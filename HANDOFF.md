@@ -79,24 +79,44 @@ native module to rebuild against Electron's ABI and nothing to break at packagin
    as its first implementation, then the `auto-land` strategy.
 5. **Scheduler v1**: admission, dependencies, hard quota gates, manual pinning.
 
-**Spike still open from M1:** confirm a second account can complete a turn on a **transplanted
-transcript** (`docs/cost-model.md` §7 — discovery is measured, completion is not). Needs a second
-subscription; do it when one is commissioned.
+**Spike still open from M1:** see **R5** under *Measurement runs owed*.
 
 ## Open questions
 
 - **Refreshing the quota cache without spending a turn.** Nothing found refreshes
   `cachedUsageUtilization` — not an interactive start, not a `-p` run. Until something does, M3 must
   build token accrual from the transcripts agentyard already meters exactly, calibrated against
-  whatever readings do arrive. This is the biggest hole in the cost model.
+  whatever readings do arrive. This is the biggest hole in the cost model — **R3** below is the
+  experiment that closes or confirms it.
 - **Auto-mode classifier cost on a subscription** (`docs/cost-model.md` §9). Documented as billable on
   Enterprise and API-billed accounts, unstated for Pro/Max/Team, and agentyard defaults Claude workers
-  to `auto`. Measure at M3 — same task, `auto` vs `default`. ⛔ Do not assume it is free.
+  to `auto`. ⛔ Do not assume it is free — **R1** below measures it.
 - **Vertex / Antigravity cache pricing.** Deliberately not guessed; `costmodels/` has the slot. M5.
 - **Antigravity `ask`-hit shape.** That `agy` surfaces approvals over `stream-json` is inferred from
   its documented three-tier model, not measured. Verify at M5.
 - **`expected idle` estimator** (plan §8.6). Cannot be designed further without real queue data. M3.
 - **D7** stands: external resource services wrapped, never vendored. **D5 is closed** (plan §9.1).
+
+## Measurement runs owed
+
+These are the questions above turned into experiments. Each is cheap, each needs a **quiet worker**
+(one session, nothing else running on that account), and each answers something the design is
+currently guessing at. Run them when a window is otherwise idle; record the result in
+`docs/cost-model.md` with the date and the CLI version, and delete the entry from here.
+
+**The instrument.** agentyard meters *assistant turns* exactly from the transcript. Quota measures
+*everything the account spent*. So the gap between them is everything the CLI spent that never reached
+a transcript — the auto-mode classifier, title generation, whatever else. That gap is the measurement.
+
+| # | Question | Method | What it changes |
+|---|---|---|---|
+| **R1** | Does the auto-mode classifier bill on a subscription? | Same shell-heavy task run twice on a quiet worker: once `--permission-mode auto`, once `default` with a narrow allowlist so nothing prompts. Read `/usage` by hand in a TUI before and after each. Compare (quota delta − transcript tokens) between the two runs | If it bills, `auto` stops being a free default and the objective vector has to price it. `docs/cost-model.md` §9 |
+| **R2** | `tokens_per_percent` per (worker, model, tokenizer) | While exactly one session is live, sample `/usage` by hand at intervals and diff against transcript tokens over the same span | Turns percent into tokens, which is what every gate actually needs. Plan §8.5 |
+| **R3** | What refreshes `cachedUsageUtilization`? | Note `fetchedAtMs`, then try in turn: `/usage` inside an interactive session · a long run · a fresh CLI start after some hours. Stop at the first that moves it | If anything does, the poller becomes real and R2 gets automatic. If nothing does, M3 must accrue tokens itself |
+| **R4** | Real compaction cost end to end | Compact a session of known size; diff transcript tokens across the `compact_boundary` and record `durationMs` | Three samples so far (139k · 116k · **161k** ms). The spread matters more than the mean for the T+53m deadline |
+| **R5** | Second account on a transplanted transcript | Commission a second worker, copy a small transcript into its root, `--resume`, complete one turn | Discovery is measured; completion is not. Shapes cross-account continuation. `docs/cost-model.md` §7 |
+
+R1 and R3 are the ones blocking real decisions. R5 needs a second subscription.
 
 ## Standing decisions worth not relitigating
 
