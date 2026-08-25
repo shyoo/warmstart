@@ -45,6 +45,10 @@ These are not preferences; breaking one breaks the product.
 - ⛔ **Nothing about one machine may be hard-coded.** No `C:\Dev`, no account names, no assumption
   that any CLI is installed. Everything is discovered or configured. The app must open on a clean
   profile with zero workers, say so, and offer the wizard.
+- ⛔ **Never kill a process by image name.** Not in code, not in a shell, not "just this once" in a
+  test. `taskkill /IM electron.exe` and `pkill -f node` take out the user's editor, their other agent
+  windows, and anything else that happens to share a binary. agentyard kills **only PIDs it recorded
+  itself**, and stops when the pid it stored no longer matches the process it started.
 - ⛔ **Native modules live in the daemon, never the renderer.** An Electron upgrade must not be able
   to break a running fleet.
 - ⛔ **The renderer never holds the daemon token.** It calls the main process over IPC, and main is
@@ -124,6 +128,15 @@ costmodels/             versioned pricing data
 - **Auto mode discards broad allow rules** — blanket `Bash(*)`, wildcarded interpreters,
   package-manager run commands, `Agent` and `Monitor` rules. Narrow rules like `Bash(npm test)`
   survive, so generated allowlists must be written narrow or they vanish where they were needed.
+- **`--print` will not start under a PTY.** It exits immediately with *"Input must be provided either
+  through stdin or as a prompt argument"*, because a pseudo-terminal is not piped stdin. The `stream`
+  transport uses real pipes; only `pty` uses node-pty.
+- **The workspace-trust dialog blocks a fresh worktree.** It is skipped only in non-interactive mode.
+  Dispatching scheduled work on a PTY would hang on it with nobody there to answer - the second
+  reason scheduled work runs on `stream`.
+- **`task_complete` is the only signal that a task succeeded.** A process exiting cleanly says nothing
+  about whether the work was done. A session that ends without it goes to `awaiting_human`, and that
+  is the honest answer rather than a guess.
 - **`gemini-cli` is dead.** Google stopped serving individual accounts 2026-06-18; the Google adapter
   is **Antigravity CLI (`agy`)**. Do not write against `gemini`.
 - **Compaction takes about two minutes.** Any deadline that ends in a compaction has to budget for

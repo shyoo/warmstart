@@ -8,9 +8,10 @@ for, untested.
 if you add a line, find the one it obsoletes and cut it in the same edit. Finished work moves to
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
-**Baseline (2026-08-25, M1):** `npm run typecheck` clean · `npm run build` clean · `npm test` 7/7 ·
-21/21 daemon integration checks · app launches, commissions two workers and renders them.
-Electron 44.0.0, Node 24.18.1 under Electron, 0 npm vulnerabilities.
+**Baseline (2026-08-25, M2):** `npm run typecheck` clean · `npm run build` clean · `npm test` 20/20 ·
+21/21 fleet integration checks · 14/14 approval checks · 20/20 task+landing checks including **a real
+agent run that wrote, committed and landed a commit on origin/main**. Electron 44.0.0, Node 24.18.1
+under Electron, 0 npm vulnerabilities.
 
 ---
 
@@ -20,8 +21,8 @@ Electron 44.0.0, Node 24.18.1 under Electron, 0 npm vulnerabilities.
 |---|---|
 | **M0** scaffold | ✅ repo, licence, docs, Electron shell |
 | **M1** fleet substrate + commissioning | ✅ daemon, cost-model loader, workers, quota, PTY, transcript metering, fleet UI |
-| **M2** tasks, threads, resources, authorship | ⬜ next — now also **approvals** (§7.3) and **cancel/delete** (§7.4) |
-| **M3** cost intelligence | ⬜ the differentiator |
+| **M2** tasks, threads, resources, authorship | ✅ tasks + DAG, cancel/delete, approvals, projects, worktree pool, auto-land, scheduler v1 |
+| **M3** cost intelligence | ⬜ next — the differentiator |
 | **M4** controller agent | ⬜ |
 | **M5** multi-provider (`antigravity-cli`, `openai-compatible`) | ⬜ |
 | **M6** packaging | ⬜ |
@@ -33,18 +34,28 @@ Scope: `transient_docs/implementation_plan_2026-08-24.md` §14, as amended by **
 
 ```
 src/daemon/            orchestratord. Runs as Electron-with-ELECTRON_RUN_AS_NODE, detached.
-  index.ts             entry: lock, db, server, poller, tailer wiring, shutdown
+  index.ts             entry: lock, db, server, poller, scheduler, tailer wiring, shutdown
   server.ts  api.ts    HTTP+WS on 127.0.0.1:<random>, bearer token, typed RPC
-  db.ts                node:sqlite + numbered migrations (v1)
+  db.ts                node:sqlite + numbered migrations (v2)
   costmodel.ts         the four questions; user dir > bundled > compiled-in
   workers.ts           registry, isolation roots, retire-keeps-credentials
   quota.ts             the staleness ladder - read this before trusting a percentage
-  sessions.ts          PTY spawn/attach, scrollback, orphan reconciliation
+  sessions.ts          two transports: pty (node-pty) and stream (real pipes); orphan reaping
   transcript.ts        metering: iterations[], TTL split, cache clock  (+ .test.ts)
+  tasks.ts             DAG, admission, mandates, budgets, runs           (+ tasks.test.ts)
+  cancel.ts            wind-down into a resting state; delete is separate and human-only
+  approvals.ts         policy engine, escalation clock, remembered rules
+  scheduler.ts         the zero-token loop: gates, dispatch, completion, landing
+  projects.ts          .agentyard/project.json; policy committed, state private
+  resources.ts         the broker - if the scheduler owns the claim, the lock is unnecessary
+  worktrees.ts         pooled worktrees, task-named branches, prepare hook
+  landing.ts           LandingStrategy; auto-land, serialised by an exclusive land: resource
   which.ts             PATH resolution - node-pty does not do it
   adapters/            claude-code; capabilities + policy as data
+src/mcp/               the MCP server the agent CLI spawns: approve, task_complete, task_create,
+                       request_human, handoff. Target of --permission-prompt-tool.
 src/main/              window host + the daemon's only client (holds the token)
-src/renderer/          fleet strip, workers + wizard, doctor, xterm pane
+src/renderer/          fleet strip, approvals bar, tasks, projects, workers, doctor, xterm pane
 costmodels/            anthropic.subscription.2026-08.json
 docs/                  cost-model.md, glossary.md — maintained; read before reasoning about cost
 ```
@@ -65,21 +76,38 @@ Three findings changed the code. All are in `docs/cost-model.md`; the short vers
 Also: `node:sqlite` replaced better-sqlite3. It ships inside Electron's own Node, so there is no
 native module to rebuild against Electron's ABI and nothing to break at packaging time.
 
-## Next: M2 — tasks, threads, resources, authorship
+## What M2 measured, and what it cost the design
 
-1. **Task/Run schema + status machine**, including `paused_user` / `cancelling` / `cancelled` and the
-   `cancel` record (plan §7.4). Migration v2.
-2. **Cancel wind-down** reusing the preemption protocol: interrupt, wrap up, ⛔ release every claim
-   even if the wrap-up fails, decide the session on the cache clock, cancel the subtree. Delete is
-   separate, human-only, soft, and never removes runs.
-3. **Approvals (plan §7.3).** The `Approval` object, the agentyard MCP server behind
-   `--permission-prompt-tool`, project rules, the Approvals bar, remember-as-rule, and escalation to
-   `awaiting_human` at 30 minutes. ⛔ Structured capture only — never read the terminal.
-4. **Projects + `.agentyard/project.json`**, then the resource broker with **pooled git worktrees**
-   as its first implementation, then the `auto-land` strategy.
-5. **Scheduler v1**: admission, dependencies, hard quota gates, manual pinning.
+1. **`--print` will not run under a PTY** — *"Input must be provided either through stdin"*. A
+   pseudo-terminal is not piped stdin. The `stream` transport therefore uses **real pipes**; only
+   `pty` uses node-pty.
+2. **The workspace-trust dialog blocks a fresh worktree**, and is skipped only in non-interactive
+   mode. Second independent reason scheduled work runs on `stream` — on a PTY every dispatch would
+   hang on a dialog with nobody there to answer.
+3. **`stream-json` emits free live `rate_limit_event` records** with a status and a real `resetsAt`
+   (`docs/cost-model.md` §5). Not a percentage, but most of what a preemption deadline needs, and it
+   costs nothing because it rides a turn already being paid for.
+4. **Anthropic's own desktop app drives its CLI the same way** — `--output-format stream-json
+   --input-format stream-json --permission-prompt-tool`. Visible in the process list on this machine;
+   independent confirmation of the transport choice.
 
-**Spike still open from M1:** see **R5** under *Measurement runs owed*.
+## Next: M3 — cost intelligence
+
+*The differentiator.* Everything before this made the fleet work; this makes it cheap.
+
+1. **The cache clock, all six moves**, including **keepalive** — the move that only exists because a
+   cache read refreshes the TTL for free. `docs/cost-model.md` §3.
+2. **The compaction reserve as a standing gate** (§5): `worker.remaining >= Σ (0.1·C + 5·S)`. Needs
+   real token accounting per worker, which is why it waits for (3).
+3. **Quota that means something.** Add the `rate_limit_event` rung, then build token accrual from the
+   transcripts already metered exactly, calibrated against whatever readings arrive. Today every
+   dispatch is marked `quotaUnverified` and that is the honest state — but it is not a good one.
+4. **Session-affinity scoring and the estimator**, learned from `runs` — which is why runs are never
+   deleted with their task.
+5. **Preemption + HANDOFF + auto-resume** at a window boundary, and the **objective vector** wired end
+   to end.
+
+**Before or during M3, run the measurements below** — R1 and R3 in particular change what M3 builds.
 
 ## Open questions
 

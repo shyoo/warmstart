@@ -2,12 +2,14 @@ import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import * as pty from '@lydell/node-pty'
+import { execFileSync, spawn as spawnChild } from 'node:child_process'
 import type { Session, SessionState, SessionTransport } from '@shared/protocol.js'
 import { db, row, rows } from './db.js'
 import { adapter } from './adapters/index.js'
 import { requireWorker } from './workers.js'
 import { log } from './log.js'
 import { ensureDir } from './paths.js'
+import { removeMcpConfig, writeMcpConfig } from './mcpconfig.js'
 
 /**
  * Live agent processes.
@@ -24,9 +26,24 @@ import { ensureDir } from './paths.js'
 /** Enough backscroll that reopening the window does not look like the session lost its history. */
 const SCROLLBACK_BYTES = 256 * 1024
 
+/**
+ * How agentyard is attached to one agent process.
+ *
+ * ⚠️ The two transports are not interchangeable plumbing, and this is the measured reason (2026-08-25):
+ * `--print` refuses to start under a pseudo-terminal - *"Input must be provided either through stdin
+ * or as a prompt argument"* - because a PTY is not piped stdin. So `stream` gets real pipes and
+ * `pty` gets a terminal, and each is used where it belongs.
+ */
+interface Channel {
+  pid: number | undefined
+  write(data: string): void
+  resize(cols: number, rows: number): void
+  kill(): void
+}
+
 interface Live {
   session: Session
-  proc: pty.IPty
+  channel: Channel
   scrollback: string[]
   scrollbackBytes: number
   purpose: 'work' | 'login'
@@ -147,22 +164,41 @@ export function spawnSession(opts: SpawnOptions): Session {
   // Minted here, before the process exists, so the transcript path is known before the file is.
   const id = randomUUID()
   const transport: SessionTransport = opts.transport ?? 'pty'
+  // A login flow gets no agentyard tools: it is the vendor's own credential flow and nothing else.
+  const mcpConfig = purpose === 'work' ? writeMcpConfig(id) : null
   const plan = ad.plan({
     sessionId: id,
     isolationRoot: worker.isolationRoot,
     cwd,
     transport,
     model: opts.model,
+    mcpConfig,
     argv: opts.argv
   })
 
-  const proc = pty.spawn(plan.command, plan.args, {
-    name: 'xterm-256color',
-    cols: opts.cols ?? 120,
-    rows: opts.rows ?? 30,
-    cwd,
-    env: plan.env
-  })
+  const emitData = (data: string) => {
+    const entry = live.get(id)
+    if (!entry) return
+    entry.scrollback.push(data)
+    entry.scrollbackBytes += data.length
+    while (entry.scrollbackBytes > SCROLLBACK_BYTES && entry.scrollback.length > 1) {
+      entry.scrollbackBytes -= entry.scrollback.shift()?.length ?? 0
+    }
+    events.onData(id, data)
+  }
+
+  const handleExit = (exitCode: number | null) => {
+    live.delete(id)
+    removeMcpConfig(id)
+    setState(id, exitCode === 0 ? 'closed' : 'failed')
+    events.onExit(id, exitCode)
+    log.info(`session ${id.slice(0, 8)} exited with ${exitCode}`)
+  }
+
+  const channel =
+    transport === 'stream'
+      ? openPipes(plan, cwd, emitData, handleExit)
+      : openPty(plan, cwd, opts.cols ?? 120, opts.rows ?? 30, emitData, handleExit)
 
   const transcriptPath = purpose === 'work' ? ad.transcriptPath(worker.isolationRoot, cwd, id) : null
   const now = Date.now()
@@ -179,31 +215,14 @@ export function spawnSession(opts: SpawnOptions): Session {
       transport,
       cwd,
       opts.model ?? null,
-      proc.pid,
+      channel.pid ?? null,
       transcriptPath,
       now
     )
 
   const session = getSession(id)
   if (!session) throw new Error('session row vanished immediately after insert')
-  const entry: Live = { session, proc, scrollback: [], scrollbackBytes: 0, purpose }
-  live.set(id, entry)
-
-  proc.onData((data) => {
-    entry.scrollback.push(data)
-    entry.scrollbackBytes += data.length
-    while (entry.scrollbackBytes > SCROLLBACK_BYTES && entry.scrollback.length > 1) {
-      entry.scrollbackBytes -= entry.scrollback.shift()?.length ?? 0
-    }
-    events.onData(id, data)
-  })
-
-  proc.onExit(({ exitCode }) => {
-    live.delete(id)
-    setState(id, exitCode === 0 ? 'closed' : 'failed')
-    events.onExit(id, exitCode)
-    log.info(`session ${id.slice(0, 8)} exited with ${exitCode}`)
-  })
+  live.set(id, { session, channel, scrollback: [], scrollbackBytes: 0, purpose })
 
   log.info(
     `spawned ${purpose} session ${id.slice(0, 8)} on ${worker.label}: ${plan.command} ${plan.args.join(' ')}`
@@ -225,17 +244,55 @@ function setState(id: string, state: SessionState): void {
   }
 }
 
+/**
+ * Send a user message, in whatever shape this session's transport expects.
+ *
+ * ⚠️ This is why unattended work runs on `stream`, not `pty`. Two independent reasons, both measured:
+ * the CLI's **workspace trust dialog is skipped in non-interactive mode** and would otherwise block
+ * every dispatch into a fresh worktree with nobody there to answer it; and `--permission-prompt-tool`
+ * only exists in non-interactive mode, which is the whole structured-approval channel. A `pty`
+ * session is for a human at the keyboard, where both of those are fine.
+ */
+export function sendPrompt(id: string, text: string): void {
+  const entry = live.get(id)
+  if (!entry) throw new Error(`session '${id}' is not live`)
+  if (entry.session.transport === 'stream') {
+    const envelope = {
+      type: 'user',
+      message: { role: 'user', content: [{ type: 'text', text }] }
+    }
+    entry.channel.write(`${JSON.stringify(envelope)}\n`)
+  } else {
+    entry.channel.write(`${text}\r`)
+  }
+}
+
 export function writeSession(id: string, data: string): void {
   const entry = live.get(id)
   if (!entry) throw new Error(`session '${id}' is not live`)
-  entry.proc.write(data)
+  entry.channel.write(data)
+}
+
+/**
+ * Interrupt a session the way a person would - the adapter's own key, not a signal. A killed agent
+ * leaves its work uncommitted and its claims held; an interrupted one can be asked to wrap up.
+ */
+export function interruptSession(id: string): void {
+  const entry = live.get(id)
+  if (!entry) return
+  const sequence = adapter(entry.session.adapterId).info.policy.interruptSequence
+  try {
+    entry.channel.write(sequence)
+  } catch (err) {
+    log.warn(`could not interrupt session ${id}:`, err)
+  }
 }
 
 export function resizeSession(id: string, cols: number, rows_: number): void {
   const entry = live.get(id)
   if (!entry) return
   try {
-    entry.proc.resize(Math.max(2, cols), Math.max(1, rows_))
+    entry.channel.resize(Math.max(2, cols), Math.max(1, rows_))
   } catch (err) {
     // A resize racing an exit is normal and not worth failing a call over.
     log.debug('resize ignored:', err)
@@ -253,7 +310,7 @@ export function closeSession(id: string): void {
     return
   }
   try {
-    entry.proc.kill()
+    entry.channel.kill()
   } catch (err) {
     log.warn(`could not kill session ${id}:`, err)
     setState(id, 'failed')
@@ -261,30 +318,164 @@ export function closeSession(id: string): void {
 }
 
 /**
- * Called at startup. Rows left `live` by a daemon that died are lies - the processes went with it.
- * Marking them failed keeps the concurrency accounting honest for the next spawn.
+ * Called at startup. Rows left `live` by a daemon that died are lies - but the *processes* may not
+ * be.
+ *
+ * ⛔ An agent whose supervisor died keeps running, keeps calling the API and keeps spending the
+ * account's window, with nothing watching it and nowhere for its work to land. So orphaned pids are
+ * killed, not just marked. Leaving them alive is the one failure mode a quota-aware tool must not
+ * have.
  */
 export function reconcileOrphans(): number {
   const stale = rows<SessionRow>(
     db().prepare("select * from sessions where state not in ('closed','failed')").all()
   )
+  let killed = 0
   for (const r of stale) {
+    if (r.pid && isAlive(r.pid) && ownsProcess(r.pid, r.id)) {
+      try {
+        process.kill(r.pid)
+        killed++
+      } catch (err) {
+        log.warn(`could not stop orphaned agent pid ${r.pid}:`, err)
+      }
+    }
     db()
       .prepare("update sessions set state = 'failed', closed_at = ? where id = ?")
       .run(Date.now(), r.id)
+    removeMcpConfig(r.id)
   }
-  if (stale.length) log.warn(`marked ${stale.length} orphaned session(s) failed at startup`)
+  if (stale.length) {
+    log.warn(
+      `marked ${stale.length} orphaned session(s) failed at startup` +
+        (killed ? `, stopped ${killed} still-running agent process(es)` : '')
+    )
+  }
   return stale.length
+}
+
+/**
+ * Is this pid still the process we started?
+ *
+ * ⛔ Liveness alone is not enough to justify killing something. Pids are recycled, and "kill whatever
+ * is at this number now" is how a tool takes out an editor, another agent window, or the user's own
+ * shell. The session id is a uuid *we* minted and passed as `--session-id`, so finding it in the
+ * process's own command line is proof of identity that a recycled pid cannot fake.
+ *
+ * If the command line cannot be read, the answer is **no**. Leaving one orphan running costs quota;
+ * killing the wrong process costs somebody their work.
+ */
+function ownsProcess(pid: number, sessionId: string): boolean {
+  try {
+    const commandLine =
+      process.platform === 'win32'
+        ? execFileSync(
+            'powershell.exe',
+            [
+              '-NoProfile',
+              '-NonInteractive',
+              '-Command',
+              `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").CommandLine`
+            ],
+            { encoding: 'utf8', timeout: 10_000, windowsHide: true }
+          )
+        : execFileSync('ps', ['-p', String(pid), '-o', 'args='], {
+            encoding: 'utf8',
+            timeout: 10_000
+          })
+    return commandLine.includes(sessionId)
+  } catch {
+    return false
+  }
+}
+
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'EPERM'
+  }
 }
 
 export function shutdownAll(): void {
   for (const [id, entry] of live) {
     try {
-      entry.proc.kill()
+      entry.channel.kill()
     } catch {
       // Best effort; the daemon is going away regardless.
     }
     setState(id, 'closed')
   }
   live.clear()
+}
+
+// ---------------------------------------------------------------------------- channels
+
+/** A terminal a human can watch and type into. What "take the keyboard" needs. */
+function openPty(
+  plan: { command: string; args: string[]; env: Record<string, string> },
+  cwd: string,
+  cols: number,
+  rows_: number,
+  onData: (data: string) => void,
+  onExit: (code: number | null) => void
+): Channel {
+  const proc = pty.spawn(plan.command, plan.args, {
+    name: 'xterm-256color',
+    cols,
+    rows: rows_,
+    cwd,
+    env: plan.env
+  })
+  proc.onData(onData)
+  proc.onExit(({ exitCode }) => onExit(exitCode))
+  return {
+    pid: proc.pid,
+    write: (data) => proc.write(data),
+    resize: (c, r) => proc.resize(c, r),
+    kill: () => proc.kill()
+  }
+}
+
+/**
+ * Real pipes, for the machine protocol.
+ *
+ * ⚠️ Not a PTY, and not by preference: `--print` exits immediately under one, because a
+ * pseudo-terminal is not piped stdin. Measured 2026-08-25.
+ */
+function openPipes(
+  plan: { command: string; args: string[]; env: Record<string, string> },
+  cwd: string,
+  onData: (data: string) => void,
+  onExit: (code: number | null) => void
+): Channel {
+  const child = spawnChild(plan.command, plan.args, {
+    cwd,
+    env: plan.env,
+    stdio: ['pipe', 'pipe', 'pipe'],
+    windowsHide: true
+  })
+  child.stdout?.setEncoding('utf8')
+  child.stderr?.setEncoding('utf8')
+  child.stdout?.on('data', (d: string) => onData(d))
+  // stderr is where the CLI puts its diagnostics; showing it is how a broken spawn stops being a
+  // silent one.
+  child.stderr?.on('data', (d: string) => onData(d))
+  child.on('exit', (code) => onExit(code))
+  child.on('error', (err) => {
+    onData(`\n[agentyard] could not start: ${err.message}\n`)
+    onExit(-1)
+  })
+  return {
+    pid: child.pid,
+    write: (data) => {
+      child.stdin?.write(data)
+    },
+    // A pipe has no geometry. Silently doing nothing is the correct behaviour, not a failure.
+    resize: () => undefined,
+    kill: () => {
+      child.kill()
+    }
+  }
 }

@@ -113,6 +113,31 @@ last-chance-to-compact moment is **T+53m**, not T+58m.
 | `.claude.json` → `oauthAccount` | `{accountUuid, emailAddress, organizationUuid, billingType, subscriptionCreatedAt}` — identity without spending anything | same |
 | **`/compact` succeeds below true 100%** | a displayed 100% may be 99.99% and compaction still works. At *true* 100% it fails | owner, from operation |
 
+### A live signal does exist — in the stream
+
+**Measured 2026-08-25.** A session running `--output-format stream-json` emits, after each turn:
+
+```json
+{"type":"rate_limit_event","rate_limit_info":{
+  "status":"allowed","resetsAt":1787684400,"rateLimitType":"five_hour",
+  "overageStatus":"rejected","isUsingOverage":false}}
+```
+
+and a final `result` record carrying `total_cost_usd`, `modelUsage` per model, and the same
+`usage.iterations[]` the transcript has.
+
+This is **free and live** - it arrives with a turn already being paid for. It is not a percentage, so
+it does not replace the calibration in §5; what it gives is a **status** (`allowed` / warning /
+rejected) and a **real `resetsAt`**, which is most of what a preemption deadline actually needs. The
+`overageStatus` field also says whether spilling past the window is even possible on this account.
+
+⚠️ It only exists on the `stream` transport. A session hosted in a PTY for a human to watch emits
+nothing of the sort, which is one more reason scheduled work does not run that way.
+
+**Owed:** wire this into the quota ladder as a rung above the config cache (M3), and check whether
+`status` moves through an intermediate value before `rejected` - that is what would make it an early
+warning rather than an obituary.
+
 ### What this costs the design
 
 There is **no free live quota probe** on this CLI. That is not a gap to route around quietly, because

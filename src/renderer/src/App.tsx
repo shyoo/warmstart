@@ -1,18 +1,23 @@
-import { useState } from 'react'
-import { useAppInfo, useDaemonStatus, useFleet, useNow } from './lib/daemon'
+import { useCallback, useEffect, useState } from 'react'
+import type { Project, ResourceAvailability } from '@shared/tasks'
+import { rpc, useAppInfo, useDaemonEvents, useDaemonStatus, useFleet, useNow } from './lib/daemon'
 import { FleetStrip } from './components/FleetStrip'
 import { Workers } from './components/Workers'
 import { Doctor } from './components/Doctor'
 import { TerminalPane } from './components/Terminal'
+import { Approvals } from './components/Approvals'
+import { Tasks } from './components/Tasks'
+import { Projects } from './components/Projects'
 
 /**
  * The shell.
  *
- * M1 is the fleet substrate: workers, quota, sessions and a terminal. Projects and tasks arrive at
- * M2, so the sidebar says so plainly rather than showing empty furniture.
+ * Two strips above the work, in the order an operator needs them: the fleet, so the cost of what is
+ * running is never hidden, and the Approvals bar, which is empty almost always and takes one
+ * keystroke when it is not.
  */
 
-type View = 'workers' | 'sessions' | 'doctor'
+type View = 'tasks' | 'projects' | 'workers' | 'sessions' | 'doctor'
 
 export function App(): React.JSX.Element {
   const info = useAppInfo()
@@ -20,9 +25,25 @@ export function App(): React.JSX.Element {
   const connected = status.state === 'connected'
   const { fleet, refresh } = useFleet(connected)
   const now = useNow()
-  const [view, setView] = useState<View>('workers')
+  const [view, setView] = useState<View>('tasks')
   const [openSession, setOpenSession] = useState<string | null>(null)
   const [keyboard, setKeyboard] = useState(false)
+  const [projects, setProjects] = useState<Project[]>([])
+  const [resources, setResources] = useState<ResourceAvailability[]>([])
+
+  const refreshProjects = useCallback(async () => {
+    if (!connected) return
+    setProjects(await rpc('project.list'))
+    setResources(await rpc('resource.list'))
+  }, [connected])
+
+  useEffect(() => {
+    void refreshProjects()
+  }, [refreshProjects])
+
+  useDaemonEvents((event) => {
+    if (event.type === 'project.changed' || event.type === 'resource.changed') void refreshProjects()
+  })
 
   const sessions = fleet.flatMap((f) => f.sessions)
 
@@ -47,8 +68,14 @@ export function App(): React.JSX.Element {
         </nav>
 
         <nav className="nav-group">
-          <h2>Projects</h2>
-          <p className="nav-empty">Tasks and projects arrive in M2.</p>
+          <h2>Work</h2>
+          <NavItem active={view === 'tasks'} onClick={() => setView('tasks')}>
+            Tasks
+          </NavItem>
+          <NavItem active={view === 'projects'} onClick={() => setView('projects')}>
+            Projects
+            <span className="nav-count num">{projects.length}</span>
+          </NavItem>
         </nav>
 
         <nav className="nav-group">
@@ -61,10 +88,15 @@ export function App(): React.JSX.Element {
 
       <main className="main">
         <FleetStrip fleet={fleet} now={now} />
+        {connected && <Approvals now={now} />}
 
         <div className="content">
           {!connected ? (
             <DaemonNotice status={status} />
+          ) : view === 'tasks' ? (
+            <Tasks projects={projects} />
+          ) : view === 'projects' ? (
+            <Projects projects={projects} resources={resources} refresh={refreshProjects} />
           ) : view === 'workers' ? (
             <Workers fleet={fleet} refresh={refresh} />
           ) : view === 'doctor' ? (
@@ -162,8 +194,8 @@ function SessionsView({
       <div className="empty-inline">
         <p>No live sessions.</p>
         <p className="dim">
-          A session is one agent process. M1 can host and stream them; M2 gives them tasks to work
-          on.
+          A session is one agent process. Scheduled work runs on a pipe transport and appears here as
+          it streams; a session you open yourself gets a real terminal.
         </p>
       </div>
     )

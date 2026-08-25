@@ -4,9 +4,10 @@
 Claude Code, Antigravity, local models — and routes each task to the worker, session and moment where
 it is cheapest to run.
 
-> **Status: pre-alpha, M1.** The fleet substrate works: a background daemon, account commissioning
-> with the vendor's own login, quota and identity probes, hosted agent terminals, and exact per-turn
-> metering read from the agent's own transcript. **Nothing schedules anything yet** — tasks are M2.
+> **Status: pre-alpha, M2.** It runs work end to end: you file a task, the scheduler routes it to an
+> account that can take it, it runs in a pooled git worktree on a branch named after the task, and it
+> lands on your trunk when the project's checks pass. Approvals, cancellation and agent-authored
+> follow-ups all work. **What it does not do yet is the interesting part** — routing by *cost* is M3.
 > See [HANDOFF.md](HANDOFF.md) for exactly where the build is, and
 > [`transient_docs/implementation_plan_2026-08-24.md`](transient_docs/implementation_plan_2026-08-24.md)
 > for the design of record.
@@ -66,9 +67,18 @@ worth and refuses to let it evaporate.
   vendor's own `login` in a terminal you type into, and verifies who signed in. It never reads,
   stores, copies or proxies a credential — each account must be separately and legitimately
   subscribed.
+- **File a task and walk away.** It gets a worktree from the project's pool, a branch named after the
+  task, and an agent on an account that can take it. When the agent reports done, agentyard rebases,
+  runs the project's checks and pushes — or keeps the branch and asks you, which is what it does
+  whenever it is not certain.
+- **Approvals, not interruptions.** When an agent needs permission, the request arrives as a
+  structured event, is answered by your project's rules where possible, and otherwise appears as a
+  one-keystroke strip above your work. *Always* turns it into a rule so the next one answers itself.
+- **Cancel without losing anything.** Cancelling stops the work, asks the agent to commit what
+  compiles and write a handoff, releases the workspace, and rests the task — it never deletes.
+  Deleting is separate, and never removes the record of what a run cost.
 - **See the fleet**: per-account quota with its **age**, reset countdowns, live sessions with their
   prompt-cache countdown and context size.
-- **Host a session** and watch the real agent TUI, read-only until you take the keyboard.
 - **Doctor** tells you which CLIs were found, who is signed in, how old each quota reading is, and
   which cost model is in force.
 

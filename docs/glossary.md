@@ -135,9 +135,20 @@ windows, preemption protocol, default permission mode, which cost model applies)
 > **Antigravity CLI (`agy`)** replaces it and is the Google adapter. The old CLI survives only under a
 > Gemini Code Assist Standard/Enterprise licence.
 
-**Transport** — how agentyard talks to a session. `stream` (`-p` with stream-json in and out) gives
-structured events and a programmatic approval channel but no vendor TUI; `pty` hosts the real TUI and
-lets a human take the keyboard. A minted session id lets one session move between them via `--resume`.
+**Transport** — how agentyard talks to a session. `stream` (`-p` with stream-json over real pipes)
+gives structured events, a programmatic approval channel, and free live rate-limit records; `pty`
+hosts the real TUI and lets a human take the keyboard. A minted session id lets one session move
+between them via `--resume`.
+
+> ⛔ Not interchangeable plumbing, and measured rather than assumed: `--print` **exits immediately
+> under a pseudo-terminal**, and the CLI's **workspace-trust dialog is skipped only in
+> non-interactive mode** — so unattended work runs on `stream`, and `pty` is for a human at the
+> keyboard.
+
+**`task_complete`** — the worker-tier MCP call that reports a task finished. ⛔ The *only* signal that
+a task succeeded. A clean exit code says nothing about whether the work was done, and reading the
+terminal to guess is what this design refuses to do; a session that ends without it lands in
+`awaiting_human`.
 
 **Controller** — the LLM agent that makes judgment calls: decomposition, ambiguous routing, failure
 triage, risk-gating agent-created work. It is itself a worker in the fleet with its own quota, so when

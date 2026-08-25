@@ -12,6 +12,8 @@ export interface SpawnRequest {
   cwd: string
   transport: SessionTransport
   model?: string | undefined
+  /** Path to the MCP config giving this session agentyard's own tools. */
+  mcpConfig?: string | null | undefined
   /** A one-shot flow (login, doctor) supplies its own argv and ignores session options. */
   argv?: string[] | undefined
 }

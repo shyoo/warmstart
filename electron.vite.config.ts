@@ -15,7 +15,9 @@ export default defineConfig({
         // match the ABI the app already ships.
         input: {
           index: resolve('src/main/index.ts'),
-          orchestratord: resolve('src/daemon/index.ts')
+          orchestratord: resolve('src/daemon/index.ts'),
+          // Spawned by the agent CLI, not by us - it is the target of --permission-prompt-tool.
+          'agentyard-mcp': resolve('src/mcp/index.ts')
         },
         output: { entryFileNames: '[name].js' }
       }

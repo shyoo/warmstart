@@ -1,3 +1,14 @@
+import type {
+  Approval,
+  ApprovalRule,
+  Project,
+  ResourceAvailability,
+  RestingState,
+  Run,
+  Task,
+  TaskMessage
+} from './tasks.js'
+
 /**
  * The daemon's wire contract.
  *
@@ -120,6 +131,8 @@ export interface AdapterCapabilities {
 
 export interface AdapterPolicy {
   defaultPermissionMode: string
+  /** What "stop what you are doing" is, as bytes. ESC for a TUI; adapters may differ. */
+  interruptSequence: string
   costModelId: string
   wrapUpProtocol: 'handoff' | 'compact' | 'none'
   /** Models with no injected token budget must be told their remaining budget explicitly. */
@@ -227,6 +240,83 @@ export interface RpcMap {
   'session.resize': { params: { id: string; cols: number; rows: number }; result: { ok: true } }
   'session.close': { params: { id: string }; result: { ok: true } }
   'session.backscroll': { params: { id: string }; result: { data: string } }
+
+  // ---- M2: projects, tasks, approvals, resources ----------------------------------------
+  'project.list': { params: void; result: Project[] }
+  'project.add': { params: { root: string; name?: string }; result: Project }
+  'project.reload': { params: { id: string }; result: Project }
+  'project.archive': { params: { id: string }; result: Project }
+  'project.writeConfig': { params: { id: string }; result: { path: string } }
+
+  'task.list': { params: { projectId?: string; includeDeleted?: boolean } | void; result: Task[] }
+  'task.get': {
+    params: { id: string }
+    result: { task: Task; messages: TaskMessage[]; runs: Run[] } | null
+  }
+  'task.create': { params: TaskCreateParams; result: Task }
+  'task.update': { params: { id: string } & Record<string, unknown>; result: Task }
+  'task.message': { params: { id: string; text: string }; result: { ok: true } }
+  'task.cancel': {
+    params: { id: string; restingState?: RestingState; reason?: string; hard?: boolean }
+    result: Task
+  }
+  'task.resume': { params: { id: string }; result: Task }
+  'task.deleteCheck': { params: { id: string }; result: { ok: boolean; reasons: string[] } }
+  'task.delete': { params: { id: string; hard?: boolean; force?: boolean }; result: Task }
+  'task.restore': { params: { id: string }; result: Task }
+  'task.promote': { params: { id: string }; result: Task }
+
+  'approval.list': { params: void; result: Approval[] }
+  /** Called by the MCP server on the agent's behalf. Blocks until policy or a person answers. */
+  'approval.request': {
+    params: {
+      sessionId: string
+      origin: 'permission_prompt' | 'tool_gate' | 'resource_gate'
+      tool: string
+      target: string
+      summary: string
+      raw?: string
+    }
+    result: { decision: 'allow' | 'deny'; reason?: string }
+  }
+  'approval.answer': {
+    params: { id: string; decision: 'allow' | 'allow_always' | 'deny' }
+    result: Approval
+  }
+  'approval.rules': { params: { projectId?: string }; result: ApprovalRule[] }
+  'approval.addRule': {
+    params: { text: string; effect: 'allow' | 'deny'; projectId?: string | null }
+    result: ApprovalRule
+  }
+  'approval.removeRule': { params: { id: string }; result: { ok: true } }
+
+  'resource.list': { params: void; result: ResourceAvailability[] }
+  'scheduler.tick': { params: void; result: { dispatched: number; note: string } }
+
+  // ---- worker tier: called by the MCP server on an agent's behalf -----------------------
+  /** ⛔ The only signal that a task succeeded. A process exiting says nothing about the work. */
+  'agent.complete': { params: { sessionId: string; summary: string }; result: { ok: true } }
+  /** Agent-authored work. Bounded by the calling task's inherited mandate and budget. */
+  'agent.createTask': {
+    params: { sessionId: string; title: string; prompt?: string; assigneeHint?: string }
+    result: { ok: boolean; seq?: number; reason?: string }
+  }
+  'agent.handoff': { params: { sessionId: string; note: string }; result: { ok: true } }
+}
+
+export interface TaskCreateParams {
+  title: string
+  projectId?: string | null
+  prompt?: string
+  priority?: 'P0' | 'P1' | 'P2' | 'P3'
+  parentTaskId?: string | null
+  dependsOn?: string[]
+  notBefore?: number | null
+  deadline?: number | null
+  assigneeHint?: string | null
+  verification?: 'required' | 'not_required' | 'auto'
+  status?: 'draft' | 'ready'
+  estTokens?: number | null
 }
 
 export type RpcMethod = keyof RpcMap
@@ -247,6 +337,12 @@ export type RpcResponse =
 
 export type DaemonEvent =
   | { type: 'worker.changed'; worker: Worker }
+  | { type: 'project.changed'; project: Project }
+  | { type: 'resource.changed'; availability: ResourceAvailability }
+  | { type: 'task.changed'; task: Task }
+  | { type: 'run.changed'; run: Run }
+  | { type: 'approval.opened'; approval: Approval }
+  | { type: 'approval.answered'; approval: Approval }
   | { type: 'quota.changed'; quota: QuotaSnapshot }
   | { type: 'session.changed'; session: Session }
   | { type: 'session.data'; sessionId: string; data: string }

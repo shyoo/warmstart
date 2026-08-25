@@ -6,7 +6,10 @@ import { closeDb, openDb } from './db.js'
 import { loadCostModels } from './costmodel.js'
 import { startServer, type DaemonServer } from './server.js'
 import { QuotaPoller } from './quota.js'
-import { reconcileOrphans, setSessionEvents, shutdownAll } from './sessions.js'
+import { getSession, reconcileOrphans, setSessionEvents, shutdownAll } from './sessions.js'
+import { reconcileClaims } from './resources.js'
+import { onSessionExit, reconcileTasks, startScheduler, stopScheduler } from './scheduler.js'
+import { creditTurn } from './tasks.js'
 import { TranscriptTailer, recordCompaction, recordTurn } from './transcript.js'
 import { log, onLog } from './log.js'
 import { setEventSink } from './events.js'
@@ -35,6 +38,10 @@ async function main(): Promise<void> {
 
   const orphans = reconcileOrphans()
   if (orphans) log.info(`cleared ${orphans} session(s) left behind by a previous run`)
+  // Claims and task states recorded by a daemon that has since died are lies. Clearing them is what
+  // stops a crash from permanently costing a workspace or stranding a task in `running`.
+  reconcileClaims()
+  reconcileTasks()
 
   const token = randomBytes(32).toString('hex')
   const server: DaemonServer = await startServer(token, { version: VERSION, startedAt })
@@ -52,6 +59,12 @@ async function main(): Promise<void> {
         const tailer = new TranscriptTailer(session.id, session.transcriptPath, {
           onTurn(turn) {
             recordTurn(turn)
+            creditTurn(turn.sessionId, {
+              input: turn.inputTokens,
+              output: turn.outputTokens,
+              cacheRead: turn.cacheReadTokens,
+              cacheWrite: turn.cacheWrite1hTokens + turn.cacheWrite5mTokens
+            })
             emit({ type: 'turn', turn })
           },
           onCompact(sessionId, meta) {
@@ -66,6 +79,8 @@ async function main(): Promise<void> {
       emit({ type: 'session.data', sessionId, data })
     },
     onExit(sessionId, exitCode) {
+      const finished = getSession(sessionId)
+      if (finished) void onSessionExit(finished, exitCode)
       // One last pass: the final turn is often written after the process is already gone.
       const tailer = tailers.get(sessionId)
       setTimeout(() => {
@@ -82,6 +97,7 @@ async function main(): Promise<void> {
 
   const poller = new QuotaPoller((quota) => emit({ type: 'quota.changed', quota }))
   poller.start()
+  startScheduler()
 
   log.info(`orchestratord ${VERSION} ready (pid ${process.pid}, data ${paths.root})`)
 
@@ -91,6 +107,7 @@ async function main(): Promise<void> {
     shuttingDown = true
     log.info(`shutting down: ${reason}`)
     poller.stop()
+    stopScheduler()
     for (const t of tailers.values()) t.stop()
     shutdownAll()
     void server.close().finally(() => {

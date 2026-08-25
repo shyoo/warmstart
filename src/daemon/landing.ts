@@ -1,0 +1,240 @@
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
+import type { LandingResult, LandingStrategyId, Project, Task } from '@shared/tasks.js'
+import { policyFor } from './projects.js'
+import { claim, landResourceId, release, upsertResource } from './resources.js'
+import { addMessage, mandateAllows, setStatus } from './tasks.js'
+import { log } from './log.js'
+
+const run = promisify(execFile)
+
+/**
+ * Landing: what happens to a task's branch when the work is done.
+ *
+ * A **strategy interface**, not a branch in the code, because different projects genuinely want
+ * different flows and the tool should not have an opinion about which. v1 ships `auto-land`;
+ * `leave-branch` is the fallback everything degrades to; `pull-request` slots in later without the
+ * scheduler, the workspace pool or the task model changing.
+ *
+ * ⛔ **Landing is serialised per project.** Three workspaces finishing at once would each rebase onto
+ * an `origin/main` the other two are about to move, and the second and third would race. So landing
+ * takes an exclusive `land:<project>` resource - which is not a special case, it is §10 doing exactly
+ * what it exists for.
+ */
+
+export interface LandingContext {
+  project: Project
+  task: Task
+  workspacePath: string
+  branch: string
+}
+
+export interface LandingStrategy {
+  id: LandingStrategyId
+  canLand(ctx: LandingContext): Promise<{ ok: boolean; reason?: string }>
+  land(ctx: LandingContext): Promise<LandingResult>
+}
+
+async function git(cwd: string, args: string[]): Promise<string> {
+  const { stdout } = await run('git', args, { cwd, maxBuffer: 8 * 1024 * 1024 })
+  return stdout.trim()
+}
+
+async function hasRemote(cwd: string): Promise<boolean> {
+  try {
+    await git(cwd, ['remote', 'get-url', 'origin'])
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function isClean(cwd: string): Promise<boolean> {
+  return (await git(cwd, ['status', '--porcelain'])).length === 0
+}
+
+/** Run the project's own checks. A project that declares none has consented to landing unchecked. */
+async function runChecks(
+  project: Project,
+  cwd: string
+): Promise<{ ok: boolean; output: string }> {
+  const commands = policyFor(project).check
+  let output = ''
+  for (const command of commands) {
+    try {
+      const result = await run(command, {
+        cwd,
+        shell: true,
+        maxBuffer: 8 * 1024 * 1024,
+        timeout: 30 * 60 * 1000
+      } as never)
+      output += `$ ${command}\n${result.stdout}${result.stderr}\n`
+    } catch (err) {
+      const e = err as { stdout?: string; stderr?: string; message?: string }
+      output += `$ ${command}\n${e.stdout ?? ''}${e.stderr ?? ''}${e.message ?? ''}\n`
+      return { ok: false, output: output.slice(-8000) }
+    }
+  }
+  return { ok: true, output: output.slice(-8000) }
+}
+
+export const leaveBranch: LandingStrategy = {
+  id: 'leave-branch',
+  async canLand() {
+    return { ok: true }
+  },
+  async land(ctx) {
+    return { strategy: 'leave-branch', ok: true, branch: ctx.branch }
+  }
+}
+
+export const autoLand: LandingStrategy = {
+  id: 'auto-land',
+
+  async canLand(ctx) {
+    if (ctx.project.vcs !== 'git') return { ok: false, reason: 'project is not a git repository' }
+    if (!mandateAllows(ctx.task, 'land')) {
+      return { ok: false, reason: 'the task has no authority to land' }
+    }
+    if (ctx.task.verification === 'required') {
+      return { ok: false, reason: 'task requires human verification before landing' }
+    }
+    if (!(await isClean(ctx.workspacePath))) {
+      return { ok: false, reason: 'the workspace has uncommitted changes' }
+    }
+    return { ok: true }
+  },
+
+  async land(ctx): Promise<LandingResult> {
+    const policy = policyFor(ctx.project)
+    const target = policy.landingTarget
+
+    // ⛔ Exclusive for the whole of rebase-check-push. Released in `finally` without exception.
+    upsertResource({
+      id: landResourceId(ctx.project.id),
+      projectId: ctx.project.id,
+      kind: 'exclusive',
+      label: `${ctx.project.name} landing`,
+      capacity: 1
+    })
+    const lock = claim(landResourceId(ctx.project.id), ctx.task.id)
+    if (!lock) {
+      return { strategy: 'auto-land', ok: false, reason: 'another task is landing right now' }
+    }
+
+    try {
+      const remote = await hasRemote(ctx.workspacePath)
+      if (remote) await git(ctx.workspacePath, ['fetch', 'origin', '--prune'])
+      const base = remote ? `origin/${target}` : target
+
+      try {
+        await git(ctx.workspacePath, ['rebase', base])
+      } catch (err) {
+        // Leave nothing half-rebased for a person to discover later.
+        await git(ctx.workspacePath, ['rebase', '--abort']).catch(() => undefined)
+        return {
+          strategy: 'auto-land',
+          ok: false,
+          branch: ctx.branch,
+          reason: `rebase onto ${base} conflicted: ${err instanceof Error ? err.message : String(err)}`
+        }
+      }
+
+      const checks = await runChecks(ctx.project, ctx.workspacePath)
+      if (!checks.ok) {
+        return {
+          strategy: 'auto-land',
+          ok: false,
+          branch: ctx.branch,
+          reason: 'the project checks failed after rebase',
+          checkOutput: checks.output
+        }
+      }
+
+      const commit = await git(ctx.workspacePath, ['rev-parse', 'HEAD'])
+
+      if (remote) {
+        await git(ctx.workspacePath, ['push', 'origin', `HEAD:${target}`])
+      } else {
+        // No remote: fast-forward the local target in the trunk instead. Same outcome, no invention.
+        await git(ctx.project.root, ['fetch', ctx.workspacePath, `${ctx.branch}:${target}`])
+      }
+
+      await git(ctx.workspacePath, ['switch', '--detach', commit])
+      await git(ctx.workspacePath, ['branch', '-D', ctx.branch]).catch(() => undefined)
+
+      log.info(`landed t${ctx.task.seq} (${commit.slice(0, 8)}) onto ${target}`)
+      return { strategy: 'auto-land', ok: true, commit, checkOutput: checks.output }
+    } catch (err) {
+      return {
+        strategy: 'auto-land',
+        ok: false,
+        branch: ctx.branch,
+        reason: err instanceof Error ? err.message : String(err)
+      }
+    } finally {
+      release(lock.id)
+    }
+  }
+}
+
+/** Declared so the interface is honest about what exists; it degrades rather than pretending. */
+export const pullRequest: LandingStrategy = {
+  id: 'pull-request',
+  async canLand() {
+    return { ok: false, reason: 'the pull-request strategy is not implemented yet (M6)' }
+  },
+  async land(ctx) {
+    return leaveBranch.land(ctx)
+  }
+}
+
+const STRATEGIES: Record<LandingStrategyId, LandingStrategy> = {
+  'auto-land': autoLand,
+  'leave-branch': leaveBranch,
+  'pull-request': pullRequest
+}
+
+export function strategyFor(project: Project): LandingStrategy {
+  return STRATEGIES[policyFor(project).landingStrategy] ?? leaveBranch
+}
+
+/**
+ * Land, or fall back honestly.
+ *
+ * ⛔ Nothing is ever forced. A task that cannot land keeps its branch, gets an `awaiting_human` entry
+ * that says exactly why, and leaves the repository in a state a person can act on.
+ */
+export async function landTask(ctx: LandingContext): Promise<LandingResult> {
+  const strategy = strategyFor(ctx.project)
+  const allowed = await strategy.canLand(ctx)
+
+  if (!allowed.ok) {
+    const fallback = await leaveBranch.land(ctx)
+    addMessage(
+      ctx.task.id,
+      'system',
+      `Not landed automatically: ${allowed.reason}. The branch \`${ctx.branch}\` is intact.`
+    )
+    setStatus(ctx.task.id, 'awaiting_human', { assignee: 'human' })
+    return { ...fallback, ok: false, reason: allowed.reason }
+  }
+
+  const result = await strategy.land(ctx)
+  if (!result.ok) {
+    addMessage(
+      ctx.task.id,
+      'system',
+      `Landing failed: ${result.reason}. The branch \`${ctx.branch}\` is intact.` +
+        (result.checkOutput ? `\n\n${result.checkOutput.slice(-2000)}` : '')
+    )
+    setStatus(ctx.task.id, 'awaiting_human', { assignee: 'human' })
+  } else {
+    addMessage(
+      ctx.task.id,
+      'system',
+      `Landed as ${result.commit?.slice(0, 8)} onto ${policyFor(ctx.project).landingTarget}.`
+    )
+  }
+  return result
+}

@@ -86,15 +86,22 @@ body {
   padding: var(--sp-1) var(--sp-2) var(--sp-2);
 }
 
+/*
+ * Flex, not grid, and deliberately so: the number of strips above the content changes (the Approvals
+ * bar appears and disappears), and a fixed `grid-template-rows` silently hands the flexible row to
+ * whichever child happens to land in it.
+ */
 .main {
-  display: grid;
-  grid-template-rows: auto 1fr auto;
+  display: flex;
+  flex-direction: column;
   min-width: 0;
+  min-height: 0;
 }
 
 /* ---- fleet strip ------------------------------------------------------- */
 
 .fleet {
+  flex: 0 0 auto;
   border-bottom: 1px solid var(--color-border);
   padding: var(--sp-3) var(--sp-4);
   display: flex;
@@ -114,6 +121,8 @@ body {
 /* ---- content ----------------------------------------------------------- */
 
 .content {
+  flex: 1;
+  min-height: 0;
   overflow: auto;
   padding: var(--sp-5);
 }
@@ -168,6 +177,7 @@ body {
 /* ---- status bar -------------------------------------------------------- */
 
 .statusbar {
+  flex: 0 0 auto;
   border-top: 1px solid var(--color-border);
   background: var(--color-surface);
   padding: 0 var(--sp-4);
@@ -733,4 +743,172 @@ select:focus-visible,
 
 .statusbar-spacer {
   flex: 1;
+}
+
+/* ---- approvals bar ------------------------------------------------------ */
+
+/*
+ * Deliberately a strip and not a modal. A modal would cover the very terminal that tells you
+ * whether to say yes.
+ */
+.approvals {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-4);
+  border-bottom: 1px solid var(--color-border);
+  background: color-mix(in srgb, var(--state-warn) 8%, var(--color-surface));
+  font-size: var(--text-dense);
+}
+
+.approvals-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--state-warn);
+  color: var(--color-bg);
+  font-size: 11px;
+  font-weight: 700;
+  flex: 0 0 auto;
+}
+
+.approvals-what {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.approvals-clock {
+  color: var(--color-text-dim);
+}
+
+.approvals-clock--warn {
+  color: var(--state-warn);
+}
+
+.approvals-clock--danger {
+  color: var(--state-danger);
+}
+
+.approvals-actions {
+  display: flex;
+  gap: var(--sp-1);
+  flex: 0 0 auto;
+}
+
+.approvals-more {
+  color: var(--color-text-faint);
+  font-size: var(--text-meta);
+}
+
+/* ---- task table --------------------------------------------------------- */
+
+.tbl tr {
+  cursor: default;
+}
+
+.tbl-row--selected td {
+  background: var(--color-surface-2);
+}
+
+.status {
+  font-size: var(--text-meta);
+  letter-spacing: 0.02em;
+}
+
+.state-running {
+  color: var(--state-running);
+}
+
+.state-ok {
+  color: var(--state-ok);
+}
+
+.state-warn {
+  color: var(--state-warn);
+}
+
+.state-danger {
+  color: var(--state-danger);
+}
+
+.state-human {
+  color: var(--state-human);
+}
+
+.state-idle {
+  color: var(--color-text-faint);
+}
+
+/* ---- task detail -------------------------------------------------------- */
+
+.detail {
+  margin-top: var(--sp-5);
+  border-top: 1px solid var(--color-border);
+  padding-top: var(--sp-4);
+}
+
+.detail h3 {
+  margin: 0 0 var(--sp-2);
+  font-size: var(--text-section);
+  font-weight: 600;
+}
+
+.detail-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+  font-size: var(--text-meta);
+  color: var(--color-text-faint);
+  margin-bottom: var(--sp-3);
+}
+
+.thread {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  padding: var(--sp-3);
+  margin-bottom: var(--sp-4);
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.msg {
+  display: grid;
+  grid-template-columns: 58px 1fr;
+  gap: var(--sp-3);
+  font-size: var(--text-dense);
+  padding: var(--sp-1) 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.msg:last-child {
+  border-bottom: 0;
+}
+
+.msg-role {
+  font-size: var(--text-meta);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-faint);
+  padding-top: 2px;
+}
+
+.msg--agent .msg-role {
+  color: var(--state-running);
+}
+
+.msg--human .msg-role {
+  color: var(--state-human);
+}
+
+.msg-text {
+  white-space: pre-wrap;
+  word-break: break-word;
 }

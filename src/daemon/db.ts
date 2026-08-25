@@ -94,6 +94,148 @@ const MIGRATIONS: string[] = [
   create unique index turns_session_request on turns(session_id, request_id);
 
   create table meta (key text primary key, value text not null);
+  `,
+
+  // 2 - the task domain. Projects, the DAG, runs, approvals and the resource broker.
+  `
+  create table projects (
+    id            text primary key,
+    name          text not null,
+    root          text not null unique,
+    vcs           text not null,
+    config_json   text not null default '{}',
+    config_path   text,
+    created_at    integer not null,
+    archived_at   integer
+  );
+
+  create table tasks (
+    id                text primary key,
+    seq               integer not null unique,
+    project_id        text references projects(id) on delete set null,
+    title             text not null,
+    status            text not null,
+    priority          text not null default 'P2',
+    created_by_json   text not null,
+    parent_task_id    text references tasks(id) on delete set null,
+    lineage_depth     integer not null default 0,
+    assignee          text,
+    assignee_hint     text,
+    mandate_json      text not null,
+    budget_json       text not null,
+    not_before        integer,
+    deadline          integer,
+    requires_json     text not null default '[]',
+    constraints_json  text not null default '{}',
+    verification      text not null default 'auto',
+    preemptible       integer not null default 1,
+    est_tokens        integer,
+    cancel_json       text,
+    handoff_note      text,
+    branch            text,
+    deleted_at        integer,
+    created_at        integer not null,
+    updated_at        integer not null
+  );
+  create index tasks_status on tasks(status, priority);
+  create index tasks_project on tasks(project_id);
+  create index tasks_parent on tasks(parent_task_id);
+
+  -- Edges are rows, not a JSON blob, so a cycle check is a query rather than a graph walk in JS.
+  create table task_deps (
+    task_id     text not null references tasks(id) on delete cascade,
+    depends_on  text not null references tasks(id) on delete cascade,
+    primary key (task_id, depends_on)
+  );
+
+  create table task_messages (
+    id        integer primary key autoincrement,
+    task_id   text not null references tasks(id) on delete cascade,
+    role      text not null,
+    text      text not null,
+    run_id    text,
+    ts        integer not null
+  );
+  create index task_messages_task on task_messages(task_id, ts);
+
+  -- ⛔ Runs are never deleted with their task. They are the estimator's training data and the record
+  -- of real spend, so task_id is nulled on delete rather than cascading.
+  create table runs (
+    id                 text primary key,
+    task_id            text references tasks(id) on delete set null,
+    project_id         text,
+    session_id         text,
+    worker_id          text not null,
+    started_at         integer not null,
+    ended_at           integer,
+    outcome            text,
+    quota_unverified   integer not null default 0,
+    input_tokens       integer not null default 0,
+    output_tokens      integer not null default 0,
+    cache_read_tokens  integer not null default 0,
+    cache_write_tokens integer not null default 0,
+    cost_model_id      text,
+    note               text
+  );
+  create index runs_task on runs(task_id, started_at desc);
+  create index runs_session on runs(session_id);
+
+  -- ⚠️ No foreign key on session_id on purpose. An approval can arrive from a session this daemon
+  -- has no row for - a restart, a session it did not spawn - and the right answer then is "no
+  -- deadline known", not a constraint failure that denies the agent with an opaque database error.
+  create table approvals (
+    id                text primary key,
+    session_id        text not null,
+    run_id            text,
+    task_id           text,
+    project_id        text,
+    origin            text not null,
+    tool              text not null,
+    target            text,
+    summary           text not null,
+    policy_result     text not null,
+    matched_rule      text,
+    asked_at          integer not null,
+    deadline_at       integer,
+    escalate_after_ms integer not null,
+    answered_at       integer,
+    answer            text,
+    answered_by       text,
+    escalated_at      integer
+  );
+  create index approvals_open on approvals(answered_at, asked_at);
+
+  create table approval_rules (
+    id          text primary key,
+    project_id  text,
+    tool        text not null,
+    pattern     text not null,
+    effect      text not null,
+    created_by  text not null,
+    created_at  integer not null
+  );
+  create index approval_rules_lookup on approval_rules(project_id, tool);
+
+  create table resources (
+    id           text primary key,
+    project_id   text references projects(id) on delete cascade,
+    kind         text not null,
+    label        text not null,
+    capacity     integer not null,
+    members_json text not null default '[]',
+    meta_json    text not null default '{}'
+  );
+
+  create table resource_claims (
+    id           text primary key,
+    resource_id  text not null references resources(id) on delete cascade,
+    member       text,
+    holder       text not null,
+    amount       integer not null default 1,
+    acquired_at  integer not null,
+    released_at  integer
+  );
+  create index resource_claims_open on resource_claims(resource_id, released_at);
   `
 ]
 

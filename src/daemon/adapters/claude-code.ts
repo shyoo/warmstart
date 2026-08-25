@@ -33,6 +33,9 @@ const info: AdapterInfo = {
     // ignored outright - so it has to be passed on every spawn or scheduled runs silently run Manual
     // and stall on their first shell command with nobody watching.
     defaultPermissionMode: 'auto',
+    // ESC is the CLI's own interrupt. ⛔ Not a process kill: a killed agent leaves its work
+    // uncommitted and its claims held, which is the expensive half of a cancel.
+    interruptSequence: '\x1b',
     costModelId: 'anthropic.subscription.2026-08',
     wrapUpProtocol: 'compact',
     // Opus 4.7+ receives no injected token budget, so a wrap-up instruction must state it. §2.
@@ -248,6 +251,14 @@ export const claudeCode: AgentAdapter = {
       info.policy.defaultPermissionMode
     ]
     if (req.model) args.push('--model', req.model)
+    if (req.mcpConfig) {
+      args.push('--mcp-config', req.mcpConfig)
+      if (req.transport === 'stream') {
+        // ⚠️ Non-interactive only. A PTY session has no such channel, which is why §9.2 has two
+        // transports rather than one and a screen parser.
+        args.push('--permission-prompt-tool', 'mcp__agentyard__approve')
+      }
+    }
     if (req.transport === 'stream') {
       args.push('-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose')
     }
