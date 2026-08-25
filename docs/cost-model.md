@@ -91,7 +91,7 @@ Source: 118 real local compactions (precompact `DESIGN.md` §5) plus transcripts
 |---|---|
 | Summary size `S` | ≈ **5,631** output tokens (min 1,733, max 11,435) |
 | Post-compaction context `P` | ≈ **12,243** tokens (min 4,834, max 22,165) |
-| **Duration** | **~2 minutes.** `compactMetadata.durationMs` = 139,207 and 116,245 on two real runs (preTokens 549k and 329k) |
+| **Duration** | **~2 to 2.7 minutes.** `compactMetadata.durationMs` = 139,207 · 116,245 · **160,862** on three real runs (preTokens 549k · 329k · 332k). The third was measured 2026-08-25 and is the slowest, so treat ~2 min as the optimistic end |
 | Break-even context | **60,000** tokens absolute, not a percentage — corresponds to a resume probability of ~0.36 |
 | Post-compaction size lives in | a later `compact_boundary` record, **not** the last assistant turn |
 
@@ -105,9 +105,36 @@ last-chance-to-compact moment is **T+53m**, not T+58m.
 
 | Fact | Value | Source |
 |---|---|---|
-| `claude -p /usage` | returns 5h / 7d percentages, answered by the CLI — **no assistant turn, nothing billed**, ~2s | precompact `usage.py` |
-| Fallback | `.claude.json` → `cachedUsageUtilization.utilization.limits[]` `{kind, percent, resets_at}`, UTC | same |
-| **`/compact` succeeds below true 100%** | `/usage` rounds up, so a displayed 100% may be 99.99% and compaction still works. At *true* 100% it fails | owner, from operation |
+| ⛔ **`claude -p /usage` is NOT free and does NOT report usage** | The slash command is taken as a **prompt**. It spends a real assistant turn and answers in prose. A poller built on it bills every account on every interval | measured 2026-08-25, CLI 2.1.223 — **corrects the earlier claim from precompact `usage.py`** |
+| No `usage` subcommand exists | `claude usage` is likewise treated as a prompt | same |
+| `.claude.json` → `cachedUsageUtilization` | `{fetchedAtMs, accountUuid, utilization.limits[]}`, each limit `{kind, group, percent, severity, resets_at, is_active}`. Shape confirmed | same |
+| ⚠️ …but it is a **cache the CLI refreshes on its own schedule** | The reading on the development machine was **19 days old**. Neither an interactive start nor a `-p` run refreshed it | same |
+| `claude auth status --json` | **Free and local, ~0.3s.** `{loggedIn, authMethod, apiProvider, email, orgId, orgName, subscriptionType}`. **Exits 1 when not logged in but still prints valid JSON** | same |
+| `.claude.json` → `oauthAccount` | `{accountUuid, emailAddress, organizationUuid, billingType, subscriptionCreatedAt}` — identity without spending anything | same |
+| **`/compact` succeeds below true 100%** | a displayed 100% may be 99.99% and compaction still works. At *true* 100% it fails | owner, from operation |
+
+### What this costs the design
+
+There is **no free live quota probe** on this CLI. That is not a gap to route around quietly, because
+two things downstream depend on knowing how much window is left: the compaction reserve below, and
+the preemption deadline in the plan §8.7.
+
+So the probe is a **ladder, and its rung is always reported**:
+
+| Rung | Source | Trust |
+|---|---|---|
+| 1 | `cachedUsageUtilization` with a fresh `fetchedAtMs` | current |
+| 2 | the same, stale | **reported as *unknown*, with its age** — never as a number |
+| 3 | nothing | unknown; degrade conservatively |
+
+⛔ **A stale percentage rendered as current is worse than no percentage.** It makes the compaction
+reserve look satisfied when it is not, and that failure strands context — the one loss the whole cost
+model exists to prevent. `quota.ts` carries `stale` on every snapshot for exactly this reason, and
+the fleet strip renders "quota unknown · last seen 19d ago" rather than "12%".
+
+**Still owed:** a way to refresh that cache without spending a turn, and — failing that — a
+token-accrual estimate built from the transcripts agentyard already meters exactly, calibrated against
+whatever percentage readings do arrive. M3.
 
 ### The compaction reserve
 

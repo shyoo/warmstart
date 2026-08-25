@@ -4,7 +4,9 @@
 Claude Code, Antigravity, local models — and routes each task to the worker, session and moment where
 it is cheapest to run.
 
-> **Status: pre-alpha, M0.** The scaffold exists and the app opens. Nothing schedules anything yet.
+> **Status: pre-alpha, M1.** The fleet substrate works: a background daemon, account commissioning
+> with the vendor's own login, quota and identity probes, hosted agent terminals, and exact per-turn
+> metering read from the agent's own transcript. **Nothing schedules anything yet** — tasks are M2.
 > See [HANDOFF.md](HANDOFF.md) for exactly where the build is, and
 > [`transient_docs/implementation_plan_2026-08-24.md`](transient_docs/implementation_plan_2026-08-24.md)
 > for the design of record.
@@ -52,10 +54,27 @@ worth and refuses to let it evaporate.
 
 ## Requirements
 
-- Node.js 22+
+- Node.js 22+ (to build; the app runs on the Node inside Electron)
 - Git 2.40+
-- At least one agent CLI on `PATH` (`claude`, `agy`, or an OpenAI-compatible local endpoint)
+- At least one agent CLI on `PATH` — today that means `claude`. Antigravity CLI (`agy`) and
+  OpenAI-compatible local endpoints arrive at M5
 - Windows today; macOS and Linux are written for and not yet tested
+
+## What works today
+
+- **Add an account** in Settings → Workers. agentyard creates an isolation directory, runs the
+  vendor's own `login` in a terminal you type into, and verifies who signed in. It never reads,
+  stores, copies or proxies a credential — each account must be separately and legitimately
+  subscribed.
+- **See the fleet**: per-account quota with its **age**, reset countdowns, live sessions with their
+  prompt-cache countdown and context size.
+- **Host a session** and watch the real agent TUI, read-only until you take the keyboard.
+- **Doctor** tells you which CLIs were found, who is signed in, how old each quota reading is, and
+  which cost model is in force.
+
+> **On quota numbers.** Claude Code has no free live usage probe — the slash command spends a real
+> turn — so agentyard reads the CLI's own cache and always shows you how old it is. An old reading is
+> reported as *unknown*, never as a number. See [`docs/cost-model.md`](docs/cost-model.md) §5.
 
 ## Development
 

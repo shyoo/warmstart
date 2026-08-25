@@ -47,6 +47,11 @@ These are not preferences; breaking one breaks the product.
   profile with zero workers, say so, and offer the wizard.
 - ⛔ **Native modules live in the daemon, never the renderer.** An Electron upgrade must not be able
   to break a running fleet.
+- ⛔ **The renderer never holds the daemon token.** It calls the main process over IPC, and main is
+  orchestratord's only client. The renderer displays untrusted agent output; it does not get a
+  credential to a service that can spawn processes.
+- ⛔ **A quota reading is never shown without its age.** Stale is rendered as *unknown*, because a
+  stale percentage makes the compaction reserve look satisfied when it is not.
 - ⛔ **An approval is not a task.** A permission prompt blocks one live session, has a closed answer
   set and a deadline set by that session's cache expiry. It goes on the Approvals bar, is answered by
   policy or one keystroke, and becomes an `awaiting_human` task only if it goes unanswered past
@@ -101,6 +106,17 @@ costmodels/             versioned pricing data
   optimistic by one response length.
 - **Changing tool definitions invalidates the entire prompt cache prefix.** A session's MCP config is
   frozen for its lifetime. This is why workers on one project get identical MCP configs.
+- **`claude -p /usage` spends a real turn.** The slash command is taken as a prompt. There is no free
+  live quota probe on 2.1.223 — `docs/cost-model.md` §5 has the ladder that replaces it, and a stale
+  reading must never be rendered as a current one.
+- **`claude auth status --json` exits 1 when not logged in**, but still prints valid JSON. Read
+  stdout, not the exit code, or every un-commissioned worker reports as "probe failed".
+- **node-pty does not search PATH.** On Windows it goes straight to CreateProcess and fails with a
+  bare *File not found* for a command that runs fine in a shell. Everything spawnable goes through
+  `src/daemon/which.ts`, which also routes `.cmd`/`.bat` shims through the command processor.
+- **`node:sqlite`, not better-sqlite3.** It ships inside the Node that Electron already carries, so
+  there is no native module to rebuild against Electron's ABI. better-sqlite3 publishes no Electron 44
+  prebuild and would need a toolchain on every contributor's machine.
 - **`--permission-mode auto` must be passed explicitly.** `auto` is the built-in start mode only for
   a *terminal* session on Pro/Max/Team; `claude -p` and the Agent SDK start in `default`, and an
   `"auto"` value for `defaultMode` in a project settings file is ignored. Forget the flag and every

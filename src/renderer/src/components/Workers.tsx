@@ -1,0 +1,349 @@
+import { useEffect, useState } from 'react'
+import type { AdapterDetection, AdapterInfo, Session } from '@shared/protocol'
+import { rpc, type FleetEntry } from '../lib/daemon'
+import { age, percent } from '../lib/format'
+import { TerminalPane } from './Terminal'
+
+/**
+ * Settings → Workers, and the commissioning wizard.
+ *
+ * ⛔ Nothing about one machine may be hard-coded here. A stranger with one account and no Claude
+ * install has to reach a working fleet from this panel: adapters are detected, isolation roots are
+ * created by the app, and login runs the vendor's own CLI in a terminal they type into.
+ *
+ * agentyard never reads, stores, copies or proxies a credential. The login session below is the
+ * vendor's flow, hosted; what it writes goes into that worker's isolation root and stays there.
+ */
+export function Workers({
+  fleet,
+  refresh
+}: {
+  fleet: FleetEntry[]
+  refresh: () => Promise<void>
+}): React.JSX.Element {
+  const [adapters, setAdapters] = useState<AdapterInfo[]>([])
+  const [detections, setDetections] = useState<AdapterDetection[]>([])
+  const [adding, setAdding] = useState(false)
+  const [busy, setBusy] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [loginSession, setLoginSession] = useState<Session | null>(null)
+
+  useEffect(() => {
+    void rpc('adapter.list').then(setAdapters)
+    void rpc('adapter.detect').then(setDetections)
+  }, [])
+
+  const guard = async (key: string, fn: () => Promise<unknown>) => {
+    setBusy(key)
+    setError(null)
+    try {
+      await fn()
+      await refresh()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const startLogin = (workerId: string, adapterId: string) =>
+    guard(`login:${workerId}`, async () => {
+      const info = adapters.find((a) => a.id === adapterId)
+      const session = await rpc('session.spawn', {
+        workerId,
+        // The login flow needs a directory; the user's home is the least surprising one and needs
+        // no project to exist yet.
+        cwd: '.',
+        purpose: 'login',
+        argv: info ? loginArgvFor(info) : ['auth', 'login'],
+        cols: 100,
+        rows: 26
+      })
+      setLoginSession(session)
+    })
+
+  return (
+    <div className="panel">
+      <header className="panel-head">
+        <div>
+          <h2>Workers</h2>
+          <p className="panel-sub">
+            One worker is one account or endpoint — one quota bucket. Adding a second subscription
+            here is what turns two separate windows into one fleet.
+          </p>
+        </div>
+        <button className="btn btn--primary" onClick={() => setAdding((v) => !v)}>
+          {adding ? 'Cancel' : 'Add worker'}
+        </button>
+      </header>
+
+      {error && <div className="alert">{error}</div>}
+
+      {adding && (
+        <AddWorker
+          adapters={adapters}
+          detections={detections}
+          onDone={async (workerId, adapterId) => {
+            setAdding(false)
+            await refresh()
+            await startLogin(workerId, adapterId)
+          }}
+          onError={setError}
+        />
+      )}
+
+      {fleet.length === 0 && !adding ? (
+        <div className="empty-inline">
+          <p>No workers yet.</p>
+          <p className="dim">
+            Add one to point agentyard at an account. It creates an isolation directory, runs the
+            vendor&rsquo;s own login in a terminal, and never sees the credential itself.
+          </p>
+        </div>
+      ) : (
+        <table className="tbl">
+          <thead>
+            <tr>
+              <th>Worker</th>
+              <th>Adapter</th>
+              <th>Account</th>
+              <th>Quota</th>
+              <th className="tbl-num">Max</th>
+              <th>Policy</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {fleet.map(({ worker, quota, sessions }) => {
+              const loggedIn = worker.identity?.raw?.includes('"loggedIn": true') ?? false
+              return (
+                <tr key={worker.id}>
+                  <td>
+                    <span className="tbl-strong">{worker.label}</span>
+                    {sessions.length > 0 && (
+                      <span className="tag tag--running">{sessions.length} live</span>
+                    )}
+                    <div className="tbl-path mono" title={worker.isolationRoot}>
+                      {worker.isolationRoot}
+                    </div>
+                  </td>
+                  <td className="dim">{worker.adapterId}</td>
+                  <td>
+                    {worker.identity?.account ?? (
+                      <span className={loggedIn ? 'dim' : 'warn'}>
+                        {loggedIn ? 'signed in' : 'not signed in'}
+                      </span>
+                    )}
+                  </td>
+                  <td className="num">
+                    {!quota || quota.stale || quota.windows.length === 0 ? (
+                      <span className="warn">
+                        unknown
+                        {quota?.ageMs !== undefined && quota.windows.length > 0 && (
+                          <span className="dim"> · {age(quota.ageMs)}</span>
+                        )}
+                      </span>
+                    ) : (
+                      quota.windows.map((w) => `${w.label} ${percent(w.percent)}`).join(' · ')
+                    )}
+                  </td>
+                  <td className="num tbl-num">{worker.maxConcurrent}</td>
+                  <td>
+                    <label className="check">
+                      <input
+                        type="checkbox"
+                        checked={worker.enabled}
+                        onChange={(e) =>
+                          void guard(`en:${worker.id}`, () =>
+                            rpc('worker.update', { id: worker.id, enabled: e.target.checked })
+                          )
+                        }
+                      />
+                      enabled
+                    </label>
+                    <label className="check" title="Quota is tracked but never spent by agentyard.">
+                      <input
+                        type="checkbox"
+                        checked={worker.humanOccupied}
+                        onChange={(e) =>
+                          void guard(`hu:${worker.id}`, () =>
+                            rpc('worker.update', { id: worker.id, humanOccupied: e.target.checked })
+                          )
+                        }
+                      />
+                      human-occupied
+                    </label>
+                  </td>
+                  <td className="tbl-actions">
+                    <button
+                      className="btn btn--ghost"
+                      disabled={busy === `login:${worker.id}`}
+                      onClick={() => void startLogin(worker.id, worker.adapterId)}
+                    >
+                      Sign in
+                    </button>
+                    <button
+                      className="btn btn--ghost"
+                      disabled={busy === `probe:${worker.id}`}
+                      onClick={() =>
+                        void guard(`probe:${worker.id}`, () => rpc('worker.probe', { id: worker.id }))
+                      }
+                    >
+                      Probe
+                    </button>
+                    <button
+                      className="btn btn--ghost btn--danger"
+                      onClick={() =>
+                        void guard(`ret:${worker.id}`, () => rpc('worker.retire', { id: worker.id }))
+                      }
+                      title="Closes the worker to new work. The isolation root stays on disk."
+                    >
+                      Retire
+                    </button>
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      )}
+
+      {loginSession && (
+        <section className="login">
+          <header className="login-head">
+            <h3>Sign in</h3>
+            <p className="dim">
+              This is the vendor&rsquo;s own login running in a terminal. Type here as you normally
+              would — agentyard is hosting the process, not reading what it writes.
+            </p>
+            <button
+              className="btn btn--ghost"
+              onClick={() => {
+                void rpc('session.close', { id: loginSession.id })
+                setLoginSession(null)
+                void refresh()
+              }}
+            >
+              Done
+            </button>
+          </header>
+          <TerminalPane sessionId={loginSession.id} interactive />
+        </section>
+      )}
+    </div>
+  )
+}
+
+/** Adapters declare their own login flow; the UI does not know what a login looks like. */
+function loginArgvFor(info: AdapterInfo): string[] {
+  return info.id === 'claude-code' ? ['auth', 'login'] : ['login']
+}
+
+function AddWorker({
+  adapters,
+  detections,
+  onDone,
+  onError
+}: {
+  adapters: AdapterInfo[]
+  detections: AdapterDetection[]
+  onDone: (workerId: string, adapterId: string) => void | Promise<void>
+  onError: (message: string) => void
+}): React.JSX.Element {
+  const [adapterId, setAdapterId] = useState(adapters[0]?.id ?? 'claude-code')
+  const [label, setLabel] = useState('')
+  const [adopt, setAdopt] = useState(false)
+  const [root, setRoot] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    if (!adapterId && adapters[0]) setAdapterId(adapters[0].id)
+  }, [adapters, adapterId])
+
+  const detection = detections.find((d) => d.adapterId === adapterId)
+
+  const submit = async () => {
+    setSaving(true)
+    try {
+      const worker = await rpc('worker.create', {
+        adapterId,
+        label: label.trim() || 'worker',
+        ...(adopt && root.trim() ? { isolationRoot: root.trim() } : {})
+      })
+      await onDone(worker.id, worker.adapterId)
+    } catch (err) {
+      onError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="form">
+      <div className="form-row">
+        <label>Adapter</label>
+        <select value={adapterId} onChange={(e) => setAdapterId(e.target.value)}>
+          {adapters.map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.label}
+            </option>
+          ))}
+        </select>
+        <span className="form-hint">
+          {detection?.found ? (
+            <>
+              found <span className="mono">{detection.path}</span> · v{detection.version}
+            </>
+          ) : (
+            <span className="warn">
+              not on PATH — install it, or point agentyard at it once adapters are configurable (M6)
+            </span>
+          )}
+        </span>
+      </div>
+
+      <div className="form-row">
+        <label>Label</label>
+        <input
+          value={label}
+          placeholder="e.g. personal, work, second seat"
+          onChange={(e) => setLabel(e.target.value)}
+        />
+        <span className="form-hint">Whatever you will recognise in a quota bar at a glance.</span>
+      </div>
+
+      <div className="form-row">
+        <label>Credentials</label>
+        <div>
+          <label className="check">
+            <input type="radio" checked={!adopt} onChange={() => setAdopt(false)} />
+            Create a new isolation directory
+          </label>
+          <label className="check">
+            <input type="radio" checked={adopt} onChange={() => setAdopt(true)} />
+            Adopt an existing one
+          </label>
+          {adopt && (
+            <input
+              className="form-wide mono"
+              value={root}
+              placeholder="path to an existing config directory"
+              onChange={(e) => setRoot(e.target.value)}
+            />
+          )}
+        </div>
+        <span className="form-hint">
+          A new directory keeps this account&rsquo;s login entirely separate, which is what lets
+          several subscriptions run side by side. Adopt an existing one if you are already signed in
+          there and would rather not log in again.
+        </span>
+      </div>
+
+      <div className="form-actions">
+        <button className="btn btn--primary" disabled={saving} onClick={() => void submit()}>
+          {saving ? 'Creating…' : 'Create and sign in'}
+        </button>
+      </div>
+    </div>
+  )
+}

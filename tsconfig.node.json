@@ -7,6 +7,7 @@
     "lib": ["ES2023"],
     "types": ["node", "electron-vite/node"],
     "strict": true,
+    "resolveJsonModule": true,
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,
     "verbatimModuleSyntax": true,

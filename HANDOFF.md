@@ -8,102 +8,104 @@ for, untested.
 if you add a line, find the one it obsoletes and cut it in the same edit. Finished work moves to
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
-**Baseline (2026-08-24, commit: M0 scaffold):** `npm run typecheck` clean, `npm run build` clean,
-app launches with no console errors, preload bridge and `app:info` IPC round-trip verified, window
-renders the zero-state. Electron 44.0.0, Node v22.19.0, 0 npm vulnerabilities.
+**Baseline (2026-08-25, M1):** `npm run typecheck` clean · `npm run build` clean · `npm test` 7/7 ·
+21/21 daemon integration checks · app launches, commissions two workers and renders them.
+Electron 44.0.0, Node 24.18.1 under Electron, 0 npm vulnerabilities.
 
 ---
 
 ## Where the build is
 
-**M0 (scaffold) is done.** Everything below M0 is not started.
-
 | Milestone | State |
 |---|---|
-| **M0** scaffold | ✅ repo, licence, docs, Electron + Vite + TS shell that opens |
-| **M1** fleet substrate + commissioning | ⬜ next |
-| **M2** tasks, threads, resources, authorship | ⬜ |
+| **M0** scaffold | ✅ repo, licence, docs, Electron shell |
+| **M1** fleet substrate + commissioning | ✅ daemon, cost-model loader, workers, quota, PTY, transcript metering, fleet UI |
+| **M2** tasks, threads, resources, authorship | ⬜ next — now also **approvals** (§7.3) and **cancel/delete** (§7.4) |
 | **M3** cost intelligence | ⬜ the differentiator |
 | **M4** controller agent | ⬜ |
-| **M5** multi-provider | ⬜ |
+| **M5** multi-provider (`antigravity-cli`, `openai-compatible`) | ⬜ |
 | **M6** packaging | ⬜ |
 
-Scope of each: `transient_docs/implementation_plan_2026-08-24.md` §14, **as amended by A1
-(2026-08-25)**: `gemini-cli` is off the roadmap, D5 closes per adapter (§9.1), and M2 gains approvals
-(§7.3) and cancel/delete (§7.4).
+Scope: `transient_docs/implementation_plan_2026-08-24.md` §14, as amended by **A1 (2026-08-25)** —
+`gemini-cli` is retired, D5 closes per adapter (§9.1), approvals and cancel/delete are new objects.
 
 ## What exists
 
 ```
-src/main, src/preload   Electron shell. Window host only. Sandboxed preload (CJS - see AGENTS.md).
-src/renderer            React 19 + Vite. Zero-state UI, design tokens, dark + light themes.
-src/shared/ipc.ts       AppInfo contract. Deliberately thin - the real channel is the daemon's.
-src/daemon/             README only. orchestratord is M1.
-costmodels/             anthropic.subscription.2026-08.json - the first cost model.
-docs/                   cost-model.md, glossary.md. Both maintained; read before reasoning about cost.
-transient_docs/         implementation_plan_2026-08-24.md - design of record, D1-D18 with reasoning.
+src/daemon/            orchestratord. Runs as Electron-with-ELECTRON_RUN_AS_NODE, detached.
+  index.ts             entry: lock, db, server, poller, tailer wiring, shutdown
+  server.ts  api.ts    HTTP+WS on 127.0.0.1:<random>, bearer token, typed RPC
+  db.ts                node:sqlite + numbered migrations (v1)
+  costmodel.ts         the four questions; user dir > bundled > compiled-in
+  workers.ts           registry, isolation roots, retire-keeps-credentials
+  quota.ts             the staleness ladder - read this before trusting a percentage
+  sessions.ts          PTY spawn/attach, scrollback, orphan reconciliation
+  transcript.ts        metering: iterations[], TTL split, cache clock  (+ .test.ts)
+  which.ts             PATH resolution - node-pty does not do it
+  adapters/            claude-code; capabilities + policy as data
+src/main/              window host + the daemon's only client (holds the token)
+src/renderer/          fleet strip, workers + wizard, doctor, xterm pane
+costmodels/            anthropic.subscription.2026-08.json
+docs/                  cost-model.md, glossary.md — maintained; read before reasoning about cost
 ```
 
-## Next: M1 — fleet substrate + commissioning
+## What M1 measured, and what it cost the design
 
-Goal: *"Anyone can add their accounts and drive them from one window."* M1 alone replaces manually
-juggling several agent windows. Suggested order — each step is independently verifiable:
+Three findings changed the code. All are in `docs/cost-model.md`; the short version:
 
-1. **`orchestratord` skeleton** (`src/daemon`). Long-lived Node process, single-instance lock,
-   SQLite via `better-sqlite3` with numbered migrations, HTTP + WS on `127.0.0.1` at a random port,
-   token written to a mode-600 file the UI reads. Electron connects as a client and shows the real
-   status in the existing status bar (it currently hard-codes *not running (M1)*).
-   ⚠️ Native modules go **here**, never the renderer.
-2. **Cost-model loader.** Read `costmodels/*.json`, expose `costOfKeepalive` / `costOfCompact` /
-   `costOfColdStart` / `cacheExpiryFor`. Do this early — everything downstream asks it questions, and
-   building it late invites inline arithmetic. See `docs/cost-model.md` §8.
-3. **Worker registry + commissioning wizard.** Settings → Workers: adapter detection (`claude`,
-   `agy` on PATH — ⛔ not `gemini`, retired 2026-06-18), isolation root creation (`<appdata>/agentyard/workers/<slug>`) or adoption of an
-   existing one, **login via embedded PTY running the vendor CLI** (agentyard never touches a
-   credential), verify + label via `probeQuota`, policy (enabled, human-occupied, max concurrent —
-   default 1, allowed projects). Plus the **Doctor** panel.
-   ⛔ Nothing machine-specific may be hard-coded; the app must open on a clean profile with zero
-   workers, say so, and offer the wizard. The current zero-state already does the "say so" half.
-4. **Quota poller.** `claude -p /usage` with the `.claude.json` `cachedUsageUtilization` fallback.
-   Per account, on an interval and after each run. Isolated module with a hard fallback: on any parse
-   failure, log once and degrade conservatively rather than stalling the scheduler.
-5. **PTY spawn/attach.** `@lydell/node-pty`, minted `--session-id` so the transcript path is known
-   before the process starts. Stream bytes to the UI over WS; xterm.js + fit + serialize so backscroll
-   survives the UI reopening. Read-only until "take the keyboard" is toggled.
-6. **Transcript tailer.** Per-turn usage summing `usage.iterations[]`, `cache_creation` split by TTL,
-   context size, idle **from request start**, `effort`, `gitBranch`. This is the metering layer and it
-   must be exact — see `docs/cost-model.md` §6 for the three traps.
-7. **Fleet strip + sidebar.** Quota bars, reset countdowns, per-session cache countdown (amber T+45m,
-   red T+53m). Tabular numerals are already wired via `.num` / `.mono`.
+1. ⛔ **`claude -p /usage` is not free and does not report usage.** The slash command is taken as a
+   prompt and spends a real turn. The plan inherited the opposite claim from prior art. There is now
+   no free live quota probe, so `quota.ts` reports a **rung** and an **age**, and stale readings
+   render as *unknown*. Closing this properly is M3 work (see below).
+2. **`claude auth status --json` is free, local and exits 1 while still printing valid JSON.** It is
+   what commissioning and Doctor verify with.
+3. **node-pty does not search PATH** — a spawn fails with a bare *File not found* for a command that
+   runs fine in a shell. Everything goes through `which.ts`.
 
-**Spike inside M1:** once a second account is logged in, confirm it can actually complete a turn on a
-**transplanted transcript** (`docs/cost-model.md` §7 — discovery is measured, completion is not). The
-answer shapes how M3 builds cross-account continuation.
+Also: `node:sqlite` replaced better-sqlite3. It ships inside Electron's own Node, so there is no
+native module to rebuild against Electron's ABI and nothing to break at packaging time.
+
+## Next: M2 — tasks, threads, resources, authorship
+
+1. **Task/Run schema + status machine**, including `paused_user` / `cancelling` / `cancelled` and the
+   `cancel` record (plan §7.4). Migration v2.
+2. **Cancel wind-down** reusing the preemption protocol: interrupt, wrap up, ⛔ release every claim
+   even if the wrap-up fails, decide the session on the cache clock, cancel the subtree. Delete is
+   separate, human-only, soft, and never removes runs.
+3. **Approvals (plan §7.3).** The `Approval` object, the agentyard MCP server behind
+   `--permission-prompt-tool`, project rules, the Approvals bar, remember-as-rule, and escalation to
+   `awaiting_human` at 30 minutes. ⛔ Structured capture only — never read the terminal.
+4. **Projects + `.agentyard/project.json`**, then the resource broker with **pooled git worktrees**
+   as its first implementation, then the `auto-land` strategy.
+5. **Scheduler v1**: admission, dependencies, hard quota gates, manual pinning.
+
+**Spike still open from M1:** confirm a second account can complete a turn on a **transplanted
+transcript** (`docs/cost-model.md` §7 — discovery is measured, completion is not). Needs a second
+subscription; do it when one is commissioned.
 
 ## Open questions
 
-- **Vertex / Antigravity cache pricing.** The Google pricing page truncated on two fetch attempts on
-  2026-08-24 and the numbers were deliberately not guessed. `costmodels/` has the schema slot. Fill at
-  M5 when the adapter is built. ⛔ Do not populate from memory.
-- **`expected idle` estimator** (implementation plan §8.6). The keepalive-vs-compact choice is only as
-  good as this, and it cannot be designed further without real queue data. M3 ships a crude version
-  (queue depth + dependency readiness + median human response latency) and improves it from `events`.
-- **Auto-mode classifier cost on a subscription** (`docs/cost-model.md` §9). Billable on Enterprise
-  and API-billed accounts; unstated for Pro/Max/Team, and agentyard defaults Claude workers to `auto`.
-  Measure at M3. ⛔ Do not assume it is free.
-- **D7** remains on its recommendation: external resource services wrapped, never vendored. **D5 is
-  closed** — permissions come from a capability, not a global default (plan §9.1).
+- **Refreshing the quota cache without spending a turn.** Nothing found refreshes
+  `cachedUsageUtilization` — not an interactive start, not a `-p` run. Until something does, M3 must
+  build token accrual from the transcripts agentyard already meters exactly, calibrated against
+  whatever readings do arrive. This is the biggest hole in the cost model.
+- **Auto-mode classifier cost on a subscription** (`docs/cost-model.md` §9). Documented as billable on
+  Enterprise and API-billed accounts, unstated for Pro/Max/Team, and agentyard defaults Claude workers
+  to `auto`. Measure at M3 — same task, `auto` vs `default`. ⛔ Do not assume it is free.
+- **Vertex / Antigravity cache pricing.** Deliberately not guessed; `costmodels/` has the slot. M5.
+- **Antigravity `ask`-hit shape.** That `agy` surfaces approvals over `stream-json` is inferred from
+  its documented three-tier model, not measured. Verify at M5.
+- **`expected idle` estimator** (plan §8.6). Cannot be designed further without real queue data. M3.
+- **D7** stands: external resource services wrapped, never vendored. **D5 is closed** (plan §9.1).
 
 ## Standing decisions worth not relitigating
 
-Full record with reasoning in `transient_docs/implementation_plan_2026-08-24.md`. The ones most often
-re-questioned:
-
-- **Daemon, not all-in-Electron.** The premise is unattended progress across quota windows. If closing
-  the window kills the fleet, the product does not work.
-- **Deterministic scheduler; the LLM only on judgment events.** A loop running every 10s for weeks must
-  not bill anything, and the fleet must survive the controller's own quota running out.
-- **PTY-hosted CLI, transcript for state.** We own stdin, so `/compact` is a function call rather than
-  UI automation. But no ANSI parsing ever determines state.
+- **Daemon, not all-in-Electron.** The premise is unattended progress across quota windows.
+- **Deterministic scheduler; the LLM only on judgment events.** A loop running every 10s for weeks
+  must not bill anything, and the fleet must survive the controller's own quota running out.
+- **PTY-hosted CLI, transcript for state.** We own stdin, so `/compact` is a function call. But no
+  ANSI parsing ever determines state.
+- **The renderer never holds the daemon token.** It renders untrusted agent output.
 - **Pooled git worktrees, task-named branches, trunk untouched by agents.**
 - **Capabilities and objectives are data.** No `if (adapter === …)`, no `if (mode === …)`.
+- **An approval is not a task; cancel is not delete.** Plan §7.3 and §7.4.

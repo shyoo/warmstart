@@ -1,9 +1,30 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { AgentyardApi, AppInfo } from '@shared/ipc'
+import { IPC, type AgentyardApi, type AppInfo, type DaemonUiStatus } from '@shared/ipc.js'
+import type { DaemonEvent, RpcMethod, RpcParams, RpcResult } from '@shared/protocol.js'
 
+/**
+ * The only thing the renderer can reach.
+ *
+ * Sandboxed and context-isolated, so this file is CommonJS at build time - see AGENTS.md before
+ * "fixing" that. Nothing here forwards a credential; `rpc` is a message to the main process, which
+ * holds the daemon token.
+ */
 const api: AgentyardApi = {
-  getAppInfo: (): Promise<AppInfo> => ipcRenderer.invoke('app:info')
+  getAppInfo: () => ipcRenderer.invoke(IPC.appInfo) as Promise<AppInfo>,
+  daemonStatus: () => ipcRenderer.invoke(IPC.daemonStatus) as Promise<DaemonUiStatus>,
+  startDaemon: () => ipcRenderer.invoke(IPC.daemonStart) as Promise<DaemonUiStatus>,
+  rpc: <M extends RpcMethod>(method: M, params?: RpcParams<M>) =>
+    ipcRenderer.invoke(IPC.rpc, method, params) as Promise<RpcResult<M>>,
+  onDaemonStatus(handler) {
+    const listener = (_e: unknown, status: DaemonUiStatus) => handler(status)
+    ipcRenderer.on(IPC.statusPush, listener)
+    return () => ipcRenderer.removeListener(IPC.statusPush, listener)
+  },
+  onDaemonEvent(handler) {
+    const listener = (_e: unknown, event: DaemonEvent) => handler(event)
+    ipcRenderer.on(IPC.eventPush, listener)
+    return () => ipcRenderer.removeListener(IPC.eventPush, listener)
+  }
 }
 
-// contextIsolation is on and sandbox is on; this is the only bridge the renderer gets.
 contextBridge.exposeInMainWorld('agentyard', api)

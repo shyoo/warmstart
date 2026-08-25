@@ -7,7 +7,19 @@ const shared = resolve('src/shared')
 export default defineConfig({
   main: {
     plugins: [externalizeDepsPlugin()],
-    resolve: { alias: { '@shared': shared } }
+    resolve: { alias: { '@shared': shared } },
+    build: {
+      rollupOptions: {
+        // Two Node entry points. orchestratord is a separate long-lived process, launched with
+        // ELECTRON_RUN_AS_NODE so a packaged build needs no system Node - and so its native modules
+        // match the ABI the app already ships.
+        input: {
+          index: resolve('src/main/index.ts'),
+          orchestratord: resolve('src/daemon/index.ts')
+        },
+        output: { entryFileNames: '[name].js' }
+      }
+    }
   },
   preload: {
     plugins: [externalizeDepsPlugin()],
