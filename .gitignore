@@ -1,0 +1,50 @@
+# Private working notes — prompt history, personal scratch. Never committed.
+internal_docs/
+
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+out/
+dist/
+build/
+*.tsbuildinfo
+
+# Electron / native
+.electron-builder-cache/
+release/
+
+# Local runtime state. agentyard's own state lives in the OS app-data dir, not here,
+# but a dev run may drop a scratch DB.
+*.db
+*.db-journal
+*.db-wal
+*.sqlite
+
+# Local overrides of committed project policy (.agentyard/project.json IS committed — see
+# docs/glossary.md; only the local override is not)
+.agentyard/local.json
+.agentyard/state/
+
+# Env and secrets
+.env
+.env.*
+!.env.example
+
+# Editors / OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+npm-debug.log*
+logs/
+
+# Test / coverage
+coverage/
+.nyc_output/

@@ -1,0 +1,23 @@
+# Normalise to LF in the repository. Checkouts still get native endings on Windows,
+# but the committed bytes are identical across platforms - which matters because this
+# project targets macOS and Linux even though only Windows is tested today.
+* text=auto eol=lf
+
+# Shell scripts must stay LF even when checked out on Windows (Git Bash / WSL run them).
+*.sh   text eol=lf
+*.bash text eol=lf
+
+# PowerShell is happier with CRLF on Windows.
+*.ps1  text eol=crlf
+
+# Never touch these.
+*.png  binary
+*.jpg  binary
+*.ico  binary
+*.woff binary
+*.woff2 binary
+*.ttf  binary
+*.otf  binary
+
+# Generated: collapse in diffs and mark so it is not reviewed by hand.
+package-lock.json linguist-generated=true -diff

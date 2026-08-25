@@ -1,0 +1,96 @@
+{
+  "$comment": [
+    "Pricing and cache behaviour as data. See docs/cost-model.md for provenance of every number.",
+    "effective_from is load-bearing: historical runs stay priced by the model in force at the time,",
+    "so a price change does not silently rewrite the estimator's training data.",
+    "Values sourced from the Claude docs (prompt-caching, context-windows, token-counting),",
+    "read 2026-08-24."
+  ],
+  "id": "anthropic.subscription.2026-08",
+  "provider": "anthropic",
+  "channel": "subscription",
+  "schema_version": 1,
+  "effective_from": "2026-08-01",
+
+  "cache": {
+    "kind": "ttl_multiplier",
+    "read_multiplier": 0.1,
+    "read_refreshes_ttl": true,
+    "ttl_measured_from": "request_start",
+    "ttls": [
+      { "id": "5m", "seconds": 300, "write_multiplier": 1.25 },
+      { "id": "1h", "seconds": 3600, "write_multiplier": 2.0 }
+    ],
+    "default_ttl": "1h",
+    "max_breakpoints": 4,
+    "scope": "workspace",
+    "invalidated_by": ["tools", "system", "images", "tool_choice"],
+    "min_cacheable_tokens": {
+      "claude-opus-5": 512,
+      "claude-fable-5": 512,
+      "claude-mythos-5": 512,
+      "claude-sonnet-5": 1024,
+      "claude-sonnet-4-6": 1024,
+      "claude-opus-4-8": 1024,
+      "claude-opus-4-6": 4096,
+      "claude-haiku-4-5": 4096
+    }
+  },
+
+  "compaction": {
+    "$comment": "Measured over 118 real local compactions; see docs/cost-model.md §4.",
+    "summary_output_tokens": 5631,
+    "post_context_tokens": 12243,
+    "duration_ms": 130000,
+    "breakeven_context_tokens": 60000,
+    "min_tokens_since_compact": 25000
+  },
+
+  "models": [
+    {
+      "id": "claude-opus-5",
+      "context_window": 1000000,
+      "input_per_mtok": 5.0,
+      "output_per_mtok": 25.0,
+      "tokenizer": "v2",
+      "context_awareness": false,
+      "effort_levels": ["low", "medium", "high", "xhigh", "max"]
+    },
+    {
+      "id": "claude-sonnet-5",
+      "context_window": 1000000,
+      "input_per_mtok": null,
+      "output_per_mtok": null,
+      "tokenizer": "v2",
+      "context_awareness": true,
+      "effort_levels": ["low", "medium", "high", "xhigh", "max"]
+    },
+    {
+      "id": "claude-haiku-4-5",
+      "context_window": 200000,
+      "input_per_mtok": null,
+      "output_per_mtok": null,
+      "tokenizer": "v1",
+      "context_awareness": true,
+      "effort_levels": []
+    }
+  ],
+
+  "quota": {
+    "kind": "rolling_windows",
+    "probe": "cli",
+    "windows": [
+      { "id": "5h", "label": "session" },
+      { "id": "7d", "label": "weekly_all" },
+      { "id": "7d_opus", "label": "weekly_opus", "optional": true }
+    ],
+    "reports": "percent",
+    "$comment": "Percent only. tokens_per_percent is learned per (worker, model, tokenizer) - see docs/cost-model.md §5.",
+    "compact_succeeds_below_true_100": true
+  },
+
+  "$owed": [
+    "input/output per-MTok for models other than Opus 5 were not verified on 2026-08-24 and are null rather than guessed.",
+    "Under a subscription these are used only to express output as a multiple of input (5x) and to render API-equivalent value; the scheduler's gates run on tokens, not dollars."
+  ]
+}
