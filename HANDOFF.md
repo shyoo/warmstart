@@ -28,7 +28,9 @@ renders the zero-state. Electron 44.0.0, Node v22.19.0, 0 npm vulnerabilities.
 | **M5** multi-provider | ⬜ |
 | **M6** packaging | ⬜ |
 
-Scope of each: `transient_docs/implementation_plan_2026-08-24.md` §14.
+Scope of each: `transient_docs/implementation_plan_2026-08-24.md` §14, **as amended by A1
+(2026-08-25)**: `gemini-cli` is off the roadmap, D5 closes per adapter (§9.1), and M2 gains approvals
+(§7.3) and cancel/delete (§7.4).
 
 ## What exists
 
@@ -56,7 +58,7 @@ juggling several agent windows. Suggested order — each step is independently v
    `costOfColdStart` / `cacheExpiryFor`. Do this early — everything downstream asks it questions, and
    building it late invites inline arithmetic. See `docs/cost-model.md` §8.
 3. **Worker registry + commissioning wizard.** Settings → Workers: adapter detection (`claude`,
-   `gemini` on PATH), isolation root creation (`<appdata>/agentyard/workers/<slug>`) or adoption of an
+   `agy` on PATH — ⛔ not `gemini`, retired 2026-06-18), isolation root creation (`<appdata>/agentyard/workers/<slug>`) or adoption of an
    existing one, **login via embedded PTY running the vendor CLI** (agentyard never touches a
    credential), verify + label via `probeQuota`, policy (enabled, human-occupied, max concurrent —
    default 1, allowed projects). Plus the **Doctor** panel.
@@ -86,8 +88,11 @@ answer shapes how M3 builds cross-account continuation.
 - **`expected idle` estimator** (implementation plan §8.6). The keepalive-vs-compact choice is only as
   good as this, and it cannot be designed further without real queue data. M3 ships a crude version
   (queue depth + dependency readiness + median human response latency) and improves it from `events`.
-- **D5 / D7** remain on their recommendation: permission default `acceptEdits` + allowlist with
-  `bypassPermissions` opt-in per project; external resource services wrapped, never vendored.
+- **Auto-mode classifier cost on a subscription** (`docs/cost-model.md` §9). Billable on Enterprise
+  and API-billed accounts; unstated for Pro/Max/Team, and agentyard defaults Claude workers to `auto`.
+  Measure at M3. ⛔ Do not assume it is free.
+- **D7** remains on its recommendation: external resource services wrapped, never vendored. **D5 is
+  closed** — permissions come from a capability, not a global default (plan §9.1).
 
 ## Standing decisions worth not relitigating
 

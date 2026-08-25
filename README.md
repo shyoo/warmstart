@@ -1,8 +1,8 @@
 # agentyard
 
 **A scheduler with a budget.** agentyard runs a fleet of coding agents across the accounts you own —
-Claude Code, Gemini, local models — and routes each task to the worker, session and moment where it
-is cheapest to run.
+Claude Code, Antigravity, local models — and routes each task to the worker, session and moment where
+it is cheapest to run.
 
 > **Status: pre-alpha, M0.** The scaffold exists and the app opens. Nothing schedules anything yet.
 > See [HANDOFF.md](HANDOFF.md) for exactly where the build is, and
@@ -54,7 +54,7 @@ worth and refuses to let it evaporate.
 
 - Node.js 22+
 - Git 2.40+
-- At least one agent CLI on `PATH` (`claude`, `gemini`, or an OpenAI-compatible local endpoint)
+- At least one agent CLI on `PATH` (`claude`, `agy`, or an OpenAI-compatible local endpoint)
 - Windows today; macOS and Linux are written for and not yet tested
 
 ## Development

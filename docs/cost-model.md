@@ -180,6 +180,28 @@ costOfKeepalive(session)   costOfCompact(session)   costOfColdStart(tokens)   ca
 `effective_from` is load-bearing: historical runs stay priced by the model in force at the time, so a
 price change does not silently rewrite the estimator's training data.
 
+## 9. Auto mode's classifier — an unmeasured cost
+
+Claude Code's `auto` mode runs a second model (Claude Sonnet 5 by default) over each non-read action
+before it executes. The docs state those calls **count toward token usage on Enterprise plans and on
+API / Bedrock / Vertex / Foundry accounts**, and say nothing about Pro/Max/Team.
+
+⛔ **Silence is not "free".** agentyard defaults every Claude worker to `auto` (see the plan §9.1), so
+if the classifier bills on a subscription it is a per-action tax on every scheduled run, and the
+percent→token calibration in §5 would absorb it as noise rather than name it.
+
+Bounded before it is measured: reads and working-directory edits skip the classifier, and a sandbox
+network verdict is reused per host and port — so the cost tracks *shell and network calls*, not turns.
+
+**Measure at M3**, the same task run twice on an idle worker under `--permission-mode auto` and
+`--permission-mode default`, comparing `/usage` deltas. Until then, no gate may assume it is zero.
+
+*Source: Claude docs, "Choose a permission mode" → Cost and latency, read 2026-08-25.*
+
+---
+
+## 10. Owed
+
 **Owed:** Vertex and Antigravity cache pricing numbers. The pricing page truncated on two fetch
 attempts on 2026-08-24 and the numbers were deliberately **not guessed**. The schema has the slot;
 fill it when the adapter is built.

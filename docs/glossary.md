@@ -69,6 +69,18 @@ the effective objective it ran under. Runs are what the estimator learns from.
 **Assignee** — a worker, or `'human'`. The human is modelled as a worker with infinite quota and
 terrible latency.
 
+**Approval** — *an interrupt on a session*, not a task: a permission or tool gate that blocks one
+live session, with a closed answer set supplied by the adapter and a deadline equal to that session's
+cache expiry. Answered by project policy where possible, by one keystroke on the **Approvals bar**
+otherwise. ⛔ Never captured by parsing the terminal — a mis-read approval card is an unattended
+*yes*. Becomes an `awaiting_human` task only after it goes unanswered past `escalate_after`.
+
+**Resting state** — where a cancelled task comes to rest: `paused_user` (*not now*), `draft` (*not
+like this* — re-enters admission), or `cancelled` (*not at all*, terminal but on the record).
+**Cancel is not delete**: cancel winds a run down through the preemption protocol and destroys
+nothing. Delete is a separate, human-only, soft-by-default operation, and it never removes runs —
+they are the estimator's training data and the record of real spend.
+
 **`awaiting_human`** — the task needs a person. Its question lands in **My Queue**. The session
 holding the context is a prime candidate for a keepalive, because human latency routinely straddles
 the one-hour cache TTL — and a reply into a warm session costs `0.1·C` against `2.0·C` into a dead
@@ -110,14 +122,22 @@ successor's prompt.
 
 ---
 
-**Adapter** — the integration for one agent CLI (`claude-code`, `gemini-cli`, `antigravity-cli`,
+**Adapter** — the integration for one agent CLI (`claude-code`, `antigravity-cli`,
 `openai-compatible`). Declares **capabilities** (what it can do — `manualCompact`, `resumeSession`,
-`streamJson`, …) and **policy** (how it behaves — context management, quota windows, preemption
-protocol, which cost model applies).
+`streamJson`, `classifierBackedAuto`, …) and **policy** (how it behaves — context management, quota
+windows, preemption protocol, default permission mode, which cost model applies).
 
-> ⛔ The scheduler asks `capabilities` and `policy`. It never asks *which* adapter. Gemini having no
-> `/compact` must express itself as a missing capability that removes two cache-clock moves, not as a
-> special case in scheduling code.
+> ⛔ The scheduler asks `capabilities` and `policy`. It never asks *which* adapter. Antigravity having
+> no `/compact` must express itself as a missing capability that removes two cache-clock moves, not as
+> a special case in scheduling code. The same goes for its lack of an auto mode.
+
+> **`gemini-cli` is not an adapter.** Google stopped serving individual accounts on **2026-06-18**;
+> **Antigravity CLI (`agy`)** replaces it and is the Google adapter. The old CLI survives only under a
+> Gemini Code Assist Standard/Enterprise licence.
+
+**Transport** — how agentyard talks to a session. `stream` (`-p` with stream-json in and out) gives
+structured events and a programmatic approval channel but no vendor TUI; `pty` hosts the real TUI and
+lets a human take the keyboard. A minted session id lets one session move between them via `--resume`.
 
 **Controller** — the LLM agent that makes judgment calls: decomposition, ambiguous routing, failure
 triage, risk-gating agent-created work. It is itself a worker in the fleet with its own quota, so when

@@ -1,8 +1,18 @@
 # agentyard — Implementation Plan (2026-08-24)
 
-Status: **accepted 2026-08-24.** All asked decisions settled; D5 and D7 stand on their
-recommendation. M0 (scaffold) executed on acceptance — see `HANDOFF.md` for where the build actually
-is.
+Status: **accepted 2026-08-24, amended 2026-08-25 (A1).** M0 (scaffold) executed on acceptance —
+see `HANDOFF.md` for where the build actually is.
+
+> **Amendment A1 — 2026-08-25.** Three changes from owner review, each verified before being written:
+>
+> 1. **Gemini CLI is retired.** Google stopped serving individual accounts on **2026-06-18** and
+>    replaced it with **Antigravity CLI (`agy`)**. `gemini-cli` leaves the adapter roadmap;
+>    `antigravity-cli` is *the* Google adapter (§2.2, §9).
+> 2. **D5 closes, and it closes per adapter.** Claude Code runs in **`auto`**; adapters with no
+>    classifier — Antigravity, local models — run **ask + allowlist**. This is a capability, not a
+>    table of names (§9.1).
+> 3. **Two new objects.** An approval is an **interrupt on a session**, not a task (§7.3). **Cancel
+>    is not delete**, and cancel lands in a chosen resting state (§7.4).
 
 > This is a **transient doc**: the design of record as it stood on 2026-08-24. It will drift as the
 > code lands and is kept for the reasoning, not as a status page. Durable facts extracted from it
@@ -26,7 +36,10 @@ is.
 | **D15** Config | Policy committed at `.agentyard/project.json`; runtime state private in app data (§7.1a) | ✔ |
 | **D17** Autonomy | Bounded — free within inherited mandate and budget; controller gate on commit/push/spend/depth>2; human gate on irreversible (§7.2) | ✔ |
 | **D16** Notifications | Desktop notification + persistent My Queue badge; tray and push are v2 | ✔ |
-| **D5, D7** | Permission default; wrap vs absorb — recommendations stand | open |
+| **D5** Permissions | Per adapter, from a capability: Claude Code `auto`; no-classifier adapters get ask + allowlist (§9.1) | ✔ A1 |
+| **D19** Approvals | An approval is an interrupt on a session, not a task. Own queue, one-click, policy-answered, priced against the cache clock (§7.3) | ✔ A1 |
+| **D20** Cancel / delete | Cancel winds a run down into a resting state and destroys nothing; delete is separate, soft by default, and never removes runs (§7.4) | ✔ A1 |
+| **D7** | Wrap vs absorb — recommendation stands | open |
 
 ---
 
@@ -87,8 +100,11 @@ Nothing load-bearing here is assumed. Sources are named so any claim can be re-c
 | Post-compaction size lives in a later `compact_boundary` record, not the last turn | precompact §4b |
 | `claude -p /usage` returns 5h / 7d percentages, answered by the CLI — no assistant turn, nothing billed, ~2s. Fallback `.claude.json` → `cachedUsageUtilization.utilization.limits[]` | precompact `usage.py` |
 | `CLAUDE_CONFIG_DIR` per account isolates credentials — how N subscriptions become N workers | precompact `accounts.py` |
-| `--session-id`, `--resume`, `--fork-session`, `--model`, `--effort`, `--permission-mode`, `--worktree`, `--autocompact`, `--max-budget-usd`, stream-json in/out, `--mcp-config` | `claude --help` 2.1.237 |
-| Gemini CLI has `--session-id`, `--resume`, `-o stream-json`, `--worktree`, `--approval-mode`, `--acp` | `gemini --help` |
+| `--session-id`, `--resume`, `--fork-session`, `--model`, `--effort`, `--permission-mode`, `--worktree`, `--autocompact`, `--max-budget-usd`, stream-json in/out, `--mcp-config` | `claude --help` 2.1.223 |
+| `claude --permission-mode` accepts **`auto`**, `acceptEdits`, `bypassPermissions`, `manual`/`default`, `dontAsk`, `plan`. `auto` is the built-in start mode on Pro/Max/Team **in a terminal only** — `-p` and the Agent SDK start in `default` | `claude --help` 2.1.223 + *Choose a permission mode*, 2026-08-25 |
+| **`--permission-prompt-tool <tool>` exists**: an MCP tool agentyard serves that answers permission prompts, non-interactive mode only. Undocumented in `--help`, but the parser accepts it | `claude --permission-prompt-tool` → *option argument missing*, 2.1.223, 2026-08-25 |
+| **Gemini CLI stopped serving individual accounts on 2026-06-18** and is superseded by **Antigravity CLI (`agy`)**. Gemini Code Assist Standard/Enterprise licences keep the old CLI | Google Developers Blog, *Transitioning Gemini CLI to Antigravity CLI*, read 2026-08-25 |
+| `agy` has `-p/--print`, `--output-format text\|json\|stream-json`, `-c/--continue`, `--conversation <id>`, `--model`, `--effort`, `--agent`, `--json-schema`, `--dangerously-skip-permissions`. **No auto/classifier mode.** Permissions are `allow`/`ask`/`deny` rules shaped `action(target)` in `~/.gemini/antigravity-cli/settings.json` | antigravity.google/docs/cli, read 2026-08-25 |
 | A transplanted transcript **is** discovered by `--resume` in another config root (error moves from *no conversation found* to *not logged in*) | D8 spike, 2026-08-24 |
 | Permanent worktree slots beat per-task worktrees on an 11.7 GB / 5,076-file repo | `magic_writer/scripts/worktree/README.md` |
 
@@ -427,7 +443,10 @@ Task {
   verification: required | not_required | auto,
   preemptible: bool,
   status: draft|ready|blocked|scheduled|assigned|running
-        | awaiting_human|paused_quota|completed|failed|cancelled,
+        | awaiting_human|paused_quota|paused_user|cancelling|cancelled
+        | completed|failed,                            // §7.4 adds the last three
+  cancel?: {requested_by, requested_at, reason?, resting_state},   // §7.4
+  deleted_at?,                                          // soft delete; §7.4
   handoff_note?, artifacts: {commit?, branch?, files[], hashes[]}
 }
 ```
@@ -452,7 +471,8 @@ Detecting that human input is needed, in order of reliability:
 
 1. **Explicit** — the agent calls the MCP tool `request_human(question, blocking?)`. Primary; the
    project's injected guidance tells agents it exists.
-2. **Permission prompt** — the adapter reports the CLI is waiting on an approval. Structural, reliable.
+2. **Permission prompt** — the adapter reports the CLI is waiting on an approval. Structural and
+   reliable, and it is **not** a task: see §7.3, where it becomes one only if it goes unanswered.
 3. **Heuristic** — the session went idle on a turn ending in a question. Flagged low-confidence,
    surfaced as "possibly waiting on you", never auto-blocking.
 
@@ -555,6 +575,154 @@ admitted under. An agent-generated subtree that has gone strange should be obvio
 cancellable at its root — cancelling a parent cancels its descendants.
 
 *Governance defaults are* **D17**, *asked separately.*
+
+---
+
+### 7.3 Approvals are not tasks (D19, A1)
+
+An agent asking *"may I run `npm publish`?"* and an agent asking *"should this be REST or gRPC?"*
+look alike in a UI and are nothing alike in the scheduler. Filing the first as a Task is wrong on
+every axis a Task exists for:
+
+| A Task | An approval |
+|---|---|
+| can be scheduled for later | **blocks a live session right now** |
+| can be reassigned to another worker | only *that* session can consume the answer |
+| carries dependencies, effort, a budget | carries none — the answer set is fixed and finite |
+| is worth a row someone will re-read | would bury the table in rows nobody re-reads |
+| outlives the session | is void the moment the session dies |
+
+So there is a second, lighter object, deliberately not a Task:
+
+```ts
+Approval {
+  id, session_id, run_id, task_id?,        // task_id is context, not ownership
+  origin: 'permission_prompt' | 'tool_gate' | 'resource_gate',
+  action: {tool, target, command?, diff_summary?},
+  options: Answer[],                       // supplied by the adapter, never invented here
+  policy_result: 'auto_allow' | 'auto_deny' | 'escalate',
+  matched_rule?, asked_at,
+  deadline_at,                             // = the blocked session's cache expiry
+  answered_at?, answer?, answered_by
+}
+```
+
+**Three resolutions, in order of preference:**
+
+1. **It never happens.** The best approval is the one the agent's own mode absorbs — Claude Code's
+   `auto` classifier, or an Antigravity `allow` rule. That is D5 (§9.1), and it does most of the work.
+2. **Policy answers it.** agentyard evaluates the project's own rules and answers without a human.
+3. **A human answers it in one click**, from an **Approvals bar** — not by opening a task.
+
+**Why one click is achievable here and not for tasks:** the answer set is closed and supplied by the
+adapter. A persistent bar above the task table showing *session · action · countdown* takes one
+keystroke to clear — `a` allow, `d` deny, `↵` allow-and-remember. The remember offer ("always allow
+`Bash(npm test)` in inkland?") is the important half: it converts a recurring interruption into a
+rule, so the queue empties itself over time instead of growing. An approval never becomes a table row,
+never gets an estimate, and never appears in My Queue.
+
+**The countdown is real money, which is why this is not a notification.** A blocked session is idle,
+and idle burns the cache clock (§8.6). So waiting is priced like everything else:
+
+```
+expected answer < ~1h         -> do nothing; the TTL covers it
+expected answer ~1h .. ~2h    -> KEEPALIVE the blocked session (0.1*C buys the hour)
+expected answer > ~2h         -> the answer will not arrive in time:
+                                 auto-deny-and-continue where the policy permits,
+                                 else preempt — handoff, compact, release the workspace
+unanswered past escalate_after (default 30m)
+                              -> NOW it becomes task work: task -> awaiting_human,
+                                 the question is appended to the thread, the session
+                                 is released on the cache clock (§7.1)
+```
+
+That last rule is the only place the two objects meet, and it is placed where it is for a reason: an
+approval becomes a task exactly when it stops being an interrupt and starts being a decision someone
+has to schedule — which is also the moment holding a session open for it stops paying for itself.
+
+**Capture mechanism, per adapter — and ⛔ never by scraping the TUI.** The standing rule that no ANSI
+parsing determines state binds hardest here, because a mis-read approval card is an unattended *yes*.
+
+| Adapter | Where the approval comes from | Status |
+|---|---|---|
+| `claude-code`, `stream` transport | **`--permission-prompt-tool <mcp tool>`** — the CLI calls a tool agentyard serves and blocks on the reply | flag accepted by 2.1.223, 2026-08-25 |
+| `claude-code`, `pty` transport | none — the session's own `auto` classifier absorbs it (§9.1). Anything it escalates is a human sitting at the terminal, by definition | by design |
+| `antigravity-cli` | `allow`/`ask`/`deny` rules written into the worker's isolation root before spawn; `ask` hits arrive over `stream-json` | to verify at M5 |
+
+⚠️ **`--permission-prompt-tool` is non-interactive only.** A session hosting the vendor's real TUI has
+no such channel. §9.2 resolves that with two transports rather than with a parser.
+
+### 7.4 Cancel is not delete (D20, A1)
+
+Stopping work and forgetting an intent are different operations, and a single `×` button conflates
+them. They are separated.
+
+**Cancel** stops execution and returns the task to a **resting state**. It destroys nothing — not the
+thread, not the runs, not the artifacts, not the branch.
+
+```
+running | assigned | scheduled | awaiting_human | blocked | ready
+     -- cancel(reason, resting_state) -->
+                    cancelling                       (asynchronous — a run is winding down)
+     -->            paused_user | draft | cancelled
+```
+
+`cancelling` is a real state, not a formality, because a running session has to be stopped *well*. The
+wind-down is the preemption protocol of §8.7 run at low urgency:
+
+1. **`interrupt`** through the adapter — the ESC equivalent. Never a process kill.
+2. **Ask for a wrap-up**: commit whatever compiles on the task branch, write `handoff_note`.
+3. **Release every claim** — workspace, resources, and the `land:<project>` lock if held. ⛔ A cancel
+   that leaks an exclusive resource deadlocks the fleet, so release is not conditional on the wrap-up
+   succeeding.
+4. **Decide the session's fate on the cache clock (§8.6), not reflexively.** A `paused_user` task
+   whose context is warm and which may resume in ten minutes is worth a keepalive; one going to
+   `cancelled` is worth closing immediately.
+5. **Cancel the subtree** — agent-created descendants (§7.2) cancel with the *same* resting state, so
+   an operator who paused a parent does not find its children destroyed.
+
+A hard **kill** exists behind a confirmation, for a session that will not wind down. It skips steps
+1–2 and marks the run `terminated`, so the estimator does not train on a truncated run as if it were
+a normal one (§8.5).
+
+**The three resting states, and when each is right:**
+
+| Resting state | Means | Re-entry |
+|---|---|---|
+| `paused_user` | *not now* — the intent is intact and correct | resume → `ready`, keeping thread, handoff, branch and estimates |
+| `draft` | *not like this* — the intent needs rewriting first | edit → `ready`, and it **re-enters admission** (§8.1): dependencies re-checked, duplicates re-merged |
+| `cancelled` | *not at all* — terminal, but still on the record | reopen → `draft` |
+
+Defaults, because the operator should not have to answer a dialog to stop something: **`paused_user`**
+when a human cancels a running task, since that is what *stop* means to a person watching something go
+wrong; `draft` when the cancel reason names the prompt; `cancelled` when the controller cancels work it
+has judged redundant.
+
+⛔ **Quota preemption keeps `paused_quota` and never becomes a cancel.** They resume differently:
+`paused_quota` carries `not_before = resets_at` and auto-resumes; `paused_user` waits for a person,
+indefinitely. Collapsing them would have the fleet cheerfully restart work an operator deliberately
+stopped.
+
+**Delete** is separate, explicit and destructive:
+
+- **Only from a resting state** (`paused_user`, `draft`, `cancelled`, `completed`, `failed`). A
+  running task must be cancelled first — delete has no way to wind a session down.
+- **Soft by default.** `deleted_at` is set, the row leaves the table, and it is recoverable. Hard
+  delete purges thread and messages after a retention window.
+- ⛔ **Runs are never deleted with the task.** They are the estimator's training data and they record
+  real spend; they detach to the project's cost history. A tool that lets an operator erase the record
+  of what a month cost is lying to them about the next month.
+- **Blocked while it still matters**: descendants that are not themselves deleted, or a live task
+  depending on it. The blocker is shown as a list, not as a refusal.
+
+Both operations are available to the controller and to agents through the worker-tier MCP surface —
+`task_cancel(id, resting_state, reason)` — under the same mandate that governs creation (§7.2), and
+`task_delete` is **human-only**. An agent that can delete the record of its own failed work is an
+agent that can hide it.
+
+**In the UI**: cancel is a row action and a keystroke on the task table, with subtree count shown
+before it fires; delete sits behind the row menu, and hard delete asks for a typed confirmation.
+Neither appears on the Approvals bar — an approval is *answered*, never cancelled (§7.3).
 
 ---
 
@@ -697,12 +865,17 @@ interface AgentAdapter {
   id: string
   capabilities: {
     interactivePty, streamJson, resumeSession, forkSession,
-    manualCompact,            // Claude yes; Gemini no; Antigravity no
+    manualCompact,            // Claude yes; Antigravity no
+    transports: ('pty'|'stream')[],          // §9.2
+    permissionModes: string[]                // §9.1
+    classifierBackedAuto: boolean,           // Claude yes; Antigravity no
+    approvalChannel: 'permission_prompt_tool'|'settings_rules'|'none',
     nativeWorktree, multimodalInput, mcp,
     quotaProbe: 'cli'|'api'|'none',
     models: ModelSpec[]       // {id, contextWindow, effortLevels, tokenizer,
   }                           //  contextAwareness: bool, strengths: TaskKind->score}
   policy: {
+    defaultPermissionMode: string,           // §9.1 - Claude 'auto'; others ask+allowlist
     contextManagement: { autoCompact?, keepaliveCost(ctx), compactCost(ctx), compactDurationMs }
     quota:      { windows[], reserveFor: 'compaction'|'none' }
     preemption: { wrapUpProtocol: 'handoff'|'compact'|'none', needsExplicitBudget: bool }
@@ -725,9 +898,74 @@ Routing between Claude and Antigravity is then just `capability_fit` plus hard n
 | Mechanical rename across 40 files | speed; no compact need | fast/cheap model, or a local LLM |
 | Asset generation with monthly credits | a credit-metered Resource (§10) | the media worker |
 
-Adapter roadmap: **claude-code** (M1) → **gemini-cli** (M5) → **antigravity-cli** (M5, first-class
-target) → **openai-compatible/local** (M5, free so `W_qrisk = 0`; wins low-complexity work under a
-cost-weighted objective).
+Adapter roadmap (A1): **claude-code** (M1) → **antigravity-cli** (M5, the Google adapter) →
+**openai-compatible/local** (M5, free so `W_qrisk = 0`; wins low-complexity work under a cost-weighted
+objective).
+
+⛔ **`gemini-cli` is not on the roadmap.** Google stopped serving individual accounts on 2026-06-18 and
+`agy` replaces it (§2.2). It survives only under a Gemini Code Assist Standard/Enterprise licence,
+which is not this tool's audience; if someone with one asks, it is a community adapter, not a
+milestone. Writing it would have meant building an adapter against a dead CLI for two months' work.
+
+### 9.1 Permission policy, per adapter (D5 — closed by A1)
+
+D5 asked for *one* default. There isn't one, because the underlying capability differs:
+
+| Adapter | Mode | Why |
+|---|---|---|
+| `claude-code` | **`auto`** | A classifier reviews each action in place of the operator. It is also the built-in start mode on Pro/Max/Team in a terminal, so it is what the owner already experiences by hand. |
+| `antigravity-cli` | **ask + allowlist** | No classifier-backed auto mode exists. Permissions are `allow`/`ask`/`deny` rules shaped `action(target)` — `command(git)`, `read_file(src/)`, `mcp(linter/*)`, with wildcards and regex — in the worker's settings. agentyard writes the project's allowlist into the isolation root before spawn. |
+| `openai-compatible` / local | ask + allowlist | Same reason: nothing is reviewing but the operator. |
+
+⛔ In code this is **not** a table of adapter names. It is one capability and one policy field:
+
+```ts
+capabilities.permissionModes: string[]        // what this CLI actually accepts
+capabilities.classifierBackedAuto: boolean    // is there a reviewer that is not the human?
+policy.defaultPermissionMode: string
+policy.approvalChannel: 'permission_prompt_tool' | 'settings_rules' | 'none'
+```
+
+The scheduler asks `classifierBackedAuto`. When it is false, agentyard compensates by writing a
+**narrower** allowlist and expecting a higher approval rate (§7.3) — a policy consequence, not a
+branch. `bypassPermissions` / `--dangerously-skip-permissions` stays opt-in per project behind a
+visible banner, unchanged from the original D5 recommendation.
+
+**Three consequences worth writing down, because each one bites silently:**
+
+1. **`auto` is not the default under `-p`.** The built-in `auto` applies to a *terminal* session on
+   Pro/Max/Team. `claude -p` and the Agent SDK start in `default`, and an `"auto"` value for
+   `defaultMode` in a project settings file is ignored outright. **agentyard must pass
+   `--permission-mode auto` explicitly on every spawn** — left implicit, every scheduled run is
+   silently Manual and stalls on its first shell command with nobody watching.
+   *(Source: Claude docs, "Which mode a session starts in", 2026-08-25.)*
+2. **Auto mode drops broad allow rules.** On entering auto, blanket `Bash(*)` / `PowerShell(*)`,
+   wildcarded interpreters like `Bash(python*)`, package-manager run commands, `Agent` rules and
+   `Monitor` rules are discarded; narrow rules such as `Bash(npm test)` survive. So the allowlist
+   agentyard generates per project must be **written narrow**, or it is dropped exactly where it was
+   meant to help.
+3. **The classifier's token cost on a subscription is unmeasured.** The docs state that classifier
+   calls count toward usage on Enterprise plans and on API / Bedrock / Vertex / Foundry accounts, and
+   say nothing about Pro/Max/Team. ⛔ Do not read that silence as *free*. Measure it in M3 — the same
+   task, metered with auto on and off — before any scheduling decision leans on it. Recorded in §17.
+
+### 9.2 Session transport (A1)
+
+§7.3 leaves a real tension: the structured approval channel exists only in non-interactive mode, and a
+live vendor TUI exists only in a PTY. Resolve it with **two transports selected by capability**, never
+by parsing a screen:
+
+| Transport | How it runs | Approvals | Human can type |
+|---|---|---|---|
+| **`stream`** | `-p --input-format stream-json --output-format stream-json --permission-prompt-tool …`; agentyard renders the live view from structured events | structured, blocking, policy-answerable | no |
+| **`pty`** | the vendor CLI in a real PTY, its own TUI on screen | absorbed by the agent's own mode; whatever escalates faces a human who is already there | yes — "take the keyboard" |
+
+Default: **`stream` for unattended scheduled work**, because that is the only transport where an
+approval can be answered by policy at 3am; **`pty` when a human opens or takes over a session**.
+
+They are not a fork in the road. Session ids are minted before spawn (§6.2), so a session can be
+**closed on one transport and resumed on the other** — `--resume <id>` — which is precisely what "take
+the keyboard" does. One session, two views of it.
 
 ---
 
@@ -872,8 +1110,10 @@ deterministic default.
 **MCP surface, in two tiers.** The controller gets the full set; **worker agents get a narrow one**,
 because §7.2 means every running agent can now file work.
 
-*Controller:* `fleet_status`, `task_list/get/create/update/split/assign/cancel/retry`,
-`session_send/command/interrupt`, `estimate`, `schedule_at`, `resource_status`, `mandate_grant`.
+*Controller:* `fleet_status`, `task_list/get/create/update/split/assign/retry`,
+`task_cancel(id, resting_state, reason)` (§7.4 — **no `task_delete`; delete is human-only**),
+`approval_list/answer` (§7.3), `session_send/command/interrupt`, `estimate`, `schedule_at`,
+`resource_status`, `mandate_grant`.
 
 *Worker agent (scoped to its own run, its own project, its own mandate and budget):*
 `task_create(title, prompt, assignee_hint?, requires?, depends_on?)` · `task_link(dep)` ·
@@ -894,7 +1134,9 @@ any ability to widen its own mandate or assign directly to another worker.
 |  v inkland |          [acct-2 ...] [gemini ...] [local qwen  inf]          |
 |    trunk   |          cache: s-3ab 04:12(!)  s-9f1 41:06                   |
 |    ws1  *  +--------------------------------------------------------------+
-|    ws2  *  |  TASKS   > all / running / blocked / awaiting-me              |
+|    ws2  *  |  ! acct-1/s-3ab  Bash(npm publish)   [a]llow [d]eny  38:12  |
+|            +--------------------------------------------------------------+
+|            |  TASKS   > all / running / blocked / awaiting-me              |
 |  > awardtr |  +----+---------------+---------+-------+------+------+----+ |
 |            |  | #  | title         | status  | who   | from | est  | dep| |
 |  RESOURCES |  | 12 | R8 questaudit | running | acct-1| you  | 40k  | -  | |
@@ -911,8 +1153,16 @@ any ability to widen its own mandate or assign directly to another worker.
 Sidebar: projects → workspaces, plus **Resources** with live availability. Task table is primary and
 tabular, with an **origin** column (`you` / `ctrl` / the agent run that filed it) and agent-created
 children nested under their parent — task 16 above was filed by the agent working task 12 and is
-sitting at a controller gate (§7.2). Cancelling a parent cancels its subtree from that row. Fleet
-strip shows what is currently held in the operator's head: quota bars, reset
+sitting at a controller gate (§7.2). Cancelling a parent cancels its subtree from that row, into a
+resting state shown before the action fires (§7.4).
+
+**The Approvals bar** is the strip between the fleet and the tasks, and it is empty almost always —
+that is the design goal, not a shortfall (§7.3). When something does land there it shows session,
+action and the live countdown to that session's cache expiry, and clears in one keystroke without
+opening anything. It is deliberately *not* a task row, *not* My Queue, and *not* a modal: a modal
+would block the operator from looking at the very terminal that would tell them whether to say yes.
+
+Fleet strip shows what is currently held in the operator's head: quota bars, reset
 countdowns, per-session cache countdowns (amber T+45m, red T+53m). Terminal tab shows the real TUI,
 read-only until "take the keyboard" is toggled. Thread tab is the task conversation (§7.1). My Queue
 is the human inbox.
@@ -972,6 +1222,10 @@ transplanted resume (§8.8).*
 
 **M2 — Tasks, threads, resources, authorship.** Task/Run/thread schema, DAG, status machine,
 `not_before`, `awaiting_human` + My Queue + `request_human`, task table with origin and lineage.
+**Cancel / delete (§7.4)**: `cancelling` wind-down reusing the preemption protocol, the three resting
+states, subtree cancel, soft delete with runs detached to cost history. **Approvals (§7.3)**: the
+`Approval` object, the agentyard MCP server behind `--permission-prompt-tool`, project rules,
+the Approvals bar, remember-as-rule, and the 30-minute escalation into `awaiting_human`.
 **Agent-authored work (§7.2)**: worker-tier MCP (`task_create`, `task_link`, `handoff`), mandate
 inheritance, budget shares, fan-out and depth caps, cycle detection, dedup-at-admission, subtree
 cancel. **Resource broker (§10)** with **pooled git worktrees** as its first implementation —
@@ -988,8 +1242,9 @@ end** (§4) with the four presets.
 **M4 — Controller agent.** MCP server, controller as a fleet member, decomposition, routing
 arbitration, failure triage, chat + thread panes, leadership delegation.
 
-**M5 — Multi-provider.** `gemini-cli`, **`antigravity-cli`**, `openai-compatible`. Second and third
-cost models. Capability-driven routing proven by the absence of `/compact`.
+**M5 — Multi-provider.** **`antigravity-cli`** (the Google adapter — `gemini-cli` is retired, §9) and
+`openai-compatible`. Second and third cost models. Capability-driven routing proven twice over: by the
+absence of `/compact`, and by the absence of `classifierBackedAuto` (§9.1).
 
 **M6 — Packaging.** electron-builder; macOS/Linux path + PTY verification; adapter loading from a
 directory; additional landing strategies (`leave-branch`, `pull-request`); public README pass.
@@ -1004,7 +1259,7 @@ directory; additional landing strategies (`leave-branch`, `pull-request`); publi
 | Native modules in Electron | Prebuilt forks; pinned Electron; natives in the daemon only |
 | **Pricing and cache models move** | §3.4 — versioned data files with `effective_from`; historical runs keep their original pricing; a stale model is a config update, not a release |
 | Undocumented surfaces drift (transcript schema, `/usage` text) | Isolated readers with schema checks and hard fallbacks; degrade conservatively, never stall the scheduler; Doctor reports it in words |
-| Unattended permissions | Per-project policy, default `acceptEdits` + allowlist, `bypassPermissions` opt-in behind a banner; agents in a pooled workspace, never the trunk; no push without approval or `verification: not_required` |
+| Unattended permissions | Per-adapter default from a capability (§9.1): `auto` where a classifier exists, ask + **narrow** allowlist where it does not, `bypassPermissions` opt-in behind a banner. Residual prompts are structured `Approval`s answered by policy or one keystroke, never by screen-scraping a card (§7.3); agents in a pooled workspace, never the trunk; no push without approval or `verification: not_required` |
 | Two agents in one checkout | Structurally prevented — no run without a claimed resource; git refuses two worktrees on one branch |
 | **Stranded context at 100%** | The compaction reserve (§3.2) is a standing gate, not a check at assignment |
 | **Task explosion** — agents filing work that files more work | Bounded by construction, not heuristics: mandates narrow each generation, budgets are inherited shares so a subtree cannot outspend its root, fan-out is capped, cycles are detected on every edge, near-duplicates are merged at admission, and cancelling a parent cancels its descendants (§7.2) |
@@ -1017,10 +1272,11 @@ directory; additional landing strategies (`leave-branch`, `pull-request`); publi
 
 ## 16. Open decisions
 
-Only two remain, both with a standing recommendation:
+One remains.
 
-**D5** Permission default — recommend `acceptEdits` + allowlist, agents confined to a pooled
-workspace, `bypassPermissions` opt-in per project behind a visible banner.
+**D5 is closed by A1** (§9.1): permissions come from a capability, not a global default — `auto` for
+Claude Code, ask + narrow allowlist for adapters with no classifier, `bypassPermissions` opt-in per
+project behind a visible banner, agents confined to a pooled workspace throughout.
 
 **D7** External resource services — recommend **wrapped**, never vendored: the media generator stays
 where it lives and is referenced as a `Resource` (§10). The repo ships the pattern and a worked
@@ -1035,6 +1291,13 @@ Everything else is settled; the table at the top of this document is the record.
 1. Vertex/Antigravity **cache pricing numbers** — the pricing page truncated twice; deliberately not
    guessed. Fill when the adapter is built (M5); the schema in §3.4 already has a slot.
 2. **Second-account resumed turn** (§8.8) — verify during M1 commissioning.
-3. **`expected idle` estimator** (§8.6) — the keepalive/compact choice is only as good as this, and it
+3. **Auto-mode classifier cost on a subscription** (§9.1) — documented as billable on Enterprise and
+   API-billed accounts, unstated for Pro/Max/Team. Measure at M3 with the same task metered under
+   `auto` and under `default`; until then no scheduling decision may assume it is free.
+4. **Antigravity `ask`-hit shape** (§7.3) — that `agy` surfaces an approval over `stream-json` in a
+   form agentyard can answer is inferred from its documented three-tier model, **not measured**.
+   Verify when the adapter is built (M5); if it turns out to be TUI-only, the adapter loses
+   `approvalChannel` and gains a narrower allowlist, which the design already accommodates.
+5. **`expected idle` estimator** (§8.6) — the keepalive/compact choice is only as good as this, and it
    cannot be designed further without real queue data. M3 ships a crude version (queue depth +
    dependency readiness + median human latency) and improves it from `events`.
