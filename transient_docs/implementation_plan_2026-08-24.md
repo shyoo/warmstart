@@ -1,7 +1,7 @@
 # agentyard — Implementation Plan (2026-08-24)
 
-Status: **accepted 2026-08-24, amended 2026-08-25 (A1).** M0 (scaffold) executed on acceptance —
-see `HANDOFF.md` for where the build actually is.
+Status: **accepted 2026-08-24, amended 2026-08-25 (A1, A2).** M0-M2 executed — see `HANDOFF.md` for
+where the build actually is.
 
 > **Amendment A1 — 2026-08-25.** Three changes from owner review, each verified before being written:
 >
@@ -13,6 +13,14 @@ see `HANDOFF.md` for where the build actually is.
 >    table of names (§9.1).
 > 3. **Two new objects.** An approval is an **interrupt on a session**, not a task (§7.3). **Cancel
 >    is not delete**, and cancel lands in a chosen resting state (§7.4).
+>
+> **Amendment A2 — 2026-08-25.** Two sections the design was missing, both asked for after M2:
+>
+> 4. **§18 Worked scenarios.** What the pieces *do*, on real work — starting with the question this
+>    repository is the answer to: a six-milestone plan is a **roadmap, not a task DAG**. Also surveys
+>    how Agent Orchestrator, Vibe Kanban, Agent Kanban and Conductor answer the same question.
+> 5. **§19 Testing plan.** Five levels organised by what a failure would *cost*, the fixture rules
+>    that stop a test damaging the developer's own machine, and what is deliberately not tested.
 
 > This is a **transient doc**: the design of record as it stood on 2026-08-24. It will drift as the
 > code lands and is kept for the reasoning, not as a status page. Durable facts extracted from it
@@ -39,6 +47,7 @@ see `HANDOFF.md` for where the build actually is.
 | **D5** Permissions | Per adapter, from a capability: Claude Code `auto`; no-classifier adapters get ask + allowlist (§9.1) | ✔ A1 |
 | **D19** Approvals | An approval is an interrupt on a session, not a task. Own queue, one-click, policy-answered, priced against the cache clock (§7.3) | ✔ A1 |
 | **D20** Cancel / delete | Cancel winds a run down into a resting state and destroys nothing; delete is separate, soft by default, and never removes runs (§7.4) | ✔ A1 |
+| **D21** Decomposition | A milestone plan is a **roadmap**: children created as `draft` with dependency edges up front, prompts written at promotion. Decomposition is itself a task (§18.1) | ✔ A2 |
 | **D7** | Wrap vs absorb — recommendation stands | open |
 
 ---
@@ -1301,3 +1310,267 @@ Everything else is settled; the table at the top of this document is the record.
 5. **`expected idle` estimator** (§8.6) — the keepalive/compact choice is only as good as this, and it
    cannot be designed further without real queue data. M3 ships a crude version (queue depth +
    dependency readiness + median human latency) and improves it from `events`.
+
+---
+
+## 18. Worked scenarios (A2)
+
+Everything above says what the pieces *are*. This section says what they **do**, on real work, because
+that is where a design either holds together or quietly does not. Each scenario states what agentyard
+does step by step, what it must **not** do, and which part of the design it exercises.
+
+### 18.0 How other tools answer this
+
+Worth knowing before deciding, because the shape of the answer is not obvious and several good tools
+have picked different points on it. Read 2026-08-25:
+
+| Tool | Decomposition model | What it does with dependencies |
+|---|---|---|
+| **Agent Orchestrator** (Untrivial) | Hybrid. A project orchestrator develops the larger outcome first, and *"when a plan becomes actionable, the orchestrator can break it into focused tasks, spawn or redirect workers, pass each worker the relevant context, follow their progress, and coordinate follow-up work."* | Not an explicit graph. The orchestrator holds the context and coordinates follow-up; the board surfaces state. Deliberately **human-in-the-loop over autonomous task-graph execution** |
+| **Vibe Kanban** | A **planning ticket** is itself a task: an agent is told to decompose the work and generate the downstream cards. Issues and sub-issues; `PLAN → PROMPT → REVIEW` | Ordering is a board, not a DAG. Status moves when an agent starts and when a PR opens or merges |
+| **Agent Kanban** | A **leader agent** plans and assigns; worker agents claim | Assignment, not dependency resolution |
+| **Conductor** | None — it is an agent *manager*: parallel worktrees, one agent per task, a human reads every diff | None |
+
+Two things stand out. **Nobody executes a full task graph autonomously**, and the one tool that comes
+closest makes decomposition *a task in its own right* rather than a planning phase. Both of those
+survive into what follows.
+
+What agentyard adds is the axis none of them model: **cost**. A board can afford to be indifferent to
+when a task runs. A scheduler with a budget cannot.
+
+### 18.1 A six-milestone roadmap — the case this repository is
+
+> *"The plan had M1 through M6. Does the tool create six tasks that depend on each other and work
+> through them, or does the agent file M2 once M1 is done?"*
+
+**Neither, and the difference matters.** A milestone plan is a **roadmap**, not a task DAG.
+
+Create all six **up front, as `draft`**, each with a title, an acceptance criterion, and a
+`depends_on` edge to its predecessor. Drafts carry the shape of the work and cost nothing: admission
+skips `draft`, so nothing dispatches, nothing is assigned, and no worker is held.
+
+Then promote **one at a time**, and — this is the load-bearing part — **write the prompt at promotion,
+not at creation.**
+
+```
+M1..M6 created as draft, chained by depends_on        <- the horizon, visible from day one
+M1 promoted: draft -> ready, prompt written now       <- promoteDraft() re-enters admission
+M1 runs (many sessions, one task)
+M1 completes -> admitDependents() -> M2 leaves blocked
+M2 is still DRAFT. A human or the controller writes its prompt from the current handoff,
+   then promotes it.
+```
+
+**The evidence for writing prompts late is this repository.** An M2 ticket written on 2026-08-24
+would have said *"host sessions in a PTY."* M1 then measured that `--print` will not start under a
+pseudo-terminal and that the workspace-trust dialog blocks a fresh worktree — and M2 shipped on real
+pipes instead. An M3 ticket written on the same day would have said *"poll `claude -p /usage`."* That
+turned out to spend a real assistant turn per poll. **Five of six prompts would have been rewritten,
+and a stale prompt is worse than no prompt, because somebody follows it.**
+
+So the split is:
+
+| Written up front | Written just in time |
+|---|---|
+| Title, acceptance criterion, dependency edges, rough effort | The prompt, the constraints, the model and effort choice, the resource requirements |
+
+**What the agent working M1 files with `task_create` is *discovered* work** — never the next
+milestone. `which.ts` (node-pty does not search PATH) and *measure the auto-mode classifier cost* are
+both real examples from this build: nobody could have written them at t=0, and both are exactly what
+agent-authored tasks are for. Bounded by construction — the mandate narrows, the budget is a share,
+fan-out is capped — so a milestone cannot quietly become forty tickets.
+
+⛔ **Do not create six `ready` tasks and let the scheduler run them.** It looks tidier and it is wrong
+twice over: five of the prompts are fiction, and the scheduler would happily dispatch M2 the moment M1
+completes, with nobody having read what M1 learned.
+
+⚠️ **A milestone is one task across many sessions, not one session.** M1 here took a dozen. `task`,
+`session` and `run` are three different things, and preemption (§8.7) plus the handoff is what carries
+one task across a quota boundary — see 18.3.
+
+**Where the controller (M4) fits:** decomposition is a judgment call, so it is a *controller* job, and
+following Vibe Kanban's better idea, **it is a task itself** — a `plan` task whose output is a set of
+draft children. That keeps it visible, cancellable, billable to a budget, and re-runnable when the
+plan turns out wrong. It is not a hidden phase.
+
+### 18.2 Fan-out with a merge — "port 40 components to the new tokens"
+
+The case orchestrators are built for, and the one where agentyard's answer is a **calculation** rather
+than a preference.
+
+```
+1 task, 1 session      context grows across all 40; late components are cheap to read
+                       (0.1·C per turn) but degrade with context rot, and one failure
+                       stalls the lot
+40 tasks, N sessions   each pays its own cold prefix (2.0·C_prefix); truly parallel, but
+                       bounded by workspace pool size and per-worker maxConcurrent -
+                       and concurrent requests on ONE worker's prefix each pay a write
+```
+
+So the split decision is: *does the shared prefix cost, times the number of splits, beat the context
+degradation and the serialisation?* The scheduler has both numbers — `costOfColdStart` from the cost
+model, context size from the transcript — so this is arithmetic, not a vibe. M3 makes it a scored
+decision; until then it is a human choice expressed as one task or several.
+
+What holds either way:
+
+- Each split task gets its **own worktree from the pool and its own task-named branch**. Git enforces
+  the isolation; two worktrees cannot hold the same branch.
+- Landing is **serialised** by the exclusive `land:<project>` claim — forty tasks finishing near each
+  other would otherwise each rebase onto a trunk the others are about to move.
+- A merge task `depends_on` all forty. It stays `blocked` until every one completes, which is a query,
+  not a poll.
+
+⛔ **Splitting is not free and must never be the default.** Forty cold prefixes on a 35k-token
+project is 1.4M input-token-equivalents that a single session would not have paid.
+
+### 18.3 Overnight, across a window reset — the case that motivated the tool
+
+Three accounts, five-hour windows, a queue, and nobody watching.
+
+```
+23:10  acct-1 at 60%.  t12 dispatched. t13, t14 ready and waiting.
+00:40  acct-1 approaches its window end while t12 is mid-run
+       -> PREEMPT: wrap up, commit what compiles, `handoff` recorded on the task,
+          compact or close on the cache clock
+       -> t12 -> paused_quota, not_before = resets_at.   ⛔ NOT cancelled: it resumes itself.
+00:41  scheduler picks t13, sees acct-1 gated, routes to acct-2
+04:00  acct-1's window resets -> admitScheduled() flips t12 paused_quota -> ready
+       -> t12 redispatched, handoff prepended, SAME task, SAME branch, new run
+08:30  you open the window to a landed t12 and two runs on its record
+```
+
+Exercised: the quota gate, preemption, `not_before` as a real scheduling primitive, the handoff, and
+the distinction between `paused_quota` (auto-resumes) and `paused_user` (waits for a person,
+indefinitely). Collapsing those two would have the fleet restart work you deliberately stopped.
+
+⚠️ **This scenario is the one M3 is for.** Today the quota gate has no trustworthy reading, so every
+dispatch is marked `quotaUnverified` and the 00:40 preempt does not fire.
+
+### 18.4 A question arrives mid-flight
+
+An agent hits something it should not guess about.
+
+```
+agent calls request_human("REST or gRPC for the sync endpoint?")
+  -> Approval, escalate (no rule can answer a design question)
+  -> Approvals bar, one keystroke, WITH the blocked session's cache countdown
+
+you answer in 4 minutes   -> reply lands in the SAME warm session: 0.1·C
+you answer in 3 hours     -> at 30 minutes it escalated: task -> awaiting_human,
+                             session released on the cache clock, and your answer
+                             starts a fresh run with the handoff prepended
+```
+
+The 30-minute escalation is not a timeout for tidiness. It is the point where holding a session open
+stops paying for itself — and it is the *only* place an approval becomes a task.
+
+Contrast a permission prompt: `Bash(npm test)` is answered by a rule in 30ms and never reaches you.
+⛔ Neither ever becomes a task table row while the session is still live.
+
+## 19. Testing plan (A2)
+
+This tool spawns processes, spends money, writes to git repositories and pushes to trunks. The cost
+of a bug is not a red build — it is somebody's quota, or their branch. So the test strategy is
+organised by **what a failure would cost**, not by the usual pyramid.
+
+### 19.1 Five levels
+
+| Level | Runs | Costs | Proves |
+|---|---|---|---|
+| **L0 unit** | `npm test`, every change | nothing | Pure logic that is a *safety boundary*: mandate narrowing, rule matching, usage summing, branch naming |
+| **L1 daemon integration** | `npm run test:daemon` | nothing | The daemon's real behaviour against a live orchestratord over its own RPC: commissioning, quota staleness, task DAG, cancel, delete refusal, resource claims |
+| **L2 approvals** | `npm run test:daemon` | nothing | A real MCP client speaking the real protocol to the real server: policy, escalation, human answer, remember-as-rule, deny precedence |
+| **L3 UI** | `npm run test:ui` | nothing | The built app, driven over DevTools: what actually rendered, and zero console errors |
+| **L4 agent-in-the-loop** | `npm run test:e2e`, **opt-in** | **real tokens** | The only thing the others cannot: an agent doing work, reporting completion, and the branch landing |
+
+L0–L3 must pass before every commit (`npm run test:all`). **L4 is gated behind `AGENTYARD_E2E=1`**
+and never runs in a watch loop, because each run spends a real assistant turn on a real account.
+
+⛔ **L1 must be provably unable to spend.** It adopts a real signed-in credential root to prove
+identity detection, which means a scheduler tick *could* dispatch real work to a real account. So the
+adopted worker is disabled the moment it has been probed, and the suite asserts that a tick dispatches
+nothing. "It probably will not dispatch" is not a property; "it dispatched nothing" is.
+
+### 19.2 What L0 covers, and why those things
+
+Not "cover the code" — cover the places where **being wrong is silent**:
+
+- `narrowMandate` — a widened mandate is an authority escalation that no test failure would announce.
+- `matchesPattern` / `parseRule` — an over-broad rule auto-approves something it should have asked
+  about. Regex metacharacters must stay literal; a mistyped rule that matches everything is the exact
+  failure this must not have.
+- `sumUsage` / `contextOf` — the three metering traps (§3.3). Undercounting is invisible until a quota
+  gate opens when it should have closed.
+- `branchNameFor` — a branch named after the workspace couples a task to where it happened to run.
+
+### 19.3 Fixtures: the rules that keep tests from costing something
+
+⛔ **Every level obeys all four.** They are not conventions; the first two exist because breaking them
+damages the developer's own machine.
+
+1. **`AGENTYARD_DATA_DIR` always points at a temp directory.** No test ever touches the real fleet
+   database, the real endpoint file, or the user's workers.
+2. **Never kill by image name.** No `taskkill /IM`, no `pkill -f`. Stop the pid the test started, after
+   checking its command line. `taskkill /IM electron.exe` also kills the developer's editor and any
+   agent window they had open — this happened during M2.
+3. **Git tests use a throwaway repo with a local bare `origin`**, created and destroyed by the test.
+   ⛔ Never the agentyard repository, and never a remote that exists.
+4. **Adopting a real credential root is read-only.** L1 may point a worker at `~/.claude` to prove
+   identity detection, and must not log in, log out, or write settings.
+
+### 19.4 What L4 does, exactly
+
+One task, one small repository, one turn:
+
+```
+create a bare origin + a working clone with .agentyard/project.json
+add the project, commission a worker against an existing signed-in root
+build a task graph and exercise it WITHOUT an agent:
+    dependency blocks admission · not_before schedules · cancel rests
+    without loss · delete refuses while a dependent lives · resume requeues
+then ONE real task: "create HELLO.md, commit it"
+assert: completed · run metered from the transcript · branch named after the task
+        · landed on origin/main · every claim released · trunk still on main
+```
+
+That last block is the whole product in one assertion list, and it is why L4 exists despite the cost.
+
+### 19.5 What is deliberately not tested, and why
+
+Saying this out loud stops someone "fixing" the gap with a test that lies:
+
+- **Agent output quality.** Whether the agent writes good code is not agentyard's contract. L4 asserts
+  that *the machinery* carried the work, not that the work was good.
+- **Vendor CLI behaviour.** We do not test that `claude auth status` prints JSON. We *measure* it, once,
+  and record it in `docs/cost-model.md` with a date and a version. A test would pin somebody else's
+  contract and fail on their release schedule, teaching everyone to ignore it.
+- **Timing of the scheduler loop.** Asserting "dispatched within 10s" makes a flaky test out of a
+  tick interval. L1 calls `scheduler.tick` directly instead.
+- **Cost arithmetic against hard-coded prices.** Prices are data with an `effective_from`; a test that
+  asserts a dollar figure is a test of the JSON file, not the code.
+
+### 19.6 Regression cases earned the hard way
+
+Each of these is a real bug from M1 or M2. They stay as tests because each one looked correct:
+
+| Case | Level | Was |
+|---|---|---|
+| `auth status` exits 1 while printing valid JSON | L1 | Every un-commissioned worker reported "probe failed" instead of "not signed in" |
+| A stale quota reading is reported as *unknown*, with its age | L1 | A 19-day-old percentage rendered as current |
+| node-pty does not search PATH | L1 | Detection succeeded (`shell: true`) while spawning failed with *File not found* |
+| A run is dispatched blind and **marked** | L1 | Silently pretending the quota gate had passed |
+| Deny rules win over allow rules | L2 | — |
+| A timeout denies rather than allows | L2 | — |
+| Every claim is released on **both** holders | L4 | A workspace claimed by the task and released only by the run leaked, draining the pool to zero with no error |
+| The trunk is still on its branch after landing | L4 | — |
+| A retry is not blocked by the branch its last run left | L4 | Git refuses one branch to two worktrees — correctly. A re-dispatch failed with *already used by worktree* until `prepareWorkspace` learned to park the stale holder first |
+| The scheduler refuses an account nobody signed into | L1 | A `stream` session that cannot authenticate **does not exit** — it waits on stdin forever, holding the worker's only slot. Every task routed there stalled silently |
+| L1 cannot spend money | L1 | The suite adopts a real signed-in root to prove identity detection; the scheduler could have dispatched a real task to it. It is disabled the moment it has been probed, and the tick is asserted to dispatch nothing |
+
+### 19.7 The measurement runs are not tests
+
+R1–R5 in `HANDOFF.md` answer questions about the *world* — does the classifier bill, what refreshes
+the usage cache — and their results go into `docs/cost-model.md` with a date and a CLI version. They
+are run deliberately, by a person, on a quiet worker. ⛔ Never wire one into CI: it would spend quota
+on every push and produce a number nobody reads.

@@ -124,6 +124,15 @@ function chooseWorker(task: Task): WorkerChoice {
     }
     if (task.constraints.adapterId && task.constraints.adapterId !== worker.adapterId) continue
 
+    // ⛔ Never dispatch to an account nobody has signed into. Measured 2026-08-25: a `stream` session
+    // that cannot authenticate does not exit - it sits on stdin waiting for input it can never act
+    // on - so it holds the worker's only concurrency slot indefinitely. A mis-commissioned worker
+    // would silently absorb its own capacity and every task routed to it would stall.
+    if (worker.identity?.raw?.includes('"loggedIn": false')) {
+      reasons.push(`${worker.label} is not signed in`)
+      continue
+    }
+
     const info = adapter(worker.adapterId).info
     const needs = task.constraints.needs ?? []
     const missing = needs.filter(

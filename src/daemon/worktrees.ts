@@ -171,6 +171,11 @@ export async function prepareWorkspace(
         await git(workspace.path, ['fetch', 'origin', '--prune'])
       }
       const base = await baseRef(project)
+      // A task that ran before left its branch checked out in whichever workspace it used. Git will
+      // refuse to hand the same branch to a second worktree - correctly - so the stale holder is
+      // parked first. This is a retry, not a conflict: the scheduler never runs one task twice at
+      // once, so any other worktree still sitting on this branch is a leftover.
+      await parkOtherHolders(project, branch, workspace.path, base)
       if (await gitOk(workspace.path, ['rev-parse', '--verify', branch])) {
         await git(workspace.path, ['switch', branch])
       } else {
@@ -233,6 +238,47 @@ export function workspaceEnv(
     if (k !== 'portBase' && k !== 'portsPerWorkspace') env[k] = String(v)
   }
   return env
+}
+
+/**
+ * Detach any *other* worktree that is still sitting on this branch.
+ *
+ * ⛔ Only pool members are touched, and only when they hold the branch we are about to claim. The
+ * trunk is never switched.
+ */
+async function parkOtherHolders(
+  project: Project,
+  branch: string,
+  keepPath: string,
+  base: string
+): Promise<void> {
+  let listing: string
+  try {
+    listing = await git(project.root, ['worktree', 'list', '--porcelain'])
+  } catch {
+    return
+  }
+
+  let path: string | null = null
+  for (const line of listing.split(/\r?\n/)) {
+    if (line.startsWith('worktree ')) path = line.slice('worktree '.length).trim()
+    else if (line.startsWith('branch ') && path) {
+      const held = line.slice('branch '.length).trim()
+      const samePath = normalise(path) === normalise(keepPath) || normalise(path) === normalise(project.root)
+      if (held === `refs/heads/${branch}` && !samePath) {
+        try {
+          await git(path, ['switch', '--detach', base])
+          log.info(`parked ${path}, which still held ${branch}`)
+        } catch (err) {
+          log.warn(`could not park ${path} off ${branch}:`, err)
+        }
+      }
+    }
+  }
+}
+
+function normalise(p: string): string {
+  return p.replace(/[\\/]+/g, '/').replace(/\/$/, '').toLowerCase()
 }
 
 /**

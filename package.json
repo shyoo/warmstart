@@ -15,7 +15,11 @@
     "start": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "lint": "eslint .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:daemon": "node test/daemon.test.mjs",
+    "test:ui": "node test/ui.test.mjs",
+    "test:e2e": "node test/e2e.test.mjs",
+    "test:all": "npm run test && npm run test:daemon && npm run test:ui"
   },
   "dependencies": {
     "@lydell/node-pty": "^1.1.0",
