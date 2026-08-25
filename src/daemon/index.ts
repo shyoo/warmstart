@@ -10,6 +10,7 @@ import { getSession, reconcileOrphans, setSessionEvents, shutdownAll } from './s
 import { reconcileClaims } from './resources.js'
 import { onSessionExit, reconcileTasks, startScheduler, stopScheduler } from './scheduler.js'
 import { creditTurn } from './tasks.js'
+import { recordRateLimit } from './quota.js'
 import { TranscriptTailer, recordCompaction, recordTurn } from './transcript.js'
 import { log, onLog } from './log.js'
 import { setEventSink } from './events.js'
@@ -77,6 +78,12 @@ async function main(): Promise<void> {
     },
     onData(sessionId, data) {
       emit({ type: 'session.data', sessionId, data })
+    },
+    onStream(session, event) {
+      // The one quota signal that is both live and free: it rides a turn already being paid for.
+      if (event.kind === 'rate_limit') {
+        recordRateLimit(session.workerId, session.id, event.info)
+      }
     },
     onExit(sessionId, exitCode) {
       const finished = getSession(sessionId)

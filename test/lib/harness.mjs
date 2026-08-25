@@ -31,6 +31,30 @@ export function electronBinary() {
   )
 }
 
+/**
+ * Stop a process **and its children**, by pid.
+ *
+ * ⚠️ `child.kill()` on Windows kills only the process you started. Electron's renderer and GPU
+ * children survive it, and one of them keeps holding the remote-debugging port - so the next run of
+ * this suite fails with "the app did not expose a debugging target", which looks like a product bug
+ * and is not one.
+ *
+ * ⛔ `/PID <pid> /T` walks that one tree. Never `/IM`, which walks every process sharing the binary -
+ * the developer's editor included.
+ */
+export function killTree(pid) {
+  if (!pid) return
+  try {
+    if (process.platform === 'win32') {
+      execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' })
+    } else {
+      process.kill(-pid, 'SIGKILL')
+    }
+  } catch {
+    // Already gone, or never started. Either way there is nothing to stop.
+  }
+}
+
 // ---------------------------------------------------------------------------- assertions
 
 let failures = 0
@@ -129,13 +153,7 @@ export class Daemon {
 
   stop() {
     // ⛔ By pid, never by image name. See the rule at the top of this file.
-    if (this.child && !this.child.killed) {
-      try {
-        this.child.kill()
-      } catch {
-        // Already gone.
-      }
-    }
+    killTree(this.child?.pid)
     this.child = null
   }
 

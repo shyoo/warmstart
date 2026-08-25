@@ -56,6 +56,14 @@ These are not preferences; breaking one breaks the product.
   credential to a service that can spawn processes.
 - ⛔ **A quota reading is never shown without its age.** Stale is rendered as *unknown*, because a
   stale percentage makes the compaction reserve look satisfied when it is not.
+- ⛔ **Every cost belief carries its basis.** `remainingTokens` returns a number *and* how it was
+  arrived at; the reserve returns a verdict *and* its reason; the cache clock records every decision
+  including the ones that did nothing. A scheduler that spends money and cannot say why is one you
+  will either over-trust or switch off.
+- ⛔ **`unknown` is a verdict, not a synonym for `ok`.** The reserve has three states for a reason.
+- ⛔ **The objective vector is consumed in exactly two places:** `weights()` for scheduler scoring and
+  `policy()` for the cache clock, the model selector and preemption. A third consumer means one of
+  those two is missing a field.
 - ⛔ **An approval is not a task.** A permission prompt blocks one live session, has a closed answer
   set and a deadline set by that session's cache expiry. It goes on the Approvals bar, is answered by
   policy or one keystroke, and becomes an `awaiting_human` task only if it goes unanswered past

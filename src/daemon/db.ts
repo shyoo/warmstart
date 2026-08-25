@@ -236,6 +236,51 @@ const MIGRATIONS: string[] = [
     released_at  integer
   );
   create index resource_claims_open on resource_claims(resource_id, released_at);
+  `,
+
+  // 3 - cost intelligence. Live quota signals, the percent-to-token calibration, and a record of
+  // every cache-clock decision so "why did it do that" is answerable months later.
+  `
+  -- ⚠️ Free and live, unlike the config cache: the CLI emits one of these after each turn on the
+  -- stream transport. A status and a real reset time, riding a turn already being paid for.
+  create table rate_limit_samples (
+    id          integer primary key autoincrement,
+    worker_id   text not null,
+    session_id  text,
+    window_id   text not null,
+    status      text not null,
+    resets_at   integer,
+    sampled_at  integer not null
+  );
+  create index rate_limit_worker on rate_limit_samples(worker_id, sampled_at desc);
+
+  -- Percent is what the vendor reports; every gate needs tokens. Nobody publishes the conversion, so
+  -- it is learned per (worker, model, tokenizer) - ⛔ never across tokenizer generations, which are
+  -- not comparable. Sampled only while exactly one session was active on the worker.
+  create table calibration (
+    worker_id          text not null,
+    model              text not null,
+    tokenizer          text not null,
+    tokens_per_percent real not null,
+    samples            integer not null default 0,
+    updated_at         integer not null,
+    primary key (worker_id, model, tokenizer)
+  );
+
+  create table clock_events (
+    id               integer primary key autoincrement,
+    session_id       text not null,
+    move             text not null,
+    reason           text not null,
+    context_tokens   integer,
+    expected_idle_ms integer,
+    estimated_cost   integer,
+    ts               integer not null
+  );
+  create index clock_events_session on clock_events(session_id, ts desc);
+
+  alter table runs add column objective_json text;
+  alter table tasks add column objective_json text;
   `
 ]
 

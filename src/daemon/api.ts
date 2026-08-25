@@ -1,5 +1,6 @@
 import type {
   AdapterInfo,
+  CostReport,
   DoctorReport,
   RpcMethod,
   RpcParams,
@@ -57,6 +58,10 @@ import {
 } from './approvals.js'
 import { allAvailability } from './resources.js'
 import { completeTask, tick } from './scheduler.js'
+import { recentClockEvents, remainingTokens, reserveState } from './reserve.js'
+import { decide, medianHumanLatencyMs } from './cacheclock.js'
+import { DEFAULT_OBJECTIVE } from './objective.js'
+import { lastRateLimit, windowResetsAt } from './quota.js'
 import { log } from './log.js'
 
 type Handler<M extends RpcMethod> = (params: RpcParams<M>) => RpcResult<M> | Promise<RpcResult<M>>
@@ -247,6 +252,34 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
 
     // ---- resources and the loop --------------------------------------------------------
     'resource.list': () => allAvailability(),
+
+    'cost.report': () => {
+      const objective = DEFAULT_OBJECTIVE
+      const live = listSessions()
+      return {
+        generatedAt: Date.now(),
+        objective,
+        reserves: listWorkers().map((w) => reserveState(w.id)),
+        // Evaluated, not executed: this is the panel that answers "why is that session still open?"
+        decisions: live.map((session) => decide(session, { objective })),
+        recent: recentClockEvents(30) as CostReport['recent'],
+        medianHumanLatencyMs: medianHumanLatencyMs(),
+        workers: listWorkers().map((w) => {
+          const remaining = remainingTokens(w.id)
+          const reset = windowResetsAt(w.id)
+          const rate = lastRateLimit(w.id)
+          return {
+            workerId: w.id,
+            label: w.label,
+            remainingTokens: remaining.tokens,
+            remainingBasis: remaining.basis,
+            windowResetsAt: reset?.at ?? null,
+            windowResetSource: reset?.source ?? null,
+            liveRateLimitStatus: rate?.status ?? null
+          }
+        })
+      }
+    },
     'scheduler.tick': () => tick(),
 
     // ---- worker tier -------------------------------------------------------------------

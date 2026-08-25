@@ -1567,6 +1567,8 @@ Each of these is a real bug from M1 or M2. They stay as tests because each one l
 | A retry is not blocked by the branch its last run left | L4 | Git refuses one branch to two worktrees — correctly. A re-dispatch failed with *already used by worktree* until `prepareWorkspace` learned to park the stale holder first |
 | The scheduler refuses an account nobody signed into | L1 | A `stream` session that cannot authenticate **does not exit** — it waits on stdin forever, holding the worker's only slot. Every task routed there stalled silently |
 | L1 cannot spend money | L1 | The suite adopts a real signed-in root to prove identity detection; the scheduler could have dispatched a real task to it. It is disabled the moment it has been probed, and the tick is asserted to dispatch nothing |
+| A test kills the process **tree**, by pid | harness | `child.kill()` leaves Electron's renderer and GPU children alive, and one keeps the debugging port — so the *next* L3 run failed with "no debugging target", which looks like a product bug and is not one |
+| Every cost belief carries its basis | L1, L3 | A reserve that renders a reassuring verdict on a guess is worse than one that says `unknown` |
 
 ### 19.7 The measurement runs are not tests
 

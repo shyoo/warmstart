@@ -8,6 +8,7 @@ import { TerminalPane } from './components/Terminal'
 import { Approvals } from './components/Approvals'
 import { Tasks } from './components/Tasks'
 import { Projects } from './components/Projects'
+import { Cost } from './components/Cost'
 
 /**
  * The shell.
@@ -17,7 +18,7 @@ import { Projects } from './components/Projects'
  * keystroke when it is not.
  */
 
-type View = 'tasks' | 'projects' | 'workers' | 'sessions' | 'doctor'
+type View = 'tasks' | 'projects' | 'workers' | 'sessions' | 'cost' | 'doctor'
 
 export function App(): React.JSX.Element {
   const info = useAppInfo()
@@ -65,6 +66,9 @@ export function App(): React.JSX.Element {
             Sessions
             <span className="nav-count num">{sessions.length}</span>
           </NavItem>
+          <NavItem active={view === 'cost'} onClick={() => setView('cost')}>
+            Cost
+          </NavItem>
         </nav>
 
         <nav className="nav-group">
@@ -99,6 +103,8 @@ export function App(): React.JSX.Element {
             <Projects projects={projects} resources={resources} refresh={refreshProjects} />
           ) : view === 'workers' ? (
             <Workers fleet={fleet} refresh={refresh} />
+          ) : view === 'cost' ? (
+            <Cost now={now} />
           ) : view === 'doctor' ? (
             <Doctor />
           ) : (

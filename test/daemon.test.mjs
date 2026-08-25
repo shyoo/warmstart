@@ -212,6 +212,43 @@ try {
     resources.map((r) => `${r.resource.id}:${r.inUse}/${r.resource.capacity}`).join(' ')
   )
 
+  // ---------------------------------------------------------------- cost intelligence
+  section('cost')
+  const cost = await daemon.rpc('cost.report')
+  check('the objective is a unit vector', Math.abs(
+    cost.objective.cost + cost.objective.velocity + cost.objective.quality - 1
+  ) < 0.001)
+  check('every worker gets a reserve verdict', cost.reserves.length === 2)
+  check(
+    'a worker holding nothing needs no reserve',
+    cost.reserves.every((r) => r.liveSessions > 0 || r.requiredTokens === 0),
+    cost.reserves.map((r) => `${r.verdict}:${r.requiredTokens}`).join(' ')
+  )
+  check(
+    'an unknown remaining budget is reported as unknown, never as a number',
+    cost.workers.every((w) => w.remainingTokens === null || typeof w.remainingTokens === 'number')
+  )
+  check(
+    'every belief carries its basis',
+    cost.workers.every((w) => typeof w.remainingBasis === 'string' && w.remainingBasis.length > 0),
+    cost.workers[0]?.remainingBasis
+  )
+  check(
+    'human latency has a measured default rather than a magic number',
+    cost.medianHumanLatencyMs > 0,
+    `${Math.round(cost.medianHumanLatencyMs / 60000)}m`
+  )
+  check(
+    'the clock reports a decision for every live session',
+    Array.isArray(cost.decisions),
+    `${cost.decisions.length} decision(s)`
+  )
+  check(
+    'a session with no cached prefix is left alone',
+    cost.decisions.every((d) => d.move !== 'keepalive' || d.expiresAt !== null),
+    'a keepalive on a session with nothing cached would be pure waste'
+  )
+
   // ---------------------------------------------------------------- L2: approvals over real MCP
   section('approvals (real MCP client)')
   await runApprovalChecks(daemon)

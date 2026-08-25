@@ -1,13 +1,50 @@
 import type {
   Approval,
   ApprovalRule,
+  CacheMove,
+  ClockDecision,
+  Objective,
   Project,
+  ReserveReport,
   ResourceAvailability,
   RestingState,
   Run,
   Task,
   TaskMessage
 } from './tasks.js'
+
+/**
+ * What the scheduler currently believes about cost, and why.
+ *
+ * ⛔ Every number here carries its basis. A cost model that cannot say *why* it thinks something is
+ * a cost model nobody will override when it is wrong - and it will be wrong.
+ */
+export interface CostReport {
+  generatedAt: number
+  objective: Objective
+  reserves: ReserveReport[]
+  /** What the clock would do right now, without doing it. */
+  decisions: ClockDecision[]
+  recent: Array<{
+    sessionId: string
+    move: CacheMove
+    reason: string
+    contextTokens: number | null
+    estimatedCost: number | null
+    ts: number
+  }>
+  /** Measured from real answers, not assumed. Drives the keepalive-versus-compact choice. */
+  medianHumanLatencyMs: number
+  workers: Array<{
+    workerId: string
+    label: string
+    remainingTokens: number | null
+    remainingBasis: string
+    windowResetsAt: number | null
+    windowResetSource: string | null
+    liveRateLimitStatus: string | null
+  }>
+}
 
 /**
  * The daemon's wire contract.
@@ -291,6 +328,8 @@ export interface RpcMap {
   'approval.removeRule': { params: { id: string }; result: { ok: true } }
 
   'resource.list': { params: void; result: ResourceAvailability[] }
+  /** Everything the cost model currently believes, and on what basis. */
+  'cost.report': { params: void; result: CostReport }
   'scheduler.tick': { params: void; result: { dispatched: number; note: string } }
 
   // ---- worker tier: called by the MCP server on an agent's behalf -----------------------

@@ -1,5 +1,5 @@
 import type { QuotaSnapshot } from '@shared/protocol.js'
-import { db, rows } from './db.js'
+import { db, row, rows } from './db.js'
 import { adapter } from './adapters/index.js'
 import { listWorkers, requireWorker } from './workers.js'
 import { log } from './log.js'
@@ -91,6 +91,76 @@ export function lastQuota(workerId: string): DatedQuota | null {
     source: first.source as QuotaSnapshot['source'],
     ...(first.error ? { error: first.error } : {})
   })
+}
+
+// ---------------------------------------------------------------------------- the live rung
+
+export interface LiveRateLimit {
+  status: string
+  windowId: string
+  resetsAt: number | null
+  sampledAt: number
+}
+
+/**
+ * Record a `rate_limit_event` from the stream transport.
+ *
+ * This is the one quota signal that is both **live and free** - it rides a turn already being paid
+ * for. It carries no size, so it cannot satisfy the compaction reserve on its own; what it does give
+ * is a trustworthy **reset time** (which preemption needs) and an early warning when the status stops
+ * being `allowed`.
+ */
+export function recordRateLimit(
+  workerId: string,
+  sessionId: string | null,
+  info: { status: string; rateLimitType: string; resetsAt: number | null }
+): void {
+  db()
+    .prepare(
+      `insert into rate_limit_samples (worker_id, session_id, window_id, status, resets_at, sampled_at)
+       values (?,?,?,?,?,?)`
+    )
+    .run(workerId, sessionId, info.rateLimitType, info.status, info.resetsAt, Date.now())
+
+  if (info.status !== 'allowed') {
+    log.warn(`worker ${workerId.slice(0, 8)} rate limit status is '${info.status}' (${info.rateLimitType})`)
+  }
+}
+
+export function lastRateLimit(workerId: string): LiveRateLimit | null {
+  const r = row<{
+    status: string
+    window_id: string
+    resets_at: number | null
+    sampled_at: number
+  }>(
+    db()
+      .prepare('select * from rate_limit_samples where worker_id = ? order by sampled_at desc limit 1')
+      .get(workerId)
+  )
+  return r
+    ? { status: r.status, windowId: r.window_id, resetsAt: r.resets_at, sampledAt: r.sampled_at }
+    : null
+}
+
+/**
+ * When this worker's current window resets, from the best source available.
+ *
+ * Preferred: a live `rate_limit_event`, which is current by construction. Fallback: whatever
+ * `resets_at` the config cache carried, which may be from a window that has already turned over -
+ * so a reset time in the past is discarded rather than treated as "any moment now".
+ */
+export function windowResetsAt(workerId: string): { at: number; source: string } | null {
+  const live = lastRateLimit(workerId)
+  if (live?.resetsAt && live.resetsAt > Date.now()) {
+    return { at: live.resetsAt, source: 'live rate-limit record' }
+  }
+  const cached = lastQuota(workerId)
+  const window = cached?.windows.find((w) => w.id === 'session' || w.id === '5h')
+  if (window?.resetsAt && window.resetsAt > Date.now()) {
+    return { at: window.resetsAt, source: 'config cache' }
+  }
+  return null
 }
 
 export type QuotaListener = (q: DatedQuota) => void

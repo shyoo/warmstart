@@ -27,10 +27,16 @@ import {
   releaseWorkspace,
   type Workspace
 } from './worktrees.js'
-import { closeSession, getSession, sendPrompt, sessionsForWorker, spawnSession } from './sessions.js'
+import { closeSession, getSession, listSessions, sendPrompt, sessionsForWorker, spawnSession } from './sessions.js'
 import { landTask } from './landing.js'
 import { log } from './log.js'
 import { db } from './db.js'
+import { windowResetsAt, lastRateLimit } from './quota.js'
+import { reserveState } from './reserve.js'
+import { estimateTask, overrunFactor } from './estimator.js'
+import { DEFAULT_OBJECTIVE, policy, resolveObjective, weights } from './objective.js'
+import { runCacheClock } from './cacheclock.js'
+import { costModel } from './costmodel.js'
 
 /**
  * The scheduler.
@@ -57,23 +63,27 @@ export interface TickResult {
 export async function tick(): Promise<TickResult> {
   admitScheduled()
   escalateStale()
+  // ⛔ Before dispatching anything: a window about to close, or a run past its estimate, is a cost
+  // event that outranks starting new work.
+  await runWatchdogs()
 
   const ready = listTasks()
     .filter((t) => t.status === 'ready')
     .sort(schedulingOrder)
-  if (ready.length === 0) return { dispatched: 0, note: 'nothing ready' }
 
   let dispatched = 0
   const skipped: string[] = []
+  const dispatchTargets = new Set<string>()
 
   for (const task of ready) {
-    const choice = chooseWorker(task)
+    const choice = chooseTarget(task)
     if (!choice.worker) {
       skipped.push(`t${task.seq}: ${choice.reason}`)
       continue
     }
     try {
-      await dispatch(task, choice.worker, choice.quotaUnverified)
+      if (choice.session) dispatchTargets.add(choice.session.id)
+      await dispatch(task, choice)
       dispatched++
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
@@ -83,22 +93,53 @@ export async function tick(): Promise<TickResult> {
     }
   }
 
-  return {
-    dispatched,
-    note: dispatched
-      ? `dispatched ${dispatched}`
-      : skipped.length
-        ? `held: ${skipped.slice(0, 3).join('; ')}`
-        : 'nothing dispatched'
-  }
+  // The cache clock runs after dispatch, so a session the scheduler just chose is recognised as
+  // move 1 - an expiring asset turned into work - rather than being kept alive for its own sake.
+  const clock = await runCacheClock({ objective: DEFAULT_OBJECTIVE, dispatchTargets })
+
+  const parts: string[] = []
+  if (dispatched) parts.push(`dispatched ${dispatched}`)
+  if (clock.acted) parts.push(`cache clock acted on ${clock.acted}`)
+  if (!dispatched && skipped.length) parts.push(`held: ${skipped.slice(0, 3).join('; ')}`)
+  if (parts.length === 0) parts.push(ready.length ? 'nothing dispatchable' : 'nothing ready')
+
+  return { dispatched, note: parts.join(' · ') }
 }
 
 // ---------------------------------------------------------------------------- gates
 
 interface WorkerChoice {
   worker: Worker | null
+  /** A live, idle session already holding this task's context. Reusing it is the cheapest move here. */
+  session: Session | null
   reason: string
   quotaUnverified: boolean
+  score: number
+}
+
+/**
+ * Is this session live, idle, and already this task's?
+ *
+ * ⚠️ **Same task only, deliberately.** A reply into a warm session costs `0.1·C`; the same reply into
+ * a dead one costs `2.0·C`, and human latency routinely straddles the one-hour TTL - so this is the
+ * single most valuable reuse there is, and it is safe because the workspace, the branch and the
+ * context all still belong to the same task.
+ *
+ * Reuse *across* tasks in one project is the bigger prize and is not done here: it needs the workspace
+ * claim to move from the task to the session, so that a session outlives the task that opened it
+ * without leaking a claim or switching a branch under a running agent. Recorded in HANDOFF.
+ */
+function warmSessionFor(task: Task): Session | null {
+  for (const run of runsFor(task.id)) {
+    if (!run.sessionId) continue
+    const session = getSession(run.sessionId)
+    if (!session || session.state === 'closed' || session.state === 'failed') continue
+    // A session with an open run is busy; only an idle one can take work.
+    const open = runForSession(session.id)
+    if (open && !open.endedAt) continue
+    return session
+  }
+  return null
 }
 
 /**
@@ -107,9 +148,14 @@ interface WorkerChoice {
  *
  * ⛔ The gates ask capabilities, never adapter names.
  */
-function chooseWorker(task: Task): WorkerChoice {
+function chooseTarget(task: Task): WorkerChoice {
   const reasons: string[] = []
   let quotaUnverified = false
+  const objective = resolveObjective(undefined, undefined)
+  const w = weights(objective)
+
+  const warm = warmSessionFor(task)
+  const candidates: WorkerChoice[] = []
 
   for (const worker of listWorkers()) {
     if (task.constraints.workerId && task.constraints.workerId !== worker.id) continue
@@ -162,19 +208,99 @@ function chooseWorker(task: Task): WorkerChoice {
       quotaUnverified = true
     }
 
-    return { worker, reason: '', quotaUnverified }
+    const session = warm && warm.workerId === worker.id ? warm : null
+    candidates.push({
+      worker,
+      session,
+      reason: '',
+      quotaUnverified,
+      score: scoreCandidate(task, worker, session, w)
+    })
   }
 
-  return {
-    worker: null,
-    reason: reasons.length ? reasons.slice(0, 2).join('; ') : 'no eligible worker',
-    quotaUnverified
+  if (candidates.length === 0) {
+    return {
+      worker: null,
+      session: null,
+      reason: reasons.length ? reasons.slice(0, 2).join('; ') : 'no eligible worker',
+      quotaUnverified,
+      score: 0
+    }
   }
+
+  candidates.sort((a, b) => b.score - a.score)
+  return candidates[0] as WorkerChoice
+}
+
+/**
+ * ⛔ Every term is a continuous function of the objective vector, never a switch on a mode name. The
+ * two requirements the plan wanted fall out of the arithmetic rather than needing features:
+ * "add X, test X, document X" lands on one session because `warm` and `affinity` both peak there, and
+ * three big independent tasks go to three workers whole because `cold` prices the alternative.
+ */
+function scoreCandidate(
+  task: Task,
+  worker: Worker,
+  session: Session | null,
+  w: ReturnType<typeof weights>
+): number {
+  const now = Date.now()
+
+  const warmth = session?.cacheExpiresAt
+    ? Math.max(0, Math.min(1, (session.cacheExpiresAt - now) / (60 * 60 * 1000)))
+    : 0
+  const affinity = session ? 1 : 0
+  const cold = session ? 0 : 1
+  const projectSwitch = session && session.projectId && session.projectId !== task.projectId ? 1 : 0
+
+  // Context rot is documented rather than folklore, and it does not start at zero context - it bites
+  // as the window fills. Roughly nothing below half, rising after.
+  let rot = 0
+  if (session?.contextTokens) {
+    const model = costModel(adapter(session.adapterId).info.policy.costModelId)
+    const window = model.modelSpec(session.model ?? '')?.context_window ?? 200_000
+    const used = session.contextTokens / window
+    rot = Math.max(0, (used - 0.5) * 2)
+  }
+
+  const reserve = reserveState(worker.id)
+  const rate = lastRateLimit(worker.id)
+  const quotaRisk =
+    reserve.verdict === 'at_risk' || (rate && rate.status !== 'allowed')
+      ? 1
+      : reserve.verdict === 'unknown'
+        ? 0.5
+        : 0
+
+  const needs = task.constraints.needs ?? []
+  const caps = adapter(worker.adapterId).info.capabilities as unknown as Record<string, unknown>
+  const fit = needs.length === 0 ? 1 : needs.filter((n) => caps[n] === true).length / needs.length
+
+  return (
+    w.warm * warmth +
+    w.affinity * affinity -
+    w.contextRot * rot -
+    w.projectSwitch * projectSwitch -
+    w.quotaRisk * quotaRisk -
+    w.cold * cold +
+    w.capabilityFit * fit
+  )
 }
 
 // ---------------------------------------------------------------------------- dispatch
 
-async function dispatch(task: Task, worker: Worker, quotaUnverified: boolean): Promise<void> {
+async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
+  const worker = choice.worker as Worker
+  const quotaUnverified = choice.quotaUnverified
+
+  // ⛔ Reusing a warm session skips the workspace claim entirely: the session is already sitting in
+  // the workspace this task claimed, on this task's branch. Claiming again would double-book the
+  // pool, and re-preparing would switch a branch under a live agent.
+  if (choice.session) {
+    await dispatchIntoWarmSession(task, worker, choice.session, quotaUnverified)
+    return
+  }
+
   const project = task.projectId ? reloadProject(task.projectId) : null
 
   let workspace: Workspace | null = null
@@ -239,6 +365,151 @@ async function dispatch(task: Task, worker: Worker, quotaUnverified: boolean): P
 }
 
 /**
+ * Send a task back into the session that already holds its context.
+ *
+ * This is the move the whole cost model exists to make available: `0.1·C` for a read that also
+ * refreshes the TTL, against `2.0·C` to rebuild the same prefix from nothing.
+ */
+async function dispatchIntoWarmSession(
+  task: Task,
+  worker: Worker,
+  session: Session,
+  quotaUnverified: boolean
+): Promise<void> {
+  const model = costModel(adapter(worker.adapterId).info.policy.costModelId)
+  const saved = Math.round(model.costOfColdStart(session.contextTokens ?? 0) - model.costOfKeepalive(session))
+
+  const run = startRun({
+    taskId: task.id,
+    workerId: worker.id,
+    sessionId: session.id,
+    projectId: task.projectId,
+    quotaUnverified,
+    costModelId: adapter(worker.adapterId).info.policy.costModelId
+  })
+
+  setStatus(task.id, 'running', { assignee: worker.id })
+  addMessage(
+    task.id,
+    'system',
+    `Continued in the session that still holds this task's context` +
+      (saved > 0 ? ` — about ${saved} input-token-equivalents cheaper than a cold start.` : '.')
+  )
+  sendPrompt(session.id, promptFor(task))
+  log.info(`t${task.seq} continued warm on ${worker.label} (run ${run.id.slice(0, 8)}, saved ~${saved})`)
+}
+
+// ---------------------------------------------------------------------------- watchdogs
+
+/** No turn for this long while a run is open is a stall worth surfacing. */
+const STALL_AFTER_MS = 12 * 60 * 1000
+/** Past this multiple of its estimate, a run is not working - it is spending. */
+const RUNAWAY_FACTOR = 3
+
+/**
+ * ⛔ Runs before dispatch on every tick, and costs nothing: every input is already in the database.
+ *
+ * The three failures worth acting on are all *cost* failures - a window about to close on live work,
+ * a run past its estimate, and a reserve breach - which is why they are here rather than in a health
+ * check somebody reads later.
+ */
+async function runWatchdogs(): Promise<void> {
+  for (const task of listTasks()) {
+    if (task.status !== 'running') continue
+    const run = runsFor(task.id).find((r) => !r.endedAt)
+    if (!run?.sessionId) continue
+    const session = getSession(run.sessionId)
+    if (!session) continue
+
+    // 1. The window boundary. This is the case the whole tool was built for.
+    const reset = windowResetsAt(run.workerId)
+    const margin = policy(DEFAULT_OBJECTIVE).preemptMarginMs
+    if (reset && reset.at - Date.now() <= margin && task.preemptible) {
+      await preempt(task, session, reset.at, reset.source)
+      continue
+    }
+
+    // 2. A runaway. Nothing to compare against means it cannot be one - being first is not a crime.
+    const factor = overrunFactor(run.id)
+    if (factor !== null && factor > RUNAWAY_FACTOR) {
+      addMessage(
+        task.id,
+        'system',
+        `This run has spent about ${factor.toFixed(1)}× the estimate for work like it. ` +
+          'Stopping it and handing it back rather than letting it keep spending.'
+      )
+      await preempt(task, session, Date.now(), 'runaway')
+      continue
+    }
+
+    // 3. A stall. Reported, never killed: a long-running tool call looks exactly like this.
+    const lastTurn = session.lastRequestStartedAt ?? session.startedAt
+    if (Date.now() - lastTurn > STALL_AFTER_MS) {
+      log.warn(
+        `t${task.seq} has had no turn for ${Math.round((Date.now() - lastTurn) / 60000)}m ` +
+          '(reported, not stopped - a long tool call looks the same)'
+      )
+    }
+  }
+}
+
+/**
+ * Wrap up before the window closes.
+ *
+ * ⛔ The task goes to `paused_quota`, **not** cancelled: it carries `not_before = resets_at` and
+ * resumes itself. Collapsing the two would have the fleet abandon work it was told to pause.
+ *
+ * ⚠️ Model-aware. Sonnet and Haiku receive injected remaining-budget tags and can self-manage against
+ * them; Opus 4.7+ and Fable do not - so for those the instruction must *state* the budget rather than
+ * assume the model knows. That is a per-model policy field, not a special case here.
+ */
+async function preempt(
+  task: Task,
+  session: Session,
+  resumeAt: number,
+  because: string
+): Promise<void> {
+  const info = adapter(session.adapterId).info
+  const minutes = Math.max(1, Math.round((resumeAt - Date.now()) / 60000))
+  const budgetLine = info.policy.needsExplicitBudget
+    ? `You have roughly ${minutes} minute(s) of window left and no more. `
+    : ''
+
+  try {
+    sendPrompt(
+      session.id,
+      `${budgetLine}Wrap up now. Commit anything that compiles on this branch, then call the ` +
+        'agentyard `handoff` tool with what you were doing, what is done, and the next step. ' +
+        'Do not start new work.'
+    )
+  } catch (err) {
+    log.warn(`could not send the wrap-up for t${task.seq}:`, err)
+  }
+
+  const run = runsFor(task.id).find((r) => !r.endedAt)
+  addMessage(
+    task.id,
+    'system',
+    because === 'runaway'
+      ? 'Preempted: this run was well past its estimate.'
+      : `Preempted before the quota window closes (${because}). Resuming automatically after the reset.`
+  )
+
+  // Give the wrap-up a turn to land, then park the task so it resumes itself.
+  setTimeout(() => {
+    void (async () => {
+      if (run) finishRun(run.id, 'preempted', because)
+      db()
+        .prepare('update tasks set not_before = ?, updated_at = ? where id = ?')
+        .run(because === 'runaway' ? null : resumeAt, Date.now(), task.id)
+      setStatus(task.id, because === 'runaway' ? 'awaiting_human' : 'paused_quota')
+      closeSession(session.id)
+      if (run) await releaseFor(run.id, task.id, task.projectId)
+    })()
+  }, 120_000)
+}
+
+/**
  * What the agent is actually told.
  *
  * The handoff from a previous run is prepended, because a successor that has to rediscover the state
@@ -273,7 +544,6 @@ export async function completeTask(sessionId: string, summary: string): Promise<
   if (!task) return
 
   addMessage(task.id, 'agent', summary, run.id)
-  finishRun(run.id, 'completed', summary)
 
   const held = workspaces.get(run.id)
   const project = task.projectId ? getProject(task.projectId) : null
@@ -297,7 +567,17 @@ export async function completeTask(sessionId: string, summary: string): Promise<
     setStatus(task.id, 'completed')
   }
 
-  closeSession(sessionId)
+  finishRun(run.id, 'completed', summary)
+
+  // ⛔ A task now waiting on a person keeps its session. A reply into a warm session costs 0.1·C; the
+  // same reply into a dead one costs 2.0·C, and human latency routinely straddles the one-hour TTL.
+  // The cache clock decides from here whether to keepalive it, compact it, or let it go.
+  const settled = getTask(task.id)
+  if (settled?.status === 'awaiting_human') {
+    log.info(`t${task.seq} is waiting on a person - keeping its session warm for the reply`)
+  } else {
+    closeSession(sessionId)
+  }
   await releaseFor(run.id, task.id, project?.id ?? null)
   admitDependentsOf(task.id)
 }

@@ -134,9 +134,13 @@ rejected) and a **real `resetsAt`**, which is most of what a preemption deadline
 ⚠️ It only exists on the `stream` transport. A session hosted in a PTY for a human to watch emits
 nothing of the sort, which is one more reason scheduled work does not run that way.
 
-**Owed:** wire this into the quota ladder as a rung above the config cache (M3), and check whether
-`status` moves through an intermediate value before `rejected` - that is what would make it an early
-warning rather than an obituary.
+**Wired at M3.** `stream.ts` parses it, `quota.ts` records it, and `windowResetsAt()` prefers it over
+the config cache — which is what makes preemption possible at all, since a reset time from a window
+that has already turned over is worse than none.
+
+**Still owed:** whether `status` passes through an intermediate value before `rejected`. If it does,
+it is an early warning; if it does not, it is an obituary, and preemption can only ever be driven by
+the clock. Watch a window fill to find out.
 
 ### What this costs the design
 
@@ -252,7 +256,25 @@ network verdict is reused per host and port — so the cost tracks *shell and ne
 
 ---
 
-## 10. Owed
+## 10. What M3 can and cannot do with all this
+
+Implemented: the cache clock's six moves, the compaction reserve as a standing gate, the objective
+vector in its two consumers, an estimator over completed runs, preemption at a window boundary, and
+watchdogs for stalls and runaways.
+
+⚠️ **But be precise about what is live.** The reserve gate needs `remaining` in *tokens*, which needs
+a fresh percentage **and** a learned `tokens_per_percent`. There is no free fresh percentage (§5), so
+on a real worker today `reserveState()` returns **`unknown`**, not `ok`. That is the honest answer and
+the code says so everywhere it surfaces — but it means the reserve is a *reporting* gate right now,
+not a load-bearing one. It becomes load-bearing the moment R2 or R3 lands.
+
+What does work without any of that: the cache clock (context size and the TTL are both exact from the
+transcript), preemption (the reset time is exact from the live rate-limit record), and the estimator
+(runs are exact). Those are the three that matter most, and none of them depends on a percentage.
+
+---
+
+## 11. Owed
 
 **Owed:** Vertex and Antigravity cache pricing numbers. The pricing page truncated on two fetch
 attempts on 2026-08-24 and the numbers were deliberately **not guessed**. The schema has the slot;

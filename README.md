@@ -4,10 +4,11 @@
 Claude Code, Antigravity, local models — and routes each task to the worker, session and moment where
 it is cheapest to run.
 
-> **Status: pre-alpha, M2.** It runs work end to end: you file a task, the scheduler routes it to an
-> account that can take it, it runs in a pooled git worktree on a branch named after the task, and it
-> lands on your trunk when the project's checks pass. Approvals, cancellation and agent-authored
-> follow-ups all work. **What it does not do yet is the interesting part** — routing by *cost* is M3.
+> **Status: pre-alpha, M3.** It runs work end to end — file a task, it runs in a pooled git worktree
+> on its own branch and lands on your trunk when the checks pass — and it now reasons about **cost**:
+> it keeps a warm prompt cache alive when that is cheaper than rebuilding it, compacts when it is not,
+> preempts before a quota window closes and resumes itself after the reset. Every belief it acts on is
+> shown with its basis, including the ones that are still *unknown*.
 > See [HANDOFF.md](HANDOFF.md) for exactly where the build is, and
 > [`transient_docs/implementation_plan_2026-08-24.md`](transient_docs/implementation_plan_2026-08-24.md)
 > for the design of record.
@@ -77,6 +78,12 @@ worth and refuses to let it evaporate.
 - **Cancel without losing anything.** Cancelling stops the work, asks the agent to commit what
   compiles and write a handoff, releases the workspace, and rests the task — it never deletes.
   Deleting is separate, and never removes the record of what a run cost.
+- **Spend less on the same work.** A warm prompt cache is an asset with an expiry date: a read costs
+  0.1× and *refreshes the TTL for free*, while rebuilding a lapsed one costs 2.0×. agentyard watches
+  that clock on every session and picks between sending it queued work, keeping it warm, compacting
+  it, and letting it go — and the **Cost** view shows you which it chose and why.
+- **Survive a window closing.** Work in flight when an account's window is about to reset is wrapped
+  up, committed, handed off and re-queued to resume itself after the reset.
 - **See the fleet**: per-account quota with its **age**, reset countdowns, live sessions with their
   prompt-cache countdown and context size.
 - **Doctor** tells you which CLIs were found, who is signed in, how old each quota reading is, and
@@ -84,7 +91,10 @@ worth and refuses to let it evaporate.
 
 > **On quota numbers.** Claude Code has no free live usage probe — the slash command spends a real
 > turn — so agentyard reads the CLI's own cache and always shows you how old it is. An old reading is
-> reported as *unknown*, never as a number. See [`docs/cost-model.md`](docs/cost-model.md) §5.
+> reported as *unknown*, never as a number. One consequence is worth stating plainly: the compaction
+> reserve, which stops an account running out of room to *save* a large session, currently reports
+> `unknown` rather than `ok`, because it needs a size and nothing free gives it one.
+> See [`docs/cost-model.md`](docs/cost-model.md) §5 and §10.
 
 ## Development
 

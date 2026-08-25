@@ -8,10 +8,9 @@ for, untested.
 if you add a line, find the one it obsoletes and cut it in the same edit. Finished work moves to
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
-**Baseline (2026-08-25, M2):** `npm run typecheck` clean · `npm run build` clean · `npm test` 20/20 ·
-21/21 fleet integration checks · 14/14 approval checks · 20/20 task+landing checks including **a real
-agent run that wrote, committed and landed a commit on origin/main**. Electron 44.0.0, Node 24.18.1
-under Electron, 0 npm vulnerabilities.
+**Baseline (2026-08-25, M3):** `npm run typecheck` clean · `npm run build` clean · `npm test` 38/38 ·
+`npm run test:daemon` 47/47 · `npm run test:ui` 16/16 · L4 (opt-in) landed a real agent commit on
+origin/main. Electron 44.0.0, Node 24.18.1 under Electron, 0 npm vulnerabilities.
 
 ---
 
@@ -22,8 +21,8 @@ under Electron, 0 npm vulnerabilities.
 | **M0** scaffold | ✅ repo, licence, docs, Electron shell |
 | **M1** fleet substrate + commissioning | ✅ daemon, cost-model loader, workers, quota, PTY, transcript metering, fleet UI |
 | **M2** tasks, threads, resources, authorship | ✅ tasks + DAG, cancel/delete, approvals, projects, worktree pool, auto-land, scheduler v1 |
-| **M3** cost intelligence | ⬜ next — the differentiator |
-| **M4** controller agent | ⬜ |
+| **M3** cost intelligence | ✅ cache clock, compaction reserve, objective vector, estimator, preemption, watchdogs |
+| **M4** controller agent | ⬜ next |
 | **M5** multi-provider (`antigravity-cli`, `openai-compatible`) | ⬜ |
 | **M6** packaging | ⬜ |
 
@@ -45,7 +44,12 @@ src/daemon/            orchestratord. Runs as Electron-with-ELECTRON_RUN_AS_NODE
   tasks.ts             DAG, admission, mandates, budgets, runs           (+ tasks.test.ts)
   cancel.ts            wind-down into a resting state; delete is separate and human-only
   approvals.ts         policy engine, escalation clock, remembered rules
-  scheduler.ts         the zero-token loop: gates, dispatch, completion, landing
+  scheduler.ts         the zero-token loop: gates, scoring, dispatch, watchdogs, preemption
+  cacheclock.ts        the six moves - the piece the whole cost model exists for
+  reserve.ts           the compaction reserve, and every belief with its basis attached
+  objective.ts         the weight vector, in exactly two consumers    (+ cost.test.ts)
+  estimator.ts         what a task will cost, from what tasks have cost
+  stream.ts            stream-json records: the free live rate-limit signal
   projects.ts          .agentyard/project.json; policy committed, state private
   resources.ts         the broker - if the scheduler owns the claim, the lock is unnecessary
   worktrees.ts         pooled worktrees, task-named branches, prepare hook
@@ -91,23 +95,42 @@ native module to rebuild against Electron's ABI and nothing to break at packagin
    --input-format stream-json --permission-prompt-tool`. Visible in the process list on this machine;
    independent confirmation of the transport choice.
 
-## Next: M3 — cost intelligence
+## What M3 built, and what it still cannot see
 
-*The differentiator.* Everything before this made the fleet work; this makes it cheap.
+**Works, and does not depend on a percentage:**
 
-1. **The cache clock, all six moves**, including **keepalive** — the move that only exists because a
-   cache read refreshes the TTL for free. `docs/cost-model.md` §3.
-2. **The compaction reserve as a standing gate** (§5): `worker.remaining >= Σ (0.1·C + 5·S)`. Needs
-   real token accounting per worker, which is why it waits for (3).
-3. **Quota that means something.** Add the `rate_limit_event` rung, then build token accrual from the
-   transcripts already metered exactly, calibrated against whatever readings arrive. Today every
-   dispatch is marked `quotaUnverified` and that is the honest state — but it is not a good one.
-4. **Session-affinity scoring and the estimator**, learned from `runs` — which is why runs are never
-   deleted with their task.
-5. **Preemption + HANDOFF + auto-resume** at a window boundary, and the **objective vector** wired end
-   to end.
+- **The cache clock**, six moves, in `cacheclock.ts`. Context size and TTL are both exact from the
+  transcript, so this is real arithmetic. Every decision is recorded — including the ones that did
+  nothing — so "why is that session still open?" is answerable from data.
+- **Preemption at a window boundary**, driven by the reset time from the live `rate_limit_event`,
+  which is exact. Preempted work goes to `paused_quota` with `not_before = resets_at` and resumes
+  itself. ⛔ Never cancelled.
+- **The estimator** over completed runs — median, never mean, with confidence reported.
+- **Warm-session reuse for the same task**: a reply into a warm session costs `0.1·C` against `2.0·C`
+  into a dead one, and a task waiting on a person now keeps its session rather than closing it.
+- **The objective vector**, in exactly two consumers.
 
-**Before or during M3, run the measurements below** — R1 and R3 in particular change what M3 builds.
+⚠️ **The compaction reserve reports `unknown` on a real worker today, and that is correct.** It needs
+`remaining` in *tokens*, which needs a fresh percentage **and** a learned `tokens_per_percent`. There
+is no free fresh percentage. So the gate is honest reporting, not yet load-bearing — it becomes
+load-bearing the moment **R2** or **R3** lands. `docs/cost-model.md` §10.
+
+**Not verified, and marked as such in the code:**
+
+- **R6 — is `/compact` honoured as a user message on the `stream` transport?** The cache clock's
+  compact move sends it that way. Inferred from the CLI's slash-command handling, not measured. If it
+  is not, the fallback is handoff-and-close, which is already implemented.
+- **Keepalive has never actually fired against a live session** — it needs a warm session and an idle
+  hour. The arithmetic is unit-tested; the execution is not.
+
+## Next: M4 — the controller agent
+
+1. **The controller as a fleet member** with its own quota, so when its window runs low its next
+   decision routes elsewhere. ⛔ Never in the scheduling loop — that loop is deterministic and free.
+2. **Decomposition as a task** (plan §18.1): a `plan` task whose output is a set of *draft* children
+   with dependency edges. Prompts are written at promotion, not at creation.
+3. **Judgment events only**: ambiguous routing, failure triage, risk-gating agent-created work.
+4. **Chat and thread panes** — talking to the controller, or to one agent directly.
 
 ## Open questions
 
@@ -143,8 +166,11 @@ a transcript — the auto-mode classifier, title generation, whatever else. That
 | **R3** | What refreshes `cachedUsageUtilization`? | Note `fetchedAtMs`, then try in turn: `/usage` inside an interactive session · a long run · a fresh CLI start after some hours. Stop at the first that moves it | If anything does, the poller becomes real and R2 gets automatic. If nothing does, M3 must accrue tokens itself |
 | **R4** | Real compaction cost end to end | Compact a session of known size; diff transcript tokens across the `compact_boundary` and record `durationMs` | Three samples so far (139k · 116k · **161k** ms). The spread matters more than the mean for the T+53m deadline |
 | **R5** | Second account on a transplanted transcript | Commission a second worker, copy a small transcript into its root, `--resume`, complete one turn | Discovery is measured; completion is not. Shapes cross-account continuation. `docs/cost-model.md` §7 |
+| **R6** | Is `/compact` honoured as a user message on the `stream` transport? | Send it into a live stream session and watch for a `compact_boundary` record in the transcript | The cache clock's compact move depends on it. If not, that move becomes handoff-and-close everywhere |
+| **R7** | Does the live rate-limit `status` warn before it refuses? | Let one window fill while watching `rate_limit_samples` | Decides whether the live signal is an early warning or an obituary |
 
-R1 and R3 are the ones blocking real decisions. R5 needs a second subscription.
+**R2 and R3 now block the compaction reserve**, which reports `unknown` until one of them lands. R1
+and R6 change how the cache clock behaves. R5 needs a second subscription.
 
 ## Standing decisions worth not relitigating
 

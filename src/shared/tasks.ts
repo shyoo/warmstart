@@ -265,6 +265,46 @@ export interface ResourceAvailability {
   claims: ResourceClaim[]
 }
 
+// ---------------------------------------------------------------------------- objectives
+
+/**
+ * What the operator is optimising for, as a weight vector summing to 1.
+ *
+ * ⛔ Presets are just named vectors, and nothing may branch on a preset's *name*. The vector is
+ * consumed in exactly two places - scheduler scoring and a cost policy object - and the effective
+ * objective is recorded on every Run, so "why did it pick that" is answerable months later.
+ */
+export interface Objective {
+  cost: number
+  velocity: number
+  quality: number
+}
+
+export type ObjectivePreset = 'economy' | 'balanced' | 'velocity' | 'quality'
+
+/** What the cache clock decided to do with a session, and why. */
+export type CacheMove = 'dispatch' | 'keepalive' | 'compact' | 'let_expire' | 'handoff_close' | 'none'
+
+export interface ClockDecision {
+  sessionId: string
+  move: CacheMove
+  reason: string
+  contextTokens: number | null
+  expectedIdleMs: number | null
+  /** Input-token-equivalents this move is expected to cost. */
+  estimatedCost: number | null
+  expiresAt: number | null
+}
+
+export interface ReserveReport {
+  workerId: string
+  verdict: 'ok' | 'at_risk' | 'unknown'
+  requiredTokens: number
+  remainingTokens: number | null
+  liveSessions: number
+  reason: string
+}
+
 // ---------------------------------------------------------------------------- landing
 
 export type LandingStrategyId = 'auto-land' | 'leave-branch' | 'pull-request'

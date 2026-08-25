@@ -10,6 +10,7 @@ import { requireWorker } from './workers.js'
 import { log } from './log.js'
 import { ensureDir } from './paths.js'
 import { removeMcpConfig, writeMcpConfig } from './mcpconfig.js'
+import { StreamParser, type StreamEvent } from './stream.js'
 
 /**
  * Live agent processes.
@@ -47,6 +48,8 @@ interface Live {
   scrollback: string[]
   scrollbackBytes: number
   purpose: 'work' | 'login'
+  /** Only for the `stream` transport, where output is a machine protocol rather than a screen. */
+  parser: StreamParser | null
 }
 
 const live = new Map<string, Live>()
@@ -55,9 +58,11 @@ export interface SessionEvents {
   onChange(session: Session): void
   onData(sessionId: string, data: string): void
   onExit(sessionId: string, exitCode: number | null): void
+  /** Structured records from the `stream` transport - rate limits, results. Never screen text. */
+  onStream(session: Session, event: StreamEvent): void
 }
 
-let events: SessionEvents = { onChange() {}, onData() {}, onExit() {} }
+let events: SessionEvents = { onChange() {}, onData() {}, onExit() {}, onStream() {} }
 export function setSessionEvents(e: SessionEvents): void {
   events = e
 }
@@ -179,6 +184,9 @@ export function spawnSession(opts: SpawnOptions): Session {
   const emitData = (data: string) => {
     const entry = live.get(id)
     if (!entry) return
+    if (entry.parser) {
+      for (const event of entry.parser.push(data)) events.onStream(entry.session, event)
+    }
     entry.scrollback.push(data)
     entry.scrollbackBytes += data.length
     while (entry.scrollbackBytes > SCROLLBACK_BYTES && entry.scrollback.length > 1) {
@@ -222,7 +230,14 @@ export function spawnSession(opts: SpawnOptions): Session {
 
   const session = getSession(id)
   if (!session) throw new Error('session row vanished immediately after insert')
-  live.set(id, { session, channel, scrollback: [], scrollbackBytes: 0, purpose })
+  live.set(id, {
+    session,
+    channel,
+    scrollback: [],
+    scrollbackBytes: 0,
+    purpose,
+    parser: transport === 'stream' ? new StreamParser() : null
+  })
 
   log.info(
     `spawned ${purpose} session ${id.slice(0, 8)} on ${worker.label}: ${plan.command} ${plan.args.join(' ')}`

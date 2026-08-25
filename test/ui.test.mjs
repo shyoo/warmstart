@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createRequire } from 'node:module'
-import { REPO, check, electronBinary, section, summary, wait } from './lib/harness.mjs'
+import { REPO, check, electronBinary, killTree, section, summary, wait } from './lib/harness.mjs'
 
 const require = createRequire(join(REPO, 'package.json'))
 const WebSocket = require('ws')
@@ -128,14 +128,31 @@ try {
   )
   check('the content pane takes the remaining height', content > approvals * 3, `${Math.round(content)}px`)
 
+  section('cost')
+  await evaluate(`[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim().startsWith('Cost')).click()`)
+  await wait(1500)
+  const costPanel = await evaluate('document.querySelector(".panel")?.innerText ?? ""')
+  check('the cost view renders', costPanel.includes('Cost'))
+  check(
+    'it states the objective it is working to',
+    /cost 0\.\d\d/.test(costPanel),
+    'a scheduler that spends money should say what it is optimising for'
+  )
+  check(
+    'an unknown remaining budget says so rather than showing a number',
+    costPanel.includes('size unknown') || costPanel.includes('unknown'),
+    'this is the honest state on a CLI with no free usage probe'
+  )
+
   const errors = await evaluate('window.__agentyardErrors?.length ?? 0')
   check('no uncaught renderer errors', errors === 0)
 } catch (err) {
   check('the suite ran to completion', false, err instanceof Error ? err.stack : String(err))
 } finally {
   socket?.close()
-  // ⛔ By pid. Never `taskkill /IM electron.exe` - that also kills the developer's editor.
-  if (app && !app.killed) app.kill()
+  // ⛔ By pid, and the whole tree: Electron's renderer and GPU children outlive a plain kill and one
+  // of them keeps the debugging port, which fails the *next* run for no reason anyone can see.
+  killTree(app?.pid)
   await wait(500)
   try {
     rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
