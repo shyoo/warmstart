@@ -1,4 +1,4 @@
-import type { CacheMove, ClockDecision, Objective } from '@shared/tasks.js'
+import type { ClockDecision, Objective } from '@shared/tasks.js'
 import type { Session } from '@shared/protocol.js'
 import { db } from './db.js'
 import { costModel } from './costmodel.js'
@@ -129,7 +129,7 @@ export function decide(session: Session, ctx: ClockContext): ClockDecision {
   }
   const nothing = (reason: string): ClockDecision => ({
     ...base,
-    move: 'none' as CacheMove,
+    move: 'none',
     reason,
     expectedIdleMs: null,
     estimatedCost: null

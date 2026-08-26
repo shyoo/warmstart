@@ -159,7 +159,7 @@ export function sendChat(text: string, threadId = DEFAULT_THREAD): SendResult {
 
   const deliver = () => {
     try {
-      sendPrompt(sessionId as string, body)
+      sendPrompt(sessionId, body)
     } catch (err) {
       log.warn('could not deliver a chat message:', err)
       append(threadId, 'system', `Could not deliver that: ${String(err)}`, sessionId)

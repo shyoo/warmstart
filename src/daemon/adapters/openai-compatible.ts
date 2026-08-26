@@ -11,7 +11,7 @@ import type {
   SpawnRequest,
   WrittenPermissions
 } from './types.js'
-import { asRecord, num, textBlocks, type StreamEvent, type StreamUsage } from '../stream.js'
+import { asRecord, num, type StreamEvent, type StreamUsage } from '../stream.js'
 import { log } from '../log.js'
 import { launchArgs, launchable, which } from '../which.js'
 

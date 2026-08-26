@@ -269,7 +269,7 @@ export function Workers({
               <button
                 className="btn btn--ghost"
                 disabled={busy === `probe:${loginSession.workerId}`}
-                onClick={() => recheck(loginSession.workerId)}
+                onClick={() => void recheck(loginSession.workerId)}
               >
                 {busy === `probe:${loginSession.workerId}` ? 'Checking…' : 'Check sign-in again'}
               </button>

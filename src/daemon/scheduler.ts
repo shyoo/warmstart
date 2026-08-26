@@ -30,7 +30,7 @@ import {
   releaseWorkspace,
   type Workspace
 } from './worktrees.js'
-import { closeSession, getSession, listSessions, sendPrompt, sessionsForWorker, spawnSession } from './sessions.js'
+import { closeSession, getSession, sendPrompt, sessionsForWorker, spawnSession } from './sessions.js'
 import { landTask } from './landing.js'
 import { log } from './log.js'
 import { db } from './db.js'

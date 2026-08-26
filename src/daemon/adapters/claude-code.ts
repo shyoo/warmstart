@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { AdapterDetection, AdapterInfo, QuotaSnapshot } from '@shared/protocol.js'
 import type { AgentAdapter, IdentityProbe, SpawnPlan, SpawnRequest } from './types.js'
-import { asRecord, num, textBlocks, type StreamEvent, type StreamUsage } from '../stream.js'
+import { asRecord, textBlocks, type StreamEvent } from '../stream.js'
 import { log } from '../log.js'
 import { launchArgs, launchable, which } from '../which.js'
 import { APPROVE_TOOL } from '../mcpconfig.js'
@@ -126,10 +126,10 @@ function decodeStream(record: Record<string, unknown>): StreamEvent | StreamEven
     return {
       kind: 'rate_limit',
       info: {
-        status: String(info.status ?? 'unknown'),
+        status: typeof info.status === 'string' ? info.status : 'unknown',
         // The CLI reports seconds; everything in agentyard is epoch milliseconds.
         resetsAt: typeof info.resetsAt === 'number' ? info.resetsAt * 1000 : null,
-        rateLimitType: String(info.rateLimitType ?? 'unknown'),
+        rateLimitType: typeof info.rateLimitType === 'string' ? info.rateLimitType : 'unknown',
         ...(typeof info.overageStatus === 'string' ? { overageStatus: info.overageStatus } : {}),
         ...(typeof info.isUsingOverage === 'boolean' ? { isUsingOverage: info.isUsingOverage } : {})
       }
@@ -211,7 +211,7 @@ export const claudeCode: AgentAdapter = {
     // ⚠️ `auth status` exits 1 when nobody is logged in but still prints valid JSON on stdout.
     // Measured 2026-08-25. Treating the exit code as the answer would report every un-commissioned
     // worker as "probe failed" instead of the true and far more useful "not logged in".
-    let stdout = ''
+    let stdout: string
     try {
       stdout = (
         await run(info.command, ['auth', 'status', '--json'], {

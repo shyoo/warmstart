@@ -109,7 +109,7 @@ function createWindow(): BrowserWindow {
   return win
 }
 
-app.whenReady().then(() => {
+void app.whenReady().then(() => {
   ipcMain.handle(
     IPC.appInfo,
     (): AppInfo => ({

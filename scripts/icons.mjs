@@ -48,10 +48,13 @@ function magick(...args) {
     if (err?.code === 'ENOENT') {
       throw new Error(
         'ImageMagick (`magick`) is not on PATH. It is needed only to regenerate icons; the ' +
-          'generated files are committed, so an ordinary build never runs this script.'
+          'generated files are committed, so an ordinary build never runs this script.',
+        { cause: err }
       )
     }
-    throw new Error(`magick ${args.join(' ')}\n${err?.stderr?.toString() ?? err?.message ?? err}`)
+    throw new Error(`magick ${args.join(' ')}\n${err?.stderr?.toString() ?? err?.message ?? err}`, {
+      cause: err
+    })
   }
 }
 

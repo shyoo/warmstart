@@ -273,7 +273,7 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
     'task.create': (p) => createTask(p),
     'task.update': (p) => {
       const { id, ...patch } = p
-      return updateTask(id, patch as never)
+      return updateTask(id, patch)
     },
     'task.message': (p) => {
       addMessage(p.id, 'human', p.text)

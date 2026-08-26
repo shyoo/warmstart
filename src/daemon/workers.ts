@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
-import type { Worker, WorkerRole } from '@shared/protocol.js'
+import type { Worker, WorkerIdentity, WorkerRole } from '@shared/protocol.js'
 import { db, row, rows } from './db.js'
 import { ensureDir, paths, slugify } from './paths.js'
 import { adapter, hasAdapter } from './adapters/index.js'
@@ -32,7 +32,7 @@ function toWorker(r: WorkerRow): Worker {
     humanOccupied: r.human_occupied === 1,
     role: (r.role as WorkerRole) ?? 'both',
     maxConcurrent: r.max_concurrent,
-    identity: r.identity_json ? JSON.parse(r.identity_json) : null,
+    identity: r.identity_json ? (JSON.parse(r.identity_json) as WorkerIdentity) : null,
     createdAt: r.created_at,
     retiredAt: r.retired_at
   }

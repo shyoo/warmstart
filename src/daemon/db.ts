@@ -417,5 +417,5 @@ export function rows<T>(list: unknown[]): T[] {
 }
 
 export function row<T>(value: unknown): T | null {
-  return value == null ? null : ({ ...(value as object) } as T)
+  return value == null ? null : ({ ...value } as T)
 }

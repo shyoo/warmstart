@@ -207,7 +207,7 @@ export class TranscriptTailer {
 
   private handle(record: unknown): void {
     const rec = record as TranscriptRecord
-    const stamp = (rec as OtherRecord).timestamp
+    const stamp = rec.timestamp
     const ts = stamp ? Date.parse(stamp) : Date.now()
 
     if (isCompactBoundary(rec)) {

@@ -8,8 +8,8 @@ for, untested.
 if you add a line, find the one it obsoletes and cut it in the same edit. Finished work moves to
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
-**Baseline (2026-08-26, M6 + a green CI matrix):** `npm run typecheck` clean · `npm run build` clean ·
-`npm test` 134/134 · `npm run test:daemon` 101/101 · `npm run test:ui` 21/21 · `npm run test:pack`
+**Baseline (2026-08-26, M6 + a green CI matrix):** `npm run typecheck` clean · `npm run lint` clean ·
+`npm run build` clean · `npm test` 134/134 · `npm run test:daemon` 101/101 · `npm run test:ui` 21/21 · `npm run test:pack`
 17/17 · L4 (opt-in) landed a real agent commit on origin/main. Electron 44.0.0, electron-builder
 26.15.3, 0 npm vulnerabilities. CLIs on this machine: claude 2.1.223 - agy 1.1.20 - codex 0.149.1.
 
@@ -195,6 +195,13 @@ is no reason to believe the other two platforms are cleaner. Treat them as unbui
 `.github/workflows/ci.yml` runs four jobs, none of which can spend a token: `check` (ubuntu),
 `daemon`, `ui` and `pack` (all three platforms). ⛔ `test:e2e` is the only suite that spends and is
 never invoked there.
+
+⚠️ `check` lints now. The `lint` script had been declared and never installed, so `eslint .` had
+never run once; its first pass found 55 things, of which four were defects rather than tidiness — a
+`ws` frame put through `String()` (one of its three types survives that, the rest were dropped into a
+silent catch), two vendor JSON fields that would have printed `[object Object]` as a rate-limit
+status, `JSON.parse` assigned into `Worker.identity` as `any`, and a `Date.now()` in Doctor's render.
+⛔ Rules turned off in `eslint.config.js` carry their reason inline; "it fired a lot" is not one.
 
 Teaching the suites to run without a CLI was the cheap part. Simulating a bare runner locally failed
 five checks, and **four of them were one product bug**: the not-signed-in gate string-matched the probe

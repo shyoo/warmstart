@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process'
 import { join } from 'node:path'
 import { existsSync } from 'node:fs'
 import { EventEmitter } from 'node:events'
-import WebSocket from 'ws'
+import WebSocket, { type RawData } from 'ws'
 import type {
   DaemonEndpoint,
   DaemonEvent,
@@ -30,6 +30,20 @@ export type DaemonStatus =
   | { state: 'error'; message: string }
 
 const STARTUP_TIMEOUT_MS = 20_000
+
+/**
+ * The text of one WebSocket frame.
+ *
+ * ⚠️ `ws` hands a message over as `Buffer | ArrayBuffer | Buffer[]` - which of the three depends on
+ * how the frame arrived, not on anything this end chose. Only the first survives `String()`; the
+ * other two become "[object ArrayBuffer]" and a comma-joined mess, and `JSON.parse` then throws
+ * into a deliberately silent catch. The event is simply lost, with nothing to read afterwards.
+ */
+function frameText(raw: RawData): string {
+  if (Buffer.isBuffer(raw)) return raw.toString('utf8')
+  if (Array.isArray(raw)) return Buffer.concat(raw).toString('utf8')
+  return Buffer.from(raw).toString('utf8')
+}
 
 export class DaemonClient extends EventEmitter {
   private endpoint: DaemonEndpoint | null = null
@@ -119,7 +133,7 @@ export class DaemonClient extends EventEmitter {
 
     ws.on('message', (raw) => {
       try {
-        this.emit('event', JSON.parse(String(raw)) as DaemonEvent)
+        this.emit('event', JSON.parse(frameText(raw)) as DaemonEvent)
       } catch {
         // A malformed frame is not worth tearing the connection down for.
       }

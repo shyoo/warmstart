@@ -39,7 +39,7 @@ jobs:
   # It also runs first on purpose: it populates the Electron cache that the three matrix jobs restore,
   # so the ~110MB download happens once per run instead of seven times.
   check:
-    name: typecheck · build · unit
+    name: typecheck · lint · build · unit
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -55,6 +55,7 @@ jobs:
       - name: Ensure the Electron binary is present
         run: node scripts/ensure-electron.mjs
       - run: npm run typecheck
+      - run: npm run lint
       - run: npm run build
       - run: npm test
 

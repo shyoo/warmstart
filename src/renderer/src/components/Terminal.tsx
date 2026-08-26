@@ -24,7 +24,9 @@ export function TerminalPane({
   const termRef = useRef<Xterm | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
   const interactiveRef = useRef(interactive)
-  interactiveRef.current = interactive
+  useEffect(() => {
+    interactiveRef.current = interactive
+  })
 
   useEffect(() => {
     const host = hostRef.current

@@ -11,7 +11,7 @@ import { age } from '../lib/format'
  * how old each quota reading is, and which cost model is in force. Every warning names the thing to
  * fix.
  */
-export function Doctor(): React.JSX.Element {
+export function Doctor({ now }: { now: number }): React.JSX.Element {
   const [report, setReport] = useState<DoctorReport | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [running, setRunning] = useState(false)
@@ -122,7 +122,7 @@ export function Doctor(): React.JSX.Element {
                         {w.lastQuota && w.lastQuota.windows.length > 0 ? (
                           <>
                             {w.lastQuota.windows.map((q) => `${q.label} ${Math.round(q.percent)}%`).join(' · ')}
-                            <span className="dim"> · {age(Date.now() - w.lastQuota.sampledAt)}</span>
+                            <span className="dim"> · {age(now - w.lastQuota.sampledAt)}</span>
                           </>
                         ) : (
                           <span className="warn">no reading</span>

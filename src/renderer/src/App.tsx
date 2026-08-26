@@ -112,7 +112,7 @@ export function App(): React.JSX.Element {
           ) : view === 'cost' ? (
             <Cost now={now} />
           ) : view === 'doctor' ? (
-            <Doctor />
+            <Doctor now={now} />
           ) : (
             <SessionsView
               fleet={fleet}

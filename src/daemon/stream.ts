@@ -24,7 +24,8 @@
  */
 
 export interface RateLimitInfo {
-  status: 'allowed' | 'allowed_warning' | 'rejected' | string
+  /** `allowed`, `allowed_warning` or `rejected` on Claude Code 2.1.223. Open: a vendor may add one. */
+  status: string
   resetsAt: number | null
   rateLimitType: string
   overageStatus?: string

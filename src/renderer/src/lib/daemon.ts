@@ -48,7 +48,9 @@ export function useDaemonStatus(): DaemonUiStatus {
 /** Subscribe to daemon pushes. The handler is kept in a ref so callers need not memoise it. */
 export function useDaemonEvents(handler: (event: DaemonEvent) => void): void {
   const ref = useRef(handler)
-  ref.current = handler
+  useEffect(() => {
+    ref.current = handler
+  })
   useEffect(() => window.agentyard.onDaemonEvent((event) => ref.current(event)), [])
 }
 
@@ -63,7 +65,7 @@ export function useFleet(connected: boolean): {
   const refresh = useCallback(async () => {
     if (!connected) return
     try {
-      setFleet((await rpc('fleet.list')) as FleetEntry[])
+      setFleet(await rpc('fleet.list'))
       setError(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))

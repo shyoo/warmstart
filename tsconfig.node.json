@@ -17,5 +17,5 @@
     "paths": { "@shared/*": ["src/shared/*"] }
   },
   "include": ["src/main/**/*", "src/preload/**/*", "src/daemon/**/*", "src/mcp/**/*", "src/shared/**/*",
-              "electron.vite.config.ts"]
+              "electron.vite.config.ts", "vitest.config.ts"]
 }

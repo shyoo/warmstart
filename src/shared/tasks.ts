@@ -156,7 +156,8 @@ export interface Task {
   parentTaskId: string | null
   lineageDepth: number
   assignee: string | null
-  assigneeHint: 'human' | 'any' | string | null
+  /** `human`, `any`, or a worker id. Open, because a hint is advisory - the scheduler may ignore it. */
+  assigneeHint: string | null
   mandate: Mandate
   budget: Budget
   dependsOn: string[]

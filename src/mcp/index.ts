@@ -57,7 +57,8 @@ function endpoint(): DaemonEndpoint {
   } catch (err) {
     throw new Error(
       `orchestratord is not running (no endpoint at ${paths.endpoint}): ` +
-        (err instanceof Error ? err.message : String(err))
+        (err instanceof Error ? err.message : String(err)),
+      { cause: err }
     )
   }
 }
@@ -107,7 +108,7 @@ server.registerTool(
     const target = describeTarget(args.input)
 
     let decision: 'allow' | 'deny' = 'deny'
-    let message = 'Multi Agent Controller could not reach orchestratord to ask.'
+    let message: string
     try {
       const answer = await rpc('approval.request', {
         sessionId,

@@ -12,7 +12,7 @@ import type {
   SpawnRequest,
   WrittenPermissions
 } from './types.js'
-import { asRecord, num, textBlocks, type StreamEvent, type StreamUsage } from '../stream.js'
+import { asRecord, num, type StreamEvent, type StreamUsage } from '../stream.js'
 import { log } from '../log.js'
 import { launchArgs, launchable, which } from '../which.js'
 
@@ -181,7 +181,7 @@ function decodeStream(record: Record<string, unknown>): StreamEvent | StreamEven
 
   if (event === 'result') {
     const result = asRecord(record.result)
-    const status = String(result?.status ?? 'UNKNOWN')
+    const status = typeof result?.status === 'string' ? result.status : 'UNKNOWN'
     const finished: StreamEvent = {
       kind: 'result',
       text: typeof result?.response === 'string' ? result.response : null,
