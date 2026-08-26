@@ -78,6 +78,12 @@ mac:
   hardenedRuntime: false
 
 linux:
+  # ⛔ Set explicitly, because electron-builder does NOT use `productName` verbatim here. On Windows
+  # and macOS the executable is `Multi Agent Controller`; on Linux the name is sanitised, and the
+  # rename turned `agentyard` - a string no sanitiser touches - into one that it does. The packaged
+  # suite went looking for a binary that was never built. Naming it here means one string decides,
+  # and it is also the `Exec` line in the .desktop entry.
+  executableName: multi-agent-controller
   target:
     - target: AppImage
       arch: [x64, arm64]
