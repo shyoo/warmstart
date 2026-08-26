@@ -716,6 +716,22 @@ select:focus-visible,
   flex: 1;
 }
 
+/* ⚠️ Pushed to the trailing edge and not allowed to shrink: the head is a flex row whose paragraph
+   takes the slack, and buttons sharing that slack get squeezed to their ellipsis. */
+.login-actions {
+  display: flex;
+  gap: var(--sp-2);
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.login-note {
+  margin: 0 0 var(--sp-2);
+  font-size: var(--text-meta);
+  color: var(--color-text-dim);
+  max-width: 72ch;
+}
+
 .tabs {
   display: flex;
   gap: var(--sp-1);

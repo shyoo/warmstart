@@ -66,8 +66,16 @@ function createWindow(): BrowserWindow {
   })
 
   win.once('ready-to-show', () => win.show())
-  windows.add(win.webContents)
-  win.on('closed', () => windows.delete(win.webContents))
+
+  // ⛔ Capture the WebContents now; do not read `win.webContents` from the `closed` handler.
+  //
+  // By the time `closed` fires the native object is gone, and *reading the property* throws
+  // `Object has been destroyed` from inside Electron's own emit - which surfaces to the user as
+  // "A JavaScript error occurred in the main process" when they close the window. The Set is keyed
+  // by this reference, so holding it is also the only way the delete can match.
+  const wc = win.webContents
+  windows.add(wc)
+  win.on('closed', () => windows.delete(wc))
 
   // Never navigate the shell itself; external links go to the real browser.
   win.webContents.setWindowOpenHandler(({ url }) => {

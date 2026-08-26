@@ -115,6 +115,15 @@ export interface WorkerIdentity {
   cliVersion?: string
   /** Whatever the probe could read back, verbatim, for the Doctor panel. */
   raw?: string
+  /**
+   * When this answer was read, not when the worker was created.
+   *
+   * ⚠️ Identity is a *cached* belief about the outside world, and until a login session started
+   * refreshing it, it was written once at commissioning and never again - so a worker signed in
+   * successfully kept the `loggedIn: false` from before the sign-in, permanently. A belief with no
+   * timestamp cannot be told apart from a current one, by a person or by a test.
+   */
+  checkedAt?: number
 }
 
 export interface QuotaWindow {

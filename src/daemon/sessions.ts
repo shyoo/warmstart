@@ -6,7 +6,7 @@ import { execFileSync, spawn as spawnChild } from 'node:child_process'
 import type { Session, SessionPurpose, SessionState, SessionTransport } from '@shared/protocol.js'
 import { db, row, rows } from './db.js'
 import { adapter } from './adapters/index.js'
-import { requireWorker } from './workers.js'
+import { refreshIdentity, requireWorker } from './workers.js'
 import { log } from './log.js'
 import { ensureDir } from './paths.js'
 import { removeMcpConfig, writeMcpConfig } from './mcpconfig.js'
@@ -302,6 +302,15 @@ export function spawnSession(opts: SpawnOptions): Session {
     setState(id, exitCode === 0 ? 'closed' : 'failed')
     events.onExit(id, exitCode)
     log.info(`session ${id.slice(0, 8)} exited with ${exitCode}`)
+
+    // A login session ending is the one moment we *know* the answer to "who is signed in?" may have
+    // changed. Identity used to be read once at commissioning and never again, which meant a worker
+    // that had just finished signing in stayed permanently undispatchable.
+    if (purpose === 'login') {
+      void refreshIdentity(opts.workerId).catch((err: unknown) => {
+        log.warn(`could not re-read identity after login session ${id.slice(0, 8)}:`, err)
+      })
+    }
   }
 
   if (transport === 'stream' && !ad.decodeStream) {

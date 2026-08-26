@@ -182,7 +182,8 @@ export async function refreshIdentity(id: string): Promise<Worker> {
     account: probe.account,
     organization: probe.organization,
     cliVersion: probe.cliVersion,
-    raw: probe.raw
+    raw: probe.raw,
+    checkedAt: Date.now()
   }
   db().prepare('update workers set identity_json = ? where id = ?').run(JSON.stringify(identity), id)
   return announce(requireWorker(id))

@@ -259,6 +259,29 @@ try {
     gone ? `${said.length} bytes after exit` : 'the session never left the live list'
   )
 
+  // ⛔ The bug that made commissioning useless. Identity was written once at `worker.create` - when
+  // the true answer is "nobody is signed in yet" - and nothing ever read it again. A worker signed
+  // in successfully therefore kept `loggedIn: false` for the rest of its life, and the scheduler's
+  // gate refused to dispatch to it forever. The sign-in appeared to work and produced a dead seat.
+  //
+  // ⚠️ The probe adapter cannot report a real sign-in, and does not need to: what must be true is
+  // that a *login* session ending causes identity to be read **again**, which `checkedAt` shows.
+  const identityBefore = probeWorker.identity?.checkedAt ?? 0
+  const readAgainBy = Date.now() + 15_000
+  let identityAfter = identityBefore
+  while (Date.now() < readAgainBy && identityAfter <= identityBefore) {
+    const entry = (await daemon.rpc('fleet.list')).find((x) => x.worker.id === probeWorker.id)
+    identityAfter = entry?.worker.identity?.checkedAt ?? 0
+    if (identityAfter <= identityBefore) await wait(250)
+  }
+  check(
+    'a login session ending makes agentyard re-read who is signed in',
+    identityAfter > identityBefore,
+    identityAfter > identityBefore
+      ? `re-read ${identityAfter - identityBefore}ms after commissioning`
+      : 'identity was never read a second time'
+  )
+
   // ---------------------------------------------------------------- projects and the DAG
   section('tasks')
   makeProject(project)

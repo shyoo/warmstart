@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { AdapterDetection, AdapterInfo, Session } from '@shared/protocol'
-import { rpc, type FleetEntry } from '../lib/daemon'
+import { rpc, useDaemonEvents, type FleetEntry } from '../lib/daemon'
 import { age, percent } from '../lib/format'
 import { TerminalPane } from './Terminal'
 
@@ -27,6 +27,14 @@ export function Workers({
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loginSession, setLoginSession] = useState<Session | null>(null)
+  const [loginEnded, setLoginEnded] = useState(false)
+
+  // ⚠️ The panel used to give no signal at all when the vendor's login finished. The terminal printed
+  // `-- session exited (0) --` and nothing else changed, so there was no way to tell a completed
+  // sign-in from a hung one, and Done looked like it had done nothing.
+  useDaemonEvents((event) => {
+    if (event.type === 'session.exit' && event.sessionId === loginSession?.id) setLoginEnded(true)
+  })
 
   useEffect(() => {
     void rpc('adapter.list').then(setAdapters)
@@ -59,8 +67,19 @@ export function Workers({
         cols: 100,
         rows: 26
       })
+      setLoginEnded(false)
       setLoginSession(session)
     })
+
+  /**
+   * Re-read who this account belongs to.
+   *
+   * ⛔ `worker.probe` refreshes identity as well as quota, and identity is the thing a login can have
+   * changed. The daemon does this by itself when a login session exits, so this button is for the
+   * cases it cannot see - a sign-in completed in a browser the CLI had already handed off to, or a
+   * credential edited outside agentyard entirely.
+   */
+  const recheck = (workerId: string) => guard(`probe:${workerId}`, () => rpc('worker.probe', { id: workerId }))
 
   return (
     <div className="panel">
@@ -116,7 +135,14 @@ export function Workers({
           </thead>
           <tbody>
             {fleet.map(({ worker, quota, sessions }) => {
-              const loggedIn = worker.identity?.raw?.includes('"loggedIn": true') ?? false
+              // ⛔ The stored field, not a substring of `raw`. This is the same mistake the
+              // scheduler's dispatch gate made and had fixed: grepping the probe's raw output for
+              // `"loggedIn": true` depends on one adapter's exact JSON spacing, so a worker that
+              // *was* signed in still read as "not signed in" here.
+              // ⚠️ `null` means unknown - no CLI, or an adapter that cannot tell - and must not be
+              // drawn as a confident "not signed in".
+              const loggedIn = worker.identity?.loggedIn === true
+              const signInUnknown = worker.identity?.loggedIn == null
               return (
                 <tr key={worker.id}>
                   <td>
@@ -132,7 +158,7 @@ export function Workers({
                   <td>
                     {worker.identity?.account ?? (
                       <span className={loggedIn ? 'dim' : 'warn'}>
-                        {loggedIn ? 'signed in' : 'not signed in'}
+                        {loggedIn ? 'signed in' : signInUnknown ? 'unknown' : 'not signed in'}
                       </span>
                     )}
                   </td>
@@ -239,17 +265,43 @@ export function Workers({
               This is the vendor&rsquo;s own login running in a terminal. Type here as you normally
               would — agentyard is hosting the process, not reading what it writes.
             </p>
-            <button
-              className="btn btn--ghost"
-              onClick={() => {
-                void rpc('session.close', { id: loginSession.id })
-                setLoginSession(null)
-                void refresh()
-              }}
-            >
-              Done
-            </button>
+            <div className="login-actions">
+              <button
+                className="btn btn--ghost"
+                disabled={busy === `probe:${loginSession.workerId}`}
+                onClick={() => recheck(loginSession.workerId)}
+              >
+                {busy === `probe:${loginSession.workerId}` ? 'Checking…' : 'Check sign-in again'}
+              </button>
+              <button
+                className="btn btn--primary"
+                disabled={busy === `probe:${loginSession.workerId}`}
+                onClick={() => {
+                  const { id, workerId } = loginSession
+                  setLoginSession(null)
+                  setLoginEnded(false)
+                  // ⛔ Awaited, in this order. Done used to fire `session.close` and drop the panel
+                  // without waiting, so the fleet was re-read before the CLI had exited and the row
+                  // still said "not signed in" - which is what made a successful sign-in look like a
+                  // failure.
+                  void guard(`probe:${workerId}`, async () => {
+                    await rpc('session.close', { id }).catch(() => {
+                      // Already exited on its own, which is the normal path. Nothing to close.
+                    })
+                    await rpc('worker.probe', { id: workerId })
+                  })
+                }}
+              >
+                {loginEnded ? 'Done' : 'Cancel sign-in'}
+              </button>
+            </div>
           </header>
+          {loginEnded && (
+            <p className="login-note">
+              The login session has ended. agentyard re-read the account by itself — the Account
+              column above shows what it found.
+            </p>
+          )}
           <TerminalPane sessionId={loginSession.id} interactive />
         </section>
       )}
