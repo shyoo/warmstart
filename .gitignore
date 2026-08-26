@@ -48,3 +48,6 @@ logs/
 # Test / coverage
 coverage/
 .nyc_output/
+
+# The Electron runtime download, shared by @electron/get and electron-builder in CI.
+.electron-cache/

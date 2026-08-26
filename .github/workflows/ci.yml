@@ -25,22 +25,35 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # ⚠️ One cache directory, named explicitly, because two different tools want this download.
+  # `@electron/get` reads `electron_config_cache` and electron-builder reads `ELECTRON_CACHE`; left to
+  # themselves they pick different per-OS locations and neither is a path `actions/cache` can name
+  # portably. Pointing both at the workspace makes the cache step one line on all three platforms.
+  electron_config_cache: ${{ github.workspace }}/.electron-cache
+  ELECTRON_CACHE: ${{ github.workspace }}/.electron-cache
+
 jobs:
   # Fast feedback: types, bundle, and the pure logic. If this is red nothing else is worth running.
+  #
+  # It also runs first on purpose: it populates the Electron cache that the three matrix jobs restore,
+  # so the ~110MB download happens once per run instead of seven times.
   check:
     name: typecheck · build · unit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
       - run: npm ci
-      # Electron's postinstall is skipped by some npm configurations, and every later job needs the
-      # binary. Doing it explicitly beats a confusing failure three steps down.
+      - uses: actions/cache@v4
+        with:
+          path: .electron-cache
+          key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
       - name: Ensure the Electron binary is present
-        run: node node_modules/electron/install.js
+        run: node scripts/ensure-electron.mjs
       - run: npm run typecheck
       - run: npm run build
       - run: npm test
@@ -56,14 +69,18 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
       - run: npm ci
+      - uses: actions/cache@v4
+        with:
+          path: .electron-cache
+          key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
       - name: Ensure the Electron binary is present
-        run: node node_modules/electron/install.js
+        run: node scripts/ensure-electron.mjs
       - run: npm run build
       # ⚠️ No agent CLI is installed on purpose. The suite skips what genuinely needs one and still
       # proves scheduling, the task DAG, cancellation, approvals, the controller and cost arithmetic.
@@ -80,14 +97,18 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
       - run: npm ci
+      - uses: actions/cache@v4
+        with:
+          path: .electron-cache
+          key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
       - name: Ensure the Electron binary is present
-        run: node node_modules/electron/install.js
+        run: node scripts/ensure-electron.mjs
       - run: npm run build
       - name: UI (Linux, under a virtual display)
         if: runner.os == 'Linux'
@@ -108,14 +129,18 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
       - run: npm ci
+      - uses: actions/cache@v4
+        with:
+          path: .electron-cache
+          key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
       - name: Ensure the Electron binary is present
-        run: node node_modules/electron/install.js
+        run: node scripts/ensure-electron.mjs
       - name: Build an unpacked app
         run: npm run pack
       - name: Drive the packaged app (Linux, under a virtual display)

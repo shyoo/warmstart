@@ -157,8 +157,9 @@ npm install
 npm run dev
 ```
 
-If the window fails to start with a missing-binary error, your npm blocked Electron's postinstall.
-Run `node node_modules/electron/install.js` once and try again.
+Electron 44 has no postinstall, so `npm install` does not fetch the ~110MB runtime. If the window
+fails to start with a missing-binary error, run `node scripts/ensure-electron.mjs` once and try
+again — it is idempotent, so it is also safe to run when you are not sure.
 
 ```bash
 npm run typecheck    # tsc over main/preload/daemon and renderer

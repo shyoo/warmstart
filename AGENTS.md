@@ -144,9 +144,12 @@ costmodels/             versioned pricing data
 
 ## Things that will bite
 
-- **Electron's postinstall is blocked by this machine's npm.** After `npm install`, if
-  `node_modules/electron/dist/electron.exe` is missing, run `node node_modules/electron/install.js`.
-  The failure looks like a broken build, not a missing download.
+- **Electron does not download itself.** Electron 44 ships **no postinstall** — it exposes
+  `install-electron` as a bin and leaves the ~110MB download to you — so `npm install` finishes with
+  `node_modules/electron/dist` empty and every suite here needs that dist. Run
+  `node scripts/ensure-electron.mjs`, which retries and says whether the release host is reachable.
+  The failure looks like a broken build, not a missing download. ⚠️ This is not your npm blocking a
+  script; there is no script to block, so there is no npm setting that fixes it.
 - **A sandboxed preload must be CommonJS.** `package.json` sets `"type": "module"`, so the preload is
   built to `index.cjs` via an explicit rollup output override in `electron.vite.config.ts`. If you
   see *"Cannot use import statement outside a module"* from the preload, that override was lost.
