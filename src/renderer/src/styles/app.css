@@ -455,6 +455,18 @@ body {
   margin-bottom: var(--sp-3);
 }
 
+/* An outcome that is not a failure. A probe that finds nothing still has something to say. */
+.notice {
+  border: 1px solid var(--color-border-strong);
+  border-left: 2px solid var(--color-accent);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: var(--text-dense);
+  padding: var(--sp-2) var(--sp-3);
+  margin-bottom: var(--sp-3);
+}
+
 .warnings {
   border: 1px solid var(--color-border);
   border-left: 2px solid var(--state-warn);

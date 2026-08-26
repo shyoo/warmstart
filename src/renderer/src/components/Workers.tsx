@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { AdapterDetection, AdapterInfo, Session } from '@shared/protocol'
 import { rpc, useDaemonEvents, type FleetEntry } from '../lib/daemon'
-import { age, percent } from '../lib/format'
+import { age, percent, quotaGap } from '../lib/format'
 import { TerminalPane } from './Terminal'
 
 /**
@@ -26,6 +26,7 @@ export function Workers({
   const [adding, setAdding] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
   const [loginSession, setLoginSession] = useState<Session | null>(null)
   const [loginEnded, setLoginEnded] = useState(false)
 
@@ -44,6 +45,7 @@ export function Workers({
   const guard = async (key: string, fn: () => Promise<unknown>) => {
     setBusy(key)
     setError(null)
+    setNotice(null)
     try {
       await fn()
       await refresh()
@@ -53,6 +55,23 @@ export function Workers({
       setBusy(null)
     }
   }
+
+  /**
+   * ⚠️ `worker.probe` resolves with the failure inside its payload rather than rejecting, so
+   * `guard`'s catch never fired and a failed probe was indistinguishable from a successful one:
+   * the same busy flash, the same "unknown" left in the cell, and a button that looked dead.
+   * Report the outcome either way, and when there is no number say what would produce one.
+   */
+  const probe = (workerId: string, label: string) =>
+    guard(`probe:${workerId}`, async () => {
+      const quota = await rpc('worker.probe', { id: workerId })
+      const gap = quotaGap(quota)
+      setNotice(
+        gap
+          ? `${label}: ${gap.label}. ${gap.hint}`
+          : `${label}: ${quota.windows.map((w) => `${w.label} ${percent(w.percent)}`).join(' · ')}`
+      )
+    })
 
   const startLogin = (workerId: string, adapterId: string) =>
     guard(`login:${workerId}`, async () => {
@@ -97,6 +116,7 @@ export function Workers({
       </header>
 
       {error && <div className="alert">{error}</div>}
+      {notice && <div className="notice">{notice}</div>}
 
       {adding && (
         <AddWorker
@@ -143,6 +163,7 @@ export function Workers({
               // drawn as a confident "not signed in".
               const loggedIn = worker.identity?.loggedIn === true
               const signInUnknown = worker.identity?.loggedIn == null
+              const gap = quotaGap(quota)
               return (
                 <tr key={worker.id}>
                   <td>
@@ -163,15 +184,15 @@ export function Workers({
                     )}
                   </td>
                   <td className="num">
-                    {!quota || quota.stale || quota.windows.length === 0 ? (
-                      <span className="warn">
-                        unknown
+                    {gap ? (
+                      <span className="warn" title={gap.hint}>
+                        {gap.label}
                         {quota?.ageMs !== undefined && quota.windows.length > 0 && (
                           <span className="dim"> · {age(quota.ageMs)}</span>
                         )}
                       </span>
                     ) : (
-                      quota.windows.map((w) => `${w.label} ${percent(w.percent)}`).join(' · ')
+                      quota?.windows.map((w) => `${w.label} ${percent(w.percent)}`).join(' · ')
                     )}
                   </td>
                   <td className="num tbl-num">{worker.maxConcurrent}</td>
@@ -234,9 +255,8 @@ export function Workers({
                     <button
                       className="btn btn--ghost"
                       disabled={busy === `probe:${worker.id}`}
-                      onClick={() =>
-                        void guard(`probe:${worker.id}`, () => rpc('worker.probe', { id: worker.id }))
-                      }
+                      onClick={() => void probe(worker.id, worker.label)}
+                      title="Reads the vendor CLI's own usage cache off disk. It never spends a token."
                     >
                       Probe
                     </button>

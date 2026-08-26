@@ -54,3 +54,53 @@ export function quotaUrgency(percentUsed: number): 'ok' | 'warn' | 'danger' {
   if (percentUsed >= 70) return 'warn'
   return 'ok'
 }
+
+/**
+ * Why a quota cell has no number, phrased as something the operator can act on.
+ *
+ * ⚠️ The panel used to collapse every one of these into the bare word "unknown", including the
+ * common and boring case: the vendor CLI writes its usage cache only after real work, so a freshly
+ * signed-in account has nothing to read and never will until someone uses it. Probe dutifully
+ * recorded that failure and the cell rendered the same word before and after the click, which is
+ * why the button looked broken. The error is diagnostic; hiding it threw away the diagnosis.
+ *
+ * Returns null when there is a real number to show - the caller renders the windows itself.
+ */
+export function quotaGap(
+  quota: { windows: unknown[]; error?: string; ageMs?: number; stale?: boolean } | null
+): { label: string; hint: string } | null {
+  if (!quota) {
+    return {
+      label: 'never probed',
+      hint:
+        'No reading has been taken for this worker yet. Probe reads the vendor CLI’s own usage ' +
+        'cache off disk - it does not spend a token.'
+    }
+  }
+  if (quota.windows.length === 0) {
+    // The adapter names the file it could not read. Keep that, but lead with the fix.
+    if (/cachedUsageUtilization|no \.claude\.json/i.test(quota.error ?? '')) {
+      return {
+        label: 'no usage data yet',
+        hint:
+          'Signing in does not produce a usage reading. The CLI writes its usage cache only after ' +
+          'it has done real work on the account, so start a session on this worker and probe again ' +
+          `once it has run. (${quota.error})`
+      }
+    }
+    return {
+      label: 'unknown',
+      hint: `The last probe returned no windows: ${quota.error ?? 'no reason given'}`
+    }
+  }
+  if (quota.stale) {
+    return {
+      label: 'stale',
+      hint:
+        `The only reading available was taken ${age(quota.ageMs ?? 0)} and is too old to act on, so ` +
+        'it is not shown as a current number. The CLI refreshes its cache when it next does real ' +
+        'work - start a session on this worker to get a fresh one.'
+    }
+  }
+  return null
+}
