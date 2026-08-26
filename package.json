@@ -3,6 +3,14 @@
   "version": "0.0.1",
   "description": "A scheduler with a budget: route coding-agent tasks to the worker, session and moment where they are cheapest to run.",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shyoo/multi_agent_controller.git"
+  },
+  "homepage": "https://github.com/shyoo/multi_agent_controller#readme",
+  "bugs": {
+    "url": "https://github.com/shyoo/multi_agent_controller/issues"
+  },
   "private": true,
   "type": "module",
   "main": "./out/main/index.js",
@@ -55,5 +63,5 @@
     "electron": true,
     "esbuild": true
   },
-  "author": "agentyard contributors"
+  "author": "Sunghwan Yoo"
 }

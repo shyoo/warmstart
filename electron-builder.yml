@@ -15,7 +15,7 @@
 
 appId: dev.agentyard.app
 productName: agentyard
-copyright: Copyright © 2026 agentyard contributors
+copyright: Copyright © 2026 Sunghwan Yoo
 
 directories:
   output: release
