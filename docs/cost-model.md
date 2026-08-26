@@ -85,7 +85,8 @@ in tokens.
 
 ## 4. Compaction
 
-Source: 118 real local compactions (precompact `DESIGN.md` §5) plus transcripts sampled 2026-08-24.
+Source: 118 real local compactions measured by the author with a private predecessor tool, plus
+transcripts sampled 2026-08-24.
 
 | Fact | Value |
 |---|---|
@@ -105,7 +106,7 @@ last-chance-to-compact moment is **T+53m**, not T+58m.
 
 | Fact | Value | Source |
 |---|---|---|
-| ⛔ **`claude -p /usage` is NOT free and does NOT report usage** | The slash command is taken as a **prompt**. It spends a real assistant turn and answers in prose. A poller built on it bills every account on every interval | measured 2026-08-25, CLI 2.1.223 — **corrects the earlier claim from precompact `usage.py`** |
+| ⛔ **`claude -p /usage` is NOT free and does NOT report usage** | The slash command is taken as a **prompt**. It spends a real assistant turn and answers in prose. A poller built on it bills every account on every interval | measured 2026-08-25, CLI 2.1.223 — **corrects an earlier claim inherited from a private predecessor tool** |
 | No `usage` subcommand exists | `claude usage` is likewise treated as a prompt | same |
 | `.claude.json` → `cachedUsageUtilization` | `{fetchedAtMs, accountUuid, utilization.limits[]}`, each limit `{kind, group, percent, severity, resets_at, is_active}`. Shape confirmed | same |
 | ⚠️ …but it is a **cache the CLI refreshes on its own schedule** | The reading on the development machine was **19 days old**. Neither an interactive start nor a `-p` run refreshed it | same |

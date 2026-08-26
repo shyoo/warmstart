@@ -43,9 +43,9 @@ These are not preferences; breaking one breaks the product.
   `if (mode === 'economy')`. Adapters declare `capabilities` and `policy`; objectives are a weight
   vector consumed in exactly two places. Antigravity lacking `/compact` — or lacking a classifier-backed
   `auto` mode — must express itself as a missing capability, not a special case.
-- ⛔ **Nothing about one machine may be hard-coded.** No `C:\Dev`, no account names, no assumption
-  that any CLI is installed. Everything is discovered or configured. The app must open on a clean
-  profile with zero workers, say so, and offer the wizard.
+- ⛔ **Nothing about one machine may be hard-coded.** No absolute path from your own disk, no account
+  directory names, no assumption that any CLI is installed. Everything is discovered or configured.
+  The app must open on a clean profile with zero workers, say so, and offer the wizard.
 - ⛔ **Never kill a process by image name.** Not in code, not in a shell, not "just this once" in a
   test. `taskkill /IM electron.exe` and `pkill -f node` take out the user's editor, their other agent
   windows, and anything else that happens to share a binary. agentyard kills **only PIDs it recorded
@@ -197,7 +197,7 @@ costmodels/             versioned pricing data
   installed as a `.cmd` rather than a `.exe`. Everything that starts a CLI goes through
   `launchable()` / `launchArgs()`, **including detection** - `execFile` on a `.cmd` without a shell
   fails with a bare `spawn EINVAL`, and detection that fails for an installed CLI reports it missing.
-- **`agy` installs to `%LOCALAPPDATA%gyin` and is not on PATH until `agy install` runs.** The
+- **`agy` installs under `%LOCALAPPDATA%` and is not on PATH until `agy install` runs.** The
   adapter looks there anyway; reporting "not installed" would send somebody to reinstall what they
   already have.
 - **A native module cannot be loaded from inside an asar.** `dlopen` needs a real path and the

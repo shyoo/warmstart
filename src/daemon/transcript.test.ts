@@ -85,8 +85,9 @@ describe('contextOf', () => {
 
 describe('encodeProjectDir', () => {
   it('matches the on-disk name Claude Code uses', () => {
-    // Verified against a real transcript directory on 2026-08-25.
-    expect(encodeProjectDir('C:\\Dev\\multi_agent_controller')).toBe('C--Dev-multi-agent-controller')
+    // Verified against a real transcript directory on 2026-08-25: every character that is not a
+    // letter or a digit becomes a dash, including the drive colon and every separator.
+    expect(encodeProjectDir('C:\\code\\my_project')).toBe('C--code-my-project')
     expect(encodeProjectDir('/home/x/proj.v2')).toBe('-home-x-proj-v2')
   })
 })

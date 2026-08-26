@@ -166,18 +166,25 @@ Nothing load-bearing here is assumed. Sources are named so any claim can be re-c
 |---|---|
 | The transcript already carries everything metering needs: `usage.iterations[]`, `cache_creation.{ephemeral_1h,ephemeral_5m}_input_tokens`, `cache_read_input_tokens`, `output_tokens_details.thinking_tokens`, plus per-record `effort`, `gitBranch`, `requestId`, `cwd`, `version` | `~/.claude/projects/*/*.jsonl`, sampled 2026-08-24 |
 | **`/compact` takes ~2 minutes.** `compactMetadata.durationMs` = 139,207 and 116,245 on two real compactions (preTokens 549k and 329k) | same |
-| Compaction economics over **118 real compactions**: summary S ≈ 5,631 output tok, post-compact P ≈ 12,243 tok | precompact `DESIGN.md` §5 |
-| Idle must be measured from the **last assistant turn**, not file mtime | precompact `DESIGN.md` §6 |
-| Post-compaction size lives in a later `compact_boundary` record, not the last turn | precompact §4b |
-| `claude -p /usage` returns 5h / 7d percentages, answered by the CLI — no assistant turn, nothing billed, ~2s. Fallback `.claude.json` → `cachedUsageUtilization.utilization.limits[]` | precompact `usage.py` |
-| `CLAUDE_CONFIG_DIR` per account isolates credentials — how N subscriptions become N workers | precompact `accounts.py` |
+| Compaction economics over **118 real compactions**: summary S ≈ 5,631 output tok, post-compact P ≈ 12,243 tok | the predecessor’s design notes §5 |
+| Idle must be measured from the **last assistant turn**, not file mtime | the predecessor’s design notes §6 |
+| Post-compaction size lives in a later `compact_boundary` record, not the last turn | the predecessor’s design notes §4b |
+| `claude -p /usage` returns 5h / 7d percentages, answered by the CLI — no assistant turn, nothing billed, ~2s. Fallback `.claude.json` → `cachedUsageUtilization.utilization.limits[]` | the predecessor’s quota probe — ⛔ **later measured to be wrong; see `docs/cost-model.md` §5** |
+| `CLAUDE_CONFIG_DIR` per account isolates credentials — how N subscriptions become N workers | the predecessor’s account isolation |
 | `--session-id`, `--resume`, `--fork-session`, `--model`, `--effort`, `--permission-mode`, `--worktree`, `--autocompact`, `--max-budget-usd`, stream-json in/out, `--mcp-config` | `claude --help` 2.1.223 |
 | `claude --permission-mode` accepts **`auto`**, `acceptEdits`, `bypassPermissions`, `manual`/`default`, `dontAsk`, `plan`. `auto` is the built-in start mode on Pro/Max/Team **in a terminal only** — `-p` and the Agent SDK start in `default` | `claude --help` 2.1.223 + *Choose a permission mode*, 2026-08-25 |
 | **`--permission-prompt-tool <tool>` exists**: an MCP tool agentyard serves that answers permission prompts, non-interactive mode only. Undocumented in `--help`, but the parser accepts it | `claude --permission-prompt-tool` → *option argument missing*, 2.1.223, 2026-08-25 |
 | **Gemini CLI stopped serving individual accounts on 2026-06-18** and is superseded by **Antigravity CLI (`agy`)**. Gemini Code Assist Standard/Enterprise licences keep the old CLI | Google Developers Blog, *Transitioning Gemini CLI to Antigravity CLI*, read 2026-08-25 |
 | `agy` has `-p/--print`, `--output-format text\|json\|stream-json`, `-c/--continue`, `--conversation <id>`, `--model`, `--effort`, `--agent`, `--json-schema`, `--dangerously-skip-permissions`. **No auto/classifier mode.** Permissions are `allow`/`ask`/`deny` rules shaped `action(target)` in `~/.gemini/antigravity-cli/settings.json` | antigravity.google/docs/cli, read 2026-08-25 |
 | A transplanted transcript **is** discovered by `--resume` in another config root (error moves from *no conversation found* to *not logged in*) | D8 spike, 2026-08-24 |
-| Permanent worktree slots beat per-task worktrees on an 11.7 GB / 5,076-file repo | `magic_writer/scripts/worktree/README.md` |
+| Permanent worktree slots beat per-task worktrees on an 11.7 GB / 5,076-file repo | a large private monorepo, measured by the author |
+
+> **“The predecessor”** is a private prototype the author ran for months before this project: an
+> unattended watchdog that compacted Claude Code sessions before their context filled. It is not
+> public and is referenced here only for the measurements it produced — 118 real compactions, the
+> ~2 hour keepalive-versus-compact break-even, and the account-isolation trick that makes N
+> subscriptions into N workers. ⛔ One of its findings turned out to be **wrong** and is corrected in
+> `docs/cost-model.md` §5; that correction is the reason this plan carries provenance on every row.
 
 ### 2.3 Operational rules — from the owner's own experience
 
@@ -190,7 +197,7 @@ Nothing load-bearing here is assumed. Sources are named so any claim can be re-c
 
 ### 2.4 The limitation that goes away
 
-precompact concluded: *"No way to trigger `/compact` in a running session from outside… only via
+The predecessor concluded: *"No way to trigger `/compact` in a running session from outside… only via
 OS-level UI automation."* True of the **desktop app**. Not true of a session **we spawn in a PTY** —
 we own stdin. `/compact`, `/usage`, ESC and any prompt are bytes written to the pty master. Actuation
 becomes a function call. This is the main argument for the PTY-hosted design in §6.2.
@@ -229,7 +236,7 @@ needed*, not a binary compact-or-not:
 ```
 expected idle < ~1h   ->  do nothing, it will be resumed inside the TTL anyway
 ~1h .. ~2h            ->  keepalive at T+55m
-> ~2h, and C > 60k    ->  compact  (precompact's measured break-even)
+> ~2h, and C > 60k    ->  compact  (the predecessor's measured break-even)
 never                 ->  do nothing; both moves are pure waste
 ```
 
@@ -431,10 +438,10 @@ Cross-platform in code from day one; only Windows tested in v1.
 
 ### 6.4 Worker commissioning (D3)
 
-Public open-source software: **nothing about one machine may be hard-coded** — not `C:\Dev`, not
-`Claude`/`ClaudeSecond`/`ClaudeThird`, not a count of three, not that Claude is installed at all. A
-stranger with one Gemini account and a local model must reach a working fleet from the UI. **This is
-an M1 deliverable.**
+Public open-source software: **nothing about one machine may be hard-coded** — not an absolute path
+from the author's disk, not the particular directory names their accounts happen to use, not a count
+of how many they have, not that any given CLI is installed at all. A stranger with one account and a
+local model must reach a working fleet from the UI. **This is an M1 deliverable.**
 
 **Settings → Workers** lists workers with adapter, label, live quota, enable toggle. *Add worker*:
 
@@ -459,7 +466,7 @@ A **Doctor** panel reports which CLIs were found and at what version, whether ea
 words rather than as a silently degraded scheduler.
 
 **Transcript isolation.** Each worker's sessions live under its own root, so ownership is unambiguous
-and precompact's Windows-only `projects` junction is unnecessary — good for portability. The cost is
+and the predecessor's Windows-only `projects` junction is unnecessary — good for portability. The cost is
 that cross-account resume needs a transcript copy (§8.8).
 
 ---
@@ -860,7 +867,7 @@ low-confidence, which widens `SAFETY` in §8.3.
 ### 8.6 The cache clock
 
 Per session: `cache_expires_at = last_request_started_at + TTL`. Note **request start**, not response
-end (§2.1) — a 4-minute response has already spent 4 minutes. precompact measured from the last
+end (§2.1) — a 4-minute response has already spent 4 minutes. The predecessor measured from the last
 assistant turn, which errs ~1 response-length optimistic; we subtract the observed duration.
 
 At **T+53m** (leaving margin for a ~2-minute compaction, §2.2):
@@ -875,9 +882,9 @@ At **T+53m** (leaving margin for a ~2-minute compaction, §2.2):
 6. otherwise                                               ->  let it expire; if stale, HANDOFF + close
 ```
 
-Move 1 did not exist for precompact — a watchdog has no queue to pull from. Moves 2 and 3 did not
+Move 1 did not exist for the predecessor — a watchdog has no queue to pull from. Moves 2 and 3 did not
 exist in v0.3, because I did not know reads refresh the TTL for free. Between them they are the
-largest saving this tool offers over running precompact beside manually driven windows.
+largest saving this tool offers over running the predecessor beside manually driven windows.
 
 `expected idle` is estimated from queue depth, dependency readiness, and — for `awaiting_human` — the
 rolling median human response time, which the tool is uniquely positioned to measure.
@@ -1186,7 +1193,7 @@ Three properties worth stating because they are the whole point:
   non-git project is a pool of one over the directory itself.
 
 **The prepare hook, and the trap it exists for.** A fresh worktree has no `node_modules`, no `.env`,
-no seeded database. magic_writer solved this by copying `node_modules` from the trunk on sync — and
+no seeded database. A large private monorepo solved this by copying `node_modules` from the trunk on sync — and
 that bit back, because a package installed inside a slot vanished on the next sync. So `prepare` is
 declared per project and runs on claim, and the tool records what it did; a workspace whose lockfile
 has drifted from the trunk's is re-prepared rather than patched. Per-workspace environment (port
