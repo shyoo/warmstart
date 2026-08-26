@@ -110,3 +110,48 @@ refreshes the TTL — and marked delivered so the next prompt does not charge fo
 ⚠️ **No consult has ever been answered by a real model.** Every L1 check runs with nobody able to
 answer, which is deliberate and proves the fallbacks — but the *answer* path (spawn, one turn, JSON
 out, apply) has only been exercised against synthetic answers in L0. **R8** below.
+
+## What M5 built, and what measuring cost the design
+
+**Two adapters, and the milestone's real lesson.** `antigravity-cli` and `openai-compatible` were
+written from vendor documentation, then both CLIs were installed and run — and **several documented
+claims were wrong in ways that would have failed on the first spawn.** `docs/adapters.md` has the
+full table; the ones worth carrying in your head:
+
+- ⛔ **`--ask-for-approval` does not exist on `codex exec`.** Interactive-only. Every scheduled spawn
+  would have died on an argument error.
+- ⛔ **`-p` is `--profile` on codex and `--print` on agy.** Same letter, opposite meanings.
+- **`agy` has `--mode accept-edits|plan`** after all — exactly what plan §9.1 predicted for a
+  classifier-less CLI, and now its default.
+- ⛔ **`cmd /d /s /c <shim>` breaks on any path containing a space**, and the Windows default home
+  contains one. Latent since M1; never fired because `claude` resolves to a `.EXE` here. `codex`
+  installs as `codex.cmd`, which exposed it.
+
+**Capability-driven routing, proved four times over** — the plan expected two. None is a branch in
+scheduling code:
+
+| Gap | Consequence |
+|---|---|
+| no `/compact` | cache-clock moves 4 and 5 unavailable; `wrapUpProtocol: handoff` |
+| no classifier | narrower allowlist written into the worker's config before each spawn |
+| ⛔ no credential isolation | `maxAccounts: 1` — Antigravity keeps credentials in the **OS keyring** with no config-dir variable, so there is one identity per OS user. Commissioning refuses the second and says why |
+| ⛔ no mintable session id | transcript discovered after the fact, and **orphans are never killed** — identity cannot be proved, and agentyard kills only what it can |
+
+**A cost model may now say it does not know.** `cache.kind: "unpriced"` is a real state:
+`canPriceCache()` returns false and the clock declines to spend on keepalive or compaction rather
+than acting on an invented number. Google bills cache *storage per token-hour*; OpenAI caches
+server-side with no client-controlled TTL. ⛔ Neither was converted into a write multiplier, because
+an invented number is indistinguishable from a measured one at the point of use.
+
+**Two holes M5 found in earlier work, both fixed:**
+
+- A **reserve breach on a no-compact adapter did nothing** — the one case the reserve exists to
+  catch. It now hands off and closes.
+- **Commissioning left a window in which a signed-in worker was dispatchable** before it could be
+  disabled, and the scheduler ticks every ten seconds. `worker.create` now takes `enabled: false`.
+  Found by the M4 controller checks failing after M5 commissioned a real signed-in codex account.
+
+⚠️ **Not verified, and the boundary is sharp:** everything above was measured for free. Everything
+below needs a signed-in account and a real turn — the `stream-json` event shapes for both new
+adapters, whether codex rollouts carry meterable usage, and whether `agy -p /usage` is the first free
+quota probe agentyard has ever had. R9–R12 below.

@@ -4,7 +4,7 @@
 Claude Code, Antigravity, local models — and routes each task to the worker, session and moment where
 it is cheapest to run.
 
-> **Status: pre-alpha, M5.** It runs work end to end — file a task, it runs in a pooled git worktree
+> **Status: pre-alpha, M6.** It runs work end to end — file a task, it runs in a pooled git worktree
 > on its own branch and lands on your trunk when the checks pass — and it reasons about **cost**: it
 > keeps a warm prompt cache alive when that is cheaper than rebuilding it, compacts when it is not,
 > preempts before a quota window closes and resumes itself after the reset. Every belief it acts on is
@@ -21,6 +21,10 @@ it is cheapest to run.
 > Their differences are capabilities the scheduler reads, never branches in its code: one of them
 > cannot compact, none of them has a classifier, and one of them can only ever hold a single account
 > on a machine because it keeps its credential in the OS keyring.
+>
+> M6 packages it. `npm run dist` produces an installer, and a test suite drives the *packaged* app to
+> prove the things only packaging can break — that the native terminal module survived the archive,
+> and that the app can still start its own background daemon with no system Node installed.
 > See [HANDOFF.md](HANDOFF.md) for exactly where the build is, and
 > [`transient_docs/implementation_plan_2026-08-24.md`](transient_docs/implementation_plan_2026-08-24.md)
 > for the design of record.
@@ -70,9 +74,18 @@ worth and refuses to let it evaporate.
 
 - Node.js 22+ (to build; the app runs on the Node inside Electron)
 - Git 2.40+
-- At least one agent CLI on `PATH` — today that means `claude`. Antigravity CLI (`agy`) and
-  OpenAI-compatible local endpoints arrive at M5
-- Windows today; macOS and Linux are written for and not yet tested
+- At least one agent CLI on `PATH`:
+
+| CLI | Install | Needs |
+|---|---|---|
+| **Claude Code** | `npm install -g @anthropic-ai/claude-code` | a Claude Pro/Max/Team subscription |
+| **Codex** | `npm install -g @openai/codex` | a ChatGPT Plus/Pro/Business plan, or an API key |
+| **Antigravity** | `irm https://antigravity.google/cli/install.ps1 \| iex` | Google AI Pro or Ultra |
+
+You need **one**. Having several is the point — see *Multiple accounts* below.
+
+- Windows is tested. ⚠️ macOS and Linux are written for and **have never been run**; the packaging
+  targets exist and the platform branches are there, but nobody has started the app on either.
 
 ## What works today
 
@@ -98,8 +111,37 @@ worth and refuses to let it evaporate.
   up, committed, handed off and re-queued to resume itself after the reset.
 - **See the fleet**: per-account quota with its **age**, reset countdowns, live sessions with their
   prompt-cache countdown and context size.
-- **Doctor** tells you which CLIs were found, who is signed in, how old each quota reading is, and
-  which cost model is in force.
+- **Ask it to break down a goal.** File something too big for one task and the controller turns it
+  into a handful of drafts with dependencies between them. Drafts dispatch nothing — you promote them
+  one at a time, and each prompt is written *then*, from what the work before it actually learned.
+- **A controller that is never in the way.** It can also work out why a task keeps failing and
+  whether work an agent filed for itself should exist at all. ⛔ Every question it is asked has a
+  deterministic answer that fires on a timer if it does not reply — so with no controller account
+  configured at all, agentyard behaves exactly as it would without one.
+- **Doctor** tells you which CLIs were found, who is signed in, how old each quota reading is, which
+  cost model is in force, and — per adapter — what agentyard can and cannot verify about it.
+
+### Providers are not interchangeable, and agentyard says so
+
+The three CLIs differ in ways that matter to a scheduler and are invisible in a feature comparison.
+Each difference is a capability agentyard reads, never a branch in its code:
+
+| | Claude Code | Antigravity | Codex |
+|---|---|---|---|
+| **Accounts per machine** | unlimited | ⛔ **one** | unlimited |
+| Can compact a long session | ✔ | ⛔ | ⛔ |
+| Something reviews each action | ✔ | ⛔ | ⛔ |
+| agentyard can meter its cost | exactly | from the live stream | from the live stream |
+
+Antigravity keeps its credential in the OS keyring with no way to point it elsewhere, so **one machine
+holds exactly one Antigravity account** — agentyard refuses to commission a second rather than let two
+workers quietly share one window. A CLI that cannot compact hands off and closes instead. A CLI with
+no reviewer gets a narrower allowlist written into its own configuration before every run.
+
+⚠️ Everything in that table was established by **running the CLIs**, not by reading their
+documentation — which mattered, because several documented claims turned out to be wrong in ways that
+would have failed on the first spawn. [`docs/adapters.md`](docs/adapters.md) records what was measured,
+when, against which version, and what is still unverified.
 
 > **On quota numbers.** Claude Code has no free live usage probe — the slash command spends a real
 > turn — so agentyard reads the CLI's own cache and always shows you how old it is. An old reading is
@@ -124,15 +166,36 @@ npm run build        # typecheck + production bundle into out/
 npm start            # preview a production build
 ```
 
+**Tests.** Organised by what a failure would *cost*, not by the usual pyramid:
+
+```bash
+npm run test:all     # unit + daemon + UI. Free, and required before every commit
+npm run test:pack    # builds a real package and drives it. Free, slow
+npm run test:e2e     # AGENTYARD_E2E=1 required. SPENDS REAL TOKENS
+```
+
+**Packaging.**
+
+```bash
+npm run pack         # unpacked app in release/, for testing
+npm run dist         # installers for the current platform
+```
+
+⚠️ Builds are **unsigned**. Windows SmartScreen will warn; macOS Gatekeeper will refuse until you
+clear it by hand. That is the honest state of a pre-alpha rather than something worked around —
+signing is a certificate and a release process, not a config line.
+
 ## Repository layout
 
 | Path | What it holds |
 |---|---|
 | `src/main`, `src/preload` | Electron shell. A window host and nothing more. |
 | `src/renderer` | React UI. |
-| `src/daemon` | `orchestratord` — the scheduler, PTYs, store and MCP server. **M1.** |
+| `src/daemon` | `orchestratord` — the scheduler, cache clock, controller, PTYs and store. |
+| `src/mcp` | The MCP server agent CLIs spawn. Two tiers; neither can delete anything. |
 | `src/shared` | Types crossing a process boundary. |
 | `costmodels/` | Versioned pricing data. Never inline arithmetic. |
+| `electron-builder.yml` | Packaging. Two lines in it are load-bearing and say why. |
 | `docs/` | Current, maintained reference. |
 | `transient_docs/` | Design and implementation plans, dated. Kept for reasoning, not status. |
 | `AGENTS.md` | Conventions for AI agents working on this repo. |
@@ -144,6 +207,40 @@ agentyard supports more than one account per provider, which is useful to anyone
 personal and a work subscription. Each account must be separately and legitimately subscribed, and
 each is kept in its own isolation root; the tool never shares credentials between them and never
 reads them at all.
+
+⛔ **With one exception, and it is not a limitation agentyard can engineer around.** Antigravity keeps
+its credential in the operating system's keyring and offers no environment variable to point it at a
+different one, so a machine holds exactly **one** Antigravity identity. Commissioning a second is
+refused, with a message saying why — because two workers on one keyring are not two accounts, they are
+two schedulers' worth of belief about a single window. Claude Code and Codex both have a
+config-directory variable and are unlimited.
+
+## Adding a CLI agentyard does not know about
+
+Drop a JSON file in `<data dir>/adapters/`:
+
+```json
+{
+  "schema_version": 1,
+  "id": "my-cli",
+  "label": "My CLI",
+  "command": "mycli",
+  "isolation_env_var": "MYCLI_HOME",
+  "print_args": ["--print", "--cwd", "{{cwd}}"],
+  "cost_model_id": "anthropic.subscription.2026-08"
+}
+```
+
+⛔ **Declarative only — never JavaScript.** The daemon holds the RPC token, spawns agents and knows
+where every credential root lives; loading code from a directory anything can write to would put all
+of that behind a file permission. So a declaration describes what its CLI is *like*, and a generic
+driver does the work.
+
+⚠️ The ceiling is real and deliberate. A declared adapter cannot decode a stream dialect nobody
+wrote a decoder for, so agentyard **cannot meter it** — its runs cost an *unknown* amount rather than
+nothing — it gets no agentyard MCP tools, and its orphaned processes are never killed because their
+identity cannot be proved. Doctor states all three. A CLI worth more than that is worth a real adapter
+in `src/daemon/adapters/`, where its quirks can be measured and written down.
 
 ## Licence
 

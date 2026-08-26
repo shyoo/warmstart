@@ -4,6 +4,7 @@ import type { DaemonEvent, Session } from '@shared/protocol.js'
 import { acquireLock, clearEndpoint, publishEndpoint, releaseLock } from './lock.js'
 import { closeDb, openDb } from './db.js'
 import { loadCostModels } from './costmodel.js'
+import { loadAdapters } from './adapters/index.js'
 import { startServer, type DaemonServer } from './server.js'
 import { QuotaPoller } from './quota.js'
 import { getSession, reconcileOrphans, setSessionEvents, shutdownAll } from './sessions.js'
@@ -37,6 +38,11 @@ async function main(): Promise<void> {
   const startedAt = Date.now()
   openDb()
   loadCostModels()
+  // ⛔ Before anything can commission a worker or schedule a tick. An adapter appearing under a
+  // running scheduler would mean capabilities changing between the gate that admitted a task and the
+  // dispatch that acted on it.
+  const external = loadAdapters()
+  if (external.loaded) log.info(`${external.loaded} adapter(s) declared in the data directory`)
 
   const orphans = reconcileOrphans()
   if (orphans) log.info(`cleared ${orphans} session(s) left behind by a previous run`)

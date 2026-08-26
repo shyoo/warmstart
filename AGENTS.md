@@ -100,6 +100,16 @@ These are not preferences; breaking one breaks the product.
   and the cache clock declines to spend rather than acting on an invented number. Do not convert one
   provider's pricing shape into another's to fill the field — at the point of use, a converted number
   is indistinguishable from a measured one.
+- ⛔ **Never kill a bare pid, in product code *or* in a test.** Pids are recycled: a process you
+  spawned can exit, the OS can hand its number to something else, and a `finally` block firing
+  seconds later then kills a stranger. Read the command line and check it is yours first - both
+  `ownsProcess()` and the harness's `killTree()` do. If the command line cannot be read, the answer is
+  **no**: a leaked process costs a stale port, killing the wrong one costs somebody their work.
+- ⛔ **Code is never loaded from the data directory.** Declarative adapters are JSON and are driven by
+  a generic driver. The daemon holds the RPC token, spawns agents and knows every credential root;
+  executing a file that anything on the machine can write would put all of that behind a file
+  permission. A declaration also cannot grant itself MCP tools, a mintable session id, metering or a
+  quota probe - each is refused with a test.
 - **Agents work in a pooled worktree, never the trunk.** The branch is named after the *task*
   (`agentyard/t123-…`), never after the workspace it happened to land in.
 
@@ -190,6 +200,11 @@ costmodels/             versioned pricing data
 - **`agy` installs to `%LOCALAPPDATA%gyin` and is not on PATH until `agy install` runs.** The
   adapter looks there anyway; reporting "not installed" would send somebody to reinstall what they
   already have.
+- **A native module cannot be loaded from inside an asar.** `dlopen` needs a real path and the
+  archive is virtual, so `.node` files are unpacked beside it. ⚠️ The `.node` files are **not** in
+  `@lydell/node-pty` - they are in per-platform siblings like `node-pty-win32-x64`, so a glob naming
+  the parent matches nothing. `npm run test:pack` is what catches this; it is the only suite that runs
+  against a real package.
 - **`gemini-cli` is dead.** Google stopped serving individual accounts 2026-06-18; the Google adapter
   is **Antigravity CLI (`agy`)**. Do not write against `gemini`.
 - **Compaction takes about two minutes.** Any deadline that ends in a compaction has to budget for

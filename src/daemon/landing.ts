@@ -4,6 +4,7 @@ import type { LandingResult, LandingStrategyId, Project, Task } from '@shared/ta
 import { policyFor } from './projects.js'
 import { claim, landResourceId, release, upsertResource } from './resources.js'
 import { addMessage, mandateAllows, setStatus } from './tasks.js'
+import { launchArgs, which } from './which.js'
 import { log } from './log.js'
 
 const run = promisify(execFile)
@@ -178,14 +179,109 @@ export const autoLand: LandingStrategy = {
   }
 }
 
-/** Declared so the interface is honest about what exists; it degrades rather than pretending. */
+/**
+ * Open a pull request instead of landing.
+ *
+ * ⛔ **`gh` is wrapped, never vendored** (D7). GitHub's API is a moving target with auth agentyard
+ * has no business holding; `gh` already solves both and the operator already has it configured. If it
+ * is absent, this refuses *before* doing anything rather than pushing a branch and then discovering
+ * it cannot open the PR.
+ *
+ * ⚠️ The important difference from `auto-land`: this **does not rebase and does not run the project
+ * checks**. A pull request exists so that CI and a person do that. Rebasing here would rewrite a
+ * branch somebody is about to review, and running checks locally would duplicate what the PR is for.
+ */
 export const pullRequest: LandingStrategy = {
   id: 'pull-request',
-  async canLand() {
-    return { ok: false, reason: 'the pull-request strategy is not implemented yet (M6)' }
+
+  async canLand(ctx) {
+    if (ctx.project.vcs !== 'git') return { ok: false, reason: 'project is not a git repository' }
+    if (!mandateAllows(ctx.task, 'push')) {
+      // ⛔ `push`, not `land`. Opening a PR does not put anything on the trunk, so it needs the
+      // narrower authority - and a task that may only push should be able to use this strategy.
+      return { ok: false, reason: 'the task has no authority to push' }
+    }
+    if (!(await isClean(ctx.workspacePath))) {
+      return { ok: false, reason: 'the workspace has uncommitted changes' }
+    }
+    if (!(await hasRemote(ctx.workspacePath))) {
+      return { ok: false, reason: 'no origin remote, so there is nowhere to open a pull request' }
+    }
+    if (!which('gh')) {
+      return {
+        ok: false,
+        reason:
+          'the GitHub CLI (`gh`) is not on PATH. agentyard wraps it rather than talking to the ' +
+          'GitHub API itself, so that it never holds a token of yours. Install it, or set the ' +
+          "project's landing strategy to `leave-branch`."
+      }
+    }
+    return { ok: true }
   },
-  async land(ctx) {
-    return leaveBranch.land(ctx)
+
+  async land(ctx): Promise<LandingResult> {
+    const policy = policyFor(ctx.project)
+    try {
+      // ⛔ Push first and separately. If the PR call fails, the work is already safe on the remote
+      // and the operator can open one by hand - which is a much better failure than a branch that
+      // exists only on this machine.
+      await git(ctx.workspacePath, ['push', '--set-upstream', 'origin', ctx.branch])
+
+      const commit = await git(ctx.workspacePath, ['rev-parse', 'HEAD'])
+      const title = `t${ctx.task.seq}: ${ctx.task.title}`.slice(0, 120)
+      const body = [
+        ctx.task.handoffNote ? `${ctx.task.handoffNote}\n` : '',
+        `Opened by agentyard for task t${ctx.task.seq}.`,
+        '',
+        `- branch: \`${ctx.branch}\``,
+        `- base: \`${policy.landingTarget}\``,
+        '',
+        '⚠️ Written by an agent. The project checks were **not** run locally — that is what this ' +
+          'pull request is for.'
+      ].join('\n')
+
+      const resolved = which('gh')
+      if (!resolved) throw new Error('gh vanished between the check and the call')
+      const call = launchArgs(resolved, [
+        'pr',
+        'create',
+        '--base',
+        policy.landingTarget,
+        '--head',
+        ctx.branch,
+        '--title',
+        title,
+        '--body',
+        body
+      ])
+      const { stdout } = await run(call.command, call.args, {
+        cwd: ctx.workspacePath,
+        maxBuffer: 4 * 1024 * 1024,
+        timeout: 120_000
+      })
+
+      // `gh pr create` prints the URL and nothing else worth having.
+      const prUrl = stdout.trim().split(/\s+/).find((line) => line.startsWith('http')) ?? undefined
+      log.info(`opened a pull request for t${ctx.task.seq}: ${prUrl ?? 'url not reported'}`)
+      return {
+        strategy: 'pull-request',
+        ok: true,
+        commit,
+        branch: ctx.branch,
+        ...(prUrl ? { prUrl } : {})
+      }
+    } catch (err) {
+      // ⚠️ The branch is pushed by now in most failure paths, which is deliberate. Say so, rather
+      // than leaving somebody to guess whether their work escaped the machine.
+      return {
+        strategy: 'pull-request',
+        ok: false,
+        branch: ctx.branch,
+        reason:
+          `${err instanceof Error ? err.message : String(err)} ` +
+          `(the branch \`${ctx.branch}\` may already be pushed - check the remote before redoing work)`
+      }
+    }
   }
 }
 

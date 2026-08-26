@@ -1,7 +1,7 @@
 # agentyard — Implementation Plan (2026-08-24)
 
-Status: **accepted 2026-08-24, amended 2026-08-25 (A1-A4).** M0-M5 executed — see `HANDOFF.md`
-for where the build actually is.
+Status: **accepted 2026-08-24, amended 2026-08-25/26 (A1-A5).** M0-M6 executed — the plan is
+complete. See `HANDOFF.md` for where the build actually is and what is left.
 
 > **Amendment A1 — 2026-08-25.** Three changes from owner review, each verified before being written:
 >
@@ -64,6 +64,21 @@ for where the build actually is.
 >    shape the clock pulls, and converting one into a write multiplier would produce a number
 >    indistinguishable from a measured one at the point of use. Recorded as **D24**.
 
+> **Amendment A5 — 2026-08-26.** Two things M6 established while packaging:
+>
+> 10. **Community adapters are declarative, never executable (D25).** §14 said "adapter loading from a
+>     directory" without saying what a directory would contain. It contains JSON. The daemon holds the
+>     RPC token, spawns agents and knows where every credential root lives, so executing a file that
+>     anything on the machine can write would put all of that behind a file permission. A declaration
+>     also cannot grant itself the capabilities that license trust — MCP tools, a mintable session id,
+>     metering, a quota probe — each of which is refused with a test. The ceiling is deliberate: a CLI
+>     worth more than that is worth a real adapter, which is a pull request.
+>
+> 11. **Killing by pid is not enough, in tests either (D26).** `ownsProcess()` has verified a
+>     process's command line before killing it since M2. The *test harness* did not — it killed a
+>     number it had written down earlier, and pids are recycled. Now both check. ⛔ If the command
+>     line cannot be read, the answer is no.
+
 > This is a **transient doc**: the design of record as it stood on 2026-08-24. It will drift as the
 > code lands and is kept for the reasoning, not as a status page. Durable facts extracted from it
 > live in `docs/cost-model.md` and `docs/glossary.md`, which *are* maintained.
@@ -93,6 +108,8 @@ for where the build actually is.
 | **D22** Judgment surface | Unattended judgment gets **no tools**. It answers as JSON validated against a closed set, which the daemon applies itself; the controller tier of MCP goes only to the chat session, where a person is watching (§11.1) | ✔ A3 |
 | **D23** Routing arbitration | The weakest of the four events and gated hardest: a tie means the alternatives are close, so ε bounds the upside while the turn is a real cost. Fires only above a token floor, and defers rather than blocks (§11.1) | ✔ A3 |
 | **D24** Unpriced providers | A cost model may declare `cache.kind: "unpriced"`. The clock then refuses to spend on keepalive or compaction rather than acting on an invented number; work, preemption and handoffs are unaffected (§9.3) | ✔ A4 |
+| **D25** Community adapters | Declarative JSON in the data directory, driven generically. ⛔ Never executable code, and a declaration cannot grant itself MCP tools, a mintable session id, metering or a quota probe | ✔ A5 |
+| **D26** Killing processes | Identity is verified from the command line before any kill, in the product **and** in the test harness. ⛔ Unreadable means do not kill | ✔ A5 |
 | **D7** | Wrap vs absorb — recommendation stands | open |
 
 ---
@@ -1442,9 +1459,15 @@ times over rather than the two expected: the absence of `/compact`, the absence 
 `classifierBackedAuto`, and two the plan did not anticipate — the absence of **credential isolation**
 and the absence of a **mintable session id** (§9.3).
 
-**M6 — Packaging.** electron-builder; macOS/Linux path + PTY verification; adapter loading from a
-directory; additional landing strategies (`leave-branch`, `pull-request`); public README pass.
-*(Tray, launch-at-login and Kanban are v2.)*
+**M6 — Packaging.** ✔ shipped 2026-08-26. electron-builder with the native unpacked out of the asar;
+**L5, a suite that drives the packaged app** and is the only one that can catch what packaging breaks;
+declarative adapters from the data directory (D25); `pull-request` landing wrapping `gh` (D7); public
+README pass. *(Tray, launch-at-login and Kanban are v2.)*
+
+⛔ **One deliverable was not met: macOS and Linux have never been run.** The targets are configured,
+the platform branches exist and L5 is written to work on all three — it has only ever executed on
+Windows. M5 found a Windows path bug latent for four milestones, so there is no reason to think the
+other two are cleaner. They are **unbuilt**, not merely untested, and HANDOFF says so.
 
 ---
 
@@ -1670,9 +1693,11 @@ organised by **what a failure would cost**, not by the usual pyramid.
 | **L2 approvals + tiers** | `npm run test:daemon` | nothing | A real MCP client speaking the real protocol to the real server: policy, escalation, human answer, remember-as-rule, deny precedence — and that **each tier exposes its own tool set and neither can delete** |
 | **L3 UI** | `npm run test:ui` | nothing | The built app, driven over DevTools: what actually rendered, and zero console errors |
 | **L4 agent-in-the-loop** | `npm run test:e2e`, **opt-in** | **real tokens** | The only thing the others cannot: an agent doing work, reporting completion, and the branch landing |
+| **L5 packaged app** | `npm run test:pack` | nothing | ⛔ The only level that runs against a **real package**: the native unpacked out of the asar, the app starting its own daemon with no system Node, and a PTY opening from inside the archive. Every one of those is a way to ship something that passed L0–L4 and does not start |
 
 L0–L3 must pass before every commit (`npm run test:all`). **L4 is gated behind `AGENTYARD_E2E=1`**
 and never runs in a watch loop, because each run spends a real assistant turn on a real account.
+**L5 is free but slow** — it builds a package — so it runs before a release rather than before a commit.
 
 ⛔ **L1 must be provably unable to spend.** It adopts a real signed-in credential root to prove
 identity detection, which means a scheduler tick *could* dispatch real work to a real account. So the

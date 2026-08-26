@@ -180,7 +180,8 @@ try {
   socket?.close()
   // ⛔ By pid, and the whole tree: Electron's renderer and GPU children outlive a plain kill and one
   // of them keeps the debugging port, which fails the *next* run for no reason anyone can see.
-  killTree(app?.pid)
+  // Verified before it fires - see killTree. The dev build runs from node_modules/electron.
+  killTree(app?.pid, 'electron')
   await wait(500)
   try {
     rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })

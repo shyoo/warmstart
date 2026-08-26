@@ -41,17 +41,66 @@ export function electronBinary() {
  *
  * ⛔ `/PID <pid> /T` walks that one tree. Never `/IM`, which walks every process sharing the binary -
  * the developer's editor included.
+ *
+ * ⚠️ And never a bare pid either: pids are recycled, so identity is checked first. See below.
  */
-export function killTree(pid) {
+export function killTree(pid, expect = 'agentyard') {
   if (!pid) return
+
+  // ⛔ Identity before force, and the harness is held to the same rule as the product.
+  //
+  // `ownsProcess()` in sessions.ts refuses to kill a pid it cannot prove is agentyard's, because
+  // **pids are recycled**: a process we spawned can exit, Windows can hand its number to something
+  // else, and a `finally` block firing seconds later then kills a stranger. The product has guarded
+  // against that since M2. This harness did not - it killed a number it wrote down earlier - and it
+  // is the harness that has actually damaged this machine before.
+  //
+  // If the command line cannot be read, the answer is **no**. A leaked test process costs a stale
+  // port; killing the wrong one costs somebody their work.
+  const line = commandLineOf(pid)
+  if (line === null) {
+    console.log(`SKIP  not stopping pid ${pid}: its command line could not be read`)
+    return
+  }
+  if (!line.includes(expect)) {
+    console.log(`SKIP  not stopping pid ${pid}: it is not ours any more (expected '${expect}')`)
+    return
+  }
+
   try {
     if (process.platform === 'win32') {
+      // /T for the tree: Electron's renderer and GPU children outlive a kill of the parent, and one
+      // of them keeps holding the debug port.
       execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' })
     } else {
       process.kill(-pid, 'SIGKILL')
     }
   } catch {
-    // Already gone, or never started. Either way there is nothing to stop.
+    // Already gone. Nothing to stop.
+  }
+}
+
+/** The process's own command line, or null if it cannot be read. ⛔ Null means "do not kill". */
+function commandLineOf(pid) {
+  try {
+    if (process.platform === 'win32') {
+      return execFileSync(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").CommandLine`
+        ],
+        { encoding: 'utf8', timeout: 15_000, windowsHide: true }
+      )
+    }
+    return execFileSync('ps', ['-p', String(pid), '-o', 'args='], {
+      encoding: 'utf8',
+      timeout: 15_000
+    })
+  } catch {
+    return null
   }
 }
 

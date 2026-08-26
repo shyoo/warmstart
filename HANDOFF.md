@@ -8,9 +8,9 @@ for, untested.
 if you add a line, find the one it obsoletes and cut it in the same edit. Finished work moves to
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
-**Baseline (2026-08-25, M5):** `npm run typecheck` clean · `npm run build` clean · `npm test` 97/97 ·
-`npm run test:daemon` 96/96 · `npm run test:ui` 21/21 · L4 (opt-in) landed a real agent commit on
-origin/main. Electron 44.0.0, Node 24.18.1 under Electron, 0 npm vulnerabilities.
+**Baseline (2026-08-26, M6):** `npm run typecheck` clean · `npm run build` clean · `npm test` 126/126 ·
+`npm run test:daemon` 96/96 · `npm run test:ui` 21/21 · `npm run test:pack` 14/14 · L4 (opt-in) landed a
+real agent commit on origin/main. Electron 44.0.0, electron-builder 26.15.3, 0 npm vulnerabilities.
 CLIs on this machine: claude 2.1.223 - agy 1.1.20 - codex 0.149.1.
 
 ---
@@ -25,7 +25,7 @@ CLIs on this machine: claude 2.1.223 - agy 1.1.20 - codex 0.149.1.
 | **M3** cost intelligence | ✅ cache clock, compaction reserve, objective vector, estimator, preemption, watchdogs |
 | **M4** controller agent | ✅ consult queue + fallbacks, four judgment events, controller MCP tier, chat + thread panes |
 | **M5** multi-provider (`antigravity-cli`, `openai-compatible`) | ✅ two adapters measured against the real CLIs, two cost models, capability consequences proved |
-| **M6** packaging | ⬜ next |
+| **M6** packaging | ✅ electron-builder, a suite that drives the *packaged* app, declarative adapters, pull-request landing |
 
 Scope: `transient_docs/implementation_plan_2026-08-24.md` §14, as amended by **A1/A2/A3 (2026-08-25)**
 — `gemini-cli` is retired, D5 closes per adapter (§9.1), approvals and cancel/delete are new objects,
@@ -63,6 +63,8 @@ src/daemon/            orchestratord. Runs as Electron-with-ELECTRON_RUN_AS_NODE
   which.ts             PATH resolution - node-pty does not do it
   adapters/            claude-code - antigravity-cli - openai-compatible; capabilities as data
                        (+ adapters.test.ts). Read docs/adapters.md before changing one
+    external.ts        declarative adapters from <dataDir>/adapters/*.json  (+ external.test.ts)
+    generic.ts         the driver behind one. ⛔ JSON only, never JavaScript
 src/mcp/               the MCP server the agent CLI spawns. Two tiers, chosen by the daemon:
                        worker (task_complete, task_create, request_human, handoff) and controller
                        (fleet/task/approval/estimate). Target of --permission-prompt-tool. No delete.
@@ -117,60 +119,80 @@ against a closed set; tools go only to the chat session, where a person is watch
 answer, which proves the fallbacks but leaves the answer path exercised only against synthetic
 answers in L0. R8 below.
 
-## What M5 built, and what measuring cost the design
+## What M5 built
 
-**Two adapters, and the milestone's real lesson.** `antigravity-cli` and `openai-compatible` were
-written from vendor documentation, then both CLIs were installed and run — and **several documented
-claims were wrong in ways that would have failed on the first spawn.** `docs/adapters.md` has the
-full table; the ones worth carrying in your head:
+Two more adapters - `antigravity-cli` (agy 1.1.20) and `openai-compatible` (codex 0.149.1) - written
+from vendor documentation and then **corrected by running the CLIs**. Several documented claims were
+wrong in ways that would have failed on the first spawn, which is why `AdapterInfo.verification`
+records whether a capability block was measured or merely read.
 
-- ⛔ **`--ask-for-approval` does not exist on `codex exec`.** Interactive-only. Every scheduled spawn
-  would have died on an argument error.
-- ⛔ **`-p` is `--profile` on codex and `--print` on agy.** Same letter, opposite meanings.
-- **`agy` has `--mode accept-edits|plan`** after all — exactly what plan §9.1 predicted for a
-  classifier-less CLI, and now its default.
-- ⛔ **`cmd /d /s /c <shim>` breaks on any path containing a space**, and the Windows default home
-  contains one. Latent since M1; never fired because `claude` resolves to a `.EXE` here. `codex`
-  installs as `codex.cmd`, which exposed it.
+Capability-driven routing proved four times over rather than the two the plan expected: no `/compact`,
+no classifier, ⛔ **no credential isolation** (Antigravity keeps its credential in the OS keyring, so
+one machine holds one account) and ⛔ **no mintable session id** (so orphans are never killed - identity
+cannot be proved). A cost model may now declare `cache.kind: "unpriced"` and the clock declines to
+spend rather than acting on an invented number.
 
-**Capability-driven routing, proved four times over** — the plan expected two. None is a branch in
-scheduling code:
+A follow-up using real accounts measured the stream formats: ⛔ **there is no such thing as "the
+stream-json format"** - agy keys on `event`, not `type`, and a parser keyed on the wrong envelope
+reads *nothing*, silently. Decoding now belongs to the adapter. Both new CLIs report usage in the
+stream, so `metering` is three-valued and their runs are billed from the wire.
 
-| Gap | Consequence |
-|---|---|
-| no `/compact` | cache-clock moves 4 and 5 unavailable; `wrapUpProtocol: handoff` |
-| no classifier | narrower allowlist written into the worker's config before each spawn |
-| ⛔ no credential isolation | `maxAccounts: 1` — Antigravity keeps credentials in the **OS keyring** with no config-dir variable, so there is one identity per OS user. Commissioning refuses the second and says why |
-| ⛔ no mintable session id | transcript discovered after the fact, and **orphans are never killed** — identity cannot be proved, and agentyard kills only what it can |
+Full detail, including every corrected claim, in `transient_docs/changes_history.md` and
+`docs/adapters.md`.
 
-**A cost model may now say it does not know.** `cache.kind: "unpriced"` is a real state:
-`canPriceCache()` returns false and the clock declines to spend on keepalive or compaction rather
-than acting on an invented number. Google bills cache *storage per token-hour*; OpenAI caches
-server-side with no client-controlled TTL. ⛔ Neither was converted into a write multiplier, because
-an invented number is indistinguishable from a measured one at the point of use.
+## What M6 built, and what packaging exposed
 
-**Two holes M5 found in earlier work, both fixed:**
+**It packages, and there is a suite that proves it.** `npm run dist` produces an installer;
+`npm run test:pack` builds a real package and then *drives it* — which is the only suite that can
+fail for reasons none of the others can see. L0–L4 all run from a source tree with `node_modules` on
+disk; a packaged app has its code inside an asar, its natives outside one, and no system Node at all.
 
-- A **reserve breach on a no-compact adapter did nothing** — the one case the reserve exists to
-  catch. It now hands off and closes.
-- **Commissioning left a window in which a signed-in worker was dispatchable** before it could be
-  disabled, and the scheduler ticks every ten seconds. `worker.create` now takes `enabled: false`.
-  Found by the M4 controller checks failing after M5 commissioned a real signed-in codex account.
+The four things it checks are the four ways to ship something that passed every test and does not
+start: the native terminal module was unpacked **out** of the archive, none was left inside it, the
+app can launch its own daemon by running its own binary as Node, and a PTY actually opens from the
+packaged build. 14/14.
 
-⚠️ **Not verified, and the boundary is sharp:** everything above was measured for free. Everything
-below needs a signed-in account and a real turn — the `stream-json` event shapes for both new
-adapters, whether codex rollouts carry meterable usage, and whether `agy -p /usage` is the first free
-quota probe agentyard has ever had. R9–R12 below.
+**What packaging exposed, which nothing else would have:**
 
-## Next: M6 — packaging
+- ⚠️ The `asarUnpack` glob was **wrong and it did not matter** — electron-builder auto-unpacks
+  anything containing a `.node`, so it worked by accident. The `.node` files are not in
+  `@lydell/node-pty`; they are in per-platform siblings (`node-pty-win32-x64`). Now explicit, because
+  relying on that silently is how a version bump breaks a PTY nobody connects to the change.
+- A packaged app on a cold start is slower than a development one — Defender inspects a freshly
+  written unsigned binary the first time it runs — so the suite polls rather than sleeping once.
 
-1. **electron-builder**, and the natives that have to survive it. `node:sqlite` was chosen at M1
-   precisely so there is no ABI rebuild here; `@lydell/node-pty` is the one that still has to.
-2. **macOS/Linux path and PTY verification.** Written for, never run. `which.ts`, `launchable()` and
-   every isolation-root default are where platform assumptions hide — and M5 just found a Windows one
-   that had been latent for four milestones.
-3. **Adapter loading from a directory**, so a community adapter needs no release.
-4. Additional landing strategies (`leave-branch`, `pull-request`) and a public README pass.
+**Also landed:**
+
+- **Declarative adapters** from `<dataDir>/adapters/*.json`. ⛔ JSON, never JavaScript: the daemon
+  holds the RPC token, spawns agents and knows every credential root, and loading code from a
+  directory anything can write to would put all of that behind a file permission. A declaration
+  cannot grant itself MCP tools, a mintable session id, metering, or a quota probe — each is a
+  refusal with a test, and each refusal is what stops a typo becoming trust.
+- **`pull-request` landing**, wrapping `gh` rather than the GitHub API (D7), so agentyard never holds
+  a token. It pushes first and opens the PR second, deliberately: if the PR call fails the work is
+  already safe on the remote. ⚠️ It does **not** rebase and does **not** run the project's checks —
+  that is what the pull request is for.
+- **`killTree` now verifies identity before it fires.** It killed a pid it had written down earlier;
+  pids are recycled, and a `finally` block running seconds later could kill a stranger. The *product*
+  has guarded against this since M2 (`ownsProcess`); the harness did not, and it is the harness that
+  has damaged this machine before.
+
+⛔ **The honest limit of this milestone: macOS and Linux have never been run.** The targets are
+configured, the platform branches exist, `test:pack` is written to work on all three — and it has only
+ever executed on Windows. M5 found a Windows path bug that had been latent for four milestones; there
+is no reason to believe the other two platforms are cleaner. Treat them as unbuilt, not as untested.
+
+## Next
+
+M0–M6 are done. What is left is not a milestone but a list, in the order it would pay off:
+
+1. **Run it on macOS and Linux.** Everything above is written for them; none of it has started once.
+2. **The measurement runs still owed** — R2/R3 unblock the compaction reserve, which is the largest
+   piece of the cost model still reporting `unknown` on a real worker.
+3. **Signing and notarisation**, without which the installers warn or refuse.
+4. **Warm-session reuse across tasks in one project** — the biggest remaining cost win, and the
+   reason it is not done is in the scheduler's own comment: the workspace claim has to move from the
+   task to the session first.
 
 ## Open questions
 
@@ -196,7 +218,10 @@ quota probe agentyard has ever had. R9–R12 below.
 - **Warm-session reuse across tasks in one project.** The bigger cost prize and still not done: it
   needs the workspace claim to move from the task to the session, so a session can outlive the task
   that opened it without leaking a claim or switching a branch under a running agent.
-- **D7** stands: external resource services wrapped, never vendored. **D5 is closed** (plan §9.1).
+- **D7** stands, and M6 is its second instance: `gh` is wrapped for pull-request landing rather
+  than agentyard talking to the GitHub API and holding a token. **D5 is closed** (plan §9.1).
+- **An icon.** electron-builder ships the default Electron one. Cosmetic, but it is the first thing
+  anyone sees.
 
 ## Measurement runs owed
 
@@ -241,5 +266,11 @@ and R6 change how the cache clock behaves. R5 needs a second subscription.
   ANSI parsing ever determines state.
 - **The renderer never holds the daemon token.** It renders untrusted agent output.
 - **Pooled git worktrees, task-named branches, trunk untouched by agents.**
-- **Capabilities and objectives are data.** No `if (adapter === …)`, no `if (mode === …)`.
+- **Capabilities and objectives are data.** No `if (adapter === …)`, no `if (mode === …)`. M5 tested
+  this against three real CLIs and it held; M6 extended it to adapters an operator declares in JSON.
+- **Measure, then write it down.** Every adapter says whether its capabilities were *measured* or
+  *documented*, because M5 wrote two from vendor docs and several claims were wrong enough to fail on
+  the first spawn.
+- **⛔ Kill only what you can prove is yours.** The product has checked a pid's command line since M2;
+  M6 made the test harness do the same, after a question about a Claude Code window that restarted.
 - **An approval is not a task; cancel is not delete.** Plan §7.3 and §7.4.

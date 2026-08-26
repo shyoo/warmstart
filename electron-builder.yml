@@ -1,0 +1,88 @@
+# Packaging.
+#
+# ⛔ Two things in this file are load-bearing rather than boilerplate, and both come from decisions
+# taken much earlier:
+#
+#  1. `asarUnpack` for node-pty. A native `.node` cannot be loaded from inside an asar archive — the
+#     archive is a virtual filesystem and `dlopen` needs a real path. Everything else stays packed.
+#     ⚠️ `node:sqlite` deliberately does not appear here: it was chosen at M1 *because* it ships
+#     inside Electron's own Node, so there is no second native module to unpack, rebuild, or explain.
+#  2. `extraMetadata.main` is not set and must not be. The daemon and the MCP server are spawned as
+#     separate processes with `process.execPath` + `ELECTRON_RUN_AS_NODE=1`, which is what lets a
+#     packaged app run its own background service with no system Node installed and no ABI mismatch.
+#     They read their own bundles out of the asar, which works because Electron-as-Node keeps the
+#     patched `fs`.
+
+appId: dev.agentyard.app
+productName: agentyard
+copyright: Copyright © 2026 agentyard contributors
+
+directories:
+  output: release
+  buildResources: resources
+
+# The built output plus the runtime dependencies. Source and tests are not shipped.
+files:
+  - out/**/*
+  - package.json
+  - '!**/*.map'
+  - '!**/*.ts'
+
+asar: true
+asarUnpack:
+  # ⚠️ The whole scope, not `@lydell/node-pty`. The `.node` files do not live in that package - they
+  # are in per-platform siblings (`node-pty-win32-x64`, `node-pty-darwin-arm64`, ...), so a glob
+  # naming the parent matches nothing. electron-builder auto-unpacks anything containing a `.node`
+  # and would have covered it anyway; relying on that silently is how this gets broken by a version
+  # bump nobody connects to a PTY that stopped opening.
+  - '**/node_modules/@lydell/**'
+
+# ⚠️ Not shipped, deliberately: `costmodels/` is compiled into the daemon bundle rather than copied
+# beside it, so a packaging slip cannot leave the scheduler unable to price anything. A user file in
+# their data directory still wins at runtime. See costmodel.ts.
+
+win:
+  target:
+    - target: nsis
+      arch: [x64, arm64]
+  # ⛔ Unsigned. Windows SmartScreen will warn, and that is the honest state of a pre-alpha rather
+  # than something to work around. Signing is a certificate and a release process, not a config line.
+  signAndEditExecutable: true
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  # ⛔ The isolation roots and the database live in the user's data directory, never beside the
+  # binary. Uninstalling must not take an account's credentials with it — retiring a worker is a
+  # deliberate act, and so is deleting one.
+  deleteAppDataOnUninstall: false
+
+mac:
+  target:
+    - target: dmg
+      arch: [x64, arm64]
+  category: public.app-category.developer-tools
+  # ⚠️ Unsigned and un-notarised. On macOS this means Gatekeeper refuses the app until the user
+  # clears it by hand. Fixing it needs an Apple Developer account, not a setting.
+  identity: null
+  # node-pty spawns processes and the daemon opens a local socket; both need the hardened runtime
+  # relaxed unless the app is properly signed.
+  hardenedRuntime: false
+
+linux:
+  target:
+    - target: AppImage
+      arch: [x64, arm64]
+    - target: deb
+      arch: [x64]
+  category: Development
+  synopsis: A scheduler with a budget for coding agents
+  description: >-
+    Runs a fleet of coding agents across the accounts you own and routes each task to the worker,
+    session and moment where it is cheapest to run.
+
+# ⛔ No auto-update. An app that manages other people's credentials and spawns processes on their
+# machine should not also grant itself the ability to replace its own binary silently. Releases are
+# downloaded and installed deliberately.
+publish: null
