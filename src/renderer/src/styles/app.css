@@ -922,3 +922,17 @@ select:focus-visible,
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+/* Adapter facts at commissioning: a short list where a warning must read as a warning. */
+.facts {
+  list-style: none;
+  margin: var(--sp-2) 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+  font-size: var(--text-dense);
+}
+
+.facts li {
+  display: block;
+}

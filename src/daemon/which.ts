@@ -43,15 +43,38 @@ export interface Launchable {
 /**
  * A `.cmd` or `.bat` shim - what an npm global install leaves on Windows - is a script, not an
  * image, so it has to go through the command processor. A real executable is started directly.
+ *
+ * ⚠️ This applies to **every** way agentyard starts a CLI, not just PTY spawns. Node refuses to
+ * `execFile` a `.cmd` without a shell (it has since the 2024 argument-injection fix) and fails with a
+ * bare `spawn EINVAL`. Measured 2026-08-25: `codex` installs as `codex.cmd`, and adapter *detection*
+ * - which is `execFile`, not node-pty - failed with exactly that while the CLI itself worked
+ * perfectly. Detection that fails for an installed CLI reports it as missing, which sends somebody to
+ * reinstall something they already have.
  */
 export function launchable(resolved: string): Launchable {
   const ext = extname(resolved).toLowerCase()
   if (process.platform === 'win32' && (ext === '.cmd' || ext === '.bat')) {
     return {
       command: process.env.COMSPEC ?? 'cmd.exe',
-      // /d skips AutoRun scripts, which would otherwise print into the session's first frame.
-      prefixArgs: ['/d', '/s', '/c', resolved]
+      // ⛔ `/d` only. `/s` was here and was actively wrong: it makes cmd strip the outer quotes and
+      // take the rest literally, so an unquoted path containing a space is split at the space — and
+      // the Windows default home is `C:\Users\First Last`. Measured 2026-08-25 against `codex.CMD`:
+      // with `/s` every invocation failed; without it, it works. `/d` stays, because it skips
+      // AutoRun scripts that would otherwise print into the session's first frame.
+      //
+      // ⚠️ Do not add quotes around `resolved` either — Node quotes an argument containing spaces
+      // when it builds the command line, and a second layer breaks it again. Measured the same day.
+      prefixArgs: ['/d', '/c', resolved]
     }
   }
   return { command: resolved, prefixArgs: [] }
+}
+
+/**
+ * Everything needed to run a resolved command once, whatever kind of file it turned out to be.
+ * ⛔ Use this rather than calling `execFile(resolved, args)` directly - see the note on `launchable`.
+ */
+export function launchArgs(resolved: string, args: string[]): { command: string; args: string[] } {
+  const { command, prefixArgs } = launchable(resolved)
+  return { command, args: [...prefixArgs, ...args] }
 }

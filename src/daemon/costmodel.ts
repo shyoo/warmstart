@@ -4,6 +4,8 @@ import { paths } from './paths.js'
 import { log } from './log.js'
 import type { CostModelSummary } from '@shared/protocol.js'
 import builtinAnthropic from '../../costmodels/anthropic.subscription.2026-08.json' with { type: 'json' }
+import builtinGoogle from '../../costmodels/google.antigravity.2026-08.json' with { type: 'json' }
+import builtinOpenai from '../../costmodels/openai.codex.2026-08.json' with { type: 'json' }
 
 /**
  * Cost models are data, never code.
@@ -22,17 +24,20 @@ export interface CostModelFile {
   schema_version: number
   effective_from: string
   cache: {
+    /** ⛔ `unpriced` is a real state, not a missing value. See CostModel.canPriceCache(). */
     kind: string
-    read_multiplier: number
+    read_multiplier: number | null
     read_refreshes_ttl: boolean
     ttl_measured_from: 'request_start' | 'response_end'
     ttls: Array<{ id: string; seconds: number; write_multiplier: number }>
-    default_ttl: string
+    default_ttl: string | null
     max_breakpoints?: number
     scope?: string
     min_cacheable_tokens?: Record<string, number>
   }
   compaction: {
+    /** Absent means true, so the Anthropic file did not have to be rewritten to add this. */
+    available?: boolean
     summary_output_tokens: number
     post_context_tokens: number
     duration_ms: number
@@ -80,22 +85,53 @@ export class CostModel {
     this.path = path
   }
 
-  /** One trivial turn that refreshes the TTL. A read refreshes it for free, so this is just the read. */
-  costOfKeepalive(session: PriceableSession): number {
-    return this.data.cache.read_multiplier * (session.contextTokens ?? 0)
+  /**
+   * Can this provider's cache be *priced and steered* at all?
+   *
+   * ⛔ The single most important question this class answers, and the reason `unpriced` exists as a
+   * state rather than as a missing field. Anthropic sells a write multiplier against a TTL that a
+   * read extends, which is a lever: paying `0.1·C` to avoid `2.0·C` later is arithmetic. Google bills
+   * cache storage per token-hour, and OpenAI caches server-side with no client-controlled TTL — on
+   * neither is there a lever of that shape.
+   *
+   * When this is false the cache clock declines to spend on keepalive or compaction rather than
+   * acting on an invented number. ⚠️ Work still runs, preemption still fires, handoffs still happen.
+   * The provider simply does not get an optimisation nobody has measured.
+   */
+  canPriceCache(): boolean {
+    return this.data.cache.kind !== 'unpriced' && typeof this.data.cache.read_multiplier === 'number'
+  }
+
+  /** Is compaction a thing this provider can be asked to do? Adapters answer too, via manualCompact. */
+  canCompact(): boolean {
+    return this.data.compaction.available !== false
+  }
+
+  /**
+   * One trivial turn that refreshes the TTL. A read refreshes it for free, so this is just the read.
+   * ⛔ Returns null where the cache cannot be priced — a caller that treats that as zero would
+   * conclude a keepalive is free and do it forever.
+   */
+  costOfKeepalive(session: PriceableSession): number | null {
+    const multiplier = this.data.cache.read_multiplier
+    if (multiplier === null || !this.canPriceCache()) return null
+    return multiplier * (session.contextTokens ?? 0)
   }
 
   /** Read the context back, then pay for the summary the model writes. ~= 0.1·C + 28k. */
-  costOfCompact(session: PriceableSession): number {
+  costOfCompact(session: PriceableSession): number | null {
+    const multiplier = this.data.cache.read_multiplier
+    if (multiplier === null || !this.canPriceCache() || !this.canCompact()) return null
     return (
-      this.data.cache.read_multiplier * (session.contextTokens ?? 0) +
+      multiplier * (session.contextTokens ?? 0) +
       OUTPUT_MULTIPLE * this.data.compaction.summary_output_tokens
     )
   }
 
   /** Rebuilding a lapsed prefix from nothing: a full cache write at the default TTL's multiplier. */
-  costOfColdStart(tokens: number): number {
-    return this.defaultTtl().write_multiplier * tokens
+  costOfColdStart(tokens: number): number | null {
+    const ttl = this.defaultTtl()
+    return ttl ? ttl.write_multiplier * tokens : null
   }
 
   /**
@@ -104,7 +140,11 @@ export class CostModel {
    */
   cacheExpiryFor(session: PriceableSession): number | null {
     if (!session.lastRequestStartedAt) return null
-    return session.lastRequestStartedAt + this.defaultTtl().seconds * 1000
+    const ttl = this.defaultTtl()
+    // ⛔ No declared TTL means no expiry to reason about - not an expiry of zero, which would read as
+    // "already lapsed" and have the clock act on it.
+    if (!ttl) return null
+    return session.lastRequestStartedAt + ttl.seconds * 1000
   }
 
   /** Below this, the provider caches nothing and reports no error - so nothing is saved. */
@@ -148,11 +188,10 @@ export class CostModel {
     }
   }
 
+  /** ⛔ Null rather than a throw: a provider with no client-controlled TTL is valid, not broken. */
   private defaultTtl() {
     const wanted = this.data.cache.default_ttl
-    const found = this.data.cache.ttls.find((t) => t.id === wanted) ?? this.data.cache.ttls[0]
-    if (!found) throw new Error(`cost model ${this.id} declares no TTLs`)
-    return found
+    return this.data.cache.ttls.find((t) => t.id === wanted) ?? this.data.cache.ttls[0] ?? null
   }
 }
 
@@ -187,8 +226,13 @@ export function loadCostModels(extraDirs: string[] = []): Map<string, CostModel>
   consider(paths.costModels, 'user')
   for (const dir of extraDirs) consider(dir, 'bundled')
 
-  const builtin = builtinAnthropic as unknown as CostModelFile
-  if (!found.has(builtin.id)) found.set(builtin.id, new CostModel(builtin, 'builtin', null))
+  // ⛔ Compiled in, not read from disk. A cost model that fails to load is a scheduler that cannot
+  // price anything, and "the file was not copied at packaging time" is not a failure worth having.
+  // A user file of the same id still wins, because `consider` ran first.
+  for (const file of [builtinAnthropic, builtinGoogle, builtinOpenai]) {
+    const builtin = file as unknown as CostModelFile
+    if (!found.has(builtin.id)) found.set(builtin.id, new CostModel(builtin, 'builtin', null))
+  }
 
   registry = found
   log.info(`loaded ${found.size} cost model(s): ${[...found.keys()].join(', ')}`)

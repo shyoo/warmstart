@@ -4,7 +4,7 @@
 Claude Code, Antigravity, local models — and routes each task to the worker, session and moment where
 it is cheapest to run.
 
-> **Status: pre-alpha, M4.** It runs work end to end — file a task, it runs in a pooled git worktree
+> **Status: pre-alpha, M5.** It runs work end to end — file a task, it runs in a pooled git worktree
 > on its own branch and lands on your trunk when the checks pass — and it reasons about **cost**: it
 > keeps a warm prompt cache alive when that is cheaper than rebuilding it, compacts when it is not,
 > preempts before a quota window closes and resumes itself after the reset. Every belief it acts on is
@@ -15,6 +15,12 @@ it is cheapest to run.
 > critical path — the scheduler queues a question and carries on, and **every question has a
 > deterministic answer that fires on a timer** whether or not the controller replies. With no
 > controller account at all, agentyard behaves exactly as it did before.
+>
+> M5 adds **Antigravity** and **Codex** alongside Claude Code, each measured against the real CLI
+> rather than its documentation — see [docs/adapters.md](docs/adapters.md) for what that corrected.
+> Their differences are capabilities the scheduler reads, never branches in its code: one of them
+> cannot compact, none of them has a classifier, and one of them can only ever hold a single account
+> on a machine because it keeps its credential in the OS keyring.
 > See [HANDOFF.md](HANDOFF.md) for exactly where the build is, and
 > [`transient_docs/implementation_plan_2026-08-24.md`](transient_docs/implementation_plan_2026-08-24.md)
 > for the design of record.

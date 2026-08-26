@@ -188,6 +188,56 @@ export interface AdapterCapabilities {
   multimodalInput: boolean
   mcp: boolean
   quotaProbe: 'cli' | 'api' | 'none'
+  /**
+   * Will this CLI accept a session id agentyard chose?
+   *
+   * ⛔ Load-bearing twice over, and it took M5 to notice. When false, the transcript path cannot be
+   * known before the file exists (so it is discovered afterwards), and — the one that matters —
+   * **a process cannot be proved to be ours**, because the identity check works by finding our own
+   * minted uuid in the process's command line. agentyard therefore will not reap orphans for such an
+   * adapter. Leaving an orphan running costs quota; killing the wrong process costs somebody's work.
+   */
+  mintsSessionId: boolean
+  /**
+   * Can agentyard meter this adapter's work from the transcript it writes?
+   *
+   * ⛔ False is the most expensive capability gap there is, and M5 found the first instance of it:
+   * Antigravity writes its conversations as **SQLite databases**, not line-per-event JSONL, so the
+   * tailer that meters every other adapter exactly can read nothing. A run on such an adapter costs
+   * an **unknown** amount — not zero — and everything downstream must say unknown rather than quietly
+   * summing nothing and reporting a small number.
+   */
+  meteredFromTranscript: boolean
+  /**
+   * How many accounts of this adapter one machine can hold, or null for no limit.
+   *
+   * ⚠️ This is a fact about **where the vendor keeps credentials**, not a licence term. A CLI with a
+   * config-directory environment variable can be pointed at one isolation root per account, which is
+   * the whole basis of a fleet. One that stores credentials in the OS keyring — Antigravity — has
+   * exactly one identity per OS user, and no amount of engineering changes that without agentyard
+   * touching a credential, which it does not do. Commissioning enforces this rather than discovering
+   * it later as two workers quietly sharing one account's quota.
+   */
+  maxAccounts: number | null
+}
+
+/**
+ * How the capability block above was established.
+ *
+ * ⛔ agentyard's own rule is *measure, don't assert*, and an adapter is where that gets tested: a
+ * capability table is easy to write from documentation and expensive to be wrong about. So an adapter
+ * says which it is, the Doctor says so out loud, and nothing silently presents a documented
+ * capability with the same confidence as a measured one.
+ *
+ *  - `measured`   — exercised against the real CLI on a real machine, with a date.
+ *  - `documented` — taken from the vendor's own documentation, unrun. Believed, not verified.
+ */
+export interface AdapterVerification {
+  level: 'measured' | 'documented'
+  /** ISO date the claim was last established. */
+  asOf: string
+  /** Where it came from, and — for `documented` — what has to be run to promote it. */
+  note: string
 }
 
 export interface AdapterPolicy {
@@ -205,9 +255,17 @@ export interface AdapterInfo {
   label: string
   /** The executable looked for on PATH. */
   command: string
+  /**
+   * The environment variable that points this CLI at one account's credential directory.
+   *
+   * ⛔ `null` means the vendor offers no such variable, which is not a detail: it is the difference
+   * between an adapter that can hold a fleet and one that can hold a single account. See
+   * `capabilities.maxAccounts`.
+   */
   isolationEnvVar: string | null
   capabilities: AdapterCapabilities
   policy: AdapterPolicy
+  verification: AdapterVerification
 }
 
 export interface AdapterDetection {
@@ -294,6 +352,13 @@ export interface RpcMap {
       isolationRoot?: string
       humanOccupied?: boolean
       maxConcurrent?: number
+      /**
+       * ⛔ Defaults to true, but pass false to commission a worker that is **not yet open for work**.
+       * Adopting an already-signed-in credential root makes a worker dispatchable the instant the row
+       * exists - and the scheduler ticks every ten seconds - so anything that commissions a worker it
+       * does not intend to spend on has to close that window at creation, not just after it.
+       */
+      enabled?: boolean
     }
     result: Worker
   }

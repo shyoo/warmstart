@@ -63,3 +63,50 @@ load-bearing the moment **R2** or **R3** lands. `docs/cost-model.md` §10.
 - **Keepalive has never actually fired against a live session** — it needs a warm session and an idle
   hour. The arithmetic is unit-tested; the execution is not.
 
+## What M4 built, and what it deliberately refuses to do
+
+**The shape, and it is the whole point.** Two loops. The scheduler runs every 10s, costs nothing, and
+when it wants judgment it **enqueues a question and carries on**. A second loop runs every 30s, is the
+only loop in the daemon that can spend, and drains that queue one question at a time on a controller
+account. ⛔ **Every question has a deterministic answer before it is asked**, and that answer fires on
+a timer whether or not the controller ever replies.
+
+So the fallback is the *normal* path, not the error path: on a fresh install, on an account out of
+quota, at 3am with the controller's own window closed, the fleet behaves exactly as it did before M4.
+
+**The four judgment events.**
+
+| Event | Fires when | Falls back to |
+|---|---|---|
+| `decompose` | a `plan` task becomes ready | ask a person to break it up. ⛔ Never guesses a plan |
+| `triage` | a task has failed twice | park it for a person — where the deterministic path already put it |
+| `gate` | an agent files a task that commits, pushes, or outspends its parent (§7.2) | leave it a `draft`, which holds nothing |
+| `route` | two candidates within ε **and** the task is over 150k tokens | the highest-scoring worker |
+
+**Three structural bounds** (plan §11.1 has the reasoning):
+
+1. ⛔ **A consult has no tools.** It answers with JSON validated against a closed set. A hallucinated
+   worker id is a validation failure, not a dispatch; an unknown model is refused rather than passed
+   to a CLI to fail on a real account; a **forward dependency edge is rejected, making a cycle
+   impossible by construction** rather than detectable afterwards.
+2. **Its most open-ended output lands in `draft`** — dispatches nothing, assigned to nobody.
+3. **Capped:** one per worker, one in flight fleet-wide, 20/hour, plus a per-subject cooldown so a
+   task failing every tick is not re-diagnosed every tick.
+
+**Leadership delegation is just the gates.** `role` is `worker | controller | both`, default `both`
+so a one-account install works unconfigured. Above 80% of a *trusted* 5h reading, or on a live
+rate-limit status that is not `allowed`, an account stops being chosen; when none is left the fallback
+answers. Nothing special happens at the floor — that *is* the floor.
+
+**Tools live in exactly one place: the chat session**, because a person is watching. It runs in the
+operator's home directory (no branch to throw away), so it uses the adapter's *prompting* mode and its
+tool use goes through the same approval policy and Approvals bar as an agent's. The tier comes from
+the MCP config the daemon writes, so an agent cannot promote itself with an environment variable.
+⛔ Neither tier has `task_delete`.
+
+**Also landed:** a note typed into a running task is delivered into its live session — `0.1·C`, and it
+refreshes the TTL — and marked delivered so the next prompt does not charge for it twice (§18.4).
+
+⚠️ **No consult has ever been answered by a real model.** Every L1 check runs with nobody able to
+answer, which is deliberate and proves the fallbacks — but the *answer* path (spawn, one turn, JSON
+out, apply) has only been exercised against synthetic answers in L0. **R8** below.

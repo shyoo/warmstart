@@ -249,6 +249,128 @@ try {
     'a keepalive on a session with nothing cached would be pure waste'
   )
 
+  // ---------------------------------------------------------------- M5: multi-provider
+  //
+  // ⛔ Against the **real, installed CLIs**. codex 0.149.1 and agy 1.1.20 were installed on this
+  // machine on 2026-08-25, which is what turned two adapters written from documentation into two
+  // adapters that were measured - and corrected several claims that would have failed on first
+  // spawn. Nothing here signs in, prompts, or spends: detection and commissioning only.
+  section('multi-provider')
+
+  const all = await daemon.rpc('adapter.list')
+  check(
+    'three adapters are registered',
+    all.length === 3,
+    all.map((a) => `${a.id} (${a.verification.level})`).join(', ')
+  )
+
+  const detected = await daemon.rpc('adapter.detect')
+  for (const d of detected) {
+    check(
+      `${d.adapterId} detection answers rather than throwing`,
+      typeof d.found === 'boolean',
+      d.found ? `v${d.version} at ${d.path}` : d.error
+    )
+  }
+
+  const agy = all.find((a) => a.id === 'antigravity-cli')
+  const codex = all.find((a) => a.id === 'openai-compatible')
+
+  // ---- the capability consequences, read from the daemon rather than from the source ----
+  check(
+    'an adapter without compaction falls back to a handoff wrap-up',
+    agy?.capabilities.manualCompact === false && agy?.policy.wrapUpProtocol === 'handoff',
+    'plan §9: no /compact is not a special case - it removes two cache-clock moves'
+  )
+  check(
+    'a classifier-less adapter never defaults to an auto mode',
+    all
+      .filter((a) => !a.capabilities.classifierBackedAuto)
+      .every((a) => a.policy.defaultPermissionMode !== 'auto'),
+    `agy defaults to '${agy?.policy.defaultPermissionMode}' - what plan §9.1 predicted`
+  )
+  check(
+    'an adapter with no credential isolation is capped at one account',
+    agy?.isolationEnvVar === null && agy?.capabilities.maxAccounts === 1,
+    'credentials live in the OS keyring; there is no directory to point elsewhere'
+  )
+  check(
+    'an adapter with a config-dir variable is not capped',
+    codex?.isolationEnvVar === 'CODEX_HOME' && codex?.capabilities.maxAccounts === null,
+    'two CLIs, both without a classifier, and only one can hold a fleet'
+  )
+  check(
+    'an adapter agentyard cannot meter says so',
+    agy?.capabilities.meteredFromTranscript === false,
+    'agy writes conversations as SQLite, so the line-oriented tailer reads nothing'
+  )
+
+  // ---- commissioning enforces the account limit ----
+  // ⛔ `enabled: false` at creation, not afterwards, and this is a safety property of the suite
+  // rather than tidiness. `codex` is genuinely signed in on this machine, so a worker adopting it is
+  // dispatchable the instant its row exists - and the daemon's own scheduler ticks every ten seconds.
+  // Creating enabled and disabling a line later leaves a real window in which real work could be
+  // dispatched to a real account by a suite that claims to spend nothing. This was found by the M4
+  // controller checks failing: a background tick had seen two eligible workers and queued a routing
+  // consult for a task that had none before.
+  const firstAgy = await daemon.rpc('worker.create', {
+    adapterId: 'antigravity-cli',
+    label: 'antigravity seat',
+    enabled: false
+  })
+  check('a keyring-backed adapter commissions its one account', Boolean(firstAgy.id))
+  const secondAgy = await daemon.rpcResult('worker.create', {
+    adapterId: 'antigravity-cli',
+    label: 'antigravity seat 2',
+    enabled: false
+  })
+  check(
+    'and refuses a second, rather than letting two rows share one window',
+    !secondAgy.ok && /only 1 account/i.test(secondAgy.message ?? ''),
+    secondAgy.message
+  )
+  check(
+    'the refusal explains why and what to do instead',
+    /keyring/i.test(secondAgy.message ?? '') && /retire/i.test(secondAgy.message ?? ''),
+    'a bare "no" is the kind of error nobody can act on'
+  )
+
+  const codexWorker = await daemon.rpc('worker.create', {
+    adapterId: 'openai-compatible',
+    label: 'codex seat',
+    enabled: false
+  })
+  const codexTwo = await daemon.rpcResult('worker.create', {
+    adapterId: 'openai-compatible',
+    label: 'codex seat 2',
+    enabled: false
+  })
+  check('an isolatable adapter commissions as many as you like', codexTwo.ok, 'CODEX_HOME per account')
+  check(
+    'a worker can be commissioned closed to work, with no window in which it could be dispatched to',
+    codexWorker.enabled === false && firstAgy.enabled === false,
+    'the scheduler ticks every ten seconds; "disable it straight after" is not soon enough'
+  )
+
+  const providerTick = await daemon.rpc('scheduler.tick')
+  check(
+    'nothing dispatches to any of them',
+    providerTick.dispatched === 0,
+    'every new worker was disabled the moment it was commissioned'
+  )
+
+  const doc = await daemon.rpc('doctor.run')
+  check(
+    'doctor reports that an unmeterable adapter costs an unknown amount, not nothing',
+    doc.warnings.some((w) => /cannot meter/i.test(w)),
+    doc.warnings.find((w) => /cannot meter/i.test(w))
+  )
+  check(
+    'doctor warns that orphans of a non-minting adapter will not be stopped',
+    doc.warnings.some((w) => /orphaned/i.test(w)),
+    'agentyard kills only what it can prove is its own'
+  )
+
   // ---------------------------------------------------------------- M4: the controller
   //
   // ⛔ Every check here runs with **no account able to answer** — one worker is not signed in, the

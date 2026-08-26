@@ -1,6 +1,6 @@
 # agentyard — Implementation Plan (2026-08-24)
 
-Status: **accepted 2026-08-24, amended 2026-08-25 (A1, A2, A3).** M0-M4 executed — see `HANDOFF.md`
+Status: **accepted 2026-08-24, amended 2026-08-25 (A1-A4).** M0-M5 executed — see `HANDOFF.md`
 for where the build actually is.
 
 > **Amendment A1 — 2026-08-25.** Three changes from owner review, each verified before being written:
@@ -38,6 +38,32 @@ for where the build actually is.
 >    gets **no tools at all** and answers as validated JSON, and the **route** consult is the weakest
 >    of the four and is gated hardest.
 
+> **Amendment A4 — 2026-08-25.** Written after M5 installed the two CLIs it had just been written
+> against, and found several documented claims wrong:
+>
+> 7. **A capability table needs provenance.** `AdapterInfo.verification` records whether each
+>    adapter's capabilities were *measured* against a running CLI or merely *documented*, with a date
+>    and a note. Doctor and the commissioning panel both surface it. This exists because M5 wrote two
+>    adapters from vendor documentation and then measured them: `--ask-for-approval` does not exist on
+>    `codex exec`, `-p` means `--profile` there and `--print` on `agy`, and `agy` has an
+>    `accept-edits` mode the documentation did not mention. Every one of those would have failed on
+>    the first spawn.
+>
+> 8. **Two capabilities the plan did not anticipate, both discovered by measurement** (§9.3):
+>    **`maxAccounts`** — Antigravity keeps credentials in the OS keyring with no config-directory
+>    variable, so a machine holds exactly one Antigravity identity and commissioning must refuse the
+>    second; and **`meteredFromTranscript`** — `agy` writes conversations as SQLite, so agentyard
+>    cannot meter its work at all, and a run on it costs an *unknown* amount rather than nothing.
+>    A third, **`mintsSessionId`**, decides both how a transcript is found and ⛔ whether an orphaned
+>    process may ever be killed.
+>
+> 9. **A cost model may say it does not know.** `cache.kind: "unpriced"` is a real state rather than
+>    a missing field: `canPriceCache()` returns false and the cache clock declines to spend on
+>    keepalive or compaction rather than acting on an invented number. Google bills cache storage per
+>    token-hour and OpenAI caches server-side with no client-controlled TTL — neither is a lever of the
+>    shape the clock pulls, and converting one into a write multiplier would produce a number
+>    indistinguishable from a measured one at the point of use. Recorded as **D24**.
+
 > This is a **transient doc**: the design of record as it stood on 2026-08-24. It will drift as the
 > code lands and is kept for the reasoning, not as a status page. Durable facts extracted from it
 > live in `docs/cost-model.md` and `docs/glossary.md`, which *are* maintained.
@@ -66,6 +92,7 @@ for where the build actually is.
 | **D21** Decomposition | A milestone plan is a **roadmap**: children created as `draft` with dependency edges up front, prompts written at promotion. Decomposition is itself a task (§18.1) | ✔ A2 |
 | **D22** Judgment surface | Unattended judgment gets **no tools**. It answers as JSON validated against a closed set, which the daemon applies itself; the controller tier of MCP goes only to the chat session, where a person is watching (§11.1) | ✔ A3 |
 | **D23** Routing arbitration | The weakest of the four events and gated hardest: a tie means the alternatives are close, so ε bounds the upside while the turn is a real cost. Fires only above a token floor, and defers rather than blocks (§11.1) | ✔ A3 |
+| **D24** Unpriced providers | A cost model may declare `cache.kind: "unpriced"`. The clock then refuses to spend on keepalive or compaction rather than acting on an invented number; work, preemption and handoffs are unaffected (§9.3) | ✔ A4 |
 | **D7** | Wrap vs absorb — recommendation stands | open |
 
 ---
@@ -994,6 +1021,75 @@ They are not a fork in the road. Session ids are minted before spawn (§6.2), so
 **closed on one transport and resumed on the other** — `--resume <id>` — which is precisely what "take
 the keyboard" does. One session, two views of it.
 
+### 9.3 What measuring the other two CLIs changed (A4)
+
+§9 said the scheduler asks capabilities and never adapter names, and predicted two gaps would prove
+it: no `/compact`, and no classifier-backed auto. Both held. **Two more turned up that the plan had
+not imagined**, and they are the more interesting half, because each is invisible in a feature
+comparison and decisive in a scheduler.
+
+**1. Credential isolation is a capability, not an assumption.** The whole fleet premise is *one
+isolation root per account, pointed at by an environment variable, and agentyard never touches the
+credential*. Antigravity has no such variable and stores its credential in the **OS keyring**. So a
+machine holds exactly one Antigravity identity, and no engineering changes that without agentyard
+handling a credential — which it does not do.
+
+⛔ The wrong response would be to let somebody commission two workers and find out later. Two rows
+would not be two accounts; they would be two schedulers' worth of belief about one window, each
+confident it had its own. `maxAccounts` is therefore a capability, refused at commissioning, with a
+message that says why and what to do instead.
+
+The comparison is the point:
+
+| | Antigravity | Codex |
+|---|---|---|
+| Classifier reviewing actions | none | none |
+| Approval callback | none | none |
+| Credential | ⛔ OS keyring | `$CODEX_HOME/` |
+| **Accounts per machine** | **1** | **unlimited** |
+
+Two CLIs alike on every axis §9.1 cared about, and only one of them can hold a fleet.
+
+**2. A session id agentyard cannot mint breaks two things, and one of them is a safety rule.** Neither
+new CLI accepts an id we choose. The transcript path therefore cannot be predicted, which is
+recoverable — it is discovered after the file appears, matching on *created after the session
+started* rather than merely newest, so that an operator using the same CLI by hand does not have
+their work metered as agentyard's.
+
+⛔ The second consequence is not recoverable. Orphan reaping proves a pid is ours by finding our own
+minted uuid in the process's command line. With no minted id there is no proof, so **agentyard does
+not kill orphans for such an adapter at all** and says so in Doctor. Leaving one running costs quota;
+killing the wrong process costs somebody their work, and the standing rule is that agentyard kills
+only what it can prove is its own.
+
+**3. A provider may have no cache lever at all (D24).** Anthropic sells a write multiplier against a
+TTL that a read extends — that is a lever, and paying `0.1·C` now to avoid `2.0·C` later is
+arithmetic. Google bills cache **storage per token-hour**. OpenAI caches server-side with no
+client-controlled TTL. Neither is the same shape, and no defensible conversion was found.
+
+So `cache.kind: "unpriced"` is a real state: `canPriceCache()` returns false, and the cache clock
+declines to spend on keepalive or compaction rather than acting on a number nobody measured. Work,
+preemption and handoffs are unaffected — the provider simply does not get an optimisation that has
+not been established. ⛔ An invented multiplier would be indistinguishable from a measured one at the
+point of use, which is exactly why one was not written.
+
+**4. agentyard cannot meter every CLI.** `agy` writes conversations as **SQLite**, not the
+line-per-event JSONL every other adapter produces and `transcript.ts` tails. So its work is
+**unmetered**, and the honest report is *unknown* rather than a small number arrived at by summing
+nothing. `meteredFromTranscript: false`, and Doctor says it in words.
+
+**What this cost the design elsewhere.** Two holes in earlier milestones only became visible with a
+second adapter in the fleet:
+
+- A **reserve breach on a provider that cannot compact did nothing** — it fell through the compaction
+  branch and out the bottom, in precisely the situation the reserve exists to catch. It now takes a
+  handoff and releases the session, which is the move that is always available.
+- **Commissioning left a window in which a signed-in worker was dispatchable.** The scheduler ticks
+  every ten seconds, so "create it, then disable it" is not soon enough. `worker.create` now accepts
+  `enabled: false`.
+
+Neither is about Antigravity or codex. Both are about having assumed one provider.
+
 ---
 
 ## 10. Resources and external MCP services (D12)
@@ -1339,9 +1435,12 @@ events — decomposition into drafts, failure triage, the risk gate on agent-fil
 arbitration; the **controller MCP tier**, handed only to the chat session; chat and thread panes, the
 latter delivering a note into a live session as a cache read rather than a restart (§18.4).
 
-**M5 — Multi-provider.** **`antigravity-cli`** (the Google adapter — `gemini-cli` is retired, §9) and
-`openai-compatible`. Second and third cost models. Capability-driven routing proven twice over: by the
-absence of `/compact`, and by the absence of `classifierBackedAuto` (§9.1).
+**M5 — Multi-provider.** ✔ shipped 2026-08-25. **`antigravity-cli`** (agy 1.1.20) and
+**`openai-compatible`** (codex 0.149.1), both measured against the running CLIs. Second and third
+cost models, both declaring `cache.kind: "unpriced"` (D24). Capability-driven routing proven **four**
+times over rather than the two expected: the absence of `/compact`, the absence of
+`classifierBackedAuto`, and two the plan did not anticipate — the absence of **credential isolation**
+and the absence of a **mintable session id** (§9.3).
 
 **M6 — Packaging.** electron-builder; macOS/Linux path + PTY verification; adapter loading from a
 directory; additional landing strategies (`leave-branch`, `pull-request`); public README pass.

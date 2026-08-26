@@ -273,6 +273,10 @@ export function spawnSession(opts: SpawnOptions): Session {
 
   // Metered like anything else: a judgment call is not free, and the ledger reports what each one
   // cost from this transcript rather than from an estimate.
+  //
+  // ⚠️ Null is normal for an adapter that cannot mint a session id: the CLI names its own transcript,
+  // so there is nothing to predict and `findTranscriptLater` goes looking once the file exists.
+  // Guessing at the name would risk metering somebody else's session as ours.
   const transcriptPath = purpose === 'login' ? null : ad.transcriptPath(worker.isolationRoot, cwd, id)
   const now = Date.now()
   db()
@@ -309,7 +313,64 @@ export function spawnSession(opts: SpawnOptions): Session {
     `spawned ${purpose} session ${id.slice(0, 8)} on ${worker.label}: ${plan.command} ${plan.args.join(' ')}`
   )
   setState(id, 'live')
+  if (!transcriptPath && purpose !== 'login' && ad.discoverTranscript) {
+    findTranscriptLater(id, worker.isolationRoot, cwd, now)
+  }
   return getSession(id) ?? session
+}
+
+/** How long to keep looking for a transcript a CLI names itself, and how often. */
+const DISCOVER_ATTEMPTS = 20
+const DISCOVER_INTERVAL_MS = 1500
+
+/**
+ * Watch for the transcript an adapter could not predict.
+ *
+ * ⛔ Without this a session on a non-minting adapter is **never metered** - no turns, no context
+ * size, no cache expiry - and the cost model would report it as costing nothing rather than as
+ * unknown, which is much the worse of the two failures.
+ *
+ * Gives up quietly after half a minute. A session with no transcript still runs and still completes;
+ * it is simply invisible to the meter, and that is what Doctor reports.
+ */
+function findTranscriptLater(
+  sessionId: string,
+  isolationRoot: string,
+  cwd: string,
+  startedAt: number
+): void {
+  let attempts = 0
+  const timer = setInterval(() => {
+    attempts++
+    const entry = live.get(sessionId)
+    if (!entry || attempts > DISCOVER_ATTEMPTS) {
+      clearInterval(timer)
+      if (entry) {
+        log.warn(`no transcript appeared for session ${sessionId.slice(0, 8)}; it will run unmetered`)
+      }
+      return
+    }
+    let found: string | null = null
+    try {
+      found =
+        adapter(entry.session.adapterId).discoverTranscript?.(isolationRoot, cwd, startedAt) ?? null
+    } catch (err) {
+      log.warn('transcript discovery failed:', err)
+    }
+    if (!found) return
+
+    clearInterval(timer)
+    db().prepare('update sessions set transcript_path = ? where id = ?').run(found, sessionId)
+    log.info(`session ${sessionId.slice(0, 8)} writes its transcript at ${found}`)
+    // Re-announcing is what starts the tailer: index.ts attaches one when a live session first has a
+    // path, and at spawn time this one did not.
+    const updated = getSession(sessionId)
+    if (updated) {
+      entry.session = updated
+      events.onChange(updated)
+    }
+  }, DISCOVER_INTERVAL_MS)
+  timer.unref?.()
 }
 
 function setState(id: string, state: SessionState): void {
@@ -412,8 +473,16 @@ export function reconcileOrphans(): number {
     db().prepare("select * from sessions where state not in ('closed','failed')").all()
   )
   let killed = 0
+  let unidentifiable = 0
   for (const r of stale) {
-    if (r.pid && isAlive(r.pid) && ownsProcess(r.pid, r.id)) {
+    // ⛔ An adapter that will not accept a session id we chose leaves nothing of ours in the process's
+    // command line, so identity **cannot be established** - and the standing rule is that agentyard
+    // kills only what it can prove is its own. Leaving an orphan running costs quota; killing the
+    // wrong process costs somebody their work, and that has happened here for real once already.
+    const identifiable = adapterMintsIds(r.adapter_id)
+    if (r.pid && isAlive(r.pid) && !identifiable) {
+      unidentifiable++
+    } else if (r.pid && isAlive(r.pid) && ownsProcess(r.pid, r.id)) {
       try {
         process.kill(r.pid)
         killed++
@@ -432,7 +501,23 @@ export function reconcileOrphans(): number {
         (killed ? `, stopped ${killed} still-running agent process(es)` : '')
     )
   }
+  if (unidentifiable) {
+    log.warn(
+      `${unidentifiable} orphaned process(es) were left running: their adapter does not accept a ` +
+        'session id, so agentyard cannot prove they are its own. Stop them by hand if they are. ' +
+        'Doctor reports this.'
+    )
+  }
   return stale.length
+}
+
+/** Does this adapter let agentyard name the session? Unknown adapters are treated as "no". */
+function adapterMintsIds(adapterId: string): boolean {
+  try {
+    return adapter(adapterId).info.capabilities.mintsSessionId
+  } catch {
+    return false
+  }
 }
 
 /**

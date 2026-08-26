@@ -139,14 +139,39 @@ export function decide(session: Session, ctx: ClockContext): ClockDecision {
 
   // Move 5 first: a reserve breach is not a preference, and it does not wait for the clock.
   const reserve = reserveState(session.workerId)
-  if (reserve.verdict === 'at_risk' && caps.manualCompact && contextTokens > 0) {
+  if (reserve.verdict === 'at_risk' && contextTokens > 0) {
+    const compactCost = caps.manualCompact ? model.costOfCompact(session) : null
+    if (compactCost !== null) {
+      return {
+        ...base,
+        move: 'compact',
+        reason: `compaction reserve at risk - ${reserve.reason}`,
+        expectedIdleMs: null,
+        estimatedCost: Math.round(compactCost)
+      }
+    }
+    // ⛔ M5 found this hole. A provider with no compaction used to fall straight through here and do
+    // *nothing* while its reserve was breached - the one situation the reserve exists to catch. The
+    // move that is always available is to get the work out before the context is stranded.
     return {
       ...base,
-      move: 'compact',
-      reason: `compaction reserve at risk - ${reserve.reason}`,
+      move: 'handoff_close',
+      reason:
+        `compaction reserve at risk and this provider cannot compact - ${reserve.reason}. ` +
+        'Taking a handoff and releasing the session instead.',
       expectedIdleMs: null,
-      estimatedCost: Math.round(model.costOfCompact(session))
+      estimatedCost: model.costOfKeepalive(session) ?? 0
     }
+  }
+
+  // ⛔ Everything below trades tokens for a warmer cache, which requires knowing what a cache costs.
+  // Where the provider does not price one - Google bills storage per token-hour, OpenAI caches
+  // server-side with no client-controlled TTL - there is no lever to pull, and acting on an invented
+  // number would be worse than not acting. Work, preemption and handoffs are unaffected.
+  if (!model.canPriceCache()) {
+    return nothing(
+      `${model.provider} does not expose a priced, steerable cache, so there is nothing to buy here`
+    )
   }
 
   const untilExpiry = expiry - now
@@ -162,13 +187,15 @@ export function decide(session: Session, ctx: ClockContext): ClockDecision {
       move: 'dispatch',
       reason: 'queued work scored well against this session',
       expectedIdleMs: 0,
-      estimatedCost: Math.round(model.costOfKeepalive(session))
+      estimatedCost: Math.round(model.costOfKeepalive(session) ?? 0)
     }
   }
 
   const idle = expectedIdleMs(session, now)
-  const keepaliveCost = Math.round(model.costOfKeepalive(session))
-  const compactCost = Math.round(model.costOfCompact(session))
+  // Non-null past the canPriceCache() gate above; compaction can still be absent on its own.
+  const keepaliveCost = Math.round(model.costOfKeepalive(session) ?? 0)
+  const compactable = model.costOfCompact(session)
+  const compactCost = compactable === null ? null : Math.round(compactable)
 
   // ⚠️ Spending to hold a cache open on an account whose remaining budget is unknown is a gamble.
   // Whether it is one worth taking is a property of the objective, not a fixed rule.
@@ -193,6 +220,7 @@ export function decide(session: Session, ctx: ClockContext): ClockDecision {
 
   // Move 4.
   const worthCompacting =
+    compactCost !== null &&
     contextTokens > model.compaction.breakeven_context_tokens &&
     session.tokensSinceCompact > model.compaction.min_tokens_since_compact
   if (idle.ms > cost.compactThresholdMs && worthCompacting && caps.manualCompact) {

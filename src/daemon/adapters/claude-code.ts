@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import type { AdapterDetection, AdapterInfo, QuotaSnapshot } from '@shared/protocol.js'
 import type { AgentAdapter, IdentityProbe, SpawnPlan, SpawnRequest } from './types.js'
 import { log } from '../log.js'
-import { launchable, which } from '../which.js'
+import { launchArgs, launchable, which } from '../which.js'
 
 const run = promisify(execFile)
 
@@ -25,7 +25,14 @@ const info: AdapterInfo = {
     nativeWorktree: true,
     multimodalInput: true,
     mcp: true,
-    quotaProbe: 'cli'
+    quotaProbe: 'cli',
+    // `--session-id` takes a uuid we choose, which is what makes the transcript path knowable before
+    // the file exists and what lets orphan reaping prove a pid is ours.
+    mintsSessionId: true,
+    // JSONL, one record per event, summing usage.iterations[]. The exactness the cost model is built on.
+    meteredFromTranscript: true,
+    // CLAUDE_CONFIG_DIR points the CLI at one account's directory, so a fleet is just directories.
+    maxAccounts: null
   },
   policy: {
     // Plan §9.1. ⚠️ `auto` is the built-in start mode only for a terminal session on Pro/Max/Team.
@@ -40,6 +47,14 @@ const info: AdapterInfo = {
     wrapUpProtocol: 'compact',
     // Opus 4.7+ receives no injected token budget, so a wrap-up instruction must state it. §2.
     needsExplicitBudget: true
+  },
+  verification: {
+    level: 'measured',
+    asOf: '2026-08-25',
+    note:
+      'Every capability here was exercised against Claude Code 2.1.223 on this machine during M1-M4. ' +
+      'Three corrected a written assumption: `claude -p /usage` spends a real turn, `--print` will ' +
+      'not start under a PTY, and `auth status` exits 1 while printing valid JSON.'
   }
 }
 
@@ -106,7 +121,10 @@ export const claudeCode: AgentAdapter = {
       }
     }
     try {
-      const { stdout } = await run(resolved, ['--version'], { timeout: 15_000 })
+      // ⛔ Through launchArgs, not directly: this machine resolves a .EXE, but an npm global install
+      // leaves a .cmd that Node will not execFile without a shell.
+      const probe = launchArgs(resolved, ['--version'])
+      const { stdout } = await run(probe.command, probe.args, { timeout: 15_000 })
       const version = stdout.trim().split(/\s+/)[0] ?? stdout.trim()
       return { adapterId: info.id, found: true, path: resolved, version }
     } catch (err) {

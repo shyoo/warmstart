@@ -37,15 +37,32 @@ export interface ReserveState {
   reason: string
 }
 
-/** The cost of saving everything this worker holds right now. Always knowable - it is our own data. */
-export function requiredReserve(workerId: string): { tokens: number; sessions: number } {
+/**
+ * The cost of saving everything this worker holds right now.
+ *
+ * ⚠️ No longer "always knowable", and M5 is why. A provider whose cache cannot be priced, or that has
+ * no compaction to run, has no saving cost to reserve for - so it contributes nothing, and
+ * `unpriced` counts how many sessions were skipped. A caller that saw only the total would read a
+ * small number as *cheap to save* when it actually means *nobody knows*.
+ */
+export function requiredReserve(workerId: string): {
+  tokens: number
+  sessions: number
+  unpriced: number
+} {
   const sessions = sessionsForWorker(workerId)
   let tokens = 0
+  let unpriced = 0
   for (const session of sessions) {
     const model = costModel(adapter(session.adapterId).info.policy.costModelId)
-    tokens += model.costOfCompact({ contextTokens: session.contextTokens, model: session.model })
+    const cost = model.costOfCompact({ contextTokens: session.contextTokens, model: session.model })
+    if (cost === null) {
+      unpriced++
+      continue
+    }
+    tokens += cost
   }
-  return { tokens: Math.round(tokens), sessions: sessions.length }
+  return { tokens: Math.round(tokens), sessions: sessions.length, unpriced }
 }
 
 /**

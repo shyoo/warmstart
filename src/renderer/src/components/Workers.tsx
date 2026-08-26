@@ -262,6 +262,70 @@ function loginArgvFor(info: AdapterInfo): string[] {
   return info.id === 'claude-code' ? ['auth', 'login'] : ['login']
 }
 
+/**
+ * What this adapter can and cannot do, before you commit an account to it.
+ *
+ * ⛔ Shown at commissioning rather than buried in a doc, because these are the things that decide
+ * whether a second account is even possible and whether agentyard can tell you what its work cost.
+ * Finding out afterwards means finding out from a bill.
+ */
+function AdapterFacts({ adapter }: { adapter: AdapterInfo }): React.JSX.Element {
+  const c = adapter.capabilities
+  const facts: Array<{ ok: boolean; text: string }> = [
+    {
+      ok: c.maxAccounts === null,
+      text:
+        c.maxAccounts === null
+          ? `Any number of accounts — ${adapter.isolationEnvVar} points it at one credential directory each`
+          : `${c.maxAccounts} account only — it keeps credentials in the OS keyring, with no way to point it elsewhere`
+    },
+    {
+      ok: c.meteredFromTranscript,
+      text: c.meteredFromTranscript
+        ? 'agentyard can meter its work exactly, from the transcript it writes'
+        : 'agentyard cannot meter its work — runs on it cost an unknown amount, not nothing'
+    },
+    {
+      ok: c.manualCompact,
+      text: c.manualCompact
+        ? 'Can compact, so a long session can be shrunk rather than abandoned'
+        : 'Cannot compact — a session near its limit is handed off and closed instead'
+    },
+    {
+      ok: c.classifierBackedAuto,
+      text: c.classifierBackedAuto
+        ? 'A classifier reviews each action, so unattended work needs fewer approvals'
+        : 'Nothing reviews but you — agentyard writes an allowlist and expects more refusals'
+    },
+    {
+      ok: c.quotaProbe !== 'none',
+      text:
+        c.quotaProbe === 'none'
+          ? 'No free usage probe — its quota is always unknown, and its runs are marked unverified'
+          : 'Reports its own usage'
+    }
+  ]
+
+  return (
+    <div className="note">
+      <strong>{adapter.label}</strong>{' '}
+      <span className={adapter.verification.level === 'measured' ? 'ok' : 'warn'}>
+        {adapter.verification.level === 'measured'
+          ? `measured ${adapter.verification.asOf}`
+          : `documented only, ${adapter.verification.asOf}`}
+      </span>
+      <ul className="facts">
+        {facts.map((f) => (
+          <li key={f.text} className={f.ok ? 'dim' : 'warn'}>
+            {f.ok ? '✓' : '⚠'} {f.text}
+          </li>
+        ))}
+      </ul>
+      <p className="dim">{adapter.verification.note}</p>
+    </div>
+  )
+}
+
 function AddWorker({
   adapters,
   detections,
@@ -284,6 +348,7 @@ function AddWorker({
   }, [adapters, adapterId])
 
   const detection = detections.find((d) => d.adapterId === adapterId)
+  const selected = adapters.find((a) => a.id === adapterId)
 
   const submit = async () => {
     setSaving(true)
@@ -316,14 +381,17 @@ function AddWorker({
           {detection?.found ? (
             <>
               found <span className="mono">{detection.path}</span> · v{detection.version}
+              {detection.error && <div className="warn">{detection.error}</div>}
             </>
           ) : (
             <span className="warn">
-              not on PATH — install it, or point agentyard at it once adapters are configurable (M6)
+              {detection?.error ?? 'not on PATH — install it, or point agentyard at it (M6)'}
             </span>
           )}
         </span>
       </div>
+
+      {selected && <AdapterFacts adapter={selected} />}
 
       <div className="form-row">
         <label>Label</label>

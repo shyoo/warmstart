@@ -6,7 +6,35 @@ import type {
   WorkerIdentity
 } from '@shared/protocol.js'
 
+/**
+ * A permission rule for an adapter whose approvals are settled by **configuration rather than a
+ * callback** (`approvalChannel: 'settings_rules'`).
+ *
+ * ⚠️ The difference from `permission_prompt_tool` is not cosmetic and costs real autonomy: there is
+ * nobody to ask mid-run. Whatever is not allowed before the process starts is refused while it runs,
+ * and the agent finds out by being told no. So the allowlist has to be written into the isolation
+ * root *before* spawn, and an adapter that works this way will stall on anything not anticipated.
+ */
+export interface PermissionRules {
+  allow: string[]
+  deny: string[]
+}
+
+export interface WrittenPermissions {
+  /** Where the rules were written, for Doctor and for the operator to read. */
+  path: string | null
+  /** Populated when nothing could be written; the session still runs, with fewer powers. */
+  error?: string
+}
+
 export interface SpawnRequest {
+  /**
+   * The id agentyard minted for this session.
+   *
+   * ⚠️ Only meaningful when the adapter declares `mintsSessionId`. Where the CLI accepts no such
+   * flag it is still agentyard's handle for the session - it is simply not a fact about the process,
+   * which is why identity has to be established differently. See `AgentAdapter.transcriptPath`.
+   */
   sessionId: string
   isolationRoot: string
   cwd: string
@@ -64,6 +92,30 @@ export interface AgentAdapter {
 
   plan(req: SpawnRequest): SpawnPlan
 
-  /** Where this session's transcript will appear, so the tailer can watch before the file exists. */
-  transcriptPath(isolationRoot: string, cwd: string, sessionId: string): string
+  /**
+   * Where this session's transcript will appear, so the tailer can watch before the file exists.
+   *
+   * ⛔ Returns null when the adapter cannot mint a session id: the CLI names the file, and guessing
+   * at the name would mean metering somebody else's session. `discoverTranscript` answers instead,
+   * after the fact.
+   */
+  transcriptPath(isolationRoot: string, cwd: string, sessionId: string): string | null
+
+  /**
+   * Find the transcript a session actually wrote, for CLIs that name their own.
+   *
+   * ⚠️ Optional, and only implemented where `mintsSessionId` is false. Called after the process has
+   * started, and must return the newest transcript **created after `startedAt`** - never merely the
+   * newest, which on a machine where the operator is also using the CLI by hand would attach the
+   * tailer to their session and meter their work as agentyard's.
+   */
+  discoverTranscript?(isolationRoot: string, cwd: string, startedAt: number): string | null
+
+  /**
+   * Write the project's permission rules into the isolation root before a session starts.
+   *
+   * Only implemented for `approvalChannel: 'settings_rules'`. ⛔ agentyard writes *rules*, never
+   * credentials, and only into the root this worker owns.
+   */
+  writePermissions?(isolationRoot: string, rules: PermissionRules): WrittenPermissions
 }

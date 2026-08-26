@@ -1,0 +1,155 @@
+{
+  "$comment": [
+    "Antigravity CLI on a Google AI Pro/Ultra subscription.",
+    "",
+    "STOP. Read `cache.kind` before using anything in this file.",
+    "",
+    "Google prices context caching as STORAGE OVER TIME - a per-token-hour charge for keeping a",
+    "cache alive - not as a write multiplier against a TTL the way Anthropic does. The two are not",
+    "the same arithmetic wearing different numbers, and no conversion between them was found that",
+    "could be defended. Under a subscription the user-visible currency is neither: it is quota, and",
+    "no public figure maps Antigravity's quota onto cached tokens.",
+    "",
+    "So `cache.kind` is `unpriced`, which is a real state the code understands: CostModel.canPriceCache()",
+    "returns false, and the cache clock refuses to spend on keepalive or compaction for this provider",
+    "rather than acting on an invented number. A worker on this model still runs work, still gets",
+    "preempted at a window boundary, and still hands off - it simply will not pay to hold a cache",
+    "open, because nobody here knows what that costs.",
+    "",
+    "This file becomes useful the moment somebody measures it. Until then its honesty is its value:",
+    "an invented multiplier would be indistinguishable from a measured one at the point of use.",
+    "",
+    "MODELS: read from `agy models` on 2026-08-25 (agy 1.1.20), not guessed. Note two things.",
+    "First, effort is baked into the model id (-high/-medium/-low) as well as being a --effort flag.",
+    "Second, Antigravity serves Claude and GPT-OSS models alongside Gemini - so 'this task needs",
+    "Claude' does NOT imply 'this task needs a claude-code worker', and capability routing has to be",
+    "asked about the model, not the vendor."
+  ],
+  "id": "google.antigravity.2026-08",
+  "provider": "google",
+  "channel": "subscription",
+  "schema_version": 1,
+  "effective_from": "2026-08-01",
+  "cache": {
+    "kind": "unpriced",
+    "$comment": "Google bills cache STORAGE per token-hour. Not a TTL multiplier, and not converted here.",
+    "read_multiplier": null,
+    "read_refreshes_ttl": false,
+    "ttl_measured_from": "request_start",
+    "ttls": [],
+    "default_ttl": null,
+    "scope": "unknown"
+  },
+  "compaction": {
+    "$comment": [
+      "Antigravity exposes no /compact. `available: false` is what the cache clock reads, via the",
+      "adapter's manualCompact capability; the numbers below exist only so nothing downstream has to",
+      "handle a missing block, and are never used while available is false."
+    ],
+    "available": false,
+    "summary_output_tokens": 0,
+    "post_context_tokens": 0,
+    "duration_ms": 0,
+    "breakeven_context_tokens": 0,
+    "min_tokens_since_compact": 0
+  },
+  "models": [
+    {
+      "id": "gemini-3.1-pro-high",
+      "context_window": 1000000,
+      "input_per_mtok": null,
+      "output_per_mtok": null,
+      "tokenizer": "gemini-v3",
+      "context_awareness": false,
+      "effort_levels": [
+        "high"
+      ]
+    },
+    {
+      "id": "gemini-3.1-pro-low",
+      "context_window": 1000000,
+      "input_per_mtok": null,
+      "output_per_mtok": null,
+      "tokenizer": "gemini-v3",
+      "context_awareness": false,
+      "effort_levels": [
+        "low"
+      ]
+    },
+    {
+      "id": "gemini-3.7-flash-high",
+      "context_window": 1000000,
+      "input_per_mtok": null,
+      "output_per_mtok": null,
+      "tokenizer": "gemini-v3",
+      "context_awareness": false,
+      "effort_levels": [
+        "high"
+      ]
+    },
+    {
+      "id": "gemini-3.7-flash-medium",
+      "context_window": 1000000,
+      "input_per_mtok": null,
+      "output_per_mtok": null,
+      "tokenizer": "gemini-v3",
+      "context_awareness": false,
+      "effort_levels": [
+        "medium"
+      ]
+    },
+    {
+      "id": "gemini-3.7-flash-low",
+      "context_window": 1000000,
+      "input_per_mtok": null,
+      "output_per_mtok": null,
+      "tokenizer": "gemini-v3",
+      "context_awareness": false,
+      "effort_levels": [
+        "low"
+      ]
+    },
+    {
+      "id": "claude-sonnet-4-6",
+      "context_window": 1000000,
+      "input_per_mtok": null,
+      "output_per_mtok": null,
+      "tokenizer": "unknown",
+      "context_awareness": false,
+      "effort_levels": []
+    },
+    {
+      "id": "claude-opus-4-6-thinking",
+      "context_window": 1000000,
+      "input_per_mtok": null,
+      "output_per_mtok": null,
+      "tokenizer": "unknown",
+      "context_awareness": false,
+      "effort_levels": []
+    },
+    {
+      "id": "gpt-oss-120b-medium",
+      "context_window": 131072,
+      "input_per_mtok": null,
+      "output_per_mtok": null,
+      "tokenizer": "unknown",
+      "context_awareness": false,
+      "effort_levels": [
+        "medium"
+      ]
+    }
+  ],
+  "quota": {
+    "kind": "unknown",
+    "probe": "none",
+    "windows": [],
+    "reports": "none",
+    "$comment": "/usage is an interactive slash command only. There is no free non-interactive probe."
+  },
+  "$owed": [
+    "Cache pricing: is it storage-per-token-hour on a subscription at all, or is caching simply not billed to a subscriber? Until this is known, cache.kind stays `unpriced`.",
+    "Context windows are the published figures for each family, not read from the CLI - `agy models` reports ids and display names only.",
+    "Whether a quota window exists at all, and over what period. /usage and /credits are slash commands; HANDOFF R9 measures whether print mode runs them for free.",
+    "Nothing here is metered: agy writes conversations as SQLite, so agentyard's transcript tailer reads nothing. See capabilities.meteredFromTranscript."
+  ]
+}

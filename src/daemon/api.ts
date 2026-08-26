@@ -184,6 +184,32 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
 
       for (const d of detections) {
         if (!d.found) warnings.push(`${d.adapterId}: CLI not found on PATH`)
+        else if (d.error) warnings.push(`${d.adapterId}: ${d.error}`)
+      }
+
+      // ⛔ Said out loud, because a capability table is easy to write from documentation and
+      // expensive to be wrong about. An operator deciding whether to trust unattended work on an
+      // adapter should be told which claims were exercised and which were read.
+      for (const a of adapters()) {
+        const v = a.info.verification
+        if (v.level !== 'measured') {
+          warnings.push(
+            `${a.info.label}: its capabilities are documented, not measured (${v.asOf}). ` +
+              'Treat unattended work on it as unproven.'
+          )
+        }
+        if (!a.info.capabilities.meteredFromTranscript && listWorkers().some((w) => w.adapterId === a.info.id)) {
+          warnings.push(
+            `${a.info.label}: agentyard cannot meter its work - it does not write a transcript ` +
+              'agentyard can read, so runs on it cost an unknown amount rather than nothing.'
+          )
+        }
+        if (!a.info.capabilities.mintsSessionId && listWorkers().some((w) => w.adapterId === a.info.id)) {
+          warnings.push(
+            `${a.info.label}: agentyard will not stop its orphaned processes, because it accepts no ` +
+              'session id and so cannot be proved to own one. Stop them by hand after a crash.'
+          )
+        }
       }
       if (listWorkers().length === 0) warnings.push('No workers commissioned yet.')
 

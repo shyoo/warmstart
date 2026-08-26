@@ -70,10 +70,30 @@ export function createWorker(input: {
   isolationRoot?: string | undefined
   humanOccupied?: boolean | undefined
   maxConcurrent?: number | undefined
+  enabled?: boolean | undefined
 }): Worker {
   if (!hasAdapter(input.adapterId)) throw new Error(`unknown adapter '${input.adapterId}'`)
   const label = input.label.trim()
   if (!label) throw new Error('a worker needs a label')
+
+  // ⛔ Refused here rather than discovered later. Some CLIs keep their credential in the OS keyring
+  // with no way to point them at a different one - Antigravity is the first - so a second worker
+  // would not be a second account. It would be two rows sharing one account's quota, each believing
+  // it had a window of its own, and the scheduler would happily overspend it. A refusal now beats
+  // that, and the message says why rather than just saying no.
+  const caps = adapter(input.adapterId).info.capabilities
+  const limit = caps.maxAccounts
+  if (limit !== null) {
+    const existing = listWorkers(true).filter((w) => w.adapterId === input.adapterId && !w.retiredAt)
+    if (existing.length >= limit) {
+      const info = adapter(input.adapterId).info
+      throw new Error(
+        `${info.label} supports only ${limit} account on this machine: it keeps credentials in the ` +
+          'OS keyring and offers no way to point it at another. ' +
+          `'${existing[0]?.label}' already holds it. Retire that worker to commission a different one.`
+      )
+    }
+  }
 
   const id = randomUUID()
   const root = input.isolationRoot?.trim() || defaultIsolationRoot(label)
@@ -84,13 +104,14 @@ export function createWorker(input: {
     .prepare(
       `insert into workers (id, adapter_id, label, isolation_root, enabled, human_occupied,
                             max_concurrent, created_at)
-       values (?, ?, ?, ?, 1, ?, ?, ?)`
+       values (?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       id,
       input.adapterId,
       label,
       root,
+      input.enabled === false ? 0 : 1,
       input.humanOccupied ? 1 : 0,
       // Default 1: concurrent requests against one cached prefix each pay a write, so a second
       // session on the same worker is a cost decision, not a free speedup. cost-model.md §1.

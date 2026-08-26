@@ -13,6 +13,7 @@ true and still be needed next month.
 | use a domain word (worker, session, workspace, resource, mandate, objective) | **`docs/glossary.md`** — these terms are load-bearing and mean specific things |
 | understand *why* the design is shaped this way | **`transient_docs/implementation_plan_2026-08-24.md`** — the design of record, with every decision (D1–D18) and its reasoning |
 | change pricing or add a provider | `costmodels/` — data, never code. See `docs/cost-model.md` § Cost models are data |
+| add or change an **adapter** | **`docs/adapters.md`** — what each CLI can actually do, measured, with the date and version. ⛔ Read it before writing a capability from a vendor doc; M5 found several documented claims that would have failed on the first spawn |
 
 ## Rules
 
@@ -86,6 +87,19 @@ These are not preferences; breaking one breaks the product.
   acceptance criteria only. **The prompt is written at promotion**, from what the preceding work
   actually learned. A prompt written at creation is a guess, and a stale prompt is worse than none
   because somebody follows it.
+- ⛔ **A capability is a fact about a CLI, and it needs provenance.** `AdapterInfo.verification` says
+  whether the block was *measured* against a running binary or only *documented*. M5 wrote two
+  adapters from vendor documentation and then installed both CLIs: `--ask-for-approval` does not exist
+  on `codex exec`, `-p` means `--profile` there and `--print` on `agy`, and `agy` has an
+  `accept-edits` mode the docs never mentioned. Every one would have failed on the first spawn.
+  ⛔ Never promote a claim to `measured` without having watched it be true.
+- ⛔ **Conservative is the cheap direction on a capability.** Claiming one that turns out to be absent
+  strands a session at a window boundary; omitting one that is present costs a missed optimisation.
+  When a capability is uncertain, declare the pessimistic answer and record the question.
+- ⛔ **A cost model may say it does not know.** `cache.kind: "unpriced"` makes `canPriceCache()` false
+  and the cache clock declines to spend rather than acting on an invented number. Do not convert one
+  provider's pricing shape into another's to fill the field — at the point of use, a converted number
+  is indistinguishable from a measured one.
 - **Agents work in a pooled worktree, never the trunk.** The branch is named after the *task*
   (`agentyard/t123-…`), never after the workspace it happened to land in.
 
@@ -167,6 +181,15 @@ costmodels/             versioned pricing data
   (bounded separately at one per worker) and skipped by the cache clock; a `chat` session is very much
   the clock's business. Changing a purpose changes what a session costs.
 
+- **`cmd /d /s /c <shim>` splits any path containing a space.** `/s` makes cmd strip the outer quotes
+  and take the rest literally, and the Windows default home has a space in it. Use `/d /c` and let
+  Node quote the argument; do **not** add quotes yourself. Latent since M1 and invisible until a CLI
+  installed as a `.cmd` rather than a `.exe`. Everything that starts a CLI goes through
+  `launchable()` / `launchArgs()`, **including detection** - `execFile` on a `.cmd` without a shell
+  fails with a bare `spawn EINVAL`, and detection that fails for an installed CLI reports it missing.
+- **`agy` installs to `%LOCALAPPDATA%gyin` and is not on PATH until `agy install` runs.** The
+  adapter looks there anyway; reporting "not installed" would send somebody to reinstall what they
+  already have.
 - **`gemini-cli` is dead.** Google stopped serving individual accounts 2026-06-18; the Google adapter
   is **Antigravity CLI (`agy`)**. Do not write against `gemini`.
 - **Compaction takes about two minutes.** Any deadline that ends in a compaction has to budget for

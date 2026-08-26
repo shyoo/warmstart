@@ -429,6 +429,12 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
     }
   }
 
+  // ⛔ Before the process starts, and only for adapters whose approvals are settled by configuration
+  // rather than by a callback. There is nobody to ask mid-run on those, so whatever is not allowed
+  // now is refused later with no way to escalate - which is the real cost of `settings_rules` and the
+  // reason §9.1 says such adapters need a *narrower* allowlist and a higher expected refusal rate.
+  applyPermissionRules(worker, project)
+
   const cwd = workspace?.path ?? process.cwd()
   // ⛔ `stream`, not `pty`, for scheduled work. Two measured reasons, both in sendPrompt: the CLI's
   // workspace-trust dialog is skipped only in non-interactive mode, and would otherwise block every
@@ -476,6 +482,32 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
 }
 
 /**
+ * Push the project's allowlist into the worker's own configuration.
+ *
+ * ⚠️ Silent when the adapter has a permission callback: Claude Code answers through
+ * `--permission-prompt-tool`, so writing rules into its settings would duplicate a mechanism that
+ * already works and is per-session rather than global.
+ */
+function applyPermissionRules(worker: Worker, project: ReturnType<typeof getProject>): void {
+  const ad = adapter(worker.adapterId)
+  if (ad.info.capabilities.approvalChannel !== 'settings_rules' || !ad.writePermissions) return
+
+  const policy = project ? policyFor(project) : null
+  const written = ad.writePermissions(worker.isolationRoot, {
+    allow: policy?.allowRules ?? [],
+    deny: policy?.denyRules ?? []
+  })
+  if (written.error) {
+    log.warn(`could not write permission rules for ${worker.label}: ${written.error}`)
+  } else if (written.path) {
+    log.info(
+      `wrote ${(policy?.allowRules ?? []).length} allow / ${(policy?.denyRules ?? []).length} deny ` +
+        `rule(s) for ${worker.label} into ${written.path}`
+    )
+  }
+}
+
+/**
  * Send a task back into the session that already holds its context.
  *
  * This is the move the whole cost model exists to make available: `0.1·C` for a read that also
@@ -488,7 +520,12 @@ async function dispatchIntoWarmSession(
   quotaUnverified: boolean
 ): Promise<void> {
   const model = costModel(adapter(worker.adapterId).info.policy.costModelId)
-  const saved = Math.round(model.costOfColdStart(session.contextTokens ?? 0) - model.costOfKeepalive(session))
+  // ⚠️ The saving is a *claim about this provider's pricing*. Where the cache cannot be priced there
+  // is no saving to claim - reusing the session is still right, because the context is already there,
+  // but agentyard will not put a number on it that nobody measured.
+  const cold = model.costOfColdStart(session.contextTokens ?? 0)
+  const warm = model.costOfKeepalive(session)
+  const saved = cold !== null && warm !== null ? Math.round(cold - warm) : null
 
   const run = startRun({
     taskId: task.id,
@@ -504,10 +541,17 @@ async function dispatchIntoWarmSession(
     task.id,
     'system',
     `Continued in the session that still holds this task's context` +
-      (saved > 0 ? ` — about ${saved} input-token-equivalents cheaper than a cold start.` : '.')
+      (saved !== null && saved > 0
+        ? ` — about ${saved} input-token-equivalents cheaper than a cold start.`
+        : saved === null
+          ? ' — cheaper than a cold start, though this provider’s cache is not priced, so by how much is unknown.'
+          : '.')
   )
   sendPrompt(session.id, promptFor(task))
-  log.info(`t${task.seq} continued warm on ${worker.label} (run ${run.id.slice(0, 8)}, saved ~${saved})`)
+  log.info(
+    `t${task.seq} continued warm on ${worker.label} (run ${run.id.slice(0, 8)}, ` +
+      `saved ${saved === null ? 'unknown' : `~${saved}`})`
+  )
 }
 
 // ---------------------------------------------------------------------------- watchdogs
