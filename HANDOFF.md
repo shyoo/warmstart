@@ -8,10 +8,14 @@ for, untested.
 if you add a line, find the one it obsoletes and cut it in the same edit. Finished work moves to
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
-**Baseline (2026-08-26, M6):** `npm run typecheck` clean · `npm run build` clean · `npm test` 126/126 ·
-`npm run test:daemon` 96/96 · `npm run test:ui` 21/21 · `npm run test:pack` 14/14 · L4 (opt-in) landed a
-real agent commit on origin/main. Electron 44.0.0, electron-builder 26.15.3, 0 npm vulnerabilities.
-CLIs on this machine: claude 2.1.223 - agy 1.1.20 - codex 0.149.1.
+**Baseline (2026-08-26, M6 + CI):** `npm run typecheck` clean · `npm run build` clean · `npm test`
+126/126 · `npm run test:daemon` 97/97 · `npm run test:ui` 21/21 · `npm run test:pack` 14/14 · L4
+(opt-in) landed a real agent commit on origin/main. Electron 44.0.0, electron-builder 26.15.3, 0 npm
+vulnerabilities. CLIs on this machine: claude 2.1.223 - agy 1.1.20 - codex 0.149.1.
+
+⚠️ **On a machine with no agent CLI the daemon suite reports 97 passed and 5 skipped**, with a stated
+reason each. That is the CI state, and it is why `summary()` prints skips beside the result instead of
+folding them in.
 
 ---
 
@@ -182,11 +186,33 @@ configured, the platform branches exist, `test:pack` is written to work on all t
 ever executed on Windows. M5 found a Windows path bug that had been latent for four milestones; there
 is no reason to believe the other two platforms are cleaner. Treat them as unbuilt, not as untested.
 
+## CI, and the dispatch bug it found
+
+`.github/workflows/ci.yml` runs four jobs, none of which can spend a token: `check` (ubuntu),
+`daemon`, `ui` and `pack` (all three platforms). ⛔ `test:e2e` is the only suite that spends and is
+never invoked there.
+
+Teaching the suites to run without a CLI was the cheap part. Simulating a bare runner locally failed
+five checks, and **four of them were one product bug**: the not-signed-in gate string-matched the probe
+output for `"loggedIn": false`, and `refreshIdentity` had been throwing the `loggedIn` field away. A
+probe that failed because no binary existed returned an error string instead, the gate passed, and the
+scheduler dispatched to a worker that could not possibly work — claiming a workspace to find out.
+
+Now: `WorkerIdentity.loggedIn` is stored and the gate reads `=== false` (⚠️ `null` still means unknown
+and is let through, or Antigravity's keyring-backed workers would be permanently undispatchable), and
+**`isInstalled()` is a separate hard gate** on every candidate — a filesystem lookup, so it costs
+nothing every tick, unlike `detect()`.
+
+⚠️ **The CI matrix has not been observed passing yet.** It was pushed and not watched. macOS and Linux
+have still never been run by anybody, so treat a red square there as the expected first result rather
+than a regression.
+
 ## Next
 
 M0–M6 are done. What is left is not a milestone but a list, in the order it would pay off:
 
-1. **Run it on macOS and Linux.** Everything above is written for them; none of it has started once.
+1. **Watch the first CI run on macOS and Linux, and fix what it finds.** Everything is written for
+   them; nothing has started once. This is now automated rather than aspirational.
 2. **The measurement runs still owed** — R2/R3 unblock the compaction reserve, which is the largest
    piece of the cost model still reporting `unknown` on a real worker.
 3. **Signing and notarisation**, without which the installers warn or refuse.
