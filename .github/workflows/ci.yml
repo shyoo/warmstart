@@ -1,0 +1,126 @@
+# Continuous integration.
+#
+# ⛔ **No job here may spend a token.** Everything below runs against a machine with no agent CLI and
+# no account signed in, which is exactly the state the suites were taught to handle: CLI-dependent
+# checks are *skipped visibly* with a reason and counted separately, so a green run on a runner
+# cannot be mistaken for a green run on a developer's machine. `npm run test:e2e` is the only suite
+# that spends, it is gated behind AGENTYARD_E2E=1, and it is deliberately never invoked here.
+#
+# ⚠️ The `pack` job is the interesting one. M6 shipped with macOS and Linux **written for and never
+# run** — configured targets, platform branches, and not one execution. This is the first thing that
+# has ever built and started the app on those two, so a failure there is news rather than noise.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Fast feedback: types, bundle, and the pure logic. If this is red nothing else is worth running.
+  check:
+    name: typecheck · build · unit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # Electron's postinstall is skipped by some npm configurations, and every later job needs the
+      # binary. Doing it explicitly beats a confusing failure three steps down.
+      - name: Ensure the Electron binary is present
+        run: node node_modules/electron/install.js
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm test
+
+  # The daemon and the approval path, on all three platforms. This is where a POSIX assumption in
+  # `which.ts`, `launchable()` or the isolation-root defaults would finally show itself.
+  daemon:
+    name: daemon · ${{ matrix.os }}
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Ensure the Electron binary is present
+        run: node node_modules/electron/install.js
+      - run: npm run build
+      # ⚠️ No agent CLI is installed on purpose. The suite skips what genuinely needs one and still
+      # proves scheduling, the task DAG, cancellation, approvals, the controller and cost arithmetic.
+      - run: npm run test:daemon
+
+  # The renderer, driven over DevTools. ⚠️ Electron needs a display; Linux runners have none, so the
+  # whole suite runs under a virtual one there.
+  ui:
+    name: ui · ${{ matrix.os }}
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Ensure the Electron binary is present
+        run: node node_modules/electron/install.js
+      - run: npm run build
+      - name: UI (Linux, under a virtual display)
+        if: runner.os == 'Linux'
+        run: xvfb-run --auto-servernum npm run test:ui
+      - name: UI
+        if: runner.os != 'Linux'
+        run: npm run test:ui
+
+  # ⛔ The only job that can catch what packaging breaks: a native left inside the asar, an app that
+  # cannot start its own daemon, a PTY that will not open. Slow, so it is not a pull-request gate.
+  pack:
+    name: packaged app · ${{ matrix.os }}
+    needs: check
+    if: github.event_name != 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Ensure the Electron binary is present
+        run: node node_modules/electron/install.js
+      - name: Build an unpacked app
+        run: npm run pack
+      - name: Drive the packaged app (Linux, under a virtual display)
+        if: runner.os == 'Linux'
+        run: xvfb-run --auto-servernum npm run test:pack
+      - name: Drive the packaged app
+        if: runner.os != 'Linux'
+        run: npm run test:pack

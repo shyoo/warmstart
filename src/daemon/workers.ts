@@ -175,6 +175,10 @@ export async function refreshIdentity(id: string): Promise<Worker> {
   const w = requireWorker(id)
   const probe = await adapter(w.adapterId).probeIdentity(w.isolationRoot)
   const identity = {
+    // ⛔ Kept, not dropped. The adapter answered this question; throwing it away and having the
+    // scheduler grep `raw` for `"loggedIn": false` is how a worker with no CLI installed used to
+    // look dispatchable.
+    loggedIn: probe.loggedIn,
     account: probe.account,
     organization: probe.organization,
     cliVersion: probe.cliVersion,

@@ -217,6 +217,12 @@ export const antigravityCli: AgentAdapter = {
   info,
   decodeStream,
 
+  // ⚠️ Not just PATH: the installer leaves `agy` somewhere it does not add until `agy install`
+  // runs, so a perfectly usable install would otherwise be invisible to the scheduler.
+  isInstalled(): boolean {
+    return resolveCommand() !== null
+  },
+
   async detect(): Promise<AdapterDetection> {
     const resolved = resolveCommand()
     if (!resolved) {

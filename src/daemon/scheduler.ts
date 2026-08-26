@@ -208,11 +208,24 @@ function chooseTarget(task: Task): WorkerChoice {
     }
     if (task.constraints.adapterId && task.constraints.adapterId !== worker.adapterId) continue
 
-    // ⛔ Never dispatch to an account nobody has signed into. Measured 2026-08-25: a `stream` session
-    // that cannot authenticate does not exit - it sits on stdin waiting for input it can never act
-    // on - so it holds the worker's only concurrency slot indefinitely. A mis-commissioned worker
-    // would silently absorb its own capacity and every task routed to it would stall.
-    if (worker.identity?.raw?.includes('"loggedIn": false')) {
+    // ⛔ Two separate ways a worker cannot possibly work, and conflating them cost real dispatches.
+    //
+    // 1. The CLI is not installed. A filesystem lookup, so it is free to ask every tick. Without this
+    //    the scheduler claims a workspace, spawns, fails, and marks the task failed - having burned a
+    //    workspace claim to discover something it could have read off the disk.
+    if (!adapter(worker.adapterId).isInstalled()) {
+      reasons.push(`${adapter(worker.adapterId).info.label} is not installed`)
+      continue
+    }
+    // 2. Nobody is signed in. Measured 2026-08-25: a `stream` session that cannot authenticate does
+    //    not exit - it sits on stdin waiting for input it can never act on - so it holds the worker's
+    //    only concurrency slot indefinitely.
+    //
+    // ⚠️ `=== false`, from the stored field. This used to grep `raw` for `"loggedIn": false`, which
+    // silently passed whenever the probe failed for any *other* reason - a missing CLI among them.
+    // `null` means unknown and is deliberately allowed through: Antigravity's credential lives in the
+    // OS keyring and is unknowable by design, and refusing unknown would make it undispatchable.
+    if (worker.identity?.loggedIn === false) {
       reasons.push(`${worker.label} is not signed in`)
       continue
     }

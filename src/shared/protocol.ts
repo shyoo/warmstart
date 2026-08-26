@@ -96,6 +96,20 @@ export interface Worker {
 export type WorkerRole = 'worker' | 'controller' | 'both'
 
 export interface WorkerIdentity {
+  /**
+   * Is anybody signed in to this account?
+   *
+   * ⛔ Three states, and the third is not a formality. `false` means the vendor answered and nobody
+   * is signed in. `null` means agentyard **could not tell** — the CLI is absent, the probe errored,
+   * or the vendor keeps its credential somewhere agentyard will not look (Antigravity's keyring).
+   * Collapsing `null` into `false` would refuse to dispatch to a perfectly good Antigravity worker;
+   * collapsing it into `true` would dispatch into a run that cannot authenticate and will hold a
+   * worker's only slot until something reaps it.
+   *
+   * ⚠️ This field exists because it was once reconstructed by string-matching `raw`, which quietly
+   * failed the moment a probe failed for any reason other than "not signed in".
+   */
+  loggedIn?: boolean | null
   account?: string
   organization?: string
   cliVersion?: string

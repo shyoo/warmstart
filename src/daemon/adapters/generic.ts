@@ -50,6 +50,10 @@ export function genericAdapter(spec: GenericAdapterSpec): AgentAdapter {
   return {
     info,
 
+    isInstalled(): boolean {
+      return which(info.command) !== null
+    },
+
     async detect(): Promise<AdapterDetection> {
       const resolved = which(info.command)
       if (!resolved) {

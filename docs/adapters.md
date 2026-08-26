@@ -119,6 +119,23 @@ Everything below needs a **signed-in account and a real turn**, which is where f
 **Answered by measurement on 2026-08-25:** R9 (no — `agy -p /usage` spends a turn and does not
 answer) and R11 (three dialects, all three now decoded and regression-tested against verbatim records).
 
+## Running the tests without any of them
+
+⛔ Every suite except `test:e2e` runs on a machine with **no agent CLI installed** — that is what CI
+does. Checks that genuinely need a binary are skipped *visibly*, with a reason, and counted apart from
+passes, so a green run on a bare runner cannot be mistaken for a green run on a developer's machine.
+
+Two things that survived being run that way, and would not have been found otherwise:
+
+- ⛔ **The not-signed-in gate did not fire when the CLI was missing.** It string-matched the probe
+  output for `"loggedIn": false`; a probe that failed because there was no binary returned an error
+  string instead, the gate passed, and the scheduler dispatched to a worker that could not possibly
+  work — claiming a workspace to discover it. `WorkerIdentity.loggedIn` is now a stored field and the
+  gate reads it.
+- ⛔ **Nothing checked whether the CLI existed at all.** `isInstalled()` is now a hard gate on every
+  candidate, in the scheduler and in controller selection. It is a filesystem lookup, so it costs
+  nothing to ask on every tick — unlike `detect()`, which runs the binary.
+
 ## Installing
 
 - **`claude`** — `npm install -g @anthropic-ai/claude-code`

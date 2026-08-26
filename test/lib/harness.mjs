@@ -44,8 +44,11 @@ export function electronBinary() {
  *
  * ⚠️ And never a bare pid either: pids are recycled, so identity is checked first. See below.
  */
-export function killTree(pid, expect = 'agentyard') {
+export function killTree(pid, expect) {
   if (!pid) return
+  // ⛔ No default. A wrong-but-plausible default silently declines to kill and leaks a process; being
+  // forced to name what you expect is what makes the check honest rather than decorative.
+  if (!expect) throw new Error('killTree needs a string that must appear in the target command line')
 
   // ⛔ Identity before force, and the harness is held to the same rule as the product.
   //
@@ -84,8 +87,17 @@ export function killTree(pid, expect = 'agentyard') {
 function commandLineOf(pid) {
   try {
     if (process.platform === 'win32') {
+      // ⚠️ Absolute, not on PATH. A thin PATH — a CI runner, a stripped shell — would otherwise make
+      // this throw, and a failed identity read means "do not kill", which silently leaks the process
+      // this was called to stop.
+      //
+      // ⛔ Built with `join`, never a backslash literal. Written as a template string this path was
+      // silently wrong: `\S`, `\W` and `\v` are escape sequences, so it resolved to
+      // `C:\WINDOWSSystem32WindowsPowerShell1.0powershell.exe` and threw ENOENT every time — which
+      // read as "cannot verify" and quietly declined to kill anything.
+      const root = process.env.SystemRoot ?? 'C:/Windows'
       return execFileSync(
-        'powershell.exe',
+        join(root, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
         [
           '-NoProfile',
           '-NonInteractive',
@@ -108,6 +120,7 @@ function commandLineOf(pid) {
 
 let failures = 0
 let checks = 0
+let skipped = 0
 
 export function check(name, condition, detail = '') {
   checks++
@@ -116,15 +129,50 @@ export function check(name, condition, detail = '') {
   return condition
 }
 
+/**
+ * A check that could not run, with the reason it could not.
+ *
+ * ⛔ Counted and printed, never silent. A suite that quietly does less on a machine missing a CLI
+ * would report "all checks passed" while proving less than it did yesterday, and nobody would notice
+ * the coverage draining away. A skip is visible, states why, and is summarised separately from a pass.
+ *
+ * ⚠️ Only ever for a **capability of the machine** — an agent CLI that is not installed, a display
+ * that does not exist. Never for something the code under test might have broken.
+ */
+export function skip(name, why) {
+  skipped++
+  console.log(`SKIP  ${name}  -- ${why}`)
+}
+
+/**
+ * Which agent CLIs this machine actually has.
+ *
+ * A bare CI runner has none, and that is a normal machine rather than a broken one: scheduling,
+ * tasks, cancellation, approvals, the controller and every piece of cost arithmetic are testable
+ * without one. Only *spawning a real agent* needs a real binary.
+ */
+export async function detectClis(daemon) {
+  const all = await daemon.rpc('adapter.detect')
+  const byId = new Map(all.map((d) => [d.adapterId, d]))
+  return {
+    all,
+    has: (id) => byId.get(id)?.found === true,
+    any: all.some((d) => d.found)
+  }
+}
+
 export function section(title) {
   console.log(`\n--- ${title} ---`)
 }
 
 export function summary(label) {
+  // ⚠️ Skips are reported next to the result, never folded into it. "ALL 96 CHECKS PASSED" on a
+  // machine that silently ran 80 of them is the kind of green nobody should trust.
+  const tail = skipped ? ` (${skipped} skipped — no agent CLI on this machine)` : ''
   console.log(
     failures === 0
-      ? `\n${label}: ALL ${checks} CHECKS PASSED`
-      : `\n${label}: ${failures} of ${checks} CHECKS FAILED`
+      ? `\n${label}: ALL ${checks} CHECKS PASSED${tail}`
+      : `\n${label}: ${failures} of ${checks} CHECKS FAILED${tail}`
   )
   return failures
 }
@@ -202,7 +250,10 @@ export class Daemon {
 
   stop() {
     // ⛔ By pid, never by image name. See the rule at the top of this file.
-    killTree(this.child?.pid)
+    // ⚠️ `orchestratord`, not `agentyard`. The daemon runs as `electron <path>/orchestratord.js`, so
+    // that script name is what identifies it - the product name appears nowhere in its command line.
+    // Getting this wrong does not fail loudly; it leaks a daemon and prints one SKIP line.
+    killTree(this.child?.pid, 'orchestratord')
     this.child = null
   }
 

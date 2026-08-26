@@ -265,7 +265,12 @@ export function chooseController(): ControllerChoice {
       reasons.push(`${worker.label} human-occupied`)
       continue
     }
-    if (worker.identity?.raw?.includes('"loggedIn": false')) {
+    if (!adapter(worker.adapterId).isInstalled()) {
+      reasons.push(`${adapter(worker.adapterId).info.label} is not installed`)
+      continue
+    }
+    // ⚠️ The typed field, not a substring of `raw`. See the same gate in scheduler.ts.
+    if (worker.identity?.loggedIn === false) {
       reasons.push(`${worker.label} is not signed in`)
       continue
     }

@@ -76,6 +76,15 @@ export interface AgentAdapter {
   /** Is this CLI installed, and at what version? Cheap, run at commissioning and by Doctor. */
   detect(): Promise<AdapterDetection>
 
+  /**
+   * Is the binary on this machine at all? ⛔ Synchronous and free - a filesystem lookup, never a
+   * process spawn - because the scheduler asks it on **every candidate on every tick**.
+   *
+   * `detect()` answers the same question by running the CLI, which costs ~300ms and cannot be in a
+   * loop that runs every ten seconds. This is the version a gate can afford.
+   */
+  isInstalled(): boolean
+
   /** Who is logged in to this isolation root? Must not spend a turn. */
   probeIdentity(isolationRoot: string): Promise<IdentityProbe>
 

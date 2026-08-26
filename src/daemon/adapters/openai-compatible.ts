@@ -190,6 +190,10 @@ export const openaiCompatible: AgentAdapter = {
   info,
   decodeStream,
 
+  isInstalled(): boolean {
+    return which(info.command) !== null
+  },
+
   async detect(): Promise<AdapterDetection> {
     const resolved = which(info.command)
     if (!resolved) {

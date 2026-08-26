@@ -9,10 +9,12 @@ import {
   REPO,
   check,
   destroyProject,
+  detectClis,
   electronBinary,
   git,
   makeProject,
   section,
+  skip,
   summary,
   wait
 } from './lib/harness.mjs'
@@ -50,37 +52,80 @@ try {
 
   // ---------------------------------------------------------------- adapters and workers
   section('fleet')
-  const detections = await daemon.rpc('adapter.detect')
+  // ⛔ A bare CI runner has no agent CLI, and that is a normal machine rather than a broken one.
+  // Everything about scheduling, tasks, cancellation, approvals, the controller and the cost
+  // arithmetic is testable without one; only *spawning a real agent* needs a real binary. So the
+  // CLI-dependent checks are skipped **visibly**, with a reason, and the summary counts them.
+  const clis = await detectClis(daemon)
+  const detections = clis.all
   const claude = detections.find((d) => d.adapterId === 'claude-code')
-  check('the claude-code CLI is detected', claude?.found === true, claude?.version ?? claude?.error)
-  check('detection resolves a real path, since node-pty will not search PATH', Boolean(claude?.path))
+
+  check(
+    'every adapter answers detection rather than throwing',
+    detections.length === 3 && detections.every((d) => typeof d.found === 'boolean'),
+    detections.map((d) => `${d.adapterId}:${d.found ? d.version : 'absent'}`).join(' ')
+  )
+  check(
+    'an absent CLI is reported with a reason, not a bare false',
+    detections.every((d) => d.found || (d.error ?? '').length > 0),
+    detections.find((d) => !d.found)?.error ?? 'all present'
+  )
+
+  if (clis.has('claude-code')) {
+    check(
+      'detection resolves a real path, since node-pty will not search PATH',
+      Boolean(claude?.path),
+      claude?.path
+    )
+  } else {
+    skip('detection resolves a real path', 'claude is not installed here')
+  }
 
   const fresh = await daemon.rpc('worker.create', { adapterId: 'claude-code', label: 'fresh seat' })
-  check(
-    'a worker with no credentials reports not-signed-in, not "probe failed"',
-    fresh.identity?.raw?.includes('"loggedIn": false'),
-    'auth status exits 1 but still prints valid JSON'
-  )
+  if (clis.has('claude-code')) {
+    check(
+      'a worker with no credentials reports not-signed-in, not "probe failed"',
+      fresh.identity?.raw?.includes('"loggedIn": false'),
+      'auth status exits 1 but still prints valid JSON'
+    )
+  } else {
+    // ⛔ Still a real assertion, not a shrug. With no binary at all the honest answer is *unknown*
+    // with a stated reason - never `false`, which would read as "we asked and nobody is signed in".
+    check(
+      'with no CLI installed, sign-in state is unknown with a reason, never a confident false',
+      fresh.identity?.loggedIn !== false && (fresh.identity?.raw ?? '').length > 0,
+      (fresh.identity?.raw ?? '').slice(0, 80)
+    )
+  }
   check('agentyard created its own isolation root', fresh.isolationRoot.includes('workers'))
 
   // Read-only adoption of the developer's own root: prove identity detection, change nothing.
-  const adopted = await daemon.rpc('worker.create', {
-    adapterId: 'claude-code',
-    label: 'adopted',
-    isolationRoot: join(homedir(), '.claude')
-  })
-  const adoptedQuota = await daemon.rpc('worker.probe', { id: adopted.id })
-  check(
-    'a quota reading is never presented without its age',
-    typeof adoptedQuota.ageMs === 'number' && typeof adoptedQuota.stale === 'boolean',
-    adoptedQuota.windows.length
-      ? `${Math.round(adoptedQuota.ageMs / 60000)}m old, stale=${adoptedQuota.stale}`
-      : 'no windows'
-  )
-  // ⛔ Disabled immediately, and this is a safety property of the suite rather than tidiness: it is
-  // the only signed-in account here, and leaving it enabled would let the scheduler dispatch a real
-  // task to a real account during a test that claims to spend nothing.
-  await daemon.rpc('worker.update', { id: adopted.id, enabled: false })
+  // ⚠️ Only where such a root exists. On a runner it does not, and inventing one would prove nothing.
+  const realRoot = join(homedir(), '.claude')
+  const adopted = existsSync(realRoot)
+    ? await daemon.rpc('worker.create', {
+        adapterId: 'claude-code',
+        label: 'adopted',
+        isolationRoot: realRoot,
+        // ⛔ Closed to work at creation, not a line later. This is the only signed-in account here,
+        // and the scheduler ticks every ten seconds - "disable it straight after" is not soon enough
+        // for a suite that claims it cannot spend.
+        enabled: false
+      })
+    : null
+
+  if (adopted) {
+    const adoptedQuota = await daemon.rpc('worker.probe', { id: adopted.id })
+    check(
+      'a quota reading is never presented without its age',
+      typeof adoptedQuota.ageMs === 'number' && typeof adoptedQuota.stale === 'boolean',
+      adoptedQuota.windows.length
+        ? `${Math.round(adoptedQuota.ageMs / 60000)}m old, stale=${adoptedQuota.stale}`
+        : 'no windows'
+    )
+  } else {
+    skip('a quota reading is never presented without its age', `no credential root at ${realRoot}`)
+  }
 
   const freshQuota = await daemon.rpc('worker.probe', { id: fresh.id })
   check(
@@ -95,7 +140,11 @@ try {
   await daemon.rpc('worker.update', { id: fresh.id, humanOccupied: false })
 
   const doctor = await daemon.rpc('doctor.run')
-  check('doctor sees both workers', doctor.workers.length === 2)
+  check(
+    'doctor sees every commissioned worker',
+    doctor.workers.length === (adopted ? 2 : 1),
+    `${doctor.workers.length} worker(s)`
+  )
   check(
     'doctor names what is wrong rather than saying "unhealthy"',
     doctor.warnings.some((w) => /not logged in|no quota reading|old/.test(w)),
@@ -104,26 +153,53 @@ try {
 
   // ---------------------------------------------------------------- sessions
   section('sessions')
-  const session = await daemon.rpc('session.spawn', {
-    workerId: fresh.id,
-    cwd: REPO,
-    transport: 'pty',
-    cols: 100,
-    rows: 30
-  })
-  check('a session gets a pid', typeof session.pid === 'number' && session.pid > 0)
-  check(
-    'the transcript path is known before the file exists',
-    session.transcriptPath?.includes(session.id),
-    'because agentyard mints the session id'
-  )
-  await wait(5000)
-  const back = await daemon.rpc('session.backscroll', { id: session.id })
-  check('backscroll survives for a reattaching UI', back.data.length > 0, `${back.data.length} bytes`)
-  await daemon.rpc('session.close', { id: session.id })
-  await wait(2000)
-  const liveSessions = await daemon.rpc('session.list')
-  check('a closed session leaves the live list', !liveSessions.some((s) => s.id === session.id))
+  // ⛔ The one section that genuinely cannot run without a binary: it starts a real process in a real
+  // pseudo-terminal. The session it spawns is deliberately on a worker with **no credentials**, which
+  // is what makes proving spawn, streaming and teardown free.
+  if (!clis.has('claude-code')) {
+    skip('a session gets a pid', 'claude is not installed here')
+    skip('the transcript path is known before the file exists', 'no CLI to spawn')
+    skip('backscroll survives for a reattaching UI', 'no CLI to spawn')
+    skip('a closed session leaves the live list', 'no CLI to spawn')
+
+    // Worth proving even with nothing installed: a spawn that cannot find its CLI must fail with a
+    // message naming the command, not with an opaque ENOENT from somewhere inside node-pty.
+    const missing = await daemon.rpcResult('session.spawn', {
+      workerId: fresh.id,
+      cwd: REPO,
+      transport: 'pty'
+    })
+    check(
+      'a spawn with no CLI installed fails by name rather than opaquely',
+      !missing.ok && /not on PATH|claude/i.test(missing.message ?? ''),
+      missing.message
+    )
+  } else {
+    const session = await daemon.rpc('session.spawn', {
+      workerId: fresh.id,
+      cwd: REPO,
+      transport: 'pty',
+      cols: 100,
+      rows: 30
+    })
+    check('a session gets a pid', typeof session.pid === 'number' && session.pid > 0)
+    check(
+      'the transcript path is known before the file exists',
+      session.transcriptPath?.includes(session.id),
+      'because agentyard mints the session id'
+    )
+    await wait(5000)
+    const back = await daemon.rpc('session.backscroll', { id: session.id })
+    check(
+      'backscroll survives for a reattaching UI',
+      back.data.length > 0,
+      `${back.data.length} bytes`
+    )
+    await daemon.rpc('session.close', { id: session.id })
+    await wait(2000)
+    const liveSessions = await daemon.rpc('session.list')
+    check('a closed session leaves the live list', !liveSessions.some((s) => s.id === session.id))
+  }
 
   // ---------------------------------------------------------------- projects and the DAG
   section('tasks')
@@ -266,9 +342,11 @@ try {
 
   const detected = await daemon.rpc('adapter.detect')
   for (const d of detected) {
+    // ⚠️ Asserts the *shape of the answer*, not that the CLI exists. A runner with none installed
+    // still proves that every adapter reports rather than throws, which is the contract.
     check(
       `${d.adapterId} detection answers rather than throwing`,
-      typeof d.found === 'boolean',
+      typeof d.found === 'boolean' && (d.found ? Boolean(d.path) : Boolean(d.error)),
       d.found ? `v${d.version} at ${d.path}` : d.error
     )
   }
