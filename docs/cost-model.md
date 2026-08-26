@@ -155,12 +155,19 @@ So the probe is a **ladder, and its rung is always reported**:
 |---|---|---|
 | 1 | `cachedUsageUtilization` with a fresh `fetchedAtMs` | current |
 | 2 | the same, stale | **reported as *unknown*, with its age** — never as a number |
-| 3 | nothing | unknown; degrade conservatively |
+| 3 | nothing | unknown; degrade conservatively. ⚠️ Two distinct causes, and the UI separates them: **never probed**, and **probed but the account has no usage cache yet** — the CLI writes `cachedUsageUtilization` only after real work, so a freshly signed-in worker reports nothing until it has been used once |
 
 ⛔ **A stale percentage rendered as current is worse than no percentage.** It makes the compaction
 reserve look satisfied when it is not, and that failure strands context — the one loss the whole cost
 model exists to prevent. `quota.ts` carries `stale` on every snapshot for exactly this reason, and
 the fleet strip renders "quota unknown · last seen 19d ago" rather than "12%".
+
+⚠️ **Refusing to show a number is not the same as saying nothing.** Every numberless state carries
+what produced it and what would fix it (`quotaGap()` in the renderer): a stale reading says how old
+it is, a missing usage cache says to run a session on that account, and a failed probe keeps the
+adapter's own error text. Measured 2026-08-26: neither commissioned worker on this machine had ever
+written `cachedUsageUtilization`, and both had been rendering the bare word "unknown" since
+commissioning.
 
 **Still owed:** a way to refresh that cache without spending a turn, and — failing that — a
 token-accrual estimate built from the transcripts Multi Agent Controller already meters exactly, calibrated against

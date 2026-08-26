@@ -63,8 +63,11 @@ These are not preferences; breaking one breaks the product.
 - ⛔ **The renderer never holds the daemon token.** It calls the main process over IPC, and main is
   orchestratord's only client. The renderer displays untrusted agent output; it does not get a
   credential to a service that can spawn processes.
-- ⛔ **A quota reading is never shown without its age.** Stale is rendered as *unknown*, because a
-  stale percentage makes the compaction reserve look satisfied when it is not.
+- ⛔ **A quota reading is never shown without its age, and a stale one is never shown as a current
+  number** - a stale percentage makes the compaction reserve look satisfied when it is not. ⚠️ But
+  "unknown" is not the whole answer either: never probed, no usage cache yet, stale, and a failed
+  probe are four different states with four different things to do about them, and collapsing them
+  into one word is what made a working Probe button look broken. See `quotaGap()`.
 - ⛔ **Every cost belief carries its basis.** `remainingTokens` returns a number *and* how it was
   arrived at; the reserve returns a verdict *and* its reason; the cache clock records every decision
   including the ones that did nothing. A scheduler that spends money and cannot say why is one you
@@ -138,16 +141,20 @@ These are not preferences; breaking one breaks the product.
 ### Git
 
 - Private repo, single developer, no PR review. Commit on `main` directly, and **only when asked**.
-- Never commit `internal_docs/`, `node_modules/`, `out/`, or anything matching `.gitignore`.
+- Never commit `internal_docs/`, `node_modules/`, `out/`, `release/`, or anything matching
+  `.gitignore`.
+- **`/commit` is the shipping path** (`.claude/skills/commit/SKILL.md`): docs, suites, packaged
+  build, commit, push. It knows the trunk/worktree difference and which suites must run.
 
 ## Layout
 
 ```
 src/main, src/preload   Electron shell. A window host and nothing more.
 src/renderer            React UI. Tokens in src/renderer/src/styles/tokens.css.
-src/daemon              orchestratord: scheduler, PTYs, store, MCP server.   <- M1, not built
+src/daemon              orchestratord: scheduler, PTYs, store, MCP server
 src/shared              types crossing a process boundary
 costmodels/             versioned pricing data
+.claude/skills/         project skills. /commit is the shipping path
 ```
 
 ## Things that will bite
