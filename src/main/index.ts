@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell, type WebContents } from 'electron'
+import { app, BrowserWindow, Menu, ipcMain, shell, type WebContents } from 'electron'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { IPC, type AppInfo, type DaemonUiStatus } from '@shared/ipc.js'
@@ -23,6 +23,11 @@ const windows = new Set<WebContents>()
 // lives - so Chromium's caches would sit next to it, and anyone clearing a cache directory could
 // take the fleet with it. Give the UI its own subdirectory. Must run before `app.whenReady`.
 app.setPath('userData', join(dataDir(), 'ui'))
+
+// This app has no menu-driven features, so the default File/Edit/View/Window bar Electron
+// generates automatically is just noise. Windows/Linux lose the bar entirely; macOS keeps its
+// required minimal app menu (Quit, etc.) since the OS enforces one.
+Menu.setApplicationMenu(null)
 
 function toUiStatus(status: DaemonStatus): DaemonUiStatus {
   switch (status.state) {
