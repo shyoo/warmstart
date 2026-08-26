@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512"
+     role="img" aria-label="Multi Agent Controller">
+  <title>Multi Agent Controller</title>
+  <desc>Three accounts on a ring around one controller, drawn for 16 and 24 pixels.</desc>
+  <!--
+    The 16px and 24px layers of the .ico, and the favicon.
+    ⚠️ Not a scaled copy of icon.svg. Below ~24px the hairline border and the gap around the mark are
+    the first things to turn to mud, so both are gone and the mark is 18% larger; the corner radius is
+    reduced because a 114/512 radius at 16px eats the corners entirely. Same drawing, different
+    drawing *for a different size* - which is what an .ico's separate layers are for.
+  -->
+  <rect width="512" height="512" rx="88" fill="#0e1013"/>
+  <circle cx="256" cy="256" r="160" fill="none" stroke="#4a6bab" stroke-width="30"/>
+  <circle cx="256" cy="256" r="76" fill="#7aa2f7"/>
+  <g fill="#eef0f4">
+    <circle cx="256" cy="96" r="56"/>
+    <circle cx="394" cy="336" r="56"/>
+    <circle cx="118" cy="336" r="56"/>
+  </g>
+</svg>

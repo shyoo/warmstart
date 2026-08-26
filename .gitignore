@@ -51,3 +51,6 @@ coverage/
 
 # The Electron runtime download, shared by @electron/get and electron-builder in CI.
 .electron-cache/
+
+# Scratch from scripts/icons.mjs, cleaned up on success
+.icons-*/

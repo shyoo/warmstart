@@ -28,6 +28,13 @@ files:
   - '!**/*.map'
   - '!**/*.ts'
 
+# ⚠️ Linux only, and not redundant with `buildResources`. electron-builder reads resources/icon.png to
+# make the .desktop entry and the macOS .icns, but a Linux `BrowserWindow` needs a real file at
+# runtime or the task switcher shows Electron's default. See windowIcon() in src/main/index.ts.
+extraResources:
+  - from: resources/icon.png
+    to: icon.png
+
 asar: true
 asarUnpack:
   # ⚠️ The whole scope, not `@lydell/node-pty`. The `.node` files do not live in that package - they

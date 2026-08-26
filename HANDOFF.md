@@ -10,7 +10,7 @@ if you add a line, find the one it obsoletes and cut it in the same edit. Finish
 
 **Baseline (2026-08-26, M6 + a green CI matrix):** `npm run typecheck` clean · `npm run build` clean ·
 `npm test` 134/134 · `npm run test:daemon` 101/101 · `npm run test:ui` 21/21 · `npm run test:pack`
-15/15 · L4 (opt-in) landed a real agent commit on origin/main. Electron 44.0.0, electron-builder
+17/17 · L4 (opt-in) landed a real agent commit on origin/main. Electron 44.0.0, electron-builder
 26.15.3, 0 npm vulnerabilities. CLIs on this machine: claude 2.1.223 - agy 1.1.20 - codex 0.149.1.
 
 ⚠️ **On a machine with no agent CLI the daemon suite reports 97 passed and 5 skipped**, with a stated
@@ -293,8 +293,8 @@ M0–M6 are done. What is left is not a milestone but a list, in the order it wo
   that opened it without leaking a claim or switching a branch under a running agent.
 - **D7** stands, and M6 is its second instance: `gh` is wrapped for pull-request landing rather
   than Multi Agent Controller talking to the GitHub API and holding a token. **D5 is closed** (plan §9.1).
-- **An icon.** electron-builder ships the default Electron one. Cosmetic, but it is the first thing
-  anyone sees.
+- **Code signing.** Windows SmartScreen warns and macOS Gatekeeper refuses. That is the honest state
+  of a pre-alpha, and fixing it needs a certificate and an Apple Developer account, not a config line.
 
 ## Measurement runs owed
 

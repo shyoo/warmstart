@@ -19,7 +19,7 @@ const dirname = join(fileURLToPath(import.meta.url), '..')
 const daemon = new DaemonClient()
 const windows = new Set<WebContents>()
 
-// Electron's default userData is `<appdata>/agentyard`, which is exactly where the fleet database
+// Electron's default userData is `<appdata>/multi_agent_controller`, which is exactly where the fleet database
 // lives - so Chromium's caches would sit next to it, and anyone clearing a cache directory could
 // take the fleet with it. Give the UI its own subdirectory. Must run before `app.whenReady`.
 app.setPath('userData', join(dataDir(), 'ui'))
@@ -47,10 +47,27 @@ function broadcast(channel: string, payload: unknown): void {
   }
 }
 
+/**
+ * The window icon, which only Linux needs from us.
+ *
+ * ⚠️ Windows reads the icon compiled into the .exe and macOS reads the bundle's `.icns`; on Linux
+ * neither exists, so a `BrowserWindow` with no `icon` gets Electron's default in the task switcher
+ * even though the .desktop entry is correct. Shipped via `extraResources` because `files:` carries
+ * only `out/`, so `resources/icon.png` is not otherwise inside the app.
+ */
+function windowIcon(): string | undefined {
+  if (process.platform !== 'linux') return undefined
+  return app.isPackaged
+    ? join(process.resourcesPath, 'icon.png')
+    : join(dirname, '..', '..', 'resources', 'icon.png')
+}
+
 function createWindow(): BrowserWindow {
+  const icon = windowIcon()
   const win = new BrowserWindow({
     width: 1440,
     height: 900,
+    ...(icon ? { icon } : {}),
     minWidth: 960,
     minHeight: 600,
     show: false,

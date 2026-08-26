@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { existsSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import {
@@ -15,6 +15,20 @@ import {
   wait,
   writeProbeAdapter
 } from './lib/harness.mjs'
+
+/** Split an .ico into its layers, each of which is a standalone BMP or PNG payload. */
+function icoLayers(path) {
+  const ico = readFileSync(path)
+  const count = ico.readUInt16LE(4)
+  const layers = []
+  for (let i = 0; i < count; i++) {
+    const entry = 6 + i * 16
+    const size = ico.readUInt32LE(entry + 8)
+    const offset = ico.readUInt32LE(entry + 12)
+    layers.push(ico.subarray(offset, offset + size))
+  }
+  return layers
+}
 
 /**
  * L5: the packaged application.
@@ -94,6 +108,37 @@ try {
 
   const resources = join(dir, process.platform === 'darwin' ? `${PRODUCT}.app/Contents/Resources` : 'resources')
   check('the app is archived into an asar', existsSync(join(resources, 'app.asar')))
+
+  // ---------------------------------------------------------------- the icon
+  section('the icon')
+
+  /**
+   * ⚠️ Packaging an icon fails *quietly*. electron-builder logs `default Electron icon is used` and
+   * carries on producing a perfectly good build, so nothing short of looking at the artefact tells
+   * you the app shipped as a blank window in the task switcher. Each platform is asked the question
+   * only that platform can answer.
+   */
+  if (process.platform === 'win32') {
+    // The .ico is compiled into the .exe's resource section, so the honest question is whether *these
+    // exact bytes* are in there. ⛔ Not "does the executable contain a PNG": measured, Electron's
+    // own stock binary does too, so that check passed against an app with no icon at all.
+    const ico = join(REPO, 'resources', 'icon.ico')
+    check('the .ico the build reads is present and multi-layer', existsSync(ico) && icoLayers(ico).length > 1,
+      existsSync(ico) ? `${icoLayers(ico).length} layers, ${statSync(ico).size} bytes` : 'resources/icon.ico is missing')
+    const largest = icoLayers(ico).sort((a, b) => b.length - a.length)[0]
+    check('and its largest layer is embedded in the executable',
+      largest !== undefined && readFileSync(binary).includes(largest),
+      `${largest?.length ?? 0} bytes of icon looked for in ${(statSync(binary).size / 1e6).toFixed(1)} MB`)
+  } else if (process.platform === 'darwin') {
+    const icns = readdirSync(resources).filter((f) => f.endsWith('.icns'))
+    check('electron-builder generated an .icns into the bundle', icns.length > 0,
+      icns.join(', ') || 'no .icns in Contents/Resources — the app will show a blank Dock tile')
+  } else {
+    // ⛔ `extraResources`, not `buildResources`: this is the file BrowserWindow reads at runtime.
+    const png = join(resources, 'icon.png')
+    check('the runtime window icon shipped beside the app', existsSync(png),
+      existsSync(png) ? `${statSync(png).size} bytes` : `${png} is missing — see windowIcon()`)
+  }
 
   // ---------------------------------------------------------------- natives
   section('native modules')
