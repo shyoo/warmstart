@@ -29,9 +29,18 @@ try {
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true
   })
-  app.stderr.on('data', (d) => process.env.AGENTYARD_TEST_VERBOSE && process.stderr.write(`[app] ${d}`))
+  // ⚠️ Always kept, printed only when something goes wrong. This was verbose-only, so when the app
+  // failed to open a debugging target on Linux the suite could say nothing beyond "it did not".
+  const appOutput = []
+  const record = (d) => {
+    appOutput.push(String(d))
+    if (process.env.AGENTYARD_TEST_VERBOSE) process.stderr.write(`[app] ${d}`)
+  }
+  app.stdout.on('data', record)
+  app.stderr.on('data', record)
+  app.on('error', (err) => record(`spawn failed: ${err.message}`))
 
-  const page = await waitForPage()
+  const page = await waitForPage(appOutput)
   socket = new WebSocket(page.webSocketDebuggerUrl)
   await new Promise((r) => socket.on('open', r))
 
@@ -198,7 +207,7 @@ try {
 
 process.exit(summary('ui') === 0 ? 0 : 1)
 
-async function waitForPage() {
+async function waitForPage(appOutput = []) {
   const deadline = Date.now() + 45_000
   while (Date.now() < deadline) {
     await wait(500)
@@ -210,7 +219,11 @@ async function waitForPage() {
       // Not listening yet.
     }
   }
-  throw new Error('the app did not expose a debugging target within 45s')
+  throw new Error(
+    `the app did not expose a debugging target within 45s; it said: ${
+      appOutput.join('').trim().slice(-1500) || '(nothing)'
+    }`
+  )
 }
 
 /** Poll until `fn` is truthy, and answer whether it ever was. ⛔ For a check: never throws. */

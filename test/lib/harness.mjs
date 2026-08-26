@@ -19,15 +19,36 @@ import { tmpdir } from 'node:os'
  */
 
 export const REPO = process.cwd()
-const ELECTRON = join(REPO, 'node_modules', 'electron', 'dist', 'electron.exe')
-const ELECTRON_POSIX = join(REPO, 'node_modules', 'electron', 'dist', 'electron')
+const ELECTRON_DIR = join(REPO, 'node_modules', 'electron')
 
+/**
+ * The Electron executable, wherever this platform puts it.
+ *
+ * ⛔ Ask `path.txt` rather than guessing. The installer writes the platform's own relative path
+ * there - `electron.exe`, `electron`, or `Electron.app/Contents/MacOS/Electron` - and the guess this
+ * replaced knew only the first two. Every macOS job in CI died here, on a machine where the binary
+ * was present and correctly installed, reporting it missing.
+ */
 export function electronBinary() {
-  if (existsSync(ELECTRON)) return ELECTRON
-  if (existsSync(ELECTRON_POSIX)) return ELECTRON_POSIX
+  const dist = join(ELECTRON_DIR, 'dist')
+  const candidates = []
+  try {
+    candidates.push(join(dist, readFileSync(join(ELECTRON_DIR, 'path.txt'), 'utf8').trim()))
+  } catch {
+    // Not installed yet; the guesses below still give a useful answer on two of the three platforms.
+  }
+  candidates.push(
+    join(dist, 'electron.exe'),
+    join(dist, 'electron'),
+    join(dist, 'Electron.app', 'Contents', 'MacOS', 'Electron')
+  )
+  for (const candidate of candidates) if (existsSync(candidate)) return candidate
+
+  // ⚠️ Not "npm blocked the postinstall". Electron 44 has no postinstall to block, so that
+  // advice sent people looking for an npm setting that does not exist.
   throw new Error(
-    'Electron binary is missing. If npm blocked its postinstall, run:\n' +
-      '  node node_modules/electron/install.js'
+    'Electron binary is missing. Electron does not download itself; run:\n' +
+      '  node scripts/ensure-electron.mjs'
   )
 }
 

@@ -151,20 +151,31 @@ try {
   // pointed at it. Nothing here spends, signs in, or resembles an agent: it echoes and exits.
   writeProbeAdapter(dataDir)
 
+  // ⚠️ Piped, not ignored. When the app failed to start on Linux this said only "the packaged app
+  // did not launch orchestratord", with the reason - printed by the app to stderr - thrown away.
+  // A check that cannot say why it failed costs a CI round trip every time it goes red.
+  const appOutput = []
   app = spawn(binary, [], {
     env: { ...process.env, AGENTYARD_DATA_DIR: dataDir },
-    stdio: 'ignore',
+    stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true
   })
+  app.stdout.on('data', (d) => appOutput.push(String(d)))
+  app.stderr.on('data', (d) => appOutput.push(String(d)))
+  app.on('error', (err) => appOutput.push(`spawn failed: ${err.message}
+`))
 
   const endpointFile = join(dataDir, 'orchestratord.json')
   const deadline = Date.now() + 60_000
   while (Date.now() < deadline && !existsSync(endpointFile)) await wait(500)
 
+  const launched = existsSync(endpointFile)
   check(
     'the packaged app launches orchestratord with no system Node installed',
-    existsSync(endpointFile),
-    'ELECTRON_RUN_AS_NODE on its own binary - the reason M1 chose this topology'
+    launched,
+    launched
+      ? 'ELECTRON_RUN_AS_NODE on its own binary - the reason M1 chose this topology'
+      : `exited ${app.exitCode}; it said: ${appOutput.join('').trim().slice(-1500) || '(nothing)'}`
   )
 
   if (existsSync(endpointFile)) {

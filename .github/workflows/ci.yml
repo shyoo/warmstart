@@ -110,6 +110,16 @@ jobs:
       - name: Ensure the Electron binary is present
         run: node scripts/ensure-electron.mjs
       - run: npm run build
+      # ⚠️ Ubuntu runners restrict unprivileged user namespaces through AppArmor, and Chromium's
+      # sandbox needs them: the app exits instead of opening a window. Only the two jobs that start a
+      # window are affected — `daemon` runs the same binary as plain Node and passes untouched.
+      #
+      # ⛔ Fix the runner, not the app. `--no-sandbox` would also make this pass, by testing a
+      # configuration no user runs. This is a hypothesis, and the suites now print what the app said,
+      # so the next run says whether it was right.
+      - name: Let Chromium open its sandbox (Linux runners restrict user namespaces)
+        if: runner.os == 'Linux'
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: UI (Linux, under a virtual display)
         if: runner.os == 'Linux'
         run: xvfb-run --auto-servernum npm run test:ui
@@ -141,6 +151,16 @@ jobs:
           key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
       - name: Ensure the Electron binary is present
         run: node scripts/ensure-electron.mjs
+      # ⚠️ Ubuntu runners restrict unprivileged user namespaces through AppArmor, and Chromium's
+      # sandbox needs them: the app exits instead of opening a window. Only the two jobs that start a
+      # window are affected — `daemon` runs the same binary as plain Node and passes untouched.
+      #
+      # ⛔ Fix the runner, not the app. `--no-sandbox` would also make this pass, by testing a
+      # configuration no user runs. This is a hypothesis, and the suites now print what the app said,
+      # so the next run says whether it was right.
+      - name: Let Chromium open its sandbox (Linux runners restrict user namespaces)
+        if: runner.os == 'Linux'
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Build an unpacked app
         run: npm run pack
       - name: Drive the packaged app (Linux, under a virtual display)
