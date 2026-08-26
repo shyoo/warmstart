@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { AdapterDetection, AdapterInfo, QuotaSnapshot } from '@shared/protocol.js'
 import type { AgentAdapter, IdentityProbe, SpawnPlan, SpawnRequest } from './types.js'
+import { asRecord, num, textBlocks, type StreamEvent, type StreamUsage } from '../stream.js'
 import { log } from '../log.js'
 import { launchArgs, launchable, which } from '../which.js'
 
@@ -30,7 +31,7 @@ const info: AdapterInfo = {
     // the file exists and what lets orphan reaping prove a pid is ours.
     mintsSessionId: true,
     // JSONL, one record per event, summing usage.iterations[]. The exactness the cost model is built on.
-    meteredFromTranscript: true,
+    metering: 'transcript',
     // CLAUDE_CONFIG_DIR points the CLI at one account's directory, so a fleet is just directories.
     maxAccounts: null
   },
@@ -106,8 +107,66 @@ function envFor(isolationRoot: string): Record<string, string> {
   return env
 }
 
+/**
+ * Claude Code's stream-json dialect.
+ *
+ * The only one of the three that carries a **free live rate-limit record** - a status and a real
+ * reset time, riding a turn already being paid for. It is the signal preemption runs on.
+ *
+ * ⚠️ And the only one that does *not* report usage in the stream. Its numbers come from the
+ * transcript, which is exact and includes the compaction sampling iteration (cost-model.md §6).
+ */
+function decodeStream(record: Record<string, unknown>): StreamEvent | StreamEvent[] | null {
+  const type = typeof record.type === 'string' ? record.type : ''
+
+  if (type === 'rate_limit_event') {
+    const info = asRecord(record.rate_limit_info)
+    if (!info) return null
+    return {
+      kind: 'rate_limit',
+      info: {
+        status: String(info.status ?? 'unknown'),
+        // The CLI reports seconds; everything in agentyard is epoch milliseconds.
+        resetsAt: typeof info.resetsAt === 'number' ? info.resetsAt * 1000 : null,
+        rateLimitType: String(info.rateLimitType ?? 'unknown'),
+        ...(typeof info.overageStatus === 'string' ? { overageStatus: info.overageStatus } : {}),
+        ...(typeof info.isUsingOverage === 'boolean' ? { isUsingOverage: info.isUsingOverage } : {})
+      }
+    }
+  }
+
+  if (type === 'result') {
+    return {
+      kind: 'result',
+      text: typeof record.result === 'string' ? record.result : null,
+      costUsd: typeof record.total_cost_usd === 'number' ? record.total_cost_usd : null,
+      isError: record.is_error === true,
+      terminalReason: typeof record.terminal_reason === 'string' ? record.terminal_reason : null
+    }
+  }
+
+  if (type === 'assistant') {
+    const text = textBlocks(record.message)
+    // A tool-use-only turn carries no prose. Reporting it as empty text would make a chat pane look
+    // like the controller answered with nothing.
+    return text ? { kind: 'assistant_text', text } : { kind: 'other', type }
+  }
+
+  if (type === 'system' && record.subtype === 'init') {
+    return {
+      kind: 'init',
+      sessionId: typeof record.session_id === 'string' ? record.session_id : null,
+      model: typeof record.model === 'string' ? record.model : null,
+      permissionMode: typeof record.permissionMode === 'string' ? record.permissionMode : null
+    }
+  }
+
+  return type ? { kind: 'other', type } : null
+}
+
 export const claudeCode: AgentAdapter = {
   info,
+  decodeStream,
 
   async detect(): Promise<AdapterDetection> {
     const resolved = which(info.command)

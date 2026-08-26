@@ -1,21 +1,26 @@
 /**
- * Reading the `stream` transport's output.
+ * Reading a `stream` transport's output.
  *
- * The CLI's stream-json output carries things the transcript does not, and one of them matters a
- * great deal: a **free, live rate-limit record** after each turn. Measured 2026-08-25:
+ * ⛔ **There is no such thing as "the stream-json format".** Measured 2026-08-25 against all three
+ * CLIs, and they agree on almost nothing:
  *
- * ```json
- * {"type":"rate_limit_event","rate_limit_info":{
- *    "status":"allowed","resetsAt":1787684400,"rateLimitType":"five_hour",
- *    "overageStatus":"rejected","isUsingOverage":false}}
- * ```
+ * | | Claude Code | Antigravity | Codex |
+ * |---|---|---|---|
+ * | envelope key | `type` | **`event`** | `type` |
+ * | terminal record | `result` | `result` (nested under the key) | `turn.completed` |
+ * | assistant text | `assistant` → `content[]` blocks | `step_update` | `item.completed` → `item.text` |
+ * | usage | ⛔ not in the stream — from the transcript | **in the stream** | **in the stream** |
+ * | rate limit | `rate_limit_event` | none seen | none seen |
  *
- * It is not a percentage, so it does not replace the calibration in `docs/cost-model.md` §5 - but it
- * is a **status and a real reset time**, it arrives on a turn already being paid for, and it is the
- * first live quota signal this tool has had.
+ * A parser keyed on `record.type` — which this was until M5 measured `agy` — reads **nothing** from
+ * Antigravity, silently. Not an error, not a warning: an empty event list for every line.
  *
- * ⛔ This is still not terminal parsing. These are the CLI's own machine-readable records on its
- * declared protocol, the same ones its SDK consumes; nothing here reads a rendered screen.
+ * So framing is generic and **decoding belongs to the adapter**, beside `transcriptPath` and
+ * `probeQuota` and every other place a vendor's quirks are allowed to live. The scheduler still never
+ * asks which adapter it is looking at; it asks for events and gets events.
+ *
+ * ⛔ This is still not terminal parsing. These are each CLI's own machine-readable records on its own
+ * declared protocol; nothing here reads a rendered screen.
  */
 
 export interface RateLimitInfo {
@@ -24,6 +29,22 @@ export interface RateLimitInfo {
   rateLimitType: string
   overageStatus?: string
   isUsingOverage?: boolean
+}
+
+/**
+ * Tokens a turn actually spent, as the CLI reports them.
+ *
+ * ⚠️ Only emitted by adapters that put usage in the stream. Claude Code does not: its numbers come
+ * from the transcript, which is exact and includes the compaction sampling iteration the stream would
+ * miss (cost-model.md §6). Where both exist, the transcript wins — this is the fallback for CLIs that
+ * have no transcript agentyard can read.
+ */
+export interface StreamUsage {
+  input: number
+  output: number
+  thinking: number
+  cacheRead: number
+  cacheWrite: number
 }
 
 export type StreamEvent =
@@ -38,12 +59,34 @@ export type StreamEvent =
     }
   /** Assistant prose as it arrives, so a chat reply can be shown before the turn ends. */
   | { kind: 'assistant_text'; text: string }
+  /** ⚠️ Cumulative for the turn, not a delta. Callers must replace rather than add. */
+  | { kind: 'usage'; usage: StreamUsage; final: boolean }
   | { kind: 'init'; sessionId: string | null; model: string | null; permissionMode: string | null }
   | { kind: 'other'; type: string }
 
-/** Bytes arrive in arbitrary chunks; a record is only real once its newline has. */
+/**
+ * How one CLI's records become agentyard's events. Implemented by each adapter.
+ *
+ * May return several: one record can mean two things. Antigravity's terminal `result` carries both
+ * the response text *and* the turn's usage, and a decoder that had to pick one would silently lose
+ * the other.
+ */
+export type StreamDecoder = (
+  record: Record<string, unknown>
+) => StreamEvent | StreamEvent[] | null
+
+/**
+ * Bytes arrive in arbitrary chunks; a record is only real once its newline has.
+ *
+ * ⚠️ Every CLI also writes human-readable diagnostics to the same pipe — measured: `codex exec`
+ * opens with `Reading additional input from stdin...`, and `agy` prints a plain-English explanation
+ * when a tool is auto-denied. Lines that are not JSON objects are skipped rather than logged as
+ * errors, because they are normal.
+ */
 export class StreamParser {
   private buffer = ''
+
+  constructor(private readonly decode: StreamDecoder) {}
 
   push(chunk: string): StreamEvent[] {
     this.buffer += chunk
@@ -54,9 +97,16 @@ export class StreamParser {
       const line = this.buffer.slice(0, newline).trim()
       this.buffer = this.buffer.slice(newline + 1)
       newline = this.buffer.indexOf('\n')
-      if (!line) continue
-      const event = parseLine(line)
-      if (event) events.push(event)
+      if (!line.startsWith('{')) continue
+      let record: Record<string, unknown>
+      try {
+        record = JSON.parse(line) as Record<string, unknown>
+      } catch {
+        continue
+      }
+      const decoded = this.decode(record)
+      if (Array.isArray(decoded)) events.push(...decoded)
+      else if (decoded) events.push(decoded)
     }
 
     // A pathological line with no newline must not grow without bound.
@@ -65,68 +115,23 @@ export class StreamParser {
   }
 }
 
-function parseLine(line: string): StreamEvent | null {
-  if (!line.startsWith('{')) return null
-  let record: Record<string, unknown>
-  try {
-    record = JSON.parse(line) as Record<string, unknown>
-  } catch {
-    // The CLI also writes human-readable diagnostics; those are not our business.
-    return null
-  }
+// ---------------------------------------------------------------------------- shared helpers
 
-  const type = typeof record.type === 'string' ? record.type : ''
-
-  if (type === 'rate_limit_event') {
-    const info = record.rate_limit_info as Record<string, unknown> | undefined
-    if (!info) return null
-    return {
-      kind: 'rate_limit',
-      info: {
-        status: String(info.status ?? 'unknown'),
-        // The CLI reports seconds; everything in agentyard is epoch milliseconds.
-        resetsAt: typeof info.resetsAt === 'number' ? info.resetsAt * 1000 : null,
-        rateLimitType: String(info.rateLimitType ?? 'unknown'),
-        ...(typeof info.overageStatus === 'string' ? { overageStatus: info.overageStatus } : {}),
-        ...(typeof info.isUsingOverage === 'boolean' ? { isUsingOverage: info.isUsingOverage } : {})
-      }
-    }
-  }
-
-  if (type === 'result') {
-    return {
-      kind: 'result',
-      text: typeof record.result === 'string' ? record.result : null,
-      costUsd: typeof record.total_cost_usd === 'number' ? record.total_cost_usd : null,
-      isError: record.is_error === true,
-      terminalReason: typeof record.terminal_reason === 'string' ? record.terminal_reason : null
-    }
-  }
-
-  if (type === 'assistant') {
-    const text = assistantText(record.message)
-    if (text) return { kind: 'assistant_text', text }
-    // A tool-use-only turn carries no prose. Reporting it as empty text would make a chat pane
-    // look like the controller answered with nothing.
-    return { kind: 'other', type }
-  }
-
-  if (type === 'system' && record.subtype === 'init') {
-    return {
-      kind: 'init',
-      sessionId: typeof record.session_id === 'string' ? record.session_id : null,
-      model: typeof record.model === 'string' ? record.model : null,
-      permissionMode: typeof record.permissionMode === 'string' ? record.permissionMode : null
-    }
-  }
-
-  return type ? { kind: 'other', type } : null
+export function num(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0
 }
 
-/** Concatenate the text blocks of one assistant message, ignoring tool_use and thinking blocks. */
-function assistantText(message: unknown): string {
-  if (!message || typeof message !== 'object') return ''
-  const content = (message as { content?: unknown }).content
+export function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null
+}
+
+/** Concatenate the text blocks of a message, ignoring tool_use and thinking blocks. */
+export function textBlocks(message: unknown): string {
+  const record = asRecord(message)
+  if (!record) return ''
+  const content = record.content
   if (typeof content === 'string') return content
   if (!Array.isArray(content)) return ''
   return content

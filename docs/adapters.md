@@ -18,13 +18,14 @@ first spawn.** That is the whole reason `AdapterInfo.verification` exists.
 | Measured against | 2.1.223 | 1.1.20 | 0.149.1 |
 | **Accounts per machine** | **unlimited** (`CLAUDE_CONFIG_DIR`) | ⛔ **1** (OS keyring) | **unlimited** (`CODEX_HOME`) |
 | Credential lives in | a directory | ⛔ the OS keyring | a directory |
-| agentyard can meter it | ✔ JSONL transcript | ⛔ **no** — SQLite | ✔ JSONL rollout *(unconfirmed)* |
+| Metered from | transcript (exact, survives a restart) | **its live stream** | **its live stream** |
 | Can compact | ✔ | ⛔ | ⛔ *(conservative)* |
 | Classifier reviews actions | ✔ `auto` | ⛔ | ⛔ |
 | Approvals | `permission_prompt_tool` | settings rules | settings rules |
 | agentyard MCP tools | ✔ | ⛔ global registration only | ⛔ global registration only |
 | Accepts our session id | ✔ | ⛔ | ⛔ |
-| Free quota probe | ⛔ | ⛔ *(but see R9)* | ⛔ |
+| Free quota probe | ⛔ | ⛔ **measured — see below** | ⛔ |
+| Reports cache reads | via transcript | ⛔ no | ✔ reads **and** writes |
 
 **Read the ⛔ column-by-column, not row-by-row.** Two of these three CLIs have no classifier and no
 approval callback, and yet only one of them can hold a fleet. That difference is invisible in a
@@ -48,9 +49,13 @@ Written from documentation, then run. Each of these was wrong:
 | `antigravity-cli` | conversations under `~/.gemini/antigravity/` | **`~/.gemini/antigravity-cli/conversations/<uuid>.db`** — and ⛔ **SQLite, not JSONL** |
 | `antigravity-cli` | models `gemini-3-pro`, `gemini-3-flash` | `agy models` is free and lists the real set — including **Claude and GPT-OSS models** |
 | *(shared)* | `cmd /d /s /c <shim>` | ⛔ **`/s` breaks any path containing a space** — and `C:\Users\First Last` is the Windows default |
+| *(shared)* | one `stream-json` format | ⛔ **three dialects.** agy keys on `event`, not `type` — the shared parser read *nothing* from it, silently. Decoding now belongs to the adapter |
+| `antigravity-cli` | `agy -p /usage` might be a free quota probe | ⛔ **it is not.** Measured: taken as a *prompt*, spent 14,603 input + 264 output tokens, and began listing directories trying to work out what "/usage" meant |
+| `antigravity-cli` | unmeterable (SQLite conversations) | **meterable after all** — usage is in the stream. `metering: 'stream'` |
 
-That last one was latent in the codebase since M1 and had never fired, because `claude` resolves to a
-`.EXE` on this machine. `codex` installs as `codex.cmd`, which is what exposed it.
+The `cmd /s` one was latent since M1 and had never fired, because `claude` resolves to a `.EXE` on
+this machine; `codex` installs as `codex.cmd`, which exposed it. The last two came from running the
+CLIs against real accounts — see the quota section below.
 
 ---
 
@@ -70,11 +75,36 @@ behaviour falls out of it:
 - **`mintsSessionId: false`** → the transcript is discovered after the fact instead of predicted,
   and ⛔ **orphaned processes are never killed**, because identity cannot be proved. Leaving an orphan
   running costs quota; killing the wrong process costs somebody their work.
-- **`meteredFromTranscript: false`** → runs cost an **unknown** amount, not zero. Doctor says so.
+- **`metering`** → `transcript` is exact and survives a restart; `stream` bills from the wire and
+  loses whatever a restarted daemon was not attached for; `none` would mean runs cost an **unknown**
+  amount rather than zero. Doctor states which, and what it costs.
 - **`maxAccounts: 1`** → commissioning refuses the second account, with a message that says why and
   what to do instead.
 
 ---
+
+## Why there is still no free quota probe for Antigravity
+
+Three routes were evaluated. ⛔ All three were rejected, and the reasoning is worth keeping because
+this question will be asked again.
+
+1. **`agy -p /usage`** — measured 2026-08-25 and it **does not work**. The slash command is taken as a
+   prompt: the run spent 14,603 input and 264 output tokens and started listing directories trying to
+   work out what "/usage" meant. `--disable-slash-commands` implies print mode expands them; it does
+   not. The same trap Claude Code set, sprung a second time — which is why the adapter now says so in
+   a comment rather than leaving the lead open.
+2. **The local Antigravity Language Server** — what the community usage tools read. ⛔ It exists only
+   while the **IDE is running**. Verified on this machine with the IDE closed: no such process is
+   listening and no port file exists. agentyard's premise is unattended progress across hours-long
+   windows with no GUI open, so a probe that needs a window open is not a probe for this product.
+3. **A community package** (`antigravity-usage`, `antigravity-panel`, `opencode-antigravity-quota`).
+   ⛔ Rejected on D7 — external services are wrapped, never vendored — and because an undocumented
+   internal RPC surface behind a third-party wrapper is *two* things that can go stale rather than one.
+
+**What agentyard does instead needs no probe.** The stream carries per-turn usage, so spend is accrued
+from turns agentyard metered itself. ⚠️ That is a **floor**, not a percentage: it cannot see what the
+vendor counted that never reached a stream. `reserve.ts` already treats accrued spend as a floor, and
+runs on these adapters are marked `quotaUnverified`.
 
 ## Still unmeasured, and why
 
@@ -82,16 +112,12 @@ Everything below needs a **signed-in account and a real turn**, which is where f
 
 | # | Question | Adapter |
 |---|---|---|
-| **R9** | Does `agy -p /usage` run the slash command for free? `--disable-slash-commands` is documented as disabling expansion *in print mode*, which implies print mode expands them — the opposite of Claude Code, where `-p /usage` is taken as a prompt and spends a turn. Would be the first free quota probe agentyard has ever had | `antigravity-cli` |
-| **R10** | Does the codex rollout JSONL carry per-turn token usage in a shape `transcript.ts` can meter? If not, `meteredFromTranscript` is wrong and runs on it are invisible to the cost model | `openai-compatible` |
-| **R11** | The `stream-json` / `--json` event shapes for both. `stream.ts` parses Anthropic's; neither of the others has been seen | both |
+| **R10** | Does the codex rollout JSONL carry per-turn usage in a shape `transcript.ts` can read? Metering works from the stream today, but a stream is lost if the daemon restarts mid-run and a file is not | `openai-compatible` |
 | **R12** | Is headless compaction reachable on codex at all? Its session lifecycle has compaction, but no documented way to drive it from `exec`. If it is, `manualCompact` flips true and two cache-clock moves become available | `openai-compatible` |
+| **R13** | Is agy's `result.usage` the *turn's* total or the *conversation's*? Measured on a single-turn run, where the two are identical. If it is cumulative, multi-turn sessions are over-billed | `antigravity-cli` |
 
-⛔ **Conservative is the cheap direction of every one of these.** Claiming a capability that turns out
-to be absent strands a session at a window boundary; omitting one that is present costs a missed
-optimisation. Where a claim is uncertain, the adapter declares the pessimistic answer.
-
----
+**Answered by measurement on 2026-08-25:** R9 (no — `agy -p /usage` spends a turn and does not
+answer) and R11 (three dialects, all three now decoded and regression-tested against verbatim records).
 
 ## Installing
 

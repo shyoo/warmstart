@@ -280,10 +280,13 @@ function AdapterFacts({ adapter }: { adapter: AdapterInfo }): React.JSX.Element 
           : `${c.maxAccounts} account only — it keeps credentials in the OS keyring, with no way to point it elsewhere`
     },
     {
-      ok: c.meteredFromTranscript,
-      text: c.meteredFromTranscript
-        ? 'agentyard can meter its work exactly, from the transcript it writes'
-        : 'agentyard cannot meter its work — runs on it cost an unknown amount, not nothing'
+      ok: c.metering !== 'none',
+      text:
+        c.metering === 'transcript'
+          ? 'Metered exactly, from the transcript it writes — survives a restart'
+          : c.metering === 'stream'
+            ? 'Metered from its live stream — a run whose daemon restarted loses the turns nobody saw'
+            : 'Not metered at all — runs on it cost an unknown amount, not nothing'
     },
     {
       ok: c.manualCompact,

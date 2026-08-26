@@ -5,6 +5,7 @@ import type {
   SessionTransport,
   WorkerIdentity
 } from '@shared/protocol.js'
+import type { StreamDecoder } from '../stream.js'
 
 /**
  * A permission rule for an adapter whose approvals are settled by **configuration rather than a
@@ -118,4 +119,16 @@ export interface AgentAdapter {
    * credentials, and only into the root this worker owns.
    */
   writePermissions?(isolationRoot: string, rules: PermissionRules): WrittenPermissions
+
+  /**
+   * Turn one of this CLI's own stream records into an agentyard event.
+   *
+   * ⛔ Required for any adapter that offers the `stream` transport, because **there is no shared
+   * stream-json format** - measured 2026-08-25, the three CLIs disagree on the envelope key, the
+   * terminal record, where the text lives and whether usage appears at all. A parser keyed on one
+   * vendor's shape reads *nothing* from another, silently. See stream.ts.
+   *
+   * Return null for records this adapter does not care about.
+   */
+  decodeStream?: StreamDecoder
 }

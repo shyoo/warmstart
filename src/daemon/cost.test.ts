@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import { PRESETS, normalise, parseObjective, policy, weights } from './objective.js'
-import { StreamParser } from './stream.js'
 
 /**
  * M3's pure logic. Each of these is a place where being wrong costs money quietly rather than
@@ -89,50 +88,5 @@ describe('cost policy', () => {
     expect(policy(PRESETS.velocity).keepaliveWhenQuotaUnknown).toBe(true)
     expect(policy(PRESETS.economy).keepaliveWhenQuotaUnknown).toBe(false)
     expect(policy(PRESETS.quality).keepaliveWhenQuotaUnknown).toBe(false)
-  })
-})
-
-describe('StreamParser', () => {
-  const rateLimit =
-    '{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1787684400,' +
-    '"rateLimitType":"five_hour","overageStatus":"rejected","isUsingOverage":false}}'
-
-  it('reads a rate-limit record and converts its clock to milliseconds', () => {
-    const events = new StreamParser().push(`${rateLimit}\n`)
-    expect(events).toHaveLength(1)
-    expect(events[0]).toMatchObject({
-      kind: 'rate_limit',
-      info: { status: 'allowed', rateLimitType: 'five_hour', resetsAt: 1787684400000 }
-    })
-  })
-
-  it('waits for the newline before believing a record', () => {
-    const parser = new StreamParser()
-    // Bytes arrive in arbitrary chunks; half a JSON object is not a fact yet.
-    expect(parser.push(rateLimit.slice(0, 40))).toHaveLength(0)
-    expect(parser.push(`${rateLimit.slice(40)}\n`)).toHaveLength(1)
-  })
-
-  it('ignores the human-readable diagnostics the CLI also writes', () => {
-    const events = new StreamParser().push('Warning: something\nnot json at all\n')
-    expect(events).toHaveLength(0)
-  })
-
-  it('picks the result record out of a mixed stream', () => {
-    const events = new StreamParser().push(
-      `{"type":"assistant","message":{}}\n${rateLimit}\n` +
-        '{"type":"result","total_cost_usd":0.21,"is_error":false,"terminal_reason":"completed"}\n'
-    )
-    const result = events.find((e) => e.kind === 'result')
-    expect(result).toMatchObject({ kind: 'result', costUsd: 0.21, isError: false })
-  })
-
-  it('does not grow without bound on a stream with no newlines, and recovers on the next line', () => {
-    const parser = new StreamParser()
-    for (let i = 0; i < 10; i++) parser.push('x'.repeat(600_000))
-    // The junk still occupies the current line, so it goes out with that line rather than being
-    // treated as a prefix of the next record.
-    expect(parser.push('\n')).toHaveLength(0)
-    expect(parser.push('{"type":"other"}\n')).toHaveLength(1)
   })
 })

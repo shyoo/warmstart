@@ -11,6 +11,7 @@ import type {
   SpawnRequest,
   WrittenPermissions
 } from './types.js'
+import { asRecord, num, textBlocks, type StreamEvent, type StreamUsage } from '../stream.js'
 import { log } from '../log.js'
 import { launchArgs, launchable, which } from '../which.js'
 
@@ -76,9 +77,10 @@ const info: AdapterInfo = {
     // `codex exec resume <SESSION_ID>` takes an id, but the id is codex's to create - there is no
     // flag that supplies one for a *new* session.
     mintsSessionId: false,
-    // Rollout files are JSONL, so the existing tailer can meter this adapter. ⚠️ Whether the records
-    // carry per-turn usage in a shape transcript.ts understands is unmeasured - HANDOFF R10.
-    meteredFromTranscript: true,
+    // ⚠️ Rollout files are JSONL, but transcript.ts parses Anthropic's record shape, not codex's.
+    // The stream carries usage - including cache reads and writes - so that is the route taken.
+    // Reading the rollout files instead is HANDOFF R10.
+    metering: 'stream',
     maxAccounts: null
   },
   policy: {
@@ -113,8 +115,80 @@ function envFor(isolationRoot: string): Record<string, string> {
   return env
 }
 
+/**
+ * Codex's stream dialect.
+ *
+ * Keyed on `type` like Claude Code, and shares not one value with it. Verbatim from a real run:
+ *
+ * ```
+ * {"type":"thread.started","thread_id":"..."}
+ * {"type":"turn.started"}
+ * {"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"ok"}}
+ * {"type":"turn.completed","usage":{"input_tokens":13249,"cached_input_tokens":11008,
+ *                                   "cache_write_input_tokens":0,"output_tokens":5,
+ *                                   "reasoning_output_tokens":0}}
+ * ```
+ *
+ * ⚠️ Note what `turn.completed` carries: **cached_input_tokens and cache_write_input_tokens**. Codex
+ * reports cache reads *and* writes, which is more cost visibility than Antigravity gives. It still
+ * does not make the cache *steerable* - there is no client-controlled TTL to extend, which is why the
+ * cost model stays `unpriced` (D24). Observing a cost and having a lever on it are different things.
+ */
+function decodeStream(record: Record<string, unknown>): StreamEvent | StreamEvent[] | null {
+  const type = typeof record.type === 'string' ? record.type : ''
+
+  if (type === 'thread.started') {
+    return {
+      kind: 'init',
+      sessionId: typeof record.thread_id === 'string' ? record.thread_id : null,
+      model: null,
+      permissionMode: null
+    }
+  }
+
+  if (type === 'item.completed') {
+    const item = asRecord(record.item)
+    if (item?.type === 'agent_message' && typeof item.text === 'string' && item.text) {
+      return { kind: 'assistant_text', text: item.text }
+    }
+    return { kind: 'other', type }
+  }
+
+  if (type === 'turn.completed' || type === 'turn.failed') {
+    const usage = asRecord(record.usage)
+    const failed = type === 'turn.failed'
+    // ⛔ Usage first: `turn.completed` is both the terminal record and the only usage record, and a
+    // caller that saw only the result would never learn what the turn cost.
+    if (usage && !failed) return { kind: 'usage', usage: readUsage(usage), final: true }
+    return {
+      kind: 'result',
+      text: null,
+      costUsd: null,
+      isError: failed,
+      terminalReason: type
+    }
+  }
+
+  return type ? { kind: 'other', type } : null
+}
+
+/** `{input_tokens, cached_input_tokens, cache_write_input_tokens, output_tokens, reasoning_output_tokens}` */
+function readUsage(usage: Record<string, unknown>): StreamUsage {
+  const cacheRead = num(usage.cached_input_tokens)
+  return {
+    // ⚠️ `input_tokens` is the total and *includes* the cached part. Adding them would double-count
+    // the prefix - which on this sample was 11,008 of 13,249 tokens.
+    input: Math.max(0, num(usage.input_tokens) - cacheRead),
+    output: num(usage.output_tokens),
+    thinking: num(usage.reasoning_output_tokens),
+    cacheRead,
+    cacheWrite: num(usage.cache_write_input_tokens)
+  }
+}
+
 export const openaiCompatible: AgentAdapter = {
   info,
+  decodeStream,
 
   async detect(): Promise<AdapterDetection> {
     const resolved = which(info.command)

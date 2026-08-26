@@ -198,10 +198,18 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
               'Treat unattended work on it as unproven.'
           )
         }
-        if (!a.info.capabilities.meteredFromTranscript && listWorkers().some((w) => w.adapterId === a.info.id)) {
+        const inUse = listWorkers().some((w) => w.adapterId === a.info.id)
+        if (a.info.capabilities.metering === 'none' && inUse) {
           warnings.push(
-            `${a.info.label}: agentyard cannot meter its work - it does not write a transcript ` +
-              'agentyard can read, so runs on it cost an unknown amount rather than nothing.'
+            `${a.info.label}: agentyard cannot meter its work at all, so runs on it cost an unknown ` +
+              'amount rather than nothing.'
+          )
+        } else if (a.info.capabilities.metering === 'stream' && inUse) {
+          // ⚠️ Worth saying, because it is a real difference in what survives a crash: a transcript
+          // can be re-read afterwards, a stream cannot.
+          warnings.push(
+            `${a.info.label}: metered from its live stream rather than a transcript, so a run whose ` +
+              'daemon restarted mid-flight loses the turns nobody was attached for.'
           )
         }
         if (!a.info.capabilities.mintsSessionId && listWorkers().some((w) => w.adapterId === a.info.id)) {

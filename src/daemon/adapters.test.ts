@@ -101,6 +101,18 @@ describe('capability consequences, not capability fields', () => {
     }
   })
 
+  it('every adapter says where its token counts come from', () => {
+    // ⛔ `none` would mean runs report as costing nothing rather than unknown. Nothing declares it
+    // today; if something ever does, this is where the consequence has to be thought about again.
+    for (const a of ALL) {
+      expect(['transcript', 'stream', 'none'], a.info.id).toContain(a.info.capabilities.metering)
+      if (a.info.capabilities.metering === 'stream') {
+        // Metered from the stream means the decoder is the meter. No decoder, no numbers.
+        expect(typeof a.decodeStream, a.info.id).toBe('function')
+      }
+    }
+  })
+
   it('no adapter claims a quota probe it has not got', () => {
     // Every one of these reports `unknown` rather than a number, which the scheduler already handles
     // by marking the run quotaUnverified. Claiming `cli` without a free probe is what would hurt.

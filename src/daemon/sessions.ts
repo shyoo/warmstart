@@ -266,6 +266,13 @@ export function spawnSession(opts: SpawnOptions): Session {
     log.info(`session ${id.slice(0, 8)} exited with ${exitCode}`)
   }
 
+  if (transport === 'stream' && !ad.decodeStream) {
+    log.warn(
+      `${ad.info.label} offers the stream transport but decodes no records; this session will ` +
+        'produce no usage, no result text and no rate-limit signal'
+    )
+  }
+
   const channel =
     transport === 'stream'
       ? openPipes(plan, cwd, emitData, handleExit)
@@ -306,7 +313,11 @@ export function spawnSession(opts: SpawnOptions): Session {
     scrollback: [],
     scrollbackBytes: 0,
     purpose,
-    parser: transport === 'stream' ? new StreamParser() : null
+    // ⛔ The adapter's own decoder, not a shared one. The three CLIs' stream formats agree on
+    // almost nothing, and a parser keyed on the wrong dialect returns an empty list for every line
+    // rather than an error. An adapter that offers `stream` and no decoder gets nothing, loudly.
+    parser:
+      transport === 'stream' && ad.decodeStream ? new StreamParser(ad.decodeStream) : null
   })
 
   log.info(

@@ -199,15 +199,21 @@ export interface AdapterCapabilities {
    */
   mintsSessionId: boolean
   /**
-   * Can agentyard meter this adapter's work from the transcript it writes?
+   * Where agentyard gets this adapter's token counts from.
    *
-   * ⛔ False is the most expensive capability gap there is, and M5 found the first instance of it:
-   * Antigravity writes its conversations as **SQLite databases**, not line-per-event JSONL, so the
-   * tailer that meters every other adapter exactly can read nothing. A run on such an adapter costs
-   * an **unknown** amount — not zero — and everything downstream must say unknown rather than quietly
-   * summing nothing and reporting a small number.
+   * ⛔ Three values because M5 measured three answers, and getting this wrong is expensive in the
+   * quiet direction — an unmetered run reports as costing *nothing* rather than as *unknown*.
+   *
+   *  - `transcript` — the CLI writes a line-per-event JSONL file agentyard tails. Exact, and it
+   *    includes the compaction sampling iteration a stream would miss (cost-model.md §6). Claude Code.
+   *  - `stream` — no readable transcript, but the stream carries usage records. Antigravity writes its
+   *    conversations as SQLite, so this is the only route; Codex reports cache reads and writes here
+   *    too. ⚠️ Only available while agentyard is attached — a run whose daemon restarted mid-flight
+   *    loses the turns it did not see.
+   *  - `none` — agentyard cannot tell what it cost. Nothing declares this today, and anything that
+   *    did would need to say `unknown` everywhere downstream rather than sum to zero.
    */
-  meteredFromTranscript: boolean
+  metering: 'transcript' | 'stream' | 'none'
   /**
    * How many accounts of this adapter one machine can hold, or null for no limit.
    *

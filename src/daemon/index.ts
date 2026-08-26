@@ -12,7 +12,7 @@ import { onSessionExit, reconcileTasks, startScheduler, stopScheduler } from './
 import { reconcileConsults, startController, stopController } from './controller.js'
 import { creditTurn } from './tasks.js'
 import { recordRateLimit } from './quota.js'
-import { TranscriptTailer, recordCompaction, recordTurn } from './transcript.js'
+import { TranscriptTailer, creditStreamTurn, recordCompaction, recordTurn } from './transcript.js'
 import { log, onLog } from './log.js'
 import { setEventSink } from './events.js'
 import { paths } from './paths.js'
@@ -85,6 +85,14 @@ async function main(): Promise<void> {
       // The one quota signal that is both live and free: it rides a turn already being paid for.
       if (event.kind === 'rate_limit') {
         recordRateLimit(session.workerId, session.id, event.info)
+      }
+      // ⛔ Only the terminal usage record, and only for adapters metered from the stream. Antigravity
+      // reports usage per step *and* again in its result; billing both would double-count the turn.
+      // Claude Code is billed from its transcript instead, which is exact and sees the compaction
+      // sampling iteration a stream never shows (cost-model.md §6).
+      if (event.kind === 'usage' && event.final) {
+        creditStreamTurn(session, event.usage)
+        emit({ type: 'session.changed', session })
       }
     },
     onExit(sessionId, exitCode) {

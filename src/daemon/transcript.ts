@@ -1,10 +1,12 @@
 import { createReadStream, existsSync, statSync, watch, type FSWatcher } from 'node:fs'
 import { createInterface } from 'node:readline'
-import type { Turn } from '@shared/protocol.js'
+import type { Session, Turn } from '@shared/protocol.js'
 import { db } from './db.js'
 import { costModel } from './costmodel.js'
 import { adapter } from './adapters/index.js'
 import { getSession } from './sessions.js'
+import { creditTurn } from './tasks.js'
+import type { StreamUsage } from './stream.js'
 import { log } from './log.js'
 
 /**
@@ -314,4 +316,71 @@ export function recordCompaction(
 
 function costModelFor(adapterId: string) {
   return costModel(adapter(adapterId).info.policy.costModelId)
+}
+
+/**
+ * Record a turn agentyard saw on the wire rather than in a file.
+ *
+ * ⛔ For adapters whose `metering` is `stream` — Antigravity has no transcript agentyard can read,
+ * and Codex writes one in a shape `parseTranscriptLine` does not understand (R10). Without this they
+ * would run and report **zero**, which reads as free rather than as unknown, and every budget, gate
+ * and estimate downstream would believe it.
+ *
+ * ⚠️ Deliberately less than the transcript path gives:
+ *
+ *  - No `requestStartedAt`, so no cache expiry is derived. The cache clock leaves these sessions
+ *    alone anyway, because neither provider prices a steerable cache (D24) — so nothing is lost that
+ *    was going to be used.
+ *  - Only what was seen. A daemon that restarted mid-run misses the turns nobody was attached for,
+ *    which is why `metering: 'stream'` is reported as a caveat in Doctor rather than as equivalent.
+ */
+export function creditStreamTurn(session: Session, usage: StreamUsage): void {
+  const model = costModelFor(session.adapterId)
+  const ts = Date.now()
+
+  db()
+    .prepare(
+      `insert or ignore into turns
+         (session_id, request_id, ts, request_started_at, model, effort, git_branch,
+          input_tokens, output_tokens, thinking_tokens, cache_read_tokens,
+          cache_write_1h_tokens, cache_write_5m_tokens, context_tokens, tokenizer, cost_model_id)
+       values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+    )
+    .run(
+      session.id,
+      // The CLIs do not expose a request id, so the timestamp is the uniqueness key. It is only there
+      // to stop the same record being counted twice if a chunk is replayed.
+      `stream-${ts}`,
+      ts,
+      null,
+      session.model,
+      session.effort,
+      null,
+      usage.input,
+      usage.output,
+      usage.thinking,
+      usage.cacheRead,
+      usage.cacheWrite,
+      0,
+      null,
+      session.model ? (model.modelSpec(session.model)?.tokenizer ?? null) : null,
+      model.id
+    )
+
+  db()
+    .prepare(
+      'update sessions set tokens_since_compact = tokens_since_compact + ? where id = ?'
+    )
+    .run(usage.input + usage.output + usage.cacheWrite, session.id)
+
+  creditTurn(session.id, {
+    input: usage.input,
+    output: usage.output,
+    cacheRead: usage.cacheRead,
+    cacheWrite: usage.cacheWrite
+  })
+
+  log.debug(
+    `metered ${usage.input + usage.output} tokens from the stream on ${session.id.slice(0, 8)}`
+  )
 }

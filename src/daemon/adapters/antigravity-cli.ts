@@ -12,6 +12,7 @@ import type {
   SpawnRequest,
   WrittenPermissions
 } from './types.js'
+import { asRecord, num, textBlocks, type StreamEvent, type StreamUsage } from '../stream.js'
 import { log } from '../log.js'
 import { launchArgs, launchable, which } from '../which.js'
 
@@ -46,8 +47,9 @@ import { launchArgs, launchable, which } from '../which.js'
  *
  * And the one that cost the most to find: ⛔ **conversations are SQLite, not JSONL.** Every other
  * adapter writes a line-per-event transcript that agentyard tails to meter turns exactly. `agy`
- * writes `conversations/<uuid>.db`. So `meteredFromTranscript` is false and work on this adapter is
- * **unmetered** — its cost is unknown rather than zero, and everything downstream has to say so.
+ * writes `conversations/<uuid>.db`. ⚠️ Measuring the stream then corrected the conclusion: usage
+ * records *are* emitted there, so `metering: 'stream'` and the work is metered after all — just only
+ * while agentyard is attached to the process, rather than reconstructable from a file afterwards.
  */
 
 const run = promisify(execFile)
@@ -82,7 +84,10 @@ const info: AdapterInfo = {
     mcp: false,
     quotaProbe: 'none',
     mintsSessionId: false,
-    meteredFromTranscript: false,
+    // ⚠️ Not from a transcript: agy writes conversations as SQLite, which the line-oriented tailer
+    // cannot read. But usage IS in the stream - measured 2026-08-25 - so the work is metered after
+    // all, just only while agentyard is attached to the process.
+    metering: 'stream',
     maxAccounts: 1
   },
   policy: {
@@ -134,8 +139,83 @@ function resolveCommand(): string | null {
   return which(info.command) ?? fallbackPaths().find((p) => existsSync(p)) ?? null
 }
 
+/**
+ * Antigravity's stream dialect.
+ *
+ * ⛔ The envelope key is **`event`**, not `type`. Measured 2026-08-25 - a parser keyed on `type`
+ * reads nothing here and says nothing about it, which is exactly the failure this function exists to
+ * prevent.
+ *
+ * Shapes, verbatim from a real run:
+ *
+ * ```
+ * {"event":"init","conversation_id":"...","init":{"cwd":"...","tools":[...],"permission_mode":"..."}}
+ * {"event":"step_update","step_update":{"step_type":"agent_response","state":"DONE","usage":{...}}}
+ * {"event":"result","result":{"status":"SUCCESS","response":"...","usage":{...},"num_turns":1}}
+ * ```
+ *
+ * ⚠️ **Usage is in the stream, and it is the only place agentyard can get it** - `agy` writes its
+ * conversations as SQLite, which the transcript tailer cannot read. So this adapter is metered from
+ * here or not at all.
+ */
+function decodeStream(record: Record<string, unknown>): StreamEvent | StreamEvent[] | null {
+  const event = typeof record.event === 'string' ? record.event : ''
+
+  if (event === 'init') {
+    const init = asRecord(record.init)
+    return {
+      kind: 'init',
+      sessionId: typeof record.conversation_id === 'string' ? record.conversation_id : null,
+      model: null,
+      permissionMode: typeof init?.permission_mode === 'string' ? init.permission_mode : null
+    }
+  }
+
+  if (event === 'step_update') {
+    const step = asRecord(record.step_update)
+    const usage = asRecord(step?.usage)
+    if (usage) return { kind: 'usage', usage: readUsage(usage), final: false }
+    const text = typeof step?.text_delta === 'string' ? step.text_delta : ''
+    return text ? { kind: 'assistant_text', text } : { kind: 'other', type: 'step_update' }
+  }
+
+  if (event === 'result') {
+    const result = asRecord(record.result)
+    const status = String(result?.status ?? 'UNKNOWN')
+    const finished: StreamEvent = {
+      kind: 'result',
+      text: typeof result?.response === 'string' ? result.response : null,
+      // ⛔ Not reported. Null rather than 0, which would read as "this turn was free".
+      costUsd: null,
+      isError: status !== 'SUCCESS',
+      terminalReason: status
+    }
+    const usage = asRecord(result?.usage)
+    // ⚠️ Two events from one record. The terminal record carries the turn's usage as well as its
+    // text, and this is the only place agentyard can bill this adapter from - `agy` writes its
+    // conversations as SQLite, which the transcript tailer cannot read.
+    return usage ? [{ kind: 'usage', usage: readUsage(usage), final: true }, finished] : finished
+  }
+
+  return event ? { kind: 'other', type: event } : null
+}
+
+/** `{input_tokens, output_tokens, thinking_tokens, cache_read_tokens, total_tokens}` */
+function readUsage(usage: Record<string, unknown>): StreamUsage {
+  return {
+    input: num(usage.input_tokens),
+    output: num(usage.output_tokens),
+    thinking: num(usage.thinking_tokens),
+    cacheRead: num(usage.cache_read_tokens),
+    // ⚠️ Not reported by this CLI. Zero here means "not measured", and because the provider's cache
+    // is `unpriced` anyway (D24) nothing downstream multiplies it by a write cost.
+    cacheWrite: 0
+  }
+}
+
 export const antigravityCli: AgentAdapter = {
   info,
+  decodeStream,
 
   async detect(): Promise<AdapterDetection> {
     const resolved = resolveCommand()
@@ -201,15 +281,24 @@ export const antigravityCli: AgentAdapter = {
   },
 
   /**
-   * ⛔ Always unknown, and deliberately so.
+   * ⛔ Always unknown, and deliberately so — after evaluating every alternative.
    *
-   * `/usage` is a slash command. ⚠️ Measured 2026-08-25, `agy --help` documents
-   * `--disable-slash-commands` as disabling expansion *in print mode* — which implies `agy -p /usage`
-   * would really run it, unlike Claude Code where the identical-looking command is taken as a prompt
-   * and spends a turn (docs/cost-model.md §5). That would be the first free quota probe agentyard has
-   * ever had. It is **not** used here: the implication is from a help string, the confirmation costs a
-   * turn on a signed-in account, and the last time this was assumed rather than measured it was
-   * wrong. HANDOFF R9.
+   * 1. **`agy -p /usage` — measured 2026-08-25, and it does NOT work.** The slash command is taken as
+   *    a prompt: the run spent 14,603 input and 264 output tokens and started listing directories
+   *    trying to work out what "/usage" meant. Exactly the trap Claude Code set (docs/cost-model.md
+   *    §5), sprung twice. `--disable-slash-commands` implies print mode expands them; it does not.
+   * 2. **The local Antigravity Language Server**, which is what the community usage tools read.
+   *    ⛔ Rejected: it only exists while the **IDE is running**, and agentyard's entire premise is
+   *    unattended progress across hours-long windows with no GUI open. Verified on this machine —
+   *    with the IDE closed, no such process is listening and no port file exists. A probe that works
+   *    only when a window is open is not a probe for this product.
+   * 3. **A community package** (`antigravity-usage` and friends). ⛔ Rejected on D7: external
+   *    services are wrapped, never vendored, and an undocumented internal RPC surface behind a
+   *    third-party wrapper is two things that can go stale rather than one.
+   *
+   * What agentyard does instead needs no probe at all: the stream carries per-turn usage, so spend is
+   * accrued from work agentyard itself metered. That is a **floor**, not a percentage — it cannot see
+   * what the vendor counted that never reached a stream — and `reserve.ts` already treats it as one.
    */
   async probeQuota(): Promise<Omit<QuotaSnapshot, 'workerId'>> {
     return {
@@ -217,11 +306,12 @@ export const antigravityCli: AgentAdapter = {
       sampledAt: Date.now(),
       source: 'unknown',
       error:
-        'Antigravity exposes usage only as a slash command. Whether print mode runs it for free is ' +
-        'plausible but unmeasured (HANDOFF R9), so this worker has no quota reading and its runs ' +
-        'are marked unverified.'
+        'Antigravity exposes usage only inside an interactive session or a running IDE. `agy -p ' +
+        '/usage` was measured and spends a real turn without answering. Spend is accrued from ' +
+        'metered turns instead, which is a floor rather than a percentage.'
     }
   },
+
 
   loginArgv(): string[] {
     return ['login']
@@ -317,7 +407,8 @@ export const antigravityCli: AgentAdapter = {
    *
    * ⚠️ Returns a path to a **SQLite database**, not a JSONL transcript — measured: conversations are
    * `~/.gemini/antigravity-cli/conversations/<uuid>.db`. agentyard's tailer reads lines and cannot
-   * meter this, which is why `meteredFromTranscript` is false. The path is still worth having: it is
+   * meter this, which is why `metering` is `'stream'` rather than `'transcript'`. The path is still
+   * worth having: it is
    * what an operator opens when they want to see what the agent actually did.
    *
    * ⛔ Created after `startedAt`, never merely newest. The operator has only one Antigravity identity

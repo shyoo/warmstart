@@ -300,9 +300,9 @@ try {
     'two CLIs, both without a classifier, and only one can hold a fleet'
   )
   check(
-    'an adapter agentyard cannot meter says so',
-    agy?.capabilities.meteredFromTranscript === false,
-    'agy writes conversations as SQLite, so the line-oriented tailer reads nothing'
+    'an adapter with no readable transcript says where its numbers come from instead',
+    agy?.capabilities.metering === 'stream',
+    'agy writes conversations as SQLite, so the tailer reads nothing - but usage is in the stream'
   )
 
   // ---- commissioning enforces the account limit ----
@@ -361,9 +361,9 @@ try {
 
   const doc = await daemon.rpc('doctor.run')
   check(
-    'doctor reports that an unmeterable adapter costs an unknown amount, not nothing',
-    doc.warnings.some((w) => /cannot meter/i.test(w)),
-    doc.warnings.find((w) => /cannot meter/i.test(w))
+    'doctor says when metering comes from a stream rather than a file, and what that costs',
+    doc.warnings.some((w) => /metered from its live stream/i.test(w)),
+    doc.warnings.find((w) => /metered from its live stream/i.test(w))
   )
   check(
     'doctor warns that orphans of a non-minting adapter will not be stopped',
