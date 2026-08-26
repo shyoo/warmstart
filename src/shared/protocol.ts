@@ -2,7 +2,9 @@ import type {
   Approval,
   ApprovalRule,
   CacheMove,
+  ChatMessage,
   ClockDecision,
+  Consult,
   Objective,
   Project,
   ReserveReport,
@@ -10,6 +12,7 @@ import type {
   RestingState,
   Run,
   Task,
+  TaskKind,
   TaskMessage
 } from './tasks.js'
 
@@ -76,11 +79,21 @@ export interface Worker {
   enabled: boolean
   /** Quota is tracked but never spent - a person is using this account by hand. */
   humanOccupied: boolean
+  /**
+   * May this account be asked for judgment, do work, or both?
+   *
+   * The controller is a worker in the fleet with its own quota, which is what makes **leadership
+   * delegation** free: an account near the top of its window simply stops being chosen for the next
+   * judgment call, and at the floor the deterministic fallback answers instead. Plan §11.
+   */
+  role: WorkerRole
   maxConcurrent: number
   identity: WorkerIdentity | null
   retiredAt: number | null
   createdAt: number
 }
+
+export type WorkerRole = 'worker' | 'controller' | 'both'
 
 export interface WorkerIdentity {
   account?: string
@@ -118,6 +131,7 @@ export interface Session {
   effort: string | null
   state: SessionState
   pid: number | null
+  purpose: SessionPurpose
   transcriptPath: string | null
   contextTokens: number | null
   /** Cache TTL is measured from the REQUEST start, not the response record. cost-model.md §1. */
@@ -130,6 +144,16 @@ export interface Session {
 
 export type SessionTransport = 'pty' | 'stream'
 export type SessionState = 'starting' | 'live' | 'idle' | 'closed' | 'failed'
+
+/**
+ * What this session is for.
+ *
+ * ⚠️ Load-bearing, not a label. A `consult` is one short tool-less turn and takes no workspace, so it
+ * is exempt from the worker's work-concurrency limit - a fleet that cannot ask for judgment precisely
+ * when it is busiest would have the feature only when it is not needed. It is bounded separately: one
+ * consult per worker at a time, a fleet-wide hourly cap, and the same quota gates as work.
+ */
+export type SessionPurpose = 'work' | 'login' | 'consult' | 'chat'
 
 /** One assistant turn's metering, read from the agent's own transcript. */
 export interface Turn {
@@ -222,6 +246,34 @@ export interface DoctorReport {
   warnings: string[]
 }
 
+// ---------------------------------------------------------------------------- controller
+
+/**
+ * What the controller has decided, and what each decision cost.
+ *
+ * ⛔ `fallbacks` is not an error count. A fallback is the design working: the deterministic answer
+ * fired because no controller was available, in budget, or coherent. A fleet with every consult
+ * falling back still makes progress - it just makes it with less judgment.
+ */
+export interface ControllerReport {
+  generatedAt: number
+  /** Which accounts may be asked, and whether each can be right now. */
+  controllers: Array<{
+    workerId: string
+    label: string
+    role: WorkerRole
+    available: boolean
+    reason: string
+  }>
+  pending: number
+  /** Consults started in the last hour, against the fleet-wide cap. */
+  usedThisHour: number
+  hourlyCap: number
+  recent: Consult[]
+  spentTokens: number
+  fallbacks: number
+}
+
 // ---------------------------------------------------------------------------- rpc
 
 export interface RpcMap {
@@ -247,7 +299,7 @@ export interface RpcMap {
   }
   'worker.update': {
     params: { id: string } & Partial<
-      Pick<Worker, 'label' | 'enabled' | 'humanOccupied' | 'maxConcurrent'>
+      Pick<Worker, 'label' | 'enabled' | 'humanOccupied' | 'maxConcurrent' | 'role'>
     >
     result: Worker
   }
@@ -332,6 +384,31 @@ export interface RpcMap {
   'cost.report': { params: void; result: CostReport }
   'scheduler.tick': { params: void; result: { dispatched: number; note: string } }
 
+  // ---- M4: the controller ---------------------------------------------------------------
+  /** The ledger: every judgment call, what it decided, what it cost, and when it fell back. */
+  'controller.report': { params: { limit?: number } | void; result: ControllerReport }
+  /**
+   * Drain the consult queue once, now, instead of waiting for the controller loop.
+   * ⚠️ This is the one RPC in the daemon that can spend tokens on its own. Nothing in a scheduler
+   * tick calls it.
+   */
+  'controller.drain': { params: void; result: { answered: number; note: string } }
+  /** Decompose a coarse goal into draft children. Files a `plan` task, which is the unit of work. */
+  'task.plan': { params: { title: string; projectId?: string | null; prompt?: string }; result: Task }
+  /** What work like this has cost before, from completed runs. Median, never mean. */
+  'task.estimate': {
+    params: { id: string }
+    result: { tokens: number; confidence: 'none' | 'low' | 'medium' | 'high'; basis: string }
+  }
+
+  'chat.history': { params: { threadId?: string } | void; result: ChatMessage[] }
+  /** Talk to the controller. Answers arrive as `chat.message` events, not in this result. */
+  'chat.send': {
+    params: { text: string; threadId?: string }
+    result: { ok: boolean; sessionId?: string; reason?: string }
+  }
+  'chat.reset': { params: { threadId?: string } | void; result: { ok: true } }
+
   // ---- worker tier: called by the MCP server on an agent's behalf -----------------------
   /** ⛔ The only signal that a task succeeded. A process exiting says nothing about the work. */
   'agent.complete': { params: { sessionId: string; summary: string }; result: { ok: true } }
@@ -355,6 +432,7 @@ export interface TaskCreateParams {
   assigneeHint?: string | null
   verification?: 'required' | 'not_required' | 'auto'
   status?: 'draft' | 'ready'
+  kind?: TaskKind
   estTokens?: number | null
 }
 
@@ -387,4 +465,6 @@ export type DaemonEvent =
   | { type: 'session.data'; sessionId: string; data: string }
   | { type: 'session.exit'; sessionId: string; exitCode: number | null }
   | { type: 'turn'; turn: Turn }
+  | { type: 'consult.changed'; consult: Consult }
+  | { type: 'chat.message'; message: ChatMessage }
   | { type: 'log'; level: 'info' | 'warn' | 'error'; message: string; ts: number }

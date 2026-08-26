@@ -47,6 +47,15 @@ export interface Project {
 
 // ---------------------------------------------------------------------------- task
 
+/**
+ * What kind of thing this task is.
+ *
+ * ⛔ A `plan` task is **decomposed, not dispatched**. Its output is a set of draft children with
+ * dependency edges - which keeps decomposition visible, cancellable, billable to a budget and
+ * re-runnable when the plan turns out wrong, rather than being a hidden phase. Plan §18.1.
+ */
+export type TaskKind = 'work' | 'plan'
+
 export type TaskStatus =
   | 'draft'
   | 'ready'
@@ -118,6 +127,12 @@ export interface TaskMessage {
   role: 'human' | 'agent' | 'system'
   text: string
   runId: string | null
+  /**
+   * When this message reached an agent. A note typed into a live session is answered in that
+   * session - `0.1·C` - and must not also be replayed into the next prompt, which would charge for
+   * it twice and leave the agent unsure what is still outstanding.
+   */
+  deliveredAt: number | null
   ts: number
 }
 
@@ -134,6 +149,7 @@ export interface Task {
   seq: number
   projectId: string | null
   title: string
+  kind: TaskKind
   status: TaskStatus
   priority: Priority
   createdBy: Principal
@@ -303,6 +319,60 @@ export interface ReserveReport {
   remainingTokens: number | null
   liveSessions: number
   reason: string
+}
+
+// ---------------------------------------------------------------------------- controller
+
+/**
+ * A judgment event.
+ *
+ * ⛔ **Every one of these has a deterministic fallback, and the fallback is what happens by default.**
+ * The scheduler enqueues a consult and carries on; if the controller is out of quota, mis-configured,
+ * slow or wrong, the fallback fires on a timer and the fleet keeps working. That is the whole reason
+ * the controller can be an LLM at all: it is never in the critical path, only ever an improvement on
+ * an answer that already exists.
+ *
+ *  - `decompose` — a coarse goal becomes draft children with dependency edges. Plan §18.1.
+ *  - `triage`    — a task that has failed twice: retry, rewrite, escalate, or hand to a person.
+ *  - `gate`      — an agent filed a task at a controller gate: accept, rescope, reject, escalate. §7.2.
+ *  - `route`     — two workers score within ε on an expensive task. The weakest of the four, and
+ *                  gated hardest, because a tie means the alternatives are by definition close.
+ */
+export type ConsultKind = 'decompose' | 'triage' | 'gate' | 'route'
+
+export type ConsultStatus = 'pending' | 'answered' | 'fallback' | 'failed'
+
+export interface Consult {
+  id: string
+  kind: ConsultKind
+  /** The task this is about, where there is one. */
+  subjectId: string | null
+  status: ConsultStatus
+  question: string
+  workerId: string | null
+  sessionId: string | null
+  answer: unknown
+  /** What was applied, in one line. Populated for answers and fallbacks alike. */
+  outcome: string | null
+  /** Why the deterministic answer was used: no controller, out of time, or a malformed reply. */
+  fallbackReason: string | null
+  /** Metered from the consult session's own transcript. A judgment call is not free. */
+  spentTokens: number
+  createdAt: number
+  startedAt: number | null
+  endedAt: number | null
+}
+
+/** Whether an agent-filed task is admitted, reviewed by the controller, or handed to a person. §7.2. */
+export type RiskGate = 'auto' | 'controller' | 'human'
+
+export interface ChatMessage {
+  id: number
+  threadId: string
+  role: 'human' | 'controller' | 'system'
+  text: string
+  sessionId: string | null
+  ts: number
 }
 
 // ---------------------------------------------------------------------------- landing

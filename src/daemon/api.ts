@@ -39,9 +39,12 @@ import {
   addMessage,
   createTask,
   getTask,
+  lastMessageId,
   listTasks,
   messagesFor,
   promoteDraft,
+  requireTask,
+  setStatus,
   runForSession,
   runsFor,
   setTaskHandoff,
@@ -57,7 +60,11 @@ import {
   requestApproval
 } from './approvals.js'
 import { allAvailability } from './resources.js'
-import { completeTask, tick } from './scheduler.js'
+import { completeTask, deliverToLiveSession, tick } from './scheduler.js'
+import { controllerReport, drainConsults, enqueueConsult } from './controller.js'
+import { gateQuestion, riskOf } from './judgment.js'
+import { chatHistory, resetChat, sendChat } from './chat.js'
+import { estimateTask } from './estimator.js'
 import { recentClockEvents, remainingTokens, reserveState } from './reserve.js'
 import { decide, medianHumanLatencyMs } from './cacheclock.js'
 import { DEFAULT_OBJECTIVE } from './objective.js'
@@ -72,6 +79,35 @@ function describeAge(ms: number): string {
   if (minutes < 90) return `${minutes} minutes`
   const hours = Math.round(minutes / 60)
   return hours < 48 ? `${hours} hours` : `${Math.round(hours / 24)} days`
+}
+
+/**
+ * Decide what happens to a task an agent just filed.
+ *
+ * ⛔ The rule-based assessment is what runs on every filing, and it is free. Only what it returns as
+ * `controller` costs a turn - the point of a gate is to contain task explosion, not to add a turn to
+ * every instance of it. Plan §7.2.
+ */
+function admitAgentTask(taskId: string): void {
+  const task = requireTask(taskId)
+  const risk = riskOf(task)
+
+  if (risk.gate === 'auto') {
+    addMessage(task.id, 'system', `Admitted automatically: ${risk.why}.`)
+    promoteDraft(task.id)
+    return
+  }
+  if (risk.gate === 'human') {
+    addMessage(task.id, 'system', `Held for you: ${risk.why}.`)
+    updateTask(task.id, { assigneeHint: 'human' })
+    setStatus(task.id, 'awaiting_human', { assignee: 'human' })
+    return
+  }
+
+  addMessage(task.id, 'system', `Held for the controller to review: ${risk.why}.`)
+  // ⚠️ It stays a draft while the question is open. A draft dispatches nothing and holds nothing, so
+  // the cost of waiting - including waiting forever, if there is no controller - is only time.
+  enqueueConsult({ kind: 'gate', subjectId: task.id, question: gateQuestion(task, risk.why) })
 }
 
 export interface ApiContext {
@@ -207,6 +243,11 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
     },
     'task.message': (p) => {
       addMessage(p.id, 'human', p.text)
+      // ⛔ Delivered into the live session if there is one. That is `0.1·C` and it refreshes the TTL;
+      // the same note delivered by restarting the task is `2.0·C` plus everything the successor has
+      // to rediscover about the branch. Plan §18.4.
+      const id = lastMessageId(p.id)
+      if (id !== null) deliverToLiveSession(p.id, id, p.text)
       return { ok: true as const }
     },
     'task.cancel': (p) =>
@@ -282,6 +323,30 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
     },
     'scheduler.tick': () => tick(),
 
+    // ---- the controller ----------------------------------------------------------------
+    'controller.report': (p) => controllerReport(p?.limit ?? 40),
+    // ⚠️ The one RPC that can spend tokens by being called. Nothing in a scheduler tick calls it.
+    'controller.drain': () => drainConsults(),
+
+    'task.plan': (p) =>
+      createTask({
+        title: p.title,
+        kind: 'plan',
+        projectId: p.projectId ?? null,
+        ...(p.prompt ? { prompt: p.prompt } : {})
+      }),
+    'task.estimate': (p) => {
+      const estimate = estimateTask(requireTask(p.id))
+      return { tokens: estimate.tokens, confidence: estimate.confidence, basis: estimate.basis }
+    },
+
+    'chat.history': (p) => chatHistory(p?.threadId),
+    'chat.send': (p) => sendChat(p.text, p.threadId),
+    'chat.reset': (p) => {
+      resetChat(p?.threadId)
+      return { ok: true as const }
+    },
+
     // ---- worker tier -------------------------------------------------------------------
     'agent.complete': async (p) => {
       await completeTask(p.sessionId, p.summary)
@@ -293,14 +358,21 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
       if (!parent || !run) {
         return { ok: false, reason: 'this session is not working on a task' }
       }
+      const filedAt = Date.now()
       try {
         // ⛔ Bounded by construction: createTask narrows the mandate, shares the budget, enforces the
         // depth and fan-out caps and merges near-duplicates. Nothing here has to be trusted.
+        //
+        // ⚠️ Filed as a **draft** first, then admitted or not. The risk assessment needs the task's
+        // inherited mandate and budget to judge it, and those exist only once it is created - so the
+        // safe order is create-held, assess, release. A task that reaches `ready` before it has been
+        // assessed can be dispatched by the very next tick.
         const task = createTask({
           title: p.title,
           ...(p.prompt ? { prompt: p.prompt } : {}),
           projectId: parent.projectId,
           parentTaskId: parent.id,
+          status: 'draft',
           createdBy: {
             kind: 'agent',
             workerId: run.workerId,
@@ -309,6 +381,9 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
           },
           ...(p.assigneeHint ? { assigneeHint: p.assigneeHint } : {})
         })
+        // A merge into a near-duplicate returns the *existing* task, which has already been through
+        // this. Re-gating it would re-open a decision somebody may have already made.
+        if (task.createdAt >= filedAt) admitAgentTask(task.id)
         return { ok: true, seq: task.seq }
       } catch (err) {
         return { ok: false, reason: err instanceof Error ? err.message : String(err) }

@@ -9,6 +9,7 @@ import { QuotaPoller } from './quota.js'
 import { getSession, reconcileOrphans, setSessionEvents, shutdownAll } from './sessions.js'
 import { reconcileClaims } from './resources.js'
 import { onSessionExit, reconcileTasks, startScheduler, stopScheduler } from './scheduler.js'
+import { reconcileConsults, startController, stopController } from './controller.js'
 import { creditTurn } from './tasks.js'
 import { recordRateLimit } from './quota.js'
 import { TranscriptTailer, recordCompaction, recordTurn } from './transcript.js'
@@ -43,6 +44,7 @@ async function main(): Promise<void> {
   // stops a crash from permanently costing a workspace or stranding a task in `running`.
   reconcileClaims()
   reconcileTasks()
+  reconcileConsults()
 
   const token = randomBytes(32).toString('hex')
   const server: DaemonServer = await startServer(token, { version: VERSION, startedAt })
@@ -105,6 +107,10 @@ async function main(): Promise<void> {
   const poller = new QuotaPoller((quota) => emit({ type: 'quota.changed', quota }))
   poller.start()
   startScheduler()
+  // ⚠️ A second loop, on purpose. The scheduler is free and runs every ten seconds; this one can
+  // spend and runs every thirty, one question at a time. Keeping them separate is what lets the
+  // controller be an LLM without putting an LLM in the path of every dispatch.
+  startController()
 
   log.info(`orchestratord ${VERSION} ready (pid ${process.pid}, data ${paths.root})`)
 
@@ -115,6 +121,7 @@ async function main(): Promise<void> {
     log.info(`shutting down: ${reason}`)
     poller.stop()
     stopScheduler()
+    stopController()
     for (const t of tailers.values()) t.stop()
     shutdownAll()
     void server.close().finally(() => {

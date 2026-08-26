@@ -109,6 +109,7 @@ export function Workers({
               <th>Account</th>
               <th>Quota</th>
               <th className="tbl-num">Max</th>
+              <th>Role</th>
               <th>Policy</th>
               <th />
             </tr>
@@ -148,6 +149,28 @@ export function Workers({
                     )}
                   </td>
                   <td className="num tbl-num">{worker.maxConcurrent}</td>
+                  <td>
+                    <select
+                      value={worker.role}
+                      title={
+                        'Whether this account may be asked for judgment. A controller near the top of ' +
+                        'its window stops being asked and the next call routes elsewhere — which is ' +
+                        'why a dedicated one is worth having, and why nothing breaks without one.'
+                      }
+                      onChange={(e) =>
+                        void guard(`role:${worker.id}`, () =>
+                          rpc('worker.update', {
+                            id: worker.id,
+                            role: e.target.value as 'worker' | 'controller' | 'both'
+                          })
+                        )
+                      }
+                    >
+                      <option value="both">work + judgment</option>
+                      <option value="worker">work only</option>
+                      <option value="controller">judgment only</option>
+                    </select>
+                  </td>
                   <td>
                     <label className="check">
                       <input

@@ -130,6 +130,14 @@ export class CostModel {
     return this.data.models?.find((m) => m.id === id) ?? null
   }
 
+  /**
+   * Every model this file can price. ⛔ The only list agentyard will accept a model name from - a
+   * model it cannot price is one it cannot gate, estimate for, or reason about the context of.
+   */
+  modelIds(): string[] {
+    return this.data.models?.map((m) => m.id) ?? []
+  }
+
   summary(): CostModelSummary {
     return {
       id: this.id,

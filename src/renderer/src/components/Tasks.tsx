@@ -191,7 +191,14 @@ export function Tasks({ projects }: { projects: Project[] }): React.JSX.Element 
         </table>
       )}
 
-      {detail && <TaskDetail detail={detail} />}
+      {detail && (
+        <TaskDetail
+          detail={detail}
+          refresh={async () => {
+            setDetail(await rpc('task.get', { id: detail.task.id }))
+          }}
+        />
+      )}
     </div>
   )
 }
@@ -207,9 +214,11 @@ const CANCELLABLE = new Set([
 ])
 
 function TaskDetail({
-  detail
+  detail,
+  refresh
 }: {
   detail: { task: Task; messages: TaskMessage[]; runs: Run[] }
+  refresh: () => Promise<void>
 }): React.JSX.Element {
   const { task, messages, runs } = detail
   return (
@@ -235,6 +244,8 @@ function TaskDetail({
           </div>
         ))}
       </div>
+
+      <Compose task={task} refresh={refresh} />
 
       {runs.length > 0 && (
         <table className="tbl">
@@ -276,6 +287,61 @@ function TaskDetail({
   )
 }
 
+/**
+ * Say something to a task that is already under way.
+ *
+ * ⛔ The cheap half of a mid-flight question. A note into a live session is a cache read — `0.1·C`,
+ * and it refreshes the TTL. The same note delivered by restarting the task is `2.0·C` plus everything
+ * the successor has to rediscover about the branch. Nothing is lost when there is no live session:
+ * the note waits and is prepended to the next run's prompt instead.
+ */
+function Compose({
+  task,
+  refresh
+}: {
+  task: Task
+  refresh: () => Promise<void>
+}): React.JSX.Element {
+  const [text, setText] = useState('')
+  const [sending, setSending] = useState(false)
+  const live = task.status === 'running'
+
+  const send = async () => {
+    const body = text.trim()
+    if (!body) return
+    setSending(true)
+    try {
+      await rpc('task.message', { id: task.id, text: body })
+      setText('')
+      await refresh()
+    } finally {
+      setSending(false)
+    }
+  }
+
+  return (
+    <div className="form-row">
+      <input
+        className="form-wide"
+        value={text}
+        placeholder={live ? 'Answer or redirect the agent working on this' : 'Add a note for the next run'}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && !e.shiftKey) void send()
+        }}
+      />
+      <button className="btn" disabled={sending || !text.trim()} onClick={() => void send()}>
+        Send
+      </button>
+      <span className="form-hint">
+        {live
+          ? 'Delivered into the running session — a cache read, and it refreshes the TTL.'
+          : 'Nothing is running, so this is prepended to the next run’s prompt.'}
+      </span>
+    </div>
+  )
+}
+
 function NewTask({
   projects,
   onDone,
@@ -289,17 +355,24 @@ function NewTask({
   const [projectId, setProjectId] = useState(projects[0]?.id ?? '')
   const [priority, setPriority] = useState<'P0' | 'P1' | 'P2' | 'P3'>('P2')
   const [verification, setVerification] = useState<'auto' | 'required'>('auto')
+  const [plan, setPlan] = useState(false)
   const [saving, setSaving] = useState(false)
 
   const submit = async () => {
     setSaving(true)
     try {
-      await rpc('task.create', {
-        title: title.trim(),
-        projectId: projectId || null,
-        priority,
-        verification
-      })
+      if (plan) {
+        // ⛔ A plan task is decomposed, not dispatched. Its children arrive as drafts and their
+        // prompts are written at promotion, not now.
+        await rpc('task.plan', { title: title.trim(), projectId: projectId || null })
+      } else {
+        await rpc('task.create', {
+          title: title.trim(),
+          projectId: projectId || null,
+          priority,
+          verification
+        })
+      }
       setTitle('')
       await onDone()
     } catch (err) {
@@ -316,11 +389,18 @@ function NewTask({
         <input
           className="form-wide"
           value={title}
-          placeholder="Describe the work as you would to a colleague"
+          placeholder={
+            plan
+              ? 'Describe the outcome — the controller breaks it into drafts'
+              : 'Describe the work as you would to a colleague'
+          }
           onChange={(e) => setTitle(e.target.value)}
         />
         <span className="form-hint">
-          This is the prompt the agent receives, prefixed by any handoff from an earlier run.
+          {plan
+            ? 'The controller turns this into a handful of draft tasks with dependencies between them. ' +
+              'Drafts dispatch nothing — you promote them one at a time, and each prompt is written then.'
+            : 'This is the prompt the agent receives, prefixed by any handoff from an earlier run.'}
         </span>
       </div>
       <div className="form-row">
@@ -356,6 +436,13 @@ function NewTask({
             />
             I want to check this before it lands
           </label>
+          <label
+            className="check"
+            title="A goal too big for one task. It is decomposed rather than dispatched."
+          >
+            <input type="checkbox" checked={plan} onChange={(e) => setPlan(e.target.checked)} />
+            this is a goal, not a task — break it up first
+          </label>
         </div>
         <span className="form-hint">
           Requiring verification stops auto-landing: the branch is kept and the task waits for you.
@@ -363,7 +450,7 @@ function NewTask({
       </div>
       <div className="form-actions">
         <button className="btn btn--primary" disabled={saving || !title.trim()} onClick={() => void submit()}>
-          {saving ? 'Filing…' : 'File task'}
+          {saving ? 'Filing…' : plan ? 'File and decompose' : 'File task'}
         </button>
       </div>
     </div>

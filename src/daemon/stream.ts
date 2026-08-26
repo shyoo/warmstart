@@ -28,7 +28,16 @@ export interface RateLimitInfo {
 
 export type StreamEvent =
   | { kind: 'rate_limit'; info: RateLimitInfo }
-  | { kind: 'result'; costUsd: number | null; isError: boolean; terminalReason: string | null }
+  | {
+      kind: 'result'
+      /** The final text of the turn. What a consult's answer is read out of. */
+      text: string | null
+      costUsd: number | null
+      isError: boolean
+      terminalReason: string | null
+    }
+  /** Assistant prose as it arrives, so a chat reply can be shown before the turn ends. */
+  | { kind: 'assistant_text'; text: string }
   | { kind: 'init'; sessionId: string | null; model: string | null; permissionMode: string | null }
   | { kind: 'other'; type: string }
 
@@ -87,10 +96,19 @@ function parseLine(line: string): StreamEvent | null {
   if (type === 'result') {
     return {
       kind: 'result',
+      text: typeof record.result === 'string' ? record.result : null,
       costUsd: typeof record.total_cost_usd === 'number' ? record.total_cost_usd : null,
       isError: record.is_error === true,
       terminalReason: typeof record.terminal_reason === 'string' ? record.terminal_reason : null
     }
+  }
+
+  if (type === 'assistant') {
+    const text = assistantText(record.message)
+    if (text) return { kind: 'assistant_text', text }
+    // A tool-use-only turn carries no prose. Reporting it as empty text would make a chat pane
+    // look like the controller answered with nothing.
+    return { kind: 'other', type }
   }
 
   if (type === 'system' && record.subtype === 'init') {
@@ -103,4 +121,22 @@ function parseLine(line: string): StreamEvent | null {
   }
 
   return type ? { kind: 'other', type } : null
+}
+
+/** Concatenate the text blocks of one assistant message, ignoring tool_use and thinking blocks. */
+function assistantText(message: unknown): string {
+  if (!message || typeof message !== 'object') return ''
+  const content = (message as { content?: unknown }).content
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return ''
+  return content
+    .filter(
+      (block): block is { type: string; text: string } =>
+        !!block &&
+        typeof block === 'object' &&
+        (block as { type?: unknown }).type === 'text' &&
+        typeof (block as { text?: unknown }).text === 'string'
+    )
+    .map((block) => block.text)
+    .join('')
 }

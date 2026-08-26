@@ -12,6 +12,12 @@ export interface SpawnRequest {
   cwd: string
   transport: SessionTransport
   model?: string | undefined
+  /**
+   * Overrides the adapter's default mode. ⚠️ Used by the controller's chat session, which runs in the
+   * operator's home directory rather than a worktree: there is no branch to throw away there, so its
+   * tool use goes through the approval policy instead of a classifier.
+   */
+  permissionMode?: string | undefined
   /** Path to the MCP config giving this session agentyard's own tools. */
   mcpConfig?: string | null | undefined
   /** A one-shot flow (login, doctor) supplies its own argv and ignores session options. */

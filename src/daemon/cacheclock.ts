@@ -251,6 +251,10 @@ export async function runCacheClock(ctx: ClockContext): Promise<ClockResult> {
 
   for (const session of listSessions()) {
     if (session.state !== 'live' && session.state !== 'idle') continue
+    // ⛔ A consult is a single turn that closes itself. Keeping one alive would pay to hold a cache
+    // whose only possible reader has already gone. A `chat` session is the opposite case and is very
+    // much the clock's business: it is warm precisely because a person is slow to reply.
+    if (session.purpose === 'consult' || session.purpose === 'login') continue
     const decision = decide(session, ctx)
     decisions.push(decision)
     if (decision.move === 'none') continue

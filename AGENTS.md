@@ -72,6 +72,20 @@ These are not preferences; breaking one breaks the product.
   state (`paused_user` / `draft` / `cancelled`) and destroys nothing. Delete is separate, human-only,
   soft by default, and **never removes runs** — they are the estimator's training data and the record
   of real spend.
+- ⛔ **The controller is never in the critical path.** The scheduler *enqueues* a judgment question and
+  carries on; a separate, slower loop answers it; and **every question has a deterministic fallback
+  that fires on a timer** whether or not the controller ever replies. Nothing in a scheduler tick may
+  wait for, retry, or depend on an answer. When you add a judgment event, write the fallback first —
+  it is the normal path, not the error path.
+- ⛔ **Unattended judgment gets no tools.** A consult is asked a question and replies with JSON that is
+  validated against a **closed set** and applied by the daemon. A worker id must be a candidate that
+  was offered; a model must be one the cost model can price; a dependency index must point backwards.
+  If a real reply keeps failing validation, the *prompt* is wrong — never widen a closed set to make a
+  reply fit. Tools go only to the chat session, where a person is watching.
+- ⛔ **A `plan` task is decomposed, not dispatched**, and its children land as `draft` with titles and
+  acceptance criteria only. **The prompt is written at promotion**, from what the preceding work
+  actually learned. A prompt written at creation is a guess, and a stale prompt is worse than none
+  because somebody follows it.
 - **Agents work in a pooled worktree, never the trunk.** The branch is named after the *task*
   (`agentyard/t123-…`), never after the workspace it happened to land in.
 
@@ -145,6 +159,14 @@ costmodels/             versioned pricing data
 - **`task_complete` is the only signal that a task succeeded.** A process exiting cleanly says nothing
   about whether the work was done. A session that ends without it goes to `awaiting_human`, and that
   is the honest answer rather than a guess.
+- **`AGENTYARD_TIER` decides the MCP tool set, and only the daemon writes it.** It comes from the
+  config file the daemon generated for that session; an agent cannot promote itself by exporting it.
+  Two tiers means **two cache prefixes** on an install — adding a tier adds a third, so do not add one
+  casually.
+- **`sessions.purpose` is load-bearing, not a label.** A `consult` is exempt from `maxConcurrent`
+  (bounded separately at one per worker) and skipped by the cache clock; a `chat` session is very much
+  the clock's business. Changing a purpose changes what a session costs.
+
 - **`gemini-cli` is dead.** Google stopped serving individual accounts 2026-06-18; the Google adapter
   is **Antigravity CLI (`agy`)**. Do not write against `gemini`.
 - **Compaction takes about two minutes.** Any deadline that ends in a compaction has to budget for

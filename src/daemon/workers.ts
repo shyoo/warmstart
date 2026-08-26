@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
-import type { Worker } from '@shared/protocol.js'
+import type { Worker, WorkerRole } from '@shared/protocol.js'
 import { db, row, rows } from './db.js'
 import { ensureDir, paths, slugify } from './paths.js'
 import { adapter, hasAdapter } from './adapters/index.js'
@@ -15,6 +15,7 @@ interface WorkerRow {
   isolation_root: string
   enabled: number
   human_occupied: number
+  role: string
   max_concurrent: number
   identity_json: string | null
   created_at: number
@@ -29,6 +30,7 @@ function toWorker(r: WorkerRow): Worker {
     isolationRoot: r.isolation_root,
     enabled: r.enabled === 1,
     humanOccupied: r.human_occupied === 1,
+    role: (r.role as WorkerRole) ?? 'both',
     maxConcurrent: r.max_concurrent,
     identity: r.identity_json ? JSON.parse(r.identity_json) : null,
     createdAt: r.created_at,
@@ -111,12 +113,12 @@ export function defaultIsolationRoot(label: string): string {
 
 export function updateWorker(
   id: string,
-  patch: Partial<Pick<Worker, 'label' | 'enabled' | 'humanOccupied' | 'maxConcurrent'>>
+  patch: Partial<Pick<Worker, 'label' | 'enabled' | 'humanOccupied' | 'maxConcurrent' | 'role'>>
 ): Worker {
   const current = requireWorker(id)
   db()
     .prepare(
-      `update workers set label = ?, enabled = ?, human_occupied = ?, max_concurrent = ?
+      `update workers set label = ?, enabled = ?, human_occupied = ?, max_concurrent = ?, role = ?
        where id = ?`
     )
     .run(
@@ -124,6 +126,7 @@ export function updateWorker(
       (patch.enabled ?? current.enabled) ? 1 : 0,
       (patch.humanOccupied ?? current.humanOccupied) ? 1 : 0,
       patch.maxConcurrent ?? current.maxConcurrent,
+      patch.role ?? current.role,
       id
     )
   return announce(requireWorker(id))

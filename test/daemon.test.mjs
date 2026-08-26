@@ -249,9 +249,106 @@ try {
     'a keepalive on a session with nothing cached would be pure waste'
   )
 
+  // ---------------------------------------------------------------- M4: the controller
+  //
+  // ⛔ Every check here runs with **no account able to answer** — one worker is not signed in, the
+  // other is disabled. That is the normal state on a fresh install, and it is precisely the state
+  // the fallbacks exist for. So this section proves the property that makes an LLM controller safe:
+  // the fleet keeps working when it cannot be asked anything, and nothing is spent trying.
+  section('controller')
+
+  const idle = await daemon.rpc('controller.report', {})
+  check(
+    'no account can answer a judgment call in this fixture',
+    idle.controllers.every((c) => !c.available),
+    idle.controllers.map((c) => `${c.label}: ${c.reason}`).join(' · ') || 'none designated'
+  )
+  check('a fresh fleet has spent nothing on judgment', idle.spentTokens === 0)
+
+  const plan = await daemon.rpc('task.plan', { title: 'Ship the thing end to end' })
+  check('a goal is filed as a plan, not as work', plan.kind === 'plan', plan.status)
+
+  const planTick = await daemon.rpc('scheduler.tick')
+  const planned = await daemon.rpc('task.get', { id: plan.id })
+  check(
+    'a plan task is decomposed, never dispatched',
+    planned.task.status === 'assigned' && planned.task.assignee === 'controller',
+    `${planned.task.status}/${planned.task.assignee}`
+  )
+  check('so the tick started no agent for it', planTick.dispatched === 0, planTick.note)
+
+  const queued = await daemon.rpc('controller.report', {})
+  check(
+    'the question is queued, not answered inside the free loop',
+    queued.pending === 1,
+    `${queued.pending} pending`
+  )
+  check('and queuing it spent nothing', queued.spentTokens === 0)
+
+  await daemon.rpc('scheduler.tick')
+  const requeued = await daemon.rpc('controller.report', {})
+  check(
+    'a tick that runs every ten seconds does not queue the same question again',
+    requeued.pending === 1,
+    `${requeued.pending} pending after a second tick`
+  )
+
+  const drained = await daemon.rpc('controller.drain')
+  check('draining with nobody to ask answers nothing', drained.answered === 0, drained.note)
+  check(
+    'and says why, rather than failing silently',
+    /no controller|not signed in|disabled|designated/i.test(drained.note),
+    drained.note
+  )
+  const afterDrain = await daemon.rpc('controller.report', {})
+  check('nothing was spent trying', afterDrain.spentTokens === 0)
+
+  const chat = await daemon.rpc('chat.send', { text: 'what is the fleet doing?' })
+  check(
+    'chat refuses out loud rather than queueing silently',
+    chat.ok === false && Boolean(chat.reason),
+    chat.reason
+  )
+  const chatLog = await daemon.rpc('chat.history', {})
+  check(
+    'and the refusal appears in the thread where you would look for it',
+    chatLog.some((m) => m.role === 'system'),
+    chatLog.at(-1)?.text?.slice(0, 80)
+  )
+
+  const estimate = await daemon.rpc('task.estimate', { id: plan.id })
+  check(
+    'an estimate never arrives without its basis',
+    typeof estimate.basis === 'string' && estimate.basis.length > 0,
+    `${estimate.tokens} tokens, ${estimate.confidence} — ${estimate.basis}`
+  )
+
+  const noteTarget = await daemon.rpc('task.create', { title: 'a task with nothing running' })
+  await daemon.rpc('task.message', { id: noteTarget.id, text: 'one more thing' })
+  const noted = await daemon.rpc('task.get', { id: noteTarget.id })
+  check(
+    'a note to a task with no live session waits for the next run',
+    noted.messages.at(-1)?.deliveredAt === null,
+    'undelivered notes are prepended to the next prompt; delivered ones are not repeated'
+  )
+
+  const roles = await daemon.rpc('fleet.list')
+  check(
+    'a commissioned worker can do work and answer questions by default',
+    roles.every((f) => f.worker.role === 'both'),
+    'a one-account install has a controller without configuring anything'
+  )
+  const dedicated = await daemon.rpc('worker.update', { id: roles[0].worker.id, role: 'worker' })
+  check('an account can be taken out of the judgment rota', dedicated.role === 'worker')
+  await daemon.rpc('worker.update', { id: roles[0].worker.id, role: 'both' })
+
   // ---------------------------------------------------------------- L2: approvals over real MCP
   section('approvals (real MCP client)')
   await runApprovalChecks(daemon)
+
+  // ---------------------------------------------------------------- L2: the controller tier
+  section('controller tier (real MCP client)')
+  await runControllerTierChecks(daemon)
 } catch (err) {
   check('the suite ran to completion', false, err instanceof Error ? err.stack : String(err))
 } finally {
@@ -268,11 +365,15 @@ process.exit(summary('daemon + approvals') === 0 ? 0 : 1)
  * `--permission-prompt-tool` path, which is the whole reason approvals are structured events rather
  * than something read off a screen.
  */
-async function runApprovalChecks(d) {
+/**
+ * A real MCP client over stdio, spawned the way the agent CLI spawns it - including the tier, which
+ * comes from the config file the daemon writes and not from anything the agent can set for itself.
+ */
+async function openMcp(d, tier) {
   const script = join(REPO, 'out', 'main', 'agentyard-mcp.js')
   if (!existsSync(script)) {
     check('the MCP server bundle exists', false, `${script} is missing`)
-    return
+    return null
   }
 
   const child = spawn(electronBinary(), [script], {
@@ -280,6 +381,7 @@ async function runApprovalChecks(d) {
       ...process.env,
       ELECTRON_RUN_AS_NODE: '1',
       AGENTYARD_SESSION_ID: 'selftest-session',
+      AGENTYARD_TIER: tier,
       AGENTYARD_DATA_DIR: d.dataDir
     },
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -308,18 +410,71 @@ async function runApprovalChecks(d) {
       child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: mid, method, params })}\n`)
       setTimeout(() => reject(new Error(`${method} timed out`)), 60_000)
     })
-  const body = (r) => JSON.parse(r.result?.content?.[0]?.text ?? '{}')
+
+  const init = await mcp('initialize', {
+    protocolVersion: '2024-11-05',
+    capabilities: {},
+    clientInfo: { name: 'agentyard-selftest', version: '0' }
+  })
+  check(`the ${tier}-tier MCP handshake completes`, init.result?.serverInfo?.name === 'agentyard')
+  child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`)
+
+  return {
+    mcp,
+    body: (r) => JSON.parse(r.result?.content?.[0]?.text ?? '{}'),
+    tools: async () => (await mcp('tools/list', {})).result.tools.map((t) => t.name),
+    close: () => child.kill()
+  }
+}
+
+/**
+ * ⛔ The controller tier is a boundary, not a convenience. This proves the tier is decided by what
+ * the daemon wrote, that the reach is wider than a worker's, and that neither tier can delete
+ * anything - an agent that can delete the record of its own failed work is an agent that can hide it.
+ */
+async function runControllerTierChecks(d) {
+  const client = await openMcp(d, 'controller')
+  if (!client) return
+  try {
+    const tools = await client.tools()
+    check(
+      'the controller tier can read the fleet and move work about',
+      ['fleet_status', 'task_list', 'task_create', 'task_promote', 'task_cancel', 'approval_answer'].every(
+        (n) => tools.includes(n)
+      ),
+      tools.join(', ')
+    )
+    check(
+      'and it is a different tool set, not a worker tier with extras bolted on',
+      !tools.includes('task_complete') && !tools.includes('handoff')
+    )
+    check('there is no controller-tier delete either', !tools.includes('task_delete'))
+    check(
+      'it still answers permission prompts, because it is a session like any other',
+      tools.includes('approve')
+    )
+
+    const listed = client.body(await client.mcp('tools/call', { name: 'task_list', arguments: {} }))
+    check('a controller tool reaches the daemon and returns real data', Array.isArray(listed))
+
+    const filed = await client.mcp('tools/call', {
+      name: 'task_create',
+      arguments: { title: 'something the controller proposed', status: 'draft' }
+    })
+    const said = filed.result?.content?.[0]?.text ?? ''
+    check('the controller can file a draft', /Filed as t\d+ \(draft\)/.test(said), said)
+  } finally {
+    client.close()
+  }
+}
+
+async function runApprovalChecks(d) {
+  const client = await openMcp(d, 'worker')
+  if (!client) return
+  const { mcp, body } = client
 
   try {
-    const init = await mcp('initialize', {
-      protocolVersion: '2024-11-05',
-      capabilities: {},
-      clientInfo: { name: 'agentyard-selftest', version: '0' }
-    })
-    check('the MCP handshake completes', init.result?.serverInfo?.name === 'agentyard')
-    child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`)
-
-    const tools = (await mcp('tools/list', {})).result.tools.map((t) => t.name)
+    const tools = await client.tools()
     check(
       'the worker tier exposes exactly the tools it should',
       ['approve', 'request_human', 'task_complete', 'task_create', 'handoff'].every((n) =>
@@ -386,7 +541,7 @@ async function runApprovalChecks(d) {
     })
     check('a worker tool on a task-less session degrades quietly', !orphan.result?.isError)
   } finally {
-    child.kill()
+    client.close()
   }
 }
 

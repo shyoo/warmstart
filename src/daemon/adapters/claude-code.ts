@@ -248,7 +248,7 @@ export const claudeCode: AgentAdapter = {
       '--session-id',
       req.sessionId,
       '--permission-mode',
-      info.policy.defaultPermissionMode
+      req.permissionMode ?? info.policy.defaultPermissionMode
     ]
     if (req.model) args.push('--model', req.model)
     if (req.mcpConfig) {

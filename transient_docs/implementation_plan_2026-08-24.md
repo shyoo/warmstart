@@ -1,7 +1,7 @@
 # agentyard — Implementation Plan (2026-08-24)
 
-Status: **accepted 2026-08-24, amended 2026-08-25 (A1, A2).** M0-M2 executed — see `HANDOFF.md` for
-where the build actually is.
+Status: **accepted 2026-08-24, amended 2026-08-25 (A1, A2, A3).** M0-M4 executed — see `HANDOFF.md`
+for where the build actually is.
 
 > **Amendment A1 — 2026-08-25.** Three changes from owner review, each verified before being written:
 >
@@ -21,6 +21,22 @@ where the build actually is.
 >    how Agent Orchestrator, Vibe Kanban, Agent Kanban and Conductor answer the same question.
 > 5. **§19 Testing plan.** Five levels organised by what a failure would *cost*, the fixture rules
 >    that stop a test damaging the developer's own machine, and what is deliberately not tested.
+
+> **Amendment A3 — 2026-08-25.** One change, made while building M4, and it is a change to the
+> *shape* of the controller rather than to its scope:
+>
+> 6. **A judgment event is a queued question with a deterministic fallback, not a call the scheduler
+>    makes.** §11 originally read as though the scheduler would consult the LLM at a decision point.
+>    It does not, and cannot: the scheduler's defining property is that it costs nothing and cannot
+>    stall. So the free loop **enqueues** a question and carries on; a second, slower loop drains the
+>    queue on a controller account; and every question has a deterministic answer that fires on a
+>    timer whether or not the controller ever replies. See **§11.1**. The consequence worth stating
+>    plainly: *the fallback is the normal path*, and the controller is an improvement on an answer
+>    that already exists — never the source of one.
+>
+>    Two smaller decisions fall out of it and are recorded as **D22** and **D23**: unattended judgment
+>    gets **no tools at all** and answers as validated JSON, and the **route** consult is the weakest
+>    of the four and is gated hardest.
 
 > This is a **transient doc**: the design of record as it stood on 2026-08-24. It will drift as the
 > code lands and is kept for the reasoning, not as a status page. Durable facts extracted from it
@@ -48,6 +64,8 @@ where the build actually is.
 | **D19** Approvals | An approval is an interrupt on a session, not a task. Own queue, one-click, policy-answered, priced against the cache clock (§7.3) | ✔ A1 |
 | **D20** Cancel / delete | Cancel winds a run down into a resting state and destroys nothing; delete is separate, soft by default, and never removes runs (§7.4) | ✔ A1 |
 | **D21** Decomposition | A milestone plan is a **roadmap**: children created as `draft` with dependency edges up front, prompts written at promotion. Decomposition is itself a task (§18.1) | ✔ A2 |
+| **D22** Judgment surface | Unattended judgment gets **no tools**. It answers as JSON validated against a closed set, which the daemon applies itself; the controller tier of MCP goes only to the chat session, where a person is watching (§11.1) | ✔ A3 |
+| **D23** Routing arbitration | The weakest of the four events and gated hardest: a tie means the alternatives are close, so ε bounds the upside while the turn is a real cost. Fires only above a token floor, and defers rather than blocks (§11.1) | ✔ A3 |
 | **D7** | Wrap vs absorb — recommendation stands | open |
 
 ---
@@ -1133,6 +1151,73 @@ calls return the reason so the agent can adapt rather than retry blindly. Delibe
 both tiers: raw process spawn, raw SQL, filesystem outside project roots, and — from the worker tier —
 any ability to widen its own mandate or assign directly to another worker.
 
+### 11.1 How it actually works, as built in M4 (A3)
+
+The table above says *when* judgment is wanted. This says how it is obtained without putting a
+language model anywhere it can stall, overspend, or act unsupervised.
+
+**Two loops, not one.**
+
+```
+scheduler loop        every 10s   ⛔ costs nothing, ever
+  ...wants judgment -> enqueueConsult(kind, subject, question)   <- writes a row, returns
+  ...carries on immediately
+
+controller loop       every 30s   ⚠️ the only loop in the daemon that can spend
+  one question at a time, oldest first
+  -> chooseController()  ...none available? leave it queued
+  -> spawn a tool-less `consult` session, ask, read one turn, close
+  -> extract JSON -> validate against a CLOSED SET -> apply
+  ...past its TTL, or no controller, or a malformed answer -> the deterministic fallback fires
+```
+
+**Every question has an answer before it is asked.** That is the property the whole design rests on.
+`decompose` falls back to *ask a person to break it up*; `triage` falls back to *park it for a
+person* — which is where the deterministic path already put it; `gate` falls back to *leave it a
+draft*, which holds nothing and dispatches nothing; `route` falls back to *the highest-scoring
+worker*, which is a perfectly good answer and the reason that consult is optional at all.
+
+⛔ **So the fallback is the normal path**, not the error path. On a fresh install, on an account out
+of quota, at three in the morning when the controller's own window has closed, the fleet behaves
+exactly as it did before M4. What M4 adds is that it can do better when someone is available to ask.
+
+**Three structural bounds, in the order they matter.**
+
+1. **A consult has no tools.** It is asked a question and replies with JSON, which the daemon parses,
+   validates and applies itself. A hallucinated worker id is a validation failure rather than a
+   dispatch; an unknown model name is refused rather than passed to a CLI to fail on somebody's real
+   account; a forward dependency edge is rejected, which makes a cycle impossible by construction
+   rather than detectable afterwards. **D22.**
+2. **Its most open-ended output lands in `draft`.** Decomposition may invent whatever it likes.
+   Drafts do not dispatch, are not assigned, and hold no worker.
+3. **It is capped**: one consult per worker at a time, one in flight fleet-wide, twenty per hour, and
+   a per-subject cooldown so a task that fails on every tick is not re-diagnosed on every tick.
+
+**Leadership delegation is just the gates.** A controller is a worker with `role` in
+`{controller, both}` and its own quota. Above 80% of a trusted 5h reading, or on a live rate-limit
+status that is not `allowed`, it stops being chosen and the next question routes elsewhere. When none
+is left, the fallback answers. Nothing special happens at the floor — that *is* the floor.
+
+**Where the tools are.** Exactly one place: the **chat** session, because a person is watching. It
+runs in the operator's home directory rather than a worktree — there is no branch to throw away
+there — so it runs in the adapter's *prompting* mode and every tool use it makes goes through the
+same approval policy, and appears in the same Approvals bar, as an agent's. The tier is decided by
+the MCP config the daemon writes, so an agent cannot promote itself by setting an environment
+variable. ⛔ Neither tier has `task_delete`.
+
+**On the route consult, honestly (D23).** It is the weakest of the four. A tie means the alternatives
+are by construction within ε, so ε bounds what getting it "right" can win — while the question costs
+a whole turn. It therefore fires only when the arithmetic genuinely cannot separate two candidates
+**and** the task is estimated above 150k tokens, and it *defers* the dispatch for up to 90 seconds
+rather than blocking it. The other three are worth their turn; this one had to be argued into
+existence and is documented that way so nobody widens it by accident.
+
+**What is deliberately still deterministic.** §11's table lists *"preemption imminent"* as a judgment
+call. It is not one, and M3 is the reason: the reset time from the live `rate_limit_event` is exact,
+the context size is exact from the transcript, and compaction cost is measured. Asking a model to
+choose between compacting and handing off would replace arithmetic that is right with an opinion that
+is sometimes right, and would do it at the worst possible moment — while a window is closing.
+
 ---
 
 ## 12. UI and visual design
@@ -1248,8 +1333,11 @@ rule-based here; the controller's judgment layer arrives in M4.)*
 from actuals. Preemption + HANDOFF protocol + auto-resume. Watchdogs. **Objective vector wired end to
 end** (§4) with the four presets.
 
-**M4 — Controller agent.** MCP server, controller as a fleet member, decomposition, routing
-arbitration, failure triage, chat + thread panes, leadership delegation.
+**M4 — Controller agent.** ✔ shipped 2026-08-25. Controller as a fleet member with a `role` and its
+own quota; the **consult queue** with a deterministic fallback per kind (§11.1, A3); the four judgment
+events — decomposition into drafts, failure triage, the risk gate on agent-filed work, and routing
+arbitration; the **controller MCP tier**, handed only to the chat session; chat and thread panes, the
+latter delivering a note into a live session as a cache read rather than a restart (§18.4).
 
 **M5 — Multi-provider.** **`antigravity-cli`** (the Google adapter — `gemini-cli` is retired, §9) and
 `openai-compatible`. Second and third cost models. Capability-driven routing proven twice over: by the
@@ -1478,9 +1566,9 @@ organised by **what a failure would cost**, not by the usual pyramid.
 
 | Level | Runs | Costs | Proves |
 |---|---|---|---|
-| **L0 unit** | `npm test`, every change | nothing | Pure logic that is a *safety boundary*: mandate narrowing, rule matching, usage summing, branch naming |
+| **L0 unit** | `npm test`, every change | nothing | Pure logic that is a *safety boundary*: mandate narrowing, rule matching, usage summing, branch naming, and **every validator the controller's answers pass through** |
 | **L1 daemon integration** | `npm run test:daemon` | nothing | The daemon's real behaviour against a live orchestratord over its own RPC: commissioning, quota staleness, task DAG, cancel, delete refusal, resource claims |
-| **L2 approvals** | `npm run test:daemon` | nothing | A real MCP client speaking the real protocol to the real server: policy, escalation, human answer, remember-as-rule, deny precedence |
+| **L2 approvals + tiers** | `npm run test:daemon` | nothing | A real MCP client speaking the real protocol to the real server: policy, escalation, human answer, remember-as-rule, deny precedence — and that **each tier exposes its own tool set and neither can delete** |
 | **L3 UI** | `npm run test:ui` | nothing | The built app, driven over DevTools: what actually rendered, and zero console errors |
 | **L4 agent-in-the-loop** | `npm run test:e2e`, **opt-in** | **real tokens** | The only thing the others cannot: an agent doing work, reporting completion, and the branch landing |
 
@@ -1491,6 +1579,14 @@ and never runs in a watch loop, because each run spends a real assistant turn on
 identity detection, which means a scheduler tick *could* dispatch real work to a real account. So the
 adopted worker is disabled the moment it has been probed, and the suite asserts that a tick dispatches
 nothing. "It probably will not dispatch" is not a property; "it dispatched nothing" is.
+
+⚠️ **The same rule extends to the controller (M4), and the fixture is the point.** Every controller
+check in L1 runs with **no account able to answer** — one worker is unsigned, the other disabled. That
+is not a limitation of the test; it is the state the whole fallback design exists for, so the suite
+proves the property that matters most: a plan task is decomposed rather than dispatched, the question
+is queued rather than answered inside the free loop, a tick running every ten seconds does not queue
+it again, draining with nobody to ask spends nothing and says why, and chat refuses out loud instead
+of waiting silently. Obtaining a real answer is L4's job; **everything up to obtaining one is free.**
 
 ### 19.2 What L0 covers, and why those things
 
@@ -1503,6 +1599,14 @@ Not "cover the code" — cover the places where **being wrong is silent**:
 - `sumUsage` / `contextOf` — the three metering traps (§3.3). Undercounting is invisible until a quota
   gate opens when it should have closed.
 - `branchNameFor` — a branch named after the workspace couples a task to where it happened to run.
+- `extractJson` and the four answer validators (M4) — the boundary between a language model's output
+  and a scheduler that spends money. A hallucinated worker id becomes a dispatch, a forward dependency
+  edge becomes a deadlock, and an invented model name becomes a failed spawn on a real account. These
+  are tested as **refusals**: what the controller must keep declining to accept.
+- `applyConsult` and `fallbackFor` against a real database (M4) — because the two claims M4 rests on
+  are properties of the rows that come out. A decomposition must land entirely in `draft` or not at
+  all, and *every* fallback must leave the fleet somewhere safe and visible. ⛔ Both are checked by
+  reading the rows, never by inspecting the prompt that produced them.
 
 ### 19.3 Fixtures: the rules that keep tests from costing something
 

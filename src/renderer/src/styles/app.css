@@ -908,6 +908,16 @@ select:focus-visible,
   color: var(--state-human);
 }
 
+.msg--controller .msg-role {
+  color: var(--state-ok);
+}
+
+/* A conversation is read top to bottom and is longer than a task thread, so it gets more room. */
+.thread--chat {
+  max-height: 44vh;
+  min-height: 180px;
+}
+
 .msg-text {
   white-space: pre-wrap;
   word-break: break-word;

@@ -11,6 +11,7 @@ import {
   type RunOutcome,
   type Task,
   type TaskConstraints,
+  type TaskKind,
   type TaskMessage,
   type TaskStatus
 } from '@shared/tasks.js'
@@ -38,6 +39,7 @@ interface TaskRow {
   seq: number
   project_id: string | null
   title: string
+  kind: string
   status: string
   priority: string
   created_by_json: string
@@ -68,6 +70,7 @@ function toTask(r: TaskRow): Task {
     seq: r.seq,
     projectId: r.project_id,
     title: r.title,
+    kind: (r.kind as TaskKind) ?? 'work',
     status: r.status as TaskStatus,
     priority: r.priority as Priority,
     createdBy: JSON.parse(r.created_by_json) as Principal,
@@ -180,6 +183,7 @@ export interface CreateTaskInput {
   mandate?: Partial<Mandate>
   budgetTokens?: number
   status?: 'draft' | 'ready'
+  kind?: TaskKind
   prompt?: string
 }
 
@@ -231,17 +235,18 @@ export function createTask(input: CreateTaskInput): Task {
 
   db()
     .prepare(
-      `insert into tasks (id, seq, project_id, title, status, priority, created_by_json,
+      `insert into tasks (id, seq, project_id, title, kind, status, priority, created_by_json,
                           parent_task_id, lineage_depth, assignee_hint, mandate_json, budget_json,
                           not_before, deadline, requires_json, constraints_json, verification,
                           preemptible, est_tokens, created_at, updated_at)
-       values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+       values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
     )
     .run(
       id,
       seq,
       input.projectId ?? parent?.projectId ?? null,
       title,
+      input.kind ?? 'work',
       input.status ?? 'ready',
       input.priority ?? 'P2',
       JSON.stringify(createdBy),
@@ -487,6 +492,7 @@ export function messagesFor(taskId: string): TaskMessage[] {
     role: string
     text: string
     run_id: string | null
+    delivered_at: number | null
     ts: number
   }>(db().prepare('select * from task_messages where task_id = ? order by ts, id').all(taskId)).map(
     (r) => ({
@@ -495,9 +501,28 @@ export function messagesFor(taskId: string): TaskMessage[] {
       role: r.role as TaskMessage['role'],
       text: r.text,
       runId: r.run_id,
+      deliveredAt: r.delivered_at,
       ts: r.ts
     })
   )
+}
+
+/**
+ * The last message added to a task, by row id. Used to mark a note delivered the moment it lands in
+ * a live session rather than guessing at it later by timestamp.
+ */
+export function lastMessageId(taskId: string): number | null {
+  const r = db()
+    .prepare('select max(id) as id from task_messages where task_id = ?')
+    .get(taskId) as { id: number | null }
+  return r.id ?? null
+}
+
+export function markDelivered(ids: number[]): void {
+  if (ids.length === 0) return
+  const now = Date.now()
+  const stmt = db().prepare('update task_messages set delivered_at = ? where id = ?')
+  for (const id of ids) stmt.run(now, id)
 }
 
 // ---------------------------------------------------------------------------- runs

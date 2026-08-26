@@ -8,10 +8,17 @@ import { log } from './log.js'
  * The MCP config handed to each agent session.
  *
  * ⚠️ **Tool definitions are the first thing in the cache prefix, and changing them invalidates
- * everything after** (`tools → system → messages`). So every session on this install gets the *same*
- * tool set, and the only thing that varies per session is an environment variable telling the server
- * which session it is speaking for. A per-session tool schema would silently cost a full cache
- * rebuild on every spawn.
+ * everything after** (`tools → system → messages`). So a session's tool set varies only by **tier**,
+ * never by session: two stable prefixes on this install, one per tier, and the only per-session
+ * variable is an environment variable telling the server which session it speaks for. A per-session
+ * tool schema would silently cost a full cache rebuild on every spawn.
+ *
+ * ⛔ The two tiers are a boundary, not a convenience. The **worker** tier can report completion, ask
+ * a person, file a follow-up within its own mandate, and leave a handoff. The **controller** tier can
+ * read the fleet and move work about - and is handed out only to the chat session, where a person is
+ * watching. Unattended judgment has no tools at all; it answers as JSON the daemon validates itself.
+ * There is no `task_delete` in either tier: an agent that can delete the record of its own failed
+ * work is an agent that can hide it.
  *
  * The server itself is a separate bundle because the agent CLI spawns it, not us.
  */
@@ -26,8 +33,10 @@ export function mcpConfigDir(): string {
   return join(paths.root, 'mcp')
 }
 
-/** Written per session, identical apart from `AGENTYARD_SESSION_ID`. Cleaned up on session exit. */
-export function writeMcpConfig(sessionId: string): string | null {
+export type McpTier = 'worker' | 'controller'
+
+/** Written per session, identical within a tier. Cleaned up on session exit. */
+export function writeMcpConfig(sessionId: string, tier: McpTier = 'worker'): string | null {
   const script = mcpServerScript()
   if (!existsSync(script)) {
     log.warn(`MCP server bundle missing at ${script}; sessions will run without agentyard tools`)
@@ -45,6 +54,7 @@ export function writeMcpConfig(sessionId: string): string | null {
         env: {
           ELECTRON_RUN_AS_NODE: '1',
           AGENTYARD_SESSION_ID: sessionId,
+          AGENTYARD_TIER: tier,
           ...(process.env.AGENTYARD_DATA_DIR ? { AGENTYARD_DATA_DIR: process.env.AGENTYARD_DATA_DIR } : {})
         }
       }

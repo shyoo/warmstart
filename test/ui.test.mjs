@@ -144,6 +144,34 @@ try {
     'this is the honest state on a CLI with no free usage probe'
   )
 
+  section('controller')
+  await evaluate(
+    `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim().startsWith('Controller')).click()`
+  )
+  await wait(1500)
+  const controllerPanel = await evaluate('document.querySelector(".panel")?.innerText ?? ""')
+  check('the controller view renders', controllerPanel.includes('Controller'))
+  check(
+    'it says up front that it is never in the critical path',
+    /deterministic answer/i.test(controllerPanel),
+    'an operator has to know the fleet keeps working when this is down'
+  )
+  check(
+    'an account that cannot be asked says why, in words',
+    /not signed in|disabled|human-occupied|window/i.test(controllerPanel),
+    '"not now" on its own is the kind of state nobody can act on'
+  )
+  check(
+    'the ledger is present even before anything has needed judgment',
+    /judgment calls/i.test(controllerPanel),
+    'what it decided and what that cost is the reason to trust or override it'
+  )
+  check(
+    'the hourly cap is visible without being asked for',
+    /\d+\/\d+ this hour/.test(controllerPanel),
+    'the one loop that can spend should show its ceiling'
+  )
+
   const errors = await evaluate('window.__agentyardErrors?.length ?? 0')
   check('no uncaught renderer errors', errors === 0)
 } catch (err) {

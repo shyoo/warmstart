@@ -281,6 +281,56 @@ const MIGRATIONS: string[] = [
 
   alter table runs add column objective_json text;
   alter table tasks add column objective_json text;
+  `,
+
+  // 4 - the controller. A judgment layer that the free loop reads but never waits on: every consult
+  // is a queued question with a deterministic fallback, and every answer lands as ordinary data.
+  `
+  -- Which workers may be asked for judgment. Quota lives on the worker, so a controller running low
+  -- simply stops being chosen - that is leadership delegation, not a special case.
+  alter table workers add column role text not null default 'both';
+
+  -- A "plan" task is decomposed rather than dispatched. Its output is draft children, so the most
+  -- open-ended thing the controller produces lands in the one status that cannot dispatch.
+  alter table tasks add column kind text not null default 'work';
+
+  -- A message answered into a live session has already been paid for; repeating it in the next
+  -- prompt would charge for it twice and confuse the agent about what is still outstanding.
+  alter table task_messages add column delivered_at integer;
+
+  -- Consults and chats spend quota but are not work: they hold no workspace and take no run.
+  alter table sessions add column purpose text not null default 'work';
+
+  -- ⛔ The queue between the free scheduler and the controller. The scheduler enqueues and moves on;
+  -- nothing in a tick waits for an answer, and every row here has a deterministic fallback that
+  -- fires on a timer whether or not the controller ever replies.
+  create table consults (
+    id              text primary key,
+    kind            text not null,
+    subject_id      text,
+    status          text not null,          -- pending | answered | fallback | failed
+    question        text not null,
+    worker_id       text,
+    session_id      text,
+    answer_json     text,
+    outcome         text,                   -- what was actually applied, in one line
+    fallback_reason text,
+    created_at      integer not null,
+    started_at      integer,
+    ended_at        integer
+  );
+  create index consults_pending on consults(status, created_at);
+  create index consults_subject on consults(kind, subject_id, created_at desc);
+
+  create table chat_messages (
+    id          integer primary key autoincrement,
+    thread_id   text not null,
+    role        text not null,              -- human | controller | system
+    text        text not null,
+    session_id  text,
+    ts          integer not null
+  );
+  create index chat_messages_thread on chat_messages(thread_id, ts);
   `
 ]
 

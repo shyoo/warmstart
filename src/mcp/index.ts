@@ -18,7 +18,38 @@ import { paths } from '../daemon/paths.js'
  *
  * It holds no state. Everything routes to orchestratord, which owns the policy, the queue and the
  * escalation clock.
+ *
+ * ⛔ **Two tiers, and the tier is set by the daemon, not asked for by the caller.** `AGENTYARD_TIER`
+ * comes from the MCP config file the daemon wrote for that session; an agent cannot promote itself by
+ * setting an environment variable it does not control. The worker tier can report completion, ask a
+ * person, file a follow-up inside its own mandate, and leave a handoff. The controller tier can read
+ * the fleet and move work about, and is handed out only to the chat session, where a person is
+ * watching. Unattended judgment gets **no tools at all** - it answers as JSON the daemon validates.
+ *
+ * ⛔ There is no `task_delete` in either tier. An agent that can delete the record of its own failed
+ * work is an agent that can hide it.
  */
+
+const TIER = process.env.AGENTYARD_TIER === 'controller' ? 'controller' : 'worker'
+
+/** Render whatever a tool produced as MCP text content. */
+function text(value: unknown): { content: Array<{ type: 'text'; text: string }> } {
+  return {
+    content: [
+      { type: 'text' as const, text: typeof value === 'string' ? value : JSON.stringify(value, null, 2) }
+    ]
+  }
+}
+
+function failed(err: unknown): {
+  content: Array<{ type: 'text'; text: string }>
+  isError: true
+} {
+  return {
+    content: [{ type: 'text' as const, text: err instanceof Error ? err.message : String(err) }],
+    isError: true
+  }
+}
 
 function endpoint(): DaemonEndpoint {
   try {
@@ -99,9 +130,14 @@ server.registerTool(
   }
 )
 
+// ============================================================================ worker tier
+//
+// Scoped to its own run, its own project, its own mandate and its own budget. ⛔ Deliberately absent:
+// raw process spawn, raw SQL, the filesystem outside its project, any way to widen its own mandate,
+// and any way to assign work directly to another worker.
+if (TIER === 'worker') {
 /**
  * The worker tier's way to ask a person something, rather than guessing and being wrong expensively.
- * ⛔ This tier cannot widen its own mandate, spawn processes, run SQL, or reach outside its project.
  */
 server.registerTool(
   'request_human',
@@ -228,6 +264,243 @@ server.registerTool(
     }
   }
 )
+
+} // end worker tier
+
+// ============================================================================ controller tier
+//
+// ⚠️ Handed only to the chat session, where a person is watching. Read the fleet, move work about,
+// answer approvals — and nothing that writes to a repository, spawns a process, or deletes a record.
+if (TIER === 'controller') {
+  server.registerTool(
+    'fleet_status',
+    {
+      title: 'What the fleet is doing',
+      description:
+        'Every worker, its quota reading with the age of that reading, and its live sessions. ' +
+        'A quota percentage is never current — check sampledAt before you reason about it.',
+      inputSchema: {}
+    },
+    async () => {
+      try {
+        return text(await rpc('fleet.list'))
+      } catch (err) {
+        return failed(err)
+      }
+    }
+  )
+
+  server.registerTool(
+    'task_list',
+    {
+      title: 'List tasks',
+      description: 'Every task on the board, with status, origin, lineage and spend.',
+      inputSchema: { project_id: z.string().optional() }
+    },
+    async (args) => {
+      try {
+        return text(await rpc('task.list', args.project_id ? { projectId: args.project_id } : {}))
+      } catch (err) {
+        return failed(err)
+      }
+    }
+  )
+
+  server.registerTool(
+    'task_get',
+    {
+      title: 'Read one task',
+      description: 'The task, its whole thread, and every run against it.',
+      inputSchema: { id: z.string() }
+    },
+    async (args) => {
+      try {
+        return text(await rpc('task.get', { id: args.id }))
+      } catch (err) {
+        return failed(err)
+      }
+    }
+  )
+
+  server.registerTool(
+    'task_create',
+    {
+      title: 'File a task',
+      description:
+        'File work. Prefer status "draft" for anything you are proposing rather than committing to: ' +
+        'a draft is visible on the board, costs nothing, and dispatches nothing until it is promoted. ' +
+        'Write its prompt at promotion, not now.',
+      inputSchema: {
+        title: z.string(),
+        prompt: z.string().optional(),
+        project_id: z.string().optional(),
+        status: z.enum(['draft', 'ready']).optional(),
+        priority: z.enum(['P0', 'P1', 'P2', 'P3']).optional(),
+        depends_on: z.array(z.string()).optional()
+      }
+    },
+    async (args) => {
+      try {
+        const task = await rpc('task.create', {
+          title: args.title,
+          ...(args.prompt ? { prompt: args.prompt } : {}),
+          ...(args.project_id ? { projectId: args.project_id } : {}),
+          ...(args.status ? { status: args.status } : {}),
+          ...(args.priority ? { priority: args.priority } : {}),
+          ...(args.depends_on ? { dependsOn: args.depends_on } : {})
+        })
+        return text(`Filed as t${task.seq} (${task.status}).`)
+      } catch (err) {
+        return failed(err)
+      }
+    }
+  )
+
+  server.registerTool(
+    'task_update',
+    {
+      title: 'Change a task',
+      description: 'Retitle, reprioritise, or set an estimate. Does not change status.',
+      inputSchema: {
+        id: z.string(),
+        title: z.string().optional(),
+        priority: z.enum(['P0', 'P1', 'P2', 'P3']).optional(),
+        est_tokens: z.number().optional()
+      }
+    },
+    async (args) => {
+      try {
+        return text(
+          await rpc('task.update', {
+            id: args.id,
+            ...(args.title ? { title: args.title } : {}),
+            ...(args.priority ? { priority: args.priority } : {}),
+            ...(args.est_tokens !== undefined ? { estTokens: args.est_tokens } : {})
+          })
+        )
+      } catch (err) {
+        return failed(err)
+      }
+    }
+  )
+
+  server.registerTool(
+    'task_promote',
+    {
+      title: 'Move a draft into the queue',
+      description:
+        'Promote a draft to ready. This is the moment to write its prompt — from what the work before ' +
+        'it actually learned, not from what was guessed when it was filed.',
+      inputSchema: { id: z.string(), prompt: z.string().optional() }
+    },
+    async (args) => {
+      try {
+        if (args.prompt) await rpc('task.message', { id: args.id, text: args.prompt })
+        const task = await rpc('task.promote', { id: args.id })
+        return text(`t${task.seq} is ${task.status}.`)
+      } catch (err) {
+        return failed(err)
+      }
+    }
+  )
+
+  server.registerTool(
+    'task_cancel',
+    {
+      title: 'Stop work on a task',
+      description:
+        'Cancel is not delete. The work winds down and the task comes to rest in a state you choose; ' +
+        'nothing is destroyed and no run is lost. There is deliberately no delete in this tier.',
+      inputSchema: {
+        id: z.string(),
+        resting_state: z.enum(['paused_user', 'draft', 'cancelled']).optional(),
+        reason: z.string().optional()
+      }
+    },
+    async (args) => {
+      try {
+        const task = await rpc('task.cancel', {
+          id: args.id,
+          ...(args.resting_state ? { restingState: args.resting_state } : {}),
+          ...(args.reason ? { reason: args.reason } : {})
+        })
+        return text(`t${task.seq} is ${task.status}.`)
+      } catch (err) {
+        return failed(err)
+      }
+    }
+  )
+
+  server.registerTool(
+    'estimate',
+    {
+      title: 'What work like this has cost',
+      description:
+        'The median of completed runs, with its confidence and basis. Read the basis: with no history ' +
+        'it is a deliberately pessimistic guess, not a measurement.',
+      inputSchema: { id: z.string() }
+    },
+    async (args) => {
+      try {
+        return text(await rpc('task.estimate', { id: args.id }))
+      } catch (err) {
+        return failed(err)
+      }
+    }
+  )
+
+  server.registerTool(
+    'approval_list',
+    {
+      title: 'Approvals waiting on an answer',
+      description:
+        'Each carries the blocked session cache expiry. Waiting is priced, which is why these are not ' +
+        'notifications.',
+      inputSchema: {}
+    },
+    async () => {
+      try {
+        return text(await rpc('approval.list'))
+      } catch (err) {
+        return failed(err)
+      }
+    }
+  )
+
+  server.registerTool(
+    'approval_answer',
+    {
+      title: 'Answer one approval',
+      description:
+        'Unblock a session. allow_always remembers the answer as a project rule, so the same question ' +
+        'is answered in 30ms next time and never reaches anyone.',
+      inputSchema: { id: z.string(), decision: z.enum(['allow', 'allow_always', 'deny']) }
+    },
+    async (args) => {
+      try {
+        return text(await rpc('approval.answer', { id: args.id, decision: args.decision }))
+      } catch (err) {
+        return failed(err)
+      }
+    }
+  )
+
+  server.registerTool(
+    'resource_status',
+    {
+      title: 'What is contended for',
+      description: 'Workspaces, exclusive locks and rate-limited services, with who holds what.',
+      inputSchema: {}
+    },
+    async () => {
+      try {
+        return text(await rpc('resource.list'))
+      } catch (err) {
+        return failed(err)
+      }
+    }
+  )
+} // end controller tier
 
 /** A best-effort one-line rendering of what is about to happen. Never used for a policy decision. */
 function describeTarget(input: unknown): string {

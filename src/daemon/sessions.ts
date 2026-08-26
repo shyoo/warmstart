@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import * as pty from '@lydell/node-pty'
 import { execFileSync, spawn as spawnChild } from 'node:child_process'
-import type { Session, SessionState, SessionTransport } from '@shared/protocol.js'
+import type { Session, SessionPurpose, SessionState, SessionTransport } from '@shared/protocol.js'
 import { db, row, rows } from './db.js'
 import { adapter } from './adapters/index.js'
 import { requireWorker } from './workers.js'
@@ -47,7 +47,7 @@ interface Live {
   channel: Channel
   scrollback: string[]
   scrollbackBytes: number
-  purpose: 'work' | 'login'
+  purpose: SessionPurpose
   /** Only for the `stream` transport, where output is a machine protocol rather than a screen. */
   parser: StreamParser | null
 }
@@ -67,6 +67,33 @@ export function setSessionEvents(e: SessionEvents): void {
   events = e
 }
 
+/**
+ * Per-session subscriptions, for callers that are waiting on **one** session rather than watching
+ * the fleet - a consult waiting for its answer, a chat waiting for a reply.
+ *
+ * Kept beside the global sink rather than routed through it because the daemon's single sink belongs
+ * to the process wiring in index.ts, and a request-scoped listener that had to be registered there
+ * would leak every time a caller forgot to unregister.
+ */
+type StreamListener = (event: StreamEvent) => void
+type EndListener = (exitCode: number | null) => void
+const streamListeners = new Map<string, Set<StreamListener>>()
+const endListeners = new Map<string, Set<EndListener>>()
+
+export function onSessionStream(id: string, cb: StreamListener): () => void {
+  const set = streamListeners.get(id) ?? new Set<StreamListener>()
+  streamListeners.set(id, set)
+  set.add(cb)
+  return () => set.delete(cb)
+}
+
+export function onSessionEnd(id: string, cb: EndListener): () => void {
+  const set = endListeners.get(id) ?? new Set<EndListener>()
+  endListeners.set(id, set)
+  set.add(cb)
+  return () => set.delete(cb)
+}
+
 interface SessionRow {
   id: string
   worker_id: string
@@ -78,6 +105,7 @@ interface SessionRow {
   effort: string | null
   state: string
   pid: number | null
+  purpose: string
   transcript_path: string | null
   context_tokens: number | null
   last_request_started_at: number | null
@@ -99,6 +127,7 @@ function toSession(r: SessionRow): Session {
     effort: r.effort,
     state: r.state as SessionState,
     pid: r.pid,
+    purpose: (r.purpose as SessionPurpose) ?? 'work',
     transcriptPath: r.transcript_path,
     contextTokens: r.context_tokens,
     lastRequestStartedAt: r.last_request_started_at,
@@ -134,10 +163,11 @@ export interface SpawnOptions {
   cwd?: string | undefined
   transport?: SessionTransport | undefined
   model?: string | undefined
+  permissionMode?: string | undefined
   argv?: string[] | undefined
   cols?: number | undefined
   rows?: number | undefined
-  purpose?: 'work' | 'login' | undefined
+  purpose?: SessionPurpose | undefined
 }
 
 export function spawnSession(opts: SpawnOptions): Session {
@@ -145,19 +175,33 @@ export function spawnSession(opts: SpawnOptions): Session {
   if (worker.retiredAt) throw new Error(`worker '${worker.label}' is retired`)
   const purpose = opts.purpose ?? 'work'
 
-  if (purpose === 'work') {
+  if (purpose !== 'login') {
     if (!worker.enabled) throw new Error(`worker '${worker.label}' is disabled`)
     // A human-occupied worker's quota is tracked and never spent. Logging in is still allowed;
     // running work on it is not.
     if (worker.humanOccupied) {
       throw new Error(`worker '${worker.label}' is marked human-occupied`)
     }
-    const running = sessionsForWorker(worker.id).length
+  }
+
+  if (purpose === 'work') {
+    const running = sessionsForWorker(worker.id).filter((s) => s.purpose === 'work').length
     if (running >= worker.maxConcurrent) {
       throw new Error(
         `worker '${worker.label}' is at its concurrency limit (${running}/${worker.maxConcurrent})`
       )
     }
+  }
+
+  // ⚠️ A consult is exempt from `maxConcurrent` and bounded separately - one at a time per worker.
+  // That limit exists to bound unattended *work*: parallel agents editing repositories and spending
+  // the window for hours. A consult is one short tool-less turn holding no workspace, and counting it
+  // as work would mean the fleet cannot ask for judgment exactly when it is busiest, which is when
+  // judgment is worth the most. The real bounds on it are in controller.ts: one per worker, a
+  // fleet-wide hourly cap, and the same quota gates work goes through.
+  if (purpose === 'consult') {
+    const inFlight = sessionsForWorker(worker.id).filter((s) => s.purpose === 'consult').length
+    if (inFlight > 0) throw new Error(`worker '${worker.label}' is already answering a consult`)
   }
 
   // A login flow has no project yet, so home is the sane default rather than the daemon's own cwd.
@@ -169,14 +213,26 @@ export function spawnSession(opts: SpawnOptions): Session {
   // Minted here, before the process exists, so the transcript path is known before the file is.
   const id = randomUUID()
   const transport: SessionTransport = opts.transport ?? 'pty'
-  // A login flow gets no agentyard tools: it is the vendor's own credential flow and nothing else.
-  const mcpConfig = purpose === 'work' ? writeMcpConfig(id) : null
+  // ⛔ Tool sets, by purpose, and each is a deliberate cost and trust decision:
+  //  - `login`   — no tools. The vendor's own credential flow and nothing else.
+  //  - `consult` — no tools. A consult is a judgment call answered as JSON that the daemon validates
+  //                and applies itself; an unattended controller that could *act* would be a much
+  //                larger thing to trust, and every tool definition is also cache prefix.
+  //  - `chat`    — the controller tier, because a person is watching what it does.
+  //  - `work`    — the worker tier.
+  const mcpConfig =
+    purpose === 'work'
+      ? writeMcpConfig(id, 'worker')
+      : purpose === 'chat'
+        ? writeMcpConfig(id, 'controller')
+        : null
   const plan = ad.plan({
     sessionId: id,
     isolationRoot: worker.isolationRoot,
     cwd,
     transport,
     model: opts.model,
+    permissionMode: opts.permissionMode,
     mcpConfig,
     argv: opts.argv
   })
@@ -185,7 +241,11 @@ export function spawnSession(opts: SpawnOptions): Session {
     const entry = live.get(id)
     if (!entry) return
     if (entry.parser) {
-      for (const event of entry.parser.push(data)) events.onStream(entry.session, event)
+      const listeners = streamListeners.get(id)
+      for (const event of entry.parser.push(data)) {
+        events.onStream(entry.session, event)
+        for (const listener of listeners ?? []) listener(event)
+      }
     }
     entry.scrollback.push(data)
     entry.scrollbackBytes += data.length
@@ -198,6 +258,9 @@ export function spawnSession(opts: SpawnOptions): Session {
   const handleExit = (exitCode: number | null) => {
     live.delete(id)
     removeMcpConfig(id)
+    for (const listener of endListeners.get(id) ?? []) listener(exitCode)
+    streamListeners.delete(id)
+    endListeners.delete(id)
     setState(id, exitCode === 0 ? 'closed' : 'failed')
     events.onExit(id, exitCode)
     log.info(`session ${id.slice(0, 8)} exited with ${exitCode}`)
@@ -208,13 +271,15 @@ export function spawnSession(opts: SpawnOptions): Session {
       ? openPipes(plan, cwd, emitData, handleExit)
       : openPty(plan, cwd, opts.cols ?? 120, opts.rows ?? 30, emitData, handleExit)
 
-  const transcriptPath = purpose === 'work' ? ad.transcriptPath(worker.isolationRoot, cwd, id) : null
+  // Metered like anything else: a judgment call is not free, and the ledger reports what each one
+  // cost from this transcript rather than from an estimate.
+  const transcriptPath = purpose === 'login' ? null : ad.transcriptPath(worker.isolationRoot, cwd, id)
   const now = Date.now()
   db()
     .prepare(
       `insert into sessions (id, worker_id, adapter_id, transport, cwd, model, state, pid,
-                             transcript_path, tokens_since_compact, started_at)
-       values (?, ?, ?, ?, ?, ?, 'starting', ?, ?, 0, ?)`
+                             purpose, transcript_path, tokens_since_compact, started_at)
+       values (?, ?, ?, ?, ?, ?, 'starting', ?, ?, ?, 0, ?)`
     )
     .run(
       id,
@@ -224,6 +289,7 @@ export function spawnSession(opts: SpawnOptions): Session {
       cwd,
       opts.model ?? null,
       channel.pid ?? null,
+      purpose,
       transcriptPath,
       now
     )

@@ -10,6 +10,7 @@ import {
   finishRun,
   getTask,
   listTasks,
+  markDelivered,
   messagesFor,
   runForSession,
   runsFor,
@@ -17,6 +18,8 @@ import {
   setStatus,
   startRun
 } from './tasks.js'
+import { enqueueConsult, hasPendingConsult, latestAnswer } from './controller.js'
+import { decomposeQuestion, routeQuestion, triageQuestion, type RouteCandidate } from './judgment.js'
 import { escalateStale, voidApprovalsForSession } from './approvals.js'
 import { releaseAllFor } from './resources.js'
 import {
@@ -41,14 +44,33 @@ import { costModel } from './costmodel.js'
 /**
  * The scheduler.
  *
- * ⛔ **This loop costs zero tokens.** Dependency resolution, quota gates, resource claims and
- * dispatch are arithmetic. A loop running every ten seconds for weeks must not bill anything, and the
- * fleet has to keep working when the controller agent's own quota runs out. The LLM is consulted on
- * discrete judgment events only, and none of them are here.
+ * ⛔ **This loop costs zero tokens, and M4 did not change that.** Dependency resolution, quota gates,
+ * resource claims and dispatch are arithmetic. A loop running every ten seconds for weeks must not
+ * bill anything, and the fleet has to keep working when the controller's own quota runs out.
+ *
+ * Where this loop wants judgment it **enqueues a question and carries on**. Answering happens in a
+ * different loop, on a different account, at a different rate, and every question has a deterministic
+ * fallback that fires on a timer - so the controller being absent, broke or wrong slows the fleet's
+ * *judgment* and never its *progress*. See controller.ts.
  */
 
 /** Above this on the 5h window, stop starting new work. Only applied to a reading we trust. */
 const QUOTA_HIGH_WATER = 92
+
+/**
+ * When two candidates score this close, the arithmetic cannot separate them.
+ *
+ * ⚠️ A tie is only worth asking about on a task large enough that ε is worth more than the turn the
+ * question costs - which is why the floor is deliberately high. Below it the top score wins and
+ * nothing is spent. This is the weakest of the four judgment events and it is gated hardest.
+ */
+const ROUTE_EPSILON = 0.1
+const ROUTE_CONSULT_FLOOR_TOKENS = 150_000
+/** After this, a routing answer is about a fleet that no longer exists. */
+const ROUTE_ANSWER_MAX_AGE_MS = 5 * 60 * 1000
+
+/** A task that has failed this many times is not going to succeed by being retried identically. */
+const TRIAGE_AFTER_FAILURES = 2
 
 export const TICK_MS = 10_000
 
@@ -74,9 +96,22 @@ export async function tick(): Promise<TickResult> {
   let dispatched = 0
   const skipped: string[] = []
   const dispatchTargets = new Set<string>()
+  let planned = 0
 
   for (const task of ready) {
+    // ⛔ A `plan` task is decomposed, not dispatched. Sending a roadmap to a coding agent produces
+    // either a half-built version of all six milestones or a very expensive opinion.
+    if (task.kind === 'plan') {
+      if (askForPlan(task)) planned++
+      else skipped.push(`t${task.seq}: decomposition was asked for recently and is on cooldown`)
+      continue
+    }
+
     const choice = chooseTarget(task)
+    if (choice.deferred) {
+      skipped.push(`t${task.seq}: ${choice.reason}`)
+      continue
+    }
     if (!choice.worker) {
       skipped.push(`t${task.seq}: ${choice.reason}`)
       continue
@@ -99,6 +134,7 @@ export async function tick(): Promise<TickResult> {
 
   const parts: string[] = []
   if (dispatched) parts.push(`dispatched ${dispatched}`)
+  if (planned) parts.push(`sent ${planned} for decomposition`)
   if (clock.acted) parts.push(`cache clock acted on ${clock.acted}`)
   if (!dispatched && skipped.length) parts.push(`held: ${skipped.slice(0, 3).join('; ')}`)
   if (parts.length === 0) parts.push(ready.length ? 'nothing dispatchable' : 'nothing ready')
@@ -115,6 +151,8 @@ interface WorkerChoice {
   reason: string
   quotaUnverified: boolean
   score: number
+  /** ⚠️ Not "no worker" - "not yet". A routing question is open and the answer is worth the wait. */
+  deferred?: boolean
 }
 
 /**
@@ -189,7 +227,12 @@ function chooseTarget(task: Task): WorkerChoice {
       continue
     }
 
-    if (sessionsForWorker(worker.id).length >= worker.maxConcurrent) {
+    // ⚠️ Work sessions only, matching what spawnSession enforces. `maxConcurrent` bounds *unattended
+    // work* - parallel agents editing repositories and spending the window for hours. A consult or a
+    // chat is short, holds no workspace, and is bounded separately at one per worker; counting them
+    // here would make the fleet undispatchable because somebody asked it a question.
+    const busy = sessionsForWorker(worker.id).filter((s) => s.purpose === 'work').length
+    if (busy >= worker.maxConcurrent) {
       reasons.push(`${worker.label} at capacity`)
       continue
     }
@@ -229,7 +272,75 @@ function chooseTarget(task: Task): WorkerChoice {
   }
 
   candidates.sort((a, b) => b.score - a.score)
-  return candidates[0] as WorkerChoice
+  const best = candidates[0] as WorkerChoice
+  const second = candidates[1]
+
+  // ---- the routing judgment event, and every reason not to fire it -------------------------
+  //
+  // ⛔ Read the conditions rather than the call: this asks for judgment only when the arithmetic has
+  // genuinely failed to separate two candidates AND the task is large enough that ε is worth more
+  // than the turn. On a one-worker fleet, on a small task, or on any clear win, nothing is spent.
+  if (!second || task.kind === 'plan') return best
+  const estimate = estimateTask(task).tokens
+  const tie = Math.abs(best.score - second.score) <= ROUTE_EPSILON
+  if (!tie || estimate < ROUTE_CONSULT_FLOOR_TOKENS) return best
+
+  const answered = latestAnswer('route', task.id, ROUTE_ANSWER_MAX_AGE_MS) as
+    | { workerId?: string }
+    | null
+  if (answered?.workerId) {
+    // ⛔ Validated again, here, against the candidate set that exists *now*. The fleet the controller
+    // was shown is minutes old; an account can be disabled or hit its window in between.
+    const picked = candidates.find((c) => c.worker?.id === answered.workerId)
+    if (picked) return picked
+  }
+
+  if (hasPendingConsult('route', task.id)) {
+    return {
+      ...best,
+      worker: null,
+      deferred: true,
+      reason: 'waiting on a routing decision (the top score is used if none arrives)'
+    }
+  }
+
+  const shortlist: RouteCandidate[] = candidates.slice(0, 4).map((c) => ({
+    worker: c.worker as Worker,
+    score: c.score,
+    warm: !!c.session,
+    note: c.quotaUnverified ? 'quota reading not trustworthy' : ''
+  }))
+  const queued = enqueueConsult({
+    kind: 'route',
+    subjectId: task.id,
+    question: routeQuestion(task, shortlist)
+  })
+  if (!queued) return best
+  return {
+    ...best,
+    worker: null,
+    deferred: true,
+    reason: 'asked the controller which worker; the top score is used if no answer arrives'
+  }
+}
+
+/**
+ * Hand a coarse goal to the controller to be broken up.
+ *
+ * The task leaves the ready pool so it is not re-enqueued every ten seconds, and it comes back as
+ * `completed` with draft children, or as `awaiting_human` if no controller could answer. ⛔ Nothing
+ * here invents a decomposition: a made-up plan looks exactly like a real one on a board.
+ */
+function askForPlan(task: Task): boolean {
+  const queued = enqueueConsult({
+    kind: 'decompose',
+    subjectId: task.id,
+    question: decomposeQuestion(task)
+  })
+  if (!queued) return false
+  setStatus(task.id, 'assigned', { assignee: 'controller' })
+  addMessage(task.id, 'system', 'Queued for decomposition. Its children arrive as drafts.')
+  return true
 }
 
 /**
@@ -518,16 +629,47 @@ async function preempt(
 function promptFor(task: Task): string {
   const parts: string[] = []
   if (task.handoffNote) {
-    parts.push(`Continuing earlier work. Handoff from the previous session:\n${task.handoffNote}\n`)
+    parts.push(
+      ['Continuing earlier work. Handoff from the previous session:', task.handoffNote, ''].join('\n')
+    )
   }
   parts.push(task.title)
+
+  // ⚠️ The first human message is the task's own prompt and is always restated: a fresh session after
+  // a preemption has no idea what it was asked to do. Everything after it is a *note*, and a note
+  // typed into a live session was already answered there - repeating it would charge for it twice and
+  // leave the agent unsure what is still outstanding.
   const thread = messagesFor(task.id).filter((m) => m.role === 'human')
-  for (const message of thread) parts.push(message.text)
+  const outstanding = thread.filter((m, i) => i === 0 || m.deliveredAt === null)
+  for (const message of outstanding) parts.push(message.text)
+  markDelivered(outstanding.map((m) => m.id))
+
   parts.push(
     'When the work is finished, call the agentyard MCP tool `task_complete` with a one-line summary. ' +
       'If you need a decision from a person, call `request_human` rather than guessing.'
   )
   return parts.join('\n\n')
+}
+
+/**
+ * Say something to a task that is already running.
+ *
+ * ⛔ This is the cheap half of §18.4: a note into a live session is a cache read - `0.1·C`, and it
+ * refreshes the TTL - while the same note delivered by restarting the task is `2.0·C` plus everything
+ * the successor has to rediscover. Returns false when there is nothing live, in which case the note
+ * waits and is prepended to the next run's prompt instead.
+ */
+export function deliverToLiveSession(taskId: string, messageId: number, text: string): boolean {
+  const session = sessionOf(taskId)
+  if (!session || (session.state !== 'live' && session.state !== 'idle')) return false
+  try {
+    sendPrompt(session.id, text)
+    markDelivered([messageId])
+    return true
+  } catch (err) {
+    log.warn(`could not deliver a note into t${taskId.slice(0, 8)}'s session:`, err)
+    return false
+  }
 }
 
 // ---------------------------------------------------------------------------- completion
@@ -614,10 +756,31 @@ export async function onSessionExit(session: Session, exitCode: number | null): 
       `The session ended (exit ${exitCode}) without reporting completion. ` +
         'Nothing here can tell whether the work was finished, so it is over to you.'
     )
+    // ⛔ The deterministic outcome happens first and unconditionally, so the task is already in a
+    // safe and visible state whether or not a controller ever answers.
     setStatus(task.id, 'awaiting_human', { assignee: 'human' })
+    maybeTriage(task.id)
   }
 
   await releaseFor(run.id, task?.id ?? null, task?.projectId ?? null)
+}
+
+/**
+ * Ask why a task keeps failing - once it has failed often enough to be a pattern rather than a
+ * mishap. One failure is a bad day; two is usually a bad instruction, which is something judgment can
+ * fix and arithmetic cannot.
+ */
+function maybeTriage(taskId: string): void {
+  const task = getTask(taskId)
+  if (!task) return
+  const failures = runsFor(taskId).filter((r) => r.outcome === 'failed').length
+  if (failures < TRIAGE_AFTER_FAILURES) return
+  try {
+    enqueueConsult({ kind: 'triage', subjectId: taskId, question: triageQuestion(task) })
+  } catch (err) {
+    // ⛔ A failed enqueue must never turn one failed task into a failed daemon.
+    log.warn(`could not queue triage for t${task.seq}:`, err)
+  }
 }
 
 /**

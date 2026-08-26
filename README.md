@@ -4,11 +4,17 @@
 Claude Code, Antigravity, local models — and routes each task to the worker, session and moment where
 it is cheapest to run.
 
-> **Status: pre-alpha, M3.** It runs work end to end — file a task, it runs in a pooled git worktree
-> on its own branch and lands on your trunk when the checks pass — and it now reasons about **cost**:
-> it keeps a warm prompt cache alive when that is cheaper than rebuilding it, compacts when it is not,
+> **Status: pre-alpha, M4.** It runs work end to end — file a task, it runs in a pooled git worktree
+> on its own branch and lands on your trunk when the checks pass — and it reasons about **cost**: it
+> keeps a warm prompt cache alive when that is cheaper than rebuilding it, compacts when it is not,
 > preempts before a quota window closes and resumes itself after the reset. Every belief it acts on is
 > shown with its basis, including the ones that are still *unknown*.
+>
+> M4 adds a **controller**: it can break a coarse goal into draft tasks, work out why something keeps
+> failing, and decide whether work an agent filed for itself should exist at all. ⛔ It is never in the
+> critical path — the scheduler queues a question and carries on, and **every question has a
+> deterministic answer that fires on a timer** whether or not the controller replies. With no
+> controller account at all, agentyard behaves exactly as it did before.
 > See [HANDOFF.md](HANDOFF.md) for exactly where the build is, and
 > [`transient_docs/implementation_plan_2026-08-24.md`](transient_docs/implementation_plan_2026-08-24.md)
 > for the design of record.
