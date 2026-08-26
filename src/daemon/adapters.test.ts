@@ -1,4 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { delimiter, join } from 'node:path'
 import { adapter, adapters } from './adapters/index.js'
 import { costModel, loadCostModels } from './costmodel.js'
 
@@ -14,6 +17,46 @@ import { costModel, loadCostModels } from './costmodel.js'
 loadCostModels()
 
 const ALL = adapters()
+
+/**
+ * Put an empty file named after each adapter's CLI at the front of PATH.
+ *
+ * ⚠️ `plan()` resolves the command through `which()` before it builds an argv, so every argv
+ * assertion below used to require the real CLI to be installed — and passed on the author's machine
+ * for exactly that reason. CI has none installed, which is how this was found: three of these threw
+ * `'agy' is not on PATH`, and the API-key test quietly `continue`d past all three adapters and
+ * asserted nothing at all. That last one is the worse failure, because it was green.
+ *
+ * ⛔ A stub proves nothing about the CLI and is not meant to. These tests are about the **argv
+ * agentyard builds** — the flag that does not exist on `codex exec`, the input format that needs its
+ * output format, the vendor key that must be stripped — and every one of those is a property of this
+ * repository's code, provable on a machine that has never installed anything. Whether the binary
+ * itself behaves as measured is a different question, asked by `npm run test:daemon`, which skips
+ * visibly when the CLI is absent rather than pretending.
+ *
+ * The files are never executed. `which()` only needs a regular file, plus the executable bit off
+ * Windows and a PATHEXT-matching extension on it, so both names are written.
+ */
+let stubDir: string | null = null
+const realPath = process.env.PATH
+
+beforeAll(() => {
+  stubDir = mkdtempSync(join(tmpdir(), 'agentyard-stub-cli-'))
+  for (const a of ALL) {
+    for (const name of [a.info.command, `${a.info.command}.exe`]) {
+      const file = join(stubDir, name)
+      writeFileSync(file, '')
+      chmodSync(file, 0o755)
+    }
+  }
+  process.env.PATH = `${stubDir}${delimiter}${realPath ?? ''}`
+})
+
+afterAll(() => {
+  if (realPath === undefined) delete process.env.PATH
+  else process.env.PATH = realPath
+  if (stubDir) rmSync(stubDir, { recursive: true, force: true })
+})
 
 describe('the registry', () => {
   it('carries three adapters, and each declares a distinct cost model', () => {
@@ -237,18 +280,16 @@ describe('the measured surprises, kept as regressions', () => {
     try {
       for (const k of keys) process.env[k] = 'leaked'
       for (const a of ALL) {
-        let plan
-        try {
-          plan = a.plan({
-            sessionId: 'ignored',
-            isolationRoot: 'C:/tmp/root',
-            cwd: 'C:/tmp/work',
-            transport: 'stream'
-          })
-        } catch {
-          // The CLI is not installed on this machine; nothing to check, and that is not a failure.
-          continue
-        }
+        // ⛔ No try/catch. This used to swallow a throw from `plan()` and `continue`, which on any
+        // machine without the CLIs meant the test checked nothing and still reported green - the
+        // exact shape of coverage draining away unnoticed. The PATH stub above removes the reason
+        // it was there.
+        const plan = a.plan({
+          sessionId: 'ignored',
+          isolationRoot: 'C:/tmp/root',
+          cwd: 'C:/tmp/work',
+          transport: 'stream'
+        })
         for (const k of keys) {
           if (plan.env[k] === 'leaked') {
             // Only the vendor's own keys must be stripped, not every key in existence.
