@@ -14,13 +14,13 @@ import { log } from './log.js'
  * workspaces are per-project *capabilities*, not universal assumptions, so a research or
  * media-generation project is a first-class citizen with no repo fiction.
  *
- * Policy is committed at `<root>/.agentyard/project.json` so a collaborator, a second machine or a
+ * Policy is committed at `<root>/.multi_agent_controller/project.json` so a collaborator, a second machine or a
  * fresh clone reproduces the same behaviour - a repo can ship an agentyard config the way it ships an
  * `.editorconfig`. Runtime state stays private in the app-data database. ⛔ Nothing secret ever goes
  * in the committed file: no credentials, no account identifiers, no absolute paths outside the repo.
  */
 
-export const PROJECT_CONFIG_RELATIVE = join('.agentyard', 'project.json')
+export const PROJECT_CONFIG_RELATIVE = join('.multi_agent_controller', 'project.json')
 
 const DEFAULTS = {
   poolSize: 3,
@@ -70,7 +70,7 @@ export function requireProject(id: string): Project {
   return p
 }
 
-/** Read `.agentyard/project.json` if it is there. A missing file is normal, not an error. */
+/** Read `.multi_agent_controller/project.json` if it is there. A missing file is normal, not an error. */
 export function readProjectConfig(root: string): { config: ProjectConfig; path: string | null } {
   const path = join(root, PROJECT_CONFIG_RELATIVE)
   if (!existsSync(path)) return { config: { schema_version: 1 }, path: null }
@@ -143,13 +143,13 @@ export function archiveProject(id: string): Project {
 }
 
 /**
- * Write a starter `.agentyard/project.json`. Offered rather than assumed: a project that has not
+ * Write a starter `.multi_agent_controller/project.json`. Offered rather than assumed: a project that has not
  * asked for one runs on defaults, and defaults that live in code are easier to change than defaults
  * that have been copied into fifty repositories.
  */
 export function writeStarterConfig(id: string): string {
   const project = requireProject(id)
-  const dir = join(project.root, '.agentyard')
+  const dir = join(project.root, '.multi_agent_controller')
   mkdirSync(dir, { recursive: true })
   const path = join(dir, 'project.json')
   if (existsSync(path)) return path

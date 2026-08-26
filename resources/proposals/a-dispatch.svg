@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Multi Agent Controller">
+  <rect width="512" height="512" rx="114" fill="#0e1013"/>
+  <rect x="4" y="4" width="504" height="504" rx="110" fill="none" stroke="#2a3040" stroke-width="8"/>
+  <g fill="none" stroke="#3d5a94" stroke-width="20" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M256 196 V246 H120 V300"/>
+    <path d="M256 196 V300"/>
+    <path d="M256 196 V246 H392 V300"/>
+  </g>
+  <rect x="196" y="96" width="120" height="100" rx="26" fill="#7aa2f7"/>
+  <g fill="#e6e8ec">
+    <rect x="72"  y="300" width="96" height="96" rx="24"/>
+    <rect x="208" y="300" width="96" height="96" rx="24"/>
+    <rect x="344" y="300" width="96" height="96" rx="24"/>
+  </g>
+</svg>

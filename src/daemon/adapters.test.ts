@@ -1,9 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { adapter, adapters } from './adapters/index.js'
 import { costModel, loadCostModels } from './costmodel.js'
+import { APPROVE_TOOL, MCP_SERVER_NAME } from './mcpconfig.js'
 
 /**
  * The claim M5 exists to test: **adding an adapter does not require touching the scheduler.**
@@ -308,5 +309,43 @@ describe('the measured surprises, kept as regressions', () => {
         else process.env[k] = saved[k]
       }
     }
+  })
+})
+
+/**
+ * The one string in this repository that is written out twice and must agree in both places.
+ *
+ * ⛔ `--permission-prompt-tool` is given `mcp__<server>__approve`, where `<server>` is the key the
+ * daemon registers the MCP server under. The server itself declares that name in a separate bundle
+ * (`src/mcp/index.ts`), spawned as its own process and deliberately sharing no daemon module - so a
+ * type error cannot connect them. Renaming the project moved one and not the other, and the failure
+ * mode is silent: the CLI asks a tool that does not exist and every approval hangs or denies.
+ */
+describe('the MCP server is called the same thing at both ends', () => {
+  it('the approve tool names the server the config registers', () => {
+    expect(APPROVE_TOOL).toBe(`mcp__${MCP_SERVER_NAME}__approve`)
+  })
+
+  it('claude-code is told to call exactly that tool', () => {
+    const claude = ALL.find((a) => a.info.id === 'claude-code')
+    expect(claude).toBeDefined()
+    const plan = claude?.plan({
+      sessionId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      isolationRoot: join(tmpdir(), 'mac-adapters-test'),
+      cwd: tmpdir(),
+      transport: 'stream',
+      mcpConfig: join(tmpdir(), 'mcp.json')
+    })
+    const i = plan?.args.indexOf('--permission-prompt-tool') ?? -1
+    expect(i, 'claude-code no longer passes --permission-prompt-tool').toBeGreaterThan(-1)
+    expect(plan?.args[i + 1]).toBe(APPROVE_TOOL)
+  })
+
+  it('the standalone MCP bundle declares that same name', () => {
+    // ⚠️ Read from source rather than imported: importing it would start a server on stdio.
+    const src = readFileSync(join(import.meta.dirname, '..', 'mcp', 'index.ts'), 'utf8')
+    const declared = /new McpServer\(\{\s*name:\s*'([^']+)'/.exec(src)?.[1]
+    expect(declared, 'could not find the McpServer name in src/mcp/index.ts').toBeDefined()
+    expect(declared).toBe(MCP_SERVER_NAME)
   })
 })

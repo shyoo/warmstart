@@ -7,7 +7,7 @@ import { rpc } from '../lib/daemon'
  *
  * A project is a directory plus policy, and the policy is **committed in the repo** so a collaborator
  * or a fresh clone reproduces the same behaviour. Everything shown here that came from
- * `.agentyard/project.json` is a fact about the repository, not a setting stored in this app.
+ * `.multi_agent_controller/project.json` is a fact about the repository, not a setting stored in this app.
  */
 export function Projects({
   projects,
@@ -44,7 +44,7 @@ export function Projects({
           <h2>Projects</h2>
           <p className="panel-sub">
             A directory plus policy. Git is optional — branching and parallel workspaces are
-            capabilities a project declares, not assumptions agentyard makes.
+            capabilities a project declares, not assumptions this app makes.
           </p>
         </div>
       </header>
@@ -61,7 +61,7 @@ export function Projects({
             onChange={(e) => setRoot(e.target.value)}
           />
           <span className="form-hint">
-            agentyard reads <span className="mono">.agentyard/project.json</span> if it is there, and
+            Multi Agent Controller reads <span className="mono">.multi_agent_controller/project.json</span> if it is there, and
             runs on defaults if it is not.
           </span>
         </div>
@@ -125,7 +125,7 @@ export function Projects({
                     {!project.configPath && (
                       <button
                         className="btn btn--ghost"
-                        title="Write a starter .agentyard/project.json into the repository."
+                        title="Write a starter .multi_agent_controller/project.json into the repository."
                         onClick={() =>
                           void rpc('project.writeConfig', { id: project.id }).then(refresh)
                         }

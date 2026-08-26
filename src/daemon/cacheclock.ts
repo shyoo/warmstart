@@ -45,7 +45,7 @@ const KEEPALIVE_PROMPT =
   'any work. This message exists only to keep this session warm.'
 
 const WRAP_UP_PROMPT =
-  'Before this session ends: call the agentyard `handoff` tool with a short note saying what you were ' +
+  'Before this session ends: call the `handoff` tool with a short note saying what you were ' +
   'doing, what is done, and what the next step is. Commit anything that compiles first.'
 
 /** Human latency straddles the one-hour TTL almost perfectly, so it is worth measuring rather than assuming. */

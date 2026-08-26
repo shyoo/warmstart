@@ -16,15 +16,15 @@ import {
  * L4: agent in the loop.
  *
  * ⚠️ **This one spends real quota** on whichever account it adopts. It is gated behind
- * `AGENTYARD_E2E=1` and must never run in a watch loop or in CI.
+ * `MULTI_AGENT_CONTROLLER_E2E=1` and must never run in a watch loop or in CI.
  *
  * It exists because it is the only level that can prove the thing the product actually claims: that
  * work filed as a task ends up committed on the trunk without anyone watching. Everything else here
  * is scaffolding around that single assertion list.
  */
 
-if (process.env.AGENTYARD_E2E !== '1') {
-  console.log('L4 skipped. It spends real quota; set AGENTYARD_E2E=1 to run it.')
+if (process.env.MULTI_AGENT_CONTROLLER_E2E !== '1') {
+  console.log('L4 skipped. It spends real quota; set MULTI_AGENT_CONTROLLER_E2E=1 to run it.')
   process.exit(0)
 }
 

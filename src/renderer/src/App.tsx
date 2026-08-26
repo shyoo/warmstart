@@ -53,7 +53,7 @@ export function App(): React.JSX.Element {
     <div className="shell">
       <aside className="sidebar">
         <div className="brand">
-          <h1>agentyard</h1>
+          <h1>Multi Agent Controller</h1>
           <span className="version">v{info?.version ?? '—'}</span>
         </div>
 

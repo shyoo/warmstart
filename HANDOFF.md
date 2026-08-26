@@ -1,4 +1,4 @@
-# agentyard — Session Handoff
+# Multi Agent Controller — Session Handoff
 
 Multi-agent controller: a scheduler that routes coding-agent tasks to the worker, session and moment
 where they are cheapest. Electron shell + `orchestratord` daemon. Windows now; macOS/Linux written
@@ -9,11 +9,11 @@ if you add a line, find the one it obsoletes and cut it in the same edit. Finish
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
 **Baseline (2026-08-26, M6 + a green CI matrix):** `npm run typecheck` clean · `npm run build` clean ·
-`npm test` 126/126 · `npm run test:daemon` 100/100 · `npm run test:ui` 21/21 · `npm run test:pack`
+`npm test` 134/134 · `npm run test:daemon` 101/101 · `npm run test:ui` 21/21 · `npm run test:pack`
 15/15 · L4 (opt-in) landed a real agent commit on origin/main. Electron 44.0.0, electron-builder
 26.15.3, 0 npm vulnerabilities. CLIs on this machine: claude 2.1.223 - agy 1.1.20 - codex 0.149.1.
 
-⚠️ **On a machine with no agent CLI the daemon suite reports 95 passed and 6 skipped**, with a stated
+⚠️ **On a machine with no agent CLI the daemon suite reports 97 passed and 5 skipped**, with a stated
 reason each. That is the CI state, and it is why `summary()` prints skips beside the result instead of
 folding them in. Simulated locally with a PATH of System32, node and git and an empty `HOME` — worth
 doing before pushing, since it is what found several of the failures below.
@@ -64,7 +64,7 @@ src/daemon/            orchestratord. Runs as Electron-with-ELECTRON_RUN_AS_NODE
   chat.ts              the one place the controller gets tools - a person is watching
   estimator.ts         what a task will cost, from what tasks have cost
   stream.ts            stream-json records: the free live rate-limit signal
-  projects.ts          .agentyard/project.json; policy committed, state private
+  projects.ts          .multi_agent_controller/project.json; policy committed, state private
   resources.ts         the broker - if the scheduler owns the claim, the lock is unnecessary
   worktrees.ts         pooled worktrees, task-named branches, prepare hook
   landing.ts           LandingStrategy; auto-land, serialised by an exclusive land: resource
@@ -176,7 +176,7 @@ packaged build. 14/14.
   directory anything can write to would put all of that behind a file permission. A declaration
   cannot grant itself MCP tools, a mintable session id, metering, or a quota probe — each is a
   refusal with a test, and each refusal is what stops a typo becoming trust.
-- **`pull-request` landing**, wrapping `gh` rather than the GitHub API (D7), so agentyard never holds
+- **`pull-request` landing**, wrapping `gh` rather than the GitHub API (D7), so Multi Agent Controller never holds
   a token. It pushes first and opens the PR second, deliberately: if the PR call fails the work is
   already safe on the remote. ⚠️ It does **not** rebase and does **not** run the project's checks —
   that is what the pull request is for.
@@ -271,11 +271,11 @@ M0–M6 are done. What is left is not a milestone but a list, in the order it wo
 
 - **Refreshing the quota cache without spending a turn.** Nothing found refreshes
   `cachedUsageUtilization` — not an interactive start, not a `-p` run. Until something does, M3 must
-  build token accrual from the transcripts agentyard already meters exactly, calibrated against
+  build token accrual from the transcripts Multi Agent Controller already meters exactly, calibrated against
   whatever readings do arrive. This is the biggest hole in the cost model — **R3** below is the
   experiment that closes or confirms it.
 - **Auto-mode classifier cost on a subscription** (`docs/cost-model.md` §9). Documented as billable on
-  Enterprise and API-billed accounts, unstated for Pro/Max/Team, and agentyard defaults Claude workers
+  Enterprise and API-billed accounts, unstated for Pro/Max/Team, and Multi Agent Controller defaults Claude workers
   to `auto`. ⛔ Do not assume it is free — **R1** below measures it.
 - **Vertex / Antigravity cache pricing.** Still not guessed, and now recorded as such: both new cost
   models declare `cache.kind: "unpriced"`, which the clock reads and declines to act on. Closing this
@@ -292,7 +292,7 @@ M0–M6 are done. What is left is not a milestone but a list, in the order it wo
   needs the workspace claim to move from the task to the session, so a session can outlive the task
   that opened it without leaking a claim or switching a branch under a running agent.
 - **D7** stands, and M6 is its second instance: `gh` is wrapped for pull-request landing rather
-  than agentyard talking to the GitHub API and holding a token. **D5 is closed** (plan §9.1).
+  than Multi Agent Controller talking to the GitHub API and holding a token. **D5 is closed** (plan §9.1).
 - **An icon.** electron-builder ships the default Electron one. Cosmetic, but it is the first thing
   anyone sees.
 
@@ -303,7 +303,7 @@ These are the questions above turned into experiments. Each is cheap, each needs
 currently guessing at. Run them when a window is otherwise idle; record the result in
 `docs/cost-model.md` with the date and the CLI version, and delete the entry from here.
 
-**The instrument.** agentyard meters *assistant turns* exactly from the transcript. Quota measures
+**The instrument.** Multi Agent Controller meters *assistant turns* exactly from the transcript. Quota measures
 *everything the account spent*. So the gap between them is everything the CLI spent that never reached
 a transcript — the auto-mode classifier, title generation, whatever else. That gap is the measurement.
 
@@ -316,7 +316,7 @@ a transcript — the auto-mode classifier, title generation, whatever else. That
 | **R5** | Second account on a transplanted transcript | Commission a second worker, copy a small transcript into its root, `--resume`, complete one turn | Discovery is measured; completion is not. Shapes cross-account continuation. `docs/cost-model.md` §7 |
 | **R6** | Is `/compact` honoured as a user message on the `stream` transport? | Send it into a live stream session and watch for a `compact_boundary` record in the transcript | The cache clock's compact move depends on it. If not, that move becomes handoff-and-close everywhere |
 | **R7** | Does the live rate-limit `status` warn before it refuses? | Let one window fill while watching `rate_limit_samples` | Decides whether the live signal is an early warning or an obituary |
-| **R9** | Does `agy -p /usage` run the slash command for free? | Run it on a quiet signed-in worker; compare against `/usage` typed into an interactive session | ⚠️ `--disable-slash-commands` is documented as disabling expansion *in print mode*, implying print mode expands them - the opposite of Claude Code. Would be **the first free quota probe agentyard has ever had** |
+| **R9** | Does `agy -p /usage` run the slash command for free? | Run it on a quiet signed-in worker; compare against `/usage` typed into an interactive session | ⚠️ `--disable-slash-commands` is documented as disabling expansion *in print mode*, implying print mode expands them - the opposite of Claude Code. Would be **the first free quota probe Multi Agent Controller has ever had** |
 | **R10** | Does the codex rollout JSONL carry per-turn usage `transcript.ts` can meter? | Run one small task on a codex worker; open `$CODEX_HOME/sessions/**/rollout-*.jsonl` and look for per-turn token counts | If not, `meteredFromTranscript` is wrong and codex runs are invisible to the cost model - a bigger hole than pricing |
 | **R11** | The `stream-json` / `--json` event shapes for agy and codex | One turn each, capture stdout verbatim | `stream.ts` parses Anthropic's records only. Until this lands, neither new adapter contributes rate-limit signal or result text |
 | **R12** | Is headless compaction reachable on codex? | Try to drive compaction from `codex exec`; watch for a compaction record | If yes, `manualCompact` flips true and two cache-clock moves become available on that provider |

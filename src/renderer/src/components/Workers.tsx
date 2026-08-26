@@ -115,7 +115,7 @@ export function Workers({
         <div className="empty-inline">
           <p>No workers yet.</p>
           <p className="dim">
-            Add one to point agentyard at an account. It creates an isolation directory, runs the
+            Add one to point Multi Agent Controller at an account. It creates an isolation directory, runs the
             vendor&rsquo;s own login in a terminal, and never sees the credential itself.
           </p>
         </div>
@@ -210,7 +210,7 @@ export function Workers({
                       />
                       enabled
                     </label>
-                    <label className="check" title="Quota is tracked but never spent by agentyard.">
+                    <label className="check" title="Quota is tracked but never spent by Multi Agent Controller.">
                       <input
                         type="checkbox"
                         checked={worker.humanOccupied}
@@ -263,7 +263,7 @@ export function Workers({
             <h3>Sign in</h3>
             <p className="dim">
               This is the vendor&rsquo;s own login running in a terminal. Type here as you normally
-              would — agentyard is hosting the process, not reading what it writes.
+              would — Multi Agent Controller is hosting the process, not reading what it writes.
             </p>
             <div className="login-actions">
               <button
@@ -298,7 +298,7 @@ export function Workers({
           </header>
           {loginEnded && (
             <p className="login-note">
-              The login session has ended. agentyard re-read the account by itself — the Account
+              The login session has ended. Multi Agent Controller re-read the account by itself — the Account
               column above shows what it found.
             </p>
           )}
@@ -350,7 +350,7 @@ function AdapterFacts({ adapter }: { adapter: AdapterInfo }): React.JSX.Element 
       ok: c.classifierBackedAuto,
       text: c.classifierBackedAuto
         ? 'A classifier reviews each action, so unattended work needs fewer approvals'
-        : 'Nothing reviews but you — agentyard writes an allowlist and expects more refusals'
+        : 'Nothing reviews but you — this app writes an allowlist and expects more refusals'
     },
     {
       ok: c.quotaProbe !== 'none',
@@ -440,7 +440,7 @@ function AddWorker({
             </>
           ) : (
             <span className="warn">
-              {detection?.error ?? 'not on PATH — install it, or point agentyard at it (M6)'}
+              {detection?.error ?? 'not on PATH — install it, or point Multi Agent Controller at it (M6)'}
             </span>
           )}
         </span>

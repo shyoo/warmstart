@@ -80,7 +80,7 @@ const info: AdapterInfo = {
     multimodalInput: true,
     // `agy mcp add|remove|list|enable|disable`. ⚠️ Registered globally rather than per session, so
     // agentyard does not use it: one shared registration cannot carry a per-session identity, and
-    // AGENTYARD_SESSION_ID is how the MCP server knows who it is speaking for.
+    // MULTI_AGENT_CONTROLLER_SESSION_ID is how the MCP server knows who it is speaking for.
     mcp: false,
     quotaProbe: 'none',
     mintsSessionId: false,
@@ -275,14 +275,14 @@ export const antigravityCli: AgentAdapter = {
         loggedIn: null,
         raw:
           `no Antigravity CLI settings at ${home}. Either it has never been run, or it is signed in ` +
-          'and keeps nothing here - agentyard cannot tell the difference without spending a turn.'
+          'and keeps nothing here - there is no way to tell the difference without spending a turn.'
       }
     }
     return {
       loggedIn: null,
       raw:
         `Antigravity CLI is configured at ${home}, but its credential lives in the OS keyring, which ` +
-        'agentyard does not read. Sign-in state is unknown by design; a failed run will say so.'
+        'this app does not read. Sign-in state is unknown by design; a failed run will say so.'
     }
   },
 
@@ -390,7 +390,7 @@ export const antigravityCli: AgentAdapter = {
       // it could call `task_complete` and could not would finish and report nothing, which looks
       // exactly like a hang.
       log.warn(
-        'antigravity-cli sessions run without agentyard tools: its MCP registration is global, ' +
+        'antigravity-cli sessions run without controller tools: its MCP registration is global, ' +
           'so a per-session identity cannot be passed'
       )
     }

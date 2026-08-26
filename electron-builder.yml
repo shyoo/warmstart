@@ -13,8 +13,8 @@
 #     They read their own bundles out of the asar, which works because Electron-as-Node keeps the
 #     patched `fs`.
 
-appId: dev.agentyard.app
-productName: agentyard
+appId: io.github.shyoo.multi-agent-controller
+productName: Multi Agent Controller
 copyright: Copyright © 2026 Sunghwan Yoo
 
 directories:

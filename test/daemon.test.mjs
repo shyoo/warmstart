@@ -682,14 +682,14 @@ async function openMcp(d, tier) {
     env: {
       ...process.env,
       ELECTRON_RUN_AS_NODE: '1',
-      AGENTYARD_SESSION_ID: 'selftest-session',
-      AGENTYARD_TIER: tier,
-      AGENTYARD_DATA_DIR: d.dataDir
+      MULTI_AGENT_CONTROLLER_SESSION_ID: 'selftest-session',
+      MULTI_AGENT_CONTROLLER_TIER: tier,
+      MULTI_AGENT_CONTROLLER_DATA_DIR: d.dataDir
     },
     stdio: ['pipe', 'pipe', 'pipe'],
     windowsHide: true
   })
-  child.stderr.on('data', (x) => process.env.AGENTYARD_TEST_VERBOSE && process.stderr.write(`[mcp] ${x}`))
+  child.stderr.on('data', (x) => process.env.MULTI_AGENT_CONTROLLER_TEST_VERBOSE && process.stderr.write(`[mcp] ${x}`))
 
   let id = 0
   const pending = new Map()
@@ -718,7 +718,7 @@ async function openMcp(d, tier) {
     capabilities: {},
     clientInfo: { name: 'agentyard-selftest', version: '0' }
   })
-  check(`the ${tier}-tier MCP handshake completes`, init.result?.serverInfo?.name === 'agentyard')
+  check(`the ${tier}-tier MCP handshake completes`, init.result?.serverInfo?.name === 'multi-agent-controller')
   child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`)
 
   return {

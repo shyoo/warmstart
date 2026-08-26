@@ -113,7 +113,7 @@ export function parseExternalAdapter(raw: unknown, source: string): ExternalAdap
     return `${source}: command must be a bare executable name, with no arguments or shell characters`
   }
   if (typeof file.cost_model_id !== 'string' || !file.cost_model_id.trim()) {
-    return `${source}: needs a cost_model_id - a CLI agentyard cannot price is one it cannot gate`
+    return `${source}: needs a cost_model_id - a CLI that cannot be priced is one that cannot be gated`
   }
   for (const key of ['print_args', 'login_args', 'version_args'] as const) {
     const value = file[key]
@@ -165,7 +165,7 @@ export function loadExternalAdapters(dir = externalAdapterDir()): ExternalLoadRe
             // ⛔ Never `measured`. agentyard did not establish any of this; somebody wrote it in a
             // file, and Doctor should say so in exactly those words.
             note:
-              `Declared by the operator in ${name}. agentyard has verified none of it, cannot meter ` +
+              `Declared by the operator in ${name}. Multi Agent Controller has verified none of it, cannot meter ` +
               'this adapter, and will not stop its orphaned processes.'
           }
         },

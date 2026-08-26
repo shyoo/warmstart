@@ -22,10 +22,10 @@ release/
 *.db-wal
 *.sqlite
 
-# Local overrides of committed project policy (.agentyard/project.json IS committed — see
+# Local overrides of committed project policy (.multi_agent_controller/project.json IS committed — see
 # docs/glossary.md; only the local override is not)
-.agentyard/local.json
-.agentyard/state/
+.multi_agent_controller/local.json
+.multi_agent_controller/state/
 
 # Env and secrets
 .env

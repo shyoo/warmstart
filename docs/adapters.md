@@ -22,7 +22,7 @@ first spawn.** That is the whole reason `AdapterInfo.verification` exists.
 | Can compact | ✔ | ⛔ | ⛔ *(conservative)* |
 | Classifier reviews actions | ✔ `auto` | ⛔ | ⛔ |
 | Approvals | `permission_prompt_tool` | settings rules | settings rules |
-| agentyard MCP tools | ✔ | ⛔ global registration only | ⛔ global registration only |
+| Multi Agent Controller MCP tools | ✔ | ⛔ global registration only | ⛔ global registration only |
 | Accepts our session id | ✔ | ⛔ | ⛔ |
 | Free quota probe | ⛔ | ⛔ **measured — see below** | ⛔ |
 | Reports cache reads | via transcript | ⛔ no | ✔ reads **and** writes |
@@ -70,7 +70,7 @@ behaviour falls out of it:
 - **`canPriceCache(): false`** → the clock declines to spend on keepalive or compaction at all,
   rather than acting on an invented number. Google bills cache *storage per token-hour*; OpenAI
   caches server-side with no client-controlled TTL. Neither is a lever of the shape the clock pulls.
-- **`classifierBackedAuto: false`** → agentyard writes a narrower allowlist into the worker's own
+- **`classifierBackedAuto: false`** → Multi Agent Controller writes a narrower allowlist into the worker's own
   configuration before each spawn, and expects a higher refusal rate.
 - **`mintsSessionId: false`** → the transcript is discovered after the fact instead of predicted,
   and ⛔ **orphaned processes are never killed**, because identity cannot be proved. Leaving an orphan
@@ -95,14 +95,14 @@ this question will be asked again.
    a comment rather than leaving the lead open.
 2. **The local Antigravity Language Server** — what the community usage tools read. ⛔ It exists only
    while the **IDE is running**. Verified on this machine with the IDE closed: no such process is
-   listening and no port file exists. agentyard's premise is unattended progress across hours-long
+   listening and no port file exists. Multi Agent Controller's premise is unattended progress across hours-long
    windows with no GUI open, so a probe that needs a window open is not a probe for this product.
 3. **A community package** (`antigravity-usage`, `antigravity-panel`, `opencode-antigravity-quota`).
    ⛔ Rejected on D7 — external services are wrapped, never vendored — and because an undocumented
    internal RPC surface behind a third-party wrapper is *two* things that can go stale rather than one.
 
-**What agentyard does instead needs no probe.** The stream carries per-turn usage, so spend is accrued
-from turns agentyard metered itself. ⚠️ That is a **floor**, not a percentage: it cannot see what the
+**What Multi Agent Controller does instead needs no probe.** The stream carries per-turn usage, so spend is accrued
+from turns Multi Agent Controller metered itself. ⚠️ That is a **floor**, not a percentage: it cannot see what the
 vendor counted that never reached a stream. `reserve.ts` already treats accrued spend as a floor, and
 runs on these adapters are marked `quotaUnverified`.
 
@@ -143,7 +143,7 @@ Two things that survived being run that way, and would not have been found other
 - **`agy`** — `irm https://antigravity.google/cli/install.ps1 | iex` (Windows) or
   `curl -fsSL https://antigravity.google/cli/install.sh | bash`. ⚠️ The installer drops
   `agy.exe` in `%LOCALAPPDATA%\agy\bin` and only adds it to PATH when you run `agy install`.
-  agentyard looks there anyway, and Doctor tells you the difference.
+  Multi Agent Controller looks there anyway, and Doctor tells you the difference.
 
 Antigravity requires a Google AI Pro or Ultra subscription — the free tier ended on 2026-06-18, when
 Gemini CLI stopped serving individual accounts. Codex is included with ChatGPT Plus/Pro/Business.

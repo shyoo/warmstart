@@ -16,7 +16,7 @@
 
 export type Vcs = 'git' | 'none'
 
-/** Committed at `<project>/.agentyard/project.json`. Nothing secret goes in it. */
+/** Committed at `<project>/.multi_agent_controller/project.json`. Nothing secret goes in it. */
 export interface ProjectConfig {
   schema_version: number
   name?: string

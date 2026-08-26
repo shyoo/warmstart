@@ -98,7 +98,7 @@ complete. See `HANDOFF.md` for where the build actually is and what is left.
 | **D18** Who creates work | Any principal — human, controller, or a worker agent mid-run. Bounded by inherited mandates and budgets (§7.2) | ✔ new |
 | **D13** Workspaces | Pooled **git worktrees**; branch created in the claimed worktree, named after the *task*; trunk never used by agents (§10.1) | ✔ |
 | **D14** Landing | A **strategy interface**. v1 ships `auto-land`; `leave-branch` and `pull-request` slot in later without scheduler changes (§10.2) | ✔ |
-| **D15** Config | Policy committed at `.agentyard/project.json`; runtime state private in app data (§7.1a) | ✔ |
+| **D15** Config | Policy committed at `.multi_agent_controller/project.json`; runtime state private in app data (§7.1a) | ✔ |
 | **D17** Autonomy | Bounded — free within inherited mandate and budget; controller gate on commit/push/spend/depth>2; human gate on irreversible (§7.2) | ✔ |
 | **D16** Notifications | Desktop notification + persistent My Queue badge; tray and push are v2 | ✔ |
 | **D5** Permissions | Per adapter, from a capability: Claude Code `auto`; no-classifier adapters get ask + allowlist (§9.1) | ✔ A1 |
@@ -559,7 +559,7 @@ Detecting that human input is needed, in order of reliability:
 Policy is **committed in the repo**; runtime state stays private.
 
 ```
-<project>/.agentyard/project.json      committed - policy, reviewable, travels with the repo
+<project>/.multi_agent_controller/project.json      committed - policy, reviewable, travels with the repo
 <appdata>/agentyard/state.db           private   - tasks, runs, usage, transcripts index
 ```
 
@@ -1197,7 +1197,7 @@ no seeded database. A large private monorepo solved this by copying `node_module
 that bit back, because a package installed inside a slot vanished on the next sync. So `prepare` is
 declared per project and runs on claim, and the tool records what it did; a workspace whose lockfile
 has drifted from the trunk's is re-prepared rather than patched. Per-workspace environment (port
-offsets, database paths) is injected as `AGENTYARD_WORKSPACE_INDEX` plus project-declared derived
+offsets, database paths) is injected as `MULTI_AGENT_CONTROLLER_WORKSPACE_INDEX` plus project-declared derived
 values, so nothing has to be hand-edited per checkout and no two workspaces can bind the same port.
 
 ### 10.2 Landing a finished task (D14)
@@ -1444,7 +1444,7 @@ the Approvals bar, remember-as-rule, and the 30-minute escalation into `awaiting
 inheritance, budget shares, fan-out and depth caps, cycle detection, dedup-at-admission, subtree
 cancel. **Resource broker (§10)** with **pooled git worktrees** as its first implementation —
 claim, fetch, task-named branch, `prepare` hook, per-workspace env, park and release (§10.1).
-**Landing strategy interface with `auto-land`** (§10.2). `.agentyard/project.json` loader (§7.1a).
+**Landing strategy interface with `auto-land`** (§10.2). `.multi_agent_controller/project.json` loader (§7.1a).
 Scheduler v1: admission, dependencies, hard quota gates, manual pinning. *(Risk gating starts
 rule-based here; the controller's judgment layer arrives in M4.)*
 
@@ -1702,7 +1702,7 @@ organised by **what a failure would cost**, not by the usual pyramid.
 | **L4 agent-in-the-loop** | `npm run test:e2e`, **opt-in** | **real tokens** | The only thing the others cannot: an agent doing work, reporting completion, and the branch landing |
 | **L5 packaged app** | `npm run test:pack` | nothing | ⛔ The only level that runs against a **real package**: the native unpacked out of the asar, the app starting its own daemon with no system Node, and a PTY opening from inside the archive. Every one of those is a way to ship something that passed L0–L4 and does not start |
 
-L0–L3 must pass before every commit (`npm run test:all`). **L4 is gated behind `AGENTYARD_E2E=1`**
+L0–L3 must pass before every commit (`npm run test:all`). **L4 is gated behind `MULTI_AGENT_CONTROLLER_E2E=1`**
 and never runs in a watch loop, because each run spends a real assistant turn on a real account.
 **L5 is free but slow** — it builds a package — so it runs before a release rather than before a commit.
 
@@ -1744,7 +1744,7 @@ Not "cover the code" — cover the places where **being wrong is silent**:
 ⛔ **Every level obeys all four.** They are not conventions; the first two exist because breaking them
 damages the developer's own machine.
 
-1. **`AGENTYARD_DATA_DIR` always points at a temp directory.** No test ever touches the real fleet
+1. **`MULTI_AGENT_CONTROLLER_DATA_DIR` always points at a temp directory.** No test ever touches the real fleet
    database, the real endpoint file, or the user's workers.
 2. **Never kill by image name.** No `taskkill /IM`, no `pkill -f`. Stop the pid the test started, after
    checking its command line. `taskkill /IM electron.exe` also kills the developer's editor and any
@@ -1759,7 +1759,7 @@ damages the developer's own machine.
 One task, one small repository, one turn:
 
 ```
-create a bare origin + a working clone with .agentyard/project.json
+create a bare origin + a working clone with .multi_agent_controller/project.json
 add the project, commission a worker against an existing signed-in root
 build a task graph and exercise it WITHOUT an agent:
     dependency blocks admission · not_before schedules · cancel rests

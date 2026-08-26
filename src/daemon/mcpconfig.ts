@@ -5,6 +5,19 @@ import { ensureDir, paths } from './paths.js'
 import { log } from './log.js'
 
 /**
+ * The server name under which these tools are registered with a vendor CLI.
+ *
+ * ⛔ One constant, because it appears twice and the two must agree: it is the key in the config
+ * written below, *and* it is half of the fully-qualified tool name a CLI is told to call for
+ * permission prompts (`mcp__<server>__approve`). Written out separately in claude-code.ts, the two
+ * drifted apart the moment the project was renamed and every approval would have failed silently.
+ */
+export const MCP_SERVER_NAME = 'multi-agent-controller'
+
+/** What `--permission-prompt-tool` must be given. See MCP_SERVER_NAME. */
+export const APPROVE_TOOL = `mcp__${MCP_SERVER_NAME}__approve`
+
+/**
  * The MCP config handed to each agent session.
  *
  * ⚠️ **Tool definitions are the first thing in the cache prefix, and changing them invalidates
@@ -39,23 +52,23 @@ export type McpTier = 'worker' | 'controller'
 export function writeMcpConfig(sessionId: string, tier: McpTier = 'worker'): string | null {
   const script = mcpServerScript()
   if (!existsSync(script)) {
-    log.warn(`MCP server bundle missing at ${script}; sessions will run without agentyard tools`)
+    log.warn(`MCP server bundle missing at ${script}; sessions will run without controller tools`)
     return null
   }
   ensureDir(mcpConfigDir())
   const path = join(mcpConfigDir(), `${sessionId}.json`)
   const config = {
     mcpServers: {
-      agentyard: {
+      [MCP_SERVER_NAME]: {
         // ELECTRON_RUN_AS_NODE turns this binary into plain Node, so a packaged app needs no system
         // Node to run its own MCP server.
         command: process.execPath,
         args: [script],
         env: {
           ELECTRON_RUN_AS_NODE: '1',
-          AGENTYARD_SESSION_ID: sessionId,
-          AGENTYARD_TIER: tier,
-          ...(process.env.AGENTYARD_DATA_DIR ? { AGENTYARD_DATA_DIR: process.env.AGENTYARD_DATA_DIR } : {})
+          MULTI_AGENT_CONTROLLER_SESSION_ID: sessionId,
+          MULTI_AGENT_CONTROLLER_TIER: tier,
+          ...(process.env.MULTI_AGENT_CONTROLLER_DATA_DIR ? { MULTI_AGENT_CONTROLLER_DATA_DIR: process.env.MULTI_AGENT_CONTROLLER_DATA_DIR } : {})
         }
       }
     }

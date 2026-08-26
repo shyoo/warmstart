@@ -95,7 +95,7 @@ export function genericAdapter(spec: GenericAdapterSpec): AgentAdapter {
       return {
         loggedIn: null,
         raw:
-          `agentyard cannot read sign-in state for a declared adapter${root ? ` at ${root}` : ''}. ` +
+          `Sign-in state cannot be read for a declared adapter${root ? ` at ${root}` : ''}. ` +
           'A failed run will say so; nothing here spends a turn to find out.'
       }
     },

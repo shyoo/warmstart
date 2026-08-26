@@ -19,7 +19,7 @@ import { paths } from '../daemon/paths.js'
  * It holds no state. Everything routes to orchestratord, which owns the policy, the queue and the
  * escalation clock.
  *
- * ⛔ **Two tiers, and the tier is set by the daemon, not asked for by the caller.** `AGENTYARD_TIER`
+ * ⛔ **Two tiers, and the tier is set by the daemon, not asked for by the caller.** `MULTI_AGENT_CONTROLLER_TIER`
  * comes from the MCP config file the daemon wrote for that session; an agent cannot promote itself by
  * setting an environment variable it does not control. The worker tier can report completion, ask a
  * person, file a follow-up inside its own mandate, and leave a handoff. The controller tier can read
@@ -30,7 +30,7 @@ import { paths } from '../daemon/paths.js'
  * work is an agent that can hide it.
  */
 
-const TIER = process.env.AGENTYARD_TIER === 'controller' ? 'controller' : 'worker'
+const TIER = process.env.MULTI_AGENT_CONTROLLER_TIER === 'controller' ? 'controller' : 'worker'
 
 /** Render whatever a tool produced as MCP text content. */
 function text(value: unknown): { content: Array<{ type: 'text'; text: string }> } {
@@ -74,7 +74,10 @@ async function rpc<M extends RpcMethod>(method: M, params?: RpcParams<M>): Promi
   return body.result as RpcResult<M>
 }
 
-const server = new McpServer({ name: 'agentyard', version: '0.0.1' })
+// ⛔ Must match MCP_SERVER_NAME in mcpconfig.ts - the daemon registers this server under that
+// key and tells the CLI to call `mcp__<that key>__approve`. Not imported: this bundle is spawned as
+// a standalone process and deliberately shares no daemon module.
+const server = new McpServer({ name: 'multi-agent-controller', version: '0.0.1' })
 
 /**
  * The permission prompt tool.
@@ -88,9 +91,9 @@ const server = new McpServer({ name: 'agentyard', version: '0.0.1' })
 server.registerTool(
   'approve',
   {
-    title: 'Ask agentyard whether this action may run',
+    title: 'Ask Multi Agent Controller whether this action may run',
     description:
-      'Called by the agent CLI in place of showing a permission prompt. agentyard answers from the ' +
+      'Called by the agent CLI in place of showing a permission prompt. The controller answers from the ' +
       "project's rules where it can, and asks the operator where it cannot.",
     inputSchema: {
       tool_name: z.string().describe('The tool the agent wants to use'),
@@ -99,12 +102,12 @@ server.registerTool(
     }
   },
   async (args, extra) => {
-    const sessionId = process.env.AGENTYARD_SESSION_ID ?? ''
+    const sessionId = process.env.MULTI_AGENT_CONTROLLER_SESSION_ID ?? ''
     const toolName = String(args.tool_name ?? 'unknown')
     const target = describeTarget(args.input)
 
     let decision: 'allow' | 'deny' = 'deny'
-    let message = 'agentyard could not reach orchestratord to ask.'
+    let message = 'Multi Agent Controller could not reach orchestratord to ask.'
     try {
       const answer = await rpc('approval.request', {
         sessionId,
@@ -118,13 +121,13 @@ server.registerTool(
       decision = answer.decision === 'deny' ? 'deny' : 'allow'
       message = answer.reason ?? ''
     } catch (err) {
-      message = `agentyard denied by default: ${err instanceof Error ? err.message : String(err)}`
+      message = `Denied by default: ${err instanceof Error ? err.message : String(err)}`
     }
 
     const payload =
       decision === 'allow'
         ? { behavior: 'allow', updatedInput: args.input ?? {} }
-        : { behavior: 'deny', message: message || 'Denied by agentyard policy.' }
+        : { behavior: 'deny', message: message || 'Denied by Multi Agent Controller policy.' }
 
     return { content: [{ type: 'text' as const, text: JSON.stringify(payload) }] }
   }
@@ -149,7 +152,7 @@ server.registerTool(
     inputSchema: { question: z.string() }
   },
   async (args) => {
-    const sessionId = process.env.AGENTYARD_SESSION_ID ?? ''
+    const sessionId = process.env.MULTI_AGENT_CONTROLLER_SESSION_ID ?? ''
     try {
       const answer = await rpc('approval.request', {
         sessionId,
@@ -179,7 +182,7 @@ server.registerTool(
 )
 
 /**
- * ⛔ The only signal that a task succeeded. agentyard will not infer completion from a process
+ * ⛔ The only signal that a task succeeded. The controller will not infer completion from a process
  * exiting, from a clean exit code, or from anything on screen.
  */
 server.registerTool(
@@ -187,15 +190,15 @@ server.registerTool(
   {
     title: 'Report that the task is finished',
     description:
-      'Call this when the work is done. agentyard will run the project checks and land the branch ' +
+      'Call this when the work is done. The controller will run the project checks and land the branch ' +
       'according to project policy. Nothing else marks a task complete.',
     inputSchema: { summary: z.string().describe('One line: what was done') }
   },
   async (args) => {
-    const sessionId = process.env.AGENTYARD_SESSION_ID ?? ''
+    const sessionId = process.env.MULTI_AGENT_CONTROLLER_SESSION_ID ?? ''
     try {
       await rpc('agent.complete', { sessionId, summary: args.summary })
-      return { content: [{ type: 'text' as const, text: 'Recorded. agentyard is landing the work.' }] }
+      return { content: [{ type: 'text' as const, text: 'Recorded. The controller is landing the work.' }] }
     } catch (err) {
       return {
         content: [{ type: 'text' as const, text: `Could not report completion: ${String(err)}` }],
@@ -223,7 +226,7 @@ server.registerTool(
     }
   },
   async (args) => {
-    const sessionId = process.env.AGENTYARD_SESSION_ID ?? ''
+    const sessionId = process.env.MULTI_AGENT_CONTROLLER_SESSION_ID ?? ''
     try {
       const result = await rpc('agent.createTask', {
         sessionId,
@@ -255,7 +258,7 @@ server.registerTool(
     inputSchema: { note: z.string() }
   },
   async (args) => {
-    const sessionId = process.env.AGENTYARD_SESSION_ID ?? ''
+    const sessionId = process.env.MULTI_AGENT_CONTROLLER_SESSION_ID ?? ''
     try {
       await rpc('agent.handoff', { sessionId, note: args.note })
       return { content: [{ type: 'text' as const, text: 'Handoff recorded.' }] }

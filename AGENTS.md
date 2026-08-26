@@ -1,4 +1,4 @@
-# agentyard — Agent Workspace Guide
+# Multi Agent Controller — Agent Workspace Guide
 
 Conventions, layout and pitfalls for AI agents working on this codebase. **This file is loaded into
 every session's context, so its length is a real cost.** A fact belongs here only if it will still be
@@ -17,6 +17,14 @@ true and still be needed next month.
 
 ## Rules
 
+- **Two names, and which one goes where.** The public name is **Multi Agent Controller**: anything a
+  user or an agent reads — UI copy, docs, PR bodies, prompt text, `productName`, the MCP server name.
+  **`agentyard`** is the internal name and stays that way: source comments, `window.agentyard`, test
+  fixture prefixes, `LEGACY_APP_DIR`. ⛔ On-disk identifiers were migrated, not left alone —
+  `.multi_agent_controller/project.json`, the data directory, `MULTI_AGENT_CONTROLLER_*`,
+  `multi-agent-controller/t<seq>` branches. A pre-rename install is carried across by
+  `adoptLegacyDataDir` in `paths.ts` plus `repointIsolationRoots` in `db.ts`; both halves are
+  required, and `paths.test.ts` fails if either is removed.
 - **No subagents.** Do the work yourself with direct tool calls. A subagent pays a fresh context cost
   to re-derive what this file and `HANDOFF.md` already give you.
 - **Measure, don't assert.** This project is built on things that were checked. When you state a
@@ -48,7 +56,7 @@ These are not preferences; breaking one breaks the product.
   The app must open on a clean profile with zero workers, say so, and offer the wizard.
 - ⛔ **Never kill a process by image name.** Not in code, not in a shell, not "just this once" in a
   test. `taskkill /IM electron.exe` and `pkill -f node` take out the user's editor, their other agent
-  windows, and anything else that happens to share a binary. agentyard kills **only PIDs it recorded
+  windows, and anything else that happens to share a binary. Multi Agent Controller kills **only PIDs it recorded
   itself**, and stops when the pid it stored no longer matches the process it started.
 - ⛔ **Native modules live in the daemon, never the renderer.** An Electron upgrade must not be able
   to break a running fleet.
@@ -111,7 +119,7 @@ These are not preferences; breaking one breaks the product.
   permission. A declaration also cannot grant itself MCP tools, a mintable session id, metering or a
   quota probe - each is refused with a test.
 - **Agents work in a pooled worktree, never the trunk.** The branch is named after the *task*
-  (`agentyard/t123-…`), never after the workspace it happened to land in.
+  (`multi-agent-controller/t123-…`), never after the workspace it happened to land in.
 
 ### Doc hygiene — these files shrink as often as they grow
 
@@ -186,7 +194,7 @@ costmodels/             versioned pricing data
 - **`task_complete` is the only signal that a task succeeded.** A process exiting cleanly says nothing
   about whether the work was done. A session that ends without it goes to `awaiting_human`, and that
   is the honest answer rather than a guess.
-- **`AGENTYARD_TIER` decides the MCP tool set, and only the daemon writes it.** It comes from the
+- **`MULTI_AGENT_CONTROLLER_TIER` decides the MCP tool set, and only the daemon writes it.** It comes from the
   config file the daemon generated for that session; an agent cannot promote itself by exporting it.
   Two tiers means **two cache prefixes** on an install — adding a tier adds a third, so do not add one
   casually.

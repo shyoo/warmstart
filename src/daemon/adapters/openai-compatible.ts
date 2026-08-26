@@ -300,12 +300,12 @@ export const openaiCompatible: AgentAdapter = {
    * user-level file — which is what `CODEX_HOME` buys.
    */
   writePermissions(isolationRoot: string, rules: PermissionRules): WrittenPermissions {
-    const path = join(isolationRoot, 'agentyard.config.toml')
+    const path = join(isolationRoot, 'multi_agent_controller.config.toml')
     try {
       mkdirSync(isolationRoot, { recursive: true })
       const lines = [
-        '# Written by agentyard before each session. Edits are overwritten.',
-        '# ⛔ Rules only. agentyard never writes a credential.',
+        '# Written by Multi Agent Controller before each session. Edits are overwritten.',
+        '# ⛔ Rules only. It never writes a credential.',
         '',
         '[approval]',
         `allow = [${rules.allow.map((r) => JSON.stringify(r)).join(', ')}]`,
@@ -345,7 +345,7 @@ export const openaiCompatible: AgentAdapter = {
       // Codex registers MCP servers with `codex mcp add` into its own config rather than by path, so
       // there is no way to give one a per-session identity. Recorded rather than faked.
       log.warn(
-        'openai-compatible sessions run without agentyard tools: its MCP registration is global, ' +
+        'openai-compatible sessions run without controller tools: its MCP registration is global, ' +
           'so a per-session identity cannot be passed'
       )
     }

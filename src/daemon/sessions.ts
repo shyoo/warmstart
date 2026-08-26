@@ -565,7 +565,7 @@ export function reconcileOrphans(): number {
   if (unidentifiable) {
     log.warn(
       `${unidentifiable} orphaned process(es) were left running: their adapter does not accept a ` +
-        'session id, so agentyard cannot prove they are its own. Stop them by hand if they are. ' +
+        'session id, so they cannot be proved to be its own. Stop them by hand if they are. ' +
         'Doctor reports this.'
     )
   }
@@ -691,7 +691,7 @@ function openPipes(
   child.stderr?.on('data', (d: string) => onData(d))
   child.on('exit', (code) => onExit(code))
   child.on('error', (err) => {
-    onData(`\n[agentyard] could not start: ${err.message}\n`)
+    onData(`\n[multi-agent-controller] could not start: ${err.message}\n`)
     onExit(-1)
   })
   return {

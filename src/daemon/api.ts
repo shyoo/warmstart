@@ -201,7 +201,7 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
         const inUse = listWorkers().some((w) => w.adapterId === a.info.id)
         if (a.info.capabilities.metering === 'none' && inUse) {
           warnings.push(
-            `${a.info.label}: agentyard cannot meter its work at all, so runs on it cost an unknown ` +
+            `${a.info.label}: its work cannot be metered at all, so runs on it cost an unknown ` +
               'amount rather than nothing.'
           )
         } else if (a.info.capabilities.metering === 'stream' && inUse) {
@@ -214,7 +214,7 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
         }
         if (!a.info.capabilities.mintsSessionId && listWorkers().some((w) => w.adapterId === a.info.id)) {
           warnings.push(
-            `${a.info.label}: agentyard will not stop its orphaned processes, because it accepts no ` +
+            `${a.info.label}: its orphaned processes will not be stopped, because it accepts no ` +
               'session id and so cannot be proved to own one. Stop them by hand after a crash.'
           )
         }
@@ -313,7 +313,7 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
         summary: p.summary
       })
       return decision === 'deny'
-        ? { decision: 'deny' as const, reason: 'agentyard policy or the operator declined.' }
+        ? { decision: 'deny' as const, reason: 'Multi Agent Controller policy or the operator declined.' }
         : { decision: 'allow' as const }
     },
     'approval.answer': (p) => answerApproval(p.id, p.decision, 'human'),

@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os'
  * ⛔ Four fixture rules, and the first two exist because breaking them damages the developer's own
  * machine (plan §19.3):
  *
- *  1. `AGENTYARD_DATA_DIR` always points at a fresh temp directory. No test touches the real fleet.
+ *  1. `MULTI_AGENT_CONTROLLER_DATA_DIR` always points at a fresh temp directory. No test touches the real fleet.
  *  2. **Never kill by image name.** `stop()` kills the pid it started, and nothing else. A
  *     `taskkill /IM electron.exe` also takes out the developer's editor and any agent window they had
  *     open - that happened for real during M2.
@@ -214,11 +214,11 @@ export class Daemon {
     if (!existsSync(script)) throw new Error(`${script} is missing - run npm run build first`)
 
     this.child = spawn(electronBinary(), [script], {
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', AGENTYARD_DATA_DIR: this.dataDir },
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', MULTI_AGENT_CONTROLLER_DATA_DIR: this.dataDir },
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true
     })
-    this.child.stdout.on('data', (d) => process.env.AGENTYARD_TEST_VERBOSE && process.stdout.write(`[d] ${d}`))
+    this.child.stdout.on('data', (d) => process.env.MULTI_AGENT_CONTROLLER_TEST_VERBOSE && process.stdout.write(`[d] ${d}`))
     this.child.stderr.on('data', (d) => process.stderr.write(`[daemon] ${d}`))
 
     const deadline = Date.now() + 30_000
@@ -355,9 +355,9 @@ export function makeProject(root, options = {}) {
   git(root, 'config', 'user.email', 'test@example.invalid')
 
   writeFileSync(join(root, 'README.md'), '# fixture\n')
-  mkdirSync(join(root, '.agentyard'), { recursive: true })
+  mkdirSync(join(root, '.multi_agent_controller'), { recursive: true })
   writeFileSync(
-    join(root, '.agentyard', 'project.json'),
+    join(root, '.multi_agent_controller', 'project.json'),
     `${JSON.stringify(
       {
         schema_version: 1,

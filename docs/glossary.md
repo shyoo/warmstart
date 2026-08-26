@@ -1,16 +1,16 @@
 # Glossary
 
-These words mean specific things in agentyard. Using them loosely makes the scheduler incoherent, so
+These words mean specific things in Multi Agent Controller. Using them loosely makes the scheduler incoherent, so
 they are worth pinning down.
 
 ---
 
-**Fleet** — every worker agentyard knows about, across all providers and accounts.
+**Fleet** — every worker Multi Agent Controller knows about, across all providers and accounts.
 
 **Worker** — *an account or endpoint, i.e. a quota bucket.* One Claude subscription is one worker; a
 second subscription is a second worker. A local model with no quota is also a worker. Each has an
 **isolation root** holding its own credentials, written by the vendor's CLI and never read by
-agentyard.
+Multi Agent Controller.
 
 **Session** — *one live agent process.* Has a model, an effort level, a workspace, a minted session
 id, a context size, a cache expiry and a topic fingerprint.
@@ -19,7 +19,7 @@ id, a context size, a cache expiry and a topic fingerprint.
 > worker; *context* lives on the session. A task must be routed to a worker that can afford it **and**
 > a session that already knows about it. Most orchestrators model only one of the two.
 
-**Human-occupied worker** — an account whose quota agentyard tracks but never spends, because a
+**Human-occupied worker** — an account whose quota Multi Agent Controller tracks but never spends, because a
 person is using it by hand. Keeps the budget arithmetic honest without taking the account over.
 
 ---
@@ -27,7 +27,7 @@ person is using it by hand. Keeps the budget arithmetic honest without taking th
 **Project** — *a directory plus policy.* Git is **optional**: `vcs: git | none`. Branching,
 committing and parallel workspaces are per-project **capabilities**, not universal assumptions, so a
 media-generation or research project is a first-class citizen with no repo fiction. Policy lives in a
-committed `.agentyard/project.json`; runtime state stays private in the OS app-data directory.
+committed `.multi_agent_controller/project.json`; runtime state stays private in the OS app-data directory.
 
 **Workspace** — *where a run executes.* For a git project, a pooled **git worktree** — a permanent
 checkout, created once and reused, sharing one `.git` object store. For a plain directory, the
@@ -54,7 +54,7 @@ device, a flaky test that must not run twice at once.
 > agent prompts are a symptom of the scheduler not knowing about a resource.
 
 **External resource service** — an MCP server fronting something contended (credits, a browser, a
-queue). Registered with a `probe` tool that reports availability; agentyard then stops dispatching
+queue). Registered with a `probe` tool that reports availability; Multi Agent Controller then stops dispatching
 contenders rather than letting them collide.
 
 ---
@@ -135,7 +135,7 @@ windows, preemption protocol, default permission mode, which cost model applies)
 > **Antigravity CLI (`agy`)** replaces it and is the Google adapter. The old CLI survives only under a
 > Gemini Code Assist Standard/Enterprise licence.
 
-**Transport** — how agentyard talks to a session. `stream` (`-p` with stream-json over real pipes)
+**Transport** — how Multi Agent Controller talks to a session. `stream` (`-p` with stream-json over real pipes)
 gives structured events, a programmatic approval channel, and free live rate-limit records; `pty`
 hosts the real TUI and lets a human take the keyboard. A minted session id lets one session move
 between them via `--resume`.

@@ -4,7 +4,7 @@ import { ensureDir, paths } from './paths.js'
 type Level = 'debug' | 'info' | 'warn' | 'error'
 
 const LEVELS: Record<Level, number> = { debug: 10, info: 20, warn: 30, error: 40 }
-const threshold = LEVELS[(process.env.AGENTYARD_LOG_LEVEL as Level) ?? 'info'] ?? LEVELS.info
+const threshold = LEVELS[(process.env.MULTI_AGENT_CONTROLLER_LOG_LEVEL as Level) ?? 'info'] ?? LEVELS.info
 const MAX_BYTES = 5 * 1024 * 1024
 
 type Listener = (level: Level, message: string, ts: number) => void
@@ -41,7 +41,7 @@ function write(level: Level, args: unknown[]): void {
     // Disk full or permissions. Still emit to stderr below.
   }
   if (level === 'error' || level === 'warn') process.stderr.write(line)
-  else if (process.env.AGENTYARD_LOG_STDOUT) process.stdout.write(line)
+  else if (process.env.MULTI_AGENT_CONTROLLER_LOG_STDOUT) process.stdout.write(line)
   for (const fn of listeners) fn(level, message, ts)
 }
 

@@ -23,7 +23,7 @@ const run = promisify(execFile)
  *  - **Git enforces the isolation.** Two worktrees cannot check out the same branch. That is a hard
  *    guarantee from git, not a claim file. The claim coordinates *scheduling*; git prevents
  *    *collision*.
- *  - ⛔ **The branch is named after the task, never the workspace** - `agentyard/t12-fix-dialog`, not
+ *  - ⛔ **The branch is named after the task, never the workspace** - `multi-agent-controller/t12-fix-dialog`, not
  *    `agent/ws2-…`. Which workspace a task happened to land in is an implementation detail that must
  *    never reach history, and re-running the task later in a different workspace yields the same name.
  *  - ⛔ **Agents never work in the trunk.** The branch is created *inside* the claimed worktree.
@@ -129,7 +129,7 @@ export function releaseWorkspace(claimId: string): void {
   release(claimId)
 }
 
-/** `agentyard/t<seq>-<slug>` - the task's name, never the workspace's. */
+/** `multi-agent-controller/t<seq>-<slug>` - the task's name, never the workspace's. */
 export function branchNameFor(seq: number, title: string): string {
   const slug = title
     .toLowerCase()
@@ -137,7 +137,7 @@ export function branchNameFor(seq: number, title: string): string {
     .replace(/^-+|-+$/g, '')
     .slice(0, 40)
     .replace(/-+$/, '')
-  return `agentyard/t${seq}${slug ? `-${slug}` : ''}`
+  return `multi-agent-controller/t${seq}${slug ? `-${slug}` : ''}`
 }
 
 export interface PrepareResult {
@@ -226,13 +226,13 @@ export function workspaceEnv(
 ): Record<string, string> {
   const env: Record<string, string> = {}
   for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v
-  env.AGENTYARD_WORKSPACE_INDEX = String(workspace.index)
-  env.AGENTYARD_WORKSPACE_PATH = workspace.path
+  env.MULTI_AGENT_CONTROLLER_WORKSPACE_INDEX = String(workspace.index)
+  env.MULTI_AGENT_CONTROLLER_WORKSPACE_PATH = workspace.path
 
   const portBase = Number(projectEnv.portBase)
   const perWorkspace = Number(projectEnv.portsPerWorkspace)
   if (Number.isFinite(portBase) && Number.isFinite(perWorkspace)) {
-    env.AGENTYARD_PORT = String(portBase + (workspace.index - 1) * perWorkspace)
+    env.MULTI_AGENT_CONTROLLER_PORT = String(portBase + (workspace.index - 1) * perWorkspace)
   }
   for (const [k, v] of Object.entries(projectEnv)) {
     if (k !== 'portBase' && k !== 'portsPerWorkspace') env[k] = String(v)

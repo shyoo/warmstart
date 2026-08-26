@@ -7,7 +7,7 @@
     "",
     "OpenAI does publish a cached-input discount on API pricing, and caching there is automatic",
     "rather than something a client marks up or keeps alive. There is no TTL a scheduler can extend,",
-    "no write multiplier to pay, and therefore no keepalive move to make: the thing agentyard's cache",
+    "no write multiplier to pay, and therefore no keepalive move to make: the thing the cache",
     "clock exists to manage is not exposed here. Pricing it would not make the clock work; it would",
     "make it act on a lever that does not connect to anything.",
     "",

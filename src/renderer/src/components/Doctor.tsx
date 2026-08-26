@@ -37,7 +37,7 @@ export function Doctor(): React.JSX.Element {
       <header className="panel-head">
         <div>
           <h2>Doctor</h2>
-          <p className="panel-sub">What agentyard can see, and what it cannot.</p>
+          <p className="panel-sub">What Multi Agent Controller can see, and what it cannot.</p>
         </div>
         <button className="btn" disabled={running} onClick={() => void run()}>
           {running ? 'Checking…' : 'Re-check'}
@@ -152,7 +152,7 @@ export function Doctor(): React.JSX.Element {
 
           <p className="note">
             <strong>On quota readings.</strong> Claude Code has no free live usage probe: the slash
-            command spends a real turn, so agentyard reads the CLI&rsquo;s own cache instead and shows
+            command spends a real turn, so it reads the CLI&rsquo;s own cache instead and shows
             you how old it is. An old reading is reported as <em>unknown</em> rather than as a number,
             because a stale percentage makes the compaction reserve look satisfied when it is not.
           </p>

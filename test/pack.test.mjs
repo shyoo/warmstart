@@ -35,6 +35,9 @@ import {
  */
 
 const OUT = join(REPO, 'release')
+// ⛔ electron-builder's `productName`, not the npm package name: it is what names the executable,
+// the .app bundle and its Resources directory on every platform.
+const PRODUCT = 'Multi Agent Controller'
 const dataDir = mkdtempSync(join(tmpdir(), 'agentyard-pack-'))
 let app = null
 
@@ -54,9 +57,9 @@ function unpackedDir() {
 
 /** The executable inside it. */
 function binaryIn(dir) {
-  if (process.platform === 'win32') return join(dir, 'agentyard.exe')
-  if (process.platform === 'darwin') return join(dir, 'agentyard.app', 'Contents', 'MacOS', 'agentyard')
-  return join(dir, 'agentyard')
+  if (process.platform === 'win32') return join(dir, `${PRODUCT}.exe`)
+  if (process.platform === 'darwin') return join(dir, `${PRODUCT}.app`, 'Contents', 'MacOS', PRODUCT)
+  return join(dir, PRODUCT)
 }
 
 function findFiles(dir, predicate, depth = 0) {
@@ -89,7 +92,7 @@ try {
   const binary = binaryIn(dir)
   check('the executable is where the packaging config says', existsSync(binary), binary)
 
-  const resources = join(dir, process.platform === 'darwin' ? 'agentyard.app/Contents/Resources' : 'resources')
+  const resources = join(dir, process.platform === 'darwin' ? `${PRODUCT}.app/Contents/Resources` : 'resources')
   check('the app is archived into an asar', existsSync(join(resources, 'app.asar')))
 
   // ---------------------------------------------------------------- natives
@@ -115,7 +118,7 @@ try {
   // ---------------------------------------------------------------- it runs
   section('the packaged app starts its own daemon')
   // ⛔ A private data directory. This must not touch the developer's real fleet, and the packaged
-  // app reads AGENTYARD_DATA_DIR exactly as the development build does - which is itself the thing
+  // app reads MULTI_AGENT_CONTROLLER_DATA_DIR exactly as the development build does - which is itself the thing
   // being checked.
   // ⛔ Declared before the app starts, because adapters are read once at daemon boot.
   //
@@ -131,7 +134,7 @@ try {
   // A check that cannot say why it failed costs a CI round trip every time it goes red.
   const appOutput = []
   app = spawn(binary, [], {
-    env: { ...process.env, AGENTYARD_DATA_DIR: dataDir },
+    env: { ...process.env, MULTI_AGENT_CONTROLLER_DATA_DIR: dataDir },
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true
   })
@@ -274,7 +277,7 @@ try {
   // ⛔ By pid, verified, and the whole tree. Never by image name - that takes out the developer's
   // editor and any agent window they had open, which happened for real during M2. And never a bare
   // pid: killTree re-reads the command line first, because a recycled pid points at a stranger.
-  killTree(app?.pid, 'agentyard')
+  killTree(app?.pid, PRODUCT)
   await wait(1000)
   try {
     rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 })

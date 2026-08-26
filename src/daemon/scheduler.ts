@@ -647,7 +647,7 @@ async function preempt(
     sendPrompt(
       session.id,
       `${budgetLine}Wrap up now. Commit anything that compiles on this branch, then call the ` +
-        'agentyard `handoff` tool with what you were doing, what is done, and the next step. ' +
+        '`handoff` tool with what you were doing, what is done, and the next step. ' +
         'Do not start new work.'
     )
   } catch (err) {
@@ -702,7 +702,7 @@ function promptFor(task: Task): string {
   markDelivered(outstanding.map((m) => m.id))
 
   parts.push(
-    'When the work is finished, call the agentyard MCP tool `task_complete` with a one-line summary. ' +
+    'When the work is finished, call the MCP tool `task_complete` with a one-line summary. ' +
       'If you need a decision from a person, call `request_human` rather than guessing.'
   )
   return parts.join('\n\n')

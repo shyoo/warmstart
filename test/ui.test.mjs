@@ -25,7 +25,7 @@ let socket = null
 
 try {
   app = spawn(electronBinary(), [REPO, `--remote-debugging-port=${PORT}`], {
-    env: { ...process.env, AGENTYARD_DATA_DIR: dataDir },
+    env: { ...process.env, MULTI_AGENT_CONTROLLER_DATA_DIR: dataDir },
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true
   })
@@ -34,7 +34,7 @@ try {
   const appOutput = []
   const record = (d) => {
     appOutput.push(String(d))
-    if (process.env.AGENTYARD_TEST_VERBOSE) process.stderr.write(`[app] ${d}`)
+    if (process.env.MULTI_AGENT_CONTROLLER_TEST_VERBOSE) process.stderr.write(`[app] ${d}`)
   }
   app.stdout.on('data', record)
   app.stderr.on('data', record)

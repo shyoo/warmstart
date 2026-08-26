@@ -150,6 +150,6 @@
     "Cache pricing: is it storage-per-token-hour on a subscription at all, or is caching simply not billed to a subscriber? Until this is known, cache.kind stays `unpriced`.",
     "Context windows are the published figures for each family, not read from the CLI - `agy models` reports ids and display names only.",
     "Whether a quota window exists at all, and over what period. /usage and /credits are slash commands; HANDOFF R9 measures whether print mode runs them for free.",
-    "Nothing here is metered: agy writes conversations as SQLite, so agentyard's transcript tailer reads nothing. See capabilities.meteredFromTranscript."
+    "Nothing here is metered: agy writes conversations as SQLite, so the transcript tailer reads nothing. See capabilities.meteredFromTranscript."
   ]
 }

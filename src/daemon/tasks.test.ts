@@ -71,7 +71,7 @@ describe('matchesPattern', () => {
 
 describe('branchNameFor', () => {
   it('names the branch after the task, never the workspace', () => {
-    expect(branchNameFor(12, 'Fix the dialog')).toBe('agentyard/t12-fix-the-dialog')
+    expect(branchNameFor(12, 'Fix the dialog')).toBe('multi-agent-controller/t12-fix-the-dialog')
   })
 
   it('is stable for the same task regardless of where it runs', () => {
@@ -79,6 +79,6 @@ describe('branchNameFor', () => {
   })
 
   it('survives a title made entirely of punctuation', () => {
-    expect(branchNameFor(3, '!!!')).toBe('agentyard/t3')
+    expect(branchNameFor(3, '!!!')).toBe('multi-agent-controller/t3')
   })
 })

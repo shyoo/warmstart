@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Multi Agent Controller">
+  <rect width="512" height="512" rx="114" fill="#0e1013"/>
+  <rect x="4" y="4" width="504" height="504" rx="110" fill="none" stroke="#2a3040" stroke-width="8"/>
+  <g fill="#1b2030">
+    <rect x="88" y="130" width="336" height="68" rx="34"/>
+    <rect x="88" y="222" width="336" height="68" rx="34"/>
+    <rect x="88" y="314" width="336" height="68" rx="34"/>
+  </g>
+  <rect x="88"  y="130" width="212" height="68" rx="34" fill="#7aa2f7"/>
+  <rect x="152" y="222" width="272" height="68" rx="34" fill="#e6e8ec"/>
+  <rect x="88"  y="314" width="130" height="68" rx="34" fill="#3d5a94"/>
+</svg>

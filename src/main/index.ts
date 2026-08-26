@@ -96,7 +96,7 @@ app.whenReady().then(() => {
   ipcMain.handle(
     IPC.appInfo,
     (): AppInfo => ({
-      name: 'agentyard',
+      name: 'Multi Agent Controller',
       version: app.getVersion(),
       platform: process.platform
     })

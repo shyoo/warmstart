@@ -7,6 +7,7 @@ import type { AgentAdapter, IdentityProbe, SpawnPlan, SpawnRequest } from './typ
 import { asRecord, num, textBlocks, type StreamEvent, type StreamUsage } from '../stream.js'
 import { log } from '../log.js'
 import { launchArgs, launchable, which } from '../which.js'
+import { APPROVE_TOOL } from '../mcpconfig.js'
 
 const run = promisify(execFile)
 
@@ -337,7 +338,7 @@ export const claudeCode: AgentAdapter = {
       if (req.transport === 'stream') {
         // ⚠️ Non-interactive only. A PTY session has no such channel, which is why §9.2 has two
         // transports rather than one and a screen parser.
-        args.push('--permission-prompt-tool', 'mcp__agentyard__approve')
+        args.push('--permission-prompt-tool', APPROVE_TOOL)
       }
     }
     if (req.transport === 'stream') {
