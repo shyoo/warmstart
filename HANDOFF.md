@@ -8,14 +8,18 @@ for, untested.
 if you add a line, find the one it obsoletes and cut it in the same edit. Finished work moves to
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
-**Baseline (2026-08-26, M6 + CI):** `npm run typecheck` clean · `npm run build` clean · `npm test`
-126/126 · `npm run test:daemon` 97/97 · `npm run test:ui` 21/21 · `npm run test:pack` 14/14 · L4
-(opt-in) landed a real agent commit on origin/main. Electron 44.0.0, electron-builder 26.15.3, 0 npm
-vulnerabilities. CLIs on this machine: claude 2.1.223 - agy 1.1.20 - codex 0.149.1.
+**Baseline (2026-08-26, M6 + a green CI matrix):** `npm run typecheck` clean · `npm run build` clean ·
+`npm test` 126/126 · `npm run test:daemon` 100/100 · `npm run test:ui` 21/21 · `npm run test:pack`
+15/15 · L4 (opt-in) landed a real agent commit on origin/main. Electron 44.0.0, electron-builder
+26.15.3, 0 npm vulnerabilities. CLIs on this machine: claude 2.1.223 - agy 1.1.20 - codex 0.149.1.
 
-⚠️ **On a machine with no agent CLI the daemon suite reports 97 passed and 5 skipped**, with a stated
+⚠️ **On a machine with no agent CLI the daemon suite reports 95 passed and 6 skipped**, with a stated
 reason each. That is the CI state, and it is why `summary()` prints skips beside the result instead of
-folding them in.
+folding them in. Simulated locally with a PATH of System32, node and git and an empty `HOME` — worth
+doing before pushing, since it is what found several of the failures below.
+
+**All ten CI jobs pass on all three platforms** (run 32940163319, 2026-08-26). ⚠️ That is the first
+time macOS or Linux has run any of this. What it does *not* cover is below.
 
 ---
 
@@ -203,16 +207,59 @@ and is let through, or Antigravity's keyring-backed workers would be permanently
 **`isInstalled()` is a separate hard gate** on every candidate — a filesystem lookup, so it costs
 nothing every tick, unlike `detect()`.
 
-⚠️ **The CI matrix has not been observed passing yet.** It was pushed and not watched. macOS and Linux
-have still never been run by anybody, so treat a red square there as the expected first result rather
-than a regression.
+### What the first runs actually found (2026-08-26)
+
+**All ten jobs green on run 32940163319.** macOS and Linux have now run this code. It took five runs,
+and none of the failures were the POSIX bugs the matrix was written to catch — the first three were
+CI asserting things about the author's machine:
+
+1. **Electron 44 has no postinstall.** It ships `install-electron` as a bin and leaves the ~110MB
+   download to the caller. README and AGENTS.md both blamed "your npm blocked the postinstall", which
+   sent people looking for a setting that does not exist. `scripts/ensure-electron.mjs` retries
+   (`@electron/get` does not) and reports whether the release host is reachable, because undici hides
+   the cause behind a bare `TypeError: fetch failed`. CI caches the runtime so one job downloads it.
+2. **Unit tests that needed a CLI installed.** `plan()` resolves the command through `which()` before
+   building an argv, so every argv assertion required an agent CLI. Three threw. The fourth — no
+   adapter leaks a vendor API key into a commissioned session — *caught the throw, `continue`d past
+   all three adapters, and reported green having asserted nothing.* A PATH stub fixes both. ⛔ The
+   stub proves nothing about the CLIs and is not meant to; the argv is a property of this repository.
+3. **Three suites asserting where they ran.** A dispatch refusal that matched only one of three
+   sentences; a reserve check counting `=== 2`, true only with a `~/.claude` to adopt; and adapter
+   *counts*, which quietly asserted nobody ever declares an external adapter — the thing M6 allows.
+4. **`electronBinary()` could never have worked on macOS.** It guessed `dist/electron.exe` or
+   `dist/electron`; macOS is `dist/Electron.app/Contents/MacOS/Electron`. It reads `path.txt` now.
+5. **Linux runners restrict unprivileged user namespaces**, so Chromium's sandbox cannot start and
+   the window never opens. ⛔ Fixed with a sysctl on the runner, not `--no-sandbox` on the app, which
+   would turn the square green by testing a configuration nobody runs.
+
+⛔ **And one real product bug, which only Linux could show.** `handleExit` dropped the session from
+`live`, `emitData` returned early without an entry, and `backscroll` read `live` — so a process that
+wrote and exited in the same tick lost **every byte**, and anything asking afterwards got `''`.
+Windows never showed it because conpty delivers data before the exit. ⚠️ The discarded output is the
+output most worth keeping: a `login` session that fails prints its reason and exits, and the pane went
+blank at that moment. Sessions now retain their last screen after exiting, bounded on both axes.
+
+⚠️ The first regression check written for that bug **passed against the unfixed daemon.** It waited
+for `state === 'running'` and there is no such state (`starting | live | idle | closed | failed`), so
+it was true on the first iteration. Reverting the fix is what exposed it, and is how it is verified
+now: 0 bytes without, 91 with. ⛔ A regression test nobody has watched fail is a comment.
+
+**Two suites need a certainly-installed command** — does the PTY native load, does an exited session
+keep its output — and no *agent* CLI qualifies. `writeProbeAdapter()` in the harness declares an M6
+external adapter pointing at `cmd`/`sh`: it echoes one line and exits, and the generic driver cannot
+grant it `mcp`, `metering` or `mintsSessionId`, so it cannot become anything but a probe.
+
+⚠️ Still unproven on macOS and Linux: everything that needs a real agent CLI. The runners have none,
+so those checks skip there exactly as they do on a bare developer machine.
 
 ## Next
 
 M0–M6 are done. What is left is not a milestone but a list, in the order it would pay off:
 
-1. **Watch the first CI run on macOS and Linux, and fix what it finds.** Everything is written for
-   them; nothing has started once. This is now automated rather than aspirational.
+1. **Run the suites on macOS or Linux with an agent CLI installed.** CI proved the three platforms
+   build, start, package and schedule; it cannot prove a single thing about spawning a real agent
+   there, because a runner has no CLI and may not sign in to one. Every adapter capability in
+   `docs/adapters.md` was measured on Windows only.
 2. **The measurement runs still owed** — R2/R3 unblock the compaction reserve, which is the largest
    piece of the cost model still reporting `unknown` on a real worker.
 3. **Signing and notarisation**, without which the installers warn or refuse.
