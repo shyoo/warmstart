@@ -1,8 +1,8 @@
 import { spawn } from 'node:child_process'
-import { existsSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { REPO, check, killTree, section, summary, wait } from './lib/harness.mjs'
+import { REPO, check, killTree, section, skip, summary, wait } from './lib/harness.mjs'
 
 /**
  * L5: the packaged application.
@@ -64,6 +64,43 @@ function findFiles(dir, predicate, depth = 0) {
   return found
 }
 
+/**
+ * A declarative adapter pointing at the OS command processor.
+ *
+ * ⛔ It is a *probe*, not an agent, and could not become one: M6's generic driver reports unknown
+ * for identity and quota, meters nothing, and cannot be granted `mcp` or `mintsSessionId` from a
+ * file. It exists so the native-module check has something certain to open a pseudo-terminal on.
+ */
+const PROBE_ID = 'pack-pty-probe'
+const PROBE_COMMAND = process.platform === 'win32' ? 'cmd' : 'sh'
+const PROBE_ARGV =
+  process.platform === 'win32'
+    ? ['/d', '/c', 'echo agentyard-pty-probe']
+    : ['-c', 'echo agentyard-pty-probe']
+
+function writeProbeAdapter(root) {
+  const dir = join(root, 'adapters')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(
+    join(dir, `${PROBE_ID}.json`),
+    `${JSON.stringify(
+      {
+        schema_version: 1,
+        id: PROBE_ID,
+        label: 'packaging probe (not an agent)',
+        command: PROBE_COMMAND,
+        // ⚠️ `--version` is the default and means nothing to a shell. Detection runs this, so it has
+        // to be something the command actually answers.
+        version_args: process.platform === 'win32' ? ['/d', '/c', 'ver'] : ['-c', 'echo sh'],
+        cost_model_id: 'anthropic.subscription.2026-08'
+      },
+      null,
+      2
+    )}
+`
+  )
+}
+
 try {
   section('the package exists')
   const dir = unpackedDir()
@@ -105,6 +142,15 @@ try {
   // ⛔ A private data directory. This must not touch the developer's real fleet, and the packaged
   // app reads AGENTYARD_DATA_DIR exactly as the development build does - which is itself the thing
   // being checked.
+  // ⛔ Declared before the app starts, because adapters are read once at daemon boot.
+  //
+  // Two checks below need a CLI that is certainly installed, and no *agent* CLI qualifies: CI has
+  // none, and writing them as "skip if absent" would retire the single most valuable check in this
+  // suite — whether the unpacked native actually loads — on every machine that has not already got
+  // an agent set up. The OS command processor is always there, so M6's declarative adapter is
+  // pointed at it. Nothing here spends, signs in, or resembles an agent: it echoes and exits.
+  writeProbeAdapter(dataDir)
+
   app = spawn(binary, [], {
     env: { ...process.env, AGENTYARD_DATA_DIR: dataDir },
     stdio: 'ignore',
@@ -149,23 +195,47 @@ try {
     )
 
     const adapters = await rpc('adapter.list')
+    const ids = (adapters.result ?? []).map((a) => a.id)
+    // ⛔ By name, not by count. The claim is that the three compiled-in adapters survived being put
+    // inside an asar; a length check also silently asserted that nobody ever declares a fourth, and
+    // the probe adapter below is a fourth.
     check(
-      'every adapter survived packaging',
-      (adapters.result ?? []).length === 3,
-      (adapters.result ?? []).map((a) => a.id).join(', ')
+      'every built-in adapter survived packaging',
+      ['claude-code', 'antigravity-cli', 'openai-compatible'].every((id) => ids.includes(id)),
+      ids.join(', ')
     )
 
     const detect = await rpc('adapter.detect')
+    const detected = detect.result ?? []
+    // ⛔ The property is *PATH survives packaging*, not *this machine has an agent installed*. They
+    // are not the same claim, and asserting the second is how this failed on a runner while the app
+    // was fine. A packaged GUI app really can be handed a stripped environment — that is the failure
+    // worth catching — so it is checked against a command every machine has.
     check(
-      'a packaged app can still find the CLIs on PATH',
-      (detect.result ?? []).some((d) => d.found),
-      (detect.result ?? []).map((d) => `${d.adapterId}:${d.found ? d.version : 'no'}`).join(' ')
+      'a packaged app still resolves commands on PATH',
+      detected.find((d) => d.adapterId === PROBE_ID)?.found === true,
+      detected.find((d) => d.adapterId === PROBE_ID)?.error ?? `${PROBE_COMMAND} resolved`
     )
+    // And the agent CLIs, where there are any. ⚠️ Reported separately so a green CI run is never
+    // read as "the packaged app found Claude Code".
+    const agents = detected.filter((d) => d.adapterId !== PROBE_ID)
+    if (agents.some((d) => d.found)) {
+      check(
+        'and it finds the agent CLIs this machine has',
+        true,
+        agents.map((d) => `${d.adapterId}:${d.found ? d.version : 'no'}`).join(' ')
+      )
+    } else {
+      skip('and it finds the agent CLIs this machine has', 'no agent CLI is installed here')
+    }
 
     // ---------------------------------------------------------------- the native, for real
     section('node-pty, from inside the package')
     const worker = await rpc('worker.create', {
-      adapterId: 'claude-code',
+      // ⛔ The probe adapter, not claude-code. This used to spawn `claude --version`, which made the
+      // packaging check that matters most conditional on the developer having an agent installed —
+      // and it is CI, with nothing installed, that this check exists to serve.
+      adapterId: PROBE_ID,
       label: 'pack test',
       // ⛔ Closed to work at creation. This suite must not be able to dispatch anything.
       enabled: false
@@ -175,9 +245,9 @@ try {
       cwd: REPO,
       transport: 'pty',
       purpose: 'login',
-      // `--version` exits immediately and spends nothing. All that is being proved here is that the
-      // native module loaded and a pseudo-terminal opened at all.
-      argv: ['--version'],
+      // Echoes one line and exits. All that is being proved here is that the native module loaded
+      // and a pseudo-terminal opened at all - nothing about any agent.
+      argv: PROBE_ARGV,
       cols: 80,
       rows: 24
     })

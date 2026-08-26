@@ -63,7 +63,13 @@ try {
 
   section('shell')
   await waitFor(() => evaluate('!!document.querySelector(".statusbar")'), 'the shell to render')
-  check('the daemon connected', await evaluate('!!document.querySelector(".dot--ok")'))
+  // ⚠️ Polled, not read once. The shell renders before the daemon has finished starting, so a bare
+  // read here asserts "the daemon connected *within the time this machine took to paint*" - true on
+  // a warm development box, false on a cold runner, and it failed on all three in CI. Everything
+  // after this seeds through the app's own bridge, so an early read also turned one honest race into
+  // a second failure reading `orchestratord is not connected`.
+  const connected = await until(() => evaluate('!!document.querySelector(".dot--ok")'))
+  check('the daemon connected', connected, connected ? '' : 'no .dot--ok within 30s')
   const nav = await evaluate('[...document.querySelectorAll(".nav-item")].map(b => b.innerText.trim())')
   check('every section is reachable', nav.length >= 5, nav.join(' | '))
 
@@ -205,6 +211,16 @@ async function waitForPage() {
     }
   }
   throw new Error('the app did not expose a debugging target within 45s')
+}
+
+/** Poll until `fn` is truthy, and answer whether it ever was. ⛔ For a check: never throws. */
+async function until(fn, ms = 30_000) {
+  const deadline = Date.now() + ms
+  while (Date.now() < deadline) {
+    if (await fn()) return true
+    await wait(500)
+  }
+  return false
 }
 
 async function waitFor(fn, what) {

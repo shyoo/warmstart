@@ -269,8 +269,15 @@ try {
   const tick = await daemon.rpc('scheduler.tick')
   check('the scheduler tick reports what it did', typeof tick.note === 'string', tick.note)
   check(
-    'it refuses to dispatch to an account nobody signed into',
-    tick.dispatched === 0 && /not signed in|disabled/.test(tick.note),
+    // ⚠️ Three refusals, not one. "Not signed in" is the interesting case, but a bare CI runner never
+    // reaches it: the not-installed gate fires first and holds with a different sentence. Matching
+    // only the sentence this machine happens to produce is how a suite starts asserting where it is
+    // running rather than what the code does — CI found exactly that here.
+    //
+    // ⛔ What must hold on every machine is `dispatched === 0` **with a reason from the closed set**.
+    // A hold for some fourth reason is not the same result, and is not allowed to pass quietly.
+    'it refuses to dispatch to a seat that is not installed, not signed in, or disabled',
+    tick.dispatched === 0 && /not installed|not signed in|disabled/.test(tick.note),
     'which is also what makes this suite unable to spend money'
   )
 
@@ -294,7 +301,14 @@ try {
   check('the objective is a unit vector', Math.abs(
     cost.objective.cost + cost.objective.velocity + cost.objective.quality - 1
   ) < 0.001)
-  check('every worker gets a reserve verdict', cost.reserves.length === 2)
+  // ⛔ Against the fleet doctor sees, never a literal. This said `=== 2`, which was true only on a
+  // machine with a `~/.claude` to adopt read-only; a runner commissions one worker and the check
+  // failed for having nothing to fail about. The claim is *every* worker, so count the workers.
+  check(
+    'every worker gets a reserve verdict',
+    cost.reserves.length === doctor.workers.length,
+    `${cost.reserves.length} reserve(s) for ${doctor.workers.length} worker(s)`
+  )
   check(
     'a worker holding nothing needs no reserve',
     cost.reserves.every((r) => r.liveSessions > 0 || r.requiredTokens === 0),
