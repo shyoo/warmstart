@@ -1,8 +1,20 @@
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { REPO, check, killTree, section, skip, summary, wait } from './lib/harness.mjs'
+import {
+  PROBE_ARGV,
+  PROBE_COMMAND,
+  PROBE_ID,
+  REPO,
+  check,
+  killTree,
+  section,
+  skip,
+  summary,
+  wait,
+  writeProbeAdapter
+} from './lib/harness.mjs'
 
 /**
  * L5: the packaged application.
@@ -62,43 +74,6 @@ function findFiles(dir, predicate, depth = 0) {
     else if (predicate(name, full)) found.push(full)
   }
   return found
-}
-
-/**
- * A declarative adapter pointing at the OS command processor.
- *
- * ⛔ It is a *probe*, not an agent, and could not become one: M6's generic driver reports unknown
- * for identity and quota, meters nothing, and cannot be granted `mcp` or `mintsSessionId` from a
- * file. It exists so the native-module check has something certain to open a pseudo-terminal on.
- */
-const PROBE_ID = 'pack-pty-probe'
-const PROBE_COMMAND = process.platform === 'win32' ? 'cmd' : 'sh'
-const PROBE_ARGV =
-  process.platform === 'win32'
-    ? ['/d', '/c', 'echo agentyard-pty-probe']
-    : ['-c', 'echo agentyard-pty-probe']
-
-function writeProbeAdapter(root) {
-  const dir = join(root, 'adapters')
-  mkdirSync(dir, { recursive: true })
-  writeFileSync(
-    join(dir, `${PROBE_ID}.json`),
-    `${JSON.stringify(
-      {
-        schema_version: 1,
-        id: PROBE_ID,
-        label: 'packaging probe (not an agent)',
-        command: PROBE_COMMAND,
-        // ⚠️ `--version` is the default and means nothing to a shell. Detection runs this, so it has
-        // to be something the command actually answers.
-        version_args: process.platform === 'win32' ? ['/d', '/c', 'ver'] : ['-c', 'echo sh'],
-        cost_model_id: 'anthropic.subscription.2026-08'
-      },
-      null,
-      2
-    )}
-`
-  )
 }
 
 try {

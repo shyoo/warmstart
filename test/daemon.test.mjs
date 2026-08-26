@@ -6,6 +6,8 @@ import { createInterface } from 'node:readline'
 import { createRequire } from 'node:module'
 import {
   Daemon,
+  PROBE_ARGV,
+  PROBE_ID,
   REPO,
   check,
   destroyProject,
@@ -16,7 +18,8 @@ import {
   section,
   skip,
   summary,
-  wait
+  wait,
+  writeProbeAdapter
 } from './lib/harness.mjs'
 
 const require = createRequire(join(REPO, 'package.json'))
@@ -34,6 +37,8 @@ const daemon = new Daemon()
 const project = join(tmpdir(), `agentyard-fixture-${process.pid}`)
 
 try {
+  // ⚠️ Before the daemon starts: adapters are read once at boot. See `writeProbeAdapter`.
+  writeProbeAdapter(daemon.dataDir)
   await daemon.start()
 
   // ---------------------------------------------------------------- transport and auth
@@ -60,9 +65,13 @@ try {
   const detections = clis.all
   const claude = detections.find((d) => d.adapterId === 'claude-code')
 
+  // ⛔ The three built-ins by name, not a count. A length check also asserted that nobody ever
+  // declares an external adapter - which M6 exists to allow, and this suite now does itself.
   check(
     'every adapter answers detection rather than throwing',
-    detections.length === 3 && detections.every((d) => typeof d.found === 'boolean'),
+    ['claude-code', 'antigravity-cli', 'openai-compatible'].every((id) =>
+      detections.some((d) => d.adapterId === id)
+    ) && detections.every((d) => typeof d.found === 'boolean'),
     detections.map((d) => `${d.adapterId}:${d.found ? d.version : 'absent'}`).join(' ')
   )
   check(
@@ -201,6 +210,55 @@ try {
     check('a closed session leaves the live list', !liveSessions.some((s) => s.id === session.id))
   }
 
+  // ---------------------------------------------------------------- a session that exits at once
+  section('short-lived sessions')
+  // ⛔ A regression, and it was a real defect rather than a flaky check. `handleExit` dropped the
+  // entry from `live`, `emitData` returned early without one, and `backscroll` read `live` - so a
+  // process that wrote and exited in the same tick lost every byte, and anything asking afterwards
+  // got ''. Windows never showed it: conpty delivers data before the exit. Linux CI did.
+  //
+  // ⚠️ The output most worth keeping is exactly this shape: a `login` session that fails prints its
+  // reason and exits, and the pane went blank at that moment.
+  const probeWorker = await daemon.rpc('worker.create', {
+    adapterId: PROBE_ID,
+    label: 'exit probe',
+    // ⛔ Closed to work, like every worker this suite commissions.
+    enabled: false
+  })
+  const probeSession = await daemon.rpc('session.spawn', {
+    workerId: probeWorker.id,
+    cwd: tmpdir(),
+    transport: 'pty',
+    purpose: 'login',
+    argv: PROBE_ARGV,
+    cols: 80,
+    rows: 24
+  })
+  check('a probe session opens a pseudo-terminal', typeof probeSession.pid === 'number')
+
+  // ⛔ Both conditions, in one loop: the session must be *gone from the live list*, and the read must
+  // still return what it said. Checking only the second would pass on a session that had not exited
+  // yet - which is the state that already worked and is not the bug.
+  const goneBy = Date.now() + 20_000
+  let gone = false
+  let said = ''
+  while (Date.now() < goneBy) {
+    // ⛔ Absent from the list, full stop. `session.list` already excludes closed and failed, so
+    // that *is* "no longer live". Written as `state === 'running'` this was vacuous - there is no
+    // such state (`starting | live | idle | closed | failed`), so `gone` was true on the first
+    // iteration and the check passed against the unfixed daemon. Verified by reverting the fix and
+    // watching it fail.
+    gone = !(await daemon.rpc('session.list', {})).some((x) => x.id === probeSession.id)
+    said = (await daemon.rpc('session.backscroll', { id: probeSession.id })).data ?? ''
+    if (gone && said.length > 0) break
+    await wait(250)
+  }
+  check(
+    'a session that has already exited still knows what it said',
+    gone && said.includes('agentyard-pty-probe'),
+    gone ? `${said.length} bytes after exit` : 'the session never left the live list'
+  )
+
   // ---------------------------------------------------------------- projects and the DAG
   section('tasks')
   makeProject(project)
@@ -304,10 +362,13 @@ try {
   // ⛔ Against the fleet doctor sees, never a literal. This said `=== 2`, which was true only on a
   // machine with a `~/.claude` to adopt read-only; a runner commissions one worker and the check
   // failed for having nothing to fail about. The claim is *every* worker, so count the workers.
+  // ⚠️ Doctor asked again here, not reused from the fleet section. More workers have been
+  // commissioned since, and a stale count is the same class of mistake as the literal it replaced.
+  const fleetNow = await daemon.rpc('doctor.run')
   check(
     'every worker gets a reserve verdict',
-    cost.reserves.length === doctor.workers.length,
-    `${cost.reserves.length} reserve(s) for ${doctor.workers.length} worker(s)`
+    cost.reserves.length === fleetNow.workers.length,
+    `${cost.reserves.length} reserve(s) for ${fleetNow.workers.length} worker(s)`
   )
   check(
     'a worker holding nothing needs no reserve',
@@ -348,9 +409,13 @@ try {
   section('multi-provider')
 
   const all = await daemon.rpc('adapter.list')
+  // ⚠️ At least the three built-ins, each with its verification level. An exact count would fail the
+  // moment anyone declares an external adapter, which is a supported thing to do.
   check(
     'three adapters are registered',
-    all.length === 3,
+    ['claude-code', 'antigravity-cli', 'openai-compatible'].every((id) =>
+      all.some((a) => a.id === id)
+    ),
     all.map((a) => `${a.id} (${a.verification.level})`).join(', ')
   )
 

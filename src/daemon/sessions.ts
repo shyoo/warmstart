@@ -54,6 +54,36 @@ interface Live {
 
 const live = new Map<string, Live>()
 
+/**
+ * The last screen of a session that has already exited.
+ *
+ * ⛔ Without this a short-lived session loses its output completely. `handleExit` drops the entry
+ * from `live`, `emitData` returns early when there is no entry, and `backscroll` reads `live` - so
+ * bytes arriving in the same tick as the exit were discarded, and anything a UI asked for afterwards
+ * came back empty. Windows only ever passed because conpty happens to deliver data before the exit.
+ *
+ * ⚠️ This is exactly the output a person most needs to read: a `login` session that fails prints its
+ * reason and exits, and the pane went blank at precisely that moment. Found by CI on Linux, where a
+ * command that echoes one line and exits produced zero bytes.
+ *
+ * Bounded on both axes - the same byte cap as a live session, and a fixed number of sessions, oldest
+ * dropped first - because this is a convenience for reading, not a record. The transcript is the
+ * record.
+ */
+const finished = new Map<string, string>()
+const FINISHED_SESSIONS = 32
+
+function retainScrollback(id: string, text: string): void {
+  // Re-inserting moves it to the end, which is what makes the eviction below oldest-first.
+  finished.delete(id)
+  finished.set(id, text.length > SCROLLBACK_BYTES ? text.slice(-SCROLLBACK_BYTES) : text)
+  while (finished.size > FINISHED_SESSIONS) {
+    const oldest = finished.keys().next().value
+    if (oldest === undefined) break
+    finished.delete(oldest)
+  }
+}
+
 export interface SessionEvents {
   onChange(session: Session): void
   onData(sessionId: string, data: string): void
@@ -239,7 +269,13 @@ export function spawnSession(opts: SpawnOptions): Session {
 
   const emitData = (data: string) => {
     const entry = live.get(id)
-    if (!entry) return
+    if (!entry) {
+      // ⚠️ After the exit, not before it. node-pty can deliver the final write after `onExit` on
+      // Linux, and this used to `return` - throwing away the last thing the process said.
+      retainScrollback(id, (finished.get(id) ?? '') + data)
+      events.onData(id, data)
+      return
+    }
     if (entry.parser) {
       const listeners = streamListeners.get(id)
       for (const event of entry.parser.push(data)) {
@@ -256,6 +292,8 @@ export function spawnSession(opts: SpawnOptions): Session {
   }
 
   const handleExit = (exitCode: number | null) => {
+    const exiting = live.get(id)
+    if (exiting) retainScrollback(id, exiting.scrollback.join(''))
     live.delete(id)
     removeMcpConfig(id)
     for (const listener of endListeners.get(id) ?? []) listener(exitCode)
@@ -453,7 +491,10 @@ export function resizeSession(id: string, cols: number, rows_: number): void {
 }
 
 export function backscroll(id: string): string {
-  return live.get(id)?.scrollback.join('') ?? ''
+  const entry = live.get(id)
+  if (entry) return entry.scrollback.join('')
+  // ⛔ Falls back to what the session said before it exited, rather than to ''. See `finished`.
+  return finished.get(id) ?? ''
 }
 
 export function closeSession(id: string): void {

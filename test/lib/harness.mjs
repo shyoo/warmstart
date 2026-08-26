@@ -288,6 +288,49 @@ export class Daemon {
   }
 }
 
+// ------------------------------------------------------------------ a CLI that is always installed
+
+/**
+ * A declarative adapter (M6) pointing at the OS command processor.
+ *
+ * ⛔ A probe, not an agent, and it could not become one: the generic driver reports unknown for
+ * identity and quota, meters nothing, and cannot be granted `mcp` or `mintsSessionId` from a file.
+ * It exists so that checks needing a *certainly present* command - does the PTY native load, does a
+ * session that exits immediately keep its output - do not quietly become "skipped unless you have an
+ * agent installed", which is every CI runner and every new contributor.
+ *
+ * ⛔ It spends nothing and resembles nothing: it echoes one line and exits.
+ */
+export const PROBE_ID = 'pack-pty-probe'
+export const PROBE_COMMAND = process.platform === 'win32' ? 'cmd' : 'sh'
+export const PROBE_ARGV =
+  process.platform === 'win32'
+    ? ['/d', '/c', 'echo agentyard-pty-probe']
+    : ['-c', 'echo agentyard-pty-probe']
+
+/** ⚠️ Must be written before the daemon starts: adapters are read once at boot. */
+export function writeProbeAdapter(root) {
+  const dir = join(root, 'adapters')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(
+    join(dir, `${PROBE_ID}.json`),
+    `${JSON.stringify(
+      {
+        schema_version: 1,
+        id: PROBE_ID,
+        label: 'test probe (not an agent)',
+        command: PROBE_COMMAND,
+        // ⚠️ `--version` is the default and means nothing to a shell. Detection runs this, so it has
+        // to be something the command actually answers.
+        version_args: process.platform === 'win32' ? ['/d', '/c', 'ver'] : ['-c', 'echo sh'],
+        cost_model_id: 'anthropic.subscription.2026-08'
+      },
+      null,
+      2
+    )}\n`
+  )
+}
+
 // ---------------------------------------------------------------------------- a throwaway repo
 
 const git = (cwd, ...args) =>
