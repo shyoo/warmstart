@@ -156,9 +156,19 @@ export async function refreshUsage(workerId: string): Promise<DatedQuota> {
 
 const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
+/**
+ * Record a reading.
+ *
+ * ⛔ `insert or replace`, keyed on (worker, window, `sampled_at`), because `sampled_at` is the
+ * *vendor's* fetch time and not ours. Reading a cache the CLI has not refreshed since the last poll
+ * produces a row identical to the one already there, and a plain insert kept both - which is what
+ * made the fleet strip grow a second `session`/`weekly` pair every five minutes and a third five
+ * minutes after that. Re-reading the same reading is not a new sample.
+ */
 function store(s: QuotaSnapshot): void {
   const stmt = db().prepare(
-    `insert into quota_samples (worker_id, window_id, label, percent, resets_at, source, error, sampled_at)
+    `insert or replace into quota_samples
+       (worker_id, window_id, label, percent, resets_at, source, error, sampled_at)
      values (?, ?, ?, ?, ?, ?, ?, ?)`
   )
   if (s.windows.length === 0) {
@@ -196,11 +206,20 @@ export function lastQuota(workerId: string): DatedQuota | null {
   const first = list[0]
   if (!first) return null
 
+  // ⚠️ Deduplicated here as well as in the index. A database written by an older build carries the
+  // duplicates the unique index now prevents, and this is what a person sees - one row per window is
+  // a claim the reader can check, and a strip showing `weekly` three times is one they cannot.
+  const byWindow = new Map<string, SampleRow>()
+  for (const r of list) if (r.window_id !== '' && !byWindow.has(r.window_id)) byWindow.set(r.window_id, r)
+
   return decorate({
     workerId,
-    windows: list
-      .filter((r) => r.window_id !== '')
-      .map((r) => ({ id: r.window_id, label: r.label, percent: r.percent, resetsAt: r.resets_at })),
+    windows: [...byWindow.values()].map((r) => ({
+      id: r.window_id,
+      label: r.label,
+      percent: r.percent,
+      resetsAt: r.resets_at
+    })),
     sampledAt: first.sampled_at,
     source: first.source as QuotaSnapshot['source'],
     ...(first.error ? { error: first.error } : {})

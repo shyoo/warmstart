@@ -1,7 +1,28 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { Project, Run, Task, TaskMessage } from '@shared/tasks'
-import { rpc, useDaemonEvents } from '../lib/daemon'
-import { tokens } from '../lib/format'
+import type { Session } from '@shared/protocol'
+import { rpc, useDaemonEvents, useNow, type FleetEntry } from '../lib/daemon'
+import { duration, tokens, when } from '../lib/format'
+
+type TaskDetailData = {
+  task: Task
+  messages: TaskMessage[]
+  runs: Run[]
+  sessions: Session[]
+  activity: Array<{ text: string; ts: number }>
+}
+
+/**
+ * How long this task has been worked on, or was worked on.
+ *
+ * ⛔ Measured from the first **run**, not from `createdAt`. When somebody typed a task in is not how
+ * long it took; a task filed on Monday and dispatched on Wednesday did not take two days. A task
+ * that has never run has no duration, and says so rather than showing zero.
+ */
+function elapsed(task: Task, now: number): string {
+  if (!task.firstRunAt) return '—'
+  return duration((task.lastRunEndedAt ?? now) - task.firstRunAt)
+}
 
 /**
  * The task table.
@@ -17,6 +38,7 @@ import { tokens } from '../lib/format'
 
 const STATUS_TONE: Record<string, string> = {
   running: 'state-running',
+  assigned: 'state-running',
   ready: 'state-ok',
   completed: 'state-ok',
   failed: 'state-danger',
@@ -30,19 +52,76 @@ const STATUS_TONE: Record<string, string> = {
   cancelled: 'state-idle'
 }
 
+/**
+ * What a status is called where a person can see it.
+ *
+ * ⛔ Renamed here, not in the domain. `assigned` means something precise to the scheduler and to
+ * cancel.ts, and changing it there to suit a table would be the tail wagging the dog. But it is the
+ * state a task is in while a workspace is being claimed, a branch checked out and the project's
+ * prepare hook run — which is *dispatching*, and is the part of the wait that most needs a name.
+ */
+const STATUS_LABEL: Record<string, string> = { assigned: 'dispatching' }
+
+/**
+ * Statuses where something is happening and the next change arrives on its own.
+ *
+ * ⚠️ `ready` is in here, and that is the whole point of the list. A freshly filed task sits at
+ * `ready` for up to one scheduler tick before anything moves, and rendered as a flat word beside
+ * `completed` and `failed` it reads as a resting state — as though the operator were the one being
+ * waited on. They are not: it is queued, and the dots say so.
+ */
+const IN_FLIGHT = new Set(['ready', 'scheduled', 'assigned', 'running', 'cancelling'])
+
+/** Three dots that say the fleet is doing something, for a row whose next event arrives by itself. */
+function Working(): React.JSX.Element {
+  return (
+    <span className="working" aria-hidden>
+      <i />
+      <i />
+      <i />
+    </span>
+  )
+}
+
+/**
+ * Who is on this task, resolved to a name.
+ *
+ * ⛔ `assignee` holds a worker **id** — a uuid, which is the correct thing to store and useless to
+ * read. The two reserved values are not worker ids at all and must not be looked up as though they
+ * were, or a task waiting on a person renders as a missing account.
+ */
+function assigneeLabel(task: Task, fleet: FleetEntry[]): string {
+  if (!task.assignee) return '—'
+  if (task.assignee === 'human') return 'you'
+  if (task.assignee === 'controller') return 'controller'
+  return fleet.find((f) => f.worker.id === task.assignee)?.worker.label ?? task.assignee.slice(0, 8)
+}
+
 export function Tasks({
   projects,
-  projectId
+  projectId,
+  fleet
 }: {
   projects: Project[]
   /** When set, this list is one project's and the creation form does not offer to change it. */
   projectId?: string
+  /** Only so a worker id can be drawn as the name of an account. */
+  fleet: FleetEntry[]
 }): React.JSX.Element {
   const [tasks, setTasks] = useState<Task[]>([])
   const [selected, setSelected] = useState<string | null>(null)
-  const [detail, setDetail] = useState<{ task: Task; messages: TaskMessage[]; runs: Run[] } | null>(null)
+  const [detail, setDetail] = useState<TaskDetailData | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
+  /**
+   * The live tail, per task.
+   *
+   * ⛔ Kept here rather than inside the detail pane, and appended from the event stream rather than
+   * re-fetched. A task's own list refreshes on every `task.changed`, and a pane that rebuilt its tail
+   * from each fetch would flicker back to whatever the daemon happened to hold at that instant.
+   */
+  const [activity, setActivity] = useState<Record<string, Array<{ text: string; ts: number }>>>({})
+  const now = useNow(1000)
 
   const refresh = useCallback(async () => {
     setTasks(await rpc('task.list', projectId ? { projectId } : {}))
@@ -57,11 +136,26 @@ export function Tasks({
       setDetail(null)
       return
     }
-    void rpc('task.get', { id: selected }).then(setDetail)
+    void rpc('task.get', { id: selected }).then((got) => {
+      setDetail(got)
+      // Seed the tail once from whatever the daemon is holding, so opening a task that is already
+      // running does not start from a blank pane. Events take over from here.
+      if (got && got.activity.length > 0) {
+        setActivity((prev) => (prev[got.task.id]?.length ? prev : { ...prev, [got.task.id]: got.activity }))
+      }
+    })
   }, [selected, tasks])
 
   useDaemonEvents((event) => {
     if (event.type === 'task.changed' || event.type === 'run.changed') void refresh()
+    if (event.type === 'task.activity') {
+      setActivity((prev) => {
+        // ⚠️ Bounded here as well as in the daemon. This is agent output arriving as fast as a model
+        // can produce it, and an unbounded array in a React state is a memory leak with a pretty UI.
+        const tail = [...(prev[event.taskId] ?? []), { text: event.text, ts: event.ts }].slice(-40)
+        return { ...prev, [event.taskId]: tail }
+      })
+    }
   })
 
   const act = async (fn: () => Promise<unknown>) => {
@@ -126,9 +220,18 @@ export function Tasks({
               <th className="tbl-num">#</th>
               <th>Title</th>
               <th>Status</th>
+              {/* ⛔ On the table, not only in the detail pane. Which account is spending on a task is
+                  the first thing an operator checks and the last thing that should need a click —
+                  and a routing mistake is invisible until it is shown here. */}
+              <th>Worker</th>
               <th>From</th>
               <th>Dep</th>
-              <th className="tbl-num">Spent</th>
+              {/* ⛔ How long, beside how much. A task showing only a token count answers "what did
+                  this cost" and not "is this taking too long", and the second is the question
+                  somebody watching a run actually has. */}
+              <th className="tbl-num">Took</th>
+              {/* ⚠️ "Spent" was read as money by everybody who saw it. These are tokens. */}
+              <th className="tbl-num">Tokens</th>
               <th />
             </tr>
           </thead>
@@ -148,8 +251,21 @@ export function Tasks({
                   {task.branch && <div className="tbl-path mono">{task.branch}</div>}
                 </td>
                 <td>
-                  <span className={`status ${STATUS_TONE[task.status] ?? ''}`}>{task.status}</span>
+                  <span className={`status ${STATUS_TONE[task.status] ?? ''}`}>
+                    {STATUS_LABEL[task.status] ?? task.status}
+                    {IN_FLIGHT.has(task.status) && <Working />}
+                  </span>
+                  {/* The scheduler's own reason, refreshed every tick it passes this task over. */}
+                  {task.holdReason && <div className="tbl-sub dim">{task.holdReason}</div>}
+                  {/* ⛔ One line only. The full tail is in the detail pane; a table that grew a
+                      paragraph per running row would stop being a table. */}
+                  {task.status === 'running' && activity[task.id]?.length ? (
+                    <div className="tbl-sub tbl-live">
+                      {activity[task.id]?.[activity[task.id]!.length - 1]?.text}
+                    </div>
+                  ) : null}
                 </td>
+                <td className={task.assignee ? '' : 'dim'}>{assigneeLabel(task, fleet)}</td>
                 <td className="dim">
                   {task.createdBy.kind === 'human'
                     ? 'you'
@@ -158,6 +274,7 @@ export function Tasks({
                       : 'agent'}
                 </td>
                 <td className="num dim">{task.dependsOn.length ? `←${task.dependsOn.length}` : '—'}</td>
+                <td className="num tbl-num dim">{elapsed(task, now)}</td>
                 <td className="num tbl-num">{tokens(task.budget.spentTokens || null)}</td>
                 <td className="tbl-actions" onClick={(e) => e.stopPropagation()}>
                   {CANCELLABLE.has(task.status) && (
@@ -202,6 +319,9 @@ export function Tasks({
       {detail && (
         <TaskDetail
           detail={detail}
+          activity={activity[detail.task.id] ?? []}
+          fleet={fleet}
+          now={now}
           refresh={async () => {
             setDetail(await rpc('task.get', { id: detail.task.id }))
           }}
@@ -221,87 +341,275 @@ const CANCELLABLE = new Set([
   'paused_quota'
 ])
 
+/**
+ * One task, opened.
+ *
+ * ⛔ Two columns, and which fact goes in which is the whole design. The **left** is the conversation
+ * — what was said, what is being said right now, and the box for saying the next thing; it is the
+ * only part a person reads in order. The **right** is the ledger — who is on it, on which session,
+ * for how long, at what cost. Everything on the right used to be either absent or spread through
+ * prose in the thread, which meant "which session is this running on?" was answerable only by
+ * reading a paragraph the daemon happened to have written.
+ */
 function TaskDetail({
   detail,
+  activity,
+  fleet,
+  now,
   refresh
 }: {
-  detail: { task: Task; messages: TaskMessage[]; runs: Run[] }
+  detail: TaskDetailData
+  /** The live tail, kept by the list so it survives a re-fetch of the detail. */
+  activity: Array<{ text: string; ts: number }>
+  fleet: FleetEntry[]
+  now: number
   refresh: () => Promise<void>
 }): React.JSX.Element {
-  const { task, messages, runs } = detail
+  const { task, messages, runs, sessions } = detail
+  const live = task.status === 'running' || task.status === 'assigned'
+
   return (
     <section className="detail">
       <h3>
         t{task.seq} · {task.title}
       </h3>
-      <div className="detail-meta num">
-        <span>{task.status}</span>
-        <span>priority {task.priority}</span>
-        {task.branch && <span className="mono">{task.branch}</span>}
-        <span>
-          mandate: {task.mandate.allowed.join(', ')} · depth {task.lineageDepth}/
-          {task.mandate.maxLineageDepth}
-        </span>
-      </div>
 
-      <div className="thread">
-        {messages.map((m) => (
-          <div key={m.id} className={`msg msg--${m.role}`}>
-            <span className="msg-role">{m.role}</span>
-            <span className="msg-text">{m.text}</span>
-          </div>
-        ))}
-      </div>
-
-      <Compose task={task} refresh={refresh} />
-
-      {runs.length > 0 && (
-        <table className="tbl">
-          <thead>
-            <tr>
-              <th>Run</th>
-              <th>Outcome</th>
-              <th className="tbl-num">In</th>
-              <th className="tbl-num">Out</th>
-              <th className="tbl-num">Cache read</th>
-              <th className="tbl-num">Cache write</th>
-              <th>Quota</th>
-            </tr>
-          </thead>
-          <tbody>
-            {runs.map((run) => (
-              <tr key={run.id}>
-                <td className="mono">{run.id.slice(0, 8)}</td>
-                <td className="dim">{run.outcome ?? 'running'}</td>
-                <td className="num tbl-num">{tokens(run.inputTokens)}</td>
-                <td className="num tbl-num">{tokens(run.outputTokens)}</td>
-                <td className="num tbl-num">{tokens(run.cacheReadTokens)}</td>
-                <td className="num tbl-num">{tokens(run.cacheWriteTokens)}</td>
-                <td>
-                  {run.quotaUnverified ? (
-                    <span className="warn" title="Dispatched without a trustworthy quota reading.">
-                      unverified
-                    </span>
-                  ) : (
-                    <span className="dim">checked</span>
-                  )}
-                </td>
-              </tr>
+      <div className="detail-grid">
+        <div className="detail-main">
+          <div className="thread">
+            {messages.length === 0 && <p className="dim">Nothing has been said on this task yet.</p>}
+            {messages.map((m) => (
+              <div key={m.id} className={`msg msg--${m.role}`}>
+                <span className="msg-role">{m.role}</span>
+                <span className="msg-text">{m.text}</span>
+              </div>
             ))}
-          </tbody>
-        </table>
-      )}
+          </div>
+
+          {/* ⛔ Below the thread and outside it. This is not part of the record — it is a window onto
+              a process that is still running, and mixing the two would make the thread unreadable
+              afterwards. It disappears when there is nothing running and nothing was said. */}
+          {(live || activity.length > 0) && (
+            <div className="peek">
+              <div className="peek-head">
+                <span>live</span>
+                {live && <Working />}
+                <span className="dim">
+                  what the agent is saying as it works — not kept, and not the record
+                </span>
+              </div>
+              <div className="peek-body">
+                {activity.length === 0 ? (
+                  <span className="dim">waiting for the agent’s first words…</span>
+                ) : (
+                  // ⚠️ Newest first in the DOM, drawn bottom-up by `column-reverse`. That is what
+                  // pins the view to the latest line without a scroll handler — a pane that had to
+                  // be scrolled by hand to see the current line is not a live view of anything.
+                  [...activity].reverse().map((line, i) => (
+                    <div key={`${line.ts}-${i}`} className="peek-line">
+                      {line.text}
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+
+          <Compose task={task} refresh={refresh} />
+        </div>
+
+        <aside className="detail-side">
+          <Fact label="status">
+            <span className={`status ${STATUS_TONE[task.status] ?? ''}`}>
+              {STATUS_LABEL[task.status] ?? task.status}
+              {IN_FLIGHT.has(task.status) && <Working />}
+            </span>
+          </Fact>
+          {task.holdReason && <Fact label="waiting on">{task.holdReason}</Fact>}
+          <Fact label="worker">{assigneeLabel(task, fleet)}</Fact>
+
+          {/* ⭐ The question this whole cost model exists to answer, and the one the UI could not.
+              A worker id says which account paid; only the session says whether the run continued
+              from a warm prefix at 0.1·C or rebuilt one at 2.0·C. */}
+          <Fact label="session">
+            <SessionFact runs={runs} sessions={sessions} />
+          </Fact>
+
+          <Fact label="priority">{task.priority}</Fact>
+          <Fact label="filed">{when(task.createdAt)}</Fact>
+          {task.firstRunAt && <Fact label="started">{when(task.firstRunAt)}</Fact>}
+          <Fact label="took">{elapsed(task, now)}</Fact>
+          {/* ⚠️ Named, not left as "spent". A bare number in a column headed Spent is read as money
+              by roughly everybody; these are tokens, metered from the agent's own transcript. */}
+          <Fact label="tokens">{tokens(task.budget.spentTokens || null)}</Fact>
+          {task.branch && (
+            <Fact label="branch">
+              <span className="mono">{task.branch}</span>
+            </Fact>
+          )}
+          <Fact label="mandate">
+            {task.mandate.allowed.join(', ')} · depth {task.lineageDepth}/
+            {task.mandate.maxLineageDepth}
+          </Fact>
+
+          {runs.length > 0 && (
+            <div className="side-runs">
+              <div className="side-label">runs</div>
+              {runs.map((run) => (
+                <RunRow key={run.id} run={run} fleet={fleet} now={now} />
+              ))}
+            </div>
+          )}
+        </aside>
+      </div>
     </section>
   )
 }
 
+function Fact({ label, children }: { label: string; children: React.ReactNode }): React.JSX.Element {
+  return (
+    <div className="fact">
+      <span className="fact-label">{label}</span>
+      <span className="fact-value">{children}</span>
+    </div>
+  )
+}
+
 /**
- * Say something to a task that is already under way.
+ * Which session, and whether its context was reused.
+ *
+ * ⛔ Reuse is decided by the clock, not by a flag: a session that already existed when the run
+ * started is one whose prompt cache the run inherited. Nothing needs to record the intent, and a
+ * recorded intent could disagree with what happened.
+ */
+function SessionFact({ runs, sessions }: { runs: Run[]; sessions: Session[] }): React.JSX.Element {
+  const run = runs[0]
+  if (!run?.sessionId) return <span className="dim">none yet</span>
+  const session = sessions.find((s) => s.id === run.sessionId)
+  const reused = session ? session.startedAt < run.startedAt : null
+
+  return (
+    <>
+      <span className="mono">{run.sessionId.slice(0, 8)}</span>{' '}
+      {reused === null ? (
+        <span className="dim">(closed)</span>
+      ) : reused ? (
+        <span className="ok" title="The run continued in a session that already held this task's context — a cache read at 0.1·C.">
+          reused, context kept
+        </span>
+      ) : (
+        <span className="dim" title="A new process, so the prompt prefix was built from nothing — 2.0·C.">
+          new session
+        </span>
+      )}
+    </>
+  )
+}
+
+/**
+ * One attempt, with what it cost — twice over, and deliberately not reconciled.
+ *
+ * ⛔ The token counts are exact assistant-turn metering from the agent's own transcript. The window
+ * figures are the *account's* view, read either side of the run, and they include everything the CLI
+ * spent that never reached a transcript. The two disagreeing is the measurement, not a bug — HANDOFF
+ * calls that gap the instrument. Merging them would destroy it.
+ */
+function RunRow({
+  run,
+  fleet,
+  now
+}: {
+  run: Run
+  fleet: FleetEntry[]
+  now: number
+}): React.JSX.Element {
+  const worker = fleet.find((f) => f.worker.id === run.workerId)?.worker.label
+  const spent = run.inputTokens + run.outputTokens + run.cacheReadTokens + run.cacheWriteTokens
+  return (
+    <div className="side-run">
+      <div className="side-run-head">
+        <span className="mono">{run.id.slice(0, 8)}</span>
+        <span className={run.outcome === 'completed' ? 'ok' : run.outcome ? 'warn' : 'state-running'}>
+          {run.outcome ?? 'running'}
+        </span>
+        <span className="num dim">{duration((run.endedAt ?? now) - run.startedAt)}</span>
+      </div>
+      <div className="side-run-body num">
+        <span>{worker ?? run.workerId.slice(0, 8)}</span>
+        <span title="in · out · cache read · cache write, metered from the transcript">
+          {tokens(spent || null)} tok
+        </span>
+      </div>
+      <QuotaDelta run={run} />
+    </div>
+  )
+}
+
+/**
+ * What this run cost the account's window.
+ *
+ * ⛔ Shown only when there are **two** readings. One reading is a state, not a cost, and rendering
+ * "41%" beside a run invites it to be read as the run's price. When the closing reading has not
+ * arrived yet — it is taken in the background once the run ends and takes about half a minute — this
+ * says so rather than showing half a subtraction.
+ */
+function QuotaDelta({ run }: { run: Run }): React.JSX.Element | null {
+  const before = run.quotaBefore
+  const after = run.quotaAfter
+  if (!before) return null
+  if (!after) {
+    return (
+      <div className="side-run-quota dim">
+        window at {pct(before)} before · closing reading not taken yet
+      </div>
+    )
+  }
+  const rows = before.windows
+    .map((b) => {
+      const a = after.windows.find((w) => w.id === b.id)
+      return a ? { label: b.label, from: b.percent, to: a.percent } : null
+    })
+    .filter((r): r is { label: string; from: number; to: number } => !!r)
+
+  if (rows.length === 0) return null
+  return (
+    <div className="side-run-quota num">
+      {rows.map((r) => (
+        <span key={r.label} title="the account's own window, read before the run and after it">
+          {r.label} {Math.round(r.from)}% → {Math.round(r.to)}%
+          <span className={r.to > r.from ? 'warn' : 'dim'}>
+            {' '}
+            ({r.to > r.from ? '+' : ''}
+            {Math.round(r.to - r.from)})
+          </span>
+        </span>
+      ))}
+      {/* ⚠️ A stale reading either side makes the difference meaningless, and it is the difference
+          being shown. Say so on the number rather than beside it. */}
+      {(before.stale || after.stale) && (
+        <span className="warn" title="One of the two readings was already too old to act on.">
+          reading not fresh
+        </span>
+      )}
+    </div>
+  )
+}
+
+function pct(q: NonNullable<Run['quotaBefore']>): string {
+  return q.windows.map((w) => `${w.label} ${Math.round(w.percent)}%`).join(' · ')
+}
+
+/**
+ * Say something to a task.
  *
  * ⛔ The cheap half of a mid-flight question. A note into a live session is a cache read — `0.1·C`,
  * and it refreshes the TTL. The same note delivered by restarting the task is `2.0·C` plus everything
  * the successor has to rediscover about the branch. Nothing is lost when there is no live session:
  * the note waits and is prepended to the next run's prompt instead.
+ *
+ * ⚠️ Its own layout, not `.form-row`. That is a three-column grid built for a labelled settings form,
+ * and this row has no label — so the input landed in the 110px label track and the Send button was
+ * drawn on top of what somebody was typing.
  */
 function Compose({
   task,
@@ -328,24 +636,31 @@ function Compose({
   }
 
   return (
-    <div className="form-row">
-      <input
-        className="form-wide"
-        value={text}
-        placeholder={live ? 'Answer or redirect the agent working on this' : 'Add a note for the next run'}
-        onChange={(e) => setText(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' && !e.shiftKey) void send()
-        }}
-      />
-      <button className="btn" disabled={sending || !text.trim()} onClick={() => void send()}>
-        Send
-      </button>
-      <span className="form-hint">
+    <div className="compose">
+      <div className="compose-row">
+        <input
+          value={text}
+          placeholder={
+            live
+              ? 'Reply to the agent working on this — it goes into the running session'
+              : 'Say something — it is prepended to the next run’s prompt'
+          }
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) void send()
+          }}
+        />
+        <button className="btn btn--primary" disabled={sending || !text.trim()} onClick={() => void send()}>
+          {sending ? 'Sending…' : 'Send'}
+        </button>
+      </div>
+      <p className="compose-hint">
         {live
-          ? 'Delivered into the running session — a cache read, and it refreshes the TTL.'
-          : 'Nothing is running, so this is prepended to the next run’s prompt.'}
-      </span>
+          ? 'Delivered straight into the session that is running — a cache read, and it refreshes ' +
+            'that session’s TTL. The agent sees it mid-task.'
+          : 'Nothing is running, so this waits. It is prepended to the prompt the next run starts ' +
+            'with, and it is not charged twice.'}
+      </p>
     </div>
   )
 }

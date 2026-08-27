@@ -386,6 +386,48 @@ const MIGRATIONS: string[] = [
     select sum(t.input_tokens + t.output_tokens + t.cache_write_1h_tokens + t.cache_write_5m_tokens)
       from turns t where t.session_id = sessions.id), 0)
   where exists (select 1 from turns t where t.session_id = sessions.id);
+  `,
+
+  // 6 - stop the fleet strip stacking a fresh copy of every quota window every five minutes, and
+  // give a worker somewhere to record that work does not survive on it.
+  //
+  // ⚠️ `sampled_at` is **the vendor's fetch time, not ours** - `cachedUsageUtilization.fetchedAtMs`,
+  // which is exactly right for staleness and exactly wrong as an insert key. Re-reading a cache the
+  // CLI has not refreshed produces a row identical to the last one, and `lastQuota` selects *every*
+  // row at `max(sampled_at)` - so a worker whose cache had not moved showed `session` and `weekly`
+  // twice after ten minutes and three times after fifteen. Measured on this machine 2026-08-27:
+  // ClaudeSecond, session 6% / weekly 0%, rendered three times over.
+  //
+  // A reading is identified by (worker, window, when the vendor fetched it), so that is the key.
+  `
+  delete from quota_samples where id not in (
+    select max(id) from quota_samples group by worker_id, window_id, sampled_at
+  );
+  create unique index quota_samples_reading
+    on quota_samples(worker_id, window_id, sampled_at);
+
+  -- ⛔ Separate from identity_json on purpose. Identity is what the vendor's auth status says; this
+  -- is what a dispatch proved. An account can answer the first perfectly and still fail every run.
+  alter table workers add column health_json text;
+
+  -- Why a ready task is not moving. Written only when it changes; cleared when the task moves.
+  alter table tasks add column hold_reason text;
+  `,
+
+  // 7 - a run's cost needs a baseline, so a run gets one either side.
+  //
+  // ⛔ A single reading is not a measurement. A run that reports "this account is at 41% of its
+  // window" says nothing about what the run spent, and 41% was the only thing this app could show -
+  // which made the honest question "how much did that task cost me against my subscription?"
+  // unanswerable from the UI. The scheduler now refreshes a stale reading *before* dispatching (one
+  // tick of patience, no tokens) and takes another once the run has ended and nothing is waiting.
+  //
+  // ⚠️ Kept separate from the token columns rather than reconciled with them. The token counts are
+  // exact assistant-turn metering; quota measures everything the account spent, classifier and title
+  // generation included. The gap between the two is the measurement, so merging them destroys it.
+  `
+  alter table runs add column quota_before_json text;
+  alter table runs add column quota_after_json text;
   `
 ]
 

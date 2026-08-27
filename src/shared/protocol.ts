@@ -89,8 +89,36 @@ export interface Worker {
   role: WorkerRole
   maxConcurrent: number
   identity: WorkerIdentity | null
+  /** What the last run on this account proved about it. `null` means nothing is known against it. */
+  health: WorkerHealth | null
   retiredAt: number | null
   createdAt: number
+}
+
+/**
+ * What dispatching to this worker actually did, last time it was tried.
+ *
+ * ⛔ Identity answers *who is signed in*; this answers *whether work survives here*, and they are
+ * different questions with different evidence. An account can pass `auth status` and still be unable
+ * to run anything - an expired subscription is the case that found this - and identity has no way to
+ * know, because it never spends a turn. So the evidence is a **run that died without producing a
+ * single metered turn**: no assistant output, no tokens, nothing the transcript could meter. That is
+ * not a task failing, it is the worker failing, and charging it to the task sends the operator to
+ * debug their prompt.
+ *
+ * ⚠️ `suspect` is a hard dispatch gate, and it is deliberately easy to clear: re-probing the worker
+ * clears it, and so does one run that produces a turn. A quarantine that needs a support ticket to
+ * lift is worse than the fault it prevents.
+ */
+export interface WorkerHealth {
+  state: 'ok' | 'suspect'
+  /** One line, from the CLI's own output where there was any. Never inferred. */
+  reason: string
+  /** How many consecutive dispatches died without a turn. */
+  strikes: number
+  since: number
+  /** The run that produced this verdict, so the evidence is reachable. */
+  runId: string | null
 }
 
 export type WorkerRole = 'worker' | 'controller' | 'both'
@@ -126,6 +154,19 @@ export interface WorkerIdentity {
    * `null` means the adapter cannot tell, and is not a problem to report.
    */
   setupComplete?: boolean | null
+  /**
+   * The plan the vendor says this account is on, verbatim and unparsed.
+   *
+   * ⚠️ Recorded, not interpreted. `claude auth status --json` has carried a `subscriptionType` since
+   * at least 2.1.223 and this app was reading past it. It is shown next to the account so an
+   * operator can see *which* subscription a worker is spending - and so an account whose plan has
+   * lapsed says so somewhere, rather than only revealing itself as runs that die on contact.
+   *
+   * ⛔ Nothing gates on this string. What an expired plan reports here has never been measured on
+   * this project, and a gate built on a guessed value would refuse healthy accounts. The gate is
+   * `health`, which rests on a run that actually failed.
+   */
+  subscriptionType?: string | null
   /** Whatever the probe could read back, verbatim, for the Doctor panel. */
   raw?: string
   /**
@@ -511,7 +552,22 @@ export interface RpcMap {
   'task.list': { params: { projectId?: string; includeDeleted?: boolean } | void; result: Task[] }
   'task.get': {
     params: { id: string }
-    result: { task: Task; messages: TaskMessage[]; runs: Run[] } | null
+    result: {
+      task: Task
+      messages: TaskMessage[]
+      runs: Run[]
+      /**
+       * Every session any run of this task has used.
+       *
+       * ⛔ Shipped so the detail pane can answer "was the context reused, or rebuilt?" - the single
+       * question this whole cost model exists to make answerable, and the one thing the UI could not
+       * say. A worker id told you which account paid; it did not tell you whether the run started
+       * from a warm prefix at `0.1·C` or a cold one at `2.0·C`.
+       */
+      sessions: Session[]
+      /** The live tail for this task, if anything is running. Same content as `task.activity`. */
+      activity: Array<{ text: string; ts: number }>
+    } | null
   }
   'task.create': { params: TaskCreateParams; result: Task }
   'task.update': { params: { id: string } & Record<string, unknown>; result: Task }
@@ -639,3 +695,15 @@ export type DaemonEvent =
   | { type: 'consult.changed'; consult: Consult }
   | { type: 'chat.message'; message: ChatMessage }
   | { type: 'log'; level: 'info' | 'warn' | 'error'; message: string; ts: number }
+  /**
+   * What the agent working on a task is saying, as it says it.
+   *
+   * ⛔ Not persisted, and deliberately not a `TaskMessage`. A running agent produces prose
+   * continuously; writing each fragment into the task's thread would turn the record of a
+   * conversation into a transcript of one, and the thread is the thing a person reads afterwards to
+   * find out what was decided. This is the *peephole* - a bounded tail held in memory, gone when the
+   * daemon restarts, which is the correct lifetime for "what is happening right now".
+   *
+   * ⚠️ Agent output, so it is untrusted text. It is rendered as text and never as markup.
+   */
+  | { type: 'task.activity'; taskId: string; text: string; ts: number }

@@ -329,3 +329,72 @@ Two bugs fell out of it immediately, both fixed in the daemon rather than papere
 
 Also corrected: the nav test asserted `nav.length >= 5`, a count that says nothing and passed happily
 through a rewrite which deleted two of its destinations. It names them now.
+
+## Five bugs an afternoon of real use found, and what each one really was (2026-08-27)
+
+The fleet was ClaudeFirst / ClaudeSecond / ClaudeThird plus Antigravity, and one question-only task.
+Every fault below was visible on one screen and invisible to every suite, which is the class this
+project is least protected against. None of them was where it looked.
+
+- ⛔ **The fleet strip grew a second `session`/`weekly` pair every five minutes.** `sampled_at` is
+  `cachedUsageUtilization.fetchedAtMs` — **the vendor's** fetch time, which is exactly right for
+  staleness and fatal as an insert key. Re-reading an unrefreshed cache produced a row identical to
+  the last one, and `lastQuota` selects *every* row at `max(sampled_at)`. `store()` is now an upsert
+  on (worker, window, sampled_at); a unique index enforces it and migration 6 deletes the duplicates
+  an older build wrote.
+
+- ⛔ **The scheduler had no reason to prefer any worker, so it preferred the oldest.** Until R2 lands
+  the compaction reserve returns `unknown` for every account, which made `quotaRisk` a constant —
+  every candidate scored identically, ties fell to candidate order, and candidate order is
+  `created_at`. **The first account ever commissioned therefore won every routing decision on the
+  fleet**, and on this machine that was the one nobody had finished setting up. It read as a routing
+  bug and was an absence of any input. `unproven()` is a small penalty, deliberately not a gate: a
+  signed-in-but-unset-up worker really does run scheduled work fine, because print mode skips every
+  first-run screen.
+
+- ⛔ **Signed in is not the same as able to work, and nothing free tells them apart.** That worker's
+  organisation had disabled Claude Code subscription access. `auth status --json` answered exactly as
+  a live account does. The evidence has to come from a run, so a dispatch that produces **no metered
+  turn** is charged to the account (`recordDispatchFailure`) and the task re-queues instead of being
+  handed to a person as though their own prompt had failed. ⚠️ The conjunction matters in both
+  directions: no turn *and* a short life, because the transcript's final turn is routinely flushed
+  after the process is gone, and a run that produced turns and then broke is the task's problem.
+
+- ⛔ **And that session never exited, so `onExit` never fired.** It sent
+  `{"type":"result","is_error":true,"terminal_reason":"api_error"}` carrying *"Your organization has
+  disabled Claude subscription access for Claude Code"* and then sat on stdin. AGENTS.md had recorded
+  since M1 that a `stream` session which cannot authenticate does not exit; what nobody had noticed is
+  that the record it sends **first** reached the session pane and nothing else. The run stayed open,
+  the task stayed `running`, and the worker's only slot stayed held indefinitely. `onStreamResult()`
+  is the fix, and the general lesson is that the terminal `result` record — not the exit — is the
+  signal a turn failed.
+
+- ⛔ **A pipeline of correct steps reported a landing that landed nothing.** A question-only task
+  changed no file and was announced as *"Landed as a166a6a onto main"*. Every step had succeeded: the
+  workspace was clean so `canLand` allowed it, the rebase was a no-op, the checks passed, the push
+  moved nothing, and `rev-parse HEAD` returned the commit already there. `landTask` now counts
+  `rev-list --count <target>..<branch>` **before** choosing a strategy. ⚠️ Zero commits with a clean
+  workspace is a success that touched no trunk; zero commits with a *dirty* one is work about to be
+  destroyed by the next dispatch into a pooled worktree, and collapsing those two would replace an
+  urgent warning with a shrug.
+
+Three UI faults from the same session, each a case of a true number rendered unreadably:
+
+- A session chip read `c760 57:46 0` — three true numbers led by the least useful, with nothing
+  saying what any of them meant. It reads `work · cache 56:49 · no turn yet` now, and a context of
+  zero is drawn as an absence rather than a measurement.
+- `ready` is the scheduler's word for *eligible*, and beside `completed` and `failed` it reads as a
+  resting state — as though the person who filed the task were the one being waited on. The reason a
+  task is not moving was already computed every tick and folded into a log line; it now reaches the
+  row it is about.
+- The Send button was painted on top of the message box, because an unlabelled compose row borrowed
+  `.form-row` — a three-column grid built for labelled settings forms, so the input landed in the
+  110px label track. The UI suite measures the overlap now rather than trusting a screenshot.
+
+⭐ **What the round added rather than fixed:** a run now carries a quota reading either side of it.
+One reading is a state; a cost is a difference, and until this there was no baseline to subtract from
+— a first run on a never-probed worker had none at all. The scheduler refreshes a stale reading before
+dispatching (in the background, holding the task one tick — never awaiting a 30-second terminal inside
+a loop that is supposed to be arithmetic) and reads again once the run has ended. The window delta and
+the transcript token count sit side by side in the task pane and are ⛔ never reconciled: their
+difference is R1's instrument, and merging them would destroy the only thing they are jointly for.

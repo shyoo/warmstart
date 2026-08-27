@@ -339,6 +339,21 @@ try {
   // editor and any agent window they had open, which happened for real during M2. And never a bare
   // pid: killTree re-reads the command line first, because a recycled pid points at a stranger.
   killTree(app?.pid, EXECUTABLE)
+
+  // ⛔ And the daemon separately, because it is **detached by design** and is therefore not in the
+  // app's process tree. That is the whole point of the topology - closing the window must not stop
+  // the fleet - and it means this suite used to leave an orchestratord running against the packaged
+  // binary every time it passed. Found 2026-08-27: the leak holds `release/win-unpacked` open, so
+  // the *next* `npm run pack` dies with EBUSY on rmdir, which reads as a broken build.
+  //
+  // ⚠️ Its pid is not a guess: the daemon publishes it in its own endpoint file, and killTree
+  // re-reads the command line before doing anything.
+  try {
+    const endpoint = JSON.parse(readFileSync(join(dataDir, 'orchestratord.json'), 'utf8'))
+    killTree(endpoint.pid, 'orchestratord')
+  } catch {
+    // No endpoint file means it never started, which the checks above have already reported.
+  }
   await wait(1000)
   try {
     rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 })

@@ -22,6 +22,12 @@ id, a context size, a cache expiry and a topic fingerprint.
 **Human-occupied worker** — an account whose quota Multi Agent Controller tracks but never spends, because a
 person is using it by hand. Keeps the budget arithmetic honest without taking the account over.
 
+**Worker health** — *whether work survives on this account*, which is a different question from
+**identity** (*who is signed in*) and answered by different evidence. Identity is free and local and
+cannot tell a live subscription from a lapsed one; health comes from a dispatch that produced **no
+metered turn**, which is charged to the account rather than to the task. A `suspect` worker is a hard
+dispatch gate, lifted by re-probing it by hand or by one real turn.
+
 ---
 
 **Project** — *a directory plus policy.* Git is **optional**: `vcs: git | none`. Branching,

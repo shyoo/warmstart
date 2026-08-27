@@ -204,6 +204,33 @@ everything: it starts a real process for ~30s, so at most one worker is refreshe
 in a scheduler tick. The command is declared per adapter as `usageRefresh`, never branched on an
 adapter name; only `claude-code` declares one today.
 
+### A reading either side of a run (2026-08-27)
+
+⛔ **One reading is a state; a cost is a difference.** Until now a run recorded only what it *metered*
+from the transcript, and the fleet strip showed a single percentage — so the honest question "what did
+that task cost me against my subscription?" was unanswerable from the product, and a first run on a
+never-probed worker had no baseline at all.
+
+A run now carries two readings:
+
+| | when | how |
+|---|---|---|
+| `quotaBefore` | at dispatch | the scheduler finds the chosen worker's reading stale or missing, starts `refreshUsage()` **in the background**, and holds the task for **one tick** with the reason on its row |
+| `quotaAfter` | once the run has ended and nothing is waiting on it | the same refresh, then read |
+
+⚠️ The tick never awaits either. `refreshUsage()` opens a terminal for ~30s and the scheduler loop is
+arithmetic; a half-minute stall in it would be a worse bug than the one this fixes. And it **gives
+up**: after one attempt per worker per 10 minutes the run goes ahead marked `quotaUnverified`, because
+a worker that cannot answer `/usage` (§ Rung 0's two dialogs) would otherwise hold its tasks forever.
+A run that metered nothing is not re-read at all — no spend, no difference to take.
+
+⭐ **This is R1's instrument, made visible.** The window delta and the transcript token count are shown
+side by side in the task's detail pane and ⛔ **never reconciled**: transcript metering is exact for
+assistant turns, while quota covers everything the CLI spent that never reached a transcript — the
+auto-mode classifier (§9), title generation, whatever else. Their difference *is* the measurement, so
+merging them destroys it. R1 no longer needs an experiment run by hand; it needs a quiet worker and a
+look at the pane.
+
 ### What else was tried, and why it is not what we use
 
 Kept because the vendor surface moves, and each of these becomes right the moment one fact changes.

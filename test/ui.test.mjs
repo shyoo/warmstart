@@ -136,6 +136,10 @@ try {
       await r('task.create', { title: 'A task the UI can render', priority: 'P1' });
       const t = await r('task.create', { title: 'A draft that must not dispatch', status: 'draft' });
       await r('task.cancel', { id: (await r('task.list', {}))[0].id, reason: 'ui test' });
+      // One task left in the queue on purpose: everything else this suite files is at rest, and a
+      // table with nothing in flight cannot show whether in-flight is legible. The one worker here
+      // has no credentials, so this is held rather than dispatched.
+      await r('task.create', { title: 'A task waiting for a worker', priority: 'P3' });
       return t.seq;
     })()
   `)
@@ -160,6 +164,72 @@ try {
   check('the task table renders rows', table.includes('A task the UI can render'))
   check('a cancelled task shows its resting state', table.includes('paused_user'), 'not "cancelled"')
   check('a draft is visible but not queued', table.includes('draft'))
+  // ⛔ Which account is spending on a task is the first thing an operator checks. It used to be
+  // reachable only by clicking the row open, which is where a misroute went unnoticed for an hour.
+  // ⚠️ Case-insensitive: `innerText` is what *rendered*, and the header is upper-cased by CSS.
+  check(
+    'the table says which worker has each task',
+    /worker/i.test(await evaluate('document.querySelector(".tbl thead")?.innerText ?? ""')),
+    'a routing mistake is invisible until this column exists'
+  )
+  // ⚠️ `ready` reads as a resting state beside `completed` and `failed` — as though the person who
+  // filed the task were the one being waited on. They are not: it is queued, and this says so.
+  check(
+    'a queued task shows that it is queued, not that it is finished',
+    await evaluate(
+      `[...document.querySelectorAll('.tbl tbody tr')].some(
+         r => /ready|dispatching|running/i.test(r.innerText) && r.querySelector('.working'))`
+    ),
+    'the dots are the only thing separating "waiting for the fleet" from "waiting for you"'
+  )
+
+  // A tick with nothing dispatchable, driven rather than waited for. The one worker this suite
+  // commissions has no credentials, so every ready task is held - which is exactly the case that
+  // used to render as a task sitting at `ready` with no explanation at all.
+  await evaluate(`window.agentyard.rpc('scheduler.tick')`)
+  await wait(1500)
+  check(
+    'a task that is not moving says why',
+    /not signed in|at capacity|no eligible worker|is held out|not installed/i.test(
+      await evaluate('document.querySelector(".tbl tbody")?.innerText ?? ""')
+    ),
+    'the scheduler already computed the reason; it now reaches the row it is about'
+  )
+
+  // ---- the detail pane ----------------------------------------------------------------
+  // ⛔ Opened, because everything below only exists once a row is open — and "click the row to find
+  // out which session it is on" is exactly the gap this pane was reworked to close.
+  await evaluate(`[...document.querySelectorAll('.tbl tbody tr')].at(-1)?.click()`)
+  await wait(1200)
+  const detail = await evaluate('document.querySelector(".detail")?.innerText ?? ""')
+  check('opening a task shows a ledger beside the thread', /STATUS|WORKER|SESSION/i.test(detail), detail.slice(0, 80))
+  check(
+    'it says which session the work is on',
+    /session/i.test(detail),
+    'a worker id says which account paid; only the session says whether the context survived'
+  )
+  check('it says how long, not only how much', /took/i.test(detail))
+  check(
+    'the token count is called tokens',
+    /tokens/i.test(detail),
+    '"spent" was read as money by everybody who saw it'
+  )
+
+  // ⛔ Measured, not eyeballed. The Send button used to be painted on top of the box somebody was
+  // typing into, because an unlabelled row borrowed a three-column grid built for labelled forms.
+  const compose = await evaluate(`
+    JSON.stringify((() => {
+      const row = document.querySelector('.compose-row');
+      const input = row?.querySelector('input');
+      const button = row?.querySelector('button');
+      if (!row || !input || !button) return { missing: true };
+      const i = input.getBoundingClientRect(), b = button.getBoundingClientRect();
+      return { overlap: Math.round(i.right - b.left), inputWidth: Math.round(i.width) };
+    })())
+  `)
+  const c = JSON.parse(compose)
+  check('the Send button does not sit on top of the message box', c.overlap <= 0, compose)
+  check('and the message box gets the room', c.inputWidth > 200, compose)
 
   // An approval with no live session: the deadline is genuinely unknown and must render as such.
   await evaluate(`

@@ -29,6 +29,38 @@ export function age(ms: number): string {
   return `${Math.round(hours / 24)}d ago`
 }
 
+/**
+ * How long something took, at the resolution a person cares about.
+ *
+ * ⛔ Not `countdown` inverted. A countdown is a deadline and reads down to the second because the
+ * seconds matter; a duration is a fact about the past, and "1h 12m" is what somebody wants where
+ * "72:14" makes them do arithmetic. Under a minute keeps its seconds, because that is the range
+ * where a run being three seconds long is the whole story.
+ */
+export function duration(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return '—'
+  const seconds = Math.floor(ms / 1000)
+  if (seconds < 60) return `${seconds}s`
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes}m ${seconds % 60}s`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h ${minutes % 60}m`
+  return `${Math.floor(hours / 24)}d ${hours % 24}h`
+}
+
+/** A wall-clock moment, in the reader's own locale. Dates are only ever shown, never parsed back. */
+export function when(ts: number | null | undefined): string {
+  if (!ts) return '—'
+  const date = new Date(ts)
+  const today = new Date()
+  const sameDay =
+    date.getFullYear() === today.getFullYear() &&
+    date.getMonth() === today.getMonth() &&
+    date.getDate() === today.getDate()
+  const time = date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+  return sameDay ? time : `${date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} ${time}`
+}
+
 export function tokens(n: number | null | undefined): string {
   if (n === null || n === undefined) return '--'
   if (n < 1000) return String(n)

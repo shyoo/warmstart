@@ -270,6 +270,10 @@ body {
   background: var(--color-surface);
   padding: var(--sp-2) var(--sp-3);
   min-width: 230px;
+  /* ⚠️ A ceiling as well as a floor. These cards are sized by their content, and the reason an
+     account is held out is a sentence from the vendor - which stretched one card across half the
+     strip and pushed the rest of the fleet off it. */
+  max-width: 320px;
   flex: 0 0 auto;
 }
 
@@ -376,6 +380,28 @@ body {
 
 .chip-ctx {
   color: var(--color-text-faint);
+}
+
+/* What the session is for. It leads the chip because it is the only part that says what this is. */
+.chip-purpose {
+  color: var(--color-text-dim);
+  text-transform: lowercase;
+}
+
+.tag--suspect {
+  color: var(--state-danger);
+  border-color: var(--state-danger);
+}
+
+/* ⛔ Above the gauges, and readable rather than truncated: this is why the account is not working. */
+.wcard-suspect {
+  font-size: var(--text-meta);
+  color: var(--state-danger);
+  margin-bottom: var(--sp-1);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .tag {
@@ -520,6 +546,10 @@ body {
 
 .warn {
   color: var(--state-warn);
+}
+
+.danger {
+  color: var(--state-danger);
 }
 
 .ok {
@@ -931,6 +961,57 @@ select:focus-visible,
   letter-spacing: 0.02em;
 }
 
+/*
+ * Three dots that mean "this is moving, and it will move again without you".
+ *
+ * ⚠️ It borrows `currentColor`, so it is whatever tone the status beside it already is - a queued
+ * task pulses in the ready colour and a running one in the running colour. An indicator with a
+ * colour of its own would be a second signal competing with the word it sits next to.
+ */
+.working {
+  display: inline-flex;
+  gap: 3px;
+  margin-left: var(--sp-2);
+  vertical-align: middle;
+}
+
+.working i {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.25;
+  animation: working-pulse 1.2s var(--ease) infinite;
+}
+
+.working i:nth-child(2) {
+  animation-delay: 0.16s;
+}
+
+.working i:nth-child(3) {
+  animation-delay: 0.32s;
+}
+
+@keyframes working-pulse {
+  0%,
+  80%,
+  100% {
+    opacity: 0.25;
+  }
+  40% {
+    opacity: 1;
+  }
+}
+
+/* ⛔ Motion is the signal here, so removing it must leave the signal behind rather than the dots
+   alone. At full opacity they still read as "in flight" beside a status that has none. */
+@media (prefers-reduced-motion: reduce) {
+  .working i {
+    animation: none;
+    opacity: 0.8;
+  }
+}
+
 .state-running {
   color: var(--state-running);
 }
@@ -976,6 +1057,183 @@ select:focus-visible,
   font-size: var(--text-meta);
   color: var(--color-text-faint);
   margin-bottom: var(--sp-3);
+}
+
+/* ⛔ Conversation left, ledger right. The two answer different questions and reading one should
+   never mean scrolling past the other. Collapses to a single column when there is no room for two:
+   the ledger goes underneath, because the thread is the part somebody came here to read. */
+.detail-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: var(--sp-4);
+  align-items: start;
+}
+
+@media (max-width: 1000px) {
+  .detail-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.detail-main {
+  min-width: 0;
+}
+
+.detail-side {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  padding: var(--sp-3);
+  font-size: var(--text-meta);
+}
+
+.fact {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  gap: var(--sp-2);
+  padding: 3px 0;
+  align-items: baseline;
+}
+
+.fact-label {
+  color: var(--color-text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 10px;
+}
+
+.fact-value {
+  overflow-wrap: anywhere;
+}
+
+.side-label {
+  color: var(--color-text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 10px;
+  margin-bottom: var(--sp-1);
+}
+
+.side-runs {
+  margin-top: var(--sp-3);
+  border-top: 1px solid var(--color-border);
+  padding-top: var(--sp-2);
+}
+
+.side-run {
+  border-bottom: 1px solid var(--color-border);
+  padding: var(--sp-2) 0;
+}
+
+.side-run:last-child {
+  border-bottom: 0;
+}
+
+.side-run-head,
+.side-run-body {
+  display: flex;
+  gap: var(--sp-2);
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.side-run-body {
+  color: var(--color-text-dim);
+  margin-top: 2px;
+}
+
+.side-run-quota {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  margin-top: 3px;
+  color: var(--color-text-faint);
+}
+
+/* ---- the live peephole -------------------------------------------------- */
+
+/* ⛔ Visibly not the thread. It is a window onto a process, it is not kept, and it must not be
+   mistaken for the record - so it gets its own frame and its own muted voice. */
+.peek {
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--radius);
+  padding: var(--sp-2) var(--sp-3);
+  margin-bottom: var(--sp-3);
+  background: var(--color-surface);
+}
+
+.peek-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--text-meta);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--state-running);
+  margin-bottom: var(--sp-1);
+}
+
+.peek-head .dim {
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.peek-body {
+  max-height: 180px;
+  overflow-y: auto;
+  font-size: var(--text-meta);
+  line-height: var(--leading-body);
+  color: var(--color-text-dim);
+  display: flex;
+  flex-direction: column-reverse;
+}
+
+.peek-line {
+  padding: 1px 0;
+  overflow-wrap: anywhere;
+}
+
+/* One line of the same thing, on a running row. */
+.tbl-live {
+  color: var(--color-text-dim);
+  font-style: italic;
+  max-width: 60ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- compose ------------------------------------------------------------ */
+
+/*
+ * ⚠️ Its own layout, and that is the fix. This used to borrow `.form-row`, a three-column grid built
+ * for a labelled settings form - so an unlabelled row put the input in the 110px label track and the
+ * Send button was painted over the top of whatever somebody was typing.
+ */
+.compose {
+  margin-bottom: var(--sp-3);
+}
+
+.compose-row {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: center;
+}
+
+.compose-row input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.compose-row .btn {
+  flex: 0 0 auto;
+}
+
+.compose-hint {
+  margin: var(--sp-1) 0 0;
+  font-size: var(--text-meta);
+  color: var(--color-text-faint);
+  line-height: var(--leading-body);
 }
 
 .thread {

@@ -1,8 +1,8 @@
-import type { Task } from '@shared/tasks.js'
+import type { Run, RunQuota, Task } from '@shared/tasks.js'
 import type { Session, Worker } from '@shared/protocol.js'
 import { adapter } from './adapters/index.js'
-import { lastQuota } from './quota.js'
-import { listWorkers } from './workers.js'
+import { lastQuota, refreshUsage } from './quota.js'
+import { listWorkers, recordDispatchFailure } from './workers.js'
 import { getProject, policyFor, reloadProject } from './projects.js'
 import {
   admitScheduled,
@@ -13,8 +13,11 @@ import {
   markDelivered,
   messagesFor,
   runForSession,
+  requireRun,
   runsFor,
   schedulingOrder,
+  setHoldReason,
+  setRunQuota,
   setStatus,
   startRun
 } from './tasks.js'
@@ -30,8 +33,16 @@ import {
   releaseWorkspace,
   type Workspace
 } from './worktrees.js'
-import { closeSession, getSession, sendPrompt, sessionsForWorker, spawnSession } from './sessions.js'
+import {
+  backscroll,
+  closeSession,
+  getSession,
+  sendPrompt,
+  sessionsForWorker,
+  spawnSession
+} from './sessions.js'
 import { landTask } from './landing.js'
+import { clearActivity } from './activity.js'
 import { log } from './log.js'
 import { db } from './db.js'
 import { windowResetsAt, lastRateLimit } from './quota.js'
@@ -103,17 +114,32 @@ export async function tick(): Promise<TickResult> {
     // either a half-built version of all six milestones or a very expensive opinion.
     if (task.kind === 'plan') {
       if (askForPlan(task)) planned++
-      else skipped.push(`t${task.seq}: decomposition was asked for recently and is on cooldown`)
+      else {
+        const why = 'decomposition was asked for recently and is on cooldown'
+        skipped.push(`t${task.seq}: ${why}`)
+        setHoldReason(task.id, why)
+      }
       continue
     }
 
     const choice = chooseTarget(task)
-    if (choice.deferred) {
+    if (choice.deferred || !choice.worker) {
       skipped.push(`t${task.seq}: ${choice.reason}`)
+      // ⛔ Told to the operator, not only to the log. `ready` on its own is unreadable - it is the
+      // scheduler's word for "eligible", and a person who has just filed a task reads it as "waiting
+      // for me to press something". The reason is already computed; the only change is that it now
+      // reaches the row it is about.
+      setHoldReason(task.id, choice.reason)
       continue
     }
-    if (!choice.worker) {
-      skipped.push(`t${task.seq}: ${choice.reason}`)
+    // ⛔ A baseline before the spend, not after it. Everything downstream of a run - what it cost
+    // against the subscription, whether the reserve was satisfied, whether the estimate was any
+    // good - is a *difference*, and a difference taken from one reading is not a measurement. So a
+    // worker about to be given work gets its window read first.
+    const baseline = needsBaseline(choice.worker)
+    if (baseline) {
+      skipped.push(`t${task.seq}: ${baseline}`)
+      setHoldReason(task.id, baseline)
       continue
     }
     try {
@@ -140,6 +166,85 @@ export async function tick(): Promise<TickResult> {
   if (parts.length === 0) parts.push(ready.length ? 'nothing dispatchable' : 'nothing ready')
 
   return { dispatched, note: parts.join(' · ') }
+}
+
+// ---------------------------------------------------------------------------- the baseline
+
+/**
+ * When was this worker's window last read, and is it worth waiting a tick to read it again?
+ *
+ * ⛔ The refresh runs **in the background and the tick never waits for it.** `refreshUsage` opens a
+ * terminal for the better part of thirty seconds; awaiting that inside the scheduler would put a
+ * half-minute stall in a loop that is supposed to be arithmetic. So the task is held for one tick
+ * with a reason on its row, and the next tick finds a reading.
+ *
+ * ⚠️ And it gives up. A worker that cannot answer `/usage` - one whose first-run screens are
+ * unanswered swallows the keystroke - would otherwise hold every task assigned to it forever, which
+ * is a worse failure than dispatching blind. After one attempt the run goes ahead and is marked
+ * `quotaUnverified`, exactly as it was before any of this existed.
+ */
+const BASELINE_RETRY_MS = 10 * 60 * 1000
+
+const baselineAttempts = new Map<string, { at: number; inFlight: boolean }>()
+
+function needsBaseline(worker: Worker | null): string | null {
+  if (!worker) return null
+  // Nothing to drive: most CLIs have no usage command, and holding work for a refresh that cannot
+  // happen would bench the whole adapter.
+  if (!adapter(worker.adapterId).info.usageRefresh) return null
+
+  const quota = lastQuota(worker.id)
+  const fresh = quota && !quota.stale && quota.windows.length > 0
+  if (fresh) return null
+
+  const attempt = baselineAttempts.get(worker.id)
+  if (attempt?.inFlight) {
+    return `reading ${worker.label}'s quota first, so this run has a baseline to be measured against`
+  }
+  if (attempt && Date.now() - attempt.at < BASELINE_RETRY_MS) {
+    // Tried recently and still nothing. Dispatch blind rather than never - the run is marked.
+    return null
+  }
+
+  baselineAttempts.set(worker.id, { at: Date.now(), inFlight: true })
+  void refreshUsage(worker.id)
+    .catch((err: unknown) => log.warn(`baseline refresh failed for ${worker.label}:`, err))
+    .finally(() => baselineAttempts.set(worker.id, { at: Date.now(), inFlight: false }))
+  return `reading ${worker.label}'s quota first, so this run has a baseline to be measured against`
+}
+
+/** The reading as it is kept beside a run: the numbers, when they were taken, and whether to trust them. */
+function runQuota(workerId: string): RunQuota | null {
+  const quota = lastQuota(workerId)
+  if (!quota || quota.windows.length === 0) return null
+  return {
+    windows: quota.windows.map((w) => ({ id: w.id, label: w.label, percent: w.percent })),
+    sampledAt: quota.sampledAt,
+    stale: quota.stale
+  }
+}
+
+/**
+ * Read the window again now that the run is over, and keep it beside the one taken before.
+ *
+ * ⚠️ Deliberately *after* everything else has been released. This starts a process and takes the
+ * better part of a minute, and nothing is waiting on it - the task has already reached its status,
+ * the workspace is already back in the pool. If it fails, the run keeps its `before` and no `after`,
+ * which renders as "not measured" rather than as a delta of zero.
+ */
+async function captureQuotaAfter(run: Run): Promise<void> {
+  // ⛔ Nothing spent, nothing to measure. A run that produced no metered turn cannot have moved the
+  // window, and reading it again would open a terminal for half a minute to confirm a subtraction
+  // whose answer is already known - on exactly the workers (dead ones) least able to answer.
+  const metered = run.inputTokens + run.outputTokens + run.cacheReadTokens + run.cacheWriteTokens
+  if (metered === 0) return
+
+  try {
+    await refreshUsage(run.workerId)
+  } catch (err) {
+    log.warn(`could not read the closing quota for run ${run.id.slice(0, 8)}:`, err)
+  }
+  setRunQuota(run.id, 'after', runQuota(run.workerId))
 }
 
 // ---------------------------------------------------------------------------- gates
@@ -229,6 +334,15 @@ function chooseTarget(task: Task): WorkerChoice {
       reasons.push(`${worker.label} is not signed in`)
       continue
     }
+    // 3. The last dispatch to this account died without producing a single turn. ⛔ A *measured*
+    //    verdict, not a guess from identity: an expired subscription answers `auth status` exactly
+    //    as a live one does, so nothing free can tell them apart and only a run can. Held out until
+    //    somebody re-probes the worker, because trying again costs another workspace claim and hands
+    //    another task to a person as though their own work had failed. See workers.ts.
+    if (worker.health?.state === 'suspect') {
+      reasons.push(`${worker.label} is held out: ${worker.health.reason}`)
+      continue
+    }
 
     const info = adapter(worker.adapterId).info
     const needs = task.constraints.needs ?? []
@@ -278,7 +392,10 @@ function chooseTarget(task: Task): WorkerChoice {
     return {
       worker: null,
       session: null,
-      reason: reasons.length ? reasons.slice(0, 2).join('; ') : 'no eligible worker',
+      // ⚠️ Every reason, not the first two. This string is now shown on the task row, and "at
+      // capacity" for one worker while three others are held out for three different causes is the
+      // difference between a fleet that is busy and a fleet that is broken.
+      reason: reasons.length ? reasons.join('; ') : 'no eligible worker',
       quotaUnverified,
       score: 0
     }
@@ -407,8 +524,40 @@ function scoreCandidate(
     w.projectSwitch * projectSwitch -
     w.quotaRisk * quotaRisk -
     w.cold * cold +
-    w.capabilityFit * fit
+    w.capabilityFit * fit -
+    UNPROVEN_PENALTY * unproven(worker)
   )
+}
+
+/**
+ * How much a candidate is preferred for having actually been *seen* to work.
+ *
+ * ⚠️ Deliberately small and deliberately not a gate. Nothing here says an unproven worker cannot run
+ * the task - a signed-in worker that has never finished the CLI's first-run screens runs scheduled
+ * work perfectly well, because print mode skips every one of those screens (AGENTS.md). What it says
+ * is that when two workers are otherwise indistinguishable, the one somebody has finished setting up
+ * is the better bet.
+ *
+ * ⛔ This is the term that was missing. Every worker on this machine scored identically - the reserve
+ * reports `unknown` for all of them until R2 lands, so `quotaRisk` was a constant - and a tie is
+ * broken by candidate order, which is `created_at`. So *the first account ever commissioned won every
+ * routing decision on the fleet*, and on this machine that account was the one nobody had finished
+ * setting up. It looked like a routing bug and it was an absence of any reason to prefer anything.
+ */
+const UNPROVEN_PENALTY = 0.2
+
+/** Exported for its test: the tie-break is the whole fix, and a silent regression restores the bug. */
+export function unproven(worker: Worker): number {
+  const identity = worker.identity
+  // Never probed at all: less is known about this account than about one that answered.
+  if (!identity) return 1
+  let doubt = 0
+  // ⚠️ `=== false`, never falsy. `null` is "the adapter cannot tell", which is the normal and
+  // permanent answer for a CLI that keeps its credential in the OS keyring, and must not be
+  // penalised as though it were a missing step somebody could go and do.
+  if (identity.setupComplete === false) doubt += 0.6
+  if (identity.loggedIn !== true) doubt += 0.4
+  return doubt
 }
 
 // ---------------------------------------------------------------------------- dispatch
@@ -426,6 +575,13 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
   }
 
   const project = task.projectId ? reloadProject(task.projectId) : null
+
+  // ⛔ Before the workspace claim, not after the process starts. Everything below this line can take
+  // a while - claiming a worktree from the pool, checking out a branch, and running the project's
+  // `prepare` hook, which is routinely an `npm install` - and for all of it the task used to sit at
+  // `ready` with no assignee, indistinguishable from a task nothing had picked up. The scheduler
+  // knows who is taking it and that it has started taking it; saying so costs one row update.
+  setStatus(task.id, 'assigned', { assignee: worker.id })
 
   let workspace: Workspace | null = null
   let branch: string | null = null
@@ -468,6 +624,10 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
     quotaUnverified,
     costModelId: adapter(worker.adapterId).info.policy.costModelId
   })
+  setRunQuota(run.id, 'before', runQuota(worker.id))
+  // A new attempt, so the peephole starts empty. ⛔ Cleared here and never on completion: what the
+  // last run said is exactly what somebody wants to read in the seconds after it fails.
+  clearActivity(task.id)
 
   if (workspace) workspaces.set(run.id, { workspace, projectId: project?.id ?? null })
 
@@ -548,6 +708,8 @@ async function dispatchIntoWarmSession(
     quotaUnverified,
     costModelId: adapter(worker.adapterId).info.policy.costModelId
   })
+  setRunQuota(run.id, 'before', runQuota(worker.id))
+  clearActivity(task.id)
 
   setStatus(task.id, 'running', { assignee: worker.id })
   addMessage(
@@ -767,6 +929,9 @@ export async function completeTask(sessionId: string, summary: string): Promise<
   }
 
   finishRun(run.id, 'completed', summary)
+  // ⛔ After the run is closed, so the reading covers the whole of it. Backgrounded because it opens
+  // a terminal for the better part of a minute and nothing is waiting on the answer.
+  void captureQuotaAfter(requireRun(run.id))
 
   // ⛔ A task now waiting on a person keeps its session. A reply into a warm session costs 0.1·C; the
   // same reply into a dead one costs 2.0·C, and human latency routinely straddles the one-hour TTL.
@@ -802,24 +967,121 @@ export async function onSessionExit(session: Session, exitCode: number | null): 
   voidApprovalsForSession(session.id)
   const run = runForSession(session.id)
   if (!run) return
+  await endFailedRun(
+    session,
+    run,
+    `The session ended (exit ${exitCode}) without reporting completion. ` +
+      'Nothing here can tell whether the work was finished, so it is over to you.'
+  )
+}
 
+/**
+ * The CLI said the turn failed.
+ *
+ * ⛔ **This is the case `onSessionExit` cannot catch, and it was the one that mattered.** Measured
+ * on this machine 2026-08-27: a worker whose organisation had disabled Claude Code subscription
+ * access answered with `is_error` and `terminal_reason: api_error`, printing *"Your organization has
+ * disabled Claude subscription access for Claude Code"* — and then **did not exit**. AGENTS.md has
+ * recorded since M1 that a `stream` session which cannot authenticate sits on stdin waiting for input
+ * it can never act on; what was missing is that nothing was listening to the record it sent first. So
+ * the error was rendered into the session pane for a person to read, the run stayed open, the task
+ * stayed `running`, and the worker's only concurrency slot stayed held. Indefinitely.
+ *
+ * ⚠️ A failed *result* is not always a failed *run*: an agent that hits a tool error and reports it
+ * has still done work and still metered turns. `endFailedRun` decides which of the two this is from
+ * the metering, not from the wording.
+ */
+export async function onStreamResult(
+  session: Session,
+  result: { isError: boolean; text: string | null; terminalReason: string | null }
+): Promise<void> {
+  if (!result.isError) return
+  const run = runForSession(session.id)
+  if (!run) return
+
+  const said = (result.text ?? '').replace(/\s+/g, ' ').trim()
+  const why =
+    `The agent reported a failure${result.terminalReason ? ` (${result.terminalReason})` : ''}` +
+    (said ? `: ${said.slice(0, 400)}` : ' and said nothing about it.')
+
+  await endFailedRun(session, run, why)
+  // ⛔ Closed here, and this is not tidiness. The process does not exit on an `api_error`; leaving it
+  // would hold this worker's only work slot against a session that can never make progress.
+  closeSession(session.id)
+}
+
+/**
+ * One place where a run that did not report completion is wound up.
+ *
+ * ⛔ Both callers ask the same question first, and it is not "did this fail" — it is **who failed**.
+ * A run that never produced a metered turn did not fail at the work; it failed at the account, and
+ * charging it to the task sends somebody to debug a prompt that was never delivered to anything.
+ */
+async function endFailedRun(session: Session, run: Run, why: string): Promise<void> {
   const task = run.taskId ? getTask(run.taskId) : null
-  finishRun(run.id, exitCode === 0 ? 'failed' : 'failed', `session exited with ${exitCode}`)
+  finishRun(run.id, 'failed', why)
 
-  if (task && task.status === 'running') {
-    addMessage(
-      task.id,
-      'system',
-      `The session ended (exit ${exitCode}) without reporting completion. ` +
-        'Nothing here can tell whether the work was finished, so it is over to you.'
-    )
-    // ⛔ The deterministic outcome happens first and unconditionally, so the task is already in a
-    // safe and visible state whether or not a controller ever answers.
-    setStatus(task.id, 'awaiting_human', { assignee: 'human' })
-    maybeTriage(task.id)
+  const dead = deadOnArrival(session, run)
+
+  if (task && (task.status === 'running' || task.status === 'assigned')) {
+    if (dead) {
+      // ⚠️ The vendor's own words, where the stream gave any. `why` is a sentence a person can act
+      // on — "your organization has disabled…" — while `deadOnArrival` can only report silence.
+      const reason = session.lastRequestStartedAt === null && why.length > dead.length ? why : dead
+      recordDispatchFailure(run.workerId, reason, run.id)
+      addMessage(
+        task.id,
+        'system',
+        `Nothing ran on this worker. ${reason} That account is held out of dispatch until it is ` +
+          'probed again; this task goes back in the queue for another one.'
+      )
+      // ⚠️ Back to `ready`, not to a person. The gate added by `recordDispatchFailure` means the next
+      // tick cannot choose the same account, so this re-routes rather than loops - and when there is
+      // no other eligible worker the task holds at `ready` with the reason on its row, which is the
+      // true statement. ⛔ It is not marked `failed`: nothing about the work has been attempted.
+      setStatus(task.id, 'ready', { assignee: null })
+    } else {
+      addMessage(task.id, 'system', why)
+      // ⛔ The deterministic outcome happens first and unconditionally, so the task is already in a
+      // safe and visible state whether or not a controller ever answers.
+      setStatus(task.id, 'awaiting_human', { assignee: 'human' })
+      maybeTriage(task.id)
+    }
   }
 
   await releaseFor(run.id, task?.id ?? null, task?.projectId ?? null)
+  void captureQuotaAfter(requireRun(run.id))
+}
+
+/**
+ * A dispatch that produced **no assistant turn at all**, and why - or null if the run did something.
+ *
+ * ⛔ Two conditions, and both are needed. *No metered turn* on its own would libel a long run whose
+ * final turn had not been flushed yet; *a short life* on its own would libel a small task that
+ * finished quickly. Together they describe one thing: the process started, produced nothing a
+ * transcript could meter, and stopped. The measured cause on this machine was an account whose
+ * subscription had lapsed - the CLI printed its complaint and exited in under two seconds.
+ *
+ * ⚠️ The reason is taken from the CLI's own last words. `backscroll` keeps what a session said after
+ * it exited precisely so this is possible, and the `stream` transport pipes stderr into it - so the
+ * message an operator reads is the vendor's, not a guess assembled from an exit code.
+ */
+export const DEAD_ON_ARRIVAL_MS = 90_000
+
+/** Exported for its test. Both halves of the conjunction matter; see the note above. */
+export function deadOnArrival(session: Session, run: Run): string | null {
+  const lived = Date.now() - run.startedAt
+  if (lived > DEAD_ON_ARRIVAL_MS) return null
+  const metered =
+    run.inputTokens + run.outputTokens + run.cacheReadTokens + run.cacheWriteTokens > 0 ||
+    session.lastRequestStartedAt !== null
+  if (metered) return null
+
+  const said = backscroll(session.id).replace(/\s+/g, ' ').trim()
+  const tail = said.slice(-300)
+  return tail
+    ? `the agent exited after ${Math.round(lived / 1000)}s having produced no output. It said: ${tail}`
+    : `the agent exited after ${Math.round(lived / 1000)}s having produced no output and said nothing.`
 }
 
 /**

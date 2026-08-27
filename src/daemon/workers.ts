@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync, watch, type FSWatcher } from 'node:fs'
 import { join } from 'node:path'
-import type { Worker, WorkerIdentity, WorkerRole } from '@shared/protocol.js'
+import type { Worker, WorkerHealth, WorkerIdentity, WorkerRole } from '@shared/protocol.js'
 import { db, row, rows } from './db.js'
 import { ensureDir, paths, slugify } from './paths.js'
 import { adapter, hasAdapter } from './adapters/index.js'
@@ -18,6 +18,7 @@ interface WorkerRow {
   role: string
   max_concurrent: number
   identity_json: string | null
+  health_json: string | null
   created_at: number
   retired_at: number | null
 }
@@ -33,6 +34,7 @@ function toWorker(r: WorkerRow): Worker {
     role: (r.role as WorkerRole) ?? 'both',
     maxConcurrent: r.max_concurrent,
     identity: r.identity_json ? (JSON.parse(r.identity_json) as WorkerIdentity) : null,
+    health: r.health_json ? (JSON.parse(r.health_json) as WorkerHealth) : null,
     createdAt: r.created_at,
     retiredAt: r.retired_at
   }
@@ -253,7 +255,65 @@ export function retireWorker(id: string): Worker {
   return announce(w)
 }
 
-export async function refreshIdentity(id: string): Promise<Worker> {
+/**
+ * How many dispatches may die on a worker before it stops being offered one.
+ *
+ * One. ⛔ Not a tolerance to be tuned: a dispatch that ends with no assistant turn at all has proved
+ * the account cannot run work *right now*, and a second attempt costs another workspace claim, another
+ * process, and another task sent to a person who will read it as their own task failing. The measured
+ * case is an expired subscription, which does not get better by being asked twice.
+ */
+const STRIKES_TO_QUARANTINE = 1
+
+/**
+ * Record that a dispatch to this worker produced nothing.
+ *
+ * ⚠️ Only ever called for a run that ended **without a single metered turn**. A run that produced
+ * turns and then failed is a task-shaped failure, and blaming the account for it would quarantine a
+ * healthy fleet one bad prompt at a time.
+ */
+export function recordDispatchFailure(id: string, reason: string, runId: string | null): Worker {
+  const w = getWorker(id)
+  if (!w) return requireWorker(id)
+  const strikes = (w.health?.strikes ?? 0) + 1
+  const health: WorkerHealth = {
+    state: strikes >= STRIKES_TO_QUARANTINE ? 'suspect' : 'ok',
+    reason,
+    strikes,
+    since: Date.now(),
+    runId
+  }
+  db().prepare('update workers set health_json = ? where id = ?').run(JSON.stringify(health), id)
+  if (health.state === 'suspect') {
+    log.warn(`${w.label} is held out of dispatch after ${strikes} dead run(s): ${reason}`)
+  }
+  return announce(requireWorker(id))
+}
+
+/**
+ * This worker just proved it works. ⛔ Called on the first metered turn of a run, not on a clean
+ * exit - a process can exit 0 having done nothing, which is the exact failure this whole mechanism
+ * exists to catch.
+ */
+export function clearDispatchFailure(id: string): void {
+  const w = getWorker(id)
+  if (!w?.health) return
+  db().prepare('update workers set health_json = null where id = ?').run(id)
+  log.info(`${w.label} produced a turn; clearing '${w.health.reason}'`)
+  announce(requireWorker(id))
+}
+
+/**
+ * Re-read who is signed in.
+ *
+ * `lift` says whether this re-read may also lift a dispatch quarantine, and it defaults to **no**.
+ * ⛔ The two callers differ in a way that matters: a person pressing Probe has usually just fixed
+ * whatever benched the account, while the five-minute sweep has fixed nothing - and an expired
+ * subscription passes `auth status` unchanged, so a sweep that lifted the quarantine would re-offer
+ * the same dead account every fifteen minutes, each time costing a workspace claim, a process, and a
+ * task handed to a person as though their own work had failed.
+ */
+export async function refreshIdentity(id: string, lift = false): Promise<Worker> {
   const w = requireWorker(id)
   const probe = await adapter(w.adapterId).probeIdentity(w.isolationRoot)
   const identity = {
@@ -268,9 +328,16 @@ export async function refreshIdentity(id: string): Promise<Worker> {
     // reconstructing it later by grepping `raw` is precisely the mistake that made a worker with no
     // CLI look dispatchable.
     setupComplete: probe.setupComplete ?? null,
+    // Recorded, never gated on. See WorkerIdentity.subscriptionType.
+    subscriptionType: probe.subscriptionType ?? null,
     raw: probe.raw,
     checkedAt: Date.now()
   }
   db().prepare('update workers set identity_json = ? where id = ?').run(JSON.stringify(identity), id)
+
+  if (lift && getWorker(id)?.health) {
+    db().prepare('update workers set health_json = null where id = ?').run(id)
+    log.info(`${w.label} was re-probed by hand; it is offered work again`)
+  }
   return announce(requireWorker(id))
 }

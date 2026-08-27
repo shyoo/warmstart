@@ -9,17 +9,15 @@ if you add a line, find the one it obsoletes and cut it in the same edit. Finish
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
 **Baseline (2026-08-27, measured on this machine):** `npm run typecheck` clean · `npm run lint` clean ·
-`npm run build` clean · `npm test` 162/162 · `npm run test:daemon` 101/101 · `npm run test:ui` 23/23 ·
+`npm run build` clean · `npm test` 195/195 · `npm run test:daemon` 101/101 · `npm run test:ui` 36/36 ·
 `npm run test:pack` 17/17 · L4 (opt-in) landed a real agent commit on origin/main. Electron 44.0.0,
-electron-builder 26.15.3, 0 npm vulnerabilities. CLIs here: claude 2.1.223 · agy 1.1.20 · codex 0.149.1.
+electron-builder 26.15.3, 0 npm vulnerabilities. CLIs here: claude 2.1.247 · agy 1.1.21 · codex 0.149.1.
 
 ⚠️ **On a machine with no agent CLI the daemon suite reports 97 passed and 5 skipped**, with a stated
 reason each. That is the CI state, and it is why `summary()` prints skips beside the result instead of
 folding them in. Simulate it locally with a PATH of System32, node and git and an empty `HOME` before
-pushing — it is what found the dispatch-gate bug.
-
-**All ten CI jobs pass on all three platforms** (run 32940163319, 2026-08-26). What that does *not*
-cover is below.
+pushing — it is what found the dispatch-gate bug. **All ten CI jobs pass on all three platforms**
+(run 32940163319, 2026-08-26); what that does *not* cover is below.
 
 ---
 
@@ -49,7 +47,7 @@ deterministic fallback** rather than a call the scheduler makes (§11.1).
 src/daemon/            orchestratord. Runs as Electron-with-ELECTRON_RUN_AS_NODE, detached.
   index.ts             entry: lock, db, server, poller, scheduler, tailer wiring, shutdown
   server.ts  api.ts    HTTP+WS on 127.0.0.1:<random>, bearer token, typed RPC
-  db.ts                node:sqlite + numbered migrations (v4)
+  db.ts                node:sqlite + numbered migrations (v7)
   costmodel.ts         the four questions; user dir > bundled > compiled-in
   workers.ts           registry, isolation roots, retire-keeps-credentials
   quota.ts             the staleness ladder - read this before trusting a percentage
@@ -58,7 +56,11 @@ src/daemon/            orchestratord. Runs as Electron-with-ELECTRON_RUN_AS_NODE
   tasks.ts             DAG, admission, mandates, budgets, runs           (+ tasks.test.ts)
   cancel.ts            wind-down into a resting state; delete is separate and human-only
   approvals.ts         policy engine, escalation clock, remembered rules
-  scheduler.ts         the zero-token loop: gates, scoring, dispatch, watchdogs, preemption
+  scheduler.ts         the zero-token loop: gates, scoring, dispatch, watchdogs (+ routing.test.ts,
+                       runfailure.test.ts - who is blamed when a run does not succeed)
+  activity.ts          the live peephole: a bounded in-memory tail of what a run is saying
+  landing.ts           LandingStrategy; auto-land, serialised by an exclusive land: resource
+                       (+ landing.test.ts - real git, because the defect was in what git was asked)
   cacheclock.ts        the six moves - the piece the whole cost model exists for
   reserve.ts           the compaction reserve, and every belief with its basis attached
   objective.ts         the weight vector, in exactly two consumers    (+ cost.test.ts)
@@ -70,7 +72,6 @@ src/daemon/            orchestratord. Runs as Electron-with-ELECTRON_RUN_AS_NODE
   projects.ts          .multi_agent_controller/project.json; policy committed, state private
   resources.ts         the broker - if the scheduler owns the claim, the lock is unnecessary
   worktrees.ts         pooled worktrees, task-named branches, prepare hook
-  landing.ts           LandingStrategy; auto-land, serialised by an exclusive land: resource
   which.ts             PATH resolution - node-pty does not do it
   adapters/            claude-code - antigravity-cli - openai-compatible; capabilities as data
                        (+ adapters.test.ts). Read docs/adapters.md before changing one
@@ -101,8 +102,20 @@ docs/                  cost-model.md, glossary.md, adapters.md - maintained; rea
   (`tokens_per_percent`) is. `docs/cost-model.md` §10.
 - ⚠️ **A worker is not usable until somebody answers the CLI's first-run questions in its own root.**
   Signing in writes the credential and neither `hasCompletedOnboarding` nor folder trust; print mode
-  skips both, so scheduled work runs while a TUI cannot reach a prompt. `Finish setup` opens that
-  terminal. ClaudeFirst on this machine is signed in and still unset-up.
+  skips both, so scheduled work runs while a TUI cannot reach a prompt — and `/usage` cannot, which
+  is now also what stops it getting a cost baseline. `Finish setup` opens that terminal.
+- ⭐ **A worker is held out of dispatch by evidence, as of 2026-08-27.** A run that produces **no
+  metered turn** is charged to the account, not the task: the worker goes `suspect` carrying the
+  CLI's own words, the task re-queues, and only **Recheck** or a real turn lifts it. Reached from
+  both a session exit and a terminal `result` record — the org-disabled case never exits at all.
+  `deadOnArrival()`, `onStreamResult()`; `runfailure.test.ts` holds the cases. The rule is in
+  AGENTS.md; nothing gates on `subscriptionType`, which is recorded and shown only.
+- ⭐ **A run carries a quota reading either side of it**, refreshed before dispatch (one tick of
+  patience, no tokens) and after the run ends. ⛔ Never merged with the transcript token count: their
+  difference is R1's instrument, now visible without running an experiment by hand.
+- ⚠️ **Sessions are reused within a task, never yet across tasks in a project.** The detail pane says
+  which happened (`reused, context kept` / `new session`), so the claim is checkable. Closing the
+  second half is item 4 in *Next* and is still the biggest remaining cost win.
 - ⚠️ **Two M3 paths are unverified and marked in the code:** whether `/compact` is honoured as a user
   message on the `stream` transport (**R6**), and keepalive *execution*, which needs a warm session
   and an idle hour. The arithmetic is unit-tested; the firing is not.

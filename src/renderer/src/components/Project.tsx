@@ -70,7 +70,7 @@ export function Project({
       </div>
 
       {tab === 'tasks' ? (
-        <Tasks projects={projects} projectId={project.id} />
+        <Tasks projects={projects} projectId={project.id} fleet={fleet} />
       ) : tab === 'sessions' ? (
         <ProjectSessions
           project={project}

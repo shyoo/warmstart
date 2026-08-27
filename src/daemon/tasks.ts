@@ -9,6 +9,7 @@ import {
   type Priority,
   type Run,
   type RunOutcome,
+  type RunQuota,
   type Task,
   type TaskConstraints,
   type TaskKind,
@@ -58,11 +59,32 @@ interface TaskRow {
   est_tokens: number | null
   cancel_json: string | null
   handoff_note: string | null
+  hold_reason: string | null
   branch: string | null
   deleted_at: number | null
   created_at: number
   updated_at: number
+  first_run_at: number | null
+  last_run_ended_at: number | null
 }
+
+/**
+ * Every read of a task, so a task always knows when work on it started and stopped.
+ *
+ * ⛔ Two correlated subqueries rather than two columns on `tasks`. Duration is a fact about the
+ * *runs*, and a copy on the task would be one more thing to keep in step with them - the class of
+ * bug migration 5 already had to repair once, on counters that only ever added.
+ *
+ * ⚠️ `last_run_ended_at` reads the **latest** run's `ended_at`, not `max(ended_at)`. `max` skips
+ * nulls, so a task whose newest attempt is still running would inherit the end time of the attempt
+ * before it and render as finished while it was working.
+ */
+const TASK_SELECT = `
+  select t.*,
+    (select min(started_at) from runs r where r.task_id = t.id) as first_run_at,
+    (select r.ended_at from runs r where r.task_id = t.id
+      order by r.started_at desc limit 1) as last_run_ended_at
+  from tasks t`
 
 function toTask(r: TaskRow): Task {
   return {
@@ -90,7 +112,10 @@ function toTask(r: TaskRow): Task {
     estTokens: r.est_tokens,
     cancel: r.cancel_json ? (JSON.parse(r.cancel_json) as Task['cancel']) : null,
     handoffNote: r.handoff_note,
+    holdReason: r.hold_reason,
     branch: r.branch,
+    firstRunAt: r.first_run_at,
+    lastRunEndedAt: r.last_run_ended_at,
     deletedAt: r.deleted_at,
     createdAt: r.created_at,
     updatedAt: r.updated_at
@@ -111,14 +136,14 @@ export function listTasks(opts: { includeDeleted?: boolean; projectId?: string }
     clauses.push('project_id = ?')
     args.push(opts.projectId)
   }
-  const where = clauses.length ? `where ${clauses.join(' and ')}` : ''
-  return rows<TaskRow>(db().prepare(`select * from tasks ${where} order by seq`).all(...args)).map(
-    toTask
-  )
+  const where = clauses.length ? `where ${clauses.map((c) => `t.${c}`).join(' and ')}` : ''
+  return rows<TaskRow>(
+    db().prepare(`${TASK_SELECT} ${where} order by t.seq`).all(...args)
+  ).map(toTask)
 }
 
 export function getTask(id: string): Task | null {
-  const r = row<TaskRow>(db().prepare('select * from tasks where id = ?').get(id))
+  const r = row<TaskRow>(db().prepare(`${TASK_SELECT} where t.id = ?`).get(id))
   return r ? toTask(r) : null
 }
 
@@ -404,16 +429,39 @@ export function admitScheduled(): number {
 }
 
 export function setStatus(taskId: string, status: TaskStatus, extra: Partial<Task> = {}): Task {
+  const current = requireTask(taskId)
+  // ⚠️ `'assignee' in extra`, not `?? current`. A task going back into the queue has to *lose* its
+  // assignee, and coalesce cannot express that - it read a deliberate `null` as "leave it alone",
+  // which left a re-routed task showing the worker that had just failed to run it.
+  const assignee = 'assignee' in extra ? (extra.assignee ?? null) : current.assignee
   db()
     .prepare(
-      `update tasks set status = ?, assignee = coalesce(?, assignee), branch = coalesce(?, branch),
-                        handoff_note = coalesce(?, handoff_note), updated_at = ?
+      `update tasks set status = ?, assignee = ?, branch = coalesce(?, branch),
+                        handoff_note = coalesce(?, handoff_note), hold_reason = null, updated_at = ?
         where id = ?`
     )
-    .run(status, extra.assignee ?? null, extra.branch ?? null, extra.handoffNote ?? null, Date.now(), taskId)
+    .run(status, assignee, extra.branch ?? null, extra.handoffNote ?? null, Date.now(), taskId)
   const task = requireTask(taskId)
   emit({ type: 'task.changed', task })
   return task
+}
+
+/**
+ * Say why a task that is eligible to run is not running.
+ *
+ * ⛔ Not a status. The task really is `ready` - the scheduler would dispatch it this second if a
+ * worker could take it - and inventing a status for "ready but nothing free" would put a lie in the
+ * DAG to fix a gap in the UI. This is the *reason*, attached to the state that is already true.
+ *
+ * ⚠️ Writes only on a change, and every `setStatus` clears it. A tick that finds the same three
+ * workers still at capacity must not emit a task event every ten seconds for as long as they are.
+ */
+export function setHoldReason(taskId: string, reason: string | null): void {
+  const current = getTask(taskId)
+  if (!current || current.holdReason === reason) return
+  db().prepare('update tasks set hold_reason = ? where id = ?').run(reason, taskId)
+  const task = getTask(taskId)
+  if (task) emit({ type: 'task.changed', task })
 }
 
 export function updateTask(
@@ -548,6 +596,8 @@ interface RunRow {
   cache_write_tokens: number
   cost_model_id: string | null
   note: string | null
+  quota_before_json: string | null
+  quota_after_json: string | null
 }
 
 function toRun(r: RunRow): Run {
@@ -565,8 +615,27 @@ function toRun(r: RunRow): Run {
     cacheReadTokens: r.cache_read_tokens,
     cacheWriteTokens: r.cache_write_tokens,
     costModelId: r.cost_model_id,
-    note: r.note
+    note: r.note,
+    quotaBefore: r.quota_before_json ? (JSON.parse(r.quota_before_json) as RunQuota) : null,
+    quotaAfter: r.quota_after_json ? (JSON.parse(r.quota_after_json) as RunQuota) : null
   }
+}
+
+/**
+ * Attach a quota reading to a run.
+ *
+ * ⛔ Two calls, never one. `before` is written at dispatch and `after` once the run has ended; a run
+ * carrying only one of them is a number with nothing to subtract from, which is what the UI used to
+ * show. The caller decides *when*, because the two readings are taken for different reasons and at
+ * moments only the scheduler knows.
+ */
+export function setRunQuota(runId: string, which: 'before' | 'after', quota: RunQuota | null): void {
+  const column = which === 'before' ? 'quota_before_json' : 'quota_after_json'
+  db()
+    .prepare(`update runs set ${column} = ? where id = ?`)
+    .run(quota ? JSON.stringify(quota) : null, runId)
+  const run = row<RunRow>(db().prepare('select * from runs where id = ?').get(runId))
+  if (run) emit({ type: 'run.changed', run: toRun(run) })
 }
 
 export function startRun(input: {

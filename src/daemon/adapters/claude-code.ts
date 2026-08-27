@@ -327,6 +327,12 @@ export const claudeCode: AgentAdapter = {
         ...(parsed.email ? { account: parsed.email } : {}),
         ...(parsed.orgName ? { organization: parsed.orgName } : {}),
         setupComplete: firstRunComplete(isolationRoot),
+        // ⚠️ Read since 2.1.223 and, until now, parsed and thrown away - the field was in the type
+        // annotation above and in nothing else. It is the only thing the CLI says for free about
+        // *which plan* a worker is spending, and an account whose plan has lapsed had nowhere at all
+        // to say so. ⛔ Recorded verbatim and gated on nowhere: what an expired plan puts here has
+        // not been measured here, and a gate on a guessed string refuses healthy accounts.
+        subscriptionType: parsed.subscriptionType ?? null,
         raw: stdout.trim()
       }
     } catch {

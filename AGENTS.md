@@ -73,6 +73,14 @@ These are not preferences; breaking one breaks the product.
   including the ones that did nothing. A scheduler that spends money and cannot say why is one you
   will either over-trust or switch off.
 - ⛔ **`unknown` is a verdict, not a synonym for `ok`.** The reserve has three states for a reason.
+- ⛔ **Signed in is not the same as able to work, and only a run can tell you which.** An account with
+  a lapsed subscription answers `auth status` exactly as a live one does, so no free probe separates
+  them. The evidence is a dispatch that ends with **no metered turn**: that is charged to the worker
+  (`recordDispatchFailure`), never to the task, and the task re-routes rather than being handed to a
+  person as though their own prompt had failed. ⚠️ Both halves of the test are load-bearing — no turn
+  *and* a short life — because the transcript's last turn is routinely flushed after the process is
+  gone. Never gate on a vendor's plan string; it is recorded and shown, and nothing here has measured
+  what an expired one says.
 - ⛔ **The objective vector is consumed in exactly two places:** `weights()` for scheduler scoring and
   `policy()` for the cache clock, the model selector and preemption. A third consumer means one of
   those two is missing a field.
@@ -80,6 +88,14 @@ These are not preferences; breaking one breaks the product.
   set and a deadline set by that session's cache expiry. It goes on the Approvals bar, is answered by
   policy or one keystroke, and becomes an `awaiting_human` task only if it goes unanswered past
   `escalate_after`. Approvals are captured through a structured channel — never by reading the screen.
+- ⛔ **A landing that landed nothing must not say it landed.** Measured 2026-08-27: a question-only
+  task changed no file and was reported as *"Landed as a166a6a onto main"* — every step had
+  succeeded (clean workspace, no-op rebase, passing checks, a push that moved nothing, and
+  `rev-parse HEAD` returning the commit already there) and the sentence was still false. Count
+  `rev-list --count <target>..<branch>` **before** choosing a strategy. ⚠️ Zero commits with a clean
+  workspace is a *success* that touched no trunk; zero commits with a dirty one is work about to be
+  destroyed by the next dispatch into a pooled worktree, and collapsing the two replaces an urgent
+  warning with a shrug.
 - ⛔ **Cancel is not delete.** Cancel winds a run down through the preemption protocol into a resting
   state (`paused_user` / `draft` / `cancelled`) and destroys nothing. Delete is separate, human-only,
   soft by default, and **never removes runs** — they are the estimator's training data and the record
@@ -169,6 +185,18 @@ costmodels/             versioned pricing data
   built to `index.cjs` via an explicit rollup output override in `electron.vite.config.ts`. If you
   see *"Cannot use import statement outside a module"* from the preload, that override was lost.
   ⛔ Do not "fix" it by dropping `sandbox: true`.
+- **A quota sample is keyed on the vendor's fetch time, which does not move when you read it.**
+  `sampledAt` is `cachedUsageUtilization.fetchedAtMs` — exactly right for staleness and fatal as an
+  insert key, because re-reading an unchanged cache produces a row identical to the last one and
+  `lastQuota` returns *every* row at `max(sampled_at)`. The fleet strip grew a second `session` /
+  `weekly` pair every five minutes until `store()` became an upsert on (worker, window, sampled_at).
+- **A cost is a difference, so a run gets two quota readings or none.** One reading is a state, and
+  showing "the account is at 41%" beside a run invites it to be read as the run's price. The
+  scheduler refreshes a stale reading **before** dispatching — holding the task one tick rather than
+  blocking the loop, since `refreshUsage` opens a terminal for half a minute — and takes the closing
+  one once the run has ended and nothing is waiting. ⚠️ Never reconcile the two with the token
+  counts: transcript metering is exact for assistant turns while quota covers everything the CLI
+  spent, and the gap between them is the instrument.
 - **Idle time is measured from the request *start*, not the response record.** A four-minute response
   has already spent four minutes of the cache TTL. Measuring from the last assistant turn is
   optimistic by one response length.
@@ -208,6 +236,13 @@ costmodels/             versioned pricing data
 - **`task_complete` is the only signal that a task succeeded.** A process exiting cleanly says nothing
   about whether the work was done. A session that ends without it goes to `awaiting_human`, and that
   is the honest answer rather than a guess.
+- ⛔ **A failing `stream` session announces it and then does not exit**, so waiting for `onExit`
+  waits forever. Measured 2026-08-27: an account whose organisation had disabled Claude Code sent
+  `{"type":"result","is_error":true,"terminal_reason":"api_error"}` and sat on stdin — the run stayed
+  open, the task stayed `running`, and the worker's only slot stayed held. The terminal `result`
+  record is the signal (`onStreamResult`); the exit is not. ⚠️ And a failed *result* is not always a
+  failed *run* — an agent that hits a tool error has still worked and still metered turns, so who is
+  blamed is decided by the metering, never by the wording.
 - **`MULTI_AGENT_CONTROLLER_TIER` decides the MCP tool set, and only the daemon writes it.** It comes from the
   config file the daemon generated for that session; an agent cannot promote itself by exporting it.
   Two tiers means **two cache prefixes** on an install — adding a tier adds a third, so do not add one

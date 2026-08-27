@@ -170,7 +170,39 @@ export interface Task {
   estTokens: number | null
   cancel: CancelRecord | null
   handoffNote: string | null
+  /**
+   * Why this task is not moving, in the scheduler's own words, refreshed every tick it is passed
+   * over.
+   *
+   * ⛔ `ready` is not a state an operator can act on. It is the scheduler's word for "eligible", and
+   * a task can sit in it for hours because every worker is at capacity, because a routing question is
+   * open, or because the only account that could take it is out of window - three situations with
+   * three different answers, rendered identically as a task that appears to be doing nothing while
+   * the person who filed it wonders which button they forgot to press.
+   *
+   * The scheduler already computes this reason on every tick and used to fold it into a log line. It
+   * costs nothing to keep - the tick is arithmetic - and it is written only when it *changes*, so a
+   * held task is not a write every ten seconds.
+   *
+   * Cleared the moment the task moves. A stale reason is worse than none, because it is read as
+   * current.
+   */
+  holdReason: string | null
   branch: string | null
+  /**
+   * When work first started on this task, and when the last attempt stopped.
+   *
+   * ⛔ Derived from the runs, not stored on the task, because they are facts about attempts and a
+   * copy on the task would drift the first time a run was re-attributed. They live here because a
+   * table of tasks must be able to say **how long this took** without loading every run of every
+   * row - `createdAt` is when somebody typed it, which is a different and much less interesting
+   * number.
+   *
+   * `lastRunEndedAt` is null while an attempt is still open, which is what makes "running for 4m"
+   * distinguishable from "took 4m".
+   */
+  firstRunAt: number | null
+  lastRunEndedAt: number | null
   deletedAt: number | null
   createdAt: number
   updatedAt: number
@@ -202,6 +234,30 @@ export interface Run {
   cacheWriteTokens: number
   costModelId: string | null
   note: string | null
+  /**
+   * The account's own window, read either side of this run.
+   *
+   * ⛔ **Two readings or none.** A cost is a difference, and a difference needs a baseline - a run
+   * that reports "the account is at 41%" afterwards says nothing about what the run itself spent.
+   * The `before` is taken at dispatch (the scheduler refreshes a stale reading and waits a tick
+   * rather than dispatching blind); the `after` is taken once the run has ended and nothing is
+   * waiting on it.
+   *
+   * ⚠️ This is *not* the same number as the token counts above, and the gap between them is the
+   * point: this app meters assistant turns exactly, while quota measures everything the account
+   * spent - the auto-mode classifier, title generation, whatever else. HANDOFF calls that gap the
+   * instrument. Both are shown, never merged.
+   */
+  quotaBefore: RunQuota | null
+  quotaAfter: RunQuota | null
+}
+
+/** A quota reading kept beside a run, with enough of its basis to be distrusted properly. */
+export interface RunQuota {
+  windows: Array<{ id: string; label: string; percent: number }>
+  sampledAt: number
+  /** True when this was the best available reading and was already too old to act on. */
+  stale: boolean
 }
 
 export type RunOutcome = 'completed' | 'failed' | 'cancelled' | 'terminated' | 'preempted'
@@ -389,4 +445,14 @@ export interface LandingResult {
   /** Why it fell back or refused. Always populated when `ok` is false. */
   reason?: string
   checkOutput?: string
+  /**
+   * The branch carried no commits the target did not already have, so nothing was landed and nothing
+   * needed to be.
+   *
+   * ⛔ `ok: true` with nothing done, and the distinction is load-bearing: a task that answers a
+   * question is a success that touched no trunk, while a task that *meant* to change something and
+   * committed nothing is a failure. Only the person who filed it can tell those apart, so the
+   * message says plainly that the trunk was not touched rather than claiming a commit landed.
+   */
+  nothingToLand?: boolean
 }

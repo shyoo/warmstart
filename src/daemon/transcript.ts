@@ -6,6 +6,7 @@ import { costModel } from './costmodel.js'
 import { adapter } from './adapters/index.js'
 import { getSession } from './sessions.js'
 import { creditTurn } from './tasks.js'
+import { clearDispatchFailure } from './workers.js'
 import type { StreamUsage } from './stream.js'
 import { log } from './log.js'
 
@@ -318,6 +319,11 @@ export function recordTurn(turn: Turn): boolean {
       turn.sessionId
     )
 
+  // ⛔ Proof, not a guess: this account just produced a real assistant turn, so whatever held it out
+  // of dispatch is over. A clean exit would not do - a process can exit 0 having done nothing, which
+  // is the exact failure the quarantine exists to catch.
+  clearDispatchFailure(session.workerId)
+
   return true
 }
 
@@ -401,6 +407,9 @@ export function creditStreamTurn(session: Session, usage: StreamUsage): void {
     cacheRead: usage.cacheRead,
     cacheWrite: usage.cacheWrite
   })
+
+  // The same proof as the transcript path, for the adapters metered from their stream instead.
+  clearDispatchFailure(session.workerId)
 
   log.debug(
     `metered ${usage.input + usage.output} tokens from the stream on ${session.id.slice(0, 8)}`

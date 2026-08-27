@@ -9,13 +9,20 @@ import { startServer, type DaemonServer } from './server.js'
 import { QuotaPoller } from './quota.js'
 import { getSession, reconcileOrphans, setSessionEvents, shutdownAll } from './sessions.js'
 import { reconcileClaims } from './resources.js'
-import { onSessionExit, reconcileTasks, startScheduler, stopScheduler } from './scheduler.js'
+import {
+  onSessionExit,
+  onStreamResult,
+  reconcileTasks,
+  startScheduler,
+  stopScheduler
+} from './scheduler.js'
 import { reconcileConsults, startController, stopController } from './controller.js'
-import { creditTurn } from './tasks.js'
+import { creditTurn, runForSession } from './tasks.js'
 import { recordRateLimit } from './quota.js'
 import { TranscriptTailer, creditStreamTurn, recordCompaction, recordTurn } from './transcript.js'
 import { log, onLog } from './log.js'
 import { setEventSink } from './events.js'
+import { noteActivity } from './activity.js'
 import { paths } from './paths.js'
 
 /**
@@ -103,6 +110,17 @@ async function main(): Promise<void> {
         creditStreamTurn(session, event.usage)
         emit({ type: 'session.changed', session })
       }
+      // ⛔ The peephole. A running task used to show a status and a token count and nothing else, so
+      // "is this working or is it stuck?" could only be answered by opening the session pane and
+      // reading a terminal. This is the same prose, already decoded, forwarded to whoever is looking
+      // at the task. It is never written to the thread - see activity.ts.
+      if (event.kind === 'assistant_text') {
+        const run = runForSession(session.id)
+        if (run?.taskId) noteActivity(run.taskId, event.text)
+      }
+      // ⛔ And the record that says the turn failed, which nothing was listening to. A `stream`
+      // session that hits an `api_error` does not exit, so waiting for `onExit` waits forever.
+      if (event.kind === 'result') void onStreamResult(session, event)
     },
     onExit(sessionId, exitCode) {
       const finished = getSession(sessionId)

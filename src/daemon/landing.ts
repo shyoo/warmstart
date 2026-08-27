@@ -89,6 +89,29 @@ async function whereTheWorkIs(cwd: string, branch: string): Promise<string> {
   )
 }
 
+/**
+ * How many commits this branch carries that the landing target does not.
+ *
+ * ⛔ Asked **before** anything is landed, because zero is a completely different situation from one.
+ * Measured on this machine 2026-08-27: a question-only task - "how long does the quota take to show
+ * up?" - was answered, changed no file, and was then reported as *"Landed as a166a6a onto main"*.
+ * Every step had succeeded: the workspace was clean, the rebase was a no-op, the checks passed, the
+ * push moved nothing, and `rev-parse HEAD` dutifully returned the commit that was already there. A
+ * pipeline of correct steps produced a sentence that was false.
+ *
+ * ⚠️ Counted against the **target**, not against `--remotes`. A branch can be ahead of every remote
+ * and still carry nothing new for `main`.
+ */
+async function commitsAhead(cwd: string, branch: string, base: string): Promise<number | null> {
+  try {
+    return Number.parseInt(await git(cwd, ['rev-list', '--count', `${base}..${branch}`]), 10) || 0
+  } catch {
+    // An unknown base is not proof of an empty branch, and guessing here would silently skip landing
+    // real work. Unknown means "carry on and let the strategy decide".
+    return null
+  }
+}
+
 /** Run the project's own checks. A project that declares none has consented to landing unchecked. */
 async function runChecks(
   project: Project,
@@ -338,6 +361,35 @@ export function strategyFor(project: Project): LandingStrategy {
  */
 export async function landTask(ctx: LandingContext): Promise<LandingResult> {
   const strategy = strategyFor(ctx.project)
+
+  // ⛔ Before the strategy, and only when the workspace is clean. A task that produced **no commits**
+  // has nothing to land, and saying "landed as <the commit that was already there>" is not a
+  // harmless overstatement - it tells somebody their change reached the trunk. Uncommitted work is a
+  // different case entirely and is left to `canLand`, which refuses it and says where the work is.
+  // ⚠️ Not for a task that asked to be checked. "Nothing landed" is still an outcome its author
+  // wanted to see before it was called done, and skipping the review because the diff turned out
+  // empty decides that for them.
+  if (
+    ctx.project.vcs === 'git' &&
+    ctx.task.verification !== 'required' &&
+    (await isClean(ctx.workspacePath))
+  ) {
+    const base = (await hasRemote(ctx.workspacePath))
+      ? `origin/${policyFor(ctx.project).landingTarget}`
+      : policyFor(ctx.project).landingTarget
+    if ((await commitsAhead(ctx.workspacePath, ctx.branch, base)) === 0) {
+      addMessage(
+        ctx.task.id,
+        'system',
+        `Nothing to land: \`${ctx.branch}\` carries no commits that ` +
+          `\`${policyFor(ctx.project).landingTarget}\` does not already have, and the workspace is ` +
+          'clean. Work that answers a question rather than changing a file is finished here — the ' +
+          'trunk was not touched.'
+      )
+      return { strategy: strategy.id, ok: true, branch: ctx.branch, nothingToLand: true }
+    }
+  }
+
   const allowed = await strategy.canLand(ctx)
 
   if (!allowed.ok) {

@@ -228,7 +228,7 @@ export function App(): React.JSX.Element {
                 These tasks belong to no project, so they get no workspace and no branch. Give each
                 one a project — this list disappears when the last of them has a home.
               </div>
-              <Tasks projects={projects} />
+              <Tasks projects={projects} fleet={fleet} />
             </div>
           ) : route.kind === 'settings' && route.page === 'workers' ? (
             <Workers fleet={fleet} refresh={refresh} />

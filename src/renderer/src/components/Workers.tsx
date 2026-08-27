@@ -216,6 +216,7 @@ export function Workers({
               const loggedIn = worker.identity?.loggedIn === true
               const signInUnknown = worker.identity?.loggedIn == null
               const needsFirstRun = worker.identity?.setupComplete === false
+              const suspect = worker.health?.state === 'suspect' ? worker.health : null
               const gap = quotaGap(quota)
               return (
                 <tr key={worker.id}>
@@ -235,11 +236,26 @@ export function Workers({
                         {loggedIn ? 'signed in' : signInUnknown ? 'unknown' : 'not signed in'}
                       </span>
                     )}
+                    {/* ⚠️ Shown verbatim, and nothing branches on it. It is the only thing the CLI
+                        says for free about *which plan* this worker is spending — and an account
+                        whose plan has lapsed previously had nowhere at all to say so. */}
+                    {worker.identity?.subscriptionType && (
+                      <div className="dim tbl-sub">{worker.identity.subscriptionType}</div>
+                    )}
                     {/* ⛔ Signed in and set up are different questions, and only one of them was
                         ever asked here. A worker can be signed in, run scheduled work all day, and
                         still be unable to open a terminal. */}
                     {needsFirstRun && (
                       <div className="warn tbl-sub">setup unfinished</div>
+                    )}
+                    {/* ⛔ A third question again, and the only one answered by evidence: whether
+                        work has actually survived on this account. Identity cannot see it — an
+                        expired subscription answers `auth status` exactly as a live one does — so
+                        this comes from a run that started and produced nothing. */}
+                    {suspect && (
+                      <div className="danger tbl-sub" title={suspect.reason}>
+                        held out of dispatch — {suspect.reason}
+                      </div>
                     )}
                   </td>
                   <td className="num">
@@ -325,9 +341,14 @@ export function Workers({
                       className="btn btn--ghost"
                       disabled={busy === `probe:${worker.id}`}
                       onClick={() => void probe(worker.id, worker.label)}
-                      title="Reads the vendor CLI's own usage cache off disk. It never spends a token."
+                      title={
+                        suspect
+                          ? 'Re-reads this account and offers it work again. Press it once you have ' +
+                            'fixed what stopped the last run — this is the only thing that lifts the hold.'
+                          : "Reads the vendor CLI's own usage cache off disk. It never spends a token."
+                      }
                     >
-                      Probe
+                      {suspect ? 'Recheck' : 'Probe'}
                     </button>
                     <button
                       className="btn btn--ghost btn--danger"

@@ -20,6 +20,7 @@ import { lastQuota, refreshUsage } from './quota.js'
 import {
   backscroll,
   closeSession,
+  getSession,
   listSessions,
   resizeSession,
   sessionsForWorker,
@@ -60,6 +61,7 @@ import {
   requestApproval
 } from './approvals.js'
 import { allAvailability } from './resources.js'
+import { activityFor } from './activity.js'
 import { completeTask, deliverToLiveSession, tick } from './scheduler.js'
 import { controllerReport, drainConsults, enqueueConsult } from './controller.js'
 import { gateQuestion, riskOf } from './judgment.js'
@@ -148,7 +150,10 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
     // for an adapter that declares none it falls straight through to the file read, so this is
     // never worse than what it replaced.
     'worker.probe': async (p) => {
-      await refreshIdentity(p.id)
+      // ⛔ `lift` — a person pressing this is the one signal that clears a dispatch quarantine.
+      // The background sweep re-reads identity too and deliberately does not, because an expired
+      // subscription answers `auth status` exactly as a live one does.
+      await refreshIdentity(p.id, true)
       return await refreshUsage(p.id)
     },
 
@@ -272,7 +277,17 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
     'task.get': (p) => {
       const task = getTask(p.id)
       if (!task) return null
-      return { task, messages: messagesFor(p.id), runs: runsFor(p.id) }
+      const runs = runsFor(p.id)
+      // ⛔ The sessions too, so the detail pane can answer the question the whole cost model exists
+      // for: did this run continue from a warm prefix, or rebuild one? A worker id says which account
+      // paid; only the session says whether the context survived.
+      const seen = new Set<string>()
+      const sessions = runs
+        .map((r) => r.sessionId)
+        .filter((id): id is string => !!id && !seen.has(id) && !!seen.add(id))
+        .map((id) => getSession(id))
+        .filter((s): s is NonNullable<typeof s> => !!s)
+      return { task, messages: messagesFor(p.id), runs, sessions, activity: activityFor(p.id) }
     },
     'task.create': (p) => createTask(p),
     'task.update': (p) => {
