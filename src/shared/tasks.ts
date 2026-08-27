@@ -208,6 +208,19 @@ export interface Task {
    */
   firstRunAt: number | null
   lastRunEndedAt: number | null
+  /**
+   * The account the most recent run was on, whoever the task is *with* right now.
+   *
+   * ⛔ Derived from the runs, and it exists because `assignee` cannot answer this. Nine hand-off
+   * sites set `assignee` to `human` when a task starts waiting on a person, which is honest about
+   * who is being waited on and destroys the one fact the Worker column exists to show: a task that
+   * ran on ClaudeSecond and then asked a question rendered as worked on by **you**, and stayed that
+   * way after it was marked done. The account that spent the tokens is not the person who answered.
+   *
+   * ⚠️ Null until something has actually run. A task assigned a moment ago and not yet started has
+   * an `assignee` and no runs, which is a different state and reads as one.
+   */
+  ranOn: string | null
   deletedAt: number | null
   createdAt: number
   updatedAt: number

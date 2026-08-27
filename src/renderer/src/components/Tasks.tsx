@@ -90,11 +90,24 @@ function Working(): React.JSX.Element {
  * read. The two reserved values are not worker ids at all and must not be looked up as though they
  * were, or a task waiting on a person renders as a missing account.
  */
+/**
+ * Which **account** this task is on, or was on.
+ *
+ * ⛔ Never "you". The column exists so that which account is spending on a task is visible without a
+ * click — that is what made a misroute findable at all — and it used to be blanked by the very thing
+ * it was there to survive: nine hand-off sites set `assignee` to `human` the moment a task started
+ * waiting on a person, so a task ClaudeSecond had run rendered as worked on by *you*, and stayed
+ * that way after it was marked done. A person answering a question did not do the work and did not
+ * pay for it.
+ *
+ * ⚠️ `ranOn` first, `assignee` only as the before-anything-ran case: a task assigned a moment ago has
+ * an account and no runs yet, which is a real state and reads as one. Who is being waited on is the
+ * *status*, and it is said there.
+ */
 function assigneeLabel(task: Task, fleet: FleetEntry[]): string {
-  if (!task.assignee) return '—'
-  if (task.assignee === 'human') return 'you'
-  if (task.assignee === 'controller') return 'controller'
-  return fleet.find((f) => f.worker.id === task.assignee)?.worker.label ?? task.assignee.slice(0, 8)
+  const account = task.ranOn ?? (task.assignee === 'human' || task.assignee === 'controller' ? null : task.assignee)
+  if (!account) return task.assignee === 'controller' ? 'controller' : '—'
+  return fleet.find((f) => f.worker.id === account)?.worker.label ?? account.slice(0, 8)
 }
 
 export function Tasks({
@@ -271,7 +284,7 @@ export function Tasks({
                     </div>
                   ) : null}
                 </td>
-                <td className={task.assignee ? '' : 'dim'}>{assigneeLabel(task, fleet)}</td>
+                <td className={task.ranOn || task.assignee ? '' : 'dim'}>{assigneeLabel(task, fleet)}</td>
                 <td className="dim">
                   {task.createdBy.kind === 'human'
                     ? 'you'
@@ -339,6 +352,12 @@ export function Tasks({
           detail={detail}
           activity={activity[detail.task.id] ?? []}
           fleet={fleet}
+          // ⛔ Counted here, where the whole list is. `task.dependsOn` is what this task waits on;
+          // the question the decision needs answered is the reverse edge, and only the list can see
+          // it. ⚠️ `blocked` only — a dependent that has already run is not released by anything.
+          blocking={
+            tasks.filter((t) => t.status === 'blocked' && t.dependsOn.includes(detail.task.id)).length
+          }
           now={now}
           refresh={async () => {
             setDetail(await rpc('task.get', { id: detail.task.id }))
@@ -373,6 +392,7 @@ function TaskDetail({
   detail,
   activity,
   fleet,
+  blocking,
   now,
   refresh
 }: {
@@ -380,6 +400,8 @@ function TaskDetail({
   /** The live tail, kept by the list so it survives a re-fetch of the detail. */
   activity: Array<{ text: string; ts: number }>
   fleet: FleetEntry[]
+  /** How many tasks are waiting on this one — the concrete consequence of finishing it or not. */
+  blocking: number
   now: number
   refresh: () => Promise<void>
 }): React.JSX.Element {
@@ -444,6 +466,13 @@ function TaskDetail({
             </div>
           )}
 
+          {/* ⛔ Here, with the composer, and not in the ledger on the right. All three answers to
+              "a decision is wanted from you" are the same kind of thing — finish it, park it, or say
+              what you want next — and two of them living in a column of read-only facts made the
+              third look like the only one. */}
+          {task.status === 'awaiting_human' && (
+            <Decide task={task} blocking={blocking} onResolve={resolve} onStop={cancel} />
+          )}
           <Compose task={task} refresh={refresh} />
         </div>
 
@@ -458,38 +487,6 @@ function TaskDetail({
             <Fact label={task.status === 'awaiting_human' ? 'wants' : 'waiting on'}>
               {task.holdReason}
             </Fact>
-          )}
-          {/*
-            ⛔ The one status that is explicitly about the operator was the only one with nothing to
-            press. Everything else at rest has Resume, Queue, Cancel or Delete; the state meaning "a
-            decision is wanted from you" offered nowhere to record the decision, so a task whose work
-            was done but had not landed sat there next to a run marked `completed` and the only exits
-            were to cancel work that had succeeded or delete the record of it.
-          */}
-          {task.status === 'awaiting_human' && (
-            <div className="decide">
-              <div className="decide-head">your call</div>
-              <div className="decide-actions">
-                <button
-                  className="btn btn--primary"
-                  title="Records that you are satisfied. ⚠️ Nothing is verified by this — it is your judgement, and it is written into the thread as such."
-                  onClick={() => void resolve()}
-                >
-                  Mark done
-                </button>
-                <button
-                  className="btn btn--ghost"
-                  title="Stops here and rests the task. Destroys nothing."
-                  onClick={() => void cancel()}
-                >
-                  Stop here
-                </button>
-              </div>
-              <p className="decide-hint">
-                Or say what you want next in the box below — that continues this task as another run
-                on the same thread, on the session that still holds its context.
-              </p>
-            </div>
           )}
           <Fact label="worker">{assigneeLabel(task, fleet)}</Fact>
 
@@ -569,6 +566,89 @@ function TaskDetail({
         </aside>
       </div>
     </section>
+  )
+}
+
+/**
+ * The two ways to settle a task that is waiting on a person, each next to what it actually does.
+ *
+ * ⛔ They were indistinguishable, and the tooltips were the reason: *"records that you are
+ * satisfied"* and *"stops here and rests the task"* are two ways of saying **it stops**. The
+ * difference is not in how it feels, it is in the DAG. `admit()` unblocks a dependent only when its
+ * dependency reaches `completed`, so **Mark done releases everything waiting on this task and Stop
+ * here does not** — and with nothing on screen saying so, the choice looked like a matter of taste
+ * while it was quietly the difference between the rest of a plan running and not.
+ *
+ * ⚠️ The count is drawn, not implied. "2 tasks start" is a fact somebody can check; "unblocks
+ * dependents" is a sentence they have to take on trust and cannot see the scope of.
+ */
+function Decide({
+  task,
+  blocking,
+  onResolve,
+  onStop
+}: {
+  task: Task
+  blocking: number
+  onResolve: () => Promise<void>
+  onStop: () => Promise<void>
+}): React.JSX.Element {
+  // ⚠️ Both numbers agree with their verb. "The 2 tasks waiting on it stays blocked" is the kind of
+  // sentence somebody stops reading, and this one is load-bearing.
+  const releases =
+    blocking === 0
+      ? 'Nothing is waiting on this one, so it just comes to rest as done.'
+      : blocking === 1
+        ? 'Releases the one task waiting on it — it becomes ready and can be dispatched.'
+        : `Releases the ${blocking} tasks waiting on it — they become ready and can be dispatched.`
+  const holds =
+    blocking === 0
+      ? 'Nothing is waiting on it either way.'
+      : blocking === 1
+        ? 'The one task waiting on it stays blocked — only a completed task releases it.'
+        : `The ${blocking} tasks waiting on it stay blocked — only a completed task releases them.`
+
+  return (
+    <div className="decide">
+      <div className="decide-head">
+        <span>your call</span>
+        {/* The reason it stopped, where the answer is given rather than only in the ledger. */}
+        {task.holdReason && <span className="decide-why">{task.holdReason}</span>}
+      </div>
+
+      <div className="decide-option">
+        <button
+          className="btn btn--primary"
+          title="Records your judgement that this is finished. ⚠️ Nothing verified the work — task_complete remains the only signal that an agent finished."
+          onClick={() => void onResolve()}
+        >
+          Mark done
+        </button>
+        <span className="decide-what">
+          <strong>Finished.</strong> {releases} ⚠️ Your judgement, written into the thread as such —
+          nothing here checked the work.
+        </span>
+      </div>
+
+      <div className="decide-option">
+        <button
+          className="btn btn--ghost"
+          title="Parks the task. Destroys nothing, and Resume picks it up where it stopped."
+          onClick={() => void onStop()}
+        >
+          Stop here
+        </button>
+        <span className="decide-what">
+          <strong>Not finished.</strong> Parks it as <span className="mono">paused_user</span>, which
+          Resume picks back up. {holds} The branch and the workspace are kept.
+        </span>
+      </div>
+
+      <p className="decide-hint">
+        Or say what you want next in the box below — neither of these, but another run on this same
+        thread, preferring the session that still holds its context.
+      </p>
+    </div>
   )
 }
 

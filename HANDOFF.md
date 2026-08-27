@@ -9,7 +9,7 @@ if you add a line, find the one it obsoletes and cut it in the same edit. Finish
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
 **Baseline (2026-08-27, measured on this machine):** `npm run typecheck` clean · `npm run lint` clean ·
-`npm run build` clean · `npm test` 301/301 · `npm run test:daemon` 121/121 · `npm run test:ui` 70/70 ·
+`npm run build` clean · `npm test` 305/305 · `npm run test:daemon` 124/124 · `npm run test:ui` 70/70 ·
 `npm run test:pack` 18/18 · L4 (opt-in) landed a real agent commit on origin/main. Electron 44.0.0,
 electron-builder 26.15.3, 0 npm vulnerabilities. CLIs here: claude 2.1.247 · agy 1.1.22 · codex 0.149.1.
 
@@ -93,31 +93,31 @@ docs/                  cost-model.md, glossary.md, adapters.md - maintained; rea
 
 ## What is true right now and not yet proven
 
-- ⭐ **Both providers have a free live quota probe**, driven by `refreshUsage()` on the Probe button,
-  a 30-minute floor, and before a dispatch needing a baseline. ⛔ **R3 closed**; `docs/cost-model.md`
-  §5 has the ladder.
-- ⚠️ **The compaction reserve still reports `unknown`**, for one reason now: it needs `remaining` in
-  *tokens*, so **R2** (`tokens_per_percent`) is the blocker, not a stale percentage.
-  `docs/cost-model.md` §10. ⛔ Until it lands it is scored zero as a routing input — only checked
+- ⭐ **Both providers have a free live quota probe** — `refreshUsage()` on Probe, a 30-minute floor,
+  and before a dispatch needing a baseline. ⛔ **R3 closed**; `docs/cost-model.md` §5 has the ladder.
+- ⚠️ **The compaction reserve still reports `unknown`**, for one reason: it needs `remaining` in
+  *tokens*, so **R2** (`tokens_per_percent`) is the blocker, not a stale percentage
+  (`docs/cost-model.md` §10). ⛔ Until it lands it scores zero as a routing input — only checked
   evidence may move a score.
 - ⚠️ **A worker is not usable until somebody answers the CLI's first-run questions.** Print mode
   skips them, so scheduled work runs while a TUI — and therefore a quota probe — cannot. `Finish
   setup` opens that terminal.
 - ⭐ **A worker is held out by evidence, for judgment as well as work.** A run — or a consult —
-  producing no metered turn is charged to the account, not the task. ⛔ One gate list,
-  `eligibility.ts`, read by both schedulers. Cases in `runfailure.test.ts`, `controllerchoice.test.ts`.
+  producing no metered turn is charged to the account, not the task, via one gate list in `eligibility.ts`.
 - ⛔ **Every suite that drives a build product refuses a stale one.** `checkBuildIsCurrent()` guards
   `test:daemon` and `test:ui`; the asar check guards `test:pack`. Three green-and-wrong runs in one
   day is what bought them.
 - ⭐ **Closing the window can stop the daemon, or not, and the operator chooses.** Global → *This
-  app* → tray. Off (the default): quitting asks orchestratord to shut down, so nothing is left
-  behind. On: it keeps running and the tray icon brings the window back. ⛔ Shutting the daemon
-  down ends every live session, so a quit with work in flight asks first. ⚠️ The tray *icon* -
-  appearing, close-to-hide, click-to-restore - has never been exercised end to end; the switch,
-  its persistence and the `daemon.shutdown` RPC are all covered.
+  app* → tray. Off (default): quitting asks orchestratord to shut down. On: it keeps running and the
+  tray icon brings the window back. ⛔ Shutting the daemon down ends every live session, so a quit
+  with work in flight asks first. ⚠️ The tray *icon* — appearing, close-to-hide, click-to-restore —
+  has never been exercised end to end; the switch and the `daemon.shutdown` RPC are covered.
 - ⭐ **The cache clock no longer repeats itself, and compaction has an off switch.** A move is
-  recorded when *issued*, and the clock gives up after two ignored attempts and hands off.
-  `settings.autoCompact` is a fleet-wide switch on the Cost page, and gates the at-risk path too.
+  recorded when *issued*; the clock gives up after two ignored attempts and hands off, and `settings.autoCompact` gates the at-risk path too.
+- ⭐ **The Worker column names an account, never a person.** `Task.ranOn` is derived from the runs
+  because `assignee` cannot answer this — nine hand-off sites set it to `human`, blanking the one
+  fact that column exists to show. ⛔ `resolveTask` puts the account back: answering a question is
+  not doing the work.
 - ⭐ **A task can be pinned to an account and a model; `checkConstraints` (api.ts) rejects what
   nothing can honour.** `constraints.workerId` is a **pin** — the scheduler skips every other
   candidate — and the form says so rather than calling it a preference. ⛔ **`selectableEffort` is
@@ -128,10 +128,10 @@ docs/                  cost-model.md, glossary.md, adapters.md - maintained; rea
   (**R6**), and keepalive *execution*. The arithmetic is unit-tested; the firing is not.
 - ⚠️ **No consult has ever been answered by a real model** - the fallbacks are proved, the answer
   path is synthetic only. **R8**.
-- ⭐ **Antigravity runs and reports its quota**, both since 2026-08-27; **R9 is closed the opposite way
-  round from how it was asked** (`docs/cost-model.md` §5). ⚠️ Still unproven past the `init` record:
-  **no Antigravity task has ever completed**, so R11 and R13 stand — and with `mcp: false` it cannot
-  call `task_complete`, so `awaiting_human` on every run is the honest outcome there.
+- ⭐ **Antigravity runs and reports its quota**, both since 2026-08-27; **R9 closed the opposite way
+  round from how it was asked** (`docs/cost-model.md` §5). ⚠️ Unproven past the `init` record: **no
+  Antigravity task has ever completed**, so R11 and R13 stand — and with `mcp: false` it cannot call
+  `task_complete`, so `awaiting_human` every run is the honest outcome there.
 - ⛔ **Anything needing a real agent CLI is unproven off Windows.** CI proved three platforms build,
   start, package and schedule; the runners have no CLI, so every capability in `docs/adapters.md`
   was measured on Windows only.

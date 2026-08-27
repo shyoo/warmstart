@@ -1332,6 +1332,10 @@ select:focus-visible,
 }
 
 .decide-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -1339,10 +1343,47 @@ select:focus-visible,
   margin-bottom: var(--sp-2);
 }
 
-.decide-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--sp-2);
+/* The reason, beside the label rather than under it, and not shouted. */
+.decide-why {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: var(--text-meta);
+  color: var(--color-text-dim);
+}
+
+/*
+ * ⛔ One row per choice: the button, and beside it what pressing it does. The two used to sit side
+ * by side with nothing between them, which made "Mark done" and "Stop here" read as the same action
+ * worded twice — while one of them releases every task waiting on this one and the other does not.
+ */
+.decide-option {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  align-items: start;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-2);
+}
+
+.decide-option .btn {
+  width: 100%;
+  justify-content: center;
+}
+
+.decide-what {
+  font-size: var(--text-meta);
+  color: var(--color-text-dim);
+  line-height: var(--leading-body);
+}
+
+.decide-what strong {
+  color: var(--color-text);
+}
+
+@media (max-width: 700px) {
+  .decide-option {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--sp-1);
+  }
 }
 
 .decide-hint {

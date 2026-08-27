@@ -1003,7 +1003,15 @@ export function resolveTask(taskId: string, note?: string): Task {
       ? `Marked done by you: ${note.trim()}`
       : 'Marked done by you. ⚠️ Nothing here verified the work — this records your judgement, not a check.'
   )
-  setStatus(task.id, 'completed', { assignee: 'human' })
+  // ⛔ The assignee goes back to the account that did the work, not to the person who signed off.
+  // It used to be set to `human` here, which put **you** in the Worker column of a task ClaudeSecond
+  // had run — and that column exists so which account is spending is visible without a click.
+  // Answering a question is not doing the work; being handed a decision is a temporary assignment,
+  // and a *finished* task assigned to a person says nothing anybody can use.
+  //
+  // ⚠️ Null when nothing ever ran, which is a real case — a task resolved before it was ever
+  // dispatched genuinely has no account, and `—` says that. Who answered is in the thread above.
+  setStatus(task.id, 'completed', { assignee: task.ranOn ?? null })
 
   // The session was being kept warm for a reply that is now not coming. Holding it any longer costs
   // this worker its only work slot for a conversation that is over.

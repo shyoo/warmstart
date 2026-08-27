@@ -423,6 +423,33 @@ describe('answering a task that is waiting on a person', () => {
     expect(tasks.getTask(child.id)?.status).toBe('ready')
   })
 
+  it('leaves the account that did the work in the record', () => {
+    // ⛔ The complaint, exactly as it arrived: "after I clicked Mark done it shows worker as *you*,
+    // but the main worker was ClaudeSecond — I was only temporarily assigned to make a close call."
+    // `resolveTask` used to write `assignee: 'human'` on the way to `completed`, so answering a
+    // question overwrote which account had spent the tokens. The Worker column exists so a routing
+    // mistake is visible without a click; this blanked it at the one moment somebody was looking.
+    const { task, worker } = seedRunningTask()
+    tasks.setStatus(task.id, 'awaiting_human', { assignee: 'human' })
+    scheduler.resolveTask(task.id)
+    const done = tasks.getTask(task.id)
+    expect(done?.status).toBe('completed')
+    expect(done?.ranOn).toBe(worker.id)
+    // ⚠️ And the assignee goes back to that account too, so a hand-resolved task and an
+    // agent-completed one agree about who did it. Who *answered* is in the thread, where it belongs
+    // — a sentence with a reason, not a field that displaces an account.
+    expect(done?.assignee).toBe(worker.id)
+  })
+
+  it('knows which account ran it even before anyone answers', () => {
+    // `ranOn` is derived from the runs, so it is right in every state rather than only after one
+    // particular transition remembers to preserve it.
+    const { task, worker } = seedRunningTask()
+    expect(tasks.getTask(task.id)?.ranOn).toBe(worker.id)
+    tasks.setStatus(task.id, 'awaiting_human', { assignee: 'human' })
+    expect(tasks.getTask(task.id)?.ranOn).toBe(worker.id)
+  })
+
   it('is idempotent, so a double click is not a second decision', () => {
     const { task } = seedRunningTask()
     tasks.setStatus(task.id, 'awaiting_human', { assignee: 'human' })
@@ -430,6 +457,53 @@ describe('answering a task that is waiting on a person', () => {
     const before = tasks.messagesFor(task.id).length
     scheduler.resolveTask(task.id)
     expect(tasks.messagesFor(task.id).length).toBe(before)
+  })
+})
+
+/**
+ * What separates the two buttons the operator is offered.
+ *
+ * ⛔ They were indistinguishable on screen, and the tooltips were why: *"records that you are
+ * satisfied"* and *"stops here and rests the task"* both mean **it stops**. The real difference is
+ * in the DAG — `admit()` releases a dependent only when its dependency reaches `completed` — so one
+ * of them starts the rest of the plan and the other leaves it waiting forever. A choice that reads
+ * as a matter of taste and is not is worse than no choice at all.
+ */
+describe('finishing a task versus parking it', () => {
+  it('releases what was waiting only when the task is completed', () => {
+    const { task } = seedRunningTask()
+    const child = tasks.createTask({
+      title: 'downstream of the decision',
+      createdBy: { kind: 'human' },
+      dependsOn: [task.id]
+    })
+    expect(tasks.getTask(child.id)?.status).toBe('blocked')
+
+    // "Stop here": the resting state a human cancel produces. Nothing downstream may move.
+    tasks.setStatus(task.id, 'paused_user')
+    tasks.admitDependents(task.id)
+    expect(tasks.getTask(child.id)?.status).toBe('blocked')
+
+    // "Mark done".
+    tasks.setStatus(task.id, 'completed')
+    tasks.admitDependents(task.id)
+    expect(tasks.getTask(child.id)?.status).toBe('ready')
+  })
+
+  it('does not release a dependent that has already run', () => {
+    // ⚠️ Which is why the count beside the button is of `blocked` dependents only. Telling somebody
+    // that pressing this starts three tasks when two of them ran yesterday is a worse lie than
+    // saying nothing, because it is checkable.
+    const { task } = seedRunningTask()
+    const child = tasks.createTask({
+      title: 'already done downstream',
+      createdBy: { kind: 'human' },
+      dependsOn: [task.id]
+    })
+    tasks.setStatus(child.id, 'completed')
+    tasks.setStatus(task.id, 'completed')
+    tasks.admitDependents(task.id)
+    expect(tasks.getTask(child.id)?.status).toBe('completed')
   })
 })
 

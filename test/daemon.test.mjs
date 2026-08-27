@@ -446,6 +446,40 @@ try {
   )
   await daemon.rpc('task.cancel', { id: blocked.id, restingState: 'cancelled' })
 
+  // ⛔ And the other button does not, which is the whole difference between them. On screen they read
+  // as one action worded twice — "records that you are satisfied" and "stops here and rests the
+  // task" both mean *it stops* — while only one of them lets the rest of a plan run. The UI now says
+  // so beside each button, with the count; this is the check that the sentence is true.
+  const parked = await daemon.rpc('task.create', { title: 'parked, not finished', projectId: added.id })
+  const stillWaiting = await daemon.rpc('task.create', {
+    title: 'waits on something that was parked',
+    projectId: added.id,
+    dependsOn: [parked.id]
+  })
+  await daemon.rpc('task.cancel', { id: parked.id })
+  const afterStop = (await daemon.rpc('task.list', {})).find((t) => t.id === parked.id)
+  check(
+    'stopping a task parks it where Resume can pick it up',
+    afterStop?.status === 'paused_user',
+    afterStop?.status
+  )
+  const heldBack = (await daemon.rpc('task.list', {})).find((t) => t.id === stillWaiting.id)
+  check(
+    'and leaves everything waiting on it blocked — only finishing releases them',
+    heldBack?.status === 'blocked',
+    heldBack?.status
+  )
+  await daemon.rpc('task.cancel', { id: stillWaiting.id, restingState: 'cancelled' })
+
+  // ⛔ A task that ran on an account keeps saying so after a person signs off on it. Reported
+  // 2026-08-27: "after I clicked Mark done it shows worker as *you*, but the main worker was
+  // ClaudeSecond — I was only temporarily assigned to make a close call."
+  check(
+    'a task nobody ever ran names no account rather than naming the person who answered',
+    resolved.assignee !== 'human' && resolved.ranOn === null,
+    `assignee=${resolved.assignee} ranOn=${resolved.ranOn}`
+  )
+
   // ---------------------------------------------------------------- cancel is not delete
   section('cancel and delete')
   const cancelled = await daemon.rpc('task.cancel', { id: later.id, reason: 'not now' })

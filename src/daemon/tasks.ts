@@ -48,6 +48,7 @@ interface TaskRow {
   lineage_depth: number
   assignee: string | null
   assignee_hint: string | null
+  last_run_worker_id?: string | null
   mandate_json: string
   budget_json: string
   not_before: number | null
@@ -83,7 +84,9 @@ const TASK_SELECT = `
   select t.*,
     (select min(started_at) from runs r where r.task_id = t.id) as first_run_at,
     (select r.ended_at from runs r where r.task_id = t.id
-      order by r.started_at desc limit 1) as last_run_ended_at
+      order by r.started_at desc limit 1) as last_run_ended_at,
+    (select r.worker_id from runs r where r.task_id = t.id
+      order by r.started_at desc limit 1) as last_run_worker_id
   from tasks t`
 
 function toTask(r: TaskRow): Task {
@@ -116,6 +119,7 @@ function toTask(r: TaskRow): Task {
     branch: r.branch,
     firstRunAt: r.first_run_at,
     lastRunEndedAt: r.last_run_ended_at,
+    ranOn: r.last_run_worker_id ?? null,
     deletedAt: r.deleted_at,
     createdAt: r.created_at,
     updatedAt: r.updated_at
