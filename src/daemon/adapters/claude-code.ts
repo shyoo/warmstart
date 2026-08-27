@@ -28,6 +28,10 @@ const info: AdapterInfo = {
     nativeWorktree: true,
     multimodalInput: true,
     mcp: true,
+    // ⛔ No start-up flag for it. Effort is chosen inside a running session (`/effort`) and
+    // arrives here only as an observation on each turn — transcript.ts reads it back per request.
+    // Measured 2026-08-27 against the CLI's flag surface; promote this the day a flag exists.
+    selectableEffort: false,
     quotaProbe: 'cli',
     // `--session-id` takes a uuid we choose, which is what makes the transcript path knowable before
     // the file exists and what lets orphan reaping prove a pid is ours.

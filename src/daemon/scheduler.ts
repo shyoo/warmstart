@@ -647,11 +647,17 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
   // workspace-trust dialog is skipped only in non-interactive mode, and would otherwise block every
   // dispatch into a fresh worktree with nobody there to answer; and `--permission-prompt-tool` -
   // the entire structured approval channel - exists only in non-interactive mode.
+  // ⛔ The effort is dropped, not forwarded, when the adapter says it cannot take one. A level
+  // passed to a CLI with no flag for it is either an argument error charged to somebody's window or
+  // — worse, because it is quiet — a task that records a setting nothing ever applied. The form
+  // will not have offered the choice for such a worker; this is the guard for every other caller.
+  const canSetEffort = adapter(worker.adapterId).info.capabilities.selectableEffort
   const session = spawnSession({
     workerId: worker.id,
     cwd,
     transport: 'stream',
-    ...(task.constraints.model ? { model: task.constraints.model } : {})
+    ...(task.constraints.model ? { model: task.constraints.model } : {}),
+    ...(task.constraints.effort && canSetEffort ? { effort: task.constraints.effort } : {})
   })
 
   const run = startRun({

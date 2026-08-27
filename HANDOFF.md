@@ -9,20 +9,18 @@ if you add a line, find the one it obsoletes and cut it in the same edit. Finish
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
 **Baseline (2026-08-27, measured on this machine):** `npm run typecheck` clean · `npm run lint` clean ·
-`npm run build` clean · `npm test` 289/289 · `npm run test:daemon` 114/114 · `npm run test:ui` 62/62 ·
+`npm run build` clean · `npm test` 301/301 · `npm run test:daemon` 121/121 · `npm run test:ui` 70/70 ·
 `npm run test:pack` 18/18 · L4 (opt-in) landed a real agent commit on origin/main. Electron 44.0.0,
 electron-builder 26.15.3, 0 npm vulnerabilities. CLIs here: claude 2.1.247 · agy 1.1.22 · codex 0.149.1.
 
 ⭐ **`scripts/build-win.ps1` runs all of the above; `-Help` lists its options, `-Restart` is the inner
 loop.** Steps are content-addressed and skipped when unchanged: **92s cold, ~0s warm**.
-⛔ **One packaged app: `release\win-unpacked\`, and it is the build's.** The second copy under
-`release\suite\` is gone (2026-08-27) — it existed only so packaging could not collide with an app
-run from the repo, and **the app to use is the one the installer installs**. Running the repo's copy
-while building blocks the pack step, correctly.
+⛔ **One packaged app: `release\win-unpacked\`, and it is the build's** — **the app to use is the
+one the installer installs**. Running the repo's copy while building blocks the pack step, correctly.
 
 ⚠️ **With no agent CLI the daemon suite skips 5 checks**, each with a stated reason — the CI state.
-Simulate it with a PATH of System32, node and git and an empty `HOME`; it is what found the
-dispatch-gate bug. **All ten CI jobs pass on all three platforms**; what that misses is below.
+Simulate it with a PATH of System32, node and git and an empty `HOME`; it found the dispatch-gate
+bug. **All ten CI jobs pass on all three platforms**; what that misses is below.
 
 ---
 
@@ -103,15 +101,14 @@ docs/                  cost-model.md, glossary.md, adapters.md - maintained; rea
   `docs/cost-model.md` §10. ⛔ Until it lands it is scored zero as a routing input — only checked
   evidence may move a score.
 - ⚠️ **A worker is not usable until somebody answers the CLI's first-run questions.** Print mode
-  skips them, so scheduled work runs while a TUI - and therefore a quota probe - cannot.
-  `Finish setup` opens that terminal.
-- ⭐ **A worker is held out by evidence, for judgment as well as work.** A run - or a consult -
+  skips them, so scheduled work runs while a TUI — and therefore a quota probe — cannot. `Finish
+  setup` opens that terminal.
+- ⭐ **A worker is held out by evidence, for judgment as well as work.** A run — or a consult —
   producing no metered turn is charged to the account, not the task. ⛔ One gate list,
-  `eligibility.ts`, read by both schedulers; a held-out account is not background-probed either.
-  Cases in `runfailure.test.ts`, `controllerchoice.test.ts`.
-- ⛔ **Every suite below L1 drives a build product and none of them builds one** —
-  `checkBuildIsCurrent()` and the asar check refuse when the artefact predates `src/`;
-  ⚠️ `test:ui` still has no such guard and silently drove a stale renderer once.
+  `eligibility.ts`, read by both schedulers. Cases in `runfailure.test.ts`, `controllerchoice.test.ts`.
+- ⛔ **Every suite that drives a build product refuses a stale one.** `checkBuildIsCurrent()` guards
+  `test:daemon` and `test:ui`; the asar check guards `test:pack`. Three green-and-wrong runs in one
+  day is what bought them.
 - ⭐ **Closing the window can stop the daemon, or not, and the operator chooses.** Global → *This
   app* → tray. Off (the default): quitting asks orchestratord to shut down, so nothing is left
   behind. On: it keeps running and the tray icon brings the window back. ⛔ Shutting the daemon
@@ -119,9 +116,14 @@ docs/                  cost-model.md, glossary.md, adapters.md - maintained; rea
   appearing, close-to-hide, click-to-restore - has never been exercised end to end; the switch,
   its persistence and the `daemon.shutdown` RPC are all covered.
 - ⭐ **The cache clock no longer repeats itself, and compaction has an off switch.** A move is
-  recorded when *issued*, with the evidence that would prove it landed, and the clock gives up after
-  two ignored attempts and hands off. `settings.autoCompact` is a fleet-wide switch on the Cost page
-  and gates the reserve-at-risk path too.
+  recorded when *issued*, and the clock gives up after two ignored attempts and hands off.
+  `settings.autoCompact` is a fleet-wide switch on the Cost page, and gates the at-risk path too.
+- ⭐ **A task can be pinned to an account and a model; `checkConstraints` (api.ts) rejects what
+  nothing can honour.** `constraints.workerId` is a **pin** — the scheduler skips every other
+  candidate — and the form says so rather than calling it a preference. ⛔ **`selectableEffort` is
+  false on all three built-ins** (`docs/adapters.md` has the per-CLI reason), so `constraints.effort`
+  is dropped at dispatch and no effort control is drawn. ⚠️ That whole path has therefore never run
+  end to end; only its refusals have.
 - ⚠️ **Two M3 paths are unverified and marked in the code:** `/compact` on the `stream` transport
   (**R6**), and keepalive *execution*. The arithmetic is unit-tested; the firing is not.
 - ⚠️ **No consult has ever been answered by a real model** - the fallbacks are proved, the answer
@@ -131,10 +133,10 @@ docs/                  cost-model.md, glossary.md, adapters.md - maintained; rea
   **no Antigravity task has ever completed**, so R11 and R13 stand — and with `mcp: false` it cannot
   call `task_complete`, so `awaiting_human` on every run is the honest outcome there.
 - ⛔ **Anything needing a real agent CLI is unproven off Windows.** CI proved three platforms build,
-  start, package and schedule; the runners have no CLI and cannot sign in to one, so every adapter
-  capability in `docs/adapters.md` was measured on Windows only.
-- ⛔ **Unsigned.** Windows SmartScreen warns and macOS Gatekeeper refuses. That is the honest state of
-  a pre-alpha; fixing it needs a certificate and an Apple Developer account, not a config line.
+  start, package and schedule; the runners have no CLI, so every capability in `docs/adapters.md`
+  was measured on Windows only.
+- ⛔ **Unsigned.** SmartScreen warns and Gatekeeper refuses — the honest state of a pre-alpha; it
+  needs a certificate and an Apple Developer account, not a config line.
 
 ## Next
 
@@ -145,21 +147,19 @@ M0–M6 are done. What is left is not a milestone but a list, in the order it wo
 2. **R2 (`tokens_per_percent`)** — the last thing between a refreshable percentage and a compaction
    reserve that reports a number. Now cheap to run, because the percentage refreshes on demand.
 3. **Signing and notarisation**, without which the installers warn or refuse.
-4. **Warm-session reuse across tasks in one project** — the biggest remaining cost win, and the
-   reason it is not done is in the scheduler's own comment: the workspace claim has to move from the
-   task to the session first, so a session can outlive the task that opened it without leaking a
-   claim or switching a branch under a running agent.
+4. **Warm-session reuse across tasks in one project** — the biggest remaining cost win. The
+   scheduler's own comment says why it is not done: the workspace claim has to move from the task to
+   the session first, so a session can outlive the task that opened it.
 
 ## Open questions
 
 - **Auto-mode classifier cost on a subscription** (`docs/cost-model.md` §9). Documented as billable on
   Enterprise and API-billed accounts, unstated for Pro/Max/Team, and Claude workers default to `auto`.
   ⛔ Do not assume it is free — **R1** measures it.
-- **Vertex / Antigravity cache pricing.** Not guessed: both cost models declare
-  `cache.kind: "unpriced"` and the clock declines to act. Needs a published figure, not an experiment.
-- **`expected idle` estimator** (plan §8.6). Cannot be designed further without real queue data.
+- **Vertex / Antigravity cache pricing.** Both cost models declare `cache.kind: "unpriced"` and the clock declines to act. Needs a published figure, not an experiment.
+- **`expected idle` estimator** (plan §8.6). Not designable without real queue data.
 - **Are the consult prompts good enough?** The honest gap in M4 (**R8**). ⛔ If replies fail
-  validation the prompt is wrong, not the validator — never widen a closed set to fit a reply.
+  validation the prompt is wrong, not the validator.
 
 ## Measurement runs owed
 
@@ -171,11 +171,11 @@ reached a transcript. ⛔ Never merged.
 
 | # | Question | Method | What it changes |
 |---|---|---|---|
-| **R1** | Does the auto-mode classifier bill on a subscription? | ⭐ No longer by hand: a run now records the window either side of itself, so the task pane shows (quota delta − transcript tokens) directly. Run the same shell-heavy task twice on a quiet worker, `auto` then `default`, and read both | If it bills, `auto` stops being a free default and the objective vector has to price it. §9 |
+| **R1** | Does the auto-mode classifier bill on a subscription? | ⭐ A run now records the window either side of itself, so the task pane shows (quota delta − transcript tokens). Run one shell-heavy task twice on a quiet worker, `auto` then `default` | If it bills, `auto` stops being a free default and the objective vector has to price it. §9 |
 | **R2** | `tokens_per_percent` per (worker, model, tokenizer) | With exactly one session live, sample `/usage` by hand at intervals and diff against transcript tokens over the same span | Turns percent into tokens, which is what every gate actually needs. Plan §8.5 |
 | **R4** | Real compaction cost end to end | Compact a session of known size; diff transcript tokens across the `compact_boundary` and record `durationMs` | Three samples so far (139k · 116k · **161k** ms). The spread matters more than the mean for the T+53m deadline |
 | **R5** | Second account on a transplanted transcript | Commission a second worker, copy a small transcript into its root, `--resume`, complete one turn | Discovery is measured; completion is not. Shapes cross-account continuation. §7 |
-| **R6** | Is `/compact` honoured as a user message on `stream`? | Send it into a live stream session and watch for a `compact_boundary` record | ⚠️ No longer urgent: the clock gives up after two ignored attempts and hands off, so a `no` costs two turns rather than a loop. Still owed — a `no` makes handoff-and-close the only move on that transport |
+| **R6** | Is `/compact` honoured as a user message on `stream`? | Send it into a live stream session and watch for a `compact_boundary` record | ⚠️ Not urgent — the clock gives up after two ignored attempts. A `no` makes handoff-and-close the only move on that transport |
 | **R7** | Does the live rate-limit `status` warn before it refuses? | Let one window fill while watching `rate_limit_samples` | Decides whether the live signal is an early warning or an obituary |
 | **R8** | Does a real model answer a consult in the shape the validators accept? | Designate a controller, file a `plan` task, run `controller.drain`, read the row: `answered` or `fallback`, and the `fallbackReason` | The one M4 path L1 cannot reach |
 | **R10** | Does the codex rollout JSONL carry per-turn usage `transcript.ts` can meter? | Run one small task on a codex worker; open `$CODEX_HOME/sessions/**/rollout-*.jsonl` | If not, `meteredFromTranscript` is wrong and codex runs are invisible to the cost model — a bigger hole than pricing |
@@ -194,7 +194,6 @@ has not read it:
 - **Deterministic scheduler; the LLM only on judgment events, never inline.** A loop running every 10s
   for weeks must not bill anything, and the fleet must survive there being no controller at all.
 - **PTY-hosted CLI, transcript for state.** We own stdin, so `/compact` is a function call. ⚠️ ANSI
-  parsing determines state in exactly one declared place - a quota reading where nothing else can
-  answer. Never a session's state.
+  parsing determines state in exactly one declared place - a quota reading. Never a session's state.
 - **Capabilities and objectives are data.** No `if (adapter === …)`, no `if (mode === …)`. Proved
   against three real CLIs in M5, and against declared ones in M6.

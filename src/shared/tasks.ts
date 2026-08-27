@@ -214,9 +214,26 @@ export interface Task {
 }
 
 export interface TaskConstraints {
+  /**
+   * Pin this task to one account.
+   *
+   * ⛔ A pin, not a preference. The scheduler skips every other worker outright, so a pinned task
+   * waits for that one account rather than routing around it when it is busy, out of window or
+   * quarantined. That is the point - somebody choosing an account has a reason - but it is also why
+   * the control that sets it has to say so rather than call itself a hint.
+   */
   workerId?: string
   adapterId?: string
   model?: string
+  /**
+   * How hard the model should think, where the CLI can be told.
+   *
+   * ⛔ Only ever sent to an adapter that declares `selectableEffort`. Effort is otherwise an
+   * *observed* property in this codebase - it arrives from the agent's own transcript and is a record
+   * of what happened. Passing a level to a CLI that has no flag for one would produce a task that
+   * claims a setting nothing applied, which is worse than not offering the choice.
+   */
+  effort?: string
   /** Capabilities the task cannot run without, e.g. `manualCompact`. */
   needs?: string[]
   workspacePolicy?: 'pooled' | 'trunk' | 'direct' | 'any'

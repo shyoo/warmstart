@@ -72,6 +72,11 @@ const info: AdapterInfo = {
     nativeWorktree: false,
     multimodalInput: true,
     mcp: true,
+    // ⚠️ `model_reasoning_effort` is a documented config key and `-c key=value` is a real flag, but
+    // the pair has not been run here, and this adapter's verification says `measured`. Declaring it
+    // true on documentation alone is exactly the trade AGENTS.md forbids — it would present a
+    // documented capability with the same confidence as a measured one. Left false until run.
+    selectableEffort: false,
     // No non-interactive status command exists; openai/codex#10233 is the open request for one.
     quotaProbe: 'none',
     // `codex exec resume <SESSION_ID>` takes an id, but the id is codex's to create - there is no

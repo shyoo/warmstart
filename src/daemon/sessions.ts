@@ -244,6 +244,8 @@ export interface SpawnOptions {
   cwd?: string | undefined
   transport?: SessionTransport | undefined
   model?: string | undefined
+  /** ⛔ Only ever set by a caller that checked the adapter declares `selectableEffort`. */
+  effort?: string | undefined
   permissionMode?: string | undefined
   argv?: string[] | undefined
   cols?: number | undefined
@@ -347,6 +349,7 @@ export function spawnSession(opts: SpawnOptions): Session {
     cwd,
     transport,
     model: opts.model,
+    effort: opts.effort,
     permissionMode: opts.permissionMode,
     mcpConfig,
     argv: opts.argv
@@ -437,8 +440,8 @@ export function spawnSession(opts: SpawnOptions): Session {
   db()
     .prepare(
       `insert into sessions (id, worker_id, adapter_id, transport, cwd, model, state, pid,
-                             purpose, transcript_path, tokens_since_compact, started_at)
-       values (?, ?, ?, ?, ?, ?, 'starting', ?, ?, ?, 0, ?)`
+                             purpose, transcript_path, tokens_since_compact, started_at, effort)
+       values (?, ?, ?, ?, ?, ?, 'starting', ?, ?, ?, 0, ?, ?)`
     )
     .run(
       id,
@@ -450,7 +453,11 @@ export function spawnSession(opts: SpawnOptions): Session {
       channel.pid ?? null,
       purpose,
       transcriptPath,
-      now
+      now,
+      // ⚠️ What was *asked for*, recorded so the detail pane can say so before a turn has run. The
+      // transcript overwrites it with what actually happened — `coalesce` in transcript.ts keeps
+      // this value only until the first turn reports one, which is the right precedence.
+      opts.effort ?? null
     )
 
   const session = getSession(id)

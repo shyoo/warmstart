@@ -87,6 +87,15 @@ behaviour falls out of it:
   amount rather than zero. Doctor states which, and what it costs.
 - **`maxAccounts: 1`** → commissioning refuses the second account, with a message that says why and
   what to do instead.
+- **`selectableEffort: false`** → the New Task form draws **no effort control at all** for that
+  account, rather than a disabled one. ⚠️ False on all three built-ins as of 2026-08-27, and that is
+  a measurement: effort is something this codebase *reads back* from a transcript, and no built-in
+  CLI has a start-up flag for one that anybody here has run. Claude Code sets it inside the session
+  (`/effort`); Antigravity encodes it in the model id, which is why its cost model lists
+  `gemini-3.1-pro-high` and `gemini-3.1-pro-low` as two models with one level each; codex documents
+  `model_reasoning_effort` as a `-c` override, unrun, and that adapter's verification says
+  `measured`. ⛔ The scheduler drops `constraints.effort` for any adapter that says false, so an
+  adapter reading `SpawnRequest.effort` can trust it said it could act on one.
 - **`needsReauth(reason)`** → the *presentation* of a held-out account: `re-sign-in required` and a
   Sign in button, rather than a reason to go and read. ⛔ Optional, and the adapter answers because
   the sentence is its CLI's — an expired subscription, a revoked key and a crash all arrive as the

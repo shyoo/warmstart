@@ -43,6 +43,12 @@ export interface SpawnRequest {
   transport: SessionTransport
   model?: string | undefined
   /**
+   * ⛔ Set only when the adapter declares `selectableEffort`. The scheduler drops it otherwise rather
+   * than passing a level to a CLI with no flag for one, so an adapter reading this can trust that it
+   * said it could act on it.
+   */
+  effort?: string | undefined
+  /**
    * Overrides the adapter's default mode. ⚠️ Used by the controller's chat session, which runs in the
    * operator's home directory rather than a worktree: there is no branch to throw away there, so its
    * tool use goes through the approval policy instead of a classifier.

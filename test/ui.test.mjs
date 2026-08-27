@@ -242,6 +242,110 @@ try {
   check('the Send button does not sit on top of the message box', c.overlap <= 0, compose)
   check('and the message box gets the room', c.inputWidth > 200, compose)
 
+  // ---- filing a task ------------------------------------------------------------------
+  // ⛔ Order is the assertion. The prompt is the one field a person came here to fill in, and it used
+  // to be first — met before anything had been decided, with three settings rows underneath it that
+  // read as an afterthought bolted to a message already written. Settings narrow what the task is;
+  // the prompt says what it is for, and it goes last.
+  await evaluate(
+    `[...document.querySelectorAll('.panel-head button')].find(b => b.innerText.trim() === 'New task')?.click()`
+  )
+  await wait(800)
+  const filing = await evaluate(`
+    JSON.stringify((() => {
+      const form = document.querySelector('.form');
+      if (!form) return { missing: true };
+      const labels = [...form.querySelectorAll('.form-row > label')].map(l => l.innerText.trim());
+      const ask = form.querySelector('.ask');
+      const rows = [...form.querySelectorAll('.form-row')];
+      const lastRow = rows.at(-1)?.getBoundingClientRect().bottom ?? 0;
+      return {
+        labels,
+        textarea: !!form.querySelector('textarea.ask-input'),
+        promptIsLast: !!ask && ask.getBoundingClientRect().top >= lastRow - 1,
+        modelText: rows.find(r => /^model/i.test(r.querySelector('label')?.innerText ?? ''))?.innerText ?? '',
+        modelPickers: rows
+          .find(r => /^model/i.test(r.querySelector('label')?.innerText ?? ''))
+          ?.querySelectorAll('select').length ?? 0
+      };
+    })())
+  `)
+  const f = JSON.parse(filing)
+  check(
+    'the form asks where and how before it asks what',
+    f.labels?.join(' > ').toLowerCase() === 'project > policy > worker > model',
+    filing
+  )
+  check('the prompt sits below every setting', f.promptIsLast === true, filing)
+  // ⚠️ A textarea because what goes in it is sent to an agent verbatim, and a prompt worth writing
+  // has a second sentence. A single-line box that ate Enter was a lie about what it would accept.
+  check('the prompt takes more than one line', f.textarea === true, filing)
+  // ⛔ Not a greyed-out select. A model list belongs to one CLI, so until an account is pinned there
+  // is genuinely nothing to draw — and a dead control would read as a choice being withheld.
+  check(
+    'no model is offered until an account is pinned',
+    f.modelPickers === 0 && /default/i.test(f.modelText),
+    filing
+  )
+
+  // Pin the account this suite commissioned, and the models its cost model can price appear.
+  await evaluate(`
+    (() => {
+      const rows = [...document.querySelectorAll('.form-row')];
+      const row = rows.find(r => /^worker$/i.test(r.querySelector('label')?.innerText.trim() ?? ''));
+      const sel = row?.querySelector('select');
+      if (!sel) return 'no worker picker';
+      sel.value = [...sel.options].find(o => o.value)?.value ?? '';
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+      return sel.value;
+    })()
+  `)
+  await wait(800)
+  const pinned = await evaluate(`
+    JSON.stringify((() => {
+      const rows = [...document.querySelectorAll('.form-row')];
+      const row = rows.find(r => /^model/i.test(r.querySelector('label')?.innerText ?? ''));
+      const sel = row?.querySelector('select');
+      const worker = rows.find(r => /^worker$/i.test(r.querySelector('label')?.innerText.trim() ?? ''));
+      return {
+        models: sel ? [...sel.options].map(o => o.value).filter(Boolean) : [],
+        // ⚠️ "Preferred" would be a lie: the scheduler skips every other candidate outright.
+        saysItPins: /pins/i.test(worker?.innerText ?? ''),
+        // No built-in CLI takes an effort flag today, so a second picker here would be offering a
+        // setting nothing could apply. This is the check that keeps it honest.
+        efforts: row?.querySelectorAll('select').length ?? 0
+      };
+    })())
+  `)
+  const pin = JSON.parse(pinned)
+  check('pinning an account offers the models its cost model can price', pin.models?.length > 0, pinned)
+  check(
+    'every offered model is one the daemon will accept',
+    await evaluate(`
+      (async () => {
+        const ids = ${JSON.stringify(JSON.parse(pinned).models ?? [])};
+        const opts = await window.agentyard.rpc('model.options');
+        const priced = new Set(opts.flatMap(o => o.models.map(m => m.id)));
+        // ⛔ Non-empty first. every() on an empty array is true, so an empty picker would have
+        // reported this check green — which is exactly what it did the first time it ran, while
+        // the row it was inspecting had not been found at all.
+        // ⚠️ No backticks in here: this whole block is a template literal, and one would end it.
+        return ids.length > 0 && ids.every(id => priced.has(id));
+      })()
+    `),
+    'a model the cost model cannot price is one that cannot be gated or estimated for'
+  )
+  check('the worker control says it pins rather than prefers', pin.saysItPins === true, pinned)
+  check(
+    'no effort is offered where no CLI can be told one',
+    pin.efforts === 1,
+    'a control that cannot be honoured is worse than no control'
+  )
+  await evaluate(
+    `[...document.querySelectorAll('.panel-head button')].find(b => b.innerText.trim() === 'Cancel')?.click()`
+  )
+  await wait(500)
+
   // An approval with no live session: the deadline is genuinely unknown and must render as such.
   await evaluate(`
     void window.agentyard.rpc('approval.request', {

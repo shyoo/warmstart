@@ -1,0 +1,191 @@
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import type { Worker } from '@shared/protocol.js'
+
+/**
+ * What the New Task form is allowed to promise.
+ *
+ * The form grew three controls — an account to pin the task to, a model, and (where a CLI can be
+ * told one) an effort level — and every one of them is a value typed on this side of the wire that
+ * something on the far side has to honour. ⛔ The failure mode they share is **quiet**: a bad value
+ * does not fail here, it fails minutes later as a CLI argument error on a real account's window, or
+ * worse, it does not fail at all and produces a run that silently ignored what somebody asked for.
+ *
+ * So the checks below are all one shape: *the door said no*, or *the thing that cannot be honoured
+ * was never sent*.
+ */
+
+let dir: string
+let db: typeof import('./db.js')
+let workers: typeof import('./workers.js')
+let api: typeof import('./api.js')
+let adapters: typeof import('./adapters/index.js')
+let costmodel: typeof import('./costmodel.js')
+
+let claude: Worker
+
+beforeAll(async () => {
+  dir = mkdtempSync(join(tmpdir(), 'agentyard-constraints-'))
+  process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
+  db = await import('./db.js')
+  workers = await import('./workers.js')
+  api = await import('./api.js')
+  adapters = await import('./adapters/index.js')
+  costmodel = await import('./costmodel.js')
+  db.openDb(join(dir, 'constraints.db'))
+  // ⛔ `enabled: false`. Nothing here dispatches, and a worker that is open for work the instant the
+  // row exists is a scheduler tick away from spending on a test.
+  claude = workers.createWorker({ adapterId: 'claude-code', label: 'pin-me', enabled: false })
+})
+
+afterAll(() => {
+  db.closeDb()
+  try {
+    rmSync(dir, { recursive: true, force: true })
+  } catch {
+    // A held file handle on Windows is not a test failure.
+  }
+})
+
+describe('pinning a task to an account', () => {
+  it('carries the adapter with it rather than trusting a second field', () => {
+    // Two fields that can disagree about which CLI will run this are two fields that will
+    // eventually disagree, so the adapter is derived from the worker and overwrites what was sent.
+    const checked = api.checkConstraints({ workerId: claude.id, adapterId: 'openai-compatible' })
+    expect(checked.adapterId).toBe('claude-code')
+  })
+
+  it('refuses an account that does not exist', () => {
+    // ⛔ The alternative is a task that no candidate loop can ever match, sitting in `ready` looking
+    // exactly like a scheduling problem.
+    expect(() => api.checkConstraints({ workerId: 'no-such-worker' })).toThrow()
+  })
+})
+
+describe('choosing a model', () => {
+  it('accepts one the account can be priced for', () => {
+    const priced = costmodel
+      .costModel(adapters.adapter('claude-code').info.policy.costModelId)
+      .modelIds()
+    expect(priced.length).toBeGreaterThan(0)
+    expect(() =>
+      api.checkConstraints({ workerId: claude.id, model: priced[0]! })
+    ).not.toThrow()
+  })
+
+  it('refuses one the cost model has never heard of', () => {
+    // A model agentyard cannot price is one it cannot gate, estimate for, or reason about the
+    // context window of. `knownModels` in judgment.ts refuses one from the controller for the same
+    // reasons; a person filing a task gets the same door.
+    expect(() =>
+      api.checkConstraints({ workerId: claude.id, model: 'claude-imaginary-9' })
+    ).toThrow(/not a model/)
+  })
+
+  it('refuses a model with no account to price it against', () => {
+    // ⛔ Not defaulted. Picking an adapter here would let a model chosen for one CLI be handed to
+    // another, which fails at spawn on somebody's window instead of here for free.
+    expect(() => api.checkConstraints({ model: 'claude-opus-5' })).toThrow(/choose a worker/)
+  })
+})
+
+describe('choosing an effort level', () => {
+  it('is refused for every adapter that cannot be told one', () => {
+    // ⚠️ Today that is all of them, and this test is written to keep saying something useful when
+    // that changes: it asserts the *rule*, not the current answer. An adapter that gains the flag
+    // starts being skipped here and starts being exercised by the test below it.
+    for (const a of adapters.adapters()) {
+      if (a.info.capabilities.selectableEffort) continue
+      const worker = workers.createWorker({
+        adapterId: a.info.id,
+        label: `effort-${a.info.id}`,
+        enabled: false
+      })
+      const model = costmodel.costModel(a.info.policy.costModelId).modelIds()[0]
+      if (!model) continue
+      expect(() =>
+        api.checkConstraints({ workerId: worker.id, model, effort: 'high' })
+      ).toThrow(/no effort flag/)
+    }
+  })
+
+  it('is refused when the model has no such level, wherever a CLI can take one', () => {
+    for (const a of adapters.adapters()) {
+      if (!a.info.capabilities.selectableEffort) continue
+      const worker = workers.createWorker({
+        adapterId: a.info.id,
+        label: `levels-${a.info.id}`,
+        enabled: false
+      })
+      const cm = costmodel.costModel(a.info.policy.costModelId)
+      const model = cm.modelIds().find((id) => (cm.modelSpec(id)?.effort_levels.length ?? 0) > 0)
+      if (!model) continue
+      expect(() =>
+        api.checkConstraints({ workerId: worker.id, model, effort: 'telepathy' })
+      ).toThrow(/no effort level/)
+      const real = cm.modelSpec(model)!.effort_levels[0]!
+      expect(() =>
+        api.checkConstraints({ workerId: worker.id, model, effort: real })
+      ).not.toThrow()
+    }
+  })
+
+  it('means nothing without a model, and says so', () => {
+    expect(() => api.checkConstraints({ workerId: claude.id, effort: 'high' })).toThrow(
+      /without a model/
+    )
+  })
+})
+
+describe('the effort capability itself', () => {
+  it('is declared by every adapter, so nothing falls through as undefined', () => {
+    // ⛔ `undefined` is falsy, which means a missing declaration would read as "cannot set effort"
+    // and be *right by accident*. The scheduler's gate would work and nobody would notice the
+    // adapter had never answered the question — until one of them meant to say yes.
+    for (const a of adapters.adapters()) {
+      expect(typeof a.info.capabilities.selectableEffort, a.info.id).toBe('boolean')
+    }
+  })
+
+  it('is false wherever no start-up flag has been measured', () => {
+    // ⚠️ A record of the state on 2026-08-27, not a rule. Claude Code sets effort inside the session
+    // (`/effort`); Antigravity encodes it in the model id; codex has a documented config key nobody
+    // here has run, and this adapter's verification says `measured`. Delete a line from this list
+    // the day one is exercised against a real CLI — and not before.
+    const expected: Record<string, boolean> = {
+      'claude-code': false,
+      'antigravity-cli': false,
+      'openai-compatible': false
+    }
+    for (const [id, can] of Object.entries(expected)) {
+      expect(adapters.adapter(id).info.capabilities.selectableEffort, id).toBe(can)
+    }
+  })
+})
+
+describe('what the form is offered', () => {
+  it('offers only models the cost model that will price them can name', () => {
+    // ⛔ The renderer holds no cost models and must not grow a second table of model facts. This is
+    // the check that the served list and the pricing list are the same list.
+    for (const a of adapters.adapters()) {
+      const cm = costmodel.costModel(a.info.policy.costModelId)
+      for (const id of cm.modelIds()) expect(cm.modelSpec(id), `${a.info.id}/${id}`).not.toBeNull()
+    }
+  })
+
+  it('never offers an effort level the adapter could not pass on', () => {
+    // The form's own rule, asserted against the data rather than against the JSX: where the CLI
+    // cannot take a level, no level is offerable however many the model declares.
+    for (const a of adapters.adapters()) {
+      if (a.info.capabilities.selectableEffort) continue
+      const cm = costmodel.costModel(a.info.policy.costModelId)
+      const offerable = cm
+        .modelIds()
+        .filter(() => a.info.capabilities.selectableEffort)
+        .flatMap((id) => cm.modelSpec(id)?.effort_levels ?? [])
+      expect(offerable, a.info.id).toEqual([])
+    }
+  })
+})

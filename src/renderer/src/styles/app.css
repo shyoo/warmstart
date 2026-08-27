@@ -936,6 +936,77 @@ select:focus-visible,
   justify-content: flex-end;
 }
 
+/* Two selects that answer one question, kept on one line. */
+.pickers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+
+.pickers select {
+  min-width: 0;
+  flex: 1 1 150px;
+}
+
+/*
+ * The ask: the prompt, at the foot of the form, drawn as the message it becomes.
+ *
+ * ⛔ Deliberately unlike the rows above it. Everything above is settings — labelled, aligned to a
+ * grid, read left to right — and this is the one field whose contents are sent verbatim to another
+ * party. Making it look like the fourth row of a settings form was how it came to be treated as one:
+ * a single-line box that ate the Enter key. It is the same shape as the composer at the foot of a
+ * task thread on purpose, because it does the same job.
+ */
+.ask {
+  margin-top: var(--sp-4);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius);
+  background: var(--color-bg);
+  padding: var(--sp-2);
+}
+
+.ask:focus-within {
+  border-color: var(--color-accent);
+}
+
+.ask-input {
+  font: inherit;
+  font-size: var(--text-dense);
+  line-height: var(--leading-body);
+  width: 100%;
+  min-height: 3.4em;
+  resize: vertical;
+  border: 0;
+  background: transparent;
+  color: var(--color-text);
+  padding: var(--sp-1) var(--sp-1) 0;
+}
+
+/* ⛔ The bubble carries the focus ring, not the textarea inside it. Two rings, one nested inside the
+   other by a couple of pixels, is what you get otherwise. */
+.ask-input:focus-visible {
+  outline: none;
+}
+
+.ask-input::placeholder {
+  color: var(--color-text-faint);
+}
+
+.ask-foot {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  padding: var(--sp-1) var(--sp-1) 0;
+}
+
+.ask-hint {
+  font-size: var(--text-meta);
+  color: var(--color-text-faint);
+  line-height: var(--leading-body);
+  max-width: 60ch;
+}
+
 /* ---- terminal ---------------------------------------------------------- */
 
 .term {

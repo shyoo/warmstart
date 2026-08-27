@@ -89,6 +89,10 @@ const info: AdapterInfo = {
     // agentyard does not use it: one shared registration cannot carry a per-session identity, and
     // MULTI_AGENT_CONTROLLER_SESSION_ID is how the MCP server knows who it is speaking for.
     mcp: false,
+    // ⛔ Nothing to select: this vendor encodes effort in the model id itself, which is why its cost
+    // model lists `gemini-3.1-pro-high` and `gemini-3.1-pro-low` as two models with one level each.
+    // Choosing the model *is* choosing the effort here, and a second control would double-count it.
+    selectableEffort: false,
     // ⭐ It has one after all, as of 2026-08-27. `/usage` typed into the TUI is a client-side
     // slash command - free, no turn - and the panel it draws is the only place the number exists.
     // See parseUsageScreen for why reading a screen is defensible here and nowhere else.

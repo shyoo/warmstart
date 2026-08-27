@@ -326,6 +326,64 @@ try {
   })
   check('a future not_before schedules rather than queues', later.status === 'scheduled')
 
+  // ---------------------------------------------------------------- constraints at the door
+  //
+  // ⛔ The New Task form lets somebody pin an account and choose a model, and both are values typed
+  // in one process that another process has to honour. Admission is the only cheap place to say no:
+  // a bad worker id makes a task no candidate loop can ever match, sitting in `ready` looking like a
+  // scheduling problem, and a model the cost model has never heard of surfaces minutes later as a
+  // CLI argument error charged to a real account's window.
+  const options = await daemon.rpc('model.options')
+  check(
+    'the daemon serves the model list rather than the renderer holding one',
+    Array.isArray(options) && options.length > 0 && options.every((o) => o.adapterId && o.models),
+    JSON.stringify(options.map((o) => `${o.adapterId}:${o.models.length}`))
+  )
+  check(
+    'and every offered model carries what the form needs to price and gate it',
+    options.every((o) => o.models.every((m) => typeof m.id === 'string' && Array.isArray(m.effortLevels)))
+  )
+  const claudeOptions = options.find((o) => o.adapterId === 'claude-code')
+  const goodModel = claudeOptions?.models[0]?.id
+  const pinnedTask = await daemon.rpc('task.create', {
+    title: 'pinned to one account',
+    projectId: added.id,
+    constraints: { workerId: fresh.id, ...(goodModel ? { model: goodModel } : {}) }
+  })
+  check(
+    'a task can be pinned to an account and a model it can be priced for',
+    pinnedTask.constraints.workerId === fresh.id && pinnedTask.constraints.model === goodModel,
+    JSON.stringify(pinnedTask.constraints)
+  )
+  check(
+    'and the adapter comes from the account rather than being taken on trust',
+    pinnedTask.constraints.adapterId === 'claude-code',
+    'two fields that can disagree about which CLI runs this will eventually disagree'
+  )
+  const badWorker = await daemon.rpcResult('task.create', {
+    title: 'pinned to nobody',
+    constraints: { workerId: 'no-such-worker' }
+  })
+  check('a pin to an account that does not exist is refused', badWorker.ok === false, badWorker.message)
+  const badModel = await daemon.rpcResult('task.create', {
+    title: 'a model nothing can price',
+    constraints: { workerId: fresh.id, model: 'claude-imaginary-9' }
+  })
+  check(
+    'a model the cost model cannot price is refused at the door, not on a real window',
+    badModel.ok === false && /not a model/.test(badModel.message),
+    badModel.message
+  )
+  const badEffort = await daemon.rpcResult('task.create', {
+    title: 'an effort nothing can apply',
+    constraints: { workerId: fresh.id, model: goodModel, effort: 'max' }
+  })
+  check(
+    'an effort level is refused where the CLI has no flag to carry it',
+    badEffort.ok === false && /no effort flag/.test(badEffort.message),
+    'a task recording a setting nothing applied is worse than one that never offered the choice'
+  )
+
   // ---------------------------------------------------------------- continuing a task
   //
   // ⛔ Measured 2026-08-27: a reply typed at a finished task went into the still-warm session and

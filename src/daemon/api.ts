@@ -2,11 +2,13 @@ import type {
   AdapterInfo,
   CostReport,
   DoctorReport,
+  ModelOptions,
   RpcMethod,
   RpcParams,
   RpcResult,
   Settings
 } from '@shared/protocol.js'
+import type { TaskConstraints } from '@shared/tasks.js'
 import { existsSync } from 'node:fs'
 import { adapter, adapters } from './adapters/index.js'
 import {
@@ -28,7 +30,7 @@ import {
   spawnSession,
   writeSession
 } from './sessions.js'
-import { costModels } from './costmodel.js'
+import { costModel, costModels } from './costmodel.js'
 import { requestShutdown } from './lifecycle.js'
 import { paths } from './paths.js'
 import {
@@ -171,6 +173,34 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
 
     'costmodel.list': () => costModels().map((m) => m.summary()),
 
+    'model.options': (): ModelOptions[] =>
+      adapters().flatMap((a) => {
+        try {
+          const cm = costModel(a.info.policy.costModelId)
+          return [
+            {
+              adapterId: a.info.id,
+              costModelId: cm.id,
+              selectableEffort: a.info.capabilities.selectableEffort,
+              models: cm.modelIds().map((id) => {
+                const spec = cm.modelSpec(id)
+                return {
+                  id,
+                  contextWindow: spec?.context_window ?? 0,
+                  effortLevels: spec?.effort_levels ?? []
+                }
+              })
+            }
+          ]
+        } catch (err) {
+          // ⚠️ One adapter naming a cost model that will not load must not blank the picker for the
+          // other three. The form falls back to "whatever the worker defaults to", which is exactly
+          // what happened before there was a picker at all.
+          log.warn(`no model list for adapter '${a.info.id}':`, err)
+          return []
+        }
+      }),
+
     // ⛔ Counted before the request is made: once the wind-down starts, the answer to "what
     // did this end?" is zero, and that is the one number the caller needs to report.
     'daemon.shutdown': () => {
@@ -309,7 +339,7 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
         .filter((s): s is NonNullable<typeof s> => !!s)
       return { task, messages: messagesFor(p.id), runs, sessions, activity: activityFor(p.id) }
     },
-    'task.create': (p) => createTask(p),
+    'task.create': (p) => createTask({ ...p, ...(p.constraints ? { constraints: checkConstraints(p.constraints) } : {}) }),
     'task.update': (p) => {
       const { id, ...patch } = p
       return updateTask(id, patch)
@@ -490,4 +520,56 @@ ${p.note}`, run.id)
       return { ok: true as const }
     }
   }
+}
+
+/**
+ * Reject a constraint that names something that does not exist, here, at the door.
+ *
+ * ⛔ Admission is the only cheap place to say no. A bad worker id makes a task that no candidate loop
+ * can ever match and that sits in `ready` looking like a scheduling problem; a model the cost model
+ * cannot price is one agentyard cannot gate, estimate for or reason about the context window of, and
+ * it would surface minutes later as a CLI argument error charged to a real window. `knownModels` in
+ * judgment.ts refuses an unpriceable model from the *controller* for exactly these reasons - a person
+ * filing a task deserves the same door.
+ *
+ * ⚠️ The adapter is derived from the pinned worker rather than taken on trust. Two fields that can
+ * disagree about which CLI will run this are two fields that will eventually disagree.
+ */
+export function checkConstraints(c: TaskConstraints): TaskConstraints {
+  const checked: TaskConstraints = { ...c }
+
+  if (c.workerId) {
+    const worker = requireWorker(c.workerId)
+    checked.adapterId = worker.adapterId
+  }
+
+  const adapterId = checked.adapterId
+  if (c.model || c.effort) {
+    if (!adapterId) {
+      // Nothing pins the adapter, so nothing can price the model. ⛔ Dropped rather than guessed:
+      // picking a default adapter here would let a model chosen for one CLI be passed to another.
+      throw new Error('choose a worker before choosing a model — the model list belongs to its CLI')
+    }
+    const info = adapter(adapterId).info
+    const cm = costModel(info.policy.costModelId)
+
+    if (c.model) {
+      const spec = cm.modelSpec(c.model)
+      if (!spec) {
+        throw new Error(`'${c.model}' is not a model ${info.label} can be priced for`)
+      }
+      if (c.effort) {
+        if (!info.capabilities.selectableEffort) {
+          throw new Error(`${info.label} takes no effort flag — effort is set inside the session`)
+        }
+        if (!spec.effort_levels.includes(c.effort)) {
+          throw new Error(`'${c.model}' has no effort level '${c.effort}'`)
+        }
+      }
+    } else if (c.effort) {
+      throw new Error('an effort level means nothing without a model to apply it to')
+    }
+  }
+
+  return checked
 }

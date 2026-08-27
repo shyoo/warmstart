@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { Project, Run, Task, TaskMessage } from '@shared/tasks'
-import type { Session } from '@shared/protocol'
+import type { ModelOptions, Session } from '@shared/protocol'
 import { rpc, useDaemonEvents, useNow, type FleetEntry } from '../lib/daemon'
 import { duration, tokens, when } from '../lib/format'
 
@@ -202,6 +202,7 @@ export function Tasks({
         <NewTask
           projects={projects}
           fixedProjectId={projectId}
+          fleet={fleet}
           onDone={async () => {
             setAdding(false)
             await refresh()
@@ -789,15 +790,34 @@ function Compose({
   )
 }
 
+/**
+ * Filing a task, read top to bottom: **where** it runs, **how** it should be treated, **who and
+ * what** may run it, and last of all **what to do**.
+ *
+ * ⛔ The prompt is at the bottom, and that is the whole point of the ordering. It used to be first,
+ * with the settings underneath, which meant the field somebody was actually here to fill in was the
+ * one they met before they had decided anything — and the three rows they had to read afterwards
+ * looked like an afterthought attached to a message they had already written. Everything above the
+ * prompt narrows what this task *is*; the prompt says what it is *for*, and it is the last thing
+ * touched before filing, exactly as in the composer at the foot of every task thread.
+ *
+ * ⚠️ Worker sits above Model on purpose, against the sketch this was built from. A model list belongs
+ * to one CLI — `costModel(adapter.policy.costModelId).modelIds()` — so until an account is pinned
+ * there is no list to draw. Putting the choice that produces the list *below* the control that needs
+ * it would have made the Model row point downwards at its own precondition.
+ */
 function NewTask({
   projects,
   fixedProjectId,
+  fleet,
   onDone,
   onError
 }: {
   projects: Project[]
   /** Set when filed from inside a project. The picker is replaced by the project's name. */
   fixedProjectId?: string
+  /** The accounts that could take this, so one can be pinned and its CLI's models offered. */
+  fleet: FleetEntry[]
   onDone: () => void | Promise<void>
   onError: (message: string) => void
 }): React.JSX.Element {
@@ -806,21 +826,60 @@ function NewTask({
   const [priority, setPriority] = useState<'P0' | 'P1' | 'P2' | 'P3'>('P2')
   const [verification, setVerification] = useState<'auto' | 'required'>('auto')
   const [plan, setPlan] = useState(false)
+  const [workerId, setWorkerId] = useState('')
+  const [model, setModel] = useState('')
+  const [effort, setEffort] = useState('')
   const [saving, setSaving] = useState(false)
+  /**
+   * ⛔ Fetched, not compiled in. The renderer holds no cost models, and a second table of model facts
+   * here would drift from the first the day a model was added to a file and not to this bundle.
+   */
+  const [options, setOptions] = useState<ModelOptions[]>([])
+
+  useEffect(() => {
+    void rpc('model.options')
+      .then(setOptions)
+      // A fleet with no priceable model list is still a fleet that can run work. The form falls back
+      // to whatever each CLI defaults to, which is what it did before there was a picker at all.
+      .catch(() => setOptions([]))
+  }, [])
+
+  // ⛔ Only accounts that could actually take work. Offering a switched-off worker as a pin produces
+  // a task that waits forever on a candidate loop that will never match it.
+  const pinnable = fleet.filter((e) => e.worker.enabled).map((e) => e.worker)
+  const pinned = pinnable.find((w) => w.id === workerId) ?? null
+  const forAdapter = pinned ? (options.find((o) => o.adapterId === pinned.adapterId) ?? null) : null
+  const chosen = forAdapter?.models.find((m) => m.id === model) ?? null
+  // Effort appears only where the CLI can be told one *and* the chosen model has levels to offer.
+  // Neither half is true of any built-in adapter today, so today this renders nothing — by design.
+  const efforts = forAdapter?.selectableEffort ? (chosen?.effortLevels ?? []) : []
 
   const submit = async () => {
     setSaving(true)
     try {
       if (plan) {
         // ⛔ A plan task is decomposed, not dispatched. Its children arrive as drafts and their
-        // prompts are written at promotion, not now.
+        // prompts are written at promotion, not now — which is also why it carries no worker and no
+        // model: nothing here runs, and each draft answers those questions for itself.
         await rpc('task.plan', { title: title.trim(), projectId: projectId || null })
       } else {
         await rpc('task.create', {
           title: title.trim(),
           projectId: projectId || null,
           priority,
-          verification
+          verification,
+          // ⚠️ Absent, not empty. The daemon reads a *present* `constraints` as an instruction to
+          // validate one, and an object of empty strings would be three constraints that name
+          // nothing rather than three questions left to the scheduler.
+          ...(workerId || model || effort
+            ? {
+                constraints: {
+                  ...(workerId ? { workerId } : {}),
+                  ...(model ? { model } : {}),
+                  ...(effort ? { effort } : {})
+                }
+              }
+            : {})
         })
       }
       setTitle('')
@@ -834,25 +893,6 @@ function NewTask({
 
   return (
     <div className="form">
-      <div className="form-row">
-        <label>What</label>
-        <input
-          className="form-wide"
-          value={title}
-          placeholder={
-            plan
-              ? 'Describe the outcome — the controller breaks it into drafts'
-              : 'Describe the work as you would to a colleague'
-          }
-          onChange={(e) => setTitle(e.target.value)}
-        />
-        <span className="form-hint">
-          {plan
-            ? 'The controller turns this into a handful of draft tasks with dependencies between them. ' +
-              'Drafts dispatch nothing — you promote them one at a time, and each prompt is written then.'
-            : 'This is the prompt the agent receives, prefixed by any handoff from an earlier run.'}
-        </span>
-      </div>
       <div className="form-row">
         <label>Project</label>
         {fixedProjectId ? (
@@ -877,6 +917,7 @@ function NewTask({
           the trunk.
         </span>
       </div>
+
       <div className="form-row">
         <label>Policy</label>
         <div>
@@ -907,10 +948,127 @@ function NewTask({
           Requiring verification stops auto-landing: the branch is kept and the task waits for you.
         </span>
       </div>
-      <div className="form-actions">
-        <button className="btn btn--primary" disabled={saving || !title.trim()} onClick={() => void submit()}>
-          {saving ? 'Filing…' : plan ? 'File and decompose' : 'File task'}
-        </button>
+
+      {/* ⛔ Both rows vanish for a goal rather than greying out. A goal dispatches nothing, so an
+          account and a model chosen here would apply to no run that will ever exist. */}
+      {!plan && (
+        <>
+          <div className="form-row">
+            <label>Worker</label>
+            <select
+              value={workerId}
+              onChange={(e) => {
+                setWorkerId(e.target.value)
+                // ⛔ Cleared together. A model belongs to one CLI's cost model file, so a model
+                // chosen for the account you just moved away from is not merely stale — it is an id
+                // the new account's adapter would be handed and fail to start on.
+                setModel('')
+                setEffort('')
+              }}
+            >
+              <option value="">Auto — the scheduler picks</option>
+              {pinnable.map((w) => (
+                <option key={w.id} value={w.id}>
+                  {w.label}
+                </option>
+              ))}
+            </select>
+            {/* ⚠️ Said plainly because the sketch called this "preferred" and it is not. The
+                scheduler skips every other candidate outright; there is no soft form of it. */}
+            <span className="form-hint">
+              Auto weighs quota, cache warmth and what each account has proved. Choosing one
+              <strong> pins</strong> the task: it waits for that account rather than routing around
+              it.
+            </span>
+          </div>
+
+          <div className="form-row">
+            <label>{efforts.length > 0 ? 'Model / Effort' : 'Model'}</label>
+            {forAdapter ? (
+              <div className="pickers">
+                <select
+                  value={model}
+                  onChange={(e) => {
+                    setModel(e.target.value)
+                    setEffort('')
+                  }}
+                >
+                  <option value="">Auto — the CLI’s own default</option>
+                  {forAdapter.models.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.id}
+                    </option>
+                  ))}
+                </select>
+                {efforts.length > 0 && (
+                  <select value={effort} onChange={(e) => setEffort(e.target.value)}>
+                    <option value="">Auto — the model’s own default</option>
+                    {efforts.map((level) => (
+                      <option key={level} value={level}>
+                        {level}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+            ) : (
+              // ⛔ A sentence, not a greyed-out select. The list is genuinely not knowable yet, and a
+              // dead control here would read as a choice being withheld rather than as one whose
+              // precondition is sitting immediately above it.
+              <span className="form-fixed">whatever the account that takes it runs by default</span>
+            )}
+            <span className="form-hint">
+              {forAdapter
+                ? 'Only models this account’s cost model can price are offered — one it cannot price ' +
+                  'is one that cannot be gated, estimated for, or reasoned about the context window of.'
+                : 'Pin a worker above to choose. A model list belongs to one CLI, so there is nothing ' +
+                  'to offer until an account is chosen.'}
+            </span>
+          </div>
+        </>
+      )}
+
+      {/*
+        The ask itself, last and largest.
+
+        ⚠️ A textarea, not the single-line input this used to be. What goes here is the prompt an
+        agent receives verbatim, and a prompt worth writing usually has a second sentence in it; a
+        field that swallowed Enter as "file this now" made the shape of the box a lie about what it
+        would accept. Enter breaks the line, ⌘/Ctrl+Enter files — the same bargain every chat
+        composer makes, and the same one the thread composer makes one screen away.
+      */}
+      <div className="ask">
+        <textarea
+          className="ask-input"
+          rows={3}
+          value={title}
+          placeholder={
+            plan
+              ? 'Describe the outcome — the controller breaks it into drafts'
+              : 'Describe the work as you would to a colleague'
+          }
+          onChange={(e) => setTitle(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && title.trim() && !saving) {
+              void submit()
+            }
+          }}
+        />
+        <div className="ask-foot">
+          <span className="ask-hint">
+            {plan
+              ? 'Turned into a handful of draft tasks with dependencies between them. Drafts dispatch ' +
+                'nothing — you promote them one at a time, and each prompt is written then.'
+              : 'Sent to the agent as written, after any handoff from an earlier run.'}
+          </span>
+          <button
+            className="btn btn--primary"
+            disabled={saving || !title.trim()}
+            onClick={() => void submit()}
+          >
+            {saving ? 'Filing…' : plan ? 'File and decompose' : 'File task'}
+          </button>
+        </div>
       </div>
     </div>
   )

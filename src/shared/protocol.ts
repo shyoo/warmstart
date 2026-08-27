@@ -12,6 +12,7 @@ import type {
   RestingState,
   Run,
   Task,
+  TaskConstraints,
   TaskKind,
   TaskMessage
 } from './tasks.js'
@@ -320,6 +321,21 @@ export interface AdapterCapabilities {
   nativeWorktree: boolean
   multimodalInput: boolean
   mcp: boolean
+  /**
+   * Can this CLI be told an effort level when the process starts?
+   *
+   * ⛔ False on all three built-ins as of 2026-08-27, and that is a measurement rather than an
+   * oversight. Effort appears throughout agentyard as something *read back* from a transcript - the
+   * glossary calls it a property a session has, `transcript.ts` records it per turn - and no built-in
+   * CLI has a start-up flag for it that anybody here has run. Claude Code sets it inside the session;
+   * Antigravity encodes it in the model id (`gemini-3.1-pro-high` is a different model from
+   * `gemini-3.1-pro-low`, which is why its effort levels come one to a model).
+   *
+   * ⚠️ The New Task form reads this and renders no effort control where it is false, rather than a
+   * disabled one. A control that cannot be used is still a control, and it would sit there implying
+   * the choice was being made. The moment an adapter can honestly take a level, the control appears.
+   */
+  selectableEffort: boolean
   quotaProbe: 'cli' | 'api' | 'none'
   /**
    * Will this CLI accept a session id agentyard chose?
@@ -510,6 +526,15 @@ export interface CostModelSummary {
   path: string | null
 }
 
+/** The choices one adapter can offer, read from the cost model file its policy names. */
+export interface ModelOptions {
+  adapterId: string
+  costModelId: string
+  /** ⚠️ False means this adapter takes no effort flag; the form offers no effort control for it. */
+  selectableEffort: boolean
+  models: Array<{ id: string; contextWindow: number; effortLevels: string[] }>
+}
+
 // ---------------------------------------------------------------------------- doctor
 
 export interface DoctorReport {
@@ -596,6 +621,16 @@ export interface RpcMap {
   'worker.probe': { params: { id: string }; result: QuotaSnapshot }
 
   'costmodel.list': { params: void; result: CostModelSummary[] }
+  /**
+   * What a person filing a task may choose from, per adapter.
+   *
+   * ⛔ Served rather than compiled into the renderer, for the same reason a session carries its own
+   * context window: the renderer has no cost models and must not grow a second table of model facts
+   * to keep in step with the first. Every id here came out of the cost model file that will also
+   * price it, so a model that can be chosen is a model that can be gated, estimated for and reasoned
+   * about - and one that cannot be priced is never offered.
+   */
+  'model.options': { params: void; result: ModelOptions[] }
   /**
    * Ask orchestratord to wind down and exit.
    *
@@ -764,6 +799,13 @@ export interface TaskCreateParams {
   notBefore?: number | null
   deadline?: number | null
   assigneeHint?: string | null
+  /**
+   * ⚠️ Validated at the door, not at spawn time. `workerId`, `model` and `effort` are all rejected
+   * here when they name something that does not exist, is not priceable, or is not offerable for the
+   * adapter in question - a bad value that survived admission would surface as a CLI argument error
+   * on somebody's account, minutes later, charged to their window.
+   */
+  constraints?: TaskConstraints
   verification?: 'required' | 'not_required' | 'auto'
   status?: 'draft' | 'ready'
   kind?: TaskKind

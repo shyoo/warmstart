@@ -71,6 +71,9 @@ function capabilitiesFrom(file: ExternalAdapterFile): AdapterInfo['capabilities'
     // a declarative adapter has no way to pass one - a session that believed it could call
     // `task_complete` and could not would finish and report nothing, which looks like a hang.
     mcp: false,
+    // ⛔ Not negotiable either. The effort flag would have to be a declared argv template, and a
+    // declaration that got it wrong would fail at spawn on somebody's account rather than here.
+    selectableEffort: false,
     quotaProbe: 'none',
     // ⛔ Also not negotiable. Minting a session id means agentyard can prove a process is its own and
     // may kill it. A declaration cannot grant itself that.
