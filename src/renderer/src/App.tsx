@@ -35,7 +35,7 @@ type Route =
    * the last one is given a home, which is what the require-a-project migration does.
    */
   | { kind: 'unassigned' }
-  | { kind: 'settings'; page: 'workers' | 'doctor' }
+  | { kind: 'settings'; page: 'workers' | 'global' }
 
 export function App(): React.JSX.Element {
   const info = useAppInfo()
@@ -169,7 +169,7 @@ export function App(): React.JSX.Element {
             // with nothing under it reads as something that failed to load.
             <button
               className="nav-item nav-item--ghost"
-              onClick={() => setRoute({ kind: 'settings', page: 'doctor' })}
+              onClick={() => setRoute({ kind: 'settings', page: 'global' })}
             >
               No projects yet
             </button>
@@ -205,10 +205,10 @@ export function App(): React.JSX.Element {
             <span className="nav-count num">{fleet.length}</span>
           </NavItem>
           <NavItem
-            active={route.kind === 'settings' && route.page === 'doctor'}
-            onClick={() => setRoute({ kind: 'settings', page: 'doctor' })}
+            active={route.kind === 'settings' && route.page === 'global'}
+            onClick={() => setRoute({ kind: 'settings', page: 'global' })}
           >
-            Doctor
+            Global
           </NavItem>
         </nav>
       </aside>

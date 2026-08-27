@@ -36,7 +36,7 @@ export function Doctor({ now }: { now: number }): React.JSX.Element {
     <div className="panel">
       <header className="panel-head">
         <div>
-          <h2>Doctor</h2>
+          <h2>Global</h2>
           <p className="panel-sub">What Multi Agent Controller can see, and what it cannot.</p>
         </div>
         <button className="btn" disabled={running} onClick={() => void run()}>

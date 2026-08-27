@@ -85,7 +85,7 @@ try {
   // rewrite that removed Cost and Controller as destinations.
   check(
     'the three fixed destinations are reachable',
-    ['Overview', 'Workers', 'Doctor'].every((label) => nav.some((n) => n.startsWith(label))),
+    ['Overview', 'Workers', 'Global'].every((label) => nav.some((n) => n.startsWith(label))),
     nav.join(' | ')
   )
   check(
