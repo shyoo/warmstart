@@ -149,6 +149,11 @@ export function Tasks({
   useDaemonEvents((event) => {
     if (event.type === 'task.changed' || event.type === 'run.changed') void refresh()
     if (event.type === 'task.activity') {
+      // A new attempt starts with an empty pane. See clearActivity.
+      if (event.reset) {
+        setActivity((prev) => ({ ...prev, [event.taskId]: [] }))
+        return
+      }
       setActivity((prev) => {
         // ⚠️ Bounded here as well as in the daemon. This is agent output arriving as fast as a model
         // can produce it, and an unbounded array in a React state is a memory leak with a pretty UI.
@@ -367,6 +372,9 @@ function TaskDetail({
 }): React.JSX.Element {
   const { task, messages, runs, sessions } = detail
   const live = task.status === 'running' || task.status === 'assigned'
+  const liveSession = sessions.find(
+    (s) => s.id === runs[0]?.sessionId && s.state !== 'closed' && s.state !== 'failed'
+  )
 
   return (
     <section className="detail">
@@ -435,13 +443,46 @@ function TaskDetail({
             <SessionFact runs={runs} sessions={sessions} />
           </Fact>
 
+          {/*
+            ⛔ Context and tokens are different *kinds* of number and were shown side by side with
+            nothing saying so — "52k ctx" beside "1.2M tokens" reads as a contradiction until you
+            know one is a level and the other a total. Context is how full the window is *right now*
+            and goes down when a session compacts; tokens are everything this task has ever spent and
+            only ever go up.
+          */}
+          {/* ⚠️ Only when there is a number. `0 in the window now` is a measurement of nothing — the
+              same reason the session chip draws an empty context as an absence. */}
+          {liveSession?.contextTokens ? (
+            <Fact label="context">
+              <span
+                className="num"
+                title={
+                  'How full this session’s context window is at the moment — a level, not a total. ' +
+                  'It falls when the session compacts. It is not the number below it.'
+                }
+              >
+                {tokens(liveSession.contextTokens)} in the window now
+              </span>
+            </Fact>
+          ) : null}
           <Fact label="priority">{task.priority}</Fact>
           <Fact label="filed">{when(task.createdAt)}</Fact>
           {task.firstRunAt && <Fact label="started">{when(task.firstRunAt)}</Fact>}
           <Fact label="took">{elapsed(task, now)}</Fact>
           {/* ⚠️ Named, not left as "spent". A bare number in a column headed Spent is read as money
               by roughly everybody; these are tokens, metered from the agent's own transcript. */}
-          <Fact label="tokens">{tokens(task.budget.spentTokens || null)}</Fact>
+          <Fact label="tokens">
+            <span
+              className="num"
+              title={
+                'Everything every run of this task has spent — input, output and cache, summed from ' +
+                'the agent’s own transcript. A total, so it only ever grows, and much larger than ' +
+                'the context above because every turn re-reads the whole window.'
+              }
+            >
+              {tokens(task.budget.spentTokens || null)} spent in total
+            </span>
+          </Fact>
           {task.branch && (
             <Fact label="branch">
               <span className="mono">{task.branch}</span>
@@ -536,8 +577,14 @@ function RunRow({
       </div>
       <div className="side-run-body num">
         <span>{worker ?? run.workerId.slice(0, 8)}</span>
-        <span title="in · out · cache read · cache write, metered from the transcript">
-          {tokens(spent || null)} tok
+        <span
+          title={
+            'What this run spent: input + output + cache read + cache write, summed from the ' +
+            'transcript. ⛔ Not the size of the context — a single long conversation re-reads its ' +
+            'whole window every turn, so the total runs far ahead of it.'
+          }
+        >
+          {tokens(spent || null)} spent
         </span>
       </div>
       <QuotaDelta run={run} />
@@ -620,15 +667,17 @@ function Compose({
 }): React.JSX.Element {
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
-  const live = task.status === 'running'
+  const [outcome, setOutcome] = useState<string | null>(null)
+  const running = task.status === 'running' || task.status === 'assigned'
 
   const send = async () => {
     const body = text.trim()
     if (!body) return
     setSending(true)
     try {
-      await rpc('task.message', { id: task.id, text: body })
+      const result = await rpc('task.message', { id: task.id, text: body })
       setText('')
+      setOutcome(result.outcome)
       await refresh()
     } finally {
       setSending(false)
@@ -641,9 +690,9 @@ function Compose({
         <input
           value={text}
           placeholder={
-            live
+            running
               ? 'Reply to the agent working on this — it goes into the running session'
-              : 'Say something — it is prepended to the next run’s prompt'
+              : 'Ask for the next thing — this continues the task, it does not file a new one'
           }
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
@@ -651,15 +700,26 @@ function Compose({
           }}
         />
         <button className="btn btn--primary" disabled={sending || !text.trim()} onClick={() => void send()}>
-          {sending ? 'Sending…' : 'Send'}
+          {sending ? 'Sending…' : running ? 'Send' : 'Send and continue'}
         </button>
       </div>
+      {/*
+        ⛔ This used to say "Nothing is running, so this waits… prepended to the prompt the next run
+        starts with" — which was true of the code and false of the world, because a finished task has
+        no next run. The message went into a still-warm session and produced nothing anybody could
+        see. It now starts one, and the hint says which of the two happened.
+      */}
       <p className="compose-hint">
-        {live
-          ? 'Delivered straight into the session that is running — a cache read, and it refreshes ' +
-            'that session’s TTL. The agent sees it mid-task.'
-          : 'Nothing is running, so this waits. It is prepended to the prompt the next run starts ' +
-            'with, and it is not charged twice.'}
+        {outcome === 'requeued'
+          ? 'Queued as a new run on this task — same thread, and it goes back to the session that ' +
+            'still holds the context where there is one.'
+          : outcome === 'delivered'
+            ? 'Delivered into the run that is already going.'
+            : running
+              ? 'Delivered straight into the session that is running — a cache read, and it ' +
+                'refreshes that session’s TTL. The agent sees it mid-task.'
+              : 'This continues the task rather than filing a new one: it starts another run on the ' +
+                'same thread, preferring the session, worker and workspace it already used.'}
       </p>
     </div>
   )

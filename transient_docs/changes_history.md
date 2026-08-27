@@ -398,3 +398,73 @@ dispatching (in the background, holding the task one tick — never awaiting a 3
 a loop that is supposed to be arithmetic) and reads again once the run has ended. The window delta and
 the transcript token count sit side by side in the task pane and are ⛔ never reconciled: their
 difference is R1's instrument, and merging them would destroy the only thing they are jointly for.
+
+## The routing input that measured the wrong thing, and four more from t3 (2026-08-27)
+
+A second afternoon on the same fleet, one task: *rename Doctor to Global*. It was dispatched three
+times before it worked, and the reasons were all different from how they looked.
+
+- ⛔ **The compaction reserve was being used as a routing input and could not be one.** `reserveState`
+  returns `ok` for a worker holding **no live sessions** and `unknown` for one holding any, because
+  `remaining` is null on every Claude account until R2 lands. Scoring `unknown` at 0.5 against a
+  weight of ~0.9 therefore imposed a **0.45 penalty for having a session at all** — several times
+  larger than every term that actually discriminates between candidates. An idle worker beat a busy
+  one always, whatever else was true, and on this fleet that handed the first dispatch to an
+  Antigravity account nobody had ever signed in to. It failed in 0s. ⚠️ The lesson generalises: a
+  term that is identical across the fleet contributes nothing and belongs at zero, and one that
+  differs *only* as a side effect of some unrelated state is worse than nothing, because it is a bias
+  wearing a measurement's clothes. `quotaRiskOf()` now moves only on checked evidence — `at_risk`,
+  or a live rate-limit status the vendor sent.
+
+- ⭐ **And nothing in the score knew which accounts had ever worked.** Antigravity's identity probe
+  answers "cannot tell" to every question, legitimately, because its credential is in the OS keyring
+  — so it looked exactly like a healthy account with an unhelpful adapter. Whether a single assistant
+  turn has ever come out of an account is the one fact that separates those two, it is already in
+  `turns`, and it was not being consulted. It is now the largest component of `unproven()`. ⚠️ Still
+  a penalty and never a gate: every fleet starts with no proven worker, so a first dispatch has to be
+  allowed to happen or nothing ever becomes proven.
+
+- ⛔ **A reply to a finished task went into the void.** *"Please commit to the main branch"* was typed
+  at a completed task; `deliverToLiveSession` pushed it straight into the still-warm session and
+  returned true, so the daemon believed it had done its job. From the operator's side nothing
+  happened at all — no run, so nothing metered, no status moved, no activity appeared, and no landing
+  was attempted when the agent finished. The UI meanwhile said the note was "prepended to the next
+  run's prompt", which is true of the code and false of the world: a finished task has no next run.
+  `continueTask()` re-queues it as a **new run on the same thread**, and routing follows by
+  construction rather than by instruction — `warmSessionFor` already scores the session holding the
+  task's context highest, so the same worker, workspace and session win because they are cheapest.
+  ⚠️ One thing had to be added for it: the warm path now **re-claims a workspace**, because the
+  comment claiming a warm session already sits in the workspace its task claimed is true only while
+  that task never finished. A continued task is warm in context and homeless on disk.
+
+- ⚠️ **The previous run's last words lingered under the next one.** The daemon cleared its activity
+  tail on dispatch and said nothing; whoever was watching held their own copy (they have to — the
+  list refreshes on every task event and a pane rebuilt from each fetch would flicker), so a task
+  freshly dispatched somewhere healthy still showed the error the last attempt died of.
+
+- ⚠️ **Terminal colour codes reached a table cell.** A benched worker's reason read
+  `It said: <esc>[2m— claude-sonnet-5 · auto<esc>[0m Your organization has…`, which looks like
+  corruption and buries the sentence that mattered. `stripAnsi` runs on anything from a CLI that
+  becomes prose. ⛔ Not a retreat from the ANSI rule: nothing reads *state* out of those bytes, they
+  are simply removed on the way to a person.
+
+Also clarified rather than fixed: `52k ctx` beside `1.2M tokens` reads as a contradiction until you
+know one is a **level** — how full the window is right now, which falls when a session compacts — and
+the other a **total** that only grows because every turn re-reads the whole window. Both now say
+which they are, in the chip, the ledger and the run row.
+
+### And a test that was lying
+
+`npm run pack` failed twice with `EBUSY: rmdir release\win-unpacked`, and both times `test:pack`
+then reported a confident **17/17** — because it builds nothing and drives whatever is in `release/`.
+It was validating a package built before half the work existed.
+
+The EBUSY is not a leak: **orchestratord is detached by design and survives its window closing**,
+which is the entire premise of the topology, and it keeps the packaged binary open. So the fix is not
+to kill things automatically — that daemon may be somebody's live fleet — it is for the suite to
+refuse. `test:pack` now compares the asar's mtime against the newest file in `src/` and fails with
+`⛔ STALE` rather than passing. It was verified by watching it go red against the stale package before
+the rebuild, which is the only way to know a guard works.
+
+Separately, the pack suite really did leak its *own* daemon on every pass, for the same detached
+reason, and now kills it by the pid published in its own endpoint file.

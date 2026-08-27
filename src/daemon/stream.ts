@@ -169,6 +169,25 @@ export class StreamParser {
   }
 }
 
+/**
+ * Strip terminal control sequences out of text that is about to be shown as *prose*.
+ *
+ * ⛔ Not a retreat from the rule. AGENTS.md forbids parsing ANSI to determine **state**, and nothing
+ * here reads anything: this only removes bytes that mean "make the next word dim" from a string a
+ * person is going to read in a table cell. A CLI's last words are the most useful thing a failed
+ * dispatch can carry, and they arrive with the colour codes still in them.
+ *
+ * ⚠️ Measured 2026-08-27: a benched worker's reason rendered as
+ * `the agent exited after 3s… It said: ←[2m— claude-sonnet-5 · auto←[0m Your organization has…`,
+ * which reads as corruption and buries the one sentence that mattered.
+ */
+// eslint-disable-next-line no-control-regex
+const ANSI = /[\u001B\u009B][[\]()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-PR-TZcf-ntqry=><~]/g
+
+export function stripAnsi(text: string): string {
+  return text.replace(ANSI, '')
+}
+
 // ---------------------------------------------------------------------------- shared helpers
 
 export function num(value: unknown): number {

@@ -62,7 +62,7 @@ import {
 } from './approvals.js'
 import { allAvailability } from './resources.js'
 import { activityFor } from './activity.js'
-import { completeTask, deliverToLiveSession, tick } from './scheduler.js'
+import { completeTask, continueTask, deliverToLiveSession, tick } from './scheduler.js'
 import { controllerReport, drainConsults, enqueueConsult } from './controller.js'
 import { gateQuestion, riskOf } from './judgment.js'
 import { chatHistory, resetChat, sendChat } from './chat.js'
@@ -301,7 +301,10 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
       // to rediscover about the branch. Plan §18.4.
       const id = lastMessageId(p.id)
       if (id !== null) deliverToLiveSession(p.id, id, p.text)
-      return { ok: true as const }
+      // ⛔ And a task that had stopped is started again — same task, same thread, a new run. Without
+      // this the note reached a live process and produced nothing anybody could see: no run, no
+      // metering, no status, no landing. See `continueTask`.
+      return { ok: true as const, outcome: continueTask(p.id) }
     },
     'task.cancel': (p) =>
       cancelTask(p.id, {

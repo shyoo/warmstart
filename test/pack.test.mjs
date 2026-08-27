@@ -113,6 +113,36 @@ try {
   if (!dir) throw new Error('nothing to test')
 
   const binary = binaryIn(dir)
+
+  // ⛔ **Is this package the one we just wrote?**
+  //
+  // This suite reads `release/` and never builds it, which is right — building is `npm run pack`'s
+  // job — but it means a failed or skipped build leaves the previous package sitting there and every
+  // check below passes against code that no longer exists. That happened twice on 2026-08-27, both
+  // times because `npm run pack` had died with `EBUSY: rmdir release\win-unpacked` (something was
+  // running the packaged app), and both times the suite reported a confident 17/17 for a tree it had
+  // never seen. A green suite that proves nothing is worse than a red one.
+  //
+  // ⚠️ Compared against `src/`, not `out/`. `out/` is a build product and moves whenever anything
+  // runs a build; the question being asked is whether the package contains the current *source*.
+  const asar = join(dir, 'resources', 'app.asar')
+  const packagedAt = existsSync(asar) ? statSync(asar).mtimeMs : 0
+  const newestSource = findFiles(join(REPO, 'src'), () => true).reduce(
+    (newest, file) => Math.max(newest, statSync(file).mtimeMs),
+    Math.max(
+      statSync(join(REPO, 'package.json')).mtimeMs,
+      statSync(join(REPO, 'electron-builder.yml')).mtimeMs
+    )
+  )
+  check(
+    'the package was built from the source that is here now',
+    packagedAt >= newestSource,
+    packagedAt >= newestSource
+      ? `packaged ${new Date(packagedAt).toISOString()}`
+      : `⛔ STALE: packaged ${new Date(packagedAt).toISOString()} but src/ changed ` +
+        `${new Date(newestSource).toISOString()} — run \`npm run pack\` and check it succeeded. ` +
+        'Everything below would be testing code that is no longer in the tree.'
+  )
   // ⚠️ On failure, say what IS there. "expected X, not found" sent someone reading electron-builder's
   // name-sanitising rules; one directory listing would have shown the answer immediately.
   check(

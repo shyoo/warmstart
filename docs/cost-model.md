@@ -247,6 +247,21 @@ Kept because the vendor surface moves, and each of these becomes right the momen
 **Still owed:** `tokens_per_percent` (R2), which turns a percentage into the token count every gate
 actually needs. ⭐ R3 — *what refreshes `cachedUsageUtilization`* — is **closed** by the above.
 
+### ⛔ The reserve is a gate, not a routing input
+
+Until R2 lands, `remainingTokens` is null on every Claude account, so `reserveState` can only answer
+`ok` (this worker holds no live sessions) or `unknown` (it holds some). Feeding that into scheduler
+scoring at 0.5 therefore did not express caution — it expressed **"penalise any worker that has a
+session"**, at a weight several times larger than every term that actually compares candidates.
+Measured 2026-08-27: an account nobody had ever signed in to won a dispatch over two working ones on
+that term alone, and failed in 0s.
+
+The verdict is still `unknown` and the watchdog still reads it. What changed is that scoring moves
+only on evidence somebody checked: `at_risk` (a real number, below a real requirement) or a live
+rate-limit status the vendor sent. ⚠️ Worth remembering when R2 does land — a term that is uniform
+across the fleet contributes nothing, and one that varies as a side effect of unrelated state is a
+bias, not a measurement.
+
 ### The compaction reserve
 
 The last row creates a **point of no return**. If a worker reaches true exhaustion holding a large

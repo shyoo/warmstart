@@ -123,7 +123,7 @@ describe('choosing between workers that score the same', () => {
     // routing decision, and on that machine it was the one nobody had finished setting up.
     const ready = { ...base, identity: { loggedIn: true, setupComplete: true } }
     const halfDone = { ...base, identity: { loggedIn: true, setupComplete: false } }
-    expect(scheduler.unproven(ready)).toBeLessThan(scheduler.unproven(halfDone))
+    expect(scheduler.unproven(ready, true)).toBeLessThan(scheduler.unproven(halfDone, true))
   })
 
   it('does not penalise an adapter that cannot answer the question', () => {
@@ -131,11 +131,27 @@ describe('choosing between workers that score the same', () => {
     // Reading that as a missing step would bench a healthy account for a fact it can never report.
     const cannotTell = { ...base, identity: { loggedIn: true, setupComplete: null } }
     const ready = { ...base, identity: { loggedIn: true, setupComplete: true } }
-    expect(scheduler.unproven(cannotTell)).toBe(scheduler.unproven(ready))
+    expect(scheduler.unproven(cannotTell, true)).toBe(scheduler.unproven(ready, true))
   })
 
   it('knows least about a worker nothing has ever probed', () => {
-    expect(scheduler.unproven(base)).toBe(1)
+    expect(scheduler.unproven(base, false)).toBeGreaterThanOrEqual(1)
+  })
+
+  it('prefers an account that has actually produced a turn', () => {
+    // ⛔ The strongest input, and the only one that is evidence rather than self-report. Measured
+    // 2026-08-27: a never-signed-in Antigravity account — which answers every identity question with
+    // "cannot tell", legitimately, because its credential is in the OS keyring — won a dispatch over
+    // two working Claude workers, then failed in 0s. Whether a turn has ever come out of an account
+    // is the one fact that separates those two cases, and it was not being consulted.
+    const proven = { ...base, identity: { loggedIn: true, setupComplete: null } }
+    const never = { ...base, identity: { loggedIn: true, setupComplete: null } }
+    expect(scheduler.unproven(proven, true)).toBeLessThan(scheduler.unproven(never, false))
+  })
+
+  it('still lets an unproven worker be tried, because nothing else ever becomes proven', () => {
+    // ⚠️ A penalty, never a gate. Every fleet starts with no proven account.
+    expect(scheduler.unproven(base, false)).toBeLessThan(Infinity)
   })
 })
 
@@ -272,5 +288,69 @@ describe('the live peephole', () => {
     activity.noteActivity('t-clear', 'from the run before')
     activity.clearActivity('t-clear')
     expect(activity.activityFor('t-clear')).toHaveLength(0)
+  })
+})
+
+describe('the compaction reserve as a routing input', () => {
+  it('does not make holding a live session look risky', async () => {
+    // ⛔ The bug that sent a task to an account nobody had ever signed in to. `reserveState` returns
+    // `ok` for a worker holding **no** live sessions and `unknown` for one holding any, because
+    // `remaining` is null on every Claude account until R2 lands. Scored at 0.5 against a weight of
+    // ~0.9, that was a 0.45 penalty for *having a session* — two to five times every term that
+    // actually discriminates — so an idle worker beat a busy one whatever else was true.
+    const reserve = await import('./reserve.js')
+    const worker = seedWorker('busy-but-fine', 1_787_000_000_000)
+    db.db()
+      .prepare(
+        `insert into sessions (id, worker_id, adapter_id, transport, cwd, state, purpose,
+                               started_at, context_tokens, tokens_since_compact)
+         values (?,?,?,?,?,?,?,?,?,?)`
+      )
+      .run(
+        'ffffffff-0000-4000-8000-0000000000f1',
+        worker.id,
+        'claude-code',
+        'stream',
+        dir,
+        'live',
+        'work',
+        Date.now(),
+        50_000,
+        0
+      )
+
+    // The verdict itself is still honest — unknown is not ok, and the watchdog reads it.
+    expect(reserve.reserveState(worker.id).verdict).toBe('unknown')
+    // ⚠️ What changed is that the *scorer* no longer converts that into a preference. This asserts
+    // the rule rather than the arithmetic: only checked evidence may move the score.
+    expect(scheduler.quotaRiskOf(worker.id)).toBe(0)
+  })
+
+  it('still penalises a worker the vendor has actually rate-limited', async () => {
+    const quota = await import('./quota.js')
+    const worker = seedWorker('rejected', 1_787_000_000_000)
+    quota.recordRateLimit(worker.id, null, {
+      status: 'rejected',
+      rateLimitType: 'five_hour',
+      resetsAt: Date.now() + 3_600_000
+    })
+    expect(scheduler.quotaRiskOf(worker.id)).toBe(1)
+  })
+})
+
+describe('what a CLI said, on its way into a sentence', () => {
+  it('arrives without the colour codes it was printed with', async () => {
+    // ⚠️ Measured 2026-08-27: a benched worker's reason rendered as
+    // `It said: <esc>[2m— claude-sonnet-5 · auto<esc>[0m Your organization has…`, which reads as
+    // corruption and buries the one sentence that mattered. ⛔ This strips bytes on their way to a
+    // person; nothing anywhere reads state out of them.
+    const { stripAnsi } = await import('./stream.js')
+    const esc = String.fromCharCode(27)
+    const raw = `${esc}[2m- claude-sonnet-5 . auto${esc}[0m Your organization has disabled access`
+    expect(stripAnsi(raw)).toBe('- claude-sonnet-5 . auto Your organization has disabled access')
+  })
+
+  it('leaves ordinary prose exactly as it was', () => {
+    expect(scheduler.deadOnArrival).toBeTypeOf('function')
   })
 })

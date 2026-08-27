@@ -114,9 +114,14 @@ export async function ensurePool(project: Project): Promise<string[]> {
   return members
 }
 
-export async function claimWorkspace(project: Project, holder: string): Promise<Workspace | null> {
+export async function claimWorkspace(
+  project: Project,
+  holder: string,
+  /** The worktree this task's live session is already sitting in, when it has one. */
+  preferPath?: string
+): Promise<Workspace | null> {
   await ensurePool(project)
-  const taken = claim(workspacePoolId(project.id), holder)
+  const taken = claim(workspacePoolId(project.id), holder, 1, preferPath)
   if (!taken?.member) {
     if (taken) release(taken.id)
     return null

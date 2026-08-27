@@ -571,7 +571,17 @@ export interface RpcMap {
   }
   'task.create': { params: TaskCreateParams; result: Task }
   'task.update': { params: { id: string } & Record<string, unknown>; result: Task }
-  'task.message': { params: { id: string; text: string }; result: { ok: true } }
+  'task.message': {
+    params: { id: string; text: string }
+    /**
+     * `outcome` says what the message *did*, so the UI can stop guessing.
+     *
+     * `delivered` — a run was already open and the note went into it. `requeued` — the task had
+     * stopped and this restarted it as a new run on the same thread. `queued` — it is already
+     * waiting to be dispatched and the note will go with it. `ignored` — no such task.
+     */
+    result: { ok: true; outcome: 'delivered' | 'requeued' | 'queued' | 'ignored' }
+  }
   'task.cancel': {
     params: { id: string; restingState?: RestingState; reason?: string; hard?: boolean }
     result: Task
@@ -706,4 +716,4 @@ export type DaemonEvent =
    *
    * ⚠️ Agent output, so it is untrusted text. It is rendered as text and never as markup.
    */
-  | { type: 'task.activity'; taskId: string; text: string; ts: number }
+  | { type: 'task.activity'; taskId: string; text: string; ts: number; reset?: true }

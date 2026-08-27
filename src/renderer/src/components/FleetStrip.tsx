@@ -52,7 +52,11 @@ function SessionChip({ session, now }: { session: Session; now: number }): React
       className="chip"
       title={
         `session ${session.id}\n${session.purpose} · ${session.transport} transport\n${session.cwd}\n` +
-        'the clock is what is left of this session’s prompt cache'
+        'the clock is what is left of this session’s prompt cache\n' +
+        // ⛔ Said here because the two numbers get compared. `ctx` is how full the window is
+        // now and falls when the session compacts; a task's token count is a running total of
+        // everything it ever spent, and only grows. They are not the same quantity.
+        'ctx is how full the window is now — a level, not a total, and not a task’s token count'
       }
     >
       <span className="chip-purpose">{session.purpose}</span>

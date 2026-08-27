@@ -289,3 +289,85 @@ describe('a result that is not an error', () => {
     expect(tasks.getTask(task.id)?.status).toBe('running')
   })
 })
+
+/**
+ * Saying something to a task that has stopped.
+ *
+ * ⛔ **The message was already being delivered; what was missing was a run.** Measured 2026-08-27:
+ * *"Please commit to the main branch"* was typed at a completed task, `deliverToLiveSession` pushed
+ * it straight into the still-warm session and returned true — and from the operator's side nothing
+ * whatsoever happened. No run, so nothing metered, no status moved, no activity appeared, and no
+ * landing was attempted when the agent finished. The UI meanwhile said "Nothing is running, so this
+ * waits… it is prepended to the next run's prompt", which is true of the code and false of the
+ * world: a finished task has no next run.
+ *
+ * ⚠️ A **continuation, not a new task**. Same thread, same budget, same branch — a new `run`, which
+ * is exactly what a run is for. Routing follows by construction rather than by instruction:
+ * `warmSessionFor` already scores the session holding this task's context highest, so the same
+ * worker, workspace and session win because they are cheapest, not because anything hard-codes them.
+ */
+describe('continuing a task that has stopped', () => {
+  const settle = (status: 'completed' | 'awaiting_human' | 'failed' | 'paused_user' | 'cancelled') => {
+    const seeded = seedRunningTask()
+    tasks.setStatus(seeded.task.id, status)
+    return seeded
+  }
+
+  it('starts another run rather than waiting for one that will never come', () => {
+    const { task } = settle('completed')
+    expect(scheduler.continueTask(task.id)).toBe('requeued')
+    expect(tasks.getTask(task.id)?.status).toBe('ready')
+  })
+
+  it('wakes a task from every state work can still be added to', () => {
+    for (const status of ['completed', 'awaiting_human', 'failed', 'paused_user', 'cancelled'] as const) {
+      const { task } = settle(status)
+      expect(scheduler.continueTask(task.id), status).toBe('requeued')
+      expect(tasks.getTask(task.id)?.status, status).toBe('ready')
+    }
+  })
+
+  it('leaves a running task alone, because its run is already open', () => {
+    // ⛔ Re-queueing here would open a second run against a session that is mid-turn.
+    const { task } = seedRunningTask()
+    expect(scheduler.continueTask(task.id)).toBe('delivered')
+    expect(tasks.getTask(task.id)?.status).toBe('running')
+  })
+
+  it('will not promote a draft somebody is still writing', () => {
+    const { task } = seedRunningTask()
+    tasks.setStatus(task.id, 'draft')
+    expect(scheduler.continueTask(task.id)).toBe('queued')
+    expect(tasks.getTask(task.id)?.status).toBe('draft')
+  })
+
+  it('drops a resume time a person has just overtaken', () => {
+    // ⚠️ A task parked by preemption carries `not_before = <window reset>`. Somebody asking for
+    // something now must not be told to come back in four hours.
+    const { task } = settle('paused_quota' as 'paused_user')
+    db.db()
+      .prepare('update tasks set not_before = ? where id = ?')
+      .run(Date.now() + 4 * 60 * 60 * 1000, task.id)
+    scheduler.continueTask(task.id)
+    expect(tasks.getTask(task.id)?.notBefore).toBeNull()
+  })
+
+  it('says so in the thread, so the record shows why it ran again', () => {
+    const { task } = settle('completed')
+    scheduler.continueTask(task.id)
+    const said = tasks.messagesFor(task.id).map((m) => m.text).join('\n')
+    expect(said).toContain('same thread, a new run')
+  })
+
+  it('clears the assignee so the scheduler chooses again', () => {
+    // ⚠️ It will almost always choose the same worker — that is what `warmSessionFor` is for — but it
+    // must *choose*: the account that ran this last may since have been benched or run out of window.
+    const { task } = settle('completed')
+    scheduler.continueTask(task.id)
+    expect(tasks.getTask(task.id)?.assignee).toBeNull()
+  })
+
+  it('is a no-op on a task that does not exist', () => {
+    expect(scheduler.continueTask('nope')).toBe('ignored')
+  })
+})

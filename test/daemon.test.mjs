@@ -323,6 +323,35 @@ try {
   })
   check('a future not_before schedules rather than queues', later.status === 'scheduled')
 
+  // ---------------------------------------------------------------- continuing a task
+  //
+  // ⛔ Measured 2026-08-27: a reply typed at a finished task went into the still-warm session and
+  // produced nothing anybody could see - no run, no metering, no status, no landing. The UI said it
+  // was "prepended to the next run's prompt", which is true of the code and false of the world,
+  // because a finished task has no next run.
+  section('a reply continues the task')
+  const finished = await daemon.rpc('task.create', { title: 'answer me', projectId: added.id })
+  await daemon.rpc('task.cancel', { id: finished.id, restingState: 'paused_user' })
+  const replied = await daemon.rpc('task.message', { id: finished.id, text: 'now commit it' })
+  check(
+    'saying something to a stopped task starts another run on it',
+    replied.outcome === 'requeued',
+    replied.outcome
+  )
+  const woken = (await daemon.rpc('task.list', {})).find((t) => t.id === finished.id)
+  check('and the task goes back in the queue rather than waiting forever', woken?.status === 'ready')
+  check(
+    'it is the same task, not a new one',
+    (await daemon.rpc('task.list', {})).filter((t) => t.title === 'answer me').length === 1,
+    'a continuation is a run on one thread; filing a second task would split the history'
+  )
+  const thread = await daemon.rpc('task.get', { id: finished.id })
+  check(
+    'and the thread records why it ran again',
+    thread.messages.some((m) => /same thread, a new run/.test(m.text))
+  )
+  await daemon.rpc('task.cancel', { id: finished.id, restingState: 'cancelled' })
+
   // ---------------------------------------------------------------- cancel is not delete
   section('cancel and delete')
   const cancelled = await daemon.rpc('task.cancel', { id: later.id, reason: 'not now' })

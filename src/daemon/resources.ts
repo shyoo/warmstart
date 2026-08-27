@@ -139,7 +139,16 @@ export function allAvailability(): ResourceAvailability[] {
 export function claim(
   resourceId: string,
   holder: string,
-  amount = 1
+  amount = 1,
+  /**
+   * A member this claim would rather have than any other.
+   *
+   * ⚠️ A preference, never a requirement: if it is taken, the next free member is used. A task
+   * continuing a conversation wants the worktree its own session is already sitting in — the branch
+   * is checked out there and the agent's context describes that tree — but *any* workspace is better
+   * than refusing to run.
+   */
+  preferMember?: string
 ): ResourceClaim | null {
   const state = availability(resourceId)
   if (!state) throw new Error(`no resource '${resourceId}'`)
@@ -149,7 +158,8 @@ export function claim(
   let member: string | null = null
   if (state.resource.members.length > 0) {
     const taken = new Set(state.claims.map((c) => c.member))
-    member = state.resource.members.find((m) => !taken.has(m)) ?? null
+    const free = state.resource.members.filter((m) => !taken.has(m))
+    member = (preferMember && free.includes(preferMember) ? preferMember : free[0]) ?? null
     if (!member) return null
   }
 

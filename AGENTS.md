@@ -72,7 +72,21 @@ These are not preferences; breaking one breaks the product.
   arrived at; the reserve returns a verdict *and* its reason; the cache clock records every decision
   including the ones that did nothing. A scheduler that spends money and cannot say why is one you
   will either over-trust or switch off.
-- ⛔ **`unknown` is a verdict, not a synonym for `ok`.** The reserve has three states for a reason.
+- ⛔ **`unknown` is a verdict, not a synonym for `ok` — and not a synonym for "half as bad" either.**
+  The reserve has three states for a reason, and scoring `unknown` as 0.5 looked cautious and was
+  not: `reserveState` returns `ok` for a worker holding **no** live sessions and `unknown` for one
+  holding any, so the routing term stopped measuring risk and started measuring *does this worker
+  have a session*. At weight ~0.9 that penalised being busy by 0.45 — several times every term that
+  actually discriminates — and an idle worker beat a busy one always. Measured 2026-08-27: a
+  never-signed-in account won a dispatch over two working ones on exactly this. ⚠️ A term identical
+  across the fleet contributes nothing and belongs at zero; one that differs *only* by session count
+  is worse than nothing. Only checked evidence may move a score.
+- ⛔ **A reply to a task that has stopped is a new run on the same thread, never a note that waits.**
+  `deliverToLiveSession` pushed the text into the still-warm session and returned true, so the daemon
+  believed it had done its job while the operator saw nothing at all: no run, no metering, no status,
+  no landing. Work needs a **run** to be visible, gated and billed. `continueTask()` re-queues it and
+  the scheduler routes it — the same worker, workspace and session win because `warmSessionFor`
+  scores them highest, not because anything hard-codes them.
 - ⛔ **Signed in is not the same as able to work, and only a run can tell you which.** An account with
   a lapsed subscription answers `auth status` exactly as a live one does, so no free probe separates
   them. The evidence is a dispatch that ends with **no metered turn**: that is charged to the worker
@@ -185,6 +199,13 @@ costmodels/             versioned pricing data
   built to `index.cjs` via an explicit rollup output override in `electron.vite.config.ts`. If you
   see *"Cannot use import statement outside a module"* from the preload, that override was lost.
   ⛔ Do not "fix" it by dropping `sandbox: true`.
+- **`npm run pack` fails with `EBUSY: rmdir release\win-unpacked` once the packaged app has been
+  opened.** orchestratord is **detached by design** and survives its window closing, so it keeps
+  holding the binary — that is the topology working, not a leak. Stop it by the pid in its own
+  `orchestratord.json`, never by image name, and never without asking: it may be somebody's live
+  fleet. ⚠️ `test:pack` **builds nothing** — it drives whatever is in `release/` — so a failed build
+  used to leave it reporting a confident pass for a tree it had never seen. It now refuses when the
+  package predates `src/`.
 - **A quota sample is keyed on the vendor's fetch time, which does not move when you read it.**
   `sampledAt` is `cachedUsageUtilization.fetchedAtMs` — exactly right for staleness and fatal as an
   insert key, because re-reading an unchanged cache produces a row identical to the last one and

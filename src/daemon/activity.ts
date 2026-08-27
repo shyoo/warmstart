@@ -53,4 +53,10 @@ export function activityFor(taskId: string): Array<{ text: string; ts: number }>
  */
 export function clearActivity(taskId: string): void {
   tails.delete(taskId)
+  // ⛔ Announced, not merely done. Whoever is watching this task holds their own copy of the tail —
+  // they have to, because the list refreshes on every task event and a pane that rebuilt itself from
+  // each fetch would flicker. So clearing it here and saying nothing left the **previous run's last
+  // words** sitting under a task that had just been dispatched somewhere else, which reads as the new
+  // run having failed the way the old one did.
+  emit({ type: 'task.activity', taskId, text: '', ts: Date.now(), reset: true })
 }

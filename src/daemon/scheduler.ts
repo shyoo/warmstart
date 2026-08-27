@@ -1,4 +1,4 @@
-import type { Run, RunQuota, Task } from '@shared/tasks.js'
+import type { Run, RunQuota, Task, TaskStatus } from '@shared/tasks.js'
 import type { Session, Worker } from '@shared/protocol.js'
 import { adapter } from './adapters/index.js'
 import { lastQuota, refreshUsage } from './quota.js'
@@ -42,6 +42,7 @@ import {
   spawnSession
 } from './sessions.js'
 import { landTask } from './landing.js'
+import { stripAnsi } from './stream.js'
 import { clearActivity } from './activity.js'
 import { log } from './log.js'
 import { db } from './db.js'
@@ -87,6 +88,12 @@ export const TICK_MS = 10_000
 
 /** Workspaces in flight, so an exit can release exactly what its dispatch claimed. */
 const workspaces = new Map<string, { workspace: Workspace; projectId: string | null }>()
+
+/** Is a run of this task already holding a workspace? Then a continuation must not claim a second. */
+function heldWorkspaceFor(taskId: string): boolean {
+  for (const run of runsFor(taskId)) if (!run.endedAt && workspaces.has(run.id)) return true
+  return false
+}
 
 export interface TickResult {
   dispatched: number
@@ -474,6 +481,30 @@ function askForPlan(task: Task): boolean {
 }
 
 /**
+ * How risky is spending on this worker, on evidence that was actually checked?
+ *
+ * ⛔ `unknown` scores **zero**, and that is not the same as scoring it `ok`.
+ *
+ * It used to score 0.5, which looks cautious and was not. `reserveState` returns `ok` for a worker
+ * holding **no live sessions** and `unknown` for one holding any, because `remaining` is null on
+ * every Claude account until R2 lands. So the term stopped measuring risk and started measuring
+ * *does this worker have a session* — at weight 0.9 that is a 0.45 penalty, two to five times every
+ * term that actually discriminates. An idle worker therefore beat a busy one always, no matter what
+ * else was true about either. Measured 2026-08-27: a never-signed-in Antigravity account won a
+ * dispatch over two working Claude workers on exactly this, then failed in 0s.
+ *
+ * ⚠️ A term that is identical for the whole fleet contributes nothing and belongs at zero; one that
+ * differs *only* because of session count is worse than nothing, because it is a bias wearing a
+ * measurement's clothes. Real evidence still counts: `at_risk` is a number that was checked, and a
+ * live rate-limit status is the vendor's own word.
+ */
+export function quotaRiskOf(workerId: string): 0 | 1 {
+  const reserve = reserveState(workerId)
+  const rate = lastRateLimit(workerId)
+  return reserve.verdict === 'at_risk' || (rate && rate.status !== 'allowed') ? 1 : 0
+}
+
+/**
  * ⛔ Every term is a continuous function of the objective vector, never a switch on a mode name. The
  * two requirements the plan wanted fall out of the arithmetic rather than needing features:
  * "add X, test X, document X" lands on one session because `warm` and `affinity` both peak there, and
@@ -504,14 +535,7 @@ function scoreCandidate(
     rot = Math.max(0, (used - 0.5) * 2)
   }
 
-  const reserve = reserveState(worker.id)
-  const rate = lastRateLimit(worker.id)
-  const quotaRisk =
-    reserve.verdict === 'at_risk' || (rate && rate.status !== 'allowed')
-      ? 1
-      : reserve.verdict === 'unknown'
-        ? 0.5
-        : 0
+  const quotaRisk = quotaRiskOf(worker.id)
 
   const needs = task.constraints.needs ?? []
   const caps = adapter(worker.adapterId).info.capabilities as unknown as Record<string, unknown>
@@ -525,7 +549,7 @@ function scoreCandidate(
     w.quotaRisk * quotaRisk -
     w.cold * cold +
     w.capabilityFit * fit -
-    UNPROVEN_PENALTY * unproven(worker)
+    UNPROVEN_PENALTY * unproven(worker, hasEverWorked(worker.id))
   )
 }
 
@@ -544,20 +568,47 @@ function scoreCandidate(
  * routing decision on the fleet*, and on this machine that account was the one nobody had finished
  * setting up. It looked like a routing bug and it was an absence of any reason to prefer anything.
  */
-const UNPROVEN_PENALTY = 0.2
+const UNPROVEN_PENALTY = 0.35
 
-/** Exported for its test: the tie-break is the whole fix, and a silent regression restores the bug. */
-export function unproven(worker: Worker): number {
+/**
+ * Exported for its test: the tie-break is the whole fix, and a silent regression restores the bug.
+ *
+ * `everWorked` is the strongest of the three inputs and the only one that is *evidence* rather than
+ * self-report. An account can answer every identity question perfectly and still be unable to run
+ * anything — a keyring credential nobody ever created, an organisation that has disabled the CLI, a
+ * lapsed plan — and the one fact that separates those from a working account is whether a turn has
+ * ever come out of it. ⚠️ Not a gate: every fleet starts with no proven worker, and a first dispatch
+ * has to be allowed to happen or nothing ever becomes proven.
+ */
+export function unproven(worker: Worker, everWorked: boolean): number {
+  let doubt = everWorked ? 0 : 0.5
   const identity = worker.identity
   // Never probed at all: less is known about this account than about one that answered.
-  if (!identity) return 1
-  let doubt = 0
+  if (!identity) return doubt + 1
   // ⚠️ `=== false`, never falsy. `null` is "the adapter cannot tell", which is the normal and
   // permanent answer for a CLI that keeps its credential in the OS keyring, and must not be
   // penalised as though it were a missing step somebody could go and do.
   if (identity.setupComplete === false) doubt += 0.6
   if (identity.loggedIn !== true) doubt += 0.4
   return doubt
+}
+
+/**
+ * Has a single assistant turn ever come out of this account?
+ *
+ * ⛔ Read from `turns`, which is the exact record and survives a restart, rather than from a run's
+ * accumulators. A worker with one metered turn to its name has proved the thing no free probe can
+ * establish. Cheap: an indexed existence check, and the scheduler asks it once per candidate per
+ * tick.
+ */
+function hasEverWorked(workerId: string): boolean {
+  const found = db()
+    .prepare(
+      `select 1 from turns t join sessions s on s.id = t.session_id
+        where s.worker_id = ? limit 1`
+    )
+    .get(workerId)
+  return found !== undefined
 }
 
 // ---------------------------------------------------------------------------- dispatch
@@ -700,6 +751,23 @@ async function dispatchIntoWarmSession(
   const warm = model.costOfKeepalive(session)
   const saved = cold !== null && warm !== null ? Math.round(cold - warm) : null
 
+  // ⛔ Re-claim the workspace, because this task may not be holding one any more.
+  //
+  // ⚠️ The comment at the top of `dispatch` says a warm session already sits in the workspace this
+  // task claimed — true while the task never finished, and false the moment it did: `releaseFor`
+  // parks the worktree and releases the claim on completion. A task **continued by a reply** is
+  // therefore warm in context and homeless on disk, and running it unclaimed would let a second task
+  // be given the same worktree and switch the branch out from under this one.
+  //
+  // The claim prefers the tree the session is already in - that is where its branch is checked out
+  // and what its context describes - and takes any free one rather than refusing.
+  const project = task.projectId ? getProject(task.projectId) : null
+  let reclaimed: Workspace | null = null
+  if (project && !heldWorkspaceFor(task.id)) {
+    reclaimed = await claimWorkspace(project, task.id, session.cwd)
+    if (!reclaimed) throw new Error(`no free workspace in ${project.name} to continue t${task.seq}`)
+  }
+
   const run = startRun({
     taskId: task.id,
     workerId: worker.id,
@@ -710,6 +778,7 @@ async function dispatchIntoWarmSession(
   })
   setRunQuota(run.id, 'before', runQuota(worker.id))
   clearActivity(task.id)
+  if (reclaimed) workspaces.set(run.id, { workspace: reclaimed, projectId: project?.id ?? null })
 
   setStatus(task.id, 'running', { assignee: worker.id })
   addMessage(
@@ -891,6 +960,65 @@ export function deliverToLiveSession(taskId: string, messageId: number, text: st
   }
 }
 
+/**
+ * States a human reply can wake work back up from.
+ *
+ * ⛔ Not `draft` — a draft is deliberately un-queued and promoting it on a comment would dispatch
+ * something somebody was still writing. Not `cancelling` — that run is winding down and would be
+ * asked to do two contradictory things at once. Everything else here is a task that has come to
+ * rest and can sensibly be asked to do one more thing.
+ */
+const CONTINUABLE_FROM: TaskStatus[] = [
+  'completed',
+  'awaiting_human',
+  'failed',
+  'paused_user',
+  'paused_quota',
+  'cancelled'
+]
+
+/**
+ * A person said something to a task that had stopped. Start the work again.
+ *
+ * ⛔ **The message was already being delivered; what was missing was a run.** `deliverToLiveSession`
+ * pushed the text straight into the still-warm session and returned true, so from the daemon's point
+ * of view it had done its job — and from the operator's, nothing whatsoever happened. There was no
+ * run, so nothing was metered, no status moved, no activity appeared, and no landing was attempted
+ * when the agent finished. *"Please commit to the main branch"* went into a live process and fell out
+ * of the world. Measured 2026-08-27.
+ *
+ * So a reply to a resting task **re-queues it**, and the scheduler treats the continuation exactly as
+ * it treats any other dispatch: gates, quota baseline, metering, landing. It is the same task and the
+ * same thread — a new **run**, not a new task — which is what makes the default routing right by
+ * construction: `warmSessionFor` prefers the session that already holds this task's context, so the
+ * same worker, the same workspace and the same session are chosen because they *score* highest, not
+ * because anything here says so.
+ *
+ * ⚠️ A `running` task is left alone. Its run is already open and the note belongs in it; re-queueing
+ * would start a second run against a session mid-turn.
+ *
+ * Returns what happened, so the caller can tell the person which of the two it was.
+ */
+export function continueTask(taskId: string): 'delivered' | 'requeued' | 'queued' | 'ignored' {
+  const task = getTask(taskId)
+  if (!task) return 'ignored'
+  if (task.status === 'running' || task.status === 'assigned') return 'delivered'
+  if (!CONTINUABLE_FROM.includes(task.status)) return 'queued'
+
+  addMessage(
+    task.id,
+    'system',
+    'Continuing this task with what you just said — same thread, a new run. It goes back to the ' +
+      'session that still holds its context where there is one, and starts a fresh one where there ' +
+      'is not.'
+  )
+  // ⛔ `not_before` is cleared. A task parked by preemption carries a resume time, and a person
+  // asking for something now should not be told to come back after the window resets.
+  db().prepare('update tasks set not_before = null where id = ?').run(task.id)
+  setStatus(task.id, 'ready', { assignee: null })
+  return 'requeued'
+}
+
 // ---------------------------------------------------------------------------- completion
 
 /**
@@ -999,7 +1127,7 @@ export async function onStreamResult(
   const run = runForSession(session.id)
   if (!run) return
 
-  const said = (result.text ?? '').replace(/\s+/g, ' ').trim()
+  const said = stripAnsi(result.text ?? '').replace(/\s+/g, ' ').trim()
   const why =
     `The agent reported a failure${result.terminalReason ? ` (${result.terminalReason})` : ''}` +
     (said ? `: ${said.slice(0, 400)}` : ' and said nothing about it.')
@@ -1077,7 +1205,8 @@ export function deadOnArrival(session: Session, run: Run): string | null {
     session.lastRequestStartedAt !== null
   if (metered) return null
 
-  const said = backscroll(session.id).replace(/\s+/g, ' ').trim()
+  // ⛔ Stripped, because this becomes a sentence in a table cell. See stripAnsi.
+  const said = stripAnsi(backscroll(session.id)).replace(/\s+/g, ' ').trim()
   const tail = said.slice(-300)
   return tail
     ? `the agent exited after ${Math.round(lived / 1000)}s having produced no output. It said: ${tail}`
