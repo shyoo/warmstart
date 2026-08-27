@@ -62,6 +62,14 @@ body {
   /* ⛔ One line. The controls sit beside the name, and a wrapping title would push them onto a row
      of their own - which is the thing this layout exists to avoid. */
   white-space: nowrap;
+  /* ⚠️ …but `nowrap` alone made it un-shrinkable, so where the title renders wider than the sidebar
+     it shoved the controls off the edge instead. Measured on Linux in CI, where the default UI font
+     is wider than Windows': `overflows: true` with the name intact and Back/Forward/Refresh gone.
+     ⛔ The **name** gives way, never the controls - a clipped "Multi Agent Contro…" is still
+     readable, and a button you cannot reach is not a button. */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .brand .version {
@@ -69,12 +77,13 @@ body {
   color: var(--color-text-faint);
 }
 
-/* Pinned right, so the name keeps its natural width and the controls keep their place. */
+/* Pinned right, and ⛔ never shrunk: these are the last things that may lose room. */
 .brand-nav {
   display: flex;
   align-items: center;
   gap: 2px;
   margin-left: auto;
+  flex: 0 0 auto;
 }
 
 .icon-btn {
