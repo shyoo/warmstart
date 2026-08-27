@@ -41,6 +41,7 @@ Written from documentation, then run. Each of these was wrong:
 |---|---|---|
 | `openai-compatible` | `codex exec --ask-for-approval on-request` | ⛔ **`--ask-for-approval` does not exist on `exec`.** It is interactive-only. Every scheduled spawn would have died on an argument error |
 | `openai-compatible` | `-p` is print mode | ⛔ **`-p` is `--profile`.** On `agy` the same letter *is* print mode |
+| `antigravity-cli` | `-p` is a boolean, like `claude -p` | ⛔ **it takes the prompt as its value.** `-p` / `--print` / `--prompt` are one *string* flag; `agy -p` alone answers *flag needs an argument: -p*. A bare `-p` before `--input-format` makes the CLI take `--input-format` as the prompt and exit 2 — and this adapter did exactly that, so **every Antigravity dispatch failed in 0s from M5 until 2026-08-27**. Print mode is switched on with `--print=` and the prompt arrives as NDJSON on stdin |
 | `openai-compatible` | `--output-format json\|stream-json` | `exec` has **`--json`** and no `--output-format` |
 | `openai-compatible` | identity from `auth.json` existing | **`codex doctor --json`** — free, local, redacted, and the vendor's own answer |
 | `openai-compatible` | models `gpt-5.2-codex*` | `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.5`, `gpt-5.4-mini` — from `$CODEX_HOME/models_cache.json` |
@@ -94,6 +95,27 @@ behaviour falls out of it:
 Three routes were evaluated. ⛔ All three were rejected, and the reasoning is worth keeping because
 this question will be asked again.
 
+⭐ **Reversed 2026-08-27: there IS a free probe, and it is `/usage` typed into the TUI.** Same
+shape as Claude Code's, and free for the same reason — a slash command is handled by the client.
+⛔ The difference, and why this took so long to find: Claude Code writes the answer to disk and
+`agy` does not. Driving `/usage` in a PTY and diffing every file under `~/.gemini` showed only
+`cli.log` (which logs `doRefreshQuota: starting reload` and no numbers) and `history.jsonl`
+(which logs the command text) changing; the quota lives in `quota_manager.go` in memory. So the
+adapter declares `usageRefresh.answer: 'screen'` and parses the panel — the one place in this
+codebase where rendered text becomes state, permitted for a quota reading and nothing else.
+
+Live reading, 2026-08-27, agy 1.1.22, Google AI Pro: Gemini weekly 5.48% used · Gemini 5-hour
+32.80% · Claude-and-GPT weekly 42.80% · Claude-and-GPT 5-hour 0%.
+
+⚠️ Two traps, both measured rather than reasoned:
+
+- The panel reports **remaining**; `QuotaWindow.percent` is **used**. Inverted in the parser.
+- The panel is **taller than a default terminal and scrolls**. At 30 rows one group's five-hour
+  window fell below the fold and three of four windows came back looking complete. The probe
+  session now runs at 110x60 and the parser refuses any group showing one of its two windows.
+
+What was tried before and does not work:
+
 1. **`agy -p /usage`** — measured 2026-08-25 and it **does not work**. The slash command is taken as a
    prompt: the run spent 14,603 input and 264 output tokens and started listing directories trying to
    work out what "/usage" meant. `--disable-slash-commands` implies print mode expands them; it does
@@ -122,8 +144,16 @@ Everything below needs a **signed-in account and a real turn**, which is where f
 | **R12** | Is headless compaction reachable on codex at all? Its session lifecycle has compaction, but no documented way to drive it from `exec`. If it is, `manualCompact` flips true and two cache-clock moves become available | `openai-compatible` |
 | **R13** | Is agy's `result.usage` the *turn's* total or the *conversation's*? Measured on a single-turn run, where the two are identical. If it is cumulative, multi-turn sessions are over-billed | `antigravity-cli` |
 
-**Answered by measurement on 2026-08-25:** R9 (no — `agy -p /usage` spends a turn and does not
-answer) and R11 (three dialects, all three now decoded and regression-tested against verbatim records).
+**Answered by measurement on 2026-08-27:** the print flag (above), and with it the first
+confirmation that a corrected argv reaches a signed-in Antigravity account: the CLI returns a
+valid `init` record listing 50-odd tools, with no turn spent. ⚠️ Everything past `init` on this
+adapter is still unmeasured, because it needs a real turn — R11 and R13 below.
+
+**Answered by measurement on 2026-08-25:** R9 in *print* mode (no — `agy -p /usage` spends a turn
+and does not answer) and R11 (three dialects, all decoded and regression-tested against verbatim
+records). ⭐ **R9 was then reopened and closed the other way on 2026-08-27**: the same command in
+the *interactive* TUI is free, and is now the adapter's quota probe. Print mode and the TUI are
+different products — that is twice this project has been caught by the distinction.
 
 ## Running the tests without any of them
 

@@ -2,6 +2,7 @@ import type {
   AdapterDetection,
   AdapterInfo,
   QuotaSnapshot,
+  QuotaWindow,
   SessionTransport,
   WorkerIdentity
 } from '@shared/protocol.js'
@@ -138,6 +139,26 @@ export interface AgentAdapter {
    * simply leaves the question to the person, which is the behaviour that existed before.
    */
   trustDirectory?(isolationRoot: string, dir: string): void
+
+  /**
+   * Read a quota reading out of what the `/usage` panel rendered.
+   *
+   * ⛔ Required by, and only by, an adapter declaring `usageRefresh.answer === 'screen'`. This is
+   * the one place in this codebase where rendered terminal text is allowed to become state, it is
+   * allowed to produce **a quota reading and nothing else**, and the reason is that on Antigravity
+   * there is no alternative at all: the numbers live in the CLI's memory and reach no file.
+   *
+   * ⚠️ Screen text is a rendering, so this must fail the way a rendering fails — return `null` when
+   * the panel is not there or does not parse, never a zero, a guess, or a half-read set of windows.
+   * A missing reading is already a state everything downstream distrusts correctly; a wrong one is
+   * not.
+   *
+   * The text handed in has already had its ANSI escapes stripped.
+   */
+  // ⚠️ A function property, not a method: callers pull it off the adapter object
+  // (`const parse = adapter(id).parseUsage`) and a method shorthand makes that an
+  // unbound-method error. It never uses `this`.
+  parseUsage?: (screen: string, now?: number) => QuotaWindow[] | null
 
   /**
    * Turn one of this CLI's own stream records into an agentyard event.

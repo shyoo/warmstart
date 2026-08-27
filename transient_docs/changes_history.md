@@ -519,3 +519,118 @@ running: 18/18, six of its processes alive throughout.
 
 ⛔ The general shape is worth keeping: when a check fights the way somebody works, moving the check is
 usually cheaper than moving the person, and a check people learn to skip proves nothing at all.
+
+
+## The adapter that had never once run, and the probe that was said to be impossible (2026-08-27)
+
+Reported as two complaints: *"Antigravity doesn't seem to work at all, even though it is signed in
+correctly"* and *"antigravity's usage quota seems always shown up as unknown"*. Both were true, and
+neither had the cause anyone had written down.
+
+**It had never run, and the reason was one argument.** `-p` on `agy` is a *string* flag — `-p` /
+`--print` / `--prompt` are one option that takes the prompt as its value, and `agy -p` alone answers
+*flag needs an argument: -p*. The adapter passed a bare `-p` before `--input-format`, so the CLI took
+`--input-format` as the prompt and exited 2 in zero seconds. The CLI said so itself, in a sentence
+nobody had ever read, because it went to a session nobody opened. Evidence from the operator's own
+database: **antigravity-cli had 0 metered turns, ever, against 122 on claude-code** — one work
+session, `outcome=failed`, `in=0 out=0`, from M5 until this was found.
+
+⚠️ Two things hid it, and both are more interesting than the bug.
+
+The run note said *"The session ended (exit 2) without reporting completion. Nothing here can tell
+whether the work was finished, so it is over to you."* That is a launch failure wearing an agent
+failure's words, and it sent the reader looking at the agent.
+
+And `unproven()` scored `identity.loggedIn !== true`. Antigravity's `probeIdentity()` returns
+`loggedIn: null` **permanently and correctly** — the credential is in the OS keyring and there is no
+free way to look — so every Antigravity worker carried +0.4 doubt for ever, on top of +0.5 for being
+unproven, and could shed neither: only a metered turn clears `unproven`, and at 0.9 it lost every
+dispatch and so never got one. ⛔ The comment directly above that line already said *"`=== false`,
+never falsy… must not be penalised"*. It had been applied to `setupComplete` and not to `loggedIn`,
+and the test beside it varied `setupComplete` while holding `loggedIn: true` throughout. A rule
+stated correctly, applied to one of two fields, with a test that could not see the difference.
+
+**And the quota probe existed all along.** `docs/adapters.md` recorded that Antigravity "exposes
+usage only inside an interactive session or a running IDE" and rejected three alternatives. Every
+word of that was true and the conclusion was wrong, because an interactive session is precisely what
+this app can drive — `refreshUsage()` had been doing it for Claude Code for a day. The operator
+pointed at it: *"you need to invoke `agy` and type `/usage` manually."*
+
+⛔ The reason it was missed is a real difference and not an oversight: Claude Code writes the answer
+to disk, and `agy` does not. Driving `/usage` in a PTY and diffing every file under `~/.gemini`
+showed only `cli.log` (which logs `doRefreshQuota: starting reload` and no numbers) and
+`history.jsonl` (which logs the command text) changing. The quota lives in `quota_manager.go` in
+memory. So the choice was never screen-versus-file; it was screen-versus-nothing, and the invariant
+that forbids parsing a TUI is reasoned from *the transcript is exact* — which holds only where there
+is a transcript. It now carries a narrow, declared exception: `usageRefresh.answer: 'screen'` plus
+`parseUsage`, permitted to produce **a quota reading and nothing else**.
+
+⚠️ Three things that measuring caught and reasoning would not have:
+
+- The panel reports **remaining**; `QuotaWindow.percent` is **used**. Storing it verbatim would
+  report a nearly-exhausted account as nearly empty, in the one direction the gate cannot survive —
+  `QUOTA_HIGH_WATER` would never trip.
+- The panel **scrolls**. The first live end-to-end run returned three windows of four: at 30 rows the
+  last group's five-hour window fell below the fold, silently, and the missing one is a candidate for
+  the `5h` id the quota gate reads. The probe now takes its geometry from the adapter (110×60), and
+  the parser refuses any group showing one of its two windows rather than under-reporting.
+- The **folder-trust dialog ate the first attempt**, and answered *"Yes, I trust this folder"* with
+  the Enter meant for `/usage`. That is the same failure AGENTS.md already recorded against Claude
+  Code, reproduced on a second CLI while building the thing meant to avoid it. `agy` now implements
+  `trustDirectory` too.
+
+⭐ The shape worth keeping: **a capability that was written down as absent is still a claim, and it
+decays like any other.** "No free probe here" had been true, was recorded with its evidence, and
+stopped being true when a vendor shipped a slash command. The rule *measure, don't assert* was being
+honoured for capabilities that exist and not for the ones that do not.
+
+## A compact loop that billed every ten seconds (2026-08-26)
+
+Spotted by the operator in the activity log: thirteen identical `compact` decisions on one session in
+two minutes, same reason, same 35k estimate, context stuck at 68001 tokens throughout.
+
+Nothing was wrong with the decision. `decide()` is a pure function of the session row, the scheduler
+ticks every 10s, and compaction takes about two minutes — so with nothing recording that the move had
+already been made, the same inputs produced the same move twelve more times before the first could
+land. ⛔ Each repeat was a real user message pushed into a live session, which makes this a breach of
+*the scheduler costs zero tokens* by the one component whose entire purpose is not wasting them.
+
+The fix is state, not a cleverer condition: a move is written down when **issued**, together with the
+evidence that would prove it landed. ⚠️ "A turn happened" is not that evidence — an agent replying
+*"I don't understand /compact"* is a turn. Compaction is proved by `tokensSinceCompact` falling, a
+keepalive by the TTL moving. And the clock **stops asking** after two ignored attempts and hands off
+instead, which is what makes R6 survivable rather than urgent: if `/compact` is not honoured on the
+`stream` transport, the cost is two wasted turns per session rather than an unbounded spend.
+
+The operator also asked for a switch, and it is global and honest: `settings.autoCompact` gates the
+reserve-at-risk compaction as well as the ordinary one. A switch that quietly kept compacting "for
+safety" would be false on the one page whose whole claim is that it shows what the scheduler really
+does. ⛔ Told-not-to-compact and cannot-compact land in the same place — handoff and close — which is
+the fallback that already existed for the second case.
+
+## A build that did everything twice, and the binary nobody was running (2026-08-26)
+
+`scripts/build-win.ps1` ran every step from scratch on every invocation. Steps are now
+content-addressed — a SHA-256 over the files each step actually reads, skipped when unchanged and its
+outputs are still present. Measured: **92s cold, ~0s warm**, with the two suites that start the app
+accounting for two thirds of the cold run (`test:daemon` 50s, `test:ui` 12s).
+
+⛔ Fingerprints are over **content, not mtimes**, and a stamp is written only after the step exits 0.
+This repo has already had three green-and-wrong runs; a cache that has to be distrusted is worse than
+no cache. Proved by reintroducing each bug and watching the guard go red before trusting it green.
+
+⚠️ A comment-only change correctly rebuilds the bundle and correctly **skips** the suites below it,
+because the bundler strips comments and `out/` comes out byte-identical. That is a property of
+content-addressing worth knowing rather than a hole.
+
+Two workflow faults surfaced while doing it. The EBUSY guard tested the whole of `release\`, so an app
+running from `release\win-unpacked\` blocked the pack step — which writes only to `release\suite\`
+and could never have collided with it. The `release/suite/` split existed precisely to make "you
+cannot run the app while building" untrue, and an over-broad guard had quietly re-imposed it.
+
+And there are **two packaged apps in the tree, only one of which is ever new**: the pack step rewrites
+`release\suite\win-unpacked\` every run, while `release\win-unpacked\` moves only under
+`-Installer`. Measured on the operator's machine, the copy they were clicking by habit was **98
+minutes and several builds older than the bundle** — indistinguishable from a change that silently did
+not take effect. `-Restart` now stops what is running, builds, and starts the result, and the summary
+names the stale copy on every run whether or not a restart was asked for.

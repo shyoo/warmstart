@@ -69,6 +69,10 @@ function seedSession(id: string, workerId: string, patch: { lastRequestStartedAt
     lastRequestStartedAt: patch.lastRequestStartedAt ?? null,
     cacheExpiresAt: null,
     tokensSinceCompact: 0,
+    clockMove: null,
+    clockMoveAt: null,
+    clockMoveAttempts: 0,
+    clockMoveContext: null,
     startedAt: Date.now(),
     closedAt: null
   }

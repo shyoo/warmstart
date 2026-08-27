@@ -99,8 +99,28 @@ export function quotaUrgency(percentUsed: number): 'ok' | 'warn' | 'danger' {
  * Returns null when there is a real number to show - the caller renders the windows itself.
  */
 export function quotaGap(
-  quota: { windows: unknown[]; error?: string; ageMs?: number; stale?: boolean } | null
+  quota: { windows: unknown[]; error?: string; ageMs?: number; stale?: boolean } | null,
+  /**
+   * The adapter's `capabilities.quotaProbe`. ⛔ `'none'` is a **fifth state**, and collapsing it
+   * into the fourth is what made a perfectly healthy Antigravity worker read as broken. The other
+   * four — never probed, no usage data yet, stale, failed probe — all describe a reading somebody
+   * can go and get, and the word "unknown" invites them to keep pressing Probe. On a provider with
+   * no probe there is nothing to press, ever: Antigravity exposes usage only inside an interactive
+   * session or a running IDE, `agy -p /usage` was measured spending a turn without answering, and
+   * spend is accrued from metered turns instead. A permanent property of the provider has to read
+   * as one, not as a number that has gone missing.
+   */
+  quotaProbe?: 'cli' | 'api' | 'none'
 ): { label: string; hint: string } | null {
+  if (quotaProbe === 'none') {
+    return {
+      label: 'not reported',
+      hint:
+        'This provider does not expose usage to anything outside an interactive session, so there ' +
+        'is no reading to take and nothing to retry. Spend is accrued from the turns this app ' +
+        'metered itself, which is a floor rather than a percentage of the window.'
+    }
+  }
   if (!quota) {
     return {
       label: 'never probed',

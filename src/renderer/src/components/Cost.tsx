@@ -17,6 +17,8 @@ export function Cost({ now }: { now: number }): React.JSX.Element {
   const [report, setReport] = useState<CostReport | null>(null)
   const [error, setError] = useState<string | null>(null)
 
+  const [saving, setSaving] = useState(false)
+
   const refresh = useCallback(async () => {
     try {
       setReport(await rpc('cost.report'))
@@ -25,6 +27,26 @@ export function Cost({ now }: { now: number }): React.JSX.Element {
       setError(err instanceof Error ? err.message : String(err))
     }
   }, [])
+
+  // ⚠️ The answer from the daemon is what lands in state, never the value that was clicked. A
+  // toggle that paints itself green and leaves the fleet unchanged is exactly the disagreement
+  // this page exists to make impossible.
+  const setAutoCompact = useCallback(
+    async (next: boolean) => {
+      setSaving(true)
+      try {
+        const settings = await rpc('settings.set', { autoCompact: next })
+        setReport((r) => (r ? { ...r, settings } : r))
+        setError(null)
+        await refresh()
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err))
+      } finally {
+        setSaving(false)
+      }
+    },
+    [refresh]
+  )
 
   useEffect(() => {
     void refresh()
@@ -40,6 +62,7 @@ export function Cost({ now }: { now: number }): React.JSX.Element {
   if (!report) return <div className="panel"><p className="dim">Reading the cost model…</p></div>
 
   const { objective } = report
+  const autoCompact = report.settings.autoCompact
 
   return (
     <div className="panel">
@@ -56,6 +79,42 @@ export function Cost({ now }: { now: number }): React.JSX.Element {
           {objective.quality.toFixed(2)}
         </span>
       </header>
+
+      <section className="doc-section">
+        <h3>Automatic compaction</h3>
+        <div className="switch-row">
+          <button
+            type="button"
+            role="switch"
+            aria-checked={autoCompact}
+            aria-label="Automatic compaction"
+            disabled={saving}
+            className={`switch ${autoCompact ? 'switch--on' : ''}`}
+            onClick={() => void setAutoCompact(!autoCompact)}
+          >
+            <span className="switch-knob" />
+          </button>
+          <div>
+            <p className="switch-state">
+              {autoCompact ? 'On' : 'Off'}
+              <span className="dim">
+                {autoCompact
+                  ? ' — the clock may compact a session when the arithmetic favours it.'
+                  : ' — the clock never compacts on its own. A session that would have been compacted' +
+                    ' hands off and closes instead, including when the reserve is at risk.'}
+              </span>
+            </p>
+            <p className="note">
+              Compaction is what stops a long session being stranded when a quota window closes, so
+              this is on by default — running out of room to <em>save</em> is the one loss that is
+              not recoverable. Turn it off when compaction is not reaching your sessions: on the{' '}
+              <code>stream</code> transport it is <strong>unverified</strong> whether{' '}
+              <code>/compact</code> is honoured at all, and every attempt that is not costs real
+              tokens. This switch is fleet-wide and takes effect on the next tick.
+            </p>
+          </div>
+        </div>
+      </section>
 
       <section className="doc-section">
         <h3>The cache clock, right now</h3>

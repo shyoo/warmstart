@@ -9,9 +9,15 @@ if you add a line, find the one it obsoletes and cut it in the same edit. Finish
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
 **Baseline (2026-08-27, measured on this machine):** `npm run typecheck` clean · `npm run lint` clean ·
-`npm run build` clean · `npm test` 219/219 · `npm run test:daemon` 110/110 · `npm run test:ui` 37/37 ·
+`npm run build` clean · `npm test` 248/248 · `npm run test:daemon` 110/110 · `npm run test:ui` 41/41 ·
 `npm run test:pack` 18/18 · L4 (opt-in) landed a real agent commit on origin/main. Electron 44.0.0,
-electron-builder 26.15.3, 0 npm vulnerabilities. CLIs here: claude 2.1.247 · agy 1.1.21 · codex 0.149.1.
+electron-builder 26.15.3, 0 npm vulnerabilities. CLIs here: claude 2.1.247 · agy 1.1.22 · codex 0.149.1.
+
+⭐ **`scripts/build-win.ps1` runs all of the above; `-Help` lists its options, `-Restart` is the
+inner loop.** Steps are content-addressed and skipped when unchanged: **92s cold, ~0s warm**.
+⚠️ **Two packaged apps exist and only one is ever new** — the pack step rewrites
+`release\suite\`, `release\win-unpacked\` moves only under `-Installer`. The summary names the
+stale one every run.
 
 ⚠️ **With no agent CLI the daemon suite skips 5 checks**, each with a stated reason — the CI state,
 and why `summary()` prints skips beside the result. Simulate it with a PATH of System32, node and git
@@ -46,7 +52,7 @@ re-deriving any of it.
 src/daemon/            orchestratord. Runs as Electron-with-ELECTRON_RUN_AS_NODE, detached.
   index.ts             entry: lock, db, server, poller, scheduler, tailer wiring, shutdown
   server.ts  api.ts    HTTP+WS on 127.0.0.1:<random>, bearer token, typed RPC
-  db.ts                node:sqlite + numbered migrations (v7)
+  db.ts                node:sqlite + numbered migrations (v8)
   costmodel.ts         the four questions; user dir > bundled > compiled-in
   workers.ts           registry, isolation roots, retire-keeps-credentials
   quota.ts             the staleness ladder - read this before trusting a percentage
@@ -59,7 +65,9 @@ src/daemon/            orchestratord. Runs as Electron-with-ELECTRON_RUN_AS_NODE
                        runfailure.test.ts - who is blamed when a run does not succeed)
   activity.ts          the live peephole: a bounded in-memory tail of what a run is saying
   landing.ts           auto-land, serialised by an exclusive land: resource (+ landing.test.ts)
-  cacheclock.ts        the six moves - the piece the whole cost model exists for
+  cacheclock.ts        the six moves - the piece the whole cost model exists for; a move is a
+                       request, and moveOutcome() is what stops it being re-asked (+ .test.ts)
+  settings.ts          the fleet switches the operator owns. There is one: autoCompact
   reserve.ts           the compaction reserve, and every belief with its basis attached
   objective.ts         the weight vector, in exactly two consumers    (+ cost.test.ts)
   controller.ts        the consult queue, the caps, and choosing who answers (+ controller.test.ts)
@@ -90,44 +98,41 @@ docs/                  cost-model.md, glossary.md, adapters.md - maintained; rea
 
 ## What is true right now and not yet proven
 
-- ⭐ **There is a free live quota probe.** `/usage` typed into an interactive session is client-side:
-  it spends nothing and rewrites `cachedUsageUtilization`. `refreshUsage()` drives it on the Probe
-  button, on a 30-minute floor, and before a dispatch that needs a baseline. ⛔ **R3 is closed** —
-  `docs/cost-model.md` §5 has the ladder and what else was tried.
-- ⚠️ **The compaction reserve still reports `unknown`,** and now for one reason rather than two: it
-  needs `remaining` in *tokens*, so a fresh percentage is no longer the blocker — **R2**
-  (`tokens_per_percent`) is. `docs/cost-model.md` §10. ⛔ Until it lands the reserve cannot be a
-  *routing* input at all — scoring `unknown` as half-risk silently meant "penalise any worker holding
-  a session", so it is scored zero and only checked evidence moves the score.
-- ⚠️ **A worker is not usable until somebody answers the CLI's first-run questions in its own root.**
-  Signing in writes neither `hasCompletedOnboarding` nor folder trust; print mode skips both, so
-  scheduled work runs while a TUI - and therefore `/usage`, and therefore a cost baseline - cannot.
-  `Finish setup` opens that terminal.
+- ⭐ **Both providers have a free live quota probe**, driven by `refreshUsage()` on the Probe button,
+  a 30-minute floor, and before a dispatch needing a baseline. ⛔ **R3 closed**; `docs/cost-model.md`
+  §5 has the ladder.
+- ⚠️ **The compaction reserve still reports `unknown`**, for one reason now: it needs `remaining` in
+  *tokens*, so **R2** (`tokens_per_percent`) is the blocker, not a stale percentage.
+  `docs/cost-model.md` §10. ⛔ Until it lands it is scored zero as a routing input — only checked
+  evidence may move a score.
+- ⚠️ **A worker is not usable until somebody answers the CLI's first-run questions.** Signing in
+  writes neither onboarding nor folder trust, and print mode skips both — so scheduled work runs
+  while a TUI, and therefore a quota probe, cannot. `Finish setup` opens that terminal.
 - ⭐ **A worker is held out of dispatch by evidence** — a run producing no metered turn is charged to
-  the account, not the task. **A run carries a quota reading either side of it**, never merged with
-  the transcript token count: their difference is R1's instrument. Rules in AGENTS.md, cases in
-  `runfailure.test.ts`.
+  the account, not the task. Rules in AGENTS.md, cases in `runfailure.test.ts`.
 - ⚠️ **Sessions are reused within a task, never across tasks in a project.** The detail pane says
   which happened, so the claim is checkable. Closing the second half is item 4 in *Next*.
-- ⭐ **A reply to a stopped task continues it**: same thread, a new **run**, re-queued through the
-  scheduler so it is gated, metered and landed like any other. `continueTask()`.
-- ⭐ **`awaiting_human` is answerable.** It states what it wants (on the task, not only in the thread)
-  and offers **Mark done** — `resolveTask()`, a person's judgement, recorded as one. Before this it
-  was the only resting state with nothing to press.
-- ⛔ **A completed task never unblocked its dependents until 2026-08-27.** The scheduler carried a
-  private copy of `admitDependents` that re-set each dependent to the status it already had, so the
-  DAG never advanced past its first edge. Nothing else re-admits a `blocked` task. Found by a test
-  written for something else; the correct implementation was exported and called by nobody.
-- ⭐ **`npm run pack` packages into `release/suite/`**, so the packaged suite runs with the app open —
-  building into the directory somebody executes from is what caused `EBUSY: rmdir release\win-unpacked`,
-  and closing the app is not an acceptable answer. ⛔ **Every suite below L1 drives a build product and
-  none of them builds one**, so `checkBuildIsCurrent()` (daemon, ui) and the asar check (pack) refuse
-  when the artefact predates `src/`. Three green-and-wrong runs on 2026-08-27 are why.
+- ⭐ **The packaged suite runs with the app open.** ⛔ **Every suite below L1 drives a build product
+  and none of them builds one** — `checkBuildIsCurrent()` and the asar check refuse when the
+  artefact predates `src/`.
+- ⭐ **The cache clock no longer repeats itself, and compaction has an off switch.** A move is
+  recorded when *issued*, with the evidence that would prove it landed, and the clock gives up after
+  two ignored attempts and hands off. ⚠️ That bound is what makes **R6** survivable rather than
+  urgent: a `no` costs two turns per session, not an unbounded spend. `settings.autoCompact` is a
+  fleet-wide switch on the Cost page and gates the reserve-at-risk path too.
 - ⚠️ **Two M3 paths are unverified and marked in the code:** whether `/compact` is honoured on the
   `stream` transport (**R6**), and keepalive *execution*, which needs a warm session and an idle
   hour. The arithmetic is unit-tested; the firing is not.
 - ⚠️ **No consult has ever been answered by a real model.** L1 runs with nobody able to answer, which
   proves the fallbacks and leaves the answer path on synthetic replies only. **R8**.
+- ⭐ **Antigravity works, and reports its quota — both new on 2026-08-27.** It had never once run:
+  `-p` on `agy` takes the prompt as its *value*, so a bare `-p` exited 2 in zero seconds on **every
+  dispatch since M5** (0 turns ever, against 122 on claude-code). And `/usage` in its TUI is a free
+  probe after all — the answer reaches no file, so the adapter parses the panel under a declared
+  `usageRefresh.answer: 'screen'`. Live: Gemini 5.48% / 32.80%, Claude-and-GPT 42.80% / 0%.
+  **R9 closed, the opposite way round from how it was asked.** ⚠️ Still unproven past the `init`
+  record: **no Antigravity task has ever completed**, so R11 and R13 stand — and with `mcp: false` it
+  cannot call `task_complete`, so `awaiting_human` on every run is the honest outcome there.
 - ⛔ **Anything needing a real agent CLI is unproven off Windows.** CI proved three platforms build,
   start, package and schedule; the runners have no CLI and cannot sign in to one, so every adapter
   capability in `docs/adapters.md` was measured on Windows only.
@@ -150,16 +155,13 @@ M0–M6 are done. What is left is not a milestone but a list, in the order it wo
 
 ## Open questions
 
-- **Turning a percentage into tokens (R2).** The percentage is now refreshable; what no vendor
-  publishes is what one percent of a window is worth, and every gate needs tokens.
 - **Auto-mode classifier cost on a subscription** (`docs/cost-model.md` §9). Documented as billable on
   Enterprise and API-billed accounts, unstated for Pro/Max/Team, and Claude workers default to `auto`.
   ⛔ Do not assume it is free — **R1** measures it.
-- **Vertex / Antigravity cache pricing.** Not guessed, and recorded as such: both new cost models
-  declare `cache.kind: "unpriced"`, which the clock reads and declines to act on. Closing this needs a
-  published figure, not an experiment.
+- **Vertex / Antigravity cache pricing.** Not guessed: both cost models declare
+  `cache.kind: "unpriced"` and the clock declines to act. Needs a published figure, not an experiment.
 - **`expected idle` estimator** (plan §8.6). Cannot be designed further without real queue data.
-- **Are the consult prompts good enough?** The honest gap in M4. **R8** measures it. ⛔ If replies fail
+- **Are the consult prompts good enough?** The honest gap in M4 (**R8**). ⛔ If replies fail
   validation the prompt is wrong, not the validator — never widen a closed set to fit a reply.
 
 ## Measurement runs owed
@@ -169,9 +171,8 @@ nothing else on that account), and each answers something the design is guessing
 window is idle; record the result in `docs/cost-model.md` with the date and CLI version, and delete
 the row.
 
-**The instrument**, now on screen rather than run by hand: transcript metering is exact for assistant
-turns, quota covers everything the account spent, and their difference is what the CLI spent that
-never reached a transcript. A run records both. ⛔ They are never merged.
+**The instrument:** a run records a quota reading either side of itself, and transcript metering
+beside it. Their difference is what the CLI spent that never reached a transcript. ⛔ Never merged.
 
 | # | Question | Method | What it changes |
 |---|---|---|---|
@@ -179,10 +180,9 @@ never reached a transcript. A run records both. ⛔ They are never merged.
 | **R2** | `tokens_per_percent` per (worker, model, tokenizer) | With exactly one session live, sample `/usage` by hand at intervals and diff against transcript tokens over the same span | Turns percent into tokens, which is what every gate actually needs. Plan §8.5 |
 | **R4** | Real compaction cost end to end | Compact a session of known size; diff transcript tokens across the `compact_boundary` and record `durationMs` | Three samples so far (139k · 116k · **161k** ms). The spread matters more than the mean for the T+53m deadline |
 | **R5** | Second account on a transplanted transcript | Commission a second worker, copy a small transcript into its root, `--resume`, complete one turn | Discovery is measured; completion is not. Shapes cross-account continuation. §7 |
-| **R6** | Is `/compact` honoured as a user message on `stream`? | Send it into a live stream session and watch for a `compact_boundary` record | The cache clock's compact move depends on it. If not, that move becomes handoff-and-close everywhere |
+| **R6** | Is `/compact` honoured as a user message on `stream`? | Send it into a live stream session and watch for a `compact_boundary` record | ⚠️ No longer urgent: the clock gives up after two ignored attempts and hands off, so a `no` costs two turns rather than a loop. Still owed — a `no` makes handoff-and-close the only move on that transport |
 | **R7** | Does the live rate-limit `status` warn before it refuses? | Let one window fill while watching `rate_limit_samples` | Decides whether the live signal is an early warning or an obituary |
 | **R8** | Does a real model answer a consult in the shape the validators accept? | Designate a controller, file a `plan` task, run `controller.drain`, read the row: `answered` or `fallback`, and the `fallbackReason` | The one M4 path L1 cannot reach |
-| **R9** | Does `agy -p /usage` run the slash command for free? | Run it on a quiet signed-in worker; compare against `/usage` typed into an interactive session | ⚠️ `--disable-slash-commands` is documented as disabling expansion *in print mode*, implying print mode expands them — the opposite of Claude Code. Would be **the first free quota probe this project has ever had** |
 | **R10** | Does the codex rollout JSONL carry per-turn usage `transcript.ts` can meter? | Run one small task on a codex worker; open `$CODEX_HOME/sessions/**/rollout-*.jsonl` | If not, `meteredFromTranscript` is wrong and codex runs are invisible to the cost model — a bigger hole than pricing |
 | **R11** | The `stream-json` / `--json` event shapes for agy and codex | One turn each, capture stdout verbatim | `stream.ts` parses Anthropic's records only. Until this lands, neither new adapter contributes rate-limit signal or result text |
 | **R12** | Is headless compaction reachable on codex? | Try to drive compaction from `codex exec`; watch for a compaction record | If yes, `manualCompact` flips true and two cache-clock moves become available on that provider |
@@ -198,7 +198,8 @@ choices most likely to be re-argued by someone who has not read it:
 - **Daemon, not all-in-Electron.** The premise is unattended progress across quota windows.
 - **Deterministic scheduler; the LLM only on judgment events, never inline.** A loop running every 10s
   for weeks must not bill anything, and the fleet must survive there being no controller at all.
-- **PTY-hosted CLI, transcript for state.** We own stdin, so `/compact` is a function call. But no
-  ANSI parsing ever determines state.
+- **PTY-hosted CLI, transcript for state.** We own stdin, so `/compact` is a function call. ⚠️ ANSI
+  parsing determines state in exactly one declared place — a quota reading on a provider that writes
+  one nowhere. Never a session's state. See AGENTS.md.
 - **Capabilities and objectives are data.** No `if (adapter === …)`, no `if (mode === …)`. Proved
   against three real CLIs in M5, extended in M6 to adapters an operator declares in JSON.

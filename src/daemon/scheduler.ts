@@ -587,11 +587,24 @@ export function unproven(worker: Worker, everWorked: boolean): number {
   const identity = worker.identity
   // Never probed at all: less is known about this account than about one that answered.
   if (!identity) return doubt + 1
-  // ⚠️ `=== false`, never falsy. `null` is "the adapter cannot tell", which is the normal and
-  // permanent answer for a CLI that keeps its credential in the OS keyring, and must not be
-  // penalised as though it were a missing step somebody could go and do.
+  // ⚠️ `=== false`, never falsy, and that applies to **both** of these. `null` is "the adapter
+  // cannot tell", which is the normal and permanent answer for a CLI that keeps its credential in
+  // the OS keyring, and must not be penalised as though it were a missing step somebody could go
+  // and do.
+  //
+  // ⛔ The second line used to read `loggedIn !== true`, which is the bug this comment was already
+  // written to prevent - stated correctly, applied to one line and not the other. Antigravity's
+  // `probeIdentity()` returns `loggedIn: null` **by design and permanently**, so every Antigravity
+  // worker carried +0.4 doubt for ever, on top of the +0.5 for being unproven. It could not shed
+  // either: the only thing that clears `unproven` is a metered turn, and at 0.9 doubt it lost every
+  // dispatch to any Claude worker, so it never got one. Measured on this install 2026-08-27:
+  // antigravity-cli had **0 turns ever**, against 122 on claude-code.
+  //
+  // This is the same fault as the reserve one in AGENTS.md, in a different variable: a term that
+  // scores *unknown* as though it were *bad* stops measuring risk and starts measuring which
+  // provider you are. Only checked evidence may move a score, and `null` is not evidence.
   if (identity.setupComplete === false) doubt += 0.6
-  if (identity.loggedIn !== true) doubt += 0.4
+  if (identity.loggedIn === false) doubt += 0.4
   return doubt
 }
 
@@ -698,7 +711,7 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
   // The CLI needs a moment before it starts reading stdin; a message sent too early is dropped.
   setTimeout(() => {
     try {
-      sendPrompt(session.id, promptFor(task))
+      sendPrompt(session.id, promptFor(task, worker.adapterId))
     } catch (err) {
       log.warn(`could not send the prompt for t${task.seq}:`, err)
     }
@@ -793,7 +806,7 @@ async function dispatchIntoWarmSession(
           ? ' — cheaper than a cold start, though this provider’s cache is not priced, so by how much is unknown.'
           : '.')
   )
-  sendPrompt(session.id, promptFor(task))
+  sendPrompt(session.id, promptFor(task, worker.adapterId))
   log.info(
     `t${task.seq} continued warm on ${worker.label} (run ${run.id.slice(0, 8)}, ` +
       `saved ${saved === null ? 'unknown' : `~${saved}`})`
@@ -916,7 +929,7 @@ async function preempt(
  * The handoff from a previous run is prepended, because a successor that has to rediscover the state
  * of the branch pays for it twice - once in tokens and once in the mistakes it makes meanwhile.
  */
-function promptFor(task: Task): string {
+function promptFor(task: Task, adapterId: string): string {
   const parts: string[] = []
   if (task.handoffNote) {
     parts.push(
@@ -934,10 +947,32 @@ function promptFor(task: Task): string {
   for (const message of outstanding) parts.push(message.text)
   markDelivered(outstanding.map((m) => m.id))
 
-  parts.push(
-    'When the work is finished, call the MCP tool `task_complete` with a one-line summary. ' +
-      'If you need a decision from a person, call `request_human` rather than guessing.'
-  )
+  // ⛔ Only name tools this adapter actually gets. `mcp: false` means the daemon spawns it with no
+  // MCP server at all - true for Antigravity, whose `agy mcp add` registers globally and so cannot
+  // carry the per-session identity the tools need, and true for every declarative adapter.
+  //
+  // ⚠️ Telling an agent to call a tool it does not have is not a harmless surplus sentence. It is
+  // the last instruction in the prompt, so it is what the agent tries to do when it believes it has
+  // finished: it hunts for `task_complete`, cannot find it, and burns turns deciding what to do
+  // instead - the same trap as `claude -p /usage`, from the other side. And it can never succeed,
+  // because `task_complete` is the *only* signal that an agent finished, so every run on such an
+  // adapter ends in `awaiting_human` no matter how well the work went.
+  //
+  // ⚠️ `awaiting_human` remains the honest answer here, and this does not change that: without the
+  // tool there is genuinely no signal, and inventing one from a clean exit would be the guess this
+  // project refuses to make. What changes is that the operator is told *why* the hand-off is
+  // structural rather than being left to read it as the agent having failed.
+  if (adapter(adapterId).info.capabilities.mcp) {
+    parts.push(
+      'When the work is finished, call the MCP tool `task_complete` with a one-line summary. ' +
+        'If you need a decision from a person, call `request_human` rather than guessing.'
+    )
+  } else {
+    parts.push(
+      'When the work is finished, commit what you have and end with a one-line summary of what ' +
+        'changed. If you need a decision from a person, say so plainly and stop rather than guessing.'
+    )
+  }
   return parts.join('\n\n')
 }
 

@@ -4,6 +4,7 @@ import { homedir } from 'node:os'
 import * as pty from '@lydell/node-pty'
 import { execFileSync, spawn as spawnChild } from 'node:child_process'
 import type { Session, SessionPurpose, SessionState, SessionTransport } from '@shared/protocol.js'
+import type { CacheMove } from '@shared/tasks.js'
 import { db, row, rows } from './db.js'
 import { adapter } from './adapters/index.js'
 import { refreshIdentity, requireWorker, watchReadiness } from './workers.js'
@@ -158,6 +159,10 @@ interface SessionRow {
   last_request_started_at: number | null
   cache_expires_at: number | null
   tokens_since_compact: number
+  clock_move: string | null
+  clock_move_at: number | null
+  clock_move_attempts: number
+  clock_move_context: number | null
   started_at: number
   closed_at: number | null
 }
@@ -180,6 +185,10 @@ function toSession(r: SessionRow): Session {
     lastRequestStartedAt: r.last_request_started_at,
     cacheExpiresAt: r.cache_expires_at,
     tokensSinceCompact: r.tokens_since_compact,
+    clockMove: (r.clock_move as CacheMove | null) ?? null,
+    clockMoveAt: r.clock_move_at,
+    clockMoveAttempts: r.clock_move_attempts ?? 0,
+    clockMoveContext: r.clock_move_context,
     startedAt: r.started_at,
     closedAt: r.closed_at
   }
@@ -771,4 +780,42 @@ function openPipes(
       child.kill()
     }
   }
+}
+
+// ---------------------------------------------------------------- cache-clock moves in flight
+
+/**
+ * Write down that the clock has *asked* a session to do something.
+ *
+ * ⛔ The distinction this exists to keep: a move is a request, and the outcome arrives minutes
+ * later or never. `decide()` is a pure function of the session row, so without a record of the
+ * request the same inputs produce the same move on the next 10s tick - which is how one session
+ * was sent `/compact` thirteen times in two minutes, each one a billable user message, by the one
+ * component whose whole job is to not waste tokens.
+ *
+ * `context` is `tokens_since_compact` at the moment of the ask. Compaction resets it to zero, so a
+ * drop is proof the move landed; "a turn happened" is not, because an agent answering "I don't
+ * understand /compact" is also a turn.
+ */
+export function markClockMove(sessionId: string, move: CacheMove, context: number): void {
+  db()
+    .prepare(
+      `update sessions
+          set clock_move = ?, clock_move_at = ?, clock_move_context = ?,
+              clock_move_attempts = case when clock_move = ? then clock_move_attempts + 1 else 1 end
+        where id = ?`
+    )
+    .run(move, Date.now(), context, move, sessionId)
+}
+
+/** The move landed, or is no longer worth waiting for. Attempts reset with it. */
+export function clearClockMove(sessionId: string): void {
+  db()
+    .prepare(
+      `update sessions
+          set clock_move = null, clock_move_at = null, clock_move_context = null,
+              clock_move_attempts = 0
+        where id = ?`
+    )
+    .run(sessionId)
 }

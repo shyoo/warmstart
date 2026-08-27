@@ -292,6 +292,43 @@ try {
     'this is the honest state on a CLI with no free usage probe'
   )
 
+  // ⛔ The one fleet-wide switch the operator owns. It is checked here rather than only in a unit
+  // test because the thing that makes it trustworthy is visual: the state it reports has to be the
+  // daemon's answer, not the value that was clicked. A toggle that paints itself and changes
+  // nothing is worse than no toggle.
+  // ⚠️ Case-insensitive on purpose. The heading is uppercased by CSS and `innerText` reports what is
+  // *rendered*, so a case-sensitive match here would be testing the stylesheet, not the switch.
+  check(
+    'automatic compaction has a switch, and it says which way it is set',
+    /automatic compaction[\s\S]{0,8}(On|Off)\b/i.test(costPanel),
+    JSON.stringify(costPanel.slice(costPanel.search(/automatic compaction/i)).slice(0, 56))
+  )
+  const switchState = await evaluate(
+    `(() => { const s = document.querySelector('.switch');
+              return s ? s.getAttribute('role') + ':' + s.getAttribute('aria-checked') : 'absent' })()`
+  )
+  check(
+    'it is a real switch, not a styled div',
+    switchState === 'switch:true' || switchState === 'switch:false',
+    switchState
+  )
+
+  await evaluate(`document.querySelector('.switch').click()`)
+  await wait(1200)
+  const afterToggle = await evaluate('document.querySelector(".content")?.innerText ?? ""')
+  check(
+    'turning it off says so, and says what happens instead',
+    afterToggle.includes('never compacts on its own') && afterToggle.includes('hands off and closes'),
+    'off has to state its consequence - a session that would have compacted now closes instead'
+  )
+  await evaluate(`document.querySelector('.switch').click()`)
+  await wait(1200)
+  check(
+    'and it goes back on',
+    (await evaluate(`document.querySelector('.switch').getAttribute('aria-checked')`)) === 'true',
+    'the state comes back from the daemon, so this also proves it round-tripped'
+  )
+
   section('controller')
   // On Overview beside cost: the controller answers questions about the fleet, and a consult is not
   // scoped to any one project.

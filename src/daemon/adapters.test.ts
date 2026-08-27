@@ -253,6 +253,37 @@ describe('the measured surprises, kept as regressions', () => {
     expect(plan.args[output + 1]).toBe('stream-json')
   })
 
+  it('agy is never given a bare -p, because -p takes the prompt as its value there', () => {
+    // ⛔ The bug that made this adapter fail 100% of its dispatches, measured 2026-08-27 on agy
+    // 1.1.21. `-p` / `--print` / `--prompt` are one *string* flag on agy, not a boolean, so a bare
+    // `-p` swallowed the next token. The CLI says so itself:
+    //
+    //   Error: -p took "--input-format" as its prompt, so the intended prompt was left as an
+    //   argument and ignored.
+    //
+    // ⚠️ Exit 2 in **zero seconds**, which is exactly what this install's only Antigravity work
+    // session had recorded: `outcome=failed`, `in=0 out=0`, and a note blaming the agent for
+    // ending "without reporting completion" on an account that was signed in the whole time.
+    //
+    // The prompt is not passed here at all - with `--input-format stream-json` the CLI reads NDJSON
+    // from stdin - so print mode is switched on with an empty value and nothing else.
+    const plan = adapter('antigravity-cli').plan({
+      sessionId: 'ignored',
+      isolationRoot: 'C:/tmp/root',
+      cwd: 'C:/tmp/work',
+      transport: 'stream'
+    })
+    expect(plan.args).not.toContain('-p')
+    expect(plan.args).not.toContain('--print')
+    expect(plan.args).not.toContain('--prompt')
+    // ⛔ One token, `--print=`. Not `['-p', '']`: an empty-string argv entry has to survive
+    // node-pty, the `cmd /d /c` shim path and Windows quoting to arrive still empty, and this is
+    // precisely the kind of thing that works on one path and vanishes on another.
+    expect(plan.args).toContain('--print=')
+    const print = plan.args.indexOf('--print=')
+    expect(plan.args[print + 1]).toBe('--input-format')
+  })
+
   it('agy gets the accept-edits mode the plan predicted for a classifier-less CLI', () => {
     const plan = adapter('antigravity-cli').plan({
       sessionId: 'ignored',
@@ -425,12 +456,19 @@ describe('usageRefresh', () => {
     }
   })
 
-  it('only an adapter that can be metered exactly gets one', () => {
+  it('only an adapter that can be metered at all gets one', () => {
     // A refresh writes a percentage; a percentage is only useful next to tokens we measured
     // ourselves. An adapter we cannot meter would be pairing a real number with a guess.
+    //
+    // ⚠️ This said `transcript` until 2026-08-27, which was the right *reason* attached to too
+    // narrow a test. `stream` metering is also measurement — Antigravity emits per-turn usage in
+    // its own stream records, and `transcript.ts` bills from them exactly — it is simply only
+    // available while this app is attached to the process, rather than reconstructable from a file
+    // afterwards. The state the reason actually excludes is `none`: a declarative adapter, whose
+    // runs cost an unknown amount, must not pair that unknown with a real percentage.
     for (const a of ALL) {
       if (!a.info.usageRefresh) continue
-      expect(a.info.capabilities.metering, a.info.id).toBe('transcript')
+      expect(a.info.capabilities.metering, a.info.id).not.toBe('none')
     }
   })
 })

@@ -104,10 +104,20 @@ export function Workers({
    * the same busy flash, the same "unknown" left in the cell, and a button that looked dead.
    * Report the outcome either way, and when there is no number say what would produce one.
    */
+  /**
+   * ⚠️ Looked up from the *worker* rather than passed in, so the Probe button and the table row
+   * answer the same question the same way. Them disagreeing is how one of them ends up telling
+   * somebody to retry something that can never work.
+   */
+  const probeKind = (workerId: string): 'cli' | 'api' | 'none' | undefined => {
+    const worker = fleet.find((f) => f.worker.id === workerId)?.worker
+    return adapters.find((a) => a.id === worker?.adapterId)?.capabilities.quotaProbe
+  }
+
   const probe = (workerId: string, label: string) =>
     guard(`probe:${workerId}`, async () => {
       const quota = await rpc('worker.probe', { id: workerId })
-      const gap = quotaGap(quota)
+      const gap = quotaGap(quota, probeKind(workerId))
       setNotice(
         gap
           ? `${label}: ${gap.label}. ${gap.hint}`
@@ -217,7 +227,7 @@ export function Workers({
               const signInUnknown = worker.identity?.loggedIn == null
               const needsFirstRun = worker.identity?.setupComplete === false
               const suspect = worker.health?.state === 'suspect' ? worker.health : null
-              const gap = quotaGap(quota)
+              const gap = quotaGap(quota, probeKind(worker.id))
               return (
                 <tr key={worker.id}>
                   <td>

@@ -22,6 +22,18 @@ import type {
  * ⛔ Every number here carries its basis. A cost model that cannot say *why* it thinks something is
  * a cost model nobody will override when it is wrong - and it will be wrong.
  */
+/**
+ * Fleet-wide switches the operator owns.
+ *
+ * ⛔ One switch, global. Per-worker or per-project compaction toggles would be four places to look
+ * when a session is not compacting, and this exists precisely so that "why did it do that?" has a
+ * short answer.
+ */
+export interface Settings {
+  /** May the cache clock compact a session on its own? Default true. */
+  autoCompact: boolean
+}
+
 export interface CostReport {
   generatedAt: number
   objective: Objective
@@ -38,6 +50,12 @@ export interface CostReport {
   }>
   /** Measured from real answers, not assumed. Drives the keepalive-versus-compact choice. */
   medianHumanLatencyMs: number
+  /**
+   * ⚠️ Shipped with the decisions rather than fetched separately, so the switch and the behaviour it
+   * governs can never be a frame out of step on screen - a toggle that reads "on" beside a table of
+   * declined compactions is the kind of disagreement nobody trusts afterwards.
+   */
+  settings: Settings
   workers: Array<{
     workerId: string
     label: string
@@ -215,6 +233,21 @@ export interface Session {
   lastRequestStartedAt: number | null
   cacheExpiresAt: number | null
   tokensSinceCompact: number
+  /**
+   * The last cache-clock move *asked for* on this session, and when.
+   *
+   * ⛔ A move is a request, not an outcome. Compaction takes ~2 minutes; the clock ticks every 10
+   * seconds and `decide()` is a pure function of this row - so without this the same move is
+   * re-issued twelve more times before the first can land, each one a billable user message. That
+   * happened: thirteen `/compact` sends to one session in two minutes, 2026-08-26.
+   *
+   * `clockMoveContext` is `tokensSinceCompact` at the moment of the ask, which is what makes
+   * "did it land?" answerable - compaction resets that to zero.
+   */
+  clockMove: CacheMove | null
+  clockMoveAt: number | null
+  clockMoveAttempts: number
+  clockMoveContext: number | null
   startedAt: number
   closedAt: number | null
 }
@@ -411,8 +444,34 @@ export interface UsageRefresh {
   command: string
   /** How long the TUI needs before it will accept input at all. */
   readyMs: number
-  /** How long to let the answer land and be written to disk before reading it. */
+  /** How long to let the answer land before reading it. */
   settleMs: number
+  /**
+   * Where the answer turns up.
+   *
+   * `file` (the default) is the Claude Code shape: the slash command rewrites a cache on disk and
+   * `probeQuota()` reads it. The screen is never consulted.
+   *
+   * ⛔ `screen` means the number exists **only** as rendered text, and the adapter's `parseUsage`
+   * reads it out of the session's backscroll. It is a deliberate, narrow exception to *the TUI is
+   * for humans* — see that invariant in AGENTS.md — and it is permitted for **quota readings and
+   * nothing else**. Antigravity keeps its quota in `quota_manager.go` in memory and writes it
+   * nowhere: measured 2026-08-27 by driving `/usage` in a PTY and diffing every file under
+   * `~/.gemini`, where only `cli.log` and `history.jsonl` moved and neither carries a number. The
+   * choice on that provider is not screen-versus-file, it is screen-versus-nothing.
+   */
+  answer?: 'file' | 'screen'
+  /**
+   * Terminal geometry the probe session needs.
+   *
+   * ⛔ Only meaningful for `answer: 'screen'`, and not cosmetic there. Measured 2026-08-27 against
+   * the live account: at the default 30 rows Antigravity's `/usage` panel scrolled and the last
+   * group's five-hour window fell below the fold, so the parser saw three windows where there were
+   * four. Width matters too — the panel draws a progress bar and puts the figure after it, so a
+   * narrow terminal wraps the number onto its own line and it stops being found.
+   */
+  cols?: number
+  rows?: number
 }
 
 export interface AdapterDetection {
@@ -625,6 +684,8 @@ export interface RpcMap {
   'resource.list': { params: void; result: ResourceAvailability[] }
   /** Everything the cost model currently believes, and on what basis. */
   'cost.report': { params: void; result: CostReport }
+  'settings.get': { params: void; result: Settings }
+  'settings.set': { params: Partial<Settings>; result: Settings }
   'scheduler.tick': { params: void; result: { dispatched: number; note: string } }
 
   // ---- M4: the controller ---------------------------------------------------------------

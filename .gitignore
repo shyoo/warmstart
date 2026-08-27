@@ -15,6 +15,10 @@ build/
 .electron-builder-cache/
 release/
 
+# scripts/build-win.ps1's step stamps: a SHA-256 of each step's inputs, so an unchanged
+# step is skipped. Machine-local by definition - it describes this checkout's out\ and release\.
+.build-cache/
+
 # Local runtime state. agentyard's own state lives in the OS app-data dir, not here,
 # but a dev run may drop a scratch DB.
 *.db

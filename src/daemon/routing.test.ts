@@ -134,6 +134,31 @@ describe('choosing between workers that score the same', () => {
     expect(scheduler.unproven(cannotTell, true)).toBe(scheduler.unproven(ready, true))
   })
 
+  it('does not penalise an adapter that cannot answer the SIGN-IN question either', () => {
+    // ⛔ The bug the test above was one field away from catching, and did not, for a month: it
+    // varied `setupComplete` and held `loggedIn: true` throughout. Antigravity's real identity is
+    // `loggedIn: null` — `probeIdentity()` returns it unconditionally, because the credential is in
+    // the OS keyring and there is no free way to look — and `unproven` scored it with
+    // `loggedIn !== true`, which is true for null. So every Antigravity worker carried +0.4 for
+    // ever, on top of +0.5 for being unproven, and could shed neither: only a metered turn clears
+    // `unproven`, and at 0.9 doubt it lost every dispatch and never got one.
+    //
+    // ⚠️ Measured on this install 2026-08-27: antigravity-cli had **0 turns ever** against 122 on
+    // claude-code. The comment directly above the line already said `=== false`, never falsy — it
+    // was applied to one of the two fields.
+    const keyring = { ...base, identity: { loggedIn: null, setupComplete: null } }
+    const ready = { ...base, identity: { loggedIn: true, setupComplete: true } }
+    expect(scheduler.unproven(keyring, true)).toBe(scheduler.unproven(ready, true))
+  })
+
+  it('still penalises a worker that is genuinely, checkably signed out', () => {
+    // ⚠️ The other half. "Cannot tell" must be free; "we asked and it said no" must not be — or the
+    // fix for the above would have thrown away a real signal to buy fairness for a null.
+    const signedOut = { ...base, identity: { loggedIn: false, setupComplete: true } }
+    const ready = { ...base, identity: { loggedIn: true, setupComplete: true } }
+    expect(scheduler.unproven(signedOut, true)).toBeGreaterThan(scheduler.unproven(ready, true))
+  })
+
   it('knows least about a worker nothing has ever probed', () => {
     expect(scheduler.unproven(base, false)).toBeGreaterThanOrEqual(1)
   })
@@ -174,6 +199,10 @@ describe('a dispatch that produced nothing', () => {
       lastRequestStartedAt: null,
       cacheExpiresAt: null,
       tokensSinceCompact: 0,
+      clockMove: null,
+      clockMoveAt: null,
+      clockMoveAttempts: 0,
+      clockMoveContext: null,
       startedAt: 0,
       closedAt: null,
       ...patch

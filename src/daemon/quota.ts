@@ -1,6 +1,7 @@
 import type { QuotaSnapshot } from '@shared/protocol.js'
 import { db, row, rows } from './db.js'
 import { adapter } from './adapters/index.js'
+import { stripAnsi } from './stream.js'
 import { listWorkers, refreshIdentityIfStale, requireWorker } from './workers.js'
 import { log } from './log.js'
 
@@ -90,15 +91,20 @@ export async function refreshUsage(workerId: string): Promise<DatedQuota> {
   // What we are trying to beat. A refresh that changes nothing must not come back looking fresh.
   const before = lastQuota(workerId)?.sampledAt ?? 0
 
-  const { spawnSession, closeSession, writeSession } = await import('./sessions.js')
+  const { spawnSession, closeSession, writeSession, backscroll } = await import('./sessions.js')
   let sessionId: string | null = null
+  let screen: string | null = null
   try {
     const session = spawnSession({
       workerId,
       purpose: 'probe',
       transport: 'pty',
-      cols: 100,
-      rows: 30
+      // ⚠️ Load-bearing for a screen-answered refresh, and the adapter is what knows how big its own
+      // panel is. Measured 2026-08-27 against the live account: at 30 rows Antigravity's `/usage`
+      // panel scrolled and one group's five-hour window fell below the fold — three windows read
+      // where there were four, with no error, and the missing one a candidate for the `5h` gate.
+      cols: refresh.cols ?? 100,
+      rows: refresh.rows ?? 30
     })
     sessionId = session.id
     log.info(`refreshing usage on ${w.label} via \`${refresh.command}\``)
@@ -106,6 +112,8 @@ export async function refreshUsage(workerId: string): Promise<DatedQuota> {
     await wait(refresh.readyMs)
     writeSession(session.id, `${refresh.command}\r`)
     await wait(refresh.settleMs)
+    // ⛔ Read before the session is closed - `backscroll` is keyed on a live session.
+    if (refresh.answer === 'screen') screen = stripAnsi(backscroll(session.id))
   } catch (err) {
     // ⚠️ Never fatal. A refresh that fails leaves the previous reading exactly as it was, with its
     // age attached, which is the state everything downstream already knows how to distrust.
@@ -114,6 +122,50 @@ export async function refreshUsage(workerId: string): Promise<DatedQuota> {
     // ⛔ By session id, which is how this app kills anything: `closeSession` stops only the pid it
     // recorded and only after checking the process is still the one it started.
     if (sessionId) closeSession(sessionId)
+  }
+
+  // ⛔ The screen path, for a provider that writes the number nowhere. It never falls through to
+  // `probeWorker`, because there is no file for it to read - `probeQuota()` on such an adapter says
+  // exactly that. See UsageRefresh.answer, and parseUsageScreen for why this exception exists.
+  if (refresh.answer === 'screen') {
+    const parse = adapter(w.adapterId).parseUsage
+    const windows = screen && parse ? parse(screen) : null
+    if (!windows) {
+      // ⚠️ A rendering that did not parse is an unknown, not a zero. The commonest cause is real and
+      // worth naming: this CLI asks about folder trust per directory and swallows every keystroke
+      // until it is answered, so the command can be typed into a dialog and vanish.
+      const why =
+        `\`${refresh.command}\` was typed into ${w.label} but its usage panel did not appear. ` +
+        (screen === null
+          ? 'The probe session did not start, so nothing was read.'
+          : 'The session may still have been starting, or a folder-trust dialog may have taken the ' +
+            'keystrokes - this CLI asks that question per directory and swallows input until it is ' +
+            'answered.')
+      log.warn(why)
+      const failed: QuotaSnapshot = {
+        workerId,
+        windows: [],
+        sampledAt: Date.now(),
+        source: 'unknown',
+        error: why
+      }
+      store(failed)
+      return decorate(failed)
+    }
+    const snapshot: QuotaSnapshot = {
+      workerId,
+      windows,
+      // ⚠️ Our clock, deliberately, unlike the config-cache path where the key is the *vendor's*
+      // fetch time. There is no vendor timestamp to borrow here: the CLI just refreshed on being
+      // asked, so the reading is as old as this moment and no older.
+      sampledAt: Date.now(),
+      source: 'cli'
+    }
+    store(snapshot)
+    log.info(
+      `usage on ${w.label}: ${windows.map((x) => `${x.label} ${Math.round(x.percent)}% used`).join(' · ')}`
+    )
+    return decorate(snapshot)
   }
 
   const after = await probeWorker(workerId)

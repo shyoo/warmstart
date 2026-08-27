@@ -428,6 +428,44 @@ const MIGRATIONS: string[] = [
   `
   alter table runs add column quota_before_json text;
   alter table runs add column quota_after_json text;
+  `,
+
+  // 8 - a cache-clock move is a request, not an outcome, and until this it was recorded as though
+  // it were both.
+  //
+  // ⛔ The bug this closes, measured on this machine 2026-08-26: session c17ce7 sat at 68001 context
+  // tokens and the clock sent it `/compact` on **every 10s tick for as long as it was watched** -
+  // thirteen identical rows in two minutes, same session, same reason, same 35k estimate. Nothing
+  // was wrong with the decision; what was missing was any memory that it had already been made.
+  // `decide()` is a pure function of the session row, compaction takes ~2 minutes (measured 139k ·
+  // 116k · 161k ms), and nothing in the session row changes in the meantime - so the same inputs
+  // produced the same move twelve more times before the first one could possibly have landed.
+  //
+  // ⚠️ Worse than the noise: each repeat is a real user message pushed into a live session. A
+  // *free* decision loop was writing a **billable** turn every ten seconds, which is precisely the
+  // "a loop running every 10 seconds for weeks must not bill anything" invariant in AGENTS.md,
+  // violated by the one component whose entire purpose is to not waste tokens.
+  //
+  // So a move is now written down when it is *issued*, with the evidence that would prove it
+  // landed, and the clock declines to re-issue until it has settled. `clock_move_context` is
+  // `tokens_since_compact` at the moment of the request: compaction resets that to zero, so a drop
+  // is proof, whereas "a turn happened" is not - an agent replying "I don't understand /compact" is
+  // also a turn.
+  `
+  alter table sessions add column clock_move text;
+  alter table sessions add column clock_move_at integer;
+  alter table sessions add column clock_move_attempts integer not null default 0;
+  alter table sessions add column clock_move_context integer;
+
+  -- ⛔ Global, deliberately, and there is exactly one of them. Per-worker or per-project compaction
+  -- switches would be four places to look when a session is not compacting; the operator asked for
+  -- one switch, and one switch is also the only kind whose state can be shown honestly in a header.
+  -- Values are JSON so a boolean today does not need a migration to become a shape tomorrow.
+  create table if not exists settings (
+    key        text primary key,
+    value      text not null,
+    updated_at integer not null
+  );
   `
 ]
 

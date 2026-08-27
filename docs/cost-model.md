@@ -231,6 +231,49 @@ auto-mode classifier (§9), title generation, whatever else. Their difference *i
 merging them destroys it. R1 no longer needs an experiment run by hand; it needs a quiet worker and a
 look at the pane.
 
+### Rung 0 on Antigravity — the same probe, with the answer in a different place (2026-08-27)
+
+⭐ **R9 is closed, the opposite way round from how it was asked.** The question was whether
+`agy -p /usage` runs the slash command for free in *print* mode. It does not — measured 2026-08-25,
+it is taken as a prompt and spent 14,603 input + 264 output tokens listing directories. But `/usage`
+typed into the **interactive** session is client-side and free, exactly as on Claude Code.
+
+⛔ **The difference that hid it for three months is where the answer lands.** Claude Code writes it to
+`cachedUsageUtilization` on disk and `probeQuota()` reads the file. `agy` writes it nowhere.
+Measured by driving `/usage` in a PTY and diffing every file under `~/.gemini` before and after: only
+`cli.log` moved (it logs `doRefreshQuota: starting reload (force=true)` and a `loadCodeAssist` call,
+and no numbers) and `history.jsonl` (which logs the command text). The quota lives in
+`quota_manager.go` in memory.
+
+So this adapter declares `usageRefresh.answer: 'screen'` and parses the rendered panel — the single
+declared exception to *the TUI is for humans*, permitted for a quota reading and nothing else. See
+AGENTS.md for the boundary.
+
+Measured on agy 1.1.22, Windows, Google AI Pro, 2026-08-27 — a live reading through the adapter:
+
+| Group | Window | Used | Resets |
+|---|---|---|---|
+| Gemini (Flash, Pro) | weekly | 5.48% | 138h |
+| Gemini (Flash, Pro) | 5-hour | 32.80% | 1h 40m |
+| Claude and GPT (Opus, Sonnet, GPT-OSS) | weekly | 42.80% | 44h |
+| Claude and GPT (Opus, Sonnet, GPT-OSS) | 5-hour | 0% | — |
+
+⚠️ **Two traps, both found by running it rather than reading it.**
+
+- The panel reports **remaining**; `QuotaWindow.percent` is **used**. Inverted in the parser. Storing
+  it verbatim reports a nearly-exhausted account as nearly empty — the one direction the gate cannot
+  survive, since `QUOTA_HIGH_WATER` would never trip.
+- The panel is **taller than a default terminal and scrolls**. The first live run returned three
+  windows of four: at 30 rows the last group's five-hour window fell below the fold, silently, and
+  that window is a candidate for the `5h` id the gate reads. The probe session now takes its geometry
+  from the adapter (110×60), and the parser refuses any group showing one of its two windows rather
+  than under-reporting.
+
+⚠️ **Two five-hour windows, one gate.** Gemini and Claude/GPT are metered separately and a snapshot
+cannot know which group the next run will use, so the **busiest** is promoted to the `5h` id the
+scheduler and reserve look for. Over-stating pressure delays a dispatch; under-stating it strands a
+run at a window boundary holding context it cannot save.
+
 ### What else was tried, and why it is not what we use
 
 Kept because the vendor surface moves, and each of these becomes right the moment one fact changes.
@@ -245,7 +288,8 @@ Kept because the vendor surface moves, and each of these becomes right the momen
 | A community usage package | ⛔ Rejected on D7: external services are wrapped, never vendored, and an undocumented internal surface behind a third-party wrapper is two things that can go stale rather than one | Never |
 
 **Still owed:** `tokens_per_percent` (R2), which turns a percentage into the token count every gate
-actually needs. ⭐ R3 — *what refreshes `cachedUsageUtilization`* — is **closed** by the above.
+actually needs. ⭐ R3 — *what refreshes `cachedUsageUtilization`* — is **closed** by the above, and so
+is R9, on Antigravity, in the section before it.
 
 ### ⛔ The reserve is a gate, not a routing input
 

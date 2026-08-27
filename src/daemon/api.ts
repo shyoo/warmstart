@@ -4,7 +4,8 @@ import type {
   DoctorReport,
   RpcMethod,
   RpcParams,
-  RpcResult
+  RpcResult,
+  Settings
 } from '@shared/protocol.js'
 import { existsSync } from 'node:fs'
 import { adapter, adapters } from './adapters/index.js'
@@ -76,6 +77,7 @@ import { estimateTask } from './estimator.js'
 import { recentClockEvents, remainingTokens, reserveState } from './reserve.js'
 import { decide, medianHumanLatencyMs } from './cacheclock.js'
 import { DEFAULT_OBJECTIVE } from './objective.js'
+import { setSetting, settings } from './settings.js'
 import { lastRateLimit, windowResetsAt } from './quota.js'
 import { log } from './log.js'
 
@@ -360,6 +362,19 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
     // ---- resources and the loop --------------------------------------------------------
     'resource.list': () => allAvailability(),
 
+    'settings.get': () => settings(),
+
+    // ⚠️ A partial patch, not a whole object. The renderer sends the one switch the operator threw,
+    // so two clients cannot silently overwrite each other's unrelated settings by round-tripping a
+    // stale copy of the whole thing.
+    'settings.set': (p) => {
+      let current = settings()
+      for (const [key, value] of Object.entries(p) as Array<[keyof Settings, boolean]>) {
+        current = setSetting(key, value)
+      }
+      return current
+    },
+
     'cost.report': () => {
       const objective = DEFAULT_OBJECTIVE
       const live = listSessions()
@@ -371,6 +386,7 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
         decisions: live.map((session) => decide(session, { objective })),
         recent: recentClockEvents(30) as CostReport['recent'],
         medianHumanLatencyMs: medianHumanLatencyMs(),
+        settings: settings(),
         workers: listWorkers().map((w) => {
           const remaining = remainingTokens(w.id)
           const reset = windowResetsAt(w.id)

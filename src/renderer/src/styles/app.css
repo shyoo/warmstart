@@ -1344,3 +1344,71 @@ select:focus-visible,
 .facts li {
   display: block;
 }
+
+/* ---- switch ------------------------------------------------------------ */
+/*
+ * A real switch, not a checkbox with a label. The one fleet-wide setting the operator owns is worth
+ * being unmistakably a control - and role="switch" plus aria-checked is what makes it one to a
+ * screen reader too, since the visual is entirely borrowed from the track and knob.
+ */
+
+.switch-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-3);
+}
+
+.switch {
+  flex: none;
+  width: 40px;
+  height: 22px;
+  margin-top: 2px;
+  padding: 0;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 999px;
+  background: var(--color-surface-2);
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease);
+}
+
+.switch:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.switch-knob {
+  display: block;
+  width: 16px;
+  height: 16px;
+  margin-left: 2px;
+  border-radius: 50%;
+  background: var(--color-text-dim);
+  transition:
+    transform var(--motion-fast) var(--ease),
+    background var(--motion-fast) var(--ease);
+}
+
+.switch--on {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+.switch--on .switch-knob {
+  transform: translateX(18px);
+  background: #0b0f17;
+}
+
+.switch:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.switch-state {
+  margin: 0;
+  font-size: var(--text-dense);
+  font-weight: 600;
+}
+
+.switch-state .dim {
+  font-weight: 400;
+}

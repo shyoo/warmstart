@@ -4,7 +4,7 @@ import type { Session, Turn } from '@shared/protocol.js'
 import { db } from './db.js'
 import { costModel } from './costmodel.js'
 import { adapter } from './adapters/index.js'
-import { getSession } from './sessions.js'
+import { clearClockMove, getSession } from './sessions.js'
 import { creditTurn } from './tasks.js'
 import { clearDispatchFailure } from './workers.js'
 import type { StreamUsage } from './stream.js'
@@ -332,6 +332,11 @@ export function recordCompaction(
   meta: { preTokens: number | null; durationMs: number | null }
 ): void {
   db().prepare('update sessions set tokens_since_compact = 0 where id = ?').run(sessionId)
+  // ⛔ The proof arrived, so the outstanding request is retired here - at the one place that has
+  // seen a real `compact_boundary` record. Leaving it set would hold the session in `in_flight`
+  // until the settle window ran out and then count it as ignored: a compaction that worked,
+  // recorded as one that failed, and two more of them before the clock gave up.
+  clearClockMove(sessionId)
   log.info(
     `session ${sessionId.slice(0, 8)} compacted` +
       (meta.preTokens ? ` from ${meta.preTokens} tokens` : '') +

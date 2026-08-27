@@ -41,9 +41,34 @@ These are not preferences; breaking one breaks the product.
 - ⛔ **The TUI is for humans; the transcript is for the machine.** Never parse ANSI output to
   determine state. Usage, context size, idle time and effort all come from the agent's own transcript
   JSONL, which is exact. Terminal bytes go to xterm.js and nowhere else.
+  ⚠️ **One exception exists, it is narrow, and it is declared rather than assumed.** An adapter may
+  set `usageRefresh.answer: 'screen'` and implement `parseUsage`, which may produce **a quota
+  reading and nothing else** - never a session's state. It exists because Antigravity keeps its
+  quota in `quota_manager.go` in memory and writes it nowhere: measured 2026-08-27 by driving
+  `/usage` in a PTY and diffing every file under `~/.gemini`, only `cli.log` and `history.jsonl`
+  moved and neither carries a number. The invariant's reasoning is *the transcript is exact*, and
+  it holds wherever there is a transcript; here the choice is screen-versus-nothing. ⛔ Such a
+  parser must fail the way a rendering fails - return null rather than a partial reading. The
+  first live run proved why: at 30 rows the panel scrolled, a whole window fell below the fold,
+  and three of four came back looking complete.
 - ⛔ **The scheduler costs zero tokens.** Dependency resolution, quota gates, cache countdowns,
   retries and auto-resume are arithmetic. The LLM controller is consulted only on discrete judgment
   events. A loop running every 10 seconds for weeks must not bill anything.
+- ⛔ **A cache-clock move is a *request*; whether it landed is a separate question, and the answer
+  needs move-specific evidence.** `decide()` is a pure function of the session row, the tick is 10s,
+  and compaction takes ~2 minutes — so a move with no memory of having been made is re-issued every
+  tick until its effect shows up. Measured 2026-08-26: session c17ce7, 68001 tokens, sent `/compact`
+  **thirteen times in two minutes**, each one a billable user message written by the loop whose
+  entire purpose is not wasting tokens. `markClockMove` records the ask with the evidence that would
+  prove it landed; `moveOutcome()` reads it back. ⚠️ "A turn happened" is **not** that evidence — an
+  agent replying *"I don't understand /compact"* is a turn. Compaction is proved by
+  `tokensSinceCompact` falling; a keepalive by the TTL moving. And the clock **stops asking** after
+  `MAX_MOVE_ATTEMPTS`: whether `/compact` is honoured on `stream` has never been measured (R6), so an
+  unbounded retry is an unbounded spend on an unverified assumption.
+- ⛔ **A global switch is off everywhere or it is a lie.** `settings.autoCompact` gates the
+  reserve-at-risk compaction as well as the ordinary one — a switch that quietly kept compacting "for
+  safety" would be false on the one screen whose whole claim is that it shows what the scheduler
+  really does. Told-not-to-compact and cannot-compact land in the same place: handoff and close.
 - ⛔ **No pricing arithmetic inline.** Ask the cost-model object (`costOfKeepalive`, `costOfCompact`,
   `costOfColdStart`, `cacheExpiryFor`). Providers price caching in structurally different ways and
   all of them move.
@@ -68,6 +93,11 @@ These are not preferences; breaking one breaks the product.
   "unknown" is not the whole answer either: never probed, no usage cache yet, stale, and a failed
   probe are four different states with four different things to do about them, and collapsing them
   into one word is what made a working Probe button look broken. See `quotaGap()`.
+  ⚠️ **There is a fifth: `quotaProbe: 'none'`, a provider that reports usage to nothing outside
+  an interactive session.** The other four describe a reading somebody can go and get, so
+  "unknown" invites them to press Probe again; there it reads *not reported*. ⛔ Do not assume a
+  provider is in that state because it once was - Antigravity was, until `/usage` in its TUI was
+  measured on 2026-08-27 and turned out to be free. Ask the CLI before writing `none`.
 - ⛔ **Every cost belief carries its basis.** `remainingTokens` returns a number *and* how it was
   arrived at; the reserve returns a verdict *and* its reason; the cache clock records every decision
   including the ones that did nothing. A scheduler that spends money and cannot say why is one you
@@ -225,6 +255,12 @@ costmodels/             versioned pricing data
   that EBUSY ever appears again, something is executing out of `release/suite/` — find out whose it is
   before reaching for a kill, because a command line matching the packaged binary matches the
   operator's own app just as well as a test's.
+  ⚠️ **And ask about the directory actually being rewritten, nothing wider.** `build-win.ps1`'s guard
+  tested the whole of `release\`, so an app running from `release\win-unpacked\` blocked the pack
+  step — which writes only to `release\suite\` and could never have collided with it. The split
+  existed precisely to make "you cannot run the app while building" untrue, and an over-broad guard
+  re-imposed it as a rule nobody could see the reason for. `Assert-OutputIsFree` now takes the exact
+  directory, and `-Except` carves out `release\suite\` for the installer.
 - **A quota sample is keyed on the vendor's fetch time, which does not move when you read it.**
   `sampledAt` is `cachedUsageUtilization.fetchedAtMs` — exactly right for staleness and fatal as an
   insert key, because re-reading an unchanged cache produces a row identical to the last one and
@@ -298,6 +334,14 @@ costmodels/             versioned pricing data
   installed as a `.cmd` rather than a `.exe`. Everything that starts a CLI goes through
   `launchable()` / `launchArgs()`, **including detection** - `execFile` on a `.cmd` without a shell
   fails with a bare `spawn EINVAL`, and detection that fails for an installed CLI reports it missing.
+- ⛔ **`-p` on `agy` takes the prompt as its VALUE.** `-p` / `--print` / `--prompt` are one
+  string flag, not a boolean: `agy -p` alone answers *flag needs an argument: -p*. The adapter
+  passed a bare `-p` before `--input-format`, so the CLI took `--input-format` as the prompt and
+  exited 2 in zero seconds - **every Antigravity dispatch from M5 to 2026-08-27 failed this way**,
+  and the run note blamed the *agent* for ending "without reporting completion" on an account that
+  was signed in the whole time. ⚠️ Same letter, three meanings across three CLIs: `--print` on
+  `claude`, `--profile` on `codex`, and a string-valued `--print` here. Never carry a flag's shape
+  across adapters; run it.
 - **`agy` installs under `%LOCALAPPDATA%` and is not on PATH until `agy install` runs.** The
   adapter looks there anyway; reporting "not installed" would send somebody to reinstall what they
   already have.

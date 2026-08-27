@@ -148,11 +148,14 @@ documentation — which mattered, because several documented claims turned out t
 would have failed on the first spawn. [`docs/adapters.md`](docs/adapters.md) records what was measured,
 when, against which version, and what is still unverified.
 
-> **On quota numbers.** Claude Code has no free live usage probe — the slash command spends a real
-> turn — so Multi Agent Controller reads the CLI's own cache and always shows you how old it is. An old reading is
-> reported as *unknown*, never as a number. One consequence is worth stating plainly: the compaction
-> reserve, which stops an account running out of room to *save* a large session, currently reports
-> `unknown` rather than `ok`, because it needs a size and nothing free gives it one.
+> **On quota numbers.** Both Claude Code and Antigravity can be asked for a live reading without
+> spending a token: `/usage` typed into an interactive session is handled by the client, and
+> Multi Agent Controller drives it for you on the Probe button. ⚠️ A reading is always shown with
+> its age, and an old one is reported as *unknown* rather than as a number.
+>
+> One consequence is still worth stating plainly: the compaction reserve, which stops an account
+> running out of room to *save* a large session, reports `unknown` rather than `ok`. A percentage
+> is not a size, and no vendor publishes what one percent of a window is worth.
 > See [`docs/cost-model.md`](docs/cost-model.md) §5 and §10.
 
 ## Development

@@ -3,7 +3,7 @@ import { promisify } from 'node:util'
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
-import type { AdapterDetection, AdapterInfo, QuotaSnapshot } from '@shared/protocol.js'
+import type { AdapterDetection, AdapterInfo, QuotaSnapshot, QuotaWindow } from '@shared/protocol.js'
 import type {
   AgentAdapter,
   IdentityProbe,
@@ -28,6 +28,13 @@ import { launchArgs, launchable, which } from '../which.js'
  *    predicted for a classifier-less CLI — *accept edits + allowlist* — and it is now the default.
  *  - `--input-format stream-json` **requires** `--output-format stream-json`. Passing one alone is an
  *    argument error, so the two are set together or not at all.
+ *  - ⛔ **`-p` takes the prompt as its value.** `-p` / `--print` / `--prompt` are one *string* flag,
+ *    not a boolean - `agy -p` alone answers *flag needs an argument: -p*. This adapter passed a bare
+ *    `-p` before `--input-format` and so failed **every** dispatch it ever made, in zero seconds,
+ *    with exit 2: measured 2026-08-27 on the operator's install, one work session, `in=0 out=0`,
+ *    and a run note blaming the agent for ending "without reporting completion" on an account that
+ *    was signed in throughout. Print mode is switched on with `--print=` and the prompt arrives as
+ *    NDJSON on stdin, which is what `--input-format stream-json` is for.
  *  - ⚠️ `--disable-slash-commands` exists, described as disabling slash-command expansion **in print
  *    mode** — which means slash commands *are* expanded there by default. That is the opposite of
  *    Claude Code, where `-p /usage` is taken as a prompt and spends a turn. It makes a free quota
@@ -82,7 +89,10 @@ const info: AdapterInfo = {
     // agentyard does not use it: one shared registration cannot carry a per-session identity, and
     // MULTI_AGENT_CONTROLLER_SESSION_ID is how the MCP server knows who it is speaking for.
     mcp: false,
-    quotaProbe: 'none',
+    // ⭐ It has one after all, as of 2026-08-27. `/usage` typed into the TUI is a client-side
+    // slash command - free, no turn - and the panel it draws is the only place the number exists.
+    // See parseUsageScreen for why reading a screen is defensible here and nowhere else.
+    quotaProbe: 'cli',
     mintsSessionId: false,
     // ⚠️ Not from a transcript: agy writes conversations as SQLite, which the line-oriented tailer
     // cannot read. But usage IS in the stream - measured 2026-08-25 - so the work is metered after
@@ -99,11 +109,41 @@ const info: AdapterInfo = {
     wrapUpProtocol: 'handoff',
     needsExplicitBudget: true
   },
-  // ⛔ Nothing to drive. `agy -p /usage` was measured spending a turn without answering, and the
-  // interactive session shows usage in a panel it does not write anywhere this app can read.
-  usageRefresh: null,
-  // Not measured. ⚠️ Absent because nobody has looked, which is the honest state for a nullable field.
-  firstRun: null,
+  // ⭐ Measured 2026-08-27: `/usage` in the TUI costs nothing and renders both groups' windows.
+  // `answer: 'screen'` because the panel is written to no file - see parseUsageScreen.
+  // ⚠️ readyMs is generous on purpose. This CLI signs in, refreshes experiments and reloads its
+  // slash commands before it will accept a keystroke, and anything typed earlier is swallowed.
+  // 60 rows, not the default 30. Measured 2026-08-27: at 30 the panel scrolled and the last
+  // group's five-hour window was below the fold, so the probe read three windows of four.
+  // The panel's own footer said "(1-27 of 30 lines)".
+  usageRefresh: {
+    command: '/usage',
+    readyMs: 20_000,
+    settleMs: 15_000,
+    answer: 'screen',
+    cols: 110,
+    rows: 60
+  },
+  // ⛔ Required by anything that drives a TUI, and this one earned it the hard way. Measured
+  // 2026-08-27 while building the probe above: the first attempt's `/usage` was swallowed by
+  // *"Do you trust the contents of this project?"* and its Enter selected "Yes, I trust this
+  // folder". Same failure as Claude Code's, on a second CLI, found the same way.
+  //
+  // ⚠️ The two halves come apart here in a way they do not on Claude Code. `onboardingComplete`
+  // is **global** to this machine - one account, one keyring, one config - so it is answered once
+  // and stays answered. Folder trust is asked **per directory**, so a fully onboarded account still
+  // meets the dialog in a folder it has not seen. `trustDirectory` pre-answers it for the scratch
+  // directory this app owns, and never for a project, a worktree or anybody's home.
+  firstRun: {
+    argv: [],
+    completedKey: 'onboardingComplete',
+    reason:
+      'Antigravity CLI has not finished its first-run questions on this machine. They only appear ' +
+      'in a real terminal and only a person can answer them, and until they are answered the CLI ' +
+      'swallows anything typed at it - which is why a usage probe reports nothing while scheduled ' +
+      'work on the same account carries on fine. ⚠️ Separately, it asks whether it trusts each ' +
+      'folder it opens: this app pre-answers that for its own scratch directory only.'
+  },
   // ⛔ Measured on agy 1.1.20 (2026-08-26): `agy --help` lists agent, agents, changelog, help,
   // install, mcp, mic-serve, models, plugin, plugins and update. There is **no login and no auth**
   // subcommand, and `agy login` fails with *unexpected argument "login"* - which is exactly what
@@ -119,12 +159,15 @@ const info: AdapterInfo = {
   },
   verification: {
     level: 'measured',
-    asOf: '2026-08-25',
+    asOf: '2026-08-27',
     note:
-      'agy 1.1.20 on Windows. Flag surface, subcommands, model list, settings path and conversation ' +
-      'storage all read from the running CLI. ⚠️ Still unmeasured, because each needs a signed-in ' +
-      'account and a real turn: the stream-json record shapes, whether print mode expands slash ' +
-      'commands (HANDOFF R9), and anything about quota.'
+      'agy 1.1.21 on Windows. Flag surface, subcommands, model list, settings path and conversation ' +
+      'storage all read from the running CLI. ⛔ 2026-08-27 corrected the print flag: `-p` takes the ' +
+      'prompt as its value, so the bare `-p` this adapter passed failed every dispatch with exit 2. ' +
+      'The corrected argv was run against the signed-in account and returns a valid `init` record ' +
+      'with no turn spent. ⚠️ Still unmeasured, because each needs a real turn: the stream-json ' +
+      'record shapes beyond `init`, whether print mode expands slash commands (HANDOFF R9), and ' +
+      'anything about quota.'
   }
 }
 
@@ -216,6 +259,145 @@ function decodeStream(record: Record<string, unknown>): StreamEvent | StreamEven
   }
 
   return event ? { kind: 'other', type: event } : null
+}
+
+/**
+ * Read the `/usage` panel.
+ *
+ * ⛔ **The one place in this codebase that turns rendered terminal text into state**, and it is
+ * allowed to produce a quota reading and nothing else. The invariant it bends says usage, context
+ * size, idle time and effort come from the transcript because the transcript is *exact* — and that
+ * reasoning holds wherever there is a transcript to read. Here there is not: measured 2026-08-27 by
+ * driving `/usage` in a real PTY and diffing every file under `~/.gemini` before and after, the
+ * only things that moved were `cli.log` (which records `doRefreshQuota: starting reload` and no
+ * numbers) and `history.jsonl` (which records the command text). The CLI holds the answer in
+ * `quota_manager.go` in memory. So the choice is not screen-versus-file; it is screen-versus-nothing.
+ *
+ * What the panel looks like, verbatim from that run:
+ *
+ * ```
+ * GEMINI MODELS
+ *   Models within this group: Gemini Flash, Gemini Pro
+ *   Weekly Limit Remaining
+ *     [███████████████░░░] 94.52%
+ *     95% remaining · Refreshes in 138h 0m
+ *   Five Hour Limit Remaining
+ *     [██████████░░░░░░░░] 67.20%
+ *     67% remaining · Refreshes in 1h 51m
+ * CLAUDE AND GPT MODELS
+ *   ...
+ *     [██████████████████] 100.00%
+ *     Quota available
+ * ```
+ *
+ * ⛔ **These are REMAINING percentages and `QuotaWindow.percent` is utilisation** — what has been
+ * *used*. They are inverted here. Getting that backwards would report a nearly exhausted account as
+ * nearly empty, which is the one direction of error the quota gate cannot survive: `QUOTA_HIGH_WATER`
+ * would never trip.
+ *
+ * ⚠️ The bar's own figure is used (94.52%), not the rounded sentence beneath it (95%), because the
+ * sentence rounds *up* on a remaining figure and so rounds *down* the utilisation.
+ *
+ * ⚠️ Returns null rather than a partial answer. Screen text is a rendering and fails like one — it
+ * reflows, it truncates at the viewport, and this panel is scrollable, so a half-read set of windows
+ * is a normal outcome and must never be stored as a reading.
+ */
+export function parseUsageScreen(screen: string, now = Date.now()): QuotaWindow[] | null {
+  if (!/Models\s*&\s*Quota/.test(screen)) return null
+
+  const windows: QuotaWindow[] = []
+  let group: { id: string; label: string } | null = null
+  let kind: 'weekly' | '5h' | null = null
+
+  const lines = screen.split(/\r?\n/)
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] ?? ''
+
+    const heading = /^\s*([A-Z][A-Z0-9 &]*?)\s+MODELS\s*$/.exec(line)
+    if (heading?.[1]) {
+      const name = heading[1].trim()
+      group = { id: name.toLowerCase().replace(/[^a-z0-9]+/g, '-'), label: titleCase(name) }
+      kind = null
+      continue
+    }
+
+    if (/Weekly Limit Remaining/.test(line)) kind = 'weekly'
+    else if (/Five Hour Limit Remaining/.test(line)) kind = '5h'
+
+    // The bar line carries the precise figure. `Quota available` is the CLI's way of writing 100%
+    // remaining with no reset worth stating.
+    const bar = /\]\s*([\d.]+)\s*%/.exec(line)
+    if (!bar?.[1] || !group || !kind) continue
+
+    const remaining = Number.parseFloat(bar[1])
+    if (!Number.isFinite(remaining) || remaining < 0 || remaining > 100) continue
+
+    windows.push({
+      id: `${kind}:${group.id}`,
+      label: `${group.label} · ${kind === 'weekly' ? 'weekly' : '5-hour'}`,
+      percent: Math.round((100 - remaining) * 100) / 100,
+      resetsAt: readReset(lines[i + 1] ?? '', now)
+    })
+    kind = null
+  }
+
+  if (windows.length === 0) return null
+
+  // ⛔ A group must contribute BOTH of its windows or the read is not trustworthy. This panel is
+  // taller than a default terminal and scrolls - its own footer says "(1-27 of 30 lines)" - so a
+  // viewport that cuts it mid-group is the normal failure, not an exotic one.
+  //
+  // ⚠️ Measured 2026-08-27 against the live account at 30 rows: this returned Gemini weekly, Gemini
+  // 5-hour and Claude-and-GPT weekly, and silently dropped Claude-and-GPT's 5-hour window. That is
+  // the worst possible thing to lose quietly, because the missing window is a candidate for the
+  // `5h` promotion below - so the gate would have been handed Gemini's 33% while the group the run
+  // actually used sat somewhere unmeasured. A short read must fail, not under-report.
+  const perGroup = new Map<string, number>()
+  for (const w of windows) {
+    const group = w.id.slice(w.id.indexOf(':') + 1)
+    perGroup.set(group, (perGroup.get(group) ?? 0) + 1)
+  }
+  for (const [group, count] of perGroup) {
+    if (count < 2) {
+      log.warn(
+        `agy /usage panel was cut off: "${group}" showed ${count} of 2 windows. The probe session's ` +
+          'viewport is too short for this panel - no reading is recorded rather than a partial one.'
+      )
+      return null
+    }
+  }
+
+  // ⛔ Downstream asks for the five-hour window by the id `session` or `5h` - the quota gate, the
+  // reset countdown and the reserve all do. Antigravity has **two**, because Gemini and Claude/GPT
+  // are metered separately, and nothing in a quota snapshot knows which group the next run will use.
+  // ⚠️ So the busiest one is promoted, which is the conservative direction: over-stating pressure
+  // costs a delayed dispatch, under-stating it costs a run that dies at a window boundary holding
+  // context it cannot save. The label still names the group, so the promotion is visible rather than
+  // silently averaging two different accounts' worth of budget into one number.
+  const fiveHour = windows.filter((w) => w.id.startsWith('5h:'))
+  if (fiveHour.length > 0) {
+    const busiest = fiveHour.reduce((a, b) => (b.percent > a.percent ? b : a))
+    busiest.id = '5h'
+  }
+  return windows
+}
+
+/** `Refreshes in 138h 0m` → an absolute instant. Anything else, including `Quota available`, is null. */
+function readReset(line: string, now: number): number | null {
+  const found = /Refreshes in\s+(?:(\d+)h)?\s*(?:(\d+)m)?/.exec(line)
+  if (!found || (!found[1] && !found[2])) return null
+  const hours = Number.parseInt(found[1] ?? '0', 10)
+  const minutes = Number.parseInt(found[2] ?? '0', 10)
+  return now + (hours * 60 + minutes) * 60_000
+}
+
+function titleCase(heading: string): string {
+  // "CLAUDE AND GPT" reads better as "Claude and GPT" in a table cell than as a shout.
+  return heading
+    .toLowerCase()
+    .split(' ')
+    .map((w) => (w === 'and' ? w : w === 'gpt' ? 'GPT' : w.charAt(0).toUpperCase() + w.slice(1)))
+    .join(' ')
 }
 
 /** `{input_tokens, output_tokens, thinking_tokens, cache_read_tokens, total_tokens}` */
@@ -310,13 +492,76 @@ export const antigravityCli: AgentAdapter = {
           'and keeps nothing here - there is no way to tell the difference without spending a turn.'
       }
     }
+    // ⭐ `setupComplete` is knowable even though `loggedIn` is not. Measured 2026-08-27:
+    // `cache/onboarding.json` holds `{consumerOnboardingComplete, enterpriseOnboardingComplete,
+    // onboardingComplete}`, written by the CLI itself. It was reported as `null` before, which cost
+    // the operator nothing directly but left "Finish setup" unable to say whether there was
+    // anything to finish.
+    //
+    // ⚠️ It answers the *onboarding* question and NOT the folder-trust one, and the difference is
+    // the whole reason to spell it out: trust is asked **per directory**, so a fully onboarded
+    // account still meets a dialog in a folder it has not seen - and until that is answered the CLI
+    // swallows every keystroke. Measured the same day, on this very probe: the first attempt's
+    // `/usage` was eaten by the dialog and its Enter answered *"Yes, I trust this folder"*. That is
+    // what `trustDirectory` below exists to prevent.
+    let setupComplete: boolean | null = null
+    try {
+      const onboarding = JSON.parse(
+        readFileSync(join(home, 'cache', 'onboarding.json'), 'utf8')
+      ) as Record<string, unknown>
+      if (typeof onboarding.onboardingComplete === 'boolean') {
+        setupComplete = onboarding.onboardingComplete
+      }
+    } catch {
+      // Absent or unreadable is genuinely unknown, which is what null already means.
+    }
     return {
       loggedIn: null,
+      setupComplete,
       raw:
         `Antigravity CLI is configured at ${home}, but its credential lives in the OS keyring, which ` +
         'this app does not read. Sign-in state is unknown by design; a failed run will say so.'
     }
   },
+
+  /**
+   * Pre-answer the folder-trust dialog for one directory.
+   *
+   * ⛔ Not cosmetic - it is what makes the quota probe possible at all. `agy` asks *"Do you trust
+   * the contents of this project?"* per directory, and **until it is answered it swallows every
+   * keystroke**. Measured 2026-08-27: a probe that typed `/usage` before the dialog was answered
+   * got no reading, and its Enter selected *"Yes, I trust this folder"* instead - the same failure
+   * AGENTS.md already records against Claude Code, on a second CLI.
+   *
+   * ⚠️ Merges into the operator's own `trustedWorkspaces`, never replaces it: this file is shared
+   * with their interactive sessions and this app did not create it.
+   */
+  trustDirectory(_isolationRoot: string, dir: string): void {
+    const file = join(cliHome(), 'settings.json')
+    try {
+      mkdirSync(dirname(file), { recursive: true })
+      let existing: Record<string, unknown> = {}
+      if (existsSync(file)) {
+        try {
+          existing = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>
+        } catch {
+          log.warn(`${file} is not valid JSON; leaving it untouched`)
+          return
+        }
+      }
+      const trusted = Array.isArray(existing.trustedWorkspaces)
+        ? (existing.trustedWorkspaces as string[])
+        : []
+      if (trusted.some((t) => t.toLowerCase() === dir.toLowerCase())) return
+      existing.trustedWorkspaces = [...trusted, dir]
+      writeFileSync(file, `${JSON.stringify(existing, null, 2)}\n`)
+      log.info(`pre-trusted ${dir} for agy so a projectless session is not stopped by a dialog`)
+    } catch (err) {
+      log.warn(`could not record folder trust in ${file}:`, err)
+    }
+  },
+
+  parseUsage: parseUsageScreen,
 
   /**
    * ⛔ Always unknown, and deliberately so — after evaluating every alternative.
@@ -344,9 +589,9 @@ export const antigravityCli: AgentAdapter = {
       sampledAt: Date.now(),
       source: 'unknown',
       error:
-        'Antigravity exposes usage only inside an interactive session or a running IDE. `agy -p ' +
-        '/usage` was measured and spends a real turn without answering. Spend is accrued from ' +
-        'metered turns instead, which is a floor rather than a percentage.'
+        'Antigravity writes no usage cache to disk, so there is nothing to read here. A reading ' +
+        'comes from Probe, which opens a session and types `/usage` - free, no turn - and parses ' +
+        'the panel. See parseUsageScreen.'
     }
   },
 
@@ -424,9 +669,30 @@ export const antigravityCli: AgentAdapter = {
     }
 
     if (req.transport === 'stream') {
+      // ⛔ `--print=`, with the equals and nothing after it. **`-p` on `agy` takes the prompt as its
+      // value** - `-p` / `--print` / `--prompt` are one string flag, not a boolean - so the bare
+      // `-p` this used to pass swallowed the next token. Measured on agy 1.1.21, 2026-08-27, the CLI
+      // says so itself:
+      //
+      //   Error: -p took "--input-format" as its prompt, so the intended prompt was left as an
+      //   argument and ignored.
+      //
+      // ⚠️ That is exit 2 in **zero seconds**, which is what every Antigravity work session in this
+      // install had done: one run, `outcome=failed`, `in=0 out=0`, and a note blaming the *agent*
+      // for ending "without reporting completion". The account was signed in the whole time.
+      //
+      // ⛔ Written as one token rather than `'-p', ''`. An empty string argument has to survive
+      // node-pty, `launchable()`'s `cmd /d /c` shim path and Windows' own quoting rules to arrive as
+      // an empty argv entry, and it is exactly the kind of thing that works here and vanishes
+      // somewhere else. `--print=` cannot be dropped, split or re-quoted by anything.
+      //
+      // The prompt itself does not belong here at all: with `--input-format stream-json` the CLI
+      // reads one NDJSON message per line from stdin and runs a turn for each. Print mode still has
+      // to be *on*, which is all this flag is for.
+      //
       // Measured: `--input-format stream-json` *requires* `--output-format stream-json`. Setting one
       // without the other is an argument error, so they move together.
-      args.push('-p', '--input-format', 'stream-json', '--output-format', 'stream-json')
+      args.push('--print=', '--input-format', 'stream-json', '--output-format', 'stream-json')
     }
     return { command, args: [...prefixArgs, ...args], env }
   },
