@@ -125,8 +125,14 @@ try {
   //
   // ⚠️ Compared against `src/`, not `out/`. `out/` is a build product and moves whenever anything
   // runs a build; the question being asked is whether the package contains the current *source*.
-  const asar = join(dir, 'resources', 'app.asar')
-  const packagedAt = existsSync(asar) ? statSync(asar).mtimeMs : 0
+  //
+  // ⛔ The archive is **found**, not constructed from a path. `resources/app.asar` is where it sits
+  // on Windows and Linux and nowhere near where it sits on macOS, which puts it inside the bundle at
+  // `<Product>.app/Contents/Resources/`. Guessing the first layout made this check report a macOS
+  // package as `packaged 1970-01-01` — missing, read as infinitely stale — and fail a job that was
+  // perfectly healthy. A check that cries wolf on one platform gets switched off on all three.
+  const asar = findFiles(dir, (name) => name === 'app.asar')[0]
+  const packagedAt = asar ? statSync(asar).mtimeMs : 0
   const newestSource = findFiles(join(REPO, 'src'), () => true).reduce(
     (newest, file) => Math.max(newest, statSync(file).mtimeMs),
     Math.max(
@@ -134,15 +140,26 @@ try {
       statSync(join(REPO, 'electron-builder.yml')).mtimeMs
     )
   )
-  check(
-    'the package was built from the source that is here now',
-    packagedAt >= newestSource,
-    packagedAt >= newestSource
-      ? `packaged ${new Date(packagedAt).toISOString()}`
-      : `⛔ STALE: packaged ${new Date(packagedAt).toISOString()} but src/ changed ` +
-        `${new Date(newestSource).toISOString()} — run \`npm run pack\` and check it succeeded. ` +
-        'Everything below would be testing code that is no longer in the tree.'
-  )
+  // ⚠️ "Cannot tell" is its own answer and is not "stale". If the archive is somewhere neither
+  // `findFiles` nor this comment anticipated, say so plainly rather than accusing a good build.
+  if (!asar) {
+    check(
+      'the package was built from the source that is here now',
+      false,
+      `no app.asar found under ${dir} — this check cannot tell how old the package is, which is not ` +
+        'the same as it being stale. Fix the search before trusting anything below.'
+    )
+  } else {
+    check(
+      'the package was built from the source that is here now',
+      packagedAt >= newestSource,
+      packagedAt >= newestSource
+        ? `packaged ${new Date(packagedAt).toISOString()}`
+        : `⛔ STALE: packaged ${new Date(packagedAt).toISOString()} but src/ changed ` +
+          `${new Date(newestSource).toISOString()} — run \`npm run pack\` and check it succeeded. ` +
+          'Everything below would be testing code that is no longer in the tree.'
+    )
+  }
   // ⚠️ On failure, say what IS there. "expected X, not found" sent someone reading electron-builder's
   // name-sanitising rules; one directory listing would have shown the answer immediately.
   check(
