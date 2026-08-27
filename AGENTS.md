@@ -81,6 +81,19 @@ These are not preferences; breaking one breaks the product.
   never-signed-in account won a dispatch over two working ones on exactly this. ⚠️ A term identical
   across the fleet contributes nothing and belongs at zero; one that differs *only* by session count
   is worse than nothing. Only checked evidence may move a score.
+- ⛔ **`awaiting_human` must say what it wants and offer somewhere to answer.** It is the one status
+  explicitly about the operator and it was the only resting state with nothing to press — a task whose
+  work was done but had not landed sat there beside a run marked `completed`, and the only exits were
+  to cancel work that had succeeded or delete the record of it. Every hand-off to a person now writes
+  its reason onto the task, and `resolveTask()` records the answer. ⚠️ A **judgement**, written down
+  as one: `task_complete` remains the only signal that an *agent* finished.
+- ⛔ **A run is one attempt; whether the task is done is a separate question.** `completed` on a run
+  beside `awaiting_human` on its task is not a contradiction, and the UI has to say so — that pair is
+  what somebody reads as broken.
+- ⛔ **`admitDependents()` in tasks.ts is the only thing that re-admits a `blocked` task.**
+  `admitScheduled()` looks at `scheduled` ones and nothing else touches them. A second copy of it in
+  scheduler.ts re-set each dependent to the status it already had, so for months **no completed task
+  ever unblocked anything and the DAG never advanced past its first edge**. Never reimplement it.
 - ⛔ **A reply to a task that has stopped is a new run on the same thread, never a note that waits.**
   `deliverToLiveSession` pushed the text into the still-warm session and returned true, so the daemon
   believed it had done its job while the operator saw nothing at all: no run, no metering, no status,
@@ -199,13 +212,19 @@ costmodels/             versioned pricing data
   built to `index.cjs` via an explicit rollup output override in `electron.vite.config.ts`. If you
   see *"Cannot use import statement outside a module"* from the preload, that override was lost.
   ⛔ Do not "fix" it by dropping `sandbox: true`.
-- **`npm run pack` fails with `EBUSY: rmdir release\win-unpacked` once the packaged app has been
-  opened.** orchestratord is **detached by design** and survives its window closing, so it keeps
-  holding the binary — that is the topology working, not a leak. Stop it by the pid in its own
-  `orchestratord.json`, never by image name, and never without asking: it may be somebody's live
-  fleet. ⚠️ `test:pack` **builds nothing** — it drives whatever is in `release/` — so a failed build
-  used to leave it reporting a confident pass for a tree it had never seen. It now refuses when the
-  package predates `src/`.
+- ⛔ **Every suite below L1 drives a build product and none of them builds one.** `test:daemon` and
+  `test:ui` start the app out of `out/`; `test:pack` drives `release/`. Running any of them without a
+  fresh build silently tests code that is no longer in the tree **and reports a confident pass for
+  it** — three times on 2026-08-27. `checkBuildIsCurrent()` and the pack suite's asar check refuse
+  instead. ⚠️ When you add a guard like that, watch it go red before you trust it green.
+- **`npm run pack` packages into `release/suite/`, not `release/`, so it cannot fight a running app.**
+  Building into the directory somebody is *executing from* produced `EBUSY: rmdir release\win-unpacked`
+  three times on 2026-08-27 — orchestratord is **detached by design** and survives its window closing,
+  so it keeps holding the binary, which is the topology working rather than a leak. ⛔ "Close the app"
+  is not an acceptable answer: running the app while fixing the app is how this gets worked on. If
+  that EBUSY ever appears again, something is executing out of `release/suite/` — find out whose it is
+  before reaching for a kill, because a command line matching the packaged binary matches the
+  operator's own app just as well as a test's.
 - **A quota sample is keyed on the vendor's fetch time, which does not move when you read it.**
   `sampledAt` is `cachedUsageUtilization.fetchedAtMs` — exactly right for staleness and fatal as an
   insert key, because re-reading an unchanged cache produces a row identical to the last one and

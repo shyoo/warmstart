@@ -62,7 +62,13 @@ import {
 } from './approvals.js'
 import { allAvailability } from './resources.js'
 import { activityFor } from './activity.js'
-import { completeTask, continueTask, deliverToLiveSession, tick } from './scheduler.js'
+import {
+  completeTask,
+  continueTask,
+  deliverToLiveSession,
+  resolveTask,
+  tick
+} from './scheduler.js'
 import { controllerReport, drainConsults, enqueueConsult } from './controller.js'
 import { gateQuestion, riskOf } from './judgment.js'
 import { chatHistory, resetChat, sendChat } from './chat.js'
@@ -102,7 +108,10 @@ function admitAgentTask(taskId: string): void {
   if (risk.gate === 'human') {
     addMessage(task.id, 'system', `Held for you: ${risk.why}.`)
     updateTask(task.id, { assigneeHint: 'human' })
-    setStatus(task.id, 'awaiting_human', { assignee: 'human' })
+    setStatus(task.id, 'awaiting_human', {
+      assignee: 'human',
+      holdReason: `an agent filed this and it needs your decision: ${risk.why}`
+    })
     return
   }
 
@@ -314,6 +323,7 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
         requestedBy: 'human'
       }),
     'task.resume': (p) => resumeTask(p.id),
+    'task.resolve': (p) => resolveTask(p.id, p.note),
     'task.deleteCheck': (p) => deleteBlockers(p.id),
     // ⛔ Human-only. There is deliberately no worker-tier equivalent: an agent that can delete the
     // record of its own failed work is an agent that can hide it.

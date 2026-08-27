@@ -371,3 +371,156 @@ describe('continuing a task that has stopped', () => {
     expect(scheduler.continueTask('nope')).toBe('ignored')
   })
 })
+
+/**
+ * The decision `awaiting_human` is asking for.
+ *
+ * ⛔ It is the one status explicitly about the operator, and it was the only one they could not act
+ * on. Every other resting state has a button — Resume, Queue, Cancel, Delete — while the state
+ * meaning *a decision is wanted from you* offered nowhere to record the decision. Measured
+ * 2026-08-27: t3's work was done and committed by hand, landing declined it, and the task sat in
+ * `awaiting_human` next to a run marked `completed`. The only exits were to cancel work that had
+ * succeeded or to delete the record of it.
+ */
+describe('answering a task that is waiting on a person', () => {
+  it('records the answer as a judgement, not as a verification', () => {
+    const { task } = seedRunningTask()
+    tasks.setStatus(task.id, 'awaiting_human', { assignee: 'human' })
+    scheduler.resolveTask(task.id)
+    expect(tasks.getTask(task.id)?.status).toBe('completed')
+    // ⚠️ `task_complete` stays the only signal that an *agent* finished. This is the separate and
+    // equally legitimate signal that a person is satisfied, and it says so in the thread.
+    const said = tasks.messagesFor(task.id).map((m) => m.text).join('\n')
+    expect(said).toContain('Marked done by you')
+    expect(said).toContain('Nothing here verified the work')
+  })
+
+  it('keeps a note when one is given, because "why" outlives the click', () => {
+    const { task } = seedRunningTask()
+    tasks.setStatus(task.id, 'awaiting_human', { assignee: 'human' })
+    scheduler.resolveTask(task.id, 'committed by hand, landing was right to refuse')
+    expect(tasks.messagesFor(task.id).map((m) => m.text).join('\n')).toContain('landing was right')
+  })
+
+  it('unblocks whatever was waiting on it', () => {
+    // ⛔ Exactly as an agent completion does. Without this, every blocked child of a hand-resolved
+    // task waits on a parent that will never move again.
+    const { task } = seedRunningTask()
+    const child = tasks.createTask({
+      title: 'downstream',
+      createdBy: { kind: 'human' },
+      dependsOn: [task.id]
+    })
+    expect(tasks.getTask(child.id)?.status).toBe('blocked')
+
+    tasks.setStatus(task.id, 'awaiting_human', { assignee: 'human' })
+    scheduler.resolveTask(task.id)
+    expect(tasks.getTask(child.id)?.status).toBe('ready')
+  })
+
+  it('is idempotent, so a double click is not a second decision', () => {
+    const { task } = seedRunningTask()
+    tasks.setStatus(task.id, 'awaiting_human', { assignee: 'human' })
+    scheduler.resolveTask(task.id)
+    const before = tasks.messagesFor(task.id).length
+    scheduler.resolveTask(task.id)
+    expect(tasks.messagesFor(task.id).length).toBe(before)
+  })
+})
+
+describe('why a task is waiting', () => {
+  it('is written onto the task, not only into the thread', () => {
+    // ⛔ An `awaiting_human` task with no stated reason says a decision is wanted without saying what
+    // about — and sits beside a run marked `completed`, which reads as a contradiction until
+    // somebody opens the thread and finds the sentence.
+    const { task } = seedRunningTask()
+    tasks.setStatus(task.id, 'awaiting_human', {
+      assignee: 'human',
+      holdReason: 'the work is done but did not land: the workspace has uncommitted changes'
+    })
+    expect(tasks.getTask(task.id)?.holdReason).toContain('did not land')
+  })
+
+  it('moves with the status and never outlives it', () => {
+    // ⚠️ A reason belongs to the state that produced it. One left behind by the next transition is
+    // read as current, which is worse than having none.
+    const { task } = seedRunningTask()
+    tasks.setStatus(task.id, 'awaiting_human', { assignee: 'human', holdReason: 'needs you' })
+    tasks.setStatus(task.id, 'running', { assignee: 'w' })
+    expect(tasks.getTask(task.id)?.holdReason).toBeNull()
+  })
+})
+
+/**
+ * The DAG's only moving part.
+ *
+ * ⛔ Found 2026-08-27 by a test written for something else. The scheduler carried a private copy of
+ * `admitDependents` that re-set each dependent to the status it already had — a no-op dressed as an
+ * admission — so **a completed task never unblocked anything and the DAG never advanced past its
+ * first edge**. Nothing else re-admits a `blocked` task; `admitScheduled()` looks only at `scheduled`
+ * ones. The correct implementation was in `tasks.ts`, exported, and called by nobody.
+ *
+ * ⚠️ These assert the *edge*, on every path that can close a task, because one working path and one
+ * broken one is exactly the state this was in.
+ */
+describe('a dependency edge, once its parent is done', () => {
+  const chain = () => {
+    const parent = tasks.createTask({ title: 'parent', createdBy: { kind: 'human' } })
+    const child = tasks.createTask({
+      title: 'child',
+      createdBy: { kind: 'human' },
+      dependsOn: [parent.id]
+    })
+    expect(tasks.getTask(child.id)?.status).toBe('blocked')
+    return { parent, child }
+  }
+
+  it('releases when the parent completes', () => {
+    const { parent, child } = chain()
+    tasks.setStatus(parent.id, 'completed')
+    tasks.admitDependents(parent.id)
+    expect(tasks.getTask(child.id)?.status).toBe('ready')
+  })
+
+  it('stays shut when the parent stopped without succeeding', () => {
+    // ⚠️ `admit` asks for `completed` specifically, and that is the point: a failed or cancelled
+    // parent has not produced whatever the child was waiting for.
+    for (const ending of ['failed', 'cancelled', 'awaiting_human'] as const) {
+      const { parent, child } = chain()
+      tasks.setStatus(parent.id, ending)
+      tasks.admitDependents(parent.id)
+      expect(tasks.getTask(child.id)?.status, ending).toBe('blocked')
+    }
+  })
+
+  it('waits for every parent, not just the one that finished', () => {
+    const first = tasks.createTask({ title: 'first', createdBy: { kind: 'human' } })
+    const second = tasks.createTask({ title: 'second', createdBy: { kind: 'human' } })
+    const child = tasks.createTask({
+      title: 'both',
+      createdBy: { kind: 'human' },
+      dependsOn: [first.id, second.id]
+    })
+    tasks.setStatus(first.id, 'completed')
+    tasks.admitDependents(first.id)
+    expect(tasks.getTask(child.id)?.status).toBe('blocked')
+
+    tasks.setStatus(second.id, 'completed')
+    tasks.admitDependents(second.id)
+    expect(tasks.getTask(child.id)?.status).toBe('ready')
+  })
+
+  it('respects a start time the child is still waiting for', () => {
+    const parent = tasks.createTask({ title: 'p', createdBy: { kind: 'human' } })
+    const child = tasks.createTask({
+      title: 'later',
+      createdBy: { kind: 'human' },
+      dependsOn: [parent.id],
+      notBefore: Date.now() + 60 * 60 * 1000
+    })
+    tasks.setStatus(parent.id, 'completed')
+    tasks.admitDependents(parent.id)
+    // ⛔ `scheduled`, not `ready`. Unblocking is not the same as being due.
+    expect(tasks.getTask(child.id)?.status).toBe('scheduled')
+  })
+})

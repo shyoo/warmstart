@@ -171,8 +171,13 @@ export interface Task {
   cancel: CancelRecord | null
   handoffNote: string | null
   /**
-   * Why this task is not moving, in the scheduler's own words, refreshed every tick it is passed
-   * over.
+   * Why this task is not moving, and whether anybody is expected to do something about it.
+   *
+   * Two callers, one question. The **scheduler** writes it every tick it passes a `ready` task over;
+   * anything that hands a task to a **person** writes the reason it did. ⛔ An `awaiting_human` task
+   * with no stated reason is the least actionable thing this app can show — it says a decision is
+   * wanted without saying what about, and it sits next to a run marked `completed`, which reads as a
+   * contradiction until somebody opens the thread and finds the sentence.
    *
    * ⛔ `ready` is not a state an operator can act on. It is the scheduler's word for "eligible", and
    * a task can sit in it for hours because every worker is at capacity, because a routing question is
@@ -180,12 +185,12 @@ export interface Task {
    * three different answers, rendered identically as a task that appears to be doing nothing while
    * the person who filed it wonders which button they forgot to press.
    *
-   * The scheduler already computes this reason on every tick and used to fold it into a log line. It
+   * The scheduler already computes its half on every tick and used to fold it into a log line. It
    * costs nothing to keep - the tick is arithmetic - and it is written only when it *changes*, so a
    * held task is not a write every ten seconds.
    *
-   * Cleared the moment the task moves. A stale reason is worse than none, because it is read as
-   * current.
+   * ⚠️ Moves atomically with the status and is cleared by any transition that does not supply one. A
+   * stale reason is worse than none, because it is read as current.
    */
   holdReason: string | null
   branch: string | null

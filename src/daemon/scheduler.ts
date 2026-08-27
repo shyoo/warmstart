@@ -5,6 +5,7 @@ import { lastQuota, refreshUsage } from './quota.js'
 import { listWorkers, recordDispatchFailure } from './workers.js'
 import { getProject, policyFor, reloadProject } from './projects.js'
 import {
+  admitDependents,
   admitScheduled,
   addMessage,
   finishRun,
@@ -14,6 +15,7 @@ import {
   messagesFor,
   runForSession,
   requireRun,
+  requireTask,
   runsFor,
   schedulingOrder,
   setHoldReason,
@@ -961,6 +963,45 @@ export function deliverToLiveSession(taskId: string, messageId: number, text: st
 }
 
 /**
+ * A person judges a task finished.
+ *
+ * ⛔ **`awaiting_human` is the one status that is explicitly about the operator, and it was the only
+ * one they could not act on.** Every other resting state has a button — Resume, Queue, Cancel,
+ * Delete — while the state that means *a decision is wanted from you* offered nowhere to record the
+ * decision. So a task whose work was done but had not landed automatically sat there indefinitely,
+ * next to a run marked `completed`, and the only ways out were to cancel work that had succeeded or
+ * to delete the record of it.
+ *
+ * ⚠️ This is a **judgment**, not a claim that the machine verified anything, and it is written down
+ * as such. `task_complete` remains the only signal that an *agent* finished; this is the separate
+ * and equally legitimate signal that a *person* is satisfied.
+ *
+ * ⛔ Dependents are admitted, exactly as they are on an agent completion. Forgetting that would leave
+ * every blocked child of a hand-resolved task waiting on a parent that will never move again.
+ */
+export function resolveTask(taskId: string, note?: string): Task {
+  const task = requireTask(taskId)
+  if (task.status === 'completed') return task
+
+  addMessage(
+    task.id,
+    'system',
+    note?.trim()
+      ? `Marked done by you: ${note.trim()}`
+      : 'Marked done by you. ⚠️ Nothing here verified the work — this records your judgement, not a check.'
+  )
+  setStatus(task.id, 'completed', { assignee: 'human' })
+
+  // The session was being kept warm for a reply that is now not coming. Holding it any longer costs
+  // this worker its only work slot for a conversation that is over.
+  const session = sessionOf(task.id)
+  if (session) closeSession(session.id)
+
+  admitDependents(task.id)
+  return requireTask(task.id)
+}
+
+/**
  * States a human reply can wake work back up from.
  *
  * ⛔ Not `draft` — a draft is deliberately un-queued and promoting it on a comment would dispatch
@@ -1051,7 +1092,10 @@ export async function completeTask(sessionId: string, summary: string): Promise<
     if (result.ok) setStatus(task.id, 'completed')
   } else if (task.verification === 'required') {
     addMessage(task.id, 'system', 'Finished, and this task asked for human verification.')
-    setStatus(task.id, 'awaiting_human', { assignee: 'human' })
+    setStatus(task.id, 'awaiting_human', {
+      assignee: 'human',
+      holdReason: 'the work is finished and you asked to check it before it lands'
+    })
   } else {
     setStatus(task.id, 'completed')
   }
@@ -1071,18 +1115,7 @@ export async function completeTask(sessionId: string, summary: string): Promise<
     closeSession(sessionId)
   }
   await releaseFor(run.id, task.id, project?.id ?? null)
-  admitDependentsOf(task.id)
-}
-
-function admitDependentsOf(taskId: string): void {
-  // Imported lazily through the tasks module to keep the dependency direction one-way.
-  const dependents = db()
-    .prepare('select task_id from task_deps where depends_on = ?')
-    .all(taskId) as Array<{ task_id: string }>
-  for (const d of dependents) {
-    const dependent = getTask(d.task_id)
-    if (dependent) setStatus(d.task_id, dependent.status)
-  }
+  admitDependents(task.id)
 }
 
 /**
@@ -1172,7 +1205,7 @@ async function endFailedRun(session: Session, run: Run, why: string): Promise<vo
       addMessage(task.id, 'system', why)
       // ⛔ The deterministic outcome happens first and unconditionally, so the task is already in a
       // safe and visible state whether or not a controller ever answers.
-      setStatus(task.id, 'awaiting_human', { assignee: 'human' })
+      setStatus(task.id, 'awaiting_human', { assignee: 'human', holdReason: why })
       maybeTriage(task.id)
     }
   }

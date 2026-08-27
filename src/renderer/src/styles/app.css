@@ -1115,6 +1115,38 @@ select:focus-visible,
   overflow-wrap: anywhere;
 }
 
+/* ---- the decision a person owes ---------------------------------------- */
+
+/* ⛔ Framed and set apart, because it is the only part of this pane that is asking for something
+   rather than reporting it. */
+.decide {
+  border: 1px solid var(--state-human);
+  border-radius: var(--radius);
+  padding: var(--sp-2) var(--sp-3);
+  margin: var(--sp-3) 0;
+}
+
+.decide-head {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--state-human);
+  margin-bottom: var(--sp-2);
+}
+
+.decide-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+
+.decide-hint {
+  margin: var(--sp-2) 0 0;
+  font-size: var(--text-meta);
+  color: var(--color-text-faint);
+  line-height: var(--leading-body);
+}
+
 .side-label {
   color: var(--color-text-faint);
   text-transform: uppercase;

@@ -92,6 +92,11 @@ like this* — re-enters admission), or `cancelled` (*not at all*, terminal but 
 nothing. Delete is a separate, human-only, soft-by-default operation, and it never removes runs —
 they are the estimator's training data and the record of real spend.
 
+**Resolve** — *a person recording that a task is finished.* ⛔ A judgement, not a verification, and
+written into the thread as one; `task_complete` stays the only signal that an **agent** finished. It
+is the answer `awaiting_human` is asking for, and admits dependents exactly as an agent completion
+does.
+
 **`awaiting_human`** — the task needs a person. Its question lands in **My Queue**. The session
 holding the context is a prime candidate for a keepalive, because human latency routinely straddles
 the one-hour cache TTL — and a reply into a warm session costs `0.1·C` against `2.0·C` into a dead

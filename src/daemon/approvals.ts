@@ -374,7 +374,10 @@ export function escalateStale(now = Date.now()): number {
         `Waiting on a decision: ${approval.summary}\n` +
           `(unanswered for ${Math.round((now - approval.askedAt) / 60000)} minutes)`
       )
-      setStatus(approval.taskId, 'awaiting_human', { assignee: 'human' })
+      setStatus(approval.taskId, 'awaiting_human', {
+        assignee: 'human',
+        holdReason: `an approval went unanswered: ${approval.summary}`
+      })
     }
     log.warn(`approval ${approval.id.slice(0, 8)} escalated to awaiting_human: ${approval.summary}`)
     emit({ type: 'approval.opened', approval: requireApproval(approval.id) })

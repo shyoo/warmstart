@@ -3,7 +3,16 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createRequire } from 'node:module'
-import { REPO, check, electronBinary, killTree, section, summary, wait } from './lib/harness.mjs'
+import {
+  REPO,
+  check,
+  checkBuildIsCurrent,
+  electronBinary,
+  killTree,
+  section,
+  summary,
+  wait
+} from './lib/harness.mjs'
 
 const require = createRequire(join(REPO, 'package.json'))
 const WebSocket = require('ws')
@@ -70,7 +79,9 @@ try {
     return res.result?.result?.value
   }
 
+  // ⛔ Before anything else: this suite drives `out/` and does not build it.
   section('shell')
+  checkBuildIsCurrent()
   await waitFor(() => evaluate('!!document.querySelector(".statusbar")'), 'the shell to render')
   // ⚠️ Polled, not read once. The shell renders before the daemon has finished starting, so a bare
   // read here asserts "the daemon connected *within the time this machine took to paint*" - true on

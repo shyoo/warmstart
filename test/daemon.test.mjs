@@ -10,6 +10,7 @@ import {
   PROBE_ID,
   REPO,
   check,
+  checkBuildIsCurrent,
   destroyProject,
   detectClis,
   electronBinary,
@@ -42,7 +43,9 @@ try {
   await daemon.start()
 
   // ---------------------------------------------------------------- transport and auth
+  // ⛔ Before anything else: this suite drives `out/` and does not build it.
   section('daemon')
+  checkBuildIsCurrent()
   const unauth = await fetch(`http://127.0.0.1:${daemon.endpoint.port}/health`)
   check('an unauthenticated request is refused', unauth.status === 401)
   const badToken = await fetch(`http://127.0.0.1:${daemon.endpoint.port}/health`, {
@@ -351,6 +354,39 @@ try {
     thread.messages.some((m) => /same thread, a new run/.test(m.text))
   )
   await daemon.rpc('task.cancel', { id: finished.id, restingState: 'cancelled' })
+
+  // ---------------------------------------------------------------- the decision it is asking for
+  //
+  // ⛔ `awaiting_human` is the one status explicitly about the operator, and it was the only one they
+  // could not act on. Measured 2026-08-27: t3's work was done and committed by hand, landing declined
+  // it, and the task sat there next to a run marked `completed` — the only exits being to cancel work
+  // that had succeeded or delete the record of it.
+  section('answering a task that waits on a person')
+  const waiting = await daemon.rpc('task.create', { title: 'needs a decision', projectId: added.id })
+  const blocked = await daemon.rpc('task.create', {
+    title: 'waits on the decision',
+    projectId: added.id,
+    dependsOn: [waiting.id]
+  })
+  check('a dependent starts blocked', blocked.status === 'blocked')
+
+  const resolved = await daemon.rpc('task.resolve', { id: waiting.id, note: 'checked it myself' })
+  check('a person can record that they are satisfied', resolved.status === 'completed')
+  const judged = await daemon.rpc('task.get', { id: waiting.id })
+  check(
+    'and it is written down as a judgement, not as a verification',
+    judged.messages.some((m) => /Marked done by you: checked it myself/.test(m.text)),
+    'task_complete stays the only signal that an agent finished'
+  )
+  // ⛔ The DAG's only moving part. The scheduler carried a private copy of admitDependents that
+  // re-set each dependent to the status it already had, so no completed task ever unblocked anything.
+  const released = (await daemon.rpc('task.list', {})).find((t) => t.id === blocked.id)
+  check(
+    'finishing a task releases what was waiting on it',
+    released?.status === 'ready',
+    released?.status
+  )
+  await daemon.rpc('task.cancel', { id: blocked.id, restingState: 'cancelled' })
 
   // ---------------------------------------------------------------- cancel is not delete
   section('cancel and delete')

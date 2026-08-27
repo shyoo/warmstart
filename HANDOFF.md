@@ -9,7 +9,7 @@ if you add a line, find the one it obsoletes and cut it in the same edit. Finish
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
 **Baseline (2026-08-27, measured on this machine):** `npm run typecheck` clean · `npm run lint` clean ·
-`npm run build` clean · `npm test` 209/209 · `npm run test:daemon` 105/105 · `npm run test:ui` 36/36 ·
+`npm run build` clean · `npm test` 219/219 · `npm run test:daemon` 110/110 · `npm run test:ui` 37/37 ·
 `npm run test:pack` 18/18 · L4 (opt-in) landed a real agent commit on origin/main. Electron 44.0.0,
 electron-builder 26.15.3, 0 npm vulnerabilities. CLIs here: claude 2.1.247 · agy 1.1.21 · codex 0.149.1.
 
@@ -103,28 +103,31 @@ docs/                  cost-model.md, glossary.md, adapters.md - maintained; rea
   Signing in writes neither `hasCompletedOnboarding` nor folder trust; print mode skips both, so
   scheduled work runs while a TUI - and therefore `/usage`, and therefore a cost baseline - cannot.
   `Finish setup` opens that terminal.
-- ⭐ **A worker is held out of dispatch by evidence.** A run producing **no metered turn** is charged
-  to the account, not the task; only **Recheck** or a real turn lifts it. `deadOnArrival()`,
-  `onStreamResult()`; rule in AGENTS.md, cases in `runfailure.test.ts`.
-- ⭐ **A run carries a quota reading either side of it**, refreshed before dispatch and after it ends.
-  ⛔ Never merged with the transcript token count: their difference is R1's instrument.
-- ⚠️ **Sessions are reused within a task, never yet across tasks in a project.** The detail pane says
-  which happened (`reused, context kept` / `new session`), so the claim is checkable. Closing the
-  second half is item 4 in *Next* and is still the biggest remaining cost win.
-- ⭐ **A reply to a stopped task continues it**, as of 2026-08-27: same task, same thread, a new
-  **run**, re-queued through the scheduler so it is gated, metered and landed like any other. It was
-  being delivered into the warm session and producing nothing observable. `continueTask()`.
-- ⚠️ **`npm run pack` fails with `EBUSY: rmdir release\win-unpacked` while the packaged app has ever
-  been opened** — orchestratord is detached by design and survives the window closing, holding the
-  binary. Not a bug; stop that daemon by the pid in its own `orchestratord.json`. `test:pack` now
-  **refuses** rather than passing against whatever package happens to be on disk (it did that twice
-  on 2026-08-27, both times reporting a confident 17/17 for a tree it had never seen).
-- ⚠️ **Two M3 paths are unverified and marked in the code:** whether `/compact` is honoured as a user
-  message on the `stream` transport (**R6**), and keepalive *execution*, which needs a warm session
-  and an idle hour. The arithmetic is unit-tested; the firing is not.
-- ⚠️ **No consult has ever been answered by a real model.** Every L1 check runs with nobody able to
-  answer, which proves the fallbacks and leaves the answer path exercised only against synthetic
-  replies in L0. **R8**.
+- ⭐ **A worker is held out of dispatch by evidence** — a run producing no metered turn is charged to
+  the account, not the task. **A run carries a quota reading either side of it**, never merged with
+  the transcript token count: their difference is R1's instrument. Rules in AGENTS.md, cases in
+  `runfailure.test.ts`.
+- ⚠️ **Sessions are reused within a task, never across tasks in a project.** The detail pane says
+  which happened, so the claim is checkable. Closing the second half is item 4 in *Next*.
+- ⭐ **A reply to a stopped task continues it**: same thread, a new **run**, re-queued through the
+  scheduler so it is gated, metered and landed like any other. `continueTask()`.
+- ⭐ **`awaiting_human` is answerable.** It states what it wants (on the task, not only in the thread)
+  and offers **Mark done** — `resolveTask()`, a person's judgement, recorded as one. Before this it
+  was the only resting state with nothing to press.
+- ⛔ **A completed task never unblocked its dependents until 2026-08-27.** The scheduler carried a
+  private copy of `admitDependents` that re-set each dependent to the status it already had, so the
+  DAG never advanced past its first edge. Nothing else re-admits a `blocked` task. Found by a test
+  written for something else; the correct implementation was exported and called by nobody.
+- ⭐ **`npm run pack` packages into `release/suite/`**, so the packaged suite runs with the app open —
+  building into the directory somebody executes from is what caused `EBUSY: rmdir release\win-unpacked`,
+  and closing the app is not an acceptable answer. ⛔ **Every suite below L1 drives a build product and
+  none of them builds one**, so `checkBuildIsCurrent()` (daemon, ui) and the asar check (pack) refuse
+  when the artefact predates `src/`. Three green-and-wrong runs on 2026-08-27 are why.
+- ⚠️ **Two M3 paths are unverified and marked in the code:** whether `/compact` is honoured on the
+  `stream` transport (**R6**), and keepalive *execution*, which needs a warm session and an idle
+  hour. The arithmetic is unit-tested; the firing is not.
+- ⚠️ **No consult has ever been answered by a real model.** L1 runs with nobody able to answer, which
+  proves the fallbacks and leaves the answer path on synthetic replies only. **R8**.
 - ⛔ **Anything needing a real agent CLI is unproven off Windows.** CI proved three platforms build,
   start, package and schedule; the runners have no CLI and cannot sign in to one, so every adapter
   capability in `docs/adapters.md` was measured on Windows only.

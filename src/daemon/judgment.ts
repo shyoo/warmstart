@@ -381,7 +381,10 @@ function applyTriage(task: Task, answer: Record<string, unknown>): ApplyResult {
   switch (decision.action) {
     case 'human':
       addMessage(task.id, 'system', `Controller: this needs a person.${why}`)
-      setStatus(task.id, 'awaiting_human', { assignee: 'human' })
+      setStatus(task.id, 'awaiting_human', {
+        assignee: 'human',
+        holdReason: `the controller decided this needs a person.${why}`
+      })
       return good('handed to a person')
 
     case 'retry':
@@ -515,7 +518,10 @@ function applyGate(task: Task, answer: Record<string, unknown>): ApplyResult {
 
     case 'human':
       addMessage(task.id, 'system', `Controller passed this to you.${why}`)
-      setStatus(task.id, 'awaiting_human', { assignee: 'human' })
+      setStatus(task.id, 'awaiting_human', {
+        assignee: 'human',
+        holdReason: `the controller passed this to you.${why}`
+      })
       return good(`t${task.seq} handed to a person`)
   }
 }
@@ -617,7 +623,10 @@ export function fallbackFor(consult: Consult): string {
           'This needs decomposing and no controller was available to do it. Break it into drafts by ' +
             'hand, or designate a controller account and requeue it.'
         )
-        setStatus(task.id, 'awaiting_human', { assignee: 'human' })
+        setStatus(task.id, 'awaiting_human', {
+          assignee: 'human',
+          holdReason: 'this needs breaking into drafts and no controller was available to do it'
+        })
         return 'left for a person to decompose'
 
       case 'triage':
@@ -628,7 +637,10 @@ export function fallbackFor(consult: Consult): string {
           'system',
           'This has failed more than once and no controller was available to diagnose it.'
         )
-        setStatus(task.id, 'awaiting_human', { assignee: 'human' })
+        setStatus(task.id, 'awaiting_human', {
+          assignee: 'human',
+          holdReason: 'this has failed more than once and no controller was available to diagnose it'
+        })
         return 'left for a person to triage'
 
       case 'gate':

@@ -412,7 +412,18 @@ export function admit(taskId: string): Task {
   return next === task.status ? task : setStatus(taskId, next)
 }
 
-/** Re-admit everything waiting on this task. Called whenever a task reaches a terminal state. */
+/**
+ * Re-admit everything waiting on this task. Called whenever a task reaches a terminal state.
+ *
+ * ⛔ `admit()`, which recomputes each dependent's status **from the world**. The scheduler carried a
+ * private copy of this for months that re-set each dependent to the status it already had — a no-op
+ * dressed as an admission — so a completed task never unblocked anything and the DAG never advanced
+ * past its first edge. Found 2026-08-27 by a test written for something else entirely. The correct
+ * implementation was here, exported, and called by nobody.
+ *
+ * ⚠️ Nothing else re-admits a `blocked` task: `admitScheduled()` only looks at `scheduled` ones. This
+ * is the single path, so a second copy of it is a second chance to get it wrong.
+ */
 export function admitDependents(taskId: string): void {
   for (const id of dependentsOf(taskId)) admit(id)
 }
@@ -437,10 +448,21 @@ export function setStatus(taskId: string, status: TaskStatus, extra: Partial<Tas
   db()
     .prepare(
       `update tasks set status = ?, assignee = ?, branch = coalesce(?, branch),
-                        handoff_note = coalesce(?, handoff_note), hold_reason = null, updated_at = ?
+                        handoff_note = coalesce(?, handoff_note), hold_reason = ?, updated_at = ?
         where id = ?`
     )
-    .run(status, assignee, extra.branch ?? null, extra.handoffNote ?? null, Date.now(), taskId)
+    .run(
+      status,
+      assignee,
+      extra.branch ?? null,
+      extra.handoffNote ?? null,
+      // ⛔ Set here or cleared here, never left over. A reason belongs to the state that produced it,
+      // so it moves atomically with the status: a caller that has one passes it, and every caller
+      // that does not clears whatever the last state was explaining.
+      extra.holdReason ?? null,
+      Date.now(),
+      taskId
+    )
   const task = requireTask(taskId)
   emit({ type: 'task.changed', task })
   return task

@@ -118,13 +118,24 @@ npm run test:ui
 ## 4. Build the release artifact
 
 ```bash
-npm run pack        # electron-builder --dir → release/win-unpacked
+npm run pack        # electron-builder --dir → release/suite/win-unpacked
 npm run test:pack   # the only suite that runs against a real package
 ```
 
 ⛔ **`test:pack` is not optional and nothing above covers it.** It is the only thing that catches a
 native module left inside the asar, an app that cannot start its own daemon, or a PTY that will not
 open — every one of which passes `test:ui` and fails on a user's machine.
+
+⭐ **It packages into `release/suite/`, so it does not fight an app you have open.** `release/` holds
+the installers and, on a developer's machine, whatever `win-unpacked` they keep running while working
+on it; building into the directory somebody is *executing from* is what produced
+`EBUSY: rmdir release\win-unpacked` three times on 2026-08-27. Running the app while fixing the app
+is the normal way to work, so the packaging moved instead. ⚠️ If you ever see that EBUSY again,
+something is executing out of `release/suite/` — do not reach for a kill until you know whose it is.
+
+⚠️ **Every suite below L1 drives a build product and none of them builds one.** `test:daemon` and
+`test:ui` start the app out of `out/`; `test:pack` drives the package. Each now refuses when the
+artefact predates `src/` — but the order above is still the order: build, then drive.
 
 Then the installer, when the user wants an artifact rather than a check:
 

@@ -299,6 +299,18 @@ export function Tasks({
                       Resume
                     </button>
                   )}
+                  {/* ⛔ On the row too. A task waiting on a person is the one thing an operator
+                      scans this table for, and needing to open it first to find any way to answer
+                      is what left t3 sitting in `awaiting_human` after its work was done. */}
+                  {task.status === 'awaiting_human' && (
+                    <button
+                      className="btn btn--ghost"
+                      title="Records that you are satisfied. Nothing is verified by this — it is your judgement."
+                      onClick={() => void act(() => rpc('task.resolve', { id: task.id }))}
+                    >
+                      Mark done
+                    </button>
+                  )}
                   {task.status === 'draft' && (
                     <button
                       className="btn btn--ghost"
@@ -372,6 +384,14 @@ function TaskDetail({
 }): React.JSX.Element {
   const { task, messages, runs, sessions } = detail
   const live = task.status === 'running' || task.status === 'assigned'
+  const resolve = async () => {
+    await rpc('task.resolve', { id: task.id })
+    await refresh()
+  }
+  const cancel = async () => {
+    await rpc('task.cancel', { id: task.id })
+    await refresh()
+  }
   const liveSession = sessions.find(
     (s) => s.id === runs[0]?.sessionId && s.state !== 'closed' && s.state !== 'failed'
   )
@@ -433,7 +453,43 @@ function TaskDetail({
               {IN_FLIGHT.has(task.status) && <Working />}
             </span>
           </Fact>
-          {task.holdReason && <Fact label="waiting on">{task.holdReason}</Fact>}
+          {task.holdReason && (
+            <Fact label={task.status === 'awaiting_human' ? 'wants' : 'waiting on'}>
+              {task.holdReason}
+            </Fact>
+          )}
+          {/*
+            ⛔ The one status that is explicitly about the operator was the only one with nothing to
+            press. Everything else at rest has Resume, Queue, Cancel or Delete; the state meaning "a
+            decision is wanted from you" offered nowhere to record the decision, so a task whose work
+            was done but had not landed sat there next to a run marked `completed` and the only exits
+            were to cancel work that had succeeded or delete the record of it.
+          */}
+          {task.status === 'awaiting_human' && (
+            <div className="decide">
+              <div className="decide-head">your call</div>
+              <div className="decide-actions">
+                <button
+                  className="btn btn--primary"
+                  title="Records that you are satisfied. ⚠️ Nothing is verified by this — it is your judgement, and it is written into the thread as such."
+                  onClick={() => void resolve()}
+                >
+                  Mark done
+                </button>
+                <button
+                  className="btn btn--ghost"
+                  title="Stops here and rests the task. Destroys nothing."
+                  onClick={() => void cancel()}
+                >
+                  Stop here
+                </button>
+              </div>
+              <p className="decide-hint">
+                Or say what you want next in the box below — that continues this task as another run
+                on the same thread, on the session that still holds its context.
+              </p>
+            </div>
+          )}
           <Fact label="worker">{assigneeLabel(task, fleet)}</Fact>
 
           {/* ⭐ The question this whole cost model exists to answer, and the one the UI could not.
@@ -495,7 +551,15 @@ function TaskDetail({
 
           {runs.length > 0 && (
             <div className="side-runs">
-              <div className="side-label">runs</div>
+              {/* ⚠️ The label carries the distinction, because "completed" here beside
+                  "awaiting_human" above is the thing that reads as a contradiction. A run is one
+                  attempt; whether the *task* is done is a separate question. */}
+              <div
+                className="side-label"
+                title="One attempt each. A run finishing says the agent stopped cleanly — not that the task is done, which is what the status above answers."
+              >
+                runs · attempts, not outcomes
+              </div>
               {runs.map((run) => (
                 <RunRow key={run.id} run={run} fleet={fleet} now={now} />
               ))}

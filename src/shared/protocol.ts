@@ -587,6 +587,12 @@ export interface RpcMap {
     result: Task
   }
   'task.resume': { params: { id: string }; result: Task }
+  /**
+   * A person judging a task finished — the answer `awaiting_human` was asking for and had no way to
+   * take. ⚠️ Records a judgement, not a verification: `task_complete` remains the only signal that an
+   * *agent* finished.
+   */
+  'task.resolve': { params: { id: string; note?: string }; result: Task }
   'task.deleteCheck': { params: { id: string }; result: { ok: boolean; reasons: string[] } }
   'task.delete': { params: { id: string; hard?: boolean; force?: boolean }; result: Task }
   'task.restore': { params: { id: string }; result: Task }

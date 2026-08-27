@@ -1,6 +1,15 @@
 import { spawn } from 'node:child_process'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import {
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  existsSync,
+  mkdirSync,
+  statSync,
+  writeFileSync
+} from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
@@ -180,6 +189,58 @@ export async function detectClis(daemon) {
     has: (id) => byId.get(id)?.found === true,
     any: all.some((d) => d.found)
   }
+}
+
+/**
+ * Is `out/` the build of the source that is here now?
+ *
+ * ⛔ **Every suite below L1 drives a build product and none of them builds.** `test:daemon` and
+ * `test:ui` start the app out of `out/`, `test:pack` drives `release/` — so running any of them
+ * without a fresh `npm run build` silently tests code that is no longer in the tree, and reports a
+ * confident pass for it. That happened three times on 2026-08-27: twice on `release/` after
+ * `npm run pack` died with EBUSY, and once on `out/` after a one-line daemon fix. Each time the
+ * suite was green and wrong, which is worse than red.
+ *
+ * ⚠️ Compared against `src/`, never `out/` against itself. And "cannot tell" is kept separate from
+ * "stale": a missing `out/` is a different problem with a different fix, and accusing a good build of
+ * being old is how a guard gets switched off.
+ */
+export function checkBuildIsCurrent() {
+  const newest = (dir) => {
+    if (!existsSync(dir)) return null
+    let found = 0
+    const walk = (d, depth) => {
+      if (depth > 8) return
+      for (const name of readdirSync(d)) {
+        const full = join(d, name)
+        let stat
+        try {
+          stat = statSync(full)
+        } catch {
+          continue
+        }
+        if (stat.isDirectory()) walk(full, depth + 1)
+        else found = Math.max(found, stat.mtimeMs)
+      }
+    }
+    walk(dir, 0)
+    return found
+  }
+
+  const built = newest(join(REPO, 'out'))
+  const source = newest(join(REPO, 'src'))
+  if (built === null) {
+    return check('the build under test is current', false, 'no out/ — run: npm run build')
+  }
+  return check(
+    'the build under test is current',
+    built >= source,
+    built >= source
+      ? `built ${new Date(built).toISOString()}`
+      : `⛔ STALE: out/ was built ${new Date(built).toISOString()} but src/ changed ` +
+        `${new Date(source).toISOString()} — run \`npm run build\`. Everything below would be ` +
+        'testing code that is no longer in the tree.'
+  )
 }
 
 export function section(title) {

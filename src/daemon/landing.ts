@@ -400,7 +400,10 @@ export async function landTask(ctx: LandingContext): Promise<LandingResult> {
       `Not landed automatically: ${allowed.reason}. ` +
         (await whereTheWorkIs(ctx.workspacePath, ctx.branch))
     )
-    setStatus(ctx.task.id, 'awaiting_human', { assignee: 'human' })
+    setStatus(ctx.task.id, 'awaiting_human', {
+      assignee: 'human',
+      holdReason: `the work is done but did not land: ${allowed.reason}`
+    })
     return { ...fallback, ok: false, reason: allowed.reason }
   }
 
@@ -413,7 +416,10 @@ export async function landTask(ctx: LandingContext): Promise<LandingResult> {
         (await whereTheWorkIs(ctx.workspacePath, ctx.branch)) +
         (result.checkOutput ? `\n\n${result.checkOutput.slice(-2000)}` : '')
     )
-    setStatus(ctx.task.id, 'awaiting_human', { assignee: 'human' })
+    setStatus(ctx.task.id, 'awaiting_human', {
+      assignee: 'human',
+      holdReason: `landing failed: ${result.reason}`
+    })
   } else {
     addMessage(
       ctx.task.id,

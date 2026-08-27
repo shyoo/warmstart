@@ -28,7 +28,7 @@
     "test:ui": "node test/ui.test.mjs",
     "test:e2e": "node test/e2e.test.mjs",
     "test:all": "npm run test && npm run test:daemon && npm run test:ui",
-    "pack": "npm run build && electron-builder --dir",
+    "pack": "npm run build && electron-builder --dir -c.directories.output=release/suite",
     "dist": "npm run build && electron-builder",
     "dist:win": "npm run build && electron-builder --win",
     "dist:mac": "npm run build && electron-builder --mac",

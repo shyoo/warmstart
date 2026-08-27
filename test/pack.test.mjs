@@ -48,7 +48,20 @@ function icoLayers(path) {
  * milestone's honest state and is recorded in HANDOFF rather than papered over.
  */
 
-const OUT = join(REPO, 'release')
+/**
+ * Where `npm run pack` puts the package this suite drives.
+ *
+ * ⛔ **Deliberately not `release/`, and that is a workflow decision rather than a tidiness one.**
+ * `release/` holds the installers `npm run dist` builds and, on a developer's machine, the
+ * `win-unpacked` app they keep open while working on it. Packaging into the directory somebody is
+ * *executing from* is what produced `EBUSY: rmdir release\win-unpacked` three times on 2026-08-27 —
+ * and the answer cannot be "close the app", because running the app while fixing the app is the
+ * normal way to work on it.
+ *
+ * ⚠️ It costs a second copy of the unpacked app on disk (~250MB). That is cheap against the
+ * alternative, which was a packaged-app suite people learn to skip.
+ */
+const OUT = join(REPO, 'release', 'suite')
 // ⛔ electron-builder's `productName`, not the npm package name: it names the .app bundle and its
 // Resources directory on macOS.
 const PRODUCT = 'Multi Agent Controller'

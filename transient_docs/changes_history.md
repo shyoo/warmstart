@@ -468,3 +468,54 @@ the rebuild, which is the only way to know a guard works.
 
 Separately, the pack suite really did leak its *own* daemon on every pass, for the same detached
 reason, and now kills it by the pid published in its own endpoint file.
+
+## The status that asked a question and took no answer (2026-08-27)
+
+t3's continuation worked — the agent committed to main by hand and said so — and the task then sat in
+`awaiting_human` beside a run marked `completed`, which reads as a contradiction. Two things were
+wrong and a third fell out of testing them.
+
+- ⛔ **`awaiting_human` is the one status explicitly about the operator, and it was the only one they
+  could not act on.** Every other resting state has a button: Resume, Queue, Cancel, Delete. The state
+  meaning *a decision is wanted from you* offered nowhere to record the decision, so the only exits
+  from a task whose work had succeeded but not landed were to cancel it or delete the record of it.
+  `resolveTask()` is the answer, and it is written into the thread as a **judgement** — nothing
+  verified anything, a person was satisfied. `task_complete` remains the only signal that an *agent*
+  finished, and the two must not be conflated.
+
+- ⛔ **And it never said what it wanted.** Nine call sites moved a task to `awaiting_human`, each
+  having just written the reason into the thread and none of it onto the task. So the row said a
+  decision was wanted without saying what about. The reason now moves atomically with the status —
+  set by any transition that has one, cleared by any that does not, because a reason that outlives
+  the state it explains is read as current.
+
+- ⛔ **A completed task had never unblocked its dependents.** Found by a test written for
+  `resolveTask`, which expected a child to become `ready` and watched it stay `blocked`.
+  `admitDependents()` lives in tasks.ts, does the right thing — `admit()` each dependent, recomputing
+  from the world — and was **called by nobody**. The scheduler carried a private
+  `admitDependentsOf()` that called `setStatus(id, dependent.status)`: a no-op dressed as an
+  admission. Nothing else re-admits a `blocked` task, since `admitScheduled()` looks only at
+  `scheduled` ones. So the DAG — one of the headline features — never advanced past its first edge,
+  silently, on both the agent-completion path and every other. The duplicate is deleted.
+
+### Green and wrong, three times in one day
+
+`npm run pack` died with EBUSY twice and `test:pack` reported a confident 17/17 against a package from
+before half the work existed; then `test:daemon` passed against an `out/` that predated a one-line
+daemon fix, which is how the DAG bug briefly looked fixed when it was not. **Every suite below L1
+drives a build product and none of them builds one.**
+
+`checkBuildIsCurrent()` in the harness compares `out/` against `src/` for the daemon and ui suites,
+and the pack suite compares the asar. Both were verified by watching them go red against a stale
+artefact before trusting them green — which is the only way to know a guard works, and is now a rule.
+
+⚠️ The EBUSY itself is not a leak to fix: orchestratord is **detached by design** and survives its
+window closing, which is the entire premise of the topology. It holds the packaged binary — and the
+first three answers to that were all wrong, because they all ended in *stop the app*. Running the app
+while fixing the app is how this gets worked on, so the packaging moved instead: `npm run pack` now
+builds into `release/suite/`, which nothing executes from, and `release/` keeps the installers and
+whatever build the operator has open. Verified by packaging and driving the suite with the app
+running: 18/18, six of its processes alive throughout.
+
+⛔ The general shape is worth keeping: when a check fights the way somebody works, moving the check is
+usually cheaper than moving the person, and a check people learn to skip proves nothing at all.
