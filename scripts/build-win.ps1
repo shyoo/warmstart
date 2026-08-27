@@ -69,12 +69,13 @@
   Stop what this repo has running, build, then start what was just built. Implies -StopDaemon.
 
   ⭐ The inner loop, and the only option that guarantees the window in front of you is the binary
-  this run produced. ⛔ There are two packaged apps in the tree and only one is ever new:
-  `release\suite\win-unpacked\` is rewritten by the pack step every run, while
-  `release\win-unpacked\` moves only under -Installer. Clicking the second out of habit after a
-  build that did not pass -Installer runs a binary from an earlier day - which is indistinguishable
-  from a change that silently did not work. -Restart starts the right one and names it; the summary
-  flags the other as stale whether or not you asked for a restart.
+  this run produced.
+
+  ⚠️ There is now exactly **one** packaged app in the tree, `release\win-unpacked\`, and every
+  step here writes it. The second copy under release\suite\ is gone (2026-08-27): it existed so
+  packaging could not collide with an app being run from the repo, and the app to *use* is the one
+  the installer installs. ⛔ Which means running release\win-unpacked\ while building will block
+  the pack step - correctly. Install the app if you want one you can keep open.
 
   ⚠️ Nothing to start under -Quick, which bundles but packages nothing; it says so rather than
   starting yesterday's app.
@@ -326,7 +327,7 @@ $BUNDLE_OUT = @(
   'out/main/index.js', 'out/main/orchestratord.js', 'out/main/agentyard-mcp.js',
   'out/preload/index.cjs', 'out/renderer/index.html'
 )
-$PACKED_APP = 'release/suite/win-unpacked/Multi Agent Controller.exe'
+$PACKED_APP = 'release/win-unpacked/Multi Agent Controller.exe'
 
 # ================================================================ stopping what is running
 #
@@ -439,29 +440,26 @@ function Stop-RepoProcesses {
 <#
   Who is holding the directory electron-builder is about to delete?
 
-  ⛔ Ask about the directory that is actually being rewritten, and nothing more. This used to test
-  the whole of release\, which made running the app you had just installed from
-  release\win-unpacked\ block the pack step - a step that writes only to release\suite\ and could
-  never have collided with it. The over-broad guard turned "cannot run the app while building" into
-  a rule when the split into release\suite\ existed precisely to make it untrue. -Except carves out
-  a subdirectory electron-builder leaves alone, which is how the installer ignores release\suite\.
+  ⛔ Ask about the directory that is actually being rewritten, and nothing more - and say **whose**
+  the process is rather than assuming it is stale. Every step here writes release\, so a running
+  app from release\win-unpacked\ genuinely does block a build now: that is the cost of dropping
+  the second copy, and it is paid by installing the app rather than running it from the repo.
 
   ⛔ Reports PIDs; it does not kill anything unless you asked for that with -StopDaemon. Only you
   know whether that window matters.
 #>
-function Assert-OutputIsFree([string]$relative, [string[]]$Except = @()) {
+# ⚠️ -Except is gone with release\suite\: it existed to carve one subdirectory out of the guard,
+# and with a single output directory there is nothing to carve. A parameter no caller passes is a
+# claim that some caller might.
+function Assert-OutputIsFree([string]$relative) {
   $dir = Join-Path $repo $relative
   if (-not (Test-Path $dir)) { return }
-  $sep = [IO.Path]::DirectorySeparatorChar
-  $prefix = $dir + $sep
-  $spared = @($Except | ForEach-Object { (Join-Path $repo $_) + $sep })
+  $prefix = $dir + [IO.Path]::DirectorySeparatorChar
 
   $holders = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
       $path = $_.ExecutablePath
       if (-not $path) { return $false }
-      if (-not $path.StartsWith($prefix, 'OrdinalIgnoreCase')) { return $false }
-      foreach ($s in $spared) { if ($path.StartsWith($s, 'OrdinalIgnoreCase')) { return $false } }
-      return $true
+      return $path.StartsWith($prefix, 'OrdinalIgnoreCase')
     })
   if ($holders.Count -eq 0) { return }
 
@@ -567,15 +565,10 @@ if (-not $SkipTests) {
 
 Invoke-Step -Name 'pack' -Title 'Packaged app' -Inputs $PACK_IN -Outputs @($PACKED_APP) -Body {
   Assert-BundleIsCurrent
-  # Only release\suite\ - the app you are running from release\win-unpacked\ is none of this step's
-  # business, which is the whole point of the split.
-  Assert-OutputIsFree 'release/suite'
+  Assert-OutputIsFree 'release'
   # ⛔ electron-builder directly, not `npm run pack`, because that script re-runs `npm run build` -
   # the redundancy this cache exists to remove. Assert-BundleIsCurrent above is what replaces it.
-  # ⚠️ The output is release\suite\ and that is a workflow decision, not tidiness: building into the
-  # directory somebody is *executing from* is what produced `EBUSY: rmdir release\win-unpacked`
-  # three times on 2026-08-27.
-  Run "npx --no-install electron-builder --dir -c.directories.output=release/suite"
+  Run "npx --no-install electron-builder --dir"
 }
 
 if (-not $SkipTests) {
@@ -589,10 +582,7 @@ if (-not $SkipTests) {
 if ($Installer) {
   Invoke-Step -Name 'installer' -Title 'Installer' -Inputs $PACK_IN -Outputs @('release/*Setup*.exe') -Body {
     Assert-BundleIsCurrent
-    # ⚠️ This one really does rewrite release\win-unpacked\, so an app running from there does block
-    # it - but release\suite\ is a subdirectory electron-builder never touches, so a packaged app
-    # under test does not.
-    Assert-OutputIsFree 'release' -Except 'release/suite'
+    Assert-OutputIsFree 'release'
     Run "npx --no-install electron-builder --win"
   }
 }
@@ -624,38 +614,14 @@ Write-Host ""
 Write-Host "⚠️  Unsigned by design - SmartScreen will warn on the installer. That is the honest state" -ForegroundColor DarkGray
 Write-Host "    of a pre-alpha, not a build failure." -ForegroundColor DarkGray
 
-# ---------------------------------------------------------------- which binary is the new one
+# ---------------------------------------------------------------- one packaged app
 #
-# ⛔ There are two packaged apps in this tree and only one of them is ever the thing you just built.
-# `release\suite\win-unpacked\` is written by the pack step on every run; `release\win-unpacked\` is
-# written by `electron-builder --win`, so it moves **only** under -Installer. Clicking the second by
-# habit after a build that did not pass -Installer runs a binary from some earlier day, which looks
-# exactly like a change that did not take effect - and there is nothing on screen to say otherwise.
-# So the freshness of both is stated, every time, whether or not anything is about to be started.
-# ⚠️ Not `$fresh`. PowerShell matches variable names case-insensitively, so `$fresh = <a path>`
-# silently assigns to the `-Fresh` switch parameter and fails at the point of use with a cast error
-# about a value nobody wrote. Named for what they are instead.
-$newApp = if ($Installer) { Join-Path $repo 'release\win-unpacked\Multi Agent Controller.exe' } else { $packed }
-$oldApp = if ($Installer) { $packed } else { Join-Path $repo 'release\win-unpacked\Multi Agent Controller.exe' }
-
-$bundleAt = (Get-ChildItem -LiteralPath (Join-Path $repo 'out') -Recurse -File -ErrorAction SilentlyContinue |
-  Measure-Object -Property LastWriteTimeUtc -Maximum).Maximum
-$oldAppStale = (Test-Path $oldApp) -and $bundleAt -and (Get-Item $oldApp).LastWriteTimeUtc -lt $bundleAt
-
-if ($oldAppStale) {
-  Write-Host ""
-  Write-Host "⚠️  STALE, and it is the one people click by habit:" -ForegroundColor Yellow
-  Write-Host ("    {0}" -f $oldApp) -ForegroundColor Yellow
-  Write-Host ("    predates this bundle ({0} vs {1}). It is not what you just built." -f `
-      (Get-Item $oldApp).LastWriteTime, $bundleAt.ToLocalTime()) -ForegroundColor Yellow
-  $why = if ($Installer) {
-    "    Only the pack step writes release\suite\ - this run built the installer copy."
-  }
-  else {
-    "    Only -Installer rewrites release\win-unpacked\ - this run built the suite copy."
-  }
-  Write-Host $why -ForegroundColor DarkGray
-}
+# ⚠️ There used to be two, and a block here whose whole job was to say which of them was stale.
+# `release\suite\win-unpacked\` is gone as of 2026-08-27, so the question it answered no longer
+# exists: every step writes `release\win-unpacked\` and it is always the thing this run produced.
+# ⛔ If a second copy ever comes back, this warning comes back with it - a tree with two identical
+# executables and no way to tell them apart cost somebody 98 minutes of debugging a change that
+# had in fact taken effect.
 
 if ($Restart -and $Quick) {
   # ⚠️ -Quick packages nothing, so there is no new binary to start. Starting the old one would be

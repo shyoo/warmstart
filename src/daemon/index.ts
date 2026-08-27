@@ -22,6 +22,7 @@ import { recordRateLimit } from './quota.js'
 import { TranscriptTailer, creditStreamTurn, recordCompaction, recordTurn } from './transcript.js'
 import { log, onLog } from './log.js'
 import { setEventSink } from './events.js'
+import { onShutdownRequest } from './lifecycle.js'
 import { noteActivity } from './activity.js'
 import { paths } from './paths.js'
 
@@ -168,6 +169,11 @@ async function main(): Promise<void> {
     // Never hang a shutdown on a socket that will not close.
     setTimeout(() => process.exit(0), 4000).unref()
   }
+
+  // ⛔ The one way anything asks this process to stop other than a signal. The app uses it when
+  // the operator has turned the tray off, so that closing the window really does leave nothing
+  // running - see AGENTS.md. No pid is read and nothing is killed from outside.
+  onShutdownRequest(shutdown)
 
   process.on('SIGINT', () => shutdown('SIGINT'))
   process.on('SIGTERM', () => shutdown('SIGTERM'))

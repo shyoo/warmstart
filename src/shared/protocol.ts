@@ -596,6 +596,18 @@ export interface RpcMap {
   'worker.probe': { params: { id: string }; result: QuotaSnapshot }
 
   'costmodel.list': { params: void; result: CostModelSummary[] }
+  /**
+   * Ask orchestratord to wind down and exit.
+   *
+   * ⛔ **This ends every live session**, which means every running agent. The daemon exists so
+   * that closing a window stops nothing; asking it to stop is therefore an explicit act with a
+   * cost, and the caller is the one that has to be sure - see the app's quit path, which asks a
+   * person first whenever any work is in flight.
+   *
+   * ⚠️ `liveSessions` is counted **before** anything is stopped, so a caller that wants to say
+   * what it ended can. `stopping: false` means something was already winding it down.
+   */
+  'daemon.shutdown': { params: void; result: { stopping: boolean; liveSessions: number } }
   'doctor.run': { params: void; result: DoctorReport }
 
   'session.list': { params: void; result: Session[] }

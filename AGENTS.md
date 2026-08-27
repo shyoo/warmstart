@@ -79,6 +79,14 @@ These are not preferences; breaking one breaks the product.
 - ⛔ **Nothing about one machine may be hard-coded.** No absolute path from your own disk, no account
   directory names, no assumption that any CLI is installed. Everything is discovered or configured.
   The app must open on a clean profile with zero workers, say so, and offer the wizard.
+- ⛔ **The daemon is *asked* to stop, never killed.** `daemon.shutdown` makes orchestratord run its
+  own wind-down - loops, tailers, sessions, lock, endpoint file, database - and the app's quit path
+  uses it when the tray is switched off. Reading `orchestratord.json` for a pid and killing it would
+  strand a lock file and a half-written database even if the pid were trustworthy, which it is not.
+  ⚠️ **Shutting it down ends every live session**, so anything that asks must ask a person first when
+  work is in flight. The tray switch lives in main's own `ui-settings.json`, not in the daemon's
+  settings table: main has to be able to read it when the daemon is *not answering*, which is when
+  it matters.
 - ⛔ **Never kill a process by image name.** Not in code, not in a shell, not "just this once" in a
   test. `taskkill /IM electron.exe` and `pkill -f node` take out the user's editor, their other agent
   windows, and anything else that happens to share a binary. Multi Agent Controller kills **only PIDs it recorded
@@ -256,18 +264,17 @@ costmodels/             versioned pricing data
   fresh build silently tests code that is no longer in the tree **and reports a confident pass for
   it** — three times on 2026-08-27. `checkBuildIsCurrent()` and the pack suite's asar check refuse
   instead. ⚠️ When you add a guard like that, watch it go red before you trust it green.
-- **`npm run pack` packages into `release/suite/`, not `release/`, so it cannot fight a running app —
-  which means `release\suite\` is the build's, and a person runs `release\win-unpacked\`.** ⚠️ Told
-  only which copy was *newer*, the operator ran the suite one on 2026-08-27 and the next pack died
-  with `EPERM: unlink dxil.dll`. Say which to run, not which is fresh.
-  ⛔ "Close the app" is not an acceptable answer: running the app while fixing the app is how this
-  gets worked on, and orchestratord is **detached by design**, so it holds the binary after its
-  window closes - the topology working, not a leak. If a build ever collides with a running process,
-  **find out whose it is before reaching for a kill**: a command line matching the packaged binary
-  matches the operator's own app just as well as a test's.
-  ⚠️ **And guard the directory actually being rewritten, nothing wider.** A guard over the whole of
-  `release\` re-imposed "you cannot run the app while building" - the exact rule the split existed
-  to abolish. `Assert-OutputIsFree` takes an exact directory; `-Except` carves out `release\suite\`.
+- **There is exactly one packaged app in the tree, `release\win-unpacked\`, and it is the
+  build's.** ⚠️ A second copy under `release\suite\` existed from 2026-08-27 so packaging could
+  not collide with an app run from the repo; it was removed the same day, because **the app to use
+  is the one the installer installs** and two identical executables with only one ever new cost
+  more than they saved - 98 minutes debugging a change that had in fact taken effect, then an
+  `EPERM` that stopped a commit. So packaging *does* collide with the repo's own copy now, and that
+  is correct rather than a bug.
+  ⛔ When it collides, **find out whose the process is before reaching for a kill**: a command line
+  matching the packaged binary matches the operator's own app just as well as a test's. And note
+  orchestratord is **detached by design**, so it holds the binary after its window closes - the
+  topology working, not a leak. ⚠️ Guard the directory actually being rewritten, nothing wider.
 - **A quota sample is keyed on the vendor's fetch time, which does not move when you read it.**
   `sampledAt` is `cachedUsageUtilization.fetchedAtMs` — exactly right for staleness and fatal as an
   insert key, because re-reading an unchanged cache produces a row identical to the last one and

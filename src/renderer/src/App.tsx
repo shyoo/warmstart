@@ -9,6 +9,8 @@ import { Projects } from './components/Projects'
 import { Tasks } from './components/Tasks'
 import { Overview } from './components/Overview'
 import { Project as ProjectView, type ProjectTab } from './components/Project'
+import { SidebarResizer } from './components/SidebarResizer'
+import { AppSettings } from './components/AppSettings'
 
 /**
  * The shell.
@@ -213,6 +215,8 @@ export function App(): React.JSX.Element {
         </nav>
       </aside>
 
+      <SidebarResizer />
+
       <main className="main">
         <FleetStrip fleet={fleet} now={now} />
         {connected && <Approvals now={now} />}
@@ -235,6 +239,7 @@ export function App(): React.JSX.Element {
           ) : route.kind === 'settings' ? (
             <>
               <Doctor now={now} />
+              <AppSettings />
               <Projects projects={projects} resources={resources} refresh={refreshProjects} />
             </>
           ) : (

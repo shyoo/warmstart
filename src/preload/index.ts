@@ -1,5 +1,11 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import { IPC, type AgentyardApi, type AppInfo, type DaemonUiStatus } from '@shared/ipc.js'
+import {
+  IPC,
+  type AgentyardApi,
+  type AppInfo,
+  type DaemonUiStatus,
+  type UiSettings
+} from '@shared/ipc.js'
 import type { DaemonEvent, RpcMethod, RpcParams, RpcResult } from '@shared/protocol.js'
 
 /**
@@ -24,7 +30,9 @@ const api: AgentyardApi = {
     const listener = (_e: unknown, event: DaemonEvent) => handler(event)
     ipcRenderer.on(IPC.eventPush, listener)
     return () => ipcRenderer.removeListener(IPC.eventPush, listener)
-  }
+  },
+  getUiSettings: () => ipcRenderer.invoke(IPC.uiSettingsGet) as Promise<UiSettings>,
+  setUiSettings: (patch) => ipcRenderer.invoke(IPC.uiSettingsSet, patch) as Promise<UiSettings>
 }
 
 contextBridge.exposeInMainWorld('agentyard', api)

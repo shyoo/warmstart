@@ -10,6 +10,14 @@
  */
 
 :root {
+  /*
+   * ⛔ Load-bearing, not a formality. Without it the browser paints every UA-drawn surface
+   * light on a dark app: the scrollbars first and most visibly, but also the space behind an
+   * over-scroll, form-control internals and the caret. Styling `::-webkit-scrollbar` alone
+   * leaves all of that, and it is the reason the app read as dark with bright grey gutters.
+   */
+  color-scheme: dark;
+
   /* ---- type ------------------------------------------------------------ */
   --font-ui: Inter, "Inter var", -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text",
     "Segoe UI", system-ui, sans-serif;
@@ -71,6 +79,7 @@
 
 @media (prefers-color-scheme: light) {
   :root:not([data-theme="dark"]) {
+    color-scheme: light;
     --color-bg: #ffffff;
     --color-surface: #f7f8fa;
     --color-surface-2: #eef0f4;
@@ -95,6 +104,7 @@
 }
 
 :root[data-theme="light"] {
+  color-scheme: light;
   --color-bg: #ffffff;
   --color-surface: #f7f8fa;
   --color-surface-2: #eef0f4;

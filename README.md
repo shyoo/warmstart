@@ -188,7 +188,8 @@ npm run test:e2e     # MULTI_AGENT_CONTROLLER_E2E=1 required. SPENDS REAL TOKENS
 **Packaging.**
 
 ```bash
-npm run pack         # unpacked app in release/, for testing
+npm run pack         # unpacked app in release/win-unpacked, for testing. ⛔ Nothing may be
+                     # running out of it: install the app if you want one you can keep open.
 npm run dist         # installers for the current platform
 ```
 

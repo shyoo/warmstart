@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -363,22 +363,21 @@ describe('a worker the operator has switched off', () => {
 
     expect(() => sessions.spawnSession({ workerId: worker.id })).toThrow(/disabled/)
 
-    // ⛔ Signing in is deliberately exempt from this gate. Off is not retirement: it holds an
-    // account out of dispatch and leaves every way of fixing it open, including the one that needs
-    // a terminal. A switch that locked the operator out of repairing what it switched off would be
-    // a trap.
+    // ⛔ Signing in is deliberately exempt. Off is not retirement: it holds an account out of
+    // dispatch and leaves every way of fixing it open, including the one that needs a terminal. A
+    // switch that locked the operator out of repairing what it switched off would be a trap.
     //
-    // ⚠️ Asserted by reading the gate, not by calling it with `purpose: 'login'`. That call does
-    // not stop at a check - it goes on to spawn the vendor CLI in a real PTY, which makes the
-    // assertion depend on whether this machine has that CLI installed, and leaves a process behind
-    // on the one where it does. A test that passes for a different reason on CI than on a laptop is
-    // worse than no test.
-    const gate = readFileSync(new URL('sessions.ts', import.meta.url), 'utf8')
-    expect(gate).toMatch(
-      new RegExp(
-        "if \\(purpose !== 'login'\\) \\{\\s*if \\(!worker\\.enabled\\)"
-      )
-    )
+    // ⚠️ Asked of the predicate, not by calling `spawnSession({ purpose: 'login' })`. That call does
+    // not stop at a check - it goes on to spawn the vendor CLI in a real PTY, which would make the
+    // assertion depend on whether this machine has that CLI installed and leave a process behind on
+    // the one that does.
+    const off = workers.requireWorker(worker.id)
+    expect(sessions.whyNoSession(off, 'work')).toMatch(/disabled/)
+    expect(sessions.whyNoSession(off, 'probe')).toMatch(/disabled/)
+    expect(sessions.whyNoSession(off, 'login')).toBeNull()
+
+    // ⛔ Retirement is not exempt, because there is nothing left to repair.
+    expect(sessions.whyNoSession({ ...off, retiredAt: Date.now() }, 'login')).toMatch(/retired/)
   })
 
   it('comes back with nothing lost, because off is not retirement', () => {

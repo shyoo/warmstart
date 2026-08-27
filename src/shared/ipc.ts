@@ -14,6 +14,25 @@ export interface AppInfo {
   platform: NodeJS.Platform
 }
 
+/**
+ * Preferences the app owns rather than the fleet.
+ *
+ * ⛔ Separate from `Settings` in protocol.ts on purpose. Those live in the daemon's database and
+ * change what the *scheduler* does; these are read by the main process and change what the *window*
+ * does - including whether closing it leaves the daemon running, which main must be able to decide
+ * when the daemon is not answering.
+ */
+export interface UiSettings {
+  /**
+   * Keep a tray icon, and treat closing the window as hiding it.
+   *
+   * ⚠️ Also decides what quitting does to the fleet. Off: quitting asks orchestratord to shut down,
+   * so nothing is left behind and there is no daemon to hunt for later. On: the daemon keeps running
+   * and the tray is how you get the window back. Quit from the tray menu always stops everything.
+   */
+  tray: boolean
+}
+
 export type DaemonUiStatus =
   | { state: 'stopped' }
   | { state: 'starting' }
@@ -28,6 +47,9 @@ export interface AgentyardApi {
   rpc<M extends RpcMethod>(method: M, params?: RpcParams<M>): Promise<RpcResult<M>>
   onDaemonStatus(handler: (status: DaemonUiStatus) => void): () => void
   onDaemonEvent(handler: (event: DaemonEvent) => void): () => void
+  getUiSettings(): Promise<UiSettings>
+  /** ⚠️ A partial patch, and the whole object comes back - the same shape as `settings.set`. */
+  setUiSettings(patch: Partial<UiSettings>): Promise<UiSettings>
 }
 
 export const IPC = {
@@ -36,5 +58,7 @@ export const IPC = {
   daemonStart: 'daemon:start',
   rpc: 'daemon:rpc',
   statusPush: 'daemon:status-push',
-  eventPush: 'daemon:event-push'
+  eventPush: 'daemon:event-push',
+  uiSettingsGet: 'ui:settings-get',
+  uiSettingsSet: 'ui:settings-set'
 } as const

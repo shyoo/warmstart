@@ -29,6 +29,7 @@ import {
   writeSession
 } from './sessions.js'
 import { costModels } from './costmodel.js'
+import { requestShutdown } from './lifecycle.js'
 import { paths } from './paths.js'
 import {
   addProject,
@@ -169,6 +170,14 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
     },
 
     'costmodel.list': () => costModels().map((m) => m.summary()),
+
+    // ⛔ Counted before the request is made: once the wind-down starts, the answer to "what
+    // did this end?" is zero, and that is the one number the caller needs to report.
+    'daemon.shutdown': () => {
+      const liveSessions = listSessions().filter((s) => s.purpose === 'work').length
+      const stopping = requestShutdown('the app asked')
+      return { stopping, liveSessions }
+    },
 
     'doctor.run': async (): Promise<DoctorReport> => {
       const detections = await Promise.all(adapters().map((a) => a.detect()))

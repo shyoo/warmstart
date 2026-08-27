@@ -49,19 +49,19 @@ function icoLayers(path) {
  */
 
 /**
- * Where `npm run pack` puts the package this suite drives.
+ * Where `npm run pack` puts the package this suite drives — electron-builder's own default.
  *
- * ⛔ **Deliberately not `release/`, and that is a workflow decision rather than a tidiness one.**
- * `release/` holds the installers `npm run dist` builds and, on a developer's machine, the
- * `win-unpacked` app they keep open while working on it. Packaging into the directory somebody is
- * *executing from* is what produced `EBUSY: rmdir release\win-unpacked` three times on 2026-08-27 —
- * and the answer cannot be "close the app", because running the app while fixing the app is the
- * normal way to work on it.
+ * ⚠️ **This was `release/suite/` until 2026-08-27**, a second unpacked copy that existed so that
+ * packaging could not collide with an app being run out of `release/win-unpacked/`. That split
+ * cost ~250MB and one permanent confusion — two identical executables, only ever one of them
+ * new — and it is gone because the workflow it defended against is gone: the app to *use* is the
+ * one the installer installs, and this directory is the build's alone.
  *
- * ⚠️ It costs a second copy of the unpacked app on disk (~250MB). That is cheap against the
- * alternative, which was a packaged-app suite people learn to skip.
+ * ⛔ So running the repo's own `release/win-unpacked/` while building will fail the pack step
+ * with `EPERM`/`EBUSY` again, and that is now the correct behaviour rather than a bug: nothing
+ * should be executing out of a directory electron-builder is about to delete.
  */
-const OUT = join(REPO, 'release', 'suite')
+const OUT = join(REPO, 'release')
 // ⛔ electron-builder's `productName`, not the npm package name: it names the .app bundle and its
 // Resources directory on macOS.
 const PRODUCT = 'Multi Agent Controller'

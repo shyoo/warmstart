@@ -750,3 +750,86 @@ suite copy was the fresh one to click. They clicked it. The next `npm run pack` 
 Both `HANDOFF.md` and `AGENTS.md` had described the split correctly and *only in terms of which copy
 was newer*. That is the fact a build script needs and the wrong fact to hand a person. Both now say
 which one to run.
+
+## Closing the window, and what that should mean (2026-08-27)
+
+orchestratord is detached by design: closing the UI stopped nothing, which is the entire premise of
+the split — quota windows are hours long and progress should not depend on a window being open. The
+consequence nobody had chosen was that the *only* way to end it was to find a pid and kill it.
+
+So the operator now chooses, with one switch on Global → *This app*:
+
+- **Tray off** (the default): quitting asks orchestratord to shut down. Nothing is left running.
+- **Tray on**: closing the window hides it, the fleet keeps working, and the tray icon brings the
+  window back without launching the app again.
+
+⛔ **Off is the default, which is the conservative direction rather than the convenient one.** On
+means a scheduler outlives the only window that showed it. A newcomer gets what closing a window
+looks like it does.
+
+⛔ **The daemon is asked, never killed.** `daemon.shutdown` makes it run its own wind-down — the
+loops, the tailers, the sessions, the lock, the endpoint file, the database. Reading
+`orchestratord.json` for a pid and killing it is the thing AGENTS.md forbids outright, and it would
+strand a lock file and a half-written database even if the pid were trustworthy. The daemon suite's
+last section proves the mechanism: the RPC is accepted, it reports what it was about to end, **the
+endpoint file is cleared**, and the process is gone. The endpoint check is the load-bearing one — a
+dead process that left its endpoint behind has every client reconnecting to a port nobody is
+listening on.
+
+⚠️ **Shutting the daemon down ends every live session**, because `shutdownAll()` kills them. So a
+quit with work in flight asks a person first, and the panel states the consequence in *both* switch
+positions — each is a surprise in the opposite direction.
+
+⚠️ **The setting is main's, not the daemon's**, and that is not tidiness. It decides whether the
+daemon keeps running, so main has to be able to read it when the daemon is unreachable — which is
+exactly when it matters. A setting whose enforcement depends on the thing it controls being alive is
+not a setting.
+
+## The second packaged app, and why it lasted one day (2026-08-27)
+
+`release\suite\` was introduced in the morning so that packaging could never collide with an app being
+run out of `release\win-unpacked\`. It was removed the same evening, at the operator's request, once
+the workflow it defended changed: the app to *use* is the one the installer installs, and the repo's
+output directory is the build's alone.
+
+It cost 383MB and one permanent ambiguity — two identical executables, only ever one of them new —
+and both halves of that bill were paid the day it existed. First, 98 minutes debugging a change that
+had in fact taken effect, because the binary being clicked was the other one. Then an `EPERM` in the
+middle of a commit, because the docs described the split **only in terms of which copy was newer**:
+the fact a build script needs, and the wrong fact to hand a person.
+
+⛔ So packaging *does* collide with the repo's own copy again, and that is now correct rather than a
+bug: nothing should be executing out of a directory electron-builder is about to delete. What went
+with it: `Assert-OutputIsFree`'s `-Except` parameter, which no caller passes any more — a parameter
+nobody passes is a claim that somebody might — and the summary block in `build-win.ps1` whose whole
+job was to say which of the two apps was stale. ⚠️ If a second copy ever comes back, that warning
+comes back with it.
+
+Cleaned up at the same time: `win-arm64-unpacked` (a stale `dist:win` intermediate) and
+`win-unpacked.tmp` (garbage from an interrupted run). ~1.1GB, with the running-process check done
+immediately before the delete rather than remembered from a minute earlier.
+
+## Bright scrollbars on a dark app, and a sidebar that would not move (2026-08-27)
+
+The scrollbars were the browser default: bright grey gutters on a dark shell. The cause was not
+missing scrollbar CSS but a missing **`color-scheme`** declaration — without it the browser paints
+every UA-drawn surface for a light page, the scrollbars most visibly but also over-scroll, form
+controls and the caret. Styling `::-webkit-scrollbar` alone would have left all of that.
+
+⚠️ Both scrollbar dialects are declared and they are not redundant. `scrollbar-color` is the
+standard and is what an overlay scrollbar honours; `::-webkit-scrollbar` is the only way to change
+the width, and declaring it switches that element to the legacy path — so anything that does not
+match the pseudo-elements, xterm's own viewport among them, still needs the standard properties.
+
+The sidebar became resizable by writing **one CSS variable**. `--sidebar-w` already drove
+`grid-template-columns`, so no component below the shell knows the sidebar can move and no width is
+threaded through props to re-render the shell on every mouse move. ⚠️ Pointer *capture* rather than
+a window listener: the moment the width clamps, the handle stops following the cursor, and without
+capture the next mousemove goes to whatever is underneath and the drag sticks. Bounds are 180–520px
+and both are real — below 180 the brand row starts dropping its controls, above 520 it eats the pane
+the work is in — with a double-click reset, because a drag that went somewhere unhelpful needs a way
+back that does not require guessing.
+
+The width persists in `localStorage`, not the daemon's settings table: it is a per-display
+preference, and every row in that table is one more thing to reason about when a session behaves
+unexpectedly.

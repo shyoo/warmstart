@@ -356,6 +356,118 @@ try {
     'the one loop that can spend should show its ceiling'
   )
 
+  section('app settings')
+  // ⛔ These are the app's own preferences, not the fleet's: they go through the main process rather
+  // than the daemon, because whether closing the window stops orchestratord is a decision main has
+  // to make when the daemon is NOT answering - which is exactly when it matters.
+  await evaluate(
+    `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim().startsWith('Global')).click()`
+  )
+  await wait(1500)
+  const globalPanel = await evaluate('document.querySelector(".content")?.innerText ?? ""')
+  check(
+    'the Global page offers the tray switch',
+    /keep running in the tray/i.test(globalPanel),
+    JSON.stringify(globalPanel.slice(0, 60))
+  )
+  check(
+    'it defaults to off, so closing the window means what it looks like it means',
+    (await evaluate(
+      `window.agentyard.getUiSettings().then(s => String(s.tray))`
+    )) === 'false'
+  )
+  // ⚠️ Both consequences have to be stated, because each is a surprise in the other direction: off
+  // and a close can end an agent mid-run; on and a scheduler outlives the only window showing it.
+  check(
+    'and off says what it will stop',
+    /ends every running agent/i.test(globalPanel),
+    'a quit that silently discards the context an agent holds is not a preference anybody set'
+  )
+
+  const traySwitch = `[...document.querySelectorAll('.switch')].find(
+     s => s.getAttribute('aria-label') === 'Keep running in the tray')`
+  check(
+    'the tray control is a real switch',
+    (await evaluate(`${traySwitch}?.getAttribute('role')`)) === 'switch'
+  )
+  await evaluate(`${traySwitch}.click()`)
+  await wait(1200)
+  check(
+    'turning it on is persisted by the main process, not just painted',
+    (await evaluate(`window.agentyard.getUiSettings().then(s => String(s.tray))`)) === 'true',
+    'the switch reads back what main returned, never the value that was clicked'
+  )
+  const onPanel = await evaluate('document.querySelector(".content")?.innerText ?? ""')
+  check(
+    'and on explains that the fleet now outlives the window',
+    /tray icon brings the window back|scheduler keeps working/i.test(onPanel),
+    JSON.stringify(onPanel.slice(onPanel.search(/keep running in the tray/i), 0 + 120))
+  )
+  await evaluate(`${traySwitch}.click()`)
+  await wait(1200)
+  check(
+    'and it goes back off',
+    (await evaluate(`${traySwitch}?.getAttribute('aria-checked')`)) === 'false'
+  )
+
+  section('chrome')
+  // ⛔ `color-scheme` is what stops the browser painting UA surfaces light on a dark app - the
+  // scrollbars most visibly, but also over-scroll and form-control internals. Styling
+  // `::-webkit-scrollbar` alone leaves all of that, which is why this is checked rather than the
+  // pseudo-element: it is the half that is easy to forget and impossible to see in a diff.
+  check(
+    'the app declares its colour scheme, so UA-drawn surfaces follow the theme',
+    /dark|light/.test(
+      await evaluate(`getComputedStyle(document.documentElement).colorScheme`)
+    ),
+    await evaluate(`getComputedStyle(document.documentElement).colorScheme`)
+  )
+  check(
+    'and the scrollbar thumb is a theme colour rather than the default',
+    (await evaluate(`getComputedStyle(document.documentElement).scrollbarColor`)) !== 'auto',
+    await evaluate(`getComputedStyle(document.documentElement).scrollbarColor`)
+  )
+
+  // The sidebar is resizable, and the handle is keyboard-operable - `role="separator"` with a
+  // tabindex promises arrow keys work, so the promise is tested.
+  const widthNow = `parseInt(getComputedStyle(document.documentElement).getPropertyValue('--sidebar-w'), 10)`
+  const before = await evaluate(widthNow)
+  check('the sidebar has a resize handle', before > 0, String(before))
+  check(
+    'which announces itself as a separator with a range',
+    (await evaluate(
+      `(() => { const r = document.querySelector('.resizer');
+                return r ? [r.getAttribute('role'), r.getAttribute('aria-valuemin') !== null,
+                            r.tabIndex >= 0].join(',') : 'absent' })()`
+    )) === 'separator,true,true'
+  )
+  await evaluate(
+    `(() => { const r = document.querySelector('.resizer'); r.focus();
+              r.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })) })()`
+  )
+  await wait(400)
+  const wider = await evaluate(widthNow)
+  check('and the arrow keys move it', wider > before, `${before} -> ${wider}`)
+
+  // ⚠️ Persisted on this display only, deliberately: a pane width is not a fleet setting and has no
+  // business in the daemon's settings table beside the switches that gate spending.
+  check(
+    'the new width is remembered',
+    (await evaluate(`window.localStorage.getItem('multi_agent_controller.sidebarWidth')`)) ===
+      String(wider),
+    String(wider)
+  )
+  await evaluate(
+    `(() => { const r = document.querySelector('.resizer');
+              r.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })) })()`
+  )
+  await wait(400)
+  check(
+    'and a double-click puts it back, so a bad drag is recoverable',
+    (await evaluate(widthNow)) === 252,
+    String(await evaluate(widthNow))
+  )
+
   section('workers')
   // ⛔ Held out of dispatch is a state the operator sets and has to be able to *see*. It lived for
   // four milestones as a cleared checkbox in the last column, which is indistinguishable at a

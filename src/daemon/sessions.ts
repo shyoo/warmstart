@@ -3,7 +3,13 @@ import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import * as pty from '@lydell/node-pty'
 import { execFileSync, spawn as spawnChild } from 'node:child_process'
-import type { Session, SessionPurpose, SessionState, SessionTransport } from '@shared/protocol.js'
+import type {
+  Session,
+  SessionPurpose,
+  SessionState,
+  SessionTransport,
+  Worker
+} from '@shared/protocol.js'
 import type { CacheMove } from '@shared/tasks.js'
 import { db, row, rows } from './db.js'
 import { costModel } from './costmodel.js'
@@ -245,19 +251,34 @@ export interface SpawnOptions {
   purpose?: SessionPurpose | undefined
 }
 
+/**
+ * Why no session may be started on this worker at all, or `null`.
+ *
+ * ⛔ Signing in is exempt from everything except retirement: `off` is not retirement, and a
+ * switch that locked the operator out of repairing the account it switched off would be a trap.
+ *
+ * ⚠️ Exported so a caller can ask *before* trying, rather than catching the throw. `refreshUsage`
+ * used to spawn unconditionally and log `usage refresh failed on adopted: worker is disabled`
+ * with a stack trace - which reads as a fault, when the correct behaviour is simply to read the
+ * cache instead. ⛔ Deliberately *not* `accountUnavailability`: a `suspect` worker must still be
+ * probeable by hand, because that is one of the two things that lift the hold.
+ */
+export function whyNoSession(worker: Worker, purpose: SessionPurpose): string | null {
+  if (worker.retiredAt) return `worker '${worker.label}' is retired`
+  if (purpose === 'login') return null
+  if (!worker.enabled) return `worker '${worker.label}' is disabled`
+  // A human-occupied worker's quota is tracked and never spent. Logging in is still allowed;
+  // running work on it is not.
+  if (worker.humanOccupied) return `worker '${worker.label}' is marked human-occupied`
+  return null
+}
+
 export function spawnSession(opts: SpawnOptions): Session {
   const worker = requireWorker(opts.workerId)
-  if (worker.retiredAt) throw new Error(`worker '${worker.label}' is retired`)
   const purpose = opts.purpose ?? 'work'
 
-  if (purpose !== 'login') {
-    if (!worker.enabled) throw new Error(`worker '${worker.label}' is disabled`)
-    // A human-occupied worker's quota is tracked and never spent. Logging in is still allowed;
-    // running work on it is not.
-    if (worker.humanOccupied) {
-      throw new Error(`worker '${worker.label}' is marked human-occupied`)
-    }
-  }
+  const blocked = whyNoSession(worker, purpose)
+  if (blocked) throw new Error(blocked)
 
   if (purpose === 'work') {
     const running = sessionsForWorker(worker.id).filter((s) => s.purpose === 'work').length

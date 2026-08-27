@@ -716,6 +716,48 @@ try {
   // ---------------------------------------------------------------- L2: the controller tier
   section('controller tier (real MCP client)')
   await runControllerTierChecks(daemon)
+
+  // ---------------------------------------------------------------- it can be asked to stop
+  //
+  // ⛔ Last, because it ends the daemon every check above needed. This is the mechanism behind the
+  // app's quit path: with the tray switched off, closing the window asks orchestratord to wind down
+  // so that nothing is left running and nobody has to hunt a pid to get their machine back.
+  //
+  // ⚠️ Asked, never killed. The daemon does its own winding down - the loops, the tailers, the
+  // sessions, the lock, the endpoint file, the database - which is why what is checked here is that
+  // the *endpoint file is gone*, not merely that a process died. A dead process that left its
+  // endpoint behind would have every client reconnecting to a port nobody is listening on.
+  section('shutdown')
+  const endpointFile = join(daemon.dataDir, 'orchestratord.json')
+  const daemonPid = daemon.child?.pid
+  const asked = await daemon.rpc('daemon.shutdown')
+  check(
+    'the daemon accepts a request to stop itself',
+    asked.stopping === true,
+    JSON.stringify(asked)
+  )
+  check(
+    'and counts what it was about to end before it ends it',
+    typeof asked.liveSessions === 'number',
+    `${asked.liveSessions} live work session(s)`
+  )
+
+  let cleared = false
+  let exited = false
+  for (let i = 0; i < 60 && !(cleared && exited); i++) {
+    await wait(200)
+    cleared = !existsSync(endpointFile)
+    try {
+      // Signal 0 asks "is this pid alive?" without sending anything.
+      process.kill(daemonPid, 0)
+      exited = false
+    } catch {
+      exited = true
+    }
+  }
+  check('it clears its endpoint, so nothing reconnects to a port nobody is listening on', cleared, endpointFile)
+  check('and the process is actually gone', exited, `pid ${daemonPid}`)
+
 } catch (err) {
   check('the suite ran to completion', false, err instanceof Error ? err.stack : String(err))
 } finally {

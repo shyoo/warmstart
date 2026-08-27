@@ -91,7 +91,19 @@ export async function refreshUsage(workerId: string): Promise<DatedQuota> {
   // What we are trying to beat. A refresh that changes nothing must not come back looking fresh.
   const before = lastQuota(workerId)?.sampledAt ?? 0
 
-  const { spawnSession, closeSession, writeSession, backscroll } = await import('./sessions.js')
+  const { spawnSession, closeSession, writeSession, backscroll, whyNoSession } =
+    await import('./sessions.js')
+
+  // ⛔ Asked before trying, not caught afterwards. A worker that cannot host a session is not a
+  // failed refresh - it is a worker whose reading has to come off the disk instead, which is
+  // exactly what `probeWorker` does. Spawning anyway logged a stack trace under the word
+  // `failed` for the entirely expected case of probing a disabled account.
+  const blocked = whyNoSession(w, 'probe')
+  if (blocked) {
+    log.info(`not driving \`${refresh.command}\` on ${w.label}: ${blocked}; reading the cache`)
+    return probeWorker(workerId)
+  }
+
   let sessionId: string | null = null
   let screen: string | null = null
   try {

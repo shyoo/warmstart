@@ -9,16 +9,16 @@ if you add a line, find the one it obsoletes and cut it in the same edit. Finish
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
 **Baseline (2026-08-27, measured on this machine):** `npm run typecheck` clean · `npm run lint` clean ·
-`npm run build` clean · `npm test` 289/289 · `npm run test:daemon` 110/110 · `npm run test:ui` 48/48 ·
+`npm run build` clean · `npm test` 289/289 · `npm run test:daemon` 114/114 · `npm run test:ui` 62/62 ·
 `npm run test:pack` 18/18 · L4 (opt-in) landed a real agent commit on origin/main. Electron 44.0.0,
 electron-builder 26.15.3, 0 npm vulnerabilities. CLIs here: claude 2.1.247 · agy 1.1.22 · codex 0.149.1.
 
 ⭐ **`scripts/build-win.ps1` runs all of the above; `-Help` lists its options, `-Restart` is the inner
 loop.** Steps are content-addressed and skipped when unchanged: **92s cold, ~0s warm**.
-⛔ **Run `release\win-unpacked\`, never `release\suite\`.** The pack step owns the suite copy and
-rewrites it every run; an app executing out of it fails the next `npm run pack` with `EPERM`, which
-is what happened on 2026-08-27 after this file said only which copy was *newer*. `-Installer`
-refreshes the one you run.
+⛔ **One packaged app: `release\win-unpacked\`, and it is the build's.** The second copy under
+`release\suite\` is gone (2026-08-27) — it existed only so packaging could not collide with an app
+run from the repo, and **the app to use is the one the installer installs**. Running the repo's copy
+while building blocks the pack step, correctly.
 
 ⚠️ **With no agent CLI the daemon suite skips 5 checks**, each with a stated reason — the CI state.
 Simulate it with a PATH of System32, node and git and an empty `HOME`; it is what found the
@@ -59,8 +59,9 @@ src/daemon/            orchestratord. Runs as Electron-with-ELECTRON_RUN_AS_NODE
                        each kept their own until 2026-08-27 and the copies drifted
   activity.ts          the live peephole: a bounded in-memory tail of what a run is saying
   landing.ts           auto-land, serialised by an exclusive land: resource (+ landing.test.ts)
-  cacheclock.ts        the six moves - the piece the whole cost model exists for; a move is a
-                       request, and moveOutcome() is what stops it being re-asked (+ .test.ts)
+  cacheclock.ts        the six moves - what the whole cost model exists for. A move is a request;
+                       moveOutcome() is what stops it being re-asked (+ .test.ts)
+  lifecycle.ts         how the daemon is asked to stop itself. ⛔ Asked, never killed by pid
   settings.ts          the fleet switches the operator owns. There is one: autoCompact. Per-worker,
                        `enabled` is a switch on its Workers row - held out of dispatch, not retired
   reserve.ts           the compaction reserve, and every belief with its basis attached
@@ -79,14 +80,15 @@ src/daemon/            orchestratord. Runs as Electron-with-ELECTRON_RUN_AS_NODE
                        (+ adapters.test.ts). Read docs/adapters.md before changing one
     external.ts        declarative adapters from <dataDir>/adapters/*.json  (+ external.test.ts)
     generic.ts         the driver behind one. ⛔ JSON only, never JavaScript
-src/mcp/               the MCP server the agent CLI spawns. Two tiers, chosen by the daemon:
-                       worker (task_complete, task_create, request_human, handoff) and controller
-                       (fleet/task/approval/estimate). Target of --permission-prompt-tool. No delete.
-src/main/              window host + the daemon's only client (holds the token)
+src/mcp/               the MCP server the agent CLI spawns. Two tiers chosen by the daemon: worker
+                       (task_complete, task_create, request_human, handoff) and controller
+                       (fleet/task/approval/estimate). ⛔ Neither can delete anything.
+src/main/              window host + the daemon's only client (holds the token); the tray, and
+                       `uisettings.ts` - preferences main must read when the daemon is not answering
 src/renderer/          fleet strip, approvals bar, tasks, projects, workers, doctor, xterm pane
                        (+ lib/format.test.ts)
-costmodels/            anthropic.* - google.antigravity.* - openai.codex.*; compiled in, not read
-                       from disk, so a packaging slip cannot leave the scheduler unable to price
+costmodels/            anthropic.* - google.antigravity.* - openai.codex.*; compiled in, so a
+                       packaging slip cannot leave the scheduler unable to price
 docs/                  cost-model.md, glossary.md, adapters.md - maintained; read before reasoning
 .claude/skills/commit/ /commit: docs, suites, package, commit, push
 ```
@@ -100,30 +102,30 @@ docs/                  cost-model.md, glossary.md, adapters.md - maintained; rea
   *tokens*, so **R2** (`tokens_per_percent`) is the blocker, not a stale percentage.
   `docs/cost-model.md` §10. ⛔ Until it lands it is scored zero as a routing input — only checked
   evidence may move a score.
-- ⚠️ **A worker is not usable until somebody answers the CLI's first-run questions.** Signing in
-  writes neither onboarding nor folder trust, and print mode skips both — so scheduled work runs
-  while a TUI, and therefore a quota probe, cannot. `Finish setup` opens that terminal.
-- ⭐ **A worker is held out by evidence, and now for judgment as well as work.** A run - or a
-  consult - producing no metered turn is charged to the account, not the task. ⛔ The gate list
-  lives in `eligibility.ts` and both schedulers read it; while held out the account is also not
-  probed in the background, because a usage refresh opens a real session and an expired one just
-  fails to authenticate every thirty minutes. Cases in `runfailure.test.ts`,
-  `controllerchoice.test.ts`.
-- ⚠️ **Sessions are reused within a task, never across tasks in a project** - the detail pane says
-  which happened. Closing the second half is item 4 in *Next*.
-- ⭐ **The packaged suite runs with the app open — provided the app is the `release\win-unpacked\`
-  copy.** ⛔ **Every suite below L1 drives a build product and none of them builds one** —
-  `checkBuildIsCurrent()` and the asar check refuse when the artefact predates `src/`, and
-  `test:ui` still has no such guard.
+- ⚠️ **A worker is not usable until somebody answers the CLI's first-run questions.** Print mode
+  skips them, so scheduled work runs while a TUI - and therefore a quota probe - cannot.
+  `Finish setup` opens that terminal.
+- ⭐ **A worker is held out by evidence, for judgment as well as work.** A run - or a consult -
+  producing no metered turn is charged to the account, not the task. ⛔ One gate list,
+  `eligibility.ts`, read by both schedulers; a held-out account is not background-probed either.
+  Cases in `runfailure.test.ts`, `controllerchoice.test.ts`.
+- ⛔ **Every suite below L1 drives a build product and none of them builds one** —
+  `checkBuildIsCurrent()` and the asar check refuse when the artefact predates `src/`;
+  ⚠️ `test:ui` still has no such guard and silently drove a stale renderer once.
+- ⭐ **Closing the window can stop the daemon, or not, and the operator chooses.** Global → *This
+  app* → tray. Off (the default): quitting asks orchestratord to shut down, so nothing is left
+  behind. On: it keeps running and the tray icon brings the window back. ⛔ Shutting the daemon
+  down ends every live session, so a quit with work in flight asks first. ⚠️ The tray *icon* -
+  appearing, close-to-hide, click-to-restore - has never been exercised end to end; the switch,
+  its persistence and the `daemon.shutdown` RPC are all covered.
 - ⭐ **The cache clock no longer repeats itself, and compaction has an off switch.** A move is
   recorded when *issued*, with the evidence that would prove it landed, and the clock gives up after
   two ignored attempts and hands off. `settings.autoCompact` is a fleet-wide switch on the Cost page
   and gates the reserve-at-risk path too.
-- ⚠️ **Two M3 paths are unverified and marked in the code:** whether `/compact` is honoured on the
-  `stream` transport (**R6**), and keepalive *execution*, which needs a warm session and an idle
-  hour. The arithmetic is unit-tested; the firing is not.
-- ⚠️ **No consult has ever been answered by a real model.** L1 runs with nobody able to answer, which
-  proves the fallbacks and leaves the answer path on synthetic replies only. **R8**.
+- ⚠️ **Two M3 paths are unverified and marked in the code:** `/compact` on the `stream` transport
+  (**R6**), and keepalive *execution*. The arithmetic is unit-tested; the firing is not.
+- ⚠️ **No consult has ever been answered by a real model** - the fallbacks are proved, the answer
+  path is synthetic only. **R8**.
 - ⭐ **Antigravity runs and reports its quota**, both since 2026-08-27; **R9 is closed the opposite way
   round from how it was asked** (`docs/cost-model.md` §5). ⚠️ Still unproven past the `init` record:
   **no Antigravity task has ever completed**, so R11 and R13 stand — and with `mcp: false` it cannot
@@ -161,13 +163,11 @@ M0–M6 are done. What is left is not a milestone but a list, in the order it wo
 
 ## Measurement runs owed
 
-The questions above as experiments. Each is cheap, each needs a **quiet worker** (one session,
-nothing else on that account), and each answers something the design is guessing at. Run them when a
-window is idle; record the result in `docs/cost-model.md` with the date and CLI version, and delete
-the row.
-
-**The instrument:** a run records a quota reading either side of itself, and transcript metering
-beside it. Their difference is what the CLI spent that never reached a transcript. ⛔ Never merged.
+The questions above as experiments. Each is cheap and each needs a **quiet worker** - one session,
+nothing else on that account. Record the result in `docs/cost-model.md` with the date and CLI
+version, and delete the row. **The instrument:** a run records a quota reading either side of
+itself, and transcript metering beside it; their difference is what the CLI spent that never
+reached a transcript. ⛔ Never merged.
 
 | # | Question | Method | What it changes |
 |---|---|---|---|
@@ -187,8 +187,8 @@ R5 needs a second subscription.
 
 ## Standing decisions worth not relitigating
 
-⛔ The architecture invariants live in `AGENTS.md` and load into every session. These are the four
-choices most likely to be re-argued by someone who has not read it:
+⛔ The invariants live in `AGENTS.md`. These four are the ones most often re-argued by somebody who
+has not read it:
 
 - **Daemon, not all-in-Electron.** The premise is unattended progress across quota windows.
 - **Deterministic scheduler; the LLM only on judgment events, never inline.** A loop running every 10s
@@ -197,4 +197,4 @@ choices most likely to be re-argued by someone who has not read it:
   parsing determines state in exactly one declared place - a quota reading where nothing else can
   answer. Never a session's state.
 - **Capabilities and objectives are data.** No `if (adapter === …)`, no `if (mode === …)`. Proved
-  against three real CLIs in M5, extended in M6 to adapters an operator declares in JSON.
+  against three real CLIs in M5, and against declared ones in M6.

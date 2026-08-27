@@ -31,12 +31,93 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* ---- scrollbars -------------------------------------------------------- */
+/*
+ * ⚠️ Both dialects, and they are not redundant.
+ *
+ * `scrollbar-color` is the standard and is what an overlay scrollbar honours;
+ * `::-webkit-scrollbar` is what Chromium uses for a classic one and is the only way to change
+ * its **width**. Declaring the pseudo-elements switches the whole bar to the legacy path, so the
+ * standard properties have to stand on their own for any element that does not match - xterm's
+ * viewport among them, which builds its own scroller.
+ *
+ * ⛔ Colours come from the same tokens as everything else, so the light theme is handled by the
+ * theme, not by a second set of rules that would drift from it.
+ */
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-strong) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+/* Transparent, so a gutter is invisible until there is something in it to grab. */
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-border-strong);
+  border-radius: 999px;
+  /* The inset is the whole trick: a border in the *track's* colour makes a 10px hit area read
+     as a 6px bar, so it is easy to grab and quiet to look at. */
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-faint);
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:active {
+  background: var(--color-text-dim);
+  background-clip: padding-box;
+}
+
+/* ⛔ No arrow buttons. They are a Windows default, they are not in this app's language, and at
+   10px they are unhittable anyway. */
+::-webkit-scrollbar-button {
+  display: none;
+}
+
 /* ---- shell ------------------------------------------------------------- */
 
 .shell {
   display: grid;
-  grid-template-columns: var(--sidebar-w) 1fr;
+  /* ⚠️ Three columns, and the middle one is the grab handle. A 1px border cannot be grabbed,
+     and a resizer positioned *inside* the sidebar would scroll away with its content. */
+  grid-template-columns: var(--sidebar-w) 4px 1fr;
   height: 100%;
+}
+
+/*
+ * ⛔ Transparent at rest. The sidebar's own `border-right` already draws the line, so the
+ * handle adds a hit area and no new furniture - it appears only when it is being reached for.
+ */
+.resizer {
+  cursor: col-resize;
+  background: transparent;
+  transition: background var(--motion-fast) var(--ease);
+  /* Nothing to select, and a text caret over a drag handle looks like a bug. */
+  user-select: none;
+  touch-action: none;
+}
+
+.resizer:hover,
+.resizer:active {
+  background: var(--color-accent);
+}
+
+/* ⚠️ Visible when focused, because the arrow keys do something and nothing else would say so. */
+.resizer:focus-visible {
+  outline: none;
+  background: var(--color-accent);
 }
 
 .sidebar {
