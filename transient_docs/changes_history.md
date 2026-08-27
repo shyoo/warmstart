@@ -833,3 +833,60 @@ back that does not require guessing.
 The width persists in `localStorage`, not the daemon's settings table: it is a per-display
 preference, and every row in that table is one more thing to reason about when a session behaves
 unexpectedly.
+
+## The New Task form, and the two answers I could not ship (2026-08-27)
+
+The form read prompt-first with three settings rows beneath it, which put the one field somebody came
+here to fill in before they had decided anything. Reordered to Project → Policy → Worker → Model, and
+the prompt last. ⚠️ Worker sits above Model against the sketch this was built from: a model list comes
+from `costModel(adapter.policy.costModelId).modelIds()` and belongs to one CLI, so until an account is
+pinned there is no list to draw, and the Model row would have pointed downwards at its own
+precondition.
+
+Two of the four controls already worked in the daemon and had never been reachable.
+`constraints.workerId` has gated the candidate loop since M2; `constraints.model` has reached
+`--model` on all three adapters. ⛔ The control says **pins**, not "preferred" — the scheduler skips
+every other candidate outright, and there is no soft form of it. A word that promises less than the
+code delivers is the same failure as one that promises more.
+
+**The rejected alternative was effort.** The obvious move was to declare `selectableEffort: true` for
+`openai-compatible` and pass codex's documented `-c model_reasoning_effort=`. That adapter's
+`verification.level` is `measured` and its note says the flag surface was read from the running CLI;
+declaring an unrun flag under that heading would have presented a documented capability with the same
+confidence as a measured one, which is the exact trade AGENTS.md forbids. So the constraint, the
+`SpawnRequest` field and the scheduler's gate all exist, every built-in declares `false`, and the form
+draws **no effort control at all** rather than a disabled one — the same rule the fixed-project row
+already followed. The first adapter to gain the flag turns it on by changing one boolean.
+
+⚠️ A test I wrote for this reported green while proving nothing: `[].every()` is true, so "every
+offered model is one the daemon accepts" passed while the row it inspected had not been found (the
+labels are upper-cased by CSS and the selector was case-sensitive). Non-empty is asserted first now.
+Third vacuous-or-stale suite result in two days.
+
+## Two buttons that meant the same thing (2026-08-27)
+
+`awaiting_human` got Mark done and Stop here the day before, and the operator could not tell them
+apart. The tooltips were why — *"records that you are satisfied"* and *"stops here and rests the
+task"* are two ways of saying **it stops**. The difference was never in how it feels: `admit()`
+releases a dependent only when its dependency reaches `completed`, so one of them starts the rest of a
+plan and the other leaves it waiting indefinitely. Each button now carries that consequence, with the
+count of actually-blocked dependents beside it — a number somebody can check, rather than "unblocks
+dependents", which they have to take on trust and cannot see the scope of.
+
+It also moved out of the ledger and next to the composer. All three answers to *a decision is wanted
+from you* — finish it, park it, say what is next — are the same kind of thing, and two of them living
+in a right-hand column of read-only facts made the third look like the only one.
+
+⛔ **A display field was destroying routing evidence.** The Worker column showed `you` on a task
+ClaudeSecond had run, and kept showing it after the task was marked done. Nine hand-off sites set
+`assignee` to `'human'` the moment a task starts waiting on a person — honest about who is being
+waited on, and it overwrites the one fact that column exists to make visible without a click. The fix
+is `Task.ranOn`, derived from the runs in `TASK_SELECT` alongside `first_run_at`, because the runs are
+the only place that fact was ever safe; and `resolveTask` restores the account instead of writing the
+person over it, so a hand-resolved task and an agent-completed one agree about who did the work. Who
+*answered* stays in the thread as a sentence with a reason, which is what a judgement should look
+like.
+
+⚠️ The general shape is worth keeping: `assignee` was answering two questions — *who is this with*
+and *which account is paying* — and the second one silently lost every time the first changed.
+

@@ -80,8 +80,14 @@ they are cheapest.
 **Run** — *one attempt of a task on one session.* Carries the actuals: tokens, wall time, cost, and
 the effective objective it ran under. Runs are what the estimator learns from.
 
-**Assignee** — a worker, or `'human'`. The human is modelled as a worker with infinite quota and
-terrible latency.
+**Assignee** — *who a task is with*, a worker or `'human'`. The human is modelled as a worker with
+infinite quota and terrible latency. ⛔ **Not the answer to "which account did this."** Being handed a
+decision is a temporary assignment, so every hand-off to a person overwrites it — which is why the
+Worker column reads `ranOn` instead.
+
+**`ranOn`** — *the account the task's most recent run was on*, derived from the runs and never stored
+on the task. The one field that survives a hand-off, and therefore the only honest answer to which
+account is spending on a task.
 
 **Approval** — *an interrupt on a session*, not a task: a permission or tool gate that blocks one
 live session, with a closed answer set supplied by the adapter and a deadline equal to that session's
