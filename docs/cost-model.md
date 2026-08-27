@@ -169,9 +169,56 @@ adapter's own error text. Measured 2026-08-26: neither commissioned worker on th
 written `cachedUsageUtilization`, and both had been rendering the bare word "unknown" since
 commissioning.
 
-**Still owed:** a way to refresh that cache without spending a turn, and — failing that — a
-token-accrual estimate built from the transcripts Multi Agent Controller already meters exactly, calibrated against
-whatever percentage readings do arrive. M3.
+### Rung 0 — making the cache current, for free (2026-08-27)
+
+⭐ **There is a free live probe after all, and the reason it took three months to find is worth more
+than the probe.** `claude -p /usage` spends a turn — that measurement is correct and still holds.
+But it is a fact about **print mode**, and it was written down as a fact about the product: *"there
+is no free live quota probe."* Every later decision inherited the broader claim without re-testing
+the narrower one.
+
+Measured on claude 2.1.223 by driving a PTY:
+
+| | |
+|---|---|
+| before | `fetchedAtMs = 2026-08-06T23:35:18Z` — 20 days stale |
+| action | typed `/usage` and a carriage return into an interactive session |
+| after | `fetchedAtMs = 2026-08-27T00:16:52Z` |
+| tokens spent | **none** — a slash command is handled by the client |
+| what it said | weekly window **79%**, resets Aug 30 — against the stale cache's **98%** |
+
+That last row is the point: the stale number was not merely old, it was wrong in the direction that
+makes a fleet stop dispatching to an account with a fifth of its window left.
+
+⚠️ **Two dialogs stand between a signed-in worker and that reading**, and both were found only by
+testing on a commissioned worker rather than the author's own profile: the CLI's first-run screens
+(`hasCompletedOnboarding`), and the folder-trust question, which is asked per account *and* per
+folder and **swallows every keystroke until answered**. Sessions with no project therefore run in
+`<dataDir>/scratch`, an empty directory this app owns, whose trust is pre-answered for that
+directory alone. `WorkerIdentity.setupComplete` reports the rest, and the Workers panel offers
+**Finish setup**.
+
+`refreshUsage()` in `quota.ts` does this on a **30-minute** floor (`REFRESH_AFTER_MS`, deliberately
+longer than the 15-minute `STALE_AFTER_MS`) and on the Probe button. It is free of tokens, not of
+everything: it starts a real process for ~30s, so at most one worker is refreshed per sweep. ⛔ Never
+in a scheduler tick. The command is declared per adapter as `usageRefresh`, never branched on an
+adapter name; only `claude-code` declares one today.
+
+### What else was tried, and why it is not what we use
+
+Kept because the vendor surface moves, and each of these becomes right the moment one fact changes.
+
+| Path | Verdict | Revisit when |
+|---|---|---|
+| `claude -p /usage` | ⛔ **Spends a turn** and answers in prose. Measured 2026-08-25; independently corroborated by a third-party tool on this machine, which stored `error: unparsed: Total cost: $0.0000…` — print mode's cost summary, returned instead of a usage report | Print mode starts expanding slash commands client-side |
+| `claude auth status --json` | ⛔ No usage fields. Keys are `loggedIn, authMethod, apiProvider, email, orgId, orgName, subscriptionType` | A usage field appears |
+| A `claude usage` subcommand | ⛔ Does not exist. Subcommands on 2.1.223: agents, auth, auto-mode, doctor, gateway, import, install, mcp, plugin, project, setup-token, ultrareview, update | One is added — this is the cleanest possible answer if it ever ships |
+| **statusLine hook `rate_limits`** | ⚠️ **Documented since 2.1.80, measured absent on 2.1.223.** A capture on this machine returned `session_id, transcript_path, cwd, effort, model, workspace, version, output_style, cost, context_window, exceeds_200k_tokens, fast_mode, thinking` — no `rate_limits`. ⚠️ The hook fired once at session start with `current_usage: null`, so it may populate after a turn; that was not tested, because testing it costs one | Re-test after a turn has run, or on a newer CLI. **This would be the best option of all** — push-based, per-turn, no process to start |
+| Read `.credentials.json`, call `api.anthropic.com` | ⛔ **Closed to this project on principle, not difficulty.** It is what every community monitor does and it works. But this app never reads, stores, copies or proxies a credential — the same rule that makes D7 wrap `gh` instead of holding a GitHub token | Never, while that invariant stands |
+| A community usage package | ⛔ Rejected on D7: external services are wrapped, never vendored, and an undocumented internal surface behind a third-party wrapper is two things that can go stale rather than one | Never |
+
+**Still owed:** `tokens_per_percent` (R2), which turns a percentage into the token count every gate
+actually needs. ⭐ R3 — *what refreshes `cachedUsageUtilization`* — is **closed** by the above.
 
 ### The compaction reserve
 

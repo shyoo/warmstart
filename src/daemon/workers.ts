@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { existsSync } from 'node:fs'
+import { existsSync, watch, type FSWatcher } from 'node:fs'
 import { join } from 'node:path'
 import type { Worker, WorkerIdentity, WorkerRole } from '@shared/protocol.js'
 import { db, row, rows } from './db.js'
@@ -159,6 +159,88 @@ function announce(worker: Worker): Worker {
   return worker
 }
 
+/** Signed in **and** through the CLI's first-run screens. Either one alone is not a usable worker. */
+export function isReady(worker: Worker): boolean {
+  return worker.identity?.loggedIn === true && worker.identity?.setupComplete !== false
+}
+
+/**
+ * Re-read identity only if the stored answer has gone stale.
+ *
+ * ⚠️ Identity is a cached belief about the outside world and nothing expired it. ClaudeFirst on this
+ * machine read `not signed in` on 2026-08-27 while its isolation root held a valid `oauthAccount`:
+ * the `false` was written before somebody signed in, and only a button nobody knew to press would
+ * have corrected it. A belief with a timestamp and no refresh is just a stale belief with a date on
+ * it.
+ */
+export async function refreshIdentityIfStale(id: string, maxAgeMs: number): Promise<void> {
+  const w = requireWorker(id)
+  if (w.retiredAt) return
+  const checkedAt = w.identity?.checkedAt ?? 0
+  if (Date.now() - checkedAt < maxAgeMs) return
+  await refreshIdentity(id)
+}
+
+/**
+ * Watch a worker's isolation root while it is being signed in, and react when it becomes usable.
+ *
+ * ⛔ The operator should never have to tell this app something it can see for itself. Before this,
+ * signing in left the row saying `not signed in` and finishing the first-run screens left it saying
+ * `setup unfinished`, until somebody pressed a button whose name gave no hint that it was required.
+ * The vendor writes to its own config the moment either finishes; that write is the signal.
+ *
+ * ⚠️ Watched as a **directory**, not a file: which file carries the answer is the adapter's business,
+ * the credential may live somewhere else entirely, and a file that does not exist yet cannot be
+ * watched at all. A slow poll runs underneath because `fs.watch` misses writes on some Windows and
+ * network filesystems - the same belt-and-braces the transcript tailer uses, for the same reason.
+ */
+export function watchReadiness(workerId: string, onReady: () => void): () => void {
+  const w = requireWorker(workerId)
+  const wasReady = isReady(w)
+  let stopped = false
+  let debounce: NodeJS.Timeout | null = null
+  let watcher: FSWatcher | null = null
+
+  const check = async (): Promise<void> => {
+    if (stopped) return
+    try {
+      const fresh = await refreshIdentity(workerId)
+      // ⛔ The *transition* is the event, not the state. A worker that was already ready when the
+      // pane opened must not have its terminal closed out from under whoever opened it deliberately.
+      if (!wasReady && isReady(fresh)) {
+        stop()
+        onReady()
+      }
+    } catch (err) {
+      log.warn(`readiness check failed for ${w.label}:`, err)
+    }
+  }
+
+  const nudge = (): void => {
+    if (debounce) clearTimeout(debounce)
+    // The CLI writes its config in bursts; one probe after the burst beats one per write.
+    debounce = setTimeout(() => void check(), 1_500)
+  }
+
+  try {
+    watcher = watch(w.isolationRoot, { persistent: false }, nudge)
+  } catch {
+    // The poll below is the real guarantee; the watch is only there to make it feel immediate.
+  }
+  const timer = setInterval(() => void check(), 10_000)
+  timer.unref?.()
+
+  function stop(): void {
+    if (stopped) return
+    stopped = true
+    if (debounce) clearTimeout(debounce)
+    clearInterval(timer)
+    watcher?.close()
+  }
+
+  return stop
+}
+
 /**
  * Retiring closes the worker to new work but **leaves the isolation root on disk**. A credential
  * store is not something a task manager deletes on a stray click; removing it is a separate,
@@ -182,6 +264,10 @@ export async function refreshIdentity(id: string): Promise<Worker> {
     account: probe.account,
     organization: probe.organization,
     cliVersion: probe.cliVersion,
+    // ⛔ Stored for the same reason `loggedIn` is: a belief the adapter formed and the UI needs, and
+    // reconstructing it later by grepping `raw` is precisely the mistake that made a worker with no
+    // CLI look dispatchable.
+    setupComplete: probe.setupComplete ?? null,
     raw: probe.raw,
     checkedAt: Date.now()
   }

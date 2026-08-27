@@ -6,11 +6,11 @@ import { execFileSync, spawn as spawnChild } from 'node:child_process'
 import type { Session, SessionPurpose, SessionState, SessionTransport } from '@shared/protocol.js'
 import { db, row, rows } from './db.js'
 import { adapter } from './adapters/index.js'
-import { refreshIdentity, requireWorker } from './workers.js'
+import { refreshIdentity, requireWorker, watchReadiness } from './workers.js'
 import { log } from './log.js'
-import { ensureDir } from './paths.js'
+import { ensureDir, paths } from './paths.js'
 import { removeMcpConfig, writeMcpConfig } from './mcpconfig.js'
-import { StreamParser, type StreamEvent } from './stream.js'
+import { StreamParser, renderForHuman, type StreamEvent } from './stream.js'
 
 /**
  * Live agent processes.
@@ -26,6 +26,23 @@ import { StreamParser, type StreamEvent } from './stream.js'
 
 /** Enough backscroll that reopening the window does not look like the session lost its history. */
 const SCROLLBACK_BYTES = 256 * 1024
+
+/**
+ * Answer the vendor's folder-trust question for the app's own scratch directory, in advance.
+ *
+ * ⚠️ **Deliberately narrow, and the narrowness is the whole justification.** The question a CLI asks
+ * is whether an agent may act on the files in a folder. The only folder answered here is
+ * `<dataDir>/scratch`: created by this app, kept empty, and used solely by sessions that have no
+ * project - a login, and the usage probe. ⛔ It is never called for a project, a worktree, or
+ * anybody's home directory, and an operator's own trust decisions are untouched.
+ *
+ * Without it the probe cannot work unattended at all: measured 2026-08-27, an unanswered trust
+ * dialog swallows every keystroke sent to the session, so `/usage` was typed into the dialog and
+ * the Enter after it accepted the folder - reporting "no fresher reading" forever.
+ *
+ * Set `MULTI_AGENT_CONTROLLER_AUTO_TRUST=0` to turn it off and answer the dialog by hand instead.
+ */
+const AUTO_TRUST_SCRATCH = process.env.MULTI_AGENT_CONTROLLER_AUTO_TRUST !== '0'
 
 /**
  * How agentyard is attached to one agent process.
@@ -234,8 +251,27 @@ export function spawnSession(opts: SpawnOptions): Session {
     if (inFlight > 0) throw new Error(`worker '${worker.label}' is already answering a consult`)
   }
 
-  // A login flow has no project yet, so home is the sane default rather than the daemon's own cwd.
-  const cwd = opts.cwd && opts.cwd !== '.' ? opts.cwd : homedir()
+  // One probe at a time per worker. Two TUIs racing to rewrite the same usage cache would answer a
+  // question nobody asked twice, and the second reading is not fresher than the first.
+  if (purpose === 'probe') {
+    const inFlight = sessionsForWorker(worker.id).filter((s) => s.purpose === 'probe').length
+    if (inFlight > 0) throw new Error(`worker '${worker.label}' is already refreshing its usage`)
+  }
+
+  // ⛔ A session with no project runs in a directory this app owns, never in the user's home.
+  // Measured 2026-08-27: the CLI asks whether it trusts the folder it opened in - per account, once
+  // per folder - and until that is answered it swallows everything typed at it. The usage probe was
+  // typing `/usage` into that dialog and pressing Enter on "Yes, I trust this folder", every time,
+  // reporting no fresher reading and blaming onboarding. An empty directory makes the question
+  // trivial to answer and keeps the answer reusable.
+  const projectless = purpose === 'login' || purpose === 'probe'
+  const cwd =
+    opts.cwd && opts.cwd !== '.' ? opts.cwd : projectless ? ensureDir(paths.scratch) : homedir()
+
+  // ⛔ Only ever the scratch directory, and only for a session with no project. See the constant.
+  if (projectless && AUTO_TRUST_SCRATCH && cwd === paths.scratch) {
+    adapter(worker.adapterId).trustDirectory?.(worker.isolationRoot, cwd)
+  }
   if (!existsSync(cwd)) throw new Error(`working directory does not exist: ${cwd}`)
   ensureDir(worker.isolationRoot)
 
@@ -267,6 +303,9 @@ export function spawnSession(opts: SpawnOptions): Session {
     argv: opts.argv
   })
 
+  // Stopped from handleExit, whichever way the session ends. Declared here so both closures see it.
+  let stopReadinessWatch: (() => void) | null = null
+
   const emitData = (data: string) => {
     const entry = live.get(id)
     if (!entry) {
@@ -276,19 +315,31 @@ export function spawnSession(opts: SpawnOptions): Session {
       events.onData(id, data)
       return
     }
-    if (entry.parser) {
-      const listeners = streamListeners.get(id)
-      for (const event of entry.parser.push(data)) {
-        events.onStream(entry.session, event)
-        for (const listener of listeners ?? []) listener(event)
-      }
-    }
-    entry.scrollback.push(data)
-    entry.scrollbackBytes += data.length
+    // ⛔ A `stream` session's stdout is a machine protocol, and it never reaches the pane as itself.
+    // It used to: the first dispatched task filled the terminal with raw stream-json, because the
+    // same bytes were forwarded to xterm that the parser was reading. What a person gets instead is
+    // the decoded events, and only the ones that mean something to them.
+    const shown = entry.parser ? renderStream(entry, id, data) : data
+    if (!shown) return
+
+    entry.scrollback.push(shown)
+    entry.scrollbackBytes += shown.length
     while (entry.scrollbackBytes > SCROLLBACK_BYTES && entry.scrollback.length > 1) {
       entry.scrollbackBytes -= entry.scrollback.shift()?.length ?? 0
     }
-    events.onData(id, data)
+    events.onData(id, shown)
+  }
+
+  /** Feed the parser, fan the events out to everyone waiting, and return what a human should see. */
+  const renderStream = (entry: Live, id: string, data: string): string => {
+    const listeners = streamListeners.get(id)
+    let text = ''
+    for (const event of entry.parser?.push(data) ?? []) {
+      events.onStream(entry.session, event)
+      for (const listener of listeners ?? []) listener(event)
+      text += renderForHuman(event)
+    }
+    return text
   }
 
   const handleExit = (exitCode: number | null) => {
@@ -307,6 +358,7 @@ export function spawnSession(opts: SpawnOptions): Session {
     // changed. Identity used to be read once at commissioning and never again, which meant a worker
     // that had just finished signing in stayed permanently undispatchable.
     if (purpose === 'login') {
+      stopReadinessWatch?.()
       void refreshIdentity(opts.workerId).catch((err: unknown) => {
         log.warn(`could not re-read identity after login session ${id.slice(0, 8)}:`, err)
       })
@@ -374,6 +426,20 @@ export function spawnSession(opts: SpawnOptions): Session {
   if (!transcriptPath && purpose !== 'login' && ad.discoverTranscript) {
     findTranscriptLater(id, worker.isolationRoot, cwd, now)
   }
+
+  // ⛔ A sign-in that has succeeded should not need to be reported to this app by the person who
+  // just did it. The vendor writes its own config the moment the credential lands or the first-run
+  // screens are answered; that write is watched, identity is re-read, and the terminal closes itself
+  // once the worker is actually usable. `auth login` exits on its own, but the first-run session is
+  // a plain agent prompt that sits there forever - which is exactly where somebody was left
+  // wondering whether it had worked.
+  if (purpose === 'login') {
+    stopReadinessWatch = watchReadiness(worker.id, () => {
+      log.info(`${worker.label} is signed in and set up; closing its ${purpose} terminal`)
+      closeSession(id)
+    })
+  }
+
   return getSession(id) ?? session
 }
 

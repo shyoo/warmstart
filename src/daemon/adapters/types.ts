@@ -97,9 +97,6 @@ export interface AgentAdapter {
    */
   probeQuota(isolationRoot: string): Promise<Omit<QuotaSnapshot, 'workerId'>>
 
-  /** Argv for the vendor's own login flow, run in a PTY the user types into. */
-  loginArgv(): string[]
-
   plan(req: SpawnRequest): SpawnPlan
 
   /**
@@ -128,6 +125,19 @@ export interface AgentAdapter {
    * credentials, and only into the root this worker owns.
    */
   writePermissions?(isolationRoot: string, rules: PermissionRules): WrittenPermissions
+
+  /**
+   * Answer this CLI's "do you trust this folder?" question for one directory, in advance.
+   *
+   * ⛔ Only ever called with a directory **this app created and owns** - the empty scratch dir a
+   * projectless session runs in. It is never called with a project, a worktree or anybody's home,
+   * and an adapter must not widen it: the question is about what an agent may act on, and the only
+   * honest answer to pre-record is one about a folder with nothing in it.
+   *
+   * Optional, because most of this is one vendor's dialog. An adapter that does not implement it
+   * simply leaves the question to the person, which is the behaviour that existed before.
+   */
+  trustDirectory?(isolationRoot: string, dir: string): void
 
   /**
    * Turn one of this CLI's own stream records into an agentyard event.

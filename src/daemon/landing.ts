@@ -54,6 +54,41 @@ async function isClean(cwd: string): Promise<boolean> {
   return (await git(cwd, ['status', '--porcelain'])).length === 0
 }
 
+/**
+ * Say where the work actually is.
+ *
+ * ⚠️ This used to be one sentence — "The branch `x` is intact" — and on 2026-08-26 it was true and
+ * useless at the same time. The branch existed, pointed at the base commit, and contained none of
+ * the change; the only copy was an uncommitted file in a **pooled** workspace that the next dispatch
+ * would have switched out from under. A branch name is not a location. A person reading this needs
+ * to know whether their work survived and where to go and look for it.
+ */
+async function whereTheWorkIs(cwd: string, branch: string): Promise<string> {
+  const dirty = (await git(cwd, ['status', '--porcelain'])).split('\n').filter(Boolean)
+  const carried = (await git(cwd, ['log', '--oneline', branch, '--not', '--remotes', '--']))
+    .split('\n')
+    .filter(Boolean)
+
+  if (dirty.length === 0) {
+    return carried.length > 0
+      ? `${carried.length} commit(s) are on \`${branch}\`, which is intact.`
+      : `⚠️ Nothing was committed and nothing is uncommitted — \`${branch}\` holds no work.`
+  }
+
+  const named = dirty.slice(0, 5).map((line) => line.slice(3)).join(', ')
+  const more = dirty.length > 5 ? `, +${dirty.length - 5} more` : ''
+  const alsoCommitted =
+    carried.length > 0
+      ? ` \`${branch}\` does hold ${carried.length} earlier commit(s).`
+      : ` \`${branch}\` holds no commits.`
+
+  return (
+    `⚠️ ${dirty.length} file(s) are **uncommitted** in \`${cwd}\` (${named}${more}) and are NOT on ` +
+    `\`${branch}\`.${alsoCommitted} That workspace is pooled and will be reused, so commit or copy ` +
+    `the work out before dispatching anything else.`
+  )
+}
+
 /** Run the project's own checks. A project that declares none has consented to landing unchecked. */
 async function runChecks(
   project: Project,
@@ -310,7 +345,8 @@ export async function landTask(ctx: LandingContext): Promise<LandingResult> {
     addMessage(
       ctx.task.id,
       'system',
-      `Not landed automatically: ${allowed.reason}. The branch \`${ctx.branch}\` is intact.`
+      `Not landed automatically: ${allowed.reason}. ` +
+        (await whereTheWorkIs(ctx.workspacePath, ctx.branch))
     )
     setStatus(ctx.task.id, 'awaiting_human', { assignee: 'human' })
     return { ...fallback, ok: false, reason: allowed.reason }
@@ -321,7 +357,8 @@ export async function landTask(ctx: LandingContext): Promise<LandingResult> {
     addMessage(
       ctx.task.id,
       'system',
-      `Landing failed: ${result.reason}. The branch \`${ctx.branch}\` is intact.` +
+      `Landing failed: ${result.reason}. ` +
+        (await whereTheWorkIs(ctx.workspacePath, ctx.branch)) +
         (result.checkOutput ? `\n\n${result.checkOutput.slice(-2000)}` : '')
     )
     setStatus(ctx.task.id, 'awaiting_human', { assignee: 'human' })

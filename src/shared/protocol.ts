@@ -113,6 +113,19 @@ export interface WorkerIdentity {
   account?: string
   organization?: string
   cliVersion?: string
+  /**
+   * Has a person walked this isolation root through the CLI's first-run screens?
+   *
+   * ⛔ Signing in is not the same as being set up, and conflating them cost a day. Measured
+   * 2026-08-27: `claude auth login` writes `oauthAccount` and `userID` into the isolation root but
+   * not `hasCompletedOnboarding`, so an **interactive** session there opens the theme picker and
+   * then the login-method chooser — while `-p` skips all of it and runs perfectly. A worker can
+   * therefore do scheduled work for days and still be unable to answer `/usage`, which is exactly
+   * what happened.
+   *
+   * `null` means the adapter cannot tell, and is not a problem to report.
+   */
+  setupComplete?: boolean | null
   /** Whatever the probe could read back, verbatim, for the Doctor panel. */
   raw?: string
   /**
@@ -175,8 +188,13 @@ export type SessionState = 'starting' | 'live' | 'idle' | 'closed' | 'failed'
  * is exempt from the worker's work-concurrency limit - a fleet that cannot ask for judgment precisely
  * when it is busiest would have the feature only when it is not needed. It is bounded separately: one
  * consult per worker at a time, a fleet-wide hourly cap, and the same quota gates as work.
+ *
+ * A `probe` is shorter still and spends nothing at all: a TUI opened only so a slash command can be
+ * typed into it, read from disk, and closed. ⛔ It gets no tools, is exempt from the work-concurrency
+ * limit for the same reason a consult is, and the cache clock ignores it - a session that lives for
+ * fifteen seconds has no prefix worth keeping warm.
  */
-export type SessionPurpose = 'work' | 'login' | 'consult' | 'chat'
+export type SessionPurpose = 'work' | 'login' | 'consult' | 'chat' | 'probe'
 
 /** One assistant turn's metering, read from the agent's own transcript. */
 export interface Turn {
@@ -295,6 +313,65 @@ export interface AdapterInfo {
   capabilities: AdapterCapabilities
   policy: AdapterPolicy
   verification: AdapterVerification
+  login: AdapterLogin
+  /** `null` means this CLI offers no free way to refresh its own usage figures. */
+  usageRefresh: UsageRefresh | null
+  /** `null` means signing in is all this CLI needs before a terminal is usable. */
+  firstRun: AdapterFirstRun | null
+}
+
+/**
+ * How an account is signed in — **declared by the adapter, never inferred from its name.**
+ *
+ * ⚠️ The renderer used to work this out itself with `id === 'claude-code' ? ['auth','login'] :
+ * ['login']`, which is the branch-on-adapter-name this design forbids, and it was wrong the first
+ * time somebody used it: `agy` has no `login` subcommand at all, so commissioning an Antigravity
+ * account failed with *unexpected argument "login"* (measured on agy 1.1.20, 2026-08-26).
+ *
+ * ⛔ `external` is a real answer, not a missing one. A vendor whose credential lives in the OS
+ * keyring has no CLI login for this app to run, and pretending otherwise produces a terminal pane
+ * that can only fail.
+ */
+export type AdapterLogin =
+  | { kind: 'cli'; argv: string[] }
+  | { kind: 'external'; reason: string }
+
+/**
+ * How to make a CLI refresh its own usage cache, for free.
+ *
+ * ⭐ Measured 2026-08-27 on claude 2.1.223. `claude -p /usage` spends a real turn — that finding is
+ * three months old and correct — but it is a fact about **print mode**, and it got generalised into
+ * "there is no free quota probe" for far too long. Typed into an interactive session, `/usage` is a
+ * *client-side* command: it costs no tokens and it rewrites `cachedUsageUtilization` on disk. A
+ * cache that had been 20 days stale came back seconds old.
+ *
+ * This is the same trick the design already turns on for compaction: the daemon owns stdin, so a
+ * slash command is a function call. ⛔ The alternative — reading `.credentials.json` and calling the
+ * vendor's usage API, which is what every community monitor does — is closed to this project, and
+ * not on grounds of difficulty. See `docs/cost-model.md` §5.
+ */
+/**
+ * A plain interactive session, for the screens only a person can answer.
+ *
+ * ⚠️ Not a second login. The account is already signed in by the time this matters; what is missing
+ * is the first-run setup a TUI insists on before it will show a prompt. The app cannot answer these
+ * for the operator — they are choices, and one of them is a login method.
+ */
+export interface AdapterFirstRun {
+  /** Argv for a bare interactive session. Empty means the command with no arguments. */
+  argv: string[]
+  /** The key in the CLI's own config that proves the screens were completed. */
+  completedKey: string
+  reason: string
+}
+
+export interface UsageRefresh {
+  /** Typed into the session verbatim, followed by a carriage return. */
+  command: string
+  /** How long the TUI needs before it will accept input at all. */
+  readyMs: number
+  /** How long to let the answer land and be written to disk before reading it. */
+  settleMs: number
 }
 
 export interface AdapterDetection {

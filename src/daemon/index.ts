@@ -67,7 +67,10 @@ async function main(): Promise<void> {
       if (session.state === 'live' && session.transcriptPath && !tailers.has(session.id)) {
         const tailer = new TranscriptTailer(session.id, session.transcriptPath, {
           onTurn(turn) {
-            recordTurn(turn)
+            // ⛔ Bill it only if the store had never seen it. A transcript repeats usage records -
+            // 72 for 41 real turns, measured on claude 2.1.223 - and `turns` deduped them while
+            // every accumulator beside it did not.
+            if (!recordTurn(turn)) return
             creditTurn(turn.sessionId, {
               input: turn.inputTokens,
               output: turn.outputTokens,

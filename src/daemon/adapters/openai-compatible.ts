@@ -93,6 +93,12 @@ const info: AdapterInfo = {
     wrapUpProtocol: 'handoff',
     needsExplicitBudget: true
   },
+  // Not investigated on codex. ⚠️ Absent because nobody has measured it, not because it is known
+  // to be impossible - which is the honest state and the reason this field is nullable.
+  usageRefresh: null,
+  // Not measured on codex.
+  firstRun: null,
+  login: { kind: 'cli', argv: ['login'] },
   verification: {
     level: 'measured',
     asOf: '2026-08-25',
@@ -287,10 +293,6 @@ export const openaiCompatible: AgentAdapter = {
         'Codex has no non-interactive usage command (openai/codex#10233). This worker has no quota ' +
         'reading, so its runs are marked unverified.'
     }
-  },
-
-  loginArgv(): string[] {
-    return ['login']
   },
 
   /**

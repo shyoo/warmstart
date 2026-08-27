@@ -80,7 +80,19 @@ try {
   const connected = await until(() => evaluate('!!document.querySelector(".dot--ok")'))
   check('the daemon connected', connected, connected ? '' : 'no .dot--ok within 30s')
   const nav = await evaluate('[...document.querySelectorAll(".nav-item")].map(b => b.innerText.trim())')
-  check('every section is reachable', nav.length >= 5, nav.join(' | '))
+  // ⛔ Named, not counted. The sidebar is now Overview / one item per project / Settings, so a count
+  // says nothing: it moves whenever a project is added, and it passed all the way through the
+  // rewrite that removed Cost and Controller as destinations.
+  check(
+    'the three fixed destinations are reachable',
+    ['Overview', 'Workers', 'Doctor'].every((label) => nav.some((n) => n.startsWith(label))),
+    nav.join(' | ')
+  )
+  check(
+    'a project with no projects yet says so rather than showing an empty group',
+    nav.some((n) => n.startsWith('No projects yet')),
+    nav.join(' | ')
+  )
 
   section('zero state')
   check(
@@ -105,6 +117,21 @@ try {
     })()
   `)
   await wait(1500)
+
+  // These tasks are filed with no project, which is still legal. The sidebar carries an Unassigned
+  // entry for exactly that case - work with no project would otherwise be unreachable in a shell
+  // built out of projects. ⚠️ It is temporary: it disappears when the last orphan is given a home.
+  await evaluate(
+    `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim().startsWith('Unassigned'))?.click()`
+  )
+  await wait(1200)
+  check(
+    'work with no project is still reachable',
+    await evaluate(
+      `[...document.querySelectorAll('.nav-item')].some(b => b.innerText.trim().startsWith('Unassigned'))`
+    ),
+    'a project-shaped sidebar must not hide tasks that have no project'
+  )
 
   const table = await evaluate('document.querySelector(".tbl")?.innerText ?? ""')
   check('the task table renders rows', table.includes('A task the UI can render'))
@@ -144,9 +171,11 @@ try {
   check('the content pane takes the remaining height', content > approvals * 3, `${Math.round(content)}px`)
 
   section('cost')
-  await evaluate(`[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim().startsWith('Cost')).click()`)
+  await evaluate(
+    `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim().startsWith('Overview')).click()`
+  )
   await wait(1500)
-  const costPanel = await evaluate('document.querySelector(".panel")?.innerText ?? ""')
+  const costPanel = await evaluate('document.querySelector(".content")?.innerText ?? ""')
   check('the cost view renders', costPanel.includes('Cost'))
   check(
     'it states the objective it is working to',
@@ -160,11 +189,10 @@ try {
   )
 
   section('controller')
-  await evaluate(
-    `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim().startsWith('Controller')).click()`
-  )
-  await wait(1500)
-  const controllerPanel = await evaluate('document.querySelector(".panel")?.innerText ?? ""')
+  // On Overview beside cost: the controller answers questions about the fleet, and a consult is not
+  // scoped to any one project.
+  await wait(500)
+  const controllerPanel = await evaluate('document.querySelector(".content")?.innerText ?? ""')
   check('the controller view renders', controllerPanel.includes('Controller'))
   check(
     'it says up front that it is never in the critical path',

@@ -331,6 +331,61 @@ const MIGRATIONS: string[] = [
     ts          integer not null
   );
   create index chat_messages_thread on chat_messages(thread_id, ts);
+  `,
+
+  // 5 - repair every counter that was billed more than once.
+  //
+  // ⚠️ A transcript repeats usage records. Measured 2026-08-26 on claude 2.1.223: one 41-turn
+  // session's JSONL carried **72 usage records with 41 unique request ids**. `turns` has a unique
+  // index on (session_id, request_id) and was always exact; every accumulator reading the same
+  // stream was not. On the machine this was found on, one run recorded 3,154,302 cache-read tokens
+  // against an actual 1,848,902, its task's budget claimed 3.3M of spend that never happened, and
+  // `tokens_since_compact` - which the compaction reserve and the cache clock both read before
+  // deciding to spend money - stood at 144,133 against 73,987.
+  //
+  // `turns` is therefore the source of truth here, and everything else is recomputed from it.
+  `
+  -- A turn belongs to the most recent run that had started on its session. ⚠️ Not a
+  -- started_at..ended_at window: the last turn of a run is routinely written *after* the run is
+  -- closed (the transcript is flushed after the process goes), and a strict window drops exactly
+  -- the turn that carries the largest context.
+  update runs set
+    input_tokens = coalesce((
+      select sum(t.input_tokens) from turns t
+       where t.session_id = runs.session_id and t.ts >= runs.started_at
+         and not exists (select 1 from runs r2 where r2.session_id = t.session_id
+                          and r2.started_at > runs.started_at and r2.started_at <= t.ts)), 0),
+    output_tokens = coalesce((
+      select sum(t.output_tokens) from turns t
+       where t.session_id = runs.session_id and t.ts >= runs.started_at
+         and not exists (select 1 from runs r2 where r2.session_id = t.session_id
+                          and r2.started_at > runs.started_at and r2.started_at <= t.ts)), 0),
+    cache_read_tokens = coalesce((
+      select sum(t.cache_read_tokens) from turns t
+       where t.session_id = runs.session_id and t.ts >= runs.started_at
+         and not exists (select 1 from runs r2 where r2.session_id = t.session_id
+                          and r2.started_at > runs.started_at and r2.started_at <= t.ts)), 0),
+    cache_write_tokens = coalesce((
+      select sum(t.cache_write_1h_tokens + t.cache_write_5m_tokens) from turns t
+       where t.session_id = runs.session_id and t.ts >= runs.started_at
+         and not exists (select 1 from runs r2 where r2.session_id = t.session_id
+                          and r2.started_at > runs.started_at and r2.started_at <= t.ts)), 0)
+  where exists (select 1 from turns t where t.session_id = runs.session_id);
+
+  -- Budgets follow the runs, so this has to come second.
+  update tasks set budget_json = json_set(budget_json, '$.spentTokens', coalesce((
+    select sum(r.input_tokens + r.output_tokens + r.cache_read_tokens + r.cache_write_tokens)
+      from runs r where r.task_id = tasks.id), 0))
+  where exists (select 1 from runs r where r.task_id = tasks.id);
+
+  -- ⚠️ Recomputed from every turn on the session, which is exact for a session that has never
+  -- compacted and too high for one that has - no compaction timestamp is stored, only a reset to
+  -- zero. Too high is the safe direction: it compacts earlier than needed, where too low strands
+  -- context at a window boundary, and that is the loss this whole cost model exists to prevent.
+  update sessions set tokens_since_compact = coalesce((
+    select sum(t.input_tokens + t.output_tokens + t.cache_write_1h_tokens + t.cache_write_5m_tokens)
+      from turns t where t.session_id = sessions.id), 0)
+  where exists (select 1 from turns t where t.session_id = sessions.id);
   `
 ]
 

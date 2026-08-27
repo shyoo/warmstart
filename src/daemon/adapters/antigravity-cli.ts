@@ -99,6 +99,24 @@ const info: AdapterInfo = {
     wrapUpProtocol: 'handoff',
     needsExplicitBudget: true
   },
+  // ⛔ Nothing to drive. `agy -p /usage` was measured spending a turn without answering, and the
+  // interactive session shows usage in a panel it does not write anywhere this app can read.
+  usageRefresh: null,
+  // Not measured. ⚠️ Absent because nobody has looked, which is the honest state for a nullable field.
+  firstRun: null,
+  // ⛔ Measured on agy 1.1.20 (2026-08-26): `agy --help` lists agent, agents, changelog, help,
+  // install, mcp, mic-serve, models, plugin, plugins and update. There is **no login and no auth**
+  // subcommand, and `agy login` fails with *unexpected argument "login"* - which is exactly what
+  // commissioning did until this field existed. The credential is in the OS keyring, put there by
+  // the Antigravity app, and this app never touches a keyring.
+  login: {
+    kind: 'external',
+    reason:
+      'Antigravity has no CLI login. Sign in once with the Antigravity app on this machine; the ' +
+      'credential goes to the OS keyring and `agy` reads it from there. That is also why one ' +
+      'machine holds one Antigravity account. Verify with `agy models` - it lists models when ' +
+      'signed in and costs nothing.'
+  },
   verification: {
     level: 'measured',
     asOf: '2026-08-25',
@@ -268,6 +286,20 @@ export const antigravityCli: AgentAdapter = {
    *
    * ⛔ It must never spend a turn to find out. `agy -p "who am i"` would answer, and would bill.
    */
+  /**
+   * ⛔ Still unknown, and `agy models` is **not** the free sign-in check it looks like.
+   *
+   * Measured 2026-08-26 on agy 1.1.20. On a terminal it prints "Fetching available models…" and the
+   * catalogue, exits 0, and spends no turn — which makes it look like this adapter's answer to
+   * `claude auth status --json`. It is not: **with stdout on a pipe it produces nothing and hangs**.
+   * Killed at 30s through `execFile`, and again at two minutes through `agy models | cat`. Every
+   * probe this daemon runs is on a pipe, so shipping it would have hung identity refresh — the
+   * commissioning path, the Probe button, and the post-login refresh — for its whole timeout, and
+   * then returned the same `null` it starts with.
+   *
+   * ⚠️ Recorded rather than retried: this is the third Antigravity capability that reads as
+   * available and is not (`agy -p /usage`, the missing `login` subcommand, and now this).
+   */
   async probeIdentity(): Promise<IdentityProbe> {
     const home = cliHome()
     if (!existsSync(join(home, 'settings.json'))) {
@@ -318,10 +350,6 @@ export const antigravityCli: AgentAdapter = {
     }
   },
 
-
-  loginArgv(): string[] {
-    return ['login']
-  },
 
   /**
    * Write the project's allowlist where `agy` reads it.

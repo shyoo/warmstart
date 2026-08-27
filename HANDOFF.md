@@ -8,8 +8,8 @@ started in CI, never run against a real agent CLI.
 if you add a line, find the one it obsoletes and cut it in the same edit. Finished work moves to
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
-**Baseline (2026-08-26, measured on this machine):** `npm run typecheck` clean · `npm run lint` clean ·
-`npm run build` clean · `npm test` 139/139 · `npm run test:daemon` 101/101 · `npm run test:ui` 21/21 ·
+**Baseline (2026-08-27, measured on this machine):** `npm run typecheck` clean · `npm run lint` clean ·
+`npm run build` clean · `npm test` 162/162 · `npm run test:daemon` 101/101 · `npm run test:ui` 23/23 ·
 `npm run test:pack` 17/17 · L4 (opt-in) landed a real agent commit on origin/main. Electron 44.0.0,
 electron-builder 26.15.3, 0 npm vulnerabilities. CLIs here: claude 2.1.223 · agy 1.1.20 · codex 0.149.1.
 
@@ -91,14 +91,18 @@ docs/                  cost-model.md, glossary.md, adapters.md - maintained; rea
 
 ## What is true right now and not yet proven
 
-- ⚠️ **The compaction reserve reports `unknown` on a real worker, and that is correct.** It needs
-  `remaining` in *tokens*, which needs a fresh percentage **and** a learned `tokens_per_percent`, and
-  there is no free fresh percentage. It becomes load-bearing the moment **R2** or **R3** lands.
-  `docs/cost-model.md` §10.
-- ⚠️ **A freshly commissioned worker reports no quota at all**, because the CLI writes
-  `cachedUsageUtilization` only after real work on that account. The Workers panel now says which
-  kind of nothing it has and what would produce a number. Both accounts on this machine are in that
-  state — **R3** is the experiment that says whether anything ever refreshes it.
+- ⭐ **There is a free live quota probe, as of 2026-08-27.** `/usage` typed into an interactive
+  session is client-side: it spends nothing and rewrites `cachedUsageUtilization`. `refreshUsage()`
+  drives it on the Probe button and on a 30-minute floor. First real reading on this machine:
+  session 6%, weekly 0%. ⛔ **R3 is closed** — `docs/cost-model.md` §5 has the ladder, everything
+  else that was tried, and when to revisit each.
+- ⚠️ **The compaction reserve still reports `unknown`,** and now for one reason rather than two: it
+  needs `remaining` in *tokens*, so a fresh percentage is no longer the blocker — **R2**
+  (`tokens_per_percent`) is. `docs/cost-model.md` §10.
+- ⚠️ **A worker is not usable until somebody answers the CLI's first-run questions in its own root.**
+  Signing in writes the credential and neither `hasCompletedOnboarding` nor folder trust; print mode
+  skips both, so scheduled work runs while a TUI cannot reach a prompt. `Finish setup` opens that
+  terminal. ClaudeFirst on this machine is signed in and still unset-up.
 - ⚠️ **Two M3 paths are unverified and marked in the code:** whether `/compact` is honoured as a user
   message on the `stream` transport (**R6**), and keepalive *execution*, which needs a warm session
   and an idle hour. The arithmetic is unit-tested; the firing is not.
@@ -117,8 +121,8 @@ M0–M6 are done. What is left is not a milestone but a list, in the order it wo
 
 1. **Run the suites on macOS or Linux with an agent CLI installed.** See above — this is the largest
    unmeasured surface in the project.
-2. **The measurement runs still owed** — R2/R3 unblock the compaction reserve, the largest piece of
-   the cost model still reporting `unknown` on a real worker.
+2. **R2 (`tokens_per_percent`)** — the last thing between a refreshable percentage and a compaction
+   reserve that reports a number. Now cheap to run, because the percentage refreshes on demand.
 3. **Signing and notarisation**, without which the installers warn or refuse.
 4. **Warm-session reuse across tasks in one project** — the biggest remaining cost win, and the
    reason it is not done is in the scheduler's own comment: the workspace claim has to move from the
@@ -127,10 +131,8 @@ M0–M6 are done. What is left is not a milestone but a list, in the order it wo
 
 ## Open questions
 
-- **Refreshing the quota cache without spending a turn.** Nothing found refreshes
-  `cachedUsageUtilization` — not an interactive start, not a `-p` run. Until something does, M3 must
-  build token accrual from the transcripts Multi Agent Controller already meters exactly, calibrated
-  against whatever readings do arrive. The biggest hole in the cost model; **R3** closes or confirms it.
+- **Turning a percentage into tokens (R2).** The percentage is now refreshable; what no vendor
+  publishes is what one percent of a window is worth, and every gate needs tokens.
 - **Auto-mode classifier cost on a subscription** (`docs/cost-model.md` §9). Documented as billable on
   Enterprise and API-billed accounts, unstated for Pro/Max/Team, and Claude workers default to `auto`.
   ⛔ Do not assume it is free — **R1** measures it.
@@ -157,7 +159,6 @@ measurement.
 |---|---|---|---|
 | **R1** | Does the auto-mode classifier bill on a subscription? | Same shell-heavy task twice on a quiet worker: once `--permission-mode auto`, once `default` with a narrow allowlist so nothing prompts. Read `/usage` by hand in a TUI before and after each. Compare (quota delta − transcript tokens) | If it bills, `auto` stops being a free default and the objective vector has to price it. §9 |
 | **R2** | `tokens_per_percent` per (worker, model, tokenizer) | With exactly one session live, sample `/usage` by hand at intervals and diff against transcript tokens over the same span | Turns percent into tokens, which is what every gate actually needs. Plan §8.5 |
-| **R3** | What refreshes `cachedUsageUtilization`? | Note `fetchedAtMs`, then try in turn: `/usage` inside an interactive session · a long run · a fresh CLI start after some hours. Stop at the first that moves it | If anything does, the poller becomes real and R2 gets automatic. If nothing does, M3 must accrue tokens itself |
 | **R4** | Real compaction cost end to end | Compact a session of known size; diff transcript tokens across the `compact_boundary` and record `durationMs` | Three samples so far (139k · 116k · **161k** ms). The spread matters more than the mean for the T+53m deadline |
 | **R5** | Second account on a transplanted transcript | Commission a second worker, copy a small transcript into its root, `--resume`, complete one turn | Discovery is measured; completion is not. Shapes cross-account continuation. §7 |
 | **R6** | Is `/compact` honoured as a user message on `stream`? | Send it into a live stream session and watch for a `compact_boundary` record | The cache clock's compact move depends on it. If not, that move becomes handoff-and-close everywhere |
@@ -168,8 +169,8 @@ measurement.
 | **R11** | The `stream-json` / `--json` event shapes for agy and codex | One turn each, capture stdout verbatim | `stream.ts` parses Anthropic's records only. Until this lands, neither new adapter contributes rate-limit signal or result text |
 | **R12** | Is headless compaction reachable on codex? | Try to drive compaction from `codex exec`; watch for a compaction record | If yes, `manualCompact` flips true and two cache-clock moves become available on that provider |
 
-**R2 and R3 block the compaction reserve.** R1 and R6 change how the cache clock behaves. R5 needs a
-second subscription.
+**R2 blocks the compaction reserve** — R3 closed on 2026-08-27 and the percentage is now refreshable.
+R1 and R6 change how the cache clock behaves. R5 needs a second subscription.
 
 ## Standing decisions worth not relitigating
 

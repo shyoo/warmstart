@@ -66,6 +66,59 @@ export type StreamEvent =
   | { kind: 'other'; type: string }
 
 /**
+ * One stream event, as a line a person can read.
+ *
+ * ⛔ A `stream` session has no TUI. Its stdout is `stream-json`, and the session pane used to
+ * receive those bytes verbatim — so the first task anyone dispatched filled the terminal with raw
+ * JSON. That is the machine's copy of the conversation being shown to a human, which is the inverse
+ * of the rule the whole design runs on: the TUI is for people, the structured record is for the
+ * scheduler.
+ *
+ * ⚠️ Nothing here parses screen text back into state. This is one-way — events that already exist
+ * because the scheduler needed them, rendered on the way past. Returns '' for anything with nothing
+ * to say, and the caller writes nothing at all in that case.
+ */
+export function renderForHuman(event: StreamEvent): string {
+  const dim = (s: string) => `[2m${s}[0m`
+  const eol = '\r\n'
+
+  switch (event.kind) {
+    case 'assistant_text':
+      return event.text.replace(/\n/g, eol)
+    case 'init':
+      return dim(`— ${event.model ?? 'model unknown'} · ${event.permissionMode ?? 'mode unknown'}`) + eol
+    case 'usage': {
+      if (!event.final) return ''
+      const u = event.usage
+      // ⭐ Context first. The cumulative counters are what the cost model bills from, but the number
+      // a person steering a session needs is how full the window is right now.
+      const context = u.input + u.cacheRead + u.cacheWrite
+      return (
+        dim(
+          `— context ${context.toLocaleString()} · out ${u.output.toLocaleString()} · ` +
+            `cache read ${u.cacheRead.toLocaleString()}`
+        ) + eol
+      )
+    }
+    case 'rate_limit': {
+      const resets = event.info.resetsAt
+        ? ` · resets ${new Date(event.info.resetsAt).toLocaleTimeString()}`
+        : ''
+      return dim(`— rate limit: ${event.info.status}${resets}`) + eol
+    }
+    case 'result':
+      return (
+        (event.text ? event.text.replace(/\n/g, eol) + eol : '') +
+        dim(`— ${event.isError ? 'failed' : 'done'}${event.terminalReason ? `: ${event.terminalReason}` : ''}`) +
+        eol
+      )
+    // ⛔ Everything else is protocol. It goes to the scheduler and not to the screen.
+    case 'other':
+      return ''
+  }
+}
+
+/**
  * How one CLI's records become agentyard's events. Implemented by each adapter.
  *
  * May return several: one record can mean two things. Antigravity's terminal `result` carries both

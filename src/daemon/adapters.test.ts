@@ -349,3 +349,176 @@ describe('the MCP server is called the same thing at both ends', () => {
     expect(declared).toBe(MCP_SERVER_NAME)
   })
 })
+
+/**
+ * How an account gets signed in, as data.
+ *
+ * ⚠️ The renderer used to decide this with `id === 'claude-code' ? ['auth','login'] : ['login']` —
+ * a branch on an adapter name, which this design forbids, and which was wrong the first time it met
+ * a CLI that has no login subcommand. Commissioning an Antigravity account failed with *unexpected
+ * argument "login"* (agy 1.1.20, 2026-08-26).
+ */
+describe('login', () => {
+  it('every adapter declares how its accounts are signed in', () => {
+    for (const a of ALL) {
+      expect(['cli', 'external'], a.info.id).toContain(a.info.login.kind)
+    }
+  })
+
+  it('a CLI login always has an argv — an empty one would open a billable session', () => {
+    for (const a of ALL) {
+      if (a.info.login.kind !== 'cli') continue
+      expect(a.info.login.argv.length, a.info.id).toBeGreaterThan(0)
+    }
+  })
+
+  it('an adapter whose credential is not in a directory declares no CLI login', () => {
+    // ⛔ The real coupling: no isolation env var means the credential lives somewhere this app does
+    // not manage — the OS keyring for Antigravity — and there is nothing for a terminal pane to run.
+    for (const a of ALL) {
+      if (a.info.isolationEnvVar !== null) continue
+      if (a.info.capabilities.maxAccounts !== 1) continue
+      expect(a.info.login.kind, `${a.info.id} claims a CLI login it cannot have`).toBe('external')
+    }
+  })
+
+  it('says where the credential comes from when there is no CLI login', () => {
+    for (const a of ALL) {
+      if (a.info.login.kind !== 'external') continue
+      // A reason nobody can act on is the same as no reason.
+      expect(a.info.login.reason.length, a.info.id).toBeGreaterThan(40)
+    }
+  })
+})
+
+/**
+ * Refreshing a usage cache without spending a turn.
+ *
+ * ⭐ Measured 2026-08-27: `/usage` typed into an interactive claude session rewrites
+ * `cachedUsageUtilization` and costs nothing, where `-p /usage` spends a turn and answers in prose.
+ * The difference is print mode versus the client, and the project believed the wrong half of it for
+ * three months. See docs/cost-model.md §5.
+ */
+describe('usageRefresh', () => {
+  it('is declared per adapter rather than inferred from a name', () => {
+    for (const a of ALL) {
+      const r = a.info.usageRefresh
+      expect(r === null || typeof r === 'object', a.info.id).toBe(true)
+    }
+  })
+
+  it('never declares an empty command — that would send a bare carriage return into a TUI', () => {
+    for (const a of ALL) {
+      if (!a.info.usageRefresh) continue
+      expect(a.info.usageRefresh.command.trim().length, a.info.id).toBeGreaterThan(0)
+    }
+  })
+
+  it('waits for the TUI before typing, and for the answer before reading', () => {
+    // ⛔ Being early is the failure that looks like success: the file is read before the CLI has
+    // rewritten it, so the *old* number comes back and is stamped with a fresh age.
+    for (const a of ALL) {
+      const r = a.info.usageRefresh
+      if (!r) continue
+      expect(r.readyMs, `${a.info.id} readyMs`).toBeGreaterThanOrEqual(5_000)
+      expect(r.settleMs, `${a.info.id} settleMs`).toBeGreaterThanOrEqual(5_000)
+    }
+  })
+
+  it('only an adapter that can be metered exactly gets one', () => {
+    // A refresh writes a percentage; a percentage is only useful next to tokens we measured
+    // ourselves. An adapter we cannot meter would be pairing a real number with a guess.
+    for (const a of ALL) {
+      if (!a.info.usageRefresh) continue
+      expect(a.info.capabilities.metering, a.info.id).toBe('transcript')
+    }
+  })
+})
+
+/**
+ * Signed in is not the same as set up.
+ *
+ * ⛔ Measured 2026-08-27: `claude auth login` writes `oauthAccount` and `userID` into an isolation
+ * root but not `hasCompletedOnboarding`, so the first interactive session there opens the theme
+ * picker and the login-method chooser. `-p` skips all of it, which is why a worker can run
+ * scheduled work for days and still be unable to answer `/usage`.
+ */
+describe('firstRun', () => {
+  it('an adapter that can refresh usage must say how its first-run screens get answered', () => {
+    // ⛔ The coupling that this cost a day to learn: driving a slash command needs a TUI, and a TUI
+    // that has never been set up shows onboarding instead of a prompt. Declaring one without the
+    // other builds a probe that silently returns the same stale number forever.
+    for (const a of ALL) {
+      if (!a.info.usageRefresh) continue
+      expect(a.info.firstRun, `${a.info.id} drives a TUI but declares no first-run`).not.toBeNull()
+    }
+  })
+
+  it('names the config key that proves the screens were answered', () => {
+    for (const a of ALL) {
+      if (!a.info.firstRun) continue
+      expect(a.info.firstRun.completedKey.length, a.info.id).toBeGreaterThan(0)
+    }
+  })
+
+  it('explains itself to whoever has to click through it', () => {
+    for (const a of ALL) {
+      if (!a.info.firstRun) continue
+      expect(a.info.firstRun.reason.length, a.info.id).toBeGreaterThan(40)
+    }
+  })
+})
+
+/**
+ * Pre-answering the folder-trust dialog.
+ *
+ * ⛔ Measured 2026-08-27: an unanswered trust dialog swallows every keystroke sent to a session, so
+ * the usage probe was typing `/usage` into it and pressing Enter on "Yes, I trust this folder" —
+ * reporting "no fresher reading" every time, for weeks of wall-clock if nobody had looked.
+ */
+describe('trustDirectory', () => {
+  it('merges into the vendor config instead of replacing it', () => {
+    const a = ALL.find((x) => x.info.id === 'claude-code')
+    if (!a?.trustDirectory) return
+
+    const root = mkdtempSync(join(tmpdir(), 'agentyard-trust-'))
+    const file = join(root, '.claude.json')
+    // Everything here is the vendor's or the operator's, and none of it is ours to lose.
+    writeFileSync(
+      file,
+      JSON.stringify({
+        oauthAccount: { account: 'someone' },
+        hasCompletedOnboarding: true,
+        projects: { 'C:/Dev/theirs': { hasTrustDialogAccepted: true, other: 1 } }
+      })
+    )
+
+    a.trustDirectory(root, join(root, 'scratch'))
+    const after = JSON.parse(readFileSync(file, 'utf8')) as {
+      oauthAccount: unknown
+      hasCompletedOnboarding: unknown
+      projects: Record<string, Record<string, unknown>>
+    }
+
+    expect(after.oauthAccount, 'the credential survived').toEqual({ account: 'someone' })
+    expect(after.hasCompletedOnboarding).toBe(true)
+    expect(after.projects['C:/Dev/theirs']).toEqual({ hasTrustDialogAccepted: true, other: 1 })
+    const key = join(root, 'scratch').replace(/\\/g, '/')
+    expect(after.projects[key]?.hasTrustDialogAccepted).toBe(true)
+
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  it('leaves a config it cannot parse alone', () => {
+    const a = ALL.find((x) => x.info.id === 'claude-code')
+    if (!a?.trustDirectory) return
+
+    const root = mkdtempSync(join(tmpdir(), 'agentyard-trust-'))
+    const file = join(root, '.claude.json')
+    writeFileSync(file, '{ this is not json')
+    a.trustDirectory(root, join(root, 'scratch'))
+    // ⛔ Overwriting an unparseable config would destroy a credential nothing here can reconstruct.
+    expect(readFileSync(file, 'utf8')).toBe('{ this is not json')
+    rmSync(root, { recursive: true, force: true })
+  })
+})

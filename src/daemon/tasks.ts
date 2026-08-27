@@ -273,6 +273,11 @@ export function createTask(input: CreateTaskInput): Task {
 
   const task = admit(id)
   log.info(`created task t${task.seq}: ${task.title}`)
+  // ⚠️ Creation emitted nothing until 2026-08-26, so a new task existed for every pane that happened
+  // to re-fetch and for no other. The list that filed it refreshed itself and looked correct, which
+  // is what hid it: every *other* view - another window, a sidebar counting work with no project -
+  // stayed stale until something unrelated changed.
+  emit({ type: 'task.changed', task })
   return task
 }
 

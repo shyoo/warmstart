@@ -35,6 +35,22 @@ export function Workers({
   // sign-in from a hung one, and Done looked like it had done nothing.
   useDaemonEvents((event) => {
     if (event.type === 'session.exit' && event.sessionId === loginSession?.id) setLoginEnded(true)
+
+    // ⛔ The daemon watches the worker's own config and re-reads identity the moment the vendor
+    // writes it, so this arrives without anybody pressing anything. Before it existed, a completed
+    // sign-in left the row saying "not signed in" and a completed first-run left it saying "setup
+    // unfinished" until somebody found the right button.
+    if (
+      event.type === 'worker.changed' &&
+      event.worker.id === loginSession?.workerId &&
+      event.worker.identity?.loggedIn === true &&
+      event.worker.identity?.setupComplete !== false
+    ) {
+      setLoginSession(null)
+      setLoginEnded(false)
+      setNotice(`${event.worker.label} is signed in and set up. Its terminal closed itself.`)
+      void refresh()
+    }
   })
 
   useEffect(() => {
@@ -57,6 +73,32 @@ export function Workers({
   }
 
   /**
+   * Open a plain terminal on a worker so a person can answer the CLI's first-run screens.
+   *
+   * ⛔ Not a login, and not something the app can do on the operator's behalf: one of the screens is
+   * a choice of login method and another is a theme. Measured 2026-08-27 - signing in writes the
+   * credential into the isolation root but not `hasCompletedOnboarding`, so the first real terminal
+   * there lands on onboarding. Print mode never sees it, which is why scheduled work runs fine on a
+   * worker that still cannot answer `/usage`.
+   */
+  const startFirstRun = (workerId: string, adapterId: string) =>
+    guard(`setup:${workerId}`, async () => {
+      const info = adapters.find((a) => a.id === adapterId)
+      if (!info?.firstRun) throw new Error(`${adapterId} declares no first-run setup`)
+      const session = await rpc('session.spawn', {
+        workerId,
+        cwd: '.',
+        purpose: 'login',
+        argv: info.firstRun.argv,
+        cols: 100,
+        rows: 30
+      })
+      setLoginEnded(false)
+      setLoginSession(session)
+      setNotice(info.firstRun.reason)
+    })
+
+  /**
    * ⚠️ `worker.probe` resolves with the failure inside its payload rather than rejecting, so
    * `guard`'s catch never fired and a failed probe was indistinguishable from a successful one:
    * the same busy flash, the same "unknown" left in the cell, and a button that looked dead.
@@ -76,13 +118,23 @@ export function Workers({
   const startLogin = (workerId: string, adapterId: string) =>
     guard(`login:${workerId}`, async () => {
       const info = adapters.find((a) => a.id === adapterId)
+      if (!info) throw new Error(`no adapter named ${adapterId}`)
+
+      // ⛔ Some vendors have no CLI login to run. Spawning a terminal for one produces a pane that
+      // can only fail - which is exactly what commissioning an Antigravity account did, with
+      // *unexpected argument "login"*. Say where the credential actually comes from instead.
+      if (info.login.kind === 'external') {
+        setNotice(`${info.label}: ${info.login.reason}`)
+        return
+      }
+
       const session = await rpc('session.spawn', {
         workerId,
         // The login flow needs a directory; the user's home is the least surprising one and needs
         // no project to exist yet.
         cwd: '.',
         purpose: 'login',
-        argv: info ? loginArgvFor(info) : ['auth', 'login'],
+        argv: info.login.argv,
         cols: 100,
         rows: 26
       })
@@ -163,6 +215,7 @@ export function Workers({
               // drawn as a confident "not signed in".
               const loggedIn = worker.identity?.loggedIn === true
               const signInUnknown = worker.identity?.loggedIn == null
+              const needsFirstRun = worker.identity?.setupComplete === false
               const gap = quotaGap(quota)
               return (
                 <tr key={worker.id}>
@@ -181,6 +234,12 @@ export function Workers({
                       <span className={loggedIn ? 'dim' : 'warn'}>
                         {loggedIn ? 'signed in' : signInUnknown ? 'unknown' : 'not signed in'}
                       </span>
+                    )}
+                    {/* ⛔ Signed in and set up are different questions, and only one of them was
+                        ever asked here. A worker can be signed in, run scheduled work all day, and
+                        still be unable to open a terminal. */}
+                    {needsFirstRun && (
+                      <div className="warn tbl-sub">setup unfinished</div>
                     )}
                   </td>
                   <td className="num">
@@ -252,6 +311,16 @@ export function Workers({
                     >
                       Sign in
                     </button>
+                    {needsFirstRun && (
+                      <button
+                        className="btn btn--primary"
+                        disabled={busy === `setup:${worker.id}`}
+                        onClick={() => void startFirstRun(worker.id, worker.adapterId)}
+                        title="Opens a terminal so you can answer the CLI's first-run screens once."
+                      >
+                        Finish setup
+                      </button>
+                    )}
                     <button
                       className="btn btn--ghost"
                       disabled={busy === `probe:${worker.id}`}
@@ -327,11 +396,6 @@ export function Workers({
       )}
     </div>
   )
-}
-
-/** Adapters declare their own login flow; the UI does not know what a login looks like. */
-function loginArgvFor(info: AdapterInfo): string[] {
-  return info.id === 'claude-code' ? ['auth', 'login'] : ['login']
 }
 
 /**

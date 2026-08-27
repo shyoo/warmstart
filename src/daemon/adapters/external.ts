@@ -159,6 +159,22 @@ export function loadExternalAdapters(dir = externalAdapterDir()): ExternalLoadRe
           isolationEnvVar: parsed.isolation_env_var ?? null,
           capabilities: capabilitiesFrom(parsed),
           policy: policyFrom(parsed),
+          // ⛔ A declared adapter gets no usage refresh, for the same reason it gets no quota
+          // probe and no metering: nothing here has been measured, and a number nobody verified is
+          // worse than no number. Its runs stay marked unverified.
+          usageRefresh: null,
+          firstRun: null,
+          // ⚠️ `"login_args": null` in the declaration means this CLI has no login to run - the
+          // same answer Antigravity gives, and a real one. Omitting the key keeps the old default.
+          login:
+            parsed.login_args === null
+              ? {
+                  kind: 'external',
+                  reason:
+                    `${parsed.label} declares no CLI login. Sign this account in however its vendor ` +
+                    'expects, then commission it here.'
+                }
+              : { kind: 'cli', argv: parsed.login_args ?? ['login'] },
           verification: {
             level: 'documented',
             asOf: new Date().toISOString().slice(0, 10),
@@ -170,7 +186,6 @@ export function loadExternalAdapters(dir = externalAdapterDir()): ExternalLoadRe
           }
         },
         printArgs: parsed.print_args ?? [],
-        loginArgs: parsed.login_args ?? ['login'],
         versionArgs: parsed.version_args ?? ['--version']
       })
     )

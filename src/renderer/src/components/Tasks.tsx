@@ -30,7 +30,14 @@ const STATUS_TONE: Record<string, string> = {
   cancelled: 'state-idle'
 }
 
-export function Tasks({ projects }: { projects: Project[] }): React.JSX.Element {
+export function Tasks({
+  projects,
+  projectId
+}: {
+  projects: Project[]
+  /** When set, this list is one project's and the creation form does not offer to change it. */
+  projectId?: string
+}): React.JSX.Element {
   const [tasks, setTasks] = useState<Task[]>([])
   const [selected, setSelected] = useState<string | null>(null)
   const [detail, setDetail] = useState<{ task: Task; messages: TaskMessage[]; runs: Run[] } | null>(null)
@@ -38,8 +45,8 @@ export function Tasks({ projects }: { projects: Project[] }): React.JSX.Element 
   const [adding, setAdding] = useState(false)
 
   const refresh = useCallback(async () => {
-    setTasks(await rpc('task.list', {}))
-  }, [])
+    setTasks(await rpc('task.list', projectId ? { projectId } : {}))
+  }, [projectId])
 
   useEffect(() => {
     void refresh()
@@ -95,6 +102,7 @@ export function Tasks({ projects }: { projects: Project[] }): React.JSX.Element 
       {adding && (
         <NewTask
           projects={projects}
+          fixedProjectId={projectId}
           onDone={async () => {
             setAdding(false)
             await refresh()
@@ -344,15 +352,18 @@ function Compose({
 
 function NewTask({
   projects,
+  fixedProjectId,
   onDone,
   onError
 }: {
   projects: Project[]
+  /** Set when filed from inside a project. The picker is replaced by the project's name. */
+  fixedProjectId?: string
   onDone: () => void | Promise<void>
   onError: (message: string) => void
 }): React.JSX.Element {
   const [title, setTitle] = useState('')
-  const [projectId, setProjectId] = useState(projects[0]?.id ?? '')
+  const [projectId, setProjectId] = useState(fixedProjectId ?? projects[0]?.id ?? '')
   const [priority, setPriority] = useState<'P0' | 'P1' | 'P2' | 'P3'>('P2')
   const [verification, setVerification] = useState<'auto' | 'required'>('auto')
   const [plan, setPlan] = useState(false)
@@ -405,14 +416,23 @@ function NewTask({
       </div>
       <div className="form-row">
         <label>Project</label>
-        <select value={projectId} onChange={(e) => setProjectId(e.target.value)}>
-          <option value="">none — runs without a workspace</option>
-          {projects.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-        </select>
+        {fixedProjectId ? (
+          // ⛔ Not a disabled picker. A control that cannot be used is still a control, and this one
+          // would sit there implying the project is a choice being made here. It is not: the page
+          // you filed from decided it.
+          <span className="form-fixed">
+            {projects.find((p) => p.id === fixedProjectId)?.name ?? fixedProjectId}
+          </span>
+        ) : (
+          <select value={projectId} onChange={(e) => setProjectId(e.target.value)}>
+            <option value="">none — runs without a workspace</option>
+            {projects.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        )}
         <span className="form-hint">
           A git project gets a pooled worktree and a branch named after the task. Agents never work in
           the trunk.

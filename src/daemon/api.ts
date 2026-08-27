@@ -16,7 +16,7 @@ import {
   retireWorker,
   updateWorker
 } from './workers.js'
-import { lastQuota, probeWorker } from './quota.js'
+import { lastQuota, refreshUsage } from './quota.js'
 import {
   backscroll,
   closeSession,
@@ -143,9 +143,13 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
       return updateWorker(id, patch)
     },
     'worker.retire': (p) => retireWorker(p.id),
+    // ⭐ A person pressing Probe wants a number, not a re-read of a cache that may be weeks old.
+    // `refreshUsage` drives the adapter's own usage command into a TUI and then reads the result;
+    // for an adapter that declares none it falls straight through to the file read, so this is
+    // never worse than what it replaced.
     'worker.probe': async (p) => {
       await refreshIdentity(p.id)
-      return await probeWorker(p.id)
+      return await refreshUsage(p.id)
     },
 
     'costmodel.list': () => costModels().map((m) => m.summary()),

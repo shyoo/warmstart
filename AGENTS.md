@@ -174,9 +174,11 @@ costmodels/             versioned pricing data
   optimistic by one response length.
 - **Changing tool definitions invalidates the entire prompt cache prefix.** A session's MCP config is
   frozen for its lifetime. This is why workers on one project get identical MCP configs.
-- **`claude -p /usage` spends a real turn.** The slash command is taken as a prompt. There is no free
-  live quota probe on 2.1.223 — `docs/cost-model.md` §5 has the ladder that replaces it, and a stale
-  reading must never be rendered as a current one.
+- **`claude -p /usage` spends a real turn** — but that is a fact about **print mode only**, and for
+  three months it was written down as a fact about the product. ⭐ Typed into an *interactive*
+  session, `/usage` is a client-side command: it costs nothing and rewrites `cachedUsageUtilization`
+  on disk. `refreshUsage()` drives it. `docs/cost-model.md` §5 has the ladder, what else was tried,
+  and when to revisit each. A stale reading must still never be rendered as a current one.
 - **`claude auth status --json` exits 1 when not logged in**, but still prints valid JSON. Read
   stdout, not the exit code, or every un-commissioned worker reports as "probe failed".
 - **node-pty does not search PATH.** On Windows it goes straight to CreateProcess and fails with a
@@ -195,9 +197,14 @@ costmodels/             versioned pricing data
 - **`--print` will not start under a PTY.** It exits immediately with *"Input must be provided either
   through stdin or as a prompt argument"*, because a pseudo-terminal is not piped stdin. The `stream`
   transport uses real pipes; only `pty` uses node-pty.
-- **The workspace-trust dialog blocks a fresh worktree.** It is skipped only in non-interactive mode.
-  Dispatching scheduled work on a PTY would hang on it with nobody there to answer - the second
-  reason scheduled work runs on `stream`.
+- **The workspace-trust dialog blocks a fresh worktree**, and ⚠️ **it blocks far more than that**: it
+  is asked per account *and* per folder, and until it is answered the CLI **swallows every keystroke
+  sent to the session**. It cost a day in 2026-08: the usage probe was typing `/usage` into the
+  dialog and pressing Enter on "Yes, I trust this folder", reporting no reading and blaming
+  onboarding. Skipped only in non-interactive mode - the second reason scheduled work runs on
+  `stream`. ⛔ Sessions with no project now run in `<dataDir>/scratch`, an empty directory this app
+  owns, and `trustDirectory()` pre-answers the question **for that directory only**. Never for a
+  project, a worktree, or anybody's home.
 - **`task_complete` is the only signal that a task succeeded.** A process exiting cleanly says nothing
   about whether the work was done. A session that ends without it goes to `awaiting_human`, and that
   is the honest answer rather than a guess.
@@ -207,7 +214,8 @@ costmodels/             versioned pricing data
   casually.
 - **`sessions.purpose` is load-bearing, not a label.** A `consult` is exempt from `maxConcurrent`
   (bounded separately at one per worker) and skipped by the cache clock; a `chat` session is very much
-  the clock's business. Changing a purpose changes what a session costs.
+  the clock's business; a `probe` opens a TUI for fifteen seconds, spends nothing, and holds no
+  prefix worth keeping warm. Changing a purpose changes what a session costs.
 
 - **`cmd /d /s /c <shim>` splits any path containing a space.** `/s` makes cmd strip the outer quotes
   and take the rest literally, and the Windows default home has a space in it. Use `/d /c` and let

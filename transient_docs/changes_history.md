@@ -252,3 +252,80 @@ renderer's `catch` never fired; the cell rendered the same word before and after
 probe rows in `quota_samples` had been recording the answer the whole time. `quotaGap()` now names
 which kind of nothing it has — never probed, no usage data yet, stale, or a real failure with the
 adapter's own error text — and Probe reports its outcome either way.
+
+## The free quota probe that was there all along (2026-08-27)
+
+For three months this project stated, in code comments, in `AGENTS.md` and in `docs/cost-model.md`,
+that **there is no free live quota probe**. The measurement behind it was correct: `claude -p /usage`
+is taken as a prompt and spends a real turn. The error was one of scope — that is a fact about
+**print mode**, and it was written down as a fact about the product. Nobody re-tested the narrower
+claim, and everything downstream inherited the broader one.
+
+The owner asked the obvious question — *"when I type `/usage` in the CLI it answers immediately, that
+can't be spending tokens"* — and it took one experiment to settle:
+
+| | |
+|---|---|
+| before | `fetchedAtMs = 2026-08-06T23:35Z`, 20 days stale |
+| action | `/usage` and a carriage return, typed into a PTY |
+| after | `fetchedAtMs = 2026-08-27T00:16Z` |
+| cost | **nothing** — a slash command is handled by the client |
+| what it said | weekly **79%** against the stale cache's **98%** |
+
+⭐ The stale number was not merely old; it was wrong in the direction that stops a fleet dispatching
+to an account with a fifth of its window free. **R3 closed.**
+
+### Corroboration from an unexpected direction
+
+A third-party monitor on the same machine had an `account_usage` table whose rows read
+`error: unparsed: Total cost: $0.0000 …` — print mode's cost summary, stored as a failure. Where it
+did have numbers they matched `cachedUsageUtilization` exactly, three weeks stale. It had hit the
+same wall and read the same file. ⛔ The other community tools take a route closed to this project on
+principle: read `.credentials.json`, call `api.anthropic.com`. It works. This app never reads, stores,
+copies or proxies a credential, which is the same rule that makes D7 wrap `gh` rather than hold a
+token. `docs/cost-model.md` §5 records every path tried and when to revisit each.
+
+### Two dialogs, one keystroke, and a day
+
+Shipping it took two more corrections, both found only by testing on a **commissioned worker** rather
+than on the author's own profile:
+
+1. ⛔ **Signing in is not being set up.** `claude auth login` writes `oauthAccount` and `userID` into
+   the isolation root but not `hasCompletedOnboarding`, so the first interactive session there opens
+   the theme picker and the login-method chooser. Print mode skips all of it, which is why a worker
+   can run scheduled work for days and still be unable to answer `/usage`.
+2. ⛔ **The workspace-trust dialog swallows every keystroke.** Asked per account *and* per folder.
+   The probe was spawning in the user's **home**, untrusted in that worker's config, so `/usage` was
+   typed into the dialog and the Enter after it selected "Yes, I trust this folder" — reporting *no
+   fresher reading* every time. `AGENTS.md` had warned about this dialog since M2, in the context of
+   worktrees, and it was walked into anyway.
+
+Both are now visible rather than inferred: `WorkerIdentity.setupComplete` is a stored field the
+adapter computes, the Workers panel offers **Finish setup**, and sessions with no project run in
+`<dataDir>/scratch` — an empty directory this app owns — whose trust question `trustDirectory()`
+pre-answers. ⛔ Scoped to that directory alone: never a project, a worktree, or anybody's home, and
+the write merges rather than replaces, because that file holds a credential nothing here could
+reconstruct.
+
+⚠️ **The error message was the worst part.** The first version named onboarding as "the usual cause"
+and kept saying so after onboarding was finished, sending the owner to redo a completed step while
+the real cause went unmentioned. It now reads the worker's actual state before it says anything. A
+diagnosis nobody verified is a guess wearing a diagnosis's clothes.
+
+## A shell built out of projects (2026-08-27)
+
+Work was split across Tasks / Projects / Controller, so a project was one list view among seven
+rather than the axis work belongs to. The sidebar is now Overview / one entry per project / Settings,
+with the project page tabbed (Tasks · Sessions · Cost · Settings). Every existing view moved behind a
+route object unchanged; nothing was rewritten. Plan and decisions: `transient_docs/ui_overhaul_2026-08-26.md`.
+
+Two bugs fell out of it immediately, both fixed in the daemon rather than papered over in the UI:
+
+- ⛔ **A project-shaped sidebar hides tasks that have no project**, and `tasks.project_id` is
+  nullable. An **Unassigned** entry appears only while such tasks exist and removes itself when the
+  last one gets a home — which is what the require-a-project migration will do.
+- ⛔ **`createTask` emitted no `task.changed` event.** The list that filed the task refreshed itself
+  and looked correct, which is exactly what hid it: every *other* pane stayed stale.
+
+Also corrected: the nav test asserted `nav.length >= 5`, a count that says nothing and passed happily
+through a rewrite which deleted two of its destinations. It names them now.

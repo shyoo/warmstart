@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { AdapterDetection, AdapterInfo, QuotaSnapshot } from '@shared/protocol.js'
 import type { AgentAdapter, IdentityProbe, SpawnPlan, SpawnRequest } from './types.js'
@@ -8,6 +8,7 @@ import { asRecord, textBlocks, type StreamEvent } from '../stream.js'
 import { log } from '../log.js'
 import { launchArgs, launchable, which } from '../which.js'
 import { APPROVE_TOOL } from '../mcpconfig.js'
+import { paths } from '../paths.js'
 
 const run = promisify(execFile)
 
@@ -50,6 +51,26 @@ const info: AdapterInfo = {
     // Opus 4.7+ receives no injected token budget, so a wrap-up instruction must state it. §2.
     needsExplicitBudget: true
   },
+  login: { kind: 'cli', argv: ['auth', 'login'] },
+  // ⭐ Measured 2026-08-27 on 2.1.223: driving `/usage` into a PTY moved `fetchedAtMs` from
+  // 2026-08-06T23:35Z to 2026-08-27T00:16Z and spent nothing. 9s was enough for the TUI to accept
+  // input and 14s for the answer to reach disk; both are padded here, because being early means
+  // reading the old number and believing it.
+  usageRefresh: { command: '/usage', readyMs: 12_000, settleMs: 16_000 },
+  // ⛔ Measured 2026-08-27. Signing in is not being set up: the credential lands in the isolation
+  // root and `hasCompletedOnboarding` does not, so the first interactive session there shows the
+  // theme picker and the login-method chooser instead of a prompt. Print mode never sees them,
+  // which is why a worker can run scheduled work for days and still fail to answer `/usage`.
+  firstRun: {
+    argv: [],
+    completedKey: 'hasCompletedOnboarding',
+    reason:
+      'This account is signed in, but the CLI has not finished its first-run questions in this ' +
+      "worker's own directory: a theme, a login method, and whether it trusts the folder the " +
+      'session opened in. They only appear in a real terminal, only a person can answer them, and ' +
+      'until they are answered the CLI swallows anything typed at it - which is why a quota probe ' +
+      'reports nothing while scheduled work carries on fine.'
+  },
   verification: {
     level: 'measured',
     asOf: '2026-08-25',
@@ -86,6 +107,42 @@ function usageFileFor(isolationRoot: string): string | null {
     if (existsSync(file) && readFileSafe(file).includes('cachedUsageUtilization')) return file
   }
   return candidates.find((f) => existsSync(f)) ?? null
+}
+
+/**
+ * Has this root been through the CLI's first-run screens?
+ *
+ * ⚠️ Reads the config **inside the isolation root only**, never the sibling one level up. A worker
+ * adopting an existing directory can see somebody else's completed onboarding through that sibling
+ * and report itself ready when its own root is not - and the failure it hides is silent, because
+ * print mode works either way.
+ */
+function firstRunComplete(isolationRoot: string): boolean | null {
+  const file = join(isolationRoot, '.claude.json')
+  if (!existsSync(file)) return null
+  try {
+    const parsed = JSON.parse(readFileSafe(file)) as {
+      hasCompletedOnboarding?: unknown
+      projects?: Record<string, { hasTrustDialogAccepted?: unknown }>
+    }
+    if (parsed.hasCompletedOnboarding !== true) return false
+
+    // ⛔ Two questions, not one. Measured 2026-08-27: after onboarding was finished the usage probe
+    // *still* failed, because the CLI then asks whether it trusts the folder it was opened in - per
+    // account, once per folder - and swallows every keystroke until somebody answers. `/usage` was
+    // being typed into that dialog and the Enter after it was accepting the folder. A worker is only
+    // ready when both have been answered, and the folder that matters is the one a projectless
+    // session runs in.
+    const trusted = parsed.projects?.[normaliseProjectKey(paths.scratch)]?.hasTrustDialogAccepted
+    return trusted === true
+  } catch {
+    return null
+  }
+}
+
+/** The CLI keys its project map by the path as it saw it, with forward slashes. */
+function normaliseProjectKey(dir: string): string {
+  return dir.split('\\').join('/')
 }
 
 function readFileSafe(file: string): string {
@@ -207,6 +264,38 @@ export const claudeCode: AgentAdapter = {
    * Measured 2026-08-25 on 2.1.223: {loggedIn, authMethod, apiProvider, email, orgId, orgName,
    * subscriptionType}.
    */
+  /**
+   * ⚠️ Read-modify-write, never a replacement. This file is the vendor's, it holds an account's
+   * `oauthAccount`, its onboarding state and every project it has seen, and this app did not create
+   * it. Rewriting it wholesale to set one boolean would destroy configuration nothing here can
+   * reconstruct.
+   */
+  trustDirectory(isolationRoot: string, dir: string): void {
+    const file = join(isolationRoot, '.claude.json')
+    let existing: Record<string, unknown> = {}
+    if (existsSync(file)) {
+      try {
+        existing = JSON.parse(readFileSafe(file)) as Record<string, unknown>
+      } catch {
+        // Unparseable is the operator's to fix. Overwriting it would lose their credential.
+        log.warn(`${file} is not valid JSON; leaving it untouched`)
+        return
+      }
+    }
+    const key = normaliseProjectKey(dir)
+    const projects = (existing.projects ?? {}) as Record<string, Record<string, unknown>>
+    if (projects[key]?.hasTrustDialogAccepted === true) return
+
+    projects[key] = { ...(projects[key] ?? {}), hasTrustDialogAccepted: true }
+    existing.projects = projects
+    try {
+      writeFileSync(file, JSON.stringify(existing, null, 2))
+      log.info(`pre-trusted ${key} for this worker so a projectless session is not stopped by a dialog`)
+    } catch (err) {
+      log.warn(`could not record folder trust in ${file}:`, err)
+    }
+  },
+
   async probeIdentity(isolationRoot: string): Promise<IdentityProbe> {
     // ⚠️ `auth status` exits 1 when nobody is logged in but still prints valid JSON on stdout.
     // Measured 2026-08-25. Treating the exit code as the answer would report every un-commissioned
@@ -237,10 +326,15 @@ export const claudeCode: AgentAdapter = {
         loggedIn: parsed.loggedIn ?? null,
         ...(parsed.email ? { account: parsed.email } : {}),
         ...(parsed.orgName ? { organization: parsed.orgName } : {}),
+        setupComplete: firstRunComplete(isolationRoot),
         raw: stdout.trim()
       }
     } catch {
-      return { loggedIn: null, raw: stdout.slice(0, 400) }
+      return {
+        loggedIn: null,
+        setupComplete: firstRunComplete(isolationRoot),
+        raw: stdout.slice(0, 400)
+      }
     }
   },
 
@@ -313,10 +407,6 @@ export const claudeCode: AgentAdapter = {
    * when it is done, and agentyard never sees a credential - the CLI writes into its own isolation
    * root and we only watch the process finish.
    */
-  loginArgv(): string[] {
-    return ['auth', 'login']
-  },
-
   plan(req: SpawnRequest): SpawnPlan {
     const env = envFor(req.isolationRoot)
     const resolved = which(info.command)

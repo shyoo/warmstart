@@ -25,7 +25,6 @@ export interface GenericAdapterSpec {
   info: AdapterInfo
   /** Argv for a non-interactive run, before the prompt. `{{cwd}}` and `{{model}}` expand. */
   printArgs: string[]
-  loginArgs: string[]
   versionArgs: string[]
 }
 
@@ -108,10 +107,6 @@ export function genericAdapter(spec: GenericAdapterSpec): AgentAdapter {
         source: 'unknown',
         error: 'a declared adapter has no quota probe; its runs are marked unverified'
       }
-    },
-
-    loginArgv(): string[] {
-      return spec.loginArgs
     },
 
     plan(req: SpawnRequest): SpawnPlan {

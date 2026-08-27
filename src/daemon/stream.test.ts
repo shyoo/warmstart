@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { StreamParser, type StreamEvent } from './stream.js'
+import { StreamParser, renderForHuman, type StreamEvent } from './stream.js'
 import { adapter } from './adapters/index.js'
 
 /**
@@ -205,5 +205,66 @@ describe('framing, which is the one thing they do share', () => {
         expect(typeof a.decodeStream, a.info.id).toBe('function')
       }
     }
+  })
+})
+
+/**
+ * What a person sees when the session has no TUI.
+ *
+ * ⛔ The pane used to receive `stream-json` verbatim, so the first task anyone dispatched printed
+ * raw JSON at them. These check the two halves of the fix: prose reaches the screen, and protocol
+ * does not.
+ */
+describe('renderForHuman', () => {
+  it('shows assistant prose as prose', () => {
+    const out = renderForHuman({ kind: 'assistant_text', text: 'Removed the menu bar.' })
+    expect(out).toContain('Removed the menu bar.')
+    expect(out).not.toContain('{')
+  })
+
+  it('leads a finished turn with the context size, not the cumulative counters', () => {
+    // ⭐ Cumulative cache reads are what the cost model bills from; the number a person steering a
+    // session needs is how full the window is right now. Real values from the 2026-08-26 run.
+    const out = renderForHuman({
+      kind: 'usage',
+      final: true,
+      usage: { input: 2, output: 83, thinking: 0, cacheRead: 62_127, cacheWrite: 148 }
+    })
+    expect(out.indexOf('context')).toBeLessThan(out.indexOf('cache read'))
+    expect(out).toContain((2 + 62_127 + 148).toLocaleString())
+  })
+
+  it('says nothing at all for a turn still in progress', () => {
+    expect(
+      renderForHuman({
+        kind: 'usage',
+        final: false,
+        usage: { input: 2, output: 10, thinking: 0, cacheRead: 5, cacheWrite: 0 }
+      })
+    ).toBe('')
+  })
+
+  it('never puts protocol on the screen', () => {
+    expect(renderForHuman({ kind: 'other', type: 'tool_use' })).toBe('')
+  })
+
+  it('renders a rate-limit warning as a sentence', () => {
+    const out = renderForHuman({
+      kind: 'rate_limit',
+      info: { status: 'allowed_warning', resetsAt: null, rateLimitType: 'five_hour' }
+    })
+    expect(out).toContain('allowed_warning')
+  })
+
+  it('ends a turn with a verdict a person can act on', () => {
+    const out = renderForHuman({
+      kind: 'result',
+      text: 'Done.',
+      costUsd: null,
+      isError: true,
+      terminalReason: 'max turns'
+    })
+    expect(out).toContain('failed')
+    expect(out).toContain('max turns')
   })
 })

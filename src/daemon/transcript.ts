@@ -246,13 +246,25 @@ export class TranscriptTailer {
   }
 }
 
-/** Persist a turn and roll the session's cache clock forward from it. */
-export function recordTurn(turn: Turn): void {
+/**
+ * Persist a turn and roll the session's cache clock forward from it.
+ *
+ * Returns **whether this turn was new**. ⛔ The caller must not bill a turn this returns false for.
+ *
+ * ⚠️ A transcript can carry the same usage record more than once - measured 2026-08-26 on claude
+ * 2.1.223: one 41-turn session wrote **72 usage records with 41 unique request ids**. The unique
+ * index on (session_id, request_id) always absorbed that, so `turns` was exact; everything
+ * downstream that *accumulated* was not. That run's row read 3,154,302 cache-read tokens against an
+ * actual 1,848,902, its task's budget read 3.3M of spend that never happened, and
+ * `tokens_since_compact` - which the compaction reserve and the cache clock both read - was nearly
+ * double. A counter that only ever adds cannot be made correct by the row that dedupes beside it.
+ */
+export function recordTurn(turn: Turn): boolean {
   const session = getSession(turn.sessionId)
-  if (!session) return
+  if (!session) return false
   const model = costModelFor(session.adapterId)
 
-  db()
+  const inserted = db()
     .prepare(
       `insert or ignore into turns
          (session_id, request_id, ts, request_started_at, model, effort, git_branch,
@@ -277,7 +289,12 @@ export function recordTurn(turn: Turn): void {
       turn.contextTokens,
       turn.model ? (model.modelSpec(turn.model)?.tokenizer ?? null) : null,
       model.id
-    )
+    ).changes
+
+  // ⛔ Everything below this line accumulates. A replayed record must reach none of it - and that
+  // includes the session's own clock, because a duplicate arriving out of order would roll
+  // `last_request_started_at` backwards and expire a cache that is still warm.
+  if (inserted === 0) return false
 
   const expiry = model.cacheExpiryFor({
     contextTokens: turn.contextTokens,
@@ -300,6 +317,8 @@ export function recordTurn(turn: Turn): void {
       turn.model,
       turn.sessionId
     )
+
+  return true
 }
 
 export function recordCompaction(
@@ -338,7 +357,7 @@ export function creditStreamTurn(session: Session, usage: StreamUsage): void {
   const model = costModelFor(session.adapterId)
   const ts = Date.now()
 
-  db()
+  const inserted = db()
     .prepare(
       `insert or ignore into turns
          (session_id, request_id, ts, request_started_at, model, effort, git_branch,
@@ -365,7 +384,10 @@ export function creditStreamTurn(session: Session, usage: StreamUsage): void {
       null,
       session.model ? (model.modelSpec(session.model)?.tokenizer ?? null) : null,
       model.id
-    )
+    ).changes
+
+  // Same rule as the transcript path: a replayed chunk reaches the row and stops there.
+  if (inserted === 0) return
 
   db()
     .prepare(

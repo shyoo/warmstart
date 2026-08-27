@@ -47,11 +47,14 @@ Written from documentation, then run. Each of these was wrong:
 | `antigravity-cli` | no auto-ish mode at all | **`--mode accept-edits\|plan` exists** — exactly what plan §9.1 predicted, and now the default |
 | `antigravity-cli` | `--input-format` standalone | **requires `--output-format stream-json`**; one without the other is an argument error |
 | `antigravity-cli` | conversations under `~/.gemini/antigravity/` | **`~/.gemini/antigravity-cli/conversations/<uuid>.db`** — and ⛔ **SQLite, not JSONL** |
-| `antigravity-cli` | models `gemini-3-pro`, `gemini-3-flash` | `agy models` is free and lists the real set — including **Claude and GPT-OSS models** |
+| `antigravity-cli` | models `gemini-3-pro`, `gemini-3-flash` | `agy models` lists the real set — including **Claude and GPT-OSS models** — and spends no turn. ⛔ But **only on a terminal**: with stdout on a pipe it prints nothing and **hangs** (killed at 30s via `execFile`, and at 2m via `agy models | cat`, 2026-08-26). It is not usable as a probe |
 | *(shared)* | `cmd /d /s /c <shim>` | ⛔ **`/s` breaks any path containing a space** — and `C:\Users\First Last` is the Windows default |
 | *(shared)* | one `stream-json` format | ⛔ **three dialects.** agy keys on `event`, not `type` — the shared parser read *nothing* from it, silently. Decoding now belongs to the adapter |
 | `antigravity-cli` | `agy -p /usage` might be a free quota probe | ⛔ **it is not.** Measured: taken as a *prompt*, spent 14,603 input + 264 output tokens, and began listing directories trying to work out what "/usage" meant |
 | `antigravity-cli` | unmeterable (SQLite conversations) | **meterable after all** — usage is in the stream. `metering: 'stream'` |
+| `claude-code` | the folder-trust dialog only affects fresh worktrees | ⛔ **It affects any folder, per account, and it swallows every keystroke until answered.** Measured 2026-08-27: the usage probe was spawning in the user's home - untrusted in the worker's config - so `/usage` was typed into the dialog and Enter accepted the folder. Projectless sessions now run in `<dataDir>/scratch` and `trustDirectory()` pre-answers it for that directory only |
+| `claude-code` | signing in leaves an isolation root ready to use | ⚠️ **Only for print mode.** `claude auth login` writes `oauthAccount` and `userID` but not `hasCompletedOnboarding`, so an *interactive* session in that root opens the theme picker and then the login-method chooser. Scheduled work runs on `-p` and never sees it, which is why this hid until something needed a TUI (2026-08-27) |
+| `antigravity-cli` | `agy login` signs an account in | ⛔ **there is no `login` and no `auth` subcommand.** Measured on agy 1.1.20: `agy --help` lists agent, agents, changelog, help, install, mcp, mic-serve, models, plugin, plugins, update. Commissioning failed with *unexpected argument "login"*. Sign in with the Antigravity app; the credential goes to the OS keyring |
 
 The `cmd /s` one was latent since M1 and had never fired, because `claude` resolves to a `.EXE` on
 this machine; `codex` installs as `codex.cmd`, which exposed it. The last two came from running the

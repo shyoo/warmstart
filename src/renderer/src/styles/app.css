@@ -386,6 +386,45 @@ body {
   box-shadow: inset 2px 0 0 var(--color-accent);
 }
 
+/* A project the sidebar lists but cannot offer yet - the empty state, not a disabled item. */
+/* A second line under a table cell: the state behind the state. */
+.tbl-sub {
+  font-size: var(--text-meta);
+  margin-top: 2px;
+}
+
+.nav-item--ghost {
+  color: var(--color-text-faint);
+  font-style: italic;
+}
+
+/* Stacked panels: Overview's sections, and a project's header above its tabs. */
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  min-height: 0;
+}
+
+.project-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--sp-3);
+}
+
+.project-head h2 {
+  margin: 0 0 2px;
+}
+
+/* ⛔ A project that cannot be changed here is shown as text, never as a disabled <select>. A
+   control that cannot be used still reads as a choice somebody is being offered. */
+.form-fixed {
+  color: var(--color-text);
+  font-size: var(--text-body);
+  padding: var(--sp-1) 0;
+}
+
 .nav-count {
   margin-left: auto;
   font-size: var(--text-meta);

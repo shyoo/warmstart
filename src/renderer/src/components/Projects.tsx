@@ -12,11 +12,14 @@ import { rpc } from '../lib/daemon'
 export function Projects({
   projects,
   resources,
-  refresh
+  refresh,
+  only
 }: {
   projects: Project[]
   resources: ResourceAvailability[]
   refresh: () => Promise<void>
+  /** Render one project's settings rather than the whole list plus the add form. */
+  only?: string
 }): React.JSX.Element {
   const [root, setRoot] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -37,11 +40,13 @@ export function Projects({
     }
   }
 
+  const shown = only ? projects.filter((p) => p.id === only) : projects
+
   return (
     <div className="panel">
       <header className="panel-head">
         <div>
-          <h2>Projects</h2>
+          <h2>{only ? 'Project settings' : 'Projects'}</h2>
           <p className="panel-sub">
             A directory plus policy. Git is optional — branching and parallel workspaces are
             capabilities a project declares, not assumptions this app makes.
@@ -51,6 +56,7 @@ export function Projects({
 
       {error && <div className="alert">{error}</div>}
 
+      {!only && (
       <div className="form">
         <div className="form-row">
           <label>Add</label>
@@ -71,8 +77,9 @@ export function Projects({
           </button>
         </div>
       </div>
+      )}
 
-      {projects.length === 0 ? (
+      {shown.length === 0 ? (
         <div className="empty-inline">
           <p>No projects yet.</p>
           <p className="dim">Tasks can run without one, but they get no workspace and no branch.</p>
@@ -90,7 +97,7 @@ export function Projects({
             </tr>
           </thead>
           <tbody>
-            {projects.map((project) => {
+            {shown.map((project) => {
               const pool = resources.find((r) => r.resource.id === `workspace:${project.id}`)
               return (
                 <tr key={project.id}>

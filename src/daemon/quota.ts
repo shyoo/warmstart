@@ -1,7 +1,7 @@
 import type { QuotaSnapshot } from '@shared/protocol.js'
 import { db, row, rows } from './db.js'
 import { adapter } from './adapters/index.js'
-import { listWorkers, requireWorker } from './workers.js'
+import { listWorkers, refreshIdentityIfStale, requireWorker } from './workers.js'
 import { log } from './log.js'
 
 /**
@@ -12,10 +12,16 @@ import { log } from './log.js'
  * prompt, spends a real assistant turn, and answers in prose. Polling every account on an interval
  * that way would have billed the fleet for the privilege of watching itself.
  *
- * What is actually available is the CLI's own `cachedUsageUtilization` cache, which it refreshes on
- * its own schedule - the reading on the development machine was **19 days old**. So this module's
- * job is not to produce a number. It is to produce a number *with its age attached*, and to let
- * everything downstream refuse a stale one.
+ * ⭐ **But that is a fact about print mode, and for three months it was read as a fact about the
+ * product.** Measured 2026-08-27: `/usage` typed into an *interactive* session is a client-side
+ * command, spends nothing, and rewrites `cachedUsageUtilization` on disk. `refreshUsage` below does
+ * exactly that, and a cache that had been 20 days stale came back seconds old. The claim that this
+ * project had no free quota probe was true of one code path and repeated everywhere.
+ *
+ * So there are two rungs and they are not the same operation. `probeWorker` **reads** the CLI's
+ * `cachedUsageUtilization`, which the vendor refreshes on its own schedule and may leave for weeks.
+ * `refreshUsage` **makes** that cache current, at the price of a process rather than a token. Both
+ * report a number *with its age attached*, and everything downstream may still refuse a stale one.
  *
  * ⛔ A stale percentage rendered as current is worse than no percentage: it makes the compaction
  * reserve (cost-model.md §5) look satisfied when it is not, and that failure strands context.
@@ -23,6 +29,19 @@ import { log } from './log.js'
 
 /** Beyond this, a sample is reported but must not be treated as the current state of the window. */
 export const STALE_AFTER_MS = 15 * 60 * 1000
+
+/**
+ * How old a reading has to be before it is worth starting a process to replace it.
+ *
+ * ⚠️ Deliberately longer than `STALE_AFTER_MS`, and the gap is not an oversight. Fifteen minutes is
+ * how long a number may be *trusted*; thirty is how often it is worth *spending a terminal* to
+ * renew one. Setting these equal would mean a fleet permanently refreshing, since a reading becomes
+ * untrusted at exactly the moment it becomes renewable.
+ */
+export const REFRESH_AFTER_MS = 30 * 60 * 1000
+
+/** How long a stored answer to "who is signed in, and is this root set up?" may go unchecked. */
+export const IDENTITY_STALE_AFTER_MS = 15 * 60 * 1000
 
 export interface DatedQuota extends QuotaSnapshot {
   ageMs: number
@@ -41,6 +60,101 @@ export async function probeWorker(workerId: string): Promise<DatedQuota> {
   store(snapshot)
   return decorate(snapshot)
 }
+
+/**
+ * Make the CLI go and get a fresh number, then read it.
+ *
+ * ⭐ This is the free live probe the project spent three months believing it could not have.
+ * `probeWorker` reads a cache the vendor refreshes on its own schedule — 20 days stale on this
+ * machine — and `refreshUsage` is what makes that cache current: open a TUI, type the adapter's
+ * declared command into it, wait, close it, read the file. Measured 2026-08-27 on claude 2.1.223:
+ * `fetchedAtMs` moved from 2026-08-06T23:35Z to 2026-08-27T00:16Z, and the reading it produced
+ * (79% of the weekly window) disagreed with the stale one (98%) by enough to change every decision
+ * downstream.
+ *
+ * ⛔ Costs no tokens. A slash command is handled by the client, which is the same property that makes
+ * `/compact` a function call rather than a prompt. ⚠️ It is not free of *everything*: it starts a
+ * process and takes the better part of thirty seconds, so it belongs on a slow timer and on the
+ * button a person pressed — never in a scheduler tick.
+ */
+export async function refreshUsage(workerId: string): Promise<DatedQuota> {
+  const w = requireWorker(workerId)
+  const refresh = adapter(w.adapterId).info.usageRefresh
+
+  if (!refresh) {
+    // Not a failure. Most CLIs have nothing to drive, and saying so beats a probe that quietly
+    // returns the same stale number every time it is asked.
+    return probeWorker(workerId)
+  }
+
+  // What we are trying to beat. A refresh that changes nothing must not come back looking fresh.
+  const before = lastQuota(workerId)?.sampledAt ?? 0
+
+  const { spawnSession, closeSession, writeSession } = await import('./sessions.js')
+  let sessionId: string | null = null
+  try {
+    const session = spawnSession({
+      workerId,
+      purpose: 'probe',
+      transport: 'pty',
+      cols: 100,
+      rows: 30
+    })
+    sessionId = session.id
+    log.info(`refreshing usage on ${w.label} via \`${refresh.command}\``)
+
+    await wait(refresh.readyMs)
+    writeSession(session.id, `${refresh.command}\r`)
+    await wait(refresh.settleMs)
+  } catch (err) {
+    // ⚠️ Never fatal. A refresh that fails leaves the previous reading exactly as it was, with its
+    // age attached, which is the state everything downstream already knows how to distrust.
+    log.warn(`usage refresh failed on ${w.label}:`, err)
+  } finally {
+    // ⛔ By session id, which is how this app kills anything: `closeSession` stops only the pid it
+    // recorded and only after checking the process is still the one it started.
+    if (sessionId) closeSession(sessionId)
+  }
+
+  const after = await probeWorker(workerId)
+
+  // ⚠️ Did it actually work? Measured 2026-08-27: on a **commissioned worker** it does not, and the
+  // failure is silent unless something checks. `claude auth login` writes the credential but not the
+  // first-run flags, so an isolation root has `oauthAccount` and no `hasCompletedOnboarding` — and an
+  // interactive session there opens the theme picker, then the login-method chooser. The keystroke
+  // meant for `/usage` is eaten by onboarding and the cache is never written. Print mode skips all of
+  // that, which is why scheduled work on the same root runs perfectly well and hides the problem.
+  if (after.windows.length === 0 || after.sampledAt <= before) {
+    // ⛔ Report what was checked, not what is usually true. The first version of this message named
+    // onboarding as "the usual cause" and kept saying so after onboarding was finished — sending
+    // somebody to redo a step they had already done while the real cause (an unanswered folder-trust
+    // dialog eating the keystroke) went unmentioned. A diagnosis nobody verified is a guess wearing
+    // a diagnosis's clothes.
+    const fresh = requireWorker(workerId)
+    const why =
+      `\`${refresh.command}\` was typed into ${w.label} but no fresher reading appeared. ` +
+      (fresh.identity?.setupComplete === false
+        ? 'This worker has not finished the CLI\'s first-run questions — a theme, a login method, ' +
+          'and whether it trusts the folder the session opens in. Until they are answered the CLI ' +
+          'swallows anything typed at it. Use Finish setup on this worker.'
+        : 'Its first-run state looks complete, so this is something else — the CLI may have changed ' +
+          'what the command does, or the session may need longer than the adapter allows.')
+    log.warn(why)
+    const snapshot: QuotaSnapshot = {
+      workerId,
+      windows: after.windows,
+      sampledAt: after.sampledAt,
+      source: after.source,
+      error: why
+    }
+    store(snapshot)
+    return decorate(snapshot)
+  }
+
+  return after
+}
+
+const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
 function store(s: QuotaSnapshot): void {
   const stmt = db().prepare(
@@ -190,12 +304,47 @@ export class QuotaPoller {
    * schedules work - the fleet degrades to "unknown, treat conservatively" and keeps running.
    */
   async sweep(): Promise<void> {
+    // ⚠️ **At most one per sweep, and only when the reading is genuinely old.** Reading the cache is
+    // a file read; refreshing it starts a real process for the better part of a minute. Refreshing
+    // every worker every five minutes would turn a free probe into a fleet that spends its day
+    // opening terminals to look at itself — which is the shape of the mistake `-p /usage` already
+    // made once, in tokens rather than in processes.
+    let refreshed = false
+
     for (const w of listWorkers()) {
       try {
+        // ⚠️ Identity is a cached belief and nothing used to expire it. ClaudeFirst read "not signed
+        // in" on 2026-08-27 while its isolation root held a valid credential, because the `false`
+        // was written before somebody signed in and only a button nobody knew about would have
+        // corrected it. Free: a local subprocess, and only when the answer is genuinely old.
+        await refreshIdentityIfStale(w.id, IDENTITY_STALE_AFTER_MS)
+        if (!refreshed && this.shouldRefresh(w.id)) {
+          refreshed = true
+          this.listener(await refreshUsage(w.id))
+          continue
+        }
         this.listener(await probeWorker(w.id))
       } catch (err) {
         log.warn(`quota probe failed for ${w.label}:`, err)
       }
     }
+  }
+
+  /**
+   * Is it worth opening a terminal to find out?
+   *
+   * ⛔ `loggedIn === false` is excluded rather than merely deprioritised: a TUI on an account nobody
+   * is signed in to sits on its login screen for the whole timeout and answers nothing. `null` is
+   * allowed through, as everywhere else — unknown is not the same as no.
+   */
+  private shouldRefresh(workerId: string): boolean {
+    const w = requireWorker(workerId)
+    if (w.retiredAt || !w.enabled) return false
+    if (w.identity?.loggedIn === false) return false
+    if (!adapter(w.adapterId).info.usageRefresh) return false
+
+    const last = lastQuota(workerId)
+    // Never read at all, or read so long ago that nothing downstream is allowed to use it.
+    return !last || last.windows.length === 0 || last.ageMs > REFRESH_AFTER_MS
   }
 }

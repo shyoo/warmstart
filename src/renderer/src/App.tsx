@@ -4,12 +4,11 @@ import { rpc, useAppInfo, useDaemonEvents, useDaemonStatus, useFleet, useNow } f
 import { FleetStrip } from './components/FleetStrip'
 import { Workers } from './components/Workers'
 import { Doctor } from './components/Doctor'
-import { TerminalPane } from './components/Terminal'
 import { Approvals } from './components/Approvals'
-import { Tasks } from './components/Tasks'
 import { Projects } from './components/Projects'
-import { Cost } from './components/Cost'
-import { Controller } from './components/Controller'
+import { Tasks } from './components/Tasks'
+import { Overview } from './components/Overview'
+import { Project as ProjectView, type ProjectTab } from './components/Project'
 
 /**
  * The shell.
@@ -19,7 +18,24 @@ import { Controller } from './components/Controller'
  * keystroke when it is not.
  */
 
-type View = 'tasks' | 'projects' | 'controller' | 'workers' | 'sessions' | 'cost' | 'doctor'
+/**
+ * Where you are, as an object rather than a flat enum.
+ *
+ * ⚠️ This was seven sibling views, one of which happened to be called Projects — so a project was a
+ * list you visited, not the thing work belongs to. A route that carries a project id is what makes
+ * "the project is the unit of work" true of the code and not only of the sidebar.
+ */
+type Route =
+  | { kind: 'overview' }
+  | { kind: 'project'; id: string; tab: ProjectTab }
+  /**
+   * ⚠️ Temporary, and it removes itself. `tasks.project_id` is nullable, so a database can already
+   * hold work that belongs to no project - and in a sidebar built out of projects, that work would
+   * simply be unreachable. This entry appears only while such tasks exist and disappears the moment
+   * the last one is given a home, which is what the require-a-project migration does.
+   */
+  | { kind: 'unassigned' }
+  | { kind: 'settings'; page: 'workers' | 'doctor' }
 
 export function App(): React.JSX.Element {
   const info = useAppInfo()
@@ -27,16 +43,19 @@ export function App(): React.JSX.Element {
   const connected = status.state === 'connected'
   const { fleet, refresh } = useFleet(connected)
   const now = useNow()
-  const [view, setView] = useState<View>('tasks')
+  const [route, setRoute] = useState<Route>({ kind: 'overview' })
   const [openSession, setOpenSession] = useState<string | null>(null)
   const [keyboard, setKeyboard] = useState(false)
   const [projects, setProjects] = useState<Project[]>([])
   const [resources, setResources] = useState<ResourceAvailability[]>([])
+  const [orphanTasks, setOrphanTasks] = useState(0)
 
   const refreshProjects = useCallback(async () => {
     if (!connected) return
     setProjects(await rpc('project.list'))
     setResources(await rpc('resource.list'))
+    const all = await rpc('task.list', {})
+    setOrphanTasks(all.filter((t) => t.projectId === null).length)
   }, [connected])
 
   useEffect(() => {
@@ -44,7 +63,13 @@ export function App(): React.JSX.Element {
   }, [refreshProjects])
 
   useDaemonEvents((event) => {
-    if (event.type === 'project.changed' || event.type === 'resource.changed') void refreshProjects()
+    if (
+      event.type === 'project.changed' ||
+      event.type === 'resource.changed' ||
+      event.type === 'task.changed'
+    ) {
+      void refreshProjects()
+    }
   })
 
   const sessions = fleet.flatMap((f) => f.sessions)
@@ -58,37 +83,60 @@ export function App(): React.JSX.Element {
         </div>
 
         <nav className="nav-group">
-          <h2>Fleet</h2>
-          <NavItem active={view === 'workers'} onClick={() => setView('workers')}>
-            Workers
-            <span className="nav-count num">{fleet.length}</span>
-          </NavItem>
-          <NavItem active={view === 'sessions'} onClick={() => setView('sessions')}>
-            Sessions
-            <span className="nav-count num">{sessions.length}</span>
-          </NavItem>
-          <NavItem active={view === 'cost'} onClick={() => setView('cost')}>
-            Cost
+          <NavItem
+            active={route.kind === 'overview'}
+            onClick={() => setRoute({ kind: 'overview' })}
+          >
+            Overview
           </NavItem>
         </nav>
 
         <nav className="nav-group">
-          <h2>Work</h2>
-          <NavItem active={view === 'tasks'} onClick={() => setView('tasks')}>
-            Tasks
-          </NavItem>
-          <NavItem active={view === 'projects'} onClick={() => setView('projects')}>
-            Projects
-            <span className="nav-count num">{projects.length}</span>
-          </NavItem>
-          <NavItem active={view === 'controller'} onClick={() => setView('controller')}>
-            Controller
-          </NavItem>
+          <h2>Projects</h2>
+          {projects.length === 0 ? (
+            // ⛔ Not a bare heading. A stranger's first launch has no projects, and a group label
+            // with nothing under it reads as something that failed to load.
+            <button
+              className="nav-item nav-item--ghost"
+              onClick={() => setRoute({ kind: 'settings', page: 'doctor' })}
+            >
+              No projects yet
+            </button>
+          ) : (
+            projects.map((project) => (
+              <NavItem
+                key={project.id}
+                active={route.kind === 'project' && route.id === project.id}
+                onClick={() => setRoute({ kind: 'project', id: project.id, tab: 'tasks' })}
+              >
+                {project.name}
+              </NavItem>
+            ))
+          )}
+          {orphanTasks > 0 && (
+            <NavItem
+              active={route.kind === 'unassigned'}
+              onClick={() => setRoute({ kind: 'unassigned' })}
+            >
+              Unassigned
+              <span className="nav-count num">{orphanTasks}</span>
+            </NavItem>
+          )}
         </nav>
 
         <nav className="nav-group">
           <h2>Settings</h2>
-          <NavItem active={view === 'doctor'} onClick={() => setView('doctor')}>
+          <NavItem
+            active={route.kind === 'settings' && route.page === 'workers'}
+            onClick={() => setRoute({ kind: 'settings', page: 'workers' })}
+          >
+            Workers
+            <span className="nav-count num">{fleet.length}</span>
+          </NavItem>
+          <NavItem
+            active={route.kind === 'settings' && route.page === 'doctor'}
+            onClick={() => setRoute({ kind: 'settings', page: 'doctor' })}
+          >
             Doctor
           </NavItem>
         </nav>
@@ -101,25 +149,35 @@ export function App(): React.JSX.Element {
         <div className="content">
           {!connected ? (
             <DaemonNotice status={status} />
-          ) : view === 'tasks' ? (
-            <Tasks projects={projects} />
-          ) : view === 'projects' ? (
-            <Projects projects={projects} resources={resources} refresh={refreshProjects} />
-          ) : view === 'workers' ? (
+          ) : route.kind === 'overview' ? (
+            <Overview now={now} />
+          ) : route.kind === 'unassigned' ? (
+            <div className="stack">
+              <div className="notice">
+                These tasks belong to no project, so they get no workspace and no branch. Give each
+                one a project — this list disappears when the last of them has a home.
+              </div>
+              <Tasks projects={projects} />
+            </div>
+          ) : route.kind === 'settings' && route.page === 'workers' ? (
             <Workers fleet={fleet} refresh={refresh} />
-          ) : view === 'controller' ? (
-            <Controller now={now} />
-          ) : view === 'cost' ? (
-            <Cost now={now} />
-          ) : view === 'doctor' ? (
-            <Doctor now={now} />
+          ) : route.kind === 'settings' ? (
+            <>
+              <Doctor now={now} />
+              <Projects projects={projects} resources={resources} refresh={refreshProjects} />
+            </>
           ) : (
-            <SessionsView
+            <ProjectRoute
+              route={route}
+              setRoute={setRoute}
+              projects={projects}
+              resources={resources}
+              refreshProjects={refreshProjects}
               fleet={fleet}
-              openSession={openSession}
-              setOpenSession={setOpenSession}
               keyboard={keyboard}
               setKeyboard={setKeyboard}
+              openSession={openSession}
+              setOpenSession={setOpenSession}
             />
           )}
         </div>
@@ -185,64 +243,63 @@ function DaemonNotice({
   )
 }
 
-function SessionsView({
+/**
+ * A project route, resolved.
+ *
+ * ⚠️ The id in the route can outlive the project it names — another window can archive or remove one
+ * while this one is looking at it. Saying so and offering the way back is the whole handling; a
+ * blank pane would leave somebody wondering which of the two of them was broken.
+ */
+function ProjectRoute({
+  route,
+  setRoute,
+  projects,
+  resources,
+  refreshProjects,
   fleet,
-  openSession,
-  setOpenSession,
   keyboard,
-  setKeyboard
+  setKeyboard,
+  openSession,
+  setOpenSession
 }: {
+  route: { kind: 'project'; id: string; tab: ProjectTab }
+  setRoute: (route: Route) => void
+  projects: Project[]
+  resources: ResourceAvailability[]
+  refreshProjects: () => Promise<void>
   fleet: ReturnType<typeof useFleet>['fleet']
-  openSession: string | null
-  setOpenSession: (id: string | null) => void
   keyboard: boolean
   setKeyboard: (v: boolean) => void
+  openSession: string | null
+  setOpenSession: (id: string | null) => void
 }): React.JSX.Element {
-  const sessions = fleet.flatMap((f) => f.sessions.map((s) => ({ session: s, worker: f.worker })))
-  const selected = openSession ?? sessions[0]?.session.id ?? null
+  const project = projects.find((p) => p.id === route.id)
 
-  if (sessions.length === 0) {
+  if (!project) {
     return (
       <div className="empty-inline">
-        <p>No live sessions.</p>
-        <p className="dim">
-          A session is one agent process. Scheduled work runs on a pipe transport and appears here as
-          it streams; a session you open yourself gets a real terminal.
-        </p>
+        <p>That project is no longer here.</p>
+        <p className="dim">It may have been archived or removed since this pane was opened.</p>
+        <button className="btn" onClick={() => setRoute({ kind: 'overview' })}>
+          Back to Overview
+        </button>
       </div>
     )
   }
 
   return (
-    <div className="panel">
-      <header className="panel-head">
-        <div>
-          <h2>Sessions</h2>
-          <p className="panel-sub">
-            The real agent TUI. Read-only until you take the keyboard — a stray keystroke into a
-            running agent is a real edit to a real repository.
-          </p>
-        </div>
-        <label className="check">
-          <input type="checkbox" checked={keyboard} onChange={(e) => setKeyboard(e.target.checked)} />
-          take the keyboard
-        </label>
-      </header>
-
-      <div className="tabs">
-        {sessions.map(({ session, worker }) => (
-          <button
-            key={session.id}
-            className={`tab${selected === session.id ? ' tab--active' : ''}`}
-            onClick={() => setOpenSession(session.id)}
-          >
-            <span className="mono">{session.id.slice(0, 6)}</span>
-            <span className="dim">{worker.label}</span>
-          </button>
-        ))}
-      </div>
-
-      {selected && <TerminalPane sessionId={selected} interactive={keyboard} />}
-    </div>
+    <ProjectView
+      project={project}
+      tab={route.tab}
+      setTab={(tab) => setRoute({ kind: 'project', id: route.id, tab })}
+      projects={projects}
+      resources={resources}
+      refreshProjects={refreshProjects}
+      fleet={fleet}
+      keyboard={keyboard}
+      setKeyboard={setKeyboard}
+      openSession={openSession}
+      setOpenSession={setOpenSession}
+    />
   )
 }

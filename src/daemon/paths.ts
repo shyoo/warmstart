@@ -96,6 +96,19 @@ export const paths = {
   get workers() {
     return join(dataDir(), 'workers')
   },
+  /**
+   * Where a session that belongs to no project runs.
+   *
+   * ⛔ Not the user's home, and not the worker's credential root. A CLI asks whether it may trust
+   * the folder it was opened in, per account, and until somebody answers it **eats every keystroke
+   * sent to that session** - which is what silently broke the usage probe on 2026-08-27: `/usage`
+   * was typed into a trust dialog and the Enter after it accepted the folder. Home is the worst
+   * possible answer to that question and a credential root is the second worst. This directory is
+   * empty, stable, and answered once per account.
+   */
+  get scratch() {
+    return join(dataDir(), 'scratch')
+  },
   get logs() {
     return join(dataDir(), 'logs')
   },
