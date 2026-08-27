@@ -137,6 +137,14 @@ export interface WorkerHealth {
   since: number
   /** The run that produced this verdict, so the evidence is reachable. */
   runId: string | null
+  /**
+   * Is the fix *sign in again*, rather than *go and read what happened*?
+   *
+   * ⛔ Presentation, never a gate. A suspect worker is held out of dispatch either way; this only
+   * decides whether the UI offers the one button that can help. The adapter classifies its own
+   * CLI's words — see `needsReauth` in adapters/types.ts.
+   */
+  needsReauth?: boolean
 }
 
 export type WorkerRole = 'worker' | 'controller' | 'both'
@@ -229,6 +237,16 @@ export interface Session {
   purpose: SessionPurpose
   transcriptPath: string | null
   contextTokens: number | null
+  /**
+   * How big this session's context window is, from the cost model that prices its model.
+   *
+   * ⛔ Sent with the session rather than looked up in the renderer, which has no cost models and
+   * must not grow a second table of model facts to keep in step with the first.
+   *
+   * `null` means the model is unknown or unpriced — draw the level without a denominator rather
+   * than inventing one. A bar against a guessed window is a bar that lies quietly.
+   */
+  contextWindow: number | null
   /** Cache TTL is measured from the REQUEST start, not the response record. cost-model.md §1. */
   lastRequestStartedAt: number | null
   cacheExpiresAt: number | null

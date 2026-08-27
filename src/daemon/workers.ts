@@ -161,8 +161,21 @@ function announce(worker: Worker): Worker {
   return worker
 }
 
-/** Signed in **and** through the CLI's first-run screens. Either one alone is not a usable worker. */
-export function isReady(worker: Worker): boolean {
+/**
+ * Signed in **and** through the CLI's first-run screens. Either one alone leaves an account that
+ * cannot open a terminal, which is what `watchReadiness` below exists to wait for.
+ *
+ * ⛔ **Not a dispatch gate, and deliberately not exported.** It asks one narrow question - has a
+ * person finished the vendor's own sign-in flow - and says nothing about whether this account may
+ * be given a turn: not `enabled`, not `humanOccupied`, not `retiredAt`, not whether the CLI is
+ * installed, and not whether a run has already proved that work dies here. It was called `isReady`
+ * and exported, which made it exactly the thing a future caller would find by grepping for a
+ * readiness check and use as one. That is how `chooseController` came to be missing the quarantine
+ * gate the scheduler had: two answers to *is this worker usable*, only one of them complete.
+ *
+ * ⛔ The gate is `accountUnavailability` in eligibility.ts. There is one, and both schedulers use it.
+ */
+function isSignedInAndSetUp(worker: Worker): boolean {
   return worker.identity?.loggedIn === true && worker.identity?.setupComplete !== false
 }
 
@@ -198,7 +211,7 @@ export async function refreshIdentityIfStale(id: string, maxAgeMs: number): Prom
  */
 export function watchReadiness(workerId: string, onReady: () => void): () => void {
   const w = requireWorker(workerId)
-  const wasReady = isReady(w)
+  const wasSetUp = isSignedInAndSetUp(w)
   let stopped = false
   let debounce: NodeJS.Timeout | null = null
   let watcher: FSWatcher | null = null
@@ -209,7 +222,7 @@ export function watchReadiness(workerId: string, onReady: () => void): () => voi
       const fresh = await refreshIdentity(workerId)
       // ⛔ The *transition* is the event, not the state. A worker that was already ready when the
       // pane opened must not have its terminal closed out from under whoever opened it deliberately.
-      if (!wasReady && isReady(fresh)) {
+      if (!wasSetUp && isSignedInAndSetUp(fresh)) {
         stop()
         onReady()
       }
@@ -281,7 +294,11 @@ export function recordDispatchFailure(id: string, reason: string, runId: string 
     reason,
     strikes,
     since: Date.now(),
-    runId
+    runId,
+    // ⛔ Asked of the adapter, whose CLI wrote the sentence. An adapter that does not classify
+    // its failures says `false`, which is the safe answer: the worker is still held out, the
+    // operator is still shown the reason, and nobody is sent to re-authenticate on a guess.
+    needsReauth: adapter(w.adapterId).needsReauth?.(reason) ?? false
   }
   db().prepare('update workers set health_json = ? where id = ?').run(JSON.stringify(health), id)
   if (health.state === 'suspect') {

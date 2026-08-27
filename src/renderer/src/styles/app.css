@@ -352,6 +352,44 @@ body {
   background: var(--state-danger);
 }
 
+/*
+ * ⚠️ A wider value column than the account gauges above. Those show `81%`; this shows
+ * `52k/1M`, and a column sized for three characters truncates the denominator - which is the
+ * half that makes the number mean anything.
+ */
+.gauge--session {
+  grid-template-columns: 52px 1fr 58px 44px;
+}
+
+/*
+ * The prompt cache, in a colour of its own.
+ *
+ * ⛔ Deliberately not the green/amber/red of the quota bars. Those measure an account's window
+ * filling up, where more is worse; this measures a session's cache draining away, where more is
+ * better. Two bars of identical shape and opposite polarity, in the same palette, on the same
+ * card, is a misreading waiting to happen - so the healthy state is the blue this app already
+ * uses for `running`, and only the warnings borrow the shared amber and red.
+ */
+.bar-fill--cache-ok {
+  background: var(--state-running);
+}
+
+.bar-fill--cache-warn {
+  background: var(--state-warn);
+}
+
+.bar-fill--cache-danger {
+  background: var(--state-danger);
+}
+
+.gauge-reset--warn {
+  color: var(--state-warn);
+}
+
+.gauge-reset--danger {
+  color: var(--state-danger);
+}
+
 .gauge-value {
   text-align: right;
 }
@@ -362,39 +400,33 @@ body {
 }
 
 .wcard-sessions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--sp-1);
   margin-top: var(--sp-2);
 }
 
-.chip {
-  display: inline-flex;
+/*
+ * The line between the account and its sessions.
+ *
+ * ⛔ Labelled, not a bare rule. Above it is one quota shared by everything on this account and
+ * outliving all of it; below it is one live session's own context and its own cache clock. The
+ * gauges are deliberately the same shape on both sides - that is what makes them comparable -
+ * and it is exactly why they need something between them saying which is which.
+ */
+.wcard-rule {
+  display: flex;
   align-items: center;
   gap: var(--sp-2);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  padding: 1px var(--sp-2);
-  font-size: var(--text-meta);
-  color: var(--color-text-dim);
-}
-
-.chip-clock--warn {
-  color: var(--state-warn);
-}
-
-.chip-clock--danger {
-  color: var(--state-danger);
-}
-
-.chip-ctx {
+  margin: var(--sp-2) 0 var(--sp-1);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
   color: var(--color-text-faint);
 }
 
-/* What the session is for. It leads the chip because it is the only part that says what this is. */
-.chip-purpose {
-  color: var(--color-text-dim);
-  text-transform: lowercase;
+.wcard-rule::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--color-border);
 }
 
 .tag--suspect {
@@ -426,6 +458,16 @@ body {
 .tag--human {
   color: var(--state-human);
   border-color: var(--state-human);
+}
+
+/*
+ * ⚠️ Dimmed, never hidden. A disabled worker is still commissioned and the operator still
+ * needs to read its quota, its account and the switch that will bring it back.
+ */
+.tag--off {
+  color: var(--state-danger);
+  border-color: var(--state-danger);
+  margin-left: var(--sp-2);
 }
 
 .tag--running {
@@ -965,6 +1007,17 @@ select:focus-visible,
   background: var(--color-surface-2);
 }
 
+/* The same 0.55 the fleet strip's card has used since M2, so `off` looks like one thing. */
+.tbl-row--off td {
+  opacity: 0.55;
+}
+
+/* ⛔ The switch itself keeps full contrast - it is the control that undoes this state. */
+.tbl-row--off .switch,
+.tbl-row--off .tag--off {
+  opacity: 1;
+}
+
 .status {
   font-size: var(--text-meta);
   letter-spacing: 0.02em;
@@ -1369,6 +1422,29 @@ select:focus-visible,
   background: var(--color-surface-2);
   cursor: pointer;
   transition: background var(--motion-fast) var(--ease);
+}
+
+/* Row-sized: the same control, scaled to sit in a table cell beside a line of text. */
+.switch--sm {
+  width: 32px;
+  height: 18px;
+  margin-top: 0;
+}
+
+.switch--sm .switch-knob {
+  width: 12px;
+  height: 12px;
+}
+
+.switch--sm.switch--on .switch-knob {
+  transform: translateX(14px);
+}
+
+.switch-row--cell {
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--text-meta);
+  margin-bottom: var(--sp-1);
 }
 
 .switch:disabled {

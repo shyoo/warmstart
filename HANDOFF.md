@@ -9,42 +9,34 @@ if you add a line, find the one it obsoletes and cut it in the same edit. Finish
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
 **Baseline (2026-08-27, measured on this machine):** `npm run typecheck` clean · `npm run lint` clean ·
-`npm run build` clean · `npm test` 248/248 · `npm run test:daemon` 110/110 · `npm run test:ui` 41/41 ·
+`npm run build` clean · `npm test` 289/289 · `npm run test:daemon` 110/110 · `npm run test:ui` 48/48 ·
 `npm run test:pack` 18/18 · L4 (opt-in) landed a real agent commit on origin/main. Electron 44.0.0,
 electron-builder 26.15.3, 0 npm vulnerabilities. CLIs here: claude 2.1.247 · agy 1.1.22 · codex 0.149.1.
 
-⭐ **`scripts/build-win.ps1` runs all of the above; `-Help` lists its options, `-Restart` is the
-inner loop.** Steps are content-addressed and skipped when unchanged: **92s cold, ~0s warm**.
-⚠️ **Two packaged apps exist and only one is ever new** — the pack step rewrites
-`release\suite\`, `release\win-unpacked\` moves only under `-Installer`. The summary names the
-stale one every run.
+⭐ **`scripts/build-win.ps1` runs all of the above; `-Help` lists its options, `-Restart` is the inner
+loop.** Steps are content-addressed and skipped when unchanged: **92s cold, ~0s warm**.
+⛔ **Run `release\win-unpacked\`, never `release\suite\`.** The pack step owns the suite copy and
+rewrites it every run; an app executing out of it fails the next `npm run pack` with `EPERM`, which
+is what happened on 2026-08-27 after this file said only which copy was *newer*. `-Installer`
+refreshes the one you run.
 
-⚠️ **With no agent CLI the daemon suite skips 5 checks**, each with a stated reason — the CI state,
-and why `summary()` prints skips beside the result. Simulate it with a PATH of System32, node and git
-and an empty `HOME`; it is what found the dispatch-gate bug. **All ten CI jobs pass on all three
-platforms**; what that does *not* cover is below.
+⚠️ **With no agent CLI the daemon suite skips 5 checks**, each with a stated reason — the CI state.
+Simulate it with a PATH of System32, node and git and an empty `HOME`; it is what found the
+dispatch-gate bug. **All ten CI jobs pass on all three platforms**; what that misses is below.
 
 ---
 
 ## Where the build is
 
-| Milestone | State |
-|---|---|
-| **M0** scaffold | ✅ repo, licence, docs, Electron shell |
-| **M1** fleet substrate + commissioning | ✅ daemon, cost-model loader, workers, quota, PTY, transcript metering, fleet UI |
-| **M2** tasks, threads, resources, authorship | ✅ tasks + DAG, cancel/delete, approvals, projects, worktree pool, auto-land, scheduler v1 |
-| **M3** cost intelligence | ✅ cache clock, compaction reserve, objective vector, estimator, preemption, watchdogs |
-| **M4** controller agent | ✅ consult queue + fallbacks, four judgment events, controller MCP tier, chat + thread panes |
-| **M5** multi-provider (`antigravity-cli`, `openai-compatible`) | ✅ two adapters measured against the real CLIs, two cost models, capability consequences proved |
-| **M6** packaging | ✅ electron-builder, a suite that drives the *packaged* app, declarative adapters, pull-request landing |
+**M0–M6 are all shipped.** M0 scaffold · M1 fleet substrate and commissioning · M2 tasks, threads,
+resources, authorship · M3 cost intelligence · M4 controller agent · M5 multi-provider
+(`antigravity-cli`, `openai-compatible`) · M6 packaging. ⚠️ Shipped is not the same as proven — the
+gaps are in *What is true right now and not yet proven*, below.
 
-Scope: `transient_docs/implementation_plan_2026-08-24.md` §14, amended by **A1/A2/A3 (2026-08-25)**:
-`gemini-cli` retired, D5 closes per adapter (§9.1), approvals and cancel/delete are new objects,
-decomposition is a roadmap not a DAG (§18.1), and a judgment event is a **queued question with a
-deterministic fallback** rather than a call the scheduler makes (§11.1).
+Scope: `transient_docs/implementation_plan_2026-08-24.md` §14, as amended by **A1/A2/A3**
+(2026-08-25, recorded there).
 
-⛔ What each milestone *measured* is in `transient_docs/changes_history.md`. Read it before
-re-deriving any of it.
+⛔ What each milestone *measured* is in `transient_docs/changes_history.md`. Read it before re-deriving any of it.
 
 ## What exists
 
@@ -61,16 +53,20 @@ src/daemon/            orchestratord. Runs as Electron-with-ELECTRON_RUN_AS_NODE
   tasks.ts             DAG, admission, mandates, budgets, runs           (+ tasks.test.ts)
   cancel.ts            wind-down into a resting state; delete is separate and human-only
   approvals.ts         policy engine, escalation clock, remembered rules
-  scheduler.ts         gates, scoring, dispatch, watchdogs, continueTask (+ routing.test.ts,
+  scheduler.ts         scoring, dispatch, watchdogs, continueTask (+ routing.test.ts,
                        runfailure.test.ts - who is blamed when a run does not succeed)
+  eligibility.ts       ⛔ the account gates, in ONE list. Work and judgment both read it; they
+                       each kept their own until 2026-08-27 and the copies drifted
   activity.ts          the live peephole: a bounded in-memory tail of what a run is saying
   landing.ts           auto-land, serialised by an exclusive land: resource (+ landing.test.ts)
   cacheclock.ts        the six moves - the piece the whole cost model exists for; a move is a
                        request, and moveOutcome() is what stops it being re-asked (+ .test.ts)
-  settings.ts          the fleet switches the operator owns. There is one: autoCompact
+  settings.ts          the fleet switches the operator owns. There is one: autoCompact. Per-worker,
+                       `enabled` is a switch on its Workers row - held out of dispatch, not retired
   reserve.ts           the compaction reserve, and every belief with its basis attached
   objective.ts         the weight vector, in exactly two consumers    (+ cost.test.ts)
-  controller.ts        the consult queue, the caps, and choosing who answers (+ controller.test.ts)
+  controller.ts        the consult queue, the caps, and choosing who answers (+ controller.test.ts,
+                       controllerchoice.test.ts - who may be asked, and who may not)
   judgment.ts          the four events: question, closed answer set, fallback (+ judgment.test.ts)
   chat.ts              the one place the controller gets tools - a person is watching
   estimator.ts         what a task will cost, from what tasks have cost
@@ -92,7 +88,6 @@ src/renderer/          fleet strip, approvals bar, tasks, projects, workers, doc
 costmodels/            anthropic.* - google.antigravity.* - openai.codex.*; compiled in, not read
                        from disk, so a packaging slip cannot leave the scheduler unable to price
 docs/                  cost-model.md, glossary.md, adapters.md - maintained; read before reasoning
-                       about cost, vocabulary, or what a given CLI can actually do
 .claude/skills/commit/ /commit: docs, suites, package, commit, push
 ```
 
@@ -108,31 +103,31 @@ docs/                  cost-model.md, glossary.md, adapters.md - maintained; rea
 - ⚠️ **A worker is not usable until somebody answers the CLI's first-run questions.** Signing in
   writes neither onboarding nor folder trust, and print mode skips both — so scheduled work runs
   while a TUI, and therefore a quota probe, cannot. `Finish setup` opens that terminal.
-- ⭐ **A worker is held out of dispatch by evidence** — a run producing no metered turn is charged to
-  the account, not the task. Rules in AGENTS.md, cases in `runfailure.test.ts`.
-- ⚠️ **Sessions are reused within a task, never across tasks in a project.** The detail pane says
-  which happened, so the claim is checkable. Closing the second half is item 4 in *Next*.
-- ⭐ **The packaged suite runs with the app open.** ⛔ **Every suite below L1 drives a build product
-  and none of them builds one** — `checkBuildIsCurrent()` and the asar check refuse when the
-  artefact predates `src/`.
+- ⭐ **A worker is held out by evidence, and now for judgment as well as work.** A run - or a
+  consult - producing no metered turn is charged to the account, not the task. ⛔ The gate list
+  lives in `eligibility.ts` and both schedulers read it; while held out the account is also not
+  probed in the background, because a usage refresh opens a real session and an expired one just
+  fails to authenticate every thirty minutes. Cases in `runfailure.test.ts`,
+  `controllerchoice.test.ts`.
+- ⚠️ **Sessions are reused within a task, never across tasks in a project** - the detail pane says
+  which happened. Closing the second half is item 4 in *Next*.
+- ⭐ **The packaged suite runs with the app open — provided the app is the `release\win-unpacked\`
+  copy.** ⛔ **Every suite below L1 drives a build product and none of them builds one** —
+  `checkBuildIsCurrent()` and the asar check refuse when the artefact predates `src/`, and
+  `test:ui` still has no such guard.
 - ⭐ **The cache clock no longer repeats itself, and compaction has an off switch.** A move is
   recorded when *issued*, with the evidence that would prove it landed, and the clock gives up after
-  two ignored attempts and hands off. ⚠️ That bound is what makes **R6** survivable rather than
-  urgent: a `no` costs two turns per session, not an unbounded spend. `settings.autoCompact` is a
-  fleet-wide switch on the Cost page and gates the reserve-at-risk path too.
+  two ignored attempts and hands off. `settings.autoCompact` is a fleet-wide switch on the Cost page
+  and gates the reserve-at-risk path too.
 - ⚠️ **Two M3 paths are unverified and marked in the code:** whether `/compact` is honoured on the
   `stream` transport (**R6**), and keepalive *execution*, which needs a warm session and an idle
   hour. The arithmetic is unit-tested; the firing is not.
 - ⚠️ **No consult has ever been answered by a real model.** L1 runs with nobody able to answer, which
   proves the fallbacks and leaves the answer path on synthetic replies only. **R8**.
-- ⭐ **Antigravity works, and reports its quota — both new on 2026-08-27.** It had never once run:
-  `-p` on `agy` takes the prompt as its *value*, so a bare `-p` exited 2 in zero seconds on **every
-  dispatch since M5** (0 turns ever, against 122 on claude-code). And `/usage` in its TUI is a free
-  probe after all — the answer reaches no file, so the adapter parses the panel under a declared
-  `usageRefresh.answer: 'screen'`. Live: Gemini 5.48% / 32.80%, Claude-and-GPT 42.80% / 0%.
-  **R9 closed, the opposite way round from how it was asked.** ⚠️ Still unproven past the `init`
-  record: **no Antigravity task has ever completed**, so R11 and R13 stand — and with `mcp: false` it
-  cannot call `task_complete`, so `awaiting_human` on every run is the honest outcome there.
+- ⭐ **Antigravity runs and reports its quota**, both since 2026-08-27; **R9 is closed the opposite way
+  round from how it was asked** (`docs/cost-model.md` §5). ⚠️ Still unproven past the `init` record:
+  **no Antigravity task has ever completed**, so R11 and R13 stand — and with `mcp: false` it cannot
+  call `task_complete`, so `awaiting_human` on every run is the honest outcome there.
 - ⛔ **Anything needing a real agent CLI is unproven off Windows.** CI proved three platforms build,
   start, package and schedule; the runners have no CLI and cannot sign in to one, so every adapter
   capability in `docs/adapters.md` was measured on Windows only.
@@ -199,7 +194,7 @@ choices most likely to be re-argued by someone who has not read it:
 - **Deterministic scheduler; the LLM only on judgment events, never inline.** A loop running every 10s
   for weeks must not bill anything, and the fleet must survive there being no controller at all.
 - **PTY-hosted CLI, transcript for state.** We own stdin, so `/compact` is a function call. ⚠️ ANSI
-  parsing determines state in exactly one declared place — a quota reading on a provider that writes
-  one nowhere. Never a session's state. See AGENTS.md.
+  parsing determines state in exactly one declared place - a quota reading where nothing else can
+  answer. Never a session's state.
 - **Capabilities and objectives are data.** No `if (adapter === …)`, no `if (mode === …)`. Proved
   against three real CLIs in M5, extended in M6 to adapters an operator declares in JSON.

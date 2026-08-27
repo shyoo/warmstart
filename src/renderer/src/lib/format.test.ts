@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { quotaGap } from './format'
+import { cacheRemaining, quotaGap } from './format'
 
 describe('quotaGap', () => {
   it('says what would produce a reading when the account has never been used', () => {
@@ -57,5 +57,48 @@ describe('a provider that has no usage probe at all', () => {
   it('is unchanged when the caller does not know the adapter', () => {
     // The parameter is optional; every existing caller keeps its behaviour.
     expect(quotaGap({ windows: [], error: 'EACCES' })?.label).toBe('unknown')
+  })
+})
+
+
+describe('cacheRemaining', () => {
+  const HOUR = 60 * 60 * 1000
+  const started = 1_700_000_000_000
+  const clock = { lastRequestStartedAt: started, cacheExpiresAt: started + HOUR }
+
+  it('is full the instant the turn started', () => {
+    expect(cacheRemaining(clock, started)).toBe(1)
+  })
+
+  it('is half way through a one-hour TTL', () => {
+    expect(cacheRemaining(clock, started + HOUR / 2)).toBeCloseTo(0.5, 5)
+  })
+
+  it('reads a five-minute TTL off the same two timestamps', () => {
+    // ⛔ The reason this is arithmetic and not a constant: both TTLs are real, on the same fleet,
+    // and a bar hard-coded to one of them is wrong by a factor of twelve on the other.
+    const short = { lastRequestStartedAt: started, cacheExpiresAt: started + 5 * 60 * 1000 }
+    expect(cacheRemaining(short, started + 150_000)).toBeCloseTo(0.5, 5)
+  })
+
+  it('is empty rather than negative once it has expired', () => {
+    expect(cacheRemaining(clock, started + 2 * HOUR)).toBe(0)
+  })
+
+  it('does not exceed full if the clock is behind the turn', () => {
+    expect(cacheRemaining(clock, started - HOUR)).toBe(1)
+  })
+
+  it('is unknown when the session never recorded a turn', () => {
+    // ⚠️ Not zero. A `stream` session meters usage without ever setting `lastRequestStartedAt`, so
+    // this is the ordinary state of a healthy consult - and an empty bar drawn as a *measurement*
+    // would say its cache had run out.
+    expect(cacheRemaining({ lastRequestStartedAt: null, cacheExpiresAt: null })).toBeNull()
+    expect(cacheRemaining({ lastRequestStartedAt: started, cacheExpiresAt: null })).toBeNull()
+    expect(cacheRemaining({ lastRequestStartedAt: null, cacheExpiresAt: started + HOUR })).toBeNull()
+  })
+
+  it('is unknown rather than dividing by zero on a nonsense pair', () => {
+    expect(cacheRemaining({ lastRequestStartedAt: started, cacheExpiresAt: started })).toBeNull()
   })
 })

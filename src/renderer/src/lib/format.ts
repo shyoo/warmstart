@@ -1,3 +1,4 @@
+import type { Session } from '@shared/protocol'
 /**
  * Formatting for numbers that update in place.
  *
@@ -79,6 +80,28 @@ export function cacheUrgency(expiresAt: number | null, now = Date.now()): 'ok' |
   if (left <= 7 * 60 * 1000) return 'danger'
   if (left <= 15 * 60 * 1000) return 'warn'
   return 'ok'
+}
+
+/**
+ * How much of a session's prompt cache is left, as a fraction of the TTL it was granted.
+ *
+ * ⛔ Derived from the two stored timestamps, never from a constant. The TTL differs by model and
+ * by cost model - five minutes and one hour are both real - so `remaining / (expiry - start)` is
+ * the only version that is right for all of them, and it needs nothing on the wire that is not
+ * already there.
+ *
+ * `null` when there is no clock to read: a `stream` session meters usage without ever setting
+ * `lastRequestStartedAt`, and a session with no turn yet has neither timestamp. An empty track is
+ * the honest drawing of that - a full one would say the cache is fresh, which is the wrong way to
+ * be wrong.
+ */
+export function cacheRemaining(
+  session: Pick<Session, 'cacheExpiresAt' | 'lastRequestStartedAt'>,
+  now = Date.now()
+): number | null {
+  const { cacheExpiresAt: expiry, lastRequestStartedAt: started } = session
+  if (!expiry || !started || expiry <= started) return null
+  return Math.max(0, Math.min(1, (expiry - now) / (expiry - started)))
 }
 
 export function quotaUrgency(percentUsed: number): 'ok' | 'warn' | 'danger' {

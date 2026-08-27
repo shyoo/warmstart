@@ -5,7 +5,8 @@ import { db, row, rows } from './db.js'
 import { emit } from './events.js'
 import { log } from './log.js'
 import { adapter } from './adapters/index.js'
-import { listWorkers } from './workers.js'
+import { listWorkers, recordDispatchFailure } from './workers.js'
+import { accountUnavailability } from './eligibility.js'
 import { lastQuota, lastRateLimit } from './quota.js'
 import {
   closeSession,
@@ -251,56 +252,80 @@ export interface ControllerChoice {
  * elsewhere; when none is left, `worker` is null and the deterministic fallback answers. Nothing
  * special happens at the floor - that *is* the floor.
  */
+/**
+ * Why this account cannot answer the next question, or `null` if it can.
+ *
+ * ⛔ **Exported, and the report uses it too.** `controllerReport` used to say `ready` for whichever
+ * worker the chooser returned and `another is preferred` for every other row, which meant the panel
+ * could not distinguish *"fine, just not first"* from *"cannot be asked at all"* — and when the
+ * chooser itself was wrong, the panel repeated it with a confident green label. One function, asked
+ * per worker, is what stops the two from ever disagreeing again.
+ */
+export function controllerUnavailability(worker: Worker): string | null {
+  if (worker.role === 'worker') return `${worker.label} does work only`
+
+  // Everything true of the account regardless of what is being asked - including the quarantine
+  // that this function did not have and the scheduler did. See eligibility.ts.
+  const unfit = accountUnavailability(worker)
+  if (unfit) return unfit
+
+  // A consult is answered over stream-json. An adapter without that transport cannot be a
+  // controller, and that is a capability question, never an adapter name.
+  if (!adapter(worker.adapterId).info.capabilities.transports.includes('stream')) {
+    return `${worker.label} cannot run a non-interactive session`
+  }
+  if (sessionsForWorker(worker.id).some((s) => s.purpose === 'consult')) {
+    return `${worker.label} is already answering one`
+  }
+
+  const rate = lastRateLimit(worker.id)
+  if (rate && rate.status !== 'allowed') {
+    return `${worker.label} is rate-limited (${rate.status})`
+  }
+
+  const window = controllerWindow(worker.id)
+  if (window && window.percent >= CONTROLLER_HIGH_WATER) {
+    return `${worker.label} is at ${Math.round(window.percent)}% of its 5h window`
+  }
+  return null
+}
+
+/** The window the water mark reads, or `null` when nothing fresh enough to trust says. */
+function controllerWindow(workerId: string): { percent: number } | null {
+  const quota = lastQuota(workerId)
+  if (!quota || quota.stale) return null
+  return quota.windows.find((w) => w.id === 'session' || w.id === '5h') ?? null
+}
+
+/**
+ * How much room this account has, as a preference and never as a gate.
+ *
+ * ⚠️ Three states, not two, and the middle one is the point. A **measured** window gives its own
+ * headroom; a **fresh reading with no matching window** is a real answer of `plenty`; **no reading
+ * at all, or one too old to trust**, scores 0.5 - below a measured empty account and above a
+ * measured busy one. Collapsing unknown into either end is how a guess starts outranking a
+ * measurement.
+ */
+function controllerHeadroom(workerId: string): number {
+  const quota = lastQuota(workerId)
+  if (!quota || quota.stale) return 0.5
+  const window = controllerWindow(workerId)
+  return window ? 1 - window.percent / 100 : 1
+}
+
 export function chooseController(): ControllerChoice {
   const reasons: string[] = []
   const candidates: Array<{ worker: Worker; score: number }> = []
 
   for (const worker of listWorkers()) {
     if (worker.role === 'worker') continue
-    if (!worker.enabled) {
-      reasons.push(`${worker.label} disabled`)
-      continue
-    }
-    if (worker.humanOccupied) {
-      reasons.push(`${worker.label} human-occupied`)
-      continue
-    }
-    if (!adapter(worker.adapterId).isInstalled()) {
-      reasons.push(`${adapter(worker.adapterId).info.label} is not installed`)
-      continue
-    }
-    // ⚠️ The typed field, not a substring of `raw`. See the same gate in scheduler.ts.
-    if (worker.identity?.loggedIn === false) {
-      reasons.push(`${worker.label} is not signed in`)
-      continue
-    }
-    // A consult is answered over stream-json. An adapter without that transport cannot be a
-    // controller, and that is a capability question, never an adapter name.
-    if (!adapter(worker.adapterId).info.capabilities.transports.includes('stream')) {
-      reasons.push(`${worker.label} cannot run a non-interactive session`)
-      continue
-    }
-    if (sessionsForWorker(worker.id).some((s) => s.purpose === 'consult')) {
-      reasons.push(`${worker.label} is already answering one`)
+    const blocked = controllerUnavailability(worker)
+    if (blocked) {
+      reasons.push(blocked)
       continue
     }
 
-    const rate = lastRateLimit(worker.id)
-    if (rate && rate.status !== 'allowed') {
-      reasons.push(`${worker.label} is rate-limited (${rate.status})`)
-      continue
-    }
-
-    let headroom = 0.5
-    const quota = lastQuota(worker.id)
-    if (quota && !quota.stale) {
-      const window = quota.windows.find((w) => w.id === 'session' || w.id === '5h')
-      if (window && window.percent >= CONTROLLER_HIGH_WATER) {
-        reasons.push(`${worker.label} is at ${Math.round(window.percent)}% of its 5h window`)
-        continue
-      }
-      headroom = window ? 1 - window.percent / 100 : 1
-    }
+    const headroom = controllerHeadroom(worker.id)
 
     // A dedicated controller is preferred over an account that also does work, because asking a busy
     // account for judgment competes with the work it is doing.
@@ -400,6 +425,7 @@ async function run(consult: Consult, worker: Worker): Promise<void> {
     closeSession(session.id)
 
     if (text === null) {
+      noteDeadConsult(worker, session.id, 'it did not answer in time')
       applyFallback(requireConsult(consult.id), 'the controller did not answer in time')
       return
     }
@@ -459,6 +485,34 @@ function ask(sessionId: string, question: string): Promise<string | null> {
       }
     }, PROMPT_DELAY_MS)
   })
+}
+
+/**
+ * A judgment call that produced not one metered turn is evidence about the **account**, not about
+ * the question - exactly as a dead run is on the work side, and recorded the same way.
+ *
+ * ⛔ This loop is the only one in the daemon that spends tokens, and it had no way to learn. An
+ * account whose subscription had expired was asked, produced nothing, fell back to the
+ * deterministic answer, and was asked again on the next drain, indefinitely: the failure was
+ * written on the *consult* and nothing was ever written on the *worker*. The work path had had
+ * this since M4 and the judgment path never got it.
+ *
+ * ⚠️ Zero metered turns, not merely an unusable answer. A reply that arrives and fails validation
+ * proves the account works and the prompt does not, and quarantining a healthy controller for a
+ * bad prompt would empty the fleet one question at a time.
+ *
+ * ⚠️ `spentOn`, not `session.lastRequestStartedAt`. A consult always runs over `stream`, and the
+ * stream metering path deliberately never sets that column - it has no request id and writes
+ * `request_started_at` as null - so reading it would have called every healthy consult dead.
+ */
+export function deadConsultVerdict(spentTokens: number, why: string): string | null {
+  if (spentTokens > 0) return null
+  return `a judgment call on this account produced no turn: ${why}`
+}
+
+function noteDeadConsult(worker: Worker, sessionId: string, why: string): void {
+  const verdict = deadConsultVerdict(spentOn(sessionId), why)
+  if (verdict) recordDispatchFailure(worker.id, verdict, null)
 }
 
 function applyFallback(consult: Consult, reason: string): void {
@@ -531,13 +585,19 @@ export function controllerReport(limit = 40): ControllerReport {
     generatedAt: Date.now(),
     controllers: listWorkers()
       .filter((w) => w.role !== 'worker')
-      .map((w) => ({
-        workerId: w.id,
-        label: w.label,
-        role: w.role,
-        available: chosen.worker?.id === w.id,
-        reason: chosen.worker?.id === w.id ? 'ready' : chosen.reason || 'another is preferred'
-      })),
+      .map((w) => {
+        // ⛔ Asked of this worker, never inferred from which one won. A row that reads `ready` has
+        // passed every gate the chooser applies; a row that does not says which gate stopped it.
+        const blocked = controllerUnavailability(w)
+        return {
+          workerId: w.id,
+          label: w.label,
+          role: w.role,
+          available: blocked === null,
+          reason:
+            blocked ?? (chosen.worker?.id === w.id ? 'ready' : 'ready — another is preferred')
+        }
+      }),
     pending: pendingConsults().length,
     usedThisHour: consultsStartedSince(Date.now() - 60 * 60 * 1000),
     hourlyCap: HOURLY_CAP,

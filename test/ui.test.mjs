@@ -356,6 +356,62 @@ try {
     'the one loop that can spend should show its ceiling'
   )
 
+  section('workers')
+  // ⛔ Held out of dispatch is a state the operator sets and has to be able to *see*. It lived for
+  // four milestones as a cleared checkbox in the last column, which is indistinguishable at a
+  // glance from a worker that simply had no work — and the fleet strip had been saying `off` on its
+  // card since M2, so the two views disagreed about the same fact.
+  await evaluate(
+    `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim().startsWith('Workers')).click()`
+  )
+  await wait(1200)
+  const rowSwitch = `document.querySelector('.tbl tbody tr .switch')`
+  check(
+    'a commissioned worker can be switched off from its own row',
+    (await evaluate(`!!(${rowSwitch})`)) === true,
+    'the control the scheduler already honours had no obvious affordance'
+  )
+  check(
+    'and it is a real switch, not a styled div',
+    (await evaluate(`${rowSwitch}?.getAttribute('role')`)) === 'switch'
+  )
+  check(
+    'which starts on, because commissioning a worker means using it',
+    (await evaluate(`${rowSwitch}?.getAttribute('aria-checked')`)) === 'true'
+  )
+
+  await evaluate(`${rowSwitch}.click()`)
+  await wait(1200)
+  const offRow = await evaluate(
+    `document.querySelector('.tbl tbody tr')?.innerText ?? ''`
+  )
+  check(
+    'turning it off says so on the row itself',
+    /disabled/i.test(offRow),
+    JSON.stringify(offRow.slice(0, 90))
+  )
+  check(
+    'the row is dimmed so a switched-off account reads as one at a glance',
+    (await evaluate(
+      `!!document.querySelector('.tbl tbody tr.tbl-row--off')`
+    )) === true,
+    'the same 0.55 the fleet strip uses, so `off` looks like one thing in both views'
+  )
+  // ⚠️ The state has to come back from the daemon rather than from the click. A toggle that paints
+  // itself and persists nothing is exactly the failure this switch would be used to rule out.
+  const persisted = await evaluate(
+    `window.agentyard.rpc('fleet.list').then(f => String(f[0]?.worker?.enabled))`
+  )
+  check('and the daemon agrees, which is the only opinion that gates dispatch', persisted === 'false', persisted)
+
+  await evaluate(`${rowSwitch}.click()`)
+  await wait(1200)
+  check(
+    'and it comes back on, with the account untouched',
+    (await evaluate(`${rowSwitch}?.getAttribute('aria-checked')`)) === 'true',
+    'off is not retirement — nothing is deleted and nothing needs re-commissioning'
+  )
+
   const errors = await evaluate('window.__agentyardErrors?.length ?? 0')
   check('no uncaught renderer errors', errors === 0)
 } catch (err) {

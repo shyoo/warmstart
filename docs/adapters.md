@@ -87,15 +87,21 @@ behaviour falls out of it:
   amount rather than zero. Doctor states which, and what it costs.
 - **`maxAccounts: 1`** → commissioning refuses the second account, with a message that says why and
   what to do instead.
+- **`needsReauth(reason)`** → the *presentation* of a held-out account: `re-sign-in required` and a
+  Sign in button, rather than a reason to go and read. ⛔ Optional, and the adapter answers because
+  the sentence is its CLI's — an expired subscription, a revoked key and a crash all arrive as the
+  same `api_error` and differ only in the words after it. ⚠️ It changes nothing about gating: a
+  suspect worker is held out either way, and an adapter that does not implement it says `false`,
+  which is the safe answer. Never keyed on `api_error` alone — that code also covers an outage, and
+  sending somebody to re-authenticate through one is how a working account gets signed out.
 
 ---
 
-## Why there is still no free quota probe for Antigravity
+## The free quota probe for Antigravity, and the three routes that were not it
 
-Three routes were evaluated. ⛔ All three were rejected, and the reasoning is worth keeping because
-this question will be asked again.
-
-⭐ **Reversed 2026-08-27: there IS a free probe, and it is `/usage` typed into the TUI.** Same
+⭐ **There IS a free probe, and it is `/usage` typed into the TUI** - found 2026-08-27, after three
+other routes had been evaluated and rejected. Those are kept below because the question gets asked
+again, and because the first of them is a trap this project has now fallen into twice. Same
 shape as Claude Code's, and free for the same reason — a slash command is handled by the client.
 ⛔ The difference, and why this took so long to find: Claude Code writes the answer to disk and
 `agy` does not. Driving `/usage` in a PTY and diffing every file under `~/.gemini` showed only

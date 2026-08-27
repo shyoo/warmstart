@@ -26,7 +26,10 @@ person is using it by hand. Keeps the budget arithmetic honest without taking th
 **identity** (*who is signed in*) and answered by different evidence. Identity is free and local and
 cannot tell a live subscription from a lapsed one; health comes from a dispatch that produced **no
 metered turn**, which is charged to the account rather than to the task. A `suspect` worker is a hard
-dispatch gate, lifted by re-probing it by hand or by one real turn.
+gate on **work and judgment alike** - both read the same list in `src/daemon/eligibility.ts` - and it
+also stops the background usage probe, since a refresh opens a real session and an account that
+cannot authenticate simply fails to, every thirty minutes. Lifted by re-probing it by hand, which is
+deliberately still allowed, or by one real turn.
 
 ---
 

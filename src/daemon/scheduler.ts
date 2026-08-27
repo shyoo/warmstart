@@ -3,6 +3,7 @@ import type { Session, Worker } from '@shared/protocol.js'
 import { adapter } from './adapters/index.js'
 import { lastQuota, refreshUsage } from './quota.js'
 import { listWorkers, recordDispatchFailure } from './workers.js'
+import { accountUnavailability } from './eligibility.js'
 import { getProject, policyFor, reloadProject } from './projects.js'
 import {
   admitDependents,
@@ -311,45 +312,16 @@ function chooseTarget(task: Task): WorkerChoice {
 
   for (const worker of listWorkers()) {
     if (task.constraints.workerId && task.constraints.workerId !== worker.id) continue
-    if (!worker.enabled) {
-      reasons.push(`${worker.label} disabled`)
-      continue
-    }
-    // Quota is tracked on a human-occupied worker and never spent by agentyard.
-    if (worker.humanOccupied) {
-      reasons.push(`${worker.label} human-occupied`)
-      continue
-    }
     if (task.constraints.adapterId && task.constraints.adapterId !== worker.adapterId) continue
 
-    // ⛔ Two separate ways a worker cannot possibly work, and conflating them cost real dispatches.
-    //
-    // 1. The CLI is not installed. A filesystem lookup, so it is free to ask every tick. Without this
-    //    the scheduler claims a workspace, spawns, fails, and marks the task failed - having burned a
-    //    workspace claim to discover something it could have read off the disk.
-    if (!adapter(worker.adapterId).isInstalled()) {
-      reasons.push(`${adapter(worker.adapterId).info.label} is not installed`)
-      continue
-    }
-    // 2. Nobody is signed in. Measured 2026-08-25: a `stream` session that cannot authenticate does
-    //    not exit - it sits on stdin waiting for input it can never act on - so it holds the worker's
-    //    only concurrency slot indefinitely.
-    //
-    // ⚠️ `=== false`, from the stored field. This used to grep `raw` for `"loggedIn": false`, which
-    // silently passed whenever the probe failed for any *other* reason - a missing CLI among them.
-    // `null` means unknown and is deliberately allowed through: Antigravity's credential lives in the
-    // OS keyring and is unknowable by design, and refusing unknown would make it undispatchable.
-    if (worker.identity?.loggedIn === false) {
-      reasons.push(`${worker.label} is not signed in`)
-      continue
-    }
-    // 3. The last dispatch to this account died without producing a single turn. ⛔ A *measured*
-    //    verdict, not a guess from identity: an expired subscription answers `auth status` exactly
-    //    as a live one does, so nothing free can tell them apart and only a run can. Held out until
-    //    somebody re-probes the worker, because trying again costs another workspace claim and hands
-    //    another task to a person as though their own work had failed. See workers.ts.
-    if (worker.health?.state === 'suspect') {
-      reasons.push(`${worker.label} is held out: ${worker.health.reason}`)
+    // ⛔ Every way an *account* can be unfit to be handed a turn, in one shared list: disabled,
+    // human-occupied, no CLI installed, checkably signed out, or held out by a run that produced
+    // nothing. These used to be written out here and half-written in the controller, which is how
+    // an account this loop had already quarantined stayed eligible for judgment calls. Anything
+    // that has to know *what is being asked* stays below, where the task is in scope.
+    const unfit = accountUnavailability(worker)
+    if (unfit) {
+      reasons.push(unfit)
       continue
     }
 

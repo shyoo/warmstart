@@ -389,7 +389,7 @@ export class QuotaPoller {
         // was written before somebody signed in and only a button nobody knew about would have
         // corrected it. Free: a local subprocess, and only when the answer is genuinely old.
         await refreshIdentityIfStale(w.id, IDENTITY_STALE_AFTER_MS)
-        if (!refreshed && this.shouldRefresh(w.id)) {
+        if (!refreshed && shouldBackgroundRefresh(w.id)) {
           refreshed = true
           this.listener(await refreshUsage(w.id))
           continue
@@ -401,21 +401,35 @@ export class QuotaPoller {
     }
   }
 
-  /**
-   * Is it worth opening a terminal to find out?
-   *
-   * ⛔ `loggedIn === false` is excluded rather than merely deprioritised: a TUI on an account nobody
-   * is signed in to sits on its login screen for the whole timeout and answers nothing. `null` is
-   * allowed through, as everywhere else — unknown is not the same as no.
-   */
-  private shouldRefresh(workerId: string): boolean {
-    const w = requireWorker(workerId)
-    if (w.retiredAt || !w.enabled) return false
-    if (w.identity?.loggedIn === false) return false
-    if (!adapter(w.adapterId).info.usageRefresh) return false
+}
 
-    const last = lastQuota(workerId)
-    // Never read at all, or read so long ago that nothing downstream is allowed to use it.
-    return !last || last.windows.length === 0 || last.ageMs > REFRESH_AFTER_MS
-  }
+/**
+ * Is it worth opening a terminal to find out?
+ *
+ * ⛔ `loggedIn === false` is excluded rather than merely deprioritised: a TUI on an account nobody
+ * is signed in to sits on its login screen for the whole timeout and answers nothing. `null` is
+ * allowed through, as everywhere else — unknown is not the same as no.
+ *
+ * ⚠️ Exported rather than private so these gates can be tested without driving a sweep, which
+ * opens real processes on real accounts.
+ */
+export function shouldBackgroundRefresh(workerId: string): boolean {
+  const w = requireWorker(workerId)
+  if (w.retiredAt || !w.enabled) return false
+  if (w.identity?.loggedIn === false) return false
+  // ⛔ An account a run has already proved work dies on is not asked again in the background. The
+  // refresh is not free in the way a file read is: on both adapters it opens a real interactive
+  // session and types into it, so on a worker whose subscription has expired this loop spawns a
+  // CLI every thirty minutes to watch it fail to authenticate, forever, and records `unknown`
+  // either way. Effectively the same state as disabled, and treated as one.
+  //
+  // ⚠️ The *background* sweep only. `probeWorker` and `refreshUsage` still run when the operator
+  // presses Probe - that is one of the two things that lifts the hold, and a quarantine nobody can
+  // attempt to clear by hand is the fault this whole mechanism was careful to avoid.
+  if (w.health?.state === 'suspect') return false
+  if (!adapter(w.adapterId).info.usageRefresh) return false
+
+  const last = lastQuota(workerId)
+  // Never read at all, or read so long ago that nothing downstream is allowed to use it.
+  return !last || last.windows.length === 0 || last.ageMs > REFRESH_AFTER_MS
 }

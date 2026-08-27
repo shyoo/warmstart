@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -196,6 +196,7 @@ describe('a dispatch that produced nothing', () => {
       purpose: 'work',
       transcriptPath: null,
       contextTokens: null,
+      contextWindow: null,
       lastRequestStartedAt: null,
       cacheExpiresAt: null,
       tokensSinceCompact: 0,
@@ -281,6 +282,114 @@ describe('a worker that work does not survive on', () => {
 
     workers.clearDispatchFailure(worker.id)
     expect(workers.requireWorker(worker.id).health).toBeNull()
+  })
+})
+
+describe('an account that needs signing in again', () => {
+  /**
+   * ⛔ The background sweep is not free in the way a file read is. On both adapters that have one,
+   * `refreshUsage` opens a real interactive session and types into it - so on a worker whose
+   * subscription has expired it spawned a CLI every thirty minutes to watch it fail to authenticate,
+   * recorded `unknown`, and did it again. Held out of dispatch is effectively the same state as
+   * disabled, and the sweep now treats it as one.
+   */
+  it('is not probed in the background once a run has proved work dies on it', () => {
+    const worker = seedWorker('expired', Date.now())
+    workers.updateWorker(worker.id, { enabled: true })
+    expect(quota.shouldBackgroundRefresh(worker.id)).toBe(true)
+
+    workers.recordDispatchFailure(worker.id, 'subscription expired', 'r1')
+    expect(quota.shouldBackgroundRefresh(worker.id)).toBe(false)
+
+    // ⛔ And it comes back the moment the hold lifts. A worker that could never be re-read would
+    // stay `unknown` forever even after somebody fixed the account.
+    workers.clearDispatchFailure(worker.id)
+    expect(quota.shouldBackgroundRefresh(worker.id)).toBe(true)
+  })
+
+  it('is not probed while switched off or signed out either', () => {
+    const worker = seedWorker('sweep-gates', Date.now())
+    workers.updateWorker(worker.id, { enabled: false })
+    expect(quota.shouldBackgroundRefresh(worker.id)).toBe(false)
+
+    workers.updateWorker(worker.id, { enabled: true })
+    expect(quota.shouldBackgroundRefresh(worker.id)).toBe(true)
+  })
+
+  it('says the fix is signing in, when the CLI said so', async () => {
+    const { adapter } = await import('./adapters/index.js')
+    const claude = adapter('claude-code')
+    // ⚠️ Verbatim from this machine on 2026-08-27 - the run that started all of this.
+    expect(
+      claude.needsReauth?.(
+        'The agent reported a failure (api_error): Your organization has disabled Claude ' +
+          'subscription access for Claude Code. Contact your administrator or use an API key.'
+      )
+    ).toBe(true)
+    expect(claude.needsReauth?.('Invalid API key · Please run /login')).toBe(true)
+  })
+
+  it('does not send somebody to re-authenticate over an outage', () => {
+    const worker = seedWorker('crashed', Date.now())
+    // ⛔ `api_error` on its own means nothing about credentials. Telling an operator to sign in
+    // again because the vendor had a bad afternoon is how a working account gets signed out.
+    workers.recordDispatchFailure(worker.id, 'The agent reported a failure (api_error): 529 overloaded', 'r2')
+    const health = workers.requireWorker(worker.id).health
+    expect(health?.state).toBe('suspect')
+    expect(health?.needsReauth).toBe(false)
+
+    // Still held out, still not probed. Only the *advice* differs.
+    expect(quota.shouldBackgroundRefresh(worker.id)).toBe(false)
+  })
+
+  it('records the verdict on the worker, so the panel does not have to guess', () => {
+    const worker = seedWorker('expired-verdict', Date.now())
+    workers.recordDispatchFailure(worker.id, 'Your subscription has expired', 'r3')
+    expect(workers.requireWorker(worker.id).health?.needsReauth).toBe(true)
+  })
+})
+
+describe('a worker the operator has switched off', () => {
+  /**
+   * ⚠️ The scheduler's gate is not the only one, and testing only the scheduler would say nothing
+   * about the paths that never ask it: a warm session being reused, a hand-started terminal, an
+   * approval landing on a worker somebody switched off while it queued. The refusal lives where the
+   * session is actually created, so all of them hit it.
+   */
+  it('refuses to have work started on it, whoever asks', async () => {
+    const sessions = await import('./sessions.js')
+    const worker = seedWorker('switched-off', 1_787_000_000_000)
+    expect(workers.requireWorker(worker.id).enabled).toBe(false)
+
+    expect(() => sessions.spawnSession({ workerId: worker.id })).toThrow(/disabled/)
+
+    // ⛔ Signing in is deliberately exempt from this gate. Off is not retirement: it holds an
+    // account out of dispatch and leaves every way of fixing it open, including the one that needs
+    // a terminal. A switch that locked the operator out of repairing what it switched off would be
+    // a trap.
+    //
+    // ⚠️ Asserted by reading the gate, not by calling it with `purpose: 'login'`. That call does
+    // not stop at a check - it goes on to spawn the vendor CLI in a real PTY, which makes the
+    // assertion depend on whether this machine has that CLI installed, and leaves a process behind
+    // on the one where it does. A test that passes for a different reason on CI than on a laptop is
+    // worse than no test.
+    const gate = readFileSync(new URL('sessions.ts', import.meta.url), 'utf8')
+    expect(gate).toMatch(
+      new RegExp(
+        "if \\(purpose !== 'login'\\) \\{\\s*if \\(!worker\\.enabled\\)"
+      )
+    )
+  })
+
+  it('comes back with nothing lost, because off is not retirement', () => {
+    const worker = seedWorker('back-again', 1_787_000_000_000)
+    const root = worker.isolationRoot
+
+    workers.updateWorker(worker.id, { enabled: true })
+    const on = workers.requireWorker(worker.id)
+    expect(on.enabled).toBe(true)
+    expect(on.retiredAt).toBeNull()
+    expect(on.isolationRoot).toBe(root)
   })
 })
 

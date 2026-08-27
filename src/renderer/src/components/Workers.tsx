@@ -229,9 +229,14 @@ export function Workers({
               const suspect = worker.health?.state === 'suspect' ? worker.health : null
               const gap = quotaGap(quota, probeKind(worker.id))
               return (
-                <tr key={worker.id}>
+                <tr key={worker.id} className={worker.enabled ? undefined : 'tbl-row--off'}>
                   <td>
                     <span className="tbl-strong">{worker.label}</span>
+                    {/* ⚠️ A disabled worker used to be a cleared checkbox in the last column and
+                        nothing else - identical at a glance to one that simply had no work. The
+                        fleet strip had said `off` on its card since M2; the table that owns the
+                        control did not. */}
+                    {!worker.enabled && <span className="tag tag--off">disabled</span>}
                     {sessions.length > 0 && (
                       <span className="tag tag--running">{sessions.length} live</span>
                     )}
@@ -264,7 +269,19 @@ export function Workers({
                         this comes from a run that started and produced nothing. */}
                     {suspect && (
                       <div className="danger tbl-sub" title={suspect.reason}>
-                        held out of dispatch — {suspect.reason}
+                        {/* ⛔ The instruction first, the evidence after. `held out of dispatch`
+                            describes what this app did; `re-sign-in required` is the only part
+                            that tells the operator what to do about it, and it was buried in a
+                            sentence of the vendor's own words. */}
+                        {suspect.needsReauth ? 're-sign-in required' : 'held out of dispatch'} —{' '}
+                        {suspect.reason}
+                      </div>
+                    )}
+                    {/* ⚠️ Said where the quota would be read, because the absence is otherwise
+                        indistinguishable from a probe that has not run yet. */}
+                    {suspect && (
+                      <div className="dim tbl-sub">
+                        not probed in the background while held out
                       </div>
                     )}
                   </td>
@@ -304,18 +321,40 @@ export function Workers({
                     </select>
                   </td>
                   <td>
-                    <label className="check">
-                      <input
-                        type="checkbox"
-                        checked={worker.enabled}
-                        onChange={(e) =>
+                    {/* ⛔ Off is not retirement and must not read as it. Retiring is destructive
+                        and one-way; this holds a commissioned account out of dispatch and leaves
+                        its isolation root, identity and quota history exactly where they are.
+                        ⚠️ It does not touch a session already running - see the title text. Killing
+                        live work from a settings toggle is the kind of surprise nobody forgives. */}
+                    <div className="switch-row switch-row--cell">
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={worker.enabled}
+                        aria-label={`${worker.label} enabled`}
+                        disabled={busy === `en:${worker.id}`}
+                        className={`switch switch--sm ${worker.enabled ? 'switch--on' : ''}`}
+                        title={
+                          worker.enabled
+                            ? 'On — may be chosen for new work and for judgment. Turn it off to hold ' +
+                              'this account out of dispatch without retiring it: nothing is deleted and ' +
+                              'its quota keeps being read.'
+                            : 'Off — held out of dispatch. Nothing new is scheduled here and it is never ' +
+                              'asked for judgment. A session already running is left alone; stop that from ' +
+                              'Overview if you want it gone.'
+                        }
+                        onClick={() =>
                           void guard(`en:${worker.id}`, () =>
-                            rpc('worker.update', { id: worker.id, enabled: e.target.checked })
+                            rpc('worker.update', { id: worker.id, enabled: !worker.enabled })
                           )
                         }
-                      />
-                      enabled
-                    </label>
+                      >
+                        <span className="switch-knob" />
+                      </button>
+                      <span className={worker.enabled ? 'dim' : 'warn'}>
+                        {worker.enabled ? 'enabled' : 'disabled'}
+                      </span>
+                    </div>
                     <label className="check" title="Quota is tracked but never spent by Multi Agent Controller.">
                       <input
                         type="checkbox"

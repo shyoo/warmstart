@@ -204,6 +204,16 @@ everything: it starts a real process for ~30s, so at most one worker is refreshe
 in a scheduler tick. The command is declared per adapter as `usageRefresh`, never branched on an
 adapter name; only `claude-code` declares one today.
 
+### ⛔ An account that cannot authenticate is not asked again (2026-08-27)
+
+Rung 0 is free in tokens and **not** free in processes: it opens a real interactive session and types
+into it. So the background sweep skips any worker a dispatch has already proved work dies on
+(`health.state === 'suspect'`). Before this, a lapsed subscription meant a CLI spawned every thirty
+minutes, forever, to watch it fail to authenticate - and the reading stayed `unknown` either way.
+
+⚠️ The *background* sweep only. Pressing Probe still refreshes: it is one of the two things that lift
+the hold, and a quarantine nobody can attempt to clear by hand is worse than the fault it prevents.
+
 ### A reading either side of a run (2026-08-27)
 
 ⛔ **One reading is a state; a cost is a difference.** Until now a run recorded only what it *metered*

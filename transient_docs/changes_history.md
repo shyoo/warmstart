@@ -634,3 +634,119 @@ And there are **two packaged apps in the tree, only one of which is ever new**: 
 minutes and several builds older than the bundle** — indistinguishable from a change that silently did
 not take effect. `-Restart` now stops what is running, builds, and starts the result, and the summary
 names the stale copy on every run whether or not a restart was asked for.
+
+## A worker that could be switched off, and no way to see it (2026-08-27)
+
+The operator asked for a way to stop using a worker without decommissioning it. `Worker.enabled`
+had existed since M1 and **four independent gates already read it** — dispatch, judgment, session
+creation, and the quota sweep. What did not exist was a control anyone could find: an unlabelled
+checkbox reading `enabled`, in the last column of the Workers table, sharing a cell with
+`human-occupied`. Looking at that panel and concluding the feature was absent is a fair verdict on
+the affordance.
+
+It is now a switch on each row, `role="switch"` with `aria-checked`, the same component as the
+global compaction toggle. The row carries a `DISABLED` tag and dims to 0.55 — the exact opacity the
+fleet strip's card has used since M2, because the two views had been disagreeing about the same
+fact: the strip said `off`, the table that owned the control said nothing at all.
+
+⛔ **Off is not retirement, and the tooltip says so.** Nothing is deleted, the isolation root and
+quota history stay, and switching back on needs no re-commissioning. ⛔ It also does not touch a
+session already running — killing live agent work from a settings toggle is the kind of surprise
+nobody forgives, so that is stated rather than left to be discovered.
+
+⚠️ The first version of the test asserted the login exemption by calling
+`spawnSession({ purpose: 'login' })`. That call does not stop at a check; it spawns the vendor CLI in
+a real PTY, so the assertion would have passed for a different reason on CI (no CLI installed) than
+on the laptop, and left a process behind on the one where it does. It reads the gate's source
+instead.
+
+## The Controller panel that said `ready` about an account nothing could run on (2026-08-27)
+
+ClaudeFirst's subscription had expired. The scheduler knew: a run that produces no metered turn marks
+the worker `suspect`, and dispatch had been skipping it since M4. The Controller panel showed it
+**ready**, and the consult loop picked it for judgment call after judgment call.
+
+Two faults, and the second is why it never stopped.
+
+**One: two gate lists, kept in step by hand.** `chooseController` had five gates; `chooseTarget` had
+six. The missing one was the quarantine. So an account could be held out for work and eligible for
+judgment in the same instant. The panel was not lying independently — `available` is
+`chooseController()`'s own answer — which is why fixing the chooser fixed the panel.
+
+**Two: the judgment loop could not learn.** A consult that died wrote its failure on the *consult*
+and nothing on the *worker*. It fell back to the deterministic answer, forgot, and asked the same
+dead account again on the next drain. This is the only loop in the daemon that spends tokens and it
+was the only one with no memory of failure.
+
+Both are fixed, and the shape of the fix matters more than either: the account gates now live in one
+list, `src/daemon/eligibility.ts`, which both schedulers read. ⛔ Copying the missing gate into
+`controller.ts` would have fixed the symptom and left the drift mechanism running.
+
+⚠️ **A trap that would have made the second fix worse than the bug.** The obvious "did a turn
+happen?" test is `session.lastRequestStartedAt`, which is what the work path uses. A consult always
+runs over `stream`, and the stream metering path deliberately never sets that column — it has no
+request id and writes `request_started_at` as null. Reading it would have called every healthy
+consult dead and quarantined the entire fleet on first use. It counts metered turns instead.
+
+The panel also stopped inferring each row's status from which worker won: every row now carries its
+own reason, so `disabled`, `at 96% of its 5h window` and `held out: subscription expired` are
+distinguishable from `ready, another is preferred`.
+
+⚠️ **A wrong premise, caught by re-checking it.** A follow-up task claimed `isReady()` in
+`workers.ts` had zero callers and should be deleted. It had two, inside `watchReadiness`, hidden
+because the grep that produced the claim excluded same-file matches. Deleting it would have broken
+the login pane. The function was correct where it was used; the hazard was the name plus the
+`export`, so it became a module-private `isSignedInAndSetUp`. Unexporting is what actually removes
+the trap — the failure mode was somebody needing a readiness check, grepping, and importing the
+weaker one.
+
+## An expired account probed forever, and a strip that measured two different things (2026-08-27)
+
+Three operator reports, one session.
+
+**The background probe would not stop.** Rung 0 is free in tokens and **not** free in processes: it
+opens a real interactive session and types `/usage` into it. On an account whose subscription had
+expired, that meant spawning a CLI every thirty minutes to watch it fail to authenticate, recording
+`unknown`, and doing it again. The sweep now skips any `suspect` worker — effectively the same
+standing as disabled, which is what the operator called it. ⚠️ The *background* sweep only: pressing
+Probe still refreshes, because that is one of the two things that lift the hold.
+
+**A re-sign-in mode.** `WorkerHealth` gained `needsReauth`, decided by the **adapter**, because the
+sentence is its CLI's: an expired subscription, a revoked key and a plain crash all arrive as the
+same `api_error` and differ only in the words after it. ⛔ Anchored on the phrases and never on
+`api_error` alone — that code also covers the vendor having a bad afternoon, and sending somebody to
+re-authenticate through an outage is how a working account gets signed out. It changes presentation
+only; the worker is held out either way.
+
+**The fleet strip was drawing two kinds of thing alike.** Above: account quota windows, shared by
+every session and outliving all of them. Below: one session's context and cache clock, gone when it
+closes. Both are now four-column gauges — which is what makes them comparable — separated by a
+labelled rule, which is what stops them reading as four measurements of one quantity.
+
+⛔ **The cache bar is deliberately not in the quota palette.** A quota bar fills as a window fills
+up, where more is worse; a cache bar drains as the cache expires, where more is better. Two
+identical shapes with opposite polarity in one palette on one card is a misreading waiting to
+happen, so healthy cache is the blue this app already uses for `running` and only the warnings
+borrow the shared amber and red.
+
+⚠️ **The fill is arithmetic, not a constant.** `remaining / (expiry - requestStart)`, from two
+timestamps already on the wire. Five-minute and one-hour TTLs are both real on this fleet, and a bar
+hard-coded to one is wrong by a factor of twelve on the other. It returns `null` — an empty track,
+not a full one — where there is no clock to read, because claiming a fresh cache is the wrong way to
+be wrong.
+
+For the `52k/1M` denominator, `contextWindow` now ships with the session, resolved from the cost
+model. ⛔ Never a default: `scheduler.ts` falls back to 200k when *scoring* and that is fine for a
+score, but `52k/200k` displayed for a session whose real window is 1M is a wrong number wearing a
+measurement's clothes.
+
+## The advice that broke the next build (2026-08-27)
+
+`release\suite\` exists so packaging never fights a running app, and `release\win-unpacked\` is the
+copy a person runs. After a stale-package failure, the operator was told the opposite — that the
+suite copy was the fresh one to click. They clicked it. The next `npm run pack` died with
+`EPERM: unlink dxil.dll`, and the app had to be stopped mid-session to finish a commit.
+
+Both `HANDOFF.md` and `AGENTS.md` had described the split correctly and *only in terms of which copy
+was newer*. That is the fact a build script needs and the wrong fact to hand a person. Both now say
+which one to run.

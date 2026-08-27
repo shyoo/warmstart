@@ -138,6 +138,15 @@ These are not preferences; breaking one breaks the product.
   *and* a short life — because the transcript's last turn is routinely flushed after the process is
   gone. Never gate on a vendor's plan string; it is recorded and shown, and nothing here has measured
   what an expired one says.
+- ⛔ **Every gate on whether an *account* may be handed a turn lives in `eligibility.ts`, in one
+  list.** Work and judgment both read it. They each kept their own copy until 2026-08-27 and the
+  copies drifted: the scheduler had the `suspect` quarantine and the controller did not, so an
+  account already held out of dispatch was reported *ready* on the Controller panel and asked for
+  judgment call after judgment call - in the one loop in the daemon that spends tokens. A gate that
+  needs to know *what is being asked* belongs at the call site; anything true of the account itself
+  goes in the shared list. ⚠️ A held-out account is also not probed in the background: a usage
+  refresh opens a real session, so an expired one otherwise fails to authenticate every thirty
+  minutes forever. Pressing Probe still works, because that is one of the two things that lift it.
 - ⛔ **The objective vector is consumed in exactly two places:** `weights()` for scheduler scoring and
   `policy()` for the cache clock, the model selector and preemption. A third consumer means one of
   those two is missing a field.
@@ -247,20 +256,18 @@ costmodels/             versioned pricing data
   fresh build silently tests code that is no longer in the tree **and reports a confident pass for
   it** — three times on 2026-08-27. `checkBuildIsCurrent()` and the pack suite's asar check refuse
   instead. ⚠️ When you add a guard like that, watch it go red before you trust it green.
-- **`npm run pack` packages into `release/suite/`, not `release/`, so it cannot fight a running app.**
-  Building into the directory somebody is *executing from* produced `EBUSY: rmdir release\win-unpacked`
-  three times on 2026-08-27 — orchestratord is **detached by design** and survives its window closing,
-  so it keeps holding the binary, which is the topology working rather than a leak. ⛔ "Close the app"
-  is not an acceptable answer: running the app while fixing the app is how this gets worked on. If
-  that EBUSY ever appears again, something is executing out of `release/suite/` — find out whose it is
-  before reaching for a kill, because a command line matching the packaged binary matches the
-  operator's own app just as well as a test's.
-  ⚠️ **And ask about the directory actually being rewritten, nothing wider.** `build-win.ps1`'s guard
-  tested the whole of `release\`, so an app running from `release\win-unpacked\` blocked the pack
-  step — which writes only to `release\suite\` and could never have collided with it. The split
-  existed precisely to make "you cannot run the app while building" untrue, and an over-broad guard
-  re-imposed it as a rule nobody could see the reason for. `Assert-OutputIsFree` now takes the exact
-  directory, and `-Except` carves out `release\suite\` for the installer.
+- **`npm run pack` packages into `release/suite/`, not `release/`, so it cannot fight a running app —
+  which means `release\suite\` is the build's, and a person runs `release\win-unpacked\`.** ⚠️ Told
+  only which copy was *newer*, the operator ran the suite one on 2026-08-27 and the next pack died
+  with `EPERM: unlink dxil.dll`. Say which to run, not which is fresh.
+  ⛔ "Close the app" is not an acceptable answer: running the app while fixing the app is how this
+  gets worked on, and orchestratord is **detached by design**, so it holds the binary after its
+  window closes - the topology working, not a leak. If a build ever collides with a running process,
+  **find out whose it is before reaching for a kill**: a command line matching the packaged binary
+  matches the operator's own app just as well as a test's.
+  ⚠️ **And guard the directory actually being rewritten, nothing wider.** A guard over the whole of
+  `release\` re-imposed "you cannot run the app while building" - the exact rule the split existed
+  to abolish. `Assert-OutputIsFree` takes an exact directory; `-Except` carves out `release\suite\`.
 - **A quota sample is keyed on the vendor's fetch time, which does not move when you read it.**
   `sampledAt` is `cachedUsageUtilization.fetchedAtMs` — exactly right for staleness and fatal as an
   insert key, because re-reading an unchanged cache produces a row identical to the last one and

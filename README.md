@@ -97,7 +97,9 @@ You need **one**. Having several is the point — see *Multiple accounts* below.
 - **Add an account** in Settings → Workers. Multi Agent Controller creates an isolation directory, runs the
   vendor's own `login` in a terminal you type into, and verifies who signed in. It never reads,
   stores, copies or proxies a credential — each account must be separately and legitimately
-  subscribed.
+  subscribed. A switch on each row holds an account out of dispatch without decommissioning it,
+  and an account a run has proved unusable says so and stops being offered work, judgment, or a
+  background usage probe until you fix it.
 - **File a task and walk away.** It gets a worktree from the project's pool, a branch named after the
   task, and an agent on an account that can take it. When the agent reports done, Multi Agent Controller rebases,
   runs the project's checks and pushes — or keeps the branch and asks you, which is what it does

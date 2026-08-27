@@ -6,6 +6,7 @@ import { execFileSync, spawn as spawnChild } from 'node:child_process'
 import type { Session, SessionPurpose, SessionState, SessionTransport } from '@shared/protocol.js'
 import type { CacheMove } from '@shared/tasks.js'
 import { db, row, rows } from './db.js'
+import { costModel } from './costmodel.js'
 import { adapter } from './adapters/index.js'
 import { refreshIdentity, requireWorker, watchReadiness } from './workers.js'
 import { log } from './log.js'
@@ -182,6 +183,7 @@ function toSession(r: SessionRow): Session {
     purpose: (r.purpose as SessionPurpose) ?? 'work',
     transcriptPath: r.transcript_path,
     contextTokens: r.context_tokens,
+    contextWindow: contextWindowFor(r.adapter_id, r.model),
     lastRequestStartedAt: r.last_request_started_at,
     cacheExpiresAt: r.cache_expires_at,
     tokensSinceCompact: r.tokens_since_compact,
@@ -191,6 +193,23 @@ function toSession(r: SessionRow): Session {
     clockMoveContext: r.clock_move_context,
     startedAt: r.started_at,
     closedAt: r.closed_at
+  }
+}
+
+/**
+ * ⚠️ Never a default. `scheduler.ts` falls back to 200k when scoring context rot, because a
+ * score has to be a number and being roughly right there costs nothing. A *displayed* window is
+ * different: `52k/200k` shown for a session whose real window is 1M is a wrong number wearing a
+ * measurement's clothes, and the reader has no way to tell. Unknown stays unknown.
+ */
+function contextWindowFor(adapterId: string, model: string | null): number | null {
+  if (!model) return null
+  try {
+    const spec = costModel(adapter(adapterId).info.policy.costModelId).modelSpec(model)
+    return spec?.context_window ?? null
+  } catch {
+    // An unknown adapter or an unpriced model is a missing denominator, not a broken session.
+    return null
   }
 }
 

@@ -57,6 +57,7 @@ function session(patch: Partial<Session> = {}): Session {
     purpose: 'work',
     transcriptPath: null,
     contextTokens: 68001,
+    contextWindow: null,
     lastRequestStartedAt: null,
     cacheExpiresAt: NOW + 10 * 60 * 1000,
     tokensSinceCompact: 35_000,

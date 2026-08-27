@@ -226,6 +226,29 @@ export const claudeCode: AgentAdapter = {
   info,
   decodeStream,
 
+  /**
+   * ⚠️ Measured, not imagined: the first sentence is verbatim what this CLI answered on 2026-08-27
+   * on an account whose subscription had lapsed, and it is the case that started all of this.
+   * The others are the same class of failure with different wording, and every one of them means
+   * the same thing to an operator - press Sign in, nothing else will help.
+   *
+   * ⛔ Anchored on the phrases, and case-insensitively, but never on `api_error` alone: that code
+   * covers everything from a lapsed plan to the vendor having a bad afternoon, and telling
+   * somebody to re-authenticate through an outage is how a good account gets signed out.
+   */
+  needsReauth: (reason: string): boolean => {
+    const said = reason.toLowerCase()
+    return (
+      said.includes('disabled claude subscription access') ||
+      said.includes('subscription has expired') ||
+      said.includes('subscription expired') ||
+      said.includes('please run /login') ||
+      said.includes('invalid api key') ||
+      said.includes('oauth token has expired') ||
+      said.includes('authentication_error')
+    )
+  },
+
   isInstalled(): boolean {
     return which(info.command) !== null
   },

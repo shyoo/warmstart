@@ -141,6 +141,23 @@ export interface AgentAdapter {
   trustDirectory?(isolationRoot: string, dir: string): void
 
   /**
+   * Does this failure mean *nobody can sign this account in any more*?
+   *
+   * ⛔ The adapter answers, because the sentence is its CLI's. An expired subscription, a revoked
+   * key and a plain crash all arrive as the same `api_error` on the wire and differ only in the
+   * words after it - so this is one of the few places where matching on vendor text is the right
+   * answer rather than a shortcut, and it belongs here, next to the CLI it knows about, and not
+   * in the scheduler.
+   *
+   * ⚠️ It decides how the account is *presented*, never whether it is gated: a worker held out of
+   * dispatch is held out whatever produced the failure. What this changes is whether the operator
+   * is told to press `Sign in` or told to go and read the reason. Answering `false` is always
+   * safe; answering `true` wrongly sends somebody to re-authenticate an account that was fine.
+   */
+  // ⚠️ A function property, not a method, for the same reason as `parseUsage` below.
+  needsReauth?: (reason: string) => boolean
+
+  /**
    * Read a quota reading out of what the `/usage` panel rendered.
    *
    * ⛔ Required by, and only by, an adapter declaring `usageRefresh.answer === 'screen'`. This is
