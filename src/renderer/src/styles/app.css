@@ -49,9 +49,9 @@ body {
 
 .brand {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: var(--sp-2);
-  padding: var(--sp-4) var(--sp-4) var(--sp-3);
+  padding: var(--sp-4) var(--sp-3) var(--sp-3) var(--sp-4);
 }
 
 .brand h1 {
@@ -59,11 +59,53 @@ body {
   font-weight: 600;
   letter-spacing: -0.01em;
   margin: 0;
+  /* ⛔ One line. The controls sit beside the name, and a wrapping title would push them onto a row
+     of their own - which is the thing this layout exists to avoid. */
+  white-space: nowrap;
 }
 
 .brand .version {
   font-size: var(--text-meta);
   color: var(--color-text-faint);
+}
+
+/* Pinned right, so the name keeps its natural width and the controls keep their place. */
+.brand-nav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--color-text-faint);
+  cursor: pointer;
+}
+
+.icon-btn:hover:not(:disabled) {
+  background: var(--color-surface-2);
+  color: var(--color-text);
+}
+
+/* ⚠️ Visibly spent, not hidden. A Back that vanishes at the start of history moves the two buttons
+   beside it, so every click lands somewhere different from where you aimed. */
+.icon-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.icon-btn:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
 }
 
 .nav-group {

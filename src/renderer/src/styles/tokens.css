@@ -34,7 +34,9 @@
   --sp-6: 32px;
 
   --row-h: 30px;        /* task table row — a control surface, not a landing page */
-  --sidebar-w: 232px;
+  /* 232px until 2026-08-27, when the brand row gained back/forward/refresh. Twenty more pixels is
+     what keeps the app name and three controls on one line instead of wrapping to two. */
+  --sidebar-w: 252px;
   --radius: 6px;
   --radius-sm: 4px;
 

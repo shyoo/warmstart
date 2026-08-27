@@ -94,6 +94,29 @@ try {
     nav.join(' | ')
   )
 
+  // ⛔ One row, which is the whole requirement. Measured, not eyeballed: a wrapped title would make
+  // the brand block taller than a single line of its own font and push the controls down.
+  const brand = await evaluate(`
+    JSON.stringify((() => {
+      const b = document.querySelector('.brand');
+      const h = b?.querySelector('h1');
+      const nav = b?.querySelector('.brand-nav');
+      if (!b || !h || !nav) return { missing: true };
+      const br = b.getBoundingClientRect(), hr = h.getBoundingClientRect(), nr = nav.getBoundingClientRect();
+      return {
+        buttons: nav.querySelectorAll('button').length,
+        titleLines: Math.round(hr.height / parseFloat(getComputedStyle(h).lineHeight || '20')),
+        sameRow: Math.abs((hr.top + hr.height / 2) - (nr.top + nr.height / 2)) < 6,
+        overflows: nav.getBoundingClientRect().right > br.right + 1
+      };
+    })())
+  `)
+  const b = JSON.parse(brand)
+  check('the title bar carries back, forward and refresh', b.buttons === 3, brand)
+  check('they sit on the same row as the app name', b.sameRow === true, brand)
+  check('the app name still fits on one line', b.titleLines <= 1, brand)
+  check('nothing overflows the sidebar', b.overflows === false, brand)
+
   section('zero state')
   check(
     'an empty fleet says so rather than showing furniture',

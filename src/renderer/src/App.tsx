@@ -43,7 +43,47 @@ export function App(): React.JSX.Element {
   const connected = status.state === 'connected'
   const { fleet, refresh } = useFleet(connected)
   const now = useNow()
-  const [route, setRoute] = useState<Route>({ kind: 'overview' })
+  const [route, setRouteNow] = useState<Route>({ kind: 'overview' })
+  /**
+   * Where you have been, and where you came back from.
+   *
+   * ⚠️ Kept here rather than in the URL because there is no URL: this is an Electron window with a
+   * single renderer, so Back has to mean "the last thing this pane showed" or it means nothing. Tab
+   * changes inside a project push too - a person who opened Cost from Tasks expects Back to return
+   * to Tasks, not to leave the project entirely.
+   */
+  const [past, setPast] = useState<Route[]>([])
+  const [future, setFuture] = useState<Route[]>([])
+
+  const setRoute = useCallback(
+    (next: Route) => {
+      setPast((p) => [...p.slice(-49), route])
+      // A new destination ends the forward story, the way every browser has always worked.
+      setFuture([])
+      setRouteNow(next)
+    },
+    [route]
+  )
+
+  const goBack = useCallback(() => {
+    setPast((p) => {
+      const prev = p[p.length - 1]
+      if (!prev) return p
+      setFuture((f) => [route, ...f])
+      setRouteNow(prev)
+      return p.slice(0, -1)
+    })
+  }, [route])
+
+  const goForward = useCallback(() => {
+    setFuture((f) => {
+      const next = f[0]
+      if (!next) return f
+      setPast((p) => [...p, route])
+      setRouteNow(next)
+      return f.slice(1)
+    })
+  }, [route])
   const [openSession, setOpenSession] = useState<string | null>(null)
   const [keyboard, setKeyboard] = useState(false)
   const [projects, setProjects] = useState<Project[]>([])
@@ -72,14 +112,45 @@ export function App(): React.JSX.Element {
     }
   })
 
+  /**
+   * ⛔ Re-reads the data, never reloads the window. A reload would drop every open terminal's
+   * scrollback and the route you were standing on, to fix a problem that is only ever a stale fetch.
+   */
+  const [refreshing, setRefreshing] = useState(false)
+  const reload = useCallback(async () => {
+    setRefreshing(true)
+    try {
+      await Promise.all([refresh(), refreshProjects()])
+    } finally {
+      setRefreshing(false)
+    }
+  }, [refresh, refreshProjects])
+
   const sessions = fleet.flatMap((f) => f.sessions)
 
   return (
     <div className="shell">
       <aside className="sidebar">
         <div className="brand">
-          <h1>Multi Agent Controller</h1>
-          <span className="version">v{info?.version ?? '—'}</span>
+          <h1 title={`Multi Agent Controller v${info?.version ?? '—'}`}>Multi Agent Controller</h1>
+          {/* ⚠️ One row, by request. At 252px there is not room for the version text as well, so it
+              moved into the title above rather than pushing these onto a line of their own. */}
+          <div className="brand-nav">
+            <IconButton label="Back" disabled={past.length === 0} onClick={goBack}>
+              <path d="M10 3 L5 8 L10 13" />
+            </IconButton>
+            <IconButton label="Forward" disabled={future.length === 0} onClick={goForward}>
+              <path d="M6 3 L11 8 L6 13" />
+            </IconButton>
+            <IconButton
+              label="Refresh"
+              disabled={!connected || refreshing}
+              onClick={() => void reload()}
+            >
+              <path d="M13 8a5 5 0 1 1-1.6-3.7" />
+              <path d="M13 2.5 L13 5.2 L10.3 5.2" />
+            </IconButton>
+          </div>
         </div>
 
         <nav className="nav-group">
@@ -200,6 +271,27 @@ export function App(): React.JSX.Element {
         </footer>
       </main>
     </div>
+  )
+}
+
+/** A 20px square of chrome. Labelled for screen readers, because an icon alone names nothing. */
+function IconButton({
+  label,
+  disabled,
+  onClick,
+  children
+}: {
+  label: string
+  disabled: boolean
+  onClick: () => void
+  children: React.ReactNode
+}): React.JSX.Element {
+  return (
+    <button className="icon-btn" title={label} aria-label={label} disabled={disabled} onClick={onClick}>
+      <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+        {children}
+      </svg>
+    </button>
   )
 }
 
