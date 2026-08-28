@@ -784,8 +784,25 @@ body {
 }
 
 .tbl-actions {
-  white-space: nowrap;
-  text-align: right;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-content: flex-start;
+  row-gap: var(--sp-1);
+}
+
+/* ⚠️ Quota can widen a lot per-adapter — Antigravity's several windows read as one long joined
+   string — while Role is one word behind a <select> that was inheriting the 220px form-field
+   min-width meant for the Add Worker form. Fixed layout plus a colgroup lets each column carry
+   the width the content actually needs instead of the browser's auto-sizing picking one row (the
+   one with "Finish setup" showing, or the widest select) and forcing every row that wide. */
+.tbl-workers {
+  table-layout: fixed;
+}
+
+.tbl-workers select {
+  min-width: 0;
+  width: 100%;
 }
 
 .kv {

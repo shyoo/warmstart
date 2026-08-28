@@ -202,7 +202,17 @@ export function Workers({
           </p>
         </div>
       ) : (
-        <table className="tbl">
+        <table className="tbl tbl-workers">
+          <colgroup>
+            <col style={{ width: '18%' }} />
+            <col style={{ width: '7%' }} />
+            <col style={{ width: '12%' }} />
+            <col style={{ width: '16%' }} />
+            <col style={{ width: '5%' }} />
+            <col style={{ width: '14%' }} />
+            <col style={{ width: '13%' }} />
+            <col style={{ width: '15%' }} />
+          </colgroup>
           <thead>
             <tr>
               <th>Worker</th>
