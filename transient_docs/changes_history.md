@@ -1280,3 +1280,50 @@ applies from the next run.
 `test:ui` drives both controls against the real daemon - but no two tasks have yet shared a
 conversation on this machine. That needs two tasks in one project on one account with the switch on,
 and it is the next thing to try rather than something these tests have established.
+
+---
+
+## Which conversation served which tasks
+
+Phase 4, and the last of the resident-sessions work. The page exists for exactly one number: **how
+many tasks have been in one conversation.**
+
+Everything else was already visible somewhere. A task's own pane names the conversation it is in, and
+after phase 0 it says whether that run was warm or new. What nothing said is who *else* had been in
+it - and once a session outlives the task that opened it, that is the whole difference between the
+cost saving working and two agents having read work nobody meant to show them. From the task list
+those two look identical.
+
+⛔ Derived from `runs` on demand, never stored. Which tasks a conversation served is a fact about that
+table, and a cached copy would be one more thing to keep in step with it - the class of bug migration
+5 already had to repair once, on counters that only ever added.
+
+⚠️ Read-only, deliberately. The only honest actions would be *run a task in it*, which the task pane
+already offers, and *close it*, which the cache clock owns. A close button beside a live agent is an
+invitation to kill somebody's run by tidying up.
+
+### Two mutations that survived, and what they were hiding
+
+The first pass had twelve tests and all twelve passed with the join broken.
+
+Replacing `group by r.session_id, r.task_id` with `group by r.task_id` changed nothing, because no
+test had a task that ran in **two** conversations - and that is not an exotic case, it is what
+resuming produces every time a session dies and comes back. Under the mutation those two runs collapse
+into one row, so one of the two conversations silently loses the only task it ever served and renders
+as unused. The test that claimed to cover this ("keeps each conversation's tasks to itself") only
+proved rows are not *invented* across sessions; a second test now proves they are not *lost*, which is
+the direction that fails quietly.
+
+Removing the `limit` clamp also changed nothing, because the fixture had twelve rows and the cap is
+five hundred. Rather than insert five hundred and one sessions to observe a bound, the clamp is now a
+one-line exported function tested directly - including that `0` and `-9` do not reach SQL as "no
+limit". ⚠️ The two are indistinguishable until an install has more than five hundred conversations,
+and by then it is too late to find out.
+
+### Measured, and honest about what is not
+
+Against the live database on 2026-08-28: **0 conversations have served more than one task**, which is
+the correct reading of a feature that ships off. ⛔ That database is also still at schema **v9** while
+this build expects **v13** - the daemon has not restarted since any of the last five commits landed,
+so migrations 10-13 have never run against real data. Both facts are in HANDOFF rather than implied by
+a green suite.

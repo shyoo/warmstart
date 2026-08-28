@@ -3,6 +3,7 @@ import type { Project, ResourceAvailability } from '@shared/tasks'
 import { rpc, useAppInfo, useDaemonEvents, useDaemonStatus, useFleet, useNow } from './lib/daemon'
 import { FleetStrip } from './components/FleetStrip'
 import { Workers } from './components/Workers'
+import { Conversations } from './components/Conversations'
 import { Logs } from './components/Logs'
 import { FleetSettings } from './components/FleetSettings'
 import { Doctor } from './components/Doctor'
@@ -39,7 +40,7 @@ type Route =
    * the last one is given a home, which is what the require-a-project migration does.
    */
   | { kind: 'unassigned' }
-  | { kind: 'settings'; page: 'workers' | 'logs' | 'global' }
+  | { kind: 'settings'; page: 'workers' | 'logs' | 'global' | 'conversations' }
 
 export function App(): React.JSX.Element {
   const info = useAppInfo()
@@ -208,6 +209,15 @@ export function App(): React.JSX.Element {
             Workers
             <span className="nav-count num">{fleet.length}</span>
           </NavItem>
+          {/* ⚠️ Directly under Workers, because a conversation belongs to an account and this is the
+              second question somebody asks after "which accounts do I have" — namely what each one
+              has been talking about, and whether two tasks ended up in the same thread. */}
+          <NavItem
+            active={route.kind === 'settings' && route.page === 'conversations'}
+            onClick={() => setRoute({ kind: 'settings', page: 'conversations' })}
+          >
+            Conversations
+          </NavItem>
           {/* ⚠️ Between Workers and Global on purpose. It is the answer to "why did it do that?",
               which is asked about the fleet above it far more often than about the app below it. */}
           <NavItem
@@ -246,6 +256,8 @@ export function App(): React.JSX.Element {
             </div>
           ) : route.kind === 'settings' && route.page === 'workers' ? (
             <Workers fleet={fleet} refresh={refresh} />
+          ) : route.kind === 'settings' && route.page === 'conversations' ? (
+            <Conversations />
           ) : route.kind === 'settings' && route.page === 'logs' ? (
             <Logs now={now} />
           ) : route.kind === 'settings' ? (

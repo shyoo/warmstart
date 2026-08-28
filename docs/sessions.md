@@ -107,6 +107,20 @@ is visible under **Loose ends** and hide it inside a stash you would have to kno
 Each run in a task's detail pane is marked **warm** or **new**, and the conversation's id is shown
 beside it. ⚠️ Runs recorded before this existed show neither, rather than guessing.
 
+**Settings → Conversations** is the other direction: every conversation the fleet has opened, which
+account and worktree it belongs to, what branch its tree is on, and — expanded — **which tasks it
+served**. The header counts how many served more than one task, which is what sharing looks like from
+the outside.
+
+⛔ That count is the reason the page exists. A task's own pane says which conversation it is in;
+nothing else says who *else* has been in it, and once a conversation outlives the task that opened it
+that is the difference between the saving working and an agent having read work nobody meant to show
+it. Both look identical from the task list.
+
+⚠️ Read-only, deliberately. The only honest actions would be *run a task in it*, which the task pane
+already offers, and *close it*, which the cache clock owns — and a close button beside a live agent
+is an invitation to kill a run by tidying up.
+
 ## Why it is built this way
 
 The gates above are mechanical — no scoring, no model judgement about whether two tasks are "related".

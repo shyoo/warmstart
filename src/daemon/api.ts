@@ -83,6 +83,7 @@ import { decide, medianHumanLatencyMs } from './cacheclock.js'
 import { DEFAULT_OBJECTIVE } from './objective.js'
 import { setSetting, settings } from './settings.js'
 import { lastRateLimit, windowResetsAt } from './quota.js'
+import { listConversations } from './conversations.js'
 import { log, logFiles, recentLog } from './log.js'
 import { dismissLooseEnd, scanLooseEnds } from './finish.js'
 
@@ -440,6 +441,11 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
     // ---- loose ends ---------------------------------------------------------------------
     // ⛔ Read, dismiss, and create a task. Nothing here removes a workspace, discards a stash or
     // deletes a branch: the whole point of the list is that the work outlives the run that made it.
+    'conversation.list': (p) =>
+      listConversations({
+        ...(p?.projectId ? { projectId: p.projectId } : {}),
+        ...(p?.limit ? { limit: p.limit } : {})
+      }),
     'looseend.list': () => scanLooseEnds(),
     'looseend.dismiss': (p) => {
       dismissLooseEnd(p.id)

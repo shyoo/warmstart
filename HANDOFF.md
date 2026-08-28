@@ -9,7 +9,7 @@ if you add a line, find the one it obsoletes and cut it in the same edit. Finish
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
 **Baseline (2026-08-28, measured on this machine):** `npm run typecheck` clean · `npm run lint` clean ·
-`npm run build` clean · `npm test` 436/436 · `npm run test:daemon` 124/124 · `npm run test:ui` 93/93 ·
+`npm run build` clean · `npm test` 450/450 · `npm run test:daemon` 124/124 · `npm run test:ui` 96/96 ·
 `npm run test:pack` 18/18 · L4 (opt-in) landed a real agent commit on origin/main. Electron 44.0.0,
 electron-builder 26.15.3, 0 npm vulnerabilities. CLIs here: claude 2.1.250 · agy 1.1.22 · codex 0.149.1.
 
@@ -55,8 +55,9 @@ src/daemon/            orchestratord. Runs as Electron-with-ELECTRON_RUN_AS_NODE
                        each kept their own until 2026-08-27 and the copies drifted
   activity.ts          the live peephole: a bounded in-memory tail of what a run is saying
   landing.ts           auto-land, serialised by an exclusive land: resource (+ landing.test.ts)
+  conversations.ts     which conversation served which tasks - a join, never stored (+ .test.ts)
   sharing.ts           who may borrow whose conversation: three tiers, mechanical gates, off by
-                       default (+ .test.ts). docs/sessions.md is the user-facing spec
+                       default (+ .test.ts). docs/sessions.md is the spec for both
   finish.ts            what finishing means: one policy resolved task > project > fleet, the
                        decision that follows, and the loose-ends scan (+ .test.ts). ⛔ The tool
                        never writes a commit. docs/landing.md is the user-facing spec
@@ -106,7 +107,7 @@ docs/                  cost-model.md, glossary.md, adapters.md, landing.md - mai
   *tokens*, so **R2** (`tokens_per_percent`) is the blocker, not a stale percentage
   (`docs/cost-model.md` §10). ⛔ Until it lands it scores zero as a routing input — only checked
   evidence may move a score.
-- ⚠️ **The tray *icon* has never been exercised end to end** — appearing, close-to-hide, click-to-restore. The switch and `daemon.shutdown` are covered.
+- ⚠️ **The tray *icon* has never been exercised end to end.** The switch and `daemon.shutdown` are covered.
 - ⭐ **Every intervention on a live session has an off switch** — Settings > Global: `autoCompact` and
   `autoPreempt` **on**, `autoRunawayStop` **off**, plus configurable `probeIntervalMinutes` (default 5m).
 - ⚠️ **The runaway factor measures the wrong thing, which is why its switch ships off** - 92–98% of
@@ -144,12 +145,15 @@ M0–M6 are done. What is left is not a milestone but a list, in the order it wo
 4. **Resident sessions** - one conversation per (worker, workspace), tasks borrowing it. The cost win
    this is for: a cold Claude turn cost **41,542 cache-creation tokens** in an empty directory
    (measured 2026-08-28) and every task pays it. Agreed with the owner 2026-08-28.
-   ⭐ **Phases 0-3 are done** - see `git log` and `docs/sessions.md`. Sharing is implemented and
-   **off at every tier**; turn it on per project with `session.share`. What is left:
-   - **(4) The per-conversation view** - which tasks and runs one conversation served.
-   - ⚠️ **Sharing has never run.** Every gate is unit-tested and the controls are driven by
-     `test:ui`, but no two tasks have yet shared a conversation on this machine: it needs two tasks
-     in one project on one account with the switch on. That is the next thing to actually try.
+   ⭐ **All five phases are built** - see `git log` and `docs/sessions.md`. Sharing is implemented and
+   **off at every tier**; turn it on per project with `session.share`. Settings > Conversations shows
+   which tasks each conversation served. What is left is not code:
+   - ⚠️ **Sharing has never run.** Every gate is unit-tested and every control is driven by
+     `test:ui`, but no two tasks have yet shared a conversation on this machine - it needs two tasks
+     in one project on one account with the switch on. Measured 2026-08-28 against the live database:
+     **0 conversations have served more than one task.** That is the next thing to actually try.
+   - ⛔ **The live database is still at schema v9** and this build expects **v13**. The daemon has not
+     restarted since any of this landed, so migrations 10-13 have not run against real data.
    - **(5) `git worktree lock` and a provenance marker.** Claude Code's sweep uses both and this pool
      uses neither. Only bites when the daemon dies mid-run, which is when nobody is watching.
 5. **Compute `overrunFactor` in cost, not raw tokens**, and let preempted runs feed `estimateTask`.
@@ -190,8 +194,7 @@ is what the CLI spent that never reached a transcript.
 read it:
 
 - **Daemon, not all-in-Electron.** The premise is unattended progress across quota windows.
-- **Deterministic scheduler; the LLM only on judgment events, never inline.** A loop running every 10s
-  for weeks must not bill anything, and the fleet must survive there being no controller at all.
+- **Deterministic scheduler; the LLM only on judgment events, never inline.** A loop running every 10s for weeks must not bill anything, and the fleet must survive there being no controller at all.
 - **PTY-hosted CLI, transcript for state.** We own stdin, so `/compact` is a function call. ⚠️ ANSI parsing
   determines state in exactly one declared place - a quota reading. Never a session's state.
 - **Capabilities and objectives are data.** No `if (adapter === …)`, no `if (mode === …)`.

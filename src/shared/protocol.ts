@@ -389,6 +389,46 @@ export interface Turn {
 
 // ---------------------------------------------------------------------------- adapters
 
+/** One task's use of a conversation, collapsed across however many runs it took. */
+export interface ConversationTask {
+  taskId: string
+  seq: number
+  title: string
+  runs: number
+  firstAt: number
+  lastAt: number
+  /** ⚠️ Null for runs recorded before this was tracked. Renders as nothing, never as `new`. */
+  startedWarm: boolean | null
+  tokens: number
+}
+
+/**
+ * A conversation and what it has been used for.
+ *
+ * ⛔ Derived from `runs` on demand, never stored. Which tasks a conversation served is a fact about
+ * that table, and a cached copy would be one more thing to keep in step with it.
+ */
+export interface Conversation {
+  /** agentyard's handle. */
+  sessionId: string
+  /** ⚠️ What the **CLI** calls it — the string to type after `--resume` or `--conversation`. */
+  conversationId: string
+  adapterId: string
+  workerId: string
+  workerLabel: string
+  projectId: string | null
+  projectName: string | null
+  cwd: string
+  state: string
+  currentBranch: string | null
+  contextTokens: number | null
+  startedAt: number
+  closedAt: number | null
+  tasks: ConversationTask[]
+  /** ⭐ More than one means this conversation was shared. Invisible from every other screen. */
+  taskCount: number
+}
+
 export interface AdapterCapabilities {
   transports: SessionTransport[]
   permissionModes: string[]
@@ -859,6 +899,15 @@ export interface RpcMap {
   /** Land a branch whose task already finished. The loose-ends list and the task pane both use it. */
   'task.land': { params: { id: string }; result: { task: Task; landed: boolean; reason?: string } }
   /** Work that exists and is going nowhere: uncommitted files, unlanded branches, rescued stashes. */
+  /**
+   * Every work conversation and what it served. ⚠️ Read-only and derived; there is deliberately no
+   * way to *edit* a conversation from here, because the only honest edits are "run a task in it",
+   * which the task pane already offers, and "close it", which the cache clock owns.
+   */
+  'conversation.list': {
+    params: { projectId?: string; limit?: number }
+    result: Conversation[]
+  }
   'looseend.list': { params: void; result: LooseEnd[] }
   'looseend.dismiss': { params: { id: string }; result: { ok: true } }
   /** File a task to go and deal with one. ⚠️ Creates work; it does not do the work. */

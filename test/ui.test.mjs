@@ -640,6 +640,29 @@ try {
   // ⚠️ Put back, so the rest of the suite runs against the shipped default.
   await evaluate(`window.agentyard.rpc('settings.set', { finishPolicy: 'agent-lands' })`)
 
+  section('the conversations page')
+  // ⛔ The page exists for one number that is invisible everywhere else - how many tasks have been
+  // in one conversation. These checks are that it reaches the daemon and renders; the join itself is
+  // held by conversations.test.ts.
+  await evaluate(
+    `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim() === 'Conversations')?.click()`
+  )
+  await wait(1500)
+  const convHead = await evaluate(`document.querySelector('.page-head')?.innerText ?? ''`)
+  check('Conversations is reachable from the sidebar', /Conversations/i.test(convHead))
+  check(
+    'and says how many served more than one task, which is what sharing looks like',
+    /served more than one task/i.test(convHead)
+  )
+  check(
+    'the daemon answers the query behind it',
+    Array.isArray(await evaluate(`window.agentyard.rpc('conversation.list', {})`))
+  )
+  await evaluate(
+    `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim() === 'Global')?.click()`
+  )
+  await wait(1200)
+
   section('reusing conversations')
   // ⛔ Sharing is an information boundary, so the check that matters most is the *default*: an
   // install that upgrades into this build must not start sharing because it upgraded. The tier
