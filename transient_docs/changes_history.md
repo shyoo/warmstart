@@ -1388,3 +1388,31 @@ the task, so agy gets exactly one turn and whatever it says in that turn is take
 reason this was not recorded as a success is that the finish path asks **git** rather than the agent,
 and refused to land a branch carrying no commits. That is the design working; it is also a reason to
 be wary of unattended work on that adapter.
+
+### The commit case, which is the one that could have gone wrong
+
+The first trial's borrowers only read files, so nothing could be mixed. The second ran two tasks that
+both **wrote and committed** while sharing one conversation.
+
+t15 created `trial-e.txt` and committed it, then parked at `awaiting_human` with its conversation
+warm. t16 borrowed that conversation, was given its own branch, created `trial-f.txt` and committed
+that. Then t15 was replied to and took the conversation back.
+
+Every check held:
+
+- `t15-commit-trial-e`: **1 commit**, files `trial-e.txt`.
+- `t16-commit-trial-f`: **1 commit**, files `trial-f.txt`.
+- Neither branch contains the other's file.
+
+⭐ And the agents confirmed it from the inside rather than the daemon asserting it. t16 was asked for
+its commit hash *and* its branch, and answered `6724bf8 on multi-agent-controller/t16-commit-trial-f`.
+After the tree came back, t15 was asked which branch it was on and which `trial-*.txt` files existed,
+and answered `multi-agent-controller/t15-commit-trial-e, trial-e.txt` - its own branch, its own file,
+and no sign of t16's.
+
+Both threads were told, by name, each time the tree moved. One conversation ended up serving **five
+tasks**, every borrow reporting `warm` at ~86-92k input-token-equivalents saved.
+
+⚠️ One number worth watching: context went 43k → 49k across those five tasks. That accumulation is
+what the 60% share ceiling is for, and it has not yet been seen to fire - a conversation shared long
+enough will eventually stop being offered, and nothing has observed that happening.

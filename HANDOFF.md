@@ -110,8 +110,7 @@ docs/                  cost-model.md, glossary.md, adapters.md, landing.md, sess
 - ⚠️ **The tray *icon* has never been exercised end to end.** The switch and `daemon.shutdown` are covered.
 - ⭐ **Every intervention on a live session has an off switch** — Settings > Global: `autoCompact` and
   `autoPreempt` **on**, `autoRunawayStop` **off**, plus configurable `probeIntervalMinutes` (default 5m).
-- ⚠️ **The runaway factor measures the wrong thing, which is why its switch ships off** - 92–98% of
-  a run's tokens are cache reads, so it fires on long work, not expensive work. Item 5 under **Next**.
+- ⚠️ **The runaway factor measures the wrong thing, which is why its switch ships off** - 92–98% of a run's tokens are cache reads, so it fires on long work. Item 5 under **Next**.
 - ⭐ **One finish policy, resolved task > project > fleet** (`docs/landing.md`): `await-human` ·
   `agent-lands` · `pull-request` · `custom`, replacing `landing.strategy` and `verification`. ⛔ **The
   tool never writes a commit** and never destroys work it will not land — loose work gets one
@@ -123,16 +122,14 @@ docs/                  cost-model.md, glossary.md, adapters.md, landing.md, sess
 - ⚠️ **Pinning a task to an account and a model has never run end to end; only its refusals have.**
   `checkConstraints` (api.ts) rejects what nothing can honour, and ⛔ **`selectableEffort` is false on
   all three built-ins** (`docs/adapters.md` has the per-CLI reason), so no effort control is drawn.
-- ⚠️ **Three paths are unverified and marked in the code:** `/compact` on `stream` (**R6**), keepalive
-  *execution*, and a consult answered by a real model (**R8**). The arithmetic is unit-tested; the firing is not.
+- ⚠️ **Three paths are unverified and marked in the code:** `/compact` on `stream` (**R6**), keepalive *execution*, and a consult answered by a real model (**R8**). The arithmetic is unit-tested; the firing is not.
 - ⭐ **Antigravity runs, reports its quota, and resumes a conversation by id** (**R9** closed the
   opposite way round from how it was asked, `docs/cost-model.md` §5; the stream shapes and
   `--conversation` measured 2026-08-28). ⚠️ **No Antigravity task has ever completed** - with
   `mcp: false` it cannot call `task_complete`, so `awaiting_human` is honest there - and R13 stands.
   ⛔ It restores a conversation but reports `cache_read_tokens: 0` throughout: context, not cache.
 - ⛔ **Anything needing a real agent CLI is unproven off Windows.** CI proves three platforms build, start, package and schedule; its runners have no CLI, so `docs/adapters.md` is Windows-only.
-- ⛔ **Unsigned.** SmartScreen warns and Gatekeeper refuses — a certificate and an Apple Developer
-  account, not a config line.
+- ⛔ **Unsigned.** SmartScreen warns and Gatekeeper refuses — a certificate and an Apple Developer account, not a config line.
 
 ## Next
 
@@ -148,12 +145,15 @@ M0–M6 are done. What is left is not a milestone but a list, in the order it wo
    ⭐ **All five phases are built** - see `git log` and `docs/sessions.md`. Sharing is implemented and
    **off at every tier**; turn it on per project with `session.share`. Settings > Conversations shows
    which tasks each conversation served. What is left is not code:
-   ⭐ **Run for real on 2026-08-28** against ClaudeSecond in this repo: one conversation
-   (`f9a6bac3`) served **three tasks** - t11 lent it to t13 and t14, each `warm`, saving ~86k
-   input-token-equivalents per borrow. The borrower's branch was switched under it and the agent
-   confirmed by reporting the branch it was on; t11's thread was told by name; the tree came back.
-   Migrations 10-13 have run against real data and the backfill gave all twenty old sessions a
-   project. ⚠️ Sharing is **still off by default** - the trial set it per task.
+   ⭐ **Run for real on 2026-08-28** against ClaudeSecond in this repo: one conversation (`f9a6bac3`)
+   served **five tasks**, every borrow `warm`, saving ~86-92k input-token-equivalents each. ⭐ **Two
+   borrowers that both committed** kept their work apart - one commit per branch, each holding only
+   its own file, and the agents confirmed it from inside by reporting their branch and the files they
+   could see. Both threads were notified by name, and the tree went back. Migrations 10-13 ran against
+   real data; the backfill gave all twenty old sessions a project.
+   ⚠️ Sharing is **still off by default** - the trial set it per task. ⚠️ Context accumulated 43k →
+   49k over five tasks in one conversation, which is what the 60% share ceiling exists to bound; it
+   has not yet been seen to fire.
    - **(5) `git worktree lock` and a provenance marker.** Claude Code's sweep uses both and this pool
      uses neither. Only bites when the daemon dies mid-run, which is when nobody is watching.
 5. **Compute `overrunFactor` in cost, not raw tokens**, and let preempted runs feed `estimateTask`.
