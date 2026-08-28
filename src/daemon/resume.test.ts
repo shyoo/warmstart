@@ -115,6 +115,15 @@ let tasks: typeof import('./tasks.js')
 
 const WORKER = 'aaaaaaaa-0000-4000-8000-000000000001'
 const OTHER = 'aaaaaaaa-0000-4000-8000-000000000002'
+/**
+ * The worktree every seeded conversation sits in.
+ *
+ * ⚠️ A constant, not a literal repeated per assertion. Written out by hand it is one escaped
+ * backslash away from `C:ws1`, which matches nothing - and a cwd that matches nothing makes
+ * `resumableSession` return null for the *wrong reason*, so a test asserting `toBeNull()` passes
+ * while proving nothing. That happened to four of the tests below before this constant existed.
+ */
+const WS = 'C:\\ws1'
 
 /** A work session on `worker`, in `cwd`, with `turns` recorded turns against it. */
 function seed(opts: {
@@ -124,19 +133,21 @@ function seed(opts: {
   adapter?: string
   turns?: number
   vendor?: string | null
+  state?: string
 }): void {
   db.db()
     .prepare(
       `insert into sessions (id, worker_id, adapter_id, transport, cwd, state, purpose,
                              tokens_since_compact, started_at, vendor_session_id)
-       values (?,?,?,?,?,'closed','work',0,?,?)`
+       values (?,?,?,?,?,?,'work',0,?,?)`
     )
     .run(
       opts.id,
       opts.worker ?? WORKER,
       opts.adapter ?? 'claude-code',
       'stream',
-      opts.cwd ?? 'C:\\ws1',
+      opts.cwd ?? WS,
+      opts.state ?? 'closed',
       Date.now(),
       opts.vendor ?? null
     )
@@ -181,14 +192,16 @@ beforeEach(() => {
   db.db().exec('delete from runs')
   db.db().exec('delete from sessions')
   db.db().exec('delete from tasks')
-  // `runs.task_id` is a foreign key, so a run needs a task to hang off.
+  // `runs.task_id` is a foreign key, so a run needs a task to hang off. Two of them, because the
+  // interception cases below are about one conversation and *two* tasks.
   db.db()
     .prepare(
       `insert into tasks (id, seq, title, status, created_by_json, mandate_json, budget_json,
                           created_at, updated_at)
-       values ('t1', 1, 'probe', 'running', '{}', '{}', '{}', ?, ?)`
+       values ('t1', 1, 'probe', 'running', '{}', '{}', '{}', ?, ?),
+              ('t2', 2, 'other', 'ready',   '{}', '{}', '{}', ?, ?)`
     )
-    .run(Date.now(), Date.now())
+    .run(Date.now(), Date.now(), Date.now(), Date.now())
 })
 
 afterAll(() => {
@@ -203,34 +216,34 @@ afterAll(() => {
 describe('which conversation is worth going back to', () => {
   it('takes the one on the same account in the same tree', () => {
     seed({ id: 's-new' })
-    expect(sessions.resumableSession([load('s-new')], WORKER, 'C:\\ws1')?.id).toBe('s-new')
+    expect(sessions.resumableSession([load('s-new')], WORKER, WS)?.id).toBe('s-new')
   })
 
   it('refuses one belonging to another account', () => {
     // A conversation lives inside one isolation root and one quota bucket. The other account
     // cannot see it, and would start cold while reporting that it resumed.
     seed({ id: 's-other', worker: OTHER })
-    expect(sessions.resumableSession([load('s-other')], WORKER, 'C:\\ws1')).toBeNull()
+    expect(sessions.resumableSession([load('s-other')], WORKER, WS)).toBeNull()
   })
 
   it('refuses one recorded in a different worktree', () => {
     // ⛔ Claude Code files transcripts under an encoding of the cwd. `--resume` from ws2 for a
     // conversation held in ws1 finds nothing — and finds it quietly.
     seed({ id: 's-ws2', cwd: 'C:\\ws2' })
-    expect(sessions.resumableSession([load('s-ws2')], WORKER, 'C:\\ws1')).toBeNull()
+    expect(sessions.resumableSession([load('s-ws2')], WORKER, WS)).toBeNull()
   })
 
   it('refuses one that never recorded a turn', () => {
     // ⛔ `claude --resume` on an unknown id fails the process outright. Every session in this
     // install that exited before saying anything has zero turns; every real one has at least one.
     seed({ id: 's-empty', turns: 0 })
-    expect(sessions.resumableSession([load('s-empty')], WORKER, 'C:\\ws1')).toBeNull()
+    expect(sessions.resumableSession([load('s-empty')], WORKER, WS)).toBeNull()
   })
 
   it('skips a candidate and keeps looking rather than giving up on the first miss', () => {
     seed({ id: 's-empty', turns: 0 })
     seed({ id: 's-good' })
-    const found = sessions.resumableSession([load('s-empty'), load('s-good')], WORKER, 'C:\\ws1')
+    const found = sessions.resumableSession([load('s-empty'), load('s-good')], WORKER, WS)
     expect(found?.id).toBe('s-good')
   })
 })
@@ -304,5 +317,111 @@ describe('what a run records about the conversation it got', () => {
       costModelId: null
     })
     expect(run.startedWarm).toBeNull()
+  })
+})
+
+
+/**
+ * ⛔ **Never take a conversation somebody is still talking in.**
+ *
+ * The gates above ask whether a conversation is *worth* going back to. These ask whether it is
+ * *free*, which is a different question and the one with teeth: two processes against one
+ * conversation means two agents writing the same worktree, turns billed to whichever run happened
+ * to be open, and a `task_complete` that could settle the wrong task.
+ *
+ * ⚠️ Today `resumableSession` is only ever handed the task's own sessions, so the blast radius is
+ * small. It is written down now because phase 2 of resident sessions hands it *other tasks'*
+ * conversations, and a gate added in the same change as the feature that needs it is a gate nobody
+ * can check independently.
+ */
+describe('a conversation that is still in use', () => {
+  /** A run against `sessionId`, still open unless `ended`. */
+  function openRun(sessionId: string, opts: { ended?: boolean; task?: string } = {}): void {
+    db.db()
+      .prepare(
+        `insert into runs (id, task_id, session_id, worker_id, started_at, ended_at,
+                           quota_unverified)
+         values (?,?,?,?,?,?,0)`
+      )
+      .run(
+        `run-${sessionId}-${opts.task ?? 't1'}`,
+        opts.task ?? 't1',
+        sessionId,
+        WORKER,
+        Date.now(),
+        opts.ended === true ? Date.now() : null
+      )
+  }
+
+  it('is refused while a run against it is still open', () => {
+    seed({ id: 's-busy' })
+    openRun('s-busy')
+    expect(sessions.resumableSession([load('s-busy')], WORKER, WS)).toBeNull()
+  })
+
+  it('is refused even though the session row says it closed', () => {
+    // ⛔ The case the state check alone cannot catch, and why there are two checks rather than one.
+    // A row marked closed while its run is still open is a task mid-turn; handing that conversation
+    // out puts one agent's turn into another task's ledger.
+    seed({ id: 's-shut', state: 'closed' })
+    openRun('s-shut')
+    expect(sessions.resumableSession([load('s-shut')], WORKER, WS)).toBeNull()
+  })
+
+  it('is refused while the session is still live, run or no run', () => {
+    // A live session is `warmSessionFor`'s business: work goes into it as a continuation, without
+    // starting a second process. Resuming one would start that second process.
+    seed({ id: 's-live', state: 'live' })
+    expect(sessions.resumableSession([load('s-live')], WORKER, WS)).toBeNull()
+  })
+
+  it('is refused while it is still starting, the narrowest window and the easiest to lose', () => {
+    seed({ id: 's-starting', state: 'starting' })
+    expect(sessions.resumableSession([load('s-starting')], WORKER, WS)).toBeNull()
+  })
+
+  it('is refused for a run opened by a different task, not only by this one', () => {
+    // ⛔ The interception case named directly: t2 asking for the conversation t1 is running in.
+    seed({ id: 's-t1' })
+    openRun('s-t1', { task: 't1' })
+    expect(sessions.resumableSession([load('s-t1')], WORKER, WS)).toBeNull()
+  })
+
+  it('comes back once the run has ended', () => {
+    // ⚠️ The other half, and the one a too-strict guard breaks. A conversation that never becomes
+    // available again is a cold start after its first task, which is the bug all of this exists to
+    // fix - so the release matters exactly as much as the hold.
+    seed({ id: 's-done' })
+    openRun('s-done', { ended: true })
+    expect(sessions.resumableSession([load('s-done')], WORKER, WS)?.id).toBe('s-done')
+  })
+
+  it('passes over a busy conversation and takes a free one beside it', () => {
+    // The gate must skip, not abort. A busy session first in the list would otherwise be the only
+    // thing between a task and a perfectly good conversation behind it.
+    seed({ id: 's-busy' })
+    openRun('s-busy')
+    seed({ id: 's-free' })
+    expect(sessions.resumableSession([load('s-busy'), load('s-free')], WORKER, WS)?.id).toBe(
+      's-free'
+    )
+  })
+
+  it('never hands one conversation to two tasks at once', () => {
+    // The property stated as a property, rather than as a sequence of gate checks: whatever the
+    // list holds, nothing with an open run is ever returned.
+    seed({ id: 's-a' })
+    seed({ id: 's-b' })
+    openRun('s-a', { task: 't1' })
+    expect(sessions.resumableSession([load('s-a'), load('s-b')], WORKER, WS)?.id).toBe('s-b')
+    openRun('s-b', { task: 't2' })
+    expect(sessions.resumableSession([load('s-a'), load('s-b')], WORKER, WS)).toBeNull()
+  })
+
+  it('answers on its own terms too, so the guard is checkable without the gate around it', () => {
+    seed({ id: 's-x' })
+    expect(sessions.hasOpenRun('s-x')).toBe(false)
+    openRun('s-x')
+    expect(sessions.hasOpenRun('s-x')).toBe(true)
   })
 })

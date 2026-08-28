@@ -381,6 +381,12 @@ costmodels/             versioned pricing data
 - **`agy` installs under `%LOCALAPPDATA%` and is not on PATH until `agy install` runs.** The
   adapter looks there anyway; reporting "not installed" would send somebody to reinstall what they
   already have.
+- ⛔ **A Windows path written into a file through a shell heredoc loses a backslash.** `'C:\\ws1'`
+  arrives as `'C:\ws1'`, which TypeScript reads as `C:ws1` — a path that matches nothing. ⚠️ The
+  damage is not a crash: a gate keyed on that path returns "no match" for the *wrong reason*, so a
+  test asserting `toBeNull()` passes while proving nothing. Four did, in `resume.test.ts`, on
+  2026-08-28. Write such literals with the **Edit tool**, which does not go through a shell, and put
+  the path in a named constant so there is one occurrence to get right rather than nine.
 - ⛔ **Any test that calls `plan()` needs the CLI on PATH, and CI has none installed.** `plan()`
   resolves the command before it builds an argv, so an argv assertion passes on a developer machine
   and throws `'claude' is not on PATH` in CI. Stub the names onto PATH the way `adapters.test.ts`

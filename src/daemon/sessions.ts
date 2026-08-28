@@ -270,6 +270,23 @@ function hasRecordedTurn(sessionId: string): boolean {
   return db().prepare('select 1 from turns where session_id = ? limit 1').get(sessionId) !== undefined
 }
 
+/**
+ * Is a run still open against this session?
+ *
+ * ⛔ Asked of the **runs**, never of the session's state, because the two disagree in exactly the
+ * case that matters. A daemon killed mid-run leaves the session row saying `live` and the process
+ * gone; `reconcileOrphans` settles that at startup. What it cannot settle is the opposite - a row
+ * that has already been marked closed while the run that was using it is still open - and handing
+ * that conversation to a second task is how one agent's turn lands in another task's ledger.
+ */
+export function hasOpenRun(sessionId: string): boolean {
+  return (
+    db()
+      .prepare('select 1 from runs where session_id = ? and ended_at is null limit 1')
+      .get(sessionId) !== undefined
+  )
+}
+
 export function resumableSession(candidates: Session[], workerId: string, cwd: string): Session | null {
   for (const session of candidates) {
     if (session.workerId !== workerId || session.cwd !== cwd) continue
@@ -282,6 +299,15 @@ export function resumableSession(candidates: Session[], workerId: string, cwd: s
     // the 0-second Antigravity exits, the two Claude sessions that failed on start - has zero turns,
     // and every real one has at least one.
     if (!hasRecordedTurn(session.id)) continue
+    // ⛔ **Never take a conversation somebody is still talking in.** Two independent checks,
+    // because they fail independently: a session that has not ended belongs to `warmSessionFor`,
+    // which routes work into it as a live continuation rather than restarting the process; and a
+    // run still open against it means a task is mid-turn there whatever the row says. Resuming
+    // either would start a second process against one conversation - two agents writing the same
+    // worktree, two turns billed to whichever run happened to be open, and a `task_complete` that
+    // could settle the wrong task.
+    if (session.state !== 'closed' && session.state !== 'failed') continue
+    if (hasOpenRun(session.id)) continue
     return session
   }
   return null
