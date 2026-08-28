@@ -1327,3 +1327,64 @@ the correct reading of a feature that ships off. ⛔ That database is also still
 this build expects **v13** - the daemon has not restarted since any of the last five commits landed,
 so migrations 10-13 have never run against real data. Both facts are in HANDOFF rather than implied by
 a green suite.
+
+---
+
+## What running it actually found
+
+Four phases of resident sessions shipped green, and then it was run against a real fleet for the first
+time. **Two bugs, both invisible to every test, and one of them predated all of this work.**
+
+### The parked conversation that blocked its own reply
+
+The trial: task A commits a note and rests at `awaiting_human`, keeping its conversation warm; task B
+is then filed and should borrow it. B never dispatched. The log said
+`tick: held: t12: ClaudeSecond at capacity`.
+
+`maxConcurrent` counted **every open work session**, including idle ones, and the gate ran before any
+consideration of reuse. So on a one-slot worker - which is what the app creates by default - a task
+resting at `awaiting_human` filled the only slot with the very conversation the next task wanted.
+
+⛔ And this was never about sharing. The same gate had been silently blocking **every warm
+continuation** on a one-slot worker since long before any of this: a task parked for a human, replied
+to, could not be dispatched back into its own warm session - the single most valuable move the cost
+model has, `0.1·C` against `2.0·C`, unreachable on the default configuration. Four hundred and fifty
+tests, none of which had a worker at capacity holding a session the task wanted to reuse.
+
+The fix is one clause: the session a task will reuse does not count against the cap, because reusing
+it starts no process. Safe because `warmSessionFor` only ever returns idle sessions and the lease
+stops two tasks being handed the same one.
+
+### The borrower that ran on the lender's branch
+
+With capacity fixed, t13 borrowed t11's conversation, ran `warm`, and answered correctly. It also had
+`branch: null` - and ran in t11's worktree, **on t11's branch**.
+
+`dispatchIntoWarmSession` read `task.branch` and never assigned one, because it was written when a
+warm session only ever served the *same* task, which already had a branch from its cold dispatch. A
+task that has only ever run warm never gets one. So the branch switch was skipped, all three of phase
+2's notices were skipped, and the whole of phase 2 was unreachable from the only path that borrows.
+
+t13 only read files, so nothing was mixed. A borrower that committed would have put its work on
+somebody else's branch - the exact failure the switch-and-tell was built to prevent.
+
+Both fixes verified by re-running the trial, and the second one asked the agent to prove it: t14
+borrowed t11's conversation and was asked *which branch are you on*. It answered
+`multi-agent-controller/t14-...`. t11's thread got the notice naming t14 and confirming its own branch
+was untouched, and when t11 ran again the tree came back to it.
+
+### What the trial established, with numbers
+
+One conversation, `f9a6bac3`, served **three tasks** - t11 lent it to t13 and t14. Each borrow
+reported `warm` and ~**86,000** input-token-equivalents cheaper than a cold start. Migrations 10-13
+ran against real data and the backfill gave all twenty pre-existing sessions a project. The
+Conversations page showed `tasks=3` on that row and `1` everywhere else, which is exactly the number
+it exists to make visible.
+
+⚠️ And a finding about **Antigravity** that is not about sharing at all. Asked to create a file,
+commit it, and report the hash, it reported `b680242` - a commit that does not exist. No file was
+created and the branch was untouched. With `mcp: false` the first successful `result` record completes
+the task, so agy gets exactly one turn and whatever it says in that turn is taken as done. The only
+reason this was not recorded as a success is that the finish path asks **git** rather than the agent,
+and refused to land a branch carrying no commits. That is the design working; it is also a reason to
+be wary of unattended work on that adapter.

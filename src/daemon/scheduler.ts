@@ -428,8 +428,20 @@ function chooseTarget(task: Task): WorkerChoice {
     // work* - parallel agents editing repositories and spending the window for hours. A consult or a
     // chat is short, holds no workspace, and is bounded separately at one per worker; counting them
     // here would make the fleet undispatchable because somebody asked it a question.
-    const busy = sessionsForWorker(worker.id).filter((s) => s.purpose === 'work').length
-    if (busy >= worker.maxConcurrent) {
+    //
+    // ⛔ **The session this task would reuse is not counted, because reusing it starts no process.**
+    // `maxConcurrent` bounds how many agents run at once; a turn sent into a session that is already
+    // open adds none. Counting it made a one-slot worker - the default - refuse the single most
+    // valuable move the cost model has: a task resting at `awaiting_human` keeps its session warm for
+    // the reply, that idle session filled the only slot, and the reply was then held at
+    // `ClaudeSecond at capacity` forever. Measured 2026-08-28 on a real fleet, trying to share a
+    // conversation; the same gate had been silently blocking every warm continuation on a one-slot
+    // worker since long before sharing existed.
+    //
+    // ⚠️ Safe because `warmSessionFor` only ever returns an **idle** session, and the lease stops two
+    // tasks being given the same one. Nothing here can produce two live agents in one conversation.
+    const reuse = warm && warm.workerId === worker.id ? warm : null
+    if (atCapacity(sessionsForWorker(worker.id), worker.maxConcurrent, reuse)) {
       reasons.push(`${worker.label} at capacity`)
       continue
     }
@@ -448,7 +460,10 @@ function chooseTarget(task: Task): WorkerChoice {
       quotaUnverified = true
     }
 
-    const session = warm && warm.workerId === worker.id ? warm : null
+    // The same session the capacity gate above declined to count, and it must stay the same one:
+    // exempting a session from the cap and then dispatching into a different one would raise the
+    // real concurrency by one, quietly, on the account least able to afford it.
+    const session = reuse
     candidates.push({
       worker,
       session,
@@ -927,18 +942,31 @@ async function dispatchIntoWarmSession(
     )
   }
 
+  // ⛔ **A borrowed task needs a branch of its own, and until now it never got one.** This path was
+  // written when a warm session only ever served the *same* task, which already had its branch from
+  // its cold dispatch — so it read `task.branch` and never assigned one. A task that has only ever
+  // run warm therefore had `branch: null`, which skipped the switch below entirely and left it
+  // working on **the lender's branch**. Measured on a real fleet 2026-08-28: t13 borrowed t11's
+  // conversation and ran in t11's worktree on t11's branch. It only read files, so nothing was mixed
+  // — but a borrower that committed would have put its work on somebody else's branch, which is the
+  // exact failure phase 2's switch-and-tell exists to prevent.
+  const branch =
+    task.branch ?? (project && project.vcs === 'git' ? branchNameFor(task.seq, task.title) : null)
+
+  // Whose conversation this was, read **before** the switch moves the tree off their branch.
+  const previousOccupant = session.currentBranch ? taskOnBranch(session.currentBranch) : null
+
   // ⚠️ Put the tree on this task's branch, and say so — to the task that was here, to the agent, and
-  // in the log. A no-op today, because nothing yet routes a *second* task into a live session; it is
-  // built now so that the switch is already proven when phase 3 turns sharing on.
+  // in the log.
   let notice: string | null = null
-  if (project && project.vcs === 'git' && task.branch) {
+  if (project && project.vcs === 'git' && branch) {
     const path = workspaces.get(session.id)?.workspace.path ?? session.cwd
-    const moved = await switchBorrowedTree(project, session, path, task, task.branch)
+    const moved = await switchBorrowedTree(project, session, path, task, branch)
     if (!moved.ok) {
       // ⛔ Give the lease back. A task that cannot use the conversation must not hold it shut, and
       // this is the one path between acquiring it and `releaseFor` that does not open a run.
       releaseAllFor(task.id)
-      throw new Error(moved.error ?? `could not put ${path} on ${task.branch} for t${task.seq}`)
+      throw new Error(moved.error ?? `could not put ${path} on ${branch} for t${task.seq}`)
     }
     notice = moved.notice
   }
@@ -959,11 +987,21 @@ async function dispatchIntoWarmSession(
   clearActivity(task.id)
   if (reclaimed) workspaces.set(session.id, { workspace: reclaimed, projectId: project?.id ?? null })
 
-  setStatus(task.id, 'running', { assignee: worker.id })
+  // ⚠️ The branch travels with the status, exactly as it does on a cold dispatch. Without it a
+  // borrowed task stays `branch: null` forever and the finish path has nothing to land.
+  setStatus(task.id, 'running', { assignee: worker.id, ...(branch ? { branch } : {}) })
+  // ⛔ Says whose conversation this is. It used to say "the session that still holds **this task's**
+  // context" unconditionally - true for a continuation and false for a borrowed one, where the
+  // context belongs to somebody else's task and the operator most needs to be told so.
+  const borrowed = !runsFor(task.id).some((r) => r.sessionId === session.id && r.id !== run.id)
   addMessage(
     task.id,
     'system',
-    `Continued in the session that still holds this task's context` +
+    (borrowed
+      ? `Continued in a conversation opened by another task${
+          previousOccupant && previousOccupant.id !== task.id ? ` (t${previousOccupant.seq})` : ''
+        } — this agent can see that task's work`
+      : `Continued in the session that still holds this task's context`) +
       (saved !== null && saved > 0
         ? ` — about ${saved} input-token-equivalents cheaper than a cold start.`
         : saved === null
@@ -1733,6 +1771,31 @@ const TERMINAL_STATUSES = new Set<TaskStatus>(['completed', 'cancelled', 'failed
 /** Whose branch is this? ⚠️ By name, because the branch *is* the task's name — see `branchNameFor`. */
 function taskOnBranch(branch: string): Task | null {
   return listTasks().find((t) => t.branch === branch) ?? null
+}
+
+/**
+ * Has this account got a slot for this task?
+ *
+ * ⛔ **The session the task would reuse does not count**, because reusing it starts no process.
+ * `maxConcurrent` bounds how many agents run at once; a turn sent into a session that is already open
+ * adds none. Counting it made a one-slot worker — the default — refuse the single most valuable move
+ * the cost model has: a task resting at `awaiting_human` keeps its session warm for the reply, that
+ * idle session filled the only slot, and the reply was then held at *"at capacity"* indefinitely.
+ *
+ * ⚠️ Measured on a real fleet 2026-08-28 while trying to share a conversation, but the bug was never
+ * about sharing: the same gate had been silently blocking every warm continuation on a one-slot
+ * worker since long before sharing existed, and a one-slot worker is what the app creates by default.
+ *
+ * ⚠️ Safe because the only session ever passed as `reuse` came from `warmSessionFor`, which returns
+ * idle sessions only, and the lease stops two tasks being handed the same one.
+ */
+export function atCapacity(
+  sessions: Session[],
+  maxConcurrent: number,
+  reuse: Session | null
+): boolean {
+  const busy = sessions.filter((s) => s.purpose === 'work' && s.id !== reuse?.id).length
+  return busy >= maxConcurrent
 }
 
 /** Is this session's prompt cache already gone, making its context no cheaper than a cold start? */

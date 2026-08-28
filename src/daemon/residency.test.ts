@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { Session } from '@shared/protocol.js'
-import { cacheHasLapsed, leastValuableResident } from './scheduler.js'
+import { atCapacity, cacheHasLapsed, leastValuableResident } from './scheduler.js'
 
 /**
  * Phase 1 of resident sessions: **the workspace belongs to the conversation, not to the run.**
@@ -208,5 +208,51 @@ describe('which conversation costs least to lose', () => {
     // and reading that as "already gone" would make every one of its sessions first in line to be
     // destroyed — punishing a provider for a number it does not publish.
     expect(cacheHasLapsed(session({ cacheExpiresAt: null }), NOW)).toBe(false)
+  })
+})
+
+describe('whether an account has a slot for this task', () => {
+  const work = (id: string): Session => session({ id, purpose: 'work' })
+
+  it('refuses when every slot holds a session it will not reuse', () => {
+    expect(atCapacity([work('a')], 1, null)).toBe(true)
+    expect(atCapacity([work('a'), work('b')], 2, null)).toBe(true)
+  })
+
+  it('allows when there is a slot free', () => {
+    expect(atCapacity([], 1, null)).toBe(false)
+    expect(atCapacity([work('a')], 2, null)).toBe(false)
+  })
+
+  it('does not count the session this task is going to reuse', () => {
+    // ⭐ The bug this exists for, and it was never about sharing. A task resting at
+    // `awaiting_human` keeps its session warm for the reply; on a one-slot worker - the default -
+    // that idle session filled the only slot, so the reply itself was held at "at capacity"
+    // indefinitely. Reusing a session starts no process, so it cannot consume a concurrency slot.
+    // Measured on a real fleet 2026-08-28: t12 sat at `ready` for five minutes behind t11's own
+    // parked conversation.
+    const warm = work('warm')
+    expect(atCapacity([warm], 1, warm)).toBe(false)
+  })
+
+  it('still refuses when another session is busy beside the one being reused', () => {
+    // ⛔ The exemption is for exactly one session, not a licence to ignore the cap. Two live agents
+    // on an account that permits one is the failure `maxConcurrent` exists to prevent.
+    const warm = work('warm')
+    expect(atCapacity([warm, work('other')], 1, warm)).toBe(true)
+    expect(atCapacity([warm, work('other')], 2, warm)).toBe(false)
+  })
+
+  it('ignores sessions that are not work', () => {
+    // ⚠️ A consult, a chat or a usage probe is short, holds no workspace and is bounded separately.
+    // Counting them would make a fleet undispatchable because somebody asked it a question.
+    expect(atCapacity([session({ id: 'c', purpose: 'consult' })], 1, null)).toBe(false)
+    expect(atCapacity([session({ id: 'p', purpose: 'probe' })], 1, null)).toBe(false)
+  })
+
+  it('does not credit a reuse that is not in the list at all', () => {
+    // A session on a *different* worker. Subtracting it here would raise this account's real
+    // concurrency by one, quietly, which is the opposite of what the cap is for.
+    expect(atCapacity([work('a')], 1, work('elsewhere'))).toBe(true)
   })
 })

@@ -9,7 +9,7 @@ if you add a line, find the one it obsoletes and cut it in the same edit. Finish
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
 **Baseline (2026-08-28, measured on this machine):** `npm run typecheck` clean · `npm run lint` clean ·
-`npm run build` clean · `npm test` 450/450 · `npm run test:daemon` 124/124 · `npm run test:ui` 96/96 ·
+`npm run build` clean · `npm test` 456/456 · `npm run test:daemon` 124/124 · `npm run test:ui` 96/96 ·
 `npm run test:pack` 18/18 · L4 (opt-in) landed a real agent commit on origin/main. Electron 44.0.0,
 electron-builder 26.15.3, 0 npm vulnerabilities. CLIs here: claude 2.1.250 · agy 1.1.22 · codex 0.149.1.
 
@@ -67,7 +67,7 @@ src/daemon/            orchestratord. Runs as Electron-with-ELECTRON_RUN_AS_NODE
                        moveOutcome() is what stops it being re-asked (+ .test.ts)
   lifecycle.ts         how the daemon is asked to stop itself. ⛔ Asked, never killed by pid
   settings.ts          the fleet defaults the operator owns - autoCompact, autoPreempt,
-                       autoRunawayStop, probeIntervalMinutes, and finishPolicy (all under
+                       autoRunawayStop, probeIntervalMinutes, finishPolicy, sessionSharing (under
                        Settings > Global). Per-worker, `enabled` is on Workers row
   reserve.ts           the compaction reserve, and every belief with its basis attached
   objective.ts         the weight vector, in exactly two consumers    (+ cost.test.ts)
@@ -92,10 +92,10 @@ src/mcp/               the MCP server the agent CLI spawns. Two tiers chosen by 
 src/main/              window host + the daemon's only client (holds the token); the tray, and
                        `uisettings.ts` - preferences main must read when the daemon is not answering
 src/renderer/          fleet strip, approvals bar, tasks, projects, workers, global, xterm pane,
-                       Logs (live + on disk), LooseEnds (work going nowhere) (+ lib/format.test.ts)
+                       Logs, LooseEnds, Conversations (who shared what) (+ lib/format.test.ts)
 costmodels/            anthropic.* - google.antigravity.* - openai.codex.*; compiled in, so a
                        packaging slip cannot leave the scheduler unable to price
-docs/                  cost-model.md, glossary.md, adapters.md, landing.md - maintained
+docs/                  cost-model.md, glossary.md, adapters.md, landing.md, sessions.md
 .claude/skills/commit/ /commit: docs, suites, package, commit, push
 ```
 
@@ -148,12 +148,12 @@ M0–M6 are done. What is left is not a milestone but a list, in the order it wo
    ⭐ **All five phases are built** - see `git log` and `docs/sessions.md`. Sharing is implemented and
    **off at every tier**; turn it on per project with `session.share`. Settings > Conversations shows
    which tasks each conversation served. What is left is not code:
-   - ⚠️ **Sharing has never run.** Every gate is unit-tested and every control is driven by
-     `test:ui`, but no two tasks have yet shared a conversation on this machine - it needs two tasks
-     in one project on one account with the switch on. Measured 2026-08-28 against the live database:
-     **0 conversations have served more than one task.** That is the next thing to actually try.
-   - ⛔ **The live database is still at schema v9** and this build expects **v13**. The daemon has not
-     restarted since any of this landed, so migrations 10-13 have not run against real data.
+   ⭐ **Run for real on 2026-08-28** against ClaudeSecond in this repo: one conversation
+   (`f9a6bac3`) served **three tasks** - t11 lent it to t13 and t14, each `warm`, saving ~86k
+   input-token-equivalents per borrow. The borrower's branch was switched under it and the agent
+   confirmed by reporting the branch it was on; t11's thread was told by name; the tree came back.
+   Migrations 10-13 have run against real data and the backfill gave all twenty old sessions a
+   project. ⚠️ Sharing is **still off by default** - the trial set it per task.
    - **(5) `git worktree lock` and a provenance marker.** Claude Code's sweep uses both and this pool
      uses neither. Only bites when the daemon dies mid-run, which is when nobody is watching.
 5. **Compute `overrunFactor` in cost, not raw tokens**, and let preempted runs feed `estimateTask`.
