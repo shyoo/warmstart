@@ -1037,3 +1037,76 @@ written* — so the announcement moved to the write.
 
 The first thing the finished loose-ends scan found, run against the real repository, was a stash in
 ws1 holding the t5 Workers-table work that `rescueDirt` had saved and nothing had ever shown anyone.
+
+---
+
+## The conversation that was thrown away after every turn
+
+The operator asked whether Antigravity was starting from scratch on each reply within one task. It
+was — and so was Claude Code, and the evidence was already in the database.
+
+Across the nine (task, adapter) pairs that had ever run on this install, the count of distinct
+sessions equalled the count of runs in **every one**. t8 opened four Antigravity conversations to
+take four turns of a single task. `warmSessionFor` — the reuse path the whole cost model is built to
+make available, `0.1·C` against `2.0·C` — had never matched once, because `completeTask` closes the
+session about a second after the turn ends and the next reply arrives minutes later:
+
+```
+07:04:46  run starts        sess 94026876
+07:19:54  run completes
+07:19:55  session closed
+07:21:37  next run starts   sess 869d4cfc      ← a process that had never heard of the task
+```
+
+Both CLIs could have resumed the whole time. `resumeSession: true` was declared by three adapters and
+read by **nothing**; no `--resume` or `--conversation` appeared anywhere outside a sentence in the
+glossary. Worse, `antigravity-cli.ts` decoded `conversation_id` off the `init` record into a
+`StreamEvent` that nothing consumed — the one handle capable of resuming an `agy` conversation was
+parsed and dropped on arrival.
+
+The fix is a `resumeFrom` on the spawn request, which each adapter spells in its own flag, and a
+`vendor_session_id` column for the case where the CLI names its own conversation rather than taking
+ours. It reuses the **same session row** rather than making a second one: `claude --resume` reuses
+the original session id (`--fork-session` is the opt-out), so a second row would be a second name for
+one conversation and its transcript would be metered twice.
+
+Three gates decide whether a conversation is worth going back to, and each is a failure that would
+otherwise be silent. Same **account**, because a conversation lives in one isolation root. Same
+**worktree**, because Claude Code files transcripts under an encoding of the cwd — resuming from
+elsewhere finds nothing, starts fresh, and reports success. And at least one **recorded turn**,
+because `claude --resume` on an unknown id fails the process outright; every session in this
+install's history that exited before saying anything has zero turns and every real one has at least
+one, which made the discriminator exact rather than a guess.
+
+`promptFor` also stopped restating the task's brief into a resumed conversation. It had always
+restated the first human message, for a reason written beside it: *a fresh session after a preemption
+has no idea what it was asked to do*. True — and not true of a session that has the brief in its own
+history, where restating it reads as being asked to do the work a second time.
+
+### Measured rather than assumed
+
+One fact planted and asked back on each CLI, 2026-08-28:
+
+| | claude 2.1.250 | agy 1.1.22 |
+|---|---|---|
+| id returned | same `session_id` | same `conversation_id` |
+| recalled the fact | yes | yes |
+| cold turn | cache_creation **41,542**, cache_read 0 | input 14,637, cache_read **0** |
+| resumed turn | cache_creation **65**, cache_read **41,542** | input 29,556, cache_read **0** |
+
+41,542 cache-creation tokens to say "remember this number" in an **empty directory** is the cold-start
+tax every task was paying, and Claude reads the whole prefix back instead of rebuilding it.
+
+⚠️ The same measurement contradicted the obvious generalisation. `agy` restores the conversation but
+reports no cache read on either turn while `input_tokens` roughly doubles: it appears to re-send the
+history at full input price. Resuming is still right there — the context is what the agent needs —
+but it is not a *cache* saving on that vendor, and the design that follows this must not assume one.
+
+Two tests initially passed with their fix reverted. Both were the vendor-id guards, where SQL `NULL`
+semantics were quietly doing the work the guard was supposed to do; re-mutating to the naive
+`update … where id = ?` a real implementation would have written made them fail correctly, and a
+second case — *never replaced by a different one* — was added for the half that mutation exposed.
+
+`openai-compatible` went the other way and now declares `resumeSession: false`. `codex exec resume`
+exists and is unwired, and the scheduler drops a cold start on the strength of that flag: a
+capability that lies in that direction silently loses the context and reports a warm continuation.

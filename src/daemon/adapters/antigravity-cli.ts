@@ -664,6 +664,14 @@ export const antigravityCli: AgentAdapter = {
     // ⛔ No `--session-id` exists. agentyard's id stays its own handle rather than being passed as a
     // flag the CLI would reject.
     const args: string[] = []
+    // ⛔ `--conversation`, not `--continue`. Measured on agy 1.1.21: `-c` / `--continue` resumes
+    // *the most recent* conversation on this machine, which on a fleet running several worktrees at
+    // once - and on a machine whose operator uses `agy` by hand - is whichever one happened to speak
+    // last. Resuming by id is the only form that names the conversation this task is actually in.
+    //
+    // ⚠️ The id is the vendor's `conversation_id` off the `init` record, never agentyard's session
+    // id: this CLI names its own conversations, which is what `mintsSessionId: false` says.
+    if (req.resumeFrom) args.push('--conversation', req.resumeFrom)
     if (req.model) args.push('--model', req.model)
 
     const mode = req.permissionMode ?? info.policy.defaultPermissionMode

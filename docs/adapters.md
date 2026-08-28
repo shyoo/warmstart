@@ -84,6 +84,24 @@ behaviour falls out of it:
 - **`mintsSessionId: false`** → the transcript is discovered after the fact instead of predicted,
   and ⛔ **orphaned processes are never killed**, because identity cannot be proved. Leaving an orphan
   running costs quota; killing the wrong process costs somebody their work.
+- **`resumeSession: true`** → a task continued after its session has exited goes back into the
+  conversation it was already having, instead of starting one that has never heard of it. The
+  scheduler names the conversation; the adapter chooses the flag — `--resume <id>` for Claude Code,
+  `--conversation <id>` for Antigravity. ⛔ A claim about **the adapter**, not the CLI: `codex exec
+  resume` exists and is unwired, so `openai-compatible` says false. ⚠️ Two conditions the scheduler
+  checks before it will resume, both learned from real failures — the **same account** (a
+  conversation lives in one isolation root) and the **same worktree** (Claude Code files transcripts
+  under an encoding of the cwd, so resuming from elsewhere finds nothing and starts cold *quietly*).
+  A session with no recorded turn is never resumed: `claude --resume` on an unknown id fails the
+  process outright.
+  ⭐ **Measured end to end 2026-08-28**, one fact planted and asked back on each CLI:
+  claude 2.1.250 `--resume` returned the *same* `session_id` and answered from the earlier turn, at
+  **cache_read 41,542 / cache_creation 65** against the cold turn's **0 / 41,542** — the whole prefix
+  read instead of rebuilt. agy 1.1.22 `--conversation` returned the same `conversation_id`, answered
+  from the earlier turn, and reported `num_turns: 2`. ⚠️ But **agy reported `cache_read_tokens: 0`
+  on both turns** while `input_tokens` went 14,637 → 29,556: it restores the conversation and appears
+  to re-send it at full input price. Resuming is still right there — the context is what the agent
+  needs — but on this vendor it is not a *cache* saving, and nothing should claim one.
 - **`metering`** → `transcript` is exact and survives a restart; `stream` bills from the wire and
   loses whatever a restarted daemon was not attached for; `none` would mean runs cost an **unknown**
   amount rather than zero. Doctor states which, and what it costs.

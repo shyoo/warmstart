@@ -74,7 +74,9 @@ constraints, a verification policy, and a status.
 **Continuation** — *another run on a task that had stopped*, started by somebody replying to it. ⛔ A
 run, never a new task: same thread, same budget, same branch. Nothing routes it by hand — the session
 still holding its context scores highest, so the same worker, workspace and session are chosen because
-they are cheapest.
+they are cheapest. ⚠️ And when that session has already **exited** — which is the normal case, because
+completion closes it — the run **resumes its conversation** rather than opening a new one: same row,
+same id, `--resume` / `--conversation`. See `resumeSession` in `adapters.md`.
 
 **Run** — *one attempt of a task on one session.* Carries the actuals: tokens, wall time, cost, and
 the effective objective it ran under. Runs are what the estimator learns from.

@@ -56,6 +56,7 @@ function session(patch: Partial<Session> = {}): Session {
     pid: null,
     purpose: 'work',
     transcriptPath: null,
+    vendorSessionId: null,
     contextTokens: 68001,
     contextWindow: null,
     lastRequestStartedAt: null,

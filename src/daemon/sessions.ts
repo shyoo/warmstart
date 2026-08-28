@@ -162,6 +162,7 @@ interface SessionRow {
   pid: number | null
   purpose: string
   transcript_path: string | null
+  vendor_session_id: string | null
   context_tokens: number | null
   last_request_started_at: number | null
   cache_expires_at: number | null
@@ -188,6 +189,7 @@ function toSession(r: SessionRow): Session {
     pid: r.pid,
     purpose: (r.purpose as SessionPurpose) ?? 'work',
     transcriptPath: r.transcript_path,
+    vendorSessionId: r.vendor_session_id,
     contextTokens: r.context_tokens,
     contextWindow: contextWindowFor(r.adapter_id, r.model),
     lastRequestStartedAt: r.last_request_started_at,
@@ -231,6 +233,60 @@ export function getSession(id: string): Session | null {
   return r ? toSession(r) : null
 }
 
+/**
+ * Record the vendor's own name for this conversation, learned from the session's first record.
+ *
+ * ⛔ Written once and never overwritten with null. An adapter that reports an id on every record
+ * and a blank on one of them would otherwise erase the only handle that can resume it.
+ */
+export function noteVendorSession(sessionId: string, vendorId: string | null): void {
+  if (!vendorId) return
+  const changed = db()
+    .prepare(
+      'update sessions set vendor_session_id = ? where id = ? and coalesce(vendor_session_id, ?) = ?'
+    )
+    .run(vendorId, sessionId, vendorId, vendorId).changes
+  if (!changed) return
+  const session = getSession(sessionId)
+  if (session) {
+    const entry = live.get(sessionId)
+    if (entry) entry.session = session
+    events.onChange(session)
+  }
+}
+
+/**
+ * The session that already holds this conversation and could be started again, or null.
+ *
+ * ⛔ **Same worker and same directory, both required.** The worker because a conversation lives
+ * inside one account's isolation root and one quota bucket; the directory because Claude Code files
+ * its transcripts under an encoding of the cwd, so `--resume` run from another worktree finds
+ * nothing and starts cold while reporting success.
+ *
+ * ⚠️ Returns closed and failed sessions on purpose - those are precisely the ones worth reviving.
+ * A session that is still live needs no resuming and is `warmSessionFor`'s business.
+ */
+function hasRecordedTurn(sessionId: string): boolean {
+  return db().prepare('select 1 from turns where session_id = ? limit 1').get(sessionId) !== undefined
+}
+
+export function resumableSession(candidates: Session[], workerId: string, cwd: string): Session | null {
+  for (const session of candidates) {
+    if (session.workerId !== workerId || session.cwd !== cwd) continue
+    if (session.purpose !== 'work') continue
+    if (!adapter(session.adapterId).info.capabilities.resumeSession) continue
+    // ⛔ A recorded turn, and nothing weaker. A session that exited before it said anything has no
+    // conversation to go back to, and asking a CLI to resume one is not a quiet no-op: measured and
+    // written up in cost-model.md §7, `claude --resume` on an unknown id fails the process outright
+    // with *No conversation found with session ID*. Every empty session in this install's history -
+    // the 0-second Antigravity exits, the two Claude sessions that failed on start - has zero turns,
+    // and every real one has at least one.
+    if (!hasRecordedTurn(session.id)) continue
+    return session
+  }
+  return null
+}
+
 export function sessionsForWorker(workerId: string): Session[] {
   return rows<SessionRow>(
     db()
@@ -251,6 +307,19 @@ export interface SpawnOptions {
   cols?: number | undefined
   rows?: number | undefined
   purpose?: SessionPurpose | undefined
+  /**
+   * Start this session again holding the conversation it already had, rather than opening a new one.
+   *
+   * ⛔ The **same row**, not a copy. Claude Code's `--resume` reuses the original session id, so a
+   * second row would be a second name for one conversation and its transcript would be metered
+   * twice; and the context tokens, the cache clock and the transcript path all describe the thing
+   * being resumed. The row's `started_at` is left alone for the same reason - it is the age of the
+   * conversation, not of this process.
+   *
+   * ⚠️ Only honoured when the adapter declares `resumeSession`. Callers ask
+   * `resumableSession` rather than testing that themselves.
+   */
+  resume?: Session | undefined
 }
 
 /**
@@ -328,7 +397,9 @@ export function spawnSession(opts: SpawnOptions): Session {
 
   const ad = adapter(worker.adapterId)
   // Minted here, before the process exists, so the transcript path is known before the file is.
-  const id = randomUUID()
+  // ⚠️ Except when resuming, where the id already exists and is the whole point - see `opts.resume`.
+  const resuming = opts.resume && ad.info.capabilities.resumeSession ? opts.resume : null
+  const id = resuming?.id ?? randomUUID()
   const transport: SessionTransport = opts.transport ?? 'pty'
   // ⛔ Tool sets, by purpose, and each is a deliberate cost and trust decision:
   //  - `login`   — no tools. The vendor's own credential flow and nothing else.
@@ -352,7 +423,11 @@ export function spawnSession(opts: SpawnOptions): Session {
     effort: opts.effort,
     permissionMode: opts.permissionMode,
     mcpConfig,
-    argv: opts.argv
+    argv: opts.argv,
+    // ⛔ The vendor's handle where it gave us one, ours where it took ours. `mintsSessionId` is
+    // exactly the question of which, and getting it backwards means handing a CLI an id it has never
+    // heard of - which resumes nothing and says nothing about it.
+    ...(resuming ? { resumeFrom: resuming.vendorSessionId ?? resuming.id } : {})
   })
 
   // Stopped from handleExit, whichever way the session ends. Declared here so both closures see it.
@@ -437,11 +512,24 @@ export function spawnSession(opts: SpawnOptions): Session {
   // Guessing at the name would risk metering somebody else's session as ours.
   const transcriptPath = purpose === 'login' ? null : ad.transcriptPath(worker.isolationRoot, cwd, id)
   const now = Date.now()
+  // ⚠️ `on conflict` is the resume path and reaches nothing else: every other spawn mints a fresh
+  // uuid, so the row cannot already exist. What it deliberately does **not** touch is what makes the
+  // resumed session the same session - `started_at`, `context_tokens` and `transcript_path` all
+  // describe the conversation rather than this process.
+  //
+  // ⛔ The cache clock is cleared, though. A session told to `/compact` and then closed before it
+  // could comes back believing a move is still in flight, and the clock would wait out its timeout
+  // against a process that has no memory of being asked.
   db()
     .prepare(
       `insert into sessions (id, worker_id, adapter_id, transport, cwd, model, state, pid,
                              purpose, transcript_path, tokens_since_compact, started_at, effort)
-       values (?, ?, ?, ?, ?, ?, 'starting', ?, ?, ?, 0, ?, ?)`
+       values (?, ?, ?, ?, ?, ?, 'starting', ?, ?, ?, 0, ?, ?)
+       on conflict(id) do update set
+         state = 'starting', pid = excluded.pid, closed_at = null,
+         transport = excluded.transport, cwd = excluded.cwd,
+         model = coalesce(excluded.model, sessions.model),
+         clock_move = null, clock_move_at = null, clock_move_attempts = 0, clock_move_context = null`
     )
     .run(
       id,
@@ -476,7 +564,8 @@ export function spawnSession(opts: SpawnOptions): Session {
   })
 
   log.info(
-    `spawned ${purpose} session ${id.slice(0, 8)} on ${worker.label}: ${plan.command} ${plan.args.join(' ')}`
+    `${resuming ? 'resumed' : 'spawned'} ${purpose} session ${id.slice(0, 8)} on ${worker.label}: ` +
+      `${plan.command} ${plan.args.join(' ')}`
   )
   setState(id, 'live')
   if (!transcriptPath && purpose !== 'login' && ad.discoverTranscript) {

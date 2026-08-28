@@ -58,6 +58,17 @@ export interface SpawnRequest {
   mcpConfig?: string | null | undefined
   /** A one-shot flow (login, doctor) supplies its own argv and ignores session options. */
   argv?: string[] | undefined
+  /**
+   * The vendor's own handle for a conversation this session should continue.
+   *
+   * ⛔ **Only set when the adapter declares `resumeSession`**, and the flag it becomes is the
+   * adapter's business: Claude Code takes `--resume <session-id>`, Antigravity takes
+   * `--conversation <uuid>`. The scheduler knows only that a handle exists, never the spelling.
+   *
+   * ⚠️ Not the same field as `sessionId`. Where the CLI mints its own ids the two differ, which is
+   * exactly why this is separate: agentyard's handle is not something the vendor would recognise.
+   */
+  resumeFrom?: string | undefined
 }
 
 export interface SpawnPlan {

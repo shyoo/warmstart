@@ -291,6 +291,17 @@ export interface Session {
   pid: number | null
   purpose: SessionPurpose
   transcriptPath: string | null
+  /**
+   * The vendor's own name for this conversation, if it has told us one.
+   *
+   * ⛔ Not `id`. Where the CLI mints its own conversation ids - Antigravity does - this is the only
+   * handle that CLI would recognise, and `id` is agentyard's private label. Where the CLI takes an
+   * id we chose, the two are the same string.
+   *
+   * Null until the session's first record arrives, and permanently null for adapters that say
+   * nothing about it.
+   */
+  vendorSessionId: string | null
   contextTokens: number | null
   /**
    * How big this session's context window is, from the cost model that prices its model.
@@ -370,6 +381,14 @@ export interface AdapterCapabilities {
   classifierBackedAuto: boolean
   approvalChannel: 'permission_prompt_tool' | 'settings_rules' | 'none'
   manualCompact: boolean
+  /**
+   * This adapter's `plan` honours `SpawnRequest.resumeFrom`, so a session that has exited can be
+   * started again holding the conversation it already had.
+   *
+   * ⛔ A claim about **this adapter**, not about the CLI. A vendor flag nobody has wired up here
+   * reads as `false`: the scheduler acts on this by dropping a cold start it would otherwise pay
+   * for, and a capability that lies in that direction silently loses somebody's context.
+   */
   resumeSession: boolean
   forkSession: boolean
   nativeWorktree: boolean

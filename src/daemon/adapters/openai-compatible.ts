@@ -67,7 +67,12 @@ const info: AdapterInfo = {
     // costs a stalled session at a window boundary, while omitting one that is present costs only a
     // missed optimisation. Conservative is the cheap direction of the error.
     manualCompact: false,
-    resumeSession: true,
+    // ⛔ False because **this adapter does not honour `resumeFrom`**, not because Codex cannot
+    // resume - `codex exec resume` exists and has not been run here. The flag is read by the
+    // scheduler to skip a cold start, so claiming it before `plan` implements it would drop the
+    // prompt's context on the floor and report a warm continuation. Promote it the day it is wired
+    // and measured.
+    resumeSession: false,
     forkSession: true,
     nativeWorktree: false,
     multimodalInput: true,

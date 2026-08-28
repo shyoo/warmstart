@@ -7,7 +7,13 @@ import { loadCostModels } from './costmodel.js'
 import { loadAdapters } from './adapters/index.js'
 import { startServer, type DaemonServer } from './server.js'
 import { QuotaPoller } from './quota.js'
-import { getSession, reconcileOrphans, setSessionEvents, shutdownAll } from './sessions.js'
+import {
+  getSession,
+  noteVendorSession,
+  reconcileOrphans,
+  setSessionEvents,
+  shutdownAll
+} from './sessions.js'
 import { reconcileClaims } from './resources.js'
 import {
   onSessionExit,
@@ -102,6 +108,12 @@ async function main(): Promise<void> {
       emit({ type: 'session.data', sessionId, data })
     },
     onStream(session, event) {
+      // ⛔ The vendor's name for this conversation, and the only moment it is ever offered. It was
+      // decoded and thrown away: `agy` names its own conversations, reports the id once on `init`,
+      // and takes `--conversation <id>` to resume one - so discarding it is what made every reply on
+      // an Antigravity task a cold start. Measured on this install 2026-08-28: nine (task, adapter)
+      // pairs, distinct sessions equal to runs in all nine.
+      if (event.kind === 'init') noteVendorSession(session.id, event.sessionId)
       // The one quota signal that is both live and free: it rides a turn already being paid for.
       if (event.kind === 'rate_limit') {
         recordRateLimit(session.workerId, session.id, event.info)

@@ -42,6 +42,7 @@ import {
   backscroll,
   closeSession,
   getSession,
+  resumableSession,
   sendPrompt,
   sessionsForWorker,
   spawnSession
@@ -311,6 +312,22 @@ function warmSessionFor(task: Task): Session | null {
     return session
   }
   return null
+}
+
+/**
+ * Every session this task has ever run on, newest first.
+ *
+ * ⚠️ Includes the closed and the failed ones, which is the whole point. `warmSessionFor` wants the
+ * session that is still up; this wants the conversation that still exists on disk.
+ */
+function pastSessionsFor(task: Task): Session[] {
+  const found: Session[] = []
+  for (const run of runsFor(task.id)) {
+    if (!run.sessionId) continue
+    const session = getSession(run.sessionId)
+    if (session && !found.some((s) => s.id === session.id)) found.push(session)
+  }
+  return found
 }
 
 /**
@@ -642,8 +659,16 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
   let workspace: Workspace | null = null
   let branch: string | null = null
 
+  // ⛔ The directory a resumable conversation was in, offered to the pool as a preference.
+  // Claude Code files its transcripts under an encoding of the cwd, so `--resume` from a different
+  // worktree finds nothing - and it finds nothing *quietly*, starting a fresh conversation and
+  // reporting success. Getting the same tree back is what makes resuming possible at all; it is a
+  // preference rather than a requirement because a free workspace beats no workspace.
+  const past = pastSessionsFor(task)
+  const priorCwd = past.find((s) => s.workerId === worker.id)?.cwd
+
   if (project) {
-    workspace = await claimWorkspace(project, task.id)
+    workspace = await claimWorkspace(project, task.id, priorCwd)
     if (!workspace) throw new Error(`no free workspace in ${project.name}`)
 
     branch = project.vcs === 'git' ? branchNameFor(task.seq, task.title) : null
@@ -670,10 +695,17 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
   // — worse, because it is quiet — a task that records a setting nothing ever applied. The form
   // will not have offered the choice for such a worker; this is the guard for every other caller.
   const canSetEffort = adapter(worker.adapterId).info.capabilities.selectableEffort
+  // ⭐ The conversation this task was already having, if it is still on disk and this is the same
+  // account and the same tree. Resuming costs the read of a cache that is very likely cold by now;
+  // *not* resuming costs rebuilding the whole prefix and re-discovering the branch, the files and
+  // everything the last run worked out - and it produced an agent that answers a follow-up question
+  // having never seen the question it follows.
+  const revive = resumableSession(past, worker.id, cwd)
   const session = spawnSession({
     workerId: worker.id,
     cwd,
     transport: 'stream',
+    ...(revive ? { resume: revive } : {}),
     ...(task.constraints.model ? { model: task.constraints.model } : {}),
     ...(task.constraints.effort && canSetEffort ? { effort: task.constraints.effort } : {})
   })
@@ -700,14 +732,15 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
   addMessage(
     task.id,
     'system',
-    `Started on ${worker.label}${branch ? ` in ${workspace?.path} on \`${branch}\`` : ''}` +
+    `${revive ? 'Resumed the earlier conversation' : 'Started'} on ${worker.label}` +
+      `${branch ? ` in ${workspace?.path} on \`${branch}\`` : ''}` +
       (quotaUnverified ? ' — quota reading was not trustworthy, so this run is marked unverified.' : '')
   )
 
   // The CLI needs a moment before it starts reading stdin; a message sent too early is dropped.
   setTimeout(() => {
     try {
-      sendPrompt(session.id, promptFor(task, worker.adapterId))
+      sendPrompt(session.id, promptFor(task, worker.adapterId, revive !== null))
     } catch (err) {
       log.warn(`could not send the prompt for t${task.seq}:`, err)
     }
@@ -719,6 +752,7 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
   log.info(
     `dispatched t${task.seq} to ${worker.label} (run ${run.id.slice(0, 8)}, ` +
       `score ${choice.score.toFixed(2)}: ${choice.reason})` +
+      (revive ? `, resuming conversation ${(revive.vendorSessionId ?? revive.id).slice(0, 8)}` : '') +
       (quotaUnverified ? ' — on an unverified quota reading' : '')
   )
 }
@@ -979,7 +1013,7 @@ async function preempt(
  * The handoff from a previous run is prepended, because a successor that has to rediscover the state
  * of the branch pays for it twice - once in tokens and once in the mistakes it makes meanwhile.
  */
-function promptFor(task: Task, adapterId: string): string {
+function promptFor(task: Task, adapterId: string, resumed = false): string {
   const parts: string[] = []
   if (task.handoffNote) {
     parts.push(
@@ -988,12 +1022,18 @@ function promptFor(task: Task, adapterId: string): string {
   }
   parts.push(task.title)
 
-  // ⚠️ The first human message is the task's own prompt and is always restated: a fresh session after
-  // a preemption has no idea what it was asked to do. Everything after it is a *note*, and a note
+  // ⚠️ The first human message is the task's own prompt and is restated: a fresh session after a
+  // preemption has no idea what it was asked to do. Everything after it is a *note*, and a note
   // typed into a live session was already answered there - repeating it would charge for it twice and
   // leave the agent unsure what is still outstanding.
+  //
+  // ⛔ Except into a resumed conversation, which is the one case where the reason above does not
+  // hold: that session has the original prompt in its own history and everything it did about it.
+  // Restating it there reads as being asked to do the work a second time, which is the failure the
+  // delivery bookkeeping exists to prevent - it would just be arriving through the one message the
+  // bookkeeping deliberately exempts.
   const thread = messagesFor(task.id).filter((m) => m.role === 'human')
-  const outstanding = thread.filter((m, i) => i === 0 || m.deliveredAt === null)
+  const outstanding = thread.filter((m, i) => (i === 0 && !resumed) || m.deliveredAt === null)
   for (const message of outstanding) parts.push(message.text)
   markDelivered(outstanding.map((m) => m.id))
 

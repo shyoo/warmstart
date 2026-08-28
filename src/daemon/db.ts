@@ -501,6 +501,21 @@ const MIGRATIONS: string[] = [
     id           text primary key,
     dismissed_at integer not null
   );
+  `,
+
+  // 10 - the vendor's own name for the conversation, so a session can be started again holding it.
+  //
+  // ⛔ Measured on this install 2026-08-28: across the nine (task, adapter) pairs that have ever
+  // run, distinct sessions equalled runs in every one - t8 alone burned four Antigravity
+  // conversations on four turns of the same task. `warmSessionFor` has never once matched, because
+  // `completeTask` closes the session a second after the turn ends and the next reply spawns cold.
+  // The context was not being reused; it was being rebuilt from nothing every time, at 2.0·C.
+  //
+  // ⚠️ Distinct from `sessions.id` on purpose. Claude Code takes an id we mint, so the two agree;
+  // Antigravity names its own conversation and reports it on the `init` record, so for that adapter
+  // this is the only handle the CLI would recognise. Null until a session says what it is.
+  `
+  alter table sessions add column vendor_session_id text;
   `
 ]
 

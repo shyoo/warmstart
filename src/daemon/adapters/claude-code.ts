@@ -453,13 +453,24 @@ export const claudeCode: AgentAdapter = {
 
     if (req.argv) return { command, args: [...prefixArgs, ...req.argv], env }
 
-    const args = [
-      // Minted before the process starts, so the transcript path is known before there is a file.
-      '--session-id',
-      req.sessionId,
-      '--permission-mode',
-      req.permissionMode ?? info.policy.defaultPermissionMode
-    ]
+    // ⛔ `--resume <id>` **reuses the original session id** rather than minting a new one - the
+    // CLI says so itself, and `--fork-session` is the flag that opts out. That is what makes resuming
+    // safe here: the transcript path stays `<id>.jsonl`, orphan reaping can still prove the pid is
+    // ours from its command line, and the row this session already had is the row it comes back to.
+    // ⚠️ Passing `--session-id` alongside it would be asking for two different ids at once.
+    //
+    // ⚠️ Resuming re-reads the transcript from the top, so every turn already recorded arrives
+    // again. That is absorbed by the unique index on (session_id, request_id) in `recordTurn`, which
+    // exists because this CLI writes duplicate usage records anyway - see cost-model.md §6.
+    const args = req.resumeFrom
+      ? ['--resume', req.resumeFrom, '--permission-mode', req.permissionMode ?? info.policy.defaultPermissionMode]
+      : [
+          // Minted before the process starts, so the transcript path is known before there is a file.
+          '--session-id',
+          req.sessionId,
+          '--permission-mode',
+          req.permissionMode ?? info.policy.defaultPermissionMode
+        ]
     if (req.model) args.push('--model', req.model)
     if (req.mcpConfig) {
       args.push('--mcp-config', req.mcpConfig)

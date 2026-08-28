@@ -70,6 +70,7 @@ function seedSession(
     pid: null,
     purpose: 'work',
     transcriptPath: null,
+    vendorSessionId: null,
     contextTokens: null,
     contextWindow: null,
     lastRequestStartedAt: patch.lastRequestStartedAt ?? null,
