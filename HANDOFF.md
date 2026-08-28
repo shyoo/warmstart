@@ -63,8 +63,8 @@ src/daemon/            orchestratord. Runs as Electron-with-ELECTRON_RUN_AS_NODE
                        moveOutcome() is what stops it being re-asked (+ .test.ts)
   lifecycle.ts         how the daemon is asked to stop itself. ⛔ Asked, never killed by pid
   settings.ts          the fleet defaults the operator owns - autoCompact, autoPreempt,
-                       autoRunawayStop (Overview > Cost) and finishPolicy (Global). Per-worker,
-                       `enabled` is a switch on its Workers row - held out of dispatch, not retired
+                       autoRunawayStop, probeIntervalMinutes, and finishPolicy (all under
+                       Settings > Global). Per-worker, `enabled` is on Workers row
   reserve.ts           the compaction reserve, and every belief with its basis attached
   objective.ts         the weight vector, in exactly two consumers    (+ cost.test.ts)
   controller.ts        the consult queue, the caps, and choosing who answers (+ controller.test.ts,
@@ -107,8 +107,8 @@ docs/                  cost-model.md, glossary.md, adapters.md, landing.md - mai
   opens that terminal; print mode skips them, so work runs while a quota probe cannot.
 - ⚠️ **The tray *icon* has never been exercised end to end** — appearing, close-to-hide,
   click-to-restore. The switch and `daemon.shutdown` are covered.
-- ⭐ **Every intervention on a live session has an off switch** — Overview > Cost: `autoCompact` and
-  `autoPreempt` **on**, `autoRunawayStop` **off**.
+- ⭐ **Every intervention on a live session has an off switch** — Settings > Global: `autoCompact` and
+  `autoPreempt` **on**, `autoRunawayStop` **off**, plus configurable `probeIntervalMinutes` (default 5m).
 - ⚠️ **The runaway factor measures the wrong thing, which is why its switch ships off.** 92–98% of a
   run's tokens are cache reads (`docs/cost-model.md` §10), so it fires on long work, not expensive
   work. Item 5 under **Next**.
@@ -157,10 +157,9 @@ M0–M6 are done. What is left is not a milestone but a list, in the order it wo
 - **Auto-mode classifier cost on a subscription** (`docs/cost-model.md` §9). Documented as billable on
   Enterprise and API-billed accounts, unstated for Pro/Max/Team, and Claude workers default to `auto`.
   ⛔ Do not assume it is free — **R1** measures it.
-- **Vertex / Antigravity cache pricing.** Both cost models declare `cache.kind: "unpriced"` and the clock declines to act. Needs a published figure, not an experiment.
+- **Vertex / Antigravity cache pricing.** Both declare `cache.kind: "unpriced"`; needs a published figure, not an experiment.
 - **`expected idle` estimator** (plan §8.6). Not designable without real queue data.
-- **Are the consult prompts good enough?** The honest gap in M4 (**R8**). ⛔ If replies fail
-  validation the prompt is wrong, not the validator.
+- **Are the consult prompts good enough?** The honest gap in M4 (**R8**). ⛔ If replies fail validation the prompt is wrong.
 
 ## Measurement runs owed
 
