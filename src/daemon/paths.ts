@@ -126,8 +126,24 @@ export const paths = {
   get lock() {
     return join(dataDir(), 'orchestratord.lock')
   },
+  /**
+   * Today's log file.
+   *
+   * ⚠️ Dated, not a single growing file. One `orchestratord.log` rotated at 5MB answered "what is
+   * the daemon doing now" and nothing else: the moment it rolled, the only copy of last week was
+   * `orchestratord.log.1`, and the moment it rolled twice that was gone too. A day per file is what
+   * makes "what happened on Tuesday" a question with an answer, and it is the unit a person
+   * actually asks in. `logs.ts` prunes them.
+   */
+  daemonLogFor(when: Date | number = Date.now()) {
+    const d = typeof when === 'number' ? new Date(when) : when
+    // ⛔ Local date, not ISO/UTC. A file called 2026-08-28 must hold what the operator did on the
+    // 28th as their clock told it, or an evening's work lands in tomorrow's file.
+    const stamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+    return join(dataDir(), 'logs', `orchestratord-${stamp}.log`)
+  },
   get daemonLog() {
-    return join(dataDir(), 'logs', 'orchestratord.log')
+    return this.daemonLogFor()
   }
 }
 

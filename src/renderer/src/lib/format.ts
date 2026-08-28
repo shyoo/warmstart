@@ -172,9 +172,10 @@ export function quotaGap(
     return {
       label: 'stale',
       hint:
-        `The only reading available was taken ${age(quota.ageMs ?? 0)} and is too old to act on, so ` +
-        'it is not shown as a current number. The CLI refreshes its cache when it next does real ' +
-        'work - start a session on this worker to get a fresh one.'
+        `The only reading available was taken ${age(quota.ageMs ?? 0)} and is too old to act on. It ` +
+        'is still shown, because knowing what it was is not the same as having no reading at all - ' +
+        'but nothing the scheduler gates on will use it. The CLI refreshes its cache when it next ' +
+        'does real work, so start a session on this worker to get a fresh one.'
     }
   }
   return null

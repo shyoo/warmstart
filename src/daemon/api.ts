@@ -19,7 +19,7 @@ import {
   retireWorker,
   updateWorker
 } from './workers.js'
-import { lastQuota, refreshUsage } from './quota.js'
+import { lastQuota, lastQuotaReading, refreshUsage } from './quota.js'
 import {
   backscroll,
   closeSession,
@@ -70,6 +70,7 @@ import {
   completeTask,
   continueTask,
   deliverToLiveSession,
+  relandTask,
   resolveTask,
   tick
 } from './scheduler.js'
@@ -82,7 +83,8 @@ import { decide, medianHumanLatencyMs } from './cacheclock.js'
 import { DEFAULT_OBJECTIVE } from './objective.js'
 import { setSetting, settings } from './settings.js'
 import { lastRateLimit, windowResetsAt } from './quota.js'
-import { log } from './log.js'
+import { log, logFiles, recentLog } from './log.js'
+import { dismissLooseEnd, scanLooseEnds } from './finish.js'
 
 type Handler<M extends RpcMethod> = (params: RpcParams<M>) => RpcResult<M> | Promise<RpcResult<M>>
 
@@ -141,10 +143,12 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
     'adapter.list': (): AdapterInfo[] => adapters().map((a) => a.info),
     'adapter.detect': () => Promise.all(adapters().map((a) => a.detect())),
 
+    // ⚠️ `lastQuotaReading`, not `lastQuota`: this is the display path, and it shows the newest
+    // reading that has windows rather than the newest *attempt*. Nothing here gates anything.
     'fleet.list': () =>
       listWorkers().map((worker) => ({
         worker,
-        quota: lastQuota(worker.id),
+        quota: lastQuotaReading(worker.id),
         sessions: sessionsForWorker(worker.id)
       })),
 
@@ -344,6 +348,29 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
       const { id, ...patch } = p
       return updateTask(id, patch)
     },
+    /**
+     * Set a task's finish policy, and act on it if the task is already sitting on finished work.
+     *
+     * ⛔ Changing this to `agent-lands` on a task resting in `awaiting_human` *is* the decision to
+     * land it — that is the whole value of a control you can change after the fact. The bar is
+     * unchanged: `relandTask` runs the same `decideFinish` a first completion would, so a task that
+     * is not safe to land comes straight back with the reason.
+     */
+    'task.setFinishPolicy': async (p) => {
+      const before = requireTask(p.id)
+      const task = updateTask(p.id, { finishPolicy: p.finishPolicy })
+      const wantsLanding = p.finishPolicy === 'agent-lands' || p.finishPolicy === 'pull-request'
+      if (!wantsLanding || before.status !== 'awaiting_human' || !task.branch) {
+        return { task, landed: false }
+      }
+      const result = await relandTask(p.id)
+      return { task: requireTask(p.id), landed: result.ok, ...(result.reason ? { reason: result.reason } : {}) }
+    },
+    'task.land': async (p) => {
+      const result = await relandTask(p.id)
+      return { task: requireTask(p.id), landed: result.ok, ...(result.reason ? { reason: result.reason } : {}) }
+    },
+
     'task.message': (p) => {
       addMessage(p.id, 'human', p.text)
       // ⛔ Delivered into the live session if there is one. That is `0.1·C` and it refreshes the TTL;
@@ -400,6 +427,35 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
 
     // ---- resources and the loop --------------------------------------------------------
     'resource.list': () => allAvailability(),
+
+    // ---- the log ------------------------------------------------------------------------
+    // ⛔ Read-only, both of them. Nothing here may delete a log file: the one thing an operator
+    // needs from a record of an unattended fleet is that it is still there afterwards.
+    // ---- loose ends ---------------------------------------------------------------------
+    // ⛔ Read, dismiss, and create a task. Nothing here removes a workspace, discards a stash or
+    // deletes a branch: the whole point of the list is that the work outlives the run that made it.
+    'looseend.list': () => scanLooseEnds(),
+    'looseend.dismiss': (p) => {
+      dismissLooseEnd(p.id)
+      return { ok: true as const }
+    },
+    'looseend.reclaim': (p) => {
+      const end = p
+      const task = createTask({
+        title:
+          `Reclaim ${end.workspacePath}: ${end.summary}. Inspect what is there, finish it or ` +
+          'discard it deliberately, and land what should be landed. Do not delete work you cannot ' +
+          'account for.',
+        projectId: end.projectId,
+        priority: 'P2',
+        createdBy: { kind: 'human' }
+      })
+      log.info(`t${task.seq} filed to reclaim ${end.workspacePath}`)
+      return task
+    },
+
+    'log.tail': (p) => recentLog(Math.min(p.limit ?? 500, 2000), p.level ?? 'debug'),
+    'log.files': () => ({ directory: paths.logs, files: logFiles() }),
 
     'settings.get': () => settings(),
 

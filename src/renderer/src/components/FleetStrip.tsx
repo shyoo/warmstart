@@ -14,9 +14,17 @@ import {
  * What the operator currently holds in their head, made visible: how much of each account's window
  * is spent, when it resets, and how long each live session's prompt cache has left.
  *
- * ⚠️ The staleness treatment is the point of this component, not a detail. A quota reading whose age
- * is unknown-or-old is rendered as unknown, never as a confident number - a stale percentage makes
- * the compaction reserve look satisfied when it is not, and that failure strands context.
+ * ⚠️ The staleness treatment is the point of this component, not a detail — but *marked* is not the
+ * same as *hidden*, and this drew the distinction in the wrong place until 2026-08-28. A reading
+ * past `STALE_AFTER_MS` (15 minutes) was replaced by the words `quota unknown`, so every account
+ * read as unmeasured for the first minutes after a launch, and an account nobody had probed in a day
+ * looked identical to one that had never been probed at all. Those are different states and the
+ * operator acts on them differently.
+ *
+ * ⛔ The invariant that actually matters is unchanged and does not live here: **nothing downstream
+ * may consume a stale percentage.** `reserveState` refuses one, and a gate satisfied by a stale
+ * number is what strands context (`docs/cost-model.md` §5). A person reading a number that says
+ * *stale* beside it is not a gate. So the last known reading is shown, labelled, and dimmed.
  */
 export function FleetStrip({ fleet, now }: { fleet: FleetEntry[]; now: number }): React.JSX.Element {
   if (fleet.length === 0) {
@@ -57,12 +65,32 @@ export function FleetStrip({ fleet, now }: { fleet: FleetEntry[]; now: number })
  * no turn yet — a session that has just started, or one that never got going — and `0` reads as a
  * measurement rather than as an absence. `tokens()` already draws unknown as `--` for exactly this
  * reason; the same must be true one level up.
+ *
+ * ⛔ **And a session with no turn yet gets no gauge at all.** Drawing the row anyway produced an
+ * empty bar, `no turn yet` and `--:--` — three placeholders in the shape of three measurements,
+ * which is what a probe session looks like for its whole 30-second life and what every session looks
+ * like for its first few seconds. ⚠️ The state is still shown, as a word. What is withheld is the
+ * *shape* of a reading that does not exist yet.
  */
 function SessionGauge({ session, now }: { session: Session; now: number }): React.JSX.Element {
   const ctx = session.contextTokens
   const window = session.contextWindow
   const left = cacheRemaining(session, now)
   const urgency = cacheUrgency(session.cacheExpiresAt, now)
+
+  if (!ctx) {
+    return (
+      <div
+        className="gauge gauge--session gauge--waiting"
+        title={`session ${session.id}\n${session.purpose} · ${session.transport} transport\n${session.cwd}`}
+      >
+        <span className="gauge-label">{session.purpose}</span>
+        <span className="wcard-agenote">
+          {session.purpose === 'probe' ? 'reading the window…' : 'starting…'}
+        </span>
+      </div>
+    )
+  }
 
   return (
     <div
@@ -85,8 +113,10 @@ function SessionGauge({ session, now }: { session: Session; now: number }): Reac
           />
         )}
       </span>
+      {/* ⚠️ No `no turn yet` fallback here any more — a session without one never reaches this. */}
       <span className="num gauge-value">
-        {ctx ? `${tokens(ctx)}${window ? `/${tokens(window)}` : ''}` : 'no turn yet'}
+        {tokens(ctx)}
+        {window ? `/${tokens(window)}` : ''}
       </span>
       <span className={`num gauge-reset gauge-reset--${urgency}`}>
         {countdown(session.cacheExpiresAt, now)}
@@ -118,33 +148,64 @@ function WorkerCard({ entry, now }: { entry: FleetEntry; now: number }): React.J
         )}
       </div>
 
-      {/* ⛔ Above the quota gauges, because it outranks them. An account that cannot run anything has
-          a percentage that is true and irrelevant, and burying the reason under it is how this fleet
-          spent an afternoon routing work to a worker that could not take it. */}
-      {suspect && <div className="wcard-suspect">{suspect.reason}</div>}
+      {/* ⛔ The *fact* outranks the quota gauges and still leads — burying it is how this fleet spent
+          an afternoon routing work to a worker that could not take it. What no longer leads is the
+          raw text. ⚠️ A CLI's failure is a paragraph of escape codes and vendor prose; four cards
+          wide it pushed the numbers off the strip and was unreadable anyway. The tag above says
+          which kind, this says there is a reason, and the reason itself is one hover or one click
+          away in Settings > Workers, which is where the operator has to go to act on it. */}
+      {suspect && (
+        <div className="wcard-suspect" title={`${suspect.reason}\n\nSettings > Workers has the rest.`}>
+          <span className="dot dot--bad" />
+          error · see Settings &gt; Workers
+        </div>
+      )}
 
-      {windows.length === 0 || stale ? (
+      {windows.length === 0 ? (
         <div className="wcard-unknown">
           <span className="dot dot--down" />
           quota unknown
-          {quota?.ageMs !== undefined && quota.windows.length > 0 && (
-            <span className="num wcard-agenote"> · last seen {age(quota.ageMs)}</span>
-          )}
         </div>
       ) : (
-        windows.map((w) => (
-          <div className="gauge" key={w.id}>
-            <span className="gauge-label">{w.label}</span>
-            <span className="bar">
-              <span
-                className={`bar-fill bar-fill--${quotaUrgency(w.percent)}`}
-                style={{ width: `${Math.min(100, Math.max(2, w.percent))}%` }}
-              />
-            </span>
-            <span className="num gauge-value">{percent(w.percent)}</span>
-            <span className="num gauge-reset">{countdown(w.resetsAt, now)}</span>
+        <>
+          {/* ⚠️ Dimmed as a whole, so the numbers read as *last known* rather than as current. The
+              note carries the age, because "stale" alone does not tell you whether to wait for the
+              next probe or go and press one. */}
+          <div className={stale ? 'wcard-windows wcard-windows--stale' : 'wcard-windows'}>
+            {windows.map((w) => (
+              <div className="gauge" key={w.id}>
+                <span className="gauge-label">{w.label}</span>
+                <span className="bar">
+                  <span
+                    className={`bar-fill bar-fill--${quotaUrgency(w.percent)}`}
+                    style={{ width: `${Math.min(100, Math.max(2, w.percent))}%` }}
+                  />
+                </span>
+                <span className="num gauge-value">{percent(w.percent)}</span>
+                <span className="num gauge-reset">{countdown(w.resetsAt, now)}</span>
+              </div>
+            ))}
           </div>
-        ))
+          {stale && (
+            <div
+              className="wcard-stale"
+              title={
+                'Older than 15 minutes, so this is the last reading taken, not the state of the ' +
+                'window now. Nothing the scheduler gates on will use it — Probe takes a fresh one.'
+              }
+            >
+              <span className="dot dot--down" />
+              stale
+              {quota?.ageMs !== undefined && (
+                <span className="num wcard-agenote"> · last seen {age(quota.ageMs)}</span>
+              )}
+              {/* ⛔ Not the same thing as old. These numbers being an hour old because nobody has
+                  probed since is ordinary; being an hour old because every probe since has failed is
+                  a fault, and the operator would otherwise read the first and get the second. */}
+              {quota?.error && <span className="wcard-agenote"> · last check failed</span>}
+            </div>
+          )}
+        </>
       )}
 
       {/* ⛔ The rule is load-bearing, not decoration. Everything above it is the **account**: one

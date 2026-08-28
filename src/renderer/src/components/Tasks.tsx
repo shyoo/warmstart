@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { Project, Run, Task, TaskMessage } from '@shared/tasks'
+import type { FinishPolicyChoice, Project, Run, Task, TaskMessage } from '@shared/tasks'
 import type { ModelOptions, Session } from '@shared/protocol'
 import { rpc, useDaemonEvents, useNow, type FleetEntry } from '../lib/daemon'
 import { duration, tokens, when } from '../lib/format'
@@ -519,6 +519,12 @@ function TaskDetail({
               </span>
             </Fact>
           ) : null}
+          {/* ⛔ Settable while the task is running, and settable after it has finished — which is
+              the point. Switching a task resting in `awaiting_human` to a landing policy *is* the
+              decision to land it, and the same bar a first completion faced is applied again. */}
+          <Fact label="finish">
+            <FinishPicker task={task} />
+          </Fact>
           <Fact label="priority">{task.priority}</Fact>
           <Fact label="filed">{when(task.createdAt)}</Fact>
           {task.firstRunAt && <Fact label="started">{when(task.firstRunAt)}</Fact>}
@@ -1151,5 +1157,61 @@ function NewTask({
         </div>
       </div>
     </div>
+  )
+}
+
+/**
+ * What happens to this task's work when it is done.
+ *
+ * ⚠️ Three tiers resolve into one answer — task, then project, then fleet — and `inherit` is a real
+ * value rather than a blank. A task set to inherit follows its project as the project changes; one
+ * set explicitly to the same value does not, and a control that could not express the difference
+ * would quietly convert every glance at this dropdown into a decision.
+ *
+ * ⛔ The answer from the daemon is what lands in state, never the value that was clicked — and here
+ * that matters twice over, because choosing a landing policy on a finished task also *lands* it, and
+ * the attempt can be refused. A dropdown that painted itself green while the push was rejected would
+ * be the worst kind of lie this app could tell.
+ */
+function FinishPicker({ task }: { task: Task }): React.JSX.Element {
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState<string | null>(null)
+
+  const choose = async (finishPolicy: FinishPolicyChoice): Promise<void> => {
+    setBusy(true)
+    setNote(null)
+    try {
+      const result = await rpc('task.setFinishPolicy', { id: task.id, finishPolicy })
+      setNote(
+        result.landed
+          ? 'landed'
+          : result.reason
+            ? `not landed — ${result.reason}`
+            : null
+      )
+    } catch (err) {
+      setNote(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <>
+      <select
+        className="finish-picker"
+        value={task.finishPolicy}
+        disabled={busy}
+        aria-label="Finish policy"
+        onChange={(e) => void choose(e.target.value as FinishPolicyChoice)}
+      >
+        <option value="inherit">inherit</option>
+        <option value="await-human">await human</option>
+        <option value="agent-lands">agent lands it</option>
+        <option value="pull-request">open a pull request</option>
+        <option value="custom">this project&rsquo;s own policy</option>
+      </select>
+      {note && <div className="note">{note}</div>}
+    </>
   )
 }

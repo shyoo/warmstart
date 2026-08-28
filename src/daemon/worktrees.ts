@@ -344,3 +344,105 @@ export async function parkWorkspace(project: Project, path: string): Promise<voi
 }
 
 export { git as gitIn }
+
+// ---------------------------------------------------------------------------- what is in there
+
+/**
+ * Everything a workspace is holding that removing it would destroy.
+ *
+ * ⛔ **One predicate, asked once, used by everything.** Before 2026-08-28 four code paths each asked
+ * a different half of this question: `canLand` asked *is it clean*, `whereTheWorkIs` asked *clean or
+ * committed*, `rescueDirt` asked *is there anything to stash*, and the dispatcher asked nothing at
+ * all. So a branch carrying real commits with a clean tree - t5's `ea05929` - was invisible to every
+ * one of them, and sat unnoticed for a day.
+ *
+ * ⭐ The three-part definition is the one every serious tool converges on: **changed files, untracked
+ * files, and commits that are not on the target.** Claude Code's worktree sweep uses exactly this to
+ * decide whether removing a worktree would lose work, and refuses when any part is non-empty.
+ *
+ * ⚠️ Stashes count too, and they are the part unique to this app: `rescueDirt` takes them
+ * automatically, so a slot can look pristine while holding somebody's afternoon in the object store.
+ * Preserving work silently is only half a fix - invisible preservation is indistinguishable from
+ * loss, which is the whole reason this function exists.
+ */
+export interface WorkspaceState {
+  path: string
+  /** `null` when the workspace is parked (detached) and holds no branch. */
+  branch: string | null
+  /** Tracked files with uncommitted modifications. */
+  dirtyFiles: string[]
+  /** Files git has never seen. ⚠️ Excludes ignored ones, so `node_modules` is not "work". */
+  untrackedFiles: string[]
+  /** Commits on this branch that the landing target does not have. */
+  unlandedCommits: number
+  /** Stashes taken in this repository. ⚠️ Shared across the pool - the object store is one. */
+  stashes: number
+}
+
+/** Is there anything here worth a person's attention? */
+export function holdsWork(state: WorkspaceState): boolean {
+  return (
+    state.dirtyFiles.length > 0 ||
+    state.untrackedFiles.length > 0 ||
+    state.unlandedCommits > 0 ||
+    state.stashes > 0
+  )
+}
+
+/**
+ * ⚠️ Never throws. This is read on a timer, on startup, and to render a list; a workspace whose git
+ * metadata is broken has to come back as *empty and reported*, not as an exception that takes a
+ * panel down. `holdsWork` on an unreadable workspace is false, and the loose-ends list shows the
+ * slot with whatever it could read.
+ */
+export async function workspaceState(path: string, target: string): Promise<WorkspaceState> {
+  const state: WorkspaceState = {
+    path,
+    branch: null,
+    dirtyFiles: [],
+    untrackedFiles: [],
+    unlandedCommits: 0,
+    stashes: 0
+  }
+  if (!existsSync(path)) return state
+
+  try {
+    const head = await git(path, ['rev-parse', '--abbrev-ref', 'HEAD'])
+    state.branch = head === 'HEAD' ? null : head
+  } catch {
+    return state
+  }
+
+  try {
+    // ⚠️ `--porcelain` is the stable format; the two-character status prefix is what separates a
+    // tracked modification (` M`, `M `, `MM`) from a file git has never seen (`??`).
+    for (const line of (await git(path, ['status', '--porcelain'])).split(/\r?\n/)) {
+      if (!line) continue
+      const file = line.slice(3)
+      if (line.startsWith('??')) state.untrackedFiles.push(file)
+      else state.dirtyFiles.push(file)
+    }
+  } catch {
+    // Leave both empty; the caller reports what it has.
+  }
+
+  if (state.branch) {
+    try {
+      // ⛔ Against the landing target, not against `--remotes`. A branch whose commits are already on
+      // main is finished, however many commits it carries, and counting them as unlanded work would
+      // put every completed task on the loose-ends list forever.
+      const commits = await git(path, ['rev-list', '--count', `${target}..${state.branch}`])
+      state.unlandedCommits = Number.parseInt(commits, 10) || 0
+    } catch {
+      // A target that does not resolve - a fresh repo with no main yet - is not an error here.
+    }
+  }
+
+  try {
+    state.stashes = (await git(path, ['stash', 'list'])).split(/\r?\n/).filter(Boolean).length
+  } catch {
+    // No stash ref yet.
+  }
+
+  return state
+}

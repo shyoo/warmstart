@@ -339,6 +339,13 @@ body {
   background: var(--state-ok);
 }
 
+/* ⚠️ A third state, because two were doing three jobs. `down` is amber and means *we do not know* —
+   an unread window, a reading gone stale. This one means *we tried and it broke*, and it matches the
+   red the text beside it is already using. */
+.dot--bad {
+  background: var(--state-danger);
+}
+
 /* ---- fleet strip ------------------------------------------------------- */
 
 .fleet-empty {
@@ -389,6 +396,25 @@ body {
 }
 
 .wcard-agenote {
+  color: var(--color-text-faint);
+}
+
+/* ⚠️ Dimmed, not hidden. The numbers are the last ones actually measured, and an operator deciding
+   whether to press Probe needs to see them — they just must not read as the state of the window
+   now. Opacity says "old" without inventing a second colour scheme for stale gauges. */
+.wcard-windows--stale {
+  opacity: 0.55;
+}
+
+.wcard-stale {
+  font-size: var(--text-meta);
+  color: var(--state-warn);
+}
+
+/* A session with nothing measured yet: the word, and none of the furniture of a reading. */
+.gauge--waiting {
+  grid-template-columns: 52px 1fr;
+  font-size: var(--text-meta);
   color: var(--color-text-faint);
 }
 
@@ -516,14 +542,16 @@ body {
 }
 
 /* ⛔ Above the gauges, and readable rather than truncated: this is why the account is not working. */
+/* ⚠️ One line now, and it no longer needs clamping: the reason itself moved to the tooltip and to
+   Settings > Workers, so what is left is a fixed short phrase rather than however many lines of
+   escape codes and vendor prose the CLI happened to print. */
 .wcard-suspect {
   font-size: var(--text-meta);
   color: var(--state-danger);
   margin-bottom: var(--sp-1);
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  white-space: nowrap;
   overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .tag {
@@ -1697,4 +1725,101 @@ select:focus-visible,
 
 .switch-state .dim {
   font-weight: 400;
+}
+
+/* ---- logs --------------------------------------------------------------- */
+
+.log-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--sp-3);
+}
+
+.log-control {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--text-meta);
+}
+
+.log-control select {
+  min-width: 0;
+}
+
+.log-filter {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+/* ⛔ A fixed height with its own scroller, not a page that grows to two thousand lines. The controls
+   above and the file list below have to stay reachable while somebody reads the middle. */
+.log-view {
+  height: 52vh;
+  min-height: 220px;
+  overflow-y: auto;
+  overflow-x: auto;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: var(--sp-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-meta);
+  margin-bottom: var(--sp-4);
+}
+
+.log-line {
+  display: grid;
+  grid-template-columns: 64px 44px 1fr;
+  gap: var(--sp-2);
+  padding: 1px 0;
+  align-items: baseline;
+}
+
+.log-line:hover {
+  background: var(--color-surface);
+}
+
+.log-time {
+  color: var(--color-text-faint);
+}
+
+.log-level {
+  text-transform: uppercase;
+  font-size: 0.85em;
+  color: var(--color-text-faint);
+}
+
+.log-level--warn {
+  color: var(--state-warn);
+}
+
+.log-level--error {
+  color: var(--state-danger);
+}
+
+/* ⚠️ The whole line is tinted for warn and error, not just the level chip. A failure has to be
+   findable while scrolling past at speed, which is how this view is actually read. */
+.log-line--warn .log-message {
+  color: var(--state-warn);
+}
+
+.log-line--error .log-message {
+  color: var(--state-danger);
+}
+
+/* ⛔ Wrapped, never truncated. A stack trace or a CLI's own words are the whole value of the line,
+   and an ellipsis in a log view hides exactly the part somebody came here to read. */
+.log-message {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ⚠️ Narrow enough to live in the fact column beside single-word values, without the 220px
+   form-field min-width that the Add Worker form sets on every select. */
+.finish-picker {
+  min-width: 0;
+  width: 100%;
+  font-size: var(--text-meta);
 }

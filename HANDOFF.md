@@ -9,14 +9,13 @@ if you add a line, find the one it obsoletes and cut it in the same edit. Finish
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
 **Baseline (2026-08-28, measured on this machine):** `npm run typecheck` clean · `npm run lint` clean ·
-`npm run build` clean · `npm test` 315/315 · `npm run test:daemon` 124/124 · `npm run test:ui` 70/70 ·
+`npm run build` clean · `npm test` 364/364 · `npm run test:daemon` 124/124 · `npm run test:ui` 82/82 ·
 `npm run test:pack` 18/18 · L4 (opt-in) landed a real agent commit on origin/main. Electron 44.0.0,
 electron-builder 26.15.3, 0 npm vulnerabilities. CLIs here: claude 2.1.247 · agy 1.1.22 · codex 0.149.1.
 
-⭐ **`scripts/build-win.ps1` runs all of the above; `-Help` lists its options, `-Restart` is the inner
-loop.** Steps are content-addressed and skipped when unchanged: **92s cold, ~0s warm**.
-⛔ **One packaged app: `release\win-unpacked\`, and it is the build's** — **the app to use is the
-one the installer installs**. Running the repo's copy while building blocks the pack step, correctly.
+⭐ **`scripts/build-win.ps1` runs all of the above**; `-Help` lists its options, `-Restart` is the
+inner loop. Content-addressed steps: **92s cold, ~0s warm**. ⛔ **One packaged app —
+`release\win-unpacked\`** — and running the repo's copy while building blocks the pack step, correctly.
 
 ⚠️ **With no agent CLI the daemon suite skips 5 checks**, each with a stated reason — the CI state.
 Simulate it with a PATH of System32, node and git and an empty `HOME`; it found the dispatch-gate
@@ -29,10 +28,7 @@ bug. **All ten CI jobs pass on all three platforms**; what that misses is below.
 **M0–M6 are all shipped.** M0 scaffold · M1 fleet substrate and commissioning · M2 tasks, threads,
 resources, authorship · M3 cost intelligence · M4 controller agent · M5 multi-provider
 (`antigravity-cli`, `openai-compatible`) · M6 packaging. ⚠️ Shipped is not the same as proven — the
-gaps are in *What is true right now and not yet proven*, below.
-
-Scope: `transient_docs/implementation_plan_2026-08-24.md` §14, as amended by **A1/A2/A3**
-(2026-08-25, recorded there).
+gaps are below. Scope: `transient_docs/implementation_plan_2026-08-24.md` §14, amended by **A1/A2/A3**.
 
 ⛔ What each milestone *measured* is in `transient_docs/changes_history.md`. Read it before re-deriving any of it.
 
@@ -42,7 +38,7 @@ Scope: `transient_docs/implementation_plan_2026-08-24.md` §14, as amended by **
 src/daemon/            orchestratord. Runs as Electron-with-ELECTRON_RUN_AS_NODE, detached.
   index.ts             entry: lock, db, server, poller, scheduler, tailer wiring, shutdown
   server.ts  api.ts    HTTP+WS on 127.0.0.1:<random>, bearer token, typed RPC
-  db.ts                node:sqlite + numbered migrations (v8)
+  db.ts                node:sqlite + numbered migrations (v9)
   costmodel.ts         the four questions; user dir > bundled > compiled-in
   workers.ts           registry, isolation roots, retire-keeps-credentials
   quota.ts             the staleness ladder - read this before trusting a percentage
@@ -58,12 +54,17 @@ src/daemon/            orchestratord. Runs as Electron-with-ELECTRON_RUN_AS_NODE
                        each kept their own until 2026-08-27 and the copies drifted
   activity.ts          the live peephole: a bounded in-memory tail of what a run is saying
   landing.ts           auto-land, serialised by an exclusive land: resource (+ landing.test.ts)
+  finish.ts            what finishing means: one policy resolved task > project > fleet, the
+                       decision that follows, and the loose-ends scan (+ .test.ts). ⛔ The tool
+                       never writes a commit. docs/landing.md is the user-facing spec
+  log.ts               a file per day, a ring buffer for a UI that just opened, every level
+                       broadcast (+ .test.ts)
   cacheclock.ts        the six moves - what the whole cost model exists for. A move is a request;
                        moveOutcome() is what stops it being re-asked (+ .test.ts)
   lifecycle.ts         how the daemon is asked to stop itself. ⛔ Asked, never killed by pid
-  settings.ts          the three fleet switches the operator owns - autoCompact, autoPreempt,
-                       autoRunawayStop (Overview > Cost). Per-worker, `enabled` is a switch on its
-                       Workers row - held out of dispatch, not retired
+  settings.ts          the fleet defaults the operator owns - autoCompact, autoPreempt,
+                       autoRunawayStop (Overview > Cost) and finishPolicy (Global). Per-worker,
+                       `enabled` is a switch on its Workers row - held out of dispatch, not retired
   reserve.ts           the compaction reserve, and every belief with its basis attached
   objective.ts         the weight vector, in exactly two consumers    (+ cost.test.ts)
   controller.ts        the consult queue, the caps, and choosing who answers (+ controller.test.ts,
@@ -86,62 +87,58 @@ src/mcp/               the MCP server the agent CLI spawns. Two tiers chosen by 
                        (fleet/task/approval/estimate). ⛔ Neither can delete anything.
 src/main/              window host + the daemon's only client (holds the token); the tray, and
                        `uisettings.ts` - preferences main must read when the daemon is not answering
-src/renderer/          fleet strip, approvals bar, tasks, projects, workers, doctor, xterm pane
-                       (+ lib/format.test.ts)
+src/renderer/          fleet strip, approvals bar, tasks, projects, workers, global, xterm pane,
+                       Logs (live + on disk), LooseEnds (work going nowhere) (+ lib/format.test.ts)
 costmodels/            anthropic.* - google.antigravity.* - openai.codex.*; compiled in, so a
                        packaging slip cannot leave the scheduler unable to price
-docs/                  cost-model.md, glossary.md, adapters.md - maintained; read before reasoning
+docs/                  cost-model.md, glossary.md, adapters.md, landing.md - maintained
 .claude/skills/commit/ /commit: docs, suites, package, commit, push
 ```
 
 ## What is true right now and not yet proven
 
-- ⭐ **Both providers have a free live quota probe** — `refreshUsage()` on Probe, a 30-minute floor,
-  and before a dispatch needing a baseline. ⛔ **R3 closed**; `docs/cost-model.md` §5 has the ladder.
+- ⭐ **Both providers have a free live quota probe** (**R3 closed**, `docs/cost-model.md` §5). A
+  stale-but-known reading is now shown and labelled rather than replaced by `quota unknown`.
 - ⚠️ **The compaction reserve still reports `unknown`**, for one reason: it needs `remaining` in
   *tokens*, so **R2** (`tokens_per_percent`) is the blocker, not a stale percentage
   (`docs/cost-model.md` §10). ⛔ Until it lands it scores zero as a routing input — only checked
   evidence may move a score.
-- ⚠️ **A worker is not usable until somebody answers the CLI's first-run questions.** Print mode skips
-  them, so work runs while a TUI — and a quota probe — cannot. `Finish setup` opens that terminal.
-- ⛔ **Every suite that drives a build product refuses a stale one.** `checkBuildIsCurrent()` guards
-  `test:daemon` and `test:ui`; the asar check guards `test:pack`. Three green-and-wrong runs in one
-  day is what bought them.
+- ⚠️ **A worker is not usable until somebody answers the CLI's first-run questions.** `Finish setup`
+  opens that terminal; print mode skips them, so work runs while a quota probe cannot.
 - ⚠️ **The tray *icon* has never been exercised end to end** — appearing, close-to-hide,
-  click-to-restore. Global > This app owns the switch, and it and `daemon.shutdown` are covered.
+  click-to-restore. The switch and `daemon.shutdown` are covered.
 - ⭐ **Every intervention on a live session has an off switch** — Overview > Cost: `autoCompact` and
-  `autoPreempt` **on**, `autoRunawayStop` **off**. ⛔ Preemption also fires *once* now: it waits 120s
-  for the wrap-up, and the watchdog re-fired on that state every tick (t5, 2026-08-28: 13 prompts
-  into a session that had already committed, driving the factor it policed from 3.1× to 3.9×).
+  `autoPreempt` **on**, `autoRunawayStop` **off**.
 - ⚠️ **The runaway factor measures the wrong thing, which is why its switch ships off.** 92–98% of a
-  run's token total is cache reads (`docs/cost-model.md` §10) — it fires on long work, not expensive
-  work — and `estimateTask` learns only from `completed` runs. Calibrating it is item 5 under **Next**.
-- ⭐ **A pool worktree left dirty no longer kills the next task.** `switch --detach` carries
-  uncommitted changes with it, so parking freed a slot's branch and left its edits for the next claim
-  to die on. `rescueDirt` stashes them — never `reset --hard`; recover with `git stash list` there.
+  run's tokens are cache reads (`docs/cost-model.md` §10), so it fires on long work, not expensive
+  work. Item 5 under **Next**.
+- ⭐ **One finish policy, resolved task > project > fleet** (`docs/landing.md`): `await-human` ·
+  `agent-lands` · `pull-request` · `custom`, replacing `landing.strategy` and `verification`. ⛔ **The
+  tool never writes a commit** and never destroys work it will not land — loose work gets one
+  instruction to the agent, then rests intact and appears under **Loose ends** with every stash and
+  unlanded branch. `agent-lands` also requires the project to define checks and for them to pass;
+  `mandate.land` stays the authority and no UI may widen it.
+- ⭐ **The daemon's log is readable from inside the app** (Settings > Logs): live, filterable, backed
+  by a ring buffer so a window opened late still sees the past, and a file per day kept a fortnight.
 - ⚠️ **Pinning a task to an account and a model has never run end to end; only its refusals have.**
   `checkConstraints` (api.ts) rejects what nothing can honour, and ⛔ **`selectableEffort` is false on
   all three built-ins** (`docs/adapters.md` has the per-CLI reason), so no effort control is drawn.
-- ⚠️ **Two M3 paths are unverified and marked in the code:** `/compact` on the `stream` transport
-  (**R6**), and keepalive *execution*. The arithmetic is unit-tested; the firing is not.
-- ⚠️ **No consult has ever been answered by a real model** - the fallbacks are proved, the answer
-  path is synthetic only. **R8**.
-- ⭐ **Antigravity runs and reports its quota**, both since 2026-08-27; **R9 closed the opposite way
-  round from how it was asked** (`docs/cost-model.md` §5). ⚠️ Unproven past the `init` record: **no
-  Antigravity task has ever completed**, so R11 and R13 stand — and with `mcp: false` it cannot call
-  `task_complete`, so `awaiting_human` every run is the honest outcome there.
-- ⛔ **Anything needing a real agent CLI is unproven off Windows.** CI proved three platforms build,
-  start, package and schedule; the runners have no CLI, so every capability in `docs/adapters.md`
-  was measured on Windows only.
-- ⛔ **Unsigned.** SmartScreen warns and Gatekeeper refuses — the honest state of a pre-alpha; it
-  needs a certificate and an Apple Developer account, not a config line.
+- ⚠️ **Three paths are unverified and marked in the code:** `/compact` on `stream` (**R6**),
+  keepalive *execution*, and a consult answered by a real model (**R8**). The arithmetic is
+  unit-tested in each; the firing is not.
+- ⭐ **Antigravity runs and reports its quota** (**R9** closed the opposite way round from how it was
+  asked, `docs/cost-model.md` §5). ⚠️ **No Antigravity task has ever completed**, so R11 and R13
+  stand; with `mcp: false` it cannot call `task_complete`, so `awaiting_human` is honest there.
+- ⛔ **Anything needing a real agent CLI is unproven off Windows.** CI proves three platforms build,
+  start, package and schedule; its runners have no CLI, so `docs/adapters.md` is Windows-only.
+- ⛔ **Unsigned.** SmartScreen warns and Gatekeeper refuses — a certificate and an Apple Developer
+  account, not a config line.
 
 ## Next
 
 M0–M6 are done. What is left is not a milestone but a list, in the order it would pay off:
 
-1. **Run the suites on macOS or Linux with an agent CLI installed.** See above — this is the largest
-   unmeasured surface in the project.
+1. **Run the suites on macOS or Linux with an agent CLI installed** — the largest unmeasured surface.
 2. **R2 (`tokens_per_percent`)** — the last thing between a refreshable percentage and a compaction
    reserve that reports a number. Now cheap to run, because the percentage refreshes on demand.
 3. **Signing and notarisation**, without which the installers warn or refuse.
@@ -151,6 +148,9 @@ M0–M6 are done. What is left is not a milestone but a list, in the order it wo
 5. **Compute `overrunFactor` in cost, not raw tokens**, and let preempted runs feed `estimateTask`.
    Both are the price of turning `autoRunawayStop` on. The cost model already prices cache reads
    separately, so nothing needs measuring first.
+6. **`git worktree lock` while a run holds a slot, plus a provenance marker.** Claude Code's sweep
+   uses both; this pool uses neither. ⚠️ Only matters when the daemon dies mid-run — `rescueDirt`
+   returns a slot clean on every ordinary release — but that is exactly when nobody is watching.
 
 ## Open questions
 
@@ -164,11 +164,10 @@ M0–M6 are done. What is left is not a milestone but a list, in the order it wo
 
 ## Measurement runs owed
 
-The questions above as experiments. Each is cheap and each needs a **quiet worker** - one session,
-nothing else on that account. Record the result in `docs/cost-model.md` with the date and CLI
-version, and delete the row. **The instrument:** a run records a quota reading either side of
-itself, and transcript metering beside it; their difference is what the CLI spent that never
-reached a transcript. ⛔ Never merged.
+The questions above as experiments. Each is cheap and each needs a **quiet worker** — one session,
+nothing else on that account. Record the result in `docs/cost-model.md` with the date and CLI version,
+then delete the row. **The instrument:** a run records a quota reading either side of itself, and
+transcript metering beside it; the difference is what the CLI spent that never reached a transcript.
 
 | # | Question | Method | What it changes |
 |---|---|---|---|
@@ -188,13 +187,14 @@ R5 needs a second subscription.
 
 ## Standing decisions worth not relitigating
 
-⛔ The invariants live in `AGENTS.md`. These four are the ones most often re-argued by somebody who
-has not read it:
+⛔ The invariants live in `AGENTS.md`. These are the ones most often re-argued by somebody who has
+not read it:
 
 - **Daemon, not all-in-Electron.** The premise is unattended progress across quota windows.
 - **Deterministic scheduler; the LLM only on judgment events, never inline.** A loop running every 10s
   for weeks must not bill anything, and the fleet must survive there being no controller at all.
 - **PTY-hosted CLI, transcript for state.** We own stdin, so `/compact` is a function call. ⚠️ ANSI
   parsing determines state in exactly one declared place - a quota reading. Never a session's state.
-- **Capabilities and objectives are data.** No `if (adapter === …)`, no `if (mode === …)`. Proved
-  against three real CLIs in M5, and against declared ones in M6.
+- **Capabilities and objectives are data.** No `if (adapter === …)`, no `if (mode === …)`.
+- **The agent commits; the tool decides what happens next.** Surveyed 2026-08-28 — no orchestrator in
+  this space auto-commits at completion, and none destroys work it will not take.

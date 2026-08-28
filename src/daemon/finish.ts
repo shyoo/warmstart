@@ -1,0 +1,302 @@
+import type {
+  FinishPolicy,
+  FinishPolicyChoice,
+  LooseEnd,
+  Project,
+  ResolvedFinishPolicy,
+  Task
+} from '@shared/tasks.js'
+import { DEFAULT_FINISH_INSTRUCTION } from '@shared/tasks.js'
+import { db, rows } from './db.js'
+import { log } from './log.js'
+import { listProjects, policyFor } from './projects.js'
+import { mandateAllows } from './tasks.js'
+import { ensurePool, workspaceState } from './worktrees.js'
+import type { WorkspaceState } from './worktrees.js'
+import { settings } from './settings.js'
+
+/**
+ * What finishing means, for this task, in this project, on this fleet.
+ *
+ * ⛔ **One question, one answer, one place it is computed.** Before 2026-08-28 the same question was
+ * asked of `project.landing.strategy` in one code path and `task.verification` in another, with no
+ * fleet-wide tier at all, and the two could disagree without anything noticing. Everything that
+ * needs to know - the completion path, the dropdown's retroactive retry, the loose-ends list - calls
+ * this and gets the same answer with the same reason attached.
+ *
+ * ⚠️ **Preference, never authority.** `mandate.allowed` still decides whether a task may land at all
+ * and is untouched by any of this: it is inherited down a lineage precisely so an agent-spawned
+ * subtask cannot grant itself more than its parent had, and a dropdown in a UI must never be able to
+ * widen it. This says what *should* happen given that it *may*.
+ */
+
+/** The pre-2026-08-28 spelling, still read off any project.json that has not been rewritten. */
+const FROM_STRATEGY: Record<string, FinishPolicy> = {
+  'auto-land': 'agent-lands',
+  'leave-branch': 'await-human',
+  'pull-request': 'pull-request'
+}
+
+/**
+ * The project's answer, from either spelling.
+ *
+ * ⛔ `finish` wins over `strategy` when both are present. A file carrying both was written by
+ * somebody who edited it after this landed, and the new field is the one they meant.
+ */
+export function projectFinishChoice(project: Project): FinishPolicyChoice {
+  const landing = project.config.landing
+  if (landing?.finish) return landing.finish
+  if (landing?.strategy) return FROM_STRATEGY[landing.strategy] ?? 'inherit'
+  return 'inherit'
+}
+
+export function finishInstructionFor(project: Project | null): string {
+  return project?.config.landing?.finishInstruction?.trim() || DEFAULT_FINISH_INSTRUCTION
+}
+
+/**
+ * Task, then project, then fleet - the first one that is not `inherit`.
+ *
+ * ⚠️ The `source` travels with the answer so the UI can say *inherited from the project* rather than
+ * showing a value the operator will look for on the task and not find. A setting whose origin is
+ * invisible is one nobody trusts and everybody overrides.
+ */
+export function resolveFinishPolicy(task: Task | null, project: Project | null): ResolvedFinishPolicy {
+  const instruction = finishInstructionFor(project)
+
+  if (task && task.finishPolicy !== 'inherit') {
+    return { policy: task.finishPolicy, source: 'task', instruction: pick(task.finishPolicy, instruction) }
+  }
+  if (project) {
+    const choice = projectFinishChoice(project)
+    if (choice !== 'inherit') {
+      return { policy: choice, source: 'project', instruction: pick(choice, instruction) }
+    }
+  }
+  const fleet = settings().finishPolicy
+  return { policy: fleet, source: 'fleet', instruction: pick(fleet, instruction) }
+}
+
+/** ⚠️ Only `custom` carries one. Attaching it everywhere would invite callers to send it anyway. */
+function pick(policy: FinishPolicy, instruction: string): string | null {
+  return policy === 'custom' ? instruction : null
+}
+
+// ---------------------------------------------------------------------------- the decision
+
+/**
+ * What to do with a task whose agent has just said it is finished.
+ *
+ * ⛔ **Pure, and it does no I/O beyond reading git.** Every branch below was previously an `if` buried
+ * in the scheduler or in `landTask`, which is why the answer differed depending on which one ran
+ * first and why none of it could be tested without a live session. The caller performs the action;
+ * this decides which one, and carries the sentence explaining it.
+ */
+export type FinishDecision =
+  /** Send `instruction` into the session and wait for the agent to report completion again. */
+  | { kind: 'ask-agent'; instruction: string; reason: string }
+  /** Stop. The work is intact and a person decides what happens to it. */
+  | { kind: 'await-human'; reason: string }
+  /** Run the project's landing strategy. */
+  | { kind: 'land' }
+  /** Nothing was produced, and saying "landed" about it would be false. */
+  | { kind: 'nothing-to-land'; reason: string }
+  /** The project's own finish policy already ran and left the branch clean. */
+  | { kind: 'done'; reason: string }
+
+export interface FinishInputs {
+  task: Task
+  project: Project | null
+  state: WorkspaceState
+  /** Has the project defined any check commands? ⚠️ Not whether they passed - `land` runs them. */
+  hasChecks: boolean
+}
+
+export function decideFinish({ task, project, state, hasChecks }: FinishInputs): FinishDecision {
+  const { policy, instruction } = resolveFinishPolicy(task, project)
+  const loose = state.dirtyFiles.length + state.untrackedFiles.length
+
+  // 1. Work that is not committed. ⛔ The tool does not commit it — deciding what to stage, what to
+  //    leave and what to test first is judgement that differs per project and per person, and a
+  //    daemon applying a blocklist at the one moment nobody is watching is a worse version of it.
+  //    Every serious tool in this space converges here: the agent commits, the tool never does.
+  if (loose > 0) {
+    if (task.finishAskedAt === null) {
+      return {
+        kind: 'ask-agent',
+        instruction:
+          policy === 'custom' && instruction
+            ? instruction
+            : `You have ${loose} uncommitted file(s). Commit them on \`${state.branch ?? 'your branch'}\`, ` +
+              'then report the task complete again. Do not start new work.',
+        reason: `${loose} file(s) are uncommitted`
+      }
+    }
+    // ⚠️ Asked once and still loose. The work is preserved exactly where it is — never reset, never
+    // swept into a commit nobody wrote — and a person is told where to find it.
+    return {
+      kind: 'await-human',
+      reason:
+        `${loose} file(s) are still uncommitted in ${state.path} after the agent was asked to ` +
+        'commit them. The work is intact; nothing has been discarded.'
+    }
+  }
+
+  // 2. A custom policy that has run. Its own last step is the landing, so the tool does not add one.
+  if (policy === 'custom') {
+    if (task.finishAskedAt === null) {
+      return {
+        kind: 'ask-agent',
+        instruction: instruction ?? DEFAULT_FINISH_INSTRUCTION,
+        reason: 'this project defines its own finish policy'
+      }
+    }
+    return {
+      kind: 'done',
+      reason:
+        state.unlandedCommits > 0
+          ? `this project's finish policy ran and left ${state.unlandedCommits} commit(s) on ` +
+            `\`${state.branch}\`. The tool did not land them — the policy owns that step.`
+          : "this project's finish policy ran and the workspace is clean."
+    }
+  }
+
+  // 3. Clean, and nothing to land. ⛔ A question answered is finished; reporting it as landed would
+  //    tell somebody their change reached the trunk when no commit exists.
+  if (state.unlandedCommits === 0) {
+    return {
+      kind: 'nothing-to-land',
+      reason: `\`${state.branch}\` carries no commits the target does not already have`
+    }
+  }
+
+  if (policy === 'await-human') {
+    return {
+      kind: 'await-human',
+      reason: `${state.unlandedCommits} commit(s) are ready on \`${state.branch}\` and this task waits for you`
+    }
+  }
+
+  if (policy === 'pull-request') return { kind: 'land' }
+
+  // 4. `agent-lands`, which is the only policy that pushes to a trunk unattended, so it is the only
+  //    one with a bar. ⛔ Authority first: a task whose mandate excludes `land` may not, whatever a
+  //    dropdown says. A UI sets preferences; it never widens an authority.
+  if (!mandateAllows(task, 'land')) {
+    return { kind: 'await-human', reason: 'this task has no authority to land' }
+  }
+  // ⛔ And nothing unverified. A project with no check commands has nothing proving the work builds,
+  // so landing it while nobody is watching is a guess dressed as a policy. Naming the gap is also
+  // the nudge to close it.
+  if (!hasChecks) {
+    return {
+      kind: 'await-human',
+      reason:
+        'this project defines no check commands, so nothing proves the work builds. Add a `check` ' +
+        'array to its project.json to let the fleet land unattended.'
+    }
+  }
+  return { kind: 'land' }
+}
+
+// ---------------------------------------------------------------------------- loose ends
+
+/**
+ * ⚠️ `multi-agent-controller/t<seq>-<slug>` is written by `branchNameFor`, so the sequence number is
+ * recoverable from the branch alone — which matters because the workspace has usually been released
+ * and reused by the time anybody looks, and the branch is the only thread back to the task.
+ */
+export function taskSeqFromBranch(branch: string | null): number | null {
+  const match = branch?.match(/\/t(\d+)-/)
+  return match?.[1] ? Number.parseInt(match[1], 10) : null
+}
+
+export function looseEndsIn(
+  project: { id: string; name: string },
+  state: WorkspaceState
+): LooseEnd[] {
+  const seq = taskSeqFromBranch(state.branch)
+  const base = {
+    projectId: project.id,
+    projectName: project.name,
+    workspacePath: state.path,
+    branch: state.branch,
+    taskSeq: seq
+  }
+  const ends: LooseEnd[] = []
+  const loose = state.dirtyFiles.length + state.untrackedFiles.length
+
+  if (loose > 0) {
+    ends.push({
+      ...base,
+      id: `uncommitted:${state.path}`,
+      kind: 'uncommitted',
+      count: loose,
+      summary:
+        `${loose} uncommitted file(s) in ${state.path}` +
+        (state.branch ? ` on \`${state.branch}\`` : ' (no branch checked out)')
+    })
+  }
+  if (state.unlandedCommits > 0 && state.branch) {
+    ends.push({
+      ...base,
+      id: `unlanded:${state.branch}`,
+      kind: 'unlanded',
+      count: state.unlandedCommits,
+      summary: `${state.unlandedCommits} commit(s) on \`${state.branch}\` that the trunk does not have`
+    })
+  }
+  if (state.stashes > 0) {
+    // ⛔ One entry per repository, not per workspace: stashes live in the shared object store, so
+    // every pool member reports the same list and three slots would show the same work three times.
+    ends.push({
+      ...base,
+      id: `stash:${project.id}`,
+      kind: 'stash',
+      branch: null,
+      taskSeq: null,
+      count: state.stashes,
+      summary: `${state.stashes} stash(es) rescued from a workspace — see \`git stash list\``
+    })
+  }
+  return ends
+}
+
+/** Scan every pool member of every project. ⚠️ Reads git only; it never writes and never cleans. */
+export async function scanLooseEnds(): Promise<LooseEnd[]> {
+  const dismissed = new Set(
+    rows<{ id: string }>(db().prepare('select id from loose_end_dismissals').all()).map((r) => r.id)
+  )
+  const found: LooseEnd[] = []
+
+  for (const project of listProjects()) {
+    if (project.vcs !== 'git') continue
+    const policy = policyFor(project)
+    let members: string[]
+    try {
+      members = await ensurePool(project)
+    } catch {
+      continue
+    }
+    // ⚠️ Deduplicated by id: the stash entry is per repository and every member reports it.
+    const seen = new Set<string>()
+    for (const path of members) {
+      const state = await workspaceState(path, policy.landingTarget)
+      for (const end of looseEndsIn(project, state)) {
+        if (seen.has(end.id) || dismissed.has(end.id)) continue
+        seen.add(end.id)
+        found.push(end)
+      }
+    }
+  }
+  return found
+}
+
+export function dismissLooseEnd(id: string): void {
+  db()
+    .prepare(
+      'insert into loose_end_dismissals (id, dismissed_at) values (?,?) on conflict(id) do nothing'
+    )
+    .run(id, Date.now())
+  log.info(`loose end dismissed: ${id}`)
+}

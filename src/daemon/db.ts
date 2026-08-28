@@ -466,6 +466,41 @@ const MIGRATIONS: string[] = [
     value      text not null,
     updated_at integer not null
   );
+  `,
+
+  // 9 - one answer to "what happens when the work is finished", instead of three halves of one.
+  //
+  // ⛔ The question was split across `project.landing.strategy` (project only), `tasks.verification`
+  // (task only, and named after a different idea), and nothing at the fleet level - so "why did this
+  // not land?" needed two fields checked in two files, and neither could be changed while a task was
+  // running. Measured 2026-08-28: t5 finished, left two files uncommitted, was refused by
+  // `canLand`, rested at `awaiting_human`, and the commit that eventually appeared on its branch
+  // (ea05929) was never landed by anything and went unnoticed for a day.
+  //
+  // ⚠️ `verification` is migrated, not dropped. `required` meant "a person signs this off", which is
+  // exactly `await-human`, and the column stays so a database written by an older build still
+  // parses. Nothing writes it after this.
+  `
+  alter table tasks add column finish_policy text not null default 'inherit';
+
+  update tasks set finish_policy = 'await-human' where verification = 'required';
+
+  -- ⛔ One ask, ever. The finish path sends the agent an instruction - commit your work, or run this
+  -- project's finish policy - and then waits for it to report completion again. Between those two
+  -- moments the task is still running and still completing, which is exactly the state that decides
+  -- to send the instruction. Without this the tool would re-send it on every completion, which is
+  -- the preemption loop of 2026-08-28 in a different costume: 13 identical wrap-up prompts into a
+  -- session that had already done the thing, each of them a billed turn.
+  alter table tasks add column finish_asked_at integer;
+
+  -- ⚠️ Only the dismissals are stored. A loose end itself is a fact about a repository right now -
+  -- the branch got landed by hand, the stash got popped - and a cached copy would be stale within
+  -- minutes and need its own reconciliation. "I know, leave me alone" is the one part git cannot
+  -- tell us, so it is the only part written down.
+  create table loose_end_dismissals (
+    id           text primary key,
+    dismissed_at integer not null
+  );
   `
 ]
 

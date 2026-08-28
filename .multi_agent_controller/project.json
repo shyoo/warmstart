@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "name": "multi_agent_controller",
+  "vcs": "git",
+
+  "workspaces": { "poolSize": 3, "root": "C:/Dev/multi_agent_controller_workspaces" },
+
+  "landing": {
+    "target": "main",
+    "finish": "agent-lands",
+    "finishInstruction": "Run /commit and follow every one of its six steps. Do not stop until the work is committed and pushed."
+  },
+
+  "check": ["npm run typecheck", "npm run lint", "npm test", "npm run build"],
+
+  "prepare": [],
+
+  "permission": { "allow": [] }
+}

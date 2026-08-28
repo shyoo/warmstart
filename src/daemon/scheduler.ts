@@ -20,6 +20,7 @@ import {
   runsFor,
   schedulingOrder,
   setHoldReason,
+  markFinishAsked,
   setRunQuota,
   setStatus,
   startRun
@@ -34,6 +35,7 @@ import {
   parkWorkspace,
   prepareWorkspace,
   releaseWorkspace,
+  workspaceState,
   type Workspace
 } from './worktrees.js'
 import {
@@ -45,6 +47,7 @@ import {
   spawnSession
 } from './sessions.js'
 import { landTask } from './landing.js'
+import { decideFinish, resolveFinishPolicy } from './finish.js'
 import { stripAnsi } from './stream.js'
 import { clearActivity } from './activity.js'
 import { log } from './log.js'
@@ -176,8 +179,22 @@ export async function tick(): Promise<TickResult> {
   if (!dispatched && skipped.length) parts.push(`held: ${skipped.slice(0, 3).join('; ')}`)
   if (parts.length === 0) parts.push(ready.length ? 'nothing dispatchable' : 'nothing ready')
 
-  return { dispatched, note: parts.join(' · ') }
+  const note = parts.join(' · ')
+  // ⛔ **Only when the answer changed.** This loop runs every ten seconds forever; logging each pass
+  // would push a day of real events out of a 2000-line buffer inside six hours and make the file
+  // useless for the one thing it is for. ⚠️ But the *first* tick that starts holding a task, and the
+  // one that stops, are exactly what an operator is looking for — "why is nothing happening?" is
+  // answered by a held-reason, and until now that reason existed only on the row it was about.
+  if (note !== lastTickNote) {
+    log.info(`tick: ${note}`)
+    lastTickNote = note
+  }
+
+  return { dispatched, note }
 }
+
+/** What the last tick concluded, so an unchanged conclusion is not logged again. */
+let lastTickNote = ''
 
 // ---------------------------------------------------------------------------- the baseline
 
@@ -696,7 +713,14 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
     }
   }, 2500)
 
-  log.info(`dispatched t${task.seq} to ${worker.label} (run ${run.id.slice(0, 8)})`)
+  // ⚠️ The *reason* travels with it. "dispatched t5 to ClaudeSecond" says what happened; it does not
+  // say why that account rather than the other three, which is the question asked afterwards — and
+  // the score and its basis exist right here and were being thrown away.
+  log.info(
+    `dispatched t${task.seq} to ${worker.label} (run ${run.id.slice(0, 8)}, ` +
+      `score ${choice.score.toFixed(2)}: ${choice.reason})` +
+      (quotaUnverified ? ' — on an unverified quota reading' : '')
+  )
 }
 
 /**
@@ -1150,13 +1174,45 @@ export async function completeTask(sessionId: string, summary: string): Promise<
   )
 
   if (project && held && task.branch && project.vcs === 'git') {
-    const result = await landTask({
-      project,
-      task,
-      workspacePath: held.workspace.path,
-      branch: task.branch
-    })
-    if (result.ok) setStatus(task.id, 'completed')
+    // ⛔ One decision function, asked once, with the workspace read once. Everything below acts on
+    // what it returns; nothing below decides anything for itself. See finish.ts for why the tool
+    // never authors a commit here.
+    const policy = policyFor(project)
+    const state = await workspaceState(held.workspace.path, policy.landingTarget)
+    const decision = decideFinish({ task, project, state, hasChecks: policy.check.length > 0 })
+    log.info(`t${task.seq} finish: ${decision.kind} (${resolveFinishPolicy(task, project).policy})`)
+
+    if (decision.kind === 'ask-agent') {
+      // ⛔ Returns without ending the run. The agent is still working — it has been handed one more
+      // instruction and will report completion again — so closing the run here would orphan a live
+      // session and release a workspace out from under it.
+      markFinishAsked(task.id)
+      addMessage(task.id, 'system', `Not finished yet: ${decision.reason}. Asked the agent to fix it.`)
+      try {
+        sendPrompt(sessionId, decision.instruction)
+      } catch (err) {
+        log.warn(`could not send the finish instruction for t${task.seq}:`, err)
+        addMessage(task.id, 'system', 'Could not reach the session to ask. Over to you.')
+        setStatus(task.id, 'awaiting_human', { assignee: 'human', holdReason: decision.reason })
+      }
+      return
+    }
+
+    if (decision.kind === 'land') {
+      const result = await landTask({
+        project,
+        task,
+        workspacePath: held.workspace.path,
+        branch: task.branch
+      })
+      if (result.ok) setStatus(task.id, 'completed')
+    } else if (decision.kind === 'await-human') {
+      addMessage(task.id, 'system', `Finished, and not landed: ${decision.reason}`)
+      setStatus(task.id, 'awaiting_human', { assignee: 'human', holdReason: decision.reason })
+    } else {
+      addMessage(task.id, 'system', `Finished — ${decision.reason}`)
+      setStatus(task.id, 'completed')
+    }
   } else if (task.verification === 'required') {
     addMessage(task.id, 'system', 'Finished, and this task asked for human verification.')
     setStatus(task.id, 'awaiting_human', {
@@ -1405,3 +1461,55 @@ export function sessionOf(taskId: string): Session | null {
 }
 
 export { policyFor }
+
+// ---------------------------------------------------------------------------- landing later
+
+/**
+ * Land a branch whose task already finished.
+ *
+ * ⛔ **The case t5 had no answer for.** A task completed, its branch carried a real commit
+ * (`ea05929`), the workspace was released, and nothing in the app could ever land it again — the
+ * only path to `landTask` ran inside the completion that had already happened. It sat for a day and
+ * was recovered by hand.
+ *
+ * ⚠️ This claims a workspace and prepares it on the branch rather than operating from the trunk.
+ * The trunk holds the landing target checked out; rebasing a task branch there would move the
+ * operator's own checkout under them, and AGENTS.md has said since M2 that nothing works in the
+ * trunk. `prepareWorkspace` already switches to an existing branch, so the pooled path is also the
+ * shorter one.
+ */
+export async function relandTask(taskId: string): Promise<{ ok: boolean; reason?: string }> {
+  const task = getTask(taskId)
+  if (!task) return { ok: false, reason: 'no such task' }
+  if (!task.branch) return { ok: false, reason: 'this task has no branch' }
+  const project = task.projectId ? getProject(task.projectId) : null
+  if (!project || project.vcs !== 'git') return { ok: false, reason: 'not a git project' }
+
+  const workspace = await claimWorkspace(project, `reland:${task.id}`)
+  if (!workspace) return { ok: false, reason: 'every workspace is busy; try again in a moment' }
+
+  try {
+    const prepared = await prepareWorkspace(project, workspace, task.branch)
+    if (!prepared.ok) return { ok: false, reason: prepared.error ?? 'could not prepare a workspace' }
+
+    const policy = policyFor(project)
+    const state = await workspaceState(workspace.path, policy.landingTarget)
+    // ⛔ The same decision as a first completion, not a shortcut past it. A branch reaching this by
+    // a button press gets the identical bar: authority, checks, a clean tree, real commits.
+    const decision = decideFinish({ task, project, state, hasChecks: policy.check.length > 0 })
+    if (decision.kind !== 'land') {
+      const reason = 'reason' in decision ? decision.reason : 'nothing to land'
+      addMessage(task.id, 'system', `Asked to land again, and did not: ${reason}`)
+      return { ok: false, reason }
+    }
+
+    const result = await landTask({ project, task, workspacePath: workspace.path, branch: task.branch })
+    if (result.ok) setStatus(task.id, 'completed')
+    return { ok: result.ok, ...(result.reason ? { reason: result.reason } : {}) }
+  } finally {
+    // ⚠️ Parked and released in every path, including the refusals above. A workspace held by a
+    // failed button press is one slot fewer for the fleet, permanently.
+    await parkWorkspace(project, workspace.path)
+    releaseWorkspace(workspace.claimId)
+  }
+}

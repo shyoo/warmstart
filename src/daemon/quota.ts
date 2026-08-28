@@ -59,6 +59,17 @@ export async function probeWorker(workerId: string): Promise<DatedQuota> {
   const probed = await adapter(w.adapterId).probeQuota(w.isolationRoot)
   const snapshot: QuotaSnapshot = { workerId, ...probed }
   store(snapshot)
+  // ⛔ Logged whether it worked or not. This is the cheap rung — a file read, no process — and it is
+  // the one that runs on its own every few minutes, so it is also the one an operator is most likely
+  // to be asking about: *when did it last look at that account, and what did it see?* It said
+  // nothing at all until 2026-08-28, which made a poller that was working indistinguishable from one
+  // that had stopped.
+  log.info(
+    `probed ${w.label}: ` +
+      (probed.windows.length
+        ? probed.windows.map((x) => `${x.label} ${Math.round(x.percent)}%`).join(' · ')
+        : `no reading (${probed.error ?? 'no windows returned'})`)
+  )
   return decorate(snapshot)
 }
 
@@ -257,9 +268,47 @@ interface SampleRow {
 
 /** The most recent sample for a worker, however old. Callers must look at `stale`. */
 export function lastQuota(workerId: string): DatedQuota | null {
-  const latest = db()
-    .prepare('select max(sampled_at) as t from quota_samples where worker_id = ?')
+  return sampleAt(workerId, latestSampleTime(workerId, false))
+}
+
+/**
+ * The most recent sample that actually carries windows — what a person should be shown.
+ *
+ * ⛔ **Display only. Never a gate.** `lastQuota` stays the scheduler's accessor and is unchanged;
+ * everything that gates still reads the newest attempt and still refuses anything `stale`. This
+ * exists because the two questions are different: a gate asks *what is the window now*, and a person
+ * reading the strip asks *what do we know about this account*.
+ *
+ * ⚠️ A failed probe writes a sample with **no windows** — which is newer than the last good reading
+ * and therefore buried it. The card then said `quota unknown` about an account that had been read
+ * successfully an hour earlier, which is indistinguishable from one that has never been read at all.
+ * The reading that comes back here carries its own `sampledAt`, so the age shown is the age of the
+ * numbers shown, and `error` is carried across from the newest attempt when that attempt failed.
+ */
+export function lastQuotaReading(workerId: string): DatedQuota | null {
+  const withWindows = sampleAt(workerId, latestSampleTime(workerId, true))
+  if (!withWindows) return lastQuota(workerId)
+  const newest = lastQuota(workerId)
+  // The newest attempt failed and this is an older reading: say so, rather than presenting the old
+  // numbers as though nothing had gone wrong since.
+  return newest && newest.sampledAt > withWindows.sampledAt && newest.error
+    ? { ...withWindows, error: newest.error }
+    : withWindows
+}
+
+/** ⚠️ `window_id != ''` is how a failed probe is stored: one row, no window, an error beside it. */
+function latestSampleTime(workerId: string, mustHaveWindows: boolean): number | null {
+  const r = db()
+    .prepare(
+      `select max(sampled_at) as t from quota_samples where worker_id = ?` +
+        (mustHaveWindows ? " and window_id != ''" : '')
+    )
     .get(workerId) as { t: number | null } | undefined
+  return r?.t ?? null
+}
+
+function sampleAt(workerId: string, at: number | null): DatedQuota | null {
+  const latest = { t: at }
   if (!latest?.t) return null
 
   const list = rows<SampleRow>(

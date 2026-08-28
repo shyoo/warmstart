@@ -85,6 +85,8 @@ async function main(): Promise<void> {
               cacheRead: turn.cacheReadTokens,
               cacheWrite: turn.cacheWrite1hTokens + turn.cacheWrite5mTokens
             })
+            // ⚠️ The *session* change that came with this turn is announced by `recordTurn`
+            // itself, where the row is written. See transcript.ts `announce`.
             emit({ type: 'turn', turn })
           },
           onCompact(sessionId, meta) {
@@ -107,10 +109,11 @@ async function main(): Promise<void> {
       // reports usage per step *and* again in its result; billing both would double-count the turn.
       // Claude Code is billed from its transcript instead, which is exact and sees the compaction
       // sampling iteration a stream never shows (cost-model.md §6).
-      if (event.kind === 'usage' && event.final) {
-        creditStreamTurn(session, event.usage)
-        emit({ type: 'session.changed', session })
-      }
+      // ⚠️ No `session.changed` here either: it used to be emitted with the `session` this
+      // callback was handed, which is the row as it was *before* `creditStreamTurn` wrote to it -
+      // announcing a change while carrying the values from before it. `creditStreamTurn` now
+      // announces its own write, from the store.
+      if (event.kind === 'usage' && event.final) creditStreamTurn(session, event.usage)
       // ⛔ The peephole. A running task used to show a status and a token count and nothing else, so
       // "is this working or is it stuck?" could only be answered by opening the session pane and
       // reading a terminal. This is the same prose, already decoded, forwarded to whoever is looking
@@ -136,9 +139,10 @@ async function main(): Promise<void> {
     }
   })
 
-  onLog((level, message, ts) => {
-    if (level === 'warn' || level === 'error') emit({ type: 'log', level, message, ts })
-  })
+  // ⛔ Every level, not only failures. Forwarding `warn` and `error` alone meant a fleet working
+  // correctly and a fleet doing nothing at all produced the same empty stream, and "when did it
+  // probe that account?" had no answer anywhere in the app.
+  onLog((entry) => emit({ type: 'log', ...entry }))
 
   const poller = new QuotaPoller((quota) => emit({ type: 'quota.changed', quota }))
   poller.start()

@@ -45,11 +45,10 @@ directory itself, as a pool of one.
 **Trunk** — the project's main checkout. Used for integration and landing. ⛔ **Agents never work
 here.** The task branch is created inside the claimed worktree, never in the trunk.
 
-**Landing** — what happens to a task's branch when its work finishes, expressed as a
-`LandingStrategy`. v1 ships `auto-land` (rebase onto `origin/main`, run the project's checks, push,
-delete the branch). `leave-branch` and `pull-request` implement the same interface. Landing takes an
-exclusive `land:<project>` resource, because three workspaces finishing at once would otherwise each
-rebase onto a main the other two are about to move.
+**Landing** — moving a finished task's branch onto the trunk: rebase, run the project's checks, push.
+Implemented as a `LandingStrategy`; landing takes an exclusive `land:<project>` resource, because
+three workspaces finishing at once would otherwise each rebase onto a main the other two are about to
+move. ⚠️ *Whether* to land is a separate question from *how* — see **finish policy**.
 
 ---
 
@@ -147,6 +146,15 @@ ends differently: no window is closing, so there is nothing to resume after and 
 
 **Handoff** — the note a preempted run leaves so its successor can continue. Prepended to the
 successor's prompt.
+
+**Finish policy** — what happens to the work when an agent reports a task complete: `await-human`,
+`agent-lands`, `pull-request`, or `custom`. Resolved task → project → fleet, each of the lower two
+able to say `inherit`. ⛔ **Preference, not authority** — `mandate.allowed ⊇ 'land'` still decides
+whether a task may land at all, and no UI control may widen it. See `docs/landing.md`.
+
+**Loose end** — work that exists and is going nowhere: uncommitted files in a pooled workspace, a
+branch carrying commits nobody landed, or a stash taken to free a slot. ⚠️ Derived from git on
+demand, never stored — only dismissals are. Listed on Overview.
 
 ---
 

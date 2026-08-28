@@ -295,17 +295,30 @@ export function Workers({
                       </div>
                     )}
                   </td>
+                  {/* ⛔ A reading that exists is shown, however old. Replacing the numbers with the
+                      word `stale` made an account read as unmeasured when what was true is that it
+                      was measured a while ago — and the operator's next move differs between the
+                      two. The label stays, underneath, carrying the age. ⚠️ The states with *no*
+                      reading at all still yield to `gap`: never probed, no usage data yet, a failed
+                      probe and a provider that reports none are four different absences and the
+                      hint is what tells them apart. */}
                   <td className="num">
-                    {gap ? (
+                    {quota && quota.windows.length > 0 ? (
+                      <>
+                        <span className={quota.stale ? 'dim' : undefined}>
+                          {quota.windows.map((w) => `${w.label} ${percent(w.percent)}`).join(' · ')}
+                        </span>
+                        {quota.stale && (
+                          <div className="warn tbl-sub" title={gap?.hint}>
+                            stale · {age(quota.ageMs ?? 0)}
+                          </div>
+                        )}
+                      </>
+                    ) : gap ? (
                       <span className="warn" title={gap.hint}>
                         {gap.label}
-                        {quota?.ageMs !== undefined && quota.windows.length > 0 && (
-                          <span className="dim"> · {age(quota.ageMs)}</span>
-                        )}
                       </span>
-                    ) : (
-                      quota?.windows.map((w) => `${w.label} ${percent(w.percent)}`).join(' · ')
-                    )}
+                    ) : null}
                   </td>
                   <td className="num tbl-num">{worker.maxConcurrent}</td>
                   <td>

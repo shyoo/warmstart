@@ -101,9 +101,11 @@ You need **one**. Having several is the point — see *Multiple accounts* below.
   and an account a run has proved unusable says so and stops being offered work, judgment, or a
   background usage probe until you fix it.
 - **File a task and walk away.** It gets a worktree from the project's pool, a branch named after the
-  task, and an agent on an account that can take it. When the agent reports done, Multi Agent Controller rebases,
-  runs the project's checks and pushes — or keeps the branch and asks you, which is what it does
-  whenever it is not certain.
+  task, and an agent on an account that can take it. When the agent reports done, what happens next is
+  your **finish policy** — land it unattended, wait for you, open a pull request, or run the project's
+  own finishing instructions — set fleet-wide, per project, or per task, and changeable at any time.
+  ⛔ Multi Agent Controller never writes a commit for an agent, and never discards work it declines to
+  land: it goes on the **Loose ends** list instead. See [docs/landing.md](docs/landing.md).
 - **Approvals, not interruptions.** When an agent needs permission, the request arrives as a
   structured event, is answered by your project's rules where possible, and otherwise appears as a
   one-keystroke strip above your work. *Always* turns it into a rule so the next one answers itself.

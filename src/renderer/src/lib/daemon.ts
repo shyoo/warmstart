@@ -62,6 +62,13 @@ export function useFleet(connected: boolean): {
   const [fleet, setFleet] = useState<FleetEntry[]>([])
   const [error, setError] = useState<string | null>(null)
 
+  // ⚠️ A ref, not the state, for the event handler to read. Deciding patch-or-refetch inside a
+  // `setFleet` updater would put a network call in a function React is free to run twice.
+  const fleetRef = useRef<FleetEntry[]>(fleet)
+  useEffect(() => {
+    fleetRef.current = fleet
+  }, [fleet])
+
   const refresh = useCallback(async () => {
     if (!connected) return
     try {
@@ -82,7 +89,20 @@ export function useFleet(connected: boolean): {
       setFleet((prev) =>
         prev.map((e) => (e.worker.id === event.quota.workerId ? { ...e, quota: event.quota } : e))
       )
-    } else if (event.type === 'session.changed' || event.type === 'session.exit') {
+    } else if (event.type === 'session.changed') {
+      // ⚠️ Patched in place, because this now arrives once per metered turn. A session already on a
+      // card is replaced where it stands; only a session this list has never seen — a new one, or
+      // one that just closed and must drop off — is worth a round-trip.
+      const known = fleetRef.current.some((e) => e.sessions.some((s) => s.id === event.session.id))
+      if (!known || event.session.state !== 'live') void refresh()
+      else
+        setFleet((prev) =>
+          prev.map((e) => ({
+            ...e,
+            sessions: e.sessions.map((s) => (s.id === event.session.id ? event.session : s))
+          }))
+        )
+    } else if (event.type === 'session.exit') {
       void refresh()
     } else if (event.type === 'worker.changed') {
       void refresh()

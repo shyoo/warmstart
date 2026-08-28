@@ -1,4 +1,5 @@
 import type { Settings } from '@shared/protocol.js'
+import { DEFAULT_FLEET_FINISH } from '@shared/tasks.js'
 import { db, row } from './db.js'
 import { log } from './log.js'
 
@@ -49,7 +50,17 @@ export const DEFAULT_SETTINGS: Settings = {
    * not on it being wasteful. Until the factor is measured in cost rather than tokens, stopping work
    * on it is a guess, and a guess that ends somebody's run should be opted into.
    */
-  autoRunawayStop: false
+  autoRunawayStop: false,
+
+  /**
+   * What finishing a task means when nothing more specific says otherwise.
+   *
+   * ⚠️ `agent-lands` matches what the project default has always effectively been, so this is not a
+   * loosening — `safeToLand` now requires the project's checks to exist and to pass, which the old
+   * path did not, so the same value lands strictly less than before. A project with no checks
+   * configured rests at `awaiting_human` and says so.
+   */
+  finishPolicy: DEFAULT_FLEET_FINISH
 }
 
 export function settings(): Settings {
@@ -78,7 +89,10 @@ function read(): Partial<Settings> {
       // ⚠️ A row that will not parse is a row written by something that is not this build. Falling
       // back to the default is right - refusing to start because one switch is corrupt would take
       // the whole fleet down for a preference.
-      out[key] = JSON.parse(r.value) as Settings[typeof key]
+      // ⚠️ The cast widened when `finishPolicy` joined three booleans: the value type is no longer
+      // uniform across keys, and indexing a heterogeneous record by a loop variable defeats the
+      // narrowing. The parse is unvalidated either way - a corrupt row falls back below.
+      ;(out as Record<string, unknown>)[key] = JSON.parse(r.value)
     } catch {
       log.warn(`setting ${key} is not valid JSON - using the default`)
     }

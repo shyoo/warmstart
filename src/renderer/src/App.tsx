@@ -3,6 +3,8 @@ import type { Project, ResourceAvailability } from '@shared/tasks'
 import { rpc, useAppInfo, useDaemonEvents, useDaemonStatus, useFleet, useNow } from './lib/daemon'
 import { FleetStrip } from './components/FleetStrip'
 import { Workers } from './components/Workers'
+import { Logs } from './components/Logs'
+import { FleetFinish } from './components/FleetFinish'
 import { Doctor } from './components/Doctor'
 import { Approvals } from './components/Approvals'
 import { Projects } from './components/Projects'
@@ -37,7 +39,7 @@ type Route =
    * the last one is given a home, which is what the require-a-project migration does.
    */
   | { kind: 'unassigned' }
-  | { kind: 'settings'; page: 'workers' | 'global' }
+  | { kind: 'settings'; page: 'workers' | 'logs' | 'global' }
 
 export function App(): React.JSX.Element {
   const info = useAppInfo()
@@ -206,6 +208,14 @@ export function App(): React.JSX.Element {
             Workers
             <span className="nav-count num">{fleet.length}</span>
           </NavItem>
+          {/* ⚠️ Between Workers and Global on purpose. It is the answer to "why did it do that?",
+              which is asked about the fleet above it far more often than about the app below it. */}
+          <NavItem
+            active={route.kind === 'settings' && route.page === 'logs'}
+            onClick={() => setRoute({ kind: 'settings', page: 'logs' })}
+          >
+            Logs
+          </NavItem>
           <NavItem
             active={route.kind === 'settings' && route.page === 'global'}
             onClick={() => setRoute({ kind: 'settings', page: 'global' })}
@@ -236,9 +246,24 @@ export function App(): React.JSX.Element {
             </div>
           ) : route.kind === 'settings' && route.page === 'workers' ? (
             <Workers fleet={fleet} refresh={refresh} />
+          ) : route.kind === 'settings' && route.page === 'logs' ? (
+            <Logs now={now} />
           ) : route.kind === 'settings' ? (
             <>
               <Doctor now={now} />
+              {/* ⚠️ Above the app's own preferences: this one governs the *fleet*, and the tray
+                  switch below it governs this window. Two different scopes, in scope order. */}
+              <div className="panel">
+                <header className="panel-head">
+                  <div>
+                    <h2>Finishing work</h2>
+                    <p className="panel-sub">
+                      What happens to a task&rsquo;s branch when its agent reports the work is done.
+                    </p>
+                  </div>
+                </header>
+                <FleetFinish />
+              </div>
               <AppSettings />
               <Projects projects={projects} resources={resources} refresh={refreshProjects} />
             </>

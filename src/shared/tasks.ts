@@ -25,7 +25,17 @@ export interface ProjectConfig {
   workspaces?: { poolSize?: number; root?: string }
   prepare?: string[]
   check?: string[]
-  landing?: { strategy?: LandingStrategyId; target?: string }
+  /**
+   * ⚠️ `strategy` is the pre-2026-08-28 spelling and is still read, so an existing project.json keeps
+   * working. It is migrated to `finish` on load; write `finish` in new files.
+   */
+  landing?: {
+    strategy?: LandingStrategyId
+    target?: string
+    finish?: FinishPolicyChoice
+    /** What a `custom` finish tells the agent to do. Defaults to `DEFAULT_FINISH_INSTRUCTION`. */
+    finishInstruction?: string
+  }
   permission?: { mode?: string; allow?: string[]; deny?: string[] }
   env?: Record<string, string | number>
   resources?: Array<{ ref: string }>
@@ -165,7 +175,23 @@ export interface Task {
   deadline: number | null
   requires: Array<{ resourceId: string; amount: number }>
   constraints: TaskConstraints
+  /**
+   * ⛔ Superseded by `finishPolicy` and kept only so old rows and old callers still parse. `required`
+   * was migrated to `finishPolicy: 'await-human'`; nothing writes it any more and nothing gates on
+   * it. It goes when the last database written before 2026-08-28 is gone.
+   */
   verification: 'required' | 'not_required' | 'auto'
+  /** This task's own answer, or `inherit` to take the project's — which may itself inherit. */
+  finishPolicy: FinishPolicyChoice
+  /**
+   * When the finish instruction was sent to the agent, if it has been.
+   *
+   * ⛔ The guard against re-asking. The instruction is sent, the agent works, and it calls
+   * `task_complete` again — and between those two moments nothing about the task has changed, so the
+   * same decision would be reached again. That is the preemption loop of 2026-08-28 in a different
+   * costume, and each repeat here is a billed turn spent telling an agent to do what it just did.
+   */
+  finishAskedAt: number | null
   preemptible: boolean
   estTokens: number | null
   cancel: CancelRecord | null
@@ -470,6 +496,102 @@ export interface ChatMessage {
 // ---------------------------------------------------------------------------- landing
 
 export type LandingStrategyId = 'auto-land' | 'leave-branch' | 'pull-request'
+
+/**
+ * What happens to a task's work when the agent says it is finished.
+ *
+ * ⛔ **One field, replacing three half-answers.** Until 2026-08-28 this question was split across
+ * `landing.strategy` (project only), `task.verification` (task only, and named after a different
+ * idea), and nothing at all at the fleet level — so "why did this not land?" needed two fields
+ * checked in two files, and neither of them could be changed while a task was running.
+ *
+ * ⚠️ Not the same question as `mandate.allowed` ⊇ `'land'`, which stays exactly where it is. That is
+ * **authority** — may this task ever land — and it is inherited down a lineage precisely so an
+ * agent-spawned subtask cannot grant itself more than its parent had. This is **preference**: given
+ * that it may, should it, unattended. A dropdown may set a preference; nothing settable in the UI
+ * may widen an authority.
+ */
+export type FinishPolicy =
+  /** Stop. The branch is intact, the work is preserved, a person decides. */
+  | 'await-human'
+  /** Land it unattended, but only if it is provably safe to. See `safeToLand`. */
+  | 'agent-lands'
+  /** Push the branch and open a pull request; a human merges. */
+  | 'pull-request'
+  /**
+   * Do whatever this project says finishing means.
+   *
+   * ⚠️ An **instruction to the agent**, never a command the daemon runs. Deciding what to stage,
+   * what to leave, and what to test first is judgement that differs per project and per person —
+   * it is what a `/commit` skill encodes — and a daemon running it headless would be a worse copy
+   * of that judgement applied with less context at the one moment nobody is watching.
+   */
+  | 'custom'
+
+/**
+ * The same question at the project and task tiers, where "say nothing" is a real answer.
+ *
+ * ⛔ `inherit` is a distinct value, not a missing one. A task that has never been touched and a task
+ * somebody deliberately set to the fleet default look identical without it, and the second is a
+ * decision worth keeping when the default later changes.
+ */
+export type FinishPolicyChoice = FinishPolicy | 'inherit'
+
+/** Where a resolved policy came from, so the UI can say "inherited from the project". */
+export interface ResolvedFinishPolicy {
+  policy: FinishPolicy
+  source: 'task' | 'project' | 'fleet'
+  /** Only for `custom`: what the agent is told to do. */
+  instruction: string | null
+}
+
+/**
+ * ⚠️ The instruction a `custom` policy sends when a project has not written its own. Deliberately
+ * names a slash command: on Claude Code that resolves to the project's skill, and on an adapter
+ * with no skills it still reads as a sentence an agent can act on.
+ */
+/**
+ * ⚠️ The fleet default, and it lives here rather than in `finish.ts` because `settings.ts` needs it
+ * and `finish.ts` needs `settings.ts` — a cycle that resolves to `undefined` at import time and
+ * would have made the fleet tier silently empty.
+ *
+ * `agent-lands` is what the project default has always effectively been (`auto-land`). It is not a
+ * loosening: `safeToLand` now requires a project to define checks and for them to pass, which the
+ * old path did not, so the same value lands strictly less than it used to.
+ */
+export const DEFAULT_FLEET_FINISH: FinishPolicy = 'agent-lands'
+
+/**
+ * Work that exists and is going nowhere.
+ *
+ * ⛔ **Preserving work silently is only half a fix.** `rescueDirt` stashes what a run left behind so
+ * the next task can claim the slot, and `leave-branch` keeps a branch intact when landing is
+ * refused — both correct, and both invisible, which makes them indistinguishable from loss to the
+ * person who wanted the work. t5's commit sat on its branch for a day; the stash that preserved
+ * ws1's edits was found only because somebody went looking with `git stash list`.
+ *
+ * ⚠️ Derived on demand, never a table. A loose end is a *fact about a repository right now* — the
+ * branch got landed by hand, the stash got popped, somebody cleaned the slot — and a cached copy of
+ * that fact would be wrong within minutes and would need its own reconciliation. Only the
+ * dismissals are stored, because "I know, leave me alone" is the one part git cannot tell us.
+ */
+export interface LooseEnd {
+  /** Stable across scans, so a dismissal sticks to the thing dismissed. */
+  id: string
+  kind: 'uncommitted' | 'unlanded' | 'stash'
+  projectId: string
+  projectName: string
+  workspacePath: string
+  branch: string | null
+  /** Files for `uncommitted`, commits for `unlanded`, entries for `stash`. */
+  count: number
+  /** The task this branch belongs to, when the name still parses to one. */
+  taskSeq: number | null
+  summary: string
+}
+
+export const DEFAULT_FINISH_INSTRUCTION =
+  'Run /commit and follow every step of it. Do not stop until the work is committed.'
 
 export interface LandingResult {
   strategy: LandingStrategyId

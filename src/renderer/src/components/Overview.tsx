@@ -1,5 +1,6 @@
 import { Cost } from './Cost'
 import { Controller } from './Controller'
+import { LooseEnds } from './LooseEnds'
 
 /**
  * Everything that is true of the whole fleet rather than of one project.
@@ -16,6 +17,9 @@ import { Controller } from './Controller'
 export function Overview({ now }: { now: number }): React.JSX.Element {
   return (
     <div className="stack">
+      {/* ⛔ Above the cost model, because it is the only thing on this page that is *waiting on a
+          person*. Everything below it is a number to read; this is a decision somebody owes. */}
+      <LooseEnds />
       <Cost now={now} />
       <Controller now={now} />
     </div>

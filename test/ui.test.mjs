@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { DatabaseSync } from 'node:sqlite'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -570,6 +571,120 @@ try {
     'and a double-click puts it back, so a bad drag is recoverable',
     (await evaluate(widthNow)) === 252,
     String(await evaluate(widthNow))
+  )
+
+  section('fleet strip')
+  // ⛔ A reading that has gone stale is *shown*, dimmed and labelled — it used to be replaced by the
+  // words `quota unknown`, which made an account measured yesterday indistinguishable from one that
+  // has never been measured at all. ⚠️ The numbers only; nothing downstream may act on them, and
+  // `quotareading.test.ts` is what holds that line. This check is about what a person sees.
+  const staleWorker = await evaluate(
+    `window.agentyard.rpc('fleet.list', {}).then(f => f[0].worker.id)`
+  )
+  {
+    // Seeded through the store, because no RPC can file a reading from twenty hours ago and the
+    // suite must not wait twenty hours to find out how one is drawn.
+    const store = new DatabaseSync(join(dataDir, 'multi_agent_controller.db'))
+    const at = Date.now() - 20 * 3600 * 1000
+    for (const [id, pct] of [['session', 11], ['weekly', 16]]) {
+      store
+        .prepare(
+          `insert into quota_samples (worker_id, window_id, label, percent, resets_at, source, sampled_at)
+           values (?,?,?,?,?,?,?)`
+        )
+        .run(staleWorker, id, id, pct, at + 7_200_000, 'config cache', at)
+    }
+    store.close()
+  }
+  // A worker event is what makes the strip re-read the fleet; the edit itself is a no-op.
+  await evaluate(
+    `window.agentyard.rpc('worker.update', { id: ${JSON.stringify(staleWorker)}, maxConcurrent: 1 })`
+  )
+  await wait(1500)
+  const strip = await evaluate(`document.querySelector('.fleet')?.innerText ?? ''`)
+  check('a stale reading still shows its numbers', /11%/.test(strip), JSON.stringify(strip.slice(0, 90)))
+  check('and says that they are stale', /stale/i.test(strip))
+  check(
+    'rather than calling a measured account unknown',
+    !/quota unknown/i.test(strip),
+    'an account read yesterday and one never read are different states'
+  )
+
+  section('finishing work')
+  // ⛔ Three tiers resolve into one answer, and the failure this guards is the answer disappearing
+  // from the one place a person can change it. The daemon-side resolution is held by
+  // finish.test.ts; these checks are that the controls exist and reach the daemon.
+  await evaluate(
+    `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim() === 'Global')?.click()`
+  )
+  await wait(1500)
+  const fleetPicker = `[...document.querySelectorAll('select')].find(
+     s => s.getAttribute('aria-label') === 'Fleet finish policy')`
+  check('the fleet tier has a control', (await evaluate(`!!(${fleetPicker})`)) === true)
+  check(
+    'which starts at agent-lands, the shipped default',
+    (await evaluate(`${fleetPicker}?.value`)) === 'agent-lands'
+  )
+  await evaluate(`
+    (() => {
+      const s = ${fleetPicker};
+      s.value = 'await-human';
+      s.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    })()
+  `)
+  await wait(1200)
+  check(
+    'and a change reaches the daemon, not just the select',
+    (await evaluate(
+      `window.agentyard.rpc('settings.get', {}).then(s => s.finishPolicy)`
+    )) === 'await-human',
+    'the control reads back what the daemon returned, never the value that was chosen'
+  )
+  // ⚠️ Put back, so the rest of the suite runs against the shipped default.
+  await evaluate(`window.agentyard.rpc('settings.set', { finishPolicy: 'agent-lands' })`)
+  check(
+    'a task carries its own tier, defaulting to inherit',
+    (await evaluate(
+      `window.agentyard.rpc('task.create', { title: 'finish tier check' }).then(t => t.finishPolicy)`
+    )) === 'inherit',
+    'inherit is a value, not a blank: a task set to it follows its project as the project changes'
+  )
+  check(
+    'and the loose-ends scan answers without a project configured',
+    Array.isArray(await evaluate(`window.agentyard.rpc('looseend.list', {}).then(e => e)`)),
+    'it runs on Overview for every project on every load, so it must never throw'
+  )
+
+  section('logs')
+  // ⛔ The daemon has always written a log and nothing ever displayed it, which is the same as not
+  // having one: the premise of the product is that it runs while nobody watches. These checks are
+  // about the two halves being present — the live buffer, and the files behind it.
+  await evaluate(
+    `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim() === 'Logs')?.click()`
+  )
+  await wait(1500)
+  const logPanel = await evaluate(`document.querySelector('.content')?.innerText ?? ''`)
+  const lines = await evaluate(`document.querySelectorAll('.log-line').length`)
+  check('the log panel shows lines the daemon has already written', lines > 0, `${lines} line(s)`)
+  check(
+    'including the startup line, which happened before this window existed',
+    /orchestratord .* ready|scheduler started/i.test(logPanel),
+    'a live event stream alone would show a panel opened afterwards nothing at all'
+  )
+  check(
+    'and it names the directory the files are kept in',
+    /logs/.test(logPanel) && /On disk/i.test(logPanel)
+  )
+  // ⚠️ Asserted through the RPC as well as the DOM: the panel could render a hard-coded row and
+  // still look right, and the file on disk is the half that outlives the window.
+  const onDisk = await evaluate(
+    `window.agentyard.rpc('log.files', {}).then(r => JSON.stringify(r.files.map(f => f.name)))`
+  )
+  check(
+    'a file is on disk, named for the day',
+    /orchestratord-\d{4}-\d{2}-\d{2}\.log/.test(onDisk),
+    onDisk
   )
 
   section('workers')

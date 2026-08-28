@@ -20,6 +20,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 let dir: string
 let db: typeof import('./db.js')
 let transcript: typeof import('./transcript.js')
+let events: typeof import('./events.js')
 
 const SESSION = 'aaaaaaaa-0000-4000-8000-000000000001'
 const WORKER = 'bbbbbbbb-0000-4000-8000-000000000001'
@@ -47,6 +48,7 @@ beforeAll(async () => {
   process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
   db = await import('./db.js')
   transcript = await import('./transcript.js')
+  events = await import('./events.js')
   db.openDb(join(dir, 'metering.db'))
 
   db.db()
@@ -110,5 +112,60 @@ describe('recordTurn', () => {
       n: number
     }
     expect(n).toBe(1)
+  })
+})
+
+/**
+ * Saying that the session moved.
+ *
+ * ⛔ Measured 2026-08-28. `recordTurn` writes `context_tokens`, `last_request_started_at` and
+ * `cache_expires_at` onto the session and announced none of it — only a `turn` event, which is about
+ * the turn. So every holder of a `Session` kept the copy it was handed when the session opened: the
+ * fleet strip drew an empty cache bar, `no turn yet` and `--:--` for session e1419ce6, which was 77
+ * turns and 118,183 context tokens deep, while the task pane one panel over read 82k off a fresher
+ * copy of the same row. Two panels, one row, two answers.
+ *
+ * ⚠️ events.ts already states the rule this broke — *a mutation is only half done when the row is
+ * written* — which is why the announcement belongs here, at the write, and not in the caller.
+ */
+describe('the event that says a metered turn moved the session', () => {
+  const captured: Array<{ type: string; session?: { id: string; contextTokens: number | null } }> = []
+
+  beforeAll(() => {
+    events.setEventSink((event) => {
+      if (event.type === 'session.changed') {
+        captured.push({
+          type: event.type,
+          session: { id: event.session.id, contextTokens: event.session.contextTokens }
+        })
+      }
+    })
+  })
+
+  afterAll(() => events.setEventSink(() => {}))
+
+  it('goes out when the turn is new', () => {
+    captured.length = 0
+    transcript.recordTurn(turn('req_announced'))
+    expect(captured).toHaveLength(1)
+    expect(captured[0]?.session?.id).toBe(SESSION)
+  })
+
+  it('carries the row as it is now, not as the caller last saw it', () => {
+    // ⛔ The half that makes this worth having. Emitting the `Session` the caller was holding would
+    // announce a change while carrying the values from before it — the same staleness, pointed the
+    // other way, and it is what the stream path was doing.
+    captured.length = 0
+    transcript.recordTurn(turn('req_fresh'))
+    expect(captured[0]?.session?.contextTokens).toBe(30_512)
+  })
+
+  it('stays quiet for a turn the store has already seen', () => {
+    // ⚠️ A transcript repeats records. An event per repeat would wake every attached window ~1.8x
+    // more often than anything actually changed, and nothing would have changed.
+    transcript.recordTurn(turn('req_dupe_event'))
+    captured.length = 0
+    transcript.recordTurn(turn('req_dupe_event'))
+    expect(captured).toHaveLength(0)
   })
 })

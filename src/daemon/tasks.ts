@@ -56,6 +56,8 @@ interface TaskRow {
   requires_json: string
   constraints_json: string
   verification: string
+  finish_policy: string
+  finish_asked_at: number | null
   preemptible: number
   est_tokens: number | null
   cancel_json: string | null
@@ -111,6 +113,10 @@ function toTask(r: TaskRow): Task {
     requires: JSON.parse(r.requires_json) as Task['requires'],
     constraints: JSON.parse(r.constraints_json) as TaskConstraints,
     verification: r.verification as Task['verification'],
+    // ⚠️ Coalesced rather than trusted. A row written before migration 9 has no value, and `inherit`
+    // is the honest reading of a task that has never expressed a preference.
+    finishPolicy: (r.finish_policy || 'inherit') as Task['finishPolicy'],
+    finishAskedAt: r.finish_asked_at,
     preemptible: r.preemptible === 1,
     estTokens: r.est_tokens,
     cancel: r.cancel_json ? (JSON.parse(r.cancel_json) as Task['cancel']) : null,
@@ -207,6 +213,7 @@ export interface CreateTaskInput {
   requires?: Task['requires']
   constraints?: TaskConstraints
   verification?: Task['verification']
+  finishPolicy?: Task['finishPolicy']
   preemptible?: boolean
   estTokens?: number | null
   mandate?: Partial<Mandate>
@@ -267,8 +274,8 @@ export function createTask(input: CreateTaskInput): Task {
       `insert into tasks (id, seq, project_id, title, kind, status, priority, created_by_json,
                           parent_task_id, lineage_depth, assignee_hint, mandate_json, budget_json,
                           not_before, deadline, requires_json, constraints_json, verification,
-                          preemptible, est_tokens, created_at, updated_at)
-       values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+                          finish_policy, preemptible, est_tokens, created_at, updated_at)
+       values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
     )
     .run(
       id,
@@ -289,6 +296,9 @@ export function createTask(input: CreateTaskInput): Task {
       JSON.stringify(input.requires ?? []),
       JSON.stringify(input.constraints ?? {}),
       input.verification ?? 'auto',
+      // ⚠️ `inherit` by default, which is not the same as picking the fleet value: a task that has
+      // never expressed a preference follows its project as the project changes.
+      input.finishPolicy ?? 'inherit',
       input.preemptible === false ? 0 : 1,
       input.estTokens ?? null,
       now,
@@ -469,6 +479,18 @@ export function setStatus(taskId: string, status: TaskStatus, extra: Partial<Tas
     )
   const task = requireTask(taskId)
   emit({ type: 'task.changed', task })
+  // ⛔ The spine of the log. A task's life is a sequence of these transitions and nothing was
+  // recording them, so the log could show a dispatch and a failure with no account of the states in
+  // between — and after a restart there was no way to reconstruct what a task had been through.
+  // ⚠️ Only on a real change: `setStatus` is also how a status is *re-*written with new fields, and
+  // logging `running -> running` on every one of those would bury the transitions that matter.
+  if (current.status !== status) {
+    log.info(
+      `t${task.seq} ${current.status} -> ${status}` +
+        (task.holdReason ? ` (${task.holdReason})` : '') +
+        (assignee && assignee !== current.assignee ? ` on ${assignee.slice(0, 8)}` : '')
+    )
+  }
   return task
 }
 
@@ -502,6 +524,7 @@ export function updateTask(
       | 'deadline'
       | 'assigneeHint'
       | 'verification'
+      | 'finishPolicy'
       | 'preemptible'
       | 'estTokens'
       | 'constraints'
@@ -512,8 +535,8 @@ export function updateTask(
   db()
     .prepare(
       `update tasks set title = ?, priority = ?, project_id = ?, not_before = ?, deadline = ?,
-                        assignee_hint = ?, verification = ?, preemptible = ?, est_tokens = ?,
-                        constraints_json = ?, updated_at = ?
+                        assignee_hint = ?, verification = ?, finish_policy = ?, preemptible = ?,
+                        est_tokens = ?, constraints_json = ?, updated_at = ?
         where id = ?`
     )
     .run(
@@ -524,6 +547,7 @@ export function updateTask(
       patch.deadline !== undefined ? patch.deadline : current.deadline,
       patch.assigneeHint !== undefined ? patch.assigneeHint : current.assigneeHint,
       patch.verification ?? current.verification,
+      patch.finishPolicy ?? current.finishPolicy,
       (patch.preemptible ?? current.preemptible) ? 1 : 0,
       patch.estTokens !== undefined ? patch.estTokens : current.estTokens,
       JSON.stringify(patch.constraints ?? current.constraints),
@@ -764,4 +788,19 @@ export function schedulingOrder(a: Task, b: Task): number {
   const bDue = b.deadline ?? Number.POSITIVE_INFINITY
   if (aDue !== bDue) return aDue - bDue
   return a.seq - b.seq
+}
+
+/**
+ * Record that the finish instruction has been sent, so it is never sent twice.
+ *
+ * ⛔ Written *before* the prompt goes out, not after. A send that throws still counts as an ask: the
+ * failure path hands the task to a person, and a retry loop that re-asked on every error would be
+ * the same runaway the preemption guard exists to prevent.
+ */
+export function markFinishAsked(taskId: string): void {
+  db().prepare('update tasks set finish_asked_at = ?, updated_at = ? where id = ?').run(
+    Date.now(),
+    Date.now(),
+    taskId
+  )
 }

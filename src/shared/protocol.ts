@@ -14,7 +14,10 @@ import type {
   Task,
   TaskConstraints,
   TaskKind,
-  TaskMessage
+  TaskMessage,
+  FinishPolicy,
+  FinishPolicyChoice,
+  LooseEnd
 } from './tasks.js'
 
 /**
@@ -53,6 +56,15 @@ export interface Settings {
    * work, so the operator opts in.
    */
   autoRunawayStop: boolean
+  /**
+   * What finishing a task means, fleet-wide, for every project that has not said otherwise.
+   *
+   * ⚠️ The odd one out in this interface, and deliberately so. The three switches above gate an
+   * *intervention on a live session*; this is the bottom tier of a three-tier preference (fleet →
+   * project → task). It lives here because a fleet-wide default has to live somewhere an operator
+   * can find it, and this is where the operator already looks for fleet-wide anything.
+   */
+  finishPolicy: FinishPolicy
 }
 
 export interface CostReport {
@@ -232,6 +244,23 @@ export interface QuotaWindow {
   label: string
   percent: number
   resetsAt: number | null
+}
+
+export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
+
+/** One line of the daemon's log, as the log panel and the tail RPC both carry it. */
+export interface LogEntry {
+  ts: number
+  level: LogLevel
+  message: string
+}
+
+/** A log file on disk. ⚠️ Reported, never streamed — the ring buffer covers the live case. */
+export interface LogFile {
+  name: string
+  path: string
+  bytes: number
+  modifiedAt: number
 }
 
 export interface QuotaSnapshot {
@@ -769,6 +798,30 @@ export interface RpcMap {
   'resource.list': { params: void; result: ResourceAvailability[] }
   /** Everything the cost model currently believes, and on what basis. */
   'cost.report': { params: void; result: CostReport }
+  /**
+   * The recent past of the daemon's log, for a panel that has just opened.
+   *
+   * ⚠️ Served from a ring buffer in memory, not by reading a file. The live stream arrives as `log`
+   * events; this is only what happened *before* the UI attached, which is otherwise invisible.
+   */
+  /**
+   * Set a task's finish policy. ⚠️ Also *acts*: switching a finished task to a landing policy lands
+   * it, subject to the same bar a first completion faces.
+   */
+  'task.setFinishPolicy': {
+    params: { id: string; finishPolicy: FinishPolicyChoice }
+    result: { task: Task; landed: boolean; reason?: string }
+  }
+  /** Land a branch whose task already finished. The loose-ends list and the task pane both use it. */
+  'task.land': { params: { id: string }; result: { task: Task; landed: boolean; reason?: string } }
+  /** Work that exists and is going nowhere: uncommitted files, unlanded branches, rescued stashes. */
+  'looseend.list': { params: void; result: LooseEnd[] }
+  'looseend.dismiss': { params: { id: string }; result: { ok: true } }
+  /** File a task to go and deal with one. ⚠️ Creates work; it does not do the work. */
+  'looseend.reclaim': { params: LooseEnd; result: Task }
+  'log.tail': { params: { limit?: number; level?: LogLevel }; result: LogEntry[] }
+  /** What is on disk, for the offline half. ⛔ Lists files; never returns their contents. */
+  'log.files': { params: void; result: { directory: string; files: LogFile[] } }
   'settings.get': { params: void; result: Settings }
   'settings.set': { params: Partial<Settings>; result: Settings }
   'scheduler.tick': { params: void; result: { dispatched: number; note: string } }
@@ -863,7 +916,14 @@ export type DaemonEvent =
   | { type: 'turn'; turn: Turn }
   | { type: 'consult.changed'; consult: Consult }
   | { type: 'chat.message'; message: ChatMessage }
-  | { type: 'log'; level: 'info' | 'warn' | 'error'; message: string; ts: number }
+  /**
+   * One line the daemon logged.
+   *
+   * ⚠️ `debug` is in the union because the level is the *daemon's* choice, gated by
+   * `MULTI_AGENT_CONTROLLER_LOG_LEVEL` at the source. A renderer that could not represent a level
+   * the daemon can send would drop lines an operator had explicitly asked to see.
+   */
+  | { type: 'log'; level: LogLevel; message: string; ts: number }
   /**
    * What the agent working on a task is saying, as it says it.
    *

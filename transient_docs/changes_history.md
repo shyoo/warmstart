@@ -953,3 +953,87 @@ on a measured reset time rather than an inferred one, and the loss it prevents (
 mid-thought with no commit and no handoff) is unrecoverable. ⭐ Two switches rather than one, because
 the two triggers rest on evidence of completely different quality and a single toggle would have
 forced the operator to buy both.
+
+## What happens to work the tool will not take (2026-08-28)
+
+Three threads, all downstream of one absence: nothing answered *what becomes of work the tool
+declines to land*.
+
+### The survey that reversed the proposal
+
+The first plan had the daemon commit on the agent's behalf when a task finished dirty — `git add -A`
+behind a blocklist screening untracked files for credential-shaped names, sizes and paths. The owner
+pushed back that a blocklist is a heuristic with a loophole, and asked what other tools do.
+
+Nobody does it. Claude Code's worktree documentation specifies the opposite in detail: a subagent's
+worktree is removed automatically only when it finishes *without changes*, and one "with changes
+stays on disk until the periodic sweep can remove it without losing work"; the sweep leaves a
+worktree alone when it "still holds work: changed or untracked files, or unpushed commits", and
+reclaiming one anyway requires `git worktree remove --force` typed by a person. It holds a
+`git worktree lock` while an agent runs, writes a provenance marker so it never reclaims a worktree
+somebody else made, and resets a reused worktree only when git can prove it is safe. Untrivial's
+agent-orchestrator states **"Never force-delete dirty worktrees"** as a load-bearing rule and treats
+the agent's pull request as the unit of output. `pi-worktrees` refuses `/wt-cleanup` on a dirty
+worktree; `agent-worktree` preserves rather than destroys.
+
+⭐ The convergent pattern: **detect work, never destroy it, and let the agent commit.** The judgement
+about what to stage, what to leave and what to test first is what a `/commit` skill encodes, differs
+per project and per person, and a daemon applying a name-and-size list at the one moment nobody is
+watching is a worse copy of it with less context. The blocklist was deleted before it was written.
+
+⚠️ One adaptation was needed. Every tool surveyed asks a human at the moment of preservation, and
+this fleet is unattended by design. So the exit prompt became a list: **Loose ends**, on Overview,
+asking the same question afterwards.
+
+### One field where there had been three halves
+
+`project.landing.strategy` answered it per project, `task.verification` answered a different-sounding
+version of it per task, and nothing answered it fleet-wide — so *why did this not land?* needed two
+fields checked in two files, and neither could be changed while a task was running. `finishPolicy`
+replaces both, resolved task → project → fleet with `inherit` as a real value at the lower two tiers.
+
+⛔ `mandate.allowed ⊇ 'land'` stays exactly where it was, and the distinction is the point:
+**preference is not authority.** The mandate is inherited down a lineage so an agent-spawned subtask
+cannot grant itself more than its parent had. A dropdown may set what *should* happen; nothing in a
+UI may widen what *may*. There is a test that fails if that ever stops being true.
+
+`agent-lands` gained a bar it did not have: the project must define check commands and they must
+pass. This repo had no `project.json` at all, so it had been landing on an empty check array — which
+is to say landing whatever an agent produced, unverified, unattended.
+
+### The one ask
+
+A task finishing dirty gets one instruction — commit these, then report complete again — guarded by
+`finish_asked_at`. Between the instruction and the agent's next report nothing about the task
+changes, so the same decision would be reached again, and each repeat is a billed turn telling an
+agent to do what it just did. ⚠️ That is the third appearance of one shape this week: the cache clock
+re-issuing `/compact` thirteen times, the runaway watchdog re-preempting thirteen times, and this.
+**A decision that triggers an action, and is re-evaluated before the action lands, is a loop.** It is
+now an invariant in AGENTS.md rather than a lesson relearned per component.
+
+### What the log could not tell anybody
+
+The daemon had written `logs/orchestratord.log` since M0 and nothing in the app displayed it; only
+`warn` and `error` reached a UI, and no panel rendered even those. So "when did it probe that
+account?" had no answer, and a fleet working correctly was indistinguishable from one that had
+stopped. The file also rotated at 5MB into a single `.1`, which answers *is the disk safe* rather
+than *what happened on Tuesday*.
+
+Now: a file per day pruned by mtime, a ring buffer so a window opened after the interesting minute
+still shows it, every level broadcast, and a panel. Plus the lines that were missing — `probeWorker`
+logged nothing at all, task status transitions logged nothing, and the dispatch line named the
+account without the score that chose it. ⚠️ The tick's conclusion logs only when it *changes*: a
+10-second loop logging every pass would push a day of real events out of a 2000-line buffer in six
+hours.
+
+### And a smaller one, which is the same lesson
+
+`recordTurn` writes `context_tokens`, `last_request_started_at` and `cache_expires_at` onto a session
+and announced none of it — only a `turn` event, which is about the turn. So the fleet strip drew an
+empty cache bar, `no turn yet` and `--:--` for session e1419ce6, which was 77 turns and 118,183
+context tokens deep, while the task pane one panel over read 82k off a fresher copy of the same row.
+`events.ts` already carried the rule that was broken — *a mutation is only half done when the row is
+written* — so the announcement moved to the write.
+
+The first thing the finished loose-ends scan found, run against the real repository, was a stash in
+ws1 holding the t5 Workers-table work that `rescueDirt` had saved and nothing had ever shown anyone.

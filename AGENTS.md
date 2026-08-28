@@ -69,12 +69,14 @@ These are not preferences; breaking one breaks the product.
   reserve-at-risk compaction as well as the ordinary one — a switch that quietly kept compacting "for
   safety" would be false on the one screen whose whole claim is that it shows what the scheduler
   really does. Told-not-to-compact and cannot-compact land in the same place: handoff and close.
-- ⛔ **An intervention that takes time must mark what it is intervening on.** `preempt` sends a
-  wrap-up prompt and waits two minutes for it to land — during which the run is still open and the
-  task still `running`, the exact state the watchdog scans for, so it re-fired every tick until the
-  `preempting` claim set stopped it. Any watchdog that acts and *then* waits owes the same guard, and
-  owes a re-read before it acts on the far side: two minutes is long enough for the run to have
-  ended. ⚠️ Re-asking is never idempotent when the asking itself costs a turn.
+- ⛔ **A decision that triggers an action, and is re-evaluated before the action lands, is a loop.**
+  Three components learned this separately: the cache clock re-issued `/compact` thirteen times
+  (2026-08-26), the runaway watchdog re-preempted one run thirteen times (2026-08-28), and the finish
+  path would have re-asked an agent to commit on every completion. In each case the decision is a
+  pure function of state the action has not changed yet. **Record the ask, with the evidence that
+  would prove it landed** — `clock_move`, the `preempting` set, `finish_asked_at` — and owe a re-read
+  before acting on the far side of the wait, because minutes are long enough for the subject to have
+  moved on. ⚠️ Re-asking is never idempotent when the asking itself costs a turn.
 - ⛔ **No pricing arithmetic inline.** Ask the cost-model object (`costOfKeepalive`, `costOfCompact`,
   `costOfColdStart`, `cacheExpiryFor`). Providers price caching in structurally different ways and
   all of them move.
@@ -217,6 +219,16 @@ These are not preferences; breaking one breaks the product.
   executing a file that anything on the machine can write would put all of that behind a file
   permission. A declaration also cannot grant itself MCP tools, a mintable session id, metering or a
   quota probe - each is refused with a test.
+- ⛔ **The tool never writes a commit, and never destroys work.** Committing is the agent's job: what
+  to stage, what to leave, what to run first is judgement that differs per project and per person, and
+  a daemon applying a heuristic at the one moment nobody is watching is a worse copy of it. Work the
+  tool declines to land is preserved exactly where it is and surfaced under **Loose ends** — ⚠️
+  preserving it silently is only half a fix, because invisible preservation is indistinguishable from
+  loss. `docs/landing.md` is the user-facing spec.
+- ⛔ **Preference never widens authority.** `finishPolicy` (fleet → project → task) says what *should*
+  happen; `mandate.allowed ⊇ 'land'` says what *may*. The mandate is inherited down a lineage so an
+  agent-spawned subtask cannot grant itself more than its parent had, so nothing settable in a UI may
+  touch it. A dropdown that could would be a privilege escalation with a nice label.
 - **Agents work in a pooled worktree, never the trunk.** The branch is named after the *task*
   (`multi-agent-controller/t123-…`), never after the workspace it happened to land in. ⛔ **A slot
   does not arrive clean.** `switch --detach` carries uncommitted changes with it, so parking frees a

@@ -5,6 +5,7 @@ import { db } from './db.js'
 import { costModel } from './costmodel.js'
 import { adapter } from './adapters/index.js'
 import { clearClockMove, getSession } from './sessions.js'
+import { emit } from './events.js'
 import { creditTurn } from './tasks.js'
 import { clearDispatchFailure } from './workers.js'
 import type { StreamUsage } from './stream.js'
@@ -324,7 +325,28 @@ export function recordTurn(turn: Turn): boolean {
   // is the exact failure the quarantine exists to catch.
   clearDispatchFailure(session.workerId)
 
+  announce(turn.sessionId)
   return true
+}
+
+/**
+ * Say that the session moved.
+ *
+ * ⛔ **A mutation is only half done when the row is written** - events.ts says so, and this is the
+ * write that ignored it. `context_tokens`, `last_request_started_at` and `cache_expires_at` all
+ * change here, and nothing announced any of it: a `turn` event went out, which is about the *turn*,
+ * so every holder of a `Session` object kept the copy it was handed when the session opened. The
+ * fleet strip drew an empty cache bar, `no turn yet` and `--:--` for a session 77 turns deep while
+ * the task pane one panel over showed 82k from a fresher copy of the same row (session e1419ce6,
+ * measured 2026-08-28).
+ *
+ * ⚠️ Re-read from the store rather than patching a copy. The caller's `session` is the row as it was
+ * before any of this, and broadcasting that would replace a fresh copy somewhere with a stale one -
+ * the same bug, pointed the other way.
+ */
+function announce(sessionId: string): void {
+  const session = getSession(sessionId)
+  if (session) emit({ type: 'session.changed', session })
 }
 
 export function recordCompaction(
@@ -415,6 +437,8 @@ export function creditStreamTurn(session: Session, usage: StreamUsage): void {
 
   // The same proof as the transcript path, for the adapters metered from their stream instead.
   clearDispatchFailure(session.workerId)
+
+  announce(session.id)
 
   log.debug(
     `metered ${usage.input + usage.output} tokens from the stream on ${session.id.slice(0, 8)}`
