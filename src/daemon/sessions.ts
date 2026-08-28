@@ -201,6 +201,7 @@ interface SessionRow {
   purpose: string
   transcript_path: string | null
   vendor_session_id: string | null
+  current_branch: string | null
   context_tokens: number | null
   last_request_started_at: number | null
   cache_expires_at: number | null
@@ -228,6 +229,7 @@ function toSession(r: SessionRow): Session {
     purpose: (r.purpose as SessionPurpose) ?? 'work',
     transcriptPath: r.transcript_path,
     vendorSessionId: r.vendor_session_id,
+    currentBranch: r.current_branch,
     contextTokens: r.context_tokens,
     contextWindow: contextWindowFor(r.adapter_id, r.model),
     lastRequestStartedAt: r.last_request_started_at,
@@ -285,6 +287,23 @@ export function noteVendorSession(sessionId: string, vendorId: string | null): v
     )
     .run(vendorId, sessionId, vendorId, vendorId).changes
   if (!changed) return
+  const session = getSession(sessionId)
+  if (session) {
+    const entry = live.get(sessionId)
+    if (entry) entry.session = session
+    events.onChange(session)
+  }
+}
+
+/**
+ * Record which branch this conversation's worktree is now on.
+ *
+ * ⚠️ Written after the switch has actually happened, never before. A row claiming a branch the
+ * tree is not on would send the next borrower's restore to the wrong place, and the failure would
+ * land on a task that did nothing wrong.
+ */
+export function noteCurrentBranch(sessionId: string, branch: string | null): void {
+  db().prepare('update sessions set current_branch = ? where id = ?').run(branch, sessionId)
   const session = getSession(sessionId)
   if (session) {
     const entry = live.get(sessionId)

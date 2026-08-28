@@ -9,7 +9,7 @@ if you add a line, find the one it obsoletes and cut it in the same edit. Finish
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
 **Baseline (2026-08-28, measured on this machine):** `npm run typecheck` clean · `npm run lint` clean ·
-`npm run build` clean · `npm test` 411/411 · `npm run test:daemon` 124/124 · `npm run test:ui` 89/89 ·
+`npm run build` clean · `npm test` 417/417 · `npm run test:daemon` 124/124 · `npm run test:ui` 89/89 ·
 `npm run test:pack` 18/18 · L4 (opt-in) landed a real agent commit on origin/main. Electron 44.0.0,
 electron-builder 26.15.3, 0 npm vulnerabilities. CLIs here: claude 2.1.250 · agy 1.1.22 · codex 0.149.1.
 
@@ -38,7 +38,7 @@ gaps are below. Scope: `transient_docs/implementation_plan_2026-08-24.md` §14, 
 src/daemon/            orchestratord. Runs as Electron-with-ELECTRON_RUN_AS_NODE, detached.
   index.ts             entry: lock, db, server, poller, scheduler, tailer wiring, shutdown
   server.ts  api.ts    HTTP+WS on 127.0.0.1:<random>, bearer token, typed RPC
-  db.ts                node:sqlite + numbered migrations (v11)
+  db.ts                node:sqlite + numbered migrations (v12)
   costmodel.ts         the four questions; user dir > bundled > compiled-in
   workers.ts           registry, isolation roots, retire-keeps-credentials
   quota.ts             the staleness ladder - read this before trusting a percentage
@@ -142,11 +142,9 @@ M0–M6 are done. What is left is not a milestone but a list, in the order it wo
 4. **Resident sessions** - one conversation per (worker, workspace), tasks borrowing it. The cost win
    this is for: a cold Claude turn cost **41,542 cache-creation tokens** in an empty directory
    (measured 2026-08-28) and every task pays it. Agreed with the owner 2026-08-28.
-   ⭐ **Phases 0 and 1 are done** - see `git log`; what is left is what makes it visible and shared:
-   - **(2) The session lease.** An exclusive Resource held by the task, so no two tasks are ever in
-     one conversation, plus `sessions.current_branch` with switch-and-restore and a notice to each of
-     three readers: the parked task's thread, the agent on switch, the agent on return.
-     ⛔ A dirty resident tree is never switched out from under its task - the joining task starts cold.
+   ⭐ **Phases 0, 1 and 2 are done** - see `git log`. Phase 2 shipped dark: the lease, the branch
+   switch and all three notices exist and are tested, and nothing routes a second task into a live
+   session until (3) turns sharing on. What is left:
    - **(3) The setting.** Fleet > project > task, `off` at every tier, mechanical gates only.
      ⚠️ Topic scoring is deliberately deferred; the gate returns a ranked list so a score is a
      comparator later rather than a rewrite.

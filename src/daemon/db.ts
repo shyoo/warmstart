@@ -542,6 +542,20 @@ const MIGRATIONS: string[] = [
    where project_id is null;
 
   alter table runs add column started_warm integer;
+  `,
+
+  // 12 - which branch the tree a conversation lives in is actually on.
+  //
+  // ⛔ A session outlives the task that opened it now, and the next task to borrow it wants a
+  // different branch. Something has to know what the worktree is currently checked out to, because
+  // the answer decides whether a switch is needed and - when the borrower is done - what to switch
+  // *back* to. Reading it from git each time would answer a different question: git says what the
+  // tree is on, not what the conversation believes it is on, and the gap between those two is
+  // exactly the stale-context hazard the switch notice exists to warn about.
+  //
+  // ⚠️ Null for a session with no branch at all - a `vcs: none` project, a consult, a chat.
+  `
+  alter table sessions add column current_branch text;
   `
 ]
 

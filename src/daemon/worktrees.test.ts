@@ -137,3 +137,135 @@ describe('claiming a workspace somebody left dirty', () => {
     worktrees.releaseWorkspace(ws!.claimId)
   })
 })
+
+/**
+ * Lending a resident conversation's worktree to another task.
+ *
+ * ⛔ Phase 2 of resident sessions. A session now keeps its worktree for as long as it lives, so the
+ * next task to borrow the conversation needs the tree moved to *its* branch and put back afterwards.
+ * The move is the dangerous half: the agent's context is full of file contents read from the branch
+ * being left, and nothing about that context says they are stale.
+ *
+ * ⚠️ Real git again, for the same reason the tests above use it: every interesting case here is
+ * something git does or refuses to do with a working tree, and a stub would agree with whatever the
+ * implementation happened to believe.
+ */
+describe('moving a borrowed worktree to another branch', () => {
+  it('switches a clean tree and reports where it came from', async () => {
+    const project = makeProject()
+    const ws = await worktrees.claimWorkspace(project, 'session-1')
+    const first = worktrees.branchNameFor(1, 'first task')
+    await worktrees.prepareWorkspace(project, ws!, first)
+
+    const second = worktrees.branchNameFor(2, 'second task')
+    const moved = await worktrees.switchResidentBranch(project, ws!.path, second)
+
+    expect(moved.error).toBeUndefined()
+    expect(moved.ok).toBe(true)
+    // ⛔ `from` is what the restore will be asked for later. Getting it wrong sends the borrowed
+    // conversation back to the wrong branch, and the failure lands on a task that did nothing wrong.
+    expect(moved.from).toBe(first)
+    expect(git(ws!.path, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe(second)
+    worktrees.releaseWorkspace(ws!.claimId)
+  })
+
+  it('goes back, because a restore is the same move in the other direction', async () => {
+    const project = makeProject()
+    const ws = await worktrees.claimWorkspace(project, 'session-1')
+    const mine = worktrees.branchNameFor(1, 'first task')
+    await worktrees.prepareWorkspace(project, ws!, mine)
+    writeFileSync(join(ws!.path, 'mine.txt'), 'work committed on my branch\n')
+    git(ws!.path, 'add', '-A')
+    git(ws!.path, 'commit', '-m', 'my work')
+
+    const borrower = worktrees.branchNameFor(2, 'second task')
+    await worktrees.switchResidentBranch(project, ws!.path, borrower)
+    const back = await worktrees.switchResidentBranch(project, ws!.path, mine)
+
+    expect(back.ok).toBe(true)
+    expect(back.from).toBe(borrower)
+    expect(git(ws!.path, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe(mine)
+    // ⭐ The whole promise made to the task that was parked: its branch is untouched.
+    expect(text(join(ws!.path, 'mine.txt'))).toBe('work committed on my branch\n')
+    worktrees.releaseWorkspace(ws!.claimId)
+  })
+
+  it('refuses a tree holding uncommitted work, and names the files', async () => {
+    // ⛔ The rule, not a safety margin. Stashing to make room would take work that is currently
+    // *visible* as a loose end and hide it in a stash the next reader has to know to look for -
+    // which is the t5 failure with extra steps. A dirty tree keeps its task.
+    const project = makeProject()
+    const ws = await worktrees.claimWorkspace(project, 'session-1')
+    const mine = worktrees.branchNameFor(1, 'first task')
+    await worktrees.prepareWorkspace(project, ws!, mine)
+    writeFileSync(join(ws!.path, 'kept.txt'), 'half-finished, not committed\n')
+
+    const moved = await worktrees.switchResidentBranch(
+      project,
+      ws!.path,
+      worktrees.branchNameFor(2, 'second task')
+    )
+
+    expect(moved.ok).toBe(false)
+    expect(moved.error).toContain('kept.txt')
+    // ⛔ And it really did not move. A refusal that had already switched would be worse than no
+    // refusal at all.
+    expect(git(ws!.path, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe(mine)
+    expect(text(join(ws!.path, 'kept.txt'))).toBe('half-finished, not committed\n')
+    worktrees.releaseWorkspace(ws!.claimId)
+  })
+
+  it('reports a modified file by its whole name, not missing its first letter', async () => {
+    // ⛔ A real bug this suite found on the way past, and it had nothing to do with switching.
+    // `--porcelain` writes a two-column status field, so a file modified but not staged begins the
+    // line with a space (` M kept.txt`) — and `git()` trims its output, so `slice(3)` ate the first
+    // character of every modified file's name. `kept.txt` was reported as `ept.txt`, everywhere
+    // `workspaceState` is read: the loose-ends list, the refusal to land, and this refusal.
+    //
+    // ⚠️ Untracked files start with `??` and were never affected, which is exactly why it survived —
+    // the loose-ends scan that found the t5 stash had no modified file in it to get wrong.
+    const project = makeProject()
+    const ws = await worktrees.claimWorkspace(project, 'session-1')
+    await worktrees.prepareWorkspace(project, ws!, worktrees.branchNameFor(1, 'first task'))
+    writeFileSync(join(ws!.path, 'kept.txt'), 'edited, not staged\n')
+
+    const state = await worktrees.workspaceState(ws!.path, 'main')
+    expect(state.dirtyFiles).toEqual(['kept.txt'])
+    expect(state.untrackedFiles).toEqual([])
+    worktrees.releaseWorkspace(ws!.claimId)
+  })
+
+  it('refuses for a file git has never seen, not only for an edited one', async () => {
+    // ⚠️ The half that `git status` reports differently and that `git add -u` would have dropped.
+    // A new file is the most likely thing an agent leaves behind and the easiest to lose.
+    const project = makeProject()
+    const ws = await worktrees.claimWorkspace(project, 'session-1')
+    await worktrees.prepareWorkspace(project, ws!, worktrees.branchNameFor(1, 'first task'))
+    writeFileSync(join(ws!.path, 'brand-new.txt'), 'never added\n')
+
+    const moved = await worktrees.switchResidentBranch(
+      project,
+      ws!.path,
+      worktrees.branchNameFor(2, 'second task')
+    )
+    expect(moved.ok).toBe(false)
+    expect(moved.error).toContain('brand-new.txt')
+    worktrees.releaseWorkspace(ws!.claimId)
+  })
+
+  it('does nothing at all when the tree is already on that branch', async () => {
+    // ⚠️ Including when it is dirty. This is the common case - a task continuing its own work -
+    // and refusing it because the agent has uncommitted edits would break every continuation.
+    const project = makeProject()
+    const ws = await worktrees.claimWorkspace(project, 'session-1')
+    const mine = worktrees.branchNameFor(1, 'first task')
+    await worktrees.prepareWorkspace(project, ws!, mine)
+    writeFileSync(join(ws!.path, 'kept.txt'), 'still working on it\n')
+
+    const moved = await worktrees.switchResidentBranch(project, ws!.path, mine)
+    expect(moved.ok).toBe(true)
+    expect(moved.from).toBe(mine)
+    expect(text(join(ws!.path, 'kept.txt'))).toBe('still working on it\n')
+    worktrees.releaseWorkspace(ws!.claimId)
+  })
+})

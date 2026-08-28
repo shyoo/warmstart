@@ -147,6 +147,7 @@ const session = (patch: Partial<Session>): Session =>
     purpose: 'work',
     transcriptPath: null,
     vendorSessionId: null,
+    currentBranch: null,
     contextTokens: null,
     contextWindow: null,
     lastRequestStartedAt: null,

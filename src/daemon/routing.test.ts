@@ -196,6 +196,7 @@ describe('a dispatch that produced nothing', () => {
       purpose: 'work',
       transcriptPath: null,
     vendorSessionId: null,
+    currentBranch: null,
       contextTokens: null,
       contextWindow: null,
       lastRequestStartedAt: null,

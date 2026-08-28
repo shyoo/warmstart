@@ -46,6 +46,13 @@ and transferred the moment there is one. A pool with nothing free **evicts** rat
 conversation whose prompt cache has already lapsed goes first, because its context is no cheaper to
 reach than a cold start, and one with an open run is never touched.
 
+**Session lease** — *the right to be the task speaking in a conversation.* An exclusive Resource held
+by the task, so two tasks in one conversation is unrepresentable rather than merely discouraged, and
+`releaseAllFor(task)` returns it at the end of every run. ⚠️ A task parked at `awaiting_human` does
+**not** hold one - its conversation may be borrowed while it waits, and it takes the lease again when
+it is replied to. Borrowing moves the worktree to the borrower's branch and back again; ⛔ a tree
+holding uncommitted work is never moved, and the borrower starts cold instead.
+
 **Workspace** — *where a run executes.* For a git project, a pooled **git worktree** — a permanent
 checkout, created once and reused, sharing one `.git` object store. For a plain directory, the
 directory itself, as a pool of one.

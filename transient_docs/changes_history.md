@@ -1167,3 +1167,56 @@ And `reconcileTasks` carried `workspaces.delete(task.id)`, which had never once 
 never been keyed by task. Harmless, and it survived precisely because it read like the line that
 cleaned up after a restart. Nothing needs to: the map is in memory and starts empty, and
 `reconcileClaims` clears the rows beside it.
+
+---
+
+## Lending a conversation, and the letter that went missing from every filename
+
+Phase 2 of resident sessions. Phase 1 gave a conversation its own worktree for as long as it lives;
+this is what happens when a second task wants it.
+
+The **lease** is an exclusive Resource held by the task, following the rule the glossary already
+states - *if the scheduler owns the claim, the lock is unnecessary*. Two tasks in one conversation is
+not discouraged, it is unrepresentable: the second claim is simply not granted. A boolean field
+guarded by an `if` would have been a lock with extra steps and a race between the read and the write.
+Because the holder is the task, `releaseAllFor(task.id)` already returns it at the end of every run,
+on every exit path, with nothing new to remember. That also settles a question the owner asked
+directly: a task parked at `awaiting_human` holds no lease, so its conversation *can* be borrowed
+while it waits, and it takes the lease again when somebody replies.
+
+Moving the tree is the dangerous half, and the danger is not git. It is that the agent's context is
+full of file contents read from the branch being left, and nothing in that context says so. Three
+readers need to know, and each needs something different: the parked task's **thread** gets a note,
+because from its side the tree silently moved; the **agent** gets a warning at the top of its next
+prompt, before the task's own words, because one that reads the work first has already started
+planning against a tree that is not there; and the **log** gets the switch, because a worktree
+changing branches between two tasks is the most confusing thing this feature does from outside.
+
+⛔ Restoring is the same function in the other direction. When the borrowed task runs again its branch
+is the one that differs, so the tree moves back and the note goes to the borrower. There is
+deliberately no separate restore path: two functions that must stay each other's inverse are two
+functions that will eventually disagree.
+
+⛔ And a tree holding uncommitted work is never lent. The alternative was stashing to make room, which
+takes work that is currently *visible* as a loose end and hides it in a stash the next reader has to
+know to look for - the t5 failure with extra steps. A dirty tree keeps its task and the borrower
+starts cold.
+
+### The bug the tests found on the way past
+
+`switchResidentBranch` refuses a dirty tree and names the files. The test asserted the name was in
+the message. It was not: the message said `ept.txt`.
+
+`git status --porcelain` writes a two-column status field, so a file modified but not staged begins
+its line with a space - ` M kept.txt`. The `git()` helper in this module **trims its output**. Every
+such line therefore arrived one character short of what `slice(3)` assumed, and every modified file
+in the codebase was reported with its first letter missing.
+
+⚠️ Untracked files start with `??` and were never affected, which is exactly why this survived: the
+loose-ends scan that found the t5 stash had no modified file in it to get wrong. `workspaceState` is
+read by the loose-ends list, by the refusal to land, and by the ask-to-commit instruction - so the
+same wrong name was being shown in all three, to somebody who would have gone looking for a file that
+does not exist.
+
+Parsed by field now, with its own test, verified by putting `slice(3)` back and watching two tests
+fail.

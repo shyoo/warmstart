@@ -1,4 +1,4 @@
-import type { Run, RunQuota, Task, TaskStatus } from '@shared/tasks.js'
+import type { Project, Run, RunQuota, Task, TaskStatus } from '@shared/tasks.js'
 import type { Session, Worker } from '@shared/protocol.js'
 import { adapter } from './adapters/index.js'
 import { lastQuota, refreshUsage } from './quota.js'
@@ -28,13 +28,14 @@ import {
 import { enqueueConsult, hasPendingConsult, latestAnswer } from './controller.js'
 import { decomposeQuestion, routeQuestion, triageQuestion, type RouteCandidate } from './judgment.js'
 import { escalateStale, voidApprovalsForSession } from './approvals.js'
-import { reassignClaim, releaseAllFor } from './resources.js'
+import { claim, reassignClaim, releaseAllFor, upsertResource } from './resources.js'
 import {
   branchNameFor,
   claimWorkspace,
   parkWorkspace,
   prepareWorkspace,
   releaseWorkspace,
+  switchResidentBranch,
   workspaceState,
   type Workspace
 } from './worktrees.js'
@@ -44,6 +45,7 @@ import {
   closeSession,
   getSession,
   hasOpenRun,
+  noteCurrentBranch,
   resumableSession,
   sendPrompt,
   sessionsForWorker,
@@ -752,6 +754,23 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
     reassignClaim(workspace.claimId, session.id)
     workspaces.set(session.id, { workspace, projectId: project?.id ?? null })
   }
+  // ⚠️ `prepareWorkspace` has already put the tree on this branch, so this records what is true
+  // rather than asking for anything. It is what the *next* borrower reads to know what to restore.
+  noteCurrentBranch(session.id, branch)
+  // ⛔ The lease, even on a cold start. This session is brand new or freshly revived and nothing else
+  // can be in it — but a claim taken only on some paths is a claim nobody can reason about, and it is
+  // `releaseFor` that hands it back either way.
+  acquireSessionLease(session.id, task.id)
+
+  // ⚠️ A revived conversation remembers a tree that has since moved. `prepareWorkspace` switched the
+  // worktree while the agent was not running, so nothing warned it — and its context is full of file
+  // contents from the branch it was last on.
+  const movedSince = revive && revive.currentBranch && branch && revive.currentBranch !== branch
+  const branchNotice = movedSince
+    ? `⚠️ This workspace has moved since your last turn: it was on \`${revive.currentBranch}\` and ` +
+      `is now on \`${branch}\`. Any file you read earlier came from the other branch — re-read ` +
+      'anything you are going to rely on rather than trusting what is in this conversation.'
+    : null
 
   setStatus(task.id, 'running', {
     assignee: worker.id,
@@ -768,7 +787,10 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
   // The CLI needs a moment before it starts reading stdin; a message sent too early is dropped.
   setTimeout(() => {
     try {
-      sendPrompt(session.id, promptFor(task, worker.adapterId, revive !== null))
+      sendPrompt(
+        session.id,
+        [branchNotice, promptFor(task, worker.adapterId, revive !== null)].filter(Boolean).join('\n\n')
+      )
     } catch (err) {
       log.warn(`could not send the prompt for t${task.seq}:`, err)
     }
@@ -850,6 +872,32 @@ async function dispatchIntoWarmSession(
     reassignClaim(reclaimed.claimId, session.id)
   }
 
+  // ⛔ Before anything is sent into it. Two tasks in one conversation would interleave their turns,
+  // bill each other's tokens and race to answer one `task_complete`; the lease makes that
+  // unrepresentable rather than merely discouraged. Refusing here is safe — the task stays `ready`
+  // and the next tick will find it a session, warm or otherwise.
+  if (!acquireSessionLease(session.id, task.id)) {
+    throw new Error(
+      `the conversation ${session.id.slice(0, 8)} is already in use by another task; t${task.seq} waits`
+    )
+  }
+
+  // ⚠️ Put the tree on this task's branch, and say so — to the task that was here, to the agent, and
+  // in the log. A no-op today, because nothing yet routes a *second* task into a live session; it is
+  // built now so that the switch is already proven when phase 3 turns sharing on.
+  let notice: string | null = null
+  if (project && project.vcs === 'git' && task.branch) {
+    const path = workspaces.get(session.id)?.workspace.path ?? session.cwd
+    const moved = await switchBorrowedTree(project, session, path, task, task.branch)
+    if (!moved.ok) {
+      // ⛔ Give the lease back. A task that cannot use the conversation must not hold it shut, and
+      // this is the one path between acquiring it and `releaseFor` that does not open a run.
+      releaseAllFor(task.id)
+      throw new Error(moved.error ?? `could not put ${path} on ${task.branch} for t${task.seq}`)
+    }
+    notice = moved.notice
+  }
+
   applyPermissionRules(worker, project)
 
   const run = startRun({
@@ -877,7 +925,15 @@ async function dispatchIntoWarmSession(
           ? ' — cheaper than a cold start, though this provider’s cache is not priced, so by how much is unknown.'
           : '.')
   )
-  sendPrompt(session.id, promptFor(task, worker.adapterId))
+  // ⚠️ The branch notice goes **first**, before the task's own words. An agent that reads the work
+  // before it reads "the files you remember are from another branch" has already started planning
+  // against a tree that is not there.
+  sendPrompt(
+    session.id,
+    // ⛔ `resumed: true` — this session never closed, so it holds the brief already. Restating it
+    // here would read as being asked to do the work a second time.
+    [notice, promptFor(task, worker.adapterId, true)].filter(Boolean).join('\n\n')
+  )
   log.info(
     `t${task.seq} continued warm on ${worker.label} (run ${run.id.slice(0, 8)}, ` +
       `saved ${saved === null ? 'unknown' : `~${saved}`})`
@@ -1519,6 +1575,119 @@ async function releaseWorkspaceOf(sessionId: string): Promise<void> {
   if (project) await parkWorkspace(project, held.workspace.path)
   releaseWorkspace(held.workspace.claimId)
   releaseAllFor(sessionId)
+}
+
+// ------------------------------------------------------------------- borrowing a conversation
+
+/** The exclusive resource one task holds while it is the one talking in a conversation. */
+export function sessionLeaseId(sessionId: string): string {
+  return `session:${sessionId}`
+}
+
+/**
+ * Take the right to be the task speaking in this conversation, or fail.
+ *
+ * ⛔ **An exclusive Resource rather than a check.** The glossary states the rule this follows — *if
+ * the scheduler owns the claim, the lock is unnecessary* — and it buys the same thing here it buys
+ * for workspaces: two tasks cannot be handed one conversation, because the second claim simply is not
+ * granted. A boolean field guarded by an `if` would be a lock with extra steps and a race between the
+ * read and the write.
+ *
+ * ⚠️ Held by the **task**, so `releaseAllFor(task.id)` in `releaseFor` returns it at the end of every
+ * run, on every exit path, without a second thing to remember. A task parked at `awaiting_human`
+ * therefore does *not* keep the lease: its conversation may be borrowed while it waits, which is the
+ * whole point, and it takes the lease again when it is replied to.
+ */
+function acquireSessionLease(sessionId: string, taskId: string): boolean {
+  const id = sessionLeaseId(sessionId)
+  upsertResource({
+    id,
+    projectId: null,
+    kind: 'exclusive',
+    label: `conversation ${sessionId.slice(0, 8)}`,
+    members: [],
+    meta: { sessionId }
+  })
+  return claim(id, taskId, 1) !== null
+}
+
+/**
+ * Put the borrowed conversation's worktree on this task's branch, and tell everyone who is affected.
+ *
+ * Three readers, three different things they need to know, and the switch is not safe to make quietly
+ * for any of them:
+ *
+ *  - **The task that was here** gets a note in its thread, because from its side the tree it was
+ *    working in has silently moved and a person reading it later would have no way to know.
+ *  - **The agent**, in its prompt, because its conversation holds file contents read from the *other*
+ *    branch. Nothing about the context says they are stale. This is the hazard the owner accepted
+ *    when choosing switch-and-tell over one long-lived branch, and the warning is the mitigation.
+ *  - **The operator**, in the log, because a worktree changing branches between two tasks is the
+ *    single most confusing thing this feature does when read from the outside.
+ *
+ * ⚠️ **Restoring is this same call in the other direction.** When the borrowed task runs again its
+ * branch is the one that differs, so the tree moves back and the borrower's task gets the note. There
+ * is deliberately no separate restore path: two functions that must stay each other's inverse are two
+ * functions that will eventually disagree.
+ *
+ * Returns the notice to prepend to the agent's prompt, or null when nothing moved.
+ */
+async function switchBorrowedTree(
+  project: Project,
+  session: Session,
+  path: string,
+  task: Task,
+  branch: string
+): Promise<{ ok: boolean; notice: string | null; error?: string }> {
+  const from = session.currentBranch
+  if (from === branch) return { ok: true, notice: null }
+
+  const result = await switchResidentBranch(project, path, branch)
+  if (!result.ok) {
+    log.info(
+      `t${task.seq} cannot borrow the conversation in ${path}: ${result.error ?? 'switch failed'}`
+    )
+    return { ok: false, notice: null, ...(result.error ? { error: result.error } : {}) }
+  }
+
+  noteCurrentBranch(session.id, branch)
+
+  // ⚠️ Only into a task that is actually still open. A completed task's thread is a record, and
+  // appending to it what happened to somebody else's work afterwards would be noise in the one place
+  // a person goes to read what this task did.
+  const previous = result.from ? taskOnBranch(result.from) : null
+  if (previous && previous.id !== task.id && !TERMINAL_STATUSES.has(previous.status)) {
+    addMessage(
+      previous.id,
+      'system',
+      `The conversation this task was running in has been borrowed by t${task.seq}, and its ` +
+        `workspace ${path} is now on \`${branch}\`. ⛔ Your branch \`${result.from}\` is untouched — ` +
+        'nothing was committed, stashed or discarded. The workspace switches back when this task ' +
+        'runs again, and the agent is told.'
+    )
+  }
+
+  log.info(
+    `${path} switched from ${result.from ?? 'a detached head'} to ${branch} for t${task.seq}, ` +
+      `in the conversation ${session.id.slice(0, 8)} was already having`
+  )
+
+  return {
+    ok: true,
+    notice:
+      `⚠️ This workspace has moved to a different branch since your last turn. It was on ` +
+      `\`${result.from ?? 'a detached head'}\` and is now on \`${branch}\`, for a different task. ` +
+      'Any file you read earlier came from the other branch and may be different or absent now — ' +
+      're-read anything you are going to rely on rather than trusting what is in this conversation.'
+  }
+}
+
+/** Statuses after which a task's thread is a record rather than a place to leave notes. */
+const TERMINAL_STATUSES = new Set<TaskStatus>(['completed', 'cancelled', 'failed'])
+
+/** Whose branch is this? ⚠️ By name, because the branch *is* the task's name — see `branchNameFor`. */
+function taskOnBranch(branch: string): Task | null {
+  return listTasks().find((t) => t.branch === branch) ?? null
 }
 
 /** Is this session's prompt cache already gone, making its context no cheaper than a cold start? */

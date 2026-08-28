@@ -145,6 +145,67 @@ export function branchNameFor(seq: number, title: string): string {
   return `multi-agent-controller/t${seq}${slug ? `-${slug}` : ''}`
 }
 
+export interface SwitchResult {
+  ok: boolean
+  /** What the tree was on before, so a borrower knows what to put back. */
+  from: string | null
+  error?: string
+}
+
+/**
+ * Move an already-prepared worktree to another task's branch, for a conversation being borrowed.
+ *
+ * ⛔ **Refuses a tree that holds uncommitted work, and this is the rule, not a safety margin.** The
+ * alternative is stashing to make room — which takes work that is currently *visible* as a loose end
+ * and hides it inside a stash the next reader has to know to look for. That is the t5 failure with
+ * extra steps: a clean commit on a good branch that nothing ever mentioned again. A clean tree is
+ * lent out; a dirty one keeps its task, and the borrower starts cold instead.
+ *
+ * ⚠️ Deliberately lighter than `prepareWorkspace`. No fetch and no `prepare` hooks: this tree is
+ * already set up — the install has run, the dependencies are there — and re-running a project's
+ * `npm install` to change branches would make borrowing cost more than the cold start it replaces.
+ *
+ * ⚠️ Also deliberately without `rescueDirt`. `prepareWorkspace` stashes on the way *in* because a
+ * pool member does not arrive clean and the previous holder is gone. Here the previous holder is a
+ * live conversation that is coming back, and rescuing its dirt out from under it is precisely what
+ * the refusal above exists to prevent.
+ */
+export async function switchResidentBranch(
+  project: Project,
+  path: string,
+  branch: string
+): Promise<SwitchResult> {
+  const policy = policyFor(project)
+  const state = await workspaceState(path, policy.landingTarget)
+  if (state.branch === branch) return { ok: true, from: branch }
+
+  const loose = [...state.dirtyFiles, ...state.untrackedFiles]
+  if (loose.length > 0) {
+    return {
+      ok: false,
+      from: state.branch,
+      // ⚠️ Names the files. "Could not switch" sends somebody to look; this tells them where.
+      error:
+        `${path} holds ${loose.length} uncommitted file(s) on ${state.branch ?? 'a detached head'}` +
+        ` — ${loose.slice(0, 5).join(', ')}${loose.length > 5 ? ', …' : ''}`
+    }
+  }
+
+  try {
+    const base = await baseRef(project)
+    // Git refuses to check one branch out into two worktrees, correctly. A leftover holder is parked.
+    await parkOtherHolders(project, branch, path, base)
+    if (await gitOk(path, ['rev-parse', '--verify', branch])) {
+      await git(path, ['switch', branch])
+    } else {
+      await git(path, ['switch', '-c', branch, base])
+    }
+    return { ok: true, from: state.branch }
+  } catch (err) {
+    return { ok: false, from: state.branch, error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
 export interface PrepareResult {
   ok: boolean
   branch: string | null
@@ -414,12 +475,20 @@ export async function workspaceState(path: string, target: string): Promise<Work
   }
 
   try {
-    // ⚠️ `--porcelain` is the stable format; the two-character status prefix is what separates a
+    // ⚠️ `--porcelain` is the stable format; the two-character status field is what separates a
     // tracked modification (` M`, `M `, `MM`) from a file git has never seen (`??`).
+    //
+    // ⛔ **Parsed by field, not by `slice(3)`.** The status field is two columns wide and a file
+    // modified but not staged fills only the second (` M kept.txt`) — so the line begins with a
+    // space, and `git()` here **trims its output**. Every such line arrived one character short and
+    // every modified file was reported with its first letter missing: `ept.txt`. Untracked files
+    // start with `??` and were unaffected, which is why the loose-ends list looked correct — the
+    // scan that found the t5 stash never had a modified file in it to get wrong.
     for (const line of (await git(path, ['status', '--porcelain'])).split(/\r?\n/)) {
-      if (!line) continue
-      const file = line.slice(3)
-      if (line.startsWith('??')) state.untrackedFiles.push(file)
+      const entry = /^(\S{1,2})\s+(.+)$/.exec(line.trim())
+      if (!entry) continue
+      const [, status, file] = entry as unknown as [string, string, string]
+      if (status === '??') state.untrackedFiles.push(file)
       else state.dirtyFiles.push(file)
     }
   } catch {

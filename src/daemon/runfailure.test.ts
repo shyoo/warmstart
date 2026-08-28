@@ -71,6 +71,7 @@ function seedSession(
     purpose: 'work',
     transcriptPath: null,
     vendorSessionId: null,
+    currentBranch: null,
     contextTokens: null,
     contextWindow: null,
     lastRequestStartedAt: patch.lastRequestStartedAt ?? null,

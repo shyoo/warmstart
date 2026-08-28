@@ -302,6 +302,14 @@ export interface Session {
    * nothing about it.
    */
   vendorSessionId: string | null
+  /**
+   * The branch the workspace this conversation lives in is checked out to.
+   *
+   * ⚠️ What the *conversation* is on, which is not the same question as what git reports. A task
+   * borrowing this session moves the tree and this moves with it; the agent's own memory of the files
+   * does not, which is why a switch is announced rather than performed quietly.
+   */
+  currentBranch: string | null
   contextTokens: number | null
   /**
    * How big this session's context window is, from the cost model that prices its model.
