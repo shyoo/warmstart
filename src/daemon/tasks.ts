@@ -57,6 +57,7 @@ interface TaskRow {
   constraints_json: string
   verification: string
   finish_policy: string
+  session_sharing: string
   finish_asked_at: number | null
   preemptible: number
   est_tokens: number | null
@@ -116,6 +117,7 @@ function toTask(r: TaskRow): Task {
     // ⚠️ Coalesced rather than trusted. A row written before migration 9 has no value, and `inherit`
     // is the honest reading of a task that has never expressed a preference.
     finishPolicy: (r.finish_policy || 'inherit') as Task['finishPolicy'],
+    sessionSharing: (r.session_sharing || 'inherit') as Task['sessionSharing'],
     finishAskedAt: r.finish_asked_at,
     preemptible: r.preemptible === 1,
     estTokens: r.est_tokens,
@@ -214,6 +216,7 @@ export interface CreateTaskInput {
   constraints?: TaskConstraints
   verification?: Task['verification']
   finishPolicy?: Task['finishPolicy']
+  sessionSharing?: Task['sessionSharing']
   preemptible?: boolean
   estTokens?: number | null
   mandate?: Partial<Mandate>
@@ -274,8 +277,9 @@ export function createTask(input: CreateTaskInput): Task {
       `insert into tasks (id, seq, project_id, title, kind, status, priority, created_by_json,
                           parent_task_id, lineage_depth, assignee_hint, mandate_json, budget_json,
                           not_before, deadline, requires_json, constraints_json, verification,
-                          finish_policy, preemptible, est_tokens, created_at, updated_at)
-       values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+                          finish_policy, session_sharing, preemptible, est_tokens,
+                          created_at, updated_at)
+       values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
     )
     .run(
       id,
@@ -299,6 +303,7 @@ export function createTask(input: CreateTaskInput): Task {
       // ⚠️ `inherit` by default, which is not the same as picking the fleet value: a task that has
       // never expressed a preference follows its project as the project changes.
       input.finishPolicy ?? 'inherit',
+      input.sessionSharing ?? 'inherit',
       input.preemptible === false ? 0 : 1,
       input.estTokens ?? null,
       now,
@@ -525,6 +530,7 @@ export function updateTask(
       | 'assigneeHint'
       | 'verification'
       | 'finishPolicy'
+      | 'sessionSharing'
       | 'preemptible'
       | 'estTokens'
       | 'constraints'
@@ -535,7 +541,8 @@ export function updateTask(
   db()
     .prepare(
       `update tasks set title = ?, priority = ?, project_id = ?, not_before = ?, deadline = ?,
-                        assignee_hint = ?, verification = ?, finish_policy = ?, preemptible = ?,
+                        assignee_hint = ?, verification = ?, finish_policy = ?,
+                        session_sharing = ?, preemptible = ?,
                         est_tokens = ?, constraints_json = ?, updated_at = ?
         where id = ?`
     )
@@ -548,6 +555,7 @@ export function updateTask(
       patch.assigneeHint !== undefined ? patch.assigneeHint : current.assigneeHint,
       patch.verification ?? current.verification,
       patch.finishPolicy ?? current.finishPolicy,
+      patch.sessionSharing ?? current.sessionSharing,
       (patch.preemptible ?? current.preemptible) ? 1 : 0,
       patch.estTokens !== undefined ? patch.estTokens : current.estTokens,
       JSON.stringify(patch.constraints ?? current.constraints),

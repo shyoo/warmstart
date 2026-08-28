@@ -28,7 +28,7 @@ import {
 import { enqueueConsult, hasPendingConsult, latestAnswer } from './controller.js'
 import { decomposeQuestion, routeQuestion, triageQuestion, type RouteCandidate } from './judgment.js'
 import { escalateStale, voidApprovalsForSession } from './approvals.js'
-import { claim, reassignClaim, releaseAllFor, upsertResource } from './resources.js'
+import { availability, claim, reassignClaim, releaseAllFor, upsertResource } from './resources.js'
 import {
   branchNameFor,
   claimWorkspace,
@@ -53,6 +53,7 @@ import {
 } from './sessions.js'
 import { landTask } from './landing.js'
 import { decideFinish, resolveFinishPolicy } from './finish.js'
+import { rank, resolveSessionSharing, whyNotShared } from './sharing.js'
 import { stripAnsi } from './stream.js'
 import { clearActivity } from './activity.js'
 import { log } from './log.js'
@@ -299,28 +300,72 @@ interface WorkerChoice {
 }
 
 /**
- * Is this session live, idle, and already this task's?
+ * A live, idle conversation this task could run in.
  *
- * ⚠️ **Same task only, deliberately.** A reply into a warm session costs `0.1·C`; the same reply into
- * a dead one costs `2.0·C`, and human latency routinely straddles the one-hour TTL - so this is the
- * single most valuable reuse there is, and it is safe because the workspace, the branch and the
- * context all still belong to the same task.
+ * ⛔ **This task's own comes first, always, and needs no permission.** A reply into a session that
+ * already holds this task's context costs `0.1·C` against `2.0·C` into a dead one, the workspace and
+ * the branch already belong to it, and nothing is disclosed to anybody. That is the single most
+ * valuable reuse there is and it is unconditional.
  *
- * Reuse *across* tasks in one project is the bigger prize and is not done here: it needs the workspace
- * claim to move from the task to the session, so that a session outlives the task that opened it
- * without leaking a claim or switching a branch under a running agent. Recorded in HANDOFF.
+ * ⚠️ Only when that misses does sharing come into it, and only when somebody has turned it on. A
+ * borrowed conversation is a real saving and a real disclosure, which is why it is a setting and the
+ * task's own session is not.
  */
 function warmSessionFor(task: Task): Session | null {
+  const idle = (session: Session | null): Session | null => {
+    if (!session || session.state === 'closed' || session.state === 'failed') return null
+    // A session with an open run is busy; only an idle one can take work.
+    return hasOpenRun(session.id) ? null : session
+  }
+
   for (const run of runsFor(task.id)) {
     if (!run.sessionId) continue
-    const session = getSession(run.sessionId)
-    if (!session || session.state === 'closed' || session.state === 'failed') continue
-    // A session with an open run is busy; only an idle one can take work.
-    const open = runForSession(session.id)
-    if (open && !open.endedAt) continue
-    return session
+    const own = idle(getSession(run.sessionId))
+    if (own) return own
   }
-  return null
+  return borrowableSessionFor(task)
+}
+
+/**
+ * A conversation belonging to *another* task that this one may join.
+ *
+ * ⛔ Returns null unless sharing is on for this task, and `off` is the shipped default at every tier.
+ * ⚠️ The gates are in `sharing.ts` so the answer is the same wherever it is asked; what lives here is
+ * the part that needs the scheduler's own knowledge — which conversations are resident, and whether
+ * one is already leased.
+ */
+function borrowableSessionFor(task: Task): Session | null {
+  if (!task.projectId) return null
+  const project = getProject(task.projectId)
+  if (resolveSessionSharing(task, project).sharing !== 'on') return null
+
+  const candidates: Session[] = []
+  for (const [sessionId, held] of workspaces) {
+    if (held.projectId !== task.projectId) continue
+    const session = getSession(sessionId)
+    if (!session || session.state === 'closed' || session.state === 'failed') continue
+    const refusal = whyNotShared(task, session, {
+      hasWorkspace: true,
+      // ⚠️ Asked of the runs and of the lease, because they answer different questions: a run says
+      // somebody is mid-turn, a lease says somebody has been given the right to speak next.
+      leased: hasOpenRun(sessionId) || leaseHeld(sessionId)
+    })
+    if (refusal === null) candidates.push(session)
+  }
+
+  const best = rank(candidates)[0] ?? null
+  if (best) {
+    log.debug(
+      `t${task.seq} may borrow the conversation ${best.id.slice(0, 8)} in ${best.cwd} ` +
+        `(${candidates.length} candidate(s) in this project)`
+    )
+  }
+  return best
+}
+
+/** Has somebody already been granted the right to speak next in this conversation? */
+function leaseHeld(sessionId: string): boolean {
+  return (availability(sessionLeaseId(sessionId))?.free ?? 1) < 1
 }
 
 /**

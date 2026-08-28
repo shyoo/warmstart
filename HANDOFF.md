@@ -9,7 +9,7 @@ if you add a line, find the one it obsoletes and cut it in the same edit. Finish
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
 **Baseline (2026-08-28, measured on this machine):** `npm run typecheck` clean · `npm run lint` clean ·
-`npm run build` clean · `npm test` 417/417 · `npm run test:daemon` 124/124 · `npm run test:ui` 89/89 ·
+`npm run build` clean · `npm test` 436/436 · `npm run test:daemon` 124/124 · `npm run test:ui` 93/93 ·
 `npm run test:pack` 18/18 · L4 (opt-in) landed a real agent commit on origin/main. Electron 44.0.0,
 electron-builder 26.15.3, 0 npm vulnerabilities. CLIs here: claude 2.1.250 · agy 1.1.22 · codex 0.149.1.
 
@@ -38,7 +38,7 @@ gaps are below. Scope: `transient_docs/implementation_plan_2026-08-24.md` §14, 
 src/daemon/            orchestratord. Runs as Electron-with-ELECTRON_RUN_AS_NODE, detached.
   index.ts             entry: lock, db, server, poller, scheduler, tailer wiring, shutdown
   server.ts  api.ts    HTTP+WS on 127.0.0.1:<random>, bearer token, typed RPC
-  db.ts                node:sqlite + numbered migrations (v12)
+  db.ts                node:sqlite + numbered migrations (v13)
   costmodel.ts         the four questions; user dir > bundled > compiled-in
   workers.ts           registry, isolation roots, retire-keeps-credentials
   quota.ts             the staleness ladder - read this before trusting a percentage
@@ -55,6 +55,8 @@ src/daemon/            orchestratord. Runs as Electron-with-ELECTRON_RUN_AS_NODE
                        each kept their own until 2026-08-27 and the copies drifted
   activity.ts          the live peephole: a bounded in-memory tail of what a run is saying
   landing.ts           auto-land, serialised by an exclusive land: resource (+ landing.test.ts)
+  sharing.ts           who may borrow whose conversation: three tiers, mechanical gates, off by
+                       default (+ .test.ts). docs/sessions.md is the user-facing spec
   finish.ts            what finishing means: one policy resolved task > project > fleet, the
                        decision that follows, and the loose-ends scan (+ .test.ts). ⛔ The tool
                        never writes a commit. docs/landing.md is the user-facing spec
@@ -142,13 +144,12 @@ M0–M6 are done. What is left is not a milestone but a list, in the order it wo
 4. **Resident sessions** - one conversation per (worker, workspace), tasks borrowing it. The cost win
    this is for: a cold Claude turn cost **41,542 cache-creation tokens** in an empty directory
    (measured 2026-08-28) and every task pays it. Agreed with the owner 2026-08-28.
-   ⭐ **Phases 0, 1 and 2 are done** - see `git log`. Phase 2 shipped dark: the lease, the branch
-   switch and all three notices exist and are tested, and nothing routes a second task into a live
-   session until (3) turns sharing on. What is left:
-   - **(3) The setting.** Fleet > project > task, `off` at every tier, mechanical gates only.
-     ⚠️ Topic scoring is deliberately deferred; the gate returns a ranked list so a score is a
-     comparator later rather than a rewrite.
+   ⭐ **Phases 0-3 are done** - see `git log` and `docs/sessions.md`. Sharing is implemented and
+   **off at every tier**; turn it on per project with `session.share`. What is left:
    - **(4) The per-conversation view** - which tasks and runs one conversation served.
+   - ⚠️ **Sharing has never run.** Every gate is unit-tested and the controls are driven by
+     `test:ui`, but no two tasks have yet shared a conversation on this machine: it needs two tasks
+     in one project on one account with the switch on. That is the next thing to actually try.
    - **(5) `git worktree lock` and a provenance marker.** Claude Code's sweep uses both and this pool
      uses neither. Only bites when the daemon dies mid-run, which is when nobody is watching.
 5. **Compute `overrunFactor` in cost, not raw tokens**, and let preempted runs feed `estimateTask`.

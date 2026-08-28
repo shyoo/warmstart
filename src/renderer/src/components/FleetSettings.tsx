@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { FinishPolicy } from '@shared/tasks'
+import type { FinishPolicy, SessionSharing } from '@shared/tasks'
 import type { Settings } from '@shared/protocol'
 import { rpc } from '../lib/daemon'
 
@@ -56,6 +56,21 @@ export function FleetSettings(): React.JSX.Element {
     []
   )
 
+  const chooseSharing = useCallback(
+    async (next: SessionSharing) => {
+      setBusy(true)
+      setError(null)
+      try {
+        setSettings(await rpc('settings.set', { sessionSharing: next }))
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err))
+      } finally {
+        setBusy(false)
+      }
+    },
+    []
+  )
+
   const chooseProbeInterval = useCallback(
     async (minutes: number) => {
       setBusy(true)
@@ -75,11 +90,45 @@ export function FleetSettings(): React.JSX.Element {
   const autoPreempt = settings?.autoPreempt ?? true
   const autoRunawayStop = settings?.autoRunawayStop ?? false
   const finishPolicy = settings?.finishPolicy ?? 'agent-lands'
+  const sessionSharing = settings?.sessionSharing ?? 'off'
   const probeIntervalMinutes = settings?.probeIntervalMinutes ?? 5
 
   return (
     <div>
       {error && <div className="alert">{error}</div>}
+
+      <section className="doc-section">
+        <h3>Reusing conversations</h3>
+        <div className="switch-row">
+          <select
+            className="finish-picker"
+            aria-label="Fleet session sharing"
+            value={sessionSharing}
+            disabled={busy || settings === null}
+            onChange={(e) => void chooseSharing(e.target.value as SessionSharing)}
+          >
+            <option value="off">every task starts a new one</option>
+            <option value="on">reuse one in the same project</option>
+          </select>
+          <div>
+            <p className="switch-state">
+              <strong>Session sharing</strong> · {sessionSharing}
+              <span className="dim"> — may a task join a conversation already open?</span>
+            </p>
+            <p className="note">
+              ⛔ <strong>Off by default, and this is an information boundary rather than a
+              performance switch.</strong> An agent that joins a conversation sees everything said in
+              it, so sharing only ever happens within one project, on one account, and never into a
+              conversation somebody else is mid-turn in. What it buys is real and measured: a cold
+              turn on this machine rebuilt <strong>41,542</strong> tokens of prompt prefix that a
+              reused conversation read back for <strong>65</strong>.{' '}
+              ⚠️ It changes nothing about <em>authority</em> — a task&rsquo;s mandate still decides what
+              it may do. Overridden per project with <code>session.share</code> in{' '}
+              <code>project.json</code>, and per task from its detail pane.
+            </p>
+          </div>
+        </div>
+      </section>
 
       <section className="doc-section">
         <h3>When a task finishes</h3>

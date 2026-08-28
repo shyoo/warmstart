@@ -184,6 +184,13 @@ export interface Task {
   /** This task's own answer, or `inherit` to take the project's — which may itself inherit. */
   finishPolicy: FinishPolicyChoice
   /**
+   * May this task borrow a conversation? Resolved task → project → fleet, `inherit` by default.
+   *
+   * ⚠️ `inherit` is a real value rather than a blank: a task left on it follows its project as the
+   * project changes, and one set explicitly to the same value does not.
+   */
+  sessionSharing: SessionSharingChoice
+  /**
    * When the finish instruction was sent to the agent, if it has been.
    *
    * ⛔ The guard against re-asking. The instruction is sent, the agent works, and it calls
@@ -567,6 +574,40 @@ export interface ResolvedFinishPolicy {
  * old path did not, so the same value lands strictly less than it used to.
  */
 export const DEFAULT_FLEET_FINISH: FinishPolicy = 'agent-lands'
+
+/**
+ * May a task be given a conversation another task has already been having?
+ *
+ * ⛔ The saving is real and measured - a cold Claude turn cost **41,542 cache-creation tokens** on
+ * 2026-08-28 for a trivial prompt in an empty directory, and a resumed one read all of it back for 65
+ * - but it is not free of consequence. An agent joining a conversation *sees everything said in it*,
+ * so this is an information boundary, and the answer belongs to whoever owns the project rather than
+ * to the scheduler.
+ *
+ * ⚠️ Authority is elsewhere and this cannot widen it. `mandate` still decides what a task may do;
+ * turning sharing on lets a task read a conversation, never act beyond what it was granted.
+ */
+export type SessionSharing =
+  /** Every task opens its own conversation. What the tool did before any of this existed. */
+  | 'off'
+  /** A task may join a conversation already open in its project, when the gates allow. */
+  | 'on'
+
+export type SessionSharingChoice = SessionSharing | 'inherit'
+
+/** Where a resolved answer came from, so the UI can say "inherited from the project". */
+export interface ResolvedSessionSharing {
+  sharing: SessionSharing
+  source: 'task' | 'project' | 'fleet'
+}
+
+/**
+ * ⛔ **Off**, and deliberately the opposite default from `DEFAULT_FLEET_FINISH`. Finishing has to do
+ * *something* when a task ends, so its default is the useful one; sharing changes who can see whose
+ * work, and a default that quietly widened that on upgrade would be a change nobody asked for made to
+ * every project at once.
+ */
+export const DEFAULT_FLEET_SHARING: SessionSharing = 'off'
 
 /**
  * Work that exists and is going nowhere.

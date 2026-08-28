@@ -116,6 +116,11 @@ You need **one**. Having several is the point — see *Multiple accounts* below.
   0.1× and *refreshes the TTL for free*, while rebuilding a lapsed one costs 2.0×. Multi Agent Controller watches
   that clock on every session and picks between sending it queued work, keeping it warm, compacting
   it, and letting it go — and the **Cost** view shows you which it chose and why.
+- **Don't rebuild what the agent already knows.** A task replied to continues in its own session, and
+  one whose session has since exited **resumes the same conversation** rather than starting over —
+  measured on this machine, a cold turn built 41,542 tokens of prompt prefix that a resumed one read
+  back for 65. Tasks can also *share* a conversation across a project, which is ⛔ **off by default**,
+  because an agent that joins one sees everything said in it. See [docs/sessions.md](docs/sessions.md).
 - **Survive a window closing.** Work in flight when an account's window is about to reset is wrapped
   up, committed, handed off and re-queued to resume itself after the reset.
 - **See the fleet**: per-account quota with its **age**, reset countdowns, live sessions with their

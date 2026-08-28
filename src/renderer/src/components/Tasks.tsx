@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { FinishPolicyChoice, Project, Run, Task, TaskMessage } from '@shared/tasks'
+import type {
+  FinishPolicyChoice,
+  Project,
+  Run,
+  SessionSharingChoice,
+  Task,
+  TaskMessage
+} from '@shared/tasks'
 import type { ModelOptions, Session } from '@shared/protocol'
 import { rpc, useDaemonEvents, useNow, type FleetEntry } from '../lib/daemon'
 import { duration, tokens, when } from '../lib/format'
@@ -524,6 +531,13 @@ function TaskDetail({
               decision to land it, and the same bar a first completion faced is applied again. */}
           <Fact label="finish">
             <FinishPicker task={task} />
+          </Fact>
+          {/* ⚠️ Next to `finish` because they are the same shape of decision — three tiers, `inherit`
+              a real value, changeable at any time — and an operator who has learnt one has learnt
+              the other. ⛔ Unlike `finish`, this one only records: a task already talking in a
+              conversation is never moved out of it. */}
+          <Fact label="conversation">
+            <SharingPicker task={task} />
           </Fact>
           <Fact label="priority">{task.priority}</Fact>
           <Fact label="filed">{when(task.createdAt)}</Fact>
@@ -1241,6 +1255,57 @@ function FinishPicker({ task }: { task: Task }): React.JSX.Element {
         <option value="agent-lands">agent lands it</option>
         <option value="pull-request">open a pull request</option>
         <option value="custom">this project&rsquo;s own policy</option>
+      </select>
+      {note && <div className="note">{note}</div>}
+    </>
+  )
+}
+
+/**
+ * Whether this task may borrow a conversation somebody else has been having.
+ *
+ * ⛔ Records a preference and nothing more. `FinishPicker` beside it also *acts* — switching a
+ * finished task to a landing policy lands it — and the asymmetry is deliberate rather than an
+ * omission: acting on this one would mean moving a running agent out of the conversation it is
+ * mid-thought in, which is the single thing sharing must never do. It applies from the next run.
+ *
+ * ⚠️ The saving is real and measured, and so is the disclosure. An agent joining a conversation sees
+ * everything said in it, which is why this is off until somebody says otherwise and why the tooltip
+ * says so rather than describing only the upside.
+ */
+function SharingPicker({ task }: { task: Task }): React.JSX.Element {
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState<string | null>(null)
+
+  const choose = async (sessionSharing: SessionSharingChoice): Promise<void> => {
+    setBusy(true)
+    setNote(null)
+    try {
+      await rpc('task.setSessionSharing', { id: task.id, sessionSharing })
+    } catch (err) {
+      setNote(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <>
+      <select
+        className="finish-picker"
+        value={task.sessionSharing}
+        disabled={busy}
+        aria-label="Session sharing"
+        title={
+          'Whether this task may continue in a conversation another task in this project has ' +
+          'already been having. Cheaper — a cold start rebuilt 41,542 tokens of prefix that a ' +
+          'reused one read back for 65 — but the agent sees everything said in that conversation.'
+        }
+        onChange={(e) => void choose(e.target.value as SessionSharingChoice)}
+      >
+        <option value="inherit">inherit</option>
+        <option value="on">reuse one if possible</option>
+        <option value="off">always start a new one</option>
       </select>
       {note && <div className="note">{note}</div>}
     </>

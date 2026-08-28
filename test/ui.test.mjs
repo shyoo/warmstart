@@ -640,6 +640,40 @@ try {
   // ⚠️ Put back, so the rest of the suite runs against the shipped default.
   await evaluate(`window.agentyard.rpc('settings.set', { finishPolicy: 'agent-lands' })`)
 
+  section('reusing conversations')
+  // ⛔ Sharing is an information boundary, so the check that matters most is the *default*: an
+  // install that upgrades into this build must not start sharing because it upgraded. The tier
+  // resolution itself is held by sharing.test.ts; these are that the controls exist, reach the
+  // daemon, and ship off.
+  const sharePicker = `[...document.querySelectorAll('select')].find(
+     s => s.getAttribute('aria-label') === 'Fleet session sharing')`
+  check('the fleet tier has a sharing control', (await evaluate(`!!(${sharePicker})`)) === true)
+  check(
+    'which ships OFF, so upgrading never widens who sees whose work',
+    (await evaluate(`${sharePicker}?.value`)) === 'off'
+  )
+  check(
+    'and the daemon agrees, which is the opinion that gates dispatch',
+    (await evaluate(`window.agentyard.rpc('settings.get', {}).then(s => s.sessionSharing)`)) === 'off'
+  )
+  await evaluate(`
+    (() => {
+      const s = ${sharePicker};
+      s.value = 'on';
+      s.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    })()
+  `)
+  await wait(1200)
+  check(
+    'turning it on reaches the daemon',
+    (await evaluate(
+      `window.agentyard.rpc('settings.get', {}).then(s => s.sessionSharing)`
+    )) === 'on'
+  )
+  // ⚠️ Put back, so the rest of the suite runs against the shipped default.
+  await evaluate(`window.agentyard.rpc('settings.set', { sessionSharing: 'off' })`)
+
   // ⛔ Global settings: probe frequency selector and fleet intervention toggles
   const probePicker = `[...document.querySelectorAll('select')].find(
      s => s.getAttribute('aria-label') === 'Quota probe frequency')`

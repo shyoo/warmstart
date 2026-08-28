@@ -46,6 +46,12 @@ and transferred the moment there is one. A pool with nothing free **evicts** rat
 conversation whose prompt cache has already lapsed goes first, because its context is no cheaper to
 reach than a cold start, and one with an open run is never touched.
 
+**Session sharing** — *may a task join a conversation another task has been having?* Resolved task →
+project → fleet, `off` at every tier until somebody says otherwise. ⛔ **An information boundary, not
+a performance switch**: an agent that joins a conversation sees everything said in it, so sharing
+never crosses a project or an account — and it changes nothing about **authority**, which is still
+`mandate`'s to decide. See `docs/sessions.md`.
+
 **Session lease** — *the right to be the task speaking in a conversation.* An exclusive Resource held
 by the task, so two tasks in one conversation is unrepresentable rather than merely discouraged, and
 `releaseAllFor(task)` returns it at the end of every run. ⚠️ A task parked at `awaiting_human` does

@@ -1220,3 +1220,63 @@ does not exist.
 
 Parsed by field now, with its own test, verified by putting `slice(3)` back and watching two tests
 fail.
+
+---
+
+## Turning it on: three tiers, and a boundary rather than a switch
+
+Phase 3 of resident sessions. Phases 1 and 2 built the machinery; this is the part that decides
+whether any of it happens, and to whom.
+
+The setting mirrors `finishPolicy` exactly - task > project > fleet, `inherit` a real value at the
+lower two - because an operator who has learnt one has learnt the other, and a second shape for the
+same kind of decision is a second thing to remember. What differs is the **default**, and the
+asymmetry is the point. `finishPolicy` ships `agent-lands` because finishing has to do *something*
+when a task ends. Sharing ships **off at every tier**, because it changes who can see whose work, and
+an install that started sharing because it upgraded would be a change nobody asked for made
+everywhere at once.
+
+That framing decided the gates. Sharing never crosses a project and never crosses an account - not as
+a tuning parameter but because one client's code in another client's conversation is not something a
+scheduler gets to decide is acceptable. And it changes nothing about **authority**: `mandate` still
+decides what a task may do. Sharing lets a task *read* a conversation; it never lets one act beyond
+what it was granted.
+
+### Mechanical gates, on purpose
+
+The owner asked for a topic score and then said, correctly, that there was no good design for one
+yet. There still is not, and the reason is worth writing down rather than deferring: a topic score has
+**no ground truth**. When it misfires there is nothing to check it against, and being wrong means an
+agent has quietly read work it was not given. A rule anybody can predict from the outside - same
+project, same account, free, clean, room to grow - is worth more here than one that is right slightly
+more often and unexplainable when it is not.
+
+⚠️ Scoring is not ruled out, and the seam is left open deliberately: `rank` returns a **list**, not a
+winner, so a score becomes another term in that comparator rather than a new decision somewhere else.
+
+Two gates earned their own reasoning:
+
+- **The context ceiling is a fraction (60%), not a token count.** Windows across this fleet differ by
+  an order of magnitude - 200k on some models, 1M on others - and one absolute constant would be far
+  too strict on the large ones and useless on the small. A borrowed conversation about to need
+  compaction is a false economy anyway: the borrower pays to read a large prefix and then pays again
+  to compact it, for context mostly about somebody else's task.
+- **Unknown is not full.** A model with no priced window reports none, and reading that as "too full"
+  would exclude a whole provider from sharing over a number it does not publish - the same trap as
+  treating an unrecorded cache expiry as lapsed, avoided in the same way.
+
+A project config saying something meaningless - `share: true`, `share: "yes"` - falls through to the
+tier below rather than being coerced. Guessing which way a nonsense answer leans is how an information
+boundary gets widened by a typo.
+
+### What the task control does not do
+
+`FinishPicker` also *acts*: switching a finished task to a landing policy lands it. `SharingPicker`
+deliberately does not. Acting on it would mean moving a running agent out of the conversation it is
+mid-thought in, which is the single thing this feature must never do. It records a preference and
+applies from the next run.
+
+⚠️ **Sharing has never actually run.** Every gate is unit-tested, the tiers resolve correctly, and
+`test:ui` drives both controls against the real daemon - but no two tasks have yet shared a
+conversation on this machine. That needs two tasks in one project on one account with the switch on,
+and it is the next thing to try rather than something these tests have established.

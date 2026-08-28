@@ -556,6 +556,16 @@ const MIGRATIONS: string[] = [
   // ⚠️ Null for a session with no branch at all - a `vcs: none` project, a consult, a chat.
   `
   alter table sessions add column current_branch text;
+  `,
+
+  // 13 - may this task borrow a conversation somebody else has been having?
+  //
+  // ⛔ `inherit` for every existing task, and `off` at the fleet, so a database written before this
+  // migration behaves afterwards exactly as it did before. Sharing changes who can see whose work;
+  // switching that on for every project in an install by upgrading it would be a change nobody asked
+  // for, made everywhere at once.
+  `
+  alter table tasks add column session_sharing text not null default 'inherit';
   `
 ]
 

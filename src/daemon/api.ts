@@ -366,6 +366,12 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
       const result = await relandTask(p.id)
       return { task: requireTask(p.id), landed: result.ok, ...(result.reason ? { reason: result.reason } : {}) }
     },
+    /**
+     * ⚠️ Takes effect on the task's **next** run, and nothing else. Unlike `setFinishPolicy`, which
+     * also acts, this only records a preference - a task already talking in a conversation is not
+     * moved out of it, because moving an agent mid-thought is the one thing sharing must never do.
+     */
+    'task.setSessionSharing': (p) => updateTask(p.id, { sessionSharing: p.sessionSharing }),
     'task.land': async (p) => {
       const result = await relandTask(p.id)
       return { task: requireTask(p.id), landed: result.ok, ...(result.reason ? { reason: result.reason } : {}) }

@@ -1,5 +1,5 @@
 import type { Settings } from '@shared/protocol.js'
-import { DEFAULT_FLEET_FINISH } from '@shared/tasks.js'
+import { DEFAULT_FLEET_FINISH, DEFAULT_FLEET_SHARING } from '@shared/tasks.js'
 import { db, row } from './db.js'
 import { log } from './log.js'
 
@@ -61,6 +61,16 @@ export const DEFAULT_SETTINGS: Settings = {
    * configured rests at `awaiting_human` and says so.
    */
   finishPolicy: DEFAULT_FLEET_FINISH,
+
+  /**
+   * May a task be given a conversation another task has already been having?
+   *
+   * ⛔ **Off**, and the asymmetry with `finishPolicy` above is the point. Finishing has to do
+   * *something* when a task ends, so its default is the useful one. Sharing changes who can see whose
+   * work, so switching it on for every project in an install by upgrading it would be a change nobody
+   * asked for, made everywhere at once. Turn it on per project, and per task from the detail pane.
+   */
+  sessionSharing: DEFAULT_FLEET_SHARING,
 
   /**
    * How often (in minutes) orchestratord sweeps workers in the background for quota updates.
