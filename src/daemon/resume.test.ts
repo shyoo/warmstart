@@ -111,6 +111,7 @@ describe('the resume flag each CLI actually takes', () => {
 let dir: string
 let db: typeof import('./db.js')
 let sessions: typeof import('./sessions.js')
+let tasks: typeof import('./tasks.js')
 
 const WORKER = 'aaaaaaaa-0000-4000-8000-000000000001'
 const OTHER = 'aaaaaaaa-0000-4000-8000-000000000002'
@@ -162,6 +163,7 @@ beforeAll(async () => {
   process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
   db = await import('./db.js')
   sessions = await import('./sessions.js')
+  tasks = await import('./tasks.js')
   db.openDb(join(dir, 'resume.db'))
   for (const id of [WORKER, OTHER]) {
     db.db()
@@ -176,7 +178,17 @@ beforeAll(async () => {
 
 beforeEach(() => {
   db.db().exec('delete from turns')
+  db.db().exec('delete from runs')
   db.db().exec('delete from sessions')
+  db.db().exec('delete from tasks')
+  // `runs.task_id` is a foreign key, so a run needs a task to hang off.
+  db.db()
+    .prepare(
+      `insert into tasks (id, seq, title, status, created_by_json, mandate_json, budget_json,
+                          created_at, updated_at)
+       values ('t1', 1, 'probe', 'running', '{}', '{}', '{}', ?, ?)`
+    )
+    .run(Date.now(), Date.now())
 })
 
 afterAll(() => {
@@ -247,5 +259,50 @@ describe("the vendor's name for a conversation", () => {
     sessions.noteVendorSession('s1', 'agy-conv-9')
     sessions.noteVendorSession('s1', 'agy-conv-later')
     expect(load('s1').vendorSessionId).toBe('agy-conv-9')
+  })
+})
+
+describe('what a run records about the conversation it got', () => {
+  it('marks a resumed run warm and a fresh one new', () => {
+    // ⛔ The field exists because the UI used to *infer* this from the clock, and the inference was
+    // backwards: `spawnSession` inserts its row before `startRun` inserts the run's, so a brand-new
+    // session is always older than its own first run. Measured against this install 2026-08-28, that
+    // rendered "reused, context kept" on 19 of 20 runs, every one of them a cold start.
+    seed({ id: 's-warm' })
+    const warm = tasks.startRun({
+      taskId: 't1',
+      workerId: WORKER,
+      sessionId: 's-warm',
+      projectId: null,
+      quotaUnverified: false,
+      costModelId: null,
+      startedWarm: true
+    })
+    const cold = tasks.startRun({
+      taskId: 't1',
+      workerId: WORKER,
+      sessionId: 's-warm',
+      projectId: null,
+      quotaUnverified: false,
+      costModelId: null,
+      startedWarm: false
+    })
+    expect(warm.startedWarm).toBe(true)
+    expect(cold.startedWarm).toBe(false)
+  })
+
+  it('says null, not false, when nothing recorded an answer', () => {
+    // ⛔ Every run predating the column. Rendering those as `new` would put a measurement nobody
+    // took beside ones that were taken, which is the failure this whole field exists to end.
+    seed({ id: 's-old' })
+    const run = tasks.startRun({
+      taskId: 't1',
+      workerId: WORKER,
+      sessionId: 's-old',
+      projectId: null,
+      quotaUnverified: false,
+      costModelId: null
+    })
+    expect(run.startedWarm).toBeNull()
   })
 })

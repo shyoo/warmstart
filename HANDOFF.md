@@ -9,7 +9,7 @@ if you add a line, find the one it obsoletes and cut it in the same edit. Finish
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
 **Baseline (2026-08-28, measured on this machine):** `npm run typecheck` clean · `npm run lint` clean ·
-`npm run build` clean · `npm test` 388/388 · `npm run test:daemon` 124/124 · `npm run test:ui` 89/89 ·
+`npm run build` clean · `npm test` 390/390 · `npm run test:daemon` 124/124 · `npm run test:ui` 89/89 ·
 `npm run test:pack` 18/18 · L4 (opt-in) landed a real agent commit on origin/main. Electron 44.0.0,
 electron-builder 26.15.3, 0 npm vulnerabilities. CLIs here: claude 2.1.250 · agy 1.1.22 · codex 0.149.1.
 
@@ -38,7 +38,7 @@ gaps are below. Scope: `transient_docs/implementation_plan_2026-08-24.md` §14, 
 src/daemon/            orchestratord. Runs as Electron-with-ELECTRON_RUN_AS_NODE, detached.
   index.ts             entry: lock, db, server, poller, scheduler, tailer wiring, shutdown
   server.ts  api.ts    HTTP+WS on 127.0.0.1:<random>, bearer token, typed RPC
-  db.ts                node:sqlite + numbered migrations (v10)
+  db.ts                node:sqlite + numbered migrations (v11)
   costmodel.ts         the four questions; user dir > bundled > compiled-in
   workers.ts           registry, isolation roots, retire-keeps-credentials
   quota.ts             the staleness ladder - read this before trusting a percentage
@@ -127,8 +127,7 @@ docs/                  cost-model.md, glossary.md, adapters.md, landing.md - mai
   `--conversation` measured 2026-08-28). ⚠️ **No Antigravity task has ever completed** - with
   `mcp: false` it cannot call `task_complete`, so `awaiting_human` is honest there - and R13 stands.
   ⛔ It restores a conversation but reports `cache_read_tokens: 0` throughout: context, not cache.
-- ⛔ **Anything needing a real agent CLI is unproven off Windows.** CI proves three platforms build,
-  start, package and schedule; its runners have no CLI, so `docs/adapters.md` is Windows-only.
+- ⛔ **Anything needing a real agent CLI is unproven off Windows.** CI proves three platforms build, start, package and schedule; its runners have no CLI, so `docs/adapters.md` is Windows-only.
 - ⛔ **Unsigned.** SmartScreen warns and Gatekeeper refuses — a certificate and an Apple Developer
   account, not a config line.
 
@@ -145,23 +144,25 @@ M0–M6 are done. What is left is not a milestone but a list, in the order it wo
    (measured 2026-08-28) and every task pays it. Agreed with the owner 2026-08-28, five phases, the
    first two dark: (1) the **workspace claim moves from the task to the session**, alone, in its own
    commit, and the place `git worktree lock` plus a provenance marker finally belong - Claude Code's
-   sweep uses both and this pool uses neither, which only bites when the daemon dies mid-run;
+   sweep uses both and this pool uses neither, which only bites when the daemon dies mid-run.
+   ⭐ **Phase 0 is done:** `sessions.project_id` is written (it never was - twenty sessions, zero
+   projects), `runs.started_warm` records what the dispatcher chose, and both panes name the
+   conversation - replacing a heuristic that read `session.startedAt < run.startedAt` and so said
+   *"reused, context kept"* on **19 of 20 runs**, every one a cold start;
    (2) a **session lease** (exclusive Resource, holder = task) plus `sessions.current_branch`
    with switch-and-restore, and a notice to each of the parked task's thread, the agent on switch and
    the agent on return; (3) the setting, `off` at all three tiers, mechanical gates only; (4) eviction
    and a per-conversation view; (5) `runs.started_warm`, because `estimateTask` would otherwise
    average warm and cold runs together and feed the 3× the runaway watchdog reads.
-   ⛔ A dirty resident tree is never switched out from under its task. ⚠️ Topic scoring deferred: the
-   gate returns a ranked list, so a score is a comparator later rather than a rewrite.
+   ⛔ A dirty resident tree is never switched out from under its task. ⚠️ Topic scoring deferred: the gate returns a ranked list, so a score is a comparator later rather than a rewrite.
 5. **Compute `overrunFactor` in cost, not raw tokens**, and let preempted runs feed `estimateTask`.
    Both are the price of turning `autoRunawayStop` on. The cost model already prices cache reads
    separately, so nothing needs measuring first.
 
 ## Open questions
 
-- **Auto-mode classifier cost on a subscription** (`docs/cost-model.md` §9). Documented as billable on
-  Enterprise and API-billed accounts, unstated for Pro/Max/Team, and Claude workers default to `auto`.
-  ⛔ Do not assume it is free — **R1** measures it.
+- **Auto-mode classifier cost on a subscription** (`docs/cost-model.md` §9). Billable on Enterprise and
+  API-billed accounts, unstated for Pro/Max/Team, and Claude workers default to `auto`. ⛔ Do not assume it is free — **R1** measures it.
 - **Vertex / Antigravity cache pricing.** Both declare `cache.kind: "unpriced"`; needs a published figure, not an experiment. ⚠️ agy reports `cache_read_tokens: 0` on every turn (measured 2026-08-28), so there may be nothing to price.
 - **`expected idle` estimator** (plan §8.6). Not designable without real queue data.
 
@@ -177,7 +178,6 @@ is what the CLI spent that never reached a transcript.
 | **R1** | Does the auto-mode classifier bill on a subscription? | ⭐ A run now records the window either side of itself, so the task pane shows (quota delta − transcript tokens). Run one shell-heavy task twice on a quiet worker, `auto` then `default` | If it bills, `auto` stops being a free default and the objective vector has to price it. §9 |
 | **R2** | `tokens_per_percent` per (worker, model, tokenizer) | With exactly one session live, sample `/usage` by hand at intervals and diff against transcript tokens over the same span | Turns percent into tokens, which is what every gate actually needs. Plan §8.5 |
 | **R4** | Real compaction cost end to end | Compact a session of known size; diff transcript tokens across the `compact_boundary` and record `durationMs` | Three samples so far (139k · 116k · **161k** ms). The spread matters more than the mean for the T+53m deadline |
-| **R5** | Second account on a transplanted transcript | Commission a second worker, copy a small transcript into its root, `--resume`, complete one turn | Discovery is measured; completion is not. Shapes cross-account continuation. §7 |
 | **R6** | Is `/compact` honoured as a user message on `stream`? | Send it into a live stream session and watch for a `compact_boundary` record | ⚠️ Not urgent — the clock gives up after two ignored attempts. A `no` makes handoff-and-close the only move on that transport |
 | **R7** | Does the live rate-limit `status` warn before it refuses? | Let one window fill while watching `rate_limit_samples` | Decides whether the live signal is an early warning or an obituary |
 | **R8** | Does a real model answer a consult in the shape the validators accept? | Designate a controller, file a `plan` task, run `controller.drain`, read the row: `answered` or `fallback`, and the `fallbackReason` | The one M4 path L1 cannot reach |
@@ -185,7 +185,7 @@ is what the CLI spent that never reached a transcript.
 | **R11** | The `--json` event shapes for **codex** | One turn, capture stdout verbatim | ⭐ The agy half closed 2026-08-28 - `init` / `step_update` / `result`, usage on the last two, and `--conversation` resumes one. codex is still unread, so it contributes no rate-limit signal or result text |
 | **R12** | Is headless compaction reachable on codex? | Try to drive compaction from `codex exec`; watch for a compaction record | If yes, `manualCompact` flips true and two cache-clock moves become available on that provider |
 
-**R2 blocks the compaction reserve** (R3 closed). R1 and R6 change the cache clock; R5 needs a second subscription.
+**R2 blocks the compaction reserve** (R3 closed). R1 and R6 change the cache clock. ⚠️ **R5 dropped**: resuming is measured and shipped within an account; its transplant needs a second subscription.
 
 ## Standing decisions worth not relitigating
 

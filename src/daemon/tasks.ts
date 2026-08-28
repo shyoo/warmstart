@@ -648,6 +648,7 @@ interface RunRow {
   note: string | null
   quota_before_json: string | null
   quota_after_json: string | null
+  started_warm: number | null
 }
 
 function toRun(r: RunRow): Run {
@@ -667,7 +668,10 @@ function toRun(r: RunRow): Run {
     costModelId: r.cost_model_id,
     note: r.note,
     quotaBefore: r.quota_before_json ? (JSON.parse(r.quota_before_json) as RunQuota) : null,
-    quotaAfter: r.quota_after_json ? (JSON.parse(r.quota_after_json) as RunQuota) : null
+    quotaAfter: r.quota_after_json ? (JSON.parse(r.quota_after_json) as RunQuota) : null,
+    // ⛔ Null is not false. Every run that predates the column recorded nothing, and saying `cold`
+    // for those would be a measurement nobody took.
+    startedWarm: r.started_warm === null ? null : r.started_warm === 1
   }
 }
 
@@ -695,13 +699,20 @@ export function startRun(input: {
   projectId: string | null
   quotaUnverified: boolean
   costModelId: string | null
+  /**
+   * Did this run inherit a conversation, or build one from nothing?
+   *
+   * ⚠️ Two ways to be warm and they cost the same: continuing in a session that never closed, and
+   * resuming one that did. Both skip the cold prefix, which is what this records.
+   */
+  startedWarm?: boolean | undefined
 }): Run {
   const id = randomUUID()
   db()
     .prepare(
       `insert into runs (id, task_id, project_id, session_id, worker_id, started_at,
-                         quota_unverified, cost_model_id)
-       values (?,?,?,?,?,?,?,?)`
+                         quota_unverified, cost_model_id, started_warm)
+       values (?,?,?,?,?,?,?,?,?)`
     )
     .run(
       id,
@@ -711,7 +722,8 @@ export function startRun(input: {
       input.workerId,
       Date.now(),
       input.quotaUnverified ? 1 : 0,
-      input.costModelId
+      input.costModelId,
+      input.startedWarm === undefined ? null : input.startedWarm ? 1 : 0
     )
   const run = requireRun(id)
   emit({ type: 'run.changed', run })

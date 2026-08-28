@@ -516,6 +516,32 @@ const MIGRATIONS: string[] = [
   // this is the only handle the CLI would recognise. Null until a session says what it is.
   `
   alter table sessions add column vendor_session_id text;
+  `,
+
+  // 11 - who a conversation belongs to, and whether a run had to build its context or inherited it.
+  //
+  // ⛔ `sessions.project_id` has existed since M2 and nothing ever wrote it. Measured 2026-08-28:
+  // twenty work sessions in this install, **zero** with a project. So the only route from a
+  // conversation to a project was through its runs, and a session that had not run yet had none -
+  // which is no basis for grouping conversations by project, or for the residency work that follows.
+  // The backfill reads the runs, which is where the answer has been hiding.
+  //
+  // ⚠️ `started_warm` is not bookkeeping. A run that inherited a live conversation costs a fraction
+  // of the same run built from nothing - measured the same day, 41,542 cache-creation tokens against
+  // 65 - and `estimateTask` averages every run of a kind together. Feeding both into one mean makes
+  // the estimate meaningless in both directions, and the runaway watchdog fires at 3x that mean.
+  // ⛔ Null for every run that predates this, which is honest: nothing recorded it at the time, and
+  // defaulting them to 0 would assert a measurement nobody made.
+  `
+  update sessions
+     set project_id = (
+       select r.project_id from runs r
+        where r.session_id = sessions.id and r.project_id is not null
+        order by r.started_at limit 1
+     )
+   where project_id is null;
+
+  alter table runs add column started_warm integer;
   `
 ]
 

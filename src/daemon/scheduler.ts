@@ -705,6 +705,7 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
     workerId: worker.id,
     cwd,
     transport: 'stream',
+    projectId: project?.id ?? null,
     ...(revive ? { resume: revive } : {}),
     ...(task.constraints.model ? { model: task.constraints.model } : {}),
     ...(task.constraints.effort && canSetEffort ? { effort: task.constraints.effort } : {})
@@ -716,7 +717,11 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
     sessionId: session.id,
     projectId: project?.id ?? null,
     quotaUnverified,
-    costModelId: adapter(worker.adapterId).info.policy.costModelId
+    costModelId: adapter(worker.adapterId).info.policy.costModelId,
+    // ⚠️ Resuming counts as warm. It skips the cold prefix exactly as continuing does - measured
+    // 2026-08-28, cache_read 41,542 against a cold turn's 0 - and the estimator must not average
+    // the two kinds of run together.
+    startedWarm: revive !== null
   })
   setRunQuota(run.id, 'before', runQuota(worker.id))
   // A new attempt, so the peephole starts empty. ⛔ Cleared here and never on completion: what the
@@ -828,7 +833,9 @@ async function dispatchIntoWarmSession(
     sessionId: session.id,
     projectId: task.projectId,
     quotaUnverified,
-    costModelId: adapter(worker.adapterId).info.policy.costModelId
+    costModelId: adapter(worker.adapterId).info.policy.costModelId,
+    // The session never closed, which is the warmest a run gets.
+    startedWarm: true
   })
   setRunQuota(run.id, 'before', runQuota(worker.id))
   clearActivity(task.id)

@@ -311,6 +311,13 @@ export interface Run {
    */
   quotaBefore: RunQuota | null
   quotaAfter: RunQuota | null
+  /**
+   * Did this run inherit a conversation, or build one from nothing?
+   *
+   * ⛔ **`null` is not `false`.** Runs that predate the column recorded nothing, and rendering those
+   * as *new* would be an assertion nobody measured. The UI says nothing at all for null.
+   */
+  startedWarm: boolean | null
 }
 
 /** A quota reading kept beside a run, with enough of its basis to be distrusted properly. */

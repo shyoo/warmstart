@@ -308,6 +308,16 @@ export interface SpawnOptions {
   rows?: number | undefined
   purpose?: SessionPurpose | undefined
   /**
+   * The project this conversation belongs to.
+   *
+   * ⛔ The column has existed since M2 and **nothing ever wrote it** - all twenty work sessions in
+   * this install carry null, so the only route from a conversation back to a project was through its
+   * runs, and a session that had not run yet had none at all. Written here because the caller that
+   * chose the workspace is the only one that knows, and because everything downstream that groups
+   * conversations by project has to read something.
+   */
+  projectId?: string | null | undefined
+  /**
    * Start this session again holding the conversation it already had, rather than opening a new one.
    *
    * ⛔ The **same row**, not a copy. Claude Code's `--resume` reuses the original session id, so a
@@ -523,8 +533,9 @@ export function spawnSession(opts: SpawnOptions): Session {
   db()
     .prepare(
       `insert into sessions (id, worker_id, adapter_id, transport, cwd, model, state, pid,
-                             purpose, transcript_path, tokens_since_compact, started_at, effort)
-       values (?, ?, ?, ?, ?, ?, 'starting', ?, ?, ?, 0, ?, ?)
+                             purpose, transcript_path, tokens_since_compact, started_at, effort,
+                             project_id)
+       values (?, ?, ?, ?, ?, ?, 'starting', ?, ?, ?, 0, ?, ?, ?)
        on conflict(id) do update set
          state = 'starting', pid = excluded.pid, closed_at = null,
          transport = excluded.transport, cwd = excluded.cwd,
@@ -545,7 +556,8 @@ export function spawnSession(opts: SpawnOptions): Session {
       // ⚠️ What was *asked for*, recorded so the detail pane can say so before a turn has run. The
       // transcript overwrites it with what actually happened — `coalesce` in transcript.ts keeps
       // this value only until the first turn reports one, which is the right precedence.
-      opts.effort ?? null
+      opts.effort ?? null,
+      opts.projectId ?? null
     )
 
   const session = getSession(id)

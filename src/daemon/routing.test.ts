@@ -216,6 +216,7 @@ describe('a dispatch that produced nothing', () => {
       taskId: 't',
       sessionId: 's',
       workerId: 'w',
+      startedWarm: null,
       startedAt: Date.now(),
       endedAt: null,
       outcome: null,
