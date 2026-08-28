@@ -8,7 +8,8 @@ import { log } from './log.js'
  *
  * ⛔ Deliberately tiny, and it should stay that way. Almost everything this app does is decided from
  * measured evidence and an objective vector - a setting is an admission that no evidence can settle
- * the question, because the answer is a preference. There is currently one.
+ * the question, because the answer is a preference. There are currently three, and every one of them
+ * gates an intervention the scheduler makes on a live session without being asked.
  *
  * ⚠️ Stored as JSON values under string keys so that a boolean today can become a shape tomorrow
  * without a migration, and read through `settings()` so a key that has never been written returns
@@ -25,7 +26,30 @@ export const DEFAULT_SETTINGS: Settings = {
    * on the `stream` transport is still **unverified**, HANDOFF R6 - every attempt is pure spend,
    * and an operator watching that happen should not have to edit code to stop it.
    */
-  autoCompact: true
+  autoCompact: true,
+
+  /**
+   * Whether the scheduler may wrap a run up before its quota window closes.
+   *
+   * ⚠️ Default on, because this is the one intervention the tool was built to make. A run caught by a
+   * window close with this off is not paused - it is simply cut off mid-thought, with no commit and
+   * no handoff, and the next session pays to rediscover the branch. That loss is unrecoverable where
+   * an unnecessary wrap-up merely ends a run early.
+   */
+  autoPreempt: true,
+
+  /**
+   * Whether the scheduler may stop a run for going far past its estimate.
+   *
+   * ⛔ Default **off**, and the asymmetry with `autoPreempt` is the point. A window boundary is a
+   * measured fact with a reset time attached; a runaway is a *judgement* made from a median over
+   * completed runs, in raw tokens that are ~98% cache reads. Measured on t5, 2026-08-28: a run at
+   * 6,271,722 tokens against an estimate of 1,557,974 was called a runaway at 4.0×, of which
+   * 6,155,066 were cache reads and 27,338 were output. That trigger fires on a session being long,
+   * not on it being wasteful. Until the factor is measured in cost rather than tokens, stopping work
+   * on it is a guess, and a guess that ends somebody's run should be opted into.
+   */
+  autoRunawayStop: false
 }
 
 export function settings(): Settings {

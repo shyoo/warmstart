@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { CostReport } from '@shared/protocol'
+import type { CostReport, Settings } from '@shared/protocol'
 import { rpc, useDaemonEvents } from '../lib/daemon'
 import { age, countdown, tokens } from '../lib/format'
 
@@ -31,11 +31,13 @@ export function Cost({ now }: { now: number }): React.JSX.Element {
   // ⚠️ The answer from the daemon is what lands in state, never the value that was clicked. A
   // toggle that paints itself green and leaves the fleet unchanged is exactly the disagreement
   // this page exists to make impossible.
-  const setAutoCompact = useCallback(
-    async (next: boolean) => {
+  const setSwitch = useCallback(
+    async (key: keyof Settings, next: boolean) => {
       setSaving(true)
       try {
-        const settings = await rpc('settings.set', { autoCompact: next })
+        // ⚠️ A partial patch of one key. Round-tripping the whole object would let this panel
+        // overwrite a switch somebody threw in another window between the read and the write.
+        const settings = await rpc('settings.set', { [key]: next })
         setReport((r) => (r ? { ...r, settings } : r))
         setError(null)
         await refresh()
@@ -62,7 +64,7 @@ export function Cost({ now }: { now: number }): React.JSX.Element {
   if (!report) return <div className="panel"><p className="dim">Reading the cost model…</p></div>
 
   const { objective } = report
-  const autoCompact = report.settings.autoCompact
+  const { autoCompact, autoPreempt, autoRunawayStop } = report.settings
 
   return (
     <div className="panel">
@@ -82,38 +84,69 @@ export function Cost({ now }: { now: number }): React.JSX.Element {
 
       <section className="doc-section">
         <h3>Automatic compaction</h3>
-        <div className="switch-row">
-          <button
-            type="button"
-            role="switch"
-            aria-checked={autoCompact}
-            aria-label="Automatic compaction"
-            disabled={saving}
-            className={`switch ${autoCompact ? 'switch--on' : ''}`}
-            onClick={() => void setAutoCompact(!autoCompact)}
-          >
-            <span className="switch-knob" />
-          </button>
-          <div>
-            <p className="switch-state">
-              {autoCompact ? 'On' : 'Off'}
-              <span className="dim">
-                {autoCompact
-                  ? ' — the clock may compact a session when the arithmetic favours it.'
-                  : ' — the clock never compacts on its own. A session that would have been compacted' +
-                    ' hands off and closes instead, including when the reserve is at risk.'}
-              </span>
-            </p>
-            <p className="note">
-              Compaction is what stops a long session being stranded when a quota window closes, so
-              this is on by default — running out of room to <em>save</em> is the one loss that is
-              not recoverable. Turn it off when compaction is not reaching your sessions: on the{' '}
-              <code>stream</code> transport it is <strong>unverified</strong> whether{' '}
-              <code>/compact</code> is honoured at all, and every attempt that is not costs real
-              tokens. This switch is fleet-wide and takes effect on the next tick.
-            </p>
-          </div>
-        </div>
+        <SwitchRow
+          label="Automatic compaction"
+          on={autoCompact}
+          busy={saving}
+          onToggle={() => void setSwitch('autoCompact', !autoCompact)}
+          state={
+            autoCompact
+              ? 'the clock may compact a session when the arithmetic favours it.'
+              : 'the clock never compacts on its own. A session that would have been compacted' +
+                ' hands off and closes instead, including when the reserve is at risk.'
+          }
+        >
+          Compaction is what stops a long session being stranded when a quota window closes, so this
+          is on by default — running out of room to <em>save</em> is the one loss that is not
+          recoverable. Turn it off when compaction is not reaching your sessions: on the{' '}
+          <code>stream</code> transport it is <strong>unverified</strong> whether <code>/compact</code>{' '}
+          is honoured at all, and every attempt that is not costs real tokens. This switch is
+          fleet-wide and takes effect on the next tick.
+        </SwitchRow>
+      </section>
+
+      {/*
+        ⛔ Two switches, not one. Both stop a live run, but they rest on different evidence and are
+        trustworthy to different degrees — so an operator bringing this fleet up gradually can have
+        the measured one without the inferred one.
+      */}
+      <section className="doc-section">
+        <h3>Stopping a run early</h3>
+        <SwitchRow
+          label="Wrap up before a quota window closes"
+          on={autoPreempt}
+          busy={saving}
+          onToggle={() => void setSwitch('autoPreempt', !autoPreempt)}
+          state={
+            autoPreempt
+              ? 'a run inside the margin is told to commit and hand off, then parked until the reset.'
+              : 'runs are left alone at a window boundary and are cut off mid-thought when it closes.'
+          }
+        >
+          On by default: this is the intervention the tool exists to make, and it acts on a{' '}
+          <em>measured</em> reset time rather than a guess. The task goes to{' '}
+          <code>paused_quota</code> carrying the reset as its resume time, so it restarts itself —
+          nothing is cancelled. With this off, a run caught by a closing window loses its
+          uncommitted work and the next session pays to rediscover the branch.
+        </SwitchRow>
+        <SwitchRow
+          label="Stop a run that is far past its estimate"
+          on={autoRunawayStop}
+          busy={saving}
+          onToggle={() => void setSwitch('autoRunawayStop', !autoRunawayStop)}
+          state={
+            autoRunawayStop
+              ? 'a run past 3× the estimate is wrapped up and handed back to you.'
+              : 'a long run is never stopped for cost alone. Nothing else changes.'
+          }
+        >
+          <strong>Off by default, deliberately.</strong> The estimate is a median over completed runs
+          and the overrun is counted in raw tokens — which on these CLIs are ~98% cache reads, and
+          those accumulate with how <em>long</em> a session is rather than how wasteful. Measured on
+          t5 (2026-08-28): 6,271,722 tokens against an estimate of 1,557,974 was called a runaway at
+          4.0×, of which 6,155,066 were cache reads and 27,338 were output. Turn this on once the
+          factor is measured in cost rather than tokens.
+        </SwitchRow>
       </section>
 
       <section className="doc-section">
@@ -275,4 +308,50 @@ const RESERVE_TONE: Record<string, string> = {
   ok: 'state-ok',
   at_risk: 'state-danger',
   unknown: 'state-warn'
+}
+
+/**
+ * One operator switch: the control, what it is doing right now, and why it is set that way.
+ *
+ * ⚠️ The state line is written in the present tense of the *current* setting, not as a description of
+ * the feature. "The clock never compacts on its own" tells you what your fleet is doing; "toggles
+ * automatic compaction" tells you what the button is, which you can already see.
+ */
+function SwitchRow({
+  label,
+  on,
+  busy,
+  onToggle,
+  state,
+  children
+}: {
+  label: string
+  on: boolean
+  busy: boolean
+  onToggle: () => void
+  state: string
+  children: React.ReactNode
+}): React.JSX.Element {
+  return (
+    <div className="switch-row">
+      <button
+        type="button"
+        role="switch"
+        aria-checked={on}
+        aria-label={label}
+        disabled={busy}
+        className={`switch ${on ? 'switch--on' : ''}`}
+        onClick={onToggle}
+      >
+        <span className="switch-knob" />
+      </button>
+      <div>
+        <p className="switch-state">
+          <strong>{label}</strong> · {on ? 'On' : 'Off'}
+          <span className="dim"> — {state}</span>
+        </p>
+        <p className="note">{children}</p>
+      </div>
+    </div>
+  )
 }

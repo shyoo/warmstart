@@ -51,6 +51,7 @@ import { log } from './log.js'
 import { db } from './db.js'
 import { windowResetsAt, lastRateLimit } from './quota.js'
 import { reserveState } from './reserve.js'
+import { settings } from './settings.js'
 import { estimateTask, overrunFactor } from './estimator.js'
 import { DEFAULT_OBJECTIVE, policy, resolveObjective, weights } from './objective.js'
 import { runCacheClock } from './cacheclock.js'
@@ -798,6 +799,26 @@ const STALL_AFTER_MS = 12 * 60 * 1000
 /** Past this multiple of its estimate, a run is not working - it is spending. */
 const RUNAWAY_FACTOR = 3
 
+/** How long the agent gets to land a wrap-up before the task is parked out from under it. */
+const WRAP_UP_GRACE_MS = 120_000
+
+/**
+ * Runs that have already been told to wrap up.
+ *
+ * ⛔ **Preemption is not instantaneous, and the watchdog that fires it cannot tell.** `preempt` sends
+ * a wrap-up prompt and then waits two minutes for it to land - during which the run is still open and
+ * the task is still `running`, which is precisely the state `runWatchdogs` scans for. Without this
+ * set the same run is preempted again on every 10s tick.
+ *
+ * ⛔ Measured on t5, 2026-08-28: **13** identical *"about 3.1× the estimate"* notices between
+ * 02:42:52 and 02:44:42, and with them 13 copies of *"Wrap up now. Commit anything that compiles"*
+ * pushed into a session that had already committed (`ea05929`) and already called `handoff`. The
+ * agent spent the whole window answering "already done" - and the loop fed itself, because every one
+ * of those turns was more spend, so the factor it was being preempted over climbed 3.1 → 3.9 while
+ * nobody was doing any work. A person watching the task sees a commit loop; the loop is here.
+ */
+const preempting = new Set<string>()
+
 /**
  * ⛔ Runs before dispatch on every tick, and costs nothing: every input is already in the database.
  *
@@ -806,23 +827,32 @@ const RUNAWAY_FACTOR = 3
  * check somebody reads later.
  */
 async function runWatchdogs(): Promise<void> {
+  // ⚠️ Read once per tick, not once per task: a switch thrown mid-loop would otherwise stop one run
+  // and not the next, and the operator would have no way to tell which.
+  const switches = settings()
+
   for (const task of listTasks()) {
     if (task.status !== 'running') continue
     const run = runsFor(task.id).find((r) => !r.endedAt)
     if (!run?.sessionId) continue
+    // ⛔ Already wrapping up. Every check below is still true of this run and will stay true until it
+    // ends, so without this the watchdogs re-fire on it every tick for the whole grace period.
+    if (preempting.has(run.id)) continue
     const session = getSession(run.sessionId)
     if (!session) continue
 
     // 1. The window boundary. This is the case the whole tool was built for.
     const reset = windowResetsAt(run.workerId)
     const margin = policy(DEFAULT_OBJECTIVE).preemptMarginMs
-    if (reset && reset.at - Date.now() <= margin && task.preemptible) {
+    if (switches.autoPreempt && reset && reset.at - Date.now() <= margin && task.preemptible) {
       await preempt(task, session, reset.at, reset.source)
       continue
     }
 
     // 2. A runaway. Nothing to compare against means it cannot be one - being first is not a crime.
-    const factor = overrunFactor(run.id)
+    // ⛔ Opted into, and off by default. See `autoRunawayStop` in settings.ts for why this trigger is
+    // held to a higher bar than the one above it.
+    const factor = switches.autoRunawayStop ? overrunFactor(run.id) : null
     if (factor !== null && factor > RUNAWAY_FACTOR) {
       addMessage(
         task.id,
@@ -861,6 +891,14 @@ async function preempt(
   resumeAt: number,
   because: string
 ): Promise<void> {
+  const run = runsFor(task.id).find((r) => !r.endedAt)
+  // ⛔ Claimed before anything is sent, and never re-entered. A second wrap-up prompt is not a
+  // harmless duplicate: it is a turn the agent has to pay for in order to say it already finished.
+  if (run) {
+    if (preempting.has(run.id)) return
+    preempting.add(run.id)
+  }
+
   const info = adapter(session.adapterId).info
   const minutes = Math.max(1, Math.round((resumeAt - Date.now()) / 60000))
   const budgetLine = info.policy.needsExplicitBudget
@@ -878,7 +916,6 @@ async function preempt(
     log.warn(`could not send the wrap-up for t${task.seq}:`, err)
   }
 
-  const run = runsFor(task.id).find((r) => !r.endedAt)
   addMessage(
     task.id,
     'system',
@@ -890,15 +927,24 @@ async function preempt(
   // Give the wrap-up a turn to land, then park the task so it resumes itself.
   setTimeout(() => {
     void (async () => {
-      if (run) finishRun(run.id, 'preempted', because)
-      db()
-        .prepare('update tasks set not_before = ?, updated_at = ? where id = ?')
-        .run(because === 'runaway' ? null : resumeAt, Date.now(), task.id)
-      setStatus(task.id, because === 'runaway' ? 'awaiting_human' : 'paused_quota')
-      closeSession(session.id)
-      if (run) await releaseFor(run.id, task.id, task.projectId)
+      try {
+        // ⚠️ Two minutes is a long time in a fleet. The run may have ended on its own - the agent
+        // took the instruction, committed, and called `task_complete` - and parking a task that has
+        // since moved on would close a session somebody else's run is now holding.
+        const current = run ? runsFor(task.id).find((r) => r.id === run.id) : null
+        if (run && (!current || current.endedAt)) return
+        if (run) finishRun(run.id, 'preempted', because)
+        db()
+          .prepare('update tasks set not_before = ?, updated_at = ? where id = ?')
+          .run(because === 'runaway' ? null : resumeAt, Date.now(), task.id)
+        setStatus(task.id, because === 'runaway' ? 'awaiting_human' : 'paused_quota')
+        closeSession(session.id)
+        if (run) await releaseFor(run.id, task.id, task.projectId)
+      } finally {
+        if (run) preempting.delete(run.id)
+      }
     })()
-  }, 120_000)
+  }, WRAP_UP_GRACE_MS)
 }
 
 /**

@@ -422,6 +422,41 @@ not a load-bearing one. It becomes load-bearing the moment R2 or R3 lands.
 What does work without any of that: the cache clock (context size and the TTL are both exact from the
 transcript), preemption (the reset time is exact from the live rate-limit record), and the estimator
 (runs are exact). Those are the three that matter most, and none of them depends on a percentage.
+⚠️ *Exact* is not the same as *meaningful* — see below.
+
+### The estimator counts tokens, and tokens are not cost (2026-08-28)
+
+`estimateTask` medians `input + output + cache_read + cache_write` over completed runs, and
+`overrunFactor` divides a live run's same sum by it. Both numbers are exact. The ratio is not what it
+looks like.
+
+Measured on this machine, 2026-08-28, from the `runs` table — every completed or preempted run on
+record, claude-code on the `stream` transport:
+
+| run | total | input | output | cache read | cache write | cache read % |
+|---|---|---|---|---|---|---|
+| 08-27 03:35 | 524,758 | 22 | 6,840 | 483,490 | 34,406 | 92.1% |
+| 08-27 04:39 | 1,193,058 | 56 | 7,702 | 1,156,672 | 28,628 | 97.0% |
+| 08-27 05:26 | 2,146,654 | 78 | 9,599 | 2,092,524 | 44,453 | 97.5% |
+| 08-28 01:40 | 4,870,842 | 130 | 28,645 | 4,759,779 | 82,288 | 97.7% |
+| 08-28 02:30 | 6,271,722 | 154 | 27,338 | 6,155,066 | 89,164 | 98.1% |
+
+⛔ **Cache reads are 92–98% of every total, and the share rises with the length of the run.** Each
+turn re-reads the whole prefix, so the sum grows with turn count against a growing prefix — roughly
+quadratically — while output, the thing the agent actually produced, stays in the tens of thousands.
+A run is therefore called a runaway for being *long*, not for being *wasteful*, and cache reads are
+billed at a fraction of input (§1).
+
+⚠️ **And the estimate cannot correct itself.** `completedRunTotals` filters `outcome = 'completed'`,
+so a preempted run contributes nothing. The median above stayed at **1,557,974** — the middle of the
+four completed runs — while the two runs that were actually stopped were 3–4× it. Stop enough long
+runs and the estimator's picture of "work like this" gets *shorter*, not more accurate.
+
+This is why `settings.autoRunawayStop` ships **off** and `settings.autoPreempt` ships **on**: a
+window reset time is measured, an overrun factor in raw tokens is inferred from a metric that does
+not mean what the gate needs it to mean. Turning the switch on is the operator's call until the
+factor is computed in cost — the cost model already prices cache reads separately, so the arithmetic
+exists; nothing has wired it into `overrunFactor` yet.
 
 ---
 

@@ -181,6 +181,11 @@ export async function prepareWorkspace(
       // parked first. This is a retry, not a conflict: the scheduler never runs one task twice at
       // once, so any other worktree still sitting on this branch is a leftover.
       await parkOtherHolders(project, branch, workspace.path, base)
+      // ⛔ Before the switch, not after. A pool member does not arrive clean: `switch --detach`
+      // *carries* uncommitted changes with it, so a task that ended without committing leaves its
+      // edits sitting in the slot, and the next task to claim that slot dies on `switch -c` with
+      // git's "local changes would be overwritten" — an error about files it has never heard of.
+      await rescueDirt(workspace.path, branch)
       if (await gitOk(workspace.path, ['rev-parse', '--verify', branch])) {
         await git(workspace.path, ['switch', branch])
       } else {
@@ -272,6 +277,7 @@ async function parkOtherHolders(
       const samePath = normalise(path) === normalise(keepPath) || normalise(path) === normalise(project.root)
       if (held === `refs/heads/${branch}` && !samePath) {
         try {
+          await rescueDirt(path, base)
           await git(path, ['switch', '--detach', base])
           log.info(`parked ${path}, which still held ${branch}`)
         } catch (err) {
@@ -279,6 +285,41 @@ async function parkOtherHolders(
         }
       }
     }
+  }
+}
+
+/**
+ * Get uncommitted work out of the way of a branch switch.
+ *
+ * ⛔ **Stashed, never discarded.** `reset --hard` would be one line and would silently destroy the
+ * only copy of whatever the last run left behind — and the reason a slot is dirty is very often that
+ * the last run *failed*, which is exactly when its half-finished edits are worth the most. A stash
+ * lives in the shared object store, so `git stash list` from the trunk shows it and `git stash show
+ * -p` reads it back.
+ *
+ * ⚠️ `--include-untracked`, not `--all`: a new file an agent wrote counts, and `node_modules` and
+ * `out/` are ignored rather than untracked, so they stay where a prepare step put them.
+ *
+ * ⚠️ Best-effort. A slot that cannot be stashed is left alone and the switch below fails loudly, as
+ * it did before this existed — silently deleting somebody's work to keep the scheduler moving is the
+ * one outcome worse than a task that will not start.
+ */
+async function rescueDirt(path: string, destination: string): Promise<void> {
+  let dirty: string
+  try {
+    dirty = await git(path, ['status', '--porcelain'])
+  } catch {
+    return
+  }
+  if (!dirty) return
+
+  const files = dirty.split(/\r?\n/).filter(Boolean).length
+  const label = `multi-agent-controller: ${files} file(s) left in ${path} before ${destination}`
+  try {
+    await git(path, ['stash', 'push', '--include-untracked', '-m', label])
+    log.warn(`${label} — recover with: git stash list`)
+  } catch (err) {
+    log.error(`could not stash the uncommitted work in ${path}:`, err)
   }
 }
 
@@ -294,7 +335,9 @@ function normalise(p: string): string {
 export async function parkWorkspace(project: Project, path: string): Promise<void> {
   if (project.vcs !== 'git') return
   try {
-    await git(path, ['switch', '--detach', await baseRef(project)])
+    const base = await baseRef(project)
+    await rescueDirt(path, base)
+    await git(path, ['switch', '--detach', base])
   } catch (err) {
     log.warn(`could not park workspace ${path}:`, err)
   }

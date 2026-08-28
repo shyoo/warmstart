@@ -890,3 +890,66 @@ like.
 ⚠️ The general shape is worth keeping: `assignee` was answering two questions — *who is this with*
 and *which account is paying* — and the second one silently lost every time the first changed.
 
+
+## A pool slot that did not arrive clean, and a watchdog that could not stop firing (2026-08-28)
+
+Two failures, a day apart, that looked nothing alike and were the same shape: **an operation that
+takes time, judged by a check that assumes it is instant.**
+
+### The worktree
+
+t4 never started. `git switch -c multi-agent-controller/t4-… origin/main` failed with *"Your local
+changes to the following files would be overwritten by checkout"*, naming `App.tsx`, `Doctor.tsx` and
+`ui.test.mjs` — three files the task had never touched, in a workspace it had just been handed.
+
+Nothing about the scheduler was wrong. The branch was named after the task, it was created inside the
+claimed worktree, the trunk was never switched. What nobody had noticed is that **`switch --detach`
+carries uncommitted changes with it.** Parking a pool member frees its *branch* and leaves its
+*edits* — so ws1 had been sitting on an earlier run's uncommitted work for a day, and every task that
+happened to claim ws1 was going to die on it. Measured: ws1's HEAD was detached at `c77e04f`
+(2026-08-26 22:19), and its diff was byte-for-byte the Doctor→Global rename already landed as
+`2cd597f`. ws2 and ws3 were clean, which is why it read as random.
+
+It only fires when two things coincide — the slot is dirty *and* the base has moved under it, because
+git refuses only a switch that would **overwrite** the dirty file. That is also what made the first
+version of the test vacuous: it reproduced the dirt, passed against the unfixed code, and only became
+a real test once it advanced the trunk before re-claiming the slot.
+
+⛔ **Stashed, never `reset --hard`.** The one-line reset would have worked in this instance, and it
+would have been wrong: a slot is dirty most often because the *last run failed*, which is exactly
+when its half-finished edits are worth the most. `rescueDirt` is best-effort — a slot that cannot be
+stashed is left alone and the switch fails loudly, as before, because silently deleting somebody's
+work to keep the scheduler moving is the one outcome worse than a task that will not start.
+
+### The watchdog
+
+t5 then showed the same shape from the other side. The runaway watchdog decided a run was past its
+estimate, sent *"Wrap up now. Commit anything that compiles, then call `handoff`"*, and waited 120s
+for that to land — leaving the run open and the task `running`, which is precisely the state
+`runWatchdogs` scans for. It fired again on the next tick, and the next: **13 identical notices
+between 02:42:52 and 02:44:42**, and with them 13 wrap-up prompts into a session that had already
+committed `ea05929` and already called `handoff`. What the operator saw was an agent stuck in a
+commit loop; the loop was in the scheduler.
+
+⚠️ And it fed itself in the currency it was policing. Every forced turn was more spend, so the factor
+quoted in the notice climbed **3.1× → 3.9×** while no work was happening. A watchdog whose own firing
+satisfies its trigger will not stop on its own.
+
+The same 120s window hid a second bug: the timer parked the task unconditionally, so a run that
+*did* take the instruction and finish had its status overwritten and its session closed underneath
+whatever came next.
+
+### What the numbers say about the trigger itself
+
+Run `98dad387` was called a runaway at 4.0× — 6,271,722 tokens against an estimate of 1,557,974 (the
+median of four completed runs). Of those tokens **6,155,066 were cache reads and 27,338 were output**.
+Cache reads accumulate with how *long* a session is, not how wasteful, so the trigger as written
+fires on duration. Worse, `estimateTask` learns only from `outcome = 'completed'`, so a preempted run
+teaches it nothing and the median stays anchored to the short runs that finished.
+
+That is not a bug with a fix in this commit — it is a calibration question — so the trigger became a
+switch and the switch ships **off**. The window-boundary preemption beside it ships **on**: it acts
+on a measured reset time rather than an inferred one, and the loss it prevents (a run cut off
+mid-thought with no commit and no handoff) is unrecoverable. ⭐ Two switches rather than one, because
+the two triggers rest on evidence of completely different quality and a single toggle would have
+forced the operator to buy both.

@@ -141,6 +141,9 @@ it lapses: send it queued work, keepalive, compact, or let it go. See `cost-mode
 
 **Preemption** — stopping a run before a quota window closes: wrap up, commit what compiles, write a
 handoff, then compact or close. The task returns to the queue with `not_before = resets_at`.
+⚠️ The same protocol also serves a **runaway stop** (`settings.autoRunawayStop`, default off), which
+ends differently: no window is closing, so there is nothing to resume after and the task rests at
+`awaiting_human` with no `not_before`. Preemption pauses; a runaway stop hands back.
 
 **Handoff** — the note a preempted run leaves so its successor can continue. Prepended to the
 successor's prompt.

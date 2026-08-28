@@ -69,6 +69,12 @@ These are not preferences; breaking one breaks the product.
   reserve-at-risk compaction as well as the ordinary one — a switch that quietly kept compacting "for
   safety" would be false on the one screen whose whole claim is that it shows what the scheduler
   really does. Told-not-to-compact and cannot-compact land in the same place: handoff and close.
+- ⛔ **An intervention that takes time must mark what it is intervening on.** `preempt` sends a
+  wrap-up prompt and waits two minutes for it to land — during which the run is still open and the
+  task still `running`, the exact state the watchdog scans for, so it re-fired every tick until the
+  `preempting` claim set stopped it. Any watchdog that acts and *then* waits owes the same guard, and
+  owes a re-read before it acts on the far side: two minutes is long enough for the run to have
+  ended. ⚠️ Re-asking is never idempotent when the asking itself costs a turn.
 - ⛔ **No pricing arithmetic inline.** Ask the cost-model object (`costOfKeepalive`, `costOfCompact`,
   `costOfColdStart`, `cacheExpiryFor`). Providers price caching in structurally different ways and
   all of them move.
@@ -212,7 +218,11 @@ These are not preferences; breaking one breaks the product.
   permission. A declaration also cannot grant itself MCP tools, a mintable session id, metering or a
   quota probe - each is refused with a test.
 - **Agents work in a pooled worktree, never the trunk.** The branch is named after the *task*
-  (`multi-agent-controller/t123-…`), never after the workspace it happened to land in.
+  (`multi-agent-controller/t123-…`), never after the workspace it happened to land in. ⛔ **A slot
+  does not arrive clean.** `switch --detach` carries uncommitted changes with it, so parking frees a
+  member's *branch* and leaves its *edits* for whoever claims it next; `prepareWorkspace` stashes
+  them first — **stashed, never `reset --hard`**, because a dirty slot usually means the last run
+  failed. Recover with `git stash list` inside the workspace.
 
 ### Doc hygiene — these files shrink as often as they grow
 

@@ -26,13 +26,33 @@ import type {
 /**
  * Fleet-wide switches the operator owns.
  *
- * ⛔ One switch, global. Per-worker or per-project compaction toggles would be four places to look
- * when a session is not compacting, and this exists precisely so that "why did it do that?" has a
- * short answer.
+ * ⛔ Global, every one of them. Per-worker or per-project toggles would be four places to look when a
+ * session is not compacting or a run was not stopped, and this exists precisely so that "why did it
+ * do that?" has a short answer.
+ *
+ * ⚠️ Each switch gates something that *acts on a live session without being asked* — compaction,
+ * preemption, a runaway stop. That is the whole membership rule: a preference the scheduler cannot
+ * infer, about an intervention the operator would want to be able to stop.
  */
 export interface Settings {
   /** May the cache clock compact a session on its own? Default true. */
   autoCompact: boolean
+  /**
+   * May the scheduler wrap a run up before its quota window closes? Default true.
+   *
+   * ⛔ Gates the *window boundary* trigger only. A runaway stop is `autoRunawayStop`, because the two
+   * rest on completely different evidence and are trustworthy to completely different degrees.
+   */
+  autoPreempt: boolean
+  /**
+   * May the scheduler stop a run for going far past its token estimate? Default **false**.
+   *
+   * ⚠️ Off by design, not by oversight. The estimate is a median over completed runs and the factor
+   * is measured in raw tokens — overwhelmingly cache reads, which accumulate with a session's length
+   * rather than its waste. Until that is calibrated the trigger fires on long work, not expensive
+   * work, so the operator opts in.
+   */
+  autoRunawayStop: boolean
 }
 
 export interface CostReport {

@@ -8,8 +8,8 @@ started in CI, never run against a real agent CLI.
 if you add a line, find the one it obsoletes and cut it in the same edit. Finished work moves to
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
-**Baseline (2026-08-27, measured on this machine):** `npm run typecheck` clean · `npm run lint` clean ·
-`npm run build` clean · `npm test` 305/305 · `npm run test:daemon` 124/124 · `npm run test:ui` 70/70 ·
+**Baseline (2026-08-28, measured on this machine):** `npm run typecheck` clean · `npm run lint` clean ·
+`npm run build` clean · `npm test` 315/315 · `npm run test:daemon` 124/124 · `npm run test:ui` 70/70 ·
 `npm run test:pack` 18/18 · L4 (opt-in) landed a real agent commit on origin/main. Electron 44.0.0,
 electron-builder 26.15.3, 0 npm vulnerabilities. CLIs here: claude 2.1.247 · agy 1.1.22 · codex 0.149.1.
 
@@ -52,7 +52,8 @@ src/daemon/            orchestratord. Runs as Electron-with-ELECTRON_RUN_AS_NODE
   cancel.ts            wind-down into a resting state; delete is separate and human-only
   approvals.ts         policy engine, escalation clock, remembered rules
   scheduler.ts         scoring, dispatch, watchdogs, continueTask (+ routing.test.ts,
-                       runfailure.test.ts - who is blamed when a run does not succeed)
+                       runfailure.test.ts - who is blamed when a run does not succeed;
+                       preemption.test.ts - wrapping a run up once, and the switches that gate it)
   eligibility.ts       ⛔ the account gates, in ONE list. Work and judgment both read it; they
                        each kept their own until 2026-08-27 and the copies drifted
   activity.ts          the live peephole: a bounded in-memory tail of what a run is saying
@@ -60,8 +61,9 @@ src/daemon/            orchestratord. Runs as Electron-with-ELECTRON_RUN_AS_NODE
   cacheclock.ts        the six moves - what the whole cost model exists for. A move is a request;
                        moveOutcome() is what stops it being re-asked (+ .test.ts)
   lifecycle.ts         how the daemon is asked to stop itself. ⛔ Asked, never killed by pid
-  settings.ts          the fleet switches the operator owns. There is one: autoCompact. Per-worker,
-                       `enabled` is a switch on its Workers row - held out of dispatch, not retired
+  settings.ts          the three fleet switches the operator owns - autoCompact, autoPreempt,
+                       autoRunawayStop (Overview > Cost). Per-worker, `enabled` is a switch on its
+                       Workers row - held out of dispatch, not retired
   reserve.ts           the compaction reserve, and every belief with its basis attached
   objective.ts         the weight vector, in exactly two consumers    (+ cost.test.ts)
   controller.ts        the consult queue, the caps, and choosing who answers (+ controller.test.ts,
@@ -72,7 +74,8 @@ src/daemon/            orchestratord. Runs as Electron-with-ELECTRON_RUN_AS_NODE
   stream.ts            stream-json records: the free live rate-limit signal
   projects.ts          .multi_agent_controller/project.json; policy committed, state private
   resources.ts         the broker - if the scheduler owns the claim, the lock is unnecessary
-  worktrees.ts         pooled worktrees, task-named branches, prepare hook
+  worktrees.ts         pooled worktrees, task-named branches, prepare hook. ⛔ A slot does not
+                       arrive clean; rescueDirt stashes what the last run left (+ .test.ts)
   which.ts             PATH resolution - node-pty does not do it
   adapters/            claude-code - antigravity-cli - openai-compatible; capabilities as data
                        (+ adapters.test.ts). Read docs/adapters.md before changing one
@@ -99,31 +102,26 @@ docs/                  cost-model.md, glossary.md, adapters.md - maintained; rea
   *tokens*, so **R2** (`tokens_per_percent`) is the blocker, not a stale percentage
   (`docs/cost-model.md` §10). ⛔ Until it lands it scores zero as a routing input — only checked
   evidence may move a score.
-- ⚠️ **A worker is not usable until somebody answers the CLI's first-run questions.** Print mode
-  skips them, so scheduled work runs while a TUI — and therefore a quota probe — cannot. `Finish
-  setup` opens that terminal.
-- ⭐ **A worker is held out by evidence, for judgment as well as work.** A run — or a consult —
-  producing no metered turn is charged to the account, not the task, via one gate list in `eligibility.ts`.
+- ⚠️ **A worker is not usable until somebody answers the CLI's first-run questions.** Print mode skips
+  them, so work runs while a TUI — and a quota probe — cannot. `Finish setup` opens that terminal.
 - ⛔ **Every suite that drives a build product refuses a stale one.** `checkBuildIsCurrent()` guards
   `test:daemon` and `test:ui`; the asar check guards `test:pack`. Three green-and-wrong runs in one
   day is what bought them.
-- ⭐ **Closing the window can stop the daemon, or not, and the operator chooses.** Global → *This
-  app* → tray. Off (default): quitting asks orchestratord to shut down. On: it keeps running and the
-  tray icon brings the window back. ⛔ Shutting the daemon down ends every live session, so a quit
-  with work in flight asks first. ⚠️ The tray *icon* — appearing, close-to-hide, click-to-restore —
-  has never been exercised end to end; the switch and the `daemon.shutdown` RPC are covered.
-- ⭐ **The cache clock no longer repeats itself, and compaction has an off switch.** A move is
-  recorded when *issued*; the clock gives up after two ignored attempts and hands off, and `settings.autoCompact` gates the at-risk path too.
-- ⭐ **The Worker column names an account, never a person.** `Task.ranOn` is derived from the runs
-  because `assignee` cannot answer this — nine hand-off sites set it to `human`, blanking the one
-  fact that column exists to show. ⛔ `resolveTask` puts the account back: answering a question is
-  not doing the work.
-- ⭐ **A task can be pinned to an account and a model; `checkConstraints` (api.ts) rejects what
-  nothing can honour.** `constraints.workerId` is a **pin** — the scheduler skips every other
-  candidate — and the form says so rather than calling it a preference. ⛔ **`selectableEffort` is
-  false on all three built-ins** (`docs/adapters.md` has the per-CLI reason), so `constraints.effort`
-  is dropped at dispatch and no effort control is drawn. ⚠️ That whole path has therefore never run
-  end to end; only its refusals have.
+- ⚠️ **The tray *icon* has never been exercised end to end** — appearing, close-to-hide,
+  click-to-restore. Global > This app owns the switch, and it and `daemon.shutdown` are covered.
+- ⭐ **Every intervention on a live session has an off switch** — Overview > Cost: `autoCompact` and
+  `autoPreempt` **on**, `autoRunawayStop` **off**. ⛔ Preemption also fires *once* now: it waits 120s
+  for the wrap-up, and the watchdog re-fired on that state every tick (t5, 2026-08-28: 13 prompts
+  into a session that had already committed, driving the factor it policed from 3.1× to 3.9×).
+- ⚠️ **The runaway factor measures the wrong thing, which is why its switch ships off.** 92–98% of a
+  run's token total is cache reads (`docs/cost-model.md` §10) — it fires on long work, not expensive
+  work — and `estimateTask` learns only from `completed` runs. Calibrating it is item 5 under **Next**.
+- ⭐ **A pool worktree left dirty no longer kills the next task.** `switch --detach` carries
+  uncommitted changes with it, so parking freed a slot's branch and left its edits for the next claim
+  to die on. `rescueDirt` stashes them — never `reset --hard`; recover with `git stash list` there.
+- ⚠️ **Pinning a task to an account and a model has never run end to end; only its refusals have.**
+  `checkConstraints` (api.ts) rejects what nothing can honour, and ⛔ **`selectableEffort` is false on
+  all three built-ins** (`docs/adapters.md` has the per-CLI reason), so no effort control is drawn.
 - ⚠️ **Two M3 paths are unverified and marked in the code:** `/compact` on the `stream` transport
   (**R6**), and keepalive *execution*. The arithmetic is unit-tested; the firing is not.
 - ⚠️ **No consult has ever been answered by a real model** - the fallbacks are proved, the answer
@@ -150,6 +148,9 @@ M0–M6 are done. What is left is not a milestone but a list, in the order it wo
 4. **Warm-session reuse across tasks in one project** — the biggest remaining cost win. The
    scheduler's own comment says why it is not done: the workspace claim has to move from the task to
    the session first, so a session can outlive the task that opened it.
+5. **Compute `overrunFactor` in cost, not raw tokens**, and let preempted runs feed `estimateTask`.
+   Both are the price of turning `autoRunawayStop` on. The cost model already prices cache reads
+   separately, so nothing needs measuring first.
 
 ## Open questions
 
