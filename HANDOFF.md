@@ -9,7 +9,7 @@ if you add a line, find the one it obsoletes and cut it in the same edit. Finish
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
 **Baseline (2026-08-28, measured on this machine):** `npm run typecheck` clean · `npm run lint` clean ·
-`npm run build` clean · `npm test` 399/399 · `npm run test:daemon` 124/124 · `npm run test:ui` 89/89 ·
+`npm run build` clean · `npm test` 411/411 · `npm run test:daemon` 124/124 · `npm run test:ui` 89/89 ·
 `npm run test:pack` 18/18 · L4 (opt-in) landed a real agent commit on origin/main. Electron 44.0.0,
 electron-builder 26.15.3, 0 npm vulnerabilities. CLIs here: claude 2.1.250 · agy 1.1.22 · codex 0.149.1.
 
@@ -139,22 +139,20 @@ M0–M6 are done. What is left is not a milestone but a list, in the order it wo
 2. **R2 (`tokens_per_percent`)** — the last thing between a refreshable percentage and a compaction
    reserve that reports a number. Now cheap to run, because the percentage refreshes on demand.
 3. **Signing and notarisation**, without which the installers warn or refuse.
-4. **Resident sessions** - one conversation per (worker, workspace), tasks borrowing it. The biggest
-   remaining cost win: a cold Claude turn cost **41,542 cache-creation tokens** in an empty directory
-   (measured 2026-08-28) and every task pays it. Agreed with the owner 2026-08-28, five phases, the
-   first two dark: (1) the **workspace claim moves from the task to the session**, alone, in its own
-   commit, and the place `git worktree lock` plus a provenance marker finally belong - Claude Code's
-   sweep uses both and this pool uses neither, which only bites when the daemon dies mid-run.
-   ⭐ **Phase 0 is done:** `sessions.project_id` is written (it never was - twenty sessions, zero
-   projects), `runs.started_warm` records what the dispatcher chose, and both panes name the
-   conversation - replacing a heuristic that read `session.startedAt < run.startedAt` and so said
-   *"reused, context kept"* on **19 of 20 runs**, every one a cold start;
-   (2) a **session lease** (exclusive Resource, holder = task) plus `sessions.current_branch`
-   with switch-and-restore, and a notice to each of the parked task's thread, the agent on switch and
-   the agent on return; (3) the setting, `off` at all three tiers, mechanical gates only; (4) eviction
-   and a per-conversation view; (5) `runs.started_warm`, because `estimateTask` would otherwise
-   average warm and cold runs together and feed the 3× the runaway watchdog reads.
-   ⛔ A dirty resident tree is never switched out from under its task. ⚠️ Topic scoring deferred: the gate returns a ranked list, so a score is a comparator later rather than a rewrite.
+4. **Resident sessions** - one conversation per (worker, workspace), tasks borrowing it. The cost win
+   this is for: a cold Claude turn cost **41,542 cache-creation tokens** in an empty directory
+   (measured 2026-08-28) and every task pays it. Agreed with the owner 2026-08-28.
+   ⭐ **Phases 0 and 1 are done** - see `git log`; what is left is what makes it visible and shared:
+   - **(2) The session lease.** An exclusive Resource held by the task, so no two tasks are ever in
+     one conversation, plus `sessions.current_branch` with switch-and-restore and a notice to each of
+     three readers: the parked task's thread, the agent on switch, the agent on return.
+     ⛔ A dirty resident tree is never switched out from under its task - the joining task starts cold.
+   - **(3) The setting.** Fleet > project > task, `off` at every tier, mechanical gates only.
+     ⚠️ Topic scoring is deliberately deferred; the gate returns a ranked list so a score is a
+     comparator later rather than a rewrite.
+   - **(4) The per-conversation view** - which tasks and runs one conversation served.
+   - **(5) `git worktree lock` and a provenance marker.** Claude Code's sweep uses both and this pool
+     uses neither. Only bites when the daemon dies mid-run, which is when nobody is watching.
 5. **Compute `overrunFactor` in cost, not raw tokens**, and let preempted runs feed `estimateTask`.
    Both are the price of turning `autoRunawayStop` on. The cost model already prices cache reads
    separately, so nothing needs measuring first.

@@ -149,6 +149,44 @@ export function onSessionEnd(id: string, cb: EndListener): () => void {
   return () => set.delete(cb)
 }
 
+/**
+ * Close a session and wait for its process to actually be gone.
+ *
+ * ⛔ `closeSession` asks; it does not wait. The kill is delivered and the row is not marked until
+ * `handleExit` runs, so anything that needs the *worktree* rather than the row — parking it, handing
+ * it to another task — must wait for the process, not for the call to return. Reclaiming a tree while
+ * the last agent still holds file handles in it is how a git operation fails for reasons nobody can
+ * reproduce.
+ *
+ * ⚠️ Resolves rather than throwing when the wait times out. The caller is already committed to losing
+ * this session; a process that will not die is a reason to stop *reusing* its workspace, not a reason
+ * to fail the dispatch that asked. `false` says the wait ran out, so the caller can decline to hand
+ * the tree on.
+ */
+export function closeAndWait(id: string, timeoutMs = 15_000): Promise<boolean> {
+  if (!live.has(id)) {
+    setState(id, 'closed')
+    return Promise.resolve(true)
+  }
+  return new Promise<boolean>((resolve) => {
+    let settled = false
+    const finish = (ok: boolean): void => {
+      if (settled) return
+      settled = true
+      off()
+      clearTimeout(timer)
+      resolve(ok)
+    }
+    const off = onSessionEnd(id, () => finish(true))
+    const timer = setTimeout(() => {
+      log.warn(`session ${id.slice(0, 8)} did not exit within ${timeoutMs}ms of being closed`)
+      finish(false)
+    }, timeoutMs)
+    timer.unref?.()
+    closeSession(id)
+  })
+}
+
 interface SessionRow {
   id: string
   worker_id: string

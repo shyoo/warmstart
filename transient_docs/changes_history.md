@@ -1110,3 +1110,60 @@ second case — *never replaced by a different one* — was added for the half t
 `openai-compatible` went the other way and now declares `resumeSession: false`. `codex exec resume`
 exists and is unwired, and the scheduler drops a cold start on the strength of that flag: a
 capability that lies in that direction silently loses the context and reports a warm continuation.
+
+---
+
+## The worktree that was handed back while somebody was still living in it
+
+Phase 1 of resident sessions, and it is one line of intent: **the workspace belongs to the
+conversation, not to the run.**
+
+It used to belong to the task, and the claim died when the run did. The scheduler's own comment had
+already worked out what that cost, in `dispatchIntoWarmSession`:
+
+> A task **continued by a reply** is therefore warm in context and homeless on disk.
+
+So the reuse path the whole cost model exists to reach had to ask the pool for a tree and *hope* it
+was handed the same one back. Anything else meant an agent resuming a conversation about files that
+were no longer in front of it - and it had to hope while holding the one thing that made the reuse
+worth doing.
+
+Three changes carry it. `reassignClaim` transfers an existing claim rather than releasing and
+retaking one, because the ordering forces it: a session's working directory *is* its workspace, so
+there is no session to claim on behalf of until there is a workspace to put one in, and a pool with a
+free slot for even one scheduler tick is a pool another task can take the slot out of. The in-memory
+map is keyed by session rather than by run. And `releaseFor` stopped releasing the workspace at all -
+`releaseWorkspaceOf` runs when the conversation ends, reached from the session's own exit.
+
+### The valve that had to come with it
+
+Eviction was planned for phase 4 and moved here, because without it phase 1 is a leak rather than a
+feature. The cache clock closes a session whose cache has lapsed - but only on the `compact` and
+`close` moves. Its `let_expire` move leaves the session alone, so an idle conversation would sit on a
+worktree until somebody restarted the daemon. A pool with nothing free now closes the least valuable
+resident and takes the tree.
+
+⛔ Never one with an open run: evicting a conversation mid-turn would kill a run to start another,
+which is not a trade this scheduler is allowed to make on its own.
+
+⚠️ The ranking is the part with judgement in it, so it is a pure exported function with its own
+tests. A **lapsed cache goes first** - such a session's context is no cheaper to reach than a cold
+start, so closing it destroys nothing that had value, and ranking a warm session ahead of a lapsed
+one would be the scheduler throwing away the exact thing it exists to preserve. Idleness is only the
+tie-break, and it is measured from the **last request** rather than from `startedAt`: a conversation
+opened an hour ago that spoke a second ago is the busiest thing in the pool, and ranking by start
+time would evict it first, reliably, every time, on a fleet whose sessions are long-lived by design.
+
+When the victim's cache was still warm the log says so in those words - *this pool is too small for
+the work in it* - because that is a fact about the operator's configuration, not about the scheduler.
+
+### Two things found on the way past
+
+`completeTask` read the workspace map by run id, and the finish path is gated on the answer: a
+missing workspace means no landing, no loose-end scan and no ask to commit. Re-keying the map without
+re-keying that read would have turned every completion into a silent no-op.
+
+And `reconcileTasks` carried `workspaces.delete(task.id)`, which had never once matched - the map has
+never been keyed by task. Harmless, and it survived precisely because it read like the line that
+cleaned up after a restart. Nothing needs to: the map is in memory and starts empty, and
+`reconcileClaims` clears the rows beside it.

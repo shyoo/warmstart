@@ -38,6 +38,14 @@ committing and parallel workspaces are per-project **capabilities**, not univers
 media-generation or research project is a first-class citizen with no repo fiction. Policy lives in a
 committed `.multi_agent_controller/project.json`; runtime state stays private in the OS app-data directory.
 
+**Resident session** — *the conversation currently holding a workspace.* ⛔ **The session owns the
+worktree, not the run and not the task**, so it keeps it for as long as it lives — which is what lets
+a task resting at `awaiting_human` be replied to in the tree its own branch is checked out in. ⚠️ The
+claim is taken under the task's name (there is no session until there is a directory to put one in)
+and transferred the moment there is one. A pool with nothing free **evicts** rather than refusing: the
+conversation whose prompt cache has already lapsed goes first, because its context is no cheaper to
+reach than a cold start, and one with an open run is never touched.
+
 **Workspace** — *where a run executes.* For a git project, a pooled **git worktree** — a permanent
 checkout, created once and reused, sharing one `.git` object store. For a plain directory, the
 directory itself, as a pool of one.

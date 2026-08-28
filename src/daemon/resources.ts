@@ -183,6 +183,25 @@ export function claim(
   return toClaim(record)
 }
 
+/**
+ * Hand an existing claim to a different holder.
+ *
+ * ⛔ Exists for one ordering problem and should not be used for anything else. A workspace has to be
+ * claimed **before** the session that will live in it exists, because the session's working directory
+ * *is* the workspace — so the claim is taken under the task's name and moved to the session's the
+ * moment there is one. Re-claiming instead would mean releasing first, and a pool with a free slot
+ * for even a scheduler tick is a pool another task can take the slot out of.
+ *
+ * ⚠️ Silent on a released or unknown claim: both mean there is nothing left to transfer, and neither
+ * is worth failing a dispatch over.
+ */
+export function reassignClaim(claimId: string, holder: string): void {
+  const changed = db()
+    .prepare('update resource_claims set holder = ? where id = ? and released_at is null')
+    .run(holder, claimId).changes
+  if (changed) log.debug(`claim ${claimId.slice(0, 8)} now held by ${holder}`)
+}
+
 export function release(claimId: string): void {
   const r = row<ClaimRow>(db().prepare('select * from resource_claims where id = ?').get(claimId))
   if (!r || r.released_at) return

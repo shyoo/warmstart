@@ -28,7 +28,7 @@ import {
 import { enqueueConsult, hasPendingConsult, latestAnswer } from './controller.js'
 import { decomposeQuestion, routeQuestion, triageQuestion, type RouteCandidate } from './judgment.js'
 import { escalateStale, voidApprovalsForSession } from './approvals.js'
-import { releaseAllFor } from './resources.js'
+import { reassignClaim, releaseAllFor } from './resources.js'
 import {
   branchNameFor,
   claimWorkspace,
@@ -40,8 +40,10 @@ import {
 } from './worktrees.js'
 import {
   backscroll,
+  closeAndWait,
   closeSession,
   getSession,
+  hasOpenRun,
   resumableSession,
   sendPrompt,
   sessionsForWorker,
@@ -94,14 +96,19 @@ const TRIAGE_AFTER_FAILURES = 2
 
 export const TICK_MS = 10_000
 
-/** Workspaces in flight, so an exit can release exactly what its dispatch claimed. */
+/**
+ * Which workspace each live session is sitting in, keyed by **session id**.
+ *
+ * ⛔ **The session owns the workspace, not the run and not the task.** It was keyed by run before,
+ * which meant a worktree was handed back the moment a run ended — and the session holding that
+ * task's context stayed alive in a directory it no longer had any claim to. The scheduler's own
+ * comment called that out: a task continued by a reply was *"warm in context and homeless on disk"*,
+ * and had to re-claim a tree and hope for the same one. Ownership now matches lifetime.
+ *
+ * ⚠️ In memory on purpose, and safe because `reconcileClaims` releases every claim at startup: a map
+ * rebuilt from nothing beside a table cleared to nothing cannot disagree with itself.
+ */
 const workspaces = new Map<string, { workspace: Workspace; projectId: string | null }>()
-
-/** Is a run of this task already holding a workspace? Then a continuation must not claim a second. */
-function heldWorkspaceFor(taskId: string): boolean {
-  for (const run of runsFor(taskId)) if (!run.endedAt && workspaces.has(run.id)) return true
-  return false
-}
 
 export interface TickResult {
   dispatched: number
@@ -668,7 +675,17 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
   const priorCwd = past.find((s) => s.workerId === worker.id)?.cwd
 
   if (project) {
+    // ⚠️ Claimed under the **task's** name, and moved to the session's below. The session's working
+    // directory is the workspace, so there is no session to claim on behalf of until there is a
+    // workspace to put it in. See `reassignClaim`.
     workspace = await claimWorkspace(project, task.id, priorCwd)
+    // ⛔ A pool with nothing free is not necessarily a pool that is busy. Now that a session keeps
+    // its workspace for as long as it lives, an idle conversation can sit on a worktree with no run
+    // against it — and the cache clock's `let_expire` move leaves such a session alone indefinitely.
+    // Without this, one parked task would cost a slot until somebody restarted the daemon.
+    if (!workspace) {
+      if (await evictResident(project)) workspace = await claimWorkspace(project, task.id, priorCwd)
+    }
     if (!workspace) throw new Error(`no free workspace in ${project.name}`)
 
     branch = project.vcs === 'git' ? branchNameFor(task.seq, task.title) : null
@@ -728,7 +745,13 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
   // last run said is exactly what somebody wants to read in the seconds after it fails.
   clearActivity(task.id)
 
-  if (workspace) workspaces.set(run.id, { workspace, projectId: project?.id ?? null })
+  // ⛔ The claim moves to the session here, and this is the whole of phase 1. It was taken under the
+  // task's name a moment ago because the session could not exist until its directory did; from now
+  // on the tree is released when the *conversation* ends, not when a run does.
+  if (workspace) {
+    reassignClaim(workspace.claimId, session.id)
+    workspaces.set(session.id, { workspace, projectId: project?.id ?? null })
+  }
 
   setStatus(task.id, 'running', {
     assignee: worker.id,
@@ -808,21 +831,23 @@ async function dispatchIntoWarmSession(
   const warm = model.costOfKeepalive(session)
   const saved = cold !== null && warm !== null ? Math.round(cold - warm) : null
 
-  // ⛔ Re-claim the workspace, because this task may not be holding one any more.
+  // ⭐ **A warm session already holds its workspace**, and this is what phase 1 bought. This block
+  // used to re-claim one, because the claim died with the run: a task continued by a reply was warm
+  // in context and homeless on disk, and had to ask the pool for a tree and hope it got the same one
+  // back. The claim now lives as long as the conversation does, so there is nothing to re-take.
   //
-  // ⚠️ The comment at the top of `dispatch` says a warm session already sits in the workspace this
-  // task claimed — true while the task never finished, and false the moment it did: `releaseFor`
-  // parks the worktree and releases the claim on completion. A task **continued by a reply** is
-  // therefore warm in context and homeless on disk, and running it unclaimed would let a second task
-  // be given the same worktree and switch the branch out from under this one.
-  //
-  // The claim prefers the tree the session is already in - that is where its branch is checked out
-  // and what its context describes - and takes any free one rather than refusing.
+  // ⚠️ The fallback stays for the case the map cannot answer for: a session that outlived the claim
+  // — a daemon restart clears every claim while the process keeps running — is warm in context with
+  // no tree, and re-claiming its own directory is exactly right there.
   const project = task.projectId ? getProject(task.projectId) : null
   let reclaimed: Workspace | null = null
-  if (project && !heldWorkspaceFor(task.id)) {
+  if (project && !workspaces.has(session.id)) {
     reclaimed = await claimWorkspace(project, task.id, session.cwd)
+    if (!reclaimed && (await evictResident(project))) {
+      reclaimed = await claimWorkspace(project, task.id, session.cwd)
+    }
     if (!reclaimed) throw new Error(`no free workspace in ${project.name} to continue t${task.seq}`)
+    reassignClaim(reclaimed.claimId, session.id)
   }
 
   applyPermissionRules(worker, project)
@@ -839,7 +864,7 @@ async function dispatchIntoWarmSession(
   })
   setRunQuota(run.id, 'before', runQuota(worker.id))
   clearActivity(task.id)
-  if (reclaimed) workspaces.set(run.id, { workspace: reclaimed, projectId: project?.id ?? null })
+  if (reclaimed) workspaces.set(session.id, { workspace: reclaimed, projectId: project?.id ?? null })
 
   setStatus(task.id, 'running', { assignee: worker.id })
   addMessage(
@@ -1215,7 +1240,10 @@ export async function completeTask(sessionId: string, summary: string): Promise<
 
   addMessage(task.id, 'agent', summary, run.id)
 
-  const held = workspaces.get(run.id)
+  // ⚠️ Keyed by the session, which is what holds the workspace. Keyed by the run this read `MISSING`
+  // for every completion the moment ownership moved, and the finish path is gated on it — a missing
+  // workspace means no landing, no loose-end scan, and no ask to commit.
+  const held = workspaces.get(sessionId)
   const project = task.projectId ? getProject(task.projectId) : null
   log.info(
     `t${task.seq} reported complete: run=${run.id.slice(0, 8)} workspace=${held ? 'held' : 'MISSING'} ` +
@@ -1299,13 +1327,20 @@ export async function completeTask(sessionId: string, summary: string): Promise<
 export async function onSessionExit(session: Session, exitCode: number | null): Promise<void> {
   voidApprovalsForSession(session.id)
   const run = runForSession(session.id)
-  if (!run) return
-  await endFailedRun(
-    session,
-    run,
-    `The session ended (exit ${exitCode}) without reporting completion. ` +
-      'Nothing here can tell whether the work was finished, so it is over to you.'
-  )
+  if (run) {
+    await endFailedRun(
+      session,
+      run,
+      `The session ended (exit ${exitCode}) without reporting completion. ` +
+        'Nothing here can tell whether the work was finished, so it is over to you.'
+    )
+  }
+  // ⛔ Run or no run, and after the run either way. This is the moment the workspace goes back,
+  // because the workspace belongs to the **conversation** and the conversation has just ended.
+  // ⚠️ The early return this replaced (`if (!run) return`) is exactly the path a session that
+  // finished its task and was then closed takes — the common case, and the one that would have
+  // leaked every worktree the fleet ever used.
+  await releaseWorkspaceOf(session.id)
 }
 
 /**
@@ -1452,17 +1487,103 @@ function maybeTriage(taskId: string): void {
 async function releaseFor(
   runId: string,
   taskId: string | null,
-  projectId: string | null
+  _projectId: string | null
 ): Promise<void> {
-  const held = workspaces.get(runId)
-  if (held) {
-    const project = projectId ? getProject(projectId) : null
-    if (project) await parkWorkspace(project, held.workspace.path)
-    releaseWorkspace(held.workspace.claimId)
-    workspaces.delete(runId)
-  }
+  // ⛔ **The workspace is deliberately not released here any more.** It belongs to the session, and
+  // the session may well outlive this run — a task resting at `awaiting_human` keeps its session
+  // warm for the reply, and taking its worktree away in the meantime is what used to leave it warm
+  // in context and homeless on disk. `releaseWorkspaceOf` runs when the conversation ends.
+  //
+  // ⚠️ Everything a *run* took is still released here, and unconditionally. One leaked exclusive
+  // claim stalls a project forever, and the symptom — nothing dispatches, nothing errors — is the
+  // worst kind of bug to find later.
   releaseAllFor(runId)
   if (taskId) releaseAllFor(taskId)
+}
+
+/**
+ * Park and hand back the workspace a conversation was living in.
+ *
+ * ⛔ Idempotent, and it has to be: it is reached from a session exiting, from eviction, and from the
+ * shutdown sweep, and two of those can happen within a millisecond of each other.
+ *
+ * ⚠️ Parking runs `rescueDirt`, which stashes anything the agent left behind rather than resetting
+ * over it — so this must not run until the process is actually gone. Every caller waits for the exit
+ * rather than for `closeSession` to return; see `closeAndWait`.
+ */
+async function releaseWorkspaceOf(sessionId: string): Promise<void> {
+  const held = workspaces.get(sessionId)
+  if (!held) return
+  workspaces.delete(sessionId)
+  const project = held.projectId ? getProject(held.projectId) : null
+  if (project) await parkWorkspace(project, held.workspace.path)
+  releaseWorkspace(held.workspace.claimId)
+  releaseAllFor(sessionId)
+}
+
+/** Is this session's prompt cache already gone, making its context no cheaper than a cold start? */
+export function cacheHasLapsed(session: Session, now = Date.now()): boolean {
+  return session.cacheExpiresAt !== null && session.cacheExpiresAt <= now
+}
+
+/**
+ * Of the conversations sitting on a workspace, which one costs least to lose?
+ *
+ * ⛔ **A lapsed cache first, always.** Such a session's context is no cheaper to reach than a cold
+ * start already, so closing it destroys nothing that had value — and a still-warm session ranked
+ * ahead of a lapsed one would be the scheduler throwing away the exact thing it exists to preserve.
+ *
+ * ⚠️ Among equals, the one idle longest, measured from its **last request** rather than from when it
+ * started. A conversation that opened an hour ago and spoke a second ago is the busiest thing here,
+ * not the oldest; ranking by `startedAt` would evict it first and reliably pick the wrong session.
+ * `startedAt` is the fallback only for a session that has never made a request.
+ *
+ * Exported for its own tests: the ranking is where the judgement is, and it is worth being able to
+ * check it without a pool, a worktree and a process.
+ */
+export function leastValuableResident(candidates: Session[], now = Date.now()): Session | null {
+  const ranked = [...candidates].sort((a, b) => {
+    const [al, bl] = [cacheHasLapsed(a, now), cacheHasLapsed(b, now)]
+    if (al !== bl) return al ? -1 : 1
+    return (a.lastRequestStartedAt ?? a.startedAt) - (b.lastRequestStartedAt ?? b.startedAt)
+  })
+  return ranked[0] ?? null
+}
+
+/**
+ * Close the least valuable conversation holding a workspace in this project, so somebody else can
+ * have the tree. Returns whether anything was actually freed.
+ *
+ * ⛔ **Never one with an open run.** A conversation mid-turn is an agent working; evicting it would
+ * kill a run to start another, which is not a trade this scheduler is allowed to make on its own.
+ *
+ * ⚠️ The victim is the one whose prompt cache has already lapsed — its context is no cheaper to
+ * reach than a cold start, so it is the one session whose loss costs nothing measurable. Only if
+ * none has lapsed does this fall back to the longest idle, and that case is a genuine cost: it is
+ * the pool being too small for the work, and the log says so in those words.
+ */
+async function evictResident(project: { id: string; name: string }): Promise<boolean> {
+  const now = Date.now()
+  const candidates = [...workspaces.entries()]
+    .filter(([sessionId, held]) => held.projectId === project.id && !hasOpenRun(sessionId))
+    .map(([sessionId]) => getSession(sessionId))
+    .filter((s): s is Session => s !== null)
+
+  const victim = leastValuableResident(candidates, now)
+  if (!victim) return false
+  const cold = cacheHasLapsed(victim, now)
+  log.info(
+    `evicting session ${victim.id.slice(0, 8)} from ${victim.cwd} to free a workspace in ` +
+      `${project.name}` +
+      (cold
+        ? ' — its cache had already lapsed, so nothing warm was lost'
+        : ' — ⚠️ its cache was still warm, which means this pool is too small for the work in it')
+  )
+  // ⚠️ Waits for the process, not for the request. `releaseWorkspaceOf` parks the tree with git, and
+  // an agent that still has file handles in it makes that fail for reasons nobody can reproduce.
+  await closeAndWait(victim.id)
+  await releaseWorkspaceOf(victim.id)
+  return true
 }
 
 // ---------------------------------------------------------------------------- loop
@@ -1499,9 +1620,13 @@ export function reconcileTasks(): number {
     for (const run of runsFor(task.id)) {
       if (!run.endedAt) finishRun(run.id, 'terminated', 'orchestratord restarted')
       releaseAllFor(run.id)
+      if (run.sessionId) releaseAllFor(run.sessionId)
     }
     releaseAllFor(task.id)
-    workspaces.delete(task.id)
+    // ⚠️ `workspaces.delete(task.id)` stood here and had never once matched: the map has never been
+    // keyed by task. Harmless, but it read as the line that cleaned up after a restart, which is why
+    // it survived. Nothing needs to clean the map at startup — it is in memory and starts empty, and
+    // `reconcileClaims` releases the rows beside it.
     addMessage(task.id, 'system', 'orchestratord restarted while this was running; returned to ready.')
     setStatus(task.id, task.status === 'cancelling' ? 'paused_user' : 'ready')
   }
