@@ -381,6 +381,13 @@ costmodels/             versioned pricing data
 - **`agy` installs under `%LOCALAPPDATA%` and is not on PATH until `agy install` runs.** The
   adapter looks there anyway; reporting "not installed" would send somebody to reinstall what they
   already have.
+- ⛔ **Any test that calls `plan()` needs the CLI on PATH, and CI has none installed.** `plan()`
+  resolves the command before it builds an argv, so an argv assertion passes on a developer machine
+  and throws `'claude' is not on PATH` in CI. Stub the names onto PATH the way `adapters.test.ts`
+  and `resume.test.ts` do - empty files, both with and without `.exe`. ⚠️ This has now been found
+  twice, the second time in a brand-new test file written by somebody who had read the first one's
+  explanation. Check a new suite against a stripped PATH before pushing:
+  `env -u LOCALAPPDATA PATH=/c/Windows/System32:/c/Apps/nodejs:/usr/bin node node_modules/vitest/vitest.mjs run <file>`
 - **A native module cannot be loaded from inside an asar.** `dlopen` needs a real path and the
   archive is virtual, so `.node` files are unpacked beside it. ⚠️ The `.node` files are **not** in
   `@lydell/node-pty` - they are in per-platform siblings like `node-pty-win32-x64`, so a glob naming

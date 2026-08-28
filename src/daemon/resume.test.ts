@@ -1,6 +1,6 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { delimiter, join } from 'node:path'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { claudeCode } from './adapters/claude-code.js'
 import { antigravityCli } from './adapters/antigravity-cli.js'
@@ -19,6 +19,37 @@ import type { SpawnRequest } from './adapters/types.js'
  * Two halves, tested separately because they fail separately: the adapter has to *say* the resume
  * flag, and the daemon has to know which conversation to name.
  */
+
+/**
+ * ⛔ **`plan()` resolves the command through `which()` before it builds an argv**, so every argv
+ * assertion below needs *something* named `claude` and `agy` on PATH — and CI has neither. This file
+ * shipped green on a machine with both installed and failed the first CI run it saw, which is the
+ * identical mistake `adapters.test.ts` documents at length and solved this way. The stub proves
+ * nothing about the CLI and is not meant to: what is under test is **the argv this repository
+ * builds**, which is provable on a machine that has never installed anything.
+ */
+let stubDir: string | null = null
+const realPath = process.env.PATH
+
+beforeAll(() => {
+  stubDir = mkdtempSync(join(tmpdir(), 'agentyard-resume-cli-'))
+  for (const command of ['claude', 'agy']) {
+    // Never executed. `which()` wants a regular file, plus the executable bit off Windows and a
+    // PATHEXT-matching extension on it, so both names are written.
+    for (const name of [command, `${command}.exe`]) {
+      const file = join(stubDir, name)
+      writeFileSync(file, '')
+      chmodSync(file, 0o755)
+    }
+  }
+  process.env.PATH = `${stubDir}${delimiter}${realPath ?? ''}`
+})
+
+afterAll(() => {
+  if (realPath === undefined) delete process.env.PATH
+  else process.env.PATH = realPath
+  if (stubDir) rmSync(stubDir, { recursive: true, force: true })
+})
 
 const REQ: SpawnRequest = {
   sessionId: '11111111-2222-4333-8444-555555555555',
