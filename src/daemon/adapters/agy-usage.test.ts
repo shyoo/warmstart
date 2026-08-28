@@ -122,4 +122,25 @@ describe('the /usage panel', () => {
     const prose = 'Models & Quota\nGEMINI MODELS\n  Quota is consumed proportionally, up to 100%.\n'
     expect(parseUsageScreen(prose, NOW)).toBeNull()
   })
+
+  it('deduplicates windows when backscroll contains multiple repaints', () => {
+    const tripleScreen = `${screen}\n${screen}\n${screen}`
+    const windows = parseUsageScreen(tripleScreen, NOW)
+    expect(windows).not.toBeNull()
+    expect(windows).toHaveLength(4)
+    expect(new Set(windows?.map((w) => w.id)).size).toBe(4)
+  })
+
+  it('parses "Quota available" or "Quota ava…" on the bar line as 0% used', () => {
+    const screenWithQuotaAvailableOnBar = screen.replace(
+      'Five Hour Limit Remaining\n    [██████████████████████████████████████████████████] 100.00%',
+      'Five Hour Limit Remaining\n    [██████████████████████████████████████████████████] Quota ava…'
+    )
+    const windows = parseUsageScreen(screenWithQuotaAvailableOnBar, NOW)
+    expect(windows).not.toBeNull()
+    expect(windows).toHaveLength(4)
+    const claudeFiveHour = windows?.find((w) => w.label === 'Claude and GPT · 5-hour')
+    expect(claudeFiveHour?.percent).toBe(0)
+    expect(claudeFiveHour?.resetsAt).toBeNull()
+  })
 })

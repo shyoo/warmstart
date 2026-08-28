@@ -34,8 +34,10 @@ let app = null
 let socket = null
 
 try {
+  const env = { ...process.env, MULTI_AGENT_CONTROLLER_DATA_DIR: dataDir }
+  delete env.ELECTRON_RUN_AS_NODE
   app = spawn(electronBinary(), [REPO, `--remote-debugging-port=${PORT}`], {
-    env: { ...process.env, MULTI_AGENT_CONTROLLER_DATA_DIR: dataDir },
+    env,
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true
   })
@@ -396,42 +398,9 @@ try {
     costPanel.includes('size unknown') || costPanel.includes('unknown'),
     'this is the honest state on a CLI with no free usage probe'
   )
-
-  // ⛔ The one fleet-wide switch the operator owns. It is checked here rather than only in a unit
-  // test because the thing that makes it trustworthy is visual: the state it reports has to be the
-  // daemon's answer, not the value that was clicked. A toggle that paints itself and changes
-  // nothing is worse than no toggle.
-  // ⚠️ Case-insensitive on purpose. The heading is uppercased by CSS and `innerText` reports what is
-  // *rendered*, so a case-sensitive match here would be testing the stylesheet, not the switch.
   check(
-    'automatic compaction has a switch, and it says which way it is set',
-    /automatic compaction[\s\S]{0,8}(On|Off)\b/i.test(costPanel),
-    JSON.stringify(costPanel.slice(costPanel.search(/automatic compaction/i)).slice(0, 56))
-  )
-  const switchState = await evaluate(
-    `(() => { const s = document.querySelector('.switch');
-              return s ? s.getAttribute('role') + ':' + s.getAttribute('aria-checked') : 'absent' })()`
-  )
-  check(
-    'it is a real switch, not a styled div',
-    switchState === 'switch:true' || switchState === 'switch:false',
-    switchState
-  )
-
-  await evaluate(`document.querySelector('.switch').click()`)
-  await wait(1200)
-  const afterToggle = await evaluate('document.querySelector(".content")?.innerText ?? ""')
-  check(
-    'turning it off says so, and says what happens instead',
-    afterToggle.includes('never compacts on its own') && afterToggle.includes('hands off and closes'),
-    'off has to state its consequence - a session that would have compacted now closes instead'
-  )
-  await evaluate(`document.querySelector('.switch').click()`)
-  await wait(1200)
-  check(
-    'and it goes back on',
-    (await evaluate(`document.querySelector('.switch').getAttribute('aria-checked')`)) === 'true',
-    'the state comes back from the daemon, so this also proves it round-tripped'
+    'shows cache clock and reserves sections',
+    /cache clock/i.test(costPanel) && /save what it holds/i.test(costPanel)
   )
 
   section('controller')
@@ -610,6 +579,33 @@ try {
     'an account read yesterday and one never read are different states'
   )
 
+  // ⛔ A suspect worker without quota windows shows `error · see Settings > Workers` and suppresses `quota unknown`
+  const suspectWorkerId = await evaluate(
+    `window.agentyard.rpc('worker.create', { adapterId: 'claude-code', label: 'suspect worker', enabled: false }).then(w => w.id)`
+  )
+  {
+    const store = new DatabaseSync(join(dataDir, 'multi_agent_controller.db'))
+    const health = JSON.stringify({
+      state: 'suspect',
+      reason: 'subscription expired',
+      strikes: 1,
+      since: Date.now(),
+      runId: null,
+      needsReauth: false
+    })
+    store.prepare('update workers set health_json = ? where id = ?').run(health, suspectWorkerId)
+    store.close()
+  }
+  await evaluate(
+    `window.agentyard.rpc('worker.update', { id: ${JSON.stringify(suspectWorkerId)}, maxConcurrent: 1 })`
+  )
+  await wait(1500)
+  const suspectCard = await evaluate(
+    `[...document.querySelectorAll('.wcard')].find(c => c.innerText.includes('suspect worker'))?.innerText ?? ''`
+  )
+  check('a suspect worker without quota shows the error banner', /error · see Settings/i.test(suspectCard))
+  check('and suppresses quota unknown when suspect', !/quota unknown/i.test(suspectCard))
+
   section('finishing work')
   // ⛔ Three tiers resolve into one answer, and the failure this guards is the answer disappearing
   // from the one place a person can change it. The daemon-side resolution is held by
@@ -643,6 +639,52 @@ try {
   )
   // ⚠️ Put back, so the rest of the suite runs against the shipped default.
   await evaluate(`window.agentyard.rpc('settings.set', { finishPolicy: 'agent-lands' })`)
+
+  // ⛔ Global settings: probe frequency selector and fleet intervention toggles
+  const probePicker = `[...document.querySelectorAll('select')].find(
+     s => s.getAttribute('aria-label') === 'Quota probe frequency')`
+  check('the probe frequency control exists under Global', (await evaluate(`!!(${probePicker})`)) === true)
+  check('starts at 5 minutes default', (await evaluate(`${probePicker}?.value`)) === '5')
+  await evaluate(`
+    (() => {
+      const s = ${probePicker};
+      s.value = '10';
+      s.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    })()
+  `)
+  await wait(1200)
+  check(
+    'probe frequency change reaches daemon',
+    (await evaluate(`window.agentyard.rpc('settings.get', {}).then(s => s.probeIntervalMinutes)`)) === 10
+  )
+  await evaluate(`window.agentyard.rpc('settings.set', { probeIntervalMinutes: 5 })`)
+
+  const autoCompactBtn = `[...document.querySelectorAll('button[role="switch"]')].find(
+     b => b.getAttribute('aria-label') === 'Automatic compaction')`
+  check('automatic compaction toggle exists on Global', (await evaluate(`!!(${autoCompactBtn})`)) === true)
+  await evaluate(`${autoCompactBtn}?.click()`)
+  await wait(1200)
+  const afterToggle = await evaluate('document.querySelector(".content")?.innerText ?? ""')
+  check(
+    'turning it off says so, and says what happens instead',
+    afterToggle.includes('never compacts on its own') && afterToggle.includes('hands off and closes'),
+    'off has to state its consequence - a session that would have compacted now closes instead'
+  )
+  await evaluate(`${autoCompactBtn}?.click()`)
+  await wait(1200)
+  check(
+    'and it goes back on',
+    (await evaluate(`${autoCompactBtn}?.getAttribute('aria-checked')`)) === 'true'
+  )
+
+  const autoPreemptBtn = `[...document.querySelectorAll('button[role="switch"]')].find(
+     b => b.getAttribute('aria-label') === 'Wrap up before a quota window closes')`
+  check('preemption toggle exists on Global', (await evaluate(`!!(${autoPreemptBtn})`)) === true)
+  const runawayBtn = `[...document.querySelectorAll('button[role="switch"]')].find(
+     b => b.getAttribute('aria-label') === 'Stop a run that is far past its estimate')`
+  check('runaway stop toggle exists on Global', (await evaluate(`!!(${runawayBtn})`)) === true)
+
   check(
     'a task carries its own tier, defaulting to inherit',
     (await evaluate(

@@ -1,0 +1,251 @@
+import { useCallback, useEffect, useState } from 'react'
+import type { FinishPolicy } from '@shared/tasks'
+import type { Settings } from '@shared/protocol'
+import { rpc } from '../lib/daemon'
+
+/**
+ * Fleet-wide settings: finishing policy, session interventions, and quota probe frequency.
+ *
+ * ⛔ These govern the *fleet*, unlike AppSettings which governs this window.
+ */
+export function FleetSettings(): React.JSX.Element {
+  const [settings, setSettings] = useState<Settings | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const load = useCallback(async () => {
+    try {
+      setSettings(await rpc('settings.get'))
+      setError(null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }, [])
+
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  const setSwitch = useCallback(
+    async (key: keyof Settings, next: boolean) => {
+      setBusy(true)
+      setError(null)
+      try {
+        setSettings(await rpc('settings.set', { [key]: next }))
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err))
+      } finally {
+        setBusy(false)
+      }
+    },
+    []
+  )
+
+  const chooseFinishPolicy = useCallback(
+    async (next: FinishPolicy) => {
+      setBusy(true)
+      setError(null)
+      try {
+        setSettings(await rpc('settings.set', { finishPolicy: next }))
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err))
+      } finally {
+        setBusy(false)
+      }
+    },
+    []
+  )
+
+  const chooseProbeInterval = useCallback(
+    async (minutes: number) => {
+      setBusy(true)
+      setError(null)
+      try {
+        setSettings(await rpc('settings.set', { probeIntervalMinutes: minutes }))
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err))
+      } finally {
+        setBusy(false)
+      }
+    },
+    []
+  )
+
+  const autoCompact = settings?.autoCompact ?? true
+  const autoPreempt = settings?.autoPreempt ?? true
+  const autoRunawayStop = settings?.autoRunawayStop ?? false
+  const finishPolicy = settings?.finishPolicy ?? 'agent-lands'
+  const probeIntervalMinutes = settings?.probeIntervalMinutes ?? 5
+
+  return (
+    <div>
+      {error && <div className="alert">{error}</div>}
+
+      <section className="doc-section">
+        <h3>When a task finishes</h3>
+        <div className="switch-row">
+          <select
+            className="finish-picker"
+            aria-label="Fleet finish policy"
+            value={finishPolicy}
+            disabled={busy || settings === null}
+            onChange={(e) => void chooseFinishPolicy(e.target.value as FinishPolicy)}
+          >
+            <option value="await-human">await human</option>
+            <option value="agent-lands">agent lands it</option>
+            <option value="pull-request">open a pull request</option>
+            <option value="custom">the project&rsquo;s own policy</option>
+          </select>
+          <div>
+            <p className="switch-state">
+              <strong>Finish policy</strong> · {finishPolicy}
+              <span className="dim"> — default landing strategy for completed tasks.</span>
+            </p>
+            <p className="note">
+              The fleet-wide default, used by any project that has not set <code>landing.finish</code> in
+              its <code>project.json</code>, and by any task left on <em>inherit</em>. ⛔ Multi Agent
+              Controller never writes a commit for an agent and never discards work it declines to land —
+              anything it will not land appears under <strong>Loose ends</strong> on Overview.{' '}
+              <em>agent lands it</em> additionally requires the project to define check commands and for
+              them to pass. See <code>docs/landing.md</code>.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section className="doc-section">
+        <h3>Automatic compaction</h3>
+        <SwitchRow
+          label="Automatic compaction"
+          on={autoCompact}
+          busy={busy || settings === null}
+          onToggle={() => void setSwitch('autoCompact', !autoCompact)}
+          state={
+            autoCompact
+              ? 'the clock may compact a session when the arithmetic favours it.'
+              : 'the clock never compacts on its own. A session that would have been compacted' +
+                ' hands off and closes instead, including when the reserve is at risk.'
+          }
+        >
+          Compaction is what stops a long session being stranded when a quota window closes, so this
+          is on by default — running out of room to <em>save</em> is the one loss that is not
+          recoverable. Turn it off when compaction is not reaching your sessions: on the{' '}
+          <code>stream</code> transport it is <strong>unverified</strong> whether <code>/compact</code>{' '}
+          is honoured at all, and every attempt that is not costs real tokens. This switch is
+          fleet-wide and takes effect on the next tick.
+        </SwitchRow>
+      </section>
+
+      <section className="doc-section">
+        <h3>Stopping a run early</h3>
+        <SwitchRow
+          label="Wrap up before a quota window closes"
+          on={autoPreempt}
+          busy={busy || settings === null}
+          onToggle={() => void setSwitch('autoPreempt', !autoPreempt)}
+          state={
+            autoPreempt
+              ? 'a run inside the margin is told to commit and hand off, then parked until the reset.'
+              : 'runs are left alone at a window boundary and are cut off mid-thought when it closes.'
+          }
+        >
+          On by default: this is the intervention the tool exists to make, and it acts on a{' '}
+          <em>measured</em> reset time rather than a guess. The task goes to{' '}
+          <code>paused_quota</code> carrying the reset as its resume time, so it restarts itself —
+          nothing is cancelled. With this off, a run caught by a closing window loses its
+          uncommitted work and the next session pays to rediscover the branch.
+        </SwitchRow>
+        <SwitchRow
+          label="Stop a run that is far past its estimate"
+          on={autoRunawayStop}
+          busy={busy || settings === null}
+          onToggle={() => void setSwitch('autoRunawayStop', !autoRunawayStop)}
+          state={
+            autoRunawayStop
+              ? 'a run past 3× the estimate is wrapped up and handed back to you.'
+              : 'a long run is never stopped for cost alone. Nothing else changes.'
+          }
+        >
+          <strong>Off by default, deliberately.</strong> The estimate is a median over completed runs
+          and the overrun is counted in raw tokens — which on these CLIs are ~98% cache reads, and
+          those accumulate with how <em>long</em> a session is rather than how wasteful. Measured on
+          t5 (2026-08-28): 6,271,722 tokens against an estimate of 1,557,974 was called a runaway at
+          4.0×, of which 6,155,066 were cache reads and 27,338 were output. Turn this on once the
+          factor is measured in cost rather than tokens.
+        </SwitchRow>
+      </section>
+
+      <section className="doc-section">
+        <h3>Quota probe frequency</h3>
+        <div className="switch-row">
+          <select
+            className="finish-picker"
+            aria-label="Quota probe frequency"
+            value={probeIntervalMinutes}
+            disabled={busy || settings === null}
+            onChange={(e) => void chooseProbeInterval(Number(e.target.value))}
+          >
+            <option value={1}>Every 1 minute</option>
+            <option value={2}>Every 2 minutes</option>
+            <option value={5}>Every 5 minutes (default)</option>
+            <option value={10}>Every 10 minutes</option>
+            <option value={15}>Every 15 minutes</option>
+            <option value={30}>Every 30 minutes</option>
+            <option value={60}>Every 60 minutes</option>
+          </select>
+          <div>
+            <p className="switch-state">
+              <strong>Background poller</strong> · Every {probeIntervalMinutes} minute{probeIntervalMinutes === 1 ? '' : 's'}
+              <span className="dim"> — how often orchestratord sweeps workers for updated quota data.</span>
+            </p>
+            <p className="note">
+              Reading the local CLI usage cache is free. Refreshing a stale cache opens a background
+              interactive session without spending tokens. Lower intervals keep quota readings fresh
+              at the cost of occasional background subprocesses; higher intervals reduce background
+              activity.
+            </p>
+          </div>
+        </div>
+      </section>
+    </div>
+  )
+}
+
+function SwitchRow({
+  label,
+  on,
+  busy,
+  onToggle,
+  state,
+  children
+}: {
+  label: string
+  on: boolean
+  busy: boolean
+  onToggle: () => void
+  state: string
+  children: React.ReactNode
+}): React.JSX.Element {
+  return (
+    <div className="switch-row">
+      <button
+        type="button"
+        role="switch"
+        aria-checked={on}
+        aria-label={label}
+        disabled={busy}
+        className={`switch ${on ? 'switch--on' : ''}`}
+        onClick={onToggle}
+      >
+        <span className="switch-knob" />
+      </button>
+      <div>
+        <p className="switch-state">
+          <strong>{label}</strong> · {on ? 'On' : 'Off'}
+          <span className="dim"> — {state}</span>
+        </p>
+        <p className="note">{children}</p>
+      </div>
+    </div>
+  )
+}

@@ -3,6 +3,7 @@ import { db, row, rows } from './db.js'
 import { adapter } from './adapters/index.js'
 import { stripAnsi } from './stream.js'
 import { listWorkers, refreshIdentityIfStale, requireWorker } from './workers.js'
+import { settings } from './settings.js'
 import { log } from './log.js'
 
 /**
@@ -413,11 +414,28 @@ export type QuotaListener = (q: DatedQuota) => void
 
 export class QuotaPoller {
   private timer: NodeJS.Timeout | null = null
+  private intervalMs: number
 
   constructor(
     private readonly listener: QuotaListener,
-    private readonly intervalMs = 5 * 60 * 1000
-  ) {}
+    intervalMs?: number
+  ) {
+    const configuredMinutes = settings().probeIntervalMinutes ?? 5
+    this.intervalMs = intervalMs ?? configuredMinutes * 60 * 1000
+  }
+
+  setIntervalMinutes(minutes: number): void {
+    const safeMinutes = Math.max(1, Math.min(1440, minutes))
+    const ms = safeMinutes * 60 * 1000
+    if (this.intervalMs === ms) return
+    this.intervalMs = ms
+    log.info(`quota poller interval set to ${safeMinutes}m`)
+    if (this.timer) {
+      clearInterval(this.timer)
+      this.timer = setInterval(() => void this.sweep(), this.intervalMs)
+      this.timer.unref?.()
+    }
+  }
 
   start(): void {
     if (this.timer) return

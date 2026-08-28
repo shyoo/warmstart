@@ -4,7 +4,7 @@ import { rpc, useAppInfo, useDaemonEvents, useDaemonStatus, useFleet, useNow } f
 import { FleetStrip } from './components/FleetStrip'
 import { Workers } from './components/Workers'
 import { Logs } from './components/Logs'
-import { FleetFinish } from './components/FleetFinish'
+import { FleetSettings } from './components/FleetSettings'
 import { Doctor } from './components/Doctor'
 import { Approvals } from './components/Approvals'
 import { Projects } from './components/Projects'
@@ -256,13 +256,13 @@ export function App(): React.JSX.Element {
               <div className="panel">
                 <header className="panel-head">
                   <div>
-                    <h2>Finishing work</h2>
+                    <h2>Fleet settings</h2>
                     <p className="panel-sub">
-                      What happens to a task&rsquo;s branch when its agent reports the work is done.
+                      Fleet-wide defaults and automation policies that govern running sessions.
                     </p>
                   </div>
                 </header>
-                <FleetFinish />
+                <FleetSettings />
               </div>
               <AppSettings />
               <Projects projects={projects} resources={resources} refresh={refreshProjects} />

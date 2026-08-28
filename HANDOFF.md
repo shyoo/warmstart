@@ -9,7 +9,7 @@ if you add a line, find the one it obsoletes and cut it in the same edit. Finish
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
 **Baseline (2026-08-28, measured on this machine):** `npm run typecheck` clean · `npm run lint` clean ·
-`npm run build` clean · `npm test` 364/364 · `npm run test:daemon` 124/124 · `npm run test:ui` 82/82 ·
+`npm run build` clean · `npm test` 374/374 · `npm run test:daemon` 124/124 · `npm run test:ui` 89/89 ·
 `npm run test:pack` 18/18 · L4 (opt-in) landed a real agent commit on origin/main. Electron 44.0.0,
 electron-builder 26.15.3, 0 npm vulnerabilities. CLIs here: claude 2.1.247 · agy 1.1.22 · codex 0.149.1.
 

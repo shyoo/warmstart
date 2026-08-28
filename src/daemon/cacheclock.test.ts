@@ -170,3 +170,23 @@ describe('the automatic-compaction switch', () => {
     db.db().prepare('delete from settings').run()
   })
 })
+
+describe('the probe frequency setting', () => {
+  it('defaults to 5 minutes', () => {
+    expect(settings.DEFAULT_SETTINGS.probeIntervalMinutes).toBe(5)
+    expect(settings.settings().probeIntervalMinutes).toBe(5)
+  })
+
+  it('persists changes and notifies listeners', () => {
+    const notifications: Array<[string, unknown]> = []
+    const unsubscribe = settings.onSettingChange((k, v) => notifications.push([k, v]))
+
+    expect(settings.setSetting('probeIntervalMinutes', 15).probeIntervalMinutes).toBe(15)
+    expect(settings.settings().probeIntervalMinutes).toBe(15)
+    expect(notifications).toEqual([['probeIntervalMinutes', 15]])
+
+    unsubscribe()
+    expect(settings.setSetting('probeIntervalMinutes', 5).probeIntervalMinutes).toBe(5)
+    expect(notifications.length).toBe(1)
+  })
+})

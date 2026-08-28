@@ -464,7 +464,7 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
     // stale copy of the whole thing.
     'settings.set': (p) => {
       let current = settings()
-      for (const [key, value] of Object.entries(p) as Array<[keyof Settings, boolean]>) {
+      for (const [key, value] of Object.entries(p) as Array<[keyof Settings, Settings[keyof Settings]]>) {
         current = setSetting(key, value)
       }
       return current

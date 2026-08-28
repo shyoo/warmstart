@@ -229,6 +229,11 @@ function decodeStream(record: Record<string, unknown>): StreamEvent | StreamEven
 export const claudeCode: AgentAdapter = {
   info,
   decodeStream,
+  encodeStreamPrompt: (text: string) =>
+    JSON.stringify({
+      type: 'user',
+      message: { role: 'user', content: [{ type: 'text', text }] }
+    }),
 
   /**
    * ⚠️ Measured, not imagined: the first sentence is verbatim what this CLI answered on 2026-08-27

@@ -105,8 +105,9 @@ const info: AdapterInfo = {
     maxAccounts: 1
   },
   policy: {
-    // Plan §9.1's prediction, now measurable: accept edits, and let the allowlist govern the rest.
-    defaultPermissionMode: 'accept-edits',
+    // ⛔ Headless print mode has no TUI prompt: `accept-edits` auto-denies commands (git, tests, etc.)
+    // and causes immediate CANCELED turns. Work runs in an isolated pooled worktree governed by mandate.
+    defaultPermissionMode: 'dangerously-skip-permissions',
     interruptSequence: '\x1b',
     costModelId: 'google.antigravity.2026-08',
     // ⛔ Falls out of manualCompact: false. Preemption writes a handoff instead of compacting.
@@ -125,8 +126,8 @@ const info: AdapterInfo = {
     readyMs: 20_000,
     settleMs: 15_000,
     answer: 'screen',
-    cols: 110,
-    rows: 60
+    cols: 120,
+    rows: 100
   },
   // ⛔ Required by anything that drives a TUI, and this one earned it the hard way. Measured
   // 2026-08-27 while building the probe above: the first attempt's `/usage` was swallowed by
@@ -238,10 +239,13 @@ function decodeStream(record: Record<string, unknown>): StreamEvent | StreamEven
 
   if (event === 'step_update') {
     const step = asRecord(record.step_update)
-    const usage = asRecord(step?.usage)
-    if (usage) return { kind: 'usage', usage: readUsage(usage), final: false }
+    const events: StreamEvent[] = []
     const text = typeof step?.text_delta === 'string' ? step.text_delta : ''
-    return text ? { kind: 'assistant_text', text } : { kind: 'other', type: 'step_update' }
+    if (text) events.push({ kind: 'assistant_text', text })
+    const usage = asRecord(step?.usage)
+    if (usage) events.push({ kind: 'usage', usage: readUsage(usage), final: false })
+    if (events.length > 0) return events.length === 1 ? events[0]! : events
+    return { kind: 'other', type: 'step_update' }
   }
 
   if (event === 'result') {
@@ -309,7 +313,8 @@ function decodeStream(record: Record<string, unknown>): StreamEvent | StreamEven
 export function parseUsageScreen(screen: string, now = Date.now()): QuotaWindow[] | null {
   if (!/Models\s*&\s*Quota/.test(screen)) return null
 
-  const windows: QuotaWindow[] = []
+  // ⛔ Keyed by window id so repaints across backscroll do not duplicate windows.
+  const windowsById = new Map<string, QuotaWindow>()
   let group: { id: string; label: string } | null = null
   let kind: 'weekly' | '5h' | null = null
 
@@ -328,16 +333,17 @@ export function parseUsageScreen(screen: string, now = Date.now()): QuotaWindow[
     if (/Weekly Limit Remaining/.test(line)) kind = 'weekly'
     else if (/Five Hour Limit Remaining/.test(line)) kind = '5h'
 
-    // The bar line carries the precise figure. `Quota available` is the CLI's way of writing 100%
-    // remaining with no reset worth stating.
-    const bar = /\]\s*([\d.]+)\s*%/.exec(line)
-    if (!bar?.[1] || !group || !kind) continue
+    // The bar line carries the precise figure. `Quota available` (or `Quota ava…`) is the CLI's
+    // way of writing 100% remaining with no reset worth stating.
+    const bar = /\]\s*(?:([\d.]+)\s*%|(?:Quota\s+ava[a-z….]*))/i.exec(line)
+    if (!bar || !group || !kind) continue
 
-    const remaining = Number.parseFloat(bar[1])
+    const remaining = bar[1] !== undefined ? Number.parseFloat(bar[1]) : 100
     if (!Number.isFinite(remaining) || remaining < 0 || remaining > 100) continue
 
-    windows.push({
-      id: `${kind}:${group.id}`,
+    const id = `${kind}:${group.id}`
+    windowsById.set(id, {
+      id,
       label: `${group.label} · ${kind === 'weekly' ? 'weekly' : '5-hour'}`,
       percent: Math.round((100 - remaining) * 100) / 100,
       resetsAt: readReset(lines[i + 1] ?? '', now)
@@ -345,6 +351,7 @@ export function parseUsageScreen(screen: string, now = Date.now()): QuotaWindow[
     kind = null
   }
 
+  const windows = Array.from(windowsById.values())
   if (windows.length === 0) return null
 
   // ⛔ A group must contribute BOTH of its windows or the read is not trustworthy. This panel is
@@ -420,6 +427,11 @@ function readUsage(usage: Record<string, unknown>): StreamUsage {
 export const antigravityCli: AgentAdapter = {
   info,
   decodeStream,
+  encodeStreamPrompt: (text: string) =>
+    JSON.stringify({
+      event: 'user',
+      message: { role: 'user', content: [{ type: 'text', text }] }
+    }),
 
   // ⚠️ Not just PATH: the installer leaves `agy` somewhere it does not add until `agy install`
   // runs, so a perfectly usable install would otherwise be invisible to the scheduler.
@@ -694,9 +706,10 @@ export const antigravityCli: AgentAdapter = {
       // reads one NDJSON message per line from stdin and runs a turn for each. Print mode still has
       // to be *on*, which is all this flag is for.
       //
-      // Measured: `--input-format stream-json` *requires* `--output-format stream-json`. Setting one
-      // without the other is an argument error, so they move together.
-      args.push('--print=', '--input-format', 'stream-json', '--output-format', 'stream-json')
+      // ⛔ Antigravity CLI's default print timeout is 5m (`--print-timeout (default 5m0s)`).
+      // Measured 2026-08-27: complex tasks taking >5m timed out at 1497 polls and exited with ERROR.
+      // Set to 24h so autonomous worktree tasks are never aborted mid-execution.
+      args.push('--print-timeout', '24h', '--print=', '--input-format', 'stream-json', '--output-format', 'stream-json')
     }
     return { command, args: [...prefixArgs, ...args], env }
   },

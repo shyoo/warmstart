@@ -63,6 +63,19 @@ describe('claude-code', () => {
     const events = parse('claude-code', [rateLimit, '{"type":"result","result":"x"}'])
     expect(events.some((e) => e.kind === 'usage')).toBe(false)
   })
+
+  it('encodes stream prompts with the `type` user envelope', () => {
+    const encoded = adapter('claude-code').encodeStreamPrompt?.('hello world')
+    expect(encoded).toBeDefined()
+    const parsed = JSON.parse(encoded!) as {
+      type: string
+      message: { role: string; content: Array<{ type: string; text: string }> }
+    }
+    expect(parsed).toEqual({
+      type: 'user',
+      message: { role: 'user', content: [{ type: 'text', text: 'hello world' }] }
+    })
+  })
 })
 
 // ---------------------------------------------------------------------------- antigravity-cli
@@ -131,6 +144,35 @@ describe('antigravity-cli', () => {
     const events = parse('antigravity-cli', [result])
     expect(events.map((e) => e.kind).sort()).toEqual(['result', 'usage'])
     expect(events.find((e) => e.kind === 'usage')).toMatchObject({ final: true })
+  })
+
+  it('extracts both assistant text and usage when step_update carries both', () => {
+    const mixed =
+      '{"event":"step_update","step_update":{"conversation_id":"379cc136","step_index":1,"state":"DONE",' +
+      '"step_type":"agent_response","text_delta":"working on it...","duration_seconds":1.2,' +
+      '"usage":{"input_tokens":1000,"output_tokens":50,"thinking_tokens":10,"cache_read_tokens":0,"total_tokens":1050}}}'
+    const events = parse('antigravity-cli', [mixed])
+    expect(events.map((e) => e.kind).sort()).toEqual(['assistant_text', 'usage'])
+    expect(events.find((e) => e.kind === 'assistant_text')).toMatchObject({ text: 'working on it...' })
+    expect(events.find((e) => e.kind === 'usage')).toMatchObject({
+      final: false,
+      usage: { input: 1000, output: 50, thinking: 10, cacheRead: 0, cacheWrite: 0 }
+    })
+  })
+
+  it('encodes stream prompts with the `event` user envelope', () => {
+    // ⛔ agy Go CLI expects {"event":"user","message":{...}}. Sending {"type":"user",...} causes
+    // immediate exit with error: 'stream input message is missing the "event" field'.
+    const encoded = adapter('antigravity-cli').encodeStreamPrompt?.('hello world')
+    expect(encoded).toBeDefined()
+    const parsed = JSON.parse(encoded!) as {
+      event: string
+      message: { role: string; content: Array<{ type: string; text: string }> }
+    }
+    expect(parsed).toEqual({
+      event: 'user',
+      message: { role: 'user', content: [{ type: 'text', text: 'hello world' }] }
+    })
   })
 })
 
@@ -204,6 +246,17 @@ describe('framing, which is the one thing they do share', () => {
       if (a.info.capabilities.transports.includes('stream')) {
         expect(typeof a.decodeStream, a.info.id).toBe('function')
       }
+    }
+  })
+
+  it('adapters with custom prompt encoding produce valid parseable envelopes', () => {
+    for (const id of ['claude-code', 'antigravity-cli']) {
+      const ad = adapter(id)
+      const encoded = ad.encodeStreamPrompt?.('sample prompt')
+      expect(encoded, id).toBeTruthy()
+      expect(() => {
+        JSON.parse(encoded!)
+      }, id).not.toThrow()
     }
   })
 })

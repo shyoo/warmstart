@@ -786,6 +786,8 @@ async function dispatchIntoWarmSession(
     if (!reclaimed) throw new Error(`no free workspace in ${project.name} to continue t${task.seq}`)
   }
 
+  applyPermissionRules(worker, project)
+
   const run = startRun({
     taskId: task.id,
     workerId: worker.id,
@@ -1160,7 +1162,7 @@ export function continueTask(taskId: string): 'delivered' | 'requeued' | 'queued
  */
 export async function completeTask(sessionId: string, summary: string): Promise<void> {
   const run = runForSession(sessionId)
-  if (!run?.taskId) return
+  if (!run?.taskId || run.outcome) return
   const task = getTask(run.taskId)
   if (!task) return
 
@@ -1279,7 +1281,12 @@ export async function onStreamResult(
   session: Session,
   result: { isError: boolean; text: string | null; terminalReason: string | null }
 ): Promise<void> {
-  if (!result.isError) return
+  if (!result.isError) {
+    if (session.adapterId && !adapter(session.adapterId).info.capabilities.mcp) {
+      await completeTask(session.id, result.text ?? 'Completed')
+    }
+    return
+  }
   const run = runForSession(session.id)
   if (!run) return
 

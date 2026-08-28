@@ -65,6 +65,11 @@ export interface Settings {
    * can find it, and this is where the operator already looks for fleet-wide anything.
    */
   finishPolicy: FinishPolicy
+  /**
+   * How often (in minutes) orchestratord sweeps workers in the background for quota updates.
+   * Default 5 minutes.
+   */
+  probeIntervalMinutes: number
 }
 
 export interface CostReport {

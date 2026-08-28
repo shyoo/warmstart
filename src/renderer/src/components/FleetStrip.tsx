@@ -162,10 +162,12 @@ function WorkerCard({ entry, now }: { entry: FleetEntry; now: number }): React.J
       )}
 
       {windows.length === 0 ? (
-        <div className="wcard-unknown">
-          <span className="dot dot--down" />
-          quota unknown
-        </div>
+        !suspect && (
+          <div className="wcard-unknown">
+            <span className="dot dot--down" />
+            quota unknown
+          </div>
+        )
       ) : (
         <>
           {/* ⚠️ Dimmed as a whole, so the numbers read as *last known* rather than as current. The

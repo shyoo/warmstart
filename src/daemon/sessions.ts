@@ -579,11 +579,14 @@ export function sendPrompt(id: string, text: string): void {
   const entry = live.get(id)
   if (!entry) throw new Error(`session '${id}' is not live`)
   if (entry.session.transport === 'stream') {
-    const envelope = {
-      type: 'user',
-      message: { role: 'user', content: [{ type: 'text', text }] }
-    }
-    entry.channel.write(`${JSON.stringify(envelope)}\n`)
+    const ad = adapter(entry.session.adapterId)
+    const payload = ad.encodeStreamPrompt
+      ? ad.encodeStreamPrompt(text)
+      : JSON.stringify({
+          type: 'user',
+          message: { role: 'user', content: [{ type: 'text', text }] }
+        })
+    entry.channel.write(`${payload}\n`)
   } else {
     entry.channel.write(`${text}\r`)
   }

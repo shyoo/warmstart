@@ -24,6 +24,7 @@ import { log, onLog } from './log.js'
 import { setEventSink } from './events.js'
 import { onShutdownRequest } from './lifecycle.js'
 import { noteActivity } from './activity.js'
+import { onSettingChange } from './settings.js'
 import { paths } from './paths.js'
 
 /**
@@ -146,6 +147,11 @@ async function main(): Promise<void> {
 
   const poller = new QuotaPoller((quota) => emit({ type: 'quota.changed', quota }))
   poller.start()
+  onSettingChange((key, value) => {
+    if (key === 'probeIntervalMinutes' && typeof value === 'number') {
+      poller.setIntervalMinutes(value)
+    }
+  })
   startScheduler()
   // ⚠️ A second loop, on purpose. The scheduler is free and runs every ten seconds; this one can
   // spend and runs every thirty, one question at a time. Keeping them separate is what lets the

@@ -59,6 +59,8 @@ Written from documentation, then run. Each of these was wrong:
 | `claude-code` | `auth status --json` says whether an account can work | ⚠️ **It says who is signed in, which is a different question.** A lapsed or org-disabled subscription answers exactly as a live one does — `loggedIn: true`, an email, an org — so nothing free separates them and only a run can. `subscriptionType` is now recorded and shown, and ⛔ gated on nowhere: what an expired plan puts there has not been measured here |
 | `antigravity-cli` | an adapter that cannot answer identity questions looks the same as a healthy one | ⚠️ **It does, and that is the problem.** Antigravity's credential is in the OS keyring, so `loggedIn` and `setupComplete` are permanently `null` — the honest answer, and indistinguishable from an account in perfect health. Measured 2026-08-27: a never-signed-in Antigravity worker won a dispatch over two working Claude workers and failed in 0s. What separates them is whether a turn has **ever** come out of the account, which is in `turns` and now scores |
 | `antigravity-cli` | `agy login` signs an account in | ⛔ **there is no `login` and no `auth` subcommand.** Measured on agy 1.1.20: `agy --help` lists agent, agents, changelog, help, install, mcp, mic-serve, models, plugin, plugins, update. Commissioning failed with *unexpected argument "login"*. Sign in with the Antigravity app; the credential goes to the OS keyring |
+| `antigravity-cli` | `--mode accept-edits` suffices for headless work | ⛔ **it auto-denies commands.** In headless stream mode (`--input-format stream-json`), `accept-edits` only approves edits; any command (`git`, test runner, etc.) cannot prompt interactively and is auto-denied by `jetski`, causing immediate `CANCELED` turns. Headless worktree dispatches pass `--dangerously-skip-permissions` (Option A), quarantined inside isolated pooled worktrees and gated by mandate and landing checks |
+| `antigravity-cli` | default print mode timeout allows long tasks | ⛔ **it times out at 5m.** `agy` defaults to `--print-timeout 5m0s` (1497 poll ticks); long tasks running multiple file edits/tests abort with `Print mode: timed out after 1497 polls` and exit with `ERROR`. Work sessions pass `--print-timeout 24h` |
 
 The `cmd /s` one was latent since M1 and had never fired, because `claude` resolves to a `.EXE` on
 this machine; `codex` installs as `codex.cmd`, which exposed it. The last two came from running the
@@ -103,6 +105,11 @@ behaviour falls out of it:
   suspect worker is held out either way, and an adapter that does not implement it says `false`,
   which is the safe answer. Never keyed on `api_error` alone — that code also covers an outage, and
   sending somebody to re-authenticate through one is how a working account gets signed out.
+
+### Antigravity Tool Permissions & Future Improvement Options
+
+- **Option A (Current / Shipped):** Antigravity CLI runs with `--dangerously-skip-permissions` for scheduled stream-json work. Because work runs strictly in isolated pooled worktrees (never trunk) and is validated by mandate constraints and automated landing check commands before anything merges, this provides zero-friction autonomous execution without stalls.
+- **Option B (Future Improvement — Auto-Seeded Granular Settings Rules):** Instead of global permission skipping, the daemon's `writePermissions` could automatically seed fine-grained tool rules (`command(git)`, `command(npm)`, `read_file(*)`, `write_file(*)`, etc.) into `~/.gemini/antigravity-cli/settings.json` derived dynamically from the task's `mandate` and project configuration before spawn. This would provide granular tool sandboxing without requiring manual operator intervention or global permission skipping.
 
 ---
 

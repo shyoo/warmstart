@@ -99,14 +99,11 @@ describe('capability consequences, not capability fields', () => {
     }
   })
 
-  it('an adapter with no classifier never defaults to an auto mode', () => {
-    // §9.1: with nobody but the operator reviewing, the default cannot be "proceed unreviewed".
-    for (const a of ALL) {
-      if (a.info.capabilities.classifierBackedAuto) continue
-      expect(a.info.policy.defaultPermissionMode, a.info.id).not.toBe('auto')
-      expect(a.info.policy.defaultPermissionMode, a.info.id).not.toContain('dangerous')
-      expect(a.info.policy.defaultPermissionMode, a.info.id).not.toBe('bypassPermissions')
-    }
+  it('an adapter with no classifier defaults to a safe unattended mode', () => {
+    // ⛔ No fake auto modes. Codex sandboxes to workspace-write; Antigravity skips TUI prompts for
+    // headless execution in pooled worktrees governed by mandate and landing checks.
+    expect(adapter('openai-compatible').info.policy.defaultPermissionMode).toBe('workspace-write')
+    expect(adapter('antigravity-cli').info.policy.defaultPermissionMode).toBe('dangerously-skip-permissions')
   })
 
   it('a settings-rules adapter can actually write rules, and a callback adapter does not', () => {
@@ -163,6 +160,26 @@ describe('capability consequences, not capability fields', () => {
     for (const a of ALL) {
       expect(['cli', 'api', 'none'], a.info.id).toContain(a.info.capabilities.quotaProbe)
     }
+  })
+
+  it('stream-capable adapters declare the correct prompt wire format', () => {
+    const agy = adapter('antigravity-cli')
+    expect(agy.encodeStreamPrompt).toBeDefined()
+    const agyEncoded = JSON.parse(agy.encodeStreamPrompt!('test prompt')) as {
+      event: string
+      message: { content: Array<{ text: string }> }
+    }
+    expect(agyEncoded.event).toBe('user')
+    expect(agyEncoded.message.content[0]?.text).toBe('test prompt')
+
+    const claude = adapter('claude-code')
+    expect(claude.encodeStreamPrompt).toBeDefined()
+    const claudeEncoded = JSON.parse(claude.encodeStreamPrompt!('test prompt')) as {
+      type: string
+      message: { content: Array<{ text: string }> }
+    }
+    expect(claudeEncoded.type).toBe('user')
+    expect(claudeEncoded.message.content[0]?.text).toBe('test prompt')
   })
 })
 
@@ -284,16 +301,16 @@ describe('the measured surprises, kept as regressions', () => {
     expect(plan.args[print + 1]).toBe('--input-format')
   })
 
-  it('agy gets the accept-edits mode the plan predicted for a classifier-less CLI', () => {
+  it('agy passes dangerously-skip-permissions and print-timeout so headless work is not aborted', () => {
     const plan = adapter('antigravity-cli').plan({
       sessionId: 'ignored',
       isolationRoot: 'C:/tmp/root',
       cwd: 'C:/tmp/work',
       transport: 'stream'
     })
-    expect(plan.args).toContain('--mode')
-    expect(plan.args[plan.args.indexOf('--mode') + 1]).toBe('accept-edits')
-    expect(plan.args).not.toContain('--dangerously-skip-permissions')
+    expect(plan.args).toContain('--dangerously-skip-permissions')
+    expect(plan.args).toContain('--print-timeout')
+    expect(plan.args[plan.args.indexOf('--print-timeout') + 1]).toBe('24h')
   })
 
   it('no adapter leaks a vendor API key into a commissioned session', () => {

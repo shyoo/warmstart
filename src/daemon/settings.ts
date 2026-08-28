@@ -60,7 +60,27 @@ export const DEFAULT_SETTINGS: Settings = {
    * path did not, so the same value lands strictly less than before. A project with no checks
    * configured rests at `awaiting_human` and says so.
    */
-  finishPolicy: DEFAULT_FLEET_FINISH
+  finishPolicy: DEFAULT_FLEET_FINISH,
+
+  /**
+   * How often (in minutes) orchestratord sweeps workers in the background for quota updates.
+   *
+   * ⚠️ Default 5 minutes. A sweep reads the local usage cache (free) and, at most once per sweep
+   * when a worker's cache is genuinely stale (>30m), refreshes usage via an interactive background
+   * session (also free of tokens, but spends a subprocess).
+   */
+  probeIntervalMinutes: 5
+}
+
+type SettingChangeListener = <K extends keyof Settings>(key: K, value: Settings[K]) => void
+const changeListeners: SettingChangeListener[] = []
+
+export function onSettingChange(listener: SettingChangeListener): () => void {
+  changeListeners.push(listener)
+  return () => {
+    const idx = changeListeners.indexOf(listener)
+    if (idx >= 0) changeListeners.splice(idx, 1)
+  }
 }
 
 export function settings(): Settings {
@@ -75,6 +95,13 @@ export function setSetting<K extends keyof Settings>(key: K, value: Settings[K])
     )
     .run(key, JSON.stringify(value), Date.now())
   log.info(`setting ${key} = ${JSON.stringify(value)}`)
+  for (const listener of changeListeners) {
+    try {
+      listener(key, value)
+    } catch (err) {
+      log.warn(`error in setting change listener for ${key}:`, err)
+    }
+  }
   return settings()
 }
 

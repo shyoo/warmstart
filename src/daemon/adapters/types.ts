@@ -194,4 +194,12 @@ export interface AgentAdapter {
    * Return null for records this adapter does not care about.
    */
   decodeStream?: StreamDecoder
+
+  /**
+   * Format a user prompt into the wire shape this CLI's stream transport expects.
+   *
+   * ⛔ There is no shared stream-json format for input any more than for output: Claude Code expects
+   * `{"type":"user",...}` while Antigravity expects `{"event":"user",...}`.
+   */
+  encodeStreamPrompt?: (text: string) => string
 }

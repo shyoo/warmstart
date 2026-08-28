@@ -58,3 +58,8 @@ coverage/
 
 # Scratch from scripts/icons.mjs, cleaned up on success
 .icons-*/
+
+# Local dev/deploy scripts
+deploy-local.ps1
+scripts/deploy-local.ps1
+

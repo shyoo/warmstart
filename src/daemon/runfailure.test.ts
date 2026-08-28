@@ -33,7 +33,12 @@ const ORG_DISABLED =
   'Contact your administrator or use an API key.'
 
 /** A session row, written straight to the store: no CLI is installed in a unit test and none is needed. */
-function seedSession(id: string, workerId: string, patch: { lastRequestStartedAt?: number } = {}): Session {
+function seedSession(
+  id: string,
+  workerId: string,
+  patch: { adapterId?: string; lastRequestStartedAt?: number } = {}
+): Session {
+  const adapterId = patch.adapterId ?? 'openai-compatible'
   db.db()
     .prepare(
       `insert into sessions (id, worker_id, adapter_id, transport, cwd, state, purpose, started_at,
@@ -43,7 +48,7 @@ function seedSession(id: string, workerId: string, patch: { lastRequestStartedAt
     .run(
       id,
       workerId,
-      'openai-compatible',
+      adapterId,
       'stream',
       dir,
       'live',
@@ -55,7 +60,7 @@ function seedSession(id: string, workerId: string, patch: { lastRequestStartedAt
   return {
     id,
     workerId,
-    adapterId: 'openai-compatible',
+    adapterId,
     transport: 'stream',
     projectId: null,
     cwd: dir,
@@ -82,17 +87,21 @@ function seedSession(id: string, workerId: string, patch: { lastRequestStartedAt
 let seq = 0
 
 /** A task that is running on a fresh session, as the scheduler would have left it. */
-function seedRunningTask(options: { metered?: number; lastRequestStartedAt?: number } = {}) {
+function seedRunningTask(options: { adapterId?: string; metered?: number; lastRequestStartedAt?: number } = {}) {
   seq += 1
+  const adapterId = options.adapterId ?? 'openai-compatible'
   const worker = workers.createWorker({
     // ⚠️ An adapter with no `usageRefresh`, so nothing here can start a terminal. The closing quota
     // reading is a real process and belongs in the app, not in a unit test.
-    adapterId: 'openai-compatible',
+    adapterId,
     label: `w${seq}`,
     enabled: false
   })
   const task = tasks.createTask({ title: `t${seq}`, createdBy: { kind: 'human' } })
-  const session = seedSession(`5e551011-0000-4000-8000-00000000000${seq}`, worker.id)
+  const session = seedSession(`5e551011-0000-4000-8000-00000000000${seq}`, worker.id, {
+    adapterId,
+    lastRequestStartedAt: options.lastRequestStartedAt
+  })
   const run = tasks.startRun({
     taskId: task.id,
     workerId: worker.id,
@@ -281,17 +290,29 @@ describe('a run that did work and then failed', () => {
 })
 
 describe('a result that is not an error', () => {
-  it('is left entirely alone', async () => {
-    const { run, task, session } = seedRunningTask()
+  it('on an MCP-enabled adapter is left for task_complete to signal', async () => {
+    const { run, task, session } = seedRunningTask({ adapterId: 'claude-code' })
     await scheduler.onStreamResult(session, {
       isError: false,
       text: 'here is the answer',
       terminalReason: null
     })
-    // ⛔ `task_complete` is the only signal that a task succeeded — a terminal `result` record is
-    // not one. Treating a clean result as completion would mark work done that nobody did.
+    // ⛔ For MCP adapters, `task_complete` is the signal that a task succeeded — a bare stream
+    // `result` record without `task_complete` leaves the run open.
     expect(tasks.requireRun(run.id).endedAt).toBeNull()
     expect(tasks.getTask(task.id)?.status).toBe('running')
+  })
+
+  it('on an adapter without MCP completes the task', async () => {
+    const { run, task, session } = seedRunningTask({ adapterId: 'antigravity-cli' })
+    await scheduler.onStreamResult(session, {
+      isError: false,
+      text: 'here is the completed answer',
+      terminalReason: null
+    })
+    expect(tasks.requireRun(run.id).endedAt).not.toBeNull()
+    expect(tasks.getTask(task.id)?.status).toBe('completed')
+    expect(tasks.messagesFor(task.id).some((m) => m.text === 'here is the completed answer')).toBe(true)
   })
 })
 
