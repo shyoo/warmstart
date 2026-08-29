@@ -126,7 +126,30 @@ behaviour falls out of it:
 
 ### Antigravity Tool Permissions & Future Improvement Options
 
-- **Option A (Current / Shipped):** Antigravity CLI runs with `--dangerously-skip-permissions` for scheduled stream-json work. Because work runs strictly in isolated pooled worktrees (never trunk) and is validated by mandate constraints and automated landing check commands before anything merges, this provides zero-friction autonomous execution without stalls.
+- **Option A (Current / Shipped):** Antigravity CLI runs with `--dangerously-skip-permissions` for scheduled stream-json work.
+
+  ⛔ **The safety argument this was shipped on has been measured false.** It read: *"work runs
+  strictly in isolated pooled worktrees (never trunk) and is validated by mandate constraints and
+  automated landing check commands before anything merges."* The first clause is the load-bearing
+  one, and on 2026-08-28 it did not hold. t17 was spawned with `cwd` = `…_workspaces\ws1` on its own
+  branch; its conversation store records **45 distinct absolute paths under `C:\Dev\multi_agent_controller`
+  and zero under any workspace**. It edited and committed in the **trunk**, three times, with
+  permissions disabled. The branch never moved, so landing correctly logged `nothing-to-land` and
+  none of the "validated before anything merges" machinery ever ran — there was nothing on the branch
+  to validate. The commits were simply on `main`.
+
+  ⚠️ **Why: this adapter has no isolation root in practice.** `envFor()` copies `process.env` and
+  deletes three API-key variables; it sets no `HOME`, no Gemini directory, nothing. `trustDirectory`
+  and `writePermissions` take `_isolationRoot` and ignore it. Measured the same day,
+  `<dataDir>/workers/antigravity/` is **empty**, while `~/.gemini/antigravity/brain/<id>/` holds a
+  persistent cross-session memory naming `C:/Dev/multi_agent_controller` **349 times** against 5
+  mentions of the workspaces root — written on 2026-08-27, before the run, from earlier work done in
+  the trunk. The agent did not navigate out of its worktree; it was never anchored to it, because its
+  memory outlives the session and is keyed to the operator's home rather than to the worker.
+
+  ⛔ So for `antigravity-cli`, **worktree isolation is not a containment boundary**, and
+  `--dangerously-skip-permissions` is not bounded by one. Until an isolation root is actually
+  enforced, treat this adapter as able to write anywhere the operator can.
 - **Option B (Future Improvement — Auto-Seeded Granular Settings Rules):** Instead of global permission skipping, the daemon's `writePermissions` could automatically seed fine-grained tool rules (`command(git)`, `command(npm)`, `read_file(*)`, `write_file(*)`, etc.) into `~/.gemini/antigravity-cli/settings.json` derived dynamically from the task's `mandate` and project configuration before spawn. This would provide granular tool sandboxing without requiring manual operator intervention or global permission skipping.
 
 ---

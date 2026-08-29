@@ -271,6 +271,23 @@ costmodels/             versioned pricing data
 
 ## Things that will bite
 
+- ⛔ **"Agents never work in the trunk" is an assumption, not an enforced invariant — and
+  `antigravity-cli` broke it on 2026-08-28.** t17 ran with `cwd` set to its pooled worktree and
+  edited and committed in `C:\Dev\multi_agent_controller` instead: 45 distinct trunk paths in its
+  conversation store, zero workspace paths, three commits straight onto `main`. Its branch never
+  moved, so the finish logged `nothing-to-land` and every gate that runs *before a branch merges* was
+  simply skipped — the work was already on the trunk. Nothing in the daemon detects this. If a task
+  finishes with `nothing-to-land` and the work plainly happened, check `git reflog` in the trunk
+  before assuming the agent did nothing.
+- ⛔ **`antigravity-cli` has an isolation root that nothing writes to.** `envFor()` copies the
+  ambient environment and unsets three API keys; it sets no `HOME` and no Gemini directory, and
+  `trustDirectory`/`writePermissions` ignore the `_isolationRoot` they are handed.
+  `<dataDir>/workers/antigravity/` is empty; credentials, conversations and a persistent
+  cross-session "brain" all live in the operator's own `~/.gemini`. That brain carries absolute paths
+  from previous sessions, which is how an agent arrives already pointed somewhere other than its
+  workspace. ⚠️ Anything reasoning about *"one account per isolation root"* or *"a conversation lives
+  inside one isolation root"* is false for this adapter.
+
 - ⛔ **`test/ui.test.mjs` never opens a project.** Every task it files has `projectId: null`, so it
   drives the **Unassigned** route and nothing under `components/Project.tsx`. A mutation to a project
   route will run green there — it did on 2026-08-28, three checks passing with the row-click
