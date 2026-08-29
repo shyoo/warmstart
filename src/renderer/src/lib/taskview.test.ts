@@ -100,4 +100,14 @@ describe('inherited policy labels and resolution', () => {
     expect(res.sharing).toBe('off')
     expect(SHARING_LABELS[res.sharing]).toBe('always start a new one')
   })
+
+  it('resolves inherited model and effort from worker defaults', () => {
+    const worker = { defaultModel: 'gemini-3.7-flash-high', defaultEffort: null }
+    expect(worker.defaultModel ?? 'CLI default').toBe('gemini-3.7-flash-high')
+    expect(worker.defaultEffort ?? 'CLI default').toBe('CLI default')
+
+    const claudeWorker = { defaultModel: 'claude-sonnet-5', defaultEffort: 'high' }
+    expect(claudeWorker.defaultModel ?? 'CLI default').toBe('claude-sonnet-5')
+    expect(claudeWorker.defaultEffort ?? 'CLI default').toBe('high')
+  })
 })

@@ -13,6 +13,7 @@ import {
   TASK_VIEW_ORDER,
   TASK_VIEWS,
   resolveFinishPolicy,
+  resolveModelChoice,
   resolveSessionSharing
 } from '@shared/tasks'
 import type { ModelOptions, Settings } from '@shared/protocol'
@@ -609,10 +610,17 @@ function NewTask({
   const pinnable = fleet.filter((e) => e.worker.enabled).map((e) => e.worker)
   const pinned = pinnable.find((w) => w.id === workerId) ?? null
   const forAdapter = pinned ? (options.find((o) => o.adapterId === pinned.adapterId) ?? null) : null
-  const chosen = forAdapter?.models.find((m) => m.id === model) ?? null
-  // Effort appears only where the CLI can be told one *and* the chosen model has levels to offer.
-  // Neither half is true of any built-in adapter today, so today this renders nothing — by design.
-  const efforts = forAdapter?.selectableEffort ? (chosen?.effortLevels ?? []) : []
+  const canSetEffort = forAdapter?.selectableEffort ?? false
+  const resolved = resolveModelChoice(
+    { model: model || undefined, effort: effort || undefined },
+    pinned,
+    canSetEffort
+  )
+  const inheritedModelLabel = pinned?.defaultModel ?? 'CLI default'
+  const inheritedEffortLabel = pinned?.defaultEffort ?? 'CLI default'
+  // Effort appears only where the CLI can be told one *and* the model in effect has levels to offer.
+  const effectiveModel = forAdapter?.models.find((m) => m.id === (resolved.model ?? '')) ?? null
+  const efforts = canSetEffort ? (effectiveModel?.effortLevels ?? []) : []
 
   const submit = async () => {
     setSaving(true)
@@ -778,7 +786,7 @@ function NewTask({
                     setEffort('')
                   }}
                 >
-                  <option value="">Auto — the CLI’s own default</option>
+                  <option value="">inherit ({inheritedModelLabel})</option>
                   {forAdapter.models.map((m) => (
                     <option key={m.id} value={m.id}>
                       {m.id}
@@ -787,7 +795,7 @@ function NewTask({
                 </select>
                 {efforts.length > 0 && (
                   <select value={effort} onChange={(e) => setEffort(e.target.value)}>
-                    <option value="">Auto — the model’s own default</option>
+                    <option value="">inherit ({inheritedEffortLabel})</option>
                     {efforts.map((level) => (
                       <option key={level} value={level}>
                         {level}
