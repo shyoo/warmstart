@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type {
   FinishPolicyChoice,
   Project,
@@ -18,6 +18,7 @@ import {
 } from '@shared/tasks'
 import type { ModelOptions, Settings } from '@shared/protocol'
 import { rpc, useActivity, useDaemonEvents, useNow, type FleetEntry } from '../lib/daemon'
+import { showsLiveOutput } from '../lib/live'
 import { tokens, when } from '../lib/format'
 import { readViews, writeViews } from '../lib/prefs'
 import {
@@ -343,6 +344,11 @@ export function Tasks({
           </thead>
           <tbody>
             {tasks.map((task) => {
+              const liveText =
+                showsLiveOutput(task.status) && activity[task.id]?.length
+                  ? activity[task.id]![activity[task.id]!.length - 1]?.text
+                  : null
+
               const hasPriorActions =
                 CANCELLABLE.has(task.status) ||
                 task.status === 'paused_user' ||
@@ -351,148 +357,155 @@ export function Tasks({
                 task.status === 'draft'
 
               return (
-                <tr
-                  key={task.id}
-                  className={selected === task.id ? 'tbl-row--selected' : ''}
-                  onClick={() => onOpenTask(task.id)}
-                >
-                  <td className="num tbl-num">{task.seq}</td>
-                  <td>
-                    <span className="tbl-strong">
-                      {task.lineageDepth > 0 && <span className="dim">{'└ '}</span>}
-                      {task.title.length > 70 ? `${task.title.slice(0, 70)}…` : task.title}
-                    </span>
-                    {task.branch && <div className="tbl-path mono">{task.branch}</div>}
-                  </td>
-                  <td className="dim">
-                    {task.createdBy.kind === 'human'
-                      ? 'you'
-                      : task.createdBy.kind === 'controller'
-                        ? 'ctrl'
-                        : 'agent'}
-                  </td>
-                  <td className={task.ranOn || task.assignee ? '' : 'dim'}>{assigneeLabel(task, fleet)}</td>
-                  <td className="num dim">{task.dependsOn.length ? `←${task.dependsOn.length}` : '—'}</td>
-                  <td className="num tbl-num dim">{elapsed(task, now)}</td>
-                  <td className="num tbl-num">{tokens(task.budget.spentTokens || null)}</td>
-                  <td className="tbl-when dim" title={new Date(task.createdAt).toLocaleString()}>
-                    {when(task.createdAt)}
-                  </td>
-                  <td className="tbl-when dim" title={new Date(task.updatedAt).toLocaleString()}>
-                    {when(task.updatedAt)}
-                  </td>
-                  <td>
-                    <span className={`status ${STATUS_TONE[task.status] ?? ''}`}>
-                      {statusLabel(task)}
-                      {IN_FLIGHT.has(task.status) && <Working />}
-                    </span>
-                    {/* The scheduler's own reason, refreshed every tick it passes this task over. */}
-                    {task.holdReason && <div className="tbl-sub dim">{task.holdReason}</div>}
-                    {/* ⛔ One line only. The full tail is in the detail pane; a table that grew a
-                        paragraph per running row would stop being a table. */}
-                    {task.status === 'running' && activity[task.id]?.length ? (
-                      <div className="tbl-sub tbl-live">
-                        {activity[task.id]?.[activity[task.id]!.length - 1]?.text}
-                      </div>
-                    ) : null}
-                  </td>
-                  <td className="tbl-action-cell" onClick={(e) => e.stopPropagation()}>
-                    <div
-                      ref={menuTaskId === task.id ? menuRef : null}
-                      className="action-menu-wrap"
-                    >
-                      <button
-                        type="button"
-                        className={`action-menu-btn${menuTaskId === task.id ? ' action-menu-btn--open' : ''}`}
-                        aria-label={`Actions for t${task.seq}`}
-                        aria-haspopup="true"
-                        aria-expanded={menuTaskId === task.id}
-                        title="Actions"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          setMenuTaskId((cur) => (cur === task.id ? null : task.id))
-                        }}
+                <Fragment key={task.id}>
+                  <tr
+                    className={`${selected === task.id ? 'tbl-row--selected' : ''}${liveText ? ' tbl-row--has-live' : ''}`}
+                    onClick={() => onOpenTask(task.id)}
+                  >
+                    <td className="num tbl-num">{task.seq}</td>
+                    <td>
+                      <span className="tbl-strong">
+                        {task.lineageDepth > 0 && <span className="dim">{'└ '}</span>}
+                        {task.title.length > 70 ? `${task.title.slice(0, 70)}…` : task.title}
+                      </span>
+                      {task.branch && <div className="tbl-path mono">{task.branch}</div>}
+                    </td>
+                    <td className="dim">
+                      {task.createdBy.kind === 'human'
+                        ? 'you'
+                        : task.createdBy.kind === 'controller'
+                          ? 'ctrl'
+                          : 'agent'}
+                    </td>
+                    <td className={task.ranOn || task.assignee ? '' : 'dim'}>{assigneeLabel(task, fleet)}</td>
+                    <td className="num dim">{task.dependsOn.length ? `←${task.dependsOn.length}` : '—'}</td>
+                    <td className="num tbl-num dim">{elapsed(task, now)}</td>
+                    <td className="num tbl-num">{tokens(task.budget.spentTokens || null)}</td>
+                    <td className="tbl-when dim" title={new Date(task.createdAt).toLocaleString()}>
+                      {when(task.createdAt)}
+                    </td>
+                    <td className="tbl-when dim" title={new Date(task.updatedAt).toLocaleString()}>
+                      {when(task.updatedAt)}
+                    </td>
+                    <td>
+                      <span className={`status ${STATUS_TONE[task.status] ?? ''}`}>
+                        {statusLabel(task)}
+                        {IN_FLIGHT.has(task.status) && <Working />}
+                      </span>
+                      {/* The scheduler's own reason, refreshed every tick it passes this task over. */}
+                      {task.holdReason && <div className="tbl-sub dim">{task.holdReason}</div>}
+                    </td>
+                    <td className="tbl-action-cell" onClick={(e) => e.stopPropagation()}>
+                      <div
+                        ref={menuTaskId === task.id ? menuRef : null}
+                        className="action-menu-wrap"
                       >
-                        <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
-                          <circle cx="3" cy="8" r="1.5" />
-                          <circle cx="8" cy="8" r="1.5" />
-                          <circle cx="13" cy="8" r="1.5" />
-                        </svg>
-                      </button>
-                      {menuTaskId === task.id && (
-                        <div className="action-menu" role="menu" onClick={(e) => e.stopPropagation()}>
-                          {CANCELLABLE.has(task.status) && (
+                        <button
+                          type="button"
+                          className={`action-menu-btn${menuTaskId === task.id ? ' action-menu-btn--open' : ''}`}
+                          aria-label={`Actions for t${task.seq}`}
+                          aria-haspopup="true"
+                          aria-expanded={menuTaskId === task.id}
+                          title="Actions"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setMenuTaskId((cur) => (cur === task.id ? null : task.id))
+                          }}
+                        >
+                          <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
+                            <circle cx="3" cy="8" r="1.5" />
+                            <circle cx="8" cy="8" r="1.5" />
+                            <circle cx="13" cy="8" r="1.5" />
+                          </svg>
+                        </button>
+                        {menuTaskId === task.id && (
+                          <div className="action-menu" role="menu" onClick={(e) => e.stopPropagation()}>
+                            {CANCELLABLE.has(task.status) && (
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className="action-menu-item"
+                                title="Stop the work and return this task to a resting state. Destroys nothing."
+                                onClick={() => {
+                                  setMenuTaskId(null)
+                                  void act(() => rpc('task.cancel', { id: task.id }))
+                                }}
+                              >
+                                Cancel
+                              </button>
+                            )}
+                            {(task.status === 'paused_user' || task.status === 'cancelled') && (
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className="action-menu-item"
+                                onClick={() => {
+                                  setMenuTaskId(null)
+                                  void act(() => rpc('task.resume', { id: task.id }))
+                                }}
+                              >
+                                Resume
+                              </button>
+                            )}
+                            {task.status === 'awaiting_human' && (
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className="action-menu-item action-menu-item--ok"
+                                title="Records that you are satisfied. Nothing is verified by this — it is your judgement."
+                                onClick={() => {
+                                  setMenuTaskId(null)
+                                  void act(() => rpc('task.resolve', { id: task.id }))
+                                }}
+                              >
+                                Mark done
+                              </button>
+                            )}
+                            {task.status === 'draft' && (
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className="action-menu-item"
+                                onClick={() => {
+                                  setMenuTaskId(null)
+                                  void act(() => rpc('task.promote', { id: task.id }))
+                                }}
+                              >
+                                Queue
+                              </button>
+                            )}
+                            {hasPriorActions && <div className="action-menu-divider" />}
                             <button
                               type="button"
                               role="menuitem"
-                              className="action-menu-item"
-                              title="Stop the work and return this task to a resting state. Destroys nothing."
+                              className="action-menu-item action-menu-item--danger"
+                              title="Delete. Runs are kept either way — they are the record of what this cost."
                               onClick={() => {
                                 setMenuTaskId(null)
-                                void act(() => rpc('task.cancel', { id: task.id }))
+                                void remove(task)
                               }}
                             >
-                              Cancel
+                              Delete
                             </button>
-                          )}
-                          {(task.status === 'paused_user' || task.status === 'cancelled') && (
-                            <button
-                              type="button"
-                              role="menuitem"
-                              className="action-menu-item"
-                              onClick={() => {
-                                setMenuTaskId(null)
-                                void act(() => rpc('task.resume', { id: task.id }))
-                              }}
-                            >
-                              Resume
-                            </button>
-                          )}
-                          {task.status === 'awaiting_human' && (
-                            <button
-                              type="button"
-                              role="menuitem"
-                              className="action-menu-item action-menu-item--ok"
-                              title="Records that you are satisfied. Nothing is verified by this — it is your judgement."
-                              onClick={() => {
-                                setMenuTaskId(null)
-                                void act(() => rpc('task.resolve', { id: task.id }))
-                              }}
-                            >
-                              Mark done
-                            </button>
-                          )}
-                          {task.status === 'draft' && (
-                            <button
-                              type="button"
-                              role="menuitem"
-                              className="action-menu-item"
-                              onClick={() => {
-                                setMenuTaskId(null)
-                                void act(() => rpc('task.promote', { id: task.id }))
-                              }}
-                            >
-                              Queue
-                            </button>
-                          )}
-                          {hasPriorActions && <div className="action-menu-divider" />}
-                          <button
-                            type="button"
-                            role="menuitem"
-                            className="action-menu-item action-menu-item--danger"
-                            title="Delete. Runs are kept either way — they are the record of what this cost."
-                            onClick={() => {
-                              setMenuTaskId(null)
-                              void remove(task)
-                            }}
-                          >
-                            Delete
-                          </button>
+                          </div>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                  {liveText && (
+                    <tr
+                      className={`tbl-row--live${selected === task.id ? ' tbl-row--selected' : ''}`}
+                      onClick={() => onOpenTask(task.id)}
+                    >
+                      <td colSpan={11} className="tbl-live-cell">
+                        <div className="tbl-live-line">
+                          <span className="tbl-live-prefix" aria-hidden>&gt;</span>
+                          <span className="tbl-live-text">{liveText}</span>
                         </div>
-                      )}
-                    </div>
-                  </td>
-                </tr>
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
               )
             })}
           </tbody>
