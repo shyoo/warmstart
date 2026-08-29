@@ -21,7 +21,8 @@ import {
   IN_FLIGHT,
   statusLabel,
   STATUS_TONE,
-  Working
+  Working,
+  workspacePathFor
 } from '../lib/taskview'
 
 export interface TaskDetailData {
@@ -173,6 +174,7 @@ function TaskDetail({
   const liveSession = sessions.find(
     (s) => s.id === runs[0]?.sessionId && s.state !== 'closed' && s.state !== 'failed'
   )
+  const workspace = workspacePathFor(runs, sessions)
 
   return (
     <section className="detail">
@@ -281,6 +283,13 @@ function TaskDetail({
               {tokens(task.budget.spentTokens || null)} spent in total
             </span>
           </Fact>
+          {workspace && (
+            <Fact label="workspace">
+              <span className="mono" title={workspace}>
+                {workspace}
+              </span>
+            </Fact>
+          )}
           {task.branch && (
             <Fact label="branch">
               <span className="mono">{task.branch}</span>

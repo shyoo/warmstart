@@ -1,4 +1,5 @@
-import type { Task } from '@shared/tasks'
+import type { Run, Task } from '@shared/tasks'
+import type { Session } from '@shared/protocol'
 import type { FleetEntry } from './daemon'
 import { duration } from './format'
 
@@ -119,4 +120,26 @@ export function assigneeLabel(task: Task, fleet: FleetEntry[]): string {
 export function elapsed(task: Task, now: number): string {
   if (!task.firstRunAt) return '—'
   return duration((task.lastRunEndedAt ?? now) - task.firstRunAt)
+}
+
+/**
+ * The workspace directory this task is running in, or ran in.
+ *
+ * ⛔ Read from the session rather than from the project. A git project's runs execute in a pooled
+ * worktree (`<project>_workspaces/ws<N>`), never in `project.root` — drawing the project root would
+ * tell somebody the agent is working in the trunk, which is the one thing it never does.
+ *
+ * ⚠️ Returns null before anything has run: a task at rest in a pool has not claimed a workspace yet,
+ * and presenting a guess would claim a slot the scheduler has not assigned.
+ */
+export function workspacePathFor(
+  runs: Pick<Run, 'sessionId'>[],
+  sessions: Pick<Session, 'id' | 'cwd'>[]
+): string | null {
+  const run = runs[0]
+  if (run?.sessionId) {
+    const session = sessions.find((s) => s.id === run.sessionId)
+    if (session?.cwd) return session.cwd
+  }
+  return sessions[0]?.cwd ?? null
 }

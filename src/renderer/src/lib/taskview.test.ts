@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Task, TaskStatus } from '@shared/tasks'
-import { statusLabel } from './taskview.js'
+import { statusLabel, workspacePathFor } from './taskview.js'
 
 /**
  * ⛔ Reported from the app on 2026-08-29, running one worker with `maxConcurrent: 1`. Two tasks were
@@ -42,5 +42,26 @@ describe('the word a person reads beside a task', () => {
   it('still calls a dispatching task dispatching', () => {
     // The rename that was already here, which this must not have displaced.
     expect(statusLabel(task({ status: 'assigned' }))).toBe('dispatching')
+  })
+})
+
+describe('the workspace directory a person reads in the task ledger', () => {
+  it('returns null before anything has run', () => {
+    expect(workspacePathFor([], [])).toBeNull()
+  })
+
+  it('reads cwd from the latest run’s session', () => {
+    const runs = [{ sessionId: 's-2' }, { sessionId: 's-1' }]
+    const sessions = [
+      { id: 's-1', cwd: 'C:\\projects\\my-repo_workspaces\\ws1' },
+      { id: 's-2', cwd: 'C:\\projects\\my-repo_workspaces\\ws2' }
+    ]
+    expect(workspacePathFor(runs, sessions)).toBe('C:\\projects\\my-repo_workspaces\\ws2')
+  })
+
+  it('falls back to the first available session when latest run has no session', () => {
+    const runs = [{ sessionId: null }, { sessionId: 's-1' }]
+    const sessions = [{ id: 's-1', cwd: 'C:\\projects\\my-repo_workspaces\\ws1' }]
+    expect(workspacePathFor(runs, sessions)).toBe('C:\\projects\\my-repo_workspaces\\ws1')
   })
 })
