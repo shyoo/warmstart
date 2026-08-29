@@ -966,6 +966,30 @@ body {
   background: var(--color-accent);
 }
 
+.btn--ok {
+  background: var(--state-ok);
+  border-color: var(--state-ok);
+  color: #0b0f17;
+  font-weight: 600;
+}
+
+.btn--ok:hover:not(:disabled) {
+  filter: brightness(1.08);
+  background: var(--state-ok);
+}
+
+.btn--danger {
+  background: var(--state-danger);
+  border-color: var(--state-danger);
+  color: #0b0f17;
+  font-weight: 600;
+}
+
+.btn--danger:hover:not(:disabled) {
+  filter: brightness(1.08);
+  background: var(--state-danger);
+}
+
 .btn--ghost {
   background: none;
   border-color: transparent;
@@ -978,8 +1002,31 @@ body {
   color: var(--color-text);
 }
 
-.btn--danger:hover:not(:disabled) {
+.btn--ghost.btn--danger {
+  background: none;
+  border-color: transparent;
+  color: var(--color-text-dim);
+  font-weight: normal;
+}
+
+.btn--ghost.btn--danger:hover:not(:disabled) {
+  background: var(--color-surface-2);
   color: var(--state-danger);
+  filter: none;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) .btn--primary,
+  :root:not([data-theme="dark"]) .btn--ok,
+  :root:not([data-theme="dark"]) .btn--danger {
+    color: #ffffff;
+  }
+}
+
+:root[data-theme="light"] .btn--primary,
+:root[data-theme="light"] .btn--ok,
+:root[data-theme="light"] .btn--danger {
+  color: #ffffff;
 }
 
 .check {

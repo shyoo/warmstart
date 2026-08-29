@@ -373,7 +373,7 @@ export function Tasks({
                       is what left t3 sitting in `awaiting_human` after its work was done. */}
                   {task.status === 'awaiting_human' && (
                     <button
-                      className="btn btn--ghost"
+                      className="btn btn--ok"
                       title="Records that you are satisfied. Nothing is verified by this — it is your judgement."
                       onClick={() => void act(() => rpc('task.resolve', { id: task.id }))}
                     >

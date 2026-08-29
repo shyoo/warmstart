@@ -447,7 +447,7 @@ function Decide({
 
       <div className="decide-option">
         <button
-          className="btn btn--primary"
+          className="btn btn--ok"
           title="Records your judgement that this is finished. ⚠️ Nothing verified the work — task_complete remains the only signal that an agent finished."
           onClick={() => void onResolve()}
         >
@@ -461,7 +461,7 @@ function Decide({
 
       <div className="decide-option">
         <button
-          className="btn btn--ghost"
+          className="btn btn--danger"
           title="Parks the task. Destroys nothing, and Resume picks it up where it stopped."
           onClick={() => void onStop()}
         >
