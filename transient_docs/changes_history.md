@@ -1889,3 +1889,24 @@ watchdog looking for hangs.
 sessions are a feature and a task waiting on a person can idle for hours — so a TTL there kills
 correct work to catch incorrect work. Silence was already measured; what was missing was something to
 judge silence against.
+
+## Session bar context fill (2026-08-29)
+
+**Problem:** The `SessionGauge` bar in the fleet strip was permanently empty `[--------]` for Antigravity
+sessions even though `671k/1.0M` was displayed in text beside it.
+
+**Root cause:** `cacheRemaining()` needs both `cacheExpiresAt` and `lastRequestStartedAt` to compute a
+fill fraction. `creditStreamTurn()` — the path used for all stream-metered sessions (Antigravity) —
+intentionally passes `null` for `request_started_at` and does not set `cache_expires_at`, because
+these sessions have no steerable prompt cache (D24). So `cacheRemaining()` always returned `null`,
+and the `{left !== null && ...}` guard rendered nothing.
+
+**Fix** (`FleetStrip.tsx`): When `session.cacheExpiresAt` is null (no cache clock), the bar now fills
+using `contextFill(session)` = `contextTokens / contextWindow`, coloured by `quotaUrgency()` (the
+same green→amber→red scale the account quota bars use). PTY sessions with a cache clock are
+unchanged — they still show the cache TTL fill in blue. The tooltip branches to describe which
+quantity is shown.
+
+**Per-conversation quota polling:** Antigravity's `/usage` panel is a global account reading, not
+per-session. Per-session context is already tracked via `creditStreamTurn` → `context_tokens` on
+the session row, and the bar now shows it. No new probe is needed.

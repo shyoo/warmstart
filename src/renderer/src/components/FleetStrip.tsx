@@ -13,6 +13,21 @@ import {
 } from '../lib/format'
 
 /**
+ * Context-fill fraction for sessions with no cache clock.
+ *
+ * ⛔ Stream-metered adapters (Antigravity) set `contextTokens` from each turn's usage but never set
+ * `lastRequestStartedAt`, so `cacheRemaining()` always returns null and the bar stays empty even
+ * when 671k/1.0M is visible in text. For these sessions the only fill signal is the window level,
+ * which is what `contextFill` returns — null when either operand is absent or zero so the bar is
+ * not drawn as full when it is actually unmeasured.
+ */
+function contextFill(session: Pick<Session, 'contextTokens' | 'contextWindow'>): number | null {
+  const { contextTokens: ctx, contextWindow: win } = session
+  if (!ctx || !win) return null
+  return Math.max(0, Math.min(1, ctx / win))
+}
+
+/**
  * What the operator currently holds in their head, made visible: how much of each account's window
  * is spent, when it resets, and how long each live session's prompt cache has left.
  *
@@ -89,10 +104,11 @@ export function FleetStrip({ fleet, now }: { fleet: FleetEntry[]; now: number })
  * that led, so the chip read as a fault code; it now lives in the tooltip, where it is still there
  * for anyone matching a chip to a row in Sessions.
  *
- * ⛔ **The bar is the cache, not the context.** The two numbers on this row measure different things
- * and only one of them is a countdown: the fill and the clock are the same quantity seen twice, so
- * they can never disagree. Filling the bar by context and putting the cache clock beside it would
- * make a row whose bar and timer move independently, which is unreadable at a glance.
+ * ⛔ **The bar is the cache for PTY sessions; the context fill for stream sessions.**
+ * PTY sessions have a cache TTL: the fill and the countdown are the same quantity seen twice, so they
+ * can never disagree. Stream-metered sessions (Antigravity) have no cache clock — `lastRequestStartedAt`
+ * is never set — so `cacheRemaining()` is always null. For those the bar shows context window fill
+ * (contextTokens/contextWindow) with quota-urgency coloring, and the countdown becomes a token count.
  *
  * ⛔ A context of zero is not rendered as `0`. Zero metered tokens means the transcript has recorded
  * no turn yet — a session that has just started, or one that never got going — and `0` reads as a
@@ -107,9 +123,17 @@ export function FleetStrip({ fleet, now }: { fleet: FleetEntry[]; now: number })
  */
 function SessionGauge({ session, now }: { session: Session; now: number }): React.JSX.Element {
   const ctx = session.contextTokens
-  const window = session.contextWindow
+  const win = session.contextWindow
   const left = cacheRemaining(session, now)
-  const urgency = cacheUrgency(session.cacheExpiresAt, now)
+  // ⛔ Stream sessions (Antigravity) have no cache clock: `left` is always null for them.
+  // Fall back to context-window fill so the bar is not permanently empty.
+  const hasCacheClock = session.cacheExpiresAt !== null
+  const fill = hasCacheClock ? left : contextFill(session)
+  const cacheUrgencyClass = cacheUrgency(session.cacheExpiresAt, now)
+  const ctxUrgencyClass = ctx && win ? quotaUrgency((ctx / win) * 100) : 'ok'
+  const fillClass = hasCacheClock
+    ? `bar-fill--cache-${cacheUrgencyClass}`
+    : `bar-fill--${ctxUrgencyClass}`
 
   if (!ctx) {
     return (
@@ -130,29 +154,32 @@ function SessionGauge({ session, now }: { session: Session; now: number }): Reac
       className="gauge gauge--session"
       title={
         `session ${session.id}\n${session.purpose} · ${session.transport} transport\n${session.cwd}\n` +
-        'the bar and the clock are both what is left of this session’s prompt cache\n' +
-        // ⛔ Said here because the two numbers get compared. `ctx` is how full the window is
-        // now and falls when the session compacts; a task's token count is a running total of
-        // everything it ever spent, and only grows. They are not the same quantity.
-        'ctx is how full the window is now — a level, not a total, and not a task’s token count'
+        (hasCacheClock
+          ? 'the bar and the clock are both what is left of this session\u2019s prompt cache\n' +
+            // ⛔ Said here because the two numbers get compared. `ctx` is how full the window is
+            // now and falls when the session compacts; a task's token count is a running total of
+            // everything it ever spent, and only grows. They are not the same quantity.
+            'ctx is how full the window is now \u2014 a level, not a total, and not a task\u2019s token count'
+          : 'the bar shows how much of the context window is used (no cache clock on this adapter)\n' +
+            'ctx is how full the window is now \u2014 a level, not a total, and not a task\u2019s token count')
       }
     >
       <span className="gauge-label">{session.purpose}</span>
       <span className="bar">
-        {left !== null && (
+        {fill !== null && (
           <span
-            className={`bar-fill bar-fill--cache-${urgency}`}
-            style={{ width: `${Math.max(2, left * 100)}%` }}
+            className={`bar-fill ${fillClass}`}
+            style={{ width: `${Math.max(2, fill * 100)}%` }}
           />
         )}
       </span>
       {/* ⚠️ No `no turn yet` fallback here any more — a session without one never reaches this. */}
       <span className="num gauge-value">
         {tokens(ctx)}
-        {window ? `/${tokens(window)}` : ''}
+        {win ? `/${tokens(win)}` : ''}
       </span>
-      <span className={`num gauge-reset gauge-reset--${urgency}`}>
-        {countdown(session.cacheExpiresAt, now)}
+      <span className={`num gauge-reset gauge-reset--${hasCacheClock ? cacheUrgencyClass : ctxUrgencyClass}`}>
+        {hasCacheClock ? countdown(session.cacheExpiresAt, now) : ''}
       </span>
     </div>
   )
