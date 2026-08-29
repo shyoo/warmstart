@@ -254,8 +254,10 @@ try {
   // did not launch orchestratord", with the reason - printed by the app to stderr - thrown away.
   // A check that cannot say why it failed costs a CI round trip every time it goes red.
   const appOutput = []
+  const env = { ...process.env, MULTI_AGENT_CONTROLLER_DATA_DIR: dataDir }
+  delete env.ELECTRON_RUN_AS_NODE
   app = spawn(binary, [], {
-    env: { ...process.env, MULTI_AGENT_CONTROLLER_DATA_DIR: dataDir },
+    env,
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true
   })

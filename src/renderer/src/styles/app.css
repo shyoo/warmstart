@@ -366,11 +366,11 @@ body {
   border-radius: var(--radius);
   background: var(--color-surface);
   padding: var(--sp-2) var(--sp-3);
-  min-width: 230px;
+  min-width: 280px;
   /* ⚠️ A ceiling as well as a floor. These cards are sized by their content, and the reason an
      account is held out is a sentence from the vendor - which stretched one card across half the
      strip and pushed the rest of the fleet off it. */
-  max-width: 320px;
+  max-width: 380px;
   flex: 0 0 auto;
 }
 
@@ -413,14 +413,14 @@ body {
 
 /* A session with nothing measured yet: the word, and none of the furniture of a reading. */
 .gauge--waiting {
-  grid-template-columns: 52px 1fr;
+  grid-template-columns: 84px 1fr;
   font-size: var(--text-meta);
   color: var(--color-text-faint);
 }
 
 .gauge {
   display: grid;
-  grid-template-columns: 52px 1fr 34px 44px;
+  grid-template-columns: 84px 1fr 34px 44px;
   align-items: center;
   gap: var(--sp-2);
   font-size: var(--text-meta);
@@ -429,7 +429,6 @@ body {
 
 .gauge-label {
   color: var(--color-text-faint);
-  text-transform: lowercase;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -465,7 +464,7 @@ body {
  * half that makes the number mean anything.
  */
 .gauge--session {
-  grid-template-columns: 52px 1fr 58px 44px;
+  grid-template-columns: 84px 1fr 58px 44px;
 }
 
 /*

@@ -451,7 +451,7 @@ export function parseUsageScreen(screen: string, now = Date.now()): QuotaWindow[
       const heading = /^\s*([A-Z][A-Z0-9 &]*?)\s+MODELS\s*$/.exec(line)
       if (heading?.[1]) {
         const name = heading[1].trim()
-        group = { id: name.toLowerCase().replace(/[^a-z0-9]+/g, '-'), label: titleCase(name) }
+        group = { id: name.toLowerCase().replace(/[^a-z0-9]+/g, '-'), label: formatGroupLabel(name) }
         kind = null
         continue
       }
@@ -470,7 +470,7 @@ export function parseUsageScreen(screen: string, now = Date.now()): QuotaWindow[
       const id = `${kind}:${group.id}`
       windowsById.set(id, {
         id,
-        label: `${group.label} · ${kind === 'weekly' ? 'weekly' : '5-hour'}`,
+        label: `${group.label} ${kind === 'weekly' ? '7d' : '5h'}`,
         percent: Math.round((100 - remaining) * 100) / 100,
         resetsAt: readReset(lines[i + 1] ?? '', now)
       })
@@ -538,8 +538,15 @@ function readReset(line: string, now: number): number | null {
   return now + (hours * 60 + minutes) * 60_000
 }
 
+function formatGroupLabel(heading: string): string {
+  const norm = heading.trim().toUpperCase()
+  if (norm === 'CLAUDE AND GPT' || norm === 'CLAUDE & GPT' || norm === 'CLAUDE/GPT') {
+    return 'Claude/GPT'
+  }
+  return titleCase(heading)
+}
+
 function titleCase(heading: string): string {
-  // "CLAUDE AND GPT" reads better as "Claude and GPT" in a table cell than as a shout.
   return heading
     .toLowerCase()
     .split(' ')

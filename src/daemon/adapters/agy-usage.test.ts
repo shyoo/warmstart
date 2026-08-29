@@ -32,10 +32,10 @@ describe('the /usage panel', () => {
     // Gemini weekly + Gemini 5h + Claude/GPT weekly + Claude/GPT 5h.
     expect(windows).toHaveLength(4)
     expect(windows?.map((w) => w.label)).toEqual([
-      'Gemini · weekly',
-      'Gemini · 5-hour',
-      'Claude and GPT · weekly',
-      'Claude and GPT · 5-hour'
+      'Gemini 7d',
+      'Gemini 5h',
+      'Claude/GPT 7d',
+      'Claude/GPT 5h'
     ])
   })
 
@@ -44,10 +44,10 @@ describe('the /usage panel', () => {
     // an almost-untouched window as almost-exhausted and vice versa — and in the dangerous
     // direction: QUOTA_HIGH_WATER (92% used) would never trip on an account that was genuinely full.
     const windows = parseUsageScreen(screen, NOW) ?? []
-    const geminiWeekly = windows.find((w) => w.label === 'Gemini · weekly')
+    const geminiWeekly = windows.find((w) => w.label === 'Gemini 7d')
     expect(geminiWeekly?.percent).toBeCloseTo(5.48, 2)
 
-    const claudeFiveHour = windows.find((w) => w.label === 'Claude and GPT · 5-hour')
+    const claudeFiveHour = windows.find((w) => w.label === 'Claude/GPT 5h')
     // "Quota available" / 100.00% remaining — nothing used.
     expect(claudeFiveHour?.percent).toBe(0)
   })
@@ -56,20 +56,20 @@ describe('the /usage panel', () => {
     // The panel prints "[…] 94.52%" and then "95% remaining". The sentence rounds the *remaining*
     // figure up, which rounds the utilisation down — the optimistic direction.
     const windows = parseUsageScreen(screen, NOW) ?? []
-    expect(windows.find((w) => w.label === 'Gemini · weekly')?.percent).not.toBe(5)
+    expect(windows.find((w) => w.label === 'Gemini 7d')?.percent).not.toBe(5)
   })
 
   it('turns "Refreshes in 1h 51m" into an instant, and "Quota available" into no instant', () => {
     const windows = parseUsageScreen(screen, NOW) ?? []
-    const geminiFiveHour = windows.find((w) => w.label === 'Gemini · 5-hour')
+    const geminiFiveHour = windows.find((w) => w.label === 'Gemini 5h')
     expect(geminiFiveHour?.resetsAt).toBe(NOW + (1 * 60 + 51) * 60_000)
 
-    const geminiWeekly = windows.find((w) => w.label === 'Gemini · weekly')
+    const geminiWeekly = windows.find((w) => w.label === 'Gemini 7d')
     expect(geminiWeekly?.resetsAt).toBe(NOW + 138 * 60 * 60_000)
 
     // ⚠️ A window with quota to spare states no reset, and null is the honest answer. Zero would be
     // read downstream as "resets at the epoch", i.e. already reset.
-    expect(windows.find((w) => w.label === 'Claude and GPT · 5-hour')?.resetsAt).toBeNull()
+    expect(windows.find((w) => w.label === 'Claude/GPT 5h')?.resetsAt).toBeNull()
   })
 
   it('⛔ gives the id the quota gate looks for to the BUSIEST five-hour window', () => {
@@ -79,7 +79,7 @@ describe('the /usage panel', () => {
     // over-stating pressure delays a dispatch, under-stating it strands a run at a window boundary.
     const windows = parseUsageScreen(screen, NOW) ?? []
     const gate = windows.find((w) => w.id === '5h')
-    expect(gate?.label).toBe('Gemini · 5-hour') // 32.8% used, against 0% on Claude/GPT
+    expect(gate?.label).toBe('Gemini 5h') // 32.8% used, against 0% on Claude/GPT
     expect(gate?.percent).toBeCloseTo(32.8, 2)
     // ⚠️ Exactly one, or the fleet strip shows the same window twice and the gate picks arbitrarily.
     expect(windows.filter((w) => w.id === '5h')).toHaveLength(1)
@@ -139,7 +139,7 @@ describe('the /usage panel', () => {
     const windows = parseUsageScreen(screenWithQuotaAvailableOnBar, NOW)
     expect(windows).not.toBeNull()
     expect(windows).toHaveLength(4)
-    const claudeFiveHour = windows?.find((w) => w.label === 'Claude and GPT · 5-hour')
+    const claudeFiveHour = windows?.find((w) => w.label === 'Claude/GPT 5h')
     expect(claudeFiveHour?.percent).toBe(0)
     expect(claudeFiveHour?.resetsAt).toBeNull()
   })
