@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import type { Project } from '@shared/tasks.js'
 
 /**
@@ -25,6 +25,10 @@ let db: typeof import('./db.js')
 let projects: typeof import('./projects.js')
 let tasks: typeof import('./tasks.js')
 let landing: typeof import('./landing.js')
+let resources: typeof import('./resources.js')
+/** `landing.landQueue` and its shipped values, bound after the dynamic import. */
+let landingQueue: { waitMs: number; pollMs: number }
+let queueDefaults: { waitMs: number; pollMs: number }
 
 const git = (cwd: string, ...args: string[]): string =>
   execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
@@ -75,6 +79,9 @@ beforeAll(async () => {
   projects = await import('./projects.js')
   tasks = await import('./tasks.js')
   landing = await import('./landing.js')
+  resources = await import('./resources.js')
+  landingQueue = landing.landQueue
+  queueDefaults = { ...landingQueue }
   db.openDb(join(dir, 'landing.db'))
 })
 
@@ -376,5 +383,358 @@ describe('landTask on a branch with nothing left to land', () => {
 
     expect(result.branchDeleted).toBeUndefined()
     expect(git(root, 'rev-parse', '--verify', branch)).toBeTruthy()
+  })
+})
+
+/**
+ * Two tasks finishing at the same moment.
+ *
+ * ⛔ **Measured 2026-08-29.** t26 and t27 were run in parallel and finished within the same second.
+ * One landed. The other was told *"Landing failed: another task is landing right now. 1 commit(s)
+ * are on `multi-agent-controller/t27-…`, which is intact"* and was parked on a person's desk. The
+ * lock behaved exactly as designed — landing **is** serialised per project, because two rebases onto
+ * a moving target race — and the caller turned a two-second queue into a hand-off.
+ *
+ * ⭐ The fix is to wait for the turn rather than to report the queue as a failure, and to record the
+ * ordering as a dependency edge so that "t27 landed after t26" survives the run.
+ *
+ * ⚠️ Real git and real concurrency. The winner is whoever `claim()` admits first, so these assert on
+ * *whichever* task lost rather than pinning one — a test that assumed an order would pass against a
+ * scheduler that had none.
+ */
+
+interface Race {
+  project: Project
+  aTask: string
+  bTask: string
+  aPath: string
+  bPath: string
+  root: string
+}
+
+/** One project, two worktrees, each holding a branch with a real commit. The t26/t27 shape. */
+function seedRace(a: string, b: string): Race {
+  seq += 1
+  const root = makeRepo(`race${seq}`)
+  const project = projects.addProject({ root })
+  // ⚠️ The trunk is detached on purpose. `auto-land` on a project with no remote fast-forwards the
+  // target by fetching into it, and git refuses to fetch into a branch that is checked out.
+  git(root, 'switch', '--detach', 'main')
+
+  const make = (branch: string, dirName: string): { taskId: string; path: string } => {
+    const path = join(dir, dirName)
+    git(root, 'worktree', 'add', '-b', branch, path, 'main')
+    writeFileSync(join(path, `${dirName}.txt`), `work from ${branch}\n`)
+    git(path, 'add', '-A')
+    git(path, 'commit', '-m', `real work on ${branch}`)
+    const task = tasks.createTask({
+      title: `race ${branch}`,
+      projectId: project.id,
+      createdBy: { kind: 'human' }
+    })
+    return { taskId: task.id, path }
+  }
+
+  const one = make(a, `race${seq}-a`)
+  const two = make(b, `race${seq}-b`)
+  return { project, aTask: one.taskId, bTask: two.taskId, aPath: one.path, bPath: two.path, root }
+}
+
+/** Hold the project's landing lock under some other name, the way a task mid-landing does. */
+function holdTheLock(project: Project, holder: string): { release: () => void } {
+  resources.upsertResource({
+    id: resources.landResourceId(project.id),
+    projectId: project.id,
+    kind: 'exclusive',
+    label: `${project.name} landing`,
+    capacity: 1
+  })
+  const held = resources.claim(resources.landResourceId(project.id), holder)
+  if (!held) throw new Error('the fixture could not take the landing lock')
+  return { release: () => resources.release(held.id) }
+}
+
+const said = (taskId: string): string => tasks.messagesFor(taskId).map((m) => m.text).join('\n')
+
+/**
+ * Block until the task has actually queued, rather than for a number of milliseconds.
+ *
+ * ⛔ A fixture that released the lock after a fixed delay was racing the *preamble* — `landTask`
+ * spends a few hundred milliseconds on `git status` and `rev-list` before it ever asks for the lock,
+ * so a 60ms hold was released before the contention it was supposed to create. Three of these tests
+ * passed against a build with no queue in it at all. Waiting for the message the queue itself posts
+ * is the only signal that does not depend on how fast git is today.
+ */
+async function waitUntilQueued(taskId: string): Promise<void> {
+  const deadline = Date.now() + 5000
+  while (Date.now() < deadline && !said(taskId).includes('Waiting to land')) {
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+}
+
+describe('two tasks landing at once', () => {
+  afterEach(() => Object.assign(landingQueue, queueDefaults))
+
+  it('lands both of them, which is the whole report', async () => {
+    // ⭐ The regression, end to end. Before this, one of these two came back `ok: false`.
+    const race = seedRace('multi-agent-controller/t26-first', 'multi-agent-controller/t27-second')
+    landingQueue.pollMs = 20
+
+    const [a, b] = await Promise.all([
+      landing.landTask({
+        project: race.project,
+        task: tasks.requireTask(race.aTask),
+        workspacePath: race.aPath,
+        branch: 'multi-agent-controller/t26-first'
+      }),
+      landing.landTask({
+        project: race.project,
+        task: tasks.requireTask(race.bTask),
+        workspacePath: race.bPath,
+        branch: 'multi-agent-controller/t27-second'
+      })
+    ])
+
+    expect(a.ok, a.reason).toBe(true)
+    expect(b.ok, b.reason).toBe(true)
+    // ⛔ And both are actually on the trunk. Two "successes" that landed one commit between them
+    //    would be the same defect wearing a better message.
+    expect(a.commit).not.toBe(b.commit)
+    for (const commit of [a.commit, b.commit]) {
+      expect(git(race.root, 'rev-list', '--count', `main..${commit}`)).toBe('0')
+    }
+    // ⚠️ Exactly one of them queued, and the test does not care which.
+    expect([a.contendedWith, b.contendedWith].filter(Boolean)).toHaveLength(1)
+  })
+
+  it('hands neither of them to a person', async () => {
+    const race = seedRace('multi-agent-controller/t41-a', 'multi-agent-controller/t41-b')
+    landingQueue.pollMs = 20
+
+    await Promise.all([
+      landing.landTask({
+        project: race.project,
+        task: tasks.requireTask(race.aTask),
+        workspacePath: race.aPath,
+        branch: 'multi-agent-controller/t41-a'
+      }),
+      landing.landTask({
+        project: race.project,
+        task: tasks.requireTask(race.bTask),
+        workspacePath: race.bPath,
+        branch: 'multi-agent-controller/t41-b'
+      })
+    ])
+
+    for (const id of [race.aTask, race.bTask]) {
+      expect(tasks.getTask(id)?.status, id).not.toBe('awaiting_human')
+    }
+  })
+
+  it('records the ordering as a dependency on whoever was landing', async () => {
+    // ⭐ The operator's own ask: the second task should *depend on* the first rather than fail beside
+    //    it. The edge outlives the run, so "t27 landed after t26" is answerable afterwards.
+    const race = seedRace('multi-agent-controller/t42-a', 'multi-agent-controller/t42-b')
+    landingQueue.pollMs = 20
+
+    const [a] = await Promise.all([
+      landing.landTask({
+        project: race.project,
+        task: tasks.requireTask(race.aTask),
+        workspacePath: race.aPath,
+        branch: 'multi-agent-controller/t42-a'
+      }),
+      landing.landTask({
+        project: race.project,
+        task: tasks.requireTask(race.bTask),
+        workspacePath: race.bPath,
+        branch: 'multi-agent-controller/t42-b'
+      })
+    ])
+
+    const loser = a.contendedWith ? race.aTask : race.bTask
+    const winner = a.contendedWith ? race.bTask : race.aTask
+    expect(tasks.requireTask(loser).dependsOn).toContain(winner)
+    // ⛔ One direction only. An edge both ways is a cycle, and the winner waited for nothing.
+    expect(tasks.requireTask(winner).dependsOn).not.toContain(loser)
+  })
+
+  it('does not put the waiting task into `blocked`', async () => {
+    // ⛔ The tempting design, and the wrong one. `blocked` is the status of work waiting to be
+    //    *dispatched*: `admitDependents` walks a blocked task to `ready` the moment its blocker
+    //    completes, and a finished task made ready is a task the scheduler hands to an agent again —
+    //    a second run over work that is already committed. The edge is a record; the status would be
+    //    an instruction.
+    const race = seedRace('multi-agent-controller/t43-a', 'multi-agent-controller/t43-b')
+    landingQueue.pollMs = 10
+    landingQueue.waitMs = 10_000
+    const lock = holdTheLock(race.project, 'a-task-that-is-landing')
+
+    const pending = landing.landTask({
+      project: race.project,
+      task: tasks.requireTask(race.aTask),
+      workspacePath: race.aPath,
+      branch: 'multi-agent-controller/t43-a'
+    })
+    await waitUntilQueued(race.aTask)
+    expect(tasks.getTask(race.aTask)?.status).not.toBe('blocked')
+
+    lock.release()
+    expect((await pending).ok).toBe(true)
+  })
+
+  it('waits for a lock that is busy now and free in a moment, then lands', async () => {
+    const race = seedRace('multi-agent-controller/t44-a', 'multi-agent-controller/t44-b')
+    landingQueue.pollMs = 10
+    landingQueue.waitMs = 10_000
+    const lock = holdTheLock(race.project, 'a-task-that-is-landing')
+
+    const pending = landing.landTask({
+      project: race.project,
+      task: tasks.requireTask(race.aTask),
+      workspacePath: race.aPath,
+      branch: 'multi-agent-controller/t44-a'
+    })
+    await waitUntilQueued(race.aTask)
+    lock.release()
+    const result = await pending
+
+    expect(result.ok, result.reason).toBe(true)
+    expect(git(race.root, 'rev-list', '--count', `main..${result.commit}`)).toBe('0')
+    expect(said(race.aTask)).toContain('Waiting to land')
+    expect(said(race.aTask)).toContain('Landed as')
+  })
+
+  it('releases the lock afterwards, so the queue drains rather than stopping', async () => {
+    // ⛔ One leaked exclusive claim stalls a project forever, and the symptom is silence.
+    const race = seedRace('multi-agent-controller/t45-a', 'multi-agent-controller/t45-b')
+    landingQueue.pollMs = 10
+    const lock = holdTheLock(race.project, 'a-task-that-is-landing')
+
+    const pending = landing.landTask({
+      project: race.project,
+      task: tasks.requireTask(race.aTask),
+      workspacePath: race.aPath,
+      branch: 'multi-agent-controller/t45-a'
+    })
+    await waitUntilQueued(race.aTask)
+    lock.release()
+
+    // ⛔ And it landed. A lock nobody ever took is also free, so the count alone proves nothing.
+    expect((await pending).ok).toBe(true)
+    expect(resources.availability(resources.landResourceId(race.project.id))?.free).toBe(1)
+  })
+
+  it('gives up on a lock that never frees, and says the branch is fine', async () => {
+    // ⚠️ Bounded. An unbounded wait inside a completion is a deadlock with a patient face — the task
+    //    would hold its workspace and its session for as long as the daemon lived.
+    const race = seedRace('multi-agent-controller/t46-a', 'multi-agent-controller/t46-b')
+    landingQueue.pollMs = 10
+    landingQueue.waitMs = 120
+    holdTheLock(race.project, 'a-task-that-never-finishes')
+
+    const result = await landing.landTask({
+      project: race.project,
+      task: tasks.requireTask(race.aTask),
+      workspacePath: race.aPath,
+      branch: 'multi-agent-controller/t46-a'
+    })
+
+    expect(result.ok).toBe(false)
+    expect(tasks.getTask(race.aTask)?.status).toBe('awaiting_human')
+    // ⭐ The message the operator acts on. A queue that ran out is a retry, not an investigation, and
+    //    the branch is intact either way.
+    expect(said(race.aTask)).toContain('Nothing is wrong with the branch')
+    expect(git(race.aPath, 'rev-parse', '--verify', 'multi-agent-controller/t46-a')).toBeTruthy()
+  })
+
+  // ⚠️ Ten seconds of headroom against a thirty-second budget, so that a build which ignored the
+  //    cancel fails on the clock instead of on vitest's default five.
+  it('stops waiting when the task is cancelled underneath it', async () => {
+    const race = seedRace('multi-agent-controller/t47-a', 'multi-agent-controller/t47-b')
+    landingQueue.pollMs = 10
+    landingQueue.waitMs = 30_000
+    holdTheLock(race.project, 'a-task-that-never-finishes')
+
+    const started = Date.now()
+    const pending = landing.landTask({
+      project: race.project,
+      task: tasks.requireTask(race.aTask),
+      workspacePath: race.aPath,
+      branch: 'multi-agent-controller/t47-a'
+    })
+    setTimeout(() => tasks.setStatus(race.aTask, 'cancelling'), 50)
+    const result = await pending
+
+    expect(result.ok).toBe(false)
+    expect(result.reason).toContain('cancelled')
+    // ⛔ It stopped because of the cancel, not because it out-waited a thirty-second budget.
+    expect(Date.now() - started).toBeLessThan(5_000)
+  }, 10_000)
+
+  it('lands anyway when the holder is not a task this fleet has', async () => {
+    // ⚠️ The *wait* is what serialises the two; the edge only records that it happened. A holder with
+    //    no task row — a hand-taken claim, a row since deleted — costs the record and nothing else.
+    const race = seedRace('multi-agent-controller/t48-a', 'multi-agent-controller/t48-b')
+    landingQueue.pollMs = 10
+    landingQueue.waitMs = 10_000
+    const lock = holdTheLock(race.project, 'not-a-task-id')
+
+    const pending = landing.landTask({
+      project: race.project,
+      task: tasks.requireTask(race.aTask),
+      workspacePath: race.aPath,
+      branch: 'multi-agent-controller/t48-a'
+    })
+    await waitUntilQueued(race.aTask)
+    lock.release()
+    const result = await pending
+
+    expect(result.ok, result.reason).toBe(true)
+    expect(tasks.requireTask(race.aTask).dependsOn).toHaveLength(0)
+  })
+
+  it('refuses to close a cycle, and lands both regardless', async () => {
+    const race = seedRace('multi-agent-controller/t49-a', 'multi-agent-controller/t49-b')
+    landingQueue.pollMs = 20
+    // Whichever of these ends up queueing, the edge it wants may already run the other way.
+    tasks.addDependency(race.aTask, race.bTask)
+
+    const [a, b] = await Promise.all([
+      landing.landTask({
+        project: race.project,
+        task: tasks.requireTask(race.aTask),
+        workspacePath: race.aPath,
+        branch: 'multi-agent-controller/t49-a'
+      }),
+      landing.landTask({
+        project: race.project,
+        task: tasks.requireTask(race.bTask),
+        workspacePath: race.bPath,
+        branch: 'multi-agent-controller/t49-b'
+      })
+    ])
+
+    expect(a.ok, a.reason).toBe(true)
+    expect(b.ok, b.reason).toBe(true)
+    expect(tasks.requireTask(race.bTask).dependsOn).not.toContain(race.aTask)
+  })
+
+  it('adds nothing and says nothing when there is no queue', async () => {
+    // ⛔ The guard, and it must keep passing when the queue is deleted. A landing that never
+    //    contended must not acquire a dependency it did not need, and must not claim it waited.
+    const race = seedRace('multi-agent-controller/t50-a', 'multi-agent-controller/t50-b')
+
+    const result = await landing.landTask({
+      project: race.project,
+      task: tasks.requireTask(race.aTask),
+      workspacePath: race.aPath,
+      branch: 'multi-agent-controller/t50-a'
+    })
+
+    expect(result.ok, result.reason).toBe(true)
+    expect(result.contendedWith).toBeUndefined()
+    expect(tasks.requireTask(race.aTask).dependsOn).toHaveLength(0)
+    expect(said(race.aTask)).not.toContain('Waiting to land')
   })
 })

@@ -127,6 +127,37 @@ so a resumed task opens on top of the work that landed rather than behind it. Th
 task's name — every log line and every loose end reads it — so it comes back as itself, not as
 `-2`.
 
+## Two tasks finishing at once
+
+⭐ **They queue, and both land.** Landing is serialised per project — two rebases onto a target that
+is moving underneath them race, and one of them loses work — so a task that arrives while another is
+landing **waits for its turn** rather than being refused. The wait happens inside the run that was
+already waiting: nothing is re-dispatched, and no agent starts a second time over work that is
+already committed.
+
+You see it as one extra message, then the ordinary one:
+
+> Waiting to land: t26 (…) is landing right now, and landing is serialised per project so that two
+> rebases cannot race for the trunk. This one is queued behind it and now depends on it, and will
+> land by itself.
+>
+> Landed as `a41f9c2` onto `main`. It queued behind t26 and landed once that finished.
+
+⭐ **The queued task gains a dependency on the one it waited for**, so "t27 landed after t26" is still
+answerable tomorrow. ⚠️ The edge is a *record*, not an instruction: the task is deliberately **not**
+moved to `blocked`, because `blocked` means work waiting to be dispatched and would send a finished
+task back to an agent the moment its blocker completed.
+
+⚠️ **The wait is bounded at 15 minutes**, sized against a landing that runs the project's own checks.
+If it runs out, or you cancel the task while it is queued, you get the ordinary hand-off — and the
+message says the branch is fine and that landing it again is all it needs, because a queue that ran
+out is a retry rather than an investigation.
+
+⛔ Measured 2026-08-29: t26 and t27 were run in parallel and finished within the same second. One
+landed; the other was told *"Landing failed: another task is landing right now"* and parked on a
+person's desk with a perfectly good commit on an intact branch. The lock was doing its job — the
+caller was reporting a queue as a failure.
+
 ## Configuring a project
 
 ```json

@@ -1,9 +1,9 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import type { LandingResult, LandingStrategyId, Project, Task } from '@shared/tasks.js'
+import type { LandingResult, LandingStrategyId, Project, ResourceClaim, Task } from '@shared/tasks.js'
 import { policyFor } from './projects.js'
-import { claim, landResourceId, release, upsertResource } from './resources.js'
-import { addMessage, mandateAllows, setStatus } from './tasks.js'
+import { claim, landResourceId, openClaims, release, upsertResource } from './resources.js'
+import { addDependency, addMessage, getTask, mandateAllows, setStatus } from './tasks.js'
 import { landedRef } from './worktrees.js'
 import { launchArgs, which } from './which.js'
 import { log } from './log.js'
@@ -208,6 +208,102 @@ export const leaveBranch: LandingStrategy = {
   }
 }
 
+/**
+ * How long a task waits its turn to land, and how often it asks.
+ *
+ * ⚠️ **Mutable so the tests can shorten it, and written by nothing else.** Fifteen minutes is sized
+ * against the thing actually being waited for: one landing is a fetch, a rebase, the project's own
+ * checks — which `runChecks` allows thirty minutes *per command* — and a push. A wait shorter than a
+ * plausible check run would turn every slow landing into the hand-off this exists to remove.
+ */
+export const landQueue = { waitMs: 15 * 60 * 1000, pollMs: 500 }
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
+
+/** Whoever is holding this project's landing lock, if it is not us. */
+function landingHolder(projectId: string, self: string): string | null {
+  return openClaims(landResourceId(projectId)).find((c) => c.holder !== self)?.holder ?? null
+}
+
+/**
+ * Record that this task landed after that one.
+ *
+ * ⚠️ Returns false rather than throwing on every refusal, because each one is a reason the *edge*
+ * cannot exist and none of them is a reason not to land: the holder may be a task this fleet no
+ * longer has, and the edge may already run the other way — t26 waiting on t27 while t27 already
+ * declares it waits on t26 is a cycle `addDependency` is right to reject and wrong to fail a landing
+ * over. The wait below is what serialises the two; the edge only records that it happened.
+ */
+function noteLandingOrder(taskId: string, holderId: string): boolean {
+  if (holderId === taskId || !getTask(holderId)) return false
+  try {
+    addDependency(taskId, holderId)
+    return true
+  } catch (err) {
+    log.debug(`no landing-order edge from ${taskId.slice(0, 8)} to ${holderId.slice(0, 8)}:`, err)
+    return false
+  }
+}
+
+/**
+ * Queue behind whoever is landing, rather than losing to them.
+ *
+ * ⛔ **Measured 2026-08-29.** t26 and t27 finished within the same second; one landed and the other
+ * was told *"Landing failed: another task is landing right now"* and handed to a person, with a real
+ * commit sitting on an intact branch. Nothing was wrong with that branch — it had simply arrived
+ * second at a door that admits one at a time. The lock was doing its job; the *caller* was treating a
+ * queue as a failure.
+ *
+ * ⭐ **The wait happens inside the run that is already waiting.** The losing task holds its workspace
+ * and its session for the duration either way, so polling costs nothing it was not already spending,
+ * and — unlike releasing and re-dispatching — it cannot start a second agent over work that is
+ * already finished.
+ *
+ * ⛔ **Which is also why the task is not moved to `blocked`.** The dependency edge is recorded so the
+ * ordering is visible and durable, but `blocked` is the status of work waiting to be *dispatched*,
+ * and `admitDependents` would walk this task to `ready` the moment the holder completed. A finished
+ * task made ready is a task the scheduler will hand to an agent again. The edge is a fact; the status
+ * would be an instruction, and the wrong one.
+ *
+ * ⚠️ Bounded, and it gives up on a cancel. An unbounded wait inside a completion is a deadlock with a
+ * patient face, and a task the operator has cancelled must not go on holding a workspace to land work
+ * they just said they did not want.
+ */
+async function awaitLandTurn(ctx: LandingContext): Promise<{
+  lock: ResourceClaim | null
+  queuedBehind: string | null
+  gaveUp?: 'timeout' | 'cancelled'
+}> {
+  const resourceId = landResourceId(ctx.project.id)
+  const first = claim(resourceId, ctx.task.id)
+  // ⭐ The overwhelmingly common path: nobody else is landing, and this costs one synchronous query.
+  if (first) return { lock: first, queuedBehind: null }
+
+  const holder = landingHolder(ctx.project.id, ctx.task.id)
+  const linked = holder ? noteLandingOrder(ctx.task.id, holder) : false
+  const other = holder ? getTask(holder) : null
+  addMessage(
+    ctx.task.id,
+    'system',
+    `Waiting to land: ${other ? `t${other.seq} (${other.title})` : 'another task'} is landing right ` +
+      'now, and landing is serialised per project so that two rebases cannot race for the trunk. ' +
+      `This one is queued behind it${linked ? ' and now depends on it' : ''}, and will land by itself.`
+  )
+  log.info(`t${ctx.task.seq} is queued behind ${other ? `t${other.seq}` : 'another task'} to land`)
+
+  const deadline = Date.now() + landQueue.waitMs
+  while (Date.now() < deadline) {
+    await sleep(landQueue.pollMs)
+    const status = getTask(ctx.task.id)?.status
+    if (status === 'cancelling' || status === 'cancelled') {
+      return { lock: null, queuedBehind: holder, gaveUp: 'cancelled' }
+    }
+    const got = claim(resourceId, ctx.task.id)
+    if (got) return { lock: got, queuedBehind: holder }
+  }
+  return { lock: null, queuedBehind: holder, gaveUp: 'timeout' }
+}
+
 export const autoLand: LandingStrategy = {
   id: 'auto-land',
 
@@ -237,10 +333,22 @@ export const autoLand: LandingStrategy = {
       label: `${ctx.project.name} landing`,
       capacity: 1
     })
-    const lock = claim(landResourceId(ctx.project.id), ctx.task.id)
-    if (!lock) {
-      return { strategy: 'auto-land', ok: false, reason: 'another task is landing right now' }
+    // ⭐ Waits its turn rather than losing the race. See `awaitLandTurn`.
+    const turn = await awaitLandTurn(ctx)
+    if (!turn.lock) {
+      const waited = Math.round(landQueue.waitMs / 1000)
+      return {
+        strategy: 'auto-land',
+        ok: false,
+        branch: ctx.branch,
+        reason:
+          turn.gaveUp === 'cancelled'
+            ? 'this task was cancelled while it was queued to land'
+            : `another task is still landing after ${waited}s of waiting for a turn`,
+        ...(turn.queuedBehind ? { contendedWith: turn.queuedBehind } : {})
+      }
     }
+    const lock = turn.lock
 
     try {
       const remote = await hasRemote(ctx.workspacePath)
@@ -286,7 +394,15 @@ export const autoLand: LandingStrategy = {
       await retireBranch(ctx.workspacePath, ctx.branch)
 
       log.info(`landed t${ctx.task.seq} (${commit.slice(0, 8)}) onto ${target}`)
-      return { strategy: 'auto-land', ok: true, commit, checkOutput: checks.output }
+      return {
+        strategy: 'auto-land',
+        ok: true,
+        commit,
+        checkOutput: checks.output,
+        // ⚠️ Carried on the *success* too, because "it landed, after waiting for t26" is the sentence
+        // the operator who started both tasks needs, and it is the only evidence that the queue ran.
+        ...(turn.queuedBehind ? { contendedWith: turn.queuedBehind } : {})
+      }
     } catch (err) {
       return {
         strategy: 'auto-land',
@@ -495,12 +611,23 @@ export async function landTask(ctx: LandingContext): Promise<LandingResult> {
   }
 
   const result = await strategy.land(ctx)
+  // ⚠️ Named by seq, not by id. `contendedWith` is a task id because that is what the resource broker
+  // records; an operator reading a message wants `t26`.
+  const behind = result.contendedWith ? getTask(result.contendedWith) : null
   if (!result.ok) {
     addMessage(
       ctx.task.id,
       'system',
       `Landing failed: ${result.reason}. ` +
         (await whereTheWorkIs(ctx.workspacePath, ctx.branch)) +
+        // ⭐ A task that failed *only* because it was queued has nothing wrong with it, and the action
+        // is a retry rather than an investigation. That is the difference between an operator opening
+        // a branch to find out what broke and an operator pressing one button.
+        (result.contendedWith
+          ? ' Nothing is wrong with the branch — it waited its turn behind ' +
+            `${behind ? `t${behind.seq}` : 'another task'} and the wait ran out. Landing it again is ` +
+            'all this needs.'
+          : '') +
         (result.checkOutput ? `\n\n${result.checkOutput.slice(-2000)}` : '')
     )
     setStatus(ctx.task.id, 'awaiting_human', {
@@ -511,7 +638,8 @@ export async function landTask(ctx: LandingContext): Promise<LandingResult> {
     addMessage(
       ctx.task.id,
       'system',
-      `Landed as ${result.commit?.slice(0, 8)} onto ${policyFor(ctx.project).landingTarget}.`
+      `Landed as ${result.commit?.slice(0, 8)} onto ${policyFor(ctx.project).landingTarget}.` +
+        (behind ? ` It queued behind t${behind.seq} and landed once that finished.` : '')
     )
   }
   return result

@@ -848,6 +848,14 @@ export interface LandingResult {
    */
   nothingToLand?: boolean
   /**
+   * The id of the task this one had to queue behind, because landing is serialised per project.
+   *
+   * ⚠️ Set whether or not the wait paid off: with `ok: true` it means *landed, after waiting*, and
+   * with `ok: false` it means the wait ran out. Present at all means two tasks finished close enough
+   * together to contend, which is the thing worth saying out loud either way.
+   */
+  contendedWith?: string
+  /**
    * The task branch was retired — its every commit is in the landing target, so the ref held a name
    * and nothing else.
    *

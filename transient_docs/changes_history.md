@@ -1796,3 +1796,44 @@ working parser had been reading four windows for two days. It now states the fou
 pools. ⛔ Nothing reads it — `CostModel.data` is private and the live windows come from the panel — so
 a test asserts it against the shipped JSON rather than through the class, and says in its own comment
 that this is documentation whose only job is to stop drifting back into a contradiction.
+
+## The landing lock was right and the caller was wrong (2026-08-29)
+
+t26 and t27 were run in parallel and finished within the same second. One landed. The other was told
+*"Landing failed: another task is landing right now. 1 commit(s) are on
+`multi-agent-controller/t27-…`, which is intact"*, went to `awaiting_human`, and sat there with a
+perfectly good commit on a perfectly good branch.
+
+⭐ **Nothing was broken.** Landing is serialised per project because three workspaces finishing at
+once would each rebase onto a target the other two are about to move — that is `resources.ts` doing
+exactly what it exists for. The defect was one line above it: `claim()` returning `null` was read as a
+*failure* when it means *not yet*. A queue two seconds long became a hand-off.
+
+⛔ **The fix waits inside the run that was already waiting.** The losing task holds its workspace and
+its session for the duration either way, so polling costs nothing it was not already spending. The
+rejected alternative — release the workspace, mark the task `blocked`, re-dispatch when the blocker
+completes — is worse in a way that is easy to miss: `admitDependents` walks a blocked task to `ready`
+the moment its blocker finishes, and a *finished* task made ready is a task the scheduler hands to an
+agent again. A second run over work that is already committed.
+
+⭐ **The dependency edge is a record, not an instruction.** The operator asked for the second task to
+depend on the first, and it does — `t27.dependsOn` contains t26 afterwards, so "t27 landed after t26"
+is answerable tomorrow. But the edge is what makes the ordering *legible*; the wait is what makes it
+*true*. Keeping those two jobs separate is what lets the edge be best-effort: a holder with no task
+row, or an edge that would close a cycle, costs the record and never the landing.
+
+⚠️ **Bounded at fifteen minutes, and it gives up on a cancel.** An unbounded wait inside a completion
+is a deadlock with a patient face — the task would hold a workspace for as long as the daemon lived.
+Fifteen minutes is sized against what is actually being waited for: a landing runs the project's own
+checks, which `runChecks` allows thirty minutes *per command*. On timeout the old hand-off returns,
+with one sentence added: *nothing is wrong with the branch, landing it again is all this needs.* A
+queue that ran out is a retry, not an investigation, and the message decides which of those the
+operator goes looking for.
+
+⛔ **Three of the new tests passed against a build with no queue in it at all.** The fixture took the
+landing lock and released it after a fixed 60ms — but `landTask` spends a few hundred milliseconds on
+`git status` and `rev-list` before it ever asks for the lock, so the hold was released before the
+contention it existed to create, and the test measured an uncontended landing while claiming
+otherwise. ⚠️ Found by the mutation run, not by the green tick. They now block on the message the
+queue itself posts, which is the only signal that does not depend on how fast git is today. Reverting
+the queue now fails ten of the eleven, and the eleventh is the guard that must not fail.
