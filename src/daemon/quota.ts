@@ -1,4 +1,4 @@
-import type { QuotaSnapshot } from '@shared/protocol.js'
+import type { QuotaSnapshot, QuotaWindow } from '@shared/protocol.js'
 import { db, row, rows } from './db.js'
 import { adapter } from './adapters/index.js'
 import { stripAnsi } from './stream.js'
@@ -523,4 +523,34 @@ export function shouldBackgroundRefresh(workerId: string): boolean {
   const last = lastQuota(workerId)
   // Never read at all, or read so long ago that nothing downstream is allowed to use it.
   return !last || last.windows.length === 0 || last.ageMs > REFRESH_AFTER_MS
+}
+
+/**
+ * The five-hour window that governs *this* model, on a provider that meters more than one pool.
+ *
+ * ⛔ **The pessimistic fallback is still the default, and has to be.** With no model in hand — the
+ * reset countdown, the reserve's sample query — the only safe reading is the busiest pool, which the
+ * Antigravity adapter aliases to the bare id `5h` for exactly that reason. This function is for the
+ * one caller that *does* know: the dispatch gate, which resolves a task's model before it spawns.
+ *
+ * ⭐ Measured 2026-08-27: an Antigravity account carries two five-hour windows and two weeklies.
+ * Holding a Gemini task out because the Claude/GPT pool is nearly spent is a refusal with no cause —
+ * the pools do not share, so the task would have run fine.
+ *
+ * ⚠️ Containment, not equality. The group slug comes from the panel's own heading and `CLAUDE & GPT`,
+ * `CLAUDE AND GPT` and `CLAUDE/GPT` slugify three different ways; `claude` and `gpt` are substrings
+ * of all three. A pool that matches nothing falls back rather than returning no window, because an
+ * unrecognised pool is ignorance, not permission.
+ */
+export function sessionWindowFor(
+  windows: QuotaWindow[],
+  pool: string | null
+): QuotaWindow | undefined {
+  const fallback = windows.find((w) => w.id === 'session' || w.id === '5h')
+  if (!pool) return fallback
+
+  const mine = windows.find(
+    (w) => (w.id.startsWith('5h') || w.id === 'session') && (w.group?.includes(pool) ?? false)
+  )
+  return mine ?? fallback
 }

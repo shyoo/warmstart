@@ -177,6 +177,14 @@ at the end is an answer — the vendor picks — not a missing setting. ⛔ Effo
 read at launch and apply to the **next** run: changing them inside a live conversation discards its
 prompt cache, which `docs/cost-model.md` §11 prices.
 
+**Quota pool** — *a separately metered allowance on one account.* Antigravity meters **Gemini apart
+from Claude/GPT** — two five-hour windows and two weeklies on one login — so "how full is this
+account?" has two answers and the right one depends on the model. ⛔ The dispatch gate resolves the
+task's model first and asks for that pool; every other caller has no model in hand and gets the
+**busiest** window, which the adapter aliases to the bare id `5h`. ⚠️ A model's pool is data on the
+cost model, matched against the window's group by containment, because the vendor writes the panel
+heading three different ways. Every other provider here has one pool and no group.
+
 **Mandate** — *the authority a task runs under.* Inherited from its creator and **narrowed, never
 widened**: allowed operations, project scope, remaining lineage depth, fan-out cap. A task that has
 lost `spawn_tasks` cannot create children — not because a heuristic caught it, but because it has no

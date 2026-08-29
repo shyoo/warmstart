@@ -9,7 +9,7 @@ if you add a line, find the one it obsoletes and cut it in the same edit. Finish
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
 **Baseline (2026-08-29, measured on this machine):** `npm run typecheck` clean · `npm run lint` clean ·
-`npm run build` clean · `npm test` 587/587 (2 POSIX-only skipped) · `npm run test:daemon` 125/125 ·
+`npm run build` clean · `npm test` 597/597 (2 POSIX-only skipped) · `npm run test:daemon` 125/125 ·
 `npm run test:ui` 125/125 ·
 `npm run test:pack` 18/18 · L4 (opt-in) landed a real agent commit on origin/main. Electron 44.0.0,
 electron-builder 26.15.3, 0 npm vulnerabilities. CLIs here: claude 2.1.250 · agy 1.1.22 · codex 0.149.1.
@@ -104,7 +104,7 @@ docs/                  cost-model.md, glossary.md, adapters.md, landing.md, sess
 ## What is true right now and not yet proven
 
 - ⭐ **Both providers have a free live quota probe** (**R3 closed**, `docs/cost-model.md` §5). A
-  stale-but-known reading is now shown and labelled rather than replaced by `quota unknown`.
+  stale-but-known reading is labelled, not dropped, and Antigravity's **two pools gate separately**.
 - ⚠️ **The compaction reserve still reports `unknown`**, for one reason: it needs `remaining` in
   *tokens*, so **R2** (`tokens_per_percent`) is the blocker, not a stale percentage
   (`docs/cost-model.md` §10). ⛔ Until it lands it scores zero as a routing input — only checked

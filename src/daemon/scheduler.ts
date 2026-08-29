@@ -2,7 +2,7 @@ import type { Project, Run, RunQuota, Task, TaskStatus } from '@shared/tasks.js'
 import { resolveModelChoice } from '@shared/tasks.js'
 import type { Session, Worker } from '@shared/protocol.js'
 import { adapter } from './adapters/index.js'
-import { lastQuota, refreshUsage } from './quota.js'
+import { lastQuota, refreshUsage, sessionWindowFor } from './quota.js'
 import { listWorkers, recordDispatchFailure } from './workers.js'
 import { accountUnavailability } from './eligibility.js'
 import { getProject, policyFor, reloadProject } from './projects.js'
@@ -229,6 +229,23 @@ const BASELINE_RETRY_MS = 10 * 60 * 1000
 
 const baselineAttempts = new Map<string, { at: number; inFlight: boolean }>()
 
+/**
+ * Which metered pool a model draws on, or `null` where the provider has only one.
+ *
+ * ⛔ Read from the cost model, never inferred from the model's name here. `gemini-*` and `claude-*`
+ * look like a rule until a vendor ships a model that breaks it, and this file has no business
+ * knowing vendor naming conventions — `docs/adapters.md` and the cost models hold that.
+ */
+function poolFor(worker: Worker, model: string | null): string | null {
+  if (!model) return null
+  try {
+    return costModel(adapter(worker.adapterId).info.policy.costModelId).modelSpec(model)?.pool ?? null
+  } catch {
+    // An adapter with no loadable cost model still dispatches; it just gets the pessimistic window.
+    return null
+  }
+}
+
 function needsBaseline(worker: Worker | null): string | null {
   if (!worker) return null
   // Nothing to drive: most CLIs have no usage command, and holding work for a refresh that cannot
@@ -451,9 +468,20 @@ function chooseTarget(task: Task): WorkerChoice {
 
     const quota = lastQuota(worker.id)
     if (quota && !quota.stale) {
-      const session = quota.windows.find((w) => w.id === 'session' || w.id === '5h')
+      // ⭐ **The pool this task's model would actually draw on.** Antigravity meters Gemini apart
+      // from Claude/GPT, so an account can be spent for one and untouched for the other; holding a
+      // Gemini task out because the Claude/GPT window is nearly full is a refusal with no cause.
+      // ⚠️ Only answerable since the model became knowable before the spawn — `resolveModelChoice`
+      // gives the same answer here that the dispatch will reach, from the same two tiers.
+      // ⚠️ `false` for effort: the pool follows the model, and effort has no bearing on it.
+      const pool = poolFor(worker, resolveModelChoice(task.constraints, worker, false).model)
+      const session = sessionWindowFor(quota.windows, pool)
       if (session && session.percent >= QUOTA_HIGH_WATER) {
-        reasons.push(`${worker.label} at ${Math.round(session.percent)}% of its 5h window`)
+        // Names the window, because "at 91% of its 5h window" on a two-pool account is a sentence
+        // the operator cannot check against what the CLI's own panel shows them.
+        reasons.push(
+          `${worker.label} at ${Math.round(session.percent)}% of its ${session.label ?? '5h'} window`
+        )
         continue
       }
     } else {

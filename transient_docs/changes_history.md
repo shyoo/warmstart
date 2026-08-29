@@ -1749,3 +1749,50 @@ asserted all three adapters were false and carried its own instruction — *"del
 is exercised against a real CLI, and not before"*. The daemon suite asserted effort was refused on
 Claude Code. Both were right when written; a capability is a fact about a CLI version, so the suite
 has to be able to change its mind and say why.
+
+## Two quota pools, and the guess that stopped being necessary (2026-08-29)
+
+The operator said Antigravity meters Gemini apart from Claude/GPT and asked for them to be treated as
+separate pools. They already were, twice over: the `/usage` probe had been reading **both groups'
+windows** since 2026-08-27 — four windows, two per group — and `docs/cost-model.md` §5 carried the
+live table. `parseUsageScreen` emitted them keyed `5h:<group>` and `weekly:<group>`.
+
+⛔ **What consumed them was one line that could not see them.** Three callers ask for the five-hour
+window by the id `session` or `5h`, and on this provider neither matches. The adapter had papered
+over that by renaming the **busiest** five-hour window to the bare `5h`, with a comment saying
+exactly why: *"nothing in a quota snapshot knows which group the next run will use."* That was true,
+and it made the pessimistic choice, which is the right one when you cannot know.
+
+⭐ **It stopped being true earlier the same day.** The model picker resolves task → worker → CLI
+*before* the spawn, so the dispatch gate now knows which model a run will use and therefore which
+pool it draws on. Phase 4 was unblocked by phase 2 rather than by anything about quota. The gate asks
+`sessionWindowFor(windows, pool)`; the reset countdown and the reserve's sample query still get the
+busiest window, because they genuinely have no model in hand and pessimism is correct there.
+
+⚠️ **The concrete failure this removes**: with Gemini at 96% and Claude/GPT untouched, a Claude/GPT
+task was held out against a pool it does not draw on. The pools do not share, so the task would have
+run fine — a refusal with no cause, and one that reads as "the account is busy" in the UI.
+
+⛔ **`group` is carried beside the window id, because the id does not survive.** The aliasing
+overwrites `5h:gemini` with `5h`, so whichever pool happens to be busiest loses its identity. Keyed
+on the id alone, the gate could find every pool except the one most likely to matter.
+
+⛔ **Matched by containment, not equality, and the measured table is why.** The panel's heading in the
+2026-08-27 reading is *"Claude and GPT"*, which slugifies to `claude-and-gpt`; `formatGroupLabel`
+also handles `CLAUDE & GPT` and `CLAUDE/GPT`, giving `claude-gpt`. A pool token of `claude` or `gpt`
+is a substring of all three and of none of Gemini's. Equality against either spelling would have
+passed a test written against that spelling and failed on a real panel — the mutation run proves it:
+swapping containment for equality fails exactly the case where the group carries the alias.
+
+⚠️ **Which model belongs to which pool is data, not a rule in the scheduler.** `pool` sits on each
+model in the cost model file. `gemini-*` and `claude-*` look like a rule until a vendor ships a model
+that breaks it, and `scheduler.ts` has no business knowing vendor naming conventions. A test asserts
+every model in that file has one, because a model added without a pool silently reverts to the
+pessimistic window for that model alone — the failure this replaces, reintroduced quietly.
+
+⚠️ **The file's own `quota` block was a lie and is now merely documentation.** It declared
+`kind: "unknown"`, `probe: "none"`, `windows: []` while the adapter declared `quotaProbe: 'cli'` and a
+working parser had been reading four windows for two days. It now states the four windows and their
+pools. ⛔ Nothing reads it — `CostModel.data` is private and the live windows come from the panel — so
+a test asserts it against the shipped JSON rather than through the class, and says in its own comment
+that this is documentation whose only job is to stop drifting back into a contradiction.

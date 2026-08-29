@@ -63,7 +63,8 @@
       "context_awareness": false,
       "effort_levels": [
         "high"
-      ]
+      ],
+      "pool": "gemini"
     },
     {
       "id": "gemini-3.1-pro-low",
@@ -74,7 +75,8 @@
       "context_awareness": false,
       "effort_levels": [
         "low"
-      ]
+      ],
+      "pool": "gemini"
     },
     {
       "id": "gemini-3.7-flash-high",
@@ -85,7 +87,8 @@
       "context_awareness": false,
       "effort_levels": [
         "high"
-      ]
+      ],
+      "pool": "gemini"
     },
     {
       "id": "gemini-3.7-flash-medium",
@@ -96,7 +99,8 @@
       "context_awareness": false,
       "effort_levels": [
         "medium"
-      ]
+      ],
+      "pool": "gemini"
     },
     {
       "id": "gemini-3.7-flash-low",
@@ -107,7 +111,8 @@
       "context_awareness": false,
       "effort_levels": [
         "low"
-      ]
+      ],
+      "pool": "gemini"
     },
     {
       "id": "gemini-3.6-flash-high",
@@ -119,7 +124,8 @@
       "effort_levels": [
         "high"
       ],
-      "$comment": "Listed by `agy models` on 2026-08-29 (agy 1.1.22) and absent from this file until then, so it could be neither picked nor priced. context_window is null because the figure has not been read from anywhere - null reports unknown, and a copied 1000000 would be a guess wearing a measurement's clothes."
+      "$comment": "Listed by `agy models` on 2026-08-29 (agy 1.1.22) and absent from this file until then, so it could be neither picked nor priced. context_window is null because the figure has not been read from anywhere - null reports unknown, and a copied 1000000 would be a guess wearing a measurement's clothes.",
+      "pool": "gemini"
     },
     {
       "id": "gemini-3.6-flash-medium",
@@ -131,7 +137,8 @@
       "effort_levels": [
         "medium"
       ],
-      "$comment": "Listed by `agy models` on 2026-08-29 (agy 1.1.22) and absent from this file until then, so it could be neither picked nor priced. context_window is null because the figure has not been read from anywhere - null reports unknown, and a copied 1000000 would be a guess wearing a measurement's clothes."
+      "$comment": "Listed by `agy models` on 2026-08-29 (agy 1.1.22) and absent from this file until then, so it could be neither picked nor priced. context_window is null because the figure has not been read from anywhere - null reports unknown, and a copied 1000000 would be a guess wearing a measurement's clothes.",
+      "pool": "gemini"
     },
     {
       "id": "gemini-3.6-flash-low",
@@ -143,7 +150,8 @@
       "effort_levels": [
         "low"
       ],
-      "$comment": "Listed by `agy models` on 2026-08-29 (agy 1.1.22) and absent from this file until then, so it could be neither picked nor priced. context_window is null because the figure has not been read from anywhere - null reports unknown, and a copied 1000000 would be a guess wearing a measurement's clothes."
+      "$comment": "Listed by `agy models` on 2026-08-29 (agy 1.1.22) and absent from this file until then, so it could be neither picked nor priced. context_window is null because the figure has not been read from anywhere - null reports unknown, and a copied 1000000 would be a guess wearing a measurement's clothes.",
+      "pool": "gemini"
     },
     {
       "id": "gemini-3.5-flash-high",
@@ -155,7 +163,8 @@
       "effort_levels": [
         "high"
       ],
-      "$comment": "Listed by `agy models` on 2026-08-29 (agy 1.1.22) and absent from this file until then, so it could be neither picked nor priced. context_window is null because the figure has not been read from anywhere - null reports unknown, and a copied 1000000 would be a guess wearing a measurement's clothes."
+      "$comment": "Listed by `agy models` on 2026-08-29 (agy 1.1.22) and absent from this file until then, so it could be neither picked nor priced. context_window is null because the figure has not been read from anywhere - null reports unknown, and a copied 1000000 would be a guess wearing a measurement's clothes.",
+      "pool": "gemini"
     },
     {
       "id": "gemini-3.5-flash-medium",
@@ -167,7 +176,8 @@
       "effort_levels": [
         "medium"
       ],
-      "$comment": "Listed by `agy models` on 2026-08-29 (agy 1.1.22) and absent from this file until then, so it could be neither picked nor priced. context_window is null because the figure has not been read from anywhere - null reports unknown, and a copied 1000000 would be a guess wearing a measurement's clothes."
+      "$comment": "Listed by `agy models` on 2026-08-29 (agy 1.1.22) and absent from this file until then, so it could be neither picked nor priced. context_window is null because the figure has not been read from anywhere - null reports unknown, and a copied 1000000 would be a guess wearing a measurement's clothes.",
+      "pool": "gemini"
     },
     {
       "id": "gemini-3.5-flash-low",
@@ -179,7 +189,8 @@
       "effort_levels": [
         "low"
       ],
-      "$comment": "Listed by `agy models` on 2026-08-29 (agy 1.1.22) and absent from this file until then, so it could be neither picked nor priced. context_window is null because the figure has not been read from anywhere - null reports unknown, and a copied 1000000 would be a guess wearing a measurement's clothes."
+      "$comment": "Listed by `agy models` on 2026-08-29 (agy 1.1.22) and absent from this file until then, so it could be neither picked nor priced. context_window is null because the figure has not been read from anywhere - null reports unknown, and a copied 1000000 would be a guess wearing a measurement's clothes.",
+      "pool": "gemini"
     },
     {
       "id": "claude-sonnet-4-6",
@@ -188,7 +199,8 @@
       "output_per_mtok": null,
       "tokenizer": "unknown",
       "context_awareness": false,
-      "effort_levels": []
+      "effort_levels": [],
+      "pool": "claude"
     },
     {
       "id": "claude-opus-4-6-thinking",
@@ -197,7 +209,8 @@
       "output_per_mtok": null,
       "tokenizer": "unknown",
       "context_awareness": false,
-      "effort_levels": []
+      "effort_levels": [],
+      "pool": "claude"
     },
     {
       "id": "gpt-oss-120b-medium",
@@ -208,15 +221,37 @@
       "context_awareness": false,
       "effort_levels": [
         "medium"
-      ]
+      ],
+      "pool": "gpt"
     }
   ],
   "quota": {
-    "kind": "unknown",
-    "probe": "none",
-    "windows": [],
-    "reports": "none",
-    "$comment": "/usage is an interactive slash command only. There is no free non-interactive probe."
+    "kind": "rolling_windows",
+    "probe": "cli",
+    "windows": [
+      {
+        "id": "5h:gemini",
+        "label": "Gemini 5h",
+        "pool": "gemini"
+      },
+      {
+        "id": "weekly:gemini",
+        "label": "Gemini 7d",
+        "pool": "gemini"
+      },
+      {
+        "id": "5h:claude-gpt",
+        "label": "Claude/GPT 5h",
+        "pool": "claude"
+      },
+      {
+        "id": "weekly:claude-gpt",
+        "label": "Claude/GPT 7d",
+        "pool": "claude"
+      }
+    ],
+    "reports": "percent",
+    "$comment": "Two separately metered pools on one account - Gemini apart from Claude/GPT - measured 2026-08-27 by reading the `/usage` panel, which renders both groups' windows. This block previously said kind 'unknown', probe 'none', windows [], which contradicted both the adapter's quotaProbe: 'cli' and a parser that had been reading four windows for two days. The ids here are what parseUsageScreen emits; the exact group slug follows the panel's heading wording, so `pool` is matched by containment rather than by equality."
   },
   "$owed": [
     "Cache pricing: is it storage-per-token-hour on a subscription at all, or is caching simply not billed to a subscriber? Until this is known, cache.kind stays `unpriced`.",

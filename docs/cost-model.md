@@ -268,6 +268,22 @@ Measured on agy 1.1.22, Windows, Google AI Pro, 2026-08-27 — a live reading th
 | Claude and GPT (Opus, Sonnet, GPT-OSS) | weekly | 42.80% | 44h |
 | Claude and GPT (Opus, Sonnet, GPT-OSS) | 5-hour | 0% | — |
 
+⭐ **Two pools mean two answers to "how full is this account?", and the gate now picks the right one
+(2026-08-29).** The parser has produced all four windows since the day above. What consumed them was
+one line asking for a window whose id is `session` or `5h` — which on this provider matches neither,
+so the adapter renamed the *busiest* five-hour window to the bare `5h`. That is correct for a caller
+with no model in hand, and the reset countdown and the reserve's sample query still get it. It was
+wrong for the dispatch gate: with Gemini at 96% and Claude/GPT untouched, a Claude/GPT task was held
+out against a pool it does not draw on. ⚠️ The gate can only do better because the model became
+knowable before the spawn — `resolveModelChoice` resolves task → worker → CLI *before* dispatch, so
+the pool is a lookup rather than a guess. `pool` on each model in the cost model is that lookup.
+
+⛔ **Matched by containment, not equality — and the table above is why.** The panel's heading here
+reads *"Claude and GPT"*, which slugifies to `claude-and-gpt`; the CLI also writes it `CLAUDE & GPT`
+and `CLAUDE/GPT`, giving `claude-gpt`. A pool token of `claude` or `gpt` is a substring of all three
+and of none of Gemini's. Equality against any one spelling would have passed every test written
+against the other and failed on a real panel.
+
 ⚠️ **Two traps, both found by running it rather than reading it.**
 
 - The panel reports **remaining**; `QuotaWindow.percent` is **used**. Inverted in the parser. Storing

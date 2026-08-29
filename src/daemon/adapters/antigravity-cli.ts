@@ -483,7 +483,11 @@ export function parseUsageScreen(screen: string, now = Date.now()): QuotaWindow[
         id,
         label: `${group.label} ${kind === 'weekly' ? '7d' : '5h'}`,
         percent: Math.round((100 - remaining) * 100) / 100,
-        resetsAt: readReset(lines[i + 1] ?? '', now)
+        resetsAt: readReset(lines[i + 1] ?? '', now),
+        // ⛔ Beside the id, because the id does not survive. The busiest five-hour window is aliased
+        // to the bare `5h` below for consumers that cannot know a model, which overwrites `5h:gemini`
+        // — and then a Gemini-pinned task could no longer find its own pool by id.
+        group: group.id
       })
       kind = null
     }
@@ -527,9 +531,17 @@ export function parseUsageScreen(screen: string, now = Date.now()): QuotaWindow[
       }
     }
 
-    // ⛔ Downstream asks for the five-hour window by the id `session` or `5h` - the quota gate, the
-    // reset countdown and the reserve all do. Antigravity has **two**, because Gemini and Claude/GPT
-    // are metered separately, and nothing in a quota snapshot knows which group the next run will use.
+    // ⛔ Downstream asks for the five-hour window by the id `session` or `5h` - the reset countdown
+    // and the reserve's sample query both do, and neither has a model in hand to choose a pool with.
+    // Antigravity has **two**, because Gemini and Claude/GPT are metered separately, so the busiest
+    // is aliased to the bare id and those two consumers get the pessimistic answer, which is the
+    // right one when you cannot know.
+    //
+    // ⭐ **The dispatch gate no longer settles for that.** It resolves the task's model first
+    // (`resolveModelChoice`, 2026-08-29) and asks for that model's pool by `group`, so a task pinned
+    // to Gemini is no longer held out because the Claude/GPT pool is the emptier of the two. The
+    // sentence that used to stand here - "nothing in a quota snapshot knows which group the next run
+    // will use" - was true until the model became knowable before the spawn.
     const fiveHour = windows.filter((w) => w.id.startsWith('5h:'))
     if (fiveHour.length > 0) {
       const busiest = fiveHour.reduce((a, b) => (b.percent > a.percent ? b : a))

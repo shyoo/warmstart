@@ -274,6 +274,21 @@ export interface QuotaWindow {
   label: string
   percent: number
   resetsAt: number | null
+  /**
+   * Which **separately metered pool** this window belongs to, where the vendor has more than one.
+   *
+   * ⭐ Antigravity meters Gemini apart from Claude/GPT — two five-hour windows and two weeklies on
+   * one account, measured 2026-08-27 — so "how full is this account?" has two answers and the right
+   * one depends on which model the next run uses.
+   *
+   * ⚠️ `undefined` on a provider with a single pool, which is every other one here. Undefined means
+   * "this window covers everything", not "unknown".
+   *
+   * ⛔ Carried **beside** the id rather than encoded in it. The busiest five-hour window is also
+   * aliased to the bare id `5h` for the consumers that cannot know a model — the reset countdown and
+   * the reserve's sample query — and that aliasing overwrites the id. The group has to survive it.
+   */
+  group?: string
 }
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error'

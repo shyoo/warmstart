@@ -58,6 +58,18 @@ export interface CostModelFile {
     tokenizer: string
     context_awareness: boolean
     effort_levels: string[]
+    /**
+     * Which separately metered quota pool this model draws on.
+     *
+     * ⭐ Only where the vendor meters more than one. Antigravity bills Gemini apart from Claude/GPT,
+     * so an account can be empty for one and untouched for the other.
+     *
+     * ⚠️ Matched against a window's `group` by **containment, not equality**: the group id is derived
+     * from the `/usage` panel's own heading, and `CLAUDE & GPT`, `CLAUDE AND GPT` and `CLAUDE/GPT`
+     * slugify to three different strings. `claude` and `gpt` are substrings of all three; `gemini` is
+     * a substring of none of them.
+     */
+    pool?: string
   }>
   quota?: unknown
 }
