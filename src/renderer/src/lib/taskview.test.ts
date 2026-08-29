@@ -6,7 +6,7 @@ import {
   resolveFinishPolicy,
   resolveSessionSharing
 } from '@shared/tasks'
-import { statusLabel, workspacePathFor } from './taskview.js'
+import { projectWorkState, statusLabel, workspacePathFor } from './taskview.js'
 import { readFleetCollapsed, writeFleetCollapsed } from './prefs.js'
 
 /**
@@ -142,6 +142,53 @@ describe('preferences persistence in localStorage', () => {
 
     writeFleetCollapsed(false)
     expect(readFleetCollapsed()).toBe(false)
+  })
+})
+
+describe('project work state for left pane indicators', () => {
+  it('returns idle when there are no tasks', () => {
+    expect(projectWorkState([])).toBe('idle')
+  })
+
+  it('returns idle when all tasks are completed, failed, cancelled, draft, or blocked', () => {
+    const tasks: Array<{ status: TaskStatus }> = [
+      { status: 'completed' },
+      { status: 'failed' },
+      { status: 'cancelled' },
+      { status: 'draft' },
+      { status: 'blocked' }
+    ]
+    expect(projectWorkState(tasks)).toBe('idle')
+  })
+
+  it('returns working when a task is running', () => {
+    const tasks: Array<{ status: TaskStatus }> = [{ status: 'completed' }, { status: 'running' }]
+    expect(projectWorkState(tasks)).toBe('working')
+  })
+
+  it('returns working when a task is in flight (ready, scheduled, assigned, cancelling)', () => {
+    expect(projectWorkState([{ status: 'ready' }])).toBe('working')
+    expect(projectWorkState([{ status: 'scheduled' }])).toBe('working')
+    expect(projectWorkState([{ status: 'assigned' }])).toBe('working')
+    expect(projectWorkState([{ status: 'cancelling' }])).toBe('working')
+  })
+
+  it('returns needs_attention when a task is awaiting_human', () => {
+    const tasks: Array<{ status: TaskStatus }> = [{ status: 'awaiting_human' }]
+    expect(projectWorkState(tasks)).toBe('needs_attention')
+  })
+
+  it('returns needs_attention when a task is paused_user', () => {
+    const tasks: Array<{ status: TaskStatus }> = [{ status: 'paused_user' }]
+    expect(projectWorkState(tasks)).toBe('needs_attention')
+  })
+
+  it('prioritizes needs_attention over working when tasks in both states exist', () => {
+    const tasks: Array<{ status: TaskStatus }> = [
+      { status: 'running' },
+      { status: 'awaiting_human' }
+    ]
+    expect(projectWorkState(tasks)).toBe('needs_attention')
   })
 })
 

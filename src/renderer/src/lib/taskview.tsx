@@ -78,6 +78,35 @@ export const CANCELLABLE = new Set([
   'paused_quota'
 ])
 
+export type ProjectWorkState = 'working' | 'needs_attention' | 'idle'
+
+/**
+ * Computes the work state for a project based on its tasks:
+ * - 'needs_attention': At least one task is awaiting human input or paused by user.
+ * - 'working': At least one task is active/in-flight and no tasks need human action.
+ * - 'idle': No active tasks and no human action needed.
+ */
+export function projectWorkState(tasks: Array<Pick<Task, 'status'>>): ProjectWorkState {
+  if (tasks.some((t) => t.status === 'awaiting_human' || t.status === 'paused_user')) {
+    return 'needs_attention'
+  }
+  if (tasks.some((t) => IN_FLIGHT.has(t.status))) {
+    return 'working'
+  }
+  return 'idle'
+}
+
+/** Small indicator dot displayed before the project name in the navigation pane. */
+export function ProjectDot({ state }: { state: ProjectWorkState }): React.JSX.Element {
+  const title =
+    state === 'working'
+      ? 'Tasks in progress'
+      : state === 'needs_attention'
+        ? 'Human action needed'
+        : 'Idle'
+  return <span className={`project-dot project-dot--${state}`} title={title} aria-label={title} />
+}
+
 /** Three dots that say the fleet is doing something, for a row whose next event arrives by itself. */
 export function Working(): React.JSX.Element {
   return (

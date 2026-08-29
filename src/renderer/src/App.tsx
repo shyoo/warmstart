@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { Project, ResourceAvailability } from '@shared/tasks'
+import type { Project, ResourceAvailability, Task } from '@shared/tasks'
 import { rpc, useAppInfo, useDaemonEvents, useDaemonStatus, useFleet, useNow } from './lib/daemon'
 import { FleetStrip } from './components/FleetStrip'
 import { Workers } from './components/Workers'
@@ -16,6 +16,7 @@ import { Controller } from './components/Controller'
 import { Project as ProjectView, type ProjectTab } from './components/Project'
 import { SidebarResizer } from './components/SidebarResizer'
 import { AppSettings } from './components/AppSettings'
+import { ProjectDot, projectWorkState } from './lib/taskview'
 
 /**
  * The shell.
@@ -101,6 +102,7 @@ export function App(): React.JSX.Element {
   const [keyboard, setKeyboard] = useState(false)
   const [projects, setProjects] = useState<Project[]>([])
   const [resources, setResources] = useState<ResourceAvailability[]>([])
+  const [tasks, setTasks] = useState<Task[]>([])
   const [orphanTasks, setOrphanTasks] = useState(0)
 
   const refreshProjects = useCallback(async () => {
@@ -108,6 +110,7 @@ export function App(): React.JSX.Element {
     setProjects(await rpc('project.list'))
     setResources(await rpc('resource.list'))
     const all = await rpc('task.list', {})
+    setTasks(all)
     setOrphanTasks(all.filter((t) => t.projectId === null).length)
   }, [connected])
 
@@ -119,7 +122,8 @@ export function App(): React.JSX.Element {
     if (
       event.type === 'project.changed' ||
       event.type === 'resource.changed' ||
-      event.type === 'task.changed'
+      event.type === 'task.changed' ||
+      event.type === 'run.changed'
     ) {
       void refreshProjects()
     }
@@ -194,22 +198,28 @@ export function App(): React.JSX.Element {
               No projects yet
             </button>
           ) : (
-            projects.map((project) => (
-              <NavItem
-                key={project.id}
-                active={route.kind === 'project' && route.id === project.id}
-                onClick={() => setRoute({ kind: 'project', id: project.id, tab: 'tasks' })}
-              >
-                {project.name}
-              </NavItem>
-            ))
+            projects.map((project) => {
+              const projectTasks = tasks.filter((t) => t.projectId === project.id)
+              const state = projectWorkState(projectTasks)
+              return (
+                <NavItem
+                  key={project.id}
+                  active={route.kind === 'project' && route.id === project.id}
+                  onClick={() => setRoute({ kind: 'project', id: project.id, tab: 'tasks' })}
+                >
+                  <ProjectDot state={state} />
+                  <span>{project.name}</span>
+                </NavItem>
+              )
+            })
           )}
           {orphanTasks > 0 && (
             <NavItem
               active={route.kind === 'unassigned'}
               onClick={() => setRoute({ kind: 'unassigned' })}
             >
-              Unassigned
+              <ProjectDot state={projectWorkState(tasks.filter((t) => t.projectId === null))} />
+              <span>Unassigned</span>
               <span className="nav-count num">{orphanTasks}</span>
             </NavItem>
           )}

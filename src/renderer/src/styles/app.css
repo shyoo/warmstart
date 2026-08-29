@@ -664,6 +664,74 @@ body {
   box-shadow: inset 2px 0 0 var(--color-accent);
 }
 
+/* ---- project status dots ----------------------------------------------- */
+
+.project-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  box-sizing: border-box;
+}
+
+.project-dot--idle {
+  background: transparent;
+  border: 1.5px solid var(--color-text-faint);
+  opacity: 0.6;
+}
+
+.nav-item:hover .project-dot--idle {
+  opacity: 0.9;
+}
+
+.nav-item--active .project-dot--idle {
+  opacity: 1;
+  border-color: var(--color-text-dim);
+}
+
+.project-dot--working {
+  background: var(--state-running);
+  border: 1px solid var(--state-running);
+  box-shadow: 0 0 5px var(--state-running);
+  animation: project-dot-blink 1.2s ease-in-out infinite;
+}
+
+.project-dot--needs_attention {
+  background: var(--state-warn);
+  border: 1px solid var(--state-warn);
+  box-shadow: 0 0 5px var(--state-warn);
+  animation: project-dot-attention 2s ease-in-out infinite;
+}
+
+@keyframes project-dot-blink {
+  0%, 100% {
+    opacity: 0.25;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
+}
+
+@keyframes project-dot-attention {
+  0%, 100% {
+    opacity: 0.75;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .project-dot--working,
+  .project-dot--needs_attention {
+    animation: none;
+    opacity: 1;
+  }
+}
+
 /* A project the sidebar lists but cannot offer yet - the empty state, not a disabled item. */
 /* A second line under a table cell: the state behind the state. */
 .tbl-sub {
