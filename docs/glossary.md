@@ -66,7 +66,9 @@ directory itself, as a pool of one.
 **Trunk** — the project's main checkout. Used for integration and landing. ⛔ **Agents never work
 here.** The task branch is created inside the claimed worktree, never in the trunk.
 
-**Landing** — moving a finished task's branch onto the trunk: rebase, run the project's checks, push.
+**Landing** — moving a finished task's branch onto the trunk: rebase, run the project's checks,
+`git push origin HEAD:<target>`. ⛔ **A push, never a local ref move** — so `origin/<target>` is what
+"landed" is measured against everywhere, and your own trunk is behind until you pull.
 Implemented as a `LandingStrategy`; landing takes an exclusive `land:<project>` resource, because
 three workspaces finishing at once would otherwise each rebase onto a main the other two are about to
 move. ⚠️ *Whether* to land is a separate question from *how* — see **finish policy**.
@@ -148,6 +150,12 @@ does.
 holding the context is a prime candidate for a keepalive, because human latency routinely straddles
 the one-hour cache TTL — and a reply into a warm session costs `0.1·C` against `2.0·C` into a dead
 one.
+
+**`queued`** — ⛔ *not a status.* A task the scheduler passed over is still `ready` — it would be
+dispatched this second if a worker could take it — and the reason it was passed over is written to
+`holdReason`, not into the DAG. The UI renames `ready`-with-a-reason to **queued** at render time,
+because inventing a status for "ready but nothing free" would put a lie in the graph to fix a gap in
+the display.
 
 **Mandate** — *the authority a task runs under.* Inherited from its creator and **narrowed, never
 widened**: allowed operations, project scope, remaining lineage depth, fan-out cap. A task that has

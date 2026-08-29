@@ -51,8 +51,9 @@ straight back with the reason.
 with a bar. All of these must hold:
 
 1. **The workspace is clean** — no modified files, no untracked files.
-2. **The branch carries commits** the landing target does not already have. A task that answered a
-   question and changed no file is finished, and reporting it as *landed* would be false.
+2. **The branch carries commits** `origin/<target>` does not already have — the remote, not your
+   local copy of it, for the reason [below](#landed-means-pushed). A task that answered a question
+   and changed no file is finished, and reporting it as *landed* would be false.
 3. **The task's mandate allows `land`.** ⛔ This is authority, not preference: it is inherited down a
    lineage so an agent-spawned subtask cannot grant itself more than its parent had, and **no
    dropdown can widen it**.
@@ -85,9 +86,9 @@ appears under **Loose ends**.
 Three kinds of work that exists and is going nowhere, listed on **Overview**:
 
 - **uncommitted** — files in a pooled workspace that no commit holds.
-- **not landed** — a branch carrying commits the trunk does not have, whose task has finished. ⚠️
-  This is the one that is easiest to lose: nothing is dirty, nothing looks wrong, and the work is
-  simply never mentioned again.
+- **not landed** — a branch carrying commits `origin/<target>` does not have, whose task has
+  finished. ⚠️ This is the one that is easiest to lose: nothing is dirty, nothing looks wrong, and the
+  work is simply never mentioned again.
 - **stashed** — work the tool moved out of the way to free a workspace for the next task. Recover it
   with `git stash list` and `git stash show -p` in the workspace.
 
@@ -95,6 +96,26 @@ Each offers **Land it** (branches with commits only), **Make a task** — which 
 go and deal with it — and **Dismiss**, which only hides the row.
 
 ⛔ None of the three deletes anything.
+
+## Landed means pushed
+
+⭐ **Landing is `git push origin HEAD:<target>`.** The tool never moves your local branch — it has no
+business writing to a checkout you are standing in — so `origin/<target>` is the only ref that
+answers "did this work land?", and everything asks it: the safety bar, the loose-ends scan, and the
+message you get back. Your own trunk only catches up when you `git pull`.
+
+⚠️ **Which means the agent may have landed the work itself, and that is fine.** A project whose
+finishing instruction ends in a push — most `/commit` skills do — leaves a branch with nothing left
+to land. That is success, not a refusal, and the message says so and tells you how far your trunk is
+behind:
+
+> `t22-…` carries no commits `origin/main` does not already have. The work reached `origin/main`
+> without passing through here — your local `main` is 2 commit(s) behind it, so run `git pull` in the
+> trunk to see it.
+
+⛔ Measured 2026-08-29: while the two refs were compared inconsistently, this read as *"carries no
+commits that `main` does not already have"* — true of the ref it named, false of the ref it used, and
+indistinguishable from work that had vanished.
 
 ## Configuring a project
 

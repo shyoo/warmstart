@@ -17,7 +17,7 @@ import {
   CANCELLABLE,
   elapsed,
   IN_FLIGHT,
-  STATUS_LABEL,
+  statusLabel,
   STATUS_TONE,
   Working
 } from '../lib/taskview'
@@ -375,7 +375,7 @@ export function Tasks({
                   </td>
                   <td>
                     <span className={`status ${STATUS_TONE[task.status] ?? ''}`}>
-                      {STATUS_LABEL[task.status] ?? task.status}
+                      {statusLabel(task)}
                       {IN_FLIGHT.has(task.status) && <Working />}
                     </span>
                     {/* The scheduler's own reason, refreshed every tick it passes this task over. */}

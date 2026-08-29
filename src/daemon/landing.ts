@@ -4,6 +4,7 @@ import type { LandingResult, LandingStrategyId, Project, Task } from '@shared/ta
 import { policyFor } from './projects.js'
 import { claim, landResourceId, release, upsertResource } from './resources.js'
 import { addMessage, mandateAllows, setStatus } from './tasks.js'
+import { landedRef } from './worktrees.js'
 import { launchArgs, which } from './which.js'
 import { log } from './log.js'
 
@@ -374,17 +375,26 @@ export async function landTask(ctx: LandingContext): Promise<LandingResult> {
     ctx.task.verification !== 'required' &&
     (await isClean(ctx.workspacePath))
   ) {
-    const base = (await hasRemote(ctx.workspacePath))
-      ? `origin/${policyFor(ctx.project).landingTarget}`
-      : policyFor(ctx.project).landingTarget
+    const target = policyFor(ctx.project).landingTarget
+    const base = await landedRef(ctx.workspacePath, target)
     if ((await commitsAhead(ctx.workspacePath, ctx.branch, base)) === 0) {
+      // ⛔ **Names the ref it compared.** This said `main` while comparing `origin/main`, which is
+      // not a wording quibble: on 2026-08-29 t22's agent pushed its own commit to `origin/main`, and
+      // the operator was told the branch carried nothing `main` did not have while their `main` was
+      // two commits short of it. A message that names the wrong ref is worse than no message,
+      // because it is checkable and it checks out false.
+      // ⚠️ `?? 0` because a base git cannot resolve is not evidence the trunk is behind.
+      const behind = (await commitsAhead(ctx.workspacePath, base, target)) ?? 0
       addMessage(
         ctx.task.id,
         'system',
-        `Nothing to land: \`${ctx.branch}\` carries no commits that ` +
-          `\`${policyFor(ctx.project).landingTarget}\` does not already have, and the workspace is ` +
-          'clean. Work that answers a question rather than changing a file is finished here — the ' +
-          'trunk was not touched.'
+        `Nothing to land: \`${ctx.branch}\` carries no commits that \`${base}\` does not already ` +
+          'have, and the workspace is clean.' +
+          (behind > 0
+            ? ` The work reached \`${base}\` without passing through here — your \`${target}\` is ` +
+              `${behind} commit(s) behind it, so run \`git pull\` in the trunk to see it.`
+            : ' Work that answers a question rather than changing a file is finished here — the ' +
+              'trunk was not touched.')
       )
       return { strategy: strategy.id, ok: true, branch: ctx.branch, nothingToLand: true }
     }

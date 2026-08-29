@@ -19,7 +19,7 @@ import {
   assigneeLabel,
   elapsed,
   IN_FLIGHT,
-  STATUS_LABEL,
+  statusLabel,
   STATUS_TONE,
   Working
 } from '../lib/taskview'
@@ -202,7 +202,7 @@ function TaskDetail({
         <aside className="detail-side">
           <Fact label="status">
             <span className={`status ${STATUS_TONE[task.status] ?? ''}`}>
-              {STATUS_LABEL[task.status] ?? task.status}
+              {statusLabel(task)}
               {IN_FLIGHT.has(task.status) && <Working />}
             </span>
           </Fact>

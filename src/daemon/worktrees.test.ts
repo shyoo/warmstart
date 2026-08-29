@@ -346,3 +346,94 @@ describe('reading where the trunk stands', () => {
     expect(await worktrees.trunkCommitsSince(project, 'deadbeef', 'cafebabe')).toEqual([])
   })
 })
+
+// --------------------------------------------------------------- what counts as landed
+
+/**
+ * A project whose trunk has an `origin` to push to, which is the normal case and the one the
+ * unlanded count used to get wrong.
+ *
+ * ⛔ A real bare repository, cloned into and pushed to. The whole defect lives in the difference
+ * between `main` and `origin/main`, so a fixture with no remote cannot express it — which is
+ * precisely why the original suite did not catch this.
+ */
+function makeProjectWithRemote(): Project {
+  const project = makeProject()
+  const remote = join(dir, `remote${seq}.git`)
+  git(dir, 'init', '--bare', '--initial-branch=main', remote)
+  git(project.root, 'remote', 'add', 'origin', remote)
+  git(project.root, 'push', '-u', 'origin', 'main')
+  return project
+}
+
+describe('what counts as landed', () => {
+  it('measures against origin/<target> when there is a remote', async () => {
+    // ⛔ Measured 2026-08-29 on t22. Landing pushes and never moves the local ref, and an agent may
+    // push to `origin/main` itself — this repo's own /commit skill tells it to. Counting against the
+    // local `main` called work that had already shipped "unlanded", which is how `decideFinish` said
+    // `land` and `landTask` said `nothing-to-land` 109ms apart on the same branch.
+    const project = makeProjectWithRemote()
+    const ws = await worktrees.claimWorkspace(project, 'session-1')
+    const branch = worktrees.branchNameFor(22, 'push my own work')
+    await worktrees.prepareWorkspace(project, ws!, branch)
+    writeFileSync(join(ws!.path, 'shipped.txt'), 'the agent pushed this itself\n')
+    git(ws!.path, 'add', '-A')
+    git(ws!.path, 'commit', '-m', 'work the agent landed on its own')
+    git(ws!.path, 'push', 'origin', 'HEAD:main')
+
+    const state = await worktrees.workspaceState(ws!.path, 'main')
+    expect(state.landedRef).toBe('origin/main')
+    expect(state.unlandedCommits).toBe(0)
+    worktrees.releaseWorkspace(ws!.claimId)
+  })
+
+  it('says how far the local target is behind, which is why the work looks missing', async () => {
+    // ⭐ The number that explains the confusion. The branch is finished and the operator's checkout
+    // does not have it, and those two facts are only reconcilable if somebody says the second one.
+    const project = makeProjectWithRemote()
+    const ws = await worktrees.claimWorkspace(project, 'session-1')
+    await worktrees.prepareWorkspace(project, ws!, worktrees.branchNameFor(22, 'a task'))
+    writeFileSync(join(ws!.path, 'shipped.txt'), 'pushed straight to origin\n')
+    git(ws!.path, 'add', '-A')
+    git(ws!.path, 'commit', '-m', 'one commit that never touched the local trunk')
+    git(ws!.path, 'push', 'origin', 'HEAD:main')
+
+    const state = await worktrees.workspaceState(ws!.path, 'main')
+    expect(state.targetBehind).toBe(1)
+    expect(git(project.root, 'rev-parse', 'main')).not.toBe(git(project.root, 'rev-parse', 'origin/main'))
+    worktrees.releaseWorkspace(ws!.claimId)
+  })
+
+  it('still counts work that has reached neither the trunk nor the remote', async () => {
+    // ⚠️ The half that must not move. Widening what counts as landed is only safe if unpushed work
+    // is still unlanded — otherwise the fix silently completes tasks whose commits exist nowhere but
+    // a pooled worktree that is about to be reused.
+    const project = makeProjectWithRemote()
+    const ws = await worktrees.claimWorkspace(project, 'session-1')
+    await worktrees.prepareWorkspace(project, ws!, worktrees.branchNameFor(23, 'unpushed'))
+    writeFileSync(join(ws!.path, 'local-only.txt'), 'committed, never pushed\n')
+    git(ws!.path, 'add', '-A')
+    git(ws!.path, 'commit', '-m', 'work that exists only here')
+
+    const state = await worktrees.workspaceState(ws!.path, 'main')
+    expect(state.unlandedCommits).toBe(1)
+    expect(state.targetBehind).toBe(0)
+    worktrees.releaseWorkspace(ws!.claimId)
+  })
+
+  it('falls back to the local target in a repo with no remote', async () => {
+    // ⚠️ A repo with no origin is a normal thing to work in and must not become uncountable.
+    const project = makeProject()
+    const ws = await worktrees.claimWorkspace(project, 'session-1')
+    await worktrees.prepareWorkspace(project, ws!, worktrees.branchNameFor(24, 'no remote here'))
+    writeFileSync(join(ws!.path, 'local.txt'), 'nowhere to push\n')
+    git(ws!.path, 'add', '-A')
+    git(ws!.path, 'commit', '-m', 'a commit in a remoteless repo')
+
+    const state = await worktrees.workspaceState(ws!.path, 'main')
+    expect(state.landedRef).toBe('main')
+    expect(state.unlandedCommits).toBe(1)
+    expect(state.targetBehind).toBe(0)
+    worktrees.releaseWorkspace(ws!.claimId)
+  })
+})

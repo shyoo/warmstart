@@ -36,6 +36,8 @@ const clean = (over: Partial<WorkspaceState> = {}): WorkspaceState => ({
   dirtyFiles: [],
   untrackedFiles: [],
   unlandedCommits: 1,
+  landedRef: 'origin/main',
+  targetBehind: 0,
   stashes: 0,
   ...over
 })
@@ -287,6 +289,8 @@ describe('surfacing work that is going nowhere', () => {
     dirtyFiles: [],
     untrackedFiles: [],
     unlandedCommits: 0,
+    landedRef: 'origin/main',
+    targetBehind: 0,
     stashes: 0,
     ...over
   })
@@ -459,5 +463,68 @@ describe('a run whose branch is empty while the trunk moved', () => {
       trunk: moved()
     })
     expect(decision.kind).toBe('ask-agent')
+  })
+})
+
+// ------------------------------------------------- reporting work that landed without us
+
+/**
+ * ⛔ The failure was not that t22 went unlanded — it landed. The failure was that the operator was
+ * told `main` carried its work when `main` was two commits short of it, so a true verdict arrived
+ * wearing a false explanation and read as "the change is gone". 2026-08-29.
+ *
+ * ⚠️ The agent pushing to `origin/<target>` itself is **supported**, not a bug to design out: a
+ * project's finish skill is its own business, and this repo's own tells it to. So the reporting has
+ * to handle it rather than the scheduler having to prevent it.
+ */
+describe('a branch whose work reached the remote without passing through here', () => {
+  it('names the ref it actually compared, not the local one', () => {
+    const decision = finish.decideFinish({
+      task: makeTask(),
+      project: projectWith({ target: 'main' }),
+      state: clean({ unlandedCommits: 0, landedRef: 'origin/main', targetBehind: 2 }),
+      hasChecks: false
+    })
+    expect(decision.kind).toBe('nothing-to-land')
+    expect('reason' in decision && decision.reason).toContain('origin/main')
+  })
+
+  it('says the trunk is behind and what to run about it', () => {
+    // ⭐ The one sentence that turns "my work vanished" into "run git pull".
+    const decision = finish.decideFinish({
+      task: makeTask(),
+      project: projectWith({ target: 'main' }),
+      state: clean({ unlandedCommits: 0, landedRef: 'origin/main', targetBehind: 2 }),
+      hasChecks: false
+    })
+    const reason = 'reason' in decision ? decision.reason : ''
+    expect(reason).toContain('2 commit(s) behind')
+    expect(reason).toContain('git pull')
+  })
+
+  it('stays quiet about pulling when the trunk is level', () => {
+    // ⚠️ The ordinary empty-branch case, which is most of them. A task that only answered a question
+    // must not tell somebody to go and pull work that does not exist.
+    const decision = finish.decideFinish({
+      task: makeTask(),
+      project: projectWith({ target: 'main' }),
+      state: clean({ unlandedCommits: 0, landedRef: 'origin/main', targetBehind: 0 }),
+      hasChecks: false
+    })
+    const reason = 'reason' in decision ? decision.reason : ''
+    expect(reason).not.toContain('git pull')
+  })
+
+  it('still defers to the trunk tripwire, which is the case that must not be explained away', () => {
+    // ⛔ Ordering. An empty branch beside a trunk that moved is t17, and "your trunk is behind, run
+    //    git pull" is exactly the reassuring sentence that would bury it.
+    const decision = finish.decideFinish({
+      task: makeTask(),
+      project: projectWith({ target: 'main' }),
+      state: clean({ unlandedCommits: 0, landedRef: 'origin/main', targetBehind: 2 }),
+      hasChecks: false,
+      trunk: { before: 'aaaaaaaa1111', after: 'bbbbbbbb2222', commits: ['bbbbbbb not ours'] }
+    })
+    expect(decision.kind).toBe('trunk-moved')
   })
 })

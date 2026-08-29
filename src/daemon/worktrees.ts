@@ -473,10 +473,44 @@ export interface WorkspaceState {
   dirtyFiles: string[]
   /** Files git has never seen. ⚠️ Excludes ignored ones, so `node_modules` is not "work". */
   untrackedFiles: string[]
-  /** Commits on this branch that the landing target does not have. */
+  /** Commits on this branch that `landedRef` does not have. */
   unlandedCommits: number
+  /**
+   * The ref `unlandedCommits` was measured against: `origin/<target>` when there is a remote, the
+   * local `<target>` when there is not. ⚠️ Carried so that a message can name the ref it compared
+   * instead of naming a different one — see the note on `landedRef()`.
+   */
+  landedRef: string
+  /**
+   * How far the trunk's local `<target>` is behind `origin/<target>`. ⭐ Not a property of this
+   * workspace at all, and here anyway: it is the number that explains why finished work is missing
+   * from the operator's checkout, and it is free to read while we are already asking git.
+   */
+  targetBehind: number
   /** Stashes taken in this repository. ⚠️ Shared across the pool - the object store is one. */
   stashes: number
+}
+
+/**
+ * Where work has to have reached to count as landed.
+ *
+ * ⛔ **`origin/<target>` whenever there is one.** Landing pushes (`landing.ts`) and never moves the
+ * local ref, and an agent may push to `origin/<target>` itself — this repo's own `/commit` skill
+ * tells it to, and a project's skills are its own business — so the operator's trunk is routinely
+ * behind by the time a run finishes. Measuring against the local ref counts work that has already
+ * shipped as unlanded.
+ *
+ * ⚠️ That is not hypothetical. On 2026-08-29 t22's agent pushed `adb7268` to `origin/main` itself;
+ * `decideFinish` read the local `main`, counted two unlanded commits and decided `land`, and
+ * `landTask` compared against `origin/main` 109ms later, found nothing, and reported "carries no
+ * commits that `main` does not already have" — naming a ref it had not looked at. Two reference
+ * points in one finish path, and the silent one won. There is one here now, and everything that
+ * asks "is this landed?" asks this.
+ */
+export async function landedRef(path: string, target: string): Promise<string> {
+  return (await gitOk(path, ['rev-parse', '--verify', `origin/${target}`]))
+    ? `origin/${target}`
+    : target
 }
 
 /** Is there anything here worth a person's attention? */
@@ -502,6 +536,8 @@ export async function workspaceState(path: string, target: string): Promise<Work
     dirtyFiles: [],
     untrackedFiles: [],
     unlandedCommits: 0,
+    landedRef: target,
+    targetBehind: 0,
     stashes: 0
   }
   if (!existsSync(path)) return state
@@ -534,15 +570,31 @@ export async function workspaceState(path: string, target: string): Promise<Work
     // Leave both empty; the caller reports what it has.
   }
 
+  // ⛔ Resolved before the count and kept, so the number and the ref it came from travel together.
+  try {
+    state.landedRef = await landedRef(path, target)
+  } catch {
+    // Leave it as the local target; a repo git cannot answer for gets the conservative reading.
+  }
+
   if (state.branch) {
     try {
       // ⛔ Against the landing target, not against `--remotes`. A branch whose commits are already on
       // main is finished, however many commits it carries, and counting them as unlanded work would
       // put every completed task on the loose-ends list forever.
-      const commits = await git(path, ['rev-list', '--count', `${target}..${state.branch}`])
+      const commits = await git(path, ['rev-list', '--count', `${state.landedRef}..${state.branch}`])
       state.unlandedCommits = Number.parseInt(commits, 10) || 0
     } catch {
       // A target that does not resolve - a fresh repo with no main yet - is not an error here.
+    }
+  }
+
+  if (state.landedRef !== target) {
+    try {
+      const behind = await git(path, ['rev-list', '--count', `${target}..${state.landedRef}`])
+      state.targetBehind = Number.parseInt(behind, 10) || 0
+    } catch {
+      // No local target yet. Nothing to be behind.
     }
   }
 

@@ -174,10 +174,16 @@ These are not preferences; breaking one breaks the product.
   task changed no file and was reported as *"Landed as a166a6a onto main"* — every step had
   succeeded (clean workspace, no-op rebase, passing checks, a push that moved nothing, and
   `rev-parse HEAD` returning the commit already there) and the sentence was still false. Count
-  `rev-list --count <target>..<branch>` **before** choosing a strategy. ⚠️ Zero commits with a clean
-  workspace is a *success* that touched no trunk; zero commits with a dirty one is work about to be
-  destroyed by the next dispatch into a pooled worktree, and collapsing the two replaces an urgent
-  warning with a shrug.
+  `rev-list --count $(landedRef)..<branch>` **before** choosing a strategy. ⚠️ Zero commits with a
+  clean workspace is a *success* that touched no trunk; zero commits with a dirty one is work about
+  to be destroyed by the next dispatch into a pooled worktree, and collapsing the two replaces an
+  urgent warning with a shrug.
+- ⛔ **"Landed" is measured against `origin/<target>`, and `landedRef()` in `worktrees.ts` is the only
+  place that decides.** Landing is a push; the tool never moves a local ref, so the operator's trunk
+  is behind until they pull. Measured 2026-08-29: `workspaceState` counted against local `main` while
+  `landTask` compared against `origin/main` and *printed* `main`, and a task whose agent had pushed
+  its own work was reported in words indistinguishable from work that had vanished. ⚠️ Any message
+  about landing must name the ref it compared.
 - ⛔ **Cancel is not delete.** Cancel winds a run down through the preemption protocol into a resting
   state (`paused_user` / `draft` / `cancelled`) and destroys nothing. Delete is separate, human-only,
   soft by default, and **never removes runs** — they are the estimator's training data and the record

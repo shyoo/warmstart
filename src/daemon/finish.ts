@@ -211,9 +211,20 @@ export function decideFinish({ task, project, state, hasChecks, trunk }: FinishI
         commits: trunk.commits
       }
     }
+    const localTarget = project ? policyFor(project).landingTarget : 'the target'
+    // ⭐ And if the trunk is behind, say so here rather than leaving somebody to discover it. This
+    //    is the shape t22 arrived in on 2026-08-29: the agent pushed its own commit to
+    //    `origin/main`, so the branch was genuinely finished, and the operator — whose `main` was
+    //    two commits short — read "nothing to land" as "the work is gone".
     return {
       kind: 'nothing-to-land',
-      reason: `\`${state.branch}\` carries no commits the target does not already have`
+      reason:
+        state.targetBehind > 0
+          ? `\`${state.branch}\` carries no commits \`${state.landedRef}\` does not already have. ` +
+            `The work reached \`${state.landedRef}\` without passing through here — your local ` +
+            `\`${localTarget}\` is ${state.targetBehind} commit(s) behind it, so run ` +
+            '`git pull` in the trunk to see it.'
+          : `\`${state.branch}\` carries no commits \`${state.landedRef}\` does not already have`
     }
   }
 

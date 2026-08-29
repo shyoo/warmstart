@@ -38,6 +38,26 @@ export const STATUS_TONE: Record<string, string> = {
 export const STATUS_LABEL: Record<string, string> = { assigned: 'dispatching' }
 
 /**
+ * The same rename, asked per task, because one status covers two situations a person tells apart.
+ *
+ * ⛔ Still not a status. `setHoldReason` in tasks.ts argues the case: the task really is `ready` -
+ * the scheduler would dispatch it this second if a worker could take it - and inventing a domain
+ * status for "ready but nothing free" would put a lie in the DAG to paper over a gap in the UI. So
+ * the *word* changes here and the DAG does not.
+ *
+ * ⚠️ Driven by `holdReason` rather than by counting workers, because the scheduler has already done
+ * that arithmetic and written down its answer. A renderer that re-derived "is anything free?" would
+ * be a second opinion on a question with an authoritative one, and the two would disagree the first
+ * time a gate the UI does not know about (quota, capability, a missing baseline) held a task back.
+ * ⭐ Measured 2026-08-29: t22 sat at `ready` for seven minutes with `Antigravity at capacity`
+ * written on it, and read as a task waiting on the operator to press something.
+ */
+export function statusLabel(task: Pick<Task, 'status' | 'holdReason'>): string {
+  if (task.status === 'ready' && task.holdReason) return 'queued'
+  return STATUS_LABEL[task.status] ?? task.status
+}
+
+/**
  * Statuses where something is happening and the next change arrives on its own.
  *
  * ⚠️ `ready` is in here, and that is the whole point of the list. A freshly filed task sits at

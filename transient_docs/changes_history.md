@@ -1563,3 +1563,48 @@ thread, and the run still closes normally. What is refused is the *verdict*, not
 ⚠️ It has never fired in anger, and cannot easily be made to: the failure it watches for is fixed, so
 provoking it means reintroducing the bug on purpose. What is proven is the decision rule (seven
 cases, three mutations) and the readings (seven cases against real repositories).
+
+## Two reference points for "landed", and the one that stayed silent (2026-08-29)
+
+A live parallel run with one worker produced two complaints, and neither was the bug it looked like.
+
+**t22 did not fail to land — it landed, and was described wrongly.** `adb7268` was on `origin/main`
+before the controller ever looked; the agent had pushed it itself, following this repo's `/commit`
+skill, whose step 6 tells a worktree to `git push origin HEAD:main`. What the operator was told was
+that the branch *"carries no commits that `main` does not already have"* — and the finish path had in
+fact compared against `origin/main`, which their local `main` was two commits short of. So the
+sentence was true of the ref it named, false of the ref it used, and read exactly like work that had
+evaporated. The timings say the same thing: `finish: land` → `completed` in **109 ms**, against ~27 s
+and a `landed tNN … onto main` line for t20 and t21 the same hour.
+
+⛔ **The defect was two definitions of "landed" in one path.** `workspaceState` counted against the
+local `<target>`; `landTask`'s early return compared against `origin/<target>` and printed
+`<target>`. Both are defensible alone. The fix is that neither is a choice any more: `landedRef()` in
+`worktrees.ts` is the one definition — `origin/<target>` when it resolves, the local branch when
+there is no remote — and `workspaceState`, `decideFinish` and `landTask` all consume it.
+
+⭐ **`origin/<target>` is the right one because landing is a push.** `landing.ts` runs
+`git push origin HEAD:<target>` and never moves a local ref; the operator's trunk is updated by their
+own `git pull` and nothing else. `main`'s reflog on this machine contains only `pull: Fast-forward`
+entries — not one land — which is the evidence that the local branch was never the thing being
+measured.
+
+⚠️ **Which makes an agent that pushes its own work a supported outcome, not a refusal.** Landing
+mechanics differ per project and a finishing instruction that ends in a push is common, so every
+message now names the ref it compared and, when `targetBehind > 0`, says how far the operator's trunk
+trails it and to run `git pull`. ⚠️ `?? 0` on that count, because a base git cannot resolve is not
+evidence the trunk is behind.
+
+**The other complaint was a word.** A task held because the only worker was busy sat at `ready` with
+`Antigravity at capacity` rendered underneath it, and read as a task waiting on the operator to press
+something. ⛔ **It is still `ready` in the DAG.** `setHoldReason` had already argued the case —
+inventing a status for "ready but nothing free" puts a lie in the graph to fix a gap in the display —
+so `statusLabel()` renames it to **queued** at render time, the same trick `assigned` → `dispatching`
+was already using. ⚠️ Driven by `holdReason`, not by the renderer counting workers: the scheduler has
+done that arithmetic and written the answer down, and a second opinion would disagree the first time
+a gate the UI does not model held a task back.
+
+⚠️ **A branch is still stranded when the agent lands its own work.** The early return does not
+detach-and-delete the way the success path does, so one dead branch accumulates per agent-pushed
+task. Deferred deliberately — it is landing mechanics, and the branch is provably contained in
+`origin/<target>` by the time anyone would remove it.
