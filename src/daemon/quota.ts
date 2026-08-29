@@ -293,7 +293,7 @@ export function lastQuotaReading(workerId: string): DatedQuota | null {
   // The newest attempt failed and this is an older reading: say so, rather than presenting the old
   // numbers as though nothing had gone wrong since.
   return newest && newest.sampledAt > withWindows.sampledAt && newest.error
-    ? { ...withWindows, error: newest.error }
+    ? { ...withWindows, error: newest.error, stale: true }
     : withWindows
 }
 
@@ -462,6 +462,7 @@ export class QuotaPoller {
     let refreshed = false
 
     for (const w of listWorkers()) {
+      if (w.retiredAt || !w.enabled || w.health?.state === 'suspect') continue
       try {
         // ⚠️ Identity is a cached belief and nothing used to expire it. ClaudeFirst read "not signed
         // in" on 2026-08-27 while its isolation root held a valid credential, because the `false`
@@ -470,10 +471,21 @@ export class QuotaPoller {
         await refreshIdentityIfStale(w.id, IDENTITY_STALE_AFTER_MS)
         if (!refreshed && shouldBackgroundRefresh(w.id)) {
           refreshed = true
-          this.listener(await refreshUsage(w.id))
+          await refreshUsage(w.id)
+          const reading = lastQuotaReading(w.id)
+          if (reading) this.listener(reading)
           continue
         }
-        this.listener(await probeWorker(w.id))
+        // ⛔ An adapter whose usage is screen-answered writes no cache to disk: `probeQuota` returns
+        // empty windows with an error. Running it here would wipe out the last successful reading and
+        // replace it with `quota unknown` every five minutes.
+        const a = adapter(w.adapterId)
+        if (a.info.usageRefresh?.answer === 'screen' || a.info.capabilities.quotaProbe === 'none') {
+          continue
+        }
+        await probeWorker(w.id)
+        const reading = lastQuotaReading(w.id)
+        if (reading) this.listener(reading)
       } catch (err) {
         log.warn(`quota probe failed for ${w.label}:`, err)
       }

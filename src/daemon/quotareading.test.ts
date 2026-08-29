@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import type { DatedQuota } from './quota.js'
 
 /**
  * What the operator is shown about an account's window, as opposed to what the scheduler gates on.
@@ -122,6 +123,15 @@ describe('a probe that failed on top of a reading that worked', () => {
     expect(quota.lastQuotaReading(WORKER)?.error).toBeUndefined()
   })
 
+  it('marks a recent reading stale when the newest check failed', () => {
+    sample({ ageMs: 60_000, windows: [['session', 11]] })
+    sample({ ageMs: 1000, error: 'probe failed' })
+    const reading = quota.lastQuotaReading(WORKER)
+    expect(reading?.stale).toBe(true)
+    expect(reading?.error).toBe('probe failed')
+    expect(reading?.windows).toHaveLength(1)
+  })
+
   it('still answers "nothing" for an account that has never been read', () => {
     // ⚠️ `never probed` and `we last saw 11%` are different states and the card draws them
     // differently. Inventing a reading here would be the opposite failure to the one being fixed.
@@ -142,5 +152,86 @@ describe('what the scheduler reads, which did not change', () => {
     const gated = quota.lastQuota(WORKER)
     expect(gated?.windows).toHaveLength(0)
     expect(gated?.stale).toBe(true)
+  })
+})
+
+describe('QuotaPoller.sweep', () => {
+  const DISABLED = 'cccccccc-0000-4000-8000-000000000002'
+  const AGY = 'cccccccc-0000-4000-8000-000000000003'
+  const SUSPECT = 'cccccccc-0000-4000-8000-000000000004'
+
+  beforeAll(() => {
+    db.db()
+      .prepare(
+        `insert into workers (id, label, adapter_id, isolation_root, enabled, human_occupied,
+                              max_concurrent, role, health_json, created_at)
+         values (?,?,?,?,?,?,?,?,?,?)`
+      )
+      .run(DISABLED, 'disabled-worker', 'claude-code', join(dir, 'w2'), 0, 0, 1, 'worker', null, Date.now())
+
+    db.db()
+      .prepare(
+        `insert into workers (id, label, adapter_id, isolation_root, enabled, human_occupied,
+                              max_concurrent, role, health_json, created_at)
+         values (?,?,?,?,?,?,?,?,?,?)`
+      )
+      .run(AGY, 'agy-worker', 'antigravity-cli', join(dir, 'w3'), 1, 0, 1, 'worker', null, Date.now())
+
+    db.db()
+      .prepare(
+        `insert into workers (id, label, adapter_id, isolation_root, enabled, human_occupied,
+                              max_concurrent, role, health_json, created_at)
+         values (?,?,?,?,?,?,?,?,?,?)`
+      )
+      .run(
+        SUSPECT,
+        'suspect-worker',
+        'claude-code',
+        join(dir, 'w4'),
+        1,
+        0,
+        1,
+        'worker',
+        JSON.stringify({ state: 'suspect', reason: 'dead run' }),
+        Date.now()
+      )
+  })
+
+  it('skips disabled and suspect workers during background sweep', async () => {
+    sample({ ageMs: 60_000, windows: [['session', 10]] })
+    db.db()
+      .prepare(
+        `insert into quota_samples (worker_id, window_id, label, percent, resets_at, source, sampled_at)
+         values (?,?,?,?,?,?,?)`
+      )
+      .run(AGY, 'session', 'session', 25, Date.now() + 3600_000, 'cli', Date.now() - 60_000)
+    const heard: DatedQuota[] = []
+    const poller = new quota.QuotaPoller((q) => heard.push(q))
+
+    await poller.sweep()
+
+    expect(heard.some((q) => q.workerId === DISABLED)).toBe(false)
+    expect(heard.some((q) => q.workerId === SUSPECT)).toBe(false)
+  })
+
+  it('does not wipe out screen-answered adapter reading with probeWorker when not refreshing', async () => {
+    sample({ ageMs: 60_000, windows: [['session', 10]] })
+    // Seed an existing reading on AGY
+    db.db()
+      .prepare(
+        `insert into quota_samples (worker_id, window_id, label, percent, resets_at, source, sampled_at)
+         values (?,?,?,?,?,?,?)`
+      )
+      .run(AGY, 'session', 'session', 25, Date.now() + 3600_000, 'cli', Date.now() - 60_000)
+
+    const heard: DatedQuota[] = []
+    const poller = new quota.QuotaPoller((q) => heard.push(q))
+
+    await poller.sweep()
+
+    // It should not have probed AGY with probeWorker (which would write windows: [] sample)
+    const after = quota.lastQuota(AGY)
+    expect(after?.windows).toHaveLength(1)
+    expect(after?.windows[0]?.percent).toBe(25)
   })
 })

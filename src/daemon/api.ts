@@ -20,6 +20,7 @@ import {
   updateWorker
 } from './workers.js'
 import { lastQuota, lastQuotaReading, refreshUsage } from './quota.js'
+import { emit } from './events.js'
 import {
   backscroll,
   closeSession,
@@ -177,7 +178,19 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
       // The background sweep re-reads identity too and deliberately does not, because an expired
       // subscription answers `auth status` exactly as a live one does.
       await refreshIdentity(p.id, true)
-      return await refreshUsage(p.id)
+      await refreshUsage(p.id)
+      const reading =
+        lastQuotaReading(p.id) ??
+        lastQuota(p.id) ?? {
+          workerId: p.id,
+          windows: [],
+          sampledAt: Date.now(),
+          source: 'unknown',
+          ageMs: 0,
+          stale: true
+        }
+      emit({ type: 'quota.changed', quota: reading })
+      return reading
     },
 
     'costmodel.list': () => costModels().map((m) => m.summary()),

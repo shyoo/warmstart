@@ -1621,3 +1621,26 @@ name; what was never checked is that they cut it from the ref the work actually 
 `baseRef` now delegates to `landedRef` instead of repeating its two lines, because they were separate
 copies of one rule and that is precisely the shape of the bug this whole entry is about: a resumed
 task branching off a trunk two commits behind would open with its own finished work missing.
+
+## Antigravity quota cycling to unknown, and probing disabled workers in the background (2026-08-29)
+
+Two poller bugs discovered during live fleet runs:
+
+- ⛔ **Antigravity quota reading was wiped out every 5 minutes.** Antigravity writes no usage cache to disk
+  (`answer: 'screen'`); its quota comes exclusively from driving `/usage` in an interactive PTY session.
+  When the background sweep ran, `shouldBackgroundRefresh` was false for 30 minutes after a successful
+  refresh, and the sweep fell through to `probeWorker`. Calling `probeWorker` on an adapter without a disk
+  cache recorded a sample with empty windows and emitted it over the wire, wiping out the fleet strip's
+  badge and replacing it with `quota unknown` for 50% of the time. `QuotaPoller.sweep()` now skips
+  `probeWorker` for screen-answered and unprobed adapters when a background refresh is not due.
+
+- ⭐ **A failed probe marks the previous reading stale rather than burying it with unknown.**
+  When a probe or refresh fails on an account that already had a successful reading, `lastQuotaReading`
+  preserves the older windows, sets `stale: true`, and attaches the error. `quota.changed` events and the
+  `worker.probe` RPC now emit and return `lastQuotaReading` so the fleet strip shows the last known numbers
+  with the `stale` marker and `last check failed` notice instead of dropping to `quota unknown`.
+
+- ⛔ **Disabled and suspect workers were being probed in the background sweep.** `QuotaPoller.sweep()` was
+  iterating over every worker from `listWorkers()` including disabled ones (`!w.enabled`), probing their
+  identity and logging `probed <Worker>: session X%`. `sweep()` now skips workers that are disabled,
+  retired, or suspect/quarantined.
