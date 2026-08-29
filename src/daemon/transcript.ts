@@ -414,7 +414,7 @@ export function creditStreamTurn(session: Session, usage: StreamUsage): void {
       usage.cacheRead,
       usage.cacheWrite,
       0,
-      null,
+      usage.input,
       session.model ? (model.modelSpec(session.model)?.tokenizer ?? null) : null,
       model.id
     ).changes
@@ -424,9 +424,9 @@ export function creditStreamTurn(session: Session, usage: StreamUsage): void {
 
   db()
     .prepare(
-      'update sessions set tokens_since_compact = tokens_since_compact + ? where id = ?'
+      'update sessions set context_tokens = ?, tokens_since_compact = tokens_since_compact + ? where id = ?'
     )
-    .run(usage.input + usage.output + usage.cacheWrite, session.id)
+    .run(usage.input, usage.input + usage.output + usage.cacheWrite, session.id)
 
   creditTurn(session.id, {
     input: usage.input,

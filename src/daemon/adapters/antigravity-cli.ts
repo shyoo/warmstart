@@ -310,45 +310,187 @@ function decodeStream(record: Record<string, unknown>): StreamEvent | StreamEven
  * reflows, it truncates at the viewport, and this panel is scrollable, so a half-read set of windows
  * is a normal outcome and must never be stored as a reading.
  */
-export function parseUsageScreen(screen: string, now = Date.now()): QuotaWindow[] | null {
-  if (!/Models\s*&\s*Quota/.test(screen)) return null
+export interface ContextSnapshot {
+  model: string | null
+  usedTokens: number
+  windowTokens: number
+  percent: number
+  breakdown?: {
+    systemPrompt?: number
+    systemTools?: number
+    userMessages?: number
+    agentResponses?: number
+    toolCalls?: number
+    skills?: number
+    subagents?: number
+    filesAndDirs?: number
+  }
+}
 
-  // ⛔ Keyed by window id so repaints across backscroll do not duplicate windows.
-  const windowsById = new Map<string, QuotaWindow>()
-  let group: { id: string; label: string } | null = null
-  let kind: 'weekly' | '5h' | null = null
+/** Parses token count representations e.g. "28.9k" -> 28900, "1.0M" -> 1000000, "1,048,576" -> 1048576 */
+export function parseTokenCount(str: string): number {
+  const cleaned = str.trim().replace(/,/g, '')
+  const match = /^([\d.]+)\s*([kmgt])?$/i.exec(cleaned)
+  if (!match) return 0
+  const val = Number.parseFloat(match[1] ?? '0')
+  const unit = (match[2] ?? '').toLowerCase()
+  if (unit === 'k') return Math.round(val * 1_000)
+  if (unit === 'm') return Math.round(val * 1_000_000)
+  if (unit === 'g') return Math.round(val * 1_000_000_000)
+  return Math.round(val)
+}
+
+/**
+ * Parses the `/context` command modal output from Antigravity CLI.
+ *
+ * Examples:
+ * ```
+ * └ Context Usage
+ * ◉ ◉ ◉ ◉ ◉ ◉ ◉ ◉ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □     Gemini 3.7 Flash (High) · 28.9k/1.0M tokens
+ * □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □      (2.8%)
+ * ```
+ */
+export function parseContextScreen(screen: string): ContextSnapshot | null {
+  if (!/Context\s+(?:Usage|Breakdown)/i.test(screen)) return null
+
+  let usedTokens = 0
+  let windowTokens = 1_000_000
+  let percent: number | null = null
+  let model: string | null = null
+  const breakdown: NonNullable<ContextSnapshot['breakdown']> = {}
 
   const lines = screen.split(/\r?\n/)
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? ''
 
-    const heading = /^\s*([A-Z][A-Z0-9 &]*?)\s+MODELS\s*$/.exec(line)
-    if (heading?.[1]) {
-      const name = heading[1].trim()
-      group = { id: name.toLowerCase().replace(/[^a-z0-9]+/g, '-'), label: titleCase(name) }
-      kind = null
-      continue
+    // Match header: e.g. "Gemini 3.7 Flash (High) · 28.9k/1.0M tokens"
+    const headerMatch = /([A-Za-z0-9. ()-]+?)\s*·\s*([0-9.,]+[kmgt]?)\s*\/\s*([0-9.,]+[kmgt]?)\s*tokens/i.exec(line)
+    if (headerMatch?.[2] && headerMatch?.[3]) {
+      model = headerMatch[1]?.trim() || null
+      usedTokens = parseTokenCount(headerMatch[2])
+      windowTokens = parseTokenCount(headerMatch[3])
     }
 
-    if (/Weekly Limit Remaining/.test(line)) kind = 'weekly'
-    else if (/Five Hour Limit Remaining/.test(line)) kind = '5h'
+    // Match older/alternative format: "0 / 1,048,576 tokens used"
+    const usedMatch = /([0-9.,]+[kmgt]?)\s*\/\s*([0-9.,]+[kmgt]?)\s*tokens\s+used/i.exec(line)
+    if (usedMatch?.[1] && usedMatch?.[2]) {
+      usedTokens = parseTokenCount(usedMatch[1])
+      windowTokens = parseTokenCount(usedMatch[2])
+    }
 
-    // The bar line carries the precise figure. `Quota available` (or `Quota ava…`) is the CLI's
-    // way of writing 100% remaining with no reset worth stating.
-    const bar = /\]\s*(?:([\d.]+)\s*%|(?:Quota\s+ava[a-z….]*))/i.exec(line)
-    if (!bar || !group || !kind) continue
+    // Match percentage in parentheses e.g. "(2.8%)" or bar percentage "0.00%"
+    if (
+      percent === null &&
+      !/Free space|User messages|Agent responses|System prompt|System tools|Skills|Subagents|Tool definitions|Active files/i.test(
+        line
+      )
+    ) {
+      const pctMatch = /(?:\(([0-9.]+)%\)|\]\s*([0-9.]+)\s*%)/.exec(line)
+      if (pctMatch) {
+        const p = Number.parseFloat(pctMatch[1] ?? pctMatch[2] ?? '')
+        if (Number.isFinite(p)) percent = p
+      }
+    }
 
-    const remaining = bar[1] !== undefined ? Number.parseFloat(bar[1]) : 100
-    if (!Number.isFinite(remaining) || remaining < 0 || remaining > 100) continue
+    // Match breakdown items
+    const systemPromptMatch = /System\s+prompt:\s*([0-9.,]+[kmgt]?)/i.exec(line)
+    if (systemPromptMatch?.[1]) breakdown.systemPrompt = parseTokenCount(systemPromptMatch[1])
 
-    const id = `${kind}:${group.id}`
-    windowsById.set(id, {
-      id,
-      label: `${group.label} · ${kind === 'weekly' ? 'weekly' : '5-hour'}`,
-      percent: Math.round((100 - remaining) * 100) / 100,
-      resetsAt: readReset(lines[i + 1] ?? '', now)
-    })
-    kind = null
+    const systemToolsMatch = /(?:System\s+tools|Tool\s+definitions)[:\s]+([0-9.,]+[kmgt]?)/i.exec(line)
+    if (systemToolsMatch?.[1]) breakdown.systemTools = parseTokenCount(systemToolsMatch[1])
+
+    const userMsgMatch = /User\s+messages[:\s]+([0-9.,]+[kmgt]?)/i.exec(line)
+    if (userMsgMatch?.[1]) breakdown.userMessages = parseTokenCount(userMsgMatch[1])
+
+    const agentRespMatch = /Agent\s+responses[:\s]+([0-9.,]+[kmgt]?)/i.exec(line)
+    if (agentRespMatch?.[1]) breakdown.agentResponses = parseTokenCount(agentRespMatch[1])
+
+    const toolCallsMatch = /Tool\s+calls[:\s]+([0-9.,]+[kmgt]?)/i.exec(line)
+    if (toolCallsMatch?.[1]) breakdown.toolCalls = parseTokenCount(toolCallsMatch[1])
+
+    const skillsMatch = /Skills(?: & Plugins)?[:\s]+([0-9.,]+[kmgt]?)/i.exec(line)
+    if (skillsMatch?.[1]) breakdown.skills = parseTokenCount(skillsMatch[1])
+
+    const subagentsMatch = /Subagents[:\s]+([0-9.,]+[kmgt]?)/i.exec(line)
+    if (subagentsMatch?.[1]) breakdown.subagents = parseTokenCount(subagentsMatch[1])
+
+    const filesMatch = /Active\s+files\s*&\s*directories[:\s]+([0-9.,]+[kmgt]?)/i.exec(line)
+    if (filesMatch?.[1]) breakdown.filesAndDirs = parseTokenCount(filesMatch[1])
+  }
+
+  if (percent === null && windowTokens > 0) {
+    percent = Math.round((usedTokens / windowTokens) * 10000) / 100
+  }
+
+  return {
+    model,
+    usedTokens,
+    windowTokens,
+    percent: percent ?? 0,
+    breakdown: Object.keys(breakdown).length > 0 ? breakdown : undefined
+  }
+}
+
+export function parseUsageScreen(screen: string, now = Date.now()): QuotaWindow[] | null {
+  const hasUsage = /Models\s*&\s*Quota/.test(screen)
+  const hasContext = /Context\s+(?:Usage|Breakdown)/i.test(screen)
+
+  if (!hasUsage && !hasContext) return null
+
+  // ⛔ Keyed by window id so repaints across backscroll do not duplicate windows.
+  const windowsById = new Map<string, QuotaWindow>()
+
+  if (hasUsage) {
+    let group: { id: string; label: string } | null = null
+    let kind: 'weekly' | '5h' | null = null
+
+    const lines = screen.split(/\r?\n/)
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i] ?? ''
+
+      const heading = /^\s*([A-Z][A-Z0-9 &]*?)\s+MODELS\s*$/.exec(line)
+      if (heading?.[1]) {
+        const name = heading[1].trim()
+        group = { id: name.toLowerCase().replace(/[^a-z0-9]+/g, '-'), label: titleCase(name) }
+        kind = null
+        continue
+      }
+
+      if (/Weekly Limit Remaining/.test(line)) kind = 'weekly'
+      else if (/Five Hour Limit Remaining/.test(line)) kind = '5h'
+
+      // The bar line carries the precise figure. `Quota available` (or `Quota ava…`) is the CLI's
+      // way of writing 100% remaining with no reset worth stating.
+      const bar = /\]\s*(?:([\d.]+)\s*%|(?:Quota\s+ava[a-z….]*))/i.exec(line)
+      if (!bar || !group || !kind) continue
+
+      const remaining = bar[1] !== undefined ? Number.parseFloat(bar[1]) : 100
+      if (!Number.isFinite(remaining) || remaining < 0 || remaining > 100) continue
+
+      const id = `${kind}:${group.id}`
+      windowsById.set(id, {
+        id,
+        label: `${group.label} · ${kind === 'weekly' ? 'weekly' : '5-hour'}`,
+        percent: Math.round((100 - remaining) * 100) / 100,
+        resetsAt: readReset(lines[i + 1] ?? '', now)
+      })
+      kind = null
+    }
+  }
+
+  if (hasContext) {
+    const ctx = parseContextScreen(screen)
+    if (ctx) {
+      const windowLabel = ctx.windowTokens >= 1_000_000
+        ? `${(ctx.windowTokens / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`
+        : `${Math.round(ctx.windowTokens / 1_000)}k`
+      windowsById.set('context', {
+        id: 'context',
+        label: `Context · ${windowLabel}`,
+        percent: Math.round(ctx.percent * 100) / 100,
+        resetsAt: null
+      })
+    }
   }
 
   const windows = Array.from(windowsById.values())
@@ -357,39 +499,33 @@ export function parseUsageScreen(screen: string, now = Date.now()): QuotaWindow[
   // ⛔ A group must contribute BOTH of its windows or the read is not trustworthy. This panel is
   // taller than a default terminal and scrolls - its own footer says "(1-27 of 30 lines)" - so a
   // viewport that cuts it mid-group is the normal failure, not an exotic one.
-  //
-  // ⚠️ Measured 2026-08-27 against the live account at 30 rows: this returned Gemini weekly, Gemini
-  // 5-hour and Claude-and-GPT weekly, and silently dropped Claude-and-GPT's 5-hour window. That is
-  // the worst possible thing to lose quietly, because the missing window is a candidate for the
-  // `5h` promotion below - so the gate would have been handed Gemini's 33% while the group the run
-  // actually used sat somewhere unmeasured. A short read must fail, not under-report.
-  const perGroup = new Map<string, number>()
-  for (const w of windows) {
-    const group = w.id.slice(w.id.indexOf(':') + 1)
-    perGroup.set(group, (perGroup.get(group) ?? 0) + 1)
-  }
-  for (const [group, count] of perGroup) {
-    if (count < 2) {
-      log.warn(
-        `agy /usage panel was cut off: "${group}" showed ${count} of 2 windows. The probe session's ` +
-          'viewport is too short for this panel - no reading is recorded rather than a partial one.'
-      )
-      return null
+  if (hasUsage) {
+    const perGroup = new Map<string, number>()
+    for (const w of windows) {
+      if (w.id === 'context') continue
+      const group = w.id.slice(w.id.indexOf(':') + 1)
+      perGroup.set(group, (perGroup.get(group) ?? 0) + 1)
+    }
+    for (const [group, count] of perGroup) {
+      if (count < 2) {
+        log.warn(
+          `agy /usage panel was cut off: "${group}" showed ${count} of 2 windows. The probe session's ` +
+            'viewport is too short for this panel - no reading is recorded rather than a partial one.'
+        )
+        return null
+      }
+    }
+
+    // ⛔ Downstream asks for the five-hour window by the id `session` or `5h` - the quota gate, the
+    // reset countdown and the reserve all do. Antigravity has **two**, because Gemini and Claude/GPT
+    // are metered separately, and nothing in a quota snapshot knows which group the next run will use.
+    const fiveHour = windows.filter((w) => w.id.startsWith('5h:'))
+    if (fiveHour.length > 0) {
+      const busiest = fiveHour.reduce((a, b) => (b.percent > a.percent ? b : a))
+      busiest.id = '5h'
     }
   }
 
-  // ⛔ Downstream asks for the five-hour window by the id `session` or `5h` - the quota gate, the
-  // reset countdown and the reserve all do. Antigravity has **two**, because Gemini and Claude/GPT
-  // are metered separately, and nothing in a quota snapshot knows which group the next run will use.
-  // ⚠️ So the busiest one is promoted, which is the conservative direction: over-stating pressure
-  // costs a delayed dispatch, under-stating it costs a run that dies at a window boundary holding
-  // context it cannot save. The label still names the group, so the promotion is visible rather than
-  // silently averaging two different accounts' worth of budget into one number.
-  const fiveHour = windows.filter((w) => w.id.startsWith('5h:'))
-  if (fiveHour.length > 0) {
-    const busiest = fiveHour.reduce((a, b) => (b.percent > a.percent ? b : a))
-    busiest.id = '5h'
-  }
   return windows
 }
 

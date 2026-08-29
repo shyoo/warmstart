@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { parseUsageScreen } from './antigravity-cli.js'
+import { parseContextScreen, parseTokenCount, parseUsageScreen } from './antigravity-cli.js'
 
 /**
  * Reading Antigravity's `/usage` panel.
@@ -142,5 +142,76 @@ describe('the /usage panel', () => {
     const claudeFiveHour = windows?.find((w) => w.label === 'Claude and GPT · 5-hour')
     expect(claudeFiveHour?.percent).toBe(0)
     expect(claudeFiveHour?.resetsAt).toBeNull()
+  })
+})
+
+describe('parseTokenCount', () => {
+  it('parses abbreviations and commas into exact numbers', () => {
+    expect(parseTokenCount('28.9k')).toBe(28900)
+    expect(parseTokenCount('1.0M')).toBe(1000000)
+    expect(parseTokenCount('1,048,576')).toBe(1048576)
+    expect(parseTokenCount('145')).toBe(145)
+    expect(parseTokenCount('0')).toBe(0)
+  })
+})
+
+describe('parseContextScreen', () => {
+  const CONTEXT_SCREEN = `
+└ Context Usage
+◉ ◉ ◉ ◉ ◉ ◉ ◉ ◉ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □     Gemini 3.7 Flash (High) · 28.9k/1.0M tokens
+□ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □      (2.8%)
+□ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □     Token usage by category
+□ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □     ◉ User messages: 1 tokens (0.0%)
+□ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □     ◉ Agent responses: 145 tokens (0.0%)
+□ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □     ◉ Tool calls: 0 tokens (0.0%)
+□ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □     ⛁ System prompt: 12.7k tokens (1.2%)
+□ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □     ⛁ System tools: 14.7k tokens (1.4%)
+□ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □     ⛁ Skills: 699 tokens (0.1%)
+□ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □     ⛁ Subagents: 653 tokens (0.1%)
+□ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □ □     □ Free space: 1.0M (97.2%)
+`
+
+  it('extracts tokens, capacity, percentage, and breakdown', () => {
+    const snap = parseContextScreen(CONTEXT_SCREEN)
+    expect(snap).not.toBeNull()
+    expect(snap?.model).toBe('Gemini 3.7 Flash (High)')
+    expect(snap?.usedTokens).toBe(28900)
+    expect(snap?.windowTokens).toBe(1000000)
+    expect(snap?.percent).toBe(2.8)
+    expect(snap?.breakdown?.systemPrompt).toBe(12700)
+    expect(snap?.breakdown?.systemTools).toBe(14700)
+    expect(snap?.breakdown?.skills).toBe(699)
+    expect(snap?.breakdown?.subagents).toBe(653)
+    expect(snap?.breakdown?.userMessages).toBe(1)
+    expect(snap?.breakdown?.agentResponses).toBe(145)
+  })
+
+  it('parses a fresh session with 0 tokens', () => {
+    const freshScreen = `
+└ Context Breakdown
+  Context Window Usage (Session Tokens)
+    [░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░] 0.00%
+    0 / 1,048,576 tokens used
+  Tokens by Category
+    System instructions                                0  (0%)
+    Conversation history                               0  (0%)
+`
+    const snap = parseContextScreen(freshScreen)
+    expect(snap).not.toBeNull()
+    expect(snap?.usedTokens).toBe(0)
+    expect(snap?.windowTokens).toBe(1048576)
+    expect(snap?.percent).toBe(0)
+  })
+
+  it('parseUsageScreen returns a QuotaWindow for context when /context is present', () => {
+    const windows = parseUsageScreen(CONTEXT_SCREEN)
+    expect(windows).not.toBeNull()
+    expect(windows).toHaveLength(1)
+    expect(windows?.[0]).toEqual({
+      id: 'context',
+      label: 'Context · 1M',
+      percent: 2.8,
+      resetsAt: null
+    })
   })
 })
