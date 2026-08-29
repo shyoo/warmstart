@@ -15,10 +15,12 @@ import {
   createWorker,
   listWorkers,
   refreshIdentity,
+  reorderWorkers,
   requireWorker,
   retireWorker,
   updateWorker
 } from './workers.js'
+import { accountUnavailability } from './eligibility.js'
 import { lastQuota, lastQuotaReading, refreshUsage } from './quota.js'
 import { emit } from './events.js'
 import {
@@ -71,6 +73,7 @@ import {
 import { allAvailability } from './resources.js'
 import { activityFor } from './activity.js'
 import {
+  atCapacity,
   completeTask,
   continueTask,
   deliverToLiveSession,
@@ -152,11 +155,18 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
     // ⚠️ `lastQuotaReading`, not `lastQuota`: this is the display path, and it shows the newest
     // reading that has windows rather than the newest *attempt*. Nothing here gates anything.
     'fleet.list': () =>
-      listWorkers().map((worker) => ({
-        worker,
-        quota: lastQuotaReading(worker.id),
-        sessions: sessionsForWorker(worker.id)
-      })),
+      listWorkers().map((worker) => {
+        const sessions = sessionsForWorker(worker.id)
+        return {
+          worker,
+          quota: lastQuotaReading(worker.id),
+          sessions,
+          // ⛔ Both gates called here rather than reimplemented in the renderer. See the fields'
+          // notes in protocol.ts: together these are what "ready" means everywhere in the daemon.
+          unavailable: accountUnavailability(worker),
+          atCapacity: atCapacity(sessions, worker.maxConcurrent, null)
+        }
+      }),
 
     'worker.create': async (p) => {
       const worker = createWorker(p)
@@ -172,6 +182,7 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
       checkWorkerDefaults(requireWorker(id).adapterId, patch)
       return updateWorker(id, patch)
     },
+    'worker.reorder': (p) => reorderWorkers(p.ids),
     'worker.retire': (p) => retireWorker(p.id),
     // ⭐ A person pressing Probe wants a number, not a re-read of a cache that may be weeks old.
     // `refreshUsage` drives the adapter's own usage command into a TUI and then reads the result;

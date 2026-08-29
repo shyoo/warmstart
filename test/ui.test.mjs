@@ -1183,7 +1183,10 @@ try {
   // ⭐ The account's default model — what every task routed here runs on unless it pins its own.
   // The New Task form has had a model picker since M3, but only when a worker was pinned, and there
   // was nowhere at all to say "this account normally uses X".
-  const modelSelect = `document.querySelector('.tbl tbody tr td:nth-child(6) select')`
+  // ⚠️ Column 7, not 6: the reorder arrows took the first cell on 2026-08-29 and shifted every
+  // column after them. A positional selector is the one thing that breaks silently when a table
+  // grows a column, so it is called out rather than quietly renumbered.
+  const modelSelect = `document.querySelector('.tbl tbody tr td:nth-child(7) select')`
   check(
     'an account can be given a default model',
     (await evaluate(`${modelSelect}?.tagName`)) === 'SELECT',
@@ -1209,6 +1212,77 @@ try {
     'and every model it offers came from the cost model that will price it',
     offered === served && served !== '0',
     `offered ${offered}, served ${served}`
+  )
+
+  // ⭐ Ordering the fleet. The strip is a row of cards people learn the shape of, and until
+  // 2026-08-29 that shape was the order the accounts were commissioned in, changeable only by
+  // retiring one and signing it in again. ⛔ The point of the check is that *both* views move: the
+  // table owns the control, the strip reads the same `listWorkers()` order, and a fix that only
+  // reordered the table would be worse than none.
+  const orderBefore = await evaluate(
+    `window.agentyard.rpc('fleet.list').then(f => f.map(e => e.worker.label).join('|'))`
+  )
+  check(
+    'the suite has more than one worker to order',
+    orderBefore.split('|').length > 1,
+    orderBefore
+  )
+  const upOnSecond = `document.querySelectorAll('.tbl tbody tr')[1]?.querySelector('.order-btn:not([disabled])')`
+  check(
+    'each worker row carries a control for where it sits in the fleet',
+    (await evaluate(`!!(${upOnSecond})`)) === true,
+    'commissioning order was the only order there was'
+  )
+  check(
+    'and the first row cannot be moved up, rather than silently doing nothing',
+    (await evaluate(
+      `String(document.querySelector('.tbl tbody tr .order-btn')?.disabled)`
+    )) === 'true'
+  )
+  await evaluate(`${upOnSecond}.click()`)
+  await wait(1200)
+  const orderAfter = await evaluate(
+    `window.agentyard.rpc('fleet.list').then(f => f.map(e => e.worker.label).join('|'))`
+  )
+  const swapped = orderBefore.split('|')
+  ;[swapped[0], swapped[1]] = [swapped[1], swapped[0]]
+  check(
+    'moving a worker up reaches the daemon, which is what the strip reads',
+    orderAfter === swapped.join('|'),
+    `${orderBefore} -> ${orderAfter}`
+  )
+  // ⛔ Read off the strip itself. `fleet.list` agreeing proves the write landed; only the cards
+  // prove the thing the operator asked for.
+  const stripOrder = await evaluate(
+    `[...document.querySelectorAll('.wcard .wcard-name')].map(n => n.innerText).join('|')`
+  )
+  check(
+    'and the fleet strip is drawn in that order too',
+    stripOrder === orderAfter,
+    `strip ${stripOrder}, daemon ${orderAfter}`
+  )
+
+  // ⭐ What the sidebar badge counts. It said `4` for a fleet of four commissioned accounts of which
+  // none could take a task — signed out, switched off, held out after a failed run all counted the
+  // same as ready. ⚠️ This suite's workers have no credentials, so `ready` here is legitimately 0
+  // and that is exactly the state the old badge could not express.
+  const badge = await evaluate(
+    `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim().startsWith('Workers'))?.querySelector('.nav-count')?.innerText ?? ''`
+  )
+  check(
+    'the Workers badge says running / ready / total rather than a bare count',
+    /^\d+\/\d+\/\d+$/.test(badge),
+    badge
+  )
+  check(
+    'and its last number is still the whole commissioned fleet',
+    badge.split('/')[2] === String(orderAfter.split('|').length),
+    `${badge} against ${orderAfter.split('|').length} workers`
+  )
+  check(
+    'while ready is the daemon’s own gate, so an unusable account is not counted ready',
+    badge.split('/')[1] === '0',
+    'no worker in this suite is signed in, and none of them may be handed a turn'
   )
 
   const errors = await evaluate('window.__agentyardErrors?.length ?? 0')

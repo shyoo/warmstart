@@ -114,6 +114,7 @@ describe('choosing between workers that score the same', () => {
     defaultEffort: null,
     identity: null,
     health: null,
+    sortOrder: 0,
     retiredAt: null,
     createdAt: 0
   }

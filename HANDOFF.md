@@ -9,8 +9,8 @@ if you add a line, find the one it obsoletes and cut it in the same edit. Finish
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
 **Baseline (2026-08-29, measured on this machine):** `npm run typecheck` clean · `npm run lint` clean ·
-`npm run build` clean · `npm test` 639/641 (2 POSIX-only skipped) · `npm run test:daemon` 125/125 ·
-`npm run test:ui` 125/125 ·
+`npm run build` clean · `npm test` 670/672 (2 POSIX-only skipped) · `npm run test:daemon` 125/125 ·
+`npm run test:ui` 140/140 ·
 `npm run test:pack` 18/18 · L4 (opt-in) landed a real agent commit on origin/main. Electron 44.0.0,
 electron-builder 26.15.3, 0 npm vulnerabilities. CLIs here: claude 2.1.250 · agy 1.1.22 · codex 0.149.1.
 
@@ -39,9 +39,10 @@ gaps are below. Scope: `transient_docs/implementation_plan_2026-08-24.md` §14, 
 src/daemon/            orchestratord. Runs as Electron-with-ELECTRON_RUN_AS_NODE, detached.
   index.ts             entry: lock, db, server, poller, scheduler, tailer wiring, shutdown
   server.ts  api.ts    HTTP+WS on 127.0.0.1:<random>, bearer token, typed RPC
-  db.ts                node:sqlite + numbered migrations (v14)
+  db.ts                node:sqlite + numbered migrations (v17)
   costmodel.ts         the four questions; user dir > bundled > compiled-in
-  workers.ts           registry, isolation roots, retire-keeps-credentials
+  workers.ts           registry, isolation roots, retire-keeps-credentials, the fleet's display
+                       order - ⛔ display only (+ workerorder.test.ts)
   quota.ts             the staleness ladder - read this before trusting a percentage
   sessions.ts          two transports: pty (node-pty) and stream (real pipes); orphan reaping;
                        resuming a conversation a closed session left behind  (+ resume.test.ts)

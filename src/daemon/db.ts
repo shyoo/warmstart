@@ -600,6 +600,25 @@ const MIGRATIONS: string[] = [
   // Antigravity).
   `
   alter table workers add column default_models_json text;
+  `,
+
+  // 17 - the order a person put the fleet in.
+  //
+  // ⛔ A stored position, not a sort key derived from anything the daemon computes. Every ordering
+  // the fleet strip could derive for itself - by quota, by busyness, by label - reorders the cards
+  // underneath the operator while they are reading them, and the strip is a thing people learn the
+  // shape of. The one ordering that stays still is the one somebody chose.
+  //
+  // ⚠️ Backfilled from `created_at` so an existing install opens looking exactly as it did: the
+  // rank of each row in the order `listWorkers` already returned. Retired workers are ranked too,
+  // so un-retiring one does not drop it at position zero.
+  `
+  alter table workers add column sort_order integer not null default 0;
+  update workers set sort_order = (
+    select count(*) from workers other
+    where other.created_at < workers.created_at
+       or (other.created_at = workers.created_at and other.id < workers.id)
+  );
   `
 ]
 

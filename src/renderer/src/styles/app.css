@@ -1013,6 +1013,41 @@ body {
   row-gap: var(--sp-1);
 }
 
+/* ⚠️ Two arrows stacked in a 4% column, not a row: side by side they wrapped the header cell and
+   pushed the Worker column narrower than its isolation path. */
+.tbl-order {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: center;
+}
+
+.order-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 14px;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-faint);
+  cursor: pointer;
+}
+
+.order-btn:hover:not(:disabled) {
+  color: var(--color-text);
+  border-color: var(--color-border-strong);
+}
+
+/* ⛔ Still drawn, not hidden. The worker at the top of the fleet has no *up*, and a button that
+   vanishes there makes the two rows look like different kinds of row. */
+.order-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
 .tbl-col-action {
   text-align: right;
   width: 48px;

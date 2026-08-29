@@ -1,6 +1,14 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { Project, ResourceAvailability, Task } from '@shared/tasks'
-import { rpc, useAppInfo, useDaemonEvents, useDaemonStatus, useFleet, useNow } from './lib/daemon'
+import {
+  fleetCounts,
+  rpc,
+  useAppInfo,
+  useDaemonEvents,
+  useDaemonStatus,
+  useFleet,
+  useNow
+} from './lib/daemon'
 import { FleetStrip } from './components/FleetStrip'
 import { Workers } from './components/Workers'
 import { Conversations } from './components/Conversations'
@@ -56,6 +64,7 @@ export function App(): React.JSX.Element {
   const status = useDaemonStatus()
   const connected = status.state === 'connected'
   const { fleet, refresh } = useFleet(connected)
+  const counts = fleetCounts(fleet)
   const now = useNow()
   const [route, setRouteNow] = useState<Route>({ kind: 'overview', page: 'dashboard' })
   /**
@@ -248,7 +257,24 @@ export function App(): React.JSX.Element {
             onClick={() => setRoute({ kind: 'settings', page: 'workers' })}
           >
             Workers
-            <span className="nav-count num">{fleet.length}</span>
+            {/* ⛔ Three numbers, because one was the wrong one. `fleet.length` counted accounts that
+                had been *commissioned* — which includes the one that is signed out, the one held out
+                after a run died on it, and the one somebody switched off — so the sidebar said 4
+                while nothing could take a task. Running and ready are what an operator with a queue
+                is actually asking about; the total is still there, last, where it belongs. */}
+            <span
+              className="nav-count num"
+              title={
+                `${counts.running} of ${counts.total} worker${counts.total === 1 ? '' : 's'} running work · ` +
+                `${counts.ready} ready to take a task now
+` +
+                'Ready is the scheduler’s own test: enabled, signed in, its CLI installed, not ' +
+                'held out after a failed run, and with a free slot. A worker can be both running and ' +
+                'ready, so these do not add up to the total.'
+              }
+            >
+              {counts.running}/{counts.ready}/{counts.total}
+            </span>
           </NavItem>
           <NavItem
             active={route.kind === 'settings' && route.page === 'global'}

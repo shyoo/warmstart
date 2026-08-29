@@ -177,6 +177,15 @@ export interface Worker {
   identity: WorkerIdentity | null
   /** What the last run on this account proved about it. `null` means nothing is known against it. */
   health: WorkerHealth | null
+  /**
+   * Where this worker sits in the fleet strip, lowest first.
+   *
+   * ⛔ A position somebody chose, never a ranking. Nothing scores, gates or routes on it — the
+   * scheduler's order is its scoring, and a worker being first here says nothing about being picked
+   * first. It exists because the strip is a row of cards people learn the shape of, and any order
+   * derived from live state rearranges itself under the reader.
+   */
+  sortOrder: number
   retiredAt: number | null
   createdAt: number
 }
@@ -766,7 +775,30 @@ export interface RpcMap {
 
   'fleet.list': {
     params: void
-    result: Array<{ worker: Worker; quota: QuotaSnapshot | null; sessions: Session[] }>
+    result: Array<{
+      worker: Worker
+      quota: QuotaSnapshot | null
+      sessions: Session[]
+      /**
+       * Why this account could not be handed a turn right now, or `null` if it could.
+       *
+       * ⛔ Served, not re-derived. This is `accountUnavailability()` — the one list every gate reads
+       * — and the renderer cannot run it: half of it is a filesystem question (is the CLI even
+       * installed) that no browser context can answer. A UI that counted *ready* workers for itself
+       * would be the third copy of a list that has already drifted once, and it would drift in the
+       * direction of telling an operator a worker is ready while the scheduler refuses it.
+       */
+      unavailable: string | null
+      /**
+       * Is every slot `maxConcurrent` allows already running work?
+       *
+       * ⛔ `atCapacity()` from the scheduler, called — the same function the dispatch gate uses, so
+       * *ready* on a screen and *ready* at dispatch cannot come apart. ⚠️ Passed no reuse session,
+       * because there is no task here to reuse one *for*: this answers "could this account start
+       * something new", which is strictly the more pessimistic of the two questions the gate asks.
+       */
+      atCapacity: boolean
+    }>
   }
   'worker.create': {
     params: {
@@ -802,6 +834,13 @@ export interface RpcMap {
     >
     result: Worker
   }
+  /**
+   * Put the fleet in this order, top to bottom.
+   *
+   * ⛔ The whole ordering, never a move — see `reorderWorkers`. The result is the fleet as it now
+   * stands, so a caller never has to guess whether its own list won.
+   */
+  'worker.reorder': { params: { ids: string[] }; result: Worker[] }
   'worker.retire': { params: { id: string }; result: Worker }
   'worker.probe': { params: { id: string }; result: QuotaSnapshot }
 

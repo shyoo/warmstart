@@ -186,6 +186,28 @@ export function Workers({
    */
   const recheck = (workerId: string) => guard(`probe:${workerId}`, () => rpc('worker.probe', { id: workerId }))
 
+  /**
+   * Move one worker up or down the fleet.
+   *
+   * ⛔ Sends the **whole order**, not "move this one up". This list is the order the daemon last
+   * served, so the neighbour being swapped with is the one on screen; posting a full ordering means
+   * a second window that reordered in between loses the race cleanly and visibly on the next
+   * `worker.changed`, instead of both windows applying a relative move to different lists.
+   *
+   * ⚠️ Cosmetic, and the title text says so. Nothing routes on this order — the scheduler scores —
+   * so a control that looked like a priority list would be a lie about what it does.
+   */
+  const move = (workerId: string, delta: -1 | 1) => {
+    const ids = fleet.map((f) => f.worker.id)
+    const from = ids.indexOf(workerId)
+    const to = from + delta
+    if (from < 0 || to < 0 || to >= ids.length) return
+    const next = [...ids]
+    const [moved] = next.splice(from, 1)
+    next.splice(to, 0, moved as string)
+    void guard(`order:${workerId}`, () => rpc('worker.reorder', { ids: next }))
+  }
+
   return (
     <div className="panel">
       <header className="panel-head">
@@ -228,7 +250,8 @@ export function Workers({
       ) : (
         <table className="tbl tbl-workers">
           <colgroup>
-            <col style={{ width: '18%' }} />
+            <col style={{ width: '4%' }} />
+            <col style={{ width: '14%' }} />
             <col style={{ width: '7%' }} />
             <col style={{ width: '12%' }} />
             <col style={{ width: '16%' }} />
@@ -239,6 +262,9 @@ export function Workers({
           </colgroup>
           <thead>
             <tr>
+              {/* ⚠️ No word in the header. The column is two arrows and a rank; `Order` above them
+                  reads as *sort this table by*, which is a different and absent feature. */}
+              <th />
               <th>Worker</th>
               <th>Adapter</th>
               <th>Account</th>
@@ -251,7 +277,7 @@ export function Workers({
             </tr>
           </thead>
           <tbody>
-            {fleet.map(({ worker, quota, sessions }) => {
+            {fleet.map(({ worker, quota, sessions }, index) => {
               // ⛔ The stored field, not a substring of `raw`. This is the same mistake the
               // scheduler's dispatch gate made and had fixed: grepping the probe's raw output for
               // `"loggedIn": true` depends on one adapter's exact JSON spacing, so a worker that
@@ -265,6 +291,35 @@ export function Workers({
               const gap = quotaGap(quota, probeKind(worker.id))
               return (
                 <tr key={worker.id} className={worker.enabled ? undefined : 'tbl-row--off'}>
+                  {/* ⭐ This order is the fleet strip's order — the cards up there are these rows,
+                      top to bottom. It is the only place the strip can be arranged from, because the
+                      strip itself has no room for a control that is used once and then never again. */}
+                  <td className="tbl-order">
+                    <button
+                      type="button"
+                      className="order-btn"
+                      aria-label={`Move ${worker.label} up`}
+                      title="Move up in the fleet strip. Display order only — it changes nothing about which worker gets the next task."
+                      disabled={index === 0 || busy === `order:${worker.id}`}
+                      onClick={() => move(worker.id, -1)}
+                    >
+                      <svg viewBox="0 0 16 16" width="9" height="9" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M3 10 L8 5 L13 10" />
+                      </svg>
+                    </button>
+                    <button
+                      type="button"
+                      className="order-btn"
+                      aria-label={`Move ${worker.label} down`}
+                      title="Move down in the fleet strip. Display order only — it changes nothing about which worker gets the next task."
+                      disabled={index === fleet.length - 1 || busy === `order:${worker.id}`}
+                      onClick={() => move(worker.id, 1)}
+                    >
+                      <svg viewBox="0 0 16 16" width="9" height="9" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M3 6 L8 11 L13 6" />
+                      </svg>
+                    </button>
+                  </td>
                   <td>
                     <span className="tbl-strong">{worker.label}</span>
                     {/* ⚠️ A disabled worker used to be a cleared checkbox in the last column and

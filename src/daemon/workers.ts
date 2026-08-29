@@ -22,6 +22,7 @@ interface WorkerRow {
   default_models_json: string | null
   identity_json: string | null
   health_json: string | null
+  sort_order: number
   created_at: number
   retired_at: number | null
 }
@@ -41,15 +42,25 @@ function toWorker(r: WorkerRow): Worker {
     defaultModels: r.default_models_json ? (JSON.parse(r.default_models_json) as Record<string, string | null>) : null,
     identity: r.identity_json ? (JSON.parse(r.identity_json) as WorkerIdentity) : null,
     health: r.health_json ? (JSON.parse(r.health_json) as WorkerHealth) : null,
+    sortOrder: r.sort_order,
     createdAt: r.created_at,
     retiredAt: r.retired_at
   }
 }
 
+/**
+ * The fleet, in the order a person put it in.
+ *
+ * ⛔ **One ordering, and everything that lists workers gets it.** The fleet strip, Settings > Workers
+ * and the commissioning wizard all read this; a second `order by` anywhere else is how the strip and
+ * the table come to disagree about which worker is first, which is the exact confusion an operator
+ * cannot debug from the screen. `created_at` remains the tie-break, so two rows that were never
+ * ordered against each other still come back in a stable order rather than SQLite's.
+ */
 export function listWorkers(includeRetired = false): Worker[] {
   const sql = includeRetired
-    ? 'select * from workers order by created_at'
-    : 'select * from workers where retired_at is null order by created_at'
+    ? 'select * from workers order by sort_order, created_at'
+    : 'select * from workers where retired_at is null order by sort_order, created_at'
   return rows<WorkerRow>(db().prepare(sql).all()).map(toWorker)
 }
 
@@ -108,11 +119,17 @@ export function createWorker(input: {
   ensureDir(root)
 
   const now = Date.now()
+  // ⚠️ Last, not first. A new account is the one nobody has placed yet, and dropping it at the head
+  // of the strip would move every card a person had already arranged.
+  const tail =
+    (row<{ next: number }>(
+      db().prepare('select coalesce(max(sort_order), -1) + 1 as next from workers').get()
+    )?.next ?? 0)
   db()
     .prepare(
       `insert into workers (id, adapter_id, label, isolation_root, enabled, human_occupied,
-                            max_concurrent, created_at)
-       values (?, ?, ?, ?, ?, ?, ?, ?)`
+                            max_concurrent, sort_order, created_at)
+       values (?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       id,
@@ -124,6 +141,7 @@ export function createWorker(input: {
       // Default 1: concurrent requests against one cached prefix each pay a write, so a second
       // session on the same worker is a cost decision, not a free speedup. cost-model.md §1.
       boundedConcurrency(input.maxConcurrent, 1),
+      tail,
       now
     )
   log.info(`commissioned worker ${label} (${input.adapterId}) at ${root}`)
@@ -200,6 +218,45 @@ export function updateWorker(
       id
     )
   return announce(requireWorker(id))
+}
+
+/**
+ * Put the fleet in a given order.
+ *
+ * ⛔ Takes the **whole order**, not a move. A `{id, direction}` call has to read the current list,
+ * decide who the neighbour is, and write two rows — three steps against a list two windows are
+ * looking at, where the second window's idea of "the one above" may already be wrong. A full
+ * ordering is idempotent, survives being sent twice, and cannot half-apply.
+ *
+ * ⚠️ Ids not mentioned keep their place *after* the ones that were, in the order they already had.
+ * The caller is the UI, which lists live workers only; a retired worker is not in that list and must
+ * not be silently reranked to the front by its absence from it.
+ */
+export function reorderWorkers(ids: string[]): Worker[] {
+  const all = listWorkers(true)
+  const known = new Map(all.map((w) => [w.id, w]))
+  const seen = new Set<string>()
+  const ordered: Worker[] = []
+  for (const id of ids) {
+    const worker = known.get(id)
+    if (!worker) throw new Error(`no worker '${id}'`)
+    if (seen.has(id)) throw new Error(`worker '${worker.label}' listed twice in an ordering`)
+    seen.add(id)
+    ordered.push(worker)
+  }
+  for (const worker of all) if (!seen.has(worker.id)) ordered.push(worker)
+
+  const write = db().prepare('update workers set sort_order = ? where id = ?')
+  const changed: Worker[] = []
+  ordered.forEach((worker, index) => {
+    if (worker.sortOrder === index) return
+    write.run(index, worker.id)
+    changed.push(requireWorker(worker.id))
+  })
+  // ⚠️ One event per row that actually moved. Announcing all of them would make every reorder a
+  // fleet-wide refetch in every open window, including the rows nobody touched.
+  for (const worker of changed) announce(worker)
+  return listWorkers()
 }
 
 /** Every worker mutation leaves through here, so no UI can miss one. */
