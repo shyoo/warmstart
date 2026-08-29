@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { Resource, ResourceAvailability, ResourceClaim, ResourceKind } from '@shared/tasks.js'
 import { db, row, rows } from './db.js'
+import { samePath } from './fspath.js'
 import { emit } from './events.js'
 import { log } from './log.js'
 
@@ -159,7 +160,14 @@ export function claim(
   if (state.resource.members.length > 0) {
     const taken = new Set(state.claims.map((c) => c.member))
     const free = state.resource.members.filter((m) => !taken.has(m))
-    member = (preferMember && free.includes(preferMember) ? preferMember : free[0]) ?? null
+    // ⛔ Matched canonically, not by string identity. `preferMember` arrives as a session's recorded
+    // `cwd` while the members are the pool's own spelling, and on Windows those are the same
+    // directory under two names — this install held one worktree as both `c:\Dev\…` and
+    // `C:\Dev\…`. A miss here does not refuse; it silently hands out `free[0]`, so a warm session
+    // would be resumed into a *different* tree than the one its context describes. ⚠️ The stored
+    // spelling is what gets claimed, never the caller's.
+    const preferred = preferMember ? free.find((m) => samePath(m, preferMember)) : undefined
+    member = (preferred ?? free[0]) ?? null
     if (!member) return null
   }
 

@@ -14,6 +14,7 @@ import type { CacheMove } from '@shared/tasks.js'
 import { db, row, rows } from './db.js'
 import { costModel } from './costmodel.js'
 import { adapter } from './adapters/index.js'
+import { samePath } from './fspath.js'
 import { refreshIdentity, requireWorker, watchReadiness } from './workers.js'
 import { log } from './log.js'
 import { ensureDir, paths } from './paths.js'
@@ -346,7 +347,11 @@ export function hasOpenRun(sessionId: string): boolean {
 
 export function resumableSession(candidates: Session[], workerId: string, cwd: string): Session | null {
   for (const session of candidates) {
-    if (session.workerId !== workerId || session.cwd !== cwd) continue
+    // ⛔ `samePath`, not `!==`. On Windows the same worktree reaches this under more than one
+    // spelling — this install held it as both `c:\Dev\…` and `C:\Dev\…` — and a string compare
+    // decides the directory is not itself, resumes nothing, and pays a full cold start reporting
+    // `warm=false` as though that were the answer. See fspath.ts.
+    if (session.workerId !== workerId || !samePath(session.cwd, cwd)) continue
     if (session.purpose !== 'work') continue
     if (!adapter(session.adapterId).info.capabilities.resumeSession) continue
     // ⛔ A recorded turn, and nothing weaker. A session that exited before it said anything has no

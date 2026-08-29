@@ -271,6 +271,15 @@ costmodels/             versioned pricing data
 
 ## Things that will bite
 
+- ⛔ **Never compare two paths with `===`.** Windows filesystems are case-insensitive and Windows
+  *paths* are not, so `c:\Dev\x` and `C:\Dev\x` are one directory and two strings. This install
+  held one pooled worktree under both spellings in `sessions.cwd` — the source was `policyFor`,
+  which derives an unconfigured workspace root by concatenating onto `project.root` while a
+  configured one comes back from `resolve` in the config's own case. Use `samePath` from
+  `fspath.ts`; it folds case on win32 only, because `/Dev` and `/dev` are genuinely two directories
+  everywhere else. ⚠️ Both failures are silent: a missed match costs a cold start, and in the
+  workspace pool it hands the task a **different worktree** than the one its conversation describes.
+
 - ⛔ **A worktree is where an agent *starts*, not a boundary it is held inside.** For
   `antigravity-cli` the workspace must be named with `--add-dir <cwd>` on **every** spawn, resume
   included — cwd alone let t17 edit and commit in the trunk on 2026-08-28. ⚠️ Any new adapter should

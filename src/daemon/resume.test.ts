@@ -125,6 +125,16 @@ const OTHER = 'aaaaaaaa-0000-4000-8000-000000000002'
  */
 const WS = 'C:\\ws1'
 
+/**
+ * The same directory, spelled the way this install actually recorded it 8 times.
+ *
+ * ⚠️ A constant for the same reason `WS` is one, and it caught the same trap on the way in: written
+ * through a shell heredoc this arrived as `'c:\ws1'`, where `\w` is not an escape, so the literal
+ * was `c:ws1` — a drive-*relative* path that resolves against the process cwd and matches nothing.
+ * The test then failed for a reason that had nothing to do with what it was testing.
+ */
+const WS_LOWER = 'c:\\ws1'
+
 /** A work session on `worker`, in `cwd`, with `turns` recorded turns against it. */
 function seed(opts: {
   id: string
@@ -231,6 +241,20 @@ describe('which conversation is worth going back to', () => {
     // conversation held in ws1 finds nothing — and finds it quietly.
     seed({ id: 's-ws2', cwd: 'C:\\ws2' })
     expect(sessions.resumableSession([load('s-ws2')], WORKER, WS)).toBeNull()
+  })
+
+  it('takes one recorded under a different spelling of the same directory', () => {
+    // ⭐ Measured against this install on 2026-08-28: `sessions.cwd` held one pooled worktree as both
+    // `c:\Dev\…\ws1` (8 Claude rows) and `C:\Dev\…\ws1` (2), because `policyFor` derives an
+    // unconfigured workspace root by concatenating onto `project.root` while a configured one comes
+    // back from `resolve` in the config's own case. The compare here was `!==`, so the directory was
+    // not itself.
+    //
+    // ⛔ The failure is silent and costs a full cold start — 41,542 cache-creation tokens — while the
+    // run records `warm=false` as though nothing had been available to resume.
+    if (process.platform !== 'win32') return
+    seed({ id: 's-lower', cwd: WS_LOWER })
+    expect(sessions.resumableSession([load('s-lower')], WORKER, WS)?.id).toBe('s-lower')
   })
 
   it('refuses one that never recorded a turn', () => {

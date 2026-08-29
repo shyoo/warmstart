@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import { basename, join, resolve } from 'node:path'
+import { canonicalPath } from './fspath.js'
 import { execFileSync } from 'node:child_process'
 import type { Project, ProjectConfig, Vcs } from '@shared/tasks.js'
 import { db, row, rows } from './db.js'
@@ -98,7 +99,10 @@ export function detectVcs(root: string): Vcs {
 }
 
 export function addProject(input: { root: string; name?: string }): Project {
-  const root = resolve(input.root)
+  // ⚠️ Canonical here too, because everything else is derived from it. `resolve` keeps whatever case
+  // the caller supplied, and a project added from a shell sitting in `c:\Dev\…` is stored that way
+  // forever.
+  const root = canonicalPath(input.root)
   if (!existsSync(root)) throw new Error(`directory does not exist: ${root}`)
 
   const existing = row<ProjectRow>(db().prepare('select * from projects where root = ?').get(root))
@@ -197,9 +201,14 @@ export function policyFor(project: Project): ProjectPolicy {
   return {
     // A non-git project is a pool of one over its own directory - no special case anywhere else.
     poolSize: project.vcs === 'git' ? Math.max(1, c.workspaces?.poolSize ?? DEFAULTS.poolSize) : 1,
-    workspaceRoot: c.workspaces?.root
-      ? resolve(project.root, c.workspaces.root)
-      : `${project.root}_workspaces`,
+    // ⛔ Canonical, and note the two branches did not agree before it. `resolve` returns an absolute
+    // config value in *its* case, while the fallback concatenates onto `project.root` in whatever
+    // case that was stored — so adding a `workspaces.root` to a project.json silently changed the
+    // spelling of every worktree path, and this install ended up with the same directory recorded
+    // both ways in `sessions.cwd`.
+    workspaceRoot: canonicalPath(
+      c.workspaces?.root ? resolve(project.root, c.workspaces.root) : `${project.root}_workspaces`
+    ),
     prepare: c.prepare ?? [],
     check: c.check ?? [],
     landingStrategy: c.landing?.strategy ?? DEFAULTS.landingStrategy,

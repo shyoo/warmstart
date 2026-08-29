@@ -9,7 +9,8 @@ if you add a line, find the one it obsoletes and cut it in the same edit. Finish
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
 **Baseline (2026-08-28, measured on this machine):** `npm run typecheck` clean · `npm run lint` clean ·
-`npm run build` clean · `npm test` 500/500 · `npm run test:daemon` 124/124 · `npm run test:ui` 112/112 ·
+`npm run build` clean · `npm test` 511/511 (2 POSIX-only skipped) · `npm run test:daemon` 124/124 ·
+`npm run test:ui` 112/112 ·
 `npm run test:pack` 18/18 · L4 (opt-in) landed a real agent commit on origin/main. Electron 44.0.0,
 electron-builder 26.15.3, 0 npm vulnerabilities. CLIs here: claude 2.1.250 · agy 1.1.22 · codex 0.149.1.
 
@@ -151,9 +152,8 @@ M0–M6 are done. What is left is not a milestone but a list, in the order it wo
    moved the trunk must not report success. ~40 lines in `finish.ts`, and it covers every adapter
    rather than the one that was caught.
 6. **`antigravity-cli` still has no real isolation root.** `envFor()` sets no `HOME`, so all four
-   workers share the operator's `~/.gemini` — conversations, credentials and a persistent brain.
-   Per-worker `HOME` is the fix and needs a measured trial; the credential is in the OS keyring, so
-   sign-in *should* survive, and "should" is doing the work in that sentence.
+   workers share the operator's `~/.gemini`. Per-worker `HOME` is the fix; the credential is in the
+   OS keyring so sign-in *should* survive, and "should" is doing the work there.
 7. **The project Thread tab has no automated coverage.** `test/ui.test.mjs` files every task with no
    project, so that tab is checked by `typecheck` and by hand only. Needs a real project root.
 8. **Compute `overrunFactor` in cost, not raw tokens**, and let preempted runs feed `estimateTask`.

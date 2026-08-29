@@ -256,3 +256,65 @@ describe('whether an account has a slot for this task', () => {
     expect(atCapacity([work('a')], 1, work('elsewhere'))).toBe(true)
   })
 })
+
+// ---------------------------------------------------------------- getting the same tree back
+
+/**
+ * Which pool member a task is handed.
+ *
+ * ⭐ A warm session's whole value is that the worktree in front of it is the one its context
+ * describes. `preferMember` is how that is asked for, and a miss here **does not refuse** - the pool
+ * hands out whatever is free instead, so the failure is an agent resuming a conversation about files
+ * that are no longer there. Nothing downstream can detect that.
+ */
+const TREES = 'tree-pool'
+const WS1 = 'C:\\Dev\\trees\\ws1'
+const WS2 = 'C:\\Dev\\trees\\ws2'
+
+describe('handing a task the worktree its conversation already knows', () => {
+  beforeEach(() => {
+    resources.upsertResource({
+      id: TREES,
+      projectId: null,
+      kind: 'counted',
+      label: 'trees',
+      members: [WS1, WS2],
+      meta: {}
+    })
+  })
+
+  it('gives back the member that was asked for', () => {
+    expect(resources.claim(TREES, 'task-a', 1, WS2)?.member).toBe(WS2)
+  })
+
+  it('gives it back when the caller spells the drive differently', () => {
+    // ⭐ The bug, measured on this install 2026-08-28: `sessions.cwd` held one worktree as both
+    // `c:\Dev\...` and `C:\Dev\...`, while the pool holds one spelling. `free.includes()` missed,
+    // and the task was quietly given the *other* tree.
+    if (process.platform !== 'win32') return
+    const asked = WS2.replace(/^C:/, 'c:')
+    const claim = resources.claim(TREES, 'task-a', 1, asked)
+    expect(claim?.member).toBe(WS2)
+  })
+
+  it('claims the pool spelling, never the caller’s', () => {
+    // ⚠️ `resource_claims.member` is joined back against `resources.members` by later reads. A claim
+    // recorded under the caller's spelling would be a member the pool does not believe it has.
+    if (process.platform !== 'win32') return
+    const claim = resources.claim(TREES, 'task-a', 1, WS1.replace(/^C:/, 'c:'))
+    expect(claim?.member).toBe(WS1)
+    expect(resources.availability(TREES)?.resource.members).toContain(claim?.member)
+  })
+
+  it('takes whatever is free rather than refusing when the asked-for tree is taken', () => {
+    // ⛔ Deliberate, and the reason the miss above was invisible: any workspace beats not running.
+    resources.claim(TREES, 'holder', 1, WS1)
+    expect(resources.claim(TREES, 'task-a', 1, WS1)?.member).toBe(WS2)
+  })
+
+  it('does not treat two different trees as one', () => {
+    // The inverse failure, and the worse one: two tasks in a single worktree.
+    resources.claim(TREES, 'holder', 1, WS1)
+    expect(resources.availability(TREES)?.claims.map((c) => c.member)).toEqual([WS1])
+  })
+})
