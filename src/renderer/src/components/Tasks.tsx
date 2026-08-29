@@ -1,34 +1,64 @@
 import { useCallback, useEffect, useState } from 'react'
-import type {
-  FinishPolicyChoice,
-  Project,
-  Run,
-  SessionSharingChoice,
-  Task,
-  TaskMessage
-} from '@shared/tasks'
-import type { ModelOptions, Session } from '@shared/protocol'
-import { rpc, useDaemonEvents, useNow, type FleetEntry } from '../lib/daemon'
-import { duration, tokens, when } from '../lib/format'
-
-type TaskDetailData = {
-  task: Task
-  messages: TaskMessage[]
-  runs: Run[]
-  sessions: Session[]
-  activity: Array<{ text: string; ts: number }>
-}
+import type { Project, Task, TaskSort, TaskView } from '@shared/tasks'
+import { TASK_VIEW_ORDER, TASK_VIEWS } from '@shared/tasks'
+import type { ModelOptions } from '@shared/protocol'
+import { rpc, useActivity, useDaemonEvents, useNow, type FleetEntry } from '../lib/daemon'
+import { tokens, when } from '../lib/format'
+import { readViews, writeViews } from '../lib/prefs'
+import {
+  assigneeLabel,
+  CANCELLABLE,
+  elapsed,
+  IN_FLIGHT,
+  STATUS_LABEL,
+  STATUS_TONE,
+  Working
+} from '../lib/taskview'
 
 /**
- * How long this task has been worked on, or was worked on.
+ * How many rows one page holds.
  *
- * ⛔ Measured from the first **run**, not from `createdAt`. When somebody typed a task in is not how
- * long it took; a task filed on Monday and dispatched on Wednesday did not take two days. A task
- * that has never run has no duration, and says so rather than showing zero.
+ * ⚠️ Fifty, which is more than a screen. The pager exists so the table has a bound, not so it has
+ * to be walked — a page short enough to need paging on an ordinary project would make the feature a
+ * nuisance rather than a relief.
  */
-function elapsed(task: Task, now: number): string {
-  if (!task.firstRunAt) return '—'
-  return duration((task.lastRunEndedAt ?? now) - task.firstRunAt)
+const PAGE_SIZE = 50
+
+/**
+ * A column header you can sort by.
+ *
+ * ⚠️ The arrow is on the sorted column only. An arrow on every header — the "sortable" hint some
+ * tables draw — makes the one that is actually in force impossible to find at a glance, which is the
+ * single question the marker exists to answer.
+ */
+function SortHead({
+  label,
+  column,
+  sort,
+  asc,
+  onSort,
+  numeric
+}: {
+  label: string
+  column: TaskSort
+  sort: TaskSort
+  asc: boolean
+  onSort: (column: TaskSort) => void
+  numeric?: boolean
+}): React.JSX.Element {
+  const on = sort === column
+  return (
+    <th className={numeric ? 'tbl-num' : undefined}>
+      <button
+        className={`sort-head${on ? ' sort-head--on' : ''}`}
+        onClick={() => onSort(column)}
+        aria-sort={on ? (asc ? 'ascending' : 'descending') : 'none'}
+      >
+        {label}
+        {on && <span aria-hidden>{asc ? ' ↑' : ' ↓'}</span>}
+      </button>
+    </th>
+  )
 }
 
 /**
@@ -42,145 +72,99 @@ function elapsed(task: Task, now: number): string {
  * destroys nothing; delete sits behind the row menu, refuses while anything depends on the task, and
  * never removes the runs.
  */
-
-const STATUS_TONE: Record<string, string> = {
-  running: 'state-running',
-  assigned: 'state-running',
-  ready: 'state-ok',
-  completed: 'state-ok',
-  failed: 'state-danger',
-  awaiting_human: 'state-human',
-  blocked: 'state-idle',
-  scheduled: 'state-idle',
-  draft: 'state-idle',
-  paused_user: 'state-warn',
-  paused_quota: 'state-warn',
-  cancelling: 'state-warn',
-  cancelled: 'state-idle'
-}
-
-/**
- * What a status is called where a person can see it.
- *
- * ⛔ Renamed here, not in the domain. `assigned` means something precise to the scheduler and to
- * cancel.ts, and changing it there to suit a table would be the tail wagging the dog. But it is the
- * state a task is in while a workspace is being claimed, a branch checked out and the project's
- * prepare hook run — which is *dispatching*, and is the part of the wait that most needs a name.
- */
-const STATUS_LABEL: Record<string, string> = { assigned: 'dispatching' }
-
-/**
- * Statuses where something is happening and the next change arrives on its own.
- *
- * ⚠️ `ready` is in here, and that is the whole point of the list. A freshly filed task sits at
- * `ready` for up to one scheduler tick before anything moves, and rendered as a flat word beside
- * `completed` and `failed` it reads as a resting state — as though the operator were the one being
- * waited on. They are not: it is queued, and the dots say so.
- */
-const IN_FLIGHT = new Set(['ready', 'scheduled', 'assigned', 'running', 'cancelling'])
-
-/** Three dots that say the fleet is doing something, for a row whose next event arrives by itself. */
-function Working(): React.JSX.Element {
-  return (
-    <span className="working" aria-hidden>
-      <i />
-      <i />
-      <i />
-    </span>
-  )
-}
-
-/**
- * Who is on this task, resolved to a name.
- *
- * ⛔ `assignee` holds a worker **id** — a uuid, which is the correct thing to store and useless to
- * read. The two reserved values are not worker ids at all and must not be looked up as though they
- * were, or a task waiting on a person renders as a missing account.
- */
-/**
- * Which **account** this task is on, or was on.
- *
- * ⛔ Never "you". The column exists so that which account is spending on a task is visible without a
- * click — that is what made a misroute findable at all — and it used to be blanked by the very thing
- * it was there to survive: nine hand-off sites set `assignee` to `human` the moment a task started
- * waiting on a person, so a task ClaudeSecond had run rendered as worked on by *you*, and stayed
- * that way after it was marked done. A person answering a question did not do the work and did not
- * pay for it.
- *
- * ⚠️ `ranOn` first, `assignee` only as the before-anything-ran case: a task assigned a moment ago has
- * an account and no runs yet, which is a real state and reads as one. Who is being waited on is the
- * *status*, and it is said there.
- */
-function assigneeLabel(task: Task, fleet: FleetEntry[]): string {
-  const account = task.ranOn ?? (task.assignee === 'human' || task.assignee === 'controller' ? null : task.assignee)
-  if (!account) return task.assignee === 'controller' ? 'controller' : '—'
-  return fleet.find((f) => f.worker.id === account)?.worker.label ?? account.slice(0, 8)
-}
-
 export function Tasks({
   projects,
   projectId,
-  fleet
+  fleet,
+  selected,
+  onOpenTask
 }: {
   projects: Project[]
   /** When set, this list is one project's and the creation form does not offer to change it. */
   projectId?: string
   /** Only so a worker id can be drawn as the name of an account. */
   fleet: FleetEntry[]
+  /** The task the thread is currently showing, so the row it came from stays marked. */
+  selected?: string | null
+  /**
+   * Open a task.
+   *
+   * ⛔ A navigation, not a selection. The detail used to render below this table, which put the
+   * thing you clicked on beneath every row of the thing you clicked it from — worse the more work a
+   * project had. The list no longer knows or cares what happens next.
+   */
+  onOpenTask: (taskId: string) => void
 }): React.JSX.Element {
   const [tasks, setTasks] = useState<Task[]>([])
-  const [selected, setSelected] = useState<string | null>(null)
-  const [detail, setDetail] = useState<TaskDetailData | null>(null)
+  const [total, setTotal] = useState(0)
+  const [counts, setCounts] = useState<Record<TaskView, number> | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
   /**
-   * The live tail, per task.
+   * Which buckets are showing.
    *
-   * ⛔ Kept here rather than inside the detail pane, and appended from the event stream rather than
-   * re-fetched. A task's own list refreshes on every `task.changed`, and a pane that rebuilt its tail
-   * from each fetch would flicker back to whatever the daemon happened to hold at that instant.
+   * ⚠️ Read from disk at first render, not in an effect. Seeded from an effect the table would draw
+   * one frame of the wrong view — usually All — and somebody who left it on *Needs you* would watch
+   * their filter apply itself a moment after the page appeared.
    */
-  const [activity, setActivity] = useState<Record<string, Array<{ text: string; ts: number }>>>({})
+  const [views, setViews] = useState<TaskView[]>(readViews)
+  const [sort, setSort] = useState<TaskSort>('updated')
+  const [asc, setAsc] = useState(false)
+  const [page, setPage] = useState(0)
+  // The latest live line per running row. The thread keeps its own copy of the same broadcast.
+  const { activity } = useActivity()
   const now = useNow(1000)
 
   const refresh = useCallback(async () => {
-    setTasks(await rpc('task.list', projectId ? { projectId } : {}))
-  }, [projectId])
+    const got = await rpc('task.page', {
+      ...(projectId ? { projectId } : {}),
+      views,
+      sort,
+      asc,
+      limit: PAGE_SIZE,
+      offset: page * PAGE_SIZE
+    })
+    setTasks(got.tasks)
+    setTotal(got.total)
+    setCounts(got.counts)
+  }, [projectId, views, sort, asc, page])
 
   useEffect(() => {
     void refresh()
   }, [refresh])
 
+  // ⛔ Back to the first page whenever what is being listed changes. Staying on page 4 of a filter
+  // that now has one page renders an empty table over a chip reading `Done 3`, which reads as a
+  // broken screen rather than as a stale offset.
   useEffect(() => {
-    if (!selected) {
-      setDetail(null)
+    setPage(0)
+  }, [views, sort, asc, projectId])
+
+  const toggleView = (view: TaskView): void => {
+    const next = views.includes(view) ? views.filter((v) => v !== view) : [...views, view]
+    // ⚠️ Selecting every bucket *is* All. Two selections that mean the same thing must not look
+    // different, or the chip row ends up with a state that is "all of them" and a separate state
+    // that is also "all of them" and neither is obviously the one you are in.
+    const settled = next.length === TASK_VIEW_ORDER.length ? [] : next
+    setViews(settled)
+    writeViews(settled)
+  }
+
+  const sortBy = (column: TaskSort): void => {
+    if (sort === column) {
+      setAsc((v) => !v)
       return
     }
-    void rpc('task.get', { id: selected }).then((got) => {
-      setDetail(got)
-      // Seed the tail once from whatever the daemon is holding, so opening a task that is already
-      // running does not start from a blank pane. Events take over from here.
-      if (got && got.activity.length > 0) {
-        setActivity((prev) => (prev[got.task.id]?.length ? prev : { ...prev, [got.task.id]: got.activity }))
-      }
-    })
-  }, [selected, tasks])
+    setSort(column)
+    // ⚠️ A fresh column starts newest-first. Every column here is a clock or a counter, and the
+    // interesting end of all three is the recent one.
+    setAsc(false)
+  }
+
+  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE))
 
   useDaemonEvents((event) => {
     if (event.type === 'task.changed' || event.type === 'run.changed') void refresh()
-    if (event.type === 'task.activity') {
-      // A new attempt starts with an empty pane. See clearActivity.
-      if (event.reset) {
-        setActivity((prev) => ({ ...prev, [event.taskId]: [] }))
-        return
-      }
-      setActivity((prev) => {
-        // ⚠️ Bounded here as well as in the daemon. This is agent output arriving as fast as a model
-        // can produce it, and an unbounded array in a React state is a memory leak with a pretty UI.
-        const tail = [...(prev[event.taskId] ?? []), { text: event.text, ts: event.ts }].slice(-40)
-        return { ...prev, [event.taskId]: tail }
-      })
-    }
   })
 
   const act = async (fn: () => Promise<unknown>) => {
@@ -231,19 +215,71 @@ export function Tasks({
         />
       )}
 
+      {/* ⛔ Counts on every chip, whatever is selected. The number is what makes the row worth
+          having: it says what you would get *before* you click, and `Needs you 3` is the one an
+          operator is actually scanning for. */}
+      <div className="chips">
+        <button
+          className={`chip${views.length === 0 ? ' chip--on' : ''}`}
+          onClick={() => {
+            setViews([])
+            writeViews([])
+          }}
+          title="Every task in this project, in whatever state"
+        >
+          All
+          {counts && <span className="chip-n">{Object.values(counts).reduce((a, b) => a + b, 0)}</span>}
+        </button>
+        {TASK_VIEW_ORDER.map((v) => (
+          <button
+            key={v.id}
+            className={`chip${views.includes(v.id) ? ' chip--on' : ''}`}
+            onClick={() => toggleView(v.id)}
+            title={TASK_VIEWS[v.id].join(', ')}
+          >
+            {v.label}
+            {counts && <span className="chip-n">{counts[v.id]}</span>}
+          </button>
+        ))}
+      </div>
+
       {tasks.length === 0 ? (
         <div className="empty-inline">
-          <p>No tasks yet.</p>
-          <p className="dim">
-            File one and the scheduler will route it to a worker that can afford it, in a workspace of
-            its own, on a branch named after the task.
-          </p>
+          {/* ⚠️ Two different nothings. A project with no tasks needs telling what to do; a filter
+              that matches none of them needs telling that the tasks still exist — offering the same
+              "file one and the scheduler will route it" to somebody who has forty tasks and one chip
+              selected reads as the app having lost them. */}
+          {views.length > 0 ? (
+            <>
+              <p>No tasks in {views.length === 1 ? 'that view' : 'those views'}.</p>
+              <p className="dim">
+                The filter is hiding the rest — the counts above say where they are.
+              </p>
+              <button
+                className="btn"
+                onClick={() => {
+                  setViews([])
+                  writeViews([])
+                }}
+              >
+                Show all
+              </button>
+            </>
+          ) : (
+            <>
+              <p>No tasks yet.</p>
+              <p className="dim">
+                File one and the scheduler will route it to a worker that can afford it, in a
+                workspace of its own, on a branch named after the task.
+              </p>
+            </>
+          )}
         </div>
       ) : (
         <table className="tbl">
           <thead>
             <tr>
-              <th className="tbl-num">#</th>
+              <SortHead label="#" column="seq" sort={sort} asc={asc} onSort={sortBy} numeric />
               <th>Title</th>
               <th>Status</th>
               {/* ⛔ On the table, not only in the detail pane. Which account is spending on a task is
@@ -258,6 +294,12 @@ export function Tasks({
               <th className="tbl-num">Took</th>
               {/* ⚠️ "Spent" was read as money by everybody who saw it. These are tokens. */}
               <th className="tbl-num">Tokens</th>
+              {/* ⛔ Both dates, not one. When a task was filed and when it last moved answer
+                  different questions — "how long has this been sitting here" and "is anything still
+                  happening" — and a task filed weeks ago that ran an hour ago looks identical to a
+                  fresh one under either column alone. */}
+              <SortHead label="Created" column="created" sort={sort} asc={asc} onSort={sortBy} />
+              <SortHead label="Updated" column="updated" sort={sort} asc={asc} onSort={sortBy} />
               <th />
             </tr>
           </thead>
@@ -266,7 +308,7 @@ export function Tasks({
               <tr
                 key={task.id}
                 className={selected === task.id ? 'tbl-row--selected' : ''}
-                onClick={() => setSelected(task.id === selected ? null : task.id)}
+                onClick={() => onOpenTask(task.id)}
               >
                 <td className="num tbl-num">{task.seq}</td>
                 <td>
@@ -302,6 +344,12 @@ export function Tasks({
                 <td className="num dim">{task.dependsOn.length ? `←${task.dependsOn.length}` : '—'}</td>
                 <td className="num tbl-num dim">{elapsed(task, now)}</td>
                 <td className="num tbl-num">{tokens(task.budget.spentTokens || null)}</td>
+                <td className="tbl-when dim" title={new Date(task.createdAt).toLocaleString()}>
+                  {when(task.createdAt)}
+                </td>
+                <td className="tbl-when dim" title={new Date(task.updatedAt).toLocaleString()}>
+                  {when(task.updatedAt)}
+                </td>
                 <td className="tbl-actions" onClick={(e) => e.stopPropagation()}>
                   {CANCELLABLE.has(task.status) && (
                     <button
@@ -354,572 +402,29 @@ export function Tasks({
         </table>
       )}
 
-      {detail && (
-        <TaskDetail
-          detail={detail}
-          activity={activity[detail.task.id] ?? []}
-          fleet={fleet}
-          // ⛔ Counted here, where the whole list is. `task.dependsOn` is what this task waits on;
-          // the question the decision needs answered is the reverse edge, and only the list can see
-          // it. ⚠️ `blocked` only — a dependent that has already run is not released by anything.
-          blocking={
-            tasks.filter((t) => t.status === 'blocked' && t.dependsOn.includes(detail.task.id)).length
-          }
-          now={now}
-          refresh={async () => {
-            setDetail(await rpc('task.get', { id: detail.task.id }))
-          }}
-        />
-      )}
-    </div>
-  )
-}
-
-const CANCELLABLE = new Set([
-  'ready',
-  'blocked',
-  'scheduled',
-  'assigned',
-  'running',
-  'awaiting_human',
-  'paused_quota'
-])
-
-/**
- * One task, opened.
- *
- * ⛔ Two columns, and which fact goes in which is the whole design. The **left** is the conversation
- * — what was said, what is being said right now, and the box for saying the next thing; it is the
- * only part a person reads in order. The **right** is the ledger — who is on it, on which session,
- * for how long, at what cost. Everything on the right used to be either absent or spread through
- * prose in the thread, which meant "which session is this running on?" was answerable only by
- * reading a paragraph the daemon happened to have written.
- */
-function TaskDetail({
-  detail,
-  activity,
-  fleet,
-  blocking,
-  now,
-  refresh
-}: {
-  detail: TaskDetailData
-  /** The live tail, kept by the list so it survives a re-fetch of the detail. */
-  activity: Array<{ text: string; ts: number }>
-  fleet: FleetEntry[]
-  /** How many tasks are waiting on this one — the concrete consequence of finishing it or not. */
-  blocking: number
-  now: number
-  refresh: () => Promise<void>
-}): React.JSX.Element {
-  const { task, messages, runs, sessions } = detail
-  const live = task.status === 'running' || task.status === 'assigned'
-  const resolve = async () => {
-    await rpc('task.resolve', { id: task.id })
-    await refresh()
-  }
-  const cancel = async () => {
-    await rpc('task.cancel', { id: task.id })
-    await refresh()
-  }
-  const liveSession = sessions.find(
-    (s) => s.id === runs[0]?.sessionId && s.state !== 'closed' && s.state !== 'failed'
-  )
-
-  return (
-    <section className="detail">
-      <h3>
-        t{task.seq} · {task.title}
-      </h3>
-
-      <div className="detail-grid">
-        <div className="detail-main">
-          <div className="thread">
-            {messages.length === 0 && <p className="dim">Nothing has been said on this task yet.</p>}
-            {messages.map((m) => (
-              <div key={m.id} className={`msg msg--${m.role}`}>
-                <span className="msg-role">{m.role}</span>
-                <span className="msg-text">{m.text}</span>
-              </div>
-            ))}
-          </div>
-
-          {/* ⛔ Below the thread and outside it. This is not part of the record — it is a window onto
-              a process that is still running, and mixing the two would make the thread unreadable
-              afterwards. It disappears when there is nothing running and nothing was said. */}
-          {(live || activity.length > 0) && (
-            <div className="peek">
-              <div className="peek-head">
-                <span>live</span>
-                {live && <Working />}
-                <span className="dim">
-                  what the agent is saying as it works — not kept, and not the record
-                </span>
-              </div>
-              <div className="peek-body">
-                {activity.length === 0 ? (
-                  <span className="dim">waiting for the agent’s first words…</span>
-                ) : (
-                  // ⚠️ Newest first in the DOM, drawn bottom-up by `column-reverse`. That is what
-                  // pins the view to the latest line without a scroll handler — a pane that had to
-                  // be scrolled by hand to see the current line is not a live view of anything.
-                  [...activity].reverse().map((line, i) => (
-                    <div key={`${line.ts}-${i}`} className="peek-line">
-                      {line.text}
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* ⛔ Here, with the composer, and not in the ledger on the right. All three answers to
-              "a decision is wanted from you" are the same kind of thing — finish it, park it, or say
-              what you want next — and two of them living in a column of read-only facts made the
-              third look like the only one. */}
-          {task.status === 'awaiting_human' && (
-            <Decide task={task} blocking={blocking} onResolve={resolve} onStop={cancel} />
-          )}
-          <Compose task={task} refresh={refresh} />
-        </div>
-
-        <aside className="detail-side">
-          <Fact label="status">
-            <span className={`status ${STATUS_TONE[task.status] ?? ''}`}>
-              {STATUS_LABEL[task.status] ?? task.status}
-              {IN_FLIGHT.has(task.status) && <Working />}
-            </span>
-          </Fact>
-          {task.holdReason && (
-            <Fact label={task.status === 'awaiting_human' ? 'wants' : 'waiting on'}>
-              {task.holdReason}
-            </Fact>
-          )}
-          <Fact label="worker">{assigneeLabel(task, fleet)}</Fact>
-
-          {/* ⭐ The question this whole cost model exists to answer, and the one the UI could not.
-              A worker id says which account paid; only the session says whether the run continued
-              from a warm prefix at 0.1·C or rebuilt one at 2.0·C. */}
-          <Fact label="session">
-            <SessionFact runs={runs} sessions={sessions} />
-          </Fact>
-
-          {/*
-            ⛔ Context and tokens are different *kinds* of number and were shown side by side with
-            nothing saying so — "52k ctx" beside "1.2M tokens" reads as a contradiction until you
-            know one is a level and the other a total. Context is how full the window is *right now*
-            and goes down when a session compacts; tokens are everything this task has ever spent and
-            only ever go up.
-          */}
-          {/* ⚠️ Only when there is a number. `0 in the window now` is a measurement of nothing — the
-              same reason the session chip draws an empty context as an absence. */}
-          {liveSession?.contextTokens ? (
-            <Fact label="context">
-              <span
-                className="num"
-                title={
-                  'How full this session’s context window is at the moment — a level, not a total. ' +
-                  'It falls when the session compacts. It is not the number below it.'
-                }
-              >
-                {tokens(liveSession.contextTokens)} in the window now
-              </span>
-            </Fact>
-          ) : null}
-          {/* ⛔ Settable while the task is running, and settable after it has finished — which is
-              the point. Switching a task resting in `awaiting_human` to a landing policy *is* the
-              decision to land it, and the same bar a first completion faced is applied again. */}
-          <Fact label="finish">
-            <FinishPicker task={task} />
-          </Fact>
-          {/* ⚠️ Next to `finish` because they are the same shape of decision — three tiers, `inherit`
-              a real value, changeable at any time — and an operator who has learnt one has learnt
-              the other. ⛔ Unlike `finish`, this one only records: a task already talking in a
-              conversation is never moved out of it. */}
-          <Fact label="conversation">
-            <SharingPicker task={task} />
-          </Fact>
-          <Fact label="priority">{task.priority}</Fact>
-          <Fact label="filed">{when(task.createdAt)}</Fact>
-          {task.firstRunAt && <Fact label="started">{when(task.firstRunAt)}</Fact>}
-          <Fact label="took">{elapsed(task, now)}</Fact>
-          {/* ⚠️ Named, not left as "spent". A bare number in a column headed Spent is read as money
-              by roughly everybody; these are tokens, metered from the agent's own transcript. */}
-          <Fact label="tokens">
-            <span
-              className="num"
-              title={
-                'Everything every run of this task has spent — input, output and cache, summed from ' +
-                'the agent’s own transcript. A total, so it only ever grows, and much larger than ' +
-                'the context above because every turn re-reads the whole window.'
-              }
-            >
-              {tokens(task.budget.spentTokens || null)} spent in total
-            </span>
-          </Fact>
-          {task.branch && (
-            <Fact label="branch">
-              <span className="mono">{task.branch}</span>
-            </Fact>
-          )}
-          <Fact label="mandate">
-            {task.mandate.allowed.join(', ')} · depth {task.lineageDepth}/
-            {task.mandate.maxLineageDepth}
-          </Fact>
-
-          {runs.length > 0 && (
-            <div className="side-runs">
-              {/* ⚠️ The label carries the distinction, because "completed" here beside
-                  "awaiting_human" above is the thing that reads as a contradiction. A run is one
-                  attempt; whether the *task* is done is a separate question. */}
-              <div
-                className="side-label"
-                title="One attempt each. A run finishing says the agent stopped cleanly — not that the task is done, which is what the status above answers."
-              >
-                runs · attempts, not outcomes
-              </div>
-              {runs.map((run) => (
-                <RunRow key={run.id} run={run} fleet={fleet} now={now} />
-              ))}
-            </div>
-          )}
-        </aside>
-      </div>
-    </section>
-  )
-}
-
-/**
- * The two ways to settle a task that is waiting on a person, each next to what it actually does.
- *
- * ⛔ They were indistinguishable, and the tooltips were the reason: *"records that you are
- * satisfied"* and *"stops here and rests the task"* are two ways of saying **it stops**. The
- * difference is not in how it feels, it is in the DAG. `admit()` unblocks a dependent only when its
- * dependency reaches `completed`, so **Mark done releases everything waiting on this task and Stop
- * here does not** — and with nothing on screen saying so, the choice looked like a matter of taste
- * while it was quietly the difference between the rest of a plan running and not.
- *
- * ⚠️ The count is drawn, not implied. "2 tasks start" is a fact somebody can check; "unblocks
- * dependents" is a sentence they have to take on trust and cannot see the scope of.
- */
-function Decide({
-  task,
-  blocking,
-  onResolve,
-  onStop
-}: {
-  task: Task
-  blocking: number
-  onResolve: () => Promise<void>
-  onStop: () => Promise<void>
-}): React.JSX.Element {
-  // ⚠️ Both numbers agree with their verb. "The 2 tasks waiting on it stays blocked" is the kind of
-  // sentence somebody stops reading, and this one is load-bearing.
-  const releases =
-    blocking === 0
-      ? 'Nothing is waiting on this one, so it just comes to rest as done.'
-      : blocking === 1
-        ? 'Releases the one task waiting on it — it becomes ready and can be dispatched.'
-        : `Releases the ${blocking} tasks waiting on it — they become ready and can be dispatched.`
-  const holds =
-    blocking === 0
-      ? 'Nothing is waiting on it either way.'
-      : blocking === 1
-        ? 'The one task waiting on it stays blocked — only a completed task releases it.'
-        : `The ${blocking} tasks waiting on it stay blocked — only a completed task releases them.`
-
-  return (
-    <div className="decide">
-      <div className="decide-head">
-        <span>your call</span>
-        {/* The reason it stopped, where the answer is given rather than only in the ledger. */}
-        {task.holdReason && <span className="decide-why">{task.holdReason}</span>}
-      </div>
-
-      <div className="decide-option">
-        <button
-          className="btn btn--primary"
-          title="Records your judgement that this is finished. ⚠️ Nothing verified the work — task_complete remains the only signal that an agent finished."
-          onClick={() => void onResolve()}
-        >
-          Mark done
-        </button>
-        <span className="decide-what">
-          <strong>Finished.</strong> {releases} ⚠️ Your judgement, written into the thread as such —
-          nothing here checked the work.
-        </span>
-      </div>
-
-      <div className="decide-option">
-        <button
-          className="btn btn--ghost"
-          title="Parks the task. Destroys nothing, and Resume picks it up where it stopped."
-          onClick={() => void onStop()}
-        >
-          Stop here
-        </button>
-        <span className="decide-what">
-          <strong>Not finished.</strong> Parks it as <span className="mono">paused_user</span>, which
-          Resume picks back up. {holds} The branch and the workspace are kept.
-        </span>
-      </div>
-
-      <p className="decide-hint">
-        Or say what you want next in the box below — neither of these, but another run on this same
-        thread, preferring the session that still holds its context.
-      </p>
-    </div>
-  )
-}
-
-function Fact({ label, children }: { label: string; children: React.ReactNode }): React.JSX.Element {
-  return (
-    <div className="fact">
-      <span className="fact-label">{label}</span>
-      <span className="fact-value">{children}</span>
-    </div>
-  )
-}
-
-/**
- * Which conversation this task is in, and whether the latest run had to build it.
- *
- * ⛔ **This used to infer reuse from the clock** - `session.startedAt < run.startedAt` - on the
- * argument that nothing needed to record the intent because a recorded intent could disagree with
- * what happened. It disagreed with what happened. `spawnSession` inserts its row before `startRun`
- * inserts the run's, so a brand-new session is *always* older than its own first run by a
- * millisecond or two: measured against this install 2026-08-28, the heuristic rendered **"reused,
- * context kept" on 19 of 20 runs**, every one of which was a cold start. It reported the exact
- * inverse of the truth, on the one number an operator would use to judge what a task cost.
- *
- * ⚠️ `startedWarm` is now written at dispatch by the code that made the choice. Null means the run
- * predates the column, and null renders as **nothing** rather than as a guess.
- */
-function SessionFact({ runs, sessions }: { runs: Run[]; sessions: Session[] }): React.JSX.Element {
-  const run = runs[0]
-  if (!run?.sessionId) return <span className="dim">none yet</span>
-  const session = sessions.find((s) => s.id === run.sessionId)
-  // ⚠️ The vendor's id where the CLI named its own conversation, ours where it took ours. This is
-  // the string somebody types after `--conversation` or `--resume`, so it has to be the real one.
-  const conversation = session?.vendorSessionId ?? run.sessionId
-
-  return (
-    <>
-      <span className="mono" title={`Conversation ${conversation}`}>
-        {conversation.slice(0, 8)}
-      </span>{' '}
-      {run.startedWarm === null ? null : run.startedWarm ? (
-        <span
-          className="ok"
-          title="This run inherited a conversation that already existed — continued in a live session, or resumed one that had closed. The prompt prefix was read, not rebuilt."
-        >
-          reused, context kept
-        </span>
-      ) : (
-        <span
-          className="dim"
-          title="A new conversation, so the prompt prefix was built from nothing. Measured on this machine: 41,542 cache-creation tokens for a trivial prompt in an empty directory."
-        >
-          new conversation
-        </span>
-      )}
-    </>
-  )
-}
-
-/**
- * One attempt, with what it cost — twice over, and deliberately not reconciled.
- *
- * ⛔ The token counts are exact assistant-turn metering from the agent's own transcript. The window
- * figures are the *account's* view, read either side of the run, and they include everything the CLI
- * spent that never reached a transcript. The two disagreeing is the measurement, not a bug — HANDOFF
- * calls that gap the instrument. Merging them would destroy it.
- */
-function RunRow({
-  run,
-  fleet,
-  now
-}: {
-  run: Run
-  fleet: FleetEntry[]
-  now: number
-}): React.JSX.Element {
-  const worker = fleet.find((f) => f.worker.id === run.workerId)?.worker.label
-  const spent = run.inputTokens + run.outputTokens + run.cacheReadTokens + run.cacheWriteTokens
-  return (
-    <div className="side-run">
-      <div className="side-run-head">
-        <span className="mono">{run.id.slice(0, 8)}</span>
-        {/* ⛔ Nothing at all when `startedWarm` is null. Runs that predate the column recorded no
-            answer, and drawing `new` for those would put a measurement nobody took next to one
-            that was taken. */}
-        {run.startedWarm !== null && (
-          <span
-            className={run.startedWarm ? 'ok' : 'dim'}
-            title={
-              run.startedWarm
-                ? 'This run inherited a conversation that already existed — continued in a live ' +
-                  'session, or resumed one that had closed. It did not rebuild the context first.'
-                : 'This run opened a new conversation and built its context from nothing.'
-            }
+      {/* ⛔ Drawn only when there is more than one page. A pager reading "1 of 1" beside four rows
+          is furniture that says nothing and takes a line to say it. */}
+      {pages > 1 && (
+        <div className="pager">
+          <button className="btn btn--ghost" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>
+            ← Newer
+          </button>
+          <span className="dim">
+            page {page + 1} of {pages} · {total} task{total === 1 ? '' : 's'}
+          </span>
+          <button
+            className="btn btn--ghost"
+            disabled={page >= pages - 1}
+            onClick={() => setPage((p) => p + 1)}
           >
-            {run.startedWarm ? 'warm' : 'new'}
-          </span>
-        )}
-        <span className={run.outcome === 'completed' ? 'ok' : run.outcome ? 'warn' : 'state-running'}>
-          {run.outcome ?? 'running'}
-        </span>
-        <span className="num dim">{duration((run.endedAt ?? now) - run.startedAt)}</span>
-      </div>
-      <div className="side-run-body num">
-        <span>{worker ?? run.workerId.slice(0, 8)}</span>
-        <span
-          title={
-            'What this run spent: input + output + cache read + cache write, summed from the ' +
-            'transcript. ⛔ Not the size of the context — a single long conversation re-reads its ' +
-            'whole window every turn, so the total runs far ahead of it.'
-          }
-        >
-          {tokens(spent || null)} spent
-        </span>
-      </div>
-      <QuotaDelta run={run} />
-    </div>
-  )
-}
-
-/**
- * What this run cost the account's window.
- *
- * ⛔ Shown only when there are **two** readings. One reading is a state, not a cost, and rendering
- * "41%" beside a run invites it to be read as the run's price. When the closing reading has not
- * arrived yet — it is taken in the background once the run ends and takes about half a minute — this
- * says so rather than showing half a subtraction.
- */
-function QuotaDelta({ run }: { run: Run }): React.JSX.Element | null {
-  const before = run.quotaBefore
-  const after = run.quotaAfter
-  if (!before) return null
-  if (!after) {
-    return (
-      <div className="side-run-quota dim">
-        window at {pct(before)} before · closing reading not taken yet
-      </div>
-    )
-  }
-  const rows = before.windows
-    .map((b) => {
-      const a = after.windows.find((w) => w.id === b.id)
-      return a ? { label: b.label, from: b.percent, to: a.percent } : null
-    })
-    .filter((r): r is { label: string; from: number; to: number } => !!r)
-
-  if (rows.length === 0) return null
-  return (
-    <div className="side-run-quota num">
-      {rows.map((r) => (
-        <span key={r.label} title="the account's own window, read before the run and after it">
-          {r.label} {Math.round(r.from)}% → {Math.round(r.to)}%
-          <span className={r.to > r.from ? 'warn' : 'dim'}>
-            {' '}
-            ({r.to > r.from ? '+' : ''}
-            {Math.round(r.to - r.from)})
-          </span>
-        </span>
-      ))}
-      {/* ⚠️ A stale reading either side makes the difference meaningless, and it is the difference
-          being shown. Say so on the number rather than beside it. */}
-      {(before.stale || after.stale) && (
-        <span className="warn" title="One of the two readings was already too old to act on.">
-          reading not fresh
-        </span>
+            Older →
+          </button>
+        </div>
       )}
     </div>
   )
 }
 
-function pct(q: NonNullable<Run['quotaBefore']>): string {
-  return q.windows.map((w) => `${w.label} ${Math.round(w.percent)}%`).join(' · ')
-}
-
-/**
- * Say something to a task.
- *
- * ⛔ The cheap half of a mid-flight question. A note into a live session is a cache read — `0.1·C`,
- * and it refreshes the TTL. The same note delivered by restarting the task is `2.0·C` plus everything
- * the successor has to rediscover about the branch. Nothing is lost when there is no live session:
- * the note waits and is prepended to the next run's prompt instead.
- *
- * ⚠️ Its own layout, not `.form-row`. That is a three-column grid built for a labelled settings form,
- * and this row has no label — so the input landed in the 110px label track and the Send button was
- * drawn on top of what somebody was typing.
- */
-function Compose({
-  task,
-  refresh
-}: {
-  task: Task
-  refresh: () => Promise<void>
-}): React.JSX.Element {
-  const [text, setText] = useState('')
-  const [sending, setSending] = useState(false)
-  const [outcome, setOutcome] = useState<string | null>(null)
-  const running = task.status === 'running' || task.status === 'assigned'
-
-  const send = async () => {
-    const body = text.trim()
-    if (!body) return
-    setSending(true)
-    try {
-      const result = await rpc('task.message', { id: task.id, text: body })
-      setText('')
-      setOutcome(result.outcome)
-      await refresh()
-    } finally {
-      setSending(false)
-    }
-  }
-
-  return (
-    <div className="compose">
-      <div className="compose-row">
-        <input
-          value={text}
-          placeholder={
-            running
-              ? 'Reply to the agent working on this — it goes into the running session'
-              : 'Ask for the next thing — this continues the task, it does not file a new one'
-          }
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) void send()
-          }}
-        />
-        <button className="btn btn--primary" disabled={sending || !text.trim()} onClick={() => void send()}>
-          {sending ? 'Sending…' : running ? 'Send' : 'Send and continue'}
-        </button>
-      </div>
-      {/*
-        ⛔ This used to say "Nothing is running, so this waits… prepended to the prompt the next run
-        starts with" — which was true of the code and false of the world, because a finished task has
-        no next run. The message went into a still-warm session and produced nothing anybody could
-        see. It now starts one, and the hint says which of the two happened.
-      */}
-      <p className="compose-hint">
-        {outcome === 'requeued'
-          ? 'Queued as a new run on this task — same thread, and it goes back to the session that ' +
-            'still holds the context where there is one.'
-          : outcome === 'delivered'
-            ? 'Delivered into the run that is already going.'
-            : running
-              ? 'Delivered straight into the session that is running — a cache read, and it ' +
-                'refreshes that session’s TTL. The agent sees it mid-task.'
-              : 'This continues the task rather than filing a new one: it starts another run on the ' +
-                'same thread, preferring the session, worker and workspace it already used.'}
-      </p>
-    </div>
-  )
-}
 
 /**
  * Filing a task, read top to bottom: **where** it runs, **how** it should be treated, **who and
@@ -1205,109 +710,3 @@ function NewTask({
   )
 }
 
-/**
- * What happens to this task's work when it is done.
- *
- * ⚠️ Three tiers resolve into one answer — task, then project, then fleet — and `inherit` is a real
- * value rather than a blank. A task set to inherit follows its project as the project changes; one
- * set explicitly to the same value does not, and a control that could not express the difference
- * would quietly convert every glance at this dropdown into a decision.
- *
- * ⛔ The answer from the daemon is what lands in state, never the value that was clicked — and here
- * that matters twice over, because choosing a landing policy on a finished task also *lands* it, and
- * the attempt can be refused. A dropdown that painted itself green while the push was rejected would
- * be the worst kind of lie this app could tell.
- */
-function FinishPicker({ task }: { task: Task }): React.JSX.Element {
-  const [busy, setBusy] = useState(false)
-  const [note, setNote] = useState<string | null>(null)
-
-  const choose = async (finishPolicy: FinishPolicyChoice): Promise<void> => {
-    setBusy(true)
-    setNote(null)
-    try {
-      const result = await rpc('task.setFinishPolicy', { id: task.id, finishPolicy })
-      setNote(
-        result.landed
-          ? 'landed'
-          : result.reason
-            ? `not landed — ${result.reason}`
-            : null
-      )
-    } catch (err) {
-      setNote(err instanceof Error ? err.message : String(err))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <>
-      <select
-        className="finish-picker"
-        value={task.finishPolicy}
-        disabled={busy}
-        aria-label="Finish policy"
-        onChange={(e) => void choose(e.target.value as FinishPolicyChoice)}
-      >
-        <option value="inherit">inherit</option>
-        <option value="await-human">await human</option>
-        <option value="agent-lands">agent lands it</option>
-        <option value="pull-request">open a pull request</option>
-        <option value="custom">this project&rsquo;s own policy</option>
-      </select>
-      {note && <div className="note">{note}</div>}
-    </>
-  )
-}
-
-/**
- * Whether this task may borrow a conversation somebody else has been having.
- *
- * ⛔ Records a preference and nothing more. `FinishPicker` beside it also *acts* — switching a
- * finished task to a landing policy lands it — and the asymmetry is deliberate rather than an
- * omission: acting on this one would mean moving a running agent out of the conversation it is
- * mid-thought in, which is the single thing sharing must never do. It applies from the next run.
- *
- * ⚠️ The saving is real and measured, and so is the disclosure. An agent joining a conversation sees
- * everything said in it, which is why this is off until somebody says otherwise and why the tooltip
- * says so rather than describing only the upside.
- */
-function SharingPicker({ task }: { task: Task }): React.JSX.Element {
-  const [busy, setBusy] = useState(false)
-  const [note, setNote] = useState<string | null>(null)
-
-  const choose = async (sessionSharing: SessionSharingChoice): Promise<void> => {
-    setBusy(true)
-    setNote(null)
-    try {
-      await rpc('task.setSessionSharing', { id: task.id, sessionSharing })
-    } catch (err) {
-      setNote(err instanceof Error ? err.message : String(err))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <>
-      <select
-        className="finish-picker"
-        value={task.sessionSharing}
-        disabled={busy}
-        aria-label="Session sharing"
-        title={
-          'Whether this task may continue in a conversation another task in this project has ' +
-          'already been having. Cheaper — a cold start rebuilt 41,542 tokens of prefix that a ' +
-          'reused one read back for 65 — but the agent sees everything said in that conversation.'
-        }
-        onChange={(e) => void choose(e.target.value as SessionSharingChoice)}
-      >
-        <option value="inherit">inherit</option>
-        <option value="on">reuse one if possible</option>
-        <option value="off">always start a new one</option>
-      </select>
-      {note && <div className="note">{note}</div>}
-    </>
-  )
-}

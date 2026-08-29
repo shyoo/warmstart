@@ -10,6 +10,7 @@ import { Doctor } from './components/Doctor'
 import { Approvals } from './components/Approvals'
 import { Projects } from './components/Projects'
 import { Tasks } from './components/Tasks'
+import { TaskThread } from './components/TaskThread'
 import { Overview } from './components/Overview'
 import { Project as ProjectView, type ProjectTab } from './components/Project'
 import { SidebarResizer } from './components/SidebarResizer'
@@ -32,14 +33,19 @@ import { AppSettings } from './components/AppSettings'
  */
 type Route =
   | { kind: 'overview' }
-  | { kind: 'project'; id: string; tab: ProjectTab }
+  /**
+   * ⚠️ `taskId` rides on the route rather than living in the Tasks list. The Thread tab is a
+   * destination, so Back has to be able to return to a *task* and not merely to a tab that has
+   * forgotten which one it was showing.
+   */
+  | { kind: 'project'; id: string; tab: ProjectTab; taskId?: string }
   /**
    * ⚠️ Temporary, and it removes itself. `tasks.project_id` is nullable, so a database can already
    * hold work that belongs to no project - and in a sidebar built out of projects, that work would
    * simply be unreachable. This entry appears only while such tasks exist and disappears the moment
    * the last one is given a home, which is what the require-a-project migration does.
    */
-  | { kind: 'unassigned' }
+  | { kind: 'unassigned'; taskId?: string }
   | { kind: 'settings'; page: 'workers' | 'logs' | 'global' | 'conversations' }
 
 export function App(): React.JSX.Element {
@@ -247,13 +253,26 @@ export function App(): React.JSX.Element {
           ) : route.kind === 'overview' ? (
             <Overview now={now} />
           ) : route.kind === 'unassigned' ? (
-            <div className="stack">
-              <div className="notice">
-                These tasks belong to no project, so they get no workspace and no branch. Give each
-                one a project — this list disappears when the last of them has a home.
+            route.taskId ? (
+              <TaskThread
+                taskId={route.taskId}
+                fleet={fleet}
+                onBack={() => setRoute({ kind: 'unassigned' })}
+                backLabel="Unassigned"
+              />
+            ) : (
+              <div className="stack">
+                <div className="notice">
+                  These tasks belong to no project, so they get no workspace and no branch. Give each
+                  one a project — this list disappears when the last of them has a home.
+                </div>
+                <Tasks
+                  projects={projects}
+                  fleet={fleet}
+                  onOpenTask={(taskId) => setRoute({ kind: 'unassigned', taskId })}
+                />
               </div>
-              <Tasks projects={projects} fleet={fleet} />
-            </div>
+            )
           ) : route.kind === 'settings' && route.page === 'workers' ? (
             <Workers fleet={fleet} refresh={refresh} />
           ) : route.kind === 'settings' && route.page === 'conversations' ? (
@@ -396,7 +415,7 @@ function ProjectRoute({
   openSession,
   setOpenSession
 }: {
-  route: { kind: 'project'; id: string; tab: ProjectTab }
+  route: { kind: 'project'; id: string; tab: ProjectTab; taskId?: string }
   setRoute: (route: Route) => void
   projects: Project[]
   resources: ResourceAvailability[]
@@ -425,7 +444,12 @@ function ProjectRoute({
     <ProjectView
       project={project}
       tab={route.tab}
-      setTab={(tab) => setRoute({ kind: 'project', id: route.id, tab })}
+      // ⚠️ The open task survives a tab change. Somebody who steps out to Cost and back expects the
+      // task they were reading to still be there, and re-picking it from the list is the cost of
+      // forgetting it.
+      setTab={(tab) => setRoute({ kind: 'project', id: route.id, tab, ...(route.taskId ? { taskId: route.taskId } : {}) })}
+      taskId={route.taskId ?? null}
+      openTask={(taskId) => setRoute({ kind: 'project', id: route.id, tab: 'thread', taskId })}
       projects={projects}
       resources={resources}
       refreshProjects={refreshProjects}

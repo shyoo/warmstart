@@ -81,6 +81,74 @@ export type TaskStatus =
   | 'completed'
   | 'failed'
 
+/**
+ * The buckets the task list can be filtered by.
+ *
+ * ⛔ **Every status belongs to exactly one bucket.** Not "at least one" — exactly one. That is what
+ * makes a multi-select a plain union with no row appearing twice and no count double-adding, and it
+ * is what stops a status added later from being invisible in every view except All. The test that
+ * pins this checks both directions, because only one of them is the interesting failure.
+ *
+ * ⚠️ **All is not in here.** It is the *empty* selection, so that "everything" has one representation
+ * rather than two — an empty array and a full one would look identical to a reader and different to
+ * a `Set`.
+ *
+ * `draft` sits under Blocked rather than in a bucket of its own: a draft dispatches nothing until
+ * somebody promotes it, which is the same thing Blocked means to the person scanning this list —
+ * *not going anywhere without me*.
+ */
+export const TASK_VIEWS = {
+  active: ['ready', 'scheduled', 'assigned', 'running', 'cancelling'],
+  needs_you: ['awaiting_human', 'paused_user'],
+  blocked: ['blocked', 'paused_quota', 'draft'],
+  done: ['completed'],
+  failed: ['failed', 'cancelled']
+} as const satisfies Record<string, readonly TaskStatus[]>
+
+export type TaskView = keyof typeof TASK_VIEWS
+
+/** In the order they are drawn, with the label each chip carries. */
+export const TASK_VIEW_ORDER: Array<{ id: TaskView; label: string }> = [
+  { id: 'active', label: 'Active' },
+  // ⭐ The one an operator actually scans for. A task waiting on a person is stopped and nothing in
+  // the fleet will restart it, so it is the only bucket whose contents are *your* backlog.
+  { id: 'needs_you', label: 'Needs you' },
+  { id: 'blocked', label: 'Blocked' },
+  { id: 'done', label: 'Done' },
+  { id: 'failed', label: 'Failed' }
+]
+
+/** The statuses a set of views selects, as one flat list. Empty selection means no filter at all. */
+export function statusesForViews(views: readonly TaskView[]): TaskStatus[] {
+  return views.flatMap((v) => [...TASK_VIEWS[v]])
+}
+
+/** Which bucket a status falls in. Used to fold a `group by status` count into chip counts. */
+export function viewForStatus(status: TaskStatus): TaskView | null {
+  for (const [view, statuses] of Object.entries(TASK_VIEWS)) {
+    if ((statuses as readonly string[]).includes(status)) return view as TaskView
+  }
+  return null
+}
+
+/** One page of the task table, with the counts the chips above it draw. */
+export interface TaskPage {
+  tasks: Task[]
+  /** How many rows the filter matches, which is what the pager counts pages out of. */
+  total: number
+  /**
+   * How many tasks are in each bucket, **ignoring the current selection**.
+   *
+   * ⛔ Unfiltered on purpose. A chip whose count reflected the filter would read `Needs you 0` while
+   * three tasks were waiting on you, purely because you were looking at Done — the number would then
+   * only ever be right for the chip you had already clicked, which is the one you least need it on.
+   */
+  counts: Record<TaskView, number>
+}
+
+/** What the table can be ordered by. ⚠️ Every one of these is a real column, never a computed one. */
+export type TaskSort = 'seq' | 'created' | 'updated'
+
 /** Where a cancelled task comes to rest. Cancel is not delete: none of these destroy anything. */
 export type RestingState = 'paused_user' | 'draft' | 'cancelled'
 

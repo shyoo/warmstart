@@ -271,6 +271,17 @@ costmodels/             versioned pricing data
 
 ## Things that will bite
 
+- ⛔ **`test/ui.test.mjs` never opens a project.** Every task it files has `projectId: null`, so it
+  drives the **Unassigned** route and nothing under `components/Project.tsx`. A mutation to a project
+  route will run green there — it did on 2026-08-28, three checks passing with the row-click
+  navigation deliberately broken. When you change anything on a project tab, mutate the code and watch
+  the suite go red *before* believing it; if it stays green, the suite is not reaching your change.
+- ⛔ **The UI suite's worker has no credentials, so nothing it files ever runs.** There are no rows in
+  `runs` and no sessions during that suite. Any check written against `.side-run`, a session id, a
+  token count or a quota delta will report **PASS against an empty list**. Assert the collection is
+  non-empty as half the claim, or test the logic as a pure function instead — `lib/conversation.ts`
+  exists for exactly that reason.
+
 - **Electron does not download itself.** Electron 44 ships **no postinstall** — it exposes
   `install-electron` as a bin and leaves the ~110MB download to you — so `npm install` finishes with
   `node_modules/electron/dist` empty and every suite here needs that dist. Run

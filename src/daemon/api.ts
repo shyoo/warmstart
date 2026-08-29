@@ -42,11 +42,13 @@ import {
 } from './projects.js'
 import {
   addMessage,
+  blockedDependentsOf,
   createTask,
   getTask,
   lastMessageId,
   listTasks,
   messagesFor,
+  pageTasks,
   promoteDraft,
   requireTask,
   setStatus,
@@ -329,6 +331,7 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
 
     // ---- tasks -------------------------------------------------------------------------
     'task.list': (p) => listTasks(p ?? {}),
+    'task.page': (p) => pageTasks(p ?? {}),
     'task.get': (p) => {
       const task = getTask(p.id)
       if (!task) return null
@@ -342,7 +345,14 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
         .filter((id): id is string => !!id && !seen.has(id) && !!seen.add(id))
         .map((id) => getSession(id))
         .filter((s): s is NonNullable<typeof s> => !!s)
-      return { task, messages: messagesFor(p.id), runs, sessions, activity: activityFor(p.id) }
+      return {
+        task,
+        messages: messagesFor(p.id),
+        runs,
+        sessions,
+        activity: activityFor(p.id),
+        blocking: blockedDependentsOf(p.id)
+      }
     },
     'task.create': (p) => createTask({ ...p, ...(p.constraints ? { constraints: checkConstraints(p.constraints) } : {}) }),
     'task.update': (p) => {

@@ -121,3 +121,52 @@ export function useNow(intervalMs = 1000): number {
   }, [intervalMs])
   return now
 }
+
+export interface ActivityLine {
+  text: string
+  ts: number
+}
+
+/**
+ * What agents are saying right now, per task.
+ *
+ * ⛔ **Appended from the event stream, never re-fetched.** The daemon holds a tail of its own and
+ * `task.get` returns it, but a pane that rebuilt from each fetch would flicker back to whatever the
+ * daemon happened to hold at that instant — and a task's data is re-fetched on every `task.changed`
+ * the fleet emits, which is often. `seed` fills the pane once when a task is opened mid-run so it
+ * does not start blank; events take over from there.
+ *
+ * ⚠️ Two screens need this now — the table draws the latest line on a running row, the thread draws
+ * the whole tail — so it is a hook rather than state in whichever component happened to own both.
+ * Each caller keeps its own copy; they are fed by the same broadcast and cannot disagree.
+ */
+export function useActivity(): {
+  activity: Record<string, ActivityLine[]>
+  seed: (taskId: string, lines: ActivityLine[]) => void
+} {
+  const [activity, setActivity] = useState<Record<string, ActivityLine[]>>({})
+
+  const seed = useCallback((taskId: string, lines: ActivityLine[]) => {
+    if (lines.length === 0) return
+    // ⚠️ Only into an empty pane. Seeding over a tail this hook has been building would replay lines
+    // already on screen and reorder them against the ones still arriving.
+    setActivity((prev) => (prev[taskId]?.length ? prev : { ...prev, [taskId]: lines }))
+  }, [])
+
+  useDaemonEvents((event) => {
+    if (event.type !== 'task.activity') return
+    // A new attempt starts with an empty pane. See clearActivity.
+    if (event.reset) {
+      setActivity((prev) => ({ ...prev, [event.taskId]: [] }))
+      return
+    }
+    setActivity((prev) => {
+      // ⚠️ Bounded here as well as in the daemon. This is agent output arriving as fast as a model
+      // can produce it, and an unbounded array in a React state is a memory leak with a pretty UI.
+      const tail = [...(prev[event.taskId] ?? []), { text: event.text, ts: event.ts }].slice(-40)
+      return { ...prev, [event.taskId]: tail }
+    })
+  })
+
+  return { activity, seed }
+}

@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto'
 import {
   PRIORITY_ORDER,
   ROOT_MANDATE,
+  statusesForViews,
+  viewForStatus,
   type Budget,
   type Mandate,
   type MandateOperation,
@@ -14,7 +16,10 @@ import {
   type TaskConstraints,
   type TaskKind,
   type TaskMessage,
-  type TaskStatus
+  type TaskPage,
+  type TaskSort,
+  type TaskStatus,
+  type TaskView
 } from '@shared/tasks.js'
 import { db, row, rows } from './db.js'
 import { emit } from './events.js'
@@ -152,6 +157,99 @@ export function listTasks(opts: { includeDeleted?: boolean; projectId?: string }
   return rows<TaskRow>(
     db().prepare(`${TASK_SELECT} ${where} order by t.seq`).all(...args)
   ).map(toTask)
+}
+
+/**
+ * How many rows one page holds, whatever it was asked for.
+ *
+ * ⛔ A bound, not a preference. This is reachable from anything that can call the RPC, and an
+ * unbounded page size is a request to serialise the whole table into a websocket frame — the same
+ * trap `conversationLimit` exists for. Exported so the clamp is checkable without filing five
+ * hundred tasks to observe it.
+ */
+export function taskPageSize(asked?: number): number {
+  return Math.min(Math.max(asked ?? 50, 1), 200)
+}
+
+/**
+ * One page of tasks, filtered by bucket.
+ *
+ * ⛔ Filtered and paged **here**, not in the renderer. The list re-fetches on every `task.changed`
+ * the fleet emits — which on a working fleet is several a second — and shipping every task in a
+ * project across that boundary each time to throw most of them away is a cost that grows with
+ * exactly the thing this feature exists to survive.
+ *
+ * ⚠️ `views: []` means no filter, not "nothing matches". All is the empty selection; see TASK_VIEWS.
+ */
+export function pageTasks(
+  opts: {
+    projectId?: string
+    includeDeleted?: boolean
+    views?: readonly TaskView[]
+    sort?: TaskSort
+    /** `true` for ascending. Defaults to descending, which is what every column here wants. */
+    asc?: boolean
+    limit?: number
+    offset?: number
+  } = {}
+): TaskPage {
+  const clauses: string[] = []
+  const args: Array<string | number> = []
+  if (!opts.includeDeleted) clauses.push('t.deleted_at is null')
+  if (opts.projectId) {
+    clauses.push('t.project_id = ?')
+    args.push(opts.projectId)
+  }
+  // ⚠️ The scope every count is taken over: the project and the deleted rule, but never the bucket
+  // selection. Built before the status clause is added for exactly that reason.
+  const scope = clauses.length ? `where ${clauses.join(' and ')}` : ''
+  const scopeArgs = [...args]
+
+  const statuses = statusesForViews(opts.views ?? [])
+  if (statuses.length > 0) {
+    clauses.push(`t.status in (${statuses.map(() => '?').join(',')})`)
+    args.push(...statuses)
+  }
+  const where = clauses.length ? `where ${clauses.join(' and ')}` : ''
+
+  const total = (
+    db().prepare(`select count(*) as n from tasks t ${where}`).get(...args) as { n: number }
+  ).n
+
+  // ⛔ `seq` is the tie-break on every sort, never the clock alone. Two tasks filed in the same
+  // millisecond - which the plan decomposer does routinely - would otherwise come back in whatever
+  // order SQLite felt like, and a pager over an unstable order silently drops and repeats rows
+  // between pages.
+  const column: Record<TaskSort, string> = {
+    seq: 't.seq',
+    created: 't.created_at',
+    updated: 't.updated_at'
+  }
+  const dir = opts.asc ? 'asc' : 'desc'
+  const order = `order by ${column[opts.sort ?? 'updated']} ${dir}, t.seq ${dir}`
+  const limit = taskPageSize(opts.limit)
+  // ⚠️ Clamped although SQLite already tolerates a negative OFFSET by ignoring it. That tolerance is
+  // not something to build on, and no test can pin it — a test for this passed with the clamp
+  // deleted, so it was removed rather than left standing as coverage nobody had.
+  const offset = Math.max(opts.offset ?? 0, 0)
+
+  const tasks = rows<TaskRow>(
+    db().prepare(`${TASK_SELECT} ${where} ${order} limit ? offset ?`).all(...args, limit, offset)
+  ).map(toTask)
+
+  const counts: Record<TaskView, number> = { active: 0, needs_you: 0, blocked: 0, done: 0, failed: 0 }
+  const grouped = rows<{ status: TaskStatus; n: number }>(
+    db().prepare(`select t.status, count(*) as n from tasks t ${scope} group by t.status`).all(...scopeArgs)
+  )
+  for (const g of grouped) {
+    const view = viewForStatus(g.status)
+    // ⚠️ A status in no bucket is dropped rather than being folded into the nearest one. It would be
+    // a status somebody added without touching TASK_VIEWS, and quietly attributing its rows to a
+    // bucket that does not contain them would make the chips disagree with the table they filter.
+    if (view) counts[view] += g.n
+  }
+
+  return { tasks, total, counts }
 }
 
 export function getTask(id: string): Task | null {
@@ -391,6 +489,23 @@ export function dependentsOf(taskId: string): string[] {
   return rows<{ task_id: string }>(
     db().prepare('select task_id from task_deps where depends_on = ?').all(taskId)
   ).map((r) => r.task_id)
+}
+
+/**
+ * How many tasks are actually held up by this one.
+ *
+ * ⛔ `blocked` only, and deleted rows excluded. A dependent that has already run is released by
+ * nothing — counting it would tell an operator that finishing this task frees work which is in fact
+ * long finished, on the one screen where that number decides which button they press.
+ */
+export function blockedDependentsOf(taskId: string): number {
+  const r = db()
+    .prepare(
+      `select count(*) as n from task_deps d join tasks t on t.id = d.task_id
+        where d.depends_on = ? and t.status = 'blocked' and t.deleted_at is null`
+    )
+    .get(taskId) as { n: number }
+  return r.n
 }
 
 // ---------------------------------------------------------------------------- admission

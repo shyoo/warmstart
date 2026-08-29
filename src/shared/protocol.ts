@@ -15,6 +15,9 @@ import type {
   TaskConstraints,
   TaskKind,
   TaskMessage,
+  TaskPage,
+  TaskSort,
+  TaskView,
   FinishPolicy,
   FinishPolicyChoice,
   SessionSharing,
@@ -802,6 +805,27 @@ export interface RpcMap {
   'project.writeConfig': { params: { id: string }; result: { path: string } }
 
   'task.list': { params: { projectId?: string; includeDeleted?: boolean } | void; result: Task[] }
+  /**
+   * One page of the task table, filtered by bucket.
+   *
+   * ⛔ A second method rather than a new shape for `task.list`. `task.list` has fourteen callers and
+   * one of them is the MCP tool an *agent* calls — changing an external contract to add a filter to
+   * a table would be the tail wagging the dog. Nothing that reads the whole list has to care that
+   * this exists.
+   */
+  'task.page': {
+    params: {
+      projectId?: string
+      includeDeleted?: boolean
+      /** Buckets to show. ⚠️ Empty means everything; All is the empty selection, not a sixth view. */
+      views?: TaskView[]
+      sort?: TaskSort
+      asc?: boolean
+      limit?: number
+      offset?: number
+    } | void
+    result: TaskPage
+  }
   'task.get': {
     params: { id: string }
     result: {
@@ -819,6 +843,20 @@ export interface RpcMap {
       sessions: Session[]
       /** The live tail for this task, if anything is running. Same content as `task.activity`. */
       activity: Array<{ text: string; ts: number }>
+      /**
+       * How many tasks are held at `blocked` waiting on this one.
+       *
+       * ⛔ The concrete consequence of Mark done versus Stop here, and it has to be a number rather
+       * than a sentence: `admit()` releases a dependent only when its dependency reaches
+       * `completed`, so those two buttons are the difference between the rest of a plan running and
+       * not — and with nothing on screen saying so the choice looks like a matter of taste.
+       *
+       * ⚠️ Computed here because the thread is its own route now. It used to be counted in the
+       * renderer by filtering the task list the pane was rendered inside; a pane opened directly
+       * has no such list, and fetching every task in the fleet to count two of them would be a
+       * worse answer than a `count(*)`.
+       */
+      blocking: number
     } | null
   }
   'task.create': { params: TaskCreateParams; result: Task }

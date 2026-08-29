@@ -92,6 +92,15 @@ contenders rather than letting them collide.
 thread, priority, deadline, dependencies (a DAG), a schedule (`not_before`), resource requirements,
 constraints, a verification policy, and a status.
 
+**Thread** — *a task's messages*, human and agent, in the order they were said. ⛔ **Not a
+conversation.** A conversation is the agent's own session — it has a vendor id, you resume it with
+`--resume` or `--conversation`, it can outlive the task that opened it and be borrowed by another.
+A thread belongs to exactly one task and is never shared. One thread can be served by several
+conversations, and one conversation can serve several threads, which is precisely why the two need
+different words: the UI tab is **Thread** and the Settings page is **Conversations**, and naming both
+of them "conversation" would make *"which conversation is this task in?"* ambiguous on the one screen
+that answers it.
+
 **Continuation** — *another run on a task that had stopped*, started by somebody replying to it. ⛔ A
 run, never a new task: same thread, same budget, same branch. Nothing routes it by hand — the session
 still holding its context scores highest, so the same worker, workspace and session are chosen because

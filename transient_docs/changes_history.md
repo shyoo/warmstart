@@ -1416,3 +1416,71 @@ tasks**, every borrow reporting `warm` at ~86-92k input-token-equivalents saved.
 ⚠️ One number worth watching: context went 43k → 49k across those five tasks. That accumulation is
 what the 60% share ceiling is for, and it has not yet been seen to fire - a conversation shared long
 enough will eventually stop being offered, and nothing has observed that happening.
+
+
+---
+
+## The task view becomes three screens (2026-08-28)
+
+The task list, the task detail and the live output were one screen. That works until a project has
+forty tasks, at which point the pane for the task you just clicked renders below forty rows of the
+list you clicked it from — further off screen the more work a project has, which is exactly backwards.
+
+### Thread, not Conversation
+
+The owner suggested calling the new tab **Conversation**. It was named **Thread** instead, and the
+reason is worth keeping: *conversation* already means something precise here. It is the agent session
+you resume with `--resume` or `--conversation`; it has a vendor id, it outlives the task that opened
+it, another task can borrow it, and Settings has a page listing them. A task's messages are a
+different object with a different lifetime — one thread can be served by several conversations and one
+conversation can serve several threads. Naming both "conversation" would have made *"which
+conversation is this task in?"* ambiguous on the exact screen that answers it. `docs/glossary.md`
+now defines the two against each other.
+
+### The list learned to filter, in the daemon
+
+Six buckets over thirteen statuses, multi-select, with **All as the empty selection** so that
+"everything" has one representation rather than two. Every status is in exactly one bucket, which is
+what makes a multi-select a plain union — no row returned twice, no count added twice — and a test
+pins that in both directions, because a status added later that no bucket names would be invisible in
+every view except All.
+
+⛔ The counts on the chips are taken over the project, **never over the current selection**. A count
+that followed the filter would read `Needs you 0` while three tasks waited on you, purely because you
+were looking at Done — right only for the chip you had already clicked.
+
+Filtering and paging went into `pageTasks` rather than into React, because the list re-fetches on
+every `task.changed` the fleet emits. `task.list` was left alone: it has fourteen callers and one of
+them is the MCP tool an *agent* calls, and changing an external contract to add a table filter is the
+tail wagging the dog.
+
+### Three tests that could not fail
+
+Written, run green, then mutated — and three of them did not notice:
+
+1. **The Thread navigation checks.** Breaking the row → Thread route in the *project* branch changed
+   nothing: `test/ui.test.mjs` files every task with no project and drives the **unassigned** route,
+   so the mutation was in code the suite never reaches. Mutating the route it does drive failed eight
+   checks. The project tab remains uncovered and is recorded in HANDOFF as such rather than counted.
+2. **The sort tie-break.** "Asked twice, answered identically" passed with `, t.seq` deleted — SQLite
+   falls back to rowid, which is stable *and* is insertion order, so the test agreed with itself while
+   pinning nothing. Rewritten to assert the **direction**, which rowid cannot fake because it never
+   reverses.
+3. **Every message carries a timestamp.** Passed on a thread with **zero messages**. The suite's tasks
+   were filed with a title and no prompt, and the row being opened was the stalest one. Fixed by
+   seeding a prompt, opening the freshest row, and asserting `msgs.length > 0` as half the claim.
+
+A fourth was retired rather than fixed: a negative-offset clamp cannot be tested, because SQLite
+already ignores a negative `OFFSET`. The clamp stays as defence; the test that could not fail is gone.
+
+### The conversation id, and where it could be tested
+
+Runs showed the **run** id and never the conversation's. They now show the id you would paste after
+`--resume` — the vendor's where the CLI named its own conversation, ours where it took the one we
+gave it — per run, because a task that ran three times may have run in three conversations and the
+ledger names only the latest.
+
+⛔ The first UI check for this reported PASS against `{"runs":0}`: the suite's worker has no
+credentials, so nothing it files ever dispatches and there are no runs at all. Green, asserting
+nothing. The resolution moved into `lib/conversation.ts` as a pure function with its own tests, where
+the thing that can actually be wrong — picking a plausible id that resumes nothing — is checkable.

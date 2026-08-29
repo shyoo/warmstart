@@ -46,7 +46,7 @@ this feature does not turn it on.
 |---|---|---|
 | Fleet | Settings → Global → **Reusing conversations** | `off` · `on` |
 | Project | `session.share` in `.multi_agent_controller/project.json` | `off` · `on` · `inherit` |
-| Task | the **conversation** dropdown in its detail pane | `inherit` · `on` · `off` |
+| Task | the **conversation** dropdown on its **Thread** tab | `inherit` · `on` · `off` |
 
 Resolved **task → project → fleet**, taking the first that is not `inherit`.
 
@@ -104,8 +104,18 @@ is visible under **Loose ends** and hide it inside a stash you would have to kno
 
 ## Reading what happened
 
-Each run in a task's detail pane is marked **warm** or **new**, and the conversation's id is shown
-beside it. ⚠️ Runs recorded before this existed show neither, rather than guessing.
+A task's **Thread** tab lists its runs. Each is marked **warm** or **new**, and carries **the id of
+the conversation that served it** — click it to copy. That is the string to pass after `--resume` or
+`--conversation`, so it is the vendor's own id where the CLI named its conversation and ours where it
+took the one we gave it.
+
+⛔ Per run, not per task. A task that ran three times may have run in three different conversations —
+which is the whole point of resuming and sharing — and the ledger beside the thread names only the
+latest. ⚠️ Runs recorded before this existed show no warm/new marking, rather than guessing.
+
+⚠️ **Thread is not Conversation.** The tab holds a task's messages; a conversation is the agent
+session those messages were said in. One thread can be served by several conversations, and one
+conversation can serve several threads. See `docs/glossary.md`.
 
 **Settings → Conversations** is the other direction: every conversation the fleet has opened, which
 account and worktree it belongs to, what branch its tree is on, and — expanded — **which tasks it

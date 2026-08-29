@@ -767,6 +767,82 @@ body {
 
 /* ---- table ------------------------------------------------------------- */
 
+/* ---- filtering the table ------------------------------------------------- */
+
+/* ⛔ Toggles, not tabs. Several can be on at once, so they must not look like a tab bar — a tab bar
+   promises exactly one selection and would make a two-chip state read as a rendering fault. */
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1);
+  margin-bottom: var(--sp-2);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-text-faint);
+  font: inherit;
+  font-size: var(--text-meta);
+  padding: 2px var(--sp-2);
+  cursor: pointer;
+}
+
+.chip:hover {
+  color: var(--color-text);
+  border-color: var(--color-text-faint);
+}
+
+.chip--on {
+  background: var(--color-surface);
+  border-color: var(--color-accent);
+  color: var(--color-text);
+}
+
+/* ⚠️ Tabular figures, because these numbers change under the cursor as the fleet works and a chip
+   that resized on every count would move the ones beside it. */
+.chip-n {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.7;
+}
+
+.sort-head {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.sort-head:hover {
+  color: var(--color-text);
+}
+
+.sort-head--on {
+  color: var(--color-text);
+}
+
+.tbl-when {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-3);
+  padding-top: var(--sp-2);
+  font-size: var(--text-meta);
+}
+
 .tbl {
   width: 100%;
   border-collapse: collapse;
@@ -1297,16 +1373,30 @@ select:focus-visible,
 
 /* ---- task detail -------------------------------------------------------- */
 
+/* ⚠️ No top border and no top margin any more. Those separated this pane from the table it used to
+   hang below; it is its own screen now, and a rule across the top of a page divides it from
+   nothing. */
 .detail {
-  margin-top: var(--sp-5);
-  border-top: 1px solid var(--color-border);
-  padding-top: var(--sp-4);
+  padding-top: var(--sp-1);
+}
+
+/* The way out, then the title. Baseline-aligned so the button does not sit above the words. */
+.detail-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-3);
 }
 
 .detail h3 {
-  margin: 0 0 var(--sp-2);
+  margin: 0;
   font-size: var(--text-section);
   font-weight: 600;
+}
+
+.back-to-list {
+  flex: none;
+  white-space: nowrap;
 }
 
 .detail-meta {
@@ -1486,45 +1576,6 @@ select:focus-visible,
 
 /* ⛔ Visibly not the thread. It is a window onto a process, it is not kept, and it must not be
    mistaken for the record - so it gets its own frame and its own muted voice. */
-.peek {
-  border: 1px dashed var(--color-border-strong);
-  border-radius: var(--radius);
-  padding: var(--sp-2) var(--sp-3);
-  margin-bottom: var(--sp-3);
-  background: var(--color-surface);
-}
-
-.peek-head {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-2);
-  font-size: var(--text-meta);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--state-running);
-  margin-bottom: var(--sp-1);
-}
-
-.peek-head .dim {
-  text-transform: none;
-  letter-spacing: 0;
-}
-
-.peek-body {
-  max-height: 180px;
-  overflow-y: auto;
-  font-size: var(--text-meta);
-  line-height: var(--leading-body);
-  color: var(--color-text-dim);
-  display: flex;
-  flex-direction: column-reverse;
-}
-
-.peek-line {
-  padding: 1px 0;
-  overflow-wrap: anywhere;
-}
-
 /* One line of the same thing, on a running row. */
 .tbl-live {
   color: var(--color-text-dim);
@@ -1542,6 +1593,8 @@ select:focus-visible,
  * for a labelled settings form - so an unlabelled row put the input in the 110px label track and the
  * Send button was painted over the top of whatever somebody was typing.
  */
+/* ⛔ No top margin. It is the foot of the thread above it, not a separate control that happens to
+   be nearby - which is what the gap used to say when a live pane sat between the two. */
 .compose {
   margin-bottom: var(--sp-3);
 }
@@ -1576,6 +1629,57 @@ select:focus-visible,
   margin-bottom: var(--sp-4);
   max-height: 320px;
   overflow-y: auto;
+}
+
+/* ⚠️ Taller than the pane it replaced, because it is the page now rather than a box under a table -
+   and it holds the live output too, which used to have 180px of its own below it. */
+.thread--task {
+  max-height: 52vh;
+  min-height: 220px;
+  margin-bottom: var(--sp-3);
+}
+
+/* ⚠️ Beside the role, not in a column of its own. A third grid track would take width from the one
+   part of this anybody reads, to show something they only look at when they are asking a question
+   about ordering. */
+.msg-when {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--text-meta);
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--color-text-faint);
+  opacity: 0.75;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ⛔ Marked as unfinished, in the thread rather than beside it. The dashed edge is the same signal
+   the old separate pane carried: this text is a window onto a process, and it will be replaced by
+   what the agent actually recorded. */
+.msg--live {
+  border-bottom: 0;
+  border-left: 2px dashed var(--state-running);
+  padding-left: var(--sp-2);
+  margin-left: -2px;
+  color: var(--color-text-dim);
+}
+
+.msg--live .msg-role {
+  color: var(--state-running);
+}
+
+.msg-live-line {
+  display: block;
+  padding: 1px 0;
+  overflow-wrap: anywhere;
+}
+
+.msg-live-note {
+  display: block;
+  margin-top: var(--sp-1);
+  font-size: var(--text-meta);
+  color: var(--color-text-faint);
+  font-style: italic;
 }
 
 .msg {
@@ -1822,4 +1926,26 @@ select:focus-visible,
   min-width: 0;
   width: 100%;
   font-size: var(--text-meta);
+}
+
+/* ⛔ A button, not a span. This is the string somebody pastes after `--resume`, so it has to be
+   takeable — and a click target that looks like text is why it carries a hover and a title. */
+.side-run-conv {
+  padding-top: 2px;
+}
+
+.conv-id {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: var(--text-meta);
+  color: var(--color-text-faint);
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}
+
+.conv-id:hover {
+  color: var(--color-text);
 }

@@ -153,7 +153,14 @@ try {
       // One task left in the queue on purpose: everything else this suite files is at rest, and a
       // table with nothing in flight cannot show whether in-flight is legible. The one worker here
       // has no credentials, so this is held rather than dispatched.
-      await r('task.create', { title: 'A task waiting for a worker', priority: 'P3' });
+      // ⚠️ With a prompt, so the thread has something in it. A task filed with only a title has an
+      // empty message list, and a check that every message carries a timestamp passes vacuously on
+      // a thread with no messages — which is what it did the first time it was written.
+      await r('task.create', {
+        title: 'A task waiting for a worker',
+        priority: 'P3',
+        prompt: 'Say what you would do first.'
+      });
       return t.seq;
     })()
   `)
@@ -178,6 +185,74 @@ try {
   check('the task table renders rows', table.includes('A task the UI can render'))
   check('a cancelled task shows its resting state', table.includes('paused_user'), 'not "cancelled"')
   check('a draft is visible but not queued', table.includes('draft'))
+
+  // ---- filtering the table ------------------------------------------------------------
+  // ⛔ The chips are the only thing standing between an operator and a table that grows without
+  // bound. Three tasks are seeded above and they land in three different buckets, which is what
+  // makes a narrowing observable at all.
+  const chips = await evaluate(`[...document.querySelectorAll('.chip')].map(c => c.innerText.trim())`)
+  check('the table offers view filters', chips.length === 6, JSON.stringify(chips))
+  check(
+    'including the one an operator actually scans for',
+    chips.some((c) => c.startsWith('Needs you')),
+    'a task waiting on a person is stopped and nothing in the fleet will restart it'
+  )
+
+  const rowsNow = () => evaluate('document.querySelectorAll(".tbl tbody tr").length')
+  const countsNow = () =>
+    evaluate(`JSON.stringify([...document.querySelectorAll('.chip')].map(c => c.innerText.trim()))`)
+
+  const unfilteredRows = await rowsNow()
+  const countsBefore = await countsNow()
+  check('every task is listed before anything is filtered', unfilteredRows === 3, String(unfilteredRows))
+
+  await evaluate(
+    `[...document.querySelectorAll('.chip')].find(c => c.innerText.trim().startsWith('Needs you'))?.click()`
+  )
+  await wait(900)
+  const narrowed = await rowsNow()
+  check('choosing a view narrows the table', narrowed === 1, `${unfilteredRows} rows -> ${narrowed}`)
+
+  // ⭐ The property worth pinning, and the one that is wrong in most tables that do this: a count
+  // computed from the rows on screen would read `Blocked 0` while a draft sat one click away.
+  check(
+    'and the counts keep describing every bucket, not the filtered rows',
+    (await countsNow()) === countsBefore,
+    'a chip whose count followed the filter would only ever be right for the chip already clicked'
+  )
+
+  // ⛔ Multi-select. Two buckets is a union, not a replacement - the second click must add rather
+  // than switch, or the chips are a tab bar wearing a different shape.
+  await evaluate(
+    `[...document.querySelectorAll('.chip')].find(c => c.innerText.trim().startsWith('Blocked'))?.click()`
+  )
+  await wait(900)
+  const twoViews = await rowsNow()
+  check('selecting a second view adds to the first rather than replacing it', twoViews === 2, String(twoViews))
+
+  check(
+    'and the choice is remembered, so a reopened window keeps the view',
+    JSON.parse(
+      (await evaluate(`window.localStorage.getItem('multi_agent_controller.taskViews')`)) ?? '[]'
+    ).length === 2
+  )
+
+  await evaluate(
+    `[...document.querySelectorAll('.chip')].find(c => c.innerText.trim().startsWith('All'))?.click()`
+  )
+  await wait(900)
+  check('All puts every task back', (await rowsNow()) === 3)
+
+  // ⛔ Both dates. "How long has this been sitting here" and "is anything still happening" are
+  // different questions, and one column answers neither on its own.
+  const headers = await evaluate(`document.querySelector('.tbl thead')?.innerText ?? ''`)
+  check('the table says when each task was filed and when it last moved', /CREATED/i.test(headers) && /UPDATED/i.test(headers), headers)
+  check(
+    'and the column it is sorted by is the only one marked',
+    (await evaluate(`document.querySelectorAll('.sort-head--on').length`)) === 1,
+    'an arrow on every header hides the one actually in force'
+  )
+
   // ⛔ Which account is spending on a task is the first thing an operator checks. It used to be
   // reachable only by clicking the row open, which is where a misroute went unnoticed for an hour.
   // ⚠️ Case-insensitive: `innerText` is what *rendered*, and the header is upper-cased by CSS.
@@ -210,11 +285,29 @@ try {
     'the scheduler already computed the reason; it now reaches the row it is about'
   )
 
-  // ---- the detail pane ----------------------------------------------------------------
-  // ⛔ Opened, because everything below only exists once a row is open — and "click the row to find
+  // ---- the thread ---------------------------------------------------------------------
+  // ⛔ Opened, because everything below only exists once a task is open — and "click the row to find
   // out which session it is on" is exactly the gap this pane was reworked to close.
-  await evaluate(`[...document.querySelectorAll('.tbl tbody tr')].at(-1)?.click()`)
+  // ⚠️ The first row, not the last. The table now sorts most-recently-touched first, so the last row
+  // is the stalest task in the project — which is not what "open a task" should mean, and in this
+  // suite is a task nobody has said anything on.
+  await evaluate(`document.querySelector('.tbl tbody tr')?.click()`)
   await wait(1200)
+
+  // ⛔ A destination, not a pane below the table. The detail used to render underneath the list,
+  // which put the thing you had just clicked on below every row of the thing you clicked it from —
+  // further off screen the more work a project had.
+  check(
+    'clicking a task leaves the table behind rather than growing it',
+    await evaluate('!document.querySelector(".tbl tbody")'),
+    'the list should be gone, not scrolled past'
+  )
+  check(
+    'and the thread offers the way back, above the messages',
+    await evaluate(`(document.querySelector('.back-to-list')?.innerText ?? '').includes('←')`),
+    'a screen you navigate to needs its exit where the eye starts'
+  )
+
   const detail = await evaluate('document.querySelector(".detail")?.innerText ?? ""')
   check('opening a task shows a ledger beside the thread', /STATUS|WORKER|SESSION/i.test(detail), detail.slice(0, 80))
   check(
@@ -228,6 +321,38 @@ try {
     /tokens/i.test(detail),
     '"spent" was read as money by everybody who saw it'
   )
+
+  // ⛔ One scroll container, not two. The live output used to sit in its own bordered pane below the
+  // thread, which meant following one conversation by moving your eyes between two boxes — with the
+  // composer for replying below both, furthest from the words it was answering.
+  check(
+    'the live pane is gone as a separate box',
+    (await evaluate('!!document.querySelector(".peek")')) === false,
+    'what the agent is saying now is the continuation of what it said a minute ago'
+  )
+  check(
+    'the thread and the composer are the same column, in that order',
+    await evaluate(`(() => {
+      const thread = document.querySelector('.thread--task');
+      const compose = document.querySelector('.compose');
+      if (!thread || !compose) return false;
+      return thread.getBoundingClientRect().bottom <= compose.getBoundingClientRect().top + 4;
+    })()`),
+    'a reply box above the thing it replies to is not a chat'
+  )
+
+  // ⛔ On every message. A thread with no clock cannot say whether the agent replied to something or
+  // was already saying it — and on a task that ran across two days it cannot even say which day.
+  check(
+    'every message says when it was said',
+    await evaluate(`(() => {
+      const msgs = [...document.querySelectorAll('.thread--task .msg')].filter(m => !m.classList.contains('msg--live'));
+      // ⛔ length > 0 is half the assertion. Without it this passes on a thread with no messages,
+      // which is exactly how it was first written and exactly what it did.
+      return msgs.length > 0 && msgs.every(m => (m.querySelector('.msg-when')?.innerText ?? '').trim().length > 0);
+    })()`)
+  )
+
 
   // ⛔ Measured, not eyeballed. The Send button used to be painted on top of the box somebody was
   // typing into, because an unlabelled row borrowed a three-column grid built for labelled forms.
@@ -244,6 +369,16 @@ try {
   const c = JSON.parse(compose)
   check('the Send button does not sit on top of the message box', c.overlap <= 0, compose)
   check('and the message box gets the room', c.inputWidth > 200, compose)
+
+  // ⛔ Back before anything else is checked. Everything below files a task, and the form lives on
+  // the list — so a Back button that did not actually return would fail here as a missing button
+  // rather than as the navigation bug it is. Assert the return itself.
+  await evaluate(`document.querySelector('.back-to-list')?.click()`)
+  await wait(600)
+  check(
+    'and going back returns to the table it came from',
+    await evaluate('!!document.querySelector(".tbl tbody")')
+  )
 
   // ---- filing a task ------------------------------------------------------------------
   // ⛔ Order is the assertion. The prompt is the one field a person came here to fill in, and it used

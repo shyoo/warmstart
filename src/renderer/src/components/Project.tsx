@@ -1,13 +1,22 @@
 import type { Project as ProjectRecord, ResourceAvailability } from '@shared/tasks'
 import type { FleetEntry } from '../lib/daemon'
 import { Tasks } from './Tasks'
+import { TaskThread } from './TaskThread'
 import { Projects } from './Projects'
 import { TerminalPane } from './Terminal'
 
-export type ProjectTab = 'tasks' | 'sessions' | 'cost' | 'settings'
+export type ProjectTab = 'tasks' | 'thread' | 'sessions' | 'cost' | 'settings'
 
+/**
+ * ⛔ **Thread**, not Conversation. A conversation in this app is the agent session you resume with
+ * `--resume` or `--conversation` — it has an id, it outlives the task that opened it, and Settings
+ * has a page listing them. A task's messages are a different thing entirely, and giving both the
+ * same name would make "which conversation is this task in?" ambiguous on the one screen that
+ * answers it. See docs/glossary.md.
+ */
 export const PROJECT_TABS: Array<{ id: ProjectTab; label: string }> = [
   { id: 'tasks', label: 'Tasks' },
+  { id: 'thread', label: 'Thread' },
   { id: 'sessions', label: 'Sessions' },
   { id: 'cost', label: 'Cost' },
   { id: 'settings', label: 'Settings' }
@@ -24,6 +33,8 @@ export function Project({
   project,
   tab,
   setTab,
+  taskId,
+  openTask,
   projects,
   resources,
   refreshProjects,
@@ -36,6 +47,9 @@ export function Project({
   project: ProjectRecord
   tab: ProjectTab
   setTab: (tab: ProjectTab) => void
+  /** The task the Thread tab is showing, if one has been opened. */
+  taskId: string | null
+  openTask: (taskId: string) => void
   projects: ProjectRecord[]
   resources: ResourceAvailability[]
   refreshProjects: () => Promise<void>
@@ -70,7 +84,31 @@ export function Project({
       </div>
 
       {tab === 'tasks' ? (
-        <Tasks projects={projects} projectId={project.id} fleet={fleet} />
+        <Tasks
+          projects={projects}
+          projectId={project.id}
+          fleet={fleet}
+          selected={taskId}
+          onOpenTask={openTask}
+        />
+      ) : tab === 'thread' ? (
+        taskId ? (
+          <TaskThread taskId={taskId} fleet={fleet} onBack={() => setTab('tasks')} />
+        ) : (
+          // ⚠️ An empty state rather than a hidden tab. A tab that appeared and disappeared as you
+          // clicked around would move the four beside it, and this one is a destination you can
+          // arrive at from Back with nothing selected.
+          <div className="empty-inline">
+            <p>No task open.</p>
+            <p className="dim">
+              Pick one from Tasks and it opens here — its thread, what it is spending, and which
+              conversation each run was served by.
+            </p>
+            <button className="btn" onClick={() => setTab('tasks')}>
+              Go to Tasks
+            </button>
+          </div>
+        )
       ) : tab === 'sessions' ? (
         <ProjectSessions
           project={project}

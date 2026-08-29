@@ -9,8 +9,10 @@ if you add a line, find the one it obsoletes and cut it in the same edit. Finish
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
 **Baseline (2026-08-28, measured on this machine):** `npm run typecheck` clean · `npm run lint` clean ·
-`npm run build` clean · `npm test` 456/456 · `npm run test:daemon` 124/124 · `npm run test:ui` 96/96 ·
-`npm run test:pack` 18/18 · L4 (opt-in) landed a real agent commit on origin/main. Electron 44.0.0,
+`npm run build` clean · `npm test` 495/495 · `npm run test:daemon` 124/124 · `npm run test:ui` 112/112 ·
+`npm run test:pack` 18/18 · L4 (opt-in) landed a real agent commit on origin/main.
+⚠️ `npm test` includes **4 tests from uncommitted `agy-usage` work in the tree**; on `origin/main`
+alone it is 491. Electron 44.0.0,
 electron-builder 26.15.3, 0 npm vulnerabilities. CLIs here: claude 2.1.250 · agy 1.1.22 · codex 0.149.1.
 
 ⭐ **`scripts/build-win.ps1` runs all of the above**; `-Help` lists its options, `-Restart` is the inner
@@ -53,7 +55,8 @@ src/daemon/            orchestratord. Runs as Electron-with-ELECTRON_RUN_AS_NODE
                        preemption.test.ts - wrapping a run up once, and the switches that gate it)
   eligibility.ts       ⛔ the account gates, in ONE list. Work and judgment both read it; they
                        each kept their own until 2026-08-27 and the copies drifted
-  activity.ts          the live peephole: a bounded in-memory tail of what a run is saying
+  activity.ts          the live peephole: a bounded in-memory tail of what a run is saying.
+                       ⚠️ Rendered *inside* the task thread now, not in a pane below it
   landing.ts           auto-land, serialised by an exclusive land: resource (+ landing.test.ts)
   conversations.ts     which conversation served which tasks - a join, never stored (+ .test.ts)
   sharing.ts           who may borrow whose conversation: three tiers, mechanical gates, off by
@@ -139,24 +142,19 @@ M0–M6 are done. What is left is not a milestone but a list, in the order it wo
 2. **R2 (`tokens_per_percent`)** — the last thing between a refreshable percentage and a compaction
    reserve that reports a number. Now cheap to run, because the percentage refreshes on demand.
 3. **Signing and notarisation**, without which the installers warn or refuse.
-4. **Resident sessions** - one conversation per (worker, workspace), tasks borrowing it. The cost win
-   this is for: a cold Claude turn cost **41,542 cache-creation tokens** in an empty directory
-   (measured 2026-08-28) and every task pays it. Agreed with the owner 2026-08-28.
-   ⭐ **All five phases are built** - see `git log` and `docs/sessions.md`. Sharing is implemented and
-   **off at every tier**; turn it on per project with `session.share`. Settings > Conversations shows
-   which tasks each conversation served. What is left is not code:
-   ⭐ **Run for real on 2026-08-28** against ClaudeSecond in this repo: one conversation (`f9a6bac3`)
-   served **five tasks**, every borrow `warm`, saving ~86-92k input-token-equivalents each. ⭐ **Two
-   borrowers that both committed** kept their work apart - one commit per branch, each holding only
-   its own file, and the agents confirmed it from inside by reporting their branch and the files they
-   could see. Both threads were notified by name, and the tree went back. Migrations 10-13 ran against
-   real data; the backfill gave all twenty old sessions a project.
-   ⚠️ Sharing is **still off by default** - the trial set it per task. ⚠️ Context accumulated 43k →
-   49k over five tasks in one conversation, which is what the 60% share ceiling exists to bound; it
-   has not yet been seen to fire.
-   - **(5) `git worktree lock` and a provenance marker.** Claude Code's sweep uses both and this pool
+4. **Resident sessions — built, and two things about it are unproven.** All five phases shipped;
+   `docs/sessions.md` is the spec, Settings > Conversations shows which tasks each conversation
+   served, and a live trial on 2026-08-28 put **five tasks through one conversation** with two
+   committing borrowers whose work stayed apart.
+   ⚠️ The **60% share ceiling has never fired** — context grew 43k → 49k over those five tasks.
+   ⚠️ Sharing is **off at every tier**; the trial turned it on per task.
+   - **`git worktree lock` and a provenance marker.** Claude Code's sweep uses both and this pool
      uses neither. Only bites when the daemon dies mid-run, which is when nobody is watching.
-5. **Compute `overrunFactor` in cost, not raw tokens**, and let preempted runs feed `estimateTask`.
+5. **The project Thread tab has no automated coverage.** `test/ui.test.mjs` files every task with
+   no project and never opens one, so the tab bar, its empty state and its route are checked by
+   `typecheck` and by hand only. The unassigned route proves the same components. Fixing it means
+   giving the suite a real project root — worth doing before the next change to that tab.
+6. **Compute `overrunFactor` in cost, not raw tokens**, and let preempted runs feed `estimateTask`.
    Both are the price of turning `autoRunawayStop` on. The cost model already prices cache reads
    separately, so nothing needs measuring first.
 
