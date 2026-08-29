@@ -7,8 +7,15 @@ import type {
   TaskSort,
   TaskView
 } from '@shared/tasks'
-import { TASK_VIEW_ORDER, TASK_VIEWS } from '@shared/tasks'
-import type { ModelOptions } from '@shared/protocol'
+import {
+  FINISH_LABELS,
+  SHARING_LABELS,
+  TASK_VIEW_ORDER,
+  TASK_VIEWS,
+  resolveFinishPolicy,
+  resolveSessionSharing
+} from '@shared/tasks'
+import type { ModelOptions, Settings } from '@shared/protocol'
 import { rpc, useActivity, useDaemonEvents, useNow, type FleetEntry } from '../lib/daemon'
 import { tokens, when } from '../lib/format'
 import { readViews, writeViews } from '../lib/prefs'
@@ -572,6 +579,7 @@ function NewTask({
    * here would drift from the first the day a model was added to a file and not to this bundle.
    */
   const [options, setOptions] = useState<ModelOptions[]>([])
+  const [settings, setSettings] = useState<Settings | null>(null)
 
   useEffect(() => {
     void rpc('model.options')
@@ -579,7 +587,22 @@ function NewTask({
       // A fleet with no priceable model list is still a fleet that can run work. The form falls back
       // to whatever each CLI defaults to, which is what it did before there was a picker at all.
       .catch(() => setOptions([]))
+    void rpc('settings.get')
+      .then(setSettings)
+      .catch(() => setSettings(null))
   }, [])
+
+  const selectedProject = projectId ? (projects.find((p) => p.id === projectId) ?? null) : null
+  const inheritedFinish = resolveFinishPolicy(null, selectedProject, settings?.finishPolicy)
+  const inheritedSharing = resolveSessionSharing(null, selectedProject, settings?.sessionSharing)
+
+  const inheritedFinishLabel = inheritedFinish.policy
+    ? FINISH_LABELS[inheritedFinish.policy] ?? inheritedFinish.policy
+    : 'agent lands it'
+
+  const inheritedSharingLabel = inheritedSharing.sharing
+    ? SHARING_LABELS[inheritedSharing.sharing] ?? inheritedSharing.sharing
+    : 'always start a new one'
 
   // ⛔ Only accounts that could actually take work. Offering a switched-off worker as a pin produces
   // a task that waits forever on a candidate loop that will never match it.
@@ -677,7 +700,7 @@ function NewTask({
               aria-label="Finish policy"
               onChange={(e) => setFinishPolicy(e.target.value as FinishPolicyChoice)}
             >
-              <option value="inherit">inherit</option>
+              <option value="inherit">inherit ({inheritedFinishLabel})</option>
               <option value="await-human">await human</option>
               <option value="agent-lands">agent lands it</option>
               <option value="pull-request">open a pull request</option>
@@ -693,7 +716,7 @@ function NewTask({
               }
               onChange={(e) => setSessionSharing(e.target.value as SessionSharingChoice)}
             >
-              <option value="inherit">inherit</option>
+              <option value="inherit">inherit ({inheritedSharingLabel})</option>
               <option value="on">reuse conversation</option>
               <option value="off">fresh conversation</option>
             </select>

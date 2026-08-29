@@ -36,6 +36,9 @@ export interface ProjectConfig {
     /** What a `custom` finish tells the agent to do. Defaults to `DEFAULT_FINISH_INSTRUCTION`. */
     finishInstruction?: string
   }
+  session?: {
+    share?: SessionSharingChoice
+  }
   permission?: { mode?: string; allow?: string[]; deny?: string[] }
   env?: Record<string, string | number>
   resources?: Array<{ ref: string }>
@@ -654,6 +657,13 @@ export interface ResolvedFinishPolicy {
  */
 export const DEFAULT_FLEET_FINISH: FinishPolicy = 'agent-lands'
 
+export const FINISH_LABELS: Record<FinishPolicy, string> = {
+  'await-human': 'await human',
+  'agent-lands': 'agent lands it',
+  'pull-request': 'open a pull request',
+  'custom': 'this project’s own policy'
+}
+
 /**
  * May a task be given a conversation another task has already been having?
  *
@@ -687,6 +697,104 @@ export interface ResolvedSessionSharing {
  * every project at once.
  */
 export const DEFAULT_FLEET_SHARING: SessionSharing = 'off'
+
+export const SHARING_LABELS: Record<SessionSharing, string> = {
+  on: 'reuse one if possible',
+  off: 'always start a new one'
+}
+
+/** The pre-2026-08-28 spelling, still read off any project.json that has not been rewritten. */
+const FROM_STRATEGY: Record<string, FinishPolicy> = {
+  'auto-land': 'agent-lands',
+  'leave-branch': 'await-human',
+  'pull-request': 'pull-request'
+}
+
+/**
+ * The project's finish choice, from either spelling.
+ *
+ * ⛔ `finish` wins over `strategy` when both are present. A file carrying both was written by
+ * somebody who edited it after this landed, and the new field is the one they meant.
+ */
+export function projectFinishChoice(project: Project | null | undefined): FinishPolicyChoice {
+  const landing = project?.config?.landing
+  if (landing?.finish) return landing.finish
+  if (landing?.strategy) return FROM_STRATEGY[landing.strategy] ?? 'inherit'
+  return 'inherit'
+}
+
+export function projectSharingChoice(project: Project | null | undefined): SessionSharingChoice {
+  const raw = project?.config?.session?.share
+  return raw === 'on' || raw === 'off' || raw === 'inherit' ? raw : 'inherit'
+}
+
+export function finishInstructionFor(project: Project | null | undefined): string {
+  return project?.config?.landing?.finishInstruction?.trim() || DEFAULT_FINISH_INSTRUCTION
+}
+
+function pickCustomInstruction(policy: FinishPolicy, instruction: string): string | null {
+  return policy === 'custom' ? instruction : null
+}
+
+/**
+ * Task, then project, then fleet - the first one that is not `inherit`.
+ *
+ * ⚠️ The `source` travels with the answer so the UI can say *inherited from the project* rather than
+ * showing a value the operator will look for on the task and not find. A setting whose origin is
+ * invisible is one nobody trusts and everybody overrides.
+ */
+export function resolveFinishPolicy(
+  task: Task | null | undefined,
+  project: Project | null | undefined,
+  fleetFinish: FinishPolicy = DEFAULT_FLEET_FINISH
+): ResolvedFinishPolicy {
+  const instruction = finishInstructionFor(project)
+
+  if (task && task.finishPolicy !== 'inherit') {
+    return {
+      policy: task.finishPolicy,
+      source: 'task',
+      instruction: pickCustomInstruction(task.finishPolicy, instruction)
+    }
+  }
+  if (project) {
+    const choice = projectFinishChoice(project)
+    if (choice !== 'inherit') {
+      return {
+        policy: choice,
+        source: 'project',
+        instruction: pickCustomInstruction(choice, instruction)
+      }
+    }
+  }
+  return {
+    policy: fleetFinish,
+    source: 'fleet',
+    instruction: pickCustomInstruction(fleetFinish, instruction)
+  }
+}
+
+/**
+ * Resolve task → project → fleet, taking the first that is not `inherit`.
+ *
+ * ⚠️ `inherit` is a real value, not a blank. A task left on it follows its project as the project
+ * changes; a task set explicitly to the same value does not. That difference is the reason the
+ * dropdown offers it rather than showing an empty box.
+ */
+export function resolveSessionSharing(
+  task: Task | null | undefined,
+  project: Project | null | undefined,
+  fleetSharing: SessionSharing = DEFAULT_FLEET_SHARING
+): ResolvedSessionSharing {
+  if (task && task.sessionSharing !== 'inherit') {
+    return { sharing: task.sessionSharing, source: 'task' }
+  }
+  if (project) {
+    const choice = projectSharingChoice(project)
+    if (choice !== 'inherit') return { sharing: choice, source: 'project' }
+  }
+  return { sharing: fleetSharing, source: 'fleet' }
+}
 
 /**
  * Work that exists and is going nowhere.

@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type {
-  FinishPolicy,
-  FinishPolicyChoice,
-  ResolvedFinishPolicy,
-  Run,
-  SessionSharing,
-  SessionSharingChoice,
-  ResolvedSessionSharing,
-  Task,
-  TaskMessage
+import {
+  FINISH_LABELS,
+  SHARING_LABELS,
+  type FinishPolicyChoice,
+  type ResolvedFinishPolicy,
+  type Run,
+  type SessionSharingChoice,
+  type ResolvedSessionSharing,
+  type Task,
+  type TaskMessage
 } from '@shared/tasks'
 import type { Session } from '@shared/protocol'
 import { rpc, useActivity, useDaemonEvents, useNow, type FleetEntry } from '../lib/daemon'
@@ -825,17 +825,6 @@ function Compose({
  * the attempt can be refused. A dropdown that painted itself green while the push was rejected would
  * be the worst kind of lie this app could tell.
  */
-const FINISH_LABELS: Record<FinishPolicy, string> = {
-  'await-human': 'await human',
-  'agent-lands': 'agent lands it',
-  'pull-request': 'open a pull request',
-  'custom': 'this project’s own policy'
-}
-
-const SHARING_LABELS: Record<SessionSharing, string> = {
-  on: 'reuse one if possible',
-  off: 'always start a new one'
-}
 
 function FinishPicker({
   task,

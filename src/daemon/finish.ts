@@ -1,12 +1,15 @@
 import type {
-  FinishPolicy,
-  FinishPolicyChoice,
   LooseEnd,
   Project,
   ResolvedFinishPolicy,
   Task
 } from '@shared/tasks.js'
-import { DEFAULT_FINISH_INSTRUCTION } from '@shared/tasks.js'
+import {
+  DEFAULT_FINISH_INSTRUCTION,
+  finishInstructionFor,
+  projectFinishChoice,
+  resolveFinishPolicy as sharedResolveFinishPolicy
+} from '@shared/tasks.js'
 import { db, rows } from './db.js'
 import { log } from './log.js'
 import { listProjects, policyFor } from './projects.js'
@@ -14,45 +17,7 @@ import { mandateAllows } from './tasks.js'
 import { ensurePool, workspaceState } from './worktrees.js'
 import type { WorkspaceState } from './worktrees.js'
 import { settings } from './settings.js'
-
-/**
- * What finishing means, for this task, in this project, on this fleet.
- *
- * ⛔ **One question, one answer, one place it is computed.** Before 2026-08-28 the same question was
- * asked of `project.landing.strategy` in one code path and `task.verification` in another, with no
- * fleet-wide tier at all, and the two could disagree without anything noticing. Everything that
- * needs to know - the completion path, the dropdown's retroactive retry, the loose-ends list - calls
- * this and gets the same answer with the same reason attached.
- *
- * ⚠️ **Preference, never authority.** `mandate.allowed` still decides whether a task may land at all
- * and is untouched by any of this: it is inherited down a lineage precisely so an agent-spawned
- * subtask cannot grant itself more than its parent had, and a dropdown in a UI must never be able to
- * widen it. This says what *should* happen given that it *may*.
- */
-
-/** The pre-2026-08-28 spelling, still read off any project.json that has not been rewritten. */
-const FROM_STRATEGY: Record<string, FinishPolicy> = {
-  'auto-land': 'agent-lands',
-  'leave-branch': 'await-human',
-  'pull-request': 'pull-request'
-}
-
-/**
- * The project's answer, from either spelling.
- *
- * ⛔ `finish` wins over `strategy` when both are present. A file carrying both was written by
- * somebody who edited it after this landed, and the new field is the one they meant.
- */
-export function projectFinishChoice(project: Project): FinishPolicyChoice {
-  const landing = project.config.landing
-  if (landing?.finish) return landing.finish
-  if (landing?.strategy) return FROM_STRATEGY[landing.strategy] ?? 'inherit'
-  return 'inherit'
-}
-
-export function finishInstructionFor(project: Project | null): string {
-  return project?.config.landing?.finishInstruction?.trim() || DEFAULT_FINISH_INSTRUCTION
-}
+export { projectFinishChoice, finishInstructionFor }
 
 /**
  * Task, then project, then fleet - the first one that is not `inherit`.
@@ -62,24 +27,7 @@ export function finishInstructionFor(project: Project | null): string {
  * invisible is one nobody trusts and everybody overrides.
  */
 export function resolveFinishPolicy(task: Task | null, project: Project | null): ResolvedFinishPolicy {
-  const instruction = finishInstructionFor(project)
-
-  if (task && task.finishPolicy !== 'inherit') {
-    return { policy: task.finishPolicy, source: 'task', instruction: pick(task.finishPolicy, instruction) }
-  }
-  if (project) {
-    const choice = projectFinishChoice(project)
-    if (choice !== 'inherit') {
-      return { policy: choice, source: 'project', instruction: pick(choice, instruction) }
-    }
-  }
-  const fleet = settings().finishPolicy
-  return { policy: fleet, source: 'fleet', instruction: pick(fleet, instruction) }
-}
-
-/** ⚠️ Only `custom` carries one. Attaching it everywhere would invite callers to send it anyway. */
-function pick(policy: FinishPolicy, instruction: string): string | null {
-  return policy === 'custom' ? instruction : null
+  return sharedResolveFinishPolicy(task, project, settings().finishPolicy)
 }
 
 // ---------------------------------------------------------------------------- the decision

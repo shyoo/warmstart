@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import type { Task, TaskStatus } from '@shared/tasks'
+import type { Project, Task, TaskStatus } from '@shared/tasks'
+import {
+  FINISH_LABELS,
+  SHARING_LABELS,
+  resolveFinishPolicy,
+  resolveSessionSharing
+} from '@shared/tasks'
 import { statusLabel, workspacePathFor } from './taskview.js'
 
 /**
@@ -63,5 +69,35 @@ describe('the workspace directory a person reads in the task ledger', () => {
     const runs = [{ sessionId: null }, { sessionId: 's-1' }]
     const sessions = [{ id: 's-1', cwd: 'C:\\projects\\my-repo_workspaces\\ws1' }]
     expect(workspacePathFor(runs, sessions)).toBe('C:\\projects\\my-repo_workspaces\\ws1')
+  })
+})
+
+describe('inherited policy labels and resolution', () => {
+  it('resolves finish policy from project when specified', () => {
+    const proj = { config: { landing: { finish: 'await-human' } } } as unknown as Project
+    const res = resolveFinishPolicy(null, proj)
+    expect(res.policy).toBe('await-human')
+    expect(FINISH_LABELS[res.policy]).toBe('await human')
+  })
+
+  it('falls back to fleet finish policy when project does not specify', () => {
+    const proj = { config: {} } as unknown as Project
+    const res = resolveFinishPolicy(null, proj, 'pull-request')
+    expect(res.policy).toBe('pull-request')
+    expect(FINISH_LABELS[res.policy]).toBe('open a pull request')
+  })
+
+  it('resolves session sharing from project when specified', () => {
+    const proj = { config: { session: { share: 'on' } } } as unknown as Project
+    const res = resolveSessionSharing(null, proj)
+    expect(res.sharing).toBe('on')
+    expect(SHARING_LABELS[res.sharing]).toBe('reuse one if possible')
+  })
+
+  it('falls back to fleet session sharing when project does not specify', () => {
+    const proj = { config: {} } as unknown as Project
+    const res = resolveSessionSharing(null, proj, 'off')
+    expect(res.sharing).toBe('off')
+    expect(SHARING_LABELS[res.sharing]).toBe('always start a new one')
   })
 })

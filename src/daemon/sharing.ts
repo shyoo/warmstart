@@ -1,6 +1,10 @@
-import type { Project, ResolvedSessionSharing, SessionSharingChoice, Task } from '@shared/tasks.js'
+import type { Project, ResolvedSessionSharing, Task } from '@shared/tasks.js'
 import type { Session } from '@shared/protocol.js'
-import { DEFAULT_FLEET_SHARING } from '@shared/tasks.js'
+import {
+  DEFAULT_FLEET_SHARING,
+  projectSharingChoice,
+  resolveSessionSharing as sharedResolveSessionSharing
+} from '@shared/tasks.js'
 import { settings } from './settings.js'
 import { adapter } from './adapters/index.js'
 
@@ -32,10 +36,7 @@ import { adapter } from './adapters/index.js'
  */
 export const SHARE_CEILING = 0.6
 
-export function projectSharingChoice(project: Project | null): SessionSharingChoice {
-  const raw = (project?.config as { session?: { share?: unknown } } | undefined)?.session?.share
-  return raw === 'on' || raw === 'off' || raw === 'inherit' ? raw : 'inherit'
-}
+export { projectSharingChoice }
 
 /**
  * Resolve task → project → fleet, taking the first that is not `inherit`.
@@ -48,12 +49,7 @@ export function resolveSessionSharing(
   task: Task | null,
   project: Project | null
 ): ResolvedSessionSharing {
-  if (task && task.sessionSharing !== 'inherit') {
-    return { sharing: task.sessionSharing, source: 'task' }
-  }
-  const choice = projectSharingChoice(project)
-  if (choice !== 'inherit') return { sharing: choice, source: 'project' }
-  return { sharing: settings().sessionSharing ?? DEFAULT_FLEET_SHARING, source: 'fleet' }
+  return sharedResolveSessionSharing(task, project, settings().sessionSharing ?? DEFAULT_FLEET_SHARING)
 }
 
 /** Why a conversation was not offered to a task. Null means it was. */

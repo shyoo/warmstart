@@ -407,8 +407,10 @@ try {
           ?.querySelectorAll('select').length ?? 0,
         finishOptions: [...(form.querySelector('select[aria-label="Finish policy"]')?.options ?? [])]
           .map(o => o.value),
+        finishInheritText: form.querySelector('select[aria-label="Finish policy"] option[value="inherit"]')?.innerText ?? '',
         sharingOptions: [...(form.querySelector('select[aria-label="Conversation policy"]')?.options ?? [])]
-          .map(o => o.value)
+          .map(o => o.value),
+        sharingInheritText: form.querySelector('select[aria-label="Conversation policy"] option[value="inherit"]')?.innerText ?? ''
       };
     })())
   `)
@@ -433,11 +435,21 @@ try {
     filing
   )
   check(
+    'and says which finish policy is inherited',
+    typeof f.finishInheritText === 'string' && f.finishInheritText.startsWith('inherit (') && f.finishInheritText.endsWith(')'),
+    filing
+  )
+  check(
     'the new-task form offers a conversation policy, inherit included',
     Array.isArray(f.sharingOptions) &&
       f.sharingOptions.includes('inherit') &&
       f.sharingOptions.includes('on') &&
       f.sharingOptions.includes('off'),
+    filing
+  )
+  check(
+    'and says which conversation policy is inherited',
+    typeof f.sharingInheritText === 'string' && f.sharingInheritText.startsWith('inherit (') && f.sharingInheritText.endsWith(')'),
     filing
   )
   // ⚠️ A textarea because what goes in it is sent to an agent verbatim, and a prompt worth writing
