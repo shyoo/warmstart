@@ -1229,9 +1229,7 @@ function promptFor(task: Task, adapterId: string, resumed = false): string {
       ['Continuing earlier work. Handoff from the previous session:', task.handoffNote, ''].join('\n')
     )
   }
-  parts.push(task.title)
-
-  // ⚠️ The first human message is the task's own prompt and is restated: a fresh session after a
+  // ⚠️ The first prompt-bearing message is the task's own prompt and is restated: a fresh session after a
   // preemption has no idea what it was asked to do. Everything after it is a *note*, and a note
   // typed into a live session was already answered there - repeating it would charge for it twice and
   // leave the agent unsure what is still outstanding.
@@ -1241,9 +1239,20 @@ function promptFor(task: Task, adapterId: string, resumed = false): string {
   // Restating it there reads as being asked to do the work a second time, which is the failure the
   // delivery bookkeeping exists to prevent - it would just be arriving through the one message the
   // bookkeeping deliberately exempts.
-  const thread = messagesFor(task.id).filter((m) => m.role === 'human')
+  const thread = messagesFor(task.id).filter(
+    (m, i) => m.role === 'human' || m.role === 'controller' || (m.role === 'agent' && i === 0)
+  )
   const outstanding = thread.filter((m, i) => (i === 0 && !resumed) || m.deliveredAt === null)
-  for (const message of outstanding) parts.push(message.text)
+  if (thread.length === 0 && !resumed) {
+    parts.push(task.title)
+  } else {
+    for (const message of outstanding) {
+      if (parts.length === (task.handoffNote ? 1 : 0) && message.text !== task.title) {
+        parts.push(task.title)
+      }
+      parts.push(message.text)
+    }
+  }
   markDelivered(outstanding.map((m) => m.id))
 
   // ⛔ Only name tools this adapter actually gets. `mcp: false` means the daemon spawns it with no
@@ -1472,7 +1481,7 @@ export async function completeTask(sessionId: string, summary: string): Promise<
       // instruction and will report completion again — so closing the run here would orphan a live
       // session and release a workspace out from under it.
       markFinishAsked(task.id)
-      addMessage(task.id, 'system', `Not finished yet: ${decision.reason}. Asked the agent to fix it.`)
+      addMessage(task.id, 'system', decision.instruction)
       try {
         sendPrompt(sessionId, decision.instruction)
       } catch (err) {

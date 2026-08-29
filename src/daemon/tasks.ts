@@ -409,8 +409,15 @@ export function createTask(input: CreateTaskInput): Task {
     )
 
   for (const dep of input.dependsOn ?? []) addDependency(id, dep)
-  if (input.prompt?.trim()) {
-    addMessage(id, createdBy.kind === 'human' ? 'human' : 'agent', input.prompt.trim())
+  const initialText = input.prompt?.trim() || title
+  if (initialText) {
+    const role: TaskMessage['role'] =
+      createdBy.kind === 'human'
+        ? 'human'
+        : createdBy.kind === 'controller'
+          ? 'controller'
+          : 'agent'
+    addMessage(id, role, initialText)
   }
 
   const task = admit(id)

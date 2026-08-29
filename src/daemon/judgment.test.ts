@@ -149,8 +149,8 @@ describe('triage', () => {
     expect(result.ok).toBe(true)
     expect(getTask(task.id)?.status).toBe('ready')
 
-    const human = messagesFor(task.id).filter((m) => m.role === 'human')
-    expect(human.at(-1)?.text).toContain('install the dependencies first')
+    const ctrl = messagesFor(task.id).filter((m) => m.role === 'controller')
+    expect(ctrl.at(-1)?.text).toContain('install the dependencies first')
     // Where it came from is on the record, so nobody later reads it as something the operator typed.
     expect(messagesFor(task.id).some((m) => m.text.startsWith('Controller rewrote'))).toBe(true)
   })
@@ -201,3 +201,41 @@ describe('the fallbacks, which are what happens most of the time', () => {
     expect(fallbackFor(consultFor('triage', 'a-task-that-never-existed'))).toContain('gone')
   })
 })
+
+describe('initial task prompt message recording', () => {
+  it('records initial title as a human message when created by a human without prompt', () => {
+    const task = createTask({ title: 'Fix something', createdBy: { kind: 'human' } })
+    const msgs = messagesFor(task.id)
+    expect(msgs).toHaveLength(1)
+    expect(msgs[0]?.role).toBe('human')
+    expect(msgs[0]?.text).toBe('Fix something')
+  })
+
+  it('records explicit prompt as a human message when prompt is provided', () => {
+    const task = createTask({ title: 'Short title', prompt: 'Detailed instruction', createdBy: { kind: 'human' } })
+    const msgs = messagesFor(task.id)
+    expect(msgs).toHaveLength(1)
+    expect(msgs[0]?.role).toBe('human')
+    expect(msgs[0]?.text).toBe('Detailed instruction')
+  })
+
+  it('records controller role when created by controller', () => {
+    const task = createTask({ title: 'Controller task', createdBy: { kind: 'controller' } })
+    const msgs = messagesFor(task.id)
+    expect(msgs).toHaveLength(1)
+    expect(msgs[0]?.role).toBe('controller')
+    expect(msgs[0]?.text).toBe('Controller task')
+  })
+
+  it('records agent role when created by an agent', () => {
+    const task = createTask({
+      title: 'Agent subtask',
+      createdBy: { kind: 'agent', workerId: 'w1', sessionId: 's1', runId: 'r1' }
+    })
+    const msgs = messagesFor(task.id)
+    expect(msgs).toHaveLength(1)
+    expect(msgs[0]?.role).toBe('agent')
+    expect(msgs[0]?.text).toBe('Agent subtask')
+  })
+})
+

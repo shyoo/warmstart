@@ -393,11 +393,11 @@ function applyTriage(task: Task, answer: Record<string, unknown>): ApplyResult {
       return good('queued for another attempt')
 
     case 'rewrite':
-      // The replacement is filed as a human-role message so the next run's prompt carries it. The
+      // The replacement is filed as a controller-role message so the next run's prompt carries it. The
       // system note above it records where it came from, so nobody later reads it as something the
       // operator typed.
       addMessage(task.id, 'system', `Controller rewrote the instruction.${why}`)
-      addMessage(task.id, 'human', decision.prompt)
+      addMessage(task.id, 'controller', decision.prompt)
       setStatus(task.id, 'ready')
       return good('instruction rewritten and requeued')
 

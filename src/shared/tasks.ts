@@ -202,10 +202,12 @@ export interface Budget {
   spentTokens: number
 }
 
+export type MessageRole = 'human' | 'agent' | 'controller' | 'system'
+
 export interface TaskMessage {
   id: number
   taskId: string
-  role: 'human' | 'agent' | 'system'
+  role: MessageRole
   text: string
   runId: string | null
   /**
