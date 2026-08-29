@@ -271,8 +271,13 @@ costmodels/             versioned pricing data
 
 ## Things that will bite
 
-- ⛔ **"Agents never work in the trunk" is an assumption, not an enforced invariant — and
-  `antigravity-cli` broke it on 2026-08-28.** t17 ran with `cwd` set to its pooled worktree and
+- ⛔ **A worktree is where an agent *starts*, not a boundary it is held inside.** For
+  `antigravity-cli` the workspace must be named with `--add-dir <cwd>` on **every** spawn, resume
+  included — cwd alone let t17 edit and commit in the trunk on 2026-08-28. ⚠️ Any new adapter should
+  be asked the same question before it is trusted with `--dangerously-skip-permissions`: *what,
+  other than the cwd, tells this CLI where it may work?* If the answer is nothing, the flag is
+  bounded by nothing.
+- ⛔ **The history of that, kept because the failure was silent:** t17 ran with `cwd` set to its pooled worktree and
   edited and committed in `C:\Dev\multi_agent_controller` instead: 45 distinct trunk paths in its
   conversation store, zero workspace paths, three commits straight onto `main`. Its branch never
   moved, so the finish logged `nothing-to-land` and every gate that runs *before a branch merges* was

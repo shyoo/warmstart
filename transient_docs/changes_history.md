@@ -1484,3 +1484,45 @@ ledger names only the latest.
 credentials, so nothing it files ever dispatches and there are no runs at all. Green, asserting
 nothing. The resolution moved into `lib/conversation.ts` as a pure function with its own tests, where
 the thing that can actually be wrong — picking a plausible id that resumes nothing — is checkable.
+
+---
+
+## Binding Antigravity to its worktree (2026-08-28)
+
+t17 committed to the trunk with `--dangerously-skip-permissions` while its branch stayed empty. The
+containment gap was real; the fix turned out to be one flag, found by reading how somebody else
+solves the same problem with the same CLI.
+
+`Untrivial-ai/agent-orchestrator` has an Agy adapter in Go, and its two command builders both append
+`--add-dir <WorkspacePath>` — `GetLaunchCommand` and, crucially, `GetRestoreCommand`, where it sits
+directly beside `--conversation <agentSessionId>`. They set the process cwd as well; `--add-dir` is
+the second mechanism on top, not a replacement for it. Our adapter passed `--conversation` and never
+`--add-dir`, and `agy --help` on 1.1.22 — the build we run — lists the flag.
+
+⛔ The resume is the case that matters and it is the one an obvious fix would miss. A cold launch has
+no prior opinion about where it lives; a conversation reopened by id arrives pointed at wherever it
+was born, because Agy's state outlives the process in `~/.gemini/antigravity/`. An adapter that bound
+the workspace only on a fresh spawn would repair the case that was never broken. The mutation test
+for this is exactly that: `if (req.cwd && !req.resumeFrom)` still fails.
+
+### The trial
+
+One task, two runs in one conversation — the second resumed, which is the half under test. Both were
+asked to report `git rev-parse --show-toplevel`, write it to a file and commit.
+
+| | t17, before | t18, after |
+|---|---|---|
+| distinct trunk paths in the conversation store | 45 | **0** |
+| distinct workspace paths | 0 | **5**, first at step 2 |
+| trunk reflog entries added | 3 commits | **0** |
+| landed through the branch | no — `nothing-to-land` ×3 | **yes, both runs** |
+
+⭐ The measurement is the conversation store, not what the agent said about itself. t17 was convicted
+by that count and t18 is acquitted by it, which is the same instrument pointed at both. The resumed
+run reported `C:/Dev/multi_agent_controller_workspaces/ws1` and committed there; the trunk's reflog
+was 72 entries before the trial and 72 after.
+
+⚠️ What this is not: containment. `--add-dir` is a request to a CLI. Nothing stops an agent that
+decides to write elsewhere, and this adapter still has no isolation root — `envFor()` sets no `HOME`,
+so all four workers share one `~/.gemini`. The check that does not depend on the CLI cooperating is a
+trunk tripwire, and it is next.

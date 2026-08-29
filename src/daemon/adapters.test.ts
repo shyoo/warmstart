@@ -253,6 +253,43 @@ describe('the measured surprises, kept as regressions', () => {
     expect(plan.args).not.toContain('--dangerously-bypass-approvals-and-sandbox')
   })
 
+  it('agy is told which workspace it is in, not merely started inside it', () => {
+    // ⭐ The flag whose absence let an agent commit to the trunk. Measured 2026-08-28: t17 was
+    // spawned with `cwd` set to its pooled worktree and its conversation store recorded 45 distinct
+    // absolute paths under `C:\Dev\multi_agent_controller` and zero under any workspace. The
+    // process cwd is a starting position; `--add-dir` is what tells this CLI what its workspace is.
+    const plan = adapter('antigravity-cli').plan({
+      sessionId: 'ignored',
+      isolationRoot: 'C:/tmp/root',
+      cwd: 'C:/tmp/work',
+      transport: 'stream'
+    })
+    const at = plan.args.indexOf('--add-dir')
+    expect(at).toBeGreaterThan(-1)
+    expect(plan.args[at + 1]).toBe('C:/tmp/work')
+  })
+
+  it('and is told again when resuming, which is the case that was actually broken', () => {
+    // ⛔ The half that matters. A fresh launch was never the failure - the CLI has no opinion yet.
+    // A conversation resumed by id arrives already pointed at wherever it was born, because Agy's
+    // state outlives the process in `~/.gemini/antigravity/`. An adapter that bound the workspace
+    // only on a cold start would fix the case that was never broken and leave this one exactly as
+    // it was.
+    const plan = adapter('antigravity-cli').plan({
+      sessionId: 'ignored',
+      isolationRoot: 'C:/tmp/root',
+      cwd: 'C:/tmp/work',
+      transport: 'stream',
+      resumeFrom: 'conv-123'
+    })
+    const at = plan.args.indexOf('--add-dir')
+    expect(at).toBeGreaterThan(-1)
+    expect(plan.args[at + 1]).toBe('C:/tmp/work')
+    // ⚠️ Both, not either. The point is the pairing: this run continues *that* conversation *here*.
+    expect(plan.args).toContain('--conversation')
+    expect(plan.args).toContain('conv-123')
+  })
+
   it('agy is never given an input format without the output format it requires', () => {
     // Measured: `--input-format stream-json` requires `--output-format stream-json`. One without the
     // other is an argument error.

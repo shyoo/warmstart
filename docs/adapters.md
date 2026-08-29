@@ -147,9 +147,30 @@ behaviour falls out of it:
   the trunk. The agent did not navigate out of its worktree; it was never anchored to it, because its
   memory outlives the session and is keyed to the operator's home rather than to the worker.
 
-  ⛔ So for `antigravity-cli`, **worktree isolation is not a containment boundary**, and
-  `--dangerously-skip-permissions` is not bounded by one. Until an isolation root is actually
-  enforced, treat this adapter as able to write anywhere the operator can.
+  ⭐ **Fixed by binding the workspace explicitly: `--add-dir <cwd>`, on every spawn including a
+  resume.** The process cwd is a starting position; `--add-dir` is what tells this CLI what its
+  workspace *is*. The resume is the case that needed it — a fresh launch has no prior opinion, while
+  a conversation reopened with `--conversation` arrives pointed at wherever it was born.
+
+  **Measured on agy 1.1.22, 2026-08-28**, same repository, same pooled worktree, one cold run and one
+  resumed run in the same conversation:
+
+  | | t17, before | t18, after |
+  |---|---|---|
+  | distinct trunk paths in the conversation store | **45** | **0** |
+  | distinct workspace paths | **0** | **5**, first at step 2 |
+  | trunk reflog entries added | **3 commits** | **0** |
+  | landed through the branch and its gates | no — `nothing-to-land` ×3 | yes — both runs |
+
+  The resumed run reported its own toplevel as the worktree and committed there, which is the
+  behaviour the flag exists to produce.
+
+  ⚠️ **This narrows, it does not contain.** `--add-dir` is a request to a CLI; nothing stops an agent
+  that decides to write elsewhere, and this adapter still has no real isolation root (below). The
+  check that does not depend on the CLI cooperating is a trunk tripwire, which is not built.
+
+  ⛔ So `--dangerously-skip-permissions` on this adapter is **bounded by the CLI's cooperation, not
+  by the filesystem**. Treat it accordingly until an isolation root is enforced.
 - **Option B (Future Improvement — Auto-Seeded Granular Settings Rules):** Instead of global permission skipping, the daemon's `writePermissions` could automatically seed fine-grained tool rules (`command(git)`, `command(npm)`, `read_file(*)`, `write_file(*)`, etc.) into `~/.gemini/antigravity-cli/settings.json` derived dynamically from the task's `mandate` and project configuration before spawn. This would provide granular tool sandboxing without requiring manual operator intervention or global permission skipping.
 
 ---

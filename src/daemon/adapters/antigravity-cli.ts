@@ -800,6 +800,33 @@ export const antigravityCli: AgentAdapter = {
     // ⛔ No `--session-id` exists. agentyard's id stays its own handle rather than being passed as a
     // flag the CLI would reject.
     const args: string[] = []
+
+    /**
+     * ⭐ **Bind the workspace explicitly, on every spawn including a resume.**
+     *
+     * ⛔ The process `cwd` is a starting position, not a boundary, and this CLI does not treat it as
+     * one. Measured 2026-08-28: t17 was spawned with `cwd` set to its pooled worktree and its
+     * conversation store recorded **45 distinct absolute paths under the trunk and zero under any
+     * workspace**. It edited and committed in `C:\Dev\multi_agent_controller` — with
+     * `--dangerously-skip-permissions` — while its branch never received a commit, so every landing
+     * gate reported success having validated nothing.
+     *
+     * The cause is that Agy's state outlives the process: a persistent per-machine "brain" under
+     * `~/.gemini/antigravity/` carries absolute paths from earlier sessions, and a conversation
+     * resumed by id arrives already pointed at wherever it was born.
+     *
+     * ⚠️ **Before `--conversation`, and always paired with it.** A resume is the case that needs this
+     * most — it is the one where the CLI has its own opinion about where the work lives — and an
+     * adapter that bound the workspace only on a fresh launch would fix the case that was never
+     * broken. Untrivial-ai/agent-orchestrator's Agy adapter passes `--add-dir` from both its launch
+     * and its restore path for the same reason.
+     *
+     * ⚠️ This is a request to a CLI, not a sandbox. It narrows what the agent is pointed at; it does
+     * not stop one that decides to write elsewhere. The trunk tripwire is the check that does not
+     * depend on the CLI cooperating.
+     */
+    if (req.cwd) args.push('--add-dir', req.cwd)
+
     // ⛔ `--conversation`, not `--continue`. Measured on agy 1.1.21: `-c` / `--continue` resumes
     // *the most recent* conversation on this machine, which on a fleet running several worktrees at
     // once - and on a machine whose operator uses `agy` by hand - is whichever one happened to speak

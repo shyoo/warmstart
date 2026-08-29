@@ -9,10 +9,8 @@ if you add a line, find the one it obsoletes and cut it in the same edit. Finish
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
 **Baseline (2026-08-28, measured on this machine):** `npm run typecheck` clean · `npm run lint` clean ·
-`npm run build` clean · `npm test` 495/495 · `npm run test:daemon` 124/124 · `npm run test:ui` 112/112 ·
-`npm run test:pack` 18/18 · L4 (opt-in) landed a real agent commit on origin/main.
-⚠️ `npm test` includes **4 tests from uncommitted `agy-usage` work in the tree**; on `origin/main`
-alone it is 491. Electron 44.0.0,
+`npm run build` clean · `npm test` 500/500 · `npm run test:daemon` 124/124 · `npm run test:ui` 112/112 ·
+`npm run test:pack` 18/18 · L4 (opt-in) landed a real agent commit on origin/main. Electron 44.0.0,
 electron-builder 26.15.3, 0 npm vulnerabilities. CLIs here: claude 2.1.250 · agy 1.1.22 · codex 0.149.1.
 
 ⭐ **`scripts/build-win.ps1` runs all of the above**; `-Help` lists its options, `-Restart` is the inner
@@ -142,19 +140,23 @@ M0–M6 are done. What is left is not a milestone but a list, in the order it wo
 2. **R2 (`tokens_per_percent`)** — the last thing between a refreshable percentage and a compaction
    reserve that reports a number. Now cheap to run, because the percentage refreshes on demand.
 3. **Signing and notarisation**, without which the installers warn or refuse.
-4. **Resident sessions — built, and two things about it are unproven.** All five phases shipped;
-   `docs/sessions.md` is the spec, Settings > Conversations shows which tasks each conversation
-   served, and a live trial on 2026-08-28 put **five tasks through one conversation** with two
-   committing borrowers whose work stayed apart.
-   ⚠️ The **60% share ceiling has never fired** — context grew 43k → 49k over those five tasks.
-   ⚠️ Sharing is **off at every tier**; the trial turned it on per task.
+4. **Resident sessions — built; two things unproven.** `docs/sessions.md` is the spec. A live trial
+   put **five tasks through one conversation**, two committing borrowers kept apart.
+   ⚠️ The **60% share ceiling has never fired** (context 43k → 49k). ⚠️ Sharing is off at every tier.
    - **`git worktree lock` and a provenance marker.** Claude Code's sweep uses both and this pool
      uses neither. Only bites when the daemon dies mid-run, which is when nobody is watching.
-5. **The project Thread tab has no automated coverage.** `test/ui.test.mjs` files every task with
-   no project and never opens one, so the tab bar, its empty state and its route are checked by
-   `typecheck` and by hand only. The unassigned route proves the same components. Fixing it means
-   giving the suite a real project root — worth doing before the next change to that tab.
-6. **Compute `overrunFactor` in cost, not raw tokens**, and let preempted runs feed `estimateTask`.
+5. ⭐ **Build the trunk tripwire.** `--add-dir` now binds Antigravity to its worktree and the trial
+   held (0 trunk paths against t17's 45, `docs/adapters.md`), but that is the CLI cooperating, not a
+   boundary. Record the trunk's target-branch SHA at dispatch and compare at finish; a run that
+   moved the trunk must not report success. ~40 lines in `finish.ts`, and it covers every adapter
+   rather than the one that was caught.
+6. **`antigravity-cli` still has no real isolation root.** `envFor()` sets no `HOME`, so all four
+   workers share the operator's `~/.gemini` — conversations, credentials and a persistent brain.
+   Per-worker `HOME` is the fix and needs a measured trial; the credential is in the OS keyring, so
+   sign-in *should* survive, and "should" is doing the work in that sentence.
+7. **The project Thread tab has no automated coverage.** `test/ui.test.mjs` files every task with no
+   project, so that tab is checked by `typecheck` and by hand only. Needs a real project root.
+8. **Compute `overrunFactor` in cost, not raw tokens**, and let preempted runs feed `estimateTask`.
    Both are the price of turning `autoRunawayStop` on. The cost model already prices cache reads
    separately, so nothing needs measuring first.
 
