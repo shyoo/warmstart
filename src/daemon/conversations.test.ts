@@ -240,3 +240,54 @@ describe('what a conversation was used for', () => {
     expect(conversations.conversationLimit(-9)).toBe(1)
   })
 })
+
+describe('sessionsAndWarmConversationsForWorker', () => {
+  it('returns active sessions first and warmed up idle/closed sessions next', async () => {
+    const sessionsMod = await import('./sessions.js')
+    db.db()
+      .prepare(
+        `insert into sessions (id, worker_id, adapter_id, transport, cwd, state, purpose,
+                               tokens_since_compact, started_at, closed_at, context_tokens)
+         values (?,?,'claude-code','stream','C:\\ws1',?, 'work', 0, ?, ?, ?)`
+      )
+      .run('active1', WORKER, 'live', 100, null, 50000)
+    db.db()
+      .prepare(
+        `insert into sessions (id, worker_id, adapter_id, transport, cwd, state, purpose,
+                               tokens_since_compact, started_at, closed_at, context_tokens)
+         values (?,?,'claude-code','stream','C:\\ws1',?, 'work', 0, ?, ?, ?)`
+      )
+      .run('closed1', WORKER, 'closed', 50, 60, 40000)
+    db.db()
+      .prepare(
+        `insert into sessions (id, worker_id, adapter_id, transport, cwd, state, purpose,
+                               tokens_since_compact, started_at, closed_at, context_tokens)
+         values (?,?,'claude-code','stream','C:\\ws1',?, 'work', 0, ?, ?, ?)`
+      )
+      .run('closed_empty', WORKER, 'closed', 20, 30, 0)
+
+    const result = sessionsMod.sessionsAndWarmConversationsForWorker(WORKER)
+    expect(result.map((s) => s.id)).toEqual(['active1', 'closed1'])
+  })
+
+  it('deduplicates closed sessions belonging to the same resumed conversation', async () => {
+    const sessionsMod = await import('./sessions.js')
+    db.db()
+      .prepare(
+        `insert into sessions (id, worker_id, adapter_id, transport, cwd, state, purpose,
+                               tokens_since_compact, started_at, closed_at, context_tokens, vendor_session_id)
+         values (?,?,'claude-code','stream','C:\\ws1',?, 'work', 0, ?, ?, ?, ?)`
+      )
+      .run('s_old', WORKER, 'closed', 10, 20, 30000, 'conv-1')
+    db.db()
+      .prepare(
+        `insert into sessions (id, worker_id, adapter_id, transport, cwd, state, purpose,
+                               tokens_since_compact, started_at, closed_at, context_tokens, vendor_session_id)
+         values (?,?,'claude-code','stream','C:\\ws1',?, 'work', 0, ?, ?, ?, ?)`
+      )
+      .run('s_live', WORKER, 'live', 30, null, 60000, 'conv-1')
+
+    const result = sessionsMod.sessionsAndWarmConversationsForWorker(WORKER)
+    expect(result.map((s) => s.id)).toEqual(['s_live'])
+  })
+})

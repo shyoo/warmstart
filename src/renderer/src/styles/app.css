@@ -518,6 +518,10 @@ body {
   grid-template-columns: 84px 1fr 58px 44px;
 }
 
+.gauge--idle {
+  opacity: 0.7;
+}
+
 /*
  * The prompt cache, in a colour of its own.
  *
@@ -558,6 +562,14 @@ body {
 
 .wcard-sessions {
   margin-top: var(--sp-2);
+}
+
+.wcard-more-sessions {
+  font-size: var(--text-meta);
+  color: var(--color-text-faint);
+  text-align: right;
+  margin-top: 2px;
+  padding-right: var(--sp-1);
 }
 
 /*

@@ -383,6 +383,46 @@ export function sessionsForWorker(workerId: string): Session[] {
   ).map(toSession)
 }
 
+/**
+ * Active sessions and most recent warmed-up conversations for a worker.
+ *
+ * Active (live/starting) sessions come first (newest startedAt first).
+ * Warmed-up closed/idle sessions (with context_tokens > 0, purpose = 'work') follow,
+ * deduplicated by conversation (vendor_session_id ?? id) and ordered newest first.
+ */
+export function sessionsAndWarmConversationsForWorker(workerId: string): Session[] {
+  const liveRows = rows<SessionRow>(
+    db()
+      .prepare(
+        "select * from sessions where worker_id = ? and state not in ('closed','failed') order by started_at desc"
+      )
+      .all(workerId)
+  ).map(toSession)
+
+  const seenKeys = new Set<string>()
+  for (const s of liveRows) {
+    seenKeys.add(s.vendorSessionId ?? s.id)
+  }
+
+  const closedRows = rows<SessionRow>(
+    db()
+      .prepare(
+        "select * from sessions where worker_id = ? and state in ('closed','failed') and coalesce(context_tokens, 0) > 0 and purpose = 'work' order by coalesce(closed_at, started_at) desc"
+      )
+      .all(workerId)
+  ).map(toSession)
+
+  const warmRows: Session[] = []
+  for (const s of closedRows) {
+    const key = s.vendorSessionId ?? s.id
+    if (seenKeys.has(key)) continue
+    seenKeys.add(key)
+    warmRows.push(s)
+  }
+
+  return [...liveRows, ...warmRows]
+}
+
 export interface SpawnOptions {
   workerId: string
   cwd?: string | undefined

@@ -152,7 +152,9 @@ export function App(): React.JSX.Element {
     }
   }, [refresh, refreshProjects])
 
-  const sessions = fleet.flatMap((f) => f.sessions)
+  const liveSessions = fleet.flatMap((f) =>
+    f.sessions.filter((s) => s.state !== 'closed' && s.state !== 'failed')
+  )
 
   return (
     <div className="shell">
@@ -371,8 +373,8 @@ export function App(): React.JSX.Element {
           </span>
           <span className="statusbar-spacer" />
           <span className="num">
-            {fleet.length} worker{fleet.length === 1 ? '' : 's'} · {sessions.length} session
-            {sessions.length === 1 ? '' : 's'}
+            {fleet.length} worker{fleet.length === 1 ? '' : 's'} · {liveSessions.length} session
+            {liveSessions.length === 1 ? '' : 's'}
           </span>
           <span>{info?.platform}</span>
         </footer>

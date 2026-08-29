@@ -99,51 +99,32 @@ export function FleetStrip({ fleet, now }: { fleet: FleetEntry[]; now: number })
 /**
  * One session, drawn as a gauge so it reads against the account's windows above it.
  *
- * ⚠️ It used to say `c760 57:46 0`, which is three true numbers and no way to know what any of them
- * means. The id prefix is the least useful of the three to a person reading the strip and is the one
- * that led, so the chip read as a fault code; it now lives in the tooltip, where it is still there
- * for anyone matching a chip to a row in Sessions.
+ * The bar shows context window fill (contextTokens/contextWindow) with quota-urgency coloring.
+ * For sessions with a cache clock (PTY sessions), the countdown in the rightmost column shows
+ * prompt cache TTL remaining. For sessions without a cache clock (stream sessions), the countdown
+ * column is blank.
  *
- * ⛔ **The bar is the cache for PTY sessions; the context fill for stream sessions.**
- * PTY sessions have a cache TTL: the fill and the countdown are the same quantity seen twice, so they
- * can never disagree. Stream-metered sessions (Antigravity) have no cache clock — `lastRequestStartedAt`
- * is never set — so `cacheRemaining()` is always null. For those the bar shows context window fill
- * (contextTokens/contextWindow) with quota-urgency coloring, and the countdown becomes a token count.
- *
- * ⛔ A context of zero is not rendered as `0`. Zero metered tokens means the transcript has recorded
- * no turn yet — a session that has just started, or one that never got going — and `0` reads as a
- * measurement rather than as an absence. `tokens()` already draws unknown as `--` for exactly this
- * reason; the same must be true one level up.
- *
- * ⛔ **And a session with no turn yet gets no gauge at all.** Drawing the row anyway produced an
- * empty bar, `no turn yet` and `--:--` — three placeholders in the shape of three measurements,
- * which is what a probe session looks like for its whole 30-second life and what every session looks
- * like for its first few seconds. ⚠️ The state is still shown, as a word. What is withheld is the
- * *shape* of a reading that does not exist yet.
+ * Active sessions lead; warmed-up idle/closed sessions are displayed with a slight dimming.
  */
 function SessionGauge({ session, now }: { session: Session; now: number }): React.JSX.Element {
   const ctx = session.contextTokens
   const win = session.contextWindow
-  const left = cacheRemaining(session, now)
-  // ⛔ Stream sessions (Antigravity) have no cache clock: `left` is always null for them.
-  // Fall back to context-window fill so the bar is not permanently empty.
   const hasCacheClock = session.cacheExpiresAt !== null
-  const fill = hasCacheClock ? left : contextFill(session)
+  const fill = contextFill(session)
   const cacheUrgencyClass = cacheUrgency(session.cacheExpiresAt, now)
   const ctxUrgencyClass = ctx && win ? quotaUrgency((ctx / win) * 100) : 'ok'
-  const fillClass = hasCacheClock
-    ? `bar-fill--cache-${cacheUrgencyClass}`
-    : `bar-fill--${ctxUrgencyClass}`
+  const fillClass = `bar-fill--${ctxUrgencyClass}`
+  const isIdle = session.state === 'closed' || session.state === 'idle'
 
   if (!ctx) {
     return (
       <div
-        className="gauge gauge--session gauge--waiting"
-        title={`session ${session.id}\n${session.purpose} · ${session.transport} transport\n${session.cwd}`}
+        className={`gauge gauge--session gauge--waiting${isIdle ? ' gauge--idle' : ''}`}
+        title={`session ${session.id}\n${isIdle ? 'idle' : session.purpose} · ${session.transport} transport\n${session.cwd}`}
       >
-        <span className="gauge-label">{session.purpose}</span>
+        <span className="gauge-label">{isIdle ? 'idle' : session.purpose}</span>
         <span className="wcard-agenote">
-          {session.purpose === 'probe' ? 'reading the window…' : 'starting…'}
+          {session.purpose === 'probe' ? 'reading the window…' : isIdle ? 'idle' : 'starting…'}
         </span>
       </div>
     )
@@ -151,20 +132,18 @@ function SessionGauge({ session, now }: { session: Session; now: number }): Reac
 
   return (
     <div
-      className="gauge gauge--session"
+      className={`gauge gauge--session${isIdle ? ' gauge--idle' : ''}`}
       title={
-        `session ${session.id}\n${session.purpose} · ${session.transport} transport\n${session.cwd}\n` +
+        `session ${session.id}\n${isIdle ? 'idle (warmed up)' : session.purpose} · ${session.transport} transport\n${session.cwd}\n` +
         (hasCacheClock
-          ? 'the bar and the clock are both what is left of this session\u2019s prompt cache\n' +
-            // ⛔ Said here because the two numbers get compared. `ctx` is how full the window is
-            // now and falls when the session compacts; a task's token count is a running total of
-            // everything it ever spent, and only grows. They are not the same quantity.
+          ? 'the bar shows how much of the context window is used (ctx/win)\n' +
+            'the clock is what is left of this session\u2019s prompt cache TTL\n' +
             'ctx is how full the window is now \u2014 a level, not a total, and not a task\u2019s token count'
           : 'the bar shows how much of the context window is used (no cache clock on this adapter)\n' +
             'ctx is how full the window is now \u2014 a level, not a total, and not a task\u2019s token count')
       }
     >
-      <span className="gauge-label">{session.purpose}</span>
+      <span className="gauge-label">{isIdle ? 'idle' : session.purpose}</span>
       <span className="bar">
         {fill !== null && (
           <span
@@ -190,6 +169,10 @@ function WorkerCard({ entry, now }: { entry: FleetEntry; now: number }): React.J
   const stale = quota?.stale ?? true
   const windows = quota?.windows ?? []
   const suspect = worker.health?.state === 'suspect' ? worker.health : null
+
+  const maxDisplay = 3
+  const displayedSessions = sessions.slice(0, maxDisplay)
+  const overflowCount = sessions.length - displayedSessions.length
 
   return (
     <div className={`wcard${worker.enabled ? '' : ' wcard--off'}`}>
@@ -280,9 +263,17 @@ function WorkerCard({ entry, now }: { entry: FleetEntry; now: number }): React.J
           <div className="wcard-rule">
             <span>sessions</span>
           </div>
-          {sessions.map((s) => (
+          {displayedSessions.map((s) => (
             <SessionGauge key={s.id} session={s} now={now} />
           ))}
+          {overflowCount > 0 && (
+            <div
+              className="wcard-more-sessions"
+              title={`${overflowCount} more active/idle conversation(s) on this worker`}
+            >
+              +{overflowCount} more
+            </div>
+          )}
         </div>
       )}
     </div>

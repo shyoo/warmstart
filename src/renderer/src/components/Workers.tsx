@@ -327,9 +327,16 @@ export function Workers({
                         fleet strip had said `off` on its card since M2; the table that owns the
                         control did not. */}
                     {!worker.enabled && <span className="tag tag--off">disabled</span>}
-                    {sessions.length > 0 && (
-                      <span className="tag tag--running">{sessions.length} live</span>
-                    )}
+                    {(() => {
+                      const liveCount = sessions.filter((s) => s.state !== 'closed' && s.state !== 'failed').length
+                      const warmCount = sessions.length - liveCount
+                      return (
+                        <>
+                          {liveCount > 0 && <span className="tag tag--running">{liveCount} live</span>}
+                          {warmCount > 0 && <span className="tag">{warmCount} warm</span>}
+                        </>
+                      )
+                    })()}
                     <div className="tbl-path mono" title={worker.isolationRoot}>
                       {worker.isolationRoot}
                     </div>

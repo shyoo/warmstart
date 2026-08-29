@@ -30,6 +30,7 @@ import {
   listSessions,
   resizeSession,
   sessionsForWorker,
+  sessionsAndWarmConversationsForWorker,
   spawnSession,
   writeSession
 } from './sessions.js'
@@ -156,7 +157,8 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
     // reading that has windows rather than the newest *attempt*. Nothing here gates anything.
     'fleet.list': () =>
       listWorkers().map((worker) => {
-        const sessions = sessionsForWorker(worker.id)
+        const liveSessions = sessionsForWorker(worker.id)
+        const sessions = sessionsAndWarmConversationsForWorker(worker.id)
         return {
           worker,
           quota: lastQuotaReading(worker.id),
@@ -164,7 +166,7 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
           // ⛔ Both gates called here rather than reimplemented in the renderer. See the fields'
           // notes in protocol.ts: together these are what "ready" means everywhere in the daemon.
           unavailable: accountUnavailability(worker),
-          atCapacity: atCapacity(sessions, worker.maxConcurrent, null)
+          atCapacity: atCapacity(liveSessions, worker.maxConcurrent, null)
         }
       }),
 
