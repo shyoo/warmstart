@@ -1,0 +1,204 @@
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
+
+const run = promisify(execFile)
+
+/**
+ * Telling a stuck run from a slow one.
+ *
+ * ⛔ **The watchdog could not, and said so.** `runWatchdogs` has reported "no turn for Nm (reported,
+ * not stopped — a long tool call looks the same)" since M4, once every ten seconds, and that comment
+ * was an honest statement of what elapsed time alone can prove: nothing. A `npm test` and a deadlock
+ * produce the same silence.
+ *
+ * ⭐ **They do not produce the same CPU.** Measured 2026-08-29: two agents each ran this repo's UI
+ * suite, both blocked on a DevTools reply that could never arrive, and their process trees used
+ * **0.09 seconds of CPU across forty-five minutes**. Work burns CPU; a wait on something that will
+ * never come burns none. Silence plus a flat CPU total over a whole tree is a different claim from
+ * silence alone, and it is one that can be checked.
+ *
+ * ⛔ **Nothing here kills anything, and nothing here changes a task's status.** The verdict is a
+ * report: an operator gets told which processes are involved and what they have not been doing, and
+ * decides. ⚠️ A run genuinely blocked on the network — a slow API call, a stalled download — also
+ * burns no CPU, so this signal is good enough to *ask* a person and nowhere near good enough to act
+ * on. The run's own state machine is left strictly alone, which is also why a false positive here
+ * cannot corrupt a run that was fine all along.
+ */
+
+export interface ProcessRow {
+  pid: number
+  ppid: number
+  name: string
+  /** The full command line where the platform gives one. ⚠️ Null on a process we may not read. */
+  command: string | null
+  cpuSeconds: number
+}
+
+export interface TreeSample {
+  at: number
+  cpuSeconds: number
+  processes: ProcessRow[]
+}
+
+/** How far apart two samples must be before their difference means anything. */
+export const MIN_SAMPLE_GAP_MS = 60_000
+/** CPU seconds a whole tree must accumulate between samples to count as working. */
+export const MIN_PROGRESS_CPU_SECONDS = 1
+
+/**
+ * Has this tree done anything since the last look?
+ *
+ * ⚠️ **A drop is progress, not a stall.** The total only covers processes that are still alive, so a
+ * child finishing makes it fall. Reading that as "no progress" would report a stall at the exact
+ * moment a long tool call completed — the one moment it is certainly working.
+ */
+export function looksStuck(
+  previous: TreeSample | null,
+  current: TreeSample,
+  opts: { minGapMs?: number; minCpuSeconds?: number } = {}
+): boolean {
+  const minGapMs = opts.minGapMs ?? MIN_SAMPLE_GAP_MS
+  const minCpuSeconds = opts.minCpuSeconds ?? MIN_PROGRESS_CPU_SECONDS
+
+  // ⛔ One sample is a reading, not a trend. The first look establishes the baseline and accuses
+  //    nobody: a run that had been working hard for an hour has a large total and no history.
+  if (!previous) return false
+  if (current.processes.length === 0) return false
+  if (current.at - previous.at < minGapMs) return false
+  if (current.cpuSeconds < previous.cpuSeconds) return false
+  return current.cpuSeconds - previous.cpuSeconds < minCpuSeconds
+}
+
+/** Every process descended from `rootPid`, the root included. */
+export function descendantsOf(all: ProcessRow[], rootPid: number): ProcessRow[] {
+  const children = new Map<number, ProcessRow[]>()
+  for (const row of all) {
+    const siblings = children.get(row.ppid)
+    if (siblings) siblings.push(row)
+    else children.set(row.ppid, [row])
+  }
+  const found: ProcessRow[] = []
+  const seen = new Set<number>()
+  const stack = [rootPid]
+  while (stack.length) {
+    const pid = stack.pop()
+    // ⚠️ `seen` guards a cycle. Pid reuse can make a process appear to be its own ancestor, and this
+    // walk runs on a machine the fleet does not control.
+    if (pid === undefined || seen.has(pid)) continue
+    seen.add(pid)
+    const self = all.find((p) => p.pid === pid)
+    if (self) found.push(self)
+    for (const child of children.get(pid) ?? []) stack.push(child.pid)
+  }
+  return found
+}
+
+/** ⚠️ 100-nanosecond ticks, which is what `Win32_Process` counts CPU in. */
+const WINDOWS_TICKS_PER_SECOND = 10_000_000
+
+export function parseWindowsProcesses(json: string): ProcessRow[] {
+  const parsed: unknown = JSON.parse(json)
+  // ⚠️ `ConvertTo-Json` emits a bare object when there is exactly one result, never a one-element
+  // array. A machine with one process is not realistic; a *filtered* query returning one is.
+  const list = Array.isArray(parsed) ? parsed : [parsed]
+  const rows: ProcessRow[] = []
+  for (const item of list) {
+    const r = item as Record<string, unknown>
+    const pid = Number(r.ProcessId)
+    if (!Number.isFinite(pid)) continue
+    // ⚠️ UInt64 crosses the wire as a number or a string depending on its size. Both are read.
+    const ticks = Number(r.KernelModeTime ?? 0) + Number(r.UserModeTime ?? 0)
+    rows.push({
+      pid,
+      ppid: Number(r.ParentProcessId ?? 0),
+      name: typeof r.Name === 'string' ? r.Name : '',
+      command: typeof r.CommandLine === 'string' ? r.CommandLine : null,
+      cpuSeconds: Number.isFinite(ticks) ? ticks / WINDOWS_TICKS_PER_SECOND : 0
+    })
+  }
+  return rows
+}
+
+/** `ps -eo pid=,ppid=,time=,args=` — `[[DD-]HH:]MM:SS` in the third column. */
+export function parsePosixProcesses(text: string): ProcessRow[] {
+  const rows: ProcessRow[] = []
+  for (const line of text.split('\n')) {
+    const m = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/.exec(line)
+    if (!m?.[1] || !m[2] || !m[3]) continue
+    const command = (m[4] ?? '').trim()
+    rows.push({
+      pid: Number(m[1]),
+      ppid: Number(m[2]),
+      name: command.split(/\s/)[0]?.split(/[/\\]/).pop() ?? '',
+      command,
+      cpuSeconds: parsePosixCpuTime(m[3])
+    })
+  }
+  return rows
+}
+
+export function parsePosixCpuTime(value: string): number {
+  const [days, rest] = value.includes('-') ? value.split('-') : ['0', value]
+  const parts = (rest ?? '').split(':').map(Number)
+  if (parts.some((n) => !Number.isFinite(n))) return 0
+  // Right-aligned: seconds last, then minutes, then hours.
+  const seconds = parts.reverse().reduce((total, part, i) => total + part * 60 ** i, 0)
+  return seconds + Number(days) * 86_400
+}
+
+/**
+ * Read one sample of a process tree.
+ *
+ * ⚠️ Returns null rather than throwing on every failure — a thin PATH, a denied query, a pid that
+ * has already gone. **Not being able to measure is not evidence of a stall**, and a watchdog that
+ * treated it as one would report every run on a machine where the query does not work.
+ */
+export async function sampleProcessTree(rootPid: number): Promise<TreeSample | null> {
+  try {
+    const all =
+      process.platform === 'win32'
+        ? parseWindowsProcesses(
+            (
+              await run(
+                'powershell.exe',
+                [
+                  '-NoProfile',
+                  '-NonInteractive',
+                  '-Command',
+                  'Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,' +
+                    'KernelModeTime,UserModeTime,CommandLine | ConvertTo-Json -Compress'
+                ],
+                { timeout: 20_000, maxBuffer: 32 * 1024 * 1024, windowsHide: true }
+              )
+            ).stdout
+          )
+        : parsePosixProcesses(
+            (await run('ps', ['-eo', 'pid=,ppid=,time=,args='], { timeout: 20_000, maxBuffer: 32 * 1024 * 1024 }))
+              .stdout
+          )
+    const processes = descendantsOf(all, rootPid)
+    return {
+      at: Date.now(),
+      cpuSeconds: processes.reduce((total, p) => total + p.cpuSeconds, 0),
+      processes
+    }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * What to show a person who has to decide whether to intervene.
+ *
+ * ⚠️ The command line, truncated, because the *name* is what every one of these processes has in
+ * common and the arguments are what tells them apart: six `electron.exe` rows say nothing, while
+ * `electron.exe … --remote-debugging-port=9444` says everything.
+ */
+export function describeTree(sample: TreeSample, limit = 8): string {
+  const listed = [...sample.processes]
+    .sort((a, b) => b.cpuSeconds - a.cpuSeconds)
+    .slice(0, limit)
+    .map((p) => `  pid ${p.pid} · ${p.cpuSeconds.toFixed(1)}s CPU · ${(p.command ?? p.name).slice(0, 120)}`)
+  const more = sample.processes.length - listed.length
+  return listed.join('\n') + (more > 0 ? `\n  … and ${more} more` : '')
+}

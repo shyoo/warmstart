@@ -18,6 +18,7 @@ import {
   makeProject,
   section,
   skip,
+  startDeadline,
   summary,
   wait,
   writeProbeAdapter
@@ -35,6 +36,9 @@ const WebSocket = require('ws')
  */
 
 const daemon = new Daemon()
+// ⚠️ Runs in about ninety seconds on this machine; ten minutes is the ceiling. `cleanup` stops the
+// daemon this suite started, which `process.exit` would otherwise skip.
+const budget = startDeadline(10 * 60 * 1000, 'daemon + approvals', () => daemon.cleanup())
 const project = join(tmpdir(), `agentyard-fixture-${process.pid}`)
 
 try {
@@ -875,6 +879,7 @@ try {
   destroyProject(project)
 }
 
+budget.clear()
 process.exit(summary('daemon + approvals') === 0 ? 0 : 1)
 
 // ---------------------------------------------------------------------------- L2

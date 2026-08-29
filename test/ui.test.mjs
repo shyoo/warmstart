@@ -9,7 +9,9 @@ import {
   check,
   checkBuildIsCurrent,
   electronBinary,
+  freePort,
   killTree,
+  startDeadline,
   section,
   summary,
   wait
@@ -28,9 +30,15 @@ const WebSocket = require('ws')
  * Spends nothing: it seeds through the app's own bridge and never starts an agent.
  */
 
-const PORT = 9444
+// ⛔ **Private to this run, never a fixed number.** Two agents running this suite in their own
+// worktrees started four runs inside three and a half minutes on 2026-08-29; all four asked for 9444,
+// one got it, and the losers attached to a *stranger's* application because a page found on a shared
+// port carries no evidence of whose it is. See `freePort`.
+const PORT = await freePort()
 const dataDir = mkdtempSync(join(tmpdir(), 'agentyard-ui-'))
 let app = null
+// ⚠️ Runs in about two minutes on this machine; ten is the ceiling, not the expectation.
+const budget = startDeadline(10 * 60 * 1000, 'ui', () => killTree(app?.pid, 'electron'))
 let socket = null
 
 try {
@@ -54,21 +62,76 @@ try {
 
   const page = await waitForPage(appOutput)
   socket = new WebSocket(page.webSocketDebuggerUrl)
-  await new Promise((r) => socket.on('open', r))
+  // ⛔ Opening is not guaranteed either. Awaiting only `open` meant a refused or dropped connection
+  // hung here with no output and no timeout, which is the same defect as the one below.
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('the DevTools socket did not open within 15s')), 15_000)
+    socket.on('open', () => {
+      clearTimeout(timer)
+      resolve()
+    })
+    socket.on('error', (err) => {
+      clearTimeout(timer)
+      reject(new Error(`the DevTools socket failed to open: ${err.message}`))
+    })
+  })
 
   let id = 0
   const pending = new Map()
+
+  /**
+   * ⛔ **Every request is bounded, and a dead connection fails all of them.**
+   *
+   * This resolved and never rejected: no timeout, and no handler for `close` or `error`. So when the
+   * app went away mid-suite — measured 2026-08-29, when a second run on the same debugging port
+   * killed the application this one was driving — the pending `Runtime.evaluate` never settled and
+   * the process sat at **0.1 seconds of CPU for thirty-five minutes**, printing nothing. Every wait
+   * *above* this function was bounded (45s for the page, 30s in `until` and `waitFor`); the primitive
+   * underneath all of them was not, so none of those budgets could ever be reached.
+   *
+   * ⚠️ A stuck suite must fail, not hang. An agent waiting on this has no way to tell the difference
+   * between a slow test and a dead one, and neither has the fleet: `orchestratord` logged "no turn
+   * for 35m (reported, not stopped — a long tool call looks the same)" once every ten seconds.
+   */
+  let dead = null
+  const failAll = (why) => {
+    dead ??= why
+    for (const entry of pending.values()) entry.reject(new Error(why))
+    pending.clear()
+  }
+  socket.on('close', () => failAll('the app closed the DevTools connection'))
+  socket.on('error', (err) => failAll(`the DevTools connection failed: ${err.message}`))
   socket.on('message', (raw) => {
     const msg = JSON.parse(String(raw))
-    if (msg.id && pending.has(msg.id)) {
-      pending.get(msg.id)(msg)
+    const entry = msg.id ? pending.get(msg.id) : undefined
+    if (entry) {
       pending.delete(msg.id)
+      entry.resolve(msg)
     }
   })
   const send = (method, params = {}) =>
-    new Promise((resolve) => {
+    new Promise((resolve, reject) => {
+      if (dead) {
+        reject(new Error(`${method} was not sent: ${dead}`))
+        return
+      }
       const mid = ++id
-      pending.set(mid, resolve)
+      // ⚠️ 60s, not the 30s the callers use, so that a slow-but-working call fails on the *caller's*
+      // budget with the caller's message rather than on this one.
+      const timer = setTimeout(() => {
+        pending.delete(mid)
+        reject(new Error(`${method} got no reply from the app within 60s`))
+      }, 60_000)
+      pending.set(mid, {
+        resolve: (msg) => {
+          clearTimeout(timer)
+          resolve(msg)
+        },
+        reject: (err) => {
+          clearTimeout(timer)
+          reject(err)
+        }
+      })
       socket.send(JSON.stringify({ id: mid, method, params }))
     })
   const evaluate = async (expression) => {
@@ -1166,6 +1229,7 @@ try {
   }
 }
 
+budget.clear()
 process.exit(summary('ui') === 0 ? 0 : 1)
 
 async function waitForPage(appOutput = []) {

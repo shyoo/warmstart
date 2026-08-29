@@ -10,6 +10,7 @@ import {
   statSync,
   writeFileSync
 } from 'node:fs'
+import { createServer } from 'node:net'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
@@ -59,6 +60,66 @@ export function electronBinary() {
     'Electron binary is missing. Electron does not download itself; run:\n' +
       '  node scripts/ensure-electron.mjs'
   )
+}
+
+/**
+ * A hard ceiling on a whole suite, because the bound has to sit nearest the thing that can hang.
+ *
+ * ⛔ **Measured 2026-08-29.** Two `test:ui` runs blocked for forty-five minutes at 0.09 seconds of
+ * CPU each. Every wait *above* the blocking call was bounded — 45s for the app to appear, 30s in
+ * `until` and `waitFor` — and the DevTools request underneath them was not, so none of those budgets
+ * could ever be reached. A suite is run by agents and by people, and neither can tell a slow test
+ * from a dead one by watching it, so the suite states how long it may take and stops itself.
+ *
+ * ⚠️ **A ceiling, not an expectation.** Set at several times the observed runtime: a deadline that
+ * fails a merely slow machine teaches everyone to ignore it. The suite's own PASS lines say where it
+ * got to, so this prints the budget and not a second copy of that.
+ *
+ * ⛔ **`onExpire` must stop what the suite started.** `process.exit` does not run `finally`, so a
+ * deadline without it turns a hang into a leaked Electron tree or a leaked daemon — which is the
+ * failure this file's other rules exist to prevent.
+ */
+export function startDeadline(ms, label, onExpire) {
+  const timer = setTimeout(() => {
+    console.log(
+      `\nFAIL  ${label} exceeded its ${ms >= 60_000 ? `${Math.round(ms / 60_000)}m` : `${Math.round(ms / 1000)}s`} ` +
+        'budget and was stopped. The last ' +
+        'PASS above is where it got to; whatever it was waiting on there is not going to arrive.'
+    )
+    try {
+      onExpire?.()
+    } catch {
+      // Cleanup that throws must not stop the exit, or the leak outlives the failure.
+    }
+    process.exit(1)
+  }, ms)
+  return { clear: () => clearTimeout(timer) }
+}
+
+/**
+ * A port nothing is listening on, asked of the OS rather than chosen.
+ *
+ * ⛔ **Measured 2026-08-29.** `test/ui.test.mjs` hard-coded 9444. Two agents running the suite in
+ * their own worktrees started four runs inside three and a half minutes; one bound the port and the
+ * rest did not, and because the suite asked *the port* for a page rather than asking *its own app*,
+ * a losing run silently attached to somebody else's application. When the winner finished and killed
+ * its app, the debugging server went with it and the other runs blocked forever.
+ *
+ * ⚠️ There is a gap between closing this listener and the app opening its own, so a port can still be
+ * taken in between. That failure is loud and instant — the app never appears and the suite says so
+ * within 45s — where a fixed port failed silently and cost half an hour.
+ */
+export async function freePort() {
+  const server = createServer()
+  try {
+    await new Promise((resolve, reject) => {
+      server.once('error', reject)
+      server.listen(0, '127.0.0.1', resolve)
+    })
+    return server.address().port
+  } finally {
+    server.close()
+  }
 }
 
 /**

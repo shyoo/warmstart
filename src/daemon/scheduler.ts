@@ -55,6 +55,13 @@ import {
   spawnSession
 } from './sessions.js'
 import { finishWithoutLanding, landTask } from './landing.js'
+import {
+  describeTree,
+  looksStuck,
+  sampleProcessTree,
+  MIN_SAMPLE_GAP_MS,
+  type TreeSample
+} from './stall.js'
 import { decideFinish, resolveFinishPolicy, type TrunkReading } from './finish.js'
 import { rank, resolveSessionSharing, whyNotShared } from './sharing.js'
 import { stripAnsi } from './stream.js'
@@ -1133,15 +1140,81 @@ async function runWatchdogs(): Promise<void> {
       continue
     }
 
-    // 3. A stall. Reported, never killed: a long-running tool call looks exactly like this.
+    // 3. A stall. ⛔ Reported, never killed - and since 2026-08-29 it can say *why* it thinks so.
     const lastTurn = session.lastRequestStartedAt ?? session.startedAt
-    if (Date.now() - lastTurn > STALL_AFTER_MS) {
-      log.warn(
-        `t${task.seq} has had no turn for ${Math.round((Date.now() - lastTurn) / 60000)}m ` +
-          '(reported, not stopped - a long tool call looks the same)'
-      )
-    }
+    if (Date.now() - lastTurn > STALL_AFTER_MS) await reportStall(task, session, lastTurn)
   }
+}
+
+/**
+ * What the last look at each stalled session found.
+ *
+ * ⛔ Keyed by session and holding the turn it was taken against, so a session that produces a turn
+ * starts over: the baseline from before the turn describes a run that was demonstrably working, and
+ * comparing against it would accuse the next quiet minute of being the same stall.
+ */
+const stallWatch = new Map<string, { lastTurn: number; sample: TreeSample | null; reported: boolean }>()
+
+/**
+ * Say whether a silent run is stuck or merely slow, once, with the evidence.
+ *
+ * ⛔ **Nothing is stopped and no status is changed.** The signal is good enough to ask a person and
+ * not good enough to act on: a run blocked on a slow network call burns no CPU either. Leaving the
+ * run's state machine strictly alone is what makes a false positive cost a message rather than a
+ * task. ⚠️ The operator's own move — read the tree, decide, kill it — is the one this cannot make
+ * for them, and `AGENTS.md` has said since M2 that nothing kills a process it cannot prove is its
+ * own.
+ */
+async function reportStall(task: Task, session: Session, lastTurn: number): Promise<void> {
+  const minutes = Math.round((Date.now() - lastTurn) / 60000)
+  if (!session.pid) {
+    log.warn(`t${task.seq} has had no turn for ${minutes}m (no pid recorded, so nothing to measure)`)
+    return
+  }
+
+  const previous = stallWatch.get(session.id)
+  // A turn since the last look means the run was working; whatever came before describes a
+  // different silence and must not be compared against this one.
+  const history = previous && previous.lastTurn === lastTurn ? previous : null
+  if (history?.reported) return
+  if (history?.sample && Date.now() - history.sample.at < MIN_SAMPLE_GAP_MS) return
+
+  const sample = await sampleProcessTree(session.pid)
+  if (!sample) {
+    // ⚠️ Unmeasurable is not stuck. Fall back to what this line has always said.
+    log.warn(
+      `t${task.seq} has had no turn for ${minutes}m ` +
+        '(reported, not stopped - its process tree could not be read)'
+    )
+    return
+  }
+
+  const stuck = looksStuck(history?.sample ?? null, sample)
+  stallWatch.set(session.id, { lastTurn, sample, reported: stuck })
+  if (!stuck) {
+    log.warn(
+      `t${task.seq} has had no turn for ${minutes}m, but its ${sample.processes.length} process(es) ` +
+        `have used ${sample.cpuSeconds.toFixed(1)}s of CPU - working, not stuck`
+    )
+    return
+  }
+
+  const idleFor = Math.round((sample.at - (history?.sample?.at ?? sample.at)) / 1000)
+  const gained = sample.cpuSeconds - (history?.sample?.cpuSeconds ?? sample.cpuSeconds)
+  const headline =
+    `t${task.seq} looks stuck rather than slow: no turn for ${minutes}m, and the ` +
+    `${sample.processes.length} process(es) under it have used ${gained.toFixed(1)}s of CPU in the ` +
+    `last ${idleFor}s`
+  log.warn(`${headline} - reported, not stopped`)
+  addMessage(
+    task.id,
+    'system',
+    `${headline}. Work burns CPU; a wait on something that will never arrive does not.\n\n` +
+      `${describeTree(sample)}\n\n` +
+      '⚠️ Nothing has been stopped — this is a report, and a run blocked on a slow network call ' +
+      'looks the same. If it is stuck, stop the process above that is holding it and this task ' +
+      'will carry on; the fleet will not kill a process it cannot prove is its own.'
+  )
 }
 
 /**

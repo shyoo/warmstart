@@ -339,6 +339,18 @@ costmodels/             versioned pricing data
   fresh build silently tests code that is no longer in the tree **and reports a confident pass for
   it** — three times on 2026-08-27. `checkBuildIsCurrent()` and the pack suite's asar check refuse
   instead. ⚠️ When you add a guard like that, watch it go red before you trust it green.
+- ⛔ **Two agents run these suites at once, so a suite that cannot run twice at once is a bug in the
+  suite.** `test/ui.test.mjs` held a hard-coded debugging port until 2026-08-29: four runs started
+  inside three and a half minutes, and because the suite asked *the port* for a page rather than
+  asking its own app, the losers drove a stranger's application and then blocked forever when it was
+  killed. Anything shared is asked for at run time — `freePort()`, `mkdtempSync()` — never written
+  down as a constant. ⚠️ Prove it the only way that counts: run the suite twice at once and require
+  both to pass. Reverting that one constant fails 8 of 125 in one run and 33 of 81 in the other.
+- ⛔ **Bound the wait nearest the resource.** In that same incident *every* wait above the blocking
+  call had a budget — 45s for the app to appear, 30s in `until` and `waitFor` — and the DevTools
+  request underneath them had none, so no budget above it could ever be reached. Each suite now
+  declares a ceiling with `startDeadline`, whose `onExpire` must stop what the suite started because
+  `process.exit` does not run `finally`.
 - **There is exactly one packaged app in the tree, `release\win-unpacked\`, and it is the
   build's.** ⚠️ A second copy under `release\suite\` existed from 2026-08-27 so packaging could
   not collide with an app run from the repo; it was removed the same day, because **the app to use

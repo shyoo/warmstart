@@ -11,6 +11,7 @@ import {
   killTree,
   section,
   skip,
+  startDeadline,
   summary,
   wait,
   writeProbeAdapter
@@ -76,6 +77,17 @@ const PRODUCT = 'Multi Agent Controller'
 const EXECUTABLE = process.platform === 'linux' ? 'multi-agent-controller' : PRODUCT
 const dataDir = mkdtempSync(join(tmpdir(), 'agentyard-pack-'))
 let app = null
+// ⚠️ The slowest of the three — it drives a real package and its own daemon — so fifteen minutes.
+// ⛔ Both children, because this suite leaks *two* things: the app, and the detached orchestratord
+//    the app spawns, which holds `release/win-unpacked` open and breaks the next `npm run pack`.
+const budget = startDeadline(15 * 60 * 1000, 'pack', () => {
+  killTree(app?.pid, EXECUTABLE)
+  try {
+    killTree(JSON.parse(readFileSync(join(dataDir, 'orchestratord.json'), 'utf8')).pid, 'orchestratord')
+  } catch {
+    // No endpoint file means it never started.
+  }
+})
 
 /** Where electron-builder leaves the unpacked app for this platform. */
 function unpackedDir() {
@@ -424,4 +436,5 @@ try {
   }
 }
 
+budget.clear()
 process.exit(summary('pack') === 0 ? 0 : 1)

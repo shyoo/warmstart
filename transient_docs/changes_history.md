@@ -1837,3 +1837,55 @@ contention it existed to create, and the test measured an uncontended landing wh
 otherwise. ⚠️ Found by the mutation run, not by the green tick. They now block on the message the
 queue itself posts, which is the only signal that does not depend on how fast git is today. Reverting
 the queue now fails ten of the eleven, and the eleventh is the guard that must not fail.
+
+## Two agents, one debugging port, and forty-five minutes of nothing (2026-08-29)
+
+The operator reported t29 and t30 still running half an hour after they should have finished, both
+apparently sitting in a test. They were: each had run this repo's own `npm run test:ui` in its own
+worktree, and both were blocked forever.
+
+⛔ **It was not a deadlock, which matters because a deadlock detector would have found nothing.**
+Neither task held anything the other wanted and there was no cycle. `test/ui.test.mjs` hard-coded
+`--remote-debugging-port=9444`, and `waitForPage` asked *that port* for a page rather than asking
+*its own app* — a page found on a shared port carries no evidence of whose it is. Four runs started
+inside three and a half minutes (12:55:47, 12:56:19, 12:57:11, 12:59:13, one temp data dir each).
+One bound the port; the losers attached to a stranger's application, and when the winner finished
+and killed its app tree the debugging server went with it.
+
+⭐ **The stall was a second, independent defect, and the more important one.** `send()` resolved and
+never rejected: no timeout, and no handler for the socket's `close` or `error`. Every wait *above* it
+was bounded — 45s for the page, 30s in `until` and `waitFor` — so the shape of the bug is worth
+stating as a rule: **a budget above an unbounded wait can never be reached.** The suites now ask the
+OS for a port (`freePort`), and every DevTools request is bounded, as is the socket's opening.
+
+⚠️ **Three tiers of fix, and the reason only two were built.** Isolation-by-construction and bounded
+waits are cheap and local. The third — teaching the resource broker about contended things an agent's
+shell command touches — is not, because `resources.ts` can only arbitrate what the *scheduler*
+claims, and an agent typing `npm run test:ui` claims nothing. `test:pack` still cannot be isolated
+(it rewrites one fixed `release/win-unpacked`) and wants a lock with an owner and a timeout, on the
+same argument as the landing queue: a queue, never an unbounded wait.
+
+⭐ **The watchdog's own comment named the blocker, and the blocker had stopped being true.** Branch 3
+of `runWatchdogs` has logged *"no turn for Nm (reported, not stopped — a long tool call looks the
+same)"* since M4. That is exactly what elapsed silence can prove on its own: nothing. But the two
+stuck trees had used **0.09 seconds of CPU across forty-five minutes**, which is the measurement that
+separates them — work burns CPU and a wait on something that will never arrive does not. `stall.ts`
+samples the run's whole process tree after 12 minutes of silence and compares two samples a minute
+apart.
+
+⛔ **It reports and never acts, and that is not timidity.** A run blocked on a slow network call burns
+no CPU either, so the signal is good enough to ask a person and nowhere near good enough to kill on.
+It also deliberately leaves the task's status alone: setting `awaiting_human` under a live run would
+let a false positive corrupt a run that was fine, where a false positive now costs one message. The
+same reasoning that keeps `autoRunawayStop` off by default.
+
+⚠️ **A falling CPU total is progress, not a stall.** The total covers living processes only, so a
+child exiting makes it drop — and reading that as "no progress" would report a stall at the exact
+moment a long tool call *completed*. That is one of six mutations the tests catch; another is the
+cycle guard in the tree walk, whose absence hangs the walk, which would be a poor quality in a
+watchdog looking for hangs.
+
+⚠️ **A per-session TTL was considered and rejected.** Sessions are legitimately long — resident
+sessions are a feature and a task waiting on a person can idle for hours — so a TTL there kills
+correct work to catch incorrect work. Silence was already measured; what was missing was something to
+judge silence against.
