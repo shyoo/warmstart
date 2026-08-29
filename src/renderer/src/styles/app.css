@@ -1853,6 +1853,7 @@ select:focus-visible,
   font-size: var(--text-meta);
   font-style: italic;
   min-width: 0;
+  max-width: 80ch;
   overflow: hidden;
 }
 

@@ -498,9 +498,11 @@ export function Tasks({
                       onClick={() => onOpenTask(task.id)}
                     >
                       <td colSpan={11} className="tbl-live-cell">
-                        <div className="tbl-live-line">
+                        <div className="tbl-live-line" title={liveText}>
                           <span className="tbl-live-prefix" aria-hidden>&gt;</span>
-                          <span className="tbl-live-text">{liveText}</span>
+                          <span className="tbl-live-text">
+                            {liveText.length > 100 ? `${liveText.slice(0, 100)}…` : liveText}
+                          </span>
                         </div>
                       </td>
                     </tr>
