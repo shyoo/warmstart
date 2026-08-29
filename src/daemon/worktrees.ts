@@ -170,6 +170,45 @@ export interface SwitchResult {
  * live conversation that is coming back, and rescuing its dirt out from under it is precisely what
  * the refusal above exists to prevent.
  */
+/**
+ * Where the trunk's landing target stands right now.
+ *
+ * ⛔ Read in the **trunk**, not in a worktree. The whole point is to notice work appearing somewhere
+ * no agent was given, and a pooled worktree cannot see its own absence.
+ *
+ * ⚠️ Returns null rather than throwing, and null means *no reading* — a project with no git, a
+ * target branch that does not exist yet, a repository mid-rebase. Every caller must treat null as
+ * "cannot say" and never as "nothing changed", which is the direction this fails safe in.
+ */
+export async function trunkTargetSha(project: Project, target: string): Promise<string | null> {
+  if (project.vcs !== 'git') return null
+  try {
+    const sha = await git(project.root, ['rev-parse', '--verify', `refs/heads/${target}`])
+    return sha.trim() || null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The commits the trunk's target gained between two readings, newest first.
+ *
+ * ⚠️ Subjects only, and capped. This goes into a message a person reads; forty commit lines in a
+ * task thread is a wall nobody finishes.
+ */
+export async function trunkCommitsSince(
+  project: Project,
+  from: string,
+  to: string
+): Promise<string[]> {
+  try {
+    const out = await git(project.root, ['log', '--oneline', '--no-decorate', `${from}..${to}`])
+    return out.split(/\r?\n/).filter(Boolean).slice(0, 10)
+  } catch {
+    return []
+  }
+}
+
 export async function switchResidentBranch(
   project: Project,
   path: string,

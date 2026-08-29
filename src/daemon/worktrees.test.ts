@@ -269,3 +269,80 @@ describe('moving a borrowed worktree to another branch', () => {
     worktrees.releaseWorkspace(ws!.claimId)
   })
 })
+
+// ------------------------------------------------------------- reading the trunk itself
+
+/**
+ * The two readings the trunk tripwire compares.
+ *
+ * ⛔ Taken in the **trunk**, which is the whole point: the failure being watched for is work landing
+ * somewhere no agent was given, and a pooled worktree cannot observe its own absence.
+ *
+ * ⚠️ Every failure here must be `null` rather than a throw or a guess. A finish path that raised
+ * because a branch did not resolve would turn a diagnostic into an outage, and one that returned a
+ * stale or invented sha would fire the tripwire on innocent runs until somebody switched it off.
+ */
+describe('reading where the trunk stands', () => {
+  it('returns the target branch head', async () => {
+    const project = makeProject()
+    const sha = await worktrees.trunkTargetSha(project, 'main')
+    expect(sha).toMatch(/^[0-9a-f]{40}$/)
+  })
+
+  it('says nothing for a branch that does not exist', async () => {
+    // ⚠️ A project whose landing target has not been created yet is a real state, and it is not
+    // evidence of anything. Null, so the comparison declines.
+    const project = makeProject()
+    expect(await worktrees.trunkTargetSha(project, 'no-such-branch')).toBeNull()
+  })
+
+  it('says nothing for a project that is not under git', async () => {
+    const project = { ...makeProject(), vcs: 'none' } as Project
+    expect(await worktrees.trunkTargetSha(project, 'main')).toBeNull()
+  })
+
+  it('moves when the trunk gains a commit, which is the signal itself', async () => {
+    const project = makeProject()
+    const before = await worktrees.trunkTargetSha(project, 'main')
+    writeFileSync(join(project.root, 'straight-to-trunk.txt'), 'as t17 did\n')
+    git(project.root, 'add', '-A')
+    git(project.root, 'commit', '-m', 'a commit no branch ever saw')
+    const after = await worktrees.trunkTargetSha(project, 'main')
+    expect(after).not.toBe(before)
+
+    // ⭐ And the operator is told *what* appeared, because "the trunk moved" is not actionable on
+    // its own — the first question anybody asks is which commits.
+    const commits = await worktrees.trunkCommitsSince(project, before!, after!)
+    expect(commits).toHaveLength(1)
+    expect(commits[0]).toContain('a commit no branch ever saw')
+  })
+
+  it('reads the branch, not a tag that happens to share its name', async () => {
+    // ⭐ `git rev-parse main` is ambiguous when a tag `main` also exists, and git resolves the tag.
+    // A tag does not move, so the tripwire would compare the branch's old position against a
+    // constant and never fire again — silently, on the one project unlucky enough to name a tag
+    // after its trunk. `--verify refs/heads/<target>` is what makes the read unambiguous.
+    const project = makeProject()
+    const first = await worktrees.trunkTargetSha(project, 'main')
+    git(project.root, 'tag', 'main')
+    writeFileSync(join(project.root, 'after-the-tag.txt'), 'moved on\n')
+    git(project.root, 'add', '-A')
+    git(project.root, 'commit', '-m', 'the branch moved past the tag')
+
+    const now = await worktrees.trunkTargetSha(project, 'main')
+    expect(now).not.toBe(first)
+    expect(now).toBe(git(project.root, 'rev-parse', 'refs/heads/main'))
+  })
+
+  it('lists nothing between a commit and itself', async () => {
+    const project = makeProject()
+    const sha = await worktrees.trunkTargetSha(project, 'main')
+    expect(await worktrees.trunkCommitsSince(project, sha!, sha!)).toEqual([])
+  })
+
+  it('answers with an empty list rather than throwing on a range git cannot resolve', async () => {
+    // ⛔ This runs inside the finish path. A bad range must not take a completing task down with it.
+    const project = makeProject()
+    expect(await worktrees.trunkCommitsSince(project, 'deadbeef', 'cafebabe')).toEqual([])
+  })
+})

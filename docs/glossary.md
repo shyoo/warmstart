@@ -108,6 +108,13 @@ they are cheapest. ⚠️ And when that session has already **exited** — which
 completion closes it — the run **resumes its conversation** rather than opening a new one: same row,
 same id, `--resume` / `--conversation`. See `resumeSession` in `adapters.md`.
 
+**Trunk tripwire** — *a run that produced nothing on its branch while the trunk moved is handed to a
+person instead of being reported as finished.* Both halves are required and that is what makes it
+usable: an operator committing to their own trunk is constant and blameless, and an empty branch is
+the ordinary shape of a task that only answered a question. Together they are the signature of work
+done in the trunk directly, which every check, rebase and landing policy sits downstream of and
+therefore never sees. ⚠️ Detection, not containment — it says something already happened.
+
 **Run** — *one attempt of a task on one session.* Carries the actuals: tokens, wall time, cost, and
 the effective objective it ran under. Runs are what the estimator learns from.
 

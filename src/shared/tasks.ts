@@ -387,6 +387,17 @@ export interface Run {
   quotaBefore: RunQuota | null
   quotaAfter: RunQuota | null
   /**
+   * Where the trunk's landing target stood when this run was dispatched.
+   *
+   * ⛔ The tripwire's baseline. A run whose branch ends up empty while *this* has moved is the
+   * signature of work done in the trunk directly — which every check, rebase and landing policy
+   * sits downstream of and therefore never sees.
+   *
+   * ⚠️ `null` means no reading was taken (a projectless task, a non-git project, or a run predating
+   * the column), never "the trunk did not move". The check declines rather than guessing.
+   */
+  trunkShaBefore: string | null
+  /**
    * Did this run inherit a conversation, or build one from nothing?
    *
    * ⛔ **`null` is not `false`.** Runs that predate the column recorded nothing, and rendering those

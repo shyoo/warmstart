@@ -772,6 +772,7 @@ interface RunRow {
   quota_before_json: string | null
   quota_after_json: string | null
   started_warm: number | null
+  trunk_sha_before?: string | null
 }
 
 function toRun(r: RunRow): Run {
@@ -792,6 +793,7 @@ function toRun(r: RunRow): Run {
     note: r.note,
     quotaBefore: r.quota_before_json ? (JSON.parse(r.quota_before_json) as RunQuota) : null,
     quotaAfter: r.quota_after_json ? (JSON.parse(r.quota_after_json) as RunQuota) : null,
+    trunkShaBefore: r.trunk_sha_before ?? null,
     // ⛔ Null is not false. Every run that predates the column recorded nothing, and saying `cold`
     // for those would be a measurement nobody took.
     startedWarm: r.started_warm === null ? null : r.started_warm === 1
@@ -829,13 +831,20 @@ export function startRun(input: {
    * resuming one that did. Both skip the cold prefix, which is what this records.
    */
   startedWarm?: boolean | undefined
+  /**
+   * Where the trunk's landing target stood as this run began.
+   *
+   * ⚠️ Undefined where no reading could be taken — a projectless task, a non-git project, a target
+   * that does not resolve. The finish check reads null as "cannot say" and declines to fire.
+   */
+  trunkShaBefore?: string | null | undefined
 }): Run {
   const id = randomUUID()
   db()
     .prepare(
       `insert into runs (id, task_id, project_id, session_id, worker_id, started_at,
-                         quota_unverified, cost_model_id, started_warm)
-       values (?,?,?,?,?,?,?,?,?)`
+                         quota_unverified, cost_model_id, started_warm, trunk_sha_before)
+       values (?,?,?,?,?,?,?,?,?,?)`
     )
     .run(
       id,
@@ -846,7 +855,8 @@ export function startRun(input: {
       Date.now(),
       input.quotaUnverified ? 1 : 0,
       input.costModelId,
-      input.startedWarm === undefined ? null : input.startedWarm ? 1 : 0
+      input.startedWarm === undefined ? null : input.startedWarm ? 1 : 0,
+      input.trunkShaBefore ?? null
     )
   const run = requireRun(id)
   emit({ type: 'run.changed', run })

@@ -9,7 +9,7 @@ if you add a line, find the one it obsoletes and cut it in the same edit. Finish
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
 **Baseline (2026-08-28, measured on this machine):** `npm run typecheck` clean · `npm run lint` clean ·
-`npm run build` clean · `npm test` 511/511 (2 POSIX-only skipped) · `npm run test:daemon` 124/124 ·
+`npm run build` clean · `npm test` 525/525 (2 POSIX-only skipped) · `npm run test:daemon` 124/124 ·
 `npm run test:ui` 112/112 ·
 `npm run test:pack` 18/18 · L4 (opt-in) landed a real agent commit on origin/main. Electron 44.0.0,
 electron-builder 26.15.3, 0 npm vulnerabilities. CLIs here: claude 2.1.250 · agy 1.1.22 · codex 0.149.1.
@@ -39,7 +39,7 @@ gaps are below. Scope: `transient_docs/implementation_plan_2026-08-24.md` §14, 
 src/daemon/            orchestratord. Runs as Electron-with-ELECTRON_RUN_AS_NODE, detached.
   index.ts             entry: lock, db, server, poller, scheduler, tailer wiring, shutdown
   server.ts  api.ts    HTTP+WS on 127.0.0.1:<random>, bearer token, typed RPC
-  db.ts                node:sqlite + numbered migrations (v13)
+  db.ts                node:sqlite + numbered migrations (v14)
   costmodel.ts         the four questions; user dir > bundled > compiled-in
   workers.ts           registry, isolation roots, retire-keeps-credentials
   quota.ts             the staleness ladder - read this before trusting a percentage
@@ -146,11 +146,10 @@ M0–M6 are done. What is left is not a milestone but a list, in the order it wo
    ⚠️ The **60% share ceiling has never fired** (context 43k → 49k). ⚠️ Sharing is off at every tier.
    - **`git worktree lock` and a provenance marker.** Claude Code's sweep uses both and this pool
      uses neither. Only bites when the daemon dies mid-run, which is when nobody is watching.
-5. ⭐ **Build the trunk tripwire.** `--add-dir` now binds Antigravity to its worktree and the trial
-   held (0 trunk paths against t17's 45, `docs/adapters.md`), but that is the CLI cooperating, not a
-   boundary. Record the trunk's target-branch SHA at dispatch and compare at finish; a run that
-   moved the trunk must not report success. ~40 lines in `finish.ts`, and it covers every adapter
-   rather than the one that was caught.
+5. **The trunk tripwire is built and has never fired.** A run whose branch is empty while the
+   trunk's target moved now goes to `awaiting_human` naming the commits (migration 14,
+   `decideFinish`'s `trunk-moved`). ⚠️ Unproven against a real incident — the failure it watches for
+   has been fixed by `--add-dir`, so provoking it means reintroducing the bug on purpose.
 6. **`antigravity-cli` still has no real isolation root.** `envFor()` sets no `HOME`, so all four
    workers share the operator's `~/.gemini`. Per-worker `HOME` is the fix; the credential is in the
    OS keyring so sign-in *should* survive, and "should" is doing the work there.

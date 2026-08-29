@@ -36,6 +36,8 @@ import {
   prepareWorkspace,
   releaseWorkspace,
   switchResidentBranch,
+  trunkCommitsSince,
+  trunkTargetSha,
   workspaceState,
   type Workspace
 } from './worktrees.js'
@@ -52,7 +54,7 @@ import {
   spawnSession
 } from './sessions.js'
 import { landTask } from './landing.js'
-import { decideFinish, resolveFinishPolicy } from './finish.js'
+import { decideFinish, resolveFinishPolicy, type TrunkReading } from './finish.js'
 import { rank, resolveSessionSharing, whyNotShared } from './sharing.js'
 import { stripAnsi } from './stream.js'
 import { clearActivity } from './activity.js'
@@ -800,7 +802,9 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
     // ⚠️ Resuming counts as warm. It skips the cold prefix exactly as continuing does - measured
     // 2026-08-28, cache_read 41,542 against a cold turn's 0 - and the estimator must not average
     // the two kinds of run together.
-    startedWarm: revive !== null
+    startedWarm: revive !== null,
+    // ⭐ The tripwire's first half. See `decideFinish`'s `trunk-moved` branch for what it is for.
+    trunkShaBefore: project ? await trunkTargetSha(project, policyFor(project).landingTarget) : null
   })
   setRunQuota(run.id, 'before', runQuota(worker.id))
   // A new attempt, so the peephole starts empty. ⛔ Cleared here and never on completion: what the
@@ -981,7 +985,8 @@ async function dispatchIntoWarmSession(
     quotaUnverified,
     costModelId: adapter(worker.adapterId).info.policy.costModelId,
     // The session never closed, which is the warmest a run gets.
-    startedWarm: true
+    startedWarm: true,
+    trunkShaBefore: project ? await trunkTargetSha(project, policyFor(project).landingTarget) : null
   })
   setRunQuota(run.id, 'before', runQuota(worker.id))
   clearActivity(task.id)
@@ -1238,6 +1243,26 @@ function promptFor(task: Task, adapterId: string, resumed = false): string {
 }
 
 /**
+ * What the trunk's landing target did while this run was in flight.
+ *
+ * ⛔ Returns null unless there are **two** readings. A run dispatched before the tripwire existed has
+ * no `trunkShaBefore`, and a project whose target cannot be resolved has no `after` — in both cases
+ * the honest answer is "cannot say", and `decideFinish` declines to fire on it. Null is never
+ * "the trunk did not move", which would be a guess pointing the wrong way.
+ */
+async function readTrunkMovement(
+  project: Project,
+  target: string,
+  run: Run
+): Promise<TrunkReading | null> {
+  const before = run.trunkShaBefore
+  if (!before) return null
+  const after = await trunkTargetSha(project, target)
+  if (!after || after === before) return null
+  return { before, after, commits: await trunkCommitsSince(project, before, after) }
+}
+
+/**
  * Say something to a task that is already running.
  *
  * ⛔ This is the cheap half of §18.4: a note into a live session is a cache read - `0.1·C`, and it
@@ -1395,8 +1420,19 @@ export async function completeTask(sessionId: string, summary: string): Promise<
     // never authors a commit here.
     const policy = policyFor(project)
     const state = await workspaceState(held.workspace.path, policy.landingTarget)
-    const decision = decideFinish({ task, project, state, hasChecks: policy.check.length > 0 })
+    // ⛔ Read **before** anything lands. `landTask` fast-forwards the trunk itself on a project with
+    // no remote, so a reading taken afterwards would report the tool's own push as the movement it
+    // is looking for — a tripwire that fires on its own footsteps is worse than none.
+    const trunk = await readTrunkMovement(project, policy.landingTarget, run)
+    const decision = decideFinish({
+      task,
+      project,
+      state,
+      hasChecks: policy.check.length > 0,
+      trunk
+    })
     log.info(`t${task.seq} finish: ${decision.kind} (${resolveFinishPolicy(task, project).policy})`)
+
 
     if (decision.kind === 'ask-agent') {
       // ⛔ Returns without ending the run. The agent is still working — it has been handed one more
@@ -1425,6 +1461,26 @@ export async function completeTask(sessionId: string, summary: string): Promise<
     } else if (decision.kind === 'await-human') {
       addMessage(task.id, 'system', `Finished, and not landed: ${decision.reason}`)
       setStatus(task.id, 'awaiting_human', { assignee: 'human', holdReason: decision.reason })
+    } else if (decision.kind === 'trunk-moved') {
+      // ⛔ Handed to a person rather than reported as finished. The run is still closed normally by
+      //    the tail below — what is refused is the *verdict*, because commits that reached the trunk
+      //    directly were seen by none of the checks, the rebase or the landing policy.
+      //
+      // ⚠️ Logged at warn, and the log line is the one an operator greps for after the fact.
+      log.warn(
+        `t${task.seq} trunk tripwire: \`${policy.landingTarget}\` moved during run ` +
+          `${run.id.slice(0, 8)} while \`${task.branch}\` stayed empty`
+      )
+      const listed = decision.commits.length
+        ? `\n\nWhat appeared in the trunk while it ran:\n${decision.commits
+            .map((c) => `  ${c}`)
+            .join('\n')}`
+        : ''
+      addMessage(task.id, 'system', `${decision.reason}${listed}`)
+      setStatus(task.id, 'awaiting_human', {
+        assignee: 'human',
+        holdReason: 'the trunk moved during this run and this branch is empty — check where the work went'
+      })
     } else {
       addMessage(task.id, 'system', `Finished — ${decision.reason}`)
       setStatus(task.id, 'completed')

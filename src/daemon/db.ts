@@ -566,6 +566,18 @@ const MIGRATIONS: string[] = [
   // for, made everywhere at once.
   `
   alter table tasks add column session_sharing text not null default 'inherit';
+  `,
+
+  // 14 - where the trunk's landing target stood when this run was dispatched.
+  //
+  // ⛔ Recorded per run rather than held in memory, because the check it feeds has to survive a
+  // daemon restart: a run can outlive the process that started it, and a tripwire that forgets on
+  // restart is one that is absent exactly when something went wrong unattended.
+  //
+  // ⚠️ Null for every run written before this, and null is not "the trunk did not move" - it is "no
+  // reading was taken". The comparison declines rather than guessing.
+  `
+  alter table runs add column trunk_sha_before text;
   `
 ]
 

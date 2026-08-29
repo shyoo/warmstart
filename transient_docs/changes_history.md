@@ -1526,3 +1526,40 @@ was 72 entries before the trial and 72 after.
 decides to write elsewhere, and this adapter still has no isolation root — `envFor()` sets no `HOME`,
 so all four workers share one `~/.gemini`. The check that does not depend on the CLI cooperating is a
 trunk tripwire, and it is next.
+
+---
+
+## The trunk tripwire (2026-08-28)
+
+`--add-dir` stopped Antigravity wandering, but that is a CLI cooperating rather than a boundary. This
+is the check that does not depend on cooperation, and it covers every adapter rather than the one
+that happened to be caught.
+
+**The rule needs both halves, and the second is what makes it usable.** Fire only when the task's
+branch carries no commits **and** the trunk's landing target moved while the run was in flight.
+Either alone is ordinary: an operator commits to their own trunk constantly, and an empty branch is
+the normal shape of a task that only had to answer a question. Together they are the exact signature
+of t17 — three commits on `main`, a branch that never moved, and `nothing-to-land` logged three times
+as though the agent had simply had nothing to do.
+
+⛔ **Null is not innocence.** A run dispatched before migration 14, a projectless task, a target that
+does not resolve — all give no reading, and the check declines rather than assuming nothing happened.
+A tripwire that read "cannot say" as "all clear" would quietly stop covering the oldest runs in the
+database, which are the ones nobody is watching.
+
+⛔ **The second reading is taken before landing.** `landTask` fast-forwards the trunk itself on a
+project with no remote, so a reading taken afterwards would report the tool's own push as the
+movement it was looking for. A tripwire that fires on its own footsteps is worse than none.
+
+⚠️ **`--verify refs/heads/<target>`, not `rev-parse <target>`.** The bare form is ambiguous when a tag
+shares the branch's name, and git resolves the tag — which never moves, so the tripwire would compare
+against a constant and never fire again, silently, on the one project unlucky enough to name a tag
+after its trunk. That mutation survived the first round of tests; the test that catches it creates
+exactly that repository.
+
+The action is deliberately mild: the task goes to `awaiting_human` with the commits named in its
+thread, and the run still closes normally. What is refused is the *verdict*, not the work.
+
+⚠️ It has never fired in anger, and cannot easily be made to: the failure it watches for is fixed, so
+provoking it means reintroducing the bug on purpose. What is proven is the decision rule (seven
+cases, three mutations) and the readings (seven cases against real repositories).

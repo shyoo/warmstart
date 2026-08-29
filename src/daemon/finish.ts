@@ -101,6 +101,17 @@ export type FinishDecision =
   | { kind: 'land' }
   /** Nothing was produced, and saying "landed" about it would be false. */
   | { kind: 'nothing-to-land'; reason: string }
+  /**
+   * The branch is empty and the **trunk** moved while this run was in flight.
+   *
+   * ⛔ Evidence, not an accusation. An operator committing to their own trunk while agents work is
+   * ordinary and this must not call it a fault — which is why the rule needs *both* halves. What is
+   * not ordinary is a run that produced nothing on its branch while the trunk gained commits, and
+   * that pairing is the exact signature of t17 on 2026-08-28: three commits authored on `main` in
+   * the trunk, a branch that never moved, and `nothing-to-land` logged three times as though the
+   * agent had simply had nothing to do.
+   */
+  | { kind: 'trunk-moved'; reason: string; commits: string[] }
   /** The project's own finish policy already ran and left the branch clean. */
   | { kind: 'done'; reason: string }
 
@@ -110,9 +121,26 @@ export interface FinishInputs {
   state: WorkspaceState
   /** Has the project defined any check commands? ⚠️ Not whether they passed - `land` runs them. */
   hasChecks: boolean
+  /**
+   * What the trunk's landing target did while this run was in flight.
+   *
+   * ⚠️ `null` means **no reading**, never "it did not move": a run dispatched before the tripwire
+   * existed, a non-git project, a target branch that does not resolve. Unknown is not innocence, but
+   * it is also not evidence, so a null declines to fire rather than guessing in either direction.
+   */
+  trunk?: TrunkReading | null
 }
 
-export function decideFinish({ task, project, state, hasChecks }: FinishInputs): FinishDecision {
+export interface TrunkReading {
+  /** Where the target stood at dispatch. */
+  before: string
+  /** Where it stands now — read before landing, so the tool's own push is never the movement. */
+  after: string
+  /** Subjects of what appeared, newest first, for the message a person will read. */
+  commits: string[]
+}
+
+export function decideFinish({ task, project, state, hasChecks, trunk }: FinishInputs): FinishDecision {
   const { policy, instruction } = resolveFinishPolicy(task, project)
   const loose = state.dirtyFiles.length + state.untrackedFiles.length
 
@@ -164,6 +192,25 @@ export function decideFinish({ task, project, state, hasChecks }: FinishInputs):
   // 3. Clean, and nothing to land. ⛔ A question answered is finished; reporting it as landed would
   //    tell somebody their change reached the trunk when no commit exists.
   if (state.unlandedCommits === 0) {
+    // ⭐ Before calling that ordinary, ask where the work went. A branch with nothing on it is the
+    //    normal shape of a task that only had to answer a question — and it is *also* the shape of a
+    //    task whose agent worked in the trunk instead. The two are indistinguishable from the
+    //    branch alone, which is why t17 finished three times reporting success.
+    //
+    // ⚠️ Both conditions, deliberately. The trunk moving on its own means an operator was working,
+    //    which happens constantly and is nobody's fault; a branch being empty on its own is the
+    //    commonest honest outcome there is. Only together are they worth stopping for.
+    if (trunk && trunk.after !== trunk.before) {
+      return {
+        kind: 'trunk-moved',
+        reason:
+          `\`${state.branch}\` carries no commits, but the trunk's \`${project?.config.landing?.target ?? 'target'}\` ` +
+          `moved from ${trunk.before.slice(0, 8)} to ${trunk.after.slice(0, 8)} while this run was in ` +
+          'flight. Work that lands in the trunk directly is never seen by the checks, the rebase or ' +
+          'the landing policy — so this is being handed to you rather than reported as finished.',
+        commits: trunk.commits
+      }
+    }
     return {
       kind: 'nothing-to-land',
       reason: `\`${state.branch}\` carries no commits the target does not already have`

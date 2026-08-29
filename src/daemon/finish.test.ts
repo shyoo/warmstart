@@ -4,6 +4,9 @@ import { join } from 'node:path'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { FinishPolicyChoice, Project, Task } from '@shared/tasks.js'
 import type { WorkspaceState } from './worktrees.js'
+// ⚠️ A type-only import beside the dynamic one below: `finish` is a runtime binding for a module
+// loaded after the data dir is set, and a value cannot be used as a type namespace.
+import type { TrunkReading } from './finish.js'
 
 /**
  * What finishing a task means, and who does the committing.
@@ -348,5 +351,113 @@ describe('surfacing work that is going nowhere', () => {
     expect(kept).toBeTruthy()
     // ⚠️ Idempotent: the button can be pressed twice before the list refreshes.
     expect(() => finish.dismissLooseEnd('unlanded:some-branch')).not.toThrow()
+  })
+})
+
+// ---------------------------------------------------------------- the trunk tripwire
+
+/**
+ * Insurance against the failure that reported success three times.
+ *
+ * ⛔ On 2026-08-28 t17 ran with `--dangerously-skip-permissions`, edited and committed in the
+ * **trunk**, and left its branch empty. `nothing-to-land` was the literally correct answer and the
+ * completely wrong verdict: the commits reached `main` without passing a check, a rebase or the
+ * landing policy, because all three sit downstream of a branch that never received anything.
+ *
+ * ⚠️ The rule needs **both** halves, and the second is what keeps it usable. An operator committing
+ * to their own trunk while agents work is constant and blameless; an empty branch is the ordinary
+ * shape of a task that only had to answer a question. Firing on either alone would make this noise
+ * that gets switched off, which is the normal fate of a tripwire.
+ */
+const moved = (over: Partial<TrunkReading> = {}): TrunkReading => ({
+  before: 'aaaaaaaa1111',
+  after: 'bbbbbbbb2222',
+  commits: ['bbbbbbb a commit nobody on this task wrote'],
+  ...over
+})
+
+describe('a run whose branch is empty while the trunk moved', () => {
+  it('is handed to a person rather than reported as finished', () => {
+    const decision = finish.decideFinish({
+      task: makeTask(),
+      project: projectWith({ target: 'main', finish: 'agent-lands' }),
+      state: clean({ unlandedCommits: 0 }),
+      hasChecks: true,
+      trunk: moved()
+    })
+    expect(decision.kind).toBe('trunk-moved')
+  })
+
+  it('names what appeared, because the operator has to go and look at it', () => {
+    const decision = finish.decideFinish({
+      task: makeTask(),
+      project: projectWith({ target: 'main' }),
+      state: clean({ unlandedCommits: 0 }),
+      hasChecks: false,
+      trunk: moved({ commits: ['1111111 one', '2222222 two'] })
+    })
+    expect(decision.kind === 'trunk-moved' && decision.commits).toEqual(['1111111 one', '2222222 two'])
+  })
+
+  it('stays quiet when the trunk moved but the branch has work', () => {
+    // ⭐ The false positive that would matter most. An operator commits to the trunk all day while
+    // agents run; a task that produced real commits on its own branch is not evidence of anything.
+    const decision = finish.decideFinish({
+      task: makeTask({ finishPolicy: 'await-human' }),
+      project: projectWith({ target: 'main' }),
+      state: clean({ unlandedCommits: 2 }),
+      hasChecks: false,
+      trunk: moved()
+    })
+    expect(decision.kind).toBe('await-human')
+  })
+
+  it('stays quiet when the branch is empty and the trunk did not move', () => {
+    // The ordinary honest outcome: a question was answered and nothing needed committing.
+    const decision = finish.decideFinish({
+      task: makeTask(),
+      project: projectWith({ target: 'main' }),
+      state: clean({ unlandedCommits: 0 }),
+      hasChecks: false,
+      trunk: null
+    })
+    expect(decision.kind).toBe('nothing-to-land')
+  })
+
+  it('declines on a run that took no reading, rather than assuming it is innocent', () => {
+    // ⚠️ Absent is not the same as unmoved. A run dispatched before this column existed, or on a
+    // project with no git, has nothing to compare — and a tripwire that treats "cannot say" as
+    // "nothing happened" is one that quietly stops covering the oldest runs in the database.
+    const decision = finish.decideFinish({
+      task: makeTask(),
+      project: projectWith({ target: 'main' }),
+      state: clean({ unlandedCommits: 0 }),
+      hasChecks: false
+    })
+    expect(decision.kind).toBe('nothing-to-land')
+  })
+
+  it('does not fire on two readings that are the same', () => {
+    const decision = finish.decideFinish({
+      task: makeTask(),
+      project: projectWith({ target: 'main' }),
+      state: clean({ unlandedCommits: 0 }),
+      hasChecks: false,
+      trunk: moved({ after: 'aaaaaaaa1111' })
+    })
+    expect(decision.kind).toBe('nothing-to-land')
+  })
+
+  it('takes precedence over uncommitted work being asked about first', () => {
+    // ⛔ Ordering. Loose files are step 1 and this is step 3, so a tree with both goes to the agent
+    // first — correctly: the agent may yet commit them to the branch, which changes the answer.
+    const decision = finish.decideFinish({
+      task: makeTask(),
+      project: projectWith({ target: 'main' }),
+      state: clean({ unlandedCommits: 0, dirtyFiles: ['a.ts'] }),
+      hasChecks: false,
+      trunk: moved()
+    })
+    expect(decision.kind).toBe('ask-agent')
   })
 })
