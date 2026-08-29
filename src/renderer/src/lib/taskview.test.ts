@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import type { Project, Task, TaskStatus } from '@shared/tasks'
 import {
   FINISH_LABELS,
@@ -7,6 +7,7 @@ import {
   resolveSessionSharing
 } from '@shared/tasks'
 import { statusLabel, workspacePathFor } from './taskview.js'
+import { readFleetCollapsed, writeFleetCollapsed } from './prefs.js'
 
 /**
  * ⛔ Reported from the app on 2026-08-29, running one worker with `maxConcurrent: 1`. Two tasks were
@@ -111,3 +112,37 @@ describe('inherited policy labels and resolution', () => {
     expect(claudeWorker.defaultEffort ?? 'CLI default').toBe('high')
   })
 })
+
+describe('preferences persistence in localStorage', () => {
+  const store = new Map<string, string>()
+  const mockStorage = {
+    getItem: (key: string) => store.get(key) ?? null,
+    setItem: (key: string, val: string) => store.set(key, String(val)),
+    removeItem: (key: string) => store.delete(key),
+    clear: () => store.clear()
+  }
+
+  beforeEach(() => {
+    store.clear()
+    Object.defineProperty(globalThis, 'window', {
+      value: { localStorage: mockStorage },
+      configurable: true,
+      writable: true
+    })
+  })
+
+
+  it('defaults to false for fleet collapsed when unset', () => {
+    expect(readFleetCollapsed()).toBe(false)
+  })
+
+  it('persists and restores fleet collapsed state', () => {
+    writeFleetCollapsed(true)
+    expect(readFleetCollapsed()).toBe(true)
+
+    writeFleetCollapsed(false)
+    expect(readFleetCollapsed()).toBe(false)
+  })
+})
+
+

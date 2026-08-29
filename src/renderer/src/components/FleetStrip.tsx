@@ -1,5 +1,7 @@
+import { useState } from 'react'
 import type { Session } from '@shared/protocol'
 import type { FleetEntry } from '../lib/daemon'
+import { readFleetCollapsed, writeFleetCollapsed } from '../lib/prefs'
 import {
   cacheRemaining,
   cacheUrgency,
@@ -27,22 +29,53 @@ import {
  * *stale* beside it is not a gate. So the last known reading is shown, labelled, and dimmed.
  */
 export function FleetStrip({ fleet, now }: { fleet: FleetEntry[]; now: number }): React.JSX.Element {
-  if (fleet.length === 0) {
-    return (
-      <div className="fleet">
-        <span className="fleet-label">Fleet</span>
-        <span className="fleet-empty">no workers configured</span>
-      </div>
-    )
+  const [collapsed, setCollapsed] = useState(readFleetCollapsed)
+
+  const toggle = () => {
+    setCollapsed((c) => {
+      const next = !c
+      writeFleetCollapsed(next)
+      return next
+    })
   }
 
   return (
-    <div className="fleet">
-      <span className="fleet-label">Fleet</span>
-      <div className="fleet-cards">
-        {fleet.map((entry) => (
-          <WorkerCard key={entry.worker.id} entry={entry} now={now} />
-        ))}
+    <div className={`fleet-wrap${collapsed ? ' fleet-wrap--collapsed' : ''}`}>
+      <div className="fleet">
+        <span className="fleet-label">Fleet</span>
+        {fleet.length === 0 ? (
+          <span className="fleet-empty">no workers configured</span>
+        ) : (
+          <div className="fleet-cards">
+            {fleet.map((entry) => (
+              <WorkerCard key={entry.worker.id} entry={entry} now={now} />
+            ))}
+          </div>
+        )}
+      </div>
+      <div className="fleet-toggle-bar">
+        <button
+          type="button"
+          className="fleet-toggle-btn"
+          onClick={toggle}
+          aria-expanded={!collapsed}
+          aria-label={collapsed ? 'Show fleet strip' : 'Hide fleet strip'}
+          title={collapsed ? 'Show fleet strip' : 'Hide fleet strip'}
+        >
+          <span>{collapsed ? 'Show fleet' : 'Hide'}</span>
+          <svg
+            viewBox="0 0 16 16"
+            width="10"
+            height="10"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            {collapsed ? <path d="M3 6 L8 11 L13 6" /> : <path d="M3 10 L8 5 L13 10" />}
+          </svg>
+        </button>
       </div>
     </div>
   )

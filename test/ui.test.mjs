@@ -808,6 +808,43 @@ try {
   check('a suspect worker without quota shows the error banner', /error · see Settings/i.test(suspectCard))
   check('and suppresses quota unknown when suspect', !/quota unknown/i.test(suspectCard))
 
+  // ---- hide / show fleet strip toggle -------------------------------------------------
+  const toggleBtn = `document.querySelector('.fleet-toggle-btn')`
+  check('fleet strip has a hide/show toggle button', (await evaluate(`!!(${toggleBtn})`)) === true)
+  check(
+    'the toggle button starts expanded',
+    (await evaluate(`${toggleBtn}?.getAttribute('aria-expanded')`)) === 'true' &&
+      /hide/i.test(await evaluate(`${toggleBtn}?.innerText ?? ''`))
+  )
+
+  await evaluate(`${toggleBtn}?.click()`)
+  await wait(600)
+  const isCollapsed = await evaluate(
+    `!!document.querySelector('.fleet-wrap--collapsed') && getComputedStyle(document.querySelector('.fleet')).display === 'none'`
+  )
+  check('clicking the toggle collapses the fleet strip', isCollapsed === true)
+  check(
+    'the toggle button updates to Show fleet',
+    (await evaluate(`${toggleBtn}?.getAttribute('aria-expanded')`)) === 'false' &&
+      /show fleet/i.test(await evaluate(`${toggleBtn}?.innerText ?? ''`))
+  )
+
+  check(
+    'and the collapsed preference is saved to localStorage',
+    (await evaluate(`window.localStorage.getItem('multi_agent_controller.fleetCollapsed')`)) === 'true'
+  )
+
+  await evaluate(`${toggleBtn}?.click()`)
+  await wait(600)
+  const isExpanded = await evaluate(
+    `!document.querySelector('.fleet-wrap--collapsed') && getComputedStyle(document.querySelector('.fleet')).display !== 'none'`
+  )
+  check('clicking again expands the fleet strip', isExpanded === true)
+  check(
+    'and the expanded state is persisted',
+    (await evaluate(`window.localStorage.getItem('multi_agent_controller.fleetCollapsed')`)) === 'false'
+  )
+
   section('finishing work')
   // ⛔ Three tiers resolve into one answer, and the failure this guards is the answer disappearing
   // from the one place a person can change it. The daemon-side resolution is held by

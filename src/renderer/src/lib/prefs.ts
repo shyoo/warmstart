@@ -13,6 +13,7 @@ import { TASK_VIEWS, type TaskView } from '@shared/tasks'
  */
 
 const VIEWS_KEY = 'multi_agent_controller.taskViews'
+const FLEET_COLLAPSED_KEY = 'multi_agent_controller.fleetCollapsed'
 
 /**
  * Which buckets were showing last time.
@@ -27,6 +28,7 @@ const VIEWS_KEY = 'multi_agent_controller.taskViews'
  */
 export function readViews(): TaskView[] {
   try {
+    if (typeof window === 'undefined' || !window.localStorage) return []
     const raw = window.localStorage.getItem(VIEWS_KEY)
     if (!raw) return []
     const parsed: unknown = JSON.parse(raw)
@@ -39,8 +41,34 @@ export function readViews(): TaskView[] {
 
 export function writeViews(views: TaskView[]): void {
   try {
+    if (typeof window === 'undefined' || !window.localStorage) return
     window.localStorage.setItem(VIEWS_KEY, JSON.stringify(views))
   } catch {
     // A preference that cannot be saved is not an error worth showing anybody.
   }
 }
+
+/**
+ * Whether the top fleet strip was collapsed last time.
+ *
+ * ⛔ Per-display preference stored in `localStorage`, consistent with task view filters and sidebar width.
+ */
+export function readFleetCollapsed(): boolean {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return false
+    return window.localStorage.getItem(FLEET_COLLAPSED_KEY) === 'true'
+  } catch {
+    return false
+  }
+}
+
+export function writeFleetCollapsed(collapsed: boolean): void {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return
+    window.localStorage.setItem(FLEET_COLLAPSED_KEY, String(collapsed))
+  } catch {
+    // A preference that cannot be saved is not an error worth showing anybody.
+  }
+}
+
+
