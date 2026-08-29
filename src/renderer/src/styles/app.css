@@ -1268,11 +1268,18 @@ select:focus-visible,
   line-height: var(--leading-body);
   width: 100%;
   min-height: 3.4em;
+  max-height: 24em;
+  field-sizing: content;
   resize: vertical;
   border: 0;
   background: transparent;
   color: var(--color-text);
   padding: var(--sp-1) var(--sp-1) 0;
+  box-sizing: border-box;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  overflow-y: auto;
 }
 
 /* ⛔ The bubble carries the focus ring, not the textarea inside it. Two rings, one nested inside the

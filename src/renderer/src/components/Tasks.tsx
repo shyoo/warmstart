@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type {
   FinishPolicyChoice,
   Project,
@@ -556,6 +556,17 @@ function NewTask({
   const [model, setModel] = useState('')
   const [effort, setEffort] = useState('')
   const [saving, setSaving] = useState(false)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  /**
+   * Auto-size the prompt textarea dynamically to fit its contents as text is entered or removed.
+   */
+  useLayoutEffect(() => {
+    const el = textareaRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${el.scrollHeight}px`
+  }, [title])
   /**
    * ⛔ Fetched, not compiled in. The renderer holds no cost models, and a second table of model facts
    * here would drift from the first the day a model was added to a file and not to this bundle.
@@ -790,8 +801,10 @@ function NewTask({
       */}
       <div className="ask">
         <textarea
+          ref={textareaRef}
           className="ask-input"
           rows={3}
+          wrap="soft"
           value={title}
           placeholder={
             plan

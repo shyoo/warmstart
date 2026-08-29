@@ -443,6 +443,32 @@ try {
   // ⚠️ A textarea because what goes in it is sent to an agent verbatim, and a prompt worth writing
   // has a second sentence. A single-line box that ate Enter was a lie about what it would accept.
   check('the prompt takes more than one line', f.textarea === true, filing)
+
+  // Dynamic prompt textarea sizing: expands with multiline/wrapping text, shrinks when cleared.
+  const sizing = await evaluate(`
+    JSON.stringify((() => {
+      const ta = document.querySelector('textarea.ask-input');
+      if (!ta) return { missing: true };
+      const h0 = ta.getBoundingClientRect().height;
+      const setVal = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(ta), 'value').set;
+      setVal.call(ta, 'Line 1\\nLine 2\\nLine 3\\nLine 4\\nLine 5\\nLine 6\\nLine 7\\nLine 8');
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+      ta.dispatchEvent(new Event('change', { bubbles: true }));
+      const hMulti = ta.getBoundingClientRect().height;
+      const longWrapped = 'A very long prompt sentence without explicit newlines that provides extensive and detailed instructions to the agent describing a multi-step task in full detail with background information, architecture constraints, acceptance criteria, and specific edge cases to consider, which is intentionally made very long so that it is guaranteed to wrap across multiple lines in any display or window width, demonstrating that dynamic textarea auto-sizing accurately accommodates text wrapping as well as explicit newlines.';
+      setVal.call(ta, longWrapped);
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+      ta.dispatchEvent(new Event('change', { bubbles: true }));
+      const hWrap = ta.getBoundingClientRect().height;
+      setVal.call(ta, '');
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+      ta.dispatchEvent(new Event('change', { bubbles: true }));
+      const hReset = ta.getBoundingClientRect().height;
+      return { h0, hMulti, hWrap, hReset, grew: hMulti > h0, wrapped: hWrap > h0, shrunk: Math.abs(hReset - h0) <= 2 };
+    })())
+  `)
+  const s = JSON.parse(sizing)
+  check('the prompt textarea dynamically resizes with content and wrap', s.grew && s.wrapped && s.shrunk, sizing)
   // ⛔ Not a greyed-out select. A model list belongs to one CLI, so until an account is pinned there
   // is genuinely nothing to draw — and a dead control would read as a choice being withheld.
   check(
