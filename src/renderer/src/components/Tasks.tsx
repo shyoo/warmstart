@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { Project, Task, TaskSort, TaskView } from '@shared/tasks'
+import type { FinishPolicyChoice, Project, Task, TaskSort, TaskView } from '@shared/tasks'
 import { TASK_VIEW_ORDER, TASK_VIEWS } from '@shared/tasks'
 import type { ModelOptions } from '@shared/protocol'
 import { rpc, useActivity, useDaemonEvents, useNow, type FleetEntry } from '../lib/daemon'
@@ -460,7 +460,7 @@ function NewTask({
   const [title, setTitle] = useState('')
   const [projectId, setProjectId] = useState(fixedProjectId ?? projects[0]?.id ?? '')
   const [priority, setPriority] = useState<'P0' | 'P1' | 'P2' | 'P3'>('P2')
-  const [verification, setVerification] = useState<'auto' | 'required'>('auto')
+  const [finishPolicy, setFinishPolicy] = useState<FinishPolicyChoice>('inherit')
   const [plan, setPlan] = useState(false)
   const [workerId, setWorkerId] = useState('')
   const [model, setModel] = useState('')
@@ -503,7 +503,7 @@ function NewTask({
           title: title.trim(),
           projectId: projectId || null,
           priority,
-          verification,
+          finishPolicy,
           // ⚠️ Absent, not empty. The daemon reads a *present* `constraints` as an instruction to
           // validate one, and an object of empty strings would be three constraints that name
           // nothing rather than three questions left to the scheduler.
@@ -557,21 +557,31 @@ function NewTask({
       <div className="form-row">
         <label>Policy</label>
         <div>
-          <select value={priority} onChange={(e) => setPriority(e.target.value as 'P2')}>
-            {(['P0', 'P1', 'P2', 'P3'] as const).map((p) => (
-              <option key={p} value={p}>
-                {p}
-              </option>
-            ))}
-          </select>
-          <label className="check">
-            <input
-              type="checkbox"
-              checked={verification === 'required'}
-              onChange={(e) => setVerification(e.target.checked ? 'required' : 'auto')}
-            />
-            I want to check this before it lands
-          </label>
+          <div className="pickers" style={{ marginBottom: 'var(--sp-2)' }}>
+            <select
+              value={priority}
+              style={{ width: '70px', flex: '0 0 auto', minWidth: 0 }}
+              aria-label="Priority"
+              onChange={(e) => setPriority(e.target.value as 'P0' | 'P1' | 'P2' | 'P3')}
+            >
+              {(['P0', 'P1', 'P2', 'P3'] as const).map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </select>
+            <select
+              value={finishPolicy}
+              aria-label="Finish policy"
+              onChange={(e) => setFinishPolicy(e.target.value as FinishPolicyChoice)}
+            >
+              <option value="inherit">inherit</option>
+              <option value="await-human">await human</option>
+              <option value="agent-lands">agent lands it</option>
+              <option value="pull-request">open a pull request</option>
+              <option value="custom">this project&rsquo;s own policy</option>
+            </select>
+          </div>
           <label
             className="check"
             title="A goal too big for one task. It is decomposed rather than dispatched."
@@ -581,7 +591,7 @@ function NewTask({
           </label>
         </div>
         <span className="form-hint">
-          Requiring verification stops auto-landing: the branch is kept and the task waits for you.
+          Priority orders the queue; finish policy decides what happens when the work completes.
         </span>
       </div>
 

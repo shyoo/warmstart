@@ -1017,6 +1017,8 @@ export interface TaskCreateParams {
    */
   constraints?: TaskConstraints
   verification?: 'required' | 'not_required' | 'auto'
+  finishPolicy?: FinishPolicyChoice
+  sessionSharing?: SessionSharingChoice
   status?: 'draft' | 'ready'
   kind?: TaskKind
   estTokens?: number | null
