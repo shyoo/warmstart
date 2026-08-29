@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import {
   FINISH_LABELS,
   resolveModelChoice,
@@ -542,31 +542,6 @@ function Thread({
   activity: Array<{ text: string; ts: number }>
   live: boolean
 }): React.JSX.Element {
-  const box = useRef<HTMLDivElement>(null)
-  /**
-   * Whether the view is following the conversation.
-   *
-   * ⛔ Not a scroll-to-bottom on every change. This is agent output arriving as fast as a model can
-   * produce it, and yanking the viewport down while somebody is reading something further up is the
-   * one behaviour that makes a live pane useless — they scroll up, it throws them back, and they
-   * stop trying. Following is the default and stops the moment they take control.
-   */
-  const pinned = useRef(true)
-
-  const onScroll = (): void => {
-    const el = box.current
-    if (!el) return
-    // ⚠️ A tolerance, not equality. Sub-pixel scroll heights and a zoomed display both make an
-    // exactly-at-the-bottom test fail while the view plainly is at the bottom.
-    pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40
-  }
-
-  const last = activity.length > 0 ? activity[activity.length - 1]?.ts : null
-  useEffect(() => {
-    const el = box.current
-    if (el && pinned.current) el.scrollTop = el.scrollHeight
-  }, [messages.length, last, live])
-
   /**
    * ⛔ **`live` alone.** This was `live || activity.length > 0`, and the tail is not cleared when a
    * run ends — only when the *next* attempt starts, via `reset`. So a completed task went on drawing
@@ -577,7 +552,7 @@ function Thread({
   const showLive = live
 
   return (
-    <div className="thread thread--task" ref={box} onScroll={onScroll}>
+    <div className="thread thread--task">
       {messages.length === 0 && !showLive && (
         <p className="dim">Nothing has been said on this task yet.</p>
       )}

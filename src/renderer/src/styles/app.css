@@ -1836,10 +1836,10 @@ select:focus-visible,
   overflow-y: auto;
 }
 
-/* ⚠️ Taller than the pane it replaced, because it is the page now rather than a box under a table -
-   and it holds the live output too, which used to have 180px of its own below it. */
+/* ⚠️ Expands with content rather than creating an inner scrollbar — the thread UI scrolls as a whole. */
 .thread--task {
-  max-height: 52vh;
+  max-height: none;
+  overflow-y: visible;
   min-height: 220px;
   margin-bottom: var(--sp-3);
 }
