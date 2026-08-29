@@ -61,7 +61,11 @@ holding uncommitted work is never moved, and the borrower starts cold instead.
 
 **Workspace** — *where a run executes.* For a git project, a pooled **git worktree** — a permanent
 checkout, created once and reused, sharing one `.git` object store. For a plain directory, the
-directory itself, as a pool of one.
+directory itself, as a pool of one. ⭐ A task filed into a project whose pool is full is **held at
+`ready` with a reason on its row**, never failed, and never given a dependency on whoever holds the
+tree — the hold is re-decided against `schedulingOrder` every tick, so a P0 filed later takes the
+next free workspace. ⚠️ `workspaces.poolSize` (default 3) is the operator's cap and nothing grows it
+automatically; when the fleet can run more sessions than the pool has trees, the hold says so.
 
 **Trunk** — the project's main checkout. Used for integration and landing. ⛔ **Agents never work
 here.** The task branch is created inside the claimed worktree, never in the trunk.

@@ -29,7 +29,15 @@ import {
 import { enqueueConsult, hasPendingConsult, latestAnswer } from './controller.js'
 import { decomposeQuestion, routeQuestion, triageQuestion, type RouteCandidate } from './judgment.js'
 import { escalateStale, voidApprovalsForSession } from './approvals.js'
-import { availability, claim, reassignClaim, releaseAllFor, upsertResource } from './resources.js'
+import {
+  Contended,
+  availability,
+  claim,
+  reassignClaim,
+  releaseAllFor,
+  upsertResource,
+  workspacePoolId
+} from './resources.js'
 import {
   branchNameFor,
   claimWorkspace,
@@ -157,6 +165,15 @@ export async function tick(): Promise<TickResult> {
       continue
     }
 
+    // ⛔ Before `chooseTarget`, because routing can spend a controller consult and a task with
+    // nowhere to work is not worth one. See `poolPressure`.
+    const pressure = poolPressure(task)
+    if (pressure) {
+      skipped.push(`t${task.seq}: ${pressure}`)
+      setHoldReason(task.id, pressure)
+      continue
+    }
+
     const choice = chooseTarget(task)
     if (choice.deferred || !choice.worker) {
       skipped.push(`t${task.seq}: ${choice.reason}`)
@@ -182,9 +199,16 @@ export async function tick(): Promise<TickResult> {
       await dispatch(task, choice)
       dispatched++
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      log.warn(`dispatch of t${task.seq} failed: ${message}`)
-      addMessage(task.id, 'system', `Could not start: ${message}`)
+      const verdict = afterFailedDispatch(err)
+      if (verdict.status === 'ready') {
+        log.info(`t${task.seq} lost a race for a resource and goes back in the queue: ${verdict.reason}`)
+        setStatus(task.id, 'ready')
+        setHoldReason(task.id, verdict.reason)
+        skipped.push(`t${task.seq}: ${verdict.reason}`)
+        continue
+      }
+      log.warn(`dispatch of t${task.seq} failed: ${verdict.reason}`)
+      addMessage(task.id, 'system', `Could not start: ${verdict.reason}`)
       setStatus(task.id, 'failed')
     }
   }
@@ -212,6 +236,25 @@ export async function tick(): Promise<TickResult> {
   }
 
   return { dispatched, note }
+}
+
+/**
+ * A dispatch threw. Does the task go back in the queue, or has it failed?
+ *
+ * ⛔ **`ready`, explicitly, and never left at `assigned`.** `dispatch` marks the task `assigned`
+ * before it claims anything, and `assigned` is in `TERMINAL_OR_HELD` — a task put back by hand that
+ * kept that status would sit somewhere `admit` refuses to touch, which is a worse bug than the one
+ * this fixes because nothing would ever say why.
+ *
+ * ⚠️ **Only `Contended`.** A retry is correct exactly when the next attempt meets a different world,
+ * and the only thing the passage of time reliably changes is who is holding what. A `prepare` hook
+ * that exits non-zero, a branch that will not check out, an agent that dies on spawn — those are
+ * faults, they will fail identically in ten seconds, and retrying them would turn one legible error
+ * into an unbounded loop of the same one.
+ */
+export function afterFailedDispatch(err: unknown): { status: 'ready' | 'failed'; reason: string } {
+  const reason = err instanceof Error ? err.message : String(err)
+  return { status: err instanceof Contended ? 'ready' : 'failed', reason }
 }
 
 /** What the last tick concluded, so an unchanged conclusion is not logged again. */
@@ -741,6 +784,77 @@ function hasEverWorked(workerId: string): boolean {
   return found !== undefined
 }
 
+/**
+ * Is there anywhere in this project for the task to work?
+ *
+ * ⛔ **A contended resource is a hold, never a failure.** `chooseTarget` above asks every question
+ * there is about the *worker* — constraints, fitness, capabilities, `maxConcurrent`, quota — and
+ * until 2026-08-29 asked none at all about the *project*. The workspace pool was first consulted
+ * deep inside `dispatch`, which threw, and the tick's catch-all read every throw as terminal.
+ * Measured that day: the fleet could run **five** concurrent sessions (ClaudeSecond at 2, Antigravity
+ * at 3) against a pool of **three**, so a fourth task was structurally guaranteed. t40 was routed —
+ * at the cost of a controller consult — dispatched, and `failed` at 22:10:23; t38 landed and freed a
+ * worktree at **22:10:31**.
+ *
+ * ⭐ **Held, not made to depend on anybody.** A dependency edge on whoever holds the pool would pin
+ * this task behind that specific task forever, so a P0 filed a minute later would still queue behind
+ * it — and it would record a relationship that does not exist. A hold is re-decided from scratch
+ * every tick against `schedulingOrder`, which is what lets priority actually mean something.
+ *
+ * ⚠️ **Before `chooseTarget`, deliberately.** Routing can spend a controller consult, and t40's was
+ * spent five seconds before the task was thrown away.
+ *
+ * ⚠️ Three ways to pass that are not "a member is free", and each is load-bearing:
+ *  - **No pool declared yet** — `ensurePool` builds it on the first dispatch, and a project nobody
+ *    has run yet must not be held for want of a resource that exists to be created.
+ *  - **A warm session** — reusing a conversation claims nothing, because the session is already
+ *    sitting in the workspace it holds. Gating it would refuse the cheapest move the cost model has.
+ *  - **An evictable resident** — an idle conversation on a worktree is a slot `evictResident` can
+ *    reclaim, so a parked task must not hold a project shut.
+ *
+ * This is a *pre-filter over state that can change under it*, not the decision. The claim inside
+ * `dispatch` is the truth, and `Contended` is what happens when the two disagree.
+ *
+ * Exported for its own tests: every branch here is a decision, and each one is worth checking
+ * without a worker, a worktree and a process in the way.
+ */
+export function poolPressure(task: Task): string | null {
+  const project = task.projectId ? getProject(task.projectId) : null
+  if (!project) return null
+  const state = availability(workspacePoolId(project.id))
+  if (!state || state.free > 0) return null
+  if (warmSessionFor(task)) return null
+  if (evictableResidents(project.id).length > 0) return null
+  const capacity = state.resource.capacity
+  return `all ${capacity} workspace(s) in ${project.name} are busy` + poolIsNarrow(project, capacity)
+}
+
+/** Projects already told, so a ten-second loop does not repeat itself forever. */
+const narrowPools = new Set<string>()
+
+/**
+ * The pool against the fleet that will be asked to fill it.
+ *
+ * ⭐ **Said out loud, and not silently corrected.** `poolSize` is an operator's cap on disk and on
+ * parallel git, and growing it behind their back would be the scheduler overriding a number somebody
+ * chose. But a fleet three slots wider than its pool holds a task on every single tick, and "why is
+ * this always waiting" deserves an answer better than a shrug — so the shortfall is named on the
+ * row it is about, and logged once.
+ */
+function poolIsNarrow(project: Project, capacity: number): string {
+  const fleet = listWorkers()
+    .filter((w) => w.enabled)
+    .reduce((total, w) => total + Math.max(1, w.maxConcurrent), 0)
+  if (fleet <= capacity) return ''
+  const note = `the fleet can run ${fleet} at once but ${project.name} has ${capacity} workspace(s), so one is always waiting`
+  const key = `${project.id}:${fleet}:${capacity}`
+  if (!narrowPools.has(key)) {
+    narrowPools.add(key)
+    log.warn(`${note} — raise workspaces.poolSize for ${project.name} to use the whole fleet`)
+  }
+  return ` — ${note}`
+}
+
 // ---------------------------------------------------------------------------- dispatch
 
 async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
@@ -787,7 +901,12 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
     if (!workspace) {
       if (await evictResident(project)) workspace = await claimWorkspace(project, task.id, priorCwd)
     }
-    if (!workspace) throw new Error(`no free workspace in ${project.name}`)
+    // ⚠️ `Contended`, not `Error`: the pool is busy, not broken, and the tick puts this task back in
+    // the queue rather than failing it. See `Contended` in resources.ts for what that cost on
+    // 2026-08-29.
+    if (!workspace) {
+      throw new Contended(`no free workspace in ${project.name}`, workspacePoolId(project.id))
+    }
 
     branch = project.vcs === 'git' ? branchNameFor(task.seq, task.title) : null
     const prepared = await prepareWorkspace(project, workspace, branch)
@@ -973,7 +1092,12 @@ async function dispatchIntoWarmSession(
     if (!reclaimed && (await evictResident(project))) {
       reclaimed = await claimWorkspace(project, task.id, session.cwd)
     }
-    if (!reclaimed) throw new Error(`no free workspace in ${project.name} to continue t${task.seq}`)
+    if (!reclaimed) {
+      throw new Contended(
+        `no free workspace in ${project.name} to continue t${task.seq}`,
+        workspacePoolId(project.id)
+      )
+    }
     reassignClaim(reclaimed.claimId, session.id)
   }
 
@@ -2048,14 +2172,16 @@ export function leastValuableResident(candidates: Session[], now = Date.now()): 
  * none has lapsed does this fall back to the longest idle, and that case is a genuine cost: it is
  * the pool being too small for the work, and the log says so in those words.
  */
-async function evictResident(project: { id: string; name: string }): Promise<boolean> {
-  const now = Date.now()
-  const candidates = [...workspaces.entries()]
-    .filter(([sessionId, held]) => held.projectId === project.id && !hasOpenRun(sessionId))
+function evictableResidents(projectId: string): Session[] {
+  return [...workspaces.entries()]
+    .filter(([sessionId, held]) => held.projectId === projectId && !hasOpenRun(sessionId))
     .map(([sessionId]) => getSession(sessionId))
     .filter((s): s is Session => s !== null)
+}
 
-  const victim = leastValuableResident(candidates, now)
+async function evictResident(project: { id: string; name: string }): Promise<boolean> {
+  const now = Date.now()
+  const victim = leastValuableResident(evictableResidents(project.id), now)
   if (!victim) return false
   const cold = cacheHasLapsed(victim, now)
   log.info(

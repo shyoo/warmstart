@@ -8,19 +8,18 @@ started in CI, never run against a real agent CLI.
 if you add a line, find the one it obsoletes and cut it in the same edit. Finished work moves to
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
-**Baseline (2026-08-29, measured on this machine):** `npm run typecheck` clean · `npm run lint` clean ·
-`npm run build` clean · `npm test` 670/672 (2 POSIX-only skipped) · `npm run test:daemon` 125/125 ·
-`npm run test:ui` 140/140 ·
-`npm run test:pack` 18/18 · L4 (opt-in) landed a real agent commit on origin/main. Electron 44.0.0,
-electron-builder 26.15.3, 0 npm vulnerabilities. CLIs here: claude 2.1.250 · agy 1.1.22 · codex 0.149.1.
+**Baseline (2026-08-29, measured):** typecheck · lint · build clean · `npm test` 684/686 (2 POSIX-only
+skipped) · `test:daemon` 125/125 · `test:ui` 140/140 · `test:pack` 18/18 · L4 (opt-in) landed a real
+agent commit on origin/main. Electron 44.0.0, electron-builder 26.15.3, 0 npm vulnerabilities.
+CLIs here: claude 2.1.251 · agy 1.1.22 · codex 0.149.1.
 
 ⭐ **`scripts/build-win.ps1` runs all of the above**; `-Help` lists its options, `-Restart` is the inner
 loop. Content-addressed: **92s cold, ~0s warm**. ⛔ **One packaged app — `release\win-unpacked\`** — and
 running the repo's copy while building blocks the pack step, correctly.
 
-⚠️ **With no agent CLI the daemon suite skips 5 checks**, each with a stated reason — the CI state.
-Simulate it with a PATH of System32, node and git and an empty `HOME`; it found the dispatch-gate bug.
-**All ten CI jobs pass on all three platforms**; what that misses is below.
+⚠️ **With no agent CLI the daemon suite skips 5 checks**, each with a stated reason — the CI state;
+simulate it with a PATH of System32, node and git and an empty `HOME`. **All ten CI jobs pass on all
+three platforms**; what that misses is below.
 
 ---
 
@@ -30,8 +29,7 @@ Simulate it with a PATH of System32, node and git and an empty `HOME`; it found 
 resources, authorship · M3 cost intelligence · M4 controller agent · M5 multi-provider
 (`antigravity-cli`, `openai-compatible`) · M6 packaging. ⚠️ Shipped is not the same as proven — the
 gaps are below. Scope: `transient_docs/implementation_plan_2026-08-24.md` §14, amended by **A1/A2/A3**.
-
-⛔ What each milestone *measured* is in `transient_docs/changes_history.md`. Read it before re-deriving any of it.
+⛔ What each milestone *measured* is in `transient_docs/changes_history.md`; read it before re-deriving.
 
 ## What exists
 
@@ -52,7 +50,8 @@ src/daemon/            orchestratord. Runs as Electron-with-ELECTRON_RUN_AS_NODE
   approvals.ts         policy engine, escalation clock, remembered rules
   scheduler.ts         scoring, dispatch, watchdogs, continueTask (+ routing.test.ts,
                        runfailure.test.ts - who is blamed when a run does not succeed;
-                       preemption.test.ts - wrapping a run up once, and the switches that gate it)
+                       preemption.test.ts - wrapping a run up once, and the switches that gate it;
+                       poolgate.test.ts - ⛔ a busy resource holds a task, it never fails one)
   eligibility.ts       ⛔ the account gates, in ONE list. Work and judgment both read it; they
                        each kept their own until 2026-08-27 and the copies drifted
   activity.ts          the live peephole: a bounded in-memory tail of what a run is saying.
@@ -106,14 +105,13 @@ docs/                  cost-model.md, glossary.md, adapters.md, landing.md, sess
 
 - ⭐ **Both providers have a free live quota probe** (**R3 closed**, `docs/cost-model.md` §5). A
   stale-but-known reading is labelled, not dropped, and Antigravity's **two pools gate separately**.
-- ⚠️ **The compaction reserve still reports `unknown`**, for one reason: it needs `remaining` in
-  *tokens*, so **R2** (`tokens_per_percent`) is the blocker, not a stale percentage
-  (`docs/cost-model.md` §10). ⛔ Until it lands it scores zero as a routing input — only checked
-  evidence may move a score.
-- ⚠️ **The tray *icon* has never been exercised end to end.** The switch and `daemon.shutdown` are covered.
+- ⚠️ **The compaction reserve still reports `unknown`** — it needs `remaining` in *tokens*, so **R2**
+  is the blocker, not a stale percentage (`docs/cost-model.md` §10). ⛔ Until it lands it scores zero
+  as a routing input; only checked evidence may move a score.
+- ⚠️ **Two things have never been exercised end to end: the tray *icon*, and keepalive *execution*.** The tray switch and `daemon.shutdown` are covered; the keepalive arithmetic is unit-tested and its firing is not.
 - ⭐ **Every intervention on a live session has an off switch** — Settings > Global: `autoCompact` and
   `autoPreempt` **on**, `autoRunawayStop` **off**, plus configurable `probeIntervalMinutes` (default 5m).
-- ⚠️ **The runaway factor measures the wrong thing, which is why its switch ships off** - 92–98% of a run's tokens are cache reads, so it fires on long work. Item 5 under **Next**.
+- ⭐ **A full workspace pool holds a task instead of failing it** (2026-08-29): `poolPressure` gates before routing, and contention throws `Contended`, which the tick returns to `ready`. ⛔ No dependency edge — a hold is re-decided every tick, so priority still wins. ⚠️ `poolSize` is untouched; a fleet wider than its pool is *named* on the row, not silently grown.
 - ⭐ **The stall watchdog can now tell stuck from slow** (2026-08-29): after 12m of silence it samples the run's whole process tree, and a flat CPU total says stuck. ⛔ It reports and never kills or changes status — a run blocked on the network looks the same. ⚠️ It has caught one real incident by hand and none in flight.
 - ⭐ **One finish policy, resolved task > project > fleet** (`docs/landing.md`): `await-human` ·
   `agent-lands` · `pull-request` · `custom`, replacing `landing.strategy` and `verification`. ⛔ **The
@@ -127,7 +125,6 @@ docs/                  cost-model.md, glossary.md, adapters.md, landing.md, sess
   CLI's own default**, via `resolveModelChoice`, shared by the scheduler and both forms. Multi-pool
   workers (e.g. Antigravity) configure default models per pool and the scheduler auto-balances
   based on available quota/budget. ⚠️ **`selectableEffort` is true for `claude-code` only**.
-- ⚠️ **Three paths are unverified and marked in the code:** `/compact` on `stream` (**R6**), keepalive *execution*, and a consult answered by a real model (**R8**). The arithmetic is unit-tested; the firing is not.
 - ⭐ **Antigravity runs, reports its quota, and resumes a conversation by id** (**R9** closed the
   opposite way round from how it was asked, `docs/cost-model.md` §5; the stream shapes and
   `--conversation` measured 2026-08-28). ⚠️ **No Antigravity task has ever completed** - with
@@ -159,7 +156,8 @@ M0–M6 are done. What is left is not a milestone but a list, in the order it wo
 7. **The project Thread tab has no automated coverage.** `test/ui.test.mjs` files every task with no
    project, so that tab is checked by `typecheck` and by hand only. Needs a real project root.
 8. **Compute `overrunFactor` in cost, not raw tokens**, and let preempted runs feed `estimateTask`.
-   Both are the price of turning `autoRunawayStop` on. The cost model already prices cache reads
+   ⚠️ It measures the wrong thing today — 92–98% of a run's tokens are cache reads, so it fires on
+   long work, which is why `autoRunawayStop` ships off. The cost model already prices cache reads
    separately, so nothing needs measuring first.
 
 ## Open questions
@@ -188,7 +186,7 @@ is what the CLI spent that never reached a transcript.
 | **R11** | The `--json` event shapes for **codex** | One turn, capture stdout verbatim | ⭐ The agy half closed 2026-08-28 - `init` / `step_update` / `result`, usage on the last two, and `--conversation` resumes one. codex is still unread, so it contributes no rate-limit signal or result text |
 | **R12** | Is headless compaction reachable on codex? | Try to drive compaction from `codex exec`; watch for a compaction record | If yes, `manualCompact` flips true and two cache-clock moves become available on that provider |
 
-**R2 blocks the compaction reserve** (R3 closed). R1 and R6 change the cache clock. ⚠️ **R5 dropped**: resuming is measured and shipped within an account; its transplant needs a second subscription.
+R1 and R6 change the cache clock. ⚠️ **R5 dropped**: resuming is measured and shipped within an account; its transplant needs a second subscription.
 
 ## Standing decisions worth not relitigating
 

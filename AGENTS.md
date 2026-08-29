@@ -140,6 +140,17 @@ These are not preferences; breaking one breaks the product.
   `admitScheduled()` looks at `scheduled` ones and nothing else touches them. A second copy of it in
   scheduler.ts re-set each dependent to the status it already had, so for months **no completed task
   ever unblocked anything and the DAG never advanced past its first edge**. Never reimplement it.
+- ⛔ **A contended resource is a hold, never a failure.** `claim()` returning null means *not yet*,
+  and a caller that reads it as *no* throws away work for being unlucky. Measured 2026-08-29: the
+  enabled fleet could run five sessions against a pool of three, so `dispatch` threw
+  `no free workspace`, the tick's catch-all marked t40 `failed` — which is terminal — and a worktree
+  freed **eight seconds later**. Contention is now a `Contended` error the tick returns to `ready`
+  with a reason on the row, and `poolPressure` holds the task before `chooseTarget` can spend a
+  routing consult on it. ⚠️ **A hold, not a dependency edge.** An edge onto whoever holds the
+  resource outlives the contention that created it, so a P0 filed a minute later still queues behind
+  it; a hold is re-decided from `schedulingOrder` every tick, which is what makes priority mean
+  anything. ⚠️ Keep the retry narrow: only contention meets a different world on the next attempt,
+  and a `prepare` hook that exits non-zero will fail identically in ten seconds forever.
 - ⛔ **A reply to a task that has stopped is a new run on the same thread, never a note that waits.**
   `deliverToLiveSession` pushed the text into the still-warm session and returned true, so the daemon
   believed it had done its job while the operator saw nothing at all: no run, no metering, no status,

@@ -263,3 +263,28 @@ export function landResourceId(projectId: string): string {
 export function workspacePoolId(projectId: string): string {
   return `workspace:${projectId}`
 }
+
+/**
+ * A claim that was refused because something else holds it *right now*.
+ *
+ * ⛔ **Busy is not broken, and a dispatch must be able to tell a caller which one it hit.** Until
+ * 2026-08-29 it could not: `dispatch` threw a plain `Error` when the workspace pool was empty, the
+ * scheduler's catch-all marked the task `failed`, and `failed` is terminal. Measured that day — t40
+ * was routed (at the cost of a controller consult), dispatched, and failed at 22:10:23 for want of a
+ * worktree; t38 landed and freed one at **22:10:31**, eight seconds later. Nothing brought it back.
+ *
+ * ⚠️ Throw this **only** where a resource was contended. Every other dispatch failure — a `prepare`
+ * hook that exits non-zero, a branch that will not check out, an agent that dies on spawn — is a
+ * real fault and must stay terminal and loud. A retry is only ever correct when the next attempt has
+ * a different world to run in, and time alone changes nothing but who holds what.
+ */
+export class Contended extends Error {
+  constructor(
+    message: string,
+    /** The resource that said no, for the log and for a test that wants to be specific. */
+    readonly resourceId: string
+  ) {
+    super(message)
+    this.name = 'Contended'
+  }
+}

@@ -1910,3 +1910,69 @@ quantity is shown.
 **Per-conversation quota polling:** Antigravity's `/usage` panel is a global account reading, not
 per-session. Per-session context is already tracked via `creditStreamTurn` → `context_tokens` on
 the session row, and the bar now shows it. No new probe is needed.
+
+## A fourth task, three workspaces, and a failure that was only a queue (2026-08-29)
+
+The operator reported t40 failed. It had not gone wrong; it had been unlucky, and the scheduler could
+not tell the difference.
+
+```
+22:10:18  consult route answered on ClaudeSecond: t40 routed to ClaudeSecond
+22:10:23  t40 ready -> assigned on 0bb7355a
+22:10:23  dispatch of t40 failed: no free workspace in multi_agent_controller
+22:10:23  t40 assigned -> failed
+22:10:31  landed t38 (0148aa9d) onto main            ← a worktree freed, eight seconds later
+```
+
+⛔ **It was structural, not a race.** The enabled fleet could run five concurrent sessions —
+ClaudeSecond at `maxConcurrent` 2, Antigravity at 3 — against a workspace pool of three. Nothing
+reconciled those two numbers, so a fourth task was guaranteed rather than possible. `chooseTarget`
+asks every question there is about the *worker* and asked none at all about the *project*.
+
+⭐ **The broker was right and the caller was wrong, for the second time in two days.** `claim()`
+returning null means *not yet*; `resources.ts` says so in its own comment. The landing queue had the
+identical bug on 2026-08-28 and read it as a refusal. Here `dispatch` threw a plain `Error`, the
+tick's catch-all marked the task `failed`, and `failed` is in `TERMINAL_OR_HELD` — so the eight
+seconds until a tree freed made no difference at all. The routing consult spent five seconds earlier
+bought nothing either.
+
+⚠️ **A dependency edge was the obvious fix and the wrong one.** `addDependency(t40, t38)` records a
+relationship that does not exist and outlives the contention that created it: a P0 filed a minute
+later would still queue behind t38, because the edge does not know it was only ever about a worktree.
+A hold is re-decided from `schedulingOrder` every tick, which is what makes priority mean anything.
+⭐ The landing queue records an edge *and* waits, and that is consistent rather than contradictory —
+there the edge is a true statement about ordering on the trunk, and the wait is what serialises.
+
+Two pieces, and the second is why the first is allowed to be approximate:
+
+ - **`poolPressure`**, a gate in the tick ahead of `chooseTarget`. ⚠️ Ahead of it deliberately:
+   routing can spend a controller consult, and t40's was spent on a task that was about to be thrown
+   away. Three ways past a full pool, each load-bearing — an undeclared pool (`ensurePool` builds it
+   on first dispatch, and a project that has never run must not be held for want of a resource that
+   exists to be created), a warm session (reusing a conversation claims nothing, and gating it would
+   refuse the cheapest move the cost model has), and an evictable resident (an idle conversation on a
+   worktree is a slot `evictResident` can reclaim). `evictableResidents` is now shared by the gate and
+   the eviction so the two cannot drift.
+ - **`Contended`**, thrown only where a resource said no. The gate reads state that can change under
+   it; the claim is the truth. ⛔ The requeue sets `ready` **explicitly**: `dispatch` marks the task
+   `assigned` before claiming anything and `assigned` is itself in `TERMINAL_OR_HELD`, so a task put
+   back by hand that kept it would sit where `admit` refuses to touch it — a worse bug than the one
+   being fixed, because nothing would say why.
+
+⚠️ **The retry stays narrow on purpose.** A retry is correct exactly when the next attempt meets a
+different world, and the only thing time reliably changes is who holds what. A `prepare` hook that
+exits non-zero will fail identically in ten seconds forever, so everything that is not contention
+stays terminal and loud.
+
+⛔ **The pool was named, not grown.** `poolSize` is the operator's cap on disk and on parallel git,
+and raising it behind their back would be the scheduler overriding a number somebody chose. Auto-sizing
+to fleet width was offered and declined. Instead the shortfall is stated on the row it is about and
+logged once per project: *the fleet can run 5 at once but this project has 3 workspaces, so one is
+always waiting.*
+
+⭐ **Two of the fourteen tests exist to defend the design rather than the code** — that a held task
+gains no `dependsOn` edge, and that a P0 filed after three others are running takes the freed slot
+ahead of the task that has waited longest. Both would pass trivially today and both are what the
+dependency approach would have broken. Six mutations were caught: the gate never firing, an undeclared
+pool reading as full, a projectless task borrowing another project's pool, contention made terminal,
+everything made retryable, and the warm-session exemption removed.
