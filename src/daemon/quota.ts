@@ -1,4 +1,4 @@
-import type { QuotaSnapshot, QuotaWindow } from '@shared/protocol.js'
+import type { QuotaSnapshot } from '@shared/protocol.js'
 import { db, row, rows } from './db.js'
 import { adapter } from './adapters/index.js'
 import { stripAnsi } from './stream.js'
@@ -542,15 +542,5 @@ export function shouldBackgroundRefresh(workerId: string): boolean {
  * of all three. A pool that matches nothing falls back rather than returning no window, because an
  * unrecognised pool is ignorance, not permission.
  */
-export function sessionWindowFor(
-  windows: QuotaWindow[],
-  pool: string | null
-): QuotaWindow | undefined {
-  const fallback = windows.find((w) => w.id === 'session' || w.id === '5h')
-  if (!pool) return fallback
+export { sessionWindowFor } from '@shared/tasks.js'
 
-  const mine = windows.find(
-    (w) => (w.id.startsWith('5h') || w.id === 'session') && (w.group?.includes(pool) ?? false)
-  )
-  return mine ?? fallback
-}

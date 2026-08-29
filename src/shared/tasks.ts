@@ -12,6 +12,8 @@
  * plan §7.3 and §7.4.
  */
 
+import type { QuotaSnapshot, QuotaWindow } from './protocol.js'
+
 // ---------------------------------------------------------------------------- project
 
 export type Vcs = 'git' | 'none'
@@ -879,7 +881,27 @@ export interface ResolvedModelChoice {
 }
 
 /**
- * Task, then worker, then whatever the CLI does on its own.
+ * The five-hour window that governs *this* model pool, on a provider that meters more than one pool.
+ *
+ * ⛔ **The pessimistic fallback is still the default, and has to be.** With no model in hand — the
+ * reset countdown, the reserve's sample query — the only safe reading is the busiest pool, which the
+ * Antigravity adapter aliases to the bare id `5h` for exactly that reason.
+ */
+export function sessionWindowFor(
+  windows: QuotaWindow[],
+  pool: string | null
+): QuotaWindow | undefined {
+  const fallback = windows.find((w) => w.id === 'session' || w.id === '5h')
+  if (!pool) return fallback
+
+  const mine = windows.find(
+    (w) => (w.id.startsWith('5h') || w.id === 'session') && (w.group?.includes(pool) ?? false)
+  )
+  return mine ?? fallback
+}
+
+/**
+ * Task, then worker (with budget-aware balance across pools when configured), then whatever the CLI does on its own.
  *
  * ⛔ **Two tiers, not the three that finish policy uses.** A model id belongs to one CLI - `opus`
  * means nothing to Antigravity and `gemini-3.1-pro-high` means nothing to Claude Code - so a default
@@ -903,11 +925,54 @@ export function resolveModelChoice(
   constraints: Pick<TaskConstraints, 'model' | 'effort'> | null | undefined,
   // ⚠️ Structural, not `Pick<Worker, …>`: `Worker` is not imported here and TypeScript resolved the
   // name to the DOM's own `Worker` global without complaining, which typechecked into nonsense.
-  worker: { defaultModel: string | null; defaultEffort: string | null } | null | undefined,
-  selectableEffort: boolean
+  worker:
+    | {
+        defaultModel: string | null
+        defaultEffort: string | null
+        defaultModels?: Record<string, string | null> | null
+      }
+    | null
+    | undefined,
+  selectableEffort: boolean,
+  quota?: QuotaSnapshot | null
 ): ResolvedModelChoice {
   const model = constraints?.model ?? null
-  const workerModel = worker?.defaultModel ?? null
+  let workerModel: string | null = null
+
+  if (worker?.defaultModels && Object.keys(worker.defaultModels).length > 0) {
+    const poolEntries = Object.entries(worker.defaultModels).filter(
+      (entry): entry is [string, string] => entry[1] != null && entry[1].trim() !== ''
+    )
+    if (poolEntries.length === 1) {
+      workerModel = poolEntries[0]![1]
+    } else if (poolEntries.length > 1) {
+      if (quota && quota.windows && quota.windows.length > 0) {
+        // Budget-aware pool balance: evaluate 5h/session window for each pool.
+        // Pools below QUOTA_HIGH_WATER (92%) are candidates; choose the one with lowest utilization (most headroom).
+        let bestCandidate: { pool: string; model: string; percent: number; blocked: boolean } | null = null
+        for (const [pool, m] of poolEntries) {
+          const win = sessionWindowFor(quota.windows, pool)
+          const percent = win ? win.percent : 0
+          const blocked = percent >= 92
+          if (!bestCandidate) {
+            bestCandidate = { pool, model: m, percent, blocked }
+          } else if (bestCandidate.blocked && !blocked) {
+            bestCandidate = { pool, model: m, percent, blocked }
+          } else if (bestCandidate.blocked === blocked && percent < bestCandidate.percent) {
+            bestCandidate = { pool, model: m, percent, blocked }
+          }
+        }
+        workerModel = bestCandidate?.model ?? poolEntries[0]![1]
+      } else {
+        // No quota reading available: fallback to worker.defaultModel if set, otherwise first pool default
+        workerModel = worker.defaultModel ?? poolEntries[0]![1]
+      }
+    }
+  }
+
+  if (!workerModel) {
+    workerModel = worker?.defaultModel ?? null
+  }
 
   const resolvedModel = model ?? workerModel
   const modelSource: ModelSource = model ? 'task' : workerModel ? 'worker' : 'cli'

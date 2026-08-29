@@ -169,6 +169,11 @@ export interface Worker {
   defaultModel: string | null
   /** ⚠️ Only ever sent where the adapter declares `selectableEffort`; dropped otherwise. */
   defaultEffort: string | null
+  /**
+   * Default models per quota pool (e.g. { gemini: 'gemini-3.7-flash-high', claude: 'claude-sonnet-4-6' }).
+   * When set on a multi-pool worker, the scheduler automatically balances across pools based on available budget.
+   */
+  defaultModels?: Record<string, string | null> | null
   identity: WorkerIdentity | null
   /** What the last run on this account proved about it. `null` means nothing is known against it. */
   health: WorkerHealth | null
@@ -687,6 +692,12 @@ export interface CostModelSummary {
   path: string | null
 }
 
+export interface ModelPoolInfo {
+  id: string
+  label: string
+  models: string[]
+}
+
 /** The choices one adapter can offer, read from the cost model file its policy names. */
 export interface ModelOptions {
   adapterId: string
@@ -694,7 +705,9 @@ export interface ModelOptions {
   /** ⚠️ False means this adapter takes no effort flag; the form offers no effort control for it. */
   selectableEffort: boolean
   /** ⚠️ `contextWindow` is null where nobody has read the figure — unknown, never 0. */
-  models: Array<{ id: string; contextWindow: number | null; effortLevels: string[] }>
+  models: Array<{ id: string; contextWindow: number | null; effortLevels: string[]; pool?: string }>
+  /** Multi-pool definitions if this cost model partitions models into separately metered pools. */
+  pools?: ModelPoolInfo[]
 }
 
 // ---------------------------------------------------------------------------- doctor
@@ -784,6 +797,7 @@ export interface RpcMap {
         | 'role'
         | 'defaultModel'
         | 'defaultEffort'
+        | 'defaultModels'
       >
     >
     result: Worker

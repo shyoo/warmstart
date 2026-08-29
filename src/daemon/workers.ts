@@ -19,6 +19,7 @@ interface WorkerRow {
   max_concurrent: number
   default_model: string | null
   default_effort: string | null
+  default_models_json: string | null
   identity_json: string | null
   health_json: string | null
   created_at: number
@@ -37,6 +38,7 @@ function toWorker(r: WorkerRow): Worker {
     maxConcurrent: r.max_concurrent,
     defaultModel: r.default_model,
     defaultEffort: r.default_effort,
+    defaultModels: r.default_models_json ? (JSON.parse(r.default_models_json) as Record<string, string | null>) : null,
     identity: r.identity_json ? (JSON.parse(r.identity_json) as WorkerIdentity) : null,
     health: r.health_json ? (JSON.parse(r.health_json) as WorkerHealth) : null,
     createdAt: r.created_at,
@@ -160,15 +162,27 @@ export function updateWorker(
   patch: Partial<
     Pick<
       Worker,
-      'label' | 'enabled' | 'humanOccupied' | 'maxConcurrent' | 'role' | 'defaultModel' | 'defaultEffort'
+      | 'label'
+      | 'enabled'
+      | 'humanOccupied'
+      | 'maxConcurrent'
+      | 'role'
+      | 'defaultModel'
+      | 'defaultEffort'
+      | 'defaultModels'
     >
   >
 ): Worker {
   const current = requireWorker(id)
+  const defaultModelsJson =
+    patch.defaultModels === undefined
+      ? current.defaultModels ? JSON.stringify(current.defaultModels) : null
+      : patch.defaultModels ? JSON.stringify(patch.defaultModels) : null
+
   db()
     .prepare(
       `update workers set label = ?, enabled = ?, human_occupied = ?, max_concurrent = ?, role = ?,
-                          default_model = ?, default_effort = ?
+                          default_model = ?, default_effort = ?, default_models_json = ?
        where id = ?`
     )
     .run(
@@ -182,6 +196,7 @@ export function updateWorker(
       // silently re-save the value being cleared.
       patch.defaultModel === undefined ? current.defaultModel : patch.defaultModel,
       patch.defaultEffort === undefined ? current.defaultEffort : patch.defaultEffort,
+      defaultModelsJson,
       id
     )
   return announce(requireWorker(id))

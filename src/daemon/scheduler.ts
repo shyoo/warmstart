@@ -481,7 +481,8 @@ function chooseTarget(task: Task): WorkerChoice {
       // ⚠️ Only answerable since the model became knowable before the spawn — `resolveModelChoice`
       // gives the same answer here that the dispatch will reach, from the same two tiers.
       // ⚠️ `false` for effort: the pool follows the model, and effort has no bearing on it.
-      const pool = poolFor(worker, resolveModelChoice(task.constraints, worker, false).model)
+      const choice = resolveModelChoice(task.constraints, worker, false, quota)
+      const pool = poolFor(worker, choice.model)
       const session = sessionWindowFor(quota.windows, pool)
       if (session && session.percent >= QUOTA_HIGH_WATER) {
         // Names the window, because "at 91% of its 5h window" on a two-pool account is a sentence
@@ -815,7 +816,7 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
   // ⛔ Task → worker → the CLI's own choice, resolved in one place shared with the renderer so the
   // form cannot promise an inheritance the scheduler does not perform. `null` at the end is a real
   // answer: let the CLI pick, which is what every dispatch did before there was a default.
-  const picked = resolveModelChoice(task.constraints, worker, canSetEffort)
+  const picked = resolveModelChoice(task.constraints, worker, canSetEffort, lastQuota(worker.id))
   // ⭐ The conversation this task was already having, if it is still on disk and this is the same
   // account and the same tree. Resuming costs the read of a cache that is very likely cold by now;
   // *not* resuming costs rebuilding the whole prefix and re-discovering the branch, the files and

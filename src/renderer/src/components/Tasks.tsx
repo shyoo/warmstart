@@ -631,7 +631,11 @@ function NewTask({
     pinned,
     canSetEffort
   )
-  const inheritedModelLabel = pinned?.defaultModel ?? 'CLI default'
+  const hasMultiPoolDefaults =
+    pinned?.defaultModels && Object.values(pinned.defaultModels).filter(Boolean).length > 1
+  const inheritedModelLabel = hasMultiPoolDefaults
+    ? 'Auto-balance across pools'
+    : (pinned?.defaultModel ?? 'CLI default')
   const inheritedEffortLabel = pinned?.defaultEffort ?? 'CLI default'
   // Effort appears only where the CLI can be told one *and* the model in effect has levels to offer.
   const effectiveModel = forAdapter?.models.find((m) => m.id === (resolved.model ?? '')) ?? null

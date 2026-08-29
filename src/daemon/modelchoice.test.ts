@@ -172,11 +172,105 @@ describe('what an account is allowed to default to', () => {
 
   it('leaves a default alone when the patch does not mention it', () => {
     // ⛔ The guard that separates "not mentioned" from "clear it". Every worker mutation writes all
-    //    seven columns in one statement, so a rename must not blank the model.
+    //    columns in one statement, so a rename must not blank the model.
     const w = workers.createWorker({ adapterId: 'claude-code', label: 'defaults-4' })
     workers.updateWorker(w.id, { defaultModel: 'claude-sonnet-5', defaultEffort: 'low' })
     const renamed = workers.updateWorker(w.id, { label: 'renamed' })
     expect(renamed.defaultModel).toBe('claude-sonnet-5')
     expect(renamed.defaultEffort).toBe('low')
   })
+
+  it('stores and validates default models per pool on multi-pool workers', () => {
+    const w = workers.createWorker({ adapterId: 'antigravity-cli', label: 'antigravity-pools' })
+    const saved = workers.updateWorker(w.id, {
+      defaultModels: {
+        gemini: 'gemini-3.7-flash-high',
+        claude: 'claude-sonnet-4-6'
+      }
+    })
+    expect(saved.defaultModels).toEqual({
+      gemini: 'gemini-3.7-flash-high',
+      claude: 'claude-sonnet-4-6'
+    })
+
+    // Refuses model that does not belong to the pool
+    expect(() =>
+      api.checkWorkerDefaults('antigravity-cli', {
+        defaultModels: {
+          gemini: 'claude-sonnet-4-6'
+        }
+      })
+    ).toThrow(/does not belong to pool 'gemini'/)
+
+    // Refuses unknown model
+    expect(() =>
+      api.checkWorkerDefaults('antigravity-cli', {
+        defaultModels: {
+          gemini: 'unknown-model-xyz'
+        }
+      })
+    ).toThrow(/not a model/)
+  })
 })
+
+describe('budget-aware automatic pool balancing across multiple pools', () => {
+  const multiPoolWorker = {
+    defaultModel: null,
+    defaultEffort: null,
+    defaultModels: {
+      gemini: 'gemini-3.7-flash-high',
+      claude: 'claude-sonnet-4-6'
+    }
+  }
+
+  const quota = (geminiPct: number, claudePct: number) => ({
+    workerId: 'w1',
+    sampledAt: Date.now(),
+    source: 'cli' as const,
+    windows: [
+      { id: '5h:gemini', label: 'Gemini 5h', percent: geminiPct, resetsAt: null, group: 'gemini' },
+      { id: '5h:claude-gpt', label: 'Claude/GPT 5h', percent: claudePct, resetsAt: null, group: 'claude-and-gpt' }
+    ]
+  })
+
+  it('picks Gemini when Gemini has lower utilization (more available budget)', () => {
+    // Gemini at 20% used (80% remaining), Claude at 65% used (35% remaining)
+    const r = resolveModelChoice(constraints(), multiPoolWorker, false, quota(20, 65))
+    expect(r.model).toBe('gemini-3.7-flash-high')
+    expect(r.modelSource).toBe('worker')
+  })
+
+  it('picks Claude when Claude has lower utilization (more available budget)', () => {
+    // Gemini at 75% used (25% remaining), Claude at 30% used (70% remaining)
+    const r = resolveModelChoice(constraints(), multiPoolWorker, false, quota(75, 30))
+    expect(r.model).toBe('claude-sonnet-4-6')
+    expect(r.modelSource).toBe('worker')
+  })
+
+  it('routes around a pool at high-water mark (>= 92%) even if other pool is moderately used', () => {
+    // Gemini is blocked at 95% (>= 92%), Claude is at 80% (< 92%)
+    const r = resolveModelChoice(constraints(), multiPoolWorker, false, quota(95, 80))
+    expect(r.model).toBe('claude-sonnet-4-6')
+    expect(r.modelSource).toBe('worker')
+  })
+
+  it('routes to Gemini when Claude is blocked at high-water mark', () => {
+    // Claude is blocked at 94%, Gemini is at 85%
+    const r = resolveModelChoice(constraints(), multiPoolWorker, false, quota(85, 94))
+    expect(r.model).toBe('gemini-3.7-flash-high')
+    expect(r.modelSource).toBe('worker')
+  })
+
+  it('honors explicit task model pin over auto-balanced pool defaults', () => {
+    // Even if Gemini is 99% blocked, explicit task pin to Gemini is honored
+    const r = resolveModelChoice(
+      constraints({ model: 'gemini-3.1-pro-high' }),
+      multiPoolWorker,
+      false,
+      quota(99, 10)
+    )
+    expect(r.model).toBe('gemini-3.1-pro-high')
+    expect(r.modelSource).toBe('task')
+  })
+})
+

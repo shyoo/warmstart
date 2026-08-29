@@ -203,6 +203,7 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
       adapters().flatMap((a) => {
         try {
           const cm = costModel(a.info.policy.costModelId)
+          const pools = cm.pools()
           return [
             {
               adapterId: a.info.id,
@@ -213,9 +214,11 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
                 return {
                   id,
                   contextWindow: spec?.context_window ?? null,
-                  effortLevels: spec?.effort_levels ?? []
+                  effortLevels: spec?.effort_levels ?? [],
+                  ...(spec?.pool ? { pool: spec.pool } : {})
                 }
-              })
+              }),
+              ...(pools.length > 0 ? { pools } : {})
             }
           ]
         } catch (err) {
@@ -661,7 +664,11 @@ ${p.note}`, run.id)
  */
 export function checkWorkerDefaults(
   adapterId: string,
-  patch: { defaultModel?: string | null; defaultEffort?: string | null }
+  patch: {
+    defaultModel?: string | null
+    defaultEffort?: string | null
+    defaultModels?: Record<string, string | null> | null
+  }
 ): void {
   const info = adapter(adapterId).info
   const cm = costModel(info.policy.costModelId)
@@ -669,6 +676,23 @@ export function checkWorkerDefaults(
   if (patch.defaultModel) {
     if (!cm.modelSpec(patch.defaultModel)) {
       throw new Error(`'${patch.defaultModel}' is not a model ${info.label} can be priced for`)
+    }
+  }
+
+  if (patch.defaultModels) {
+    for (const [pool, m] of Object.entries(patch.defaultModels)) {
+      if (m) {
+        const spec = cm.modelSpec(m)
+        if (!spec) {
+          throw new Error(`'${m}' is not a model ${info.label} can be priced for`)
+        }
+        const matchesPool =
+          spec.pool === pool ||
+          (pool === 'claude' && (spec.pool === 'claude' || spec.pool === 'gpt'))
+        if (spec.pool && !matchesPool) {
+          throw new Error(`'${m}' does not belong to pool '${pool}'`)
+        }
+      }
     }
   }
 

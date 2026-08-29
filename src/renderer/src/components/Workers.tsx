@@ -388,65 +388,111 @@ export function Workers({
                       ⚠️ "CLI default" is a real option, not a blank. It means the vendor picks, which
                       is what every install did before this control existed. */}
                   <td>
-                    <select
-                      value={worker.defaultModel ?? ''}
-                      disabled={busy === `model:${worker.id}`}
-                      title={
-                        'The model tasks on this account run on unless they pin their own. ' +
-                        'Changing it affects the next run — a conversation already open keeps the ' +
-                        'model it started with, because switching mid-conversation throws away its ' +
-                        'prompt cache.'
-                      }
-                      onChange={(e) =>
-                        void guard(`model:${worker.id}`, () =>
-                          rpc('worker.update', {
-                            id: worker.id,
-                            // ⛔ `null`, not `''` — the daemon reads undefined as "not mentioned" and
-                            // null as "clear it", and an empty string is neither.
-                            defaultModel: e.target.value || null,
-                            // ⚠️ Effort is cleared with the model it belonged to. A level that was
-                            // legal for the old model is not necessarily legal for the new one, and
-                            // the daemon would refuse the pair — so the operator re-picks it.
-                            ...(e.target.value !== worker.defaultModel ? { defaultEffort: null } : {})
-                          })
-                        )
-                      }
-                    >
-                      <option value="">CLI default</option>
-                      {(modelsFor(worker.adapterId)?.models ?? []).map((m) => (
-                        <option key={m.id} value={m.id}>
-                          {m.id}
-                        </option>
-                      ))}
-                    </select>
-                    {/* Effort appears only where the CLI takes a flag for it *and* the chosen model
-                        has levels. Antigravity has neither: it bakes effort into the model id and
-                        refuses `--effort` outright, measured 2026-08-29. */}
-                    {effortsFor(worker).length > 0 && (
-                      <select
-                        className="tbl-sub-select"
-                        value={worker.defaultEffort ?? ''}
-                        disabled={busy === `effort:${worker.id}`}
+                    {modelsFor(worker.adapterId)?.pools && (modelsFor(worker.adapterId)?.pools?.length ?? 0) > 1 ? (
+                      <div
+                        className="pool-defaults-container"
                         title={
-                          'How hard the model thinks. Like the model, this is read at launch and ' +
-                          'applies to the next run.'
-                        }
-                        onChange={(e) =>
-                          void guard(`effort:${worker.id}`, () =>
-                            rpc('worker.update', {
-                              id: worker.id,
-                              defaultEffort: e.target.value || null
-                            })
-                          )
+                          'Default models per quota pool. The scheduler automatically balance-picks ' +
+                          'between pools based on available quota/budget on the next run.'
                         }
                       >
-                        <option value="">CLI default</option>
-                        {effortsFor(worker).map((level) => (
-                          <option key={level} value={level}>
-                            {level}
-                          </option>
-                        ))}
-                      </select>
+                        {modelsFor(worker.adapterId)!.pools!.map((p) => {
+                          const poolModels = (modelsFor(worker.adapterId)?.models ?? []).filter((m) =>
+                            p.models.includes(m.id)
+                          )
+                          const currentVal = worker.defaultModels?.[p.id] ?? ''
+                          return (
+                            <div key={p.id} className="pool-default-row">
+                              <span className="pool-default-label">{p.label}:</span>
+                              <select
+                                value={currentVal}
+                                disabled={busy === `model:${worker.id}:${p.id}`}
+                                onChange={(e) =>
+                                  void guard(`model:${worker.id}:${p.id}`, () =>
+                                    rpc('worker.update', {
+                                      id: worker.id,
+                                      defaultModels: {
+                                        ...(worker.defaultModels ?? {}),
+                                        [p.id]: e.target.value || null
+                                      }
+                                    })
+                                  )
+                                }
+                              >
+                                <option value="">CLI default</option>
+                                {poolModels.map((m) => (
+                                  <option key={m.id} value={m.id}>
+                                    {m.id}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    ) : (
+                      <>
+                        <select
+                          value={worker.defaultModel ?? ''}
+                          disabled={busy === `model:${worker.id}`}
+                          title={
+                            'The model tasks on this account run on unless they pin their own. ' +
+                            'Changing it affects the next run — a conversation already open keeps the ' +
+                            'model it started with, because switching mid-conversation throws away its ' +
+                            'prompt cache.'
+                          }
+                          onChange={(e) =>
+                            void guard(`model:${worker.id}`, () =>
+                              rpc('worker.update', {
+                                id: worker.id,
+                                // ⛔ `null`, not `''` — the daemon reads undefined as "not mentioned" and
+                                // null as "clear it", and an empty string is neither.
+                                defaultModel: e.target.value || null,
+                                // ⚠️ Effort is cleared with the model it belonged to. A level that was
+                                // legal for the old model is not necessarily legal for the new one, and
+                                // the daemon would refuse the pair — so the operator re-picks it.
+                                ...(e.target.value !== worker.defaultModel ? { defaultEffort: null } : {})
+                              })
+                            )
+                          }
+                        >
+                          <option value="">CLI default</option>
+                          {(modelsFor(worker.adapterId)?.models ?? []).map((m) => (
+                            <option key={m.id} value={m.id}>
+                              {m.id}
+                            </option>
+                          ))}
+                        </select>
+                        {/* Effort appears only where the CLI takes a flag for it *and* the chosen model
+                            has levels. Antigravity has neither: it bakes effort into the model id and
+                            refuses `--effort` outright, measured 2026-08-29. */}
+                        {effortsFor(worker).length > 0 && (
+                          <select
+                            className="tbl-sub-select"
+                            value={worker.defaultEffort ?? ''}
+                            disabled={busy === `effort:${worker.id}`}
+                            title={
+                              'How hard the model thinks. Like the model, this is read at launch and ' +
+                              'applies to the next run.'
+                            }
+                            onChange={(e) =>
+                              void guard(`effort:${worker.id}`, () =>
+                                rpc('worker.update', {
+                                  id: worker.id,
+                                  defaultEffort: e.target.value || null
+                                })
+                              )
+                            }
+                          >
+                            <option value="">CLI default</option>
+                            {effortsFor(worker).map((level) => (
+                              <option key={level} value={level}>
+                                {level}
+                              </option>
+                            ))}
+                          </select>
+                        )}
+                      </>
                     )}
                   </td>
                   <td>

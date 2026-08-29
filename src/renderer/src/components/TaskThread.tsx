@@ -381,9 +381,11 @@ function TaskDetail({
                 }}
               >
                 <option value="">
-                  {assigned?.defaultModel
-                    ? `account default (${assigned.defaultModel})`
-                    : 'CLI default'}
+                  {assigned?.defaultModels && Object.values(assigned.defaultModels).filter(Boolean).length > 1
+                    ? 'account default (Auto-balance across pools)'
+                    : assigned?.defaultModel
+                      ? `account default (${assigned.defaultModel})`
+                      : 'CLI default'}
                 </option>
                 {offered.map((m) => (
                   <option key={m.id} value={m.id}>

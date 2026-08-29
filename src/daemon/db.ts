@@ -592,6 +592,14 @@ const MIGRATIONS: string[] = [
   `
   alter table workers add column default_model text;
   alter table workers add column default_effort text;
+  `,
+
+  // 16 - default models per quota pool on multi-pool workers.
+  //
+  // Enables automatic budget-aware balance scheduling across pools (e.g. Gemini vs Claude/GPT on
+  // Antigravity).
+  `
+  alter table workers add column default_models_json text;
   `
 ]
 

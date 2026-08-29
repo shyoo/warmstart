@@ -196,6 +196,45 @@ export class CostModel {
     return this.data.models?.map((m) => m.id) ?? []
   }
 
+  /**
+   * Separately metered quota pools declared by this cost model and its models, or empty if single-pool.
+   */
+  pools(): Array<{ id: string; label: string; models: string[] }> {
+    const quotaWindows =
+      (this.data.quota as { windows?: Array<{ id: string; label: string; pool?: string }> } | undefined)
+        ?.windows ?? []
+    const poolMap = new Map<string, { label: string; models: string[] }>()
+    for (const w of quotaWindows) {
+      if (w.pool && !poolMap.has(w.pool)) {
+        const cleanLabel = w.label.replace(/\s+(?:5h|7d|session)$/i, '')
+        poolMap.set(w.pool, { label: cleanLabel, models: [] })
+      }
+    }
+
+    if (this.data.models) {
+      for (const m of this.data.models) {
+        if (m.pool) {
+          const targetPool =
+            m.pool === 'gpt' && poolMap.has('claude')
+              ? 'claude'
+              : m.pool
+          if (!poolMap.has(targetPool)) {
+            poolMap.set(targetPool, { label: targetPool.charAt(0).toUpperCase() + targetPool.slice(1), models: [] })
+          }
+          poolMap.get(targetPool)!.models.push(m.id)
+        }
+      }
+    }
+
+    if (poolMap.size <= 1) return []
+
+    return Array.from(poolMap.entries()).map(([id, info]) => ({
+      id,
+      label: info.label,
+      models: info.models
+    }))
+  }
+
   summary(): CostModelSummary {
     return {
       id: this.id,

@@ -123,9 +123,9 @@ docs/                  cost-model.md, glossary.md, adapters.md, landing.md, sess
 - ⭐ **The daemon's log is readable from inside the app** (Settings > Logs): live, filterable, backed
   by a ring buffer so a window opened late still sees the past, and a file per day kept a fortnight.
 - ⭐ **Model and effort are choosable, inherited and visible** (2026-08-29): **task → worker → the
-  CLI's own default**, via `resolveModelChoice`, shared by the scheduler and both forms. ⚠️
-  **`selectableEffort` is true for `claude-code` only** — measured per CLI, reasons in
-  `docs/adapters.md`. ⛔ **No pinned model has yet reached a real agent process.**
+  CLI's own default**, via `resolveModelChoice`, shared by the scheduler and both forms. Multi-pool
+  workers (e.g. Antigravity) configure default models per pool and the scheduler auto-balances
+  based on available quota/budget. ⚠️ **`selectableEffort` is true for `claude-code` only**.
 - ⚠️ **Three paths are unverified and marked in the code:** `/compact` on `stream` (**R6**), keepalive *execution*, and a consult answered by a real model (**R8**). The arithmetic is unit-tested; the firing is not.
 - ⭐ **Antigravity runs, reports its quota, and resumes a conversation by id** (**R9** closed the
   opposite way round from how it was asked, `docs/cost-model.md` §5; the stream shapes and
