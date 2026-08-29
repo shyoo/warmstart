@@ -1,5 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { FinishPolicyChoice, Run, SessionSharingChoice, Task, TaskMessage } from '@shared/tasks'
+import type {
+  FinishPolicy,
+  FinishPolicyChoice,
+  ResolvedFinishPolicy,
+  Run,
+  SessionSharing,
+  SessionSharingChoice,
+  ResolvedSessionSharing,
+  Task,
+  TaskMessage
+} from '@shared/tasks'
 import type { Session } from '@shared/protocol'
 import { rpc, useActivity, useDaemonEvents, useNow, type FleetEntry } from '../lib/daemon'
 import { conversationIdFor } from '../lib/conversation'
@@ -22,6 +32,10 @@ export interface TaskDetailData {
   activity: Array<{ text: string; ts: number }>
   /** How many tasks are held at `blocked` waiting on this one. Counted by the daemon. */
   blocking: number
+  resolvedFinish?: ResolvedFinishPolicy
+  resolvedSharing?: ResolvedSessionSharing
+  inheritedFinish?: ResolvedFinishPolicy
+  inheritedSharing?: ResolvedSessionSharing
 }
 
 /**
@@ -232,14 +246,22 @@ function TaskDetail({
               the point. Switching a task resting in `awaiting_human` to a landing policy *is* the
               decision to land it, and the same bar a first completion faced is applied again. */}
           <Fact label="finish">
-            <FinishPicker task={task} />
+            <FinishPicker
+              task={task}
+              inheritedFinish={detail.inheritedFinish}
+              onChanged={refresh}
+            />
           </Fact>
           {/* ⚠️ Next to `finish` because they are the same shape of decision — three tiers, `inherit`
               a real value, changeable at any time — and an operator who has learnt one has learnt
               the other. ⛔ Unlike `finish`, this one only records: a task already talking in a
               conversation is never moved out of it. */}
           <Fact label="conversation">
-            <SharingPicker task={task} />
+            <SharingPicker
+              task={task}
+              inheritedSharing={detail.inheritedSharing}
+              onChanged={refresh}
+            />
           </Fact>
           <Fact label="priority">{task.priority}</Fact>
           <Fact label="filed">{when(task.createdAt)}</Fact>
@@ -794,7 +816,27 @@ function Compose({
  * the attempt can be refused. A dropdown that painted itself green while the push was rejected would
  * be the worst kind of lie this app could tell.
  */
-function FinishPicker({ task }: { task: Task }): React.JSX.Element {
+const FINISH_LABELS: Record<FinishPolicy, string> = {
+  'await-human': 'await human',
+  'agent-lands': 'agent lands it',
+  'pull-request': 'open a pull request',
+  'custom': 'this project’s own policy'
+}
+
+const SHARING_LABELS: Record<SessionSharing, string> = {
+  on: 'reuse one if possible',
+  off: 'always start a new one'
+}
+
+function FinishPicker({
+  task,
+  inheritedFinish,
+  onChanged
+}: {
+  task: Task
+  inheritedFinish?: ResolvedFinishPolicy
+  onChanged?: () => Promise<void>
+}): React.JSX.Element {
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState<string | null>(null)
 
@@ -810,12 +852,17 @@ function FinishPicker({ task }: { task: Task }): React.JSX.Element {
             ? `not landed — ${result.reason}`
             : null
       )
+      if (onChanged) await onChanged()
     } catch (err) {
       setNote(err instanceof Error ? err.message : String(err))
     } finally {
       setBusy(false)
     }
   }
+
+  const inheritedLabel = inheritedFinish?.policy
+    ? FINISH_LABELS[inheritedFinish.policy] ?? inheritedFinish.policy
+    : 'agent lands it'
 
   return (
     <>
@@ -826,7 +873,7 @@ function FinishPicker({ task }: { task: Task }): React.JSX.Element {
         aria-label="Finish policy"
         onChange={(e) => void choose(e.target.value as FinishPolicyChoice)}
       >
-        <option value="inherit">inherit</option>
+        <option value="inherit">inherit ({inheritedLabel})</option>
         <option value="await-human">await human</option>
         <option value="agent-lands">agent lands it</option>
         <option value="pull-request">open a pull request</option>
@@ -849,7 +896,15 @@ function FinishPicker({ task }: { task: Task }): React.JSX.Element {
  * everything said in it, which is why this is off until somebody says otherwise and why the tooltip
  * says so rather than describing only the upside.
  */
-function SharingPicker({ task }: { task: Task }): React.JSX.Element {
+function SharingPicker({
+  task,
+  inheritedSharing,
+  onChanged
+}: {
+  task: Task
+  inheritedSharing?: ResolvedSessionSharing
+  onChanged?: () => Promise<void>
+}): React.JSX.Element {
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState<string | null>(null)
 
@@ -858,12 +913,17 @@ function SharingPicker({ task }: { task: Task }): React.JSX.Element {
     setNote(null)
     try {
       await rpc('task.setSessionSharing', { id: task.id, sessionSharing })
+      if (onChanged) await onChanged()
     } catch (err) {
       setNote(err instanceof Error ? err.message : String(err))
     } finally {
       setBusy(false)
     }
   }
+
+  const inheritedLabel = inheritedSharing?.sharing
+    ? SHARING_LABELS[inheritedSharing.sharing] ?? inheritedSharing.sharing
+    : 'always start a new one'
 
   return (
     <>
@@ -879,7 +939,7 @@ function SharingPicker({ task }: { task: Task }): React.JSX.Element {
         }
         onChange={(e) => void choose(e.target.value as SessionSharingChoice)}
       >
-        <option value="inherit">inherit</option>
+        <option value="inherit">inherit ({inheritedLabel})</option>
         <option value="on">reuse one if possible</option>
         <option value="off">always start a new one</option>
       </select>

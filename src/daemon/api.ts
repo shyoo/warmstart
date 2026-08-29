@@ -36,6 +36,7 @@ import { paths } from './paths.js'
 import {
   addProject,
   archiveProject,
+  getProject,
   listProjects,
   reloadProject,
   writeStarterConfig
@@ -87,7 +88,8 @@ import { setSetting, settings } from './settings.js'
 import { lastRateLimit, windowResetsAt } from './quota.js'
 import { listConversations } from './conversations.js'
 import { log, logFiles, recentLog } from './log.js'
-import { dismissLooseEnd, scanLooseEnds } from './finish.js'
+import { dismissLooseEnd, resolveFinishPolicy, scanLooseEnds } from './finish.js'
+import { resolveSessionSharing } from './sharing.js'
 
 type Handler<M extends RpcMethod> = (params: RpcParams<M>) => RpcResult<M> | Promise<RpcResult<M>>
 
@@ -345,13 +347,18 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
         .filter((id): id is string => !!id && !seen.has(id) && !!seen.add(id))
         .map((id) => getSession(id))
         .filter((s): s is NonNullable<typeof s> => !!s)
+      const project = task.projectId ? getProject(task.projectId) : null
       return {
         task,
         messages: messagesFor(p.id),
         runs,
         sessions,
         activity: activityFor(p.id),
-        blocking: blockedDependentsOf(p.id)
+        blocking: blockedDependentsOf(p.id),
+        resolvedFinish: resolveFinishPolicy(task, project),
+        resolvedSharing: resolveSessionSharing(task, project),
+        inheritedFinish: resolveFinishPolicy(null, project),
+        inheritedSharing: resolveSessionSharing(null, project)
       }
     },
     'task.create': (p) => createTask({ ...p, ...(p.constraints ? { constraints: checkConstraints(p.constraints) } : {}) }),

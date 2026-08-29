@@ -20,8 +20,10 @@ import type {
   TaskView,
   FinishPolicy,
   FinishPolicyChoice,
+  ResolvedFinishPolicy,
   SessionSharing,
   SessionSharingChoice,
+  ResolvedSessionSharing,
   LooseEnd
 } from './tasks.js'
 
@@ -857,6 +859,10 @@ export interface RpcMap {
        * worse answer than a `count(*)`.
        */
       blocking: number
+      resolvedFinish?: ResolvedFinishPolicy
+      resolvedSharing?: ResolvedSessionSharing
+      inheritedFinish?: ResolvedFinishPolicy
+      inheritedSharing?: ResolvedSessionSharing
     } | null
   }
   'task.create': { params: TaskCreateParams; result: Task }
