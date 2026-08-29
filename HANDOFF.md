@@ -8,7 +8,7 @@ started in CI, never run against a real agent CLI.
 if you add a line, find the one it obsoletes and cut it in the same edit. Finished work moves to
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
-**Baseline (2026-08-28, measured on this machine):** `npm run typecheck` clean · `npm run lint` clean ·
+**Baseline (2026-08-29, measured on this machine):** `npm run typecheck` clean · `npm run lint` clean ·
 `npm run build` clean · `npm test` 525/525 (2 POSIX-only skipped) · `npm run test:daemon` 124/124 ·
 `npm run test:ui` 113/113 ·
 `npm run test:pack` 18/18 · L4 (opt-in) landed a real agent commit on origin/main. Electron 44.0.0,
