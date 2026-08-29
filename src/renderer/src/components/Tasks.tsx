@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { FinishPolicyChoice, Project, Task, TaskSort, TaskView } from '@shared/tasks'
+import type {
+  FinishPolicyChoice,
+  Project,
+  SessionSharingChoice,
+  Task,
+  TaskSort,
+  TaskView
+} from '@shared/tasks'
 import { TASK_VIEW_ORDER, TASK_VIEWS } from '@shared/tasks'
 import type { ModelOptions } from '@shared/protocol'
 import { rpc, useActivity, useDaemonEvents, useNow, type FleetEntry } from '../lib/daemon'
@@ -543,6 +550,7 @@ function NewTask({
   const [projectId, setProjectId] = useState(fixedProjectId ?? projects[0]?.id ?? '')
   const [priority, setPriority] = useState<'P0' | 'P1' | 'P2' | 'P3'>('P2')
   const [finishPolicy, setFinishPolicy] = useState<FinishPolicyChoice>('inherit')
+  const [sessionSharing, setSessionSharing] = useState<SessionSharingChoice>('inherit')
   const [plan, setPlan] = useState(false)
   const [workerId, setWorkerId] = useState('')
   const [model, setModel] = useState('')
@@ -586,6 +594,7 @@ function NewTask({
           projectId: projectId || null,
           priority,
           finishPolicy,
+          sessionSharing,
           // ⚠️ Absent, not empty. The daemon reads a *present* `constraints` as an instruction to
           // validate one, and an object of empty strings would be three constraints that name
           // nothing rather than three questions left to the scheduler.
@@ -663,6 +672,20 @@ function NewTask({
               <option value="pull-request">open a pull request</option>
               <option value="custom">this project&rsquo;s own policy</option>
             </select>
+            <select
+              value={sessionSharing}
+              aria-label="Conversation policy"
+              title={
+                'Whether this task may continue in a conversation another task in this project has ' +
+                'already been having. Cheaper — a cold start rebuilt 41,542 tokens of prefix that a ' +
+                'reused one read back for 65 — but the agent sees everything said in that conversation.'
+              }
+              onChange={(e) => setSessionSharing(e.target.value as SessionSharingChoice)}
+            >
+              <option value="inherit">inherit</option>
+              <option value="on">reuse conversation</option>
+              <option value="off">fresh conversation</option>
+            </select>
           </div>
           <label
             className="check"
@@ -673,7 +696,7 @@ function NewTask({
           </label>
         </div>
         <span className="form-hint">
-          Priority orders the queue; finish policy decides what happens when the work completes.
+          Priority orders the queue; finish and conversation policies decide landing and session reuse.
         </span>
       </div>
 

@@ -10,7 +10,7 @@ if you add a line, find the one it obsoletes and cut it in the same edit. Finish
 
 **Baseline (2026-08-29, measured on this machine):** `npm run typecheck` clean · `npm run lint` clean ·
 `npm run build` clean · `npm test` 525/525 (2 POSIX-only skipped) · `npm run test:daemon` 124/124 ·
-`npm run test:ui` 113/113 ·
+`npm run test:ui` 114/114 ·
 `npm run test:pack` 18/18 · L4 (opt-in) landed a real agent commit on origin/main. Electron 44.0.0,
 electron-builder 26.15.3, 0 npm vulnerabilities. CLIs here: claude 2.1.250 · agy 1.1.22 · codex 0.149.1.
 

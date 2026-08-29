@@ -406,6 +406,8 @@ try {
           .find(r => /^model/i.test(r.querySelector('label')?.innerText ?? ''))
           ?.querySelectorAll('select').length ?? 0,
         finishOptions: [...(form.querySelector('select[aria-label="Finish policy"]')?.options ?? [])]
+          .map(o => o.value),
+        sharingOptions: [...(form.querySelector('select[aria-label="Conversation policy"]')?.options ?? [])]
           .map(o => o.value)
       };
     })())
@@ -428,6 +430,14 @@ try {
     Array.isArray(f.finishOptions) &&
       f.finishOptions.includes('inherit') &&
       f.finishOptions.includes('agent-lands'),
+    filing
+  )
+  check(
+    'the new-task form offers a conversation policy, inherit included',
+    Array.isArray(f.sharingOptions) &&
+      f.sharingOptions.includes('inherit') &&
+      f.sharingOptions.includes('on') &&
+      f.sharingOptions.includes('off'),
     filing
   )
   // ⚠️ A textarea because what goes in it is sent to an agent verbatim, and a prompt worth writing
