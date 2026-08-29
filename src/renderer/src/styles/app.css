@@ -1296,7 +1296,7 @@ select:focus-visible,
   min-height: 3.4em;
   max-height: 24em;
   field-sizing: content;
-  resize: vertical;
+  resize: none;
   border: 0;
   background: transparent;
   color: var(--color-text);
