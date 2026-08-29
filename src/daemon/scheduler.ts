@@ -3,7 +3,7 @@ import { resolveModelChoice } from '@shared/tasks.js'
 import type { Session, Worker } from '@shared/protocol.js'
 import { adapter } from './adapters/index.js'
 import { lastQuota, refreshUsage, sessionWindowFor } from './quota.js'
-import { listWorkers, recordDispatchFailure } from './workers.js'
+import { getWorker, listWorkers, recordDispatchFailure } from './workers.js'
 import { accountUnavailability } from './eligibility.js'
 import { getProject, policyFor, reloadProject } from './projects.js'
 import {
@@ -99,6 +99,11 @@ import { costModel } from './costmodel.js'
 
 /** Above this on the 5h window, stop starting new work. Only applied to a reading we trust. */
 const QUOTA_HIGH_WATER = 92
+
+/**
+ * When 5h quota reaches or exceeds this during an active run, preempt the run before hard exhaustion.
+ */
+const QUOTA_MIDRUN_PREEMPT_WATER = 95
 
 /**
  * When two candidates score this close, the arithmetic cannot separate them.
@@ -1248,6 +1253,48 @@ async function runWatchdogs(): Promise<void> {
     if (switches.autoPreempt && reset && reset.at - Date.now() <= margin && task.preemptible) {
       await preempt(task, session, reset.at, reset.source)
       continue
+    }
+
+    // 2. Active 5h quota exhaustion / in-stream rate-limit warning.
+    // Catches rapid in-flight quota depletion (streamed rate_limit_event with 'allowed_warning' / 'rejected',
+    // or live 5h window percentage >= 95%) before the agent triggers a hard 429 API failure.
+    if (switches.autoOverrunPreempt && task.preemptible) {
+      const liveRate = lastRateLimit(run.workerId)
+      const isRateWarning =
+        liveRate !== null &&
+        (liveRate.status === 'allowed_warning' || liveRate.status === 'rejected') &&
+        Date.now() - liveRate.sampledAt < 10 * 60 * 1000
+
+      let isQuotaExhausted = false
+      let quotaPercent = 0
+      const quota = lastQuota(run.workerId)
+      if (quota && !quota.stale) {
+        const worker = getWorker(run.workerId)
+        if (worker) {
+          const choice = resolveModelChoice(task.constraints, worker, false, quota)
+          const pool = poolFor(worker, choice.model)
+          const win = sessionWindowFor(quota.windows, pool)
+          if (win && win.percent >= QUOTA_MIDRUN_PREEMPT_WATER) {
+            isQuotaExhausted = true
+            quotaPercent = Math.round(win.percent)
+          }
+        }
+      }
+
+      if (isRateWarning || isQuotaExhausted) {
+        const resumeAt =
+          (liveRate?.resetsAt && liveRate.resetsAt > Date.now() ? liveRate.resetsAt : null) ??
+          windowResetsAt(run.workerId)?.at ??
+          Date.now() + 5 * 60 * 60 * 1000
+
+        const reason = isRateWarning
+          ? `rate-limit ${liveRate?.status ?? 'warning'}`
+          : `${quotaPercent}% of 5h window used`
+
+        log.warn(`t${task.seq} preempted for quota overrun risk (${reason})`)
+        await preempt(task, session, resumeAt, reason)
+        continue
+      }
     }
 
     // 2. A runaway. Nothing to compare against means it cannot be one - being first is not a crime.

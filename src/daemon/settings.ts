@@ -40,6 +40,15 @@ export const DEFAULT_SETTINGS: Settings = {
   autoPreempt: true,
 
   /**
+   * Whether the scheduler may wrap up a run when 5-hour quota is near exhaustion (>=95%)
+   * or an in-stream rate-limit warning arrives.
+   *
+   * ⚠️ Default on: catching rapid depletion mid-run and wrapping up cleanly (committing and pausing)
+   * prevents unrecoverable 429 API failures and context loss.
+   */
+  autoOverrunPreempt: true,
+
+  /**
    * Whether the scheduler may stop a run for going far past its estimate.
    *
    * ⛔ Default **off**, and the asymmetry with `autoPreempt` is the point. A window boundary is a

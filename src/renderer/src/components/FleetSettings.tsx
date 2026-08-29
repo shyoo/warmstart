@@ -88,6 +88,7 @@ export function FleetSettings(): React.JSX.Element {
 
   const autoCompact = settings?.autoCompact ?? true
   const autoPreempt = settings?.autoPreempt ?? true
+  const autoOverrunPreempt = settings?.autoOverrunPreempt ?? true
   const autoRunawayStop = settings?.autoRunawayStop ?? false
   const finishPolicy = settings?.finishPolicy ?? 'agent-lands'
   const sessionSharing = settings?.sessionSharing ?? 'off'
@@ -203,6 +204,21 @@ export function FleetSettings(): React.JSX.Element {
           <code>paused_quota</code> carrying the reset as its resume time, so it restarts itself —
           nothing is cancelled. With this off, a run caught by a closing window loses its
           uncommitted work and the next session pays to rediscover the branch.
+        </SwitchRow>
+        <SwitchRow
+          label="Preempt a run when 5-hour quota is near exhaustion"
+          on={autoOverrunPreempt}
+          busy={busy || settings === null}
+          onToggle={() => void setSwitch('autoOverrunPreempt', !autoOverrunPreempt)}
+          state={
+            autoOverrunPreempt
+              ? 'a run reaching >=95% 5h quota or a rate-limit warning wraps up cleanly before failing.'
+              : 'runs continue until quota is 100% exhausted and fail on hard API errors.'
+          }
+        >
+          <strong>On by default.</strong> Detects live in-stream rate limit warnings and near-exhaustion (&gt;=95%) of the
+          5-hour window during an active run. The agent is prompted to commit and hand off, and the task is paused
+          as <code>paused_quota</code> until the window resets, avoiding disruptive 429 API failures.
         </SwitchRow>
         <SwitchRow
           label="Stop a run that is far past its estimate"

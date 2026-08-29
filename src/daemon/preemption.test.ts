@@ -243,6 +243,60 @@ describe('the switches that gate all of this', () => {
     expect(tasks.getTask(task.id)?.status).toBe('running')
   })
 
+  it('preempts a run on rate_limit_warning when autoOverrunPreempt is on', async () => {
+    expect(settings.DEFAULT_SETTINGS.autoOverrunPreempt).toBe(true)
+    const { task, run } = seedRunawayTask(0)
+    const workerId = tasks.requireRun(run.id).workerId
+    db.db()
+      .prepare(
+        `insert into rate_limit_samples (worker_id, session_id, window_id, status, resets_at, sampled_at)
+         values (?,?,?,?,?,?)`
+      )
+      .run(workerId, null, '5h', 'allowed_warning', Date.now() + 3_600_000, Date.now())
+
+    await scheduler.tick()
+    await vi.advanceTimersByTimeAsync(130_000)
+
+    expect(tasks.requireRun(run.id).outcome).toBe('preempted')
+    expect(tasks.getTask(task.id)?.status).toBe('paused_quota')
+  })
+
+  it('leaves a run with rate_limit_warning alone when autoOverrunPreempt is off', async () => {
+    const { task, run } = seedRunawayTask(0)
+    const workerId = tasks.requireRun(run.id).workerId
+    db.db()
+      .prepare(
+        `insert into rate_limit_samples (worker_id, session_id, window_id, status, resets_at, sampled_at)
+         values (?,?,?,?,?,?)`
+      )
+      .run(workerId, null, '5h', 'allowed_warning', Date.now() + 3_600_000, Date.now())
+    settings.setSetting('autoOverrunPreempt', false)
+
+    await scheduler.tick()
+    await vi.advanceTimersByTimeAsync(130_000)
+
+    expect(wrapUpsOn(task.id)).toBe(0)
+    expect(tasks.getTask(task.id)?.status).toBe('running')
+    expect(tasks.requireRun(run.id).endedAt).toBeNull()
+  })
+
+  it('preempts a run when 5h quota is >= 95% and autoOverrunPreempt is on', async () => {
+    const { task, run } = seedRunawayTask(0)
+    const workerId = tasks.requireRun(run.id).workerId
+    db.db()
+      .prepare(
+        `insert into quota_samples (worker_id, window_id, label, percent, resets_at, source, sampled_at)
+         values (?,?,?,?,?,?,?)`
+      )
+      .run(workerId, '5h', '5-hour', 96, Date.now() + 3_600_000, 'probe', Date.now())
+
+    await scheduler.tick()
+    await vi.advanceTimersByTimeAsync(130_000)
+
+    expect(tasks.requireRun(run.id).outcome).toBe('preempted')
+    expect(tasks.getTask(task.id)?.status).toBe('paused_quota')
+  })
+
   it('persists, and a corrupt value falls back rather than taking the fleet down', () => {
     // A switch written by something that is not this build is a preference, not a credential: it
     // must not be able to stop the daemon starting.

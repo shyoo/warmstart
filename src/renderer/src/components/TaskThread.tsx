@@ -343,7 +343,15 @@ function TaskDetail({
               what you want next — and two of them living in a column of read-only facts made the
               third look like the only one. */}
           {task.status === 'awaiting_human' && (
-            <Decide task={task} blocking={blocking} onResolve={resolve} onStop={cancel} />
+            <Decide
+              task={task}
+              blocking={blocking}
+              fleet={fleet}
+              modelOptions={modelOptions}
+              onResolve={resolve}
+              onStop={cancel}
+              onRefresh={refresh}
+            />
           )}
           {task.status !== 'draft' && <Compose task={task} refresh={refresh} />}
         </div>
@@ -637,14 +645,39 @@ function Thread({
 function Decide({
   task,
   blocking,
+  fleet,
+  modelOptions,
   onResolve,
-  onStop
+  onStop,
+  onRefresh
 }: {
   task: Task
   blocking: number
+  fleet: FleetEntry[]
+  modelOptions: ModelOptions[]
   onResolve: () => Promise<void>
   onStop: () => Promise<void>
+  onRefresh: () => Promise<void>
 }): React.JSX.Element {
+  const [selectedWorkerId, setSelectedWorkerId] = useState<string>(task.constraints.workerId ?? '')
+  const [selectedModel, setSelectedModel] = useState<string>(task.constraints.model ?? '')
+  const [selectedEffort, setSelectedEffort] = useState<string>(task.constraints.effort ?? '')
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    setSelectedWorkerId(task.constraints.workerId ?? '')
+    setSelectedModel(task.constraints.model ?? '')
+    setSelectedEffort(task.constraints.effort ?? '')
+  }, [task.constraints.workerId, task.constraints.model, task.constraints.effort])
+
+  const selectedWorker = fleet.find((e) => e.worker.id === selectedWorkerId)?.worker ?? null
+  const adapterOptions = modelOptions.find((o) => o.adapterId === selectedWorker?.adapterId)
+  const offeredModels = adapterOptions?.models ?? []
+  const canSetEffort = adapterOptions?.selectableEffort ?? false
+  const offeredEfforts = canSetEffort
+    ? (offeredModels.find((m) => m.id === selectedModel)?.effortLevels ?? [])
+    : []
+
   // ⚠️ Both numbers agree with their verb. "The 2 tasks waiting on it stays blocked" is the kind of
   // sentence somebody stops reading, and this one is load-bearing.
   const releases =
@@ -660,6 +693,30 @@ function Decide({
         ? 'The one task waiting on it stays blocked — only a completed task releases it.'
         : `The ${blocking} tasks waiting on it stay blocked — only a completed task releases them.`
 
+  const handleReassign = async () => {
+    setBusy(true)
+    try {
+      await rpc('task.setWorker', { id: task.id, workerId: selectedWorkerId || null })
+      if (selectedWorkerId) {
+        await rpc('task.setModel', {
+          id: task.id,
+          model: selectedModel || null,
+          effort: selectedEffort || null
+        })
+      }
+      const targetName = selectedWorkerId
+        ? (fleet.find((e) => e.worker.id === selectedWorkerId)?.worker.label ?? selectedWorkerId)
+        : 'auto / scheduler choice'
+      await rpc('task.message', {
+        id: task.id,
+        text: `Reassigned worker to ${targetName} and continued.`
+      })
+      await onRefresh()
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
     <div className="decide">
       <div className="decide-head">
@@ -672,6 +729,7 @@ function Decide({
         <button
           className="btn btn--ok"
           title="Records your judgement that this is finished. ⚠️ Nothing verified the work — task_complete remains the only signal that an agent finished."
+          disabled={busy}
           onClick={() => void onResolve()}
         >
           Mark done
@@ -686,6 +744,7 @@ function Decide({
         <button
           className="btn btn--danger"
           title="Parks the task. Destroys nothing, and Resume picks it up where it stopped."
+          disabled={busy}
           onClick={() => void onStop()}
         >
           Stop here
@@ -696,9 +755,99 @@ function Decide({
         </span>
       </div>
 
+      <div className="decide-option">
+        <button
+          className="btn btn--primary"
+          title="Reassigns the worker and model and dispatches a new run on this thread."
+          disabled={busy}
+          onClick={() => void handleReassign()}
+        >
+          Reassign
+        </button>
+        <div className="decide-what">
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center', marginBottom: '4px' }}>
+            <select
+              className="tbl-sub-select"
+              value={selectedWorkerId}
+              style={{ minWidth: '160px' }}
+              disabled={busy}
+              onChange={(e) => {
+                const nextWorkerId = e.target.value
+                setSelectedWorkerId(nextWorkerId)
+                if (!nextWorkerId) {
+                  setSelectedModel('')
+                  setSelectedEffort('')
+                } else {
+                  const w = fleet.find((entry) => entry.worker.id === nextWorkerId)?.worker
+                  const offered = modelOptions.find((o) => o.adapterId === w?.adapterId)?.models ?? []
+                  if (selectedModel && !offered.some((m) => m.id === selectedModel)) {
+                    setSelectedModel(w?.defaultModel ?? '')
+                    setSelectedEffort('')
+                  }
+                }
+              }}
+            >
+              <option value="">Auto (scheduler decides)</option>
+              {fleet.map((e) => (
+                <option key={e.worker.id} value={e.worker.id}>
+                  {e.worker.label} ({e.worker.adapterId})
+                </option>
+              ))}
+            </select>
+
+            {offeredModels.length > 0 && (
+              <select
+                className="tbl-sub-select"
+                value={selectedModel}
+                disabled={busy}
+                onChange={(e) => {
+                  setSelectedModel(e.target.value)
+                  setSelectedEffort('')
+                }}
+              >
+                <option value="">
+                  {selectedWorker?.defaultModel
+                    ? `account default (${selectedWorker.defaultModel})`
+                    : 'CLI default model'}
+                </option>
+                {offeredModels.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.id}
+                  </option>
+                ))}
+              </select>
+            )}
+
+            {offeredEfforts.length > 0 && (
+              <select
+                className="tbl-sub-select"
+                value={selectedEffort}
+                disabled={busy}
+                onChange={(e) => setSelectedEffort(e.target.value)}
+              >
+                <option value="">
+                  {selectedWorker?.defaultEffort
+                    ? `account default (${selectedWorker.defaultEffort})`
+                    : 'CLI default effort'}
+                </option>
+                {offeredEfforts.map((level) => (
+                  <option key={level} value={level}>
+                    {level}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+          <span>
+            <strong>Reroute & continue.</strong> Sets the worker/model preference and dispatches a new run.
+            If set to Auto, the scheduler automatically picks the best worker (e.g. Antigravity) based on quota and capacity.
+          </span>
+        </div>
+      </div>
+
       <p className="decide-hint">
-        Or say what you want next in the box below — neither of these, but another run on this same
-        thread, preferring the session that still holds its context.
+        Or say what you want next in the box below — another run on this same thread, preferring the
+        session that still holds its context.
       </p>
     </div>
   )

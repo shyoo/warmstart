@@ -8,7 +8,7 @@ started in CI, never run against a real agent CLI.
 if you add a line, find the one it obsoletes and cut it in the same edit. Finished work moves to
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
-**Baseline (2026-08-29, measured):** typecheck · lint · build clean · `npm test` 689/691 (2 POSIX-only
+**Baseline (2026-08-29, measured):** typecheck · lint · build clean · `npm test` 690/692 (2 POSIX-only
 skipped) · `test:daemon` 125/125 · `test:ui` 140/140 · `test:pack` 18/18 · L4 (opt-in) landed a real
 agent commit on origin/main. Electron 44.0.0, electron-builder 26.15.3, 0 npm vulnerabilities.
 CLIs here: claude 2.1.251 · agy 1.1.22 · codex 0.149.1.
@@ -68,9 +68,8 @@ src/daemon/            orchestratord. Runs as Electron-with-ELECTRON_RUN_AS_NODE
   cacheclock.ts        the six moves - what the whole cost model exists for. A move is a request;
                        moveOutcome() is what stops it being re-asked (+ .test.ts)
   lifecycle.ts         how the daemon is asked to stop itself. ⛔ Asked, never killed by pid
-  settings.ts          the fleet defaults the operator owns - autoCompact, autoPreempt,
-                       autoRunawayStop, probeIntervalMinutes, finishPolicy, sessionSharing (under
-                       Settings > Global). Per-worker, `enabled` is on Workers row
+  settings.ts          the fleet defaults: autoCompact, autoPreempt, autoOverrunPreempt,
+                       autoRunawayStop, probeIntervalMinutes, finishPolicy, sessionSharing
   reserve.ts           the compaction reserve, and every belief with its basis attached
   objective.ts         the weight vector, in exactly two consumers    (+ cost.test.ts)
   controller.ts        the consult queue, the caps, and choosing who answers (+ controller.test.ts,
@@ -194,7 +193,7 @@ R1 and R6 change the cache clock. ⚠️ **R5 dropped**: resuming is measured an
 read it:
 
 - **Daemon, not all-in-Electron.** The premise is unattended progress across quota windows.
-- **Deterministic scheduler; the LLM only on judgment events, never inline.** A loop running every 10s for weeks must not bill anything, and the fleet must survive there being no controller at all.
+- **Deterministic scheduler; LLM on judgment events only.** A loop running every 10s for weeks must not bill anything, and the fleet survives with no controller at all.
 - **PTY-hosted CLI, transcript for state.** We own stdin, so `/compact` is a function call. ⚠️ ANSI parsing
   determines state in exactly one declared place - a quota reading. Never a session's state.
 - **Capabilities and objectives are data.** No `if (adapter === …)`, no `if (mode === …)`.

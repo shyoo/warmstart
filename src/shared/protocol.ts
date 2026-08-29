@@ -55,6 +55,11 @@ export interface Settings {
    */
   autoPreempt: boolean
   /**
+   * May the scheduler wrap up a run when 5-hour quota is near exhaustion (>=95%) or an in-stream
+   * rate-limit warning arrives? Default **true**.
+   */
+  autoOverrunPreempt: boolean
+  /**
    * May the scheduler stop a run for going far past its token estimate? Default **false**.
    *
    * ⚠️ Off by design, not by oversight. The estimate is a median over completed runs and the factor

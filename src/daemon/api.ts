@@ -446,7 +446,11 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
       if (!p.workerId) {
         // Reassigned to auto / scheduler choice: clear workerId, adapterId, model, effort
         const { workerId, adapterId, model, effort, ...rest } = task.constraints
-        return updateTask(p.id, { constraints: rest })
+        const isResting = !['running', 'assigned'].includes(task.status)
+        return updateTask(p.id, {
+          constraints: rest,
+          ...(isResting ? { assigneeHint: null } : {})
+        })
       }
       const worker = requireWorker(p.workerId)
       // If the adapter changed, clear model and effort because they belong to the previous adapter
@@ -458,7 +462,11 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
         model: adapterChanged ? undefined : task.constraints.model,
         effort: adapterChanged ? undefined : task.constraints.effort
       })
-      return updateTask(p.id, { constraints })
+      const isResting = !['running', 'assigned'].includes(task.status)
+      return updateTask(p.id, {
+        constraints,
+        ...(isResting ? { assigneeHint: worker.id } : {})
+      })
     },
     'task.setPriority': (p) => updateTask(p.id, { priority: p.priority }),
     'task.land': async (p) => {

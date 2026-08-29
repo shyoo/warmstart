@@ -199,3 +199,44 @@ describe('what the form is offered', () => {
     }
   })
 })
+
+describe('task.setWorker RPC', () => {
+  it('pins, switches, and unpins worker constraints cleanly', async () => {
+    const tasks = await import('./tasks.js')
+    const codex = workers.createWorker({
+      adapterId: 'openai-compatible',
+      label: 'codex-worker',
+      enabled: false
+    })
+    const handlers = api.buildApi({
+      version: '1.0.0',
+      startedAt: Date.now(),
+      port: 8080
+    })
+
+    const task = tasks.createTask({ title: 'switch worker test' })
+    expect(task.constraints.workerId).toBeUndefined()
+
+    // 1. Pin to claude
+    const pinnedClaude = await handlers['task.setWorker']({ id: task.id, workerId: claude.id })
+    expect(pinnedClaude.constraints.workerId).toBe(claude.id)
+    expect(pinnedClaude.constraints.adapterId).toBe('claude-code')
+
+    // 2. Set a model on claude
+    await handlers['task.setModel']({ id: task.id, model: 'claude-sonnet-5', effort: null })
+    expect(tasks.requireTask(task.id).constraints.model).toBe('claude-sonnet-5')
+
+    // 3. Switch to Codex -> incompatible model is automatically cleared
+    const switchedCodex = await handlers['task.setWorker']({ id: task.id, workerId: codex.id })
+    expect(switchedCodex.constraints.workerId).toBe(codex.id)
+    expect(switchedCodex.constraints.adapterId).toBe('openai-compatible')
+    expect(switchedCodex.constraints.model).toBeUndefined()
+
+    // 4. Unpin worker back to any eligible worker (scheduler decides)
+    const unpinned = await handlers['task.setWorker']({ id: task.id, workerId: null })
+    expect(unpinned.constraints.workerId).toBeUndefined()
+    expect(unpinned.constraints.adapterId).toBeUndefined()
+    expect(unpinned.constraints.model).toBeUndefined()
+  })
+})
+
