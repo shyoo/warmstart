@@ -1,4 +1,5 @@
 import type { Project, Run, RunQuota, Task, TaskStatus } from '@shared/tasks.js'
+import { resolveModelChoice } from '@shared/tasks.js'
 import type { Session, Worker } from '@shared/protocol.js'
 import { adapter } from './adapters/index.js'
 import { lastQuota, refreshUsage } from './quota.js'
@@ -776,6 +777,10 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
   // — worse, because it is quiet — a task that records a setting nothing ever applied. The form
   // will not have offered the choice for such a worker; this is the guard for every other caller.
   const canSetEffort = adapter(worker.adapterId).info.capabilities.selectableEffort
+  // ⛔ Task → worker → the CLI's own choice, resolved in one place shared with the renderer so the
+  // form cannot promise an inheritance the scheduler does not perform. `null` at the end is a real
+  // answer: let the CLI pick, which is what every dispatch did before there was a default.
+  const picked = resolveModelChoice(task.constraints, worker, canSetEffort)
   // ⭐ The conversation this task was already having, if it is still on disk and this is the same
   // account and the same tree. Resuming costs the read of a cache that is very likely cold by now;
   // *not* resuming costs rebuilding the whole prefix and re-discovering the branch, the files and
@@ -788,8 +793,8 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
     transport: 'stream',
     projectId: project?.id ?? null,
     ...(revive ? { resume: revive } : {}),
-    ...(task.constraints.model ? { model: task.constraints.model } : {}),
-    ...(task.constraints.effort && canSetEffort ? { effort: task.constraints.effort } : {})
+    ...(picked.model ? { model: picked.model } : {}),
+    ...(picked.effort ? { effort: picked.effort } : {})
   })
 
   const run = startRun({

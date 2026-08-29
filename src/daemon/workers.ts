@@ -17,6 +17,8 @@ interface WorkerRow {
   human_occupied: number
   role: string
   max_concurrent: number
+  default_model: string | null
+  default_effort: string | null
   identity_json: string | null
   health_json: string | null
   created_at: number
@@ -33,6 +35,8 @@ function toWorker(r: WorkerRow): Worker {
     humanOccupied: r.human_occupied === 1,
     role: (r.role as WorkerRole) ?? 'both',
     maxConcurrent: r.max_concurrent,
+    defaultModel: r.default_model,
+    defaultEffort: r.default_effort,
     identity: r.identity_json ? (JSON.parse(r.identity_json) as WorkerIdentity) : null,
     health: r.health_json ? (JSON.parse(r.health_json) as WorkerHealth) : null,
     createdAt: r.created_at,
@@ -153,12 +157,18 @@ function boundedConcurrency(value: number | undefined, fallback: number): number
 
 export function updateWorker(
   id: string,
-  patch: Partial<Pick<Worker, 'label' | 'enabled' | 'humanOccupied' | 'maxConcurrent' | 'role'>>
+  patch: Partial<
+    Pick<
+      Worker,
+      'label' | 'enabled' | 'humanOccupied' | 'maxConcurrent' | 'role' | 'defaultModel' | 'defaultEffort'
+    >
+  >
 ): Worker {
   const current = requireWorker(id)
   db()
     .prepare(
-      `update workers set label = ?, enabled = ?, human_occupied = ?, max_concurrent = ?, role = ?
+      `update workers set label = ?, enabled = ?, human_occupied = ?, max_concurrent = ?, role = ?,
+                          default_model = ?, default_effort = ?
        where id = ?`
     )
     .run(
@@ -167,6 +177,11 @@ export function updateWorker(
       (patch.humanOccupied ?? current.humanOccupied) ? 1 : 0,
       boundedConcurrency(patch.maxConcurrent, current.maxConcurrent),
       patch.role ?? current.role,
+      // ⛔ `undefined` means "not mentioned", `null` means "clear it". Collapsing the two with `??`
+      // would make the default unclearable: every attempt to go back to the CLI's own choice would
+      // silently re-save the value being cleared.
+      patch.defaultModel === undefined ? current.defaultModel : patch.defaultModel,
+      patch.defaultEffort === undefined ? current.defaultEffort : patch.defaultEffort,
       id
     )
   return announce(requireWorker(id))

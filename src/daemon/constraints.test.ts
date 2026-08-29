@@ -149,13 +149,23 @@ describe('the effort capability itself', () => {
     }
   })
 
-  it('is false wherever no start-up flag has been measured', () => {
-    // ⚠️ A record of the state on 2026-08-27, not a rule. Claude Code sets effort inside the session
-    // (`/effort`); Antigravity encodes it in the model id; codex has a documented config key nobody
-    // here has run, and this adapter's verification says `measured`. Delete a line from this list
-    // the day one is exercised against a real CLI — and not before.
+  it('says what was measured against each real CLI, and nothing more', () => {
+    // ⚠️ A record of what has been *run*, not a rule — the 2026-08-27 version of this list said all
+    // three were false and told the next reader to change a line "the day one is exercised against a
+    // real CLI, and not before". That day was 2026-08-29 for exactly one of them.
+    //
+    // ⭐ `claude-code` **true**: claude 2.1.250 takes `--effort low|medium|high|xhigh|max`, and a
+    //    headless run with `--effort low` came back with `effort: "low"` on its transcript's
+    //    assistant record — set *and* observable, which is what promoting a capability requires.
+    // ⛔ `antigravity-cli` **false, and now for a measured reason rather than an argued one**. agy
+    //    1.1.22 has the flag and refuses every combination this fleet would send:
+    //    `gemini-3.1-pro-high` "conflicts with --effort=low", `claude-sonnet-4-6` "not supported for
+    //    model", `gpt-oss-120b-medium` conflicts. Only a bare family — `gemini-3.1-pro` — accepts
+    //    it, and `agy models` does not list the bare families. Two spellings, one choice.
+    // ⚠️ `openai-compatible` **false, still unrun**. `model_reasoning_effort` is a documented config
+    //    key and this adapter's verification says `measured`, so documentation alone is not enough.
     const expected: Record<string, boolean> = {
-      'claude-code': false,
+      'claude-code': true,
       'antigravity-cli': false,
       'openai-compatible': false
     }

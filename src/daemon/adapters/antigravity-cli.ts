@@ -92,6 +92,17 @@ const info: AdapterInfo = {
     // ⛔ Nothing to select: this vendor encodes effort in the model id itself, which is why its cost
     // model lists `gemini-3.1-pro-high` and `gemini-3.1-pro-low` as two models with one level each.
     // Choosing the model *is* choosing the effort here, and a second control would double-count it.
+    //
+    // ⭐ **`--effort` exists on agy 1.1.22 and this stays false anyway** — measured 2026-08-29, and
+    // the CLI is the one refusing, which is stronger evidence than the argument above:
+    //   `--model gemini-3.1-pro-high --effort low` → "conflicts with --effort=low"
+    //   `--model claude-sonnet-4-6   --effort low` → "--effort is not supported for model"
+    //   `--model gpt-oss-120b-medium --effort low` → "conflicts with --effort=low"
+    //   `--model gemini-3.1-pro      --effort low` → runs
+    // So the vendor has two spellings for one choice: a *family* plus `--effort`, or a pre-combined
+    // id. `agy models` reports the combined form and this cost model prices it, so that is the one
+    // spelling agentyard uses. ⛔ Declaring `selectableEffort` true would offer a second control for
+    // a choice already made, and every operator who touched both would get a hard dispatch failure.
     selectableEffort: false,
     // ⭐ It has one after all, as of 2026-08-27. `/usage` typed into the TUI is a client-side
     // slash command - free, no turn - and the panel it draws is the only place the number exists.
@@ -843,6 +854,10 @@ export const antigravityCli: AgentAdapter = {
     // id: this CLI names its own conversations, which is what `mintsSessionId: false` says.
     if (req.resumeFrom) args.push('--conversation', req.resumeFrom)
     if (req.model) args.push('--model', req.model)
+    // ⚠️ Only ever set when this adapter declares `selectableEffort` — the scheduler drops it
+    // otherwise (adapters/types.ts), so this line is inert until the capability is promoted on
+    // measured evidence rather than on the flag existing in `--help`.
+    if (req.effort) args.push('--effort', req.effort)
 
     const mode = req.permissionMode ?? info.policy.defaultPermissionMode
     if (mode === 'dangerously-skip-permissions') {

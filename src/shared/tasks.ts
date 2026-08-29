@@ -856,3 +856,62 @@ export interface LandingResult {
    */
   branchDeleted?: boolean
 }
+
+/** Where a resolved model or effort came from, so the UI can say rather than just show. */
+export type ModelSource = 'task' | 'worker' | 'cli'
+
+export interface ResolvedModelChoice {
+  /** `null` means "let the CLI pick", which is a real answer and not a missing one. */
+  model: string | null
+  modelSource: ModelSource
+  effort: string | null
+  effortSource: ModelSource
+}
+
+/**
+ * Task, then worker, then whatever the CLI does on its own.
+ *
+ * ⛔ **Two tiers, not the three that finish policy uses.** A model id belongs to one CLI - `opus`
+ * means nothing to Antigravity and `gemini-3.1-pro-high` means nothing to Claude Code - so a default
+ * held at the project or the fleet would be invalid for every task that routed to a different
+ * adapter, which is most of them on a mixed fleet. The worker is the narrowest tier that always
+ * knows which CLI it is, and so the only one where the value is always meaningful.
+ *
+ * ⚠️ **`null` is an answer.** It means the CLI chooses, which is what every install did before there
+ * was a control and what a worker keeps doing until somebody sets one. It is not "unset, fall
+ * through" - there is nothing further to fall through to.
+ *
+ * ⛔ **Effort is dropped whole where the adapter cannot be told one.** Not defaulted, not passed and
+ * ignored: `selectableEffort` is false on Antigravity because agy *refuses* the flag for every model
+ * this fleet dispatches (measured 2026-08-29), so sending it would fail the dispatch outright rather
+ * than being politely ignored.
+ *
+ * ⚠️ Effort resolves independently of model. A task that pins only the model still inherits the
+ * worker's effort, because the two are separate choices the CLI takes as separate flags.
+ */
+export function resolveModelChoice(
+  constraints: Pick<TaskConstraints, 'model' | 'effort'> | null | undefined,
+  // ⚠️ Structural, not `Pick<Worker, …>`: `Worker` is not imported here and TypeScript resolved the
+  // name to the DOM's own `Worker` global without complaining, which typechecked into nonsense.
+  worker: { defaultModel: string | null; defaultEffort: string | null } | null | undefined,
+  selectableEffort: boolean
+): ResolvedModelChoice {
+  const model = constraints?.model ?? null
+  const workerModel = worker?.defaultModel ?? null
+
+  const resolvedModel = model ?? workerModel
+  const modelSource: ModelSource = model ? 'task' : workerModel ? 'worker' : 'cli'
+
+  if (!selectableEffort) {
+    return { model: resolvedModel, modelSource, effort: null, effortSource: 'cli' }
+  }
+
+  const effort = constraints?.effort ?? null
+  const workerEffort = worker?.defaultEffort ?? null
+  return {
+    model: resolvedModel,
+    modelSource,
+    effort: effort ?? workerEffort,
+    effortSource: effort ? 'task' : workerEffort ? 'worker' : 'cli'
+  }
+}

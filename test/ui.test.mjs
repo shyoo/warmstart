@@ -1076,6 +1076,37 @@ try {
   )
   check('raising it reaches the daemon, which is the only opinion that gates dispatch', width === '3', width)
 
+  // ⭐ The account's default model — what every task routed here runs on unless it pins its own.
+  // The New Task form has had a model picker since M3, but only when a worker was pinned, and there
+  // was nowhere at all to say "this account normally uses X".
+  const modelSelect = `document.querySelector('.tbl tbody tr td:nth-child(6) select')`
+  check(
+    'an account can be given a default model',
+    (await evaluate(`${modelSelect}?.tagName`)) === 'SELECT',
+    'before this there was no per-account default anywhere in the app'
+  )
+  check(
+    'which starts at the CLI default, not at a model somebody has to undo',
+    (await evaluate(`${modelSelect}?.value`)) === '',
+    'null means the vendor picks — the state every install ran in before this control existed'
+  )
+  check(
+    '"CLI default" is offered as a real choice, so the setting can be cleared',
+    (await evaluate(`${modelSelect}?.options[0]?.text`)) === 'CLI default',
+    'a picker with no empty option is one you can set and never unset'
+  )
+  // ⛔ The list comes from the daemon's cost models, not from a table in the renderer. A second list
+  // here would drift the day a model was added to a file and not to this bundle.
+  const served = await evaluate(
+    `window.agentyard.rpc('model.options').then(o => String(o.find(x => x.adapterId === 'claude-code')?.models.length ?? 0))`
+  )
+  const offered = await evaluate(`String((${modelSelect}?.options.length ?? 1) - 1)`)
+  check(
+    'and every model it offers came from the cost model that will price it',
+    offered === served && served !== '0',
+    `offered ${offered}, served ${served}`
+  )
+
   const errors = await evaluate('window.__agentyardErrors?.length ?? 0')
   check('no uncaught renderer errors', errors === 0)
 } catch (err) {

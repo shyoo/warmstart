@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   FINISH_LABELS,
+  resolveModelChoice,
   SHARING_LABELS,
   type FinishPolicyChoice,
   type ResolvedFinishPolicy,
@@ -10,7 +11,7 @@ import {
   type Task,
   type TaskMessage
 } from '@shared/tasks'
-import type { Session } from '@shared/protocol'
+import type { ModelOptions, Session } from '@shared/protocol'
 import { rpc, useActivity, useDaemonEvents, useNow, type FleetEntry } from '../lib/daemon'
 import { conversationIdFor } from '../lib/conversation'
 import { showsLiveOutput } from '../lib/live'
@@ -141,6 +142,100 @@ export function TaskThread({
  * prose in the thread, which meant "which session is this running on?" was answerable only by
  * reading a paragraph the daemon happened to have written.
  */
+/**
+ * What this task is actually running on.
+ *
+ * ⛔ **Two numbers, not one.** `requested` is what the dispatch asked for — the task's pin, or the
+ * account's default, or nothing at all; `observed` is what the agent's own transcript says answered
+ * each turn. They are different questions and they disagree in the cases that matter: a CLI that
+ * fell back when a model was busy, an operator who typed `/model` inside the session, an alias like
+ * `opus` resolving to a dated id. Showing one number would pick a side and be wrong half the time.
+ *
+ * ⚠️ Nothing at all until a turn has been metered. An empty session has no observation yet, and
+ * inventing "probably the default" here is exactly the guess the rest of this file refuses to make.
+ */
+function ModelFact({
+  session,
+  requested
+}: {
+  session: Session | null
+  requested: { model: string | null; effort: string | null; source: string }
+}): React.JSX.Element {
+  const observed = session?.model ?? null
+  const observedEffort = session?.effort ?? null
+
+  // ⚠️ The CLI's own default is a real answer and reads as one. "—" would look like a broken field.
+  const asked = requested.model ?? 'CLI default'
+  const differs = observed !== null && requested.model !== null && observed !== requested.model
+  const effortDiffers =
+    observedEffort !== null && requested.effort !== null && observedEffort !== requested.effort
+
+  return (
+    <>
+      <span title={`asked for at launch — ${requested.source}`}>
+        {asked}
+        {requested.effort ? ` · ${requested.effort}` : ''}
+      </span>
+      {(observed || observedEffort) && (differs || effortDiffers) && (
+        <div className="tbl-sub warn" title="what the transcript says actually answered each turn">
+          running {observed ?? asked}
+          {observedEffort ? ` · ${observedEffort}` : ''}
+        </div>
+      )}
+      {(observed || observedEffort) && !differs && !effortDiffers && (
+        <div className="tbl-sub dim" title="confirmed by the transcript, turn by turn">
+          confirmed by the transcript
+        </div>
+      )}
+    </>
+  )
+}
+
+/**
+ * What changing the model or the effort costs, said before it is changed.
+ *
+ * ⛔ Prompt caches are **model-scoped**, so switching model does not degrade the cache — it leaves it
+ * behind entirely, and the next turn rebuilds the whole prefix. Effort is cheaper and not free: it
+ * invalidates the message history on every model, and on some it takes the tools and system caches
+ * with it. Anthropic publishes both as a hierarchy; this is the two rows that apply here.
+ *
+ * ⚠️ Priced in this repo's own units — a warm read is 0.1·C and a cold rebuild 2.0·C (§1) — rather
+ * than in dollars, because the fleet runs on subscriptions where the marginal dollar is not the
+ * currency that runs out. The window is.
+ *
+ * ⭐ Only ever shown when there is a live conversation with context in it. A task that has not run,
+ * or whose session is closed, loses nothing by being re-pointed, and warning there would train the
+ * operator to dismiss the warning that matters.
+ */
+function CacheCost({
+  session,
+  changing
+}: {
+  session: Session | null
+  changing: 'model' | 'effort'
+}): React.JSX.Element | null {
+  const held = session?.contextTokens ?? 0
+  if (!session || held <= 0) return null
+
+  return (
+    <div className="warn tbl-sub">
+      {changing === 'model' ? (
+        <>
+          This conversation holds {tokens(held)} of cached context. Prompt caches belong to one model,
+          so switching discards all of it — the next turn rebuilds the prefix at 2.0·C instead of
+          reading it at 0.1·C.
+        </>
+      ) : (
+        <>
+          Changing effort invalidates this conversation’s {tokens(held)} of message cache. Cheaper
+          than a model switch, which also discards the tools and system prefix — but not free.
+        </>
+      )}{' '}
+      Applies to the next run; this session keeps what it started with.
+    </div>
+  )
+}
+
 function TaskDetail({
   detail,
   activity,
@@ -162,6 +257,14 @@ function TaskDetail({
   back: React.ReactNode
 }): React.JSX.Element {
   const { task, messages, runs, sessions } = detail
+  // ⛔ Served, never compiled in — the renderer holds no cost models, and the capability flags that
+  // decide whether an effort control exists at all live with the adapter, not here.
+  const [modelOptions, setModelOptions] = useState<ModelOptions[]>([])
+  useEffect(() => {
+    void rpc('model.options')
+      .then(setModelOptions)
+      .catch(() => setModelOptions([]))
+  }, [])
   const live = showsLiveOutput(task.status)
   const resolve = async () => {
     await rpc('task.resolve', { id: task.id })
@@ -175,6 +278,35 @@ function TaskDetail({
     (s) => s.id === runs[0]?.sessionId && s.state !== 'closed' && s.state !== 'failed'
   )
   const workspace = workspacePathFor(runs, sessions)
+
+  /**
+   * What the *next* dispatch would ask for: the task's own pin, else the account's default, else the
+   * CLI's choice — resolved by the same function the scheduler calls, so this cannot promise an
+   * inheritance the dispatch does not perform.
+   *
+   * ⚠️ `selectableEffort` decides whether an effort is even part of the answer. On Antigravity it is
+   * false and the effort is dropped at dispatch, so showing one here would describe a flag that is
+   * never sent — and that the CLI would refuse if it were.
+   */
+  const assigned = fleet.find((e) => e.worker.id === task.assignee)?.worker ?? null
+  const canSetEffort =
+    modelOptions.find((o) => o.adapterId === assigned?.adapterId)?.selectableEffort ?? false
+  const resolved = resolveModelChoice(task.constraints, assigned, canSetEffort)
+  const offered = modelOptions.find((o) => o.adapterId === assigned?.adapterId)?.models ?? []
+  // Effort needs both halves: a CLI that takes the flag, and a chosen model that has levels.
+  const taskEfforts = canSetEffort
+    ? (offered.find((m) => m.id === (resolved.model ?? ''))?.effortLevels ?? [])
+    : []
+  const requestedModel = {
+    model: resolved.model,
+    effort: resolved.effort,
+    source:
+      resolved.modelSource === 'task'
+        ? 'pinned on this task'
+        : resolved.modelSource === 'worker'
+          ? `this account’s default${assigned ? ` (${assigned.label})` : ''}`
+          : 'no model chosen — the CLI picks'
+  }
 
   return (
     <section className="detail">
@@ -220,6 +352,70 @@ function TaskDetail({
               from a warm prefix at 0.1·C or rebuilt one at 2.0·C. */}
           <Fact label="session">
             <SessionFact runs={runs} sessions={sessions} />
+          </Fact>
+
+          {/* ⭐ Which model answered, and how hard it was told to think. Both were chosen, stored and
+              metered since M3 and shown nowhere at all — the transcript knew and the operator did
+              not. */}
+          <Fact label="model">
+            <ModelFact session={liveSession ?? null} requested={requestedModel} />
+            {/* ⚠️ Only where the account's CLI has models to offer. A fleet whose cost models failed
+                to load still runs work; it just cannot be re-pointed from here. */}
+            {offered.length > 0 && (
+              <select
+                className="tbl-sub-select"
+                value={task.constraints.model ?? ''}
+                title={
+                  'Which model the next run uses. A conversation already open keeps the model it ' +
+                  'started with — caches belong to one model, so switching mid-conversation throws ' +
+                  'the cached context away.'
+                }
+                onChange={(e) => {
+                  void rpc('task.setModel', {
+                    id: task.id,
+                    model: e.target.value || null,
+                    // ⛔ Cleared with the model. A level legal for the old model need not be legal
+                    // for the new one, and the daemon refuses the pair rather than storing it.
+                    effort: null
+                  }).then(refresh)
+                }}
+              >
+                <option value="">
+                  {assigned?.defaultModel
+                    ? `account default (${assigned.defaultModel})`
+                    : 'CLI default'}
+                </option>
+                {offered.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.id}
+                  </option>
+                ))}
+              </select>
+            )}
+            {taskEfforts.length > 0 && (
+              <select
+                className="tbl-sub-select"
+                value={task.constraints.effort ?? ''}
+                title="How hard the model thinks on the next run."
+                onChange={(e) => {
+                  void rpc('task.setModel', {
+                    id: task.id,
+                    model: task.constraints.model ?? null,
+                    effort: e.target.value || null
+                  }).then(refresh)
+                }}
+              >
+                <option value="">
+                  {assigned?.defaultEffort ? `account default (${assigned.defaultEffort})` : 'CLI default'}
+                </option>
+                {taskEfforts.map((level) => (
+                  <option key={level} value={level}>
+                    {level}
+                  </option>
+                ))}
+              </select>
+            )}
+            <CacheCost session={liveSession ?? null} changing="model" />
           </Fact>
 
           {/*

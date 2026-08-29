@@ -374,13 +374,31 @@ try {
     badModel.ok === false && /not a model/.test(badModel.message),
     badModel.message
   )
-  const badEffort = await daemon.rpcResult('task.create', {
-    title: 'an effort nothing can apply',
-    constraints: { workerId: fresh.id, model: goodModel, effort: 'max' }
+  // ⭐ Effort is selectable on Claude Code as of claude 2.1.250 — `--effort low|medium|high|xhigh|max`,
+  // measured 2026-08-29 by running it and reading `effort` back off the transcript. This check said
+  // the opposite until that day, which was correct when it was written and is the reason it is here:
+  // the capability is a fact about a CLI version, so the suite has to be able to change its mind.
+  const effortModel = claudeOptions?.models.find((m) => m.effortLevels.includes('max'))?.id
+  const goodEffort = await daemon.rpcResult('task.create', {
+    title: 'an effort the CLI can carry',
+    constraints: { workerId: fresh.id, model: effortModel, effort: 'max' }
   })
   check(
-    'an effort level is refused where the CLI has no flag to carry it',
-    badEffort.ok === false && /no effort flag/.test(badEffort.message),
+    'an effort level is accepted where the CLI has a flag to carry it',
+    goodEffort.ok === true && goodEffort.result?.constraints?.effort === 'max',
+    JSON.stringify(goodEffort.result?.constraints ?? goodEffort.message)
+  )
+
+  // ⛔ And still refused where the *model* has no such level. `claude-haiku-4-5` lists none — the API
+  // rejects effort on it — so accepting one would store a setting that fails at dispatch.
+  const noLevels = claudeOptions?.models.find((m) => m.effortLevels.length === 0)?.id
+  const badEffort = await daemon.rpcResult('task.create', {
+    title: 'an effort this model does not have',
+    constraints: { workerId: fresh.id, model: noLevels, effort: 'max' }
+  })
+  check(
+    'an effort level the model does not have is still refused at the door',
+    badEffort.ok === false && /no effort level/.test(badEffort.message),
     'a task recording a setting nothing applied is worse than one that never offered the choice'
   )
 

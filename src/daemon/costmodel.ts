@@ -46,7 +46,13 @@ export interface CostModelFile {
   }
   models?: Array<{
     id: string
-    context_window: number
+    /**
+     * ⚠️ Nullable, like the two price fields beside it. A model whose window nobody has read is a
+     * missing denominator, not a broken model — `contextWindowFor` already returns `null` for it and
+     * the UI shows no percentage. Copying a plausible number from a sibling model would be a guess
+     * wearing a measurement's clothes, which is the one thing this file may not contain.
+     */
+    context_window: number | null
     input_per_mtok: number | null
     output_per_mtok: number | null
     tokenizer: string

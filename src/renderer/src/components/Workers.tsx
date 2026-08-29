@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { AdapterDetection, AdapterInfo, Session } from '@shared/protocol'
+import type { AdapterDetection, AdapterInfo, ModelOptions, Session, Worker } from '@shared/protocol'
 import { rpc, useDaemonEvents, type FleetEntry } from '../lib/daemon'
 import { age, percent, quotaGap } from '../lib/format'
 import { TerminalPane } from './Terminal'
@@ -22,6 +22,12 @@ export function Workers({
   refresh: () => Promise<void>
 }): React.JSX.Element {
   const [adapters, setAdapters] = useState<AdapterInfo[]>([])
+  /**
+   * ⛔ Fetched from the daemon, never compiled in. The renderer holds no cost models, and a second
+   * table of model facts here would drift from the first the day a model was added to a file and
+   * not to this bundle — the same argument the New Task form's picker already makes.
+   */
+  const [modelOptions, setModelOptions] = useState<ModelOptions[]>([])
   const [detections, setDetections] = useState<AdapterDetection[]>([])
   const [adding, setAdding] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
@@ -55,8 +61,26 @@ export function Workers({
 
   useEffect(() => {
     void rpc('adapter.list').then(setAdapters)
+    // A fleet with no priceable model list still runs work; the column falls back to CLI default.
+    void rpc('model.options').then(setModelOptions).catch(() => setModelOptions([]))
     void rpc('adapter.detect').then(setDetections)
   }, [])
+
+  const modelsFor = (adapterId: string): ModelOptions | null =>
+    modelOptions.find((o) => o.adapterId === adapterId) ?? null
+
+  /**
+   * The effort levels this account could actually be given.
+   *
+   * ⛔ Both halves required: the CLI must take an effort flag *and* the chosen model must have
+   * levels. `claude-haiku-4-5` lists none — the API rejects effort on it — so a control there would
+   * offer a choice that fails at dispatch.
+   */
+  const effortsFor = (worker: Worker): string[] => {
+    const options = modelsFor(worker.adapterId)
+    if (!options?.selectableEffort || !worker.defaultModel) return []
+    return options.models.find((m) => m.id === worker.defaultModel)?.effortLevels ?? []
+  }
 
   const guard = async (key: string, fn: () => Promise<unknown>) => {
     setBusy(key)
@@ -220,6 +244,7 @@ export function Workers({
               <th>Account</th>
               <th>Quota</th>
               <th className="tbl-num">Max</th>
+              <th>Model</th>
               <th>Role</th>
               <th>Policy</th>
               <th />
@@ -353,6 +378,76 @@ export function Workers({
                         )
                       }}
                     />
+                  </td>
+                  {/* ⭐ The account's default model and effort — what every task routed here runs
+                      on unless it pins something of its own (`resolveModelChoice`, task → worker →
+                      the CLI itself).
+                      ⛔ On the worker and nowhere higher: a model id belongs to one CLI, so the same
+                      control on a project or the fleet would hold a value that is invalid for every
+                      task routed to a different adapter.
+                      ⚠️ "CLI default" is a real option, not a blank. It means the vendor picks, which
+                      is what every install did before this control existed. */}
+                  <td>
+                    <select
+                      value={worker.defaultModel ?? ''}
+                      disabled={busy === `model:${worker.id}`}
+                      title={
+                        'The model tasks on this account run on unless they pin their own. ' +
+                        'Changing it affects the next run — a conversation already open keeps the ' +
+                        'model it started with, because switching mid-conversation throws away its ' +
+                        'prompt cache.'
+                      }
+                      onChange={(e) =>
+                        void guard(`model:${worker.id}`, () =>
+                          rpc('worker.update', {
+                            id: worker.id,
+                            // ⛔ `null`, not `''` — the daemon reads undefined as "not mentioned" and
+                            // null as "clear it", and an empty string is neither.
+                            defaultModel: e.target.value || null,
+                            // ⚠️ Effort is cleared with the model it belonged to. A level that was
+                            // legal for the old model is not necessarily legal for the new one, and
+                            // the daemon would refuse the pair — so the operator re-picks it.
+                            ...(e.target.value !== worker.defaultModel ? { defaultEffort: null } : {})
+                          })
+                        )
+                      }
+                    >
+                      <option value="">CLI default</option>
+                      {(modelsFor(worker.adapterId)?.models ?? []).map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.id}
+                        </option>
+                      ))}
+                    </select>
+                    {/* Effort appears only where the CLI takes a flag for it *and* the chosen model
+                        has levels. Antigravity has neither: it bakes effort into the model id and
+                        refuses `--effort` outright, measured 2026-08-29. */}
+                    {effortsFor(worker).length > 0 && (
+                      <select
+                        className="tbl-sub-select"
+                        value={worker.defaultEffort ?? ''}
+                        disabled={busy === `effort:${worker.id}`}
+                        title={
+                          'How hard the model thinks. Like the model, this is read at launch and ' +
+                          'applies to the next run.'
+                        }
+                        onChange={(e) =>
+                          void guard(`effort:${worker.id}`, () =>
+                            rpc('worker.update', {
+                              id: worker.id,
+                              defaultEffort: e.target.value || null
+                            })
+                          )
+                        }
+                      >
+                        <option value="">CLI default</option>
+                        {effortsFor(worker).map((level) => (
+                          <option key={level} value={level}>
+                            {level}
+                          </option>
+                        ))}
+                      </select>
+                    )}
                   </td>
                   <td>
                     <select

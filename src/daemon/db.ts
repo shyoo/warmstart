@@ -578,6 +578,20 @@ const MIGRATIONS: string[] = [
   // reading was taken". The comparison declines rather than guessing.
   `
   alter table runs add column trunk_sha_before text;
+  `,
+
+  // 15 - the model and effort this account reaches for when nothing more specific says otherwise.
+  //
+  // ⛔ On the **worker**, not the project or the fleet. A model id belongs to one CLI - `opus` means
+  // nothing to Antigravity and `gemini-3.1-pro-high` means nothing to Claude Code - so a default
+  // held anywhere that can route to more than one adapter is a value that is invalid most of the
+  // time. The worker is the narrowest place that always knows which CLI it is.
+  //
+  // ⚠️ Null means "whatever the CLI does by itself", which is what every install did before this and
+  // what every worker keeps doing after it. Null is not a missing default; it is the CLI's own.
+  `
+  alter table workers add column default_model text;
+  alter table workers add column default_effort text;
   `
 ]
 

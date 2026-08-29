@@ -1193,6 +1193,16 @@ select {
   text-align: right;
 }
 
+/* A second, quieter select stacked under the first in one cell — effort under its model. */
+.tbl-sub-select {
+  display: block;
+  margin-top: var(--sp-1);
+  min-width: 0;
+  width: 100%;
+  font-size: var(--text-dense);
+  color: var(--color-text-faint);
+}
+
 input:focus-visible,
 select:focus-visible,
 .btn:focus-visible,

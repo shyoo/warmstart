@@ -110,6 +110,78 @@
       ]
     },
     {
+      "id": "gemini-3.6-flash-high",
+      "context_window": null,
+      "input_per_mtok": null,
+      "output_per_mtok": null,
+      "tokenizer": "gemini-v3",
+      "context_awareness": false,
+      "effort_levels": [
+        "high"
+      ],
+      "$comment": "Listed by `agy models` on 2026-08-29 (agy 1.1.22) and absent from this file until then, so it could be neither picked nor priced. context_window is null because the figure has not been read from anywhere - null reports unknown, and a copied 1000000 would be a guess wearing a measurement's clothes."
+    },
+    {
+      "id": "gemini-3.6-flash-medium",
+      "context_window": null,
+      "input_per_mtok": null,
+      "output_per_mtok": null,
+      "tokenizer": "gemini-v3",
+      "context_awareness": false,
+      "effort_levels": [
+        "medium"
+      ],
+      "$comment": "Listed by `agy models` on 2026-08-29 (agy 1.1.22) and absent from this file until then, so it could be neither picked nor priced. context_window is null because the figure has not been read from anywhere - null reports unknown, and a copied 1000000 would be a guess wearing a measurement's clothes."
+    },
+    {
+      "id": "gemini-3.6-flash-low",
+      "context_window": null,
+      "input_per_mtok": null,
+      "output_per_mtok": null,
+      "tokenizer": "gemini-v3",
+      "context_awareness": false,
+      "effort_levels": [
+        "low"
+      ],
+      "$comment": "Listed by `agy models` on 2026-08-29 (agy 1.1.22) and absent from this file until then, so it could be neither picked nor priced. context_window is null because the figure has not been read from anywhere - null reports unknown, and a copied 1000000 would be a guess wearing a measurement's clothes."
+    },
+    {
+      "id": "gemini-3.5-flash-high",
+      "context_window": null,
+      "input_per_mtok": null,
+      "output_per_mtok": null,
+      "tokenizer": "gemini-v3",
+      "context_awareness": false,
+      "effort_levels": [
+        "high"
+      ],
+      "$comment": "Listed by `agy models` on 2026-08-29 (agy 1.1.22) and absent from this file until then, so it could be neither picked nor priced. context_window is null because the figure has not been read from anywhere - null reports unknown, and a copied 1000000 would be a guess wearing a measurement's clothes."
+    },
+    {
+      "id": "gemini-3.5-flash-medium",
+      "context_window": null,
+      "input_per_mtok": null,
+      "output_per_mtok": null,
+      "tokenizer": "gemini-v3",
+      "context_awareness": false,
+      "effort_levels": [
+        "medium"
+      ],
+      "$comment": "Listed by `agy models` on 2026-08-29 (agy 1.1.22) and absent from this file until then, so it could be neither picked nor priced. context_window is null because the figure has not been read from anywhere - null reports unknown, and a copied 1000000 would be a guess wearing a measurement's clothes."
+    },
+    {
+      "id": "gemini-3.5-flash-low",
+      "context_window": null,
+      "input_per_mtok": null,
+      "output_per_mtok": null,
+      "tokenizer": "gemini-v3",
+      "context_awareness": false,
+      "effort_levels": [
+        "low"
+      ],
+      "$comment": "Listed by `agy models` on 2026-08-29 (agy 1.1.22) and absent from this file until then, so it could be neither picked nor priced. context_window is null because the figure has not been read from anywhere - null reports unknown, and a copied 1000000 would be a guess wearing a measurement's clothes."
+    },
+    {
       "id": "claude-sonnet-4-6",
       "context_window": 1000000,
       "input_per_mtok": null,

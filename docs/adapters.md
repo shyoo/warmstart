@@ -109,15 +109,26 @@ behaviour falls out of it:
   amount rather than zero. Doctor states which, and what it costs.
 - **`maxAccounts: 1`** → commissioning refuses the second account, with a message that says why and
   what to do instead.
-- **`selectableEffort: false`** → the New Task form draws **no effort control at all** for that
-  account, rather than a disabled one. ⚠️ False on all three built-ins as of 2026-08-27, and that is
-  a measurement: effort is something this codebase *reads back* from a transcript, and no built-in
-  CLI has a start-up flag for one that anybody here has run. Claude Code sets it inside the session
-  (`/effort`); Antigravity encodes it in the model id, which is why its cost model lists
-  `gemini-3.1-pro-high` and `gemini-3.1-pro-low` as two models with one level each; codex documents
-  `model_reasoning_effort` as a `-c` override, unrun, and that adapter's verification says
-  `measured`. ⛔ The scheduler drops `constraints.effort` for any adapter that says false, so an
-  adapter reading `SpawnRequest.effort` can trust it said it could act on one.
+- **`selectableEffort`** → where false, the UI draws **no effort control at all** for that account,
+  rather than a disabled one. ⛔ The scheduler drops `constraints.effort` for any adapter that says
+  false, so an adapter reading `SpawnRequest.effort` can trust it said it could act on one.
+  **Re-measured 2026-08-29, and it moved:**
+  - **`claude-code`: true.** claude 2.1.250 takes `--effort low|medium|high|xhigh|max` — the same
+    five its cost model lists for `claude-opus-5` and `claude-sonnet-5`, and none for
+    `claude-haiku-4-5`, which takes no effort at all. ⭐ Promoted on a run, not on `--help`: a
+    headless call with `--effort low` came back with `effort: "low"` on its transcript's assistant
+    record, the field `transcript.ts` already parses. Set *and* observable.
+  - **`antigravity-cli`: false — and now because the CLI refuses, not because we argued it should.**
+    agy 1.1.22 has the flag and rejects every combination this fleet dispatches:
+    `--model gemini-3.1-pro-high --effort low` → *"conflicts with --effort=low"*;
+    `--model claude-sonnet-4-6 --effort low` → *"--effort is not supported for model"*;
+    `--model gpt-oss-120b-medium --effort low` → conflicts. Only a **bare family** takes it:
+    `--model gemini-3.1-pro --effort low` runs. So the vendor has two spellings for one choice, and
+    `agy models` reports the pre-combined one, which is what this cost model prices. ⛔ Declaring
+    true would offer a second control for a choice already made, and anyone touching both would get
+    a hard dispatch failure rather than a politely ignored flag.
+  - **`openai-compatible`: false, still unrun.** `model_reasoning_effort` is a documented `-c`
+    override and that adapter's verification says `measured`, so documentation alone is not enough.
 - **`needsReauth(reason)`** → the *presentation* of a held-out account: `re-sign-in required` and a
   Sign in button, rather than a reason to go and read. ⛔ Optional, and the adapter answers because
   the sentence is its CLI's — an expired subscription, a revoked key and a crash all arrive as the

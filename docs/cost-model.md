@@ -460,7 +460,45 @@ exists; nothing has wired it into `overrunFactor` yet.
 
 ---
 
-## 11. Owed
+## 11. Changing model or effort inside a conversation
+
+A model and an effort level are chosen at launch and read once. Changing either **while a
+conversation is open** is a different act from choosing one for a new task, and it costs something the
+UI has to say out loud before the operator commits.
+
+Anthropic publishes the invalidation as a three-tier hierarchy. Two rows matter here (`Yes` = that
+cache survives the change):
+
+| Change mid-conversation | Tools cache | System cache | Messages cache |
+|---|:--:|:--:|:--:|
+| **Model switch** | No | No | No |
+| **Effort / thinking change** | model-specific | model-specific | **No** |
+| A normal turn (message content) | Yes | Yes | No |
+
+⛔ **A model switch is a full rebuild, and there is no escape hatch.** Caches are *scoped to one
+model*, so the new model does not inherit a degraded cache — it inherits nothing. In this repo's own
+units (§1) the next turn pays a cold rebuild at **2.0·C** where it would have paid a warm read at
+**0.1·C**. That is the number the task pane shows, against the session's live `contextTokens`.
+
+⚠️ **An effort change is cheaper and still not free.** It always drops the message history, and on
+some models takes tools and system with it. Worth doing when the work changed character; not worth
+doing to shave a level off a run already in flight.
+
+⭐ **Which is why both controls apply to the next run and never to a live session.** The alternative —
+sending `/model` or `/effort` into a running agent — spends the cache immediately and mid-thought,
+and the operator who wanted "think harder from here" gets a bill for the conversation so far. The
+same argument `sharing.ts` makes for never moving an agent between worktrees mid-run.
+
+⚠️ **Setting a model's *default* effort explicitly is free.** Anthropic states that passing the
+default is equivalent to omitting it, so a per-worker default that matches the model's own default
+costs nothing to send — which is what makes an always-sent default safe.
+
+⛔ **Unverified for Antigravity.** The hierarchy above is Anthropic's, and this fleet applies it to
+Claude Code only. agy reports `cache_read_tokens: 0` on every turn measured to date (2026-08-28), so
+there may be no cache there to lose — the honest position is that nobody has checked, and the pane
+says nothing about cache cost on that provider rather than guessing.
+
+## 12. Owed
 
 **Owed:** Vertex and Antigravity cache pricing numbers. The pricing page truncated on two fetch
 attempts on 2026-08-24 and the numbers were deliberately **not guessed**. The schema has the slot;

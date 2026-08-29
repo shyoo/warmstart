@@ -28,10 +28,15 @@ const info: AdapterInfo = {
     nativeWorktree: true,
     multimodalInput: true,
     mcp: true,
-    // ⛔ No start-up flag for it. Effort is chosen inside a running session (`/effort`) and
-    // arrives here only as an observation on each turn — transcript.ts reads it back per request.
-    // Measured 2026-08-27 against the CLI's flag surface; promote this the day a flag exists.
-    selectableEffort: false,
+    // ⭐ **A flag exists as of claude 2.1.250**, which the note here promised to watch for: `--effort
+    // <level>` taking `low, medium, high, xhigh, max` — the same five this cost model lists for
+    // opus-5 and sonnet-5, and none for haiku-4-5, which takes no effort at all.
+    // ⭐ Measured 2026-08-29, not read off `--help`: a headless run with `--effort low` came back
+    // with `effort: "low"` on the assistant record of its own transcript, which is the field
+    // transcript.ts already parses. The flag is set *and* observable, so the loop closes.
+    // ⚠️ Chosen at launch, per session. `/effort` mid-session still works and still costs the
+    // messages cache — see docs/cost-model.md §11 for why that is a different decision.
+    selectableEffort: true,
     quotaProbe: 'cli',
     // `--session-id` takes a uuid we choose, which is what makes the transcript path knowable before
     // the file exists and what lets orphan reaping prove a pid is ours.
@@ -472,6 +477,10 @@ export const claudeCode: AgentAdapter = {
           req.permissionMode ?? info.policy.defaultPermissionMode
         ]
     if (req.model) args.push('--model', req.model)
+    // ⚠️ Only ever set when this adapter declares `selectableEffort` — the scheduler drops it
+    // otherwise (adapters/types.ts), so this line is inert until the capability is promoted on
+    // measured evidence rather than on the flag existing in `--help`.
+    if (req.effort) args.push('--effort', req.effort)
     if (req.mcpConfig) {
       args.push('--mcp-config', req.mcpConfig)
       if (req.transport === 'stream') {

@@ -9,8 +9,8 @@ if you add a line, find the one it obsoletes and cut it in the same edit. Finish
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
 **Baseline (2026-08-29, measured on this machine):** `npm run typecheck` clean · `npm run lint` clean ·
-`npm run build` clean · `npm test` 569/569 (2 POSIX-only skipped) · `npm run test:daemon` 124/124 ·
-`npm run test:ui` 121/121 ·
+`npm run build` clean · `npm test` 587/587 (2 POSIX-only skipped) · `npm run test:daemon` 125/125 ·
+`npm run test:ui` 125/125 ·
 `npm run test:pack` 18/18 · L4 (opt-in) landed a real agent commit on origin/main. Electron 44.0.0,
 electron-builder 26.15.3, 0 npm vulnerabilities. CLIs here: claude 2.1.250 · agy 1.1.22 · codex 0.149.1.
 
@@ -121,9 +121,10 @@ docs/                  cost-model.md, glossary.md, adapters.md, landing.md, sess
   `mandate.land` stays the authority and no UI may widen it.
 - ⭐ **The daemon's log is readable from inside the app** (Settings > Logs): live, filterable, backed
   by a ring buffer so a window opened late still sees the past, and a file per day kept a fortnight.
-- ⚠️ **Pinning a task to an account and a model has never run end to end; only its refusals have.**
-  `checkConstraints` (api.ts) rejects what nothing can honour, and ⛔ **`selectableEffort` is false on
-  all three built-ins** (`docs/adapters.md` has the per-CLI reason), so no effort control is drawn.
+- ⭐ **Model and effort are choosable, inherited and visible** (2026-08-29): **task → worker → the
+  CLI's own default**, via `resolveModelChoice`, shared by the scheduler and both forms. ⚠️
+  **`selectableEffort` is true for `claude-code` only** — measured per CLI, reasons in
+  `docs/adapters.md`. ⛔ **No pinned model has yet reached a real agent process.**
 - ⚠️ **Three paths are unverified and marked in the code:** `/compact` on `stream` (**R6**), keepalive *execution*, and a consult answered by a real model (**R8**). The arithmetic is unit-tested; the firing is not.
 - ⭐ **Antigravity runs, reports its quota, and resumes a conversation by id** (**R9** closed the
   opposite way round from how it was asked, `docs/cost-model.md` §5; the stream shapes and

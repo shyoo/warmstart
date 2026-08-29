@@ -166,6 +166,10 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
     },
     'worker.update': (p) => {
       const { id, ...patch } = p
+      // ⛔ Checked at the door, exactly as a task's own pin is. A default is worse than a pin when it
+      // is wrong: nobody chose it at the moment of dispatch, so an invalid one fails *every* task
+      // routed to this account with an error about a model the operator set days ago and forgot.
+      checkWorkerDefaults(requireWorker(id).adapterId, patch)
       return updateWorker(id, patch)
     },
     'worker.retire': (p) => retireWorker(p.id),
@@ -208,7 +212,7 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
                 const spec = cm.modelSpec(id)
                 return {
                   id,
-                  contextWindow: spec?.context_window ?? 0,
+                  contextWindow: spec?.context_window ?? null,
                   effortLevels: spec?.effort_levels ?? []
                 }
               })
@@ -403,6 +407,21 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
      * moved out of it, because moving an agent mid-thought is the one thing sharing must never do.
      */
     'task.setSessionSharing': (p) => updateTask(p.id, { sessionSharing: p.sessionSharing }),
+    /**
+     * ⚠️ Next run only. Nothing is sent into a session that is already talking — see the note on the
+     * protocol type for what a mid-conversation switch costs.
+     */
+    'task.setModel': (p) => {
+      const task = requireTask(p.id)
+      // ⛔ Through the same door a filing goes through. The adapter has to be known before a model
+      // can be checked, and `checkConstraints` is where that argument already lives.
+      const constraints = checkConstraints({
+        ...task.constraints,
+        ...(p.model ? { model: p.model } : { model: undefined }),
+        ...(p.effort ? { effort: p.effort } : { effort: undefined })
+      })
+      return updateTask(p.id, { constraints })
+    },
     'task.land': async (p) => {
       const result = await relandTask(p.id)
       return { task: requireTask(p.id), landed: result.ok, ...(result.reason ? { reason: result.reason } : {}) }
@@ -633,6 +652,42 @@ ${p.note}`, run.id)
  * ⚠️ The adapter is derived from the pinned worker rather than taken on trust. Two fields that can
  * disagree about which CLI will run this are two fields that will eventually disagree.
  */
+
+/**
+ * Is this account's default model — and effort, where it has one — something its CLI could run?
+ *
+ * ⚠️ `null` is always allowed and never checked: it means "let the CLI pick", which is the state
+ * every worker ships in and the one the operator returns to by clearing the box.
+ */
+export function checkWorkerDefaults(
+  adapterId: string,
+  patch: { defaultModel?: string | null; defaultEffort?: string | null }
+): void {
+  const info = adapter(adapterId).info
+  const cm = costModel(info.policy.costModelId)
+
+  if (patch.defaultModel) {
+    if (!cm.modelSpec(patch.defaultModel)) {
+      throw new Error(`'${patch.defaultModel}' is not a model ${info.label} can be priced for`)
+    }
+  }
+
+  if (patch.defaultEffort) {
+    if (!info.capabilities.selectableEffort) {
+      // ⛔ Not "ignored" — measured 2026-08-29, agy *refuses* the flag and the dispatch fails
+      // outright, so accepting an effort here would store a value that breaks every run.
+      throw new Error(`${info.label} takes no effort flag, so it has no default effort to set`)
+    }
+    // The effort has to be legal for the model it will be sent with, and that is the default model
+    // unless a task overrides both. ⚠️ Checked against the *stored* model only when one is set here;
+    // a task that pins a different model is checked again by `checkConstraints` on its own way in.
+    const spec = patch.defaultModel ? cm.modelSpec(patch.defaultModel) : null
+    if (spec && !spec.effort_levels.includes(patch.defaultEffort)) {
+      throw new Error(`'${patch.defaultModel}' has no effort level '${patch.defaultEffort}'`)
+    }
+  }
+}
+
 export function checkConstraints(c: TaskConstraints): TaskConstraints {
   const checked: TaskConstraints = { ...c }
 

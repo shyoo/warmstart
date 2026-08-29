@@ -1682,3 +1682,70 @@ so every worker shares the operator's `~/.gemini` including its conversation sto
 processes writing it at once has never been run here. Claude Code has a real per-worker isolation root
 and carries none of that risk. Raising the number is the experiment; the honest thing is to say so
 rather than to ship it as proven.
+
+## Choosing a model, and the flag that appeared while nobody was looking (2026-08-29)
+
+The operator asked for a model and effort picker, and for the fleet to be careful about prompt
+caching when either changed mid-conversation. Most of the machinery already existed: `model.options`
+served the model list from the cost models, `checkConstraints` validated a model against its adapter,
+all three adapters pushed `--model`, and the New Task form had a picker behind a pinned worker. The
+session row already stored `model` and `effort`, and `transcript.ts` wrote the *observed* pair back on
+every turn. ⛔ **None of it was rendered anywhere** — zero references to `session.model` in any
+component. The data had been collected since M3 and shown to nobody.
+
+⭐ **`selectableEffort: false` had gone stale, and the comment saying so is what caught it.** All four
+adapters declared it false with a reason measured on 2026-08-27, and one of those reasons ended
+*"promote this the day a flag exists"*. Re-running the flag surfaces on 2026-08-29 found
+`--effort low|medium|high|xhigh|max` on claude 2.1.250 and `--effort low|medium|high` on agy 1.1.22.
+A capability recorded as a dated measurement, with the condition for changing it written down, is why
+this was a five-minute check rather than an assumption nobody revisited.
+
+⛔ **Promoted on a run, not on `--help`.** A headless `--effort low` came back with `effort: "low"` on
+its transcript's assistant record — the field `transcript.ts` already parses — so the flag is set
+*and* observable. That run cost $0.166, nearly all of it a 41k-token cache write of Claude Code's own
+system prompt, which is itself a useful measurement of what a cold start pays before it says anything.
+
+⭐ **Antigravity stays false, and the CLI is now the one saying so.** agy has the flag and rejects
+every combination this fleet dispatches — `gemini-3.1-pro-high` "conflicts with --effort=low",
+`claude-sonnet-4-6` "not supported for model", `gpt-oss-120b-medium` conflicts — while a bare family,
+`gemini-3.1-pro`, runs. So the vendor has two spellings for one choice and `agy models` reports the
+pre-combined one. ⚠️ All three refusals were free: the CLI validates before spending a turn.
+
+⚠️ **`agy models` also listed six models this cost model had never heard of** — all of
+`gemini-3.6-flash-*` and `gemini-3.5-flash-*` — so they could be neither picked nor priced. Added with
+`context_window: null` and the type widened to match, because the figure has not been read from
+anywhere and a `1000000` copied from a sibling would be a guess wearing a measurement's clothes. The
+same pass found a `?? 0` that would have rendered *unknown* as *0 tokens*.
+
+⛔ **Two tiers, not three.** Finish policy resolves task → project → fleet; model resolves **task →
+worker → the CLI's own default** and stops there. A model id belongs to one CLI — `opus` means nothing
+to Antigravity, `gemini-3.1-pro-high` means nothing to Claude Code — so a default held anywhere that
+can route to several adapters is invalid for most tasks that read it. The worker is the narrowest tier
+that always knows which CLI it is. `resolveModelChoice` lives in `@shared` and is called by the
+scheduler *and* both forms, so a form cannot promise an inheritance the dispatch does not perform.
+
+⚠️ **`null` is an answer, and `undefined` is a different one.** Null means the CLI picks — the state
+every install ran in before there was a control. Undefined means "not mentioned by this patch". The
+worker update writes all seven columns in one statement, so collapsing the two with `??` would make a
+default unclearable: every attempt to return to the CLI's own choice would silently re-save the value
+being cleared. That is one of the six mutations the tests catch.
+
+⭐ **Requested and observed are shown separately**, because they disagree in the cases that matter: a
+CLI that fell back when a model was busy, an operator who typed `/model` inside the session, an alias
+resolving to a dated id. Showing one number would pick a side and be wrong half the time. Nothing is
+shown at all until a turn has been metered.
+
+⛔ **Both controls apply to the next run and never to a live session** — the operator's own call, and
+the cheaper one. Anthropic's invalidation hierarchy (now `docs/cost-model.md` §11) says a model switch
+is a full rebuild with no escape hatch, because caches are scoped to one model; an effort change
+always drops the message history and on some models takes tools and system with it. The pane prices
+the first in this repo's own units — 2.0·C to rebuild against 0.1·C to read — against the session's
+live `contextTokens`, rather than warning vaguely. ⚠️ Unverified for Antigravity, which reports
+`cache_read_tokens: 0` on every turn measured to date, so the pane says nothing there rather than
+guessing.
+
+⚠️ **Two suites failed correctly and were updated rather than patched around.** `constraints.test.ts`
+asserted all three adapters were false and carried its own instruction — *"delete a line the day one
+is exercised against a real CLI, and not before"*. The daemon suite asserted effort was refused on
+Claude Code. Both were right when written; a capability is a fact about a CLI version, so the suite
+has to be able to change its mind and say why.

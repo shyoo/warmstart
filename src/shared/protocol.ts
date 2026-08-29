@@ -156,6 +156,19 @@ export interface Worker {
    */
   role: WorkerRole
   maxConcurrent: number
+  /**
+   * What this account reaches for when the task does not say.
+   *
+   * ⛔ Resolved **task → worker → the CLI's own default**, and no tier between. A model id belongs to
+   * one CLI, so a default held anywhere that can route to several adapters is invalid most of the
+   * time.
+   *
+   * ⚠️ `null` is not a missing setting — it is "whatever the CLI picks", which is what every install
+   * did before this field existed and what a worker keeps doing until somebody sets one.
+   */
+  defaultModel: string | null
+  /** ⚠️ Only ever sent where the adapter declares `selectableEffort`; dropped otherwise. */
+  defaultEffort: string | null
   identity: WorkerIdentity | null
   /** What the last run on this account proved about it. `null` means nothing is known against it. */
   health: WorkerHealth | null
@@ -665,7 +678,8 @@ export interface ModelOptions {
   costModelId: string
   /** ⚠️ False means this adapter takes no effort flag; the form offers no effort control for it. */
   selectableEffort: boolean
-  models: Array<{ id: string; contextWindow: number; effortLevels: string[] }>
+  /** ⚠️ `contextWindow` is null where nobody has read the figure — unknown, never 0. */
+  models: Array<{ id: string; contextWindow: number | null; effortLevels: string[] }>
 }
 
 // ---------------------------------------------------------------------------- doctor
@@ -746,7 +760,16 @@ export interface RpcMap {
   }
   'worker.update': {
     params: { id: string } & Partial<
-      Pick<Worker, 'label' | 'enabled' | 'humanOccupied' | 'maxConcurrent' | 'role'>
+      Pick<
+        Worker,
+        | 'label'
+        | 'enabled'
+        | 'humanOccupied'
+        | 'maxConcurrent'
+        | 'role'
+        | 'defaultModel'
+        | 'defaultEffort'
+      >
     >
     result: Worker
   }
@@ -939,6 +962,22 @@ export interface RpcMap {
    * Whether this task may borrow a conversation. ⚠️ Recorded only - it takes effect on the next run
    * and never moves a task out of the session it is already talking in.
    */
+  /**
+   * Choose the model and effort this task's **next** run uses.
+   *
+   * ⛔ Records a preference and nothing else — deliberately unlike `task.setFinishPolicy`, which also
+   * acts. A conversation already open keeps the model it started with, because switching model
+   * mid-conversation throws the prompt cache away: caches are model-scoped, so the next turn pays a
+   * full cache write instead of a read. Effort is cheaper and still not free — it invalidates the
+   * messages cache on every model. The UI prices both before the operator commits.
+   *
+   * ⚠️ Validated at the door by `checkConstraints`, so a model this task's account cannot run is
+   * refused here rather than at 3am when the task is finally dispatched.
+   */
+  'task.setModel': {
+    params: { id: string; model: string | null; effort: string | null }
+    result: Task
+  }
   'task.setSessionSharing': { params: { id: string; sessionSharing: SessionSharingChoice }; result: Task }
   /** Land a branch whose task already finished. The loose-ends list and the task pane both use it. */
   'task.land': { params: { id: string }; result: { task: Task; landed: boolean; reason?: string } }

@@ -169,6 +169,14 @@ presented as a rule. ⚠️ Bounds unattended **work** only — a `consult` is e
 separately, and a session a task would *reuse* does not fill a slot because reusing one starts no
 process.
 
+**Model and effort** — *what answers a turn, and how hard it thinks.* Resolved **task → worker → the
+CLI's own default**, and deliberately not through the project or the fleet: a model id belongs to one
+CLI, so a default held anywhere that routes to several adapters is invalid most of the time. ⚠️ `null`
+at the end is an answer — the vendor picks — not a missing setting. ⛔ Effort is dropped whole where
+`selectableEffort` is false, because the CLI *refuses* the flag rather than ignoring it. ⭐ Both are
+read at launch and apply to the **next** run: changing them inside a live conversation discards its
+prompt cache, which `docs/cost-model.md` §11 prices.
+
 **Mandate** — *the authority a task runs under.* Inherited from its creator and **narrowed, never
 widened**: allowed operations, project scope, remaining lineage depth, fan-out cap. A task that has
 lost `spawn_tasks` cannot create children — not because a heuristic caught it, but because it has no

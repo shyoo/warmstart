@@ -110,6 +110,8 @@ describe('choosing between workers that score the same', () => {
     humanOccupied: false,
     role: 'both',
     maxConcurrent: 1,
+    defaultModel: null,
+    defaultEffort: null,
     identity: null,
     health: null,
     retiredAt: null,
