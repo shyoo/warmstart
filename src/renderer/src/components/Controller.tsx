@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ControllerReport } from '@shared/protocol'
 import type { ChatMessage } from '@shared/tasks'
 import { rpc, useDaemonEvents } from '../lib/daemon'
-import { age, tokens } from '../lib/format'
+import { age, tokens, when } from '../lib/format'
+import { Working } from '../lib/taskview'
 
 /**
  * The controller.
@@ -106,37 +107,62 @@ export function Controller({ now }: { now: number }): React.JSX.Element {
         <h3>Conversation</h3>
         <div className="thread thread--chat">
           {messages.length === 0 ? (
-            <p className="dim">
-              Ask it about the fleet, or tell it to file, rescope or promote work. Its tool use goes
-              through the Approvals bar, the same as an agent’s.
-            </p>
+            <p className="dim">Ask it about the fleet, or tell it to file, rescope or promote work.</p>
           ) : (
             messages.map((m) => (
               <div key={m.id} className={`msg msg--${m.role}`}>
-                <span className="msg-role">{m.role === 'controller' ? 'ctrl' : m.role}</span>
+                <span className="msg-role">
+                  {m.role === 'controller' ? 'ctrl' : m.role}
+                  {/* The same clock the task thread carries: a conversation held across a working
+                      day cannot be read without one. */}
+                  <span className="msg-when" title={new Date(m.ts).toLocaleString()}>
+                    {when(m.ts)}
+                  </span>
+                </span>
                 <span className="msg-text">{m.text}</span>
               </div>
             ))
           )}
-          {busy && <p className="dim">Thinking…</p>}
+          {/* ⚠️ A live bubble in the thread, not a line of grey text under it — the controller is
+              answering *here*, in sequence, and marked as unfinished for as long as that is true. */}
+          {busy && (
+            <div className="msg msg--controller msg--live">
+              <span className="msg-role">ctrl</span>
+              <span className="msg-text">
+                <span className="dim">thinking</span>
+                <Working />
+              </span>
+            </div>
+          )}
           <div ref={threadEnd} />
         </div>
 
-        <div className="form-row">
-          <input
-            className="form-wide"
-            value={draft}
-            placeholder={
-              available ? 'Say something to the controller' : 'No controller account is available'
-            }
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) void send()
-            }}
-          />
-          <div>
-            <button className="btn btn--primary" disabled={!draft.trim()} onClick={() => void send()}>
-              Send
+        {/*
+          ⚠️ `.compose`, not `.form-row`. That is a three-column grid built for a labelled settings
+          form, and this row has no label — so the input was laid into the 110px label track and the
+          Send/Reset pair was painted over the top of the placeholder, which is why "No controller
+          account is available" read as if it had a button sitting on it. Same layout the task
+          thread's composer uses, so the two read as the same control.
+        */}
+        <div className="compose">
+          <div className="compose-row">
+            <input
+              value={draft}
+              disabled={!available}
+              placeholder={
+                available ? 'Say something to the controller' : 'No controller account is available'
+              }
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) void send()
+              }}
+            />
+            <button
+              className="btn btn--primary"
+              disabled={busy || !available || !draft.trim()}
+              onClick={() => void send()}
+            >
+              {busy ? 'Sending…' : 'Send'}
             </button>
             <button
               className="btn btn--ghost"
@@ -146,6 +172,12 @@ export function Controller({ now }: { now: number }): React.JSX.Element {
               Reset
             </button>
           </div>
+          <p className="compose-hint">
+            {available
+              ? 'Enter sends. Its tool use goes through the Approvals bar, the same as an agent’s.'
+              : 'Every controller account is out of window or not designated. Judgment calls take ' +
+                'their deterministic answer until one is back — nothing stalls, it just waits.'}
+          </p>
         </div>
       </section>
 
