@@ -404,7 +404,9 @@ try {
         modelText: rows.find(r => /^model/i.test(r.querySelector('label')?.innerText ?? ''))?.innerText ?? '',
         modelPickers: rows
           .find(r => /^model/i.test(r.querySelector('label')?.innerText ?? ''))
-          ?.querySelectorAll('select').length ?? 0
+          ?.querySelectorAll('select').length ?? 0,
+        finishOptions: [...(form.querySelector('select[aria-label="Finish policy"]')?.options ?? [])]
+          .map(o => o.value)
       };
     })())
   `)
@@ -415,6 +417,19 @@ try {
     filing
   )
   check('the prompt sits below every setting', f.promptIsLast === true, filing)
+  // ⛔ The finish policy is chosen on the way in, where a checkbox used to ask "I want to check this
+  // before it lands". That checkbox could say await-human or nothing; the dropdown reaches all four
+  // policies and `inherit`, which is the value that keeps following the project as it changes.
+  // ⚠️ This control arrived with no coverage — the suite asserted the form's *order* and never its
+  // contents, so swapping the checkbox out broke no test and would have broken none had it rendered
+  // nothing at all.
+  check(
+    'the new-task form offers a finish policy, inherit included',
+    Array.isArray(f.finishOptions) &&
+      f.finishOptions.includes('inherit') &&
+      f.finishOptions.includes('agent-lands'),
+    filing
+  )
   // ⚠️ A textarea because what goes in it is sent to an agent verbatim, and a prompt worth writing
   // has a second sentence. A single-line box that ate Enter was a lie about what it would accept.
   check('the prompt takes more than one line', f.textarea === true, filing)
