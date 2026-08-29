@@ -56,6 +56,66 @@ async function isClean(cwd: string): Promise<boolean> {
 }
 
 /**
+ * Retire a task branch whose commits are all accounted for.
+ *
+ * ⛔ **Only ever called where the caller has just proved the branch carries nothing that is not
+ * already in the base** — `rev-list --count base..branch === 0`, or a push that has just put every
+ * one of its commits there. That proof is the whole licence to use `-D`: there is no unmerged work
+ * to lose, only a name.
+ *
+ * ⚠️ Detaches at the current commit rather than at the base, so nothing in the working tree moves.
+ * Detaching at the base would *also* free the name, and would silently change the files under an
+ * agent that is still looking at them.
+ *
+ * ⚠️ Returns `false` instead of throwing, because every reason this fails is somebody else's
+ * business: another worktree still holds the branch, or the workspace has been taken away. A branch
+ * that outlives its task is untidy; a finish that reports failure because of it is wrong.
+ */
+async function retireBranch(cwd: string, branch: string): Promise<boolean> {
+  try {
+    if ((await git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'])) === branch) {
+      await git(cwd, ['switch', '--detach', await git(cwd, ['rev-parse', 'HEAD'])])
+    }
+    await git(cwd, ['branch', '-D', branch])
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * The tail of every finish that lands nothing: retire the branch, and say what became of it.
+ *
+ * ⛔ **Two callers, one rule, because the rule was applied in one place and needed in both.** The
+ * `landTask` early return had it; `decideFinish`'s `nothing-to-land` verdict goes straight to
+ * `completed` without ever calling `landTask`, so it did not. Measured 2026-08-29: once `landedRef`
+ * made an agent-pushed branch legible as finished, *that* became the path every such task takes, and
+ * the stranded branch went from occasional to one per task.
+ *
+ * ⚠️ The caller owes the proof. Both have it — a `rev-list` count of zero against `base` — and
+ * neither should be re-deriving it here, where the result would be a third opinion on a question that
+ * already has an authoritative answer.
+ *
+ * ⚠️ `note` is empty rather than an apology when the branch could not be retired. A branch another
+ * worktree still holds is untidy, not a failure, and saying so in a finish message would spend the
+ * operator's attention on something that costs them nothing.
+ */
+export async function finishWithoutLanding(
+  workspacePath: string,
+  branch: string,
+  base: string
+): Promise<{ deleted: boolean; note: string }> {
+  const deleted = await retireBranch(workspacePath, branch)
+  return {
+    deleted,
+    note: deleted
+      ? ` The branch has been deleted; continuing this task cuts a fresh \`${branch}\` from ` +
+        `\`${base}\`, so it starts from the work that landed rather than from behind it.`
+      : ''
+  }
+}
+
+/**
  * Say where the work actually is.
  *
  * ⚠️ This used to be one sentence — "The branch `x` is intact" — and on 2026-08-26 it was true and
@@ -220,8 +280,10 @@ export const autoLand: LandingStrategy = {
         await git(ctx.project.root, ['fetch', ctx.workspacePath, `${ctx.branch}:${target}`])
       }
 
-      await git(ctx.workspacePath, ['switch', '--detach', commit])
-      await git(ctx.workspacePath, ['branch', '-D', ctx.branch]).catch(() => undefined)
+      // The push above is the proof `retireBranch` requires: every commit on the branch is now on
+      // the target. ⚠️ HEAD is the landed commit here, so this detaches exactly where the two
+      // hand-written lines it replaced did.
+      await retireBranch(ctx.workspacePath, ctx.branch)
 
       log.info(`landed t${ctx.task.seq} (${commit.slice(0, 8)}) onto ${target}`)
       return { strategy: 'auto-land', ok: true, commit, checkOutput: checks.output }
@@ -385,6 +447,14 @@ export async function landTask(ctx: LandingContext): Promise<LandingResult> {
       // because it is checkable and it checks out false.
       // ⚠️ `?? 0` because a base git cannot resolve is not evidence the trunk is behind.
       const behind = (await commitsAhead(ctx.workspacePath, base, target)) ?? 0
+      // ⭐ **And the branch goes, exactly as it does when landing succeeds.** The count above is the
+      // licence: zero commits that `base` does not have means deleting the ref loses a name and
+      // nothing else. Leaving it stranded was measured on 2026-08-29 — every task whose agent pushes
+      // its own work left a dead branch, and this repo's own /commit skill makes that the *normal*
+      // outcome, so the pool accumulated one per task until somebody swept them by hand.
+      // ⚠️ Deliberately not conditional on `behind > 0`. A question-only task's branch is equally
+      // contained and equally dead, and two rules here would be one more than the evidence supports.
+      const retired = await finishWithoutLanding(ctx.workspacePath, ctx.branch, base)
       addMessage(
         ctx.task.id,
         'system',
@@ -394,9 +464,16 @@ export async function landTask(ctx: LandingContext): Promise<LandingResult> {
             ? ` The work reached \`${base}\` without passing through here — your \`${target}\` is ` +
               `${behind} commit(s) behind it, so run \`git pull\` in the trunk to see it.`
             : ' Work that answers a question rather than changing a file is finished here — the ' +
-              'trunk was not touched.')
+              'trunk was not touched.') +
+          retired.note
       )
-      return { strategy: strategy.id, ok: true, branch: ctx.branch, nothingToLand: true }
+      return {
+        strategy: strategy.id,
+        ok: true,
+        branch: ctx.branch,
+        nothingToLand: true,
+        branchDeleted: retired.deleted
+      }
     }
   }
 

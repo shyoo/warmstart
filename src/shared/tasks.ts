@@ -739,4 +739,12 @@ export interface LandingResult {
    * message says plainly that the trunk was not touched rather than claiming a commit landed.
    */
   nothingToLand?: boolean
+  /**
+   * The task branch was retired — its every commit is in the landing target, so the ref held a name
+   * and nothing else.
+   *
+   * ⚠️ `false` is not a failure. Another worktree may still hold the branch, in which case it is left
+   * alone and the finish is still a success; see `retireBranch`.
+   */
+  branchDeleted?: boolean
 }

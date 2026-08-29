@@ -437,3 +437,111 @@ describe('what counts as landed', () => {
     worktrees.releaseWorkspace(ws!.claimId)
   })
 })
+
+/**
+ * Picking a task back up after its branch was retired.
+ *
+ * ⭐ The other half of deleting the branch. A finish that lands nothing now removes the ref, so
+ * "continue this task" has to mean something afterwards — and it does, in both directions a task can
+ * be resumed: a cold dispatch through `prepareWorkspace` and a warm one through
+ * `switchResidentBranch`. Both already re-cut a missing branch; what was never checked is that they
+ * cut it from the ref the work actually landed on, which is the difference between resuming *on top
+ * of* the finished work and resuming *behind* it.
+ *
+ * ⚠️ The branch is retired here with plain git rather than by calling landing, so this stays a test
+ * of the resume and not of the finish. What landing does to the ref is landing.test.ts's business.
+ */
+describe('resuming a task whose branch was retired', () => {
+  /** The state a finished, agent-pushed task leaves: work on `origin/main`, local `main` behind. */
+  async function afterAnAgentPushedItsOwnWork(
+    seqNo: number
+  ): Promise<{ project: Project; path: string; branch: string; landed: string }> {
+    const project = makeProjectWithRemote()
+    const ws = await worktrees.claimWorkspace(project, `session-${seqNo}`)
+    const branch = worktrees.branchNameFor(seqNo, 'push my own work')
+    await worktrees.prepareWorkspace(project, ws!, branch)
+
+    writeFileSync(join(ws!.path, 'shipped.txt'), 'landed by the agent\n')
+    git(ws!.path, 'add', '-A')
+    git(ws!.path, 'commit', '-m', 'the agent landed this itself')
+    git(ws!.path, 'push', 'origin', 'HEAD:main')
+    const landed = git(ws!.path, 'rev-parse', 'HEAD')
+
+    // What the finish now does: detach where it stands, drop the ref.
+    git(ws!.path, 'switch', '--detach', landed)
+    git(ws!.path, 'branch', '-D', branch)
+
+    return { project, path: ws!.path, branch, landed }
+  }
+
+  it('gives a cold dispatch its branch back, under the same name', async () => {
+    // ⛔ The same name, not a new one. The branch *is* the task's name — every log line, every loose
+    //    end and `taskOnBranch` all read it — so a resumed task that came back as `-2` would be a
+    //    different task to everything that looks.
+    const { project, path, branch } = await afterAnAgentPushedItsOwnWork(50)
+
+    const prepared = await worktrees.prepareWorkspace(
+      project,
+      { index: 1, path, claimId: 'resume' },
+      branch
+    )
+
+    expect(prepared.ok).toBe(true)
+    expect(git(path, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe(branch)
+  })
+
+  it('cuts it from where the work landed, not from the trunk that is behind', async () => {
+    // ⭐ The point of the whole exercise. The operator's `main` is two commits short of `origin/main`
+    //    at this moment; a branch re-cut from it would silently drop the work the task just finished
+    //    and hand the agent a checkout with its own change missing.
+    const { project, path, branch, landed } = await afterAnAgentPushedItsOwnWork(51)
+    expect(git(path, 'rev-parse', 'main')).not.toBe(landed)
+
+    await worktrees.prepareWorkspace(project, { index: 1, path, claimId: 'resume' }, branch)
+
+    expect(git(path, 'rev-parse', branch)).toBe(landed)
+    expect(git(path, 'rev-parse', 'origin/main')).toBe(landed)
+  })
+
+  it('leaves the landed work in the checkout, which is what an agent will look at', async () => {
+    // ⚠️ Asserted on the file rather than on a sha, because "the ref points at the right commit" and
+    //    "the agent can see its own work" are different claims and only the second one matters here.
+    const { project, path, branch } = await afterAnAgentPushedItsOwnWork(52)
+
+    await worktrees.prepareWorkspace(project, { index: 1, path, claimId: 'resume' }, branch)
+
+    expect(text(join(path, 'shipped.txt'))).toBe('landed by the agent\n')
+  })
+
+  it('gives a warm session its branch back too', async () => {
+    // ⛔ The warm path is a separate function with its own copy of the switch-or-create, so it needs
+    //    its own proof. A task continued into a live conversation takes this one and never touches
+    //    `prepareWorkspace`.
+    const { project, path, branch, landed } = await afterAnAgentPushedItsOwnWork(53)
+
+    const moved = await worktrees.switchResidentBranch(project, path, branch)
+
+    expect(moved.ok).toBe(true)
+    expect(git(path, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe(branch)
+    expect(git(path, 'rev-parse', branch)).toBe(landed)
+  })
+
+  it('re-creates nothing when the branch is still there, and keeps its commits', async () => {
+    // ⛔ The guard. "Create it if it is missing" must not become "recreate it", or a task resumed
+    //    with unlanded work on its branch would come back to an empty one and the commits would
+    //    survive only in the reflog.
+    const project = makeProjectWithRemote()
+    const ws = await worktrees.claimWorkspace(project, 'session-54')
+    const branch = worktrees.branchNameFor(54, 'still here')
+    await worktrees.prepareWorkspace(project, ws!, branch)
+    writeFileSync(join(ws!.path, 'unlanded.txt'), 'never pushed anywhere\n')
+    git(ws!.path, 'add', '-A')
+    git(ws!.path, 'commit', '-m', 'work that has not landed')
+    const tip = git(ws!.path, 'rev-parse', 'HEAD')
+
+    await worktrees.prepareWorkspace(project, ws!, branch)
+
+    expect(git(ws!.path, 'rev-parse', branch)).toBe(tip)
+    expect(git(ws!.path, 'rev-list', '--count', `origin/main..${branch}`)).toBe('1')
+  })
+})

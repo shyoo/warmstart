@@ -117,6 +117,16 @@ behind:
 commits that `main` does not already have"* — true of the ref it named, false of the ref it used, and
 indistinguishable from work that had vanished.
 
+⭐ **The branch is deleted, exactly as it is when landing succeeds.** Nothing is lost — every commit
+on it is already on `origin/<target>`, which is what the count above establishes — and a branch kept
+past that point is a dead name the pool accumulates one of per task. ⚠️ If another worktree still
+holds the branch, it is left alone and the finish is still a success.
+
+⚠️ **Continuing the task afterwards re-creates it under the same name**, cut from `origin/<target>`,
+so a resumed task opens on top of the work that landed rather than behind it. The branch *is* the
+task's name — every log line and every loose end reads it — so it comes back as itself, not as
+`-2`.
+
 ## Configuring a project
 
 ```json

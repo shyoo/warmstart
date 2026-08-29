@@ -1604,7 +1604,20 @@ was already using. ⚠️ Driven by `holdReason`, not by the renderer counting w
 done that arithmetic and written the answer down, and a second opinion would disagree the first time
 a gate the UI does not model held a task back.
 
-⚠️ **A branch is still stranded when the agent lands its own work.** The early return does not
-detach-and-delete the way the success path does, so one dead branch accumulates per agent-pushed
-task. Deferred deliberately — it is landing mechanics, and the branch is provably contained in
-`origin/<target>` by the time anyone would remove it.
+⭐ **And the branch it leaves behind is now retired, which took finding a second gap.** The obvious
+fix — delete on `landTask`'s early return — would have changed nothing: `decideFinish` returns
+`nothing-to-land`, and the scheduler takes that verdict straight to `completed` **without ever calling
+`landTask`**. Worse, making `landedRef` correct is what routed every agent-pushed task down that path,
+so the leak went from occasional to one dead branch per task. `finishWithoutLanding()` is the one
+function both callers use, and the licence to use `branch -D` is the caller's own `rev-list` count of
+zero — no unmerged work exists to lose, only a name.
+
+⚠️ **Detached at HEAD, not at the base.** Detaching at the base also frees the name, and would
+silently change the files under an agent still looking at them.
+
+⭐ **Which makes "continue this task" mean something afterwards.** Both resume paths —
+`prepareWorkspace` cold, `switchResidentBranch` warm — already re-cut a missing branch under the same
+name; what was never checked is that they cut it from the ref the work actually landed on.
+`baseRef` now delegates to `landedRef` instead of repeating its two lines, because they were separate
+copies of one rule and that is precisely the shape of the bug this whole entry is about: a resumed
+task branching off a trunk two commits behind would open with its own finished work missing.

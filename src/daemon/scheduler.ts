@@ -53,7 +53,7 @@ import {
   sessionsForWorker,
   spawnSession
 } from './sessions.js'
-import { landTask } from './landing.js'
+import { finishWithoutLanding, landTask } from './landing.js'
 import { decideFinish, resolveFinishPolicy, type TrunkReading } from './finish.js'
 import { rank, resolveSessionSharing, whyNotShared } from './sharing.js'
 import { stripAnsi } from './stream.js'
@@ -1481,6 +1481,21 @@ export async function completeTask(sessionId: string, summary: string): Promise<
         assignee: 'human',
         holdReason: 'the trunk moved during this run and this branch is empty — check where the work went'
       })
+    } else if (decision.kind === 'nothing-to-land') {
+      // ⭐ **Retire the branch here too, and this is the path that actually fires.** `decideFinish`
+      //    reaches this verdict by proving `unlandedCommits === 0` against `state.landedRef`, which
+      //    is the same proof `landTask`'s own early return uses — but this decision never calls
+      //    `landTask`, so fixing only that early return left the branch stranded anyway.
+      //    ⚠️ Measured 2026-08-29: t22's agent pushed its own work, and the dead branch it left was
+      //    swept by hand. Once `landedRef` made that outcome legible, *every* such task takes this
+      //    exact path, so the leak went from occasional to one per agent-pushed task.
+      // ⛔ Only with a branch to retire. A project with no VCS has none, and `task.branch` is null
+      //    for a task that never reached a workspace.
+      // ⚠️ `state.landedRef`, not the local target: it is the ref `decideFinish` just compared
+      //    against, and the message must name the same one the decision used.
+      const retired = await finishWithoutLanding(held.workspace.path, task.branch, state.landedRef)
+      addMessage(task.id, 'system', `Finished — ${decision.reason}${retired.note}`)
+      setStatus(task.id, 'completed')
     } else {
       addMessage(task.id, 'system', `Finished — ${decision.reason}`)
       setStatus(task.id, 'completed')

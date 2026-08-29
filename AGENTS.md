@@ -184,6 +184,11 @@ These are not preferences; breaking one breaks the product.
   `landTask` compared against `origin/main` and *printed* `main`, and a task whose agent had pushed
   its own work was reported in words indistinguishable from work that had vanished. ⚠️ Any message
   about landing must name the ref it compared.
+- ⛔ **`decideFinish` returning `nothing-to-land` never calls `landTask`.** `completeTask` takes that
+  verdict straight to `completed`, so anything owed at the end of a finish — retiring the branch, and
+  whatever comes next — belongs in a function *both* paths call, not in `landTask`'s early return.
+  Measured 2026-08-29: the fix that only touched the early return changed nothing, because correcting
+  `landedRef` is exactly what routed every agent-pushed task down the other path.
 - ⛔ **Cancel is not delete.** Cancel winds a run down through the preemption protocol into a resting
   state (`paused_user` / `draft` / `cancelled`) and destroys nothing. Delete is separate, human-only,
   soft by default, and **never removes runs** — they are the estimator's training data and the record

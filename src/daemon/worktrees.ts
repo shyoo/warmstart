@@ -53,16 +53,20 @@ async function gitOk(cwd: string, args: string[]): Promise<boolean> {
 }
 
 /**
- * The ref new task branches start from: `origin/<target>` when there is a remote, the local branch
- * when there is not. A repo with no remote is a normal thing to work in and must not be a failure.
+ * The ref new task branches start from.
+ *
+ * ⭐ **The same ref work is measured as landed against**, which is why this delegates to
+ * `landedRef` rather than repeating its two lines. They were separate copies of one rule until
+ * 2026-08-29, and this is exactly the shape of the bug that day produced: two definitions of "where
+ * is the trunk really", each defensible, quietly disagreeing. Branch off what a task's work will be
+ * judged against, or a resumed task starts behind the work that already landed.
+ *
+ * ⚠️ `HEAD` only when neither ref resolves — a repository whose first commit is not on the target
+ * branch yet. A repo with no remote is normal and must not be a failure.
  */
 export async function baseRef(project: Project): Promise<string> {
-  const target = policyFor(project).landingTarget
-  if (await gitOk(project.root, ['rev-parse', '--verify', `origin/${target}`])) {
-    return `origin/${target}`
-  }
-  if (await gitOk(project.root, ['rev-parse', '--verify', target])) return target
-  return 'HEAD'
+  const ref = await landedRef(project.root, policyFor(project).landingTarget)
+  return (await gitOk(project.root, ['rev-parse', '--verify', ref])) ? ref : 'HEAD'
 }
 
 /**

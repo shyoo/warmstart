@@ -71,7 +71,9 @@ here.** The task branch is created inside the claimed worktree, never in the tru
 "landed" is measured against everywhere, and your own trunk is behind until you pull.
 Implemented as a `LandingStrategy`; landing takes an exclusive `land:<project>` resource, because
 three workspaces finishing at once would otherwise each rebase onto a main the other two are about to
-move. ⚠️ *Whether* to land is a separate question from *how* — see **finish policy**.
+move. ⚠️ *Whether* to land is a separate question from *how* — see **finish policy**. ⭐ **The branch
+is retired afterwards** — by any finish that leaves nothing to land, not only a successful one — and
+continuing the task cuts it again under the same name from `origin/<target>`.
 
 ---
 
