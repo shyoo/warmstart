@@ -12,6 +12,7 @@ import { Projects } from './components/Projects'
 import { Tasks } from './components/Tasks'
 import { TaskThread } from './components/TaskThread'
 import { Overview } from './components/Overview'
+import { Controller } from './components/Controller'
 import { Project as ProjectView, type ProjectTab } from './components/Project'
 import { SidebarResizer } from './components/SidebarResizer'
 import { AppSettings } from './components/AppSettings'
@@ -32,7 +33,7 @@ import { AppSettings } from './components/AppSettings'
  * "the project is the unit of work" true of the code and not only of the sidebar.
  */
 type Route =
-  | { kind: 'overview' }
+  | { kind: 'overview'; page: 'dashboard' | 'controller' }
   /**
    * ⚠️ `taskId` rides on the route rather than living in the Tasks list. The Thread tab is a
    * destination, so Back has to be able to return to a *task* and not merely to a tab that has
@@ -46,7 +47,8 @@ type Route =
    * the last one is given a home, which is what the require-a-project migration does.
    */
   | { kind: 'unassigned'; taskId?: string }
-  | { kind: 'settings'; page: 'workers' | 'logs' | 'global' | 'conversations' }
+  | { kind: 'history'; page: 'conversations' | 'logs' }
+  | { kind: 'settings'; page: 'workers' | 'global' }
 
 export function App(): React.JSX.Element {
   const info = useAppInfo()
@@ -54,7 +56,7 @@ export function App(): React.JSX.Element {
   const connected = status.state === 'connected'
   const { fleet, refresh } = useFleet(connected)
   const now = useNow()
-  const [route, setRouteNow] = useState<Route>({ kind: 'overview' })
+  const [route, setRouteNow] = useState<Route>({ kind: 'overview', page: 'dashboard' })
   /**
    * Where you have been, and where you came back from.
    *
@@ -165,11 +167,18 @@ export function App(): React.JSX.Element {
         </div>
 
         <nav className="nav-group">
+          <h2>Overview</h2>
           <NavItem
-            active={route.kind === 'overview'}
-            onClick={() => setRoute({ kind: 'overview' })}
+            active={route.kind === 'overview' && route.page === 'dashboard'}
+            onClick={() => setRoute({ kind: 'overview', page: 'dashboard' })}
           >
-            Overview
+            Dashboard
+          </NavItem>
+          <NavItem
+            active={route.kind === 'overview' && route.page === 'controller'}
+            onClick={() => setRoute({ kind: 'overview', page: 'controller' })}
+          >
+            Controller
           </NavItem>
         </nav>
 
@@ -207,6 +216,22 @@ export function App(): React.JSX.Element {
         </nav>
 
         <nav className="nav-group">
+          <h2>History</h2>
+          <NavItem
+            active={route.kind === 'history' && route.page === 'conversations'}
+            onClick={() => setRoute({ kind: 'history', page: 'conversations' })}
+          >
+            Conversations
+          </NavItem>
+          <NavItem
+            active={route.kind === 'history' && route.page === 'logs'}
+            onClick={() => setRoute({ kind: 'history', page: 'logs' })}
+          >
+            Logs
+          </NavItem>
+        </nav>
+
+        <nav className="nav-group">
           <h2>Settings</h2>
           <NavItem
             active={route.kind === 'settings' && route.page === 'workers'}
@@ -214,23 +239,6 @@ export function App(): React.JSX.Element {
           >
             Workers
             <span className="nav-count num">{fleet.length}</span>
-          </NavItem>
-          {/* ⚠️ Directly under Workers, because a conversation belongs to an account and this is the
-              second question somebody asks after "which accounts do I have" — namely what each one
-              has been talking about, and whether two tasks ended up in the same thread. */}
-          <NavItem
-            active={route.kind === 'settings' && route.page === 'conversations'}
-            onClick={() => setRoute({ kind: 'settings', page: 'conversations' })}
-          >
-            Conversations
-          </NavItem>
-          {/* ⚠️ Between Workers and Global on purpose. It is the answer to "why did it do that?",
-              which is asked about the fleet above it far more often than about the app below it. */}
-          <NavItem
-            active={route.kind === 'settings' && route.page === 'logs'}
-            onClick={() => setRoute({ kind: 'settings', page: 'logs' })}
-          >
-            Logs
           </NavItem>
           <NavItem
             active={route.kind === 'settings' && route.page === 'global'}
@@ -250,8 +258,10 @@ export function App(): React.JSX.Element {
         <div className="content">
           {!connected ? (
             <DaemonNotice status={status} />
-          ) : route.kind === 'overview' ? (
+          ) : route.kind === 'overview' && route.page === 'dashboard' ? (
             <Overview now={now} />
+          ) : route.kind === 'overview' && route.page === 'controller' ? (
+            <Controller now={now} />
           ) : route.kind === 'unassigned' ? (
             route.taskId ? (
               <TaskThread
@@ -273,13 +283,13 @@ export function App(): React.JSX.Element {
                 />
               </div>
             )
+          ) : route.kind === 'history' && route.page === 'conversations' ? (
+            <Conversations />
+          ) : route.kind === 'history' && route.page === 'logs' ? (
+            <Logs now={now} />
           ) : route.kind === 'settings' && route.page === 'workers' ? (
             <Workers fleet={fleet} refresh={refresh} />
-          ) : route.kind === 'settings' && route.page === 'conversations' ? (
-            <Conversations />
-          ) : route.kind === 'settings' && route.page === 'logs' ? (
-            <Logs now={now} />
-          ) : route.kind === 'settings' ? (
+          ) : route.kind === 'settings' && route.page === 'global' ? (
             <>
               <Doctor now={now} />
               {/* ⚠️ Above the app's own preferences: this one governs the *fleet*, and the tray
@@ -298,7 +308,7 @@ export function App(): React.JSX.Element {
               <AppSettings />
               <Projects projects={projects} resources={resources} refresh={refreshProjects} />
             </>
-          ) : (
+          ) : route.kind === 'project' ? (
             <ProjectRoute
               route={route}
               setRoute={setRoute}
@@ -311,7 +321,7 @@ export function App(): React.JSX.Element {
               openSession={openSession}
               setOpenSession={setOpenSession}
             />
-          )}
+          ) : null}
         </div>
 
         <footer className="statusbar">
@@ -433,7 +443,7 @@ function ProjectRoute({
       <div className="empty-inline">
         <p>That project is no longer here.</p>
         <p className="dim">It may have been archived or removed since this pane was opened.</p>
-        <button className="btn" onClick={() => setRoute({ kind: 'overview' })}>
+        <button className="btn" onClick={() => setRoute({ kind: 'overview', page: 'dashboard' })}>
           Back to Overview
         </button>
       </div>

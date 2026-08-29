@@ -94,12 +94,14 @@ try {
   const connected = await until(() => evaluate('!!document.querySelector(".dot--ok")'))
   check('the daemon connected', connected, connected ? '' : 'no .dot--ok within 30s')
   const nav = await evaluate('[...document.querySelectorAll(".nav-item")].map(b => b.innerText.trim())')
-  // ⛔ Named, not counted. The sidebar is now Overview / one item per project / Settings, so a count
+  // ⛔ Named, not counted. The sidebar is now Overview (Dashboard, Controller) / one item per project / History (Conversations, Logs) / Settings (Workers, Global), so a count
   // says nothing: it moves whenever a project is added, and it passed all the way through the
   // rewrite that removed Cost and Controller as destinations.
   check(
-    'the three fixed destinations are reachable',
-    ['Overview', 'Workers', 'Global'].every((label) => nav.some((n) => n.startsWith(label))),
+    'the fixed destinations are reachable',
+    ['Dashboard', 'Controller', 'Conversations', 'Logs', 'Workers', 'Global'].every((label) =>
+      nav.some((n) => n.startsWith(label))
+    ),
     nav.join(' | ')
   )
   check(
@@ -581,7 +583,7 @@ try {
 
   section('cost')
   await evaluate(
-    `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim().startsWith('Overview')).click()`
+    `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim().startsWith('Dashboard')).click()`
   )
   await wait(1500)
   const costPanel = await evaluate('document.querySelector(".content")?.innerText ?? ""')
@@ -602,9 +604,11 @@ try {
   )
 
   section('controller')
-  // On Overview beside cost: the controller answers questions about the fleet, and a consult is not
-  // scoped to any one project.
-  await wait(500)
+  // Controller has its own destination under Overview in the sidebar.
+  await evaluate(
+    `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim().startsWith('Controller')).click()`
+  )
+  await wait(1500)
   const controllerPanel = await evaluate('document.querySelector(".content")?.innerText ?? ""')
   check('the controller view renders', controllerPanel.includes('Controller'))
   check(
