@@ -1656,15 +1656,26 @@ select:focus-visible,
 /* ⛔ Marked as unfinished, in the thread rather than beside it. The dashed edge is the same signal
    the old separate pane carried: this text is a window onto a process, and it will be replaced by
    what the agent actually recorded. */
+/* ⚠️ The rule sits in the gutter's own margin rather than crowding the words. It was 2px of dashes
+   with `--sp-2` of padding and a negative margin pulling it back under the text, which put the line
+   almost against the "AGENT" label — close enough to read as a rendering fault rather than as a
+   marker. It now has room on both sides, and the grid keeps its columns because the padding is paid
+   for out of the negative margin exactly. */
 .msg--live {
   border-bottom: 0;
   border-left: 2px dashed var(--state-running);
+  margin-left: calc(var(--sp-2) * -1);
   padding-left: var(--sp-2);
-  margin-left: -2px;
   color: var(--color-text-dim);
 }
 
 .msg--live .msg-role {
+  color: var(--state-running);
+}
+
+.msg--live .working {
+  margin-left: 0;
+  margin-top: var(--sp-1);
   color: var(--state-running);
 }
 
@@ -1674,13 +1685,6 @@ select:focus-visible,
   overflow-wrap: anywhere;
 }
 
-.msg-live-note {
-  display: block;
-  margin-top: var(--sp-1);
-  font-size: var(--text-meta);
-  color: var(--color-text-faint);
-  font-style: italic;
-}
 
 .msg {
   display: grid;

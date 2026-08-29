@@ -3,6 +3,7 @@ import type { FinishPolicyChoice, Run, SessionSharingChoice, Task, TaskMessage }
 import type { Session } from '@shared/protocol'
 import { rpc, useActivity, useDaemonEvents, useNow, type FleetEntry } from '../lib/daemon'
 import { conversationIdFor } from '../lib/conversation'
+import { showsLiveOutput } from '../lib/live'
 import { duration, tokens, when } from '../lib/format'
 import {
   assigneeLabel,
@@ -146,7 +147,7 @@ function TaskDetail({
   back: React.ReactNode
 }): React.JSX.Element {
   const { task, messages, runs, sessions } = detail
-  const live = task.status === 'running' || task.status === 'assigned'
+  const live = showsLiveOutput(task.status)
   const resolve = async () => {
     await rpc('task.resolve', { id: task.id })
     await refresh()
@@ -339,7 +340,14 @@ function Thread({
     if (el && pinned.current) el.scrollTop = el.scrollHeight
   }, [messages.length, last, live])
 
-  const showLive = live || activity.length > 0
+  /**
+   * ⛔ **`live` alone.** This was `live || activity.length > 0`, and the tail is not cleared when a
+   * run ends — only when the *next* attempt starts, via `reset`. So a completed task went on drawing
+   * a bubble captioned "replaced when the run ends" beside a status reading `completed`, forever.
+   * The tail is a window onto a running process; when nothing is running there is nothing to look
+   * through, and what the agent actually recorded is already in the messages above.
+   */
+  const showLive = live
 
   return (
     <div className="thread thread--task" ref={box} onScroll={onScroll}>
@@ -364,10 +372,9 @@ function Thread({
 
       {showLive && (
         <div className="msg msg--agent msg--live">
-          <span className="msg-role">
-            agent
-            {live && <Working />}
-          </span>
+          {/* ⚠️ No dots here. They belong at the end of the text, where the sentence stops — that
+              is where a reader is looking when they want to know whether more is coming. */}
+          <span className="msg-role">agent</span>
           <span className="msg-text">
             {activity.length === 0 ? (
               <span className="dim">waiting for the agent’s first words…</span>
@@ -378,12 +385,12 @@ function Thread({
                 </span>
               ))
             )}
-            {/* ⚠️ Said on the bubble rather than in a legend somewhere. When the run ends this is
-                replaced by what the agent actually recorded, and a reader who thought they were
-                looking at the record would experience that as text disappearing. */}
-            <span className="msg-live-note">
-              live — replaced by what the agent records when the run ends
-            </span>
+            {/* ⛔ An animation, not a sentence. "live — replaced by what the agent records when
+                the run ends" was a caption explaining a mechanism nobody had asked about, and it
+                sat there looking like part of the transcript. Three pulsing dots at the point the
+                text stops say the one thing a reader wants — *more is coming* — and stop saying it
+                the instant it is no longer true. */}
+            <Working />
           </span>
         </div>
       )}
