@@ -1177,6 +1177,22 @@ select {
   min-width: 220px;
 }
 
+/* ⚠️ `input[type="number"]` is not covered by the rule above, which lists text and untyped inputs
+   only — so a number box inherits none of the app's chrome unless it is styled here. Narrow and
+   right-aligned, because it lives in a numeric table cell beside a plain figure. */
+.num-input {
+  font: inherit;
+  font-size: var(--text-dense);
+  background: var(--color-bg);
+  color: var(--color-text);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  padding: var(--sp-1) var(--sp-2);
+  min-width: 0;
+  width: 56px;
+  text-align: right;
+}
+
 input:focus-visible,
 select:focus-visible,
 .btn:focus-visible,

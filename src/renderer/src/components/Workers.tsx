@@ -320,7 +320,40 @@ export function Workers({
                       </span>
                     ) : null}
                   </td>
-                  <td className="num tbl-num">{worker.maxConcurrent}</td>
+                  {/* ⭐ Editable, because the daemon has enforced this number since M1 and nothing
+                      could ever change it. `atCapacity` and `spawnSession` both gate on it, the
+                      commissioning default is 1, and the only place it appeared was here, as text -
+                      so a fleet of one account could run exactly one task at a time and the reason
+                      read as a fact about the provider rather than a setting.
+                      ⚠️ A number input, not a dropdown: there is no measured ceiling to offer, and a
+                      list of options would present a guess as a rule. The floor is enforced in
+                      `boundedConcurrency`, not here, so a hand-written RPC cannot get under it. */}
+                  <td className="num tbl-num">
+                    <input
+                      type="number"
+                      min={1}
+                      step={1}
+                      className="num-input"
+                      value={worker.maxConcurrent}
+                      disabled={busy === `max:${worker.id}`}
+                      title={
+                        'How many tasks this account may run at once. Raising it is what lets one ' +
+                        'worker do parallel work — a second task on a busy account waits as ' +
+                        '`queued` until a slot frees. ⚠️ Not free: parallel requests against one ' +
+                        'cached prefix each pay a cache write, and both sessions spend the same ' +
+                        'quota window.'
+                      }
+                      onChange={(e) => {
+                        const next = Number.parseInt(e.target.value, 10)
+                        // ⛔ An empty box is somebody mid-edit, not a request for zero workers.
+                        if (!Number.isFinite(next) || next < 1) return
+                        if (next === worker.maxConcurrent) return
+                        void guard(`max:${worker.id}`, () =>
+                          rpc('worker.update', { id: worker.id, maxConcurrent: next })
+                        )
+                      }}
+                    />
+                  </td>
                   <td>
                     <select
                       value={worker.role}

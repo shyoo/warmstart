@@ -159,6 +159,16 @@ dispatched this second if a worker could take it — and the reason it was passe
 because inventing a status for "ready but nothing free" would put a lie in the graph to fix a gap in
 the display.
 
+**`maxConcurrent`** — *how many tasks one account may run at once.* Shown as **Max** on the Workers
+row and editable there. Commissions at **1**, which is a cost decision rather than a provider limit:
+parallel requests against one cached prefix each pay a cache write (`docs/cost-model.md` §1). ⛔ At
+least 1 — a max of 0 leaves the worker enabled, its quota counted and its role honoured, and silently
+never taking a task; the switch for *"do not use this one"* is `enabled`. ⚠️ No upper bound is
+imposed: the ceiling is the account's own rate limits, and a number invented here would be a guess
+presented as a rule. ⚠️ Bounds unattended **work** only — a `consult` is exempt and bounded
+separately, and a session a task would *reuse* does not fill a slot because reusing one starts no
+process.
+
 **Mandate** — *the authority a task runs under.* Inherited from its creator and **narrowed, never
 widened**: allowed operations, project scope, remaining lineage depth, fan-out cap. A task that has
 lost `spawn_tasks` cannot create children — not because a heuristic caught it, but because it has no

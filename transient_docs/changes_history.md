@@ -1644,3 +1644,41 @@ Two poller bugs discovered during live fleet runs:
   iterating over every worker from `listWorkers()` including disabled ones (`!w.enabled`), probing their
   identity and logging `probed <Worker>: session X%`. `sweep()` now skips workers that are disabled,
   retired, or suspect/quarantined.
+
+## One account, more than one task at a time (2026-08-29)
+
+The operator ran two tasks against a single Antigravity worker and watched the second sit behind the
+first, and asked whether one worker could hold several sessions the way a person opens several
+terminals. It already could. `maxConcurrent` has gated exactly that since M1 — `atCapacity` reads it
+before dispatch and `spawnSession` refuses past it — the DB column, the `worker.update` RPC and the
+protocol types all carried it, and the workspace pool defaults to three, so worktrees were never the
+constraint either.
+
+⛔ **The feature was complete and unreachable.** It commissioned at 1 and the Workers table rendered
+it as a read-only `<td>`. Six milestones of a setting nobody could set. Worse than a missing feature,
+because the `queued` hold that explained the wait named the account — *"Antigravity at capacity"* —
+and so read as a fact about the provider rather than as a number the operator owned.
+
+⚠️ **Every test in the repo pinned it at 1**, which is why nothing caught it. `routing.test.ts`
+constructs its worker with `maxConcurrent: 1`; `residency.test.ts` mentions the value only in a
+comment. The arithmetic above one had never executed. `concurrency.test.ts` now drives it: a second
+task admitted at a width of two, a third refused, and — the guard that matters — the reuse exemption
+still holding at the new ceiling, because that same gate once blocked every warm continuation on a
+one-slot worker and widening the account must not quietly reintroduce it higher up.
+
+⛔ **A floor of 1, applied at commissioning and on every update.** Zero is not "paused": it leaves the
+worker enabled, its quota counted and its role honoured, and silently never taking a task, with
+`atCapacity` true on an empty account. The switch for *"do not use this one"* is `enabled`, which says
+so on the row; a max of 0 would be the same intent expressed where nobody would look for it.
+
+⚠️ **And no upper bound, deliberately.** The ceiling is the account's own rate limits, and a number
+invented here would be a guess presented as a rule. That is also why the control is a number input
+rather than a dropdown — a list of options would have to pick a maximum, and there is no measured one
+to pick. A `.num-input` style was needed because the stylesheet's input rule lists `text` and untyped
+inputs only, so a `number` box inherited none of the app's chrome.
+
+⚠️ **What is still unmeasured is concurrency on Antigravity specifically.** `envFor()` sets no `HOME`,
+so every worker shares the operator's `~/.gemini` including its conversation store, and two `agy`
+processes writing it at once has never been run here. Claude Code has a real per-worker isolation root
+and carries none of that risk. Raising the number is the experiment; the honest thing is to say so
+rather than to ship it as proven.

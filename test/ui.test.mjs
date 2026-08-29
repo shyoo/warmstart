@@ -1028,6 +1028,42 @@ try {
     'off is not retirement — nothing is deleted and nothing needs re-commissioning'
   )
 
+  // ⭐ How many tasks one account may run at once. The daemon has gated on this since M1 —
+  // `atCapacity` before dispatch, `spawnSession` at the door — and until 2026-08-29 the Workers
+  // table printed it as text and nothing in the app could change it. So a single-account fleet ran
+  // one task at a time, and the `queued` hold that said so read as a fact about the provider.
+  const maxInput = `document.querySelector('.tbl tbody tr .num-input')`
+  check(
+    'the concurrency limit is something you can change, not a printed number',
+    (await evaluate(`${maxInput}?.tagName`)) === 'INPUT',
+    'it was a plain table cell for six milestones'
+  )
+  check(
+    'it starts at one, which is the commissioning default and a cost decision',
+    (await evaluate(`${maxInput}?.value`)) === '1',
+    'parallel requests on one cached prefix each pay a cache write — cost-model.md §1'
+  )
+  check(
+    'and it refuses zero in the control as well as in the daemon',
+    (await evaluate(`${maxInput}?.getAttribute('min')`)) === '1',
+    'a max of 0 is a worker that stays enabled and silently never takes a task'
+  )
+
+  // ⚠️ React owns the value, so a plain assignment is discarded on the next render. The native
+  // setter plus a bubbling `input` event is what a real keystroke looks like from React's side.
+  await evaluate(
+    `(() => { const el = ${maxInput};` +
+      ` const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;` +
+      ` set.call(el, '3'); el.dispatchEvent(new Event('input', { bubbles: true })); })()`
+  )
+  await wait(1200)
+  // ⛔ Read back from the daemon, not from the box. A control that paints itself and persists
+  // nothing would leave the scheduler still refusing the second task, with the UI claiming otherwise.
+  const width = await evaluate(
+    `window.agentyard.rpc('fleet.list').then(f => String(f[0]?.worker?.maxConcurrent))`
+  )
+  check('raising it reaches the daemon, which is the only opinion that gates dispatch', width === '3', width)
+
   const errors = await evaluate('window.__agentyardErrors?.length ?? 0')
   check('no uncaught renderer errors', errors === 0)
 } catch (err) {

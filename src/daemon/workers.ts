@@ -117,7 +117,7 @@ export function createWorker(input: {
       input.humanOccupied ? 1 : 0,
       // Default 1: concurrent requests against one cached prefix each pay a write, so a second
       // session on the same worker is a cost decision, not a free speedup. cost-model.md §1.
-      input.maxConcurrent ?? 1,
+      boundedConcurrency(input.maxConcurrent, 1),
       now
     )
   log.info(`commissioned worker ${label} (${input.adapterId}) at ${root}`)
@@ -134,6 +134,23 @@ export function defaultIsolationRoot(label: string): string {
   return candidate
 }
 
+/**
+ * How many work sessions this account may run at once.
+ *
+ * ⛔ **At least one.** Zero is not "paused" — it is a worker that stays enabled, keeps its quota
+ * counted and its role honoured, and silently never takes a task, with `atCapacity` true on an empty
+ * account. The switch for "do not use this one" is `enabled`, which says so on the row; a max of 0
+ * would be the same intent expressed where nobody would think to look.
+ *
+ * ⚠️ No upper bound, deliberately. The ceiling is the account's own — its rate limits, and the fact
+ * that parallel requests against one cached prefix each pay a cache write (`docs/cost-model.md` §1) —
+ * and inventing a number here would be a guess presented as a rule.
+ */
+function boundedConcurrency(value: number | undefined, fallback: number): number {
+  if (value === undefined) return fallback
+  return Number.isFinite(value) ? Math.max(1, Math.floor(value)) : fallback
+}
+
 export function updateWorker(
   id: string,
   patch: Partial<Pick<Worker, 'label' | 'enabled' | 'humanOccupied' | 'maxConcurrent' | 'role'>>
@@ -148,7 +165,7 @@ export function updateWorker(
       patch.label?.trim() || current.label,
       (patch.enabled ?? current.enabled) ? 1 : 0,
       (patch.humanOccupied ?? current.humanOccupied) ? 1 : 0,
-      patch.maxConcurrent ?? current.maxConcurrent,
+      boundedConcurrency(patch.maxConcurrent, current.maxConcurrent),
       patch.role ?? current.role,
       id
     )
