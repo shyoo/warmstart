@@ -65,7 +65,7 @@ import {
 import { decideFinish, resolveFinishPolicy, type TrunkReading } from './finish.js'
 import { rank, resolveSessionSharing, whyNotShared } from './sharing.js'
 import { stripAnsi } from './stream.js'
-import { clearActivity } from './activity.js'
+import { activityFor, clearActivity } from './activity.js'
 import { log } from './log.js'
 import { db } from './db.js'
 import { windowResetsAt, lastRateLimit } from './quota.js'
@@ -1517,7 +1517,29 @@ export async function completeTask(sessionId: string, summary: string): Promise<
   const task = getTask(run.taskId)
   if (!task) return
 
-  addMessage(task.id, 'agent', summary, run.id)
+  let effectiveSummary = (summary ?? '').trim()
+  if (!effectiveSummary || effectiveSummary === 'Completed') {
+    const recentActivity = activityFor(task.id)
+    const proseLines = recentActivity
+      .map((a) => a.text)
+      .filter(
+        (t) =>
+          t &&
+          !t.startsWith('[Tool:') &&
+          !t.startsWith('[run:') &&
+          !t.startsWith('[search:') &&
+          !t.startsWith('[find:') &&
+          !t.startsWith('[list:') &&
+          !t.startsWith('[fetch:')
+      )
+    if (proseLines.length > 0) {
+      effectiveSummary = proseLines.slice(-3).join('\n')
+    } else {
+      effectiveSummary = 'Completed'
+    }
+  }
+
+  addMessage(task.id, 'agent', effectiveSummary, run.id)
 
   // ⚠️ Keyed by the session, which is what holds the workspace. Keyed by the run this read `MISSING`
   // for every completion the moment ownership moved, and the finish path is gated on it — a missing
@@ -1690,7 +1712,7 @@ export async function onStreamResult(
 ): Promise<void> {
   if (!result.isError) {
     if (session.adapterId && !adapter(session.adapterId).info.capabilities.mcp) {
-      await completeTask(session.id, result.text ?? 'Completed')
+      await completeTask(session.id, result.text?.trim() || 'Completed')
     }
     return
   }

@@ -235,6 +235,61 @@ function resolveCommand(): string | null {
  * conversations as SQLite, which the transcript tailer cannot read. So this adapter is metered from
  * here or not at all.
  */
+function formatToolActivity(step: Record<string, unknown>): string | null {
+  const toolName = typeof step.tool_name === 'string' ? step.tool_name : ''
+  const toolInfo = asRecord(step.tool_info)
+  const params =
+    asRecord(toolInfo?.parameters) ??
+    asRecord(step.parameters) ??
+    asRecord(step.tool_input) ??
+    asRecord(step.args)
+
+  if (params) {
+    if (typeof params.toolAction === 'string' && params.toolAction.trim()) {
+      const summary =
+        typeof params.toolSummary === 'string' && params.toolSummary.trim()
+          ? ` — ${params.toolSummary.trim()}`
+          : ''
+      return `[Tool: ${params.toolAction.trim()}${summary}]`
+    }
+    if (typeof params.CommandLine === 'string' && params.CommandLine.trim()) {
+      return `[run: ${params.CommandLine.trim()}]`
+    }
+    if (typeof params.command === 'string' && params.command.trim()) {
+      return `[run: ${params.command.trim()}]`
+    }
+    if (typeof params.TargetFile === 'string' && params.TargetFile.trim()) {
+      return `[${toolName || 'file'}: ${params.TargetFile.trim()}]`
+    }
+    if (typeof params.AbsolutePath === 'string' && params.AbsolutePath.trim()) {
+      return `[${toolName || 'file'}: ${params.AbsolutePath.trim()}]`
+    }
+    if (typeof params.path === 'string' && params.path.trim()) {
+      return `[${toolName || 'file'}: ${params.path.trim()}]`
+    }
+    if (typeof params.Query === 'string' && params.Query.trim()) {
+      return `[search: "${params.Query.trim()}"]`
+    }
+    if (typeof params.Pattern === 'string' && params.Pattern.trim()) {
+      return `[find: "${params.Pattern.trim()}"]`
+    }
+    if (typeof params.DirectoryPath === 'string' && params.DirectoryPath.trim()) {
+      return `[list: ${params.DirectoryPath.trim()}]`
+    }
+    if (typeof params.Url === 'string' && params.Url.trim()) {
+      return `[fetch: ${params.Url.trim()}]`
+    }
+    if (typeof params.Description === 'string' && params.Description.trim()) {
+      return `[${toolName || 'tool'}: ${params.Description.trim()}]`
+    }
+  }
+
+  if (toolName) {
+    return `[Tool: ${toolName}]`
+  }
+  return null
+}
+
 function decodeStream(record: Record<string, unknown>): StreamEvent | StreamEvent[] | null {
   const event = typeof record.event === 'string' ? record.event : ''
 
@@ -251,7 +306,13 @@ function decodeStream(record: Record<string, unknown>): StreamEvent | StreamEven
   if (event === 'step_update') {
     const step = asRecord(record.step_update)
     const events: StreamEvent[] = []
-    const text = typeof step?.text_delta === 'string' ? step.text_delta : ''
+    let text = typeof step?.text_delta === 'string' ? step.text_delta : ''
+    if (!text && typeof step?.text === 'string') text = step.text
+    if (!text && typeof step?.thought_delta === 'string') text = step.thought_delta
+    if (!text && typeof step?.thought === 'string') text = step.thought
+    if (!text && step && step.step_type === 'tool' && step.state === 'ACTIVE') {
+      text = formatToolActivity(step) ?? ''
+    }
     if (text) events.push({ kind: 'assistant_text', text })
     const usage = asRecord(step?.usage)
     if (usage) events.push({ kind: 'usage', usage: readUsage(usage), final: false })
@@ -261,16 +322,39 @@ function decodeStream(record: Record<string, unknown>): StreamEvent | StreamEven
 
   if (event === 'result') {
     const result = asRecord(record.result)
-    const status = typeof result?.status === 'string' ? result.status : 'UNKNOWN'
+    const status =
+      typeof result?.status === 'string'
+        ? result.status
+        : typeof record.status === 'string'
+          ? record.status
+          : 'UNKNOWN'
+
+    let text: string | null = null
+    if (typeof result?.response === 'string' && result.response.trim()) {
+      text = result.response
+    } else if (typeof result?.text === 'string' && result.text.trim()) {
+      text = result.text
+    } else if (typeof result?.summary === 'string' && result.summary.trim()) {
+      text = result.summary
+    } else if (typeof result?.content === 'string' && result.content.trim()) {
+      text = result.content
+    } else if (typeof result?.output === 'string' && result.output.trim()) {
+      text = result.output
+    } else if (typeof record.response === 'string' && record.response.trim()) {
+      text = record.response
+    } else if (typeof record.result === 'string' && record.result.trim()) {
+      text = record.result
+    }
+
     const finished: StreamEvent = {
       kind: 'result',
-      text: typeof result?.response === 'string' ? result.response : null,
+      text,
       // ⛔ Not reported. Null rather than 0, which would read as "this turn was free".
       costUsd: null,
       isError: status !== 'SUCCESS',
       terminalReason: status
     }
-    const usage = asRecord(result?.usage)
+    const usage = asRecord(result?.usage) ?? asRecord(record.usage)
     // ⚠️ Two events from one record. The terminal record carries the turn's usage as well as its
     // text, and this is the only place agentyard can bill this adapter from - `agy` writes its
     // conversations as SQLite, which the transcript tailer cannot read.

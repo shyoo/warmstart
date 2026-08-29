@@ -160,6 +160,42 @@ describe('antigravity-cli', () => {
     })
   })
 
+  it('extracts tool action descriptions as assistant text for activity streaming', () => {
+    const toolCall =
+      '{"event":"step_update","step_update":{"conversation_id":"379cc136","step_index":2,"state":"ACTIVE",' +
+      '"step_type":"tool","tool_name":"run_command","tool_info":{"name":"run_command","parameters":{"CommandLine":"git status","toolAction":"Running command","toolSummary":"Command execution"}}}}'
+    const events = parse('antigravity-cli', [toolCall])
+    const assistant = events.find((e) => e.kind === 'assistant_text')
+    expect(assistant).toBeDefined()
+    expect((assistant as { text: string }).text).toBe('[Tool: Running command — Command execution]')
+  })
+
+  it('formats command-line and target-file parameters when tool action is not set', () => {
+    const runCall =
+      '{"event":"step_update","step_update":{"conversation_id":"379cc136","step_index":2,"state":"ACTIVE",' +
+      '"step_type":"tool","tool_name":"run_command","tool_info":{"name":"run_command","parameters":{"CommandLine":"npm test"}}}}'
+    const [runEvent] = parse('antigravity-cli', [runCall])
+    expect(runEvent).toMatchObject({ kind: 'assistant_text', text: '[run: npm test]' })
+
+    const fileCall =
+      '{"event":"step_update","step_update":{"conversation_id":"379cc136","step_index":3,"state":"ACTIVE",' +
+      '"step_type":"tool","tool_name":"view_file","tool_info":{"name":"view_file","parameters":{"TargetFile":"src/index.ts"}}}}'
+    const [fileEvent] = parse('antigravity-cli', [fileCall])
+    expect(fileEvent).toMatchObject({ kind: 'assistant_text', text: '[view_file: src/index.ts]' })
+  })
+
+  it('extracts result text from various result formats and trims whitespace', () => {
+    const withSummary =
+      '{"event":"result","result":{"conversation_id":"379cc136","status":"SUCCESS","summary":"All tests passed.\\n"}}'
+    const [event1] = parse('antigravity-cli', [withSummary])
+    expect(event1).toMatchObject({ kind: 'result', text: 'All tests passed.\n', isError: false })
+
+    const withDirectResponse =
+      '{"event":"result","status":"SUCCESS","response":"Refactored the parser."}'
+    const [event2] = parse('antigravity-cli', [withDirectResponse])
+    expect(event2).toMatchObject({ kind: 'result', text: 'Refactored the parser.', isError: false })
+  })
+
   it('encodes stream prompts with the `event` user envelope', () => {
     // ⛔ agy Go CLI expects {"event":"user","message":{...}}. Sending {"type":"user",...} causes
     // immediate exit with error: 'stream input message is missing the "event" field'.
