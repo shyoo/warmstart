@@ -35,6 +35,26 @@ describe('quotaGap', () => {
   })
 })
 
+describe('a codex worker that has never run a turn', () => {
+  // ⚠️ Codex's reading lives in a rollout, and a worker that has never taken a turn has written
+  // none. That is the same situation as claude-code's empty `cachedUsageUtilization` and it needs
+  // the same words: an action the operator can take. `unknown` sends them back to Probe, which is
+  // the one thing that cannot help, because pressing it reads the rollouts that do not exist yet.
+  it('tells the operator to run something, rather than calling the reading unknown', () => {
+    const gap = quotaGap(
+      { windows: [], error: 'codex app-server returned no reading and there are no rollout files under C:/x yet' },
+      'cli'
+    )
+    expect(gap?.label).toBe('no usage data yet')
+    expect(gap?.hint).toMatch(/start a session/i)
+  })
+
+  it('says the same when the rollouts exist but predate rate_limits', () => {
+    const gap = quotaGap({ windows: [], error: 'no rate_limits record in the 5 newest codex rollout(s)' }, 'cli')
+    expect(gap?.label).toBe('no usage data yet')
+  })
+})
+
 describe('a provider that has no usage probe at all', () => {
   it('says the reading is not reported, never that it is unknown', () => {
     // ⛔ A fifth state, and collapsing it into the fourth is what made a healthy Antigravity worker

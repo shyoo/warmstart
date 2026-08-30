@@ -300,6 +300,71 @@ cannot know which group the next run will use, so the **busiest** is promoted to
 scheduler and reserve look for. Over-stating pressure delays a dispatch; under-stating it strands a
 run at a window boundary holding context it cannot save.
 
+### Codex — the reading was on disk the whole time (2026-08-29)
+
+**Measured against codex-cli 0.151.0 on Windows.** For three months this adapter declared
+`quotaProbe: 'none'`, reasoning that Codex has no non-interactive usage command. The command does not
+exist — openai/codex#10233 is still open — and the conclusion drawn from that was wrong. Every turn
+writes an `event_msg` / `token_count` record into the session's rollout JSONL, and that record
+carries the server's `rate_limits` verbatim:
+
+```json
+{"type":"event_msg","timestamp":"2026-08-30T01:23:30.316Z","payload":{"type":"token_count",
+  "rate_limits":{"limit_id":"codex","plan_type":"free",
+    "primary":{"used_percent":0.0,"window_minutes":43200,"resets_at":1790645009},
+    "secondary":null,
+    "credits":{"has_credits":false,"unlimited":false,"balance":null}}}}
+```
+
+⭐ **And there is a better rung, which is what the TUI's `/status` uses.** `codex app-server` speaks
+JSON-RPC over stdio and answers **`account/rateLimits/read`** — no params, **~600–700ms measured**, no
+turn, no token:
+
+```json
+{"rateLimits":{"limitId":"codex","planType":"free",
+  "primary":{"usedPercent":0,"windowDurationMins":43200,"resetsAt":1790646320},
+  "secondary":null,"credits":{"hasCredits":false,"unlimited":false,"balance":null}},
+ "rateLimitsByLimitId":{"codex":{…}}, "rateLimitResetCredits":{"availableCount":0,"credits":[]}}
+```
+
+⛔ **This is a live server call, not a cache**, which is the whole reason it outranks the rollout: two
+readings taken minutes apart returned `resetsAt` values **1311s apart**. A cache cannot do that. The
+protocol is discoverable locally and for free — `codex app-server generate-json-schema --out <dir>`
+writes `v2/GetAccountRateLimitsResponse.json`, which is where the field names below come from.
+
+So `probeQuota` has two rungs, both free, and they report **different `source` values on purpose**:
+
+| | Rung 0 — `account/rateLimits/read` | Fallback — the rollout |
+|---|---|---|
+| How | `codex app-server` over stdio, `initialize` then one request | `$CODEX_HOME/sessions/**/rollout-*.jsonl`, newest first, last `event_msg` → `token_count` |
+| Cost | a local subprocess, ~700ms, one network call | a file read |
+| `source` | `'cli'` | `'config-cache'` |
+| `sampledAt` | now — the reading is current | the record's own `timestamp`, never ours |
+| Freshness | current whenever asked | ⚠️ **as old as the worker's last turn**; an idle worker's ages without limit |
+| Fails when | offline, or not signed in | the worker has never taken a turn |
+
+⚠️ **Spelling.** The app-server answers in camelCase (`usedPercent`, `windowDurationMins`, `resetsAt`)
+and the rollout in snake_case (`used_percent`, `window_minutes`, `resets_at`). Same server payload,
+two writers; one normaliser reads both so no caller has to know which rung answered.
+
+⛔ **Still no `usageRefresh`.** That field means *drive a command into a PTY session*, which is not
+what this is. This is a local subprocess like `claude auth status --json`, and it belongs in
+`probeQuota` itself.
+
+⚠️ Measured on a window at **0% used**, `resetsAt` tracked the moment of the call — consistent with a
+rolling 30-day window that has not started. Not yet observed on a window with usage in it.
+
+⭐ **Quota is not withheld from free accounts, and the window ids must not assume a plan.** Measured on
+a free account: `plan_type: "free"`, **one 30-day window** (`window_minutes: 43200`) and a null
+`secondary`. A paid plan puts a five-hour window in `primary` instead. Since `reserve.ts` and
+`controller.ts` gate on the id `5h`, reading `primary` as *the five-hour window* would be right on
+one plan and silently wrong on the other — so the id is derived from `window_minutes` and never from
+the slot. `used_percent` is the server's snapshot **at request time**, so it lags by one turn.
+
+⭐ This also answers **R10**: the rollout carries `total_token_usage` and `last_token_usage` with
+`cached_input_tokens`, so per-turn metering off the rollout is available. `metering` stays `'stream'`
+until that path is written and measured.
+
 ### What else was tried, and why it is not what we use
 
 Kept because the vendor surface moves, and each of these becomes right the moment one fact changes.

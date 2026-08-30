@@ -1976,3 +1976,66 @@ ahead of the task that has waited longest. Both would pass trivially today and b
 dependency approach would have broken. Six mutations were caught: the gate never firing, an undeclared
 pool reading as full, a projectless task borrowing another project's pool, contention made terminal,
 everything made retryable, and the warm-session exemption removed.
+
+## A missing command mistaken for a missing reading (2026-08-29)
+
+The operator commissioned a Codex worker, saw `quota unknown` on its fleet row, and asked whether
+that was because the account is free — and if so, for the badge to say so.
+
+It was not. The account *is* free (`chatgpt_plan_type: "free"`, read out of the worker's own
+`auth.json`), but free accounts report quota like any other. The badge was empty because
+`openai-compatible` declared `quotaProbe: 'none'` with this reason attached:
+
+> Codex has no non-interactive usage command (openai/codex#10233).
+
+Every word of that is true. The issue is real and still open. The conclusion drawn from it — *so
+there is no reading* — is what was wrong, and it had been wrong for three months. `quotaProbe: 'none'`
+made `quota.ts`'s poller skip codex workers entirely and made `quotaGap()` render the permanent
+words *not reported*, so nothing ever went looking.
+
+⭐ **One `codex exec` turn settled it.** The rollout JSONL it wrote carries, on an
+`event_msg` / `token_count` record, the server's `rate_limits` verbatim: `primary` at 0% of a
+**43200-minute** window, `secondary: null`, `plan_type: "free"`. A file read. No process, no token.
+
+⛔ **The free plan is what made the shape of the fix non-obvious.** Free reports *one 30-day window*
+where a paid plan reports a five-hour one — in the same `primary` slot. Reading `primary` as "the 5h
+window" would have been correct on a paid account and silently wrong here, and `reserve.ts` and
+`controller.ts` both gate on the id `5h`. So a window's id is derived from `window_minutes` and never
+from the slot it arrived in. Writing it the obvious way would have produced a bug visible only to
+somebody on the plan nobody develops against.
+
+⭐ **Then the operator said they had run `/status` by hand and seen a monthly limit and its reset.**
+That was the useful correction: `/status` is not reading the rollout. Chasing where it *does* read
+from — `codex app-server generate-json-schema --out <dir>`, which is free and local — turned up
+`v2/GetAccountRateLimitsResponse.json` and a JSON-RPC method **`account/rateLimits/read`**, no params.
+Driven over stdio it answers in **~600–700ms**, no turn, no token.
+
+⛔ **And it is live, not cached**, which is the whole reason it outranks the rollout: two readings
+minutes apart returned `resetsAt` values **1311s apart**. A cache cannot do that. So `probeQuota`
+became two rungs — app-server first, rollout when it cannot be reached — reporting **different
+`source` values on purpose (`'cli'` vs `'config-cache'`)**, because `sampledAt` alone cannot say that
+one reading is current and the other is as old as the worker's last turn.
+
+⚠️ **Two spellings, one normaliser.** The app-server answers camelCase (`usedPercent`,
+`windowDurationMins`) and the rollout snake_case (`used_percent`, `window_minutes`). Same server
+payload, two writers. `windowsFromRateLimits` reads both so no caller has to know which rung answered.
+
+⚠️ **`usageRefresh` stays null, deliberately.** That field means *type a command into a PTY session*,
+which this is not. This is a local subprocess like `claude auth status --json`, so it belongs inside
+`probeQuota` rather than in the refresh ladder built for screen-answered providers.
+
+⭐ **`rolloutQuota` was extracted and exported so the tests do not spawn a CLI.** With codex on PATH
+the fixture tests were reaching the live app-server and taking 2.2s instead of 0.4s; worse, their
+result would have depended on whether the machine running the suite happened to be signed in. A test
+that passes for a reason outside the repository is not a test.
+
+⛔ **The same mistake, twice, on two adapters.** Antigravity carried `quotaProbe: 'none'` until
+`/usage` in its TUI was measured free on 2026-08-27; codex carried it until this. Both times the
+evidence was a *command* that did not exist, and both times a reading did. `AGENTS.md` already said
+"ask the CLI before writing `none`" from the first instance; it now says both, because one example
+reads as an anecdote and two read as a pattern.
+
+⚠️ **What is still not known.** `resetsAt` tracked the moment of the call on a window at 0% used,
+which is consistent with a rolling 30-day window that has not started — but that has never been seen
+on a window with real usage in it, and it is written down as measured behaviour rather than as how
+the window works.

@@ -84,7 +84,7 @@ worth and refuses to let it evaporate.
 | CLI | Install | Needs |
 |---|---|---|
 | **Claude Code** | `npm install -g @anthropic-ai/claude-code` | a Claude Pro/Max/Team subscription |
-| **Codex** | `npm install -g @openai/codex` | a ChatGPT Plus/Pro/Business plan, or an API key |
+| **Codex** | `npm install -g @openai/codex` | any ChatGPT plan — **Free included** — or an API key |
 | **Antigravity** | `irm https://antigravity.google/cli/install.ps1 \| iex` | Google AI Pro or Ultra |
 
 You need **one**. Having several is the point — see *Multiple accounts* below.
@@ -157,9 +157,9 @@ documentation — which mattered, because several documented claims turned out t
 would have failed on the first spawn. [`docs/adapters.md`](docs/adapters.md) records what was measured,
 when, against which version, and what is still unverified.
 
-> **On quota numbers.** Both Claude Code and Antigravity can be asked for a live reading without
-> spending a token: `/usage` typed into an interactive session is handled by the client, and
-> Multi Agent Controller drives it for you on the Probe button. ⚠️ A reading is always shown with
+> **On quota numbers.** All three CLIs can be asked for a live reading without spending a token:
+> `/usage` typed into an interactive session is handled by the client on Claude Code and Antigravity,
+> and Codex answers `account/rateLimits/read` over its app-server. Probe drives them for you. ⚠️ A reading is always shown with
 > its age, and an old one is reported as *unknown* rather than as a number.
 >
 > One consequence is still worth stating plainly: the compaction reserve, which stops an account

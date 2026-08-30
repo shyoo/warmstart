@@ -154,7 +154,14 @@ export function quotaGap(
   }
   if (quota.windows.length === 0) {
     // The adapter names the file it could not read. Keep that, but lead with the fix.
-    if (/cachedUsageUtilization|no \.claude\.json/i.test(quota.error ?? '')) {
+    // ⚠️ Codex belongs in this branch too, for the same reason by a different file: its reading
+    // lives in a rollout, and a worker that has never run a turn has written none. `unknown` would
+    // send the operator back to Probe, which is the one thing that cannot help.
+    if (
+      /cachedUsageUtilization|no \.claude\.json|no rollout files|no rate_limits record/i.test(
+        quota.error ?? ''
+      )
+    ) {
       return {
         label: 'no usage data yet',
         hint:

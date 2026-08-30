@@ -111,9 +111,10 @@ These are not preferences; breaking one breaks the product.
   into one word is what made a working Probe button look broken. See `quotaGap()`.
   ⚠️ **There is a fifth: `quotaProbe: 'none'`, a provider that reports usage to nothing outside
   an interactive session.** The other four describe a reading somebody can go and get, so
-  "unknown" invites them to press Probe again; there it reads *not reported*. ⛔ Do not assume a
-  provider is in that state because it once was - Antigravity was, until `/usage` in its TUI was
-  measured on 2026-08-27 and turned out to be free. Ask the CLI before writing `none`.
+  "unknown" invites them to press Probe again; there it reads *not reported*. ⛔ **Do not write
+  `none` from an absent command; ask the CLI.** Both built-ins that carried it were wrong -
+  Antigravity until `/usage` in its TUI was measured free (2026-08-27), and codex until
+  `account/rateLimits/read` and its rollouts were (2026-08-29). Twice is a pattern, not bad luck.
 - ⛔ **Every cost belief carries its basis.** `remainingTokens` returns a number *and* how it was
   arrived at; the reserve returns a verdict *and* its reason; the cache clock records every decision
   including the ones that did nothing. A scheduler that spends money and cannot say why is one you

@@ -8,10 +8,10 @@ started in CI, never run against a real agent CLI.
 if you add a line, find the one it obsoletes and cut it in the same edit. Finished work moves to
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
-**Baseline (2026-08-29, measured):** typecheck · lint · build clean · `npm test` 696/698 (2 POSIX-only
+**Baseline (2026-08-29, measured):** typecheck · lint · build clean · `npm test` 711/713 (2 POSIX-only
 skipped) · `test:daemon` 125/125 · `test:ui` 140/140 · `test:pack` 18/18 · L4 (opt-in) landed a real
 agent commit on origin/main. Electron 44.0.0, electron-builder 26.15.3, 0 npm vulnerabilities.
-CLIs here: claude 2.1.251 · agy 1.1.22 · codex 0.149.1.
+CLIs here: claude 2.1.251 · agy 1.1.22 · codex 0.151.0.
 
 ⭐ **`scripts/build-win.ps1` runs all of the above**; `-Help` lists its options, `-Restart` is the inner
 loop. Content-addressed: **92s cold, ~0s warm**. ⛔ **One packaged app — `release\win-unpacked\`** — and
@@ -102,8 +102,10 @@ docs/                  cost-model.md, glossary.md, adapters.md, landing.md, sess
 
 ## What is true right now and not yet proven
 
-- ⭐ **Both providers have a free live quota probe** (**R3 closed**, `docs/cost-model.md` §5). A
+- ⭐ **All three providers have a free quota probe** (**R3 closed**, `docs/cost-model.md` §5). A
   stale-but-known reading is labelled, not dropped, and Antigravity's **two pools gate separately**.
+  ⭐ **Codex joined 2026-08-29**: `codex app-server`'s `account/rateLimits/read` (~700ms, live, what
+  `/status` shows), else its rollout. ⛔ **Free reports quota too** — one 30-day window, so an id comes from a window's *length*, never its slot.
 - ⚠️ **The compaction reserve still reports `unknown`** — it needs `remaining` in *tokens*, so **R2**
   is the blocker, not a stale percentage (`docs/cost-model.md` §10). ⛔ Until it lands it scores zero
   as a routing input; only checked evidence may move a score.
@@ -154,7 +156,8 @@ M0–M6 are done. What is left is not a milestone but a list, in the order it wo
    OS keyring so sign-in *should* survive, and "should" is doing the work there.
 7. **The project Thread tab has no automated coverage.** `test/ui.test.mjs` files every task with no
    project, so that tab is checked by `typecheck` and by hand only. Needs a real project root.
-8. **Compute `overrunFactor` in cost, not raw tokens**, and let preempted runs feed `estimateTask`.
+8. **Meter codex off its rollout** — R10 is answered (§5), but `metering` stays `'stream'`, so a PTY-hosted codex run is unmetered.
+9. **Compute `overrunFactor` in cost, not raw tokens**, and let preempted runs feed `estimateTask`.
    ⚠️ It measures the wrong thing today — 92–98% of a run's tokens are cache reads, so it fires on
    long work, which is why `autoRunawayStop` ships off. The cost model already prices cache reads
    separately, so nothing needs measuring first.
@@ -181,11 +184,9 @@ is what the CLI spent that never reached a transcript.
 | **R6** | Is `/compact` honoured as a user message on `stream`? | Send it into a live stream session and watch for a `compact_boundary` record | ⚠️ Not urgent — the clock gives up after two ignored attempts. A `no` makes handoff-and-close the only move on that transport |
 | **R7** | Does the live rate-limit `status` warn before it refuses? | Let one window fill while watching `rate_limit_samples` | Decides whether the live signal is an early warning or an obituary |
 | **R8** | Does a real model answer a consult in the shape the validators accept? | Designate a controller, file a `plan` task, run `controller.drain`, read the row: `answered` or `fallback`, and the `fallbackReason` | The one M4 path L1 cannot reach |
-| **R10** | Does the codex rollout JSONL carry per-turn usage `transcript.ts` can meter? | Run one small task on a codex worker; open `$CODEX_HOME/sessions/**/rollout-*.jsonl` | If not, `meteredFromTranscript` is wrong and codex runs are invisible to the cost model — a bigger hole than pricing |
-| **R11** | The `--json` event shapes for **codex** | One turn, capture stdout verbatim | ⭐ The agy half closed 2026-08-28 - `init` / `step_update` / `result`, usage on the last two, and `--conversation` resumes one. codex is still unread, so it contributes no rate-limit signal or result text |
 | **R12** | Is headless compaction reachable on codex? | Try to drive compaction from `codex exec`; watch for a compaction record | If yes, `manualCompact` flips true and two cache-clock moves become available on that provider |
 
-R1 and R6 change the cache clock. ⚠️ **R5 dropped**: resuming is measured and shipped within an account; its transplant needs a second subscription.
+R1, R6 change the cache clock. **R10/R11 closed 2026-08-29** (§5). ⚠️ **R5 dropped**: resuming is measured and shipped within an account; its transplant needs a second subscription.
 
 ## Standing decisions worth not relitigating
 

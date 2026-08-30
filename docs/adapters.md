@@ -15,7 +15,7 @@ first spawn.** That is the whole reason `AdapterInfo.verification` exists.
 | | `claude-code` | `antigravity-cli` | `openai-compatible` |
 |---|---|---|---|
 | Command | `claude` | `agy` | `codex` |
-| Measured against | 2.1.223 | 1.1.20 | 0.149.1 |
+| Measured against | 2.1.223 | 1.1.20 | 0.151.0 |
 | **Accounts per machine** | **unlimited** (`CLAUDE_CONFIG_DIR`) | ⛔ **1** (OS keyring) | **unlimited** (`CODEX_HOME`) |
 | Credential lives in | a directory | ⛔ the OS keyring | a directory |
 | Metered from | transcript (exact, survives a restart) | **its live stream** | **its live stream** |
@@ -24,7 +24,7 @@ first spawn.** That is the whole reason `AdapterInfo.verification` exists.
 | Approvals | `permission_prompt_tool` | settings rules | settings rules |
 | Multi Agent Controller MCP tools | ✔ | ⛔ global registration only | ⛔ global registration only |
 | Accepts our session id | ✔ | ⛔ | ⛔ |
-| Free quota probe | ⛔ | ⛔ **measured — see below** | ⛔ |
+| Free quota probe | ✔ the `.claude.json` cache; `/usage` refreshes it | ⛔ **measured — see below** | ✔ **`account/rateLimits/read`**, rollout as fallback |
 | Reports cache reads | via transcript | ⛔ no | ✔ reads **and** writes |
 
 **Read the ⛔ column-by-column, not row-by-row.** Two of these three CLIs have no classifier and no
@@ -44,6 +44,8 @@ Written from documentation, then run. Each of these was wrong:
 | `antigravity-cli` | `-p` is a boolean, like `claude -p` | ⛔ **it takes the prompt as its value.** `-p` / `--print` / `--prompt` are one *string* flag; `agy -p` alone answers *flag needs an argument: -p*. A bare `-p` before `--input-format` makes the CLI take `--input-format` as the prompt and exit 2 — and this adapter did exactly that, so **every Antigravity dispatch failed in 0s from M5 until 2026-08-27**. Print mode is switched on with `--print=` and the prompt arrives as NDJSON on stdin |
 | `openai-compatible` | `--output-format json\|stream-json` | `exec` has **`--json`** and no `--output-format` |
 | `openai-compatible` | identity from `auth.json` existing | **`codex doctor --json`** — free, local, redacted, and the vendor's own answer |
+| `openai-compatible` | no usage *command* exists (openai/codex#10233), therefore `quotaProbe: 'none'` | ⛔ **A missing command is not a missing reading.** `codex app-server` answers **`account/rateLimits/read`** over JSON-RPC in ~700ms — no params, no turn, and *live* rather than cached (`resetsAt` moved 1311s between two calls). Every rollout records `rate_limits` besides, so a reading was on disk the whole time. Measured 2026-08-29, 0.151.0 |
+| `openai-compatible` | Codex needs a paid ChatGPT plan to report quota | ⛔ **Free reports it too** — `planType: "free"`, one **30-day** window, `secondary: null`. A paid plan puts a five-hour window in `primary` instead, so a window's id must come from its *length*, never its slot |
 | `openai-compatible` | models `gpt-5.2-codex*` | `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.5`, `gpt-5.4-mini` — from `$CODEX_HOME/models_cache.json` |
 | `antigravity-cli` | no auto-ish mode at all | **`--mode accept-edits\|plan` exists** — exactly what plan §9.1 predicted, and now the default |
 | `antigravity-cli` | `--input-format` standalone | **requires `--output-format stream-json`**; one without the other is an argument error |
@@ -238,7 +240,6 @@ Everything below needs a **signed-in account and a real turn**, which is where f
 
 | # | Question | Adapter |
 |---|---|---|
-| **R10** | Does the codex rollout JSONL carry per-turn usage in a shape `transcript.ts` can read? Metering works from the stream today, but a stream is lost if the daemon restarts mid-run and a file is not | `openai-compatible` |
 | **R12** | Is headless compaction reachable on codex at all? Its session lifecycle has compaction, but no documented way to drive it from `exec`. If it is, `manualCompact` flips true and two cache-clock moves become available | `openai-compatible` |
 | **R13** | Is agy's `result.usage` the *turn's* total or the *conversation's*? Measured on a single-turn run, where the two are identical. If it is cumulative, multi-turn sessions are over-billed | `antigravity-cli` |
 
@@ -280,4 +281,5 @@ Two things that survived being run that way, and would not have been found other
   Multi Agent Controller looks there anyway, and Doctor tells you the difference.
 
 Antigravity requires a Google AI Pro or Ultra subscription — the free tier ended on 2026-06-18, when
-Gemini CLI stopped serving individual accounts. Codex is included with ChatGPT Plus/Pro/Business.
+Gemini CLI stopped serving individual accounts. ⚠️ **Codex is included on ChatGPT Free as well** —
+measured 2026-08-29 on a free account, which reports a 30-day quota window like any other.

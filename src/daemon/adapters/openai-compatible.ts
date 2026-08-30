@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -82,8 +82,14 @@ const info: AdapterInfo = {
     // true on documentation alone is exactly the trade AGENTS.md forbids — it would present a
     // documented capability with the same confidence as a measured one. Left false until run.
     selectableEffort: false,
-    // No non-interactive status command exists; openai/codex#10233 is the open request for one.
-    quotaProbe: 'none',
+    // ⛔ `'none'` until 2026-08-29, on the grounds that no non-interactive *status command* exists
+    // (openai/codex#10233, still open). That was a fact about commands mistaken for a fact about
+    // readings: the server's `rate_limits` are written into every rollout, so the reading is a file
+    // read like claude-code's. `'none'` made the poller skip codex workers entirely and the fleet
+    // strip render `not reported` over a number that was on disk. See `probeQuota`.
+    // ⚠️ Still no `usageRefresh`: making this reading current means spending a turn, so an idle
+    // codex worker goes stale and the staleness ladder is the honest answer.
+    quotaProbe: 'cli',
     // `codex exec resume <SESSION_ID>` takes an id, but the id is codex's to create - there is no
     // flag that supplies one for a *new* session.
     mintsSessionId: false,
@@ -202,6 +208,343 @@ function readUsage(usage: Record<string, unknown>): StreamUsage {
   }
 }
 
+/**
+ * Codex's rate-limit reading, and where it actually lives.
+ *
+ * ⛔ **The old note here — "Codex has no non-interactive usage command" — was true and irrelevant.**
+ * It is a fact about *commands*, and the reading is not behind a command. Measured 2026-08-29 against
+ * codex-cli **0.151.0**: every turn writes an `event_msg` / `token_count` record into the session's
+ * rollout JSONL, and that record carries `rate_limits` verbatim from the server:
+ *
+ * ```
+ * "rate_limits": { "limit_id": "codex", "plan_type": "free",
+ *   "primary":   { "used_percent": 0, "window_minutes": 43200, "resets_at": 1790645009 },
+ *   "secondary": null,
+ *   "credits":   { "has_credits": false, "unlimited": false, "balance": null } }
+ * ```
+ *
+ * So this is the **cheap rung** `probeWorker` was built for: a file read, no process, no token. It is
+ * the same shape of source as claude-code's `cachedUsageUtilization` and it is dated the same way —
+ * by the vendor's own timestamp, never by ours, so the staleness ladder in `quota.ts` can do its job.
+ *
+ * ⚠️ **The reading is exactly as old as this worker's last turn**, because nothing else writes it.
+ * An idle codex worker goes stale and *should*; `refreshUsage`'s trick of making the cache current
+ * has no equivalent here, since making it current means spending a turn.
+ *
+ * ⚠️ **`used_percent` is the server's snapshot at request time, so it lags the turn it arrives on.**
+ * The 0% above was written by a turn that had already been billed.
+ *
+ * ⛔ **Only the free shape has been measured.** `secondary` was `null` and `primary` was a 30-day
+ * window — which is why the window id is derived from `window_minutes` below and never from which
+ * slot it arrived in. Reading `primary` as "the 5h window" would be right on a paid plan and wrong
+ * here, and the gates in `reserve.ts` and `controller.ts` key on that id.
+ */
+
+/**
+ * How long the app-server gets to answer before the probe falls back to the rollout.
+ *
+ * ⚠️ Generous relative to the ~700ms measured, because this call reaches the network and the
+ * fallback is a worse reading rather than no reading. The poller runs every five minutes.
+ */
+const APP_SERVER_TIMEOUT_MS = 15_000
+
+/** Rollout files are per-day; this bounds how far back a probe will look for a turn that had one. */
+const ROLLOUT_SCAN_LIMIT = 5
+
+/**
+ * A window's id, from its length rather than its slot.
+ *
+ * ⛔ `5h` and `session` are the ids the scheduler's gates recognise (`reserve.ts`, `controller.ts`),
+ * so a five-hour window has to be called `5h` whichever slot the server put it in. Everything longer
+ * is named for what it is; a 30-day window is not a weekly one and must not be mistaken for it.
+ */
+function windowIdFor(minutes: number): string {
+  if (minutes <= 300) return '5h'
+  const days = Math.round(minutes / 1440)
+  if (days >= 1) return `${days}d`
+  return `${Math.max(1, Math.round(minutes / 60))}h`
+}
+
+/** Newest-first day directories under `<CODEX_HOME>/sessions/YYYY/MM/DD`. */
+function rolloutDayDirs(sessionsDir: string): string[] {
+  const descend = (dir: string): string[] => {
+    try {
+      return readdirSync(dir, { withFileTypes: true })
+        .filter((e) => e.isDirectory())
+        .map((e) => e.name)
+        .sort()
+        .reverse()
+        .map((n) => join(dir, n))
+    } catch {
+      return []
+    }
+  }
+  const out: string[] = []
+  for (const year of descend(sessionsDir))
+    for (const month of descend(year)) out.push(...descend(month))
+  return out
+}
+
+/** The most recently written rollout files, newest first, capped. */
+function recentRollouts(isolationRoot: string): string[] {
+  const sessionsDir = join(isolationRoot, 'sessions')
+  if (!existsSync(sessionsDir)) return []
+  const found: Array<{ path: string; mtime: number }> = []
+  for (const day of rolloutDayDirs(sessionsDir)) {
+    let names: string[]
+    try {
+      names = readdirSync(day)
+    } catch {
+      continue
+    }
+    for (const name of names) {
+      if (!name.startsWith('rollout-') || !name.endsWith('.jsonl')) continue
+      const path = join(day, name)
+      try {
+        found.push({ path, mtime: statSync(path).mtimeMs })
+      } catch {
+        // A file that vanished between listing and stat is a live session rotating, not an error.
+      }
+    }
+    // Day directories are already newest-first, so one populated day is usually enough.
+    if (found.length >= ROLLOUT_SCAN_LIMIT) break
+  }
+  return found
+    .sort((a, b) => b.mtime - a.mtime)
+    .slice(0, ROLLOUT_SCAN_LIMIT)
+    .map((f) => f.path)
+}
+
+/**
+ * One window, in either spelling.
+ *
+ * ⚠️ The rollout record is snake_case and the app-server response is camelCase. They are the same
+ * server payload rendered by two writers, so the reader accepts both rather than the caller
+ * remembering which source it came from.
+ */
+interface CodexRateWindow {
+  used_percent?: number
+  usedPercent?: number
+  window_minutes?: number
+  windowDurationMins?: number | null
+  resets_at?: number | null
+  resetsAt?: number | null
+}
+
+interface CodexRateLimits {
+  primary?: CodexRateWindow | null
+  secondary?: CodexRateWindow | null
+  plan_type?: string | null
+  planType?: string | null
+  credits?: {
+    has_credits?: boolean
+    hasCredits?: boolean
+    unlimited?: boolean
+    balance?: number | string | null
+  } | null
+}
+
+/** The last `token_count` record carrying `rate_limits` in one rollout, or null. */
+export function lastRateLimits(
+  jsonl: string
+): { limits: CodexRateLimits; at: number } | null {
+  const lines = jsonl.split('\n')
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i]?.trim()
+    // Cheap reject before parsing: these files are mostly message payloads, and most of them are big.
+    if (!line || !line.includes('"rate_limits"')) continue
+    let rec: unknown
+    try {
+      rec = JSON.parse(line)
+    } catch {
+      // ⛔ A truncated last line is normal while a session is still writing. Keep walking back.
+      continue
+    }
+    const obj = asRecord(rec)
+    const payload = asRecord(obj?.payload)
+    if (payload?.type !== 'token_count') continue
+    const limits = asRecord(payload.rate_limits) as CodexRateLimits | undefined
+    if (!limits) continue
+    const at = typeof obj?.timestamp === 'string' ? Date.parse(obj.timestamp) : NaN
+    return { limits, at: Number.isFinite(at) ? at : Date.now() }
+  }
+  return null
+}
+
+/** `rate_limits` → the fleet's windows. Empty when the plan meters nothing this probe can show. */
+export function windowsFromRateLimits(limits: CodexRateLimits): QuotaSnapshot['windows'] {
+  const windows: QuotaSnapshot['windows'] = []
+  for (const w of [limits.primary, limits.secondary]) {
+    if (!w) continue
+    const percent = w.used_percent ?? w.usedPercent
+    const minutes = w.window_minutes ?? w.windowDurationMins
+    if (typeof percent !== 'number' || typeof minutes !== 'number') continue
+    const id = windowIdFor(minutes)
+    // Two slots can only collide if the server sent the same window twice; keep the first.
+    if (windows.some((x) => x.id === id)) continue
+    const resets = w.resets_at ?? w.resetsAt
+    windows.push({
+      id,
+      label: id,
+      percent,
+      // Unix seconds here, milliseconds everywhere in this project.
+      resetsAt: typeof resets === 'number' ? resets * 1000 : null
+    })
+  }
+  return windows
+}
+
+/**
+ * ⭐ **Ask the account, on demand, for nothing.** Measured 2026-08-29 against codex-cli 0.151.0.
+ *
+ * `codex app-server` speaks JSON-RPC over stdio and answers `account/rateLimits/read` — no params,
+ * **~700ms**, no turn, no token. It is what the TUI's `/status` is showing, and it is a *live server
+ * call* rather than a cached one: two readings taken minutes apart returned `resetsAt` values 1311s
+ * apart, which a cache cannot do.
+ *
+ * ⛔ This is why the rollout read below is the **fallback** and not the probe. The rollout is only
+ * ever as fresh as the worker's last turn — an idle worker's reading ages forever — whereas this is
+ * current every time it is asked. The fallback still earns its place: this call needs the network
+ * and a working sign-in, and a stale number that exists beats a fresh one that could not be fetched.
+ *
+ * ⚠️ The response is **camelCase** (`usedPercent`, `windowDurationMins`) where the rollout record is
+ * snake_case (`used_percent`, `window_minutes`). Same data, two spellings, one normaliser.
+ */
+async function readAccountRateLimits(isolationRoot: string): Promise<CodexRateLimits | null> {
+  const resolved = which(info.command)
+  if (!resolved) return null
+  const { command, prefixArgs } = launchable(resolved)
+
+  return await new Promise<CodexRateLimits | null>((resolve) => {
+    const child = spawn(command, [...prefixArgs, 'app-server'], {
+      env: envFor(isolationRoot),
+      stdio: ['pipe', 'pipe', 'pipe'],
+      // ⛔ `windowsHide`, because this runs on the poller's five-minute tick and a console flashing
+      // on the operator's desktop twice a minute across a fleet is not acceptable.
+      windowsHide: true
+    })
+    let settled = false
+    /** ⛔ One exit path, and it always kills the child. An app-server left running is an orphan. */
+    const finish = (value: CodexRateLimits | null): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      try {
+        child.stdin.end()
+        child.kill()
+      } catch {
+        // Already gone. Nothing to do and nothing worth reporting.
+      }
+      resolve(value)
+    }
+    const timer = setTimeout(() => {
+      log.debug('codex app-server did not answer account/rateLimits/read in time')
+      finish(null)
+    }, APP_SERVER_TIMEOUT_MS)
+
+    child.on('error', (err) => {
+      log.debug('codex app-server could not be started:', err)
+      finish(null)
+    })
+    child.on('exit', () => finish(null))
+    // ⚠️ Read but not surfaced: the server writes its own diagnostics here, and a probe that logged
+    // them at warn on every tick would bury the log this project just built a viewer for.
+    child.stderr.on('data', (c: Buffer) => log.debug(`codex app-server: ${c.toString().trim()}`))
+
+    let buf = ''
+    child.stdout.on('data', (chunk: Buffer) => {
+      buf += chunk.toString()
+      let nl: number
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, nl).trim()
+        buf = buf.slice(nl + 1)
+        if (!line) continue
+        let msg: Record<string, unknown> | undefined
+        try {
+          msg = asRecord(JSON.parse(line)) ?? undefined
+        } catch {
+          continue
+        }
+        if (!msg) continue
+        if (msg.id === 1) {
+          // The handshake is answered; ask the one question and nothing else.
+          child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'initialized' })}\n`)
+          child.stdin.write(
+            `${JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'account/rateLimits/read' })}\n`
+          )
+        } else if (msg.id === 2) {
+          const result = asRecord(msg.result)
+          const limits = asRecord(result?.rateLimits) as CodexRateLimits | undefined
+          finish(limits ?? null)
+        }
+      }
+    })
+
+    child.stdin.write(
+      `${JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: { clientInfo: { name: 'multi-agent-controller', title: 'quota probe', version: '1' } }
+      })}\n`
+    )
+  })
+}
+
+/**
+ * The fallback rung: the newest rollout that recorded a `rate_limits`.
+ *
+ * ⚠️ Separate from `probeQuota` so it can be tested without a codex on PATH. Spawning the
+ * app-server inside a unit test would make the result depend on whether the machine running the
+ * suite happens to be signed in, which is the opposite of what these tests are for.
+ */
+export function rolloutQuota(isolationRoot: string): Omit<QuotaSnapshot, 'workerId'> {
+  const files = recentRollouts(isolationRoot)
+  if (files.length === 0) {
+    return {
+      windows: [],
+      sampledAt: Date.now(),
+      source: 'unknown',
+      error:
+        `codex app-server returned no reading and there are no rollout files under ` +
+        `${join(isolationRoot, 'sessions')} yet`
+    }
+  }
+  for (const file of files) {
+    let found: ReturnType<typeof lastRateLimits>
+    try {
+      found = lastRateLimits(readFileSync(file, 'utf8'))
+    } catch (err) {
+      log.debug(`codex probeQuota could not read ${file}:`, err)
+      continue
+    }
+    if (!found) continue
+    const windows = windowsFromRateLimits(found.limits)
+    if (windows.length === 0) {
+      // ⚠️ A reading that names no window is still a fact: this account is metered by credits, or
+      // by nothing this probe can render. Saying so beats an empty snapshot the operator reads as
+      // a broken poller.
+      return {
+        windows: [],
+        sampledAt: found.at,
+        source: 'config-cache',
+        error: found.limits.credits?.unlimited
+          ? 'codex reports unlimited credits and no metered window'
+          : `codex reported no rate-limit window (plan ${found.limits.plan_type ?? 'unknown'})`
+      }
+    }
+    // The vendor's timestamp, not ours — same rule as claude-code. An idle worker goes stale here
+    // and should: nothing but a turn can refresh this.
+    return { windows, sampledAt: found.at, source: 'config-cache' }
+  }
+  return {
+    windows: [],
+    sampledAt: Date.now(),
+    source: 'unknown',
+    error: `no rate_limits record in the ${files.length} newest codex rollout(s)`
+  }
+}
+
 export const openaiCompatible: AgentAdapter = {
   info,
   decodeStream,
@@ -293,16 +636,32 @@ export const openaiCompatible: AgentAdapter = {
         }
   },
 
-  /** ⛔ No non-interactive usage command exists. Reported as unknown rather than guessed. */
-  async probeQuota(): Promise<Omit<QuotaSnapshot, 'workerId'>> {
-    return {
-      windows: [],
-      sampledAt: Date.now(),
-      source: 'unknown',
-      error:
-        'Codex has no non-interactive usage command (openai/codex#10233). This worker has no quota ' +
-        'reading, so its runs are marked unverified.'
+  /**
+   * Ask the app-server; fall back to the newest rollout. Both free. See `readAccountRateLimits`.
+   *
+   * ⚠️ The two rungs report **different `source` values on purpose**, because they are not equally
+   * trustworthy and `sampledAt` alone cannot say so. `'cli'` is a reading taken *now*; `'config-cache'`
+   * is one left behind by a turn, dated when that turn happened, and the staleness ladder in
+   * `quota.ts` treats it accordingly.
+   */
+  async probeQuota(isolationRoot: string): Promise<Omit<QuotaSnapshot, 'workerId'>> {
+    const live = await readAccountRateLimits(isolationRoot)
+    if (live) {
+      const windows = windowsFromRateLimits(live)
+      // ⚠️ An answer with no window still beats the rollout: it is current, and it is the account
+      // saying it meters nothing rather than this worker never having run.
+      if (windows.length > 0) return { windows, sampledAt: Date.now(), source: 'cli' }
+      if (live.credits?.unlimited === true) {
+        return {
+          windows: [],
+          sampledAt: Date.now(),
+          source: 'cli',
+          error: 'codex reports unlimited credits and no metered window'
+        }
+      }
     }
+
+    return rolloutQuota(isolationRoot)
   },
 
   /**
