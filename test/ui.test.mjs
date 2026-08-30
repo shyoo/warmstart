@@ -1282,7 +1282,7 @@ try {
     `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim().startsWith('Workers'))?.querySelector('.nav-count')?.innerText ?? ''`
   )
   check(
-    'the Workers badge says running / ready / total rather than a bare count',
+    'the Workers badge says running / active / total rather than a bare count',
     /^\d+\/\d+\/\d+$/.test(badge),
     badge
   )
@@ -1292,9 +1292,9 @@ try {
     `${badge} against ${orderAfter.split('|').length} workers`
   )
   check(
-    'while ready is the daemon’s own gate, so an unusable account is not counted ready',
-    badge.split('/')[1] === '0',
-    'no worker in this suite is signed in, and none of them may be handed a turn'
+    'while active counts enabled workers in the fleet',
+    badge.split('/')[1] === String(orderAfter.split('|').length),
+    'both commissioned workers are enabled'
   )
 
   const errors = await evaluate('window.__agentyardErrors?.length ?? 0')

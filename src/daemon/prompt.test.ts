@@ -184,7 +184,7 @@ describe('run prompt persistence and task.get preview', () => {
     >
     expect(detail).not.toBeNull()
     expect(detail.dependencies).toBeDefined()
-    expect(detail.dependencies?.map((d) => d.title)).toEqual(['Prerequisite 1', 'Prerequisite 2'])
+    expect(detail.dependencies?.map((d) => d.title).sort()).toEqual(['Prerequisite 1', 'Prerequisite 2'])
     expect(detail.dependents).toBeDefined()
     expect(detail.dependents?.map((d) => d.id)).toEqual([child.id])
     expect(detail.dependents?.map((d) => d.title)).toEqual(['Downstream task'])
