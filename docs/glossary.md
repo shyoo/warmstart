@@ -251,10 +251,21 @@ ends differently: no window is closing, so there is nothing to resume after and 
 **Handoff** — the note a preempted run leaves so its successor can continue. Prepended to the
 successor's prompt.
 
-**Finish policy** — what happens to the work when an agent reports a task complete: `await-human`,
-`agent-lands`, `pull-request`, or `custom`. Resolved task → project → fleet, each of the lower two
-able to say `inherit`. ⛔ **Preference, not authority** — `mandate.allowed ⊇ 'land'` still decides
-whether a task may land at all, and no UI control may widen it. See `docs/landing.md`.
+**Finish policy** — what happens to the work when an agent reports a task complete, as a ladder of
+five rungs each doing one thing more than the last: `await-human` · `commit-only` ·
+`commit-and-verify` · **`commit-and-merge`** (the default) · `commit-and-push`. Plus two that are not
+rungs: `pull-request` (a different destination) and `custom` (an instruction to the agent, not a
+daemon action). Resolved task → project → fleet, each of the lower two able to say `inherit`.
+⛔ **Preference, not authority** — `mandate.allowed ⊇ 'land'` still decides whether a task may land at
+all, and no UI control may widen it. ⚠️ Not the same as **`Task.verification`**, which asks whether a
+*person* should look before it lands. See `docs/landing.md`.
+
+**Check commands** — the ordered shell commands a project declares in `project.json`, run in the
+task's workspace after the agent commits, stopping at the first failure. They are what the verifying
+rungs mean by *verified*. ⛔ **An empty list verifies nothing** — every project on day one — and the
+tool says so rather than reporting a clean result. Proposed from `package.json` when a project is
+added, edited in Project → Settings, or worked out by an agent as an ordinary task with a diff you
+review.
 
 **Loose end** — work that exists and is going nowhere: uncommitted files in a pooled workspace, a
 branch carrying commits nobody landed, or a stash taken to free a slot. ⚠️ Derived from git on

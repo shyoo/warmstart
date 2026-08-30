@@ -1,5 +1,6 @@
+import { useEffect, useState } from 'react'
 import type { Project as ProjectRecord, ResourceAvailability } from '@shared/tasks'
-import type { FleetEntry } from '../lib/daemon'
+import { rpc, type FleetEntry } from '../lib/daemon'
 import { Tasks } from './Tasks'
 import { TaskThread } from './TaskThread'
 import { Projects } from './Projects'
@@ -132,13 +133,140 @@ export function Project({
           </p>
         </div>
       ) : (
-        <Projects
-          projects={projects}
-          resources={resources}
-          refresh={refreshProjects}
-          only={project.id}
-        />
+        <>
+          <ChecksPanel project={project} />
+          <Projects
+            projects={projects}
+            resources={resources}
+            refresh={refreshProjects}
+            only={project.id}
+          />
+        </>
       )}
+    </div>
+  )
+}
+
+/**
+ * The commands that decide whether work is verified.
+ *
+ * ⛔ **This list is what the verifying finish policies are trusting.** `commit-and-verify` and
+ * `commit-and-merge` say the work was checked; what they actually did was run these, in this order,
+ * stopping at the first failure. An empty list means they verified nothing — which is every project
+ * on its first day — so the emptiness is stated here rather than left to be discovered when a policy
+ * called something verified.
+ *
+ * ⚠️ One command per line, because that is what it is: an ordered list of shell commands, and the
+ * cheap ones belong first so a red one stops the run before the slow ones start.
+ */
+function ChecksPanel({ project }: { project: ProjectRecord }): React.JSX.Element {
+  // ⚠️ Joined once and depended on as a string. The array identity changes on every refresh of an
+  // unchanged project, so depending on the array would reset the box under somebody mid-edit.
+  const declaredText = (project.config?.check ?? []).join('\n')
+  const declared = declaredText ? declaredText.split('\n') : []
+  const [text, setText] = useState(declaredText)
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState<string | null>(null)
+  const [suggested, setSuggested] = useState<string[]>([])
+
+  useEffect(() => setText(declaredText), [declaredText])
+  useEffect(() => {
+    void rpc('project.proposeChecks', { id: project.id })
+      .then((r) => setSuggested(r.checks))
+      .catch(() => setSuggested([]))
+  }, [project.id])
+
+  const lines = text.split('\n').map((l) => l.trim()).filter(Boolean)
+  const dirty = lines.join('\n') !== declared.join('\n')
+
+  const save = async (): Promise<void> => {
+    setBusy(true)
+    setNote(null)
+    try {
+      await rpc('project.setChecks', { id: project.id, checks: lines })
+      setNote(`Saved ${lines.length} command(s) to project.json.`)
+    } catch (err) {
+      setNote(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  // ⛔ A task, not an edit. An agent working out what a project's checks should be is ordinary work
+  // with a reviewable diff; an agent quietly rewriting the gate that decides whether its own work is
+  // verified is not. The button files the first and can never do the second.
+  const fileTask = async (): Promise<void> => {
+    setBusy(true)
+    setNote(null)
+    try {
+      const task = await rpc('task.create', {
+        title: `Work out the check commands for ${project.name}`,
+        projectId: project.id,
+        prompt:
+          'Work out which commands should verify this project before work is landed, and write them ' +
+          'into `.multi_agent_controller/project.json` under `check`, as an ordered array of shell ' +
+          'commands. Cheap and fast ones first, so a failure stops the run early. They must exit ' +
+          'non-zero on failure and must not need a network or an interactive terminal. ' +
+          `Currently declared: ${declared.length > 0 ? declared.join(', ') : 'nothing'}. ` +
+          'Do not weaken or remove an existing check without saying why in the commit message.'
+      })
+      setNote(`Filed as t${task.seq}.`)
+    } catch (err) {
+      setNote(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="panel checks-panel">
+      <div className="panel-head">
+        <h3>Verification</h3>
+      </div>
+      {declared.length === 0 && (
+        <p className="warn">
+          This project declares no check commands, so <strong>“commit, then verify”</strong> and{' '}
+          <strong>“commit, verify and merge locally”</strong> will verify nothing here. They say so on
+          the task rather than reporting a clean result.
+        </p>
+      )}
+      <p className="dim">
+        Run in the task’s workspace after the agent commits, in this order, stopping at the first
+        failure. A failure rests the task with the output; nothing is merged.
+      </p>
+      <textarea
+        className="ask-input checks-input"
+        rows={Math.max(4, lines.length + 1)}
+        value={text}
+        disabled={busy}
+        spellCheck={false}
+        placeholder="npm run typecheck&#10;npm run lint&#10;npm test"
+        onChange={(e) => setText(e.target.value)}
+      />
+      <div className="checks-actions">
+        <button className="btn btn--primary" disabled={busy || !dirty} onClick={() => void save()}>
+          {busy ? 'Saving…' : 'Save to project.json'}
+        </button>
+        {suggested.length > 0 && (
+          <button
+            className="btn btn--ghost"
+            disabled={busy || suggested.join('\n') === lines.join('\n')}
+            title={`Suggested from this project’s package.json: ${suggested.join(', ')}`}
+            onClick={() => setText(suggested.join('\n'))}
+          >
+            Use suggested ({suggested.length})
+          </button>
+        )}
+        <button
+          className="btn btn--ghost"
+          disabled={busy}
+          title="Files an ordinary task. The agent proposes the list as a commit you review — it never edits this in place."
+          onClick={() => void fileTask()}
+        >
+          File a task to work them out
+        </button>
+      </div>
+      {note && <p className="note">{note}</p>}
     </div>
   )
 }

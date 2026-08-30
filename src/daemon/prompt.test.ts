@@ -73,6 +73,28 @@ describe('promptFor prompt construction', () => {
     expect(prompt).toContain('call `ask_human` rather than guessing')
   })
 
+  it('tells a one-shot CLI how to land, because it can never be told afterwards', () => {
+    // ⛔ Measured on t56, 2026-08-30: `agent-lands` decided `ask-agent` - *tell the still-live
+    // agent to commit* - and codex had already exited, because `codex exec` runs one turn and stops.
+    // The instruction was composed and could not be sent. For a `streamPrompts: 'once'` adapter the
+    // prompt is the only place it can arrive.
+    const task = tasks.createTask({ title: 'One-shot landing', status: 'ready' })
+    const prompt = scheduler.promptFor(task, 'openai-compatible', false, { markDelivered: false })
+    expect(prompt).toContain('You get one turn and no follow-up')
+    expect(prompt).toContain('Commit everything you change')
+    // ⛔ `DEFAULT_FINISH_INSTRUCTION` is "Run /commit", a Claude Code project skill. Sending
+    // that to codex would spend its one turn looking for a command it does not have.
+    expect(prompt).not.toContain('/commit')
+  })
+
+  it('does not say that to a CLI that can be asked again', () => {
+    // ⚠️ Narrow on purpose: a `conversation` adapter may still be reachable after its turn,
+    // and whether Antigravity's print-mode process outlives one has not been measured.
+    const task = tasks.createTask({ title: 'Conversational', status: 'ready' })
+    const prompt = scheduler.promptFor(task, 'antigravity-cli', false, { markDelivered: false })
+    expect(prompt).not.toContain('You get one turn and no follow-up')
+  })
+
   it('builds prompt for a non-MCP adapter with commit instruction', () => {
     const task = tasks.createTask({
       title: 'Update readme',

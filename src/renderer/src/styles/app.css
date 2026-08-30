@@ -1709,6 +1709,27 @@ select:focus-visible,
   flex: 0 0 auto;
 }
 
+/* ---- project checks ------------------------------------------------------ */
+
+.checks-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-4);
+}
+
+.checks-input {
+  width: 100%;
+  resize: vertical;
+  font-family: var(--font-mono, monospace);
+}
+
+.checks-actions {
+  display: flex;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+}
+
 /* ---- questions ---------------------------------------------------------- */
 
 /*

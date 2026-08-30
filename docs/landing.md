@@ -16,22 +16,49 @@ declines to land stays exactly where it is and appears under **Loose ends** on t
 
 ---
 
-## The five policies
+## The ladder
 
-| policy | what happens when the agent reports it is finished |
+Five rungs, each doing everything the one below does **plus one thing**. That is what keeps this one
+decision rather than five.
+
+| policy | agent commits | daemon verifies | merges local trunk | deletes branch | pushes |
+|---|---|---|---|---|---|
+| `await-human` | | | | | |
+| `commit-only` | ✔ | | | | |
+| `commit-and-verify` | ✔ | ✔ | | | |
+| **`commit-and-merge`** ⭐ default | ✔ | ✔ | ✔ | ✔ | |
+| `commit-and-push` | ✔ | ✔ | ✔ | ✔ | ✔ |
+
+And two that are **not rungs**:
+
+| policy | what happens |
 |---|---|
-| `await-human` | Stop. The branch is intact and the task waits for you. |
-| `agent-lands` | Land it unattended — but only if it is [provably safe](#what-safe-means). Otherwise it stops and says which condition failed. |
-| `pull-request` | Push the branch and open a pull request. A human merges. |
+| `pull-request` | Push the *branch* and open a pull request. Never touches the trunk, so it is not "one more than push" — a different destination. |
 | `custom` | Send the agent this project's own finishing instructions and let it do the rest. The tool does not land afterwards — your policy owns that step. |
 | `inherit` | Take the answer from the tier below. Only valid on a project or a task. |
+
+⛔ **`commit-after-verified` cannot exist**, and was asked for. The daemon never authors a commit, so
+verification can only happen once there *is* one. `commit-and-verify` is the achievable shape: the
+commit is unconditional and the **verdict** is what the check decides. A red check rests the task with
+the output and the commit stays, because destroying committed work is the one thing this tool refuses
+to do.
+
+⚠️ Verification is not named in `commit-and-merge` or `commit-and-push` because **merging always
+verifies** — merging unverified work into a trunk is worse than leaving it on a branch.
+
+⚠️ `agent-lands` is the pre-2026-08-30 spelling of `commit-and-push` and is still read from an
+existing `project.json`. A rename that silently changed what a config *does* would be worse than the
+bug it fixed.
 
 ## Three tiers
 
 The policy is resolved **task → project → fleet**, taking the first that is not `inherit`.
 
 - **Fleet** — Settings → Global. The default for everything with no opinion of its own. Ships as
-  `agent-lands`.
+  **`commit-and-merge`**. ⛔ It changed from `commit-and-push` on 2026-08-30: every push to `main`
+  starts a ten-job CI matrix, three of them macOS at 10x billing. Measured on this repository, 103
+  runs in five days and an exhausted allowance. Nothing about finishing a task needed a remote, so a
+  push is now something a person does on purpose.
 - **Project** — `landing.finish` in `.multi_agent_controller/project.json`.
 - **Task** — the **finish** dropdown in the task's detail pane, changeable at any time, including
   while the task is running and after it has finished.
@@ -47,8 +74,8 @@ straight back with the reason.
 
 ## What "safe" means
 
-`agent-lands` is the only policy that pushes to a trunk with nobody watching, so it is the only one
-with a bar. All of these must hold:
+The two rungs that move work — `commit-and-merge` and `commit-and-push` — do it with nobody watching,
+so they are the ones with a bar. All of these must hold:
 
 1. **The workspace is clean** — no modified files, no untracked files.
 2. **The branch carries commits** `origin/<target>` does not already have — the remote, not your
@@ -136,7 +163,27 @@ go and deal with it — and **Dismiss**, which only hides the row.
 
 ⛔ None of the three deletes anything.
 
+## Merging locally, and the trunk you are standing in
+
+⛔ **`commit-and-merge` will not merge into a trunk you are working in, and cannot.** Git refuses
+outright to update a branch a worktree holds — measured 2026-08-30:
+
+```
+fatal: refusing to fetch into branch 'refs/heads/main' checked out at 'C:/Dev/multi_agent_controller'
+```
+
+So the merge is a `git merge --ff-only` **inside the trunk**, attempted only when the trunk is on the
+target and has nothing uncommitted in it. When it is not, the branch is kept, and the task says which
+of the three it was: a dirty tree, a detached HEAD, or another branch checked out.
+
+⚠️ **This means `main` stops moving on the days you are mid-edit in it**, and finished tasks queue as
+branches saying *"committed and verified, waiting for a clean trunk"*. That is the cost of the safe
+default. ⛔ The alternative — stashing your work to make room — is not on offer: the tool does not
+reach into a checkout somebody is typing in.
+
 ## Landed means pushed
+
+⚠️ This section describes `commit-and-push` and `pull-request`. The default no longer pushes.
 
 ⭐ **Landing is `git push origin HEAD:<target>`.** The tool never moves your local branch — it has no
 business writing to a checkout you are standing in — so `origin/<target>` is the only ref that
@@ -204,22 +251,26 @@ caller was reporting a queue as a failure.
   "schema_version": 1,
   "landing": {
     "target": "main",
-    "finish": "agent-lands",
+    "finish": "commit-and-merge",
     "finishInstruction": "Run /commit and follow every one of its six steps."
   },
   "check": ["npm run typecheck", "npm run lint", "npm test", "npm run build"]
 }
 ```
 
-- `landing.finish` — `await-human` · `agent-lands` · `pull-request` · `custom` · `inherit`.
+- `landing.finish` — `await-human` · `commit-only` · `commit-and-verify` · `commit-and-merge` ·
+  `commit-and-push` · `pull-request` · `custom` · `inherit`.
 - `landing.finishInstruction` — what `custom` sends the agent. Naming a slash command works on a CLI
   that has skills and still reads as a plain instruction on one that does not.
 - `landing.target` — the branch to land on. Defaults to `main`.
-- `check` — the commands that gate `agent-lands`. Keep them fast and deterministic; the heavier
+- `check` — the commands every verifying rung runs. ⛔ An **empty list verifies nothing**, which
+  is every project on day one; the tool says so on the task rather than reporting a clean result.
+  Edit them in Project → Settings, or file a task to work them out.
+  ⚠️ Keep them fast and deterministic. Keep them fast and deterministic; the heavier
   suites belong in the finishing instruction, where a human or an agent is watching the result.
 
 ⚠️ **`landing.strategy` is the old spelling** and is still read, so an existing file keeps working:
-`auto-land` → `agent-lands`, `leave-branch` → `await-human`, `pull-request` unchanged. Write
+`auto-land` → `commit-and-push`, `leave-branch` → `await-human`, `pull-request` unchanged. Write
 `finish` in new files. Where both appear, `finish` wins.
 
 ## Why it is built this way

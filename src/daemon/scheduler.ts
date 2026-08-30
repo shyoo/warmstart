@@ -1863,6 +1863,32 @@ export function promptFor(
         '`NEEDS DECISION:` followed by the question, and stop rather than guessing.'
     )
   }
+
+  // ⛔ A `streamPrompts: 'once'` CLI gets its landing instruction **here or never**. The
+  // `ask-agent` finish - *tell the still-live agent to commit* - requires a live session, and such a
+  // process exits the instant its one turn ends. That is structural, not unlucky: measured on t56,
+  // 2026-08-30, where the instruction was composed, could not be sent, and the task rested with two
+  // uncommitted files it had been told to commit only in the vaguest terms.
+  //
+  // ⚠️ Deliberately narrow. A `conversation` adapter may still be reachable afterwards, and
+  // whether Antigravity's print-mode process outlives its turn has **not been measured** - so it
+  // keeps the existing behaviour rather than being guessed at.
+  if (adapter(adapterId).info.capabilities.streamPrompts === 'once') {
+    const project = task.projectId ? getProject(task.projectId) : null
+    const custom = project?.config?.landing?.finishInstruction?.trim()
+    parts.push(
+      'You get one turn and no follow-up, so finish the job in it. ' +
+        // ⚠️ Deliberately **not** `finishInstructionFor`. Its default is *"Run /commit and
+        // follow every step of it"* - a Claude Code project skill that does not exist on any other
+        // CLI, so telling codex to run it would burn the single turn hunting for a command it has
+        // not got. A project's *own* instruction is the operator's words and is honoured; the
+        // fallback is plain and CLI-agnostic, and mirrors what `ask-agent` says.
+        (custom ??
+          'Commit everything you change' +
+            (task.branch ? ` on \`${task.branch}\`` : '') +
+            ' before your turn ends. Nothing will ask you to do it afterwards.')
+    )
+  }
   return parts.join('\n\n')
 }
 
@@ -2020,11 +2046,45 @@ export function continueTask(taskId: string): 'delivered' | 'requeued' | 'queued
  * a process exiting cleanly says nothing about whether the work was done, and reading the terminal
  * to guess is exactly what this design refuses to do.
  */
+/**
+ * Sessions whose completion is still landing.
+ *
+ * ⛔ **Claimed synchronously, before the first `await`.** `completeTask` closes its run on its
+ * last line, after three git reads - so for the whole of that window the run has no outcome and no
+ * `ended_at`, and `runForSession` still hands it to anyone who asks. Both entry points are
+ * `void`-invoked from index.ts, so nothing serialised them.
+ *
+ * Measured on t56, 2026-08-30: codex reported complete at 20:35:45.653, its process exited 668ms
+ * later while `completeTask` was still reading the workspace, and `onSessionExit` marked the run
+ * `failed` and the task `awaiting_human` - *"nothing here can tell whether the work was finished"* -
+ * for a run that had already reported it was. The completion then resumed and tried to ask a dead
+ * session to commit.
+ *
+ * ⚠️ Every adapter has this race; a `streamPrompts: 'once'` CLI loses it every time, because
+ * its process exits the instant the turn ends. It stayed invisible until codex could complete at all.
+ */
+const completing = new Set<string>()
+
 export async function completeTask(sessionId: string, summary: string): Promise<void> {
   const run = runForSession(sessionId)
   if (!run?.taskId || run.outcome) return
   const task = getTask(run.taskId)
   if (!task) return
+  if (completing.has(sessionId)) return
+  completing.add(sessionId)
+  try {
+    await landCompletion(sessionId, run, task, summary)
+  } finally {
+    completing.delete(sessionId)
+  }
+}
+
+async function landCompletion(
+  sessionId: string,
+  run: Run,
+  task: Task,
+  summary: string
+): Promise<void> {
 
   let effectiveSummary = (summary ?? '').trim()
   if (!effectiveSummary || effectiveSummary === 'Completed') {
@@ -2086,6 +2146,30 @@ export async function completeTask(sessionId: string, summary: string): Promise<
 
 
     if (decision.kind === 'ask-agent') {
+      // ⛔ Not attempted at all on a one-shot CLI. The ask needs a live session and such a
+      // process is already gone by definition, so trying produces a warning in a log nobody is
+      // reading and a hold reason that does not say why. It fails every single time, which makes it
+      // a fact about the adapter rather than an error - and the operator is told that.
+      const finishing = getSession(sessionId)
+      const oneShot =
+        finishing !== null &&
+        adapter(finishing.adapterId).info.capabilities.streamPrompts === 'once'
+      if (oneShot) {
+        addMessage(
+          task.id,
+          'system',
+          `${decision.reason}. ${adapter(finishing.adapterId).info.label} runs one turn and exits, ` +
+            'so it cannot be asked to finish the job afterwards — this one is over to you. Its next ' +
+            'run is told to land its own work.'
+        )
+        setStatus(task.id, 'awaiting_human', {
+          assignee: 'human',
+          holdReason: `${decision.reason}, and this CLI cannot be asked after its turn ends`
+        })
+        finishRun(run.id, 'completed', summary)
+        await releaseFor(run.id, task.id, project.id)
+        return
+      }
       // ⛔ Returns without ending the run. The agent is still working — it has been handed one more
       // instruction and will report completion again — so closing the run here would orphan a live
       // session and release a workspace out from under it.
@@ -2157,7 +2241,12 @@ export async function completeTask(sessionId: string, summary: string): Promise<
         project,
         task,
         workspacePath: held.workspace.path,
-        branch: task.branch
+        branch: task.branch,
+        // ⛔ The resolved policy chooses the strategy. Without it `landTask` fell back to the
+        // project's legacy `landing.strategy`, so the policy resolved task > project > fleet and the
+        // action that ran were two different answers - a project set to `pull-request` with no
+        // `strategy` would have had its trunk pushed.
+        policy: resolveFinishPolicy(task, project).policy
       })
       if (result.ok) setStatus(task.id, 'completed')
     } else if (decision.kind === 'await-human') {
@@ -2271,6 +2360,20 @@ export async function onSessionExit(session: Session, exitCode: number | null): 
   const parked = parkQuestionsForSession(session.id)
   const waiting = blockedOn.get(session.id)
   blockedOn.delete(session.id)
+
+  // ⛔ A completion already owns this session's teardown - the run, the workspace and the
+  // status - and it has not finished writing yet. Ending the run here would overwrite a reported
+  // completion with "nothing here can tell whether the work was finished", which is exactly what
+  // happened to t56. Approvals and questions are still voided above, because those die with the
+  // process either way. See `completing`.
+  if (completing.has(session.id)) {
+    log.info(
+      `session ${session.id.slice(0, 8)} exited while its completion was still landing; ` +
+        'leaving the run to it'
+    )
+    return
+  }
+
   const run = runForSession(session.id)
   if (run) {
     const why = waiting
@@ -2829,7 +2932,13 @@ export async function relandTask(taskId: string): Promise<{ ok: boolean; reason?
       return { ok: false, reason }
     }
 
-    const result = await landTask({ project, task, workspacePath: workspace.path, branch: task.branch })
+    const result = await landTask({
+      project,
+      task,
+      workspacePath: workspace.path,
+      branch: task.branch,
+      policy: resolveFinishPolicy(task, project).policy
+    })
     if (result.ok) setStatus(task.id, 'completed')
     return { ok: result.ok, ...(result.reason ? { reason: result.reason } : {}) }
   } finally {

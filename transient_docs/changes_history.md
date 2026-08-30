@@ -2330,3 +2330,82 @@ decision it had already made, and park a task that was finished.
 from the transcript deliberately: it is exact, it sees the compaction sampling iteration, and decoding
 both would double-count every turn. What a CLI emits and which instrument we trust are separate
 questions, and only the first one changed.
+
+
+## A default that spent the CI budget (2026-08-30)
+
+The fleet's default finish policy was `agent-lands`, whose last act was
+`git push origin HEAD:<target>`. `ci.yml` triggers on `push: branches: [main]`. So **one completed
+task was one push was one CI run**, and a run is ten jobs: one Ubuntu plus a 3x3
+`ubuntu/windows/macos` matrix.
+
+Measured on this repository: **103 runs between 2026-08-26 and 2026-08-30** - 16, 11, 14, **39**, 23 -
+against 97 commits on `main`. macOS bills at 10x and Windows at 2x, so the three macOS jobs are
+roughly three quarters of the weight of every run. The account's CI allowance ran out on
+2026-08-29T21:54Z, the day of the 39.
+
+⚠️ Agents commit under the operator's git identity, so agent landings and hand-made pushes
+cannot be separated by author and the 103 is not attributed. What is certain is the mechanism.
+
+### The ladder
+
+The replacement is five rungs on one axis - how far the work travels - each doing everything the one
+below does plus one thing: `await-human`, `commit-only`, `commit-and-verify`, **`commit-and-merge`**
+(the new default), `commit-and-push`. `pull-request` and `custom` are deliberately *not* rungs and
+are documented as such: a PR is a different destination, and `custom` is an instruction to the agent
+rather than an action the daemon takes.
+
+⛔ **`commit-after-verified` was asked for and cannot exist.** The daemon never authors a
+commit, so verification can only happen once there is one to verify. Gating the commit on the check
+would need the tool to write it, or the agent's own word that checks passed, or a second turn to ask
+for the commit - which a one-shot CLI cannot give. `commit-and-verify` is the achievable shape: the
+commit is unconditional and the *verdict* is what the check decides.
+
+### The constraint that shaped the default
+
+```
+fatal: refusing to fetch into branch 'refs/heads/main' checked out at 'C:/Dev/multi_agent_controller'
+```
+
+Git will not update a branch a worktree holds, and the operator's own checkout is normally that
+worktree. That is why `auto-land` pushed whenever a remote existed, and why its local fallback only
+worked against a detached trunk - which the landing fixture arranges deliberately.
+
+So `merge-local` does `git merge --ff-only` **inside** the trunk, and only when the trunk is on the
+target with nothing uncommitted in it. Otherwise the branch is kept and the task names which of the
+three states was in the way. ⛔ Stashing the operator's work to make room was considered and
+rejected: the tool does not reach into a checkout somebody is typing in, and a pop conflict would be
+its fault.
+
+⚠️ The honest cost is that `main` stops moving on days the operator is mid-edit in it, and
+finished tasks queue as branches. That is the safe default working, not a failure, and it is written
+into `docs/landing.md` so it is not discovered as "why is nothing landing".
+
+### A defect found while wiring it
+
+`landTask` chose its strategy from the project's **legacy** `landing.strategy` field, not from the
+resolved finish policy. A project set to `finish: 'pull-request'` with no `strategy` would have had
+its trunk pushed - the policy resolved task > project > fleet and the action that ran were two
+different answers to one question. The policy is the authority now; the legacy field survives as the
+fallback for `custom` only.
+
+Three dropdowns each carried a hand-written copy of the policy list, and all three still offered
+`agent-lands` after the rename. They are driven from `FINISH_ORDER` now, and a UI check asserts the
+stale value is absent - drift there is silent, because a stale option looks fine and sets a value the
+daemon no longer understands.
+
+### The check list
+
+The verifying rungs are only as good as the commands a project declares, and **an empty list verifies
+nothing** - which is every project on its first day. Left alone, `commit-and-merge` would have merged
+unverified work and reported it verified, so the emptiness is stated in three places: the settings
+panel, the strategy's own result, and the finish decision's reason.
+
+`project.json` had no write path at all before this. It has one now, deliberately narrow: read,
+replace one key, write back, and refuse rather than guess when the file will not parse. Checks are
+proposed from `package.json` scripts in the order they should run, editable in Project settings, and
+there is a button that files an ordinary task for an agent to work them out.
+
+⛔ That last one was the owner's amendment and it resolves the objection to it: an agent
+proposing check commands as a task with a reviewable diff is ordinary work, while an agent editing in
+place the gate that decides whether its own work is verified is not. The button can only do the first.

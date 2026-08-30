@@ -227,11 +227,24 @@ export function decideFinish({
     }
   }
 
+  // 4. ⛔ The two rungs that stop at the branch. Neither moves the work anywhere, so neither
+  //    needs `land` authority and neither can be blocked by a conflict it is not going to hit. What
+  //    separates them is only whether the checks ran.
+  if (policy === 'commit-only') {
+    return {
+      kind: 'done',
+      reason: `${state.unlandedCommits} commit(s) on \`${state.branch}\`, not verified and not merged`
+    }
+  }
+  // ⛔ `land`, not `done`, because the checks have not run yet and this is the rung that runs them.
+  //    `verifyOnly` reports the verdict and moves nothing; saying `done` here would be claiming a
+  //    verification that had not happened.
+  if (policy === 'commit-and-verify') return { kind: 'land' }
+
   if (policy === 'pull-request') return landOrResolve(task, state, merge)
 
-  // 4. `agent-lands`, which is the only policy that pushes to a trunk unattended, so it is the only
-  //    one with a bar. ⛔ Authority first: a task whose mandate excludes `land` may not, whatever a
-  //    dropdown says. A UI sets preferences; it never widens an authority.
+  // 5. The two that move the work. ⛔ Authority first: a task whose mandate excludes `land` may not,
+  //    whatever a dropdown says. A UI sets preferences; it never widens an authority.
   if (!mandateAllows(task, 'land')) {
     return { kind: 'await-human', reason: 'this task has no authority to land' }
   }

@@ -303,6 +303,40 @@ describe('a run that did work and then failed', () => {
  * used to be handed "nothing here can tell whether the work was finished" for a case where the agent
  * had said, in a record on the wire, exactly what it wanted.
  */
+/**
+ * ⛔ Measured on t56, 2026-08-30. Codex reported complete at 20:35:45.653; its process exited
+ * 668ms later while `completeTask` was still reading the workspace; `onSessionExit` found the run
+ * still open - `completeTask` closes it on its last line, after three git reads - and marked it
+ * `failed` with *"nothing here can tell whether the work was finished"*, for a run that had just said
+ * it was. Every adapter has this race. A one-shot CLI loses it every time.
+ */
+describe('a completion that is still landing when the process exits', () => {
+  it('leaves the run completed when the exit follows it', async () => {
+    // ⚠️ **This does not reproduce the interleaving, and would pass without the fix.** The
+    // window only opens once `completeTask` awaits, which it does only for a task with a git project
+    // and a held workspace - and `workspaces` is a private map with no seam a unit test can reach.
+    // So this pins the observable invariant (a reported completion survives the exit that follows it)
+    // and nothing more. The interleaving itself is covered by no automated test; see HANDOFF.
+    const { run, task, session } = seedRunningTask({ metered: 500 })
+
+    const landing = scheduler.completeTask(session.id, 'did the thing')
+    await scheduler.onSessionExit(session, 0)
+    await landing
+
+    expect(tasks.requireRun(run.id).outcome).toBe('completed')
+    expect(tasks.getTask(task.id)?.status).toBe('completed')
+    expect(tasks.getTask(task.id)?.holdReason ?? '').not.toContain('Nothing here can tell')
+  })
+
+  it('still ends the run when no completion is in flight', async () => {
+    // ⚠️ The guard must be narrow. A session that simply dies is the case `onSessionExit`
+    // exists for, and swallowing that would leave runs open and workspaces held forever.
+    const { run, session } = seedRunningTask({ metered: 500 })
+    await scheduler.onSessionExit(session, 0)
+    expect(tasks.requireRun(run.id).outcome).toBe('failed')
+  })
+})
+
 describe('a session that stopped to ask', () => {
   const ASKED = "let me know which approach you'd like (OAuth, session cookies, or magic-link email)"
 

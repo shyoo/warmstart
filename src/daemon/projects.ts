@@ -3,7 +3,7 @@ import { existsSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import { basename, join, resolve } from 'node:path'
 import { canonicalPath } from './fspath.js'
 import { execFileSync } from 'node:child_process'
-import type { Project, ProjectConfig, Vcs } from '@shared/tasks.js'
+import type { LandingStrategyId, Project, ProjectConfig, Vcs } from '@shared/tasks.js'
 import { db, row, rows } from './db.js'
 import { emit } from './events.js'
 import { log } from './log.js'
@@ -166,16 +166,88 @@ export function writeStarterConfig(id: string): string {
     ...(project.vcs === 'git'
       ? {
           workspaces: { poolSize: DEFAULTS.poolSize },
-          landing: { strategy: DEFAULTS.landingStrategy, target: DEFAULTS.landingTarget }
+          // ⚠️ `finish`, not the pre-2026-08-28 `strategy`. A starter file should be written in
+          // the spelling the tool actually reasons in; the old one is read for compatibility only.
+          landing: { finish: 'inherit' as const, target: DEFAULTS.landingTarget }
         }
       : {}),
     prepare: [],
-    check: [],
+    // ⛔ Proposed from this project's own `package.json`, and it lands in a file the operator
+    // is about to read. An empty list means the verifying policies verify nothing, so the useful
+    // default is a suggestion to edit rather than a blank to overlook.
+    check: proposeChecks(project.root),
     permission: { allow: [] }
   }
   writeFileSync(path, `${JSON.stringify(starter, null, 2)}\n`)
   reloadProject(id)
   return path
+}
+
+/**
+ * Check commands worth proposing for a project, read from its `package.json`.
+ *
+ * ⛔ **Proposed, never written.** The check list is what `commit-and-verify` and `commit-and-merge`
+ * are trusting when they say work is verified, so it is not something to infer behind somebody's
+ * back. This returns a suggestion for a person to accept, edit or ignore.
+ *
+ * ⚠️ Order matters and is not alphabetical: the cheap, fast checks come first so a red one stops the
+ * run before the slow ones start. That is the same order `runChecks` executes in.
+ */
+const CHECK_ORDER = ['typecheck', 'lint', 'test', 'build']
+
+export function proposeChecks(root: string): string[] {
+  try {
+    const raw = readFileSync(join(root, 'package.json'), 'utf8')
+    const parsed = JSON.parse(raw) as { scripts?: Record<string, unknown> }
+    const scripts = parsed.scripts ?? {}
+    return CHECK_ORDER.filter((name) => typeof scripts[name] === 'string').map(
+      (name) => `npm run ${name}`
+    )
+  } catch {
+    // ⚠️ No package.json, or one this cannot read, is not an error. It means there is nothing to
+    // propose, and the operator writes the list themselves.
+    return []
+  }
+}
+
+/**
+ * Write a project's check commands into its `project.json`.
+ *
+ * ⛔ The first write path this app has ever had into that file, so it is deliberately narrow: it
+ * reads what is there, replaces exactly one key, and writes it back. Everything else in the file -
+ * including comments a person added to their own copy - is whatever `JSON.parse`/`stringify` makes
+ * of it, which is why this refuses rather than guessing when the file cannot be parsed.
+ *
+ * ⚠️ The file is committed to the repository it configures. Changing it here changes it for everyone
+ * who pulls, which is correct - the check list is a property of the project, not of this install.
+ */
+export function setProjectChecks(id: string, checks: string[]): Project {
+  const project = requireProject(id)
+  const dir = join(project.root, '.multi_agent_controller')
+  const path = join(dir, 'project.json')
+
+  let config: ProjectConfig
+  if (existsSync(path)) {
+    try {
+      config = JSON.parse(readFileSync(path, 'utf8')) as ProjectConfig
+    } catch (err) {
+      throw new Error(
+        `${path} is not valid JSON, so this will not overwrite it: ` +
+          (err instanceof Error ? err.message : String(err)),
+        { cause: err }
+      )
+    }
+  } else {
+    mkdirSync(dir, { recursive: true })
+    config = { schema_version: 1, name: project.name, vcs: project.vcs }
+  }
+
+  // ⚠️ Trimmed and emptied of blanks, because a stray empty string in this array is a shell command
+  // that runs nothing and fails, which would block every landing on the project.
+  config.check = checks.map((c) => c.trim()).filter(Boolean)
+  writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`)
+  log.info(`project ${project.name}: ${config.check.length} check command(s) written to ${path}`)
+  return reloadProject(id) ?? project
 }
 
 // ------------------------------------------------------------------ resolved policy
@@ -185,7 +257,12 @@ export interface ProjectPolicy {
   workspaceRoot: string
   prepare: string[]
   check: string[]
-  landingStrategy: 'auto-land' | 'leave-branch' | 'pull-request'
+  /**
+   * ⚠️ The pre-2026-08-28 project field, and only a **fallback**. The resolved finish policy
+   * chooses the strategy now (`strategyFor`); this is consulted only for `custom`, where the tool is
+   * tidying up behind an instruction the agent was given.
+   */
+  landingStrategy: LandingStrategyId
   landingTarget: string
   allowRules: string[]
   denyRules: string[]

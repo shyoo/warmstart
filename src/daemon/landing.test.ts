@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
-import type { Project } from '@shared/tasks.js'
+import type { FinishPolicy, Project } from '@shared/tasks.js'
 
 /**
  * Landing a task that changed nothing.
@@ -92,6 +92,146 @@ afterAll(() => {
   } catch {
     // Windows holds git pack files briefly; a leftover temp dir is harmless.
   }
+})
+
+/**
+ * The rungs that never touch a remote.
+ *
+ * ⛔ The default pushed the trunk until 2026-08-30, and every push to `main` started a ten-job CI
+ * matrix — 103 runs in five days on this install, and an exhausted allowance. `commit-and-merge`
+ * does everything `commit-and-push` does except the push.
+ */
+describe('landing without a remote', () => {
+  /** A trunk on `main` plus a worktree holding a branch with one real commit. */
+  function seedLocal(branch: string): { project: Project; taskId: string; root: string; ws: string } {
+    seq += 1
+    const root = makeRepo(`local${seq}`)
+    const project = projects.addProject({ root })
+    const task = tasks.createTask({
+      title: `local ${seq}`,
+      projectId: project.id,
+      createdBy: { kind: 'human' }
+    })
+    const ws = join(dir, `local${seq}-ws`)
+    git(root, 'worktree', 'add', '-b', branch, ws, 'main')
+    writeFileSync(join(ws, 'work.txt'), 'agent work\n')
+    git(ws, 'add', '-A')
+    git(ws, 'commit', '-m', 'the agent did the work')
+    return { project, taskId: task.id, root, ws }
+  }
+
+  const land = async (
+    project: Project,
+    taskId: string,
+    ws: string,
+    branch: string,
+    policy: FinishPolicy
+  ) =>
+    landing.landTask({
+      project,
+      task: tasks.requireTask(taskId),
+      workspacePath: ws,
+      branch,
+      policy
+    })
+
+  it('merges into a clean trunk and never reaches for a remote', async () => {
+    const branch = 'multi-agent-controller/t80-local'
+    const { project, taskId, root, ws } = seedLocal(branch)
+    const before = git(root, 'rev-parse', 'main')
+
+    const result = await land(project, taskId, ws, branch, 'commit-and-merge')
+
+    expect(result.ok).toBe(true)
+    expect(result.strategy).toBe('merge-local')
+    expect(git(root, 'rev-parse', 'main')).not.toBe(before)
+    // ⛔ The whole point: the work moved and nothing was pushed.
+    expect(result.reason).toContain('Not pushed')
+    // The branch is retired once the trunk provably contains it.
+    expect(git(root, 'branch', '--list', branch)).toBe('')
+  })
+
+  it('⛔ refuses to merge into a trunk somebody is working in, and keeps the branch', async () => {
+    const branch = 'multi-agent-controller/t81-busy'
+    const { project, taskId, root, ws } = seedLocal(branch)
+    // The operator, mid-edit. This is the ordinary state of the trunk on a working day.
+    writeFileSync(join(root, 'README.md'), '# fixture\nhalf-written local change\n')
+    const before = git(root, 'rev-parse', 'main')
+
+    const result = await land(project, taskId, ws, branch, 'commit-and-merge')
+
+    expect(result.ok).toBe(false)
+    expect(result.reason).toContain('uncommitted file')
+    // ⛔ Nothing was stashed, reset or merged. The operator's work is untouched and so is the branch.
+    expect(git(root, 'rev-parse', 'main')).toBe(before)
+    expect(git(root, 'status', '--porcelain')).toContain('README.md')
+    expect(git(root, 'branch', '--list', branch)).toContain(branch)
+    // And the agent's commit is still on it, which is what makes this recoverable.
+    expect(git(ws, 'log', '--oneline', '-1')).toContain('the agent did the work')
+  })
+
+  it('says which branch is in the way when the trunk is on another one', async () => {
+    const branch = 'multi-agent-controller/t82-elsewhere'
+    const { project, taskId, root, ws } = seedLocal(branch)
+    git(root, 'switch', '-c', 'operators-own-branch')
+
+    const result = await land(project, taskId, ws, branch, 'commit-and-merge')
+
+    expect(result.ok).toBe(false)
+    expect(result.reason).toContain('operators-own-branch')
+  })
+
+  it('verifies without merging, and says so when there is nothing to verify with', async () => {
+    const branch = 'multi-agent-controller/t83-verify'
+    const { project, taskId, root, ws } = seedLocal(branch)
+    const before = git(root, 'rev-parse', 'main')
+
+    const result = await land(project, taskId, ws, branch, 'commit-and-verify')
+
+    expect(result.ok).toBe(true)
+    expect(result.strategy).toBe('verify-only')
+    // ⛔ The fixture declares no `check` commands, and an empty list must never read as a clean
+    // verification — that is the first day of every project.
+    expect(result.reason).toContain('nothing was verified')
+    expect(git(root, 'rev-parse', 'main')).toBe(before)
+    expect(git(root, 'branch', '--list', branch)).toContain(branch)
+  })
+
+  it('reports a failing check instead of calling the task done', async () => {
+    const branch = 'multi-agent-controller/t84-red'
+    const { project, taskId, ws, root } = seedLocal(branch)
+    writeFileSync(
+      join(root, '.multi_agent_controller', 'project.json'),
+      JSON.stringify({
+        schema_version: 1,
+        name: 'red',
+        vcs: 'git',
+        check: ['git nope-this-is-not-a-command'],
+        landing: { target: 'main' }
+      })
+    )
+    const reloaded = projects.reloadProject(project.id) ?? project
+
+    const result = await land(reloaded, taskId, ws, branch, 'commit-and-verify')
+
+    expect(result.ok).toBe(false)
+    expect(result.reason).toContain('checks failed')
+    // ⛔ The commit stays. Destroying committed work is the one thing this tool refuses to do.
+    expect(git(ws, 'log', '--oneline', '-1')).toContain('the agent did the work')
+  })
+
+  it('lets the policy choose the strategy, not the project’s legacy field', () => {
+    // ⛔ `makeRepo` writes `landing.strategy: 'auto-land'`. Before 2026-08-30 that field decided
+    // what ran, so a project resolved to `pull-request` would still have had its trunk pushed.
+    const { project } = seedLocal('multi-agent-controller/t85-which')
+    expect(landing.strategyFor(project, 'commit-and-merge').id).toBe('merge-local')
+    expect(landing.strategyFor(project, 'commit-and-verify').id).toBe('verify-only')
+    expect(landing.strategyFor(project, 'pull-request').id).toBe('pull-request')
+    expect(landing.strategyFor(project, 'commit-and-push').id).toBe('auto-land')
+    // ⚠️ `custom` is the one that still falls through to the project's own field: the tool is
+    // tidying up behind an instruction the agent was given.
+    expect(landing.strategyFor(project, 'custom').id).toBe('auto-land')
+  })
 })
 
 describe('a task that produced no commits', () => {

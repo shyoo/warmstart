@@ -44,7 +44,10 @@ import {
   archiveProject,
   getProject,
   listProjects,
+  proposeChecks,
   reloadProject,
+  requireProject,
+  setProjectChecks,
   writeStarterConfig
 } from './projects.js'
 import {
@@ -427,7 +430,7 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
     /**
      * Set a task's finish policy, and act on it if the task is already sitting on finished work.
      *
-     * ⛔ Changing this to `agent-lands` on a task resting in `awaiting_human` *is* the decision to
+     * ⛔ Changing this to a landing policy on a task resting in `awaiting_human` *is* the decision to
      * land it — that is the whole value of a control you can change after the fact. The bar is
      * unchanged: `relandTask` runs the same `decideFinish` a first completion would, so a task that
      * is not safe to land comes straight back with the reason.
@@ -435,7 +438,12 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
     'task.setFinishPolicy': async (p) => {
       const before = requireTask(p.id)
       const task = updateTask(p.id, { finishPolicy: p.finishPolicy })
-      const wantsLanding = p.finishPolicy === 'agent-lands' || p.finishPolicy === 'pull-request'
+      // ⚠️ Every rung that moves the work somewhere, not just the one that pushes. Choosing
+      // `commit-and-merge` on a parked task is as much a decision to land it as `commit-and-push` is.
+      const wantsLanding =
+        p.finishPolicy === 'commit-and-merge' ||
+        p.finishPolicy === 'commit-and-push' ||
+        p.finishPolicy === 'pull-request'
       if (!wantsLanding || before.status !== 'awaiting_human' || !task.branch) {
         return { task, landed: false }
       }
@@ -526,6 +534,9 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
     'task.promote': (p) => promoteDraft(p.id),
 
     // ---- approvals ---------------------------------------------------------------------
+    'project.proposeChecks': (p) => ({ checks: proposeChecks(requireProject(p.id).root) }),
+    'project.setChecks': (p) => setProjectChecks(p.id, p.checks),
+
     'approval.list': () => openApprovals(),
     'approval.request': async (p) => {
       // ⚠️ The permission-prompt-tool payload shape is not documented. Log what actually arrives so

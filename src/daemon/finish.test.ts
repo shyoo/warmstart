@@ -88,12 +88,32 @@ afterAll(() => {
 describe('which tier answers', () => {
   it('takes the fleet default when nothing else says anything', () => {
     const resolved = finish.resolveFinishPolicy(makeTask(), null)
-    expect(resolved.policy).toBe('agent-lands')
+    expect(resolved.policy).toBe('commit-and-merge')
     expect(resolved.source).toBe('fleet')
   })
 
+  it('⛔ does not push by default', () => {
+    // The default pushed the trunk until 2026-08-30, and every push to `main` started a ten-job CI
+    // matrix - 103 runs in five days on this install, and an exhausted allowance. Finishing a task
+    // never needed a remote; a push is now something a person does on purpose. Asserted as its own
+    // test because it is the property that cost money, not an incidental of the value above.
+    expect(finish.resolveFinishPolicy(makeTask(), null).policy).not.toBe('commit-and-push')
+    expect(finish.resolveFinishPolicy(makeTask(), null).policy).not.toBe('pull-request')
+  })
+
+  it('still reads `agent-lands` as the push it has always been', () => {
+    // ⚠️ A rename that silently changed what an existing project.json *does* would be worse
+    // than the bug it fixes.
+    // The legacy value is deliberately not in `FinishPolicyChoice` any more, so it has to be
+    // cast in to prove it is still *read* - which is the whole point of the test.
+    const legacy = projectWith({ finish: 'agent-lands' as unknown as FinishPolicyChoice })
+    const resolved = finish.resolveFinishPolicy(makeTask(), legacy)
+    expect(resolved.policy).toBe('commit-and-push')
+    expect(resolved.source).toBe('project')
+  })
+
   it('lets the project override the fleet', () => {
-    settings.setSetting('finishPolicy', 'agent-lands')
+    settings.setSetting('finishPolicy', 'commit-and-push')
     const resolved = finish.resolveFinishPolicy(makeTask(), projectWith({ finish: 'await-human' }))
     expect(resolved.policy).toBe('await-human')
     expect(resolved.source).toBe('project')
@@ -102,7 +122,7 @@ describe('which tier answers', () => {
   it('lets the task override the project', () => {
     const resolved = finish.resolveFinishPolicy(
       makeTask({ finishPolicy: 'await-human' }),
-      projectWith({ finish: 'agent-lands' })
+      projectWith({ finish: 'commit-and-push' })
     )
     expect(resolved.policy).toBe('await-human')
     expect(resolved.source).toBe('task')
@@ -122,7 +142,7 @@ describe('which tier answers', () => {
   it('still reads the old landing.strategy spelling', () => {
     // ⚠️ A project.json written before 2026-08-28 keeps working, unedited.
     expect(finish.resolveFinishPolicy(makeTask(), projectWith({ strategy: 'auto-land' })).policy).toBe(
-      'agent-lands'
+      'commit-and-push'
     )
     expect(
       finish.resolveFinishPolicy(makeTask(), projectWith({ strategy: 'leave-branch' })).policy
@@ -139,7 +159,7 @@ describe('work the agent left uncommitted', () => {
   it('asks the agent to commit it, and does not commit it itself', () => {
     const decision = finish.decideFinish({
       task: makeTask(),
-      project: projectWith({ finish: 'agent-lands' }),
+      project: projectWith({ finish: 'commit-and-push' }),
       state: clean({ dirtyFiles: ['src/a.ts'], untrackedFiles: ['src/b.ts'] }),
       hasChecks: true
     })
@@ -179,7 +199,7 @@ describe('landing work that is committed', () => {
     expect(
       finish.decideFinish({
         task: makeTask(),
-        project: projectWith({ finish: 'agent-lands' }),
+        project: projectWith({ finish: 'commit-and-push' }),
         state: clean(),
         hasChecks: true
       }).kind
@@ -190,7 +210,7 @@ describe('landing work that is committed', () => {
     // ⛔ Unattended landing of code nothing verified is a guess dressed as a policy.
     const decision = finish.decideFinish({
       task: makeTask(),
-      project: projectWith({ finish: 'agent-lands' }),
+      project: projectWith({ finish: 'commit-and-push' }),
       state: clean(),
       hasChecks: false
     })
@@ -203,7 +223,7 @@ describe('landing work that is committed', () => {
     // agent-spawned subtask cannot grant itself more than its parent had, and a dropdown is a
     // preference. If this ever passes, an agent can escalate by editing its own task.
     const decision = finish.decideFinish({
-      task: makeTask({ finishPolicy: 'agent-lands', land: false }),
+      task: makeTask({ finishPolicy: 'commit-and-push', land: false }),
       project: null,
       state: clean(),
       hasChecks: true
@@ -385,7 +405,7 @@ describe('a run whose branch is empty while the trunk moved', () => {
   it('is handed to a person rather than reported as finished', () => {
     const decision = finish.decideFinish({
       task: makeTask(),
-      project: projectWith({ target: 'main', finish: 'agent-lands' }),
+      project: projectWith({ target: 'main', finish: 'commit-and-push' }),
       state: clean({ unlandedCommits: 0 }),
       hasChecks: true,
       trunk: moved()
@@ -552,7 +572,7 @@ describe('a branch that will not rebase onto its target', () => {
   it('asks the agent to resolve it, and names the files', () => {
     const decision = finish.decideFinish({
       task: makeTask(),
-      project: projectWith({ finish: 'agent-lands' }),
+      project: projectWith({ finish: 'commit-and-push' }),
       state: clean(),
       hasChecks: true,
       merge: conflicted()
@@ -574,7 +594,7 @@ describe('a branch that will not rebase onto its target', () => {
   it('lands when the reading is clean', () => {
     const decision = finish.decideFinish({
       task: makeTask(),
-      project: projectWith({ finish: 'agent-lands' }),
+      project: projectWith({ finish: 'commit-and-push' }),
       state: clean(),
       hasChecks: true,
       merge: { base: 'origin/main', clean: true, conflictedPaths: [], rebaseInProgress: false }
@@ -588,7 +608,7 @@ describe('a branch that will not rebase onto its target', () => {
     // declining to fire — whereas refusing to land on an unknown would strand every such task.
     const decision = finish.decideFinish({
       task: makeTask(),
-      project: projectWith({ finish: 'agent-lands' }),
+      project: projectWith({ finish: 'commit-and-push' }),
       state: clean(),
       hasChecks: true,
       merge: null
@@ -601,7 +621,7 @@ describe('a branch that will not rebase onto its target', () => {
     db.db().prepare('update tasks set conflict_asked_at = ? where id = ?').run(Date.now(), task.id)
     const decision = finish.decideFinish({
       task: tasks.requireTask(task.id),
-      project: projectWith({ finish: 'agent-lands' }),
+      project: projectWith({ finish: 'commit-and-push' }),
       state: clean(),
       hasChecks: true,
       merge: conflicted()
@@ -618,7 +638,7 @@ describe('a branch that will not rebase onto its target', () => {
     // ever asked it to fix.
     const decision = finish.decideFinish({
       task: makeTask({ asked: true }),
-      project: projectWith({ finish: 'agent-lands' }),
+      project: projectWith({ finish: 'commit-and-push' }),
       state: clean(),
       hasChecks: true,
       merge: conflicted()
@@ -631,7 +651,7 @@ describe('a branch that will not rebase onto its target', () => {
     // gate comes first, and no convenience may widen it.
     const decision = finish.decideFinish({
       task: makeTask({ land: false }),
-      project: projectWith({ finish: 'agent-lands' }),
+      project: projectWith({ finish: 'commit-and-push' }),
       state: clean(),
       hasChecks: true,
       merge: conflicted()
@@ -657,7 +677,7 @@ describe('a branch that will not rebase onto its target', () => {
     // tree. Checked first, and the sentence names what is actually wrong.
     const decision = finish.decideFinish({
       task: makeTask(),
-      project: projectWith({ finish: 'agent-lands' }),
+      project: projectWith({ finish: 'commit-and-push' }),
       state: clean({ dirtyFiles: ['src/a.ts', 'src/b.ts'] }),
       hasChecks: true,
       merge: conflicted({ rebaseInProgress: true })

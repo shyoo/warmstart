@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { FinishPolicy, SessionSharing } from '@shared/tasks'
+import { DEFAULT_FLEET_FINISH, FINISH_LABELS, FINISH_ORDER } from '@shared/tasks'
 import type { Settings } from '@shared/protocol'
 import { rpc } from '../lib/daemon'
 
@@ -90,7 +91,7 @@ export function FleetSettings(): React.JSX.Element {
   const autoPreempt = settings?.autoPreempt ?? true
   const autoOverrunPreempt = settings?.autoOverrunPreempt ?? true
   const autoRunawayStop = settings?.autoRunawayStop ?? false
-  const finishPolicy = settings?.finishPolicy ?? 'agent-lands'
+  const finishPolicy = settings?.finishPolicy ?? DEFAULT_FLEET_FINISH
   const sessionSharing = settings?.sessionSharing ?? 'off'
   const probeIntervalMinutes = settings?.probeIntervalMinutes ?? 5
 
@@ -141,10 +142,11 @@ export function FleetSettings(): React.JSX.Element {
             disabled={busy || settings === null}
             onChange={(e) => void chooseFinishPolicy(e.target.value as FinishPolicy)}
           >
-            <option value="await-human">await human</option>
-            <option value="agent-lands">agent lands it</option>
-            <option value="pull-request">open a pull request</option>
-            <option value="custom">the project&rsquo;s own policy</option>
+            {FINISH_ORDER.map((p) => (
+              <option key={p} value={p}>
+                {FINISH_LABELS[p]}
+              </option>
+            ))}
           </select>
           <div>
             <p className="switch-state">

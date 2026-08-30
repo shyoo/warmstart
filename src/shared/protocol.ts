@@ -1027,6 +1027,15 @@ export interface RpcMap {
   'task.restore': { params: { id: string }; result: Task }
   'task.promote': { params: { id: string }; result: Task }
 
+  // ---- project checks -------------------------------------------------------------------
+  //
+  // ⛔ The check list is what the verifying finish policies trust when they say work is
+  // verified, so it is proposed and edited, never inferred silently. See daemon/projects.ts.
+  /** What this project's `package.json` suggests. A proposal for a person, not a change. */
+  'project.proposeChecks': { params: { id: string }; result: { checks: string[] } }
+  /** Write the check list into the project's committed `project.json`. */
+  'project.setChecks': { params: { id: string; checks: string[] }; result: Project }
+
   'approval.list': { params: void; result: Approval[] }
   /** Called by the MCP server on the agent's behalf. Blocks until policy or a person answers. */
   'approval.request': {

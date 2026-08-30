@@ -9,6 +9,7 @@ import type {
 } from '@shared/tasks'
 import {
   FINISH_LABELS,
+  FINISH_ORDER,
   SHARING_LABELS,
   TASK_VIEW_ORDER,
   TASK_VIEWS,
@@ -760,10 +761,11 @@ function NewTask({
               onChange={(e) => setFinishPolicy(e.target.value as FinishPolicyChoice)}
             >
               <option value="inherit">inherit ({inheritedFinishLabel})</option>
-              <option value="await-human">await human</option>
-              <option value="agent-lands">agent lands it</option>
-              <option value="pull-request">open a pull request</option>
-              <option value="custom">this project&rsquo;s own policy</option>
+              {FINISH_ORDER.map((p) => (
+                <option key={p} value={p}>
+                  {FINISH_LABELS[p]}
+                </option>
+              ))}
             </select>
             <select
               value={sessionSharing}

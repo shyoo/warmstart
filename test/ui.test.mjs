@@ -493,10 +493,20 @@ try {
   // contents, so swapping the checkbox out broke no test and would have broken none had it rendered
   // nothing at all.
   check(
-    'the new-task form offers a finish policy, inherit included',
+    'the new-task form offers every rung of the ladder, inherit included',
     Array.isArray(f.finishOptions) &&
       f.finishOptions.includes('inherit') &&
-      f.finishOptions.includes('agent-lands'),
+      ['commit-only', 'commit-and-verify', 'commit-and-merge', 'commit-and-push'].every((p) =>
+        f.finishOptions.includes(p)
+      ),
+    filing
+  )
+  check(
+    'and the list comes from FINISH_ORDER rather than a hand-written copy',
+    // ⛔ Three dropdowns each carried their own copy of these options, and all three still
+    // offered `agent-lands` after it was renamed. Drift here is silent: a stale option looks fine
+    // and sets a value the daemon no longer understands.
+    !f.finishOptions.includes('agent-lands'),
     filing
   )
   check(
@@ -984,8 +994,13 @@ try {
      s => s.getAttribute('aria-label') === 'Fleet finish policy')`
   check('the fleet tier has a control', (await evaluate(`!!(${fleetPicker})`)) === true)
   check(
-    'which starts at agent-lands, the shipped default',
-    (await evaluate(`${fleetPicker}?.value`)) === 'agent-lands'
+    'which starts at commit-and-merge, the shipped default',
+    (await evaluate(`${fleetPicker}?.value`)) === 'commit-and-merge'
+  )
+  check(
+    '⛔ and the shipped default does not push',
+    !['commit-and-push', 'pull-request'].includes(await evaluate(`${fleetPicker}?.value`)),
+    'every push to main started a ten-job CI matrix; 103 runs in five days exhausted the allowance'
   )
   await evaluate(`
     (() => {

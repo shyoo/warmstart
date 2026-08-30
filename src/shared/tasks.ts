@@ -708,7 +708,14 @@ export interface ChatMessage {
 
 // ---------------------------------------------------------------------------- landing
 
-export type LandingStrategyId = 'auto-land' | 'leave-branch' | 'pull-request'
+export type LandingStrategyId =
+  | 'auto-land'
+  | 'leave-branch'
+  | 'pull-request'
+  /** Run the project's checks against the branch as committed, and report. Moves nothing. */
+  | 'verify-only'
+  /** Rebase, check, fast-forward the **local** trunk, retire the branch. No remote. */
+  | 'merge-local'
 
 /**
  * What happens to a task's work when the agent says it is finished.
@@ -727,8 +734,40 @@ export type LandingStrategyId = 'auto-land' | 'leave-branch' | 'pull-request'
 export type FinishPolicy =
   /** Stop. The branch is intact, the work is preserved, a person decides. */
   | 'await-human'
-  /** Land it unattended, but only if it is provably safe to. See `safeToLand`. */
-  | 'agent-lands'
+  /**
+   * The agent commits on its branch. Nothing is verified and nothing is merged.
+   *
+   * WARNSIGN For early work and single-trunk projects, where there is often no suite to run yet.
+   */
+  | 'commit-only'
+  /**
+   * Commit, then run the project's declared `check` commands and report the verdict.
+   *
+   * ⛔ The **commit is unconditional; the verdict is not**. The daemon never authors a commit,
+   * so verification can only happen after there is something to verify - `commit-after-verified`
+   * was considered and cannot exist. A red check rests the task carrying the output and the commit
+   * stays, because destroying committed work is the one thing this tool refuses to do.
+   */
+  | 'commit-and-verify'
+  /**
+   * The above, and then fast-forward the **local** trunk and retire the branch. No remote.
+   *
+   * ⛔ Merging always verifies, which is why `verify` is not in the name: merging unverified
+   * work into the trunk is worse than leaving it on a branch.
+   *
+   * WARNSIGN Only into a **clean** trunk. Git refuses to update a branch a worktree holds, and the
+   * operator's own checkout is usually that worktree - so a dirty or busy trunk means the branch is
+   * kept and the task says so. The tool never stashes or resets a checkout somebody is typing in.
+   */
+  | 'commit-and-merge'
+  /**
+   * The above, and push the trunk to its remote.
+   *
+   * WARNSIGN The pre-2026-08-30 default, under its old name `agent-lands`. It stopped being the
+   * default because a push is not free: on this install every push to `main` started a ten-job CI
+   * matrix, 103 runs in five days, and the account's CI allowance ran out on 2026-08-29.
+   */
+  | 'commit-and-push'
   /** Push the branch and open a pull request; a human merges. */
   | 'pull-request'
   /**
@@ -764,21 +803,88 @@ export interface ResolvedFinishPolicy {
  * with no skills it still reads as a sentence an agent can act on.
  */
 /**
- * ⚠️ The fleet default, and it lives here rather than in `finish.ts` because `settings.ts` needs it
- * and `finish.ts` needs `settings.ts` — a cycle that resolves to `undefined` at import time and
- * would have made the fleet tier silently empty.
+ * ⚠️ The fleet default, and it lives here rather than in `finish.ts` because `settings.ts`
+ * needs it and `finish.ts` needs `settings.ts` - a cycle that resolves to `undefined` at import time
+ * and would have made the fleet tier silently empty.
  *
- * `agent-lands` is what the project default has always effectively been (`auto-land`). It is not a
- * loosening: `safeToLand` now requires a project to define checks and for them to pass, which the
- * old path did not, so the same value lands strictly less than it used to.
+ * ⛔ **`commit-and-merge`, not `commit-and-push`, since 2026-08-30.** The old default pushed
+ * the trunk on every completed task, and every push to `main` starts a ten-job CI matrix - three of
+ * them macOS, which bills at 10x. Measured on this install: 103 runs in five days, 39 in one day, and
+ * the account's CI allowance exhausted on 2026-08-29. Nothing about finishing a task needed a remote.
+ * A push is now something a person does on purpose.
  */
-export const DEFAULT_FLEET_FINISH: FinishPolicy = 'agent-lands'
+export const DEFAULT_FLEET_FINISH: FinishPolicy = 'commit-and-merge'
+
+/** The pre-2026-08-30 spelling of `commit-and-push`, still read off any config that has it. */
+const LEGACY_FINISH: Record<string, FinishPolicy> = { 'agent-lands': 'commit-and-push' }
+
+/**
+ * Read a finish policy written by any version of this tool.
+ *
+ * ⛔ A rename that silently changed what an existing `project.json` *does* would be worse than
+ * the bug it fixes. `agent-lands` meant "push the trunk" when it was written, and it still does.
+ */
+export function readFinishPolicy(raw: unknown): FinishPolicyChoice | null {
+  if (typeof raw !== 'string') return null
+  const migrated = LEGACY_FINISH[raw] ?? raw
+  return (FINISH_ORDER as readonly string[]).includes(migrated) || migrated === 'inherit'
+    ? (migrated as FinishPolicyChoice)
+    : null
+}
+
+/**
+ * The ladder, in order. Each rung does everything the one below does plus one thing.
+ *
+ * ⚠️ `pull-request` and `custom` are deliberately last and are **not rungs**: a PR pushes the
+ * branch and never touches the trunk, and `custom` is an instruction to the agent rather than an
+ * action the daemon takes.
+ */
+export const FINISH_ORDER: FinishPolicy[] = [
+  'await-human',
+  'commit-only',
+  'commit-and-verify',
+  'commit-and-merge',
+  'commit-and-push',
+  'pull-request',
+  'custom'
+]
 
 export const FINISH_LABELS: Record<FinishPolicy, string> = {
   'await-human': 'await human',
-  'agent-lands': 'agent lands it',
+  'commit-only': 'commit only',
+  'commit-and-verify': 'commit, then verify',
+  'commit-and-merge': 'commit, verify and merge locally',
+  'commit-and-push': 'commit, verify, merge and push',
   'pull-request': 'open a pull request',
   'custom': 'this project’s own policy'
+}
+
+/**
+ * Does this policy ask the daemon to run the project's checks?
+ *
+ * ⛔ `commit-only` deliberately does not. Each rung does strictly more than the one below, and
+ * the early-phase case it exists for usually has no suite to run.
+ */
+export function policyVerifies(policy: FinishPolicy): boolean {
+  return policy === 'commit-and-verify' || policy === 'commit-and-merge' || policy === 'commit-and-push'
+}
+
+/**
+ * A policy that promises verification, on a project that has declared none.
+ *
+ * ⛔ An empty `check` list must never read as a clean verification. Every project starts this
+ * way, so without this warning `commit-and-merge` would merge unverified work and call it verified on
+ * the first day of every project - and the policy's name would be a lie.
+ */
+export function verificationWarning(
+  policy: FinishPolicy,
+  checkCount: number
+): string | null {
+  if (!policyVerifies(policy) || checkCount > 0) return null
+  return (
+    `${FINISH_LABELS[policy]} verifies nothing here: this project declares no check commands. ` +
+    'Add them in Project settings, or file a task to work them out.'
+  )
 }
 
 /**
@@ -874,7 +980,7 @@ export function resolveCompletionMode(
 
 /** The pre-2026-08-28 spelling, still read off any project.json that has not been rewritten. */
 const FROM_STRATEGY: Record<string, FinishPolicy> = {
-  'auto-land': 'agent-lands',
+  'auto-land': 'commit-and-push',
   'leave-branch': 'await-human',
   'pull-request': 'pull-request'
 }
@@ -887,7 +993,9 @@ const FROM_STRATEGY: Record<string, FinishPolicy> = {
  */
 export function projectFinishChoice(project: Project | null | undefined): FinishPolicyChoice {
   const landing = project?.config?.landing
-  if (landing?.finish) return landing.finish
+  // ⛔ Through `readFinishPolicy`, so a file still saying `agent-lands` keeps doing what it
+  // said when it was written - pushing the trunk - rather than silently acquiring the new default.
+  if (landing?.finish) return readFinishPolicy(landing.finish) ?? 'inherit'
   if (landing?.strategy) return FROM_STRATEGY[landing.strategy] ?? 'inherit'
   return 'inherit'
 }

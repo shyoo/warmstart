@@ -2,7 +2,14 @@ import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { promisify } from 'node:util'
-import type { LandingResult, LandingStrategyId, Project, ResourceClaim, Task } from '@shared/tasks.js'
+import type {
+  FinishPolicy,
+  LandingResult,
+  LandingStrategyId,
+  Project,
+  ResourceClaim,
+  Task
+} from '@shared/tasks.js'
 import { policyFor } from './projects.js'
 import { claim, landResourceId, openClaims, release, upsertResource } from './resources.js'
 import { addDependency, addMessage, getTask, mandateAllows, setStatus } from './tasks.js'
@@ -31,6 +38,16 @@ export interface LandingContext {
   task: Task
   workspacePath: string
   branch: string
+  /**
+   * The **resolved** finish policy, which is what chooses the strategy.
+   *
+   * ⛔ Not the project's `landing.strategy`. That field is the pre-2026-08-28 spelling and
+   * `strategyFor` still read it, so the policy resolved task > project > fleet and the strategy that
+   * actually ran were two different answers to one question - a project with `finish: 'pull-request'`
+   * and no `strategy` would have had its trunk pushed. The policy decides; the legacy field is a
+   * fallback for `custom` only.
+   */
+  policy?: FinishPolicy
 }
 
 export interface LandingStrategy {
@@ -360,6 +377,212 @@ async function runChecks(
   return { ok: true, output: output.slice(-8000) }
 }
 
+/**
+ * Run the project's checks against the branch as the agent committed it, and report. Moves nothing.
+ *
+ * ⛔ The commit is not conditional on the result — the daemon never authors or unwinds one. What the
+ * check decides is the **verdict**: a red one rests the task carrying the output, and the commit
+ * stays exactly where the agent put it.
+ *
+ * ⚠️ A project that declares no checks gets `ok: true` with a reason that says so. An empty list must
+ * never read as a clean verification; that is the first day of every project.
+ */
+export const verifyOnly: LandingStrategy = {
+  id: 'verify-only',
+
+  async canLand(ctx) {
+    if (ctx.project.vcs !== 'git') return { ok: false, reason: 'project is not a git repository' }
+    if (!(await isClean(ctx.workspacePath))) {
+      return { ok: false, reason: 'the workspace has uncommitted changes' }
+    }
+    return { ok: true }
+  },
+
+  async land(ctx): Promise<LandingResult> {
+    if (policyFor(ctx.project).check.length === 0) {
+      return {
+        strategy: 'verify-only',
+        ok: true,
+        branch: ctx.branch,
+        reason:
+          `committed on \`${ctx.branch}\` — **nothing was verified**: this project declares no ` +
+          'check commands. Add them in Project settings.'
+      }
+    }
+    const checks = await runChecks(ctx.project, ctx.workspacePath)
+    return checks.ok
+      ? {
+          strategy: 'verify-only',
+          ok: true,
+          branch: ctx.branch,
+          reason: `committed on \`${ctx.branch}\` and the project checks passed`
+        }
+      : {
+          strategy: 'verify-only',
+          ok: false,
+          branch: ctx.branch,
+          reason: 'the project checks failed',
+          checkOutput: checks.output
+        }
+  }
+}
+
+/**
+ * Rebase, check, fast-forward the **local** trunk, retire the branch. Never touches a remote.
+ *
+ * ⛔ **Only into a clean trunk, and this is the constraint the whole policy is shaped around.** Git
+ * refuses outright to update a branch a worktree holds — measured 2026-08-30: *"fatal: refusing to
+ * fetch into branch 'refs/heads/main' checked out at ..."* — and the operator's own checkout is
+ * normally that worktree. So the merge is a `merge --ff-only` **inside the trunk**, attempted only
+ * when the trunk has nothing uncommitted in it.
+ *
+ * ⛔ And when it does not, the branch is kept and the task says so. The tool never stashes, resets,
+ * or otherwise reaches into a checkout somebody is typing in — the operator's uncommitted work is
+ * not the tool's to move.
+ */
+export const mergeLocal: LandingStrategy = {
+  id: 'merge-local',
+
+  async canLand(ctx) {
+    if (ctx.project.vcs !== 'git') return { ok: false, reason: 'project is not a git repository' }
+    if (!mandateAllows(ctx.task, 'land')) {
+      return { ok: false, reason: 'the task has no authority to land' }
+    }
+    if (ctx.task.verification === 'required') {
+      return { ok: false, reason: 'task requires human verification before landing' }
+    }
+    if (!(await isClean(ctx.workspacePath))) {
+      return { ok: false, reason: 'the workspace has uncommitted changes' }
+    }
+    return { ok: true }
+  },
+
+  async land(ctx): Promise<LandingResult> {
+    const target = policyFor(ctx.project).landingTarget
+
+    upsertResource({
+      id: landResourceId(ctx.project.id),
+      projectId: ctx.project.id,
+      kind: 'exclusive',
+      label: `${ctx.project.name} landing`,
+      capacity: 1
+    })
+    const turn = await awaitLandTurn(ctx)
+    if (!turn.lock) {
+      const waited = Math.round(landQueue.waitMs / 1000)
+      return {
+        strategy: 'merge-local',
+        ok: false,
+        branch: ctx.branch,
+        reason:
+          turn.gaveUp === 'cancelled'
+            ? 'this task was cancelled while it was queued to land'
+            : `another task is still landing after ${waited}s of waiting for a turn`,
+        ...(turn.queuedBehind ? { contendedWith: turn.queuedBehind } : {})
+      }
+    }
+
+    try {
+      // ⚠️ The local target, never `origin/<target>`. Rebasing onto the remote would quietly make
+      // this policy depend on a fetch, which is the thing it exists to avoid.
+      try {
+        await git(ctx.workspacePath, ['rebase', target])
+      } catch (err) {
+        await git(ctx.workspacePath, ['rebase', '--abort']).catch(() => undefined)
+        return {
+          strategy: 'merge-local',
+          ok: false,
+          branch: ctx.branch,
+          reason: `rebase onto ${target} conflicted: ${err instanceof Error ? err.message : String(err)}`
+        }
+      }
+
+      const checks = await runChecks(ctx.project, ctx.workspacePath)
+      if (!checks.ok) {
+        return {
+          strategy: 'merge-local',
+          ok: false,
+          branch: ctx.branch,
+          reason: 'the project checks failed after rebase',
+          checkOutput: checks.output
+        }
+      }
+
+      const commit = await git(ctx.workspacePath, ['rev-parse', 'HEAD'])
+
+      // ⛔ The trunk has to be clean and on the target. Anything else and the work stays on its
+      // branch with a sentence naming what is in the way, because the alternative is editing a
+      // working tree somebody is using.
+      const blocked = await trunkNotReady(ctx.project.root, target)
+      if (blocked) {
+        return {
+          strategy: 'merge-local',
+          ok: false,
+          branch: ctx.branch,
+          commit,
+          reason:
+            `committed and verified on \`${ctx.branch}\`, but not merged: ${blocked}. ` +
+            'The branch is intact — merge it when the trunk is free.'
+        }
+      }
+
+      try {
+        await git(ctx.project.root, ['merge', '--ff-only', ctx.branch])
+      } catch (err) {
+        return {
+          strategy: 'merge-local',
+          ok: false,
+          branch: ctx.branch,
+          commit,
+          reason:
+            `committed and verified on \`${ctx.branch}\`, but the trunk would not fast-forward: ` +
+            (err instanceof Error ? err.message : String(err))
+        }
+      }
+
+      // The fast-forward above is the proof `retireBranch` requires: every commit on the branch is
+      // now on the target.
+      await retireBranch(ctx.workspacePath, ctx.branch)
+      log.info(`merged t${ctx.task.seq} (${commit.slice(0, 8)}) into local ${target}, not pushed`)
+      return {
+        strategy: 'merge-local',
+        ok: true,
+        commit,
+        branch: ctx.branch,
+        reason: `merged into local \`${target}\` as ${commit.slice(0, 8)}. Not pushed.`
+      }
+    } finally {
+      release(turn.lock.id)
+    }
+  }
+}
+
+/**
+ * Why the trunk cannot take a fast-forward right now, or null.
+ *
+ * ⚠️ Read-only. Three questions, and each one is a state the operator created deliberately: a dirty
+ * tree, a detached HEAD, or a different branch checked out. None of them is an error, and none of
+ * them is the tool's to fix.
+ */
+async function trunkNotReady(root: string, target: string): Promise<string | null> {
+  try {
+    const head = await git(root, ['rev-parse', '--abbrev-ref', 'HEAD'])
+    if (head !== target) {
+      return head === 'HEAD'
+        ? `the trunk is on a detached HEAD rather than \`${target}\``
+        : `the trunk has \`${head}\` checked out rather than \`${target}\``
+    }
+    const dirty = await git(root, ['status', '--porcelain'])
+    if (dirty.trim()) {
+      const count = dirty.trim().split(/\r?\n/).length
+      return `the trunk has ${count} uncommitted file(s) in it`
+    }
+    return null
+  } catch (err) {
+    return `the trunk could not be read: ${err instanceof Error ? err.message : String(err)}`
+  }
+}
+
 export const leaveBranch: LandingStrategy = {
   id: 'leave-branch',
   async canLand() {
@@ -687,11 +910,30 @@ export const pullRequest: LandingStrategy = {
 const STRATEGIES: Record<LandingStrategyId, LandingStrategy> = {
   'auto-land': autoLand,
   'leave-branch': leaveBranch,
-  'pull-request': pullRequest
+  'pull-request': pullRequest,
+  'verify-only': verifyOnly,
+  'merge-local': mergeLocal
 }
 
-export function strategyFor(project: Project): LandingStrategy {
-  return STRATEGIES[policyFor(project).landingStrategy] ?? leaveBranch
+/**
+ * Which strategy a resolved policy runs.
+ *
+ * ⛔ The policy is the authority. `custom` is the one that falls through to the project's own
+ * `landing.strategy`, because a custom policy is an instruction to the agent and the tool is only
+ * tidying up behind it.
+ */
+const FOR_POLICY: Partial<Record<FinishPolicy, LandingStrategyId>> = {
+  'commit-and-verify': 'verify-only',
+  'commit-and-merge': 'merge-local',
+  'commit-and-push': 'auto-land',
+  'pull-request': 'pull-request',
+  'commit-only': 'leave-branch',
+  'await-human': 'leave-branch'
+}
+
+export function strategyFor(project: Project, policy?: FinishPolicy): LandingStrategy {
+  const byPolicy = policy ? FOR_POLICY[policy] : undefined
+  return STRATEGIES[byPolicy ?? policyFor(project).landingStrategy] ?? leaveBranch
 }
 
 /**
@@ -701,7 +943,7 @@ export function strategyFor(project: Project): LandingStrategy {
  * that says exactly why, and leaves the repository in a state a person can act on.
  */
 export async function landTask(ctx: LandingContext): Promise<LandingResult> {
-  const strategy = strategyFor(ctx.project)
+  const strategy = strategyFor(ctx.project, ctx.policy)
 
   // ⛔ Before the strategy, and only when the workspace is clean. A task that produced **no commits**
   // has nothing to land, and saying "landed as <the commit that was already there>" is not a

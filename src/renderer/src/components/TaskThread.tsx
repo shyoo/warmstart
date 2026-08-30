@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
   FINISH_LABELS,
+  FINISH_ORDER,
   resolveModelChoice,
   COMPLETION_LABELS,
   SHARING_LABELS,
@@ -1444,11 +1445,14 @@ function FinishPicker({
         aria-label="Finish policy"
         onChange={(e) => void choose(e.target.value as FinishPolicyChoice)}
       >
+        {/* ⛔ Driven by FINISH_ORDER, never a hand-written list. Three dropdowns carried
+            copies of these options and all three still offered `agent-lands` after it was renamed. */}
         <option value="inherit">inherit ({inheritedLabel})</option>
-        <option value="await-human">await human</option>
-        <option value="agent-lands">agent lands it</option>
-        <option value="pull-request">open a pull request</option>
-        <option value="custom">this project&rsquo;s own policy</option>
+        {FINISH_ORDER.map((p) => (
+          <option key={p} value={p}>
+            {FINISH_LABELS[p]}
+          </option>
+        ))}
       </select>
       {note && <div className="note">{note}</div>}
     </>

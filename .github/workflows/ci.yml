@@ -12,6 +12,17 @@
 
 name: CI
 
+# ⛔ **macOS runs on demand, not on every push.** GitHub bills macOS minutes at 10x and Windows
+# at 2x, so of the ten jobs below the three macOS ones are roughly three quarters of the cost of a
+# run. Measured on this repository 2026-08-26 -> 2026-08-30: **103 runs in five days**, 39 in one day,
+# and the account's CI allowance exhausted on 2026-08-29T21:54Z. The cause was the fleet's default
+# finish policy pushing the trunk on every completed task; that default is now `commit-and-merge`,
+# which never touches a remote, and this is the other half of the same fix.
+#
+# ⚠️ Coverage is not dropped, it is made deliberate: `workflow_dispatch` and any tag still run
+# the full three-platform matrix. Push and pull-request runs cover Linux and Windows, which are the
+# two an operator on this project can actually reproduce a failure on.
+
 on:
   push:
     branches: [main]
@@ -67,7 +78,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        # ⛔ See the note at the top of this file. macOS only when asked for, or on a tag.
+        os: ${{ (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')) && fromJSON('["ubuntu-latest", "windows-latest", "macos-latest"]') || fromJSON('["ubuntu-latest", "windows-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
@@ -95,7 +107,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        # ⛔ See the note at the top of this file. macOS only when asked for, or on a tag.
+        os: ${{ (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')) && fromJSON('["ubuntu-latest", "windows-latest", "macos-latest"]') || fromJSON('["ubuntu-latest", "windows-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
@@ -137,7 +150,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        # ⛔ See the note at the top of this file. macOS only when asked for, or on a tag.
+        os: ${{ (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')) && fromJSON('["ubuntu-latest", "windows-latest", "macos-latest"]') || fromJSON('["ubuntu-latest", "windows-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5

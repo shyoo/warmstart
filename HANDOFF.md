@@ -8,8 +8,8 @@ started in CI, never run against a real agent CLI.
 if you add a line, find the one it obsoletes and cut it in the same edit. Finished work moves to
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
-**Baseline (2026-08-30, measured):** typecheck · lint · build clean · `npm test` 804/806 (2 POSIX-only
-skipped) · `test:daemon` 141/141 · `test:ui` 147/147 · `test:pack` 18/18 · L4 (opt-in) landed a real
+**Baseline (2026-08-30, measured):** typecheck · lint · build clean · `npm test` 821/823 (2 POSIX-only
+skipped) · `test:daemon` 141/141 · `test:ui` 149/149 · `test:pack` 18/18 · L4 (opt-in) landed a real
 agent commit on origin/main. Electron 44.0.0, electron-builder 26.15.3, 0 npm vulnerabilities.
 CLIs here: claude 2.1.251 · agy 1.1.22 · codex 0.151.0.
 
@@ -19,7 +19,7 @@ the repo's copy while building blocks the pack step, correctly.
 
 ⚠️ **With no agent CLI the daemon suite skips 5 checks**, each with a stated reason — the CI state;
 simulate it with a PATH of System32, node and git and an empty `HOME`. ⛔ **CI itself has not run since
-2026-08-29T21:54Z**: 26 runs, each dead in 2–5s on GitHub billing — **nothing is verified off Windows.**
+2026-08-29T21:54Z**: 28 runs, each dead in 2–5s on GitHub billing — **nothing is verified off Windows.**
 
 ---
 
@@ -104,16 +104,17 @@ docs/                  cost-model.md, glossary.md, adapters.md, landing.md, sess
 
 - ⭐ **All three providers have a free quota probe** (**R3 closed**, `docs/cost-model.md` §5). A
   stale-but-known reading is labelled, not dropped; Antigravity's two pools gate separately.
-- ⚠️ **The compaction reserve still reports `unknown`** (**R2**, `docs/cost-model.md` §10). ⭐ But quota is a routing input again: `windowRisk` slopes to the 92% gate and every score prints its derivation.
-- ⚠️ **Never exercised end to end: the tray *icon*, and keepalive *execution*.** The keepalive arithmetic is unit-tested; its firing is not.
+- ⚠️ **The compaction reserve still reports `unknown`** (**R2**). ⭐ Quota is a routing input again: `windowRisk` slopes to the 92% gate and every score prints its derivation.
+- ⚠️ **Never exercised end to end: the tray *icon*, and keepalive firing.** Its arithmetic is unit-tested.
 - ⭐ **Every intervention on a live session has an off switch** — Settings > Global: `autoCompact`/`autoPreempt` **on**, `autoRunawayStop` **off**, `probeIntervalMinutes` 5m.
 - ⭐ **A full workspace pool holds a task rather than failing it** (2026-08-29). ⛔ No dependency edge: a hold is re-decided every tick, so priority wins. ⚠️ A fleet wider than its pool is *named*, never silently grown.
 - ⭐ **The stall watchdog tells stuck from slow, and has fired in flight** (2026-08-30): 13m into a hung codex run it posted the process tree and 0.0s of CPU gained in 70s. ⛔ It reports and never kills.
-- ⭐ **One finish policy, resolved task > project > fleet** (`docs/landing.md`): `await-human` ·
-  `agent-lands` · `pull-request` · `custom`. ⛔ **The tool never writes a commit** and never destroys
-  work it will not land; loose work and an unrebasable branch each get *one* instruction to the live
-  agent, then rest under **Loose ends**. ⚠️ The conflict ask **has never fired in flight**
-  (`conflict.test.ts`). `mandate.land` is the authority throughout.
+- ⭐ **Finishing is a ladder, and the default no longer pushes** (2026-08-30, `docs/landing.md`):
+  `await-human` · `commit-only` · `commit-and-verify` · **`commit-and-merge`** · `commit-and-push`, plus
+  `pull-request` and `custom`. The old default pushed on every completed task and every push starts a
+  ten-job CI matrix — 103 runs in five days, allowance exhausted 2026-08-29. ⛔ The tool never writes a
+  commit, never destroys work it will not land, and never merges into a trunk somebody is working in.
+  ⚠️ `commit-and-merge` has **never run in flight**, nor has the conflict ask.
 - ⭐ **An agent can ask a person a real question, and be answered** (2026-08-30, plan in
   `transient_docs/`). The **Question** object replaces `request_human`, which went through the approval
   path and could only answer allow/deny — *"OAuth, cookies or magic link?"* came back as *"The
@@ -132,7 +133,7 @@ docs/                  cost-model.md, glossary.md, adapters.md, landing.md, sess
   2026-08-28). ⚠️ **No Antigravity task has ever completed**: with `mcp: false` and no terminal record,
   `awaiting_human` is honest there and R13 stands. ⛔ It restores context, not cache
   (`cache_read_tokens: 0`).
-- ⛔ **Nothing is proven off Windows.** CI runners carry no agent CLI, and CI has not run at all since 2026-08-29 (see the top of this file). ⛔ **Unsigned**: SmartScreen warns, Gatekeeper refuses — a certificate and an Apple Developer account, not a config line.
+- ⛔ **Nothing is proven off Windows.** CI runners carry no agent CLI, and CI has not run since 2026-08-29. ⚠️ macOS now runs only on `workflow_dispatch` and tags. ⛔ **Unsigned**: a certificate and an Apple Developer account, not a config line.
 
 ## Next
 
@@ -153,9 +154,9 @@ M0–M6 are done. What is left is not a milestone but a list, in the order it wo
    OS keyring so sign-in *should* survive, and "should" is doing the work there.
 7. **The project Thread tab has no automated coverage.** `test/ui.test.mjs` files every task with no
    project, so that tab is checked by `typecheck` and by hand only. Needs a real project root.
-8. **Put human-in-the-loop in front of a real agent.** Everything is built and nothing has been used
-   by one. Dispatch a design task to a Claude worker, answer what it asks, and see the whole chain
-   work — the one thing L1–L3 cannot prove. Costs tokens.
+8. **Put human-in-the-loop and `commit-and-merge` in front of a real agent.** Both are built and
+   neither has been used by one. Dispatch a design task to a Claude worker, answer what it asks, and
+   watch it merge locally — the one thing L1–L3 cannot prove. Costs tokens.
 9. **Meter codex off its rollout** — R10 is answered (§5), but `metering` stays `'stream'`, so a PTY-hosted codex run is unmetered.
 10. **Compute `overrunFactor` in cost, not raw tokens**, and let preempted runs feed `estimateTask`.
    ⚠️ It measures the wrong thing today — 92–98% of a run's tokens are cache reads, so it fires on
