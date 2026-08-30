@@ -3,7 +3,6 @@ import type { Session } from '@shared/protocol'
 import type { FleetEntry } from '../lib/daemon'
 import { readFleetCollapsed, writeFleetCollapsed } from '../lib/prefs'
 import {
-  cacheRemaining,
   cacheUrgency,
   countdown,
   age,
