@@ -681,6 +681,19 @@ const MIGRATIONS: string[] = [
   );
   create index questions_open on questions(answered_at, asked_at);
   create index questions_task on questions(task_id, asked_at desc);
+  `,
+
+  // 21 - how far a dispatched agent is expected to get before it stops.
+  //
+  // ⛔ Not a permission setting. `autonomous` (the default, and what every existing task gets)
+  // means *finish the task*, and such an agent still stops to ask when a decision changes what it
+  // builds. `checkpointed` means *report at each phase boundary and wait* - a different contract,
+  // chosen for work worth steering, and the reason the column exists rather than being assumed.
+  //
+  // ⚠️ `inherit` is a real value, not a blank: a task left on it follows its project as the
+  // project changes, and one set explicitly to the same value does not.
+  `
+  alter table tasks add column completion_mode text not null default 'inherit';
   `
 ]
 

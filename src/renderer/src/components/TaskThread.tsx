@@ -2,12 +2,15 @@ import { useCallback, useEffect, useState } from 'react'
 import {
   FINISH_LABELS,
   resolveModelChoice,
+  COMPLETION_LABELS,
   SHARING_LABELS,
   type FinishPolicyChoice,
   type ResolvedFinishPolicy,
   type Run,
   type SessionSharingChoice,
   type ResolvedSessionSharing,
+  type CompletionModeChoice,
+  type ResolvedCompletionMode,
   type Task,
   type TaskMessage
 } from '@shared/tasks'
@@ -40,6 +43,7 @@ export interface TaskDetailData {
   resolvedSharing?: ResolvedSessionSharing
   inheritedFinish?: ResolvedFinishPolicy
   inheritedSharing?: ResolvedSessionSharing
+  inheritedCompletion?: ResolvedCompletionMode
   previewPrompt?: string
 }
 
@@ -556,6 +560,16 @@ function TaskDetail({
             <SharingPicker
               task={task}
               inheritedSharing={detail.inheritedSharing}
+              onChanged={refresh}
+            />
+          </Fact>
+          {/* ⛔ Third of the same shape, and it belongs beside the other two: three tiers,
+              `inherit` a real value, effective on the next run. ⚠️ It is not a care setting -
+              an autonomous agent still stops to ask when a decision changes what it builds. */}
+          <Fact label="completion">
+            <CompletionPicker
+              task={task}
+              inheritedCompletion={detail.inheritedCompletion}
               onChanged={refresh}
             />
           </Fact>
@@ -1499,6 +1513,65 @@ function SharingPicker({
         <option value="inherit">inherit ({inheritedLabel})</option>
         <option value="on">reuse one if possible</option>
         <option value="off">always start a new one</option>
+      </select>
+      {note && <div className="note">{note}</div>}
+    </>
+  )
+}
+
+/**
+ * How far the agent is expected to get before it stops.
+ *
+ * ⚠️ Records a preference and nothing else. A run already in flight was given its prompt when
+ * it was dispatched, and a prompt is sent once - so this takes effect on the task's next run, which
+ * the control says rather than leaving somebody to discover.
+ */
+function CompletionPicker({
+  task,
+  inheritedCompletion,
+  onChanged
+}: {
+  task: Task
+  inheritedCompletion?: ResolvedCompletionMode
+  onChanged?: () => Promise<void>
+}): React.JSX.Element {
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState<string | null>(null)
+
+  const choose = async (completionMode: CompletionModeChoice): Promise<void> => {
+    setBusy(true)
+    setNote(null)
+    try {
+      await rpc('task.setCompletionMode', { id: task.id, completionMode })
+      if (onChanged) await onChanged()
+    } catch (err) {
+      setNote(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const inheritedLabel = inheritedCompletion?.mode
+    ? COMPLETION_LABELS[inheritedCompletion.mode] ?? inheritedCompletion.mode
+    : 'run to the end'
+
+  return (
+    <>
+      <select
+        className="finish-picker"
+        value={task.completionMode}
+        disabled={busy}
+        aria-label="Completion mode"
+        title={
+          'How far the agent goes before it stops. Running to the end is the default and does not ' +
+          'stop it asking you a question when one changes what it builds; checking in makes it ' +
+          'report at each phase boundary and wait. Takes effect on the next run.'
+        }
+        onChange={(e) => void choose(e.target.value as CompletionModeChoice)}
+      >
+        <option value="inherit">inherit ({inheritedLabel})</option>
+        <option value="autonomous">run to the end</option>
+        <option value="checkpointed">check in at each phase</option>
       </select>
       {note && <div className="note">{note}</div>}
     </>

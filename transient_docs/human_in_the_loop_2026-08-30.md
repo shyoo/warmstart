@@ -318,12 +318,23 @@ already answered does not.
 | ~~2~~ | ~~`post_turn_summary` decode + `awaiting_human` reason~~ | ✅ landed 2026-08-30. 9 tests, 7 of them red against the previous code |
 | ~~3~~ | ~~`ask_human` (the portable path)~~ | ✅ landed 2026-08-30. 7 checks over a real MCP client |
 | ~~4~~ | ~~Attention bar + thread card~~ | ✅ landed 2026-08-30. 5 UI checks; the bar is covered end to end, the card is not — see below |
-| 5 | `task_messages` write-through | Makes the decision durable |
-| 6 | `AskUserQuestion` interception in `approve` | Needs 0b, 1 and 4 |
-| 7 | `checkpoint` + `completion_mode` | Cheap once the above exist |
-| 8 | `NEEDS DECISION:` fallback for codex / Antigravity | One prompt branch |
-| 9 | Escalation fix + its test | Independent; can land any time |
-| 10 | Re-measure R14.d and correct `docs/adapters.md`'s usage row | Costs nothing — read it off the run above |
+| ~~5~~ | ~~`task_messages` write-through~~ | ✅ landed. 4 tests, incl. the duplicate-delivery trap |
+| ~~6~~ | ~~`AskUserQuestion` interception in `approve`~~ | ✅ landed. 5 checks against the verbatim R14 payload |
+| ~~7~~ | ~~`checkpoint` + `completion_mode`~~ | ✅ landed. Schema v21, a third tri-state, 4 checks + 2 prompt tests |
+| ~~8~~ | ~~`NEEDS DECISION:` fallback for codex / Antigravity~~ | ✅ landed. An anchored contract, and it blocks rather than completes |
+| ~~9~~ | ~~Escalation fix + its test~~ | ✅ landed. `escalate_after` 30m → 5m, under the 10m wait |
+| ~~10~~ | ~~Re-measure R14.d and correct `docs/adapters.md`'s usage row~~ | ✅ landed. Usage **is** in the stream on 2.1.251; we still meter from the transcript, by choice |
+
+## What is done, and what is still not proven
+
+Every step above has landed. ⚠️ **No agent has used any of it in flight.** L1 unit tests, L2 over a
+real stdio MCP client and L3 against the real app all pass; what has never happened is a dispatched
+task calling `ask_human` or `checkpoint` on its own initiative and a person answering it. That is the
+next thing worth doing and it costs tokens.
+
+⚠️ The **thread card still has no rendering test** — a question with a `taskId` needs a live run, and
+the UI suite cannot seed one. ⚠️ **R15** is unmeasured: whether an MCP client tolerates a tool call
+held for minutes.
 
 ## Open questions
 

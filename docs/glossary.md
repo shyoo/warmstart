@@ -160,6 +160,12 @@ and `failed`. ⛔ It did the work up to the question and metered its turns, so i
 towards triage and does not bench the worker; ⚠️ it is not `completed` either, and the estimator
 medians only completed runs.
 
+**Completion mode** — *how far a dispatched agent is expected to get before it stops.* Resolved
+task > project > fleet, like **finish** and **sharing**, and ⛔ defaulting to `autonomous` because
+unattended progress is the premise of the tool. ⚠️ **Not a care setting**: an autonomous agent still
+stops to ask when a decision changes what it builds. `checkpointed` is the other contract — report at
+each phase boundary via `checkpoint` and wait — chosen per task, for work worth steering.
+
 **Resting state** — where a cancelled task comes to rest: `paused_user` (*not now*), `draft` (*not
 like this* — re-enters admission), or `cancelled` (*not at all*, terminal but on the record).
 **Cancel is not delete**: cancel winds a run down through the preemption protocol and destroys

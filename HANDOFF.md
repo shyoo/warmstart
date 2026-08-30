@@ -8,8 +8,8 @@ started in CI, never run against a real agent CLI.
 if you add a line, find the one it obsoletes and cut it in the same edit. Finished work moves to
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
-**Baseline (2026-08-30, measured):** typecheck · lint · build clean · `npm test` 793/795 (2 POSIX-only
-skipped) · `test:daemon` 132/132 · `test:ui` 147/147 · `test:pack` 18/18 · L4 (opt-in) landed a real
+**Baseline (2026-08-30, measured):** typecheck · lint · build clean · `npm test` 804/806 (2 POSIX-only
+skipped) · `test:daemon` 141/141 · `test:ui` 147/147 · `test:pack` 18/18 · L4 (opt-in) landed a real
 agent commit on origin/main. Electron 44.0.0, electron-builder 26.15.3, 0 npm vulnerabilities.
 CLIs here: claude 2.1.251 · agy 1.1.22 · codex 0.151.0.
 
@@ -105,29 +105,29 @@ docs/                  cost-model.md, glossary.md, adapters.md, landing.md, sess
 - ⭐ **All three providers have a free quota probe** (**R3 closed**, `docs/cost-model.md` §5). A
   stale-but-known reading is labelled, not dropped; Antigravity's two pools gate separately.
 - ⚠️ **The compaction reserve still reports `unknown`** (**R2**, `docs/cost-model.md` §10). ⭐ But quota is a routing input again: `windowRisk` slopes to the 92% gate and every score prints its derivation.
-- ⚠️ **Never exercised end to end: the tray *icon*, and keepalive *execution*.** The switch and `daemon.shutdown` are covered; the keepalive arithmetic is unit-tested and its firing is not.
+- ⚠️ **Never exercised end to end: the tray *icon*, and keepalive *execution*.** The keepalive arithmetic is unit-tested; its firing is not.
 - ⭐ **Every intervention on a live session has an off switch** — Settings > Global: `autoCompact`/`autoPreempt` **on**, `autoRunawayStop` **off**, `probeIntervalMinutes` 5m.
 - ⭐ **A full workspace pool holds a task rather than failing it** (2026-08-29). ⛔ No dependency edge: a hold is re-decided every tick, so priority wins. ⚠️ A fleet wider than its pool is *named*, never silently grown.
-- ⭐ **The stall watchdog tells stuck from slow, and has now fired in flight** (2026-08-30): 13m into a hung codex run it posted the process tree and 0.0s of CPU gained in 70s to the thread — the diagnosis, before anybody looked. ⛔ It reports and never kills.
+- ⭐ **The stall watchdog tells stuck from slow, and has fired in flight** (2026-08-30): 13m into a hung codex run it posted the process tree and 0.0s of CPU gained in 70s. ⛔ It reports and never kills.
 - ⭐ **One finish policy, resolved task > project > fleet** (`docs/landing.md`): `await-human` ·
   `agent-lands` · `pull-request` · `custom`. ⛔ **The tool never writes a commit** and never destroys
   work it will not land; loose work and an unrebasable branch each get *one* instruction to the live
   agent, then rest under **Loose ends**. ⚠️ The conflict ask **has never fired in flight**
   (`conflict.test.ts`). `mandate.land` is the authority throughout.
-- ⭐ **An agent can ask a person a real question** (2026-08-30, plan in `transient_docs/`). `ask_human`
-  and the **Question** object replace `request_human`, which went through the approval path and could
-  only answer allow/deny — *"OAuth, cookies or magic link?"* came back as *"The operator agreed."*
-  Unanswered now **parks**: the task rests at `awaiting_human`, the question stays open.
-  ⚠️ **No agent has called it in flight**; L1/L2/L3 cover it. ⚠️ The thread card has **no rendering
-  test** — seeding one needs a live run. ⚠️ **R15**: can an MCP client hold a tool call for minutes?
+- ⭐ **An agent can ask a person a real question, and be answered** (2026-08-30, plan in
+  `transient_docs/`). The **Question** object replaces `request_human`, which went through the approval
+  path and could only answer allow/deny — *"OAuth, cookies or magic link?"* came back as *"The
+  operator agreed."* Three ways in: `ask_human`, Claude Code's own `AskUserQuestion` intercepted at
+  `approve` (measured, R14), and `checkpoint` on a `checkpointed` task. Unanswered **parks**: the task
+  rests at `awaiting_human`, the question stays open. A run that stopped to ask is `blocked`, not
+  `failed`. ⚠️ **No agent has used any of it in flight** — L1/L2/L3 only. ⚠️ The thread card has
+  **no rendering test**; seeding one needs a live run. ⚠️ **R15**: can an MCP client hold a tool call
+  for minutes?
 - ⭐ **The daemon's log is readable from inside the app** (Settings > Logs): live, filterable, ring-buffered so a late window still sees the past; a file per day, kept a fortnight.
 - ⭐ **Model and effort are choosable, inherited and visible** (2026-08-29): **task → worker → the
   CLI's own default**, via `resolveModelChoice`. Multi-pool workers set a default per pool and the
   scheduler balances on quota. ⚠️ **`selectableEffort` is true for `claude-code` only**.
-- ⛔ **Codex could never have completed a task, three bugs deep** (fixed 2026-08-30,
-  `docs/adapters.md`): stdin held open against a CLI that reads to EOF, `mcp: true` on an adapter that
-  cannot register one, and `turn.completed` decoded without its terminal half. ⚠️ **No codex task has
-  completed yet** — measured, unproven in flight.
+- ⛔ **Codex could never have completed a task, three bugs deep** (fixed 2026-08-30, `docs/adapters.md`): stdin held open against a CLI that reads to EOF, `mcp: true` on an adapter that cannot register one, and `turn.completed` decoded without its terminal half. ⚠️ **No codex task has completed yet.**
 - ⭐ **Antigravity runs, reports its quota, and resumes a conversation by id** (**R9**, measured
   2026-08-28). ⚠️ **No Antigravity task has ever completed**: with `mcp: false` and no terminal record,
   `awaiting_human` is honest there and R13 stands. ⛔ It restores context, not cache
@@ -153,10 +153,9 @@ M0–M6 are done. What is left is not a milestone but a list, in the order it wo
    OS keyring so sign-in *should* survive, and "should" is doing the work there.
 7. **The project Thread tab has no automated coverage.** `test/ui.test.mjs` files every task with no
    project, so that tab is checked by `typecheck` and by hand only. Needs a real project root.
-8. **Finish human-in-the-loop** (plan in `transient_docs/`): thread write-through, intercepting
-   Claude's own `AskUserQuestion` through `approve` (measured, R14), `checkpoint` + a per-task
-   completion mode, a `NEEDS DECISION:` fallback for MCP-less adapters, and the unreachable approval
-   escalation — `WAIT_TIMEOUT_MS` fires first, so `escalateStale` is dead code with no test.
+8. **Put human-in-the-loop in front of a real agent.** Everything is built and nothing has been used
+   by one. Dispatch a design task to a Claude worker, answer what it asks, and see the whole chain
+   work — the one thing L1–L3 cannot prove. Costs tokens.
 9. **Meter codex off its rollout** — R10 is answered (§5), but `metering` stays `'stream'`, so a PTY-hosted codex run is unmetered.
 10. **Compute `overrunFactor` in cost, not raw tokens**, and let preempted runs feed `estimateTask`.
    ⚠️ It measures the wrong thing today — 92–98% of a run's tokens are cache reads, so it fires on

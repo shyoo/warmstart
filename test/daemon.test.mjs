@@ -1001,7 +1001,7 @@ async function runApprovalChecks(d) {
     const tools = await client.tools()
     check(
       'the worker tier exposes exactly the tools it should',
-      ['approve', 'ask_human', 'task_complete', 'task_create', 'handoff'].every((n) =>
+      ['approve', 'ask_human', 'checkpoint', 'task_complete', 'task_create', 'handoff'].every((n) =>
         tools.includes(n)
       ),
       tools.join(', ')
@@ -1109,6 +1109,95 @@ async function runApprovalChecks(d) {
       answered
     )
     check('and the question leaves the queue', (await d.rpc('question.list')).length === 0)
+
+    // ---------------------------------------------------------------- the CLI's own question tool
+    //
+    // ⛔ The payload below is verbatim from the R14 capture (claude-code 2.1.251). It arrives
+    // at `approve`, and the old path answered it allow/deny - three buttons for a three-way design
+    // question. It must now open a Question instead, and the answer must come back through the
+    // deny-message channel, which is the only one that reaches the model as a tool result.
+    const native = mcp('tools/call', {
+      name: 'approve',
+      arguments: {
+        tool_name: 'AskUserQuestion',
+        tool_use_id: 'toolu_01AJN1L1wSPCQZvYkmHnbU36',
+        input: {
+          questions: [
+            {
+              question: 'Which authentication approach do you want for the internal web app?',
+              header: 'Auth approach',
+              multiSelect: false,
+              options: [
+                { label: 'OAuth (external provider)', description: 'No password storage.' },
+                { label: 'Server-side session cookies', description: 'Full control.' },
+                { label: 'Magic-link email', description: 'Needs mail delivery.' }
+              ]
+            }
+          ]
+        }
+      }
+    })
+    await wait(2500)
+    const nativeOpen = (await d.rpc('question.list')).find((q) => q.origin === 'native_tool')
+    check("the CLI's own question tool opens a question, not an approval", Boolean(nativeOpen))
+    check(
+      'and it keeps the header and the per-option prose the vendor sent',
+      nativeOpen?.header === 'Auth approach' &&
+        nativeOpen?.options?.[0]?.detail === 'No password storage.',
+      JSON.stringify(nativeOpen?.options ?? [])
+    )
+    check(
+      'it did not become an approval',
+      (await d.rpc('approval.list')).every((a) => a.tool !== 'AskUserQuestion')
+    )
+
+    await d.rpc('question.answer', { id: nativeOpen.id, optionIds: [nativeOpen.options[2].id] })
+    const nativeReply = body(await native)
+    check(
+      'the answer comes back through the deny channel, because allow is not an answer',
+      nativeReply.behavior === 'deny' && String(nativeReply.message).includes('Magic-link email'),
+      JSON.stringify(nativeReply)
+    )
+
+    // ⚠️ A payload that is not a question still has to work as a permission prompt.
+    await d.rpc('approval.addRule', { text: 'AskUserQuestion(*)', effect: 'allow' })
+    const notAQuestion = body(
+      await mcp('tools/call', {
+        name: 'approve',
+        arguments: { tool_name: 'AskUserQuestion', input: { unexpected: 'shape' } }
+      })
+    )
+    check(
+      'an unrecognised payload degrades to the ordinary approval path',
+      notAQuestion.behavior === 'allow',
+      JSON.stringify(notAQuestion)
+    )
+
+    // ⛔ A checkpoint is the one question whose options are not written by the asker: the three
+    // things a person can say at a phase boundary are the same three every time, which is what makes
+    // it answerable in one click on the bar.
+    const phase = mcp('tools/call', {
+      name: 'checkpoint',
+      arguments: {
+        phase: 'Schema',
+        done: 'Added the questions table and its indexes.',
+        next: 'Wire the RPCs and write the tests.'
+      }
+    })
+    await wait(2500)
+    const atPhase = (await d.rpc('question.list')).find((q) => q.origin === 'checkpoint')
+    check('a checkpoint reaches the operator as a question', Boolean(atPhase))
+    check(
+      'with the same three answers every time',
+      atPhase?.options?.map((o) => o.id).join(',') === 'continue,redirect,stop',
+      JSON.stringify(atPhase?.options?.map((o) => o.label) ?? [])
+    )
+    check('and it carries the phase as its header', atPhase?.header === 'Schema', atPhase?.header)
+    await d.rpc('question.answer', { id: atPhase.id, optionIds: ['continue'] })
+    check(
+      'answering it lets the agent carry on',
+      ((await phase).result?.content?.[0]?.text ?? '').includes('Carry on')
+    )
 
     // An open question is answerable long after the asker has gone; a park is not a dead end.
     const parking = mcp('tools/call', {

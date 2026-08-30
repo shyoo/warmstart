@@ -1,5 +1,5 @@
 import type { Settings } from '@shared/protocol.js'
-import { DEFAULT_FLEET_FINISH, DEFAULT_FLEET_SHARING } from '@shared/tasks.js'
+import { DEFAULT_FLEET_COMPLETION, DEFAULT_FLEET_FINISH, DEFAULT_FLEET_SHARING } from '@shared/tasks.js'
 import { db, row } from './db.js'
 import { log } from './log.js'
 
@@ -80,6 +80,16 @@ export const DEFAULT_SETTINGS: Settings = {
    * asked for, made everywhere at once. Turn it on per project, and per task from the detail pane.
    */
   sessionSharing: DEFAULT_FLEET_SHARING,
+
+  /**
+   * How far a dispatched agent is expected to get before it stops.
+   *
+   * ⛔ `autonomous`, because the premise of the tool is unattended progress across quota
+   * windows hours long; a fleet defaulting to `checkpointed` would need a person present for every
+   * task. ⚠️ It is not a care setting - an autonomous agent still stops to ask when a decision
+   * changes what it builds. Choose `checkpointed` per task, for work worth steering.
+   */
+  completionMode: DEFAULT_FLEET_COMPLETION,
 
   /**
    * How often (in minutes) orchestratord sweeps workers in the background for quota updates.

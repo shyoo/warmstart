@@ -9,7 +9,7 @@
  * | envelope key | `type` | **`event`** | `type` |
  * | terminal record | `result` | `result` (nested under the key) | `turn.completed` |
  * | assistant text | `assistant` → `content[]` blocks | `step_update` | `item.completed` → `item.text` |
- * | usage | ⛔ not in the stream — from the transcript | **in the stream** | **in the stream** |
+ * | usage | in the stream on 2.1.251, but ⛔ **metered from the transcript** — see below | **in the stream** | **in the stream** |
  * | rate limit | `rate_limit_event` | none seen | none seen |
  *
  * A parser keyed on `record.type` — which this was until M5 measured `agy` — reads **nothing** from
@@ -35,10 +35,13 @@ export interface RateLimitInfo {
 /**
  * Tokens a turn actually spent, as the CLI reports them.
  *
- * ⚠️ Only emitted by adapters that put usage in the stream. Claude Code does not: its numbers come
- * from the transcript, which is exact and includes the compaction sampling iteration the stream would
- * miss (cost-model.md §6). Where both exist, the transcript wins — this is the fallback for CLIs that
- * have no transcript agentyard can read.
+ * ⚠️ Only emitted by adapters that put usage in the stream. Claude Code's stream **does** carry it
+ * — measured 2026-08-30 on 2.1.251, a full `usage` block with `iterations` on the `result` record,
+ * correcting the 2026-08-25 reading on 2.1.223 — and this adapter still deliberately does not decode
+ * it. Its numbers come from the transcript, which is exact and includes the compaction sampling
+ * iteration (cost-model.md §6); decoding both would double-count the turn, because `index.ts` credits
+ * every final `usage` event it is given. Where both exist, the transcript wins. This is the fallback
+ * for CLIs that have no transcript agentyard can read.
  */
 export interface StreamUsage {
   input: number

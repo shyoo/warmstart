@@ -43,6 +43,7 @@ export interface ProjectConfig {
   }
   session?: {
     share?: SessionSharingChoice
+    completion?: CompletionModeChoice
   }
   permission?: { mode?: string; allow?: string[]; deny?: string[] }
   env?: Record<string, string | number>
@@ -268,6 +269,8 @@ export interface Task {
    * project changes, and one set explicitly to the same value does not.
    */
   sessionSharing: SessionSharingChoice
+  /** How far the agent is expected to get before it stops. `inherit` follows the project. */
+  completionMode: CompletionModeChoice
   /**
    * When the finish instruction was sent to the agent, if it has been.
    *
@@ -815,6 +818,58 @@ export const DEFAULT_FLEET_SHARING: SessionSharing = 'off'
 export const SHARING_LABELS: Record<SessionSharing, string> = {
   on: 'reuse one if possible',
   off: 'always start a new one'
+}
+
+/**
+ * How far a dispatched agent is expected to get before it stops.
+ *
+ * ⛔ Two different things, and neither is "how careful should you be". `autonomous` says
+ * *finish the whole task*, and an agent on it still stops for a decision that changes what it builds
+ * - that is what `ask_human` is for, and it is never discouraged. `checkpointed` says *report at each
+ * phase boundary and wait*, which is a different contract: the agent is being steered.
+ */
+export type CompletionMode = 'autonomous' | 'checkpointed'
+export type CompletionModeChoice = CompletionMode | 'inherit'
+
+export interface ResolvedCompletionMode {
+  mode: CompletionMode
+  source: 'task' | 'project' | 'fleet'
+}
+
+/**
+ * ⛔ `autonomous`, because the premise of the tool is unattended progress across quota windows
+ * that are hours long. A fleet defaulting to `checkpointed` would need a person present for every
+ * task, which is the thing this exists not to require. Interactivity is chosen, per task, for the
+ * work that is worth steering.
+ */
+export const DEFAULT_FLEET_COMPLETION: CompletionMode = 'autonomous'
+
+export const COMPLETION_LABELS: Record<CompletionMode, string> = {
+  autonomous: 'run to the end',
+  checkpointed: 'check in at each phase'
+}
+
+export function projectCompletionChoice(
+  project: Project | null | undefined
+): CompletionModeChoice {
+  const raw = project?.config?.session?.completion
+  return raw === 'autonomous' || raw === 'checkpointed' || raw === 'inherit' ? raw : 'inherit'
+}
+
+/** Task, then project, then fleet - the same three tiers as finish and sharing, and `inherit` is real. */
+export function resolveCompletionMode(
+  task: Task | null | undefined,
+  project: Project | null | undefined,
+  fleetMode: CompletionMode = DEFAULT_FLEET_COMPLETION
+): ResolvedCompletionMode {
+  if (task && task.completionMode !== 'inherit') {
+    return { mode: task.completionMode, source: 'task' }
+  }
+  if (project) {
+    const choice = projectCompletionChoice(project)
+    if (choice !== 'inherit') return { mode: choice, source: 'project' }
+  }
+  return { mode: fleetMode, source: 'fleet' }
 }
 
 /** The pre-2026-08-28 spelling, still read off any project.json that has not been rewritten. */

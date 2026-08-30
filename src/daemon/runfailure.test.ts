@@ -28,6 +28,7 @@ let workers: typeof import('./workers.js')
 let tasks: typeof import('./tasks.js')
 let scheduler: typeof import('./scheduler.js')
 let questions: typeof import('./questions.js')
+let approvals: typeof import('./approvals.js')
 
 const ORG_DISABLED =
   'Your organization has disabled Claude subscription access for Claude Code. ' +
@@ -138,6 +139,7 @@ beforeAll(async () => {
   tasks = await import('./tasks.js')
   scheduler = await import('./scheduler.js')
   questions = await import('./questions.js')
+  approvals = await import('./approvals.js')
   db.openDb(join(dir, 'runfail.db'))
 })
 
@@ -401,6 +403,60 @@ describe('a session that stopped to ask', () => {
   })
 })
 
+/**
+ * ⛔ An approval that nobody answers has to become visible as work, and until 2026-08-30 it
+ * could not: `DEFAULT_ESCALATE_AFTER_MS` (30m) was longer than `WAIT_TIMEOUT_MS` (10m), so the waiter
+ * always denied first and wrote `answered_at` - the column `escalateStale` filters on. The path was
+ * unreachable from the day it was written and had no test. This is that test.
+ */
+describe('an approval nobody answers', () => {
+  it('becomes work a person can see, rather than sitting invisible until it denies', async () => {
+    const { task, session } = seedRunningTask({ metered: 500 })
+    const pending = approvals.requestApproval({
+      sessionId: session.id,
+      origin: 'tool_gate',
+      tool: 'Bash',
+      target: 'git push --force',
+      summary: 'Bash: git push --force'
+    })
+
+    expect(approvals.escalateStale(Date.now())).toBe(0)
+    const past = Date.now() + approvals.DEFAULT_ESCALATE_AFTER_MS + 1000
+    expect(approvals.escalateStale(past)).toBe(1)
+    expect(tasks.getTask(task.id)?.status).toBe('awaiting_human')
+    expect(tasks.getTask(task.id)?.holdReason).toContain('git push --force')
+
+    // ⚠️ Escalating does not answer it. It is still open, still blocking that session, and
+    // still answerable from the bar - which is the whole point of escalating before the wait ends.
+    expect(approvals.openApprovals()).toHaveLength(1)
+    expect(approvals.escalateStale(past + 1000)).toBe(0)
+
+    approvals.answerApproval(approvals.openApprovals()[0]!.id, 'deny')
+    await expect(pending).resolves.toBe('deny')
+  })
+
+  it('escalates before it gives up, or escalation is unreachable', () => {
+    // ⛔ The ordering *is* the fix. Stated as an assertion so a later edit to either constant
+    // cannot quietly restore the bug.
+    expect(approvals.DEFAULT_ESCALATE_AFTER_MS).toBeLessThan(10 * 60 * 1000)
+  })
+
+  it('does not escalate one that has been answered', () => {
+    const { task, session } = seedRunningTask({ metered: 500 })
+    const pending = approvals.requestApproval({
+      sessionId: session.id,
+      origin: 'tool_gate',
+      tool: 'Bash',
+      target: 'npm test',
+      summary: 'Bash: npm test'
+    })
+    approvals.answerApproval(approvals.openApprovals()[0]!.id, 'allow')
+    expect(approvals.escalateStale(Date.now() + 60 * 60 * 1000)).toBe(0)
+    expect(tasks.getTask(task.id)?.status).toBe('running')
+    return pending
+  })
+})
+
 describe('a result that is not an error', () => {
   it('on an MCP-enabled adapter is left for task_complete to signal', async () => {
     const { run, task, session } = seedRunningTask({ adapterId: 'claude-code' })
@@ -413,6 +469,32 @@ describe('a result that is not an error', () => {
     // `result` record without `task_complete` leaves the run open.
     expect(tasks.requireRun(run.id).endedAt).toBeNull()
     expect(tasks.getTask(task.id)?.status).toBe('running')
+  })
+
+  it('⛔ does not complete an MCP-less run that ended by asking', async () => {
+    // An adapter with no `ask_human` was given a prompt contract instead: end with `NEEDS DECISION:`
+    // and stop. Completing such a run would file an unanswered question as finished work.
+    // ⚠️ `openai-compatible`, not Antigravity: only one Antigravity account exists per machine and
+    // the test below needs it. Both declare `mcp: false`, which is the property under test.
+    const { run, task, session } = seedRunningTask({ metered: 500 })
+    await scheduler.onStreamResult(session, {
+      isError: false,
+      text: 'I looked at both options.\nNEEDS DECISION: OAuth or session cookies?',
+      terminalReason: null
+    })
+    expect(tasks.requireRun(run.id).outcome).toBe('blocked')
+    expect(tasks.getTask(task.id)?.status).toBe('awaiting_human')
+    expect(tasks.getTask(task.id)?.holdReason).toContain('OAuth or session cookies?')
+  })
+
+  it('matches the contract it gave, and not prose that resembles it', () => {
+    // ⚠️ The anchor is the point. A looser match would fire on an agent *describing* a
+    // decision it had already made, and park a task that was finished.
+    expect(scheduler.needsDecisionIn('NEEDS DECISION: which database?')).toBe('which database?')
+    expect(scheduler.needsDecisionIn('  - NEEDS DECISION:   trimmed  ')).toBe('trimmed')
+    expect(scheduler.needsDecisionIn('I decided this needs decision: none really')).toBeNull()
+    expect(scheduler.needsDecisionIn('there was no decision to make')).toBeNull()
+    expect(scheduler.needsDecisionIn(null)).toBeNull()
   })
 
   it('on an adapter without MCP completes the task', async () => {

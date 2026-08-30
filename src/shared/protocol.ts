@@ -4,6 +4,9 @@ import type {
   CacheMove,
   ChatMessage,
   ClockDecision,
+  CompletionMode,
+  ResolvedCompletionMode,
+  CompletionModeChoice,
   Consult,
   Objective,
   Project,
@@ -87,6 +90,11 @@ export interface Settings {
    * same three (fleet → project → task), and ⛔ **off** unless somebody turns it on.
    */
   sessionSharing: SessionSharing
+  /**
+   * How far a dispatched agent is expected to get before it stops. The bottom tier of the same three
+   * (fleet -> project -> task), and ⛔ **autonomous** unless somebody chooses otherwise.
+   */
+  completionMode: CompletionMode
   /**
    * How often (in minutes) orchestratord sweeps workers in the background for quota updates.
    * Default 5 minutes.
@@ -986,6 +994,7 @@ export interface RpcMap {
       resolvedSharing?: ResolvedSessionSharing
       inheritedFinish?: ResolvedFinishPolicy
       inheritedSharing?: ResolvedSessionSharing
+      inheritedCompletion?: ResolvedCompletionMode
       previewPrompt?: string
     } | null
   }
@@ -1126,6 +1135,11 @@ export interface RpcMap {
     result: Task
   }
   'task.setSessionSharing': { params: { id: string; sessionSharing: SessionSharingChoice }; result: Task }
+  /** ⚠️ Takes effect on the task's **next** run: it changes the prompt, and a prompt is sent once. */
+  'task.setCompletionMode': {
+    params: { id: string; completionMode: CompletionModeChoice }
+    result: Task
+  }
   /** Land a branch whose task already finished. The loose-ends list and the task pane both use it. */
   'task.land': { params: { id: string }; result: { task: Task; landed: boolean; reason?: string } }
   /** Work that exists and is going nowhere: uncommitted files, unlanded branches, rescued stashes. */

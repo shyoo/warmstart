@@ -51,6 +51,28 @@ describe('promptFor prompt construction', () => {
     expect(prompt).toContain('call `ask_human` rather than guessing')
   })
 
+  it('tells an autonomous agent to run to the end', () => {
+    const task = tasks.createTask({ title: 'Autonomous by default', status: 'ready' })
+    const prompt = scheduler.promptFor(task, 'claude-code', false, { markDelivered: false })
+    // ⛔ The fleet default, and the premise of the tool: unattended progress across quota
+    // windows hours long. A default of `checkpointed` would need a person present for every task.
+    expect(prompt).toContain('Work to the end without stopping between phases')
+    expect(prompt).not.toContain('`checkpoint`')
+  })
+
+  it('tells a checkpointed agent to stop at each phase, and still to ask when it must', () => {
+    const task = tasks.createTask({ title: 'Steer this one', status: 'ready' })
+    tasks.updateTask(task.id, { completionMode: 'checkpointed' })
+    const prompt = scheduler.promptFor(tasks.requireTask(task.id), 'claude-code', false, {
+      markDelivered: false
+    })
+    expect(prompt).toContain('call the MCP tool `checkpoint`')
+    expect(prompt).toContain('wait for the answer before starting the next')
+    // ⚠️ `ask_human` survives the switch. Stopping for a decision that changes what you build
+    // is never the thing being discouraged — in either mode.
+    expect(prompt).toContain('call `ask_human` rather than guessing')
+  })
+
   it('builds prompt for a non-MCP adapter with commit instruction', () => {
     const task = tasks.createTask({
       title: 'Update readme',
@@ -62,7 +84,10 @@ describe('promptFor prompt construction', () => {
     expect(prompt).toContain('Update readme')
     expect(prompt).toContain('Add install instructions to README.md')
     expect(prompt).toContain('commit what you have and end with a one-line summary of what changed')
-    expect(prompt).toContain('say so plainly and stop rather than guessing')
+    // ⛔ An anchored contract, not an invitation to say something. It is what
+    // `needsDecisionIn` matches on, so the two have to be checked against each other.
+    expect(prompt).toContain('`NEEDS DECISION:`')
+    expect(scheduler.needsDecisionIn('NEEDS DECISION: which one?')).toBe('which one?')
     expect(prompt).not.toContain('task_complete')
   })
 

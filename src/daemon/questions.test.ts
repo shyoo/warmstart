@@ -212,6 +212,81 @@ describe('an unanswered question is not a refusal', () => {
   })
 })
 
+describe('the thread is the permanent record', () => {
+  it('writes the question and its alternatives as it is asked', () => {
+    const { task, session } = seedAsker()
+    void questions.askQuestion({
+      sessionId: session.id,
+      origin: 'ask_human',
+      kind: 'choice',
+      question: 'Which authentication approach?',
+      header: 'Auth approach',
+      options: THREE_WAYS
+    })
+
+    const asked = tasks.messagesFor(task.id).find((m) => m.role === 'agent')
+    expect(asked?.text).toContain('Auth approach')
+    // A decision recorded without the alternatives it was chosen over is half a record.
+    expect(asked?.text).toContain('Magic-link email')
+    expect(asked?.text).toContain('No password storage.')
+  })
+
+  it('records an answer given live, and does not queue it for redelivery', async () => {
+    const { task, session } = seedAsker()
+    const pending = questions.askQuestion({
+      sessionId: session.id,
+      origin: 'ask_human',
+      kind: 'choice',
+      question: 'Which authentication approach?',
+      options: THREE_WAYS
+    })
+    questions.answerQuestion(questions.openQuestions()[0]!.id, {
+      optionIds: ['cookies'],
+      text: null
+    })
+    await pending
+
+    // The task's own title is the first human message on every thread, so take the newest.
+    const answer = tasks.messagesFor(task.id).filter((m) => m.role === 'human').pop()
+    expect(answer?.text).toContain('Server-side session cookies')
+    // ⛔ The agent already took this as its tool result. Left outstanding it would arrive a second
+    // time in the next run's prompt, and the agent would be asked to act on a decision twice.
+    expect(answer?.deliveredAt).not.toBeNull()
+  })
+
+  it('leaves a parked answer outstanding, because nobody has read it yet', () => {
+    const { task, session } = seedAsker()
+    void questions.askQuestion({
+      sessionId: session.id,
+      origin: 'ask_human',
+      kind: 'choice',
+      question: 'Which authentication approach?',
+      options: THREE_WAYS
+    })
+    questions.parkQuestionsForSession(session.id)
+    questions.answerQuestion(questions.openQuestions()[0]!.id, { optionIds: ['magic'], text: null })
+
+    const answer = tasks.messagesFor(task.id).filter((m) => m.role === 'human').pop()
+    // ⭐ Undelivered is the mechanism: `buildPrompt` carries outstanding human messages, which is how
+    // answering a parked question starts the work again.
+    expect(answer?.deliveredAt).toBeNull()
+  })
+
+  it('does not say the same thing twice when it parks', () => {
+    const { task, session } = seedAsker()
+    void questions.askQuestion({
+      sessionId: session.id,
+      origin: 'ask_human',
+      kind: 'text',
+      question: 'Which database?'
+    })
+    questions.parkQuestionsForSession(session.id)
+
+    const said = tasks.messagesFor(task.id)
+    expect(said.filter((m) => m.text.includes('Which database?'))).toHaveLength(1)
+  })
+})
+
 describe('the clock a question waits against', () => {
   it('never waits zero, however stale the session', () => {
     // A cache expiry already in the past would park instantly — a question nobody could answer,

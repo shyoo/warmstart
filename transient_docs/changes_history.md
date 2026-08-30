@@ -2294,3 +2294,39 @@ click; anything larger opens the task, because a decision with three paragraphs 
 `WAIT_TIMEOUT_MS` (10 min) fires before `DEFAULT_ESCALATE_AFTER_MS` (30 min) and writes `answered_at`,
 which is the column `escalateStale` filters on. No approval that actually waits can reach
 `awaiting_human`, and the function has no test.
+
+### The rest of it, the same day
+
+Steps 5-10 landed after the first commit, and three of them changed something beyond their own scope.
+
+⛔ **The write-through had to know whether the answer had already been read.** An answer given while
+the session is live goes back as the tool result; the same answer written to the thread and left
+outstanding would arrive *again* in the next run's prompt, and the agent would be asked to act on one
+decision twice. So the thread records both either way, and marks the answer delivered exactly when a
+waiting agent consumed it. For a parked question the opposite is true and is the entire mechanism:
+undelivered is what makes `buildPrompt` carry it, which is how answering restarts the work.
+
+⚠️ **A latent sort flake surfaced while testing it.** `questionsForTask` ordered by `asked_at desc`
+alone, and two questions asked in the same millisecond - which one agent turn can easily do - came
+back in whatever order SQLite chose. It only failed once the extra thread writes shifted the timing.
+Now ordered by `asked_at desc, rowid desc`.
+
+⭐ **The escalation nobody could reach.** `DEFAULT_ESCALATE_AFTER_MS` was 30 minutes and
+`WAIT_TIMEOUT_MS` 10, so the waiter always fired first and wrote `answered_at` - the exact column
+`escalateStale` filters on. No approval that actually waited could ever become `awaiting_human`. The
+path had been dead since it was written and had no test. Five minutes is not a guess at patience; it
+is the only interval that leaves the escalation useful, because it has to fire while somebody can
+still answer from the bar. A test now asserts the ordering itself, so a later edit to either constant
+cannot quietly restore the bug.
+
+⛔ **`NEEDS DECISION:` is a contract, not prose parsing.** An adapter with no MCP has no `ask_human`,
+so it is given a prefix to end with, and a run that ends with it is `blocked` rather than completed -
+completing it would file an unanswered question as finished work. The match is anchored to a line
+start and to the exact words the prompt asked for. A looser one would fire on an agent *describing* a
+decision it had already made, and park a task that was finished.
+
+⚠️ **The usage row was out of date, and the instrument is not.** Claude Code's stream does carry
+`usage` on 2.1.251, with `iterations`, correcting the 2026-08-25 reading on 2.1.223. We still meter
+from the transcript deliberately: it is exact, it sees the compaction sampling iteration, and decoding
+both would double-count every turn. What a CLI emits and which instrument we trust are separate
+questions, and only the first one changed.

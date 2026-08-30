@@ -9,6 +9,7 @@ import type {
   Settings
 } from '@shared/protocol.js'
 import type { TaskConstraints } from '@shared/tasks.js'
+import { resolveCompletionMode } from '@shared/tasks.js'
 import { existsSync } from 'node:fs'
 import { adapter, adapters } from './adapters/index.js'
 import {
@@ -411,6 +412,7 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
         resolvedSharing: resolveSessionSharing(task, project),
         inheritedFinish: resolveFinishPolicy(null, project),
         inheritedSharing: resolveSessionSharing(null, project),
+        inheritedCompletion: resolveCompletionMode(null, project, settings().completionMode),
         previewPrompt
       }
     },
@@ -446,6 +448,7 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
      * moved out of it, because moving an agent mid-thought is the one thing sharing must never do.
      */
     'task.setSessionSharing': (p) => updateTask(p.id, { sessionSharing: p.sessionSharing }),
+    'task.setCompletionMode': (p) => updateTask(p.id, { completionMode: p.completionMode }),
     /**
      * ⚠️ Next run only. Nothing is sent into a session that is already talking — see the note on the
      * protocol type for what a mid-conversation switch costs.

@@ -107,6 +107,15 @@ server.registerTool(
     const toolName = String(args.tool_name ?? 'unknown')
     const target = describeTarget(args.input)
 
+    // ⛔ A question is not a permission request, and answering it allow/deny destroys it.
+    // Measured 2026-08-30 on claude-code 2.1.251 (R14.a): the CLI's own `AskUserQuestion` arrives
+    // here carrying the whole question - labels, per-option prose, `multiSelect` - and was being
+    // flattened into three buttons. It is routed to the Question object instead.
+    const asked = questionFrom(args.input)
+    if (toolName === 'AskUserQuestion' && asked) {
+      return await answerNativeQuestion(sessionId, asked)
+    }
+
     let decision: 'allow' | 'deny' = 'deny'
     let message: string
     try {
@@ -205,6 +214,59 @@ server.registerTool(
         content: [
           { type: 'text' as const, text: `Could not reach the operator: ${String(err)}` }
         ],
+        isError: true
+      }
+    }
+  }
+)
+
+/**
+ * A phase boundary on a `checkpointed` task.
+ *
+ * ⛔ A Question with a fixed answer set, which is the one place a question's options are *not*
+ * written by the asker - because the three things a person can say at a phase boundary are the same
+ * three every time: carry on, do something else, or stop. That makes it answerable in one click on
+ * the Attention bar, which matters more here than anywhere else: a checkpoint is answered often, and
+ * an interaction that costs a page load each time would train the operator to turn checkpointing off.
+ *
+ * ⚠️ Named in the prompt only for tasks whose completion mode resolves to `checkpointed`. An
+ * autonomous agent is told to work to the end, and calling this would be a stop nobody asked for.
+ */
+server.registerTool(
+  'checkpoint',
+  {
+    title: 'Report a finished phase and wait for the go-ahead',
+    description:
+      'Call this at a phase boundary when the task is being run in phases. Say what you have done ' +
+      'and what you propose to do next, then wait. The operator can let you carry on, redirect you, ' +
+      'or stop you. Do not use this to ask a question — `ask_human` is for that.',
+    inputSchema: {
+      phase: z.string().describe('A few words naming the phase just finished'),
+      done: z.string().describe('What you actually did in it'),
+      next: z.string().describe('What you propose to do next, in one or two sentences')
+    }
+  },
+  async (args) => {
+    const sessionId = process.env.MULTI_AGENT_CONTROLLER_SESSION_ID ?? ''
+    try {
+      const resolution = await rpc('question.ask', {
+        sessionId,
+        origin: 'checkpoint',
+        kind: 'choice',
+        header: args.phase,
+        question: `Finished: ${args.done}
+
+Proposed next: ${args.next}`,
+        options: [
+          { id: 'continue', label: 'Carry on', detail: 'Do exactly what you proposed.' },
+          { id: 'redirect', label: 'Do something else', detail: 'Follow the note instead.' },
+          { id: 'stop', label: 'Stop here', detail: 'Leave a handoff and end the run.' }
+        ]
+      })
+      return { content: [{ type: 'text' as const, text: resolution.reply }] }
+    } catch (err) {
+      return {
+        content: [{ type: 'text' as const, text: `Could not reach the operator: ${String(err)}` }],
         isError: true
       }
     }
@@ -534,6 +596,86 @@ if (TIER === 'controller') {
     }
   )
 } // end controller tier
+
+/**
+ * The vendor's own question, if this is one.
+ *
+ * ⚠️ Shape measured, not documented: `{questions: [{question, header?, options: [{label,
+ * description?}], multiSelect?}]}`. Returns null on anything that does not match, so a future change
+ * to the payload degrades to the ordinary approval path rather than throwing inside a permission
+ * hook - where the failure mode is an agent that cannot act at all.
+ */
+function questionFrom(input: unknown): {
+  question: string
+  header?: string
+  multiSelect: boolean
+  options: Array<{ id: string; label: string; detail?: string }>
+} | null {
+  if (!input || typeof input !== 'object') return null
+  const list = (input as { questions?: unknown }).questions
+  if (!Array.isArray(list) || list.length === 0) return null
+  const first = list[0] as Record<string, unknown>
+  const question = typeof first.question === 'string' ? first.question : null
+  if (!question) return null
+  const rawOptions = Array.isArray(first.options) ? first.options : []
+  return {
+    question,
+    ...(typeof first.header === 'string' && first.header ? { header: first.header } : {}),
+    multiSelect: first.multiSelect === true,
+    options: rawOptions
+      .map((o, index) => {
+        const option = o as Record<string, unknown>
+        const label = typeof option.label === 'string' ? option.label : null
+        if (!label) return null
+        return {
+          id: `opt${index + 1}`,
+          label,
+          ...(typeof option.description === 'string' && option.description
+            ? { detail: option.description }
+            : {})
+        }
+      })
+      .filter((o): o is { id: string; label: string; detail?: string } => o !== null)
+  }
+}
+
+/**
+ * Put the vendor's question to a person, and hand the answer back through the only channel that
+ * carries one.
+ *
+ * ⛔ `{behavior:'deny', message}` is the answer channel, and this is measured rather than
+ * assumed. R14.b: returning `allow` yields the tool result *"The user did not answer the questions."*
+ * - the hook gates *asking*, not *answering*. R14.b-prime: a `deny` message reaches the model as the
+ * tool result and is acted on (*"Got it - server-side session cookies it is."*).
+ *
+ * ⚠️ So the message must read as an answer and never as an apology: the model is told this
+ * was a refusal, and the only thing correcting that impression is the sentence itself. It also lands
+ * in the run's `permission_denials`; nothing reads that field today, and anything that starts to
+ * must not count these as denials.
+ */
+async function answerNativeQuestion(
+  sessionId: string,
+  asked: NonNullable<ReturnType<typeof questionFrom>>
+): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
+  const kind = asked.options.length === 0 ? 'text' : asked.multiSelect ? 'multi' : 'choice'
+  let message: string
+  try {
+    const resolution = await rpc('question.ask', {
+      sessionId,
+      origin: 'native_tool',
+      kind,
+      question: asked.question,
+      ...(asked.header ? { header: asked.header } : {}),
+      ...(asked.options.length > 0 ? { options: asked.options } : {})
+    })
+    message = resolution.reply
+  } catch (err) {
+    // ⚠️ Says what happened rather than pretending to an answer. An agent told the operator
+    // declined would build on a refusal nobody made.
+    message = `The question could not be put to the operator (${String(err)}). Do not guess: stop and say what you were about to do.`
+  }
+  return { content: [{ type: 'text' as const, text: JSON.stringify({ behavior: 'deny', message }) }] }
+}
 
 /** A best-effort one-line rendering of what is about to happen. Never used for a policy decision. */
 function describeTarget(input: unknown): string {

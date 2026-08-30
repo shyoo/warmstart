@@ -13,7 +13,7 @@ import { log } from './log.js'
 import { getSession } from './sessions.js'
 import { costModel } from './costmodel.js'
 import { adapter } from './adapters/index.js'
-import { addMessage, getTask, runForSession, setStatus } from './tasks.js'
+import { addMessage, getTask, markDelivered, messagesFor, runForSession, setStatus } from './tasks.js'
 
 /**
  * Questions.
@@ -182,6 +182,16 @@ export async function askQuestion(request: QuestionRequest): Promise<QuestionRes
 
   const question = requireQuestion(id)
   emit({ type: 'question.opened', question })
+
+  // ⛔ Written to the thread as it is asked, not when it is answered. The thread is the
+  // permanent record of why the work is the way it is, and a question asked and answered inside one
+  // live session would otherwise exist only in that session's scrollback - so a successor after a
+  // preemption pays to rediscover a decision somebody already made.
+  //
+  // ⚠️ Role `agent`, which is both true and load-bearing: `buildPrompt` re-delivers
+  // outstanding *human* messages, and takes an `agent` message only when it is first in the thread.
+  // So this is visible to a person and is never re-sent to an agent.
+  if (task) addMessage(task.id, 'agent', renderAsk(request), run?.id ?? null)
   log.info(`question ${id.slice(0, 8)}: ${request.question.slice(0, 120)} — waiting for a person`)
 
   return await waitFor(id, waitMsFor(deadlineAt, now))
@@ -250,16 +260,39 @@ export function answerQuestion(id: string, answer: QuestionAnswer, by: 'human' =
 
   const reply = renderAnswer(answered)
   const waiter = waiters.get(id)
-  if (waiter) {
-    waiter({ status: 'answered', reply, answer })
-  } else if (answered.taskId) {
-    // ⚠️ Recorded as a human message rather than a system note: it is one, and the prompt builder
-    // delivers outstanding human messages to the next run. A system note would be seen by a person
-    // and by nothing else.
-    addMessage(answered.taskId, 'human', `${answered.question}\n\n${reply}`)
+  const consumedLive = Boolean(waiter)
+  if (waiter) waiter({ status: 'answered', reply, answer })
+
+  // ⛔ Recorded either way, and as a **human** message, because it is one. What differs is
+  // only whether it still has to be *delivered*: an answer the waiting agent already took as its
+  // tool result must not arrive a second time in the next run's prompt, which is the duplicate
+  // delivery `deliveredAt` exists to prevent. An answer to a parked question has reached nobody
+  // yet, so it is left outstanding and `buildPrompt` carries it - which is the whole mechanism by
+  // which answering a parked question restarts the work.
+  if (answered.taskId) {
+    addMessage(answered.taskId, 'human', reply, answered.runId)
+    if (consumedLive) {
+      const written = messagesFor(answered.taskId)
+      const last = written[written.length - 1]
+      if (last) markDelivered([last.id])
+    }
   }
   log.info(`question ${id.slice(0, 8)} answered: ${reply.slice(0, 120)}`)
   return answered
+}
+
+/**
+ * How a question reads in the thread it was asked on.
+ *
+ * ⚠️ The options are listed, because a decision recorded without the alternatives it was
+ * chosen over is half a record. Somebody reading it in a month needs to see what was *not* picked.
+ */
+function renderAsk(request: QuestionRequest): string {
+  const lines = [request.header ? `${request.header}: ${request.question}` : request.question]
+  for (const option of request.options ?? []) {
+    lines.push(`  - ${option.label}${option.detail ? ` - ${option.detail}` : ''}`)
+  }
+  return lines.join('\n')
 }
 
 /**
@@ -301,11 +334,12 @@ function park(id: string, why: string): QuestionResolution {
   emit({ type: 'question.parked', question: parked })
 
   if (parked.taskId) {
-    const asked = parked.question.slice(0, 300)
-    addMessage(parked.taskId, 'system', `Waiting on a decision: ${asked}\n(${why})`)
+    // ⚠️ The question itself is already in the thread, written when it was asked. This says
+    // only what changed, so a reader is not shown the same sentence twice.
+    addMessage(parked.taskId, 'system', `Still waiting on that decision - ${why}.`)
     setStatus(parked.taskId, 'awaiting_human', {
       assignee: 'human',
-      holdReason: `the agent asked and is waiting on you: ${asked}`
+      holdReason: `the agent asked and is waiting on you: ${parked.question.slice(0, 300)}`
     })
   }
   log.warn(`question ${id.slice(0, 8)} parked: ${why}`)
@@ -357,6 +391,11 @@ export function openQuestions(): Question[] {
 
 export function questionsForTask(taskId: string): Question[] {
   return rows<QuestionRow>(
-    db().prepare('select * from questions where task_id = ? order by asked_at desc').all(taskId)
+    db()
+      // ⛔ `rowid` breaks the tie. Two questions asked in the same millisecond - which one
+      // agent turn can easily do - otherwise come back in whatever order SQLite felt like, and
+      // 'the newest question' is exactly what a reader of this list is looking for.
+      .prepare('select * from questions where task_id = ? order by asked_at desc, rowid desc')
+      .all(taskId)
   ).map(toQuestion)
 }

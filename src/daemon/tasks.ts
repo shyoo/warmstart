@@ -63,6 +63,7 @@ interface TaskRow {
   verification: string
   finish_policy: string
   session_sharing: string
+  completion_mode: string
   finish_asked_at: number | null
   conflict_asked_at: number | null
   preemptible: number
@@ -124,6 +125,7 @@ function toTask(r: TaskRow): Task {
     // is the honest reading of a task that has never expressed a preference.
     finishPolicy: (r.finish_policy || 'inherit') as Task['finishPolicy'],
     sessionSharing: (r.session_sharing || 'inherit') as Task['sessionSharing'],
+    completionMode: (r.completion_mode || 'inherit') as Task['completionMode'],
     finishAskedAt: r.finish_asked_at,
     conflictAskedAt: r.conflict_asked_at,
     preemptible: r.preemptible === 1,
@@ -655,6 +657,7 @@ export function updateTask(
       | 'verification'
       | 'finishPolicy'
       | 'sessionSharing'
+      | 'completionMode'
       | 'preemptible'
       | 'estTokens'
       | 'constraints'
@@ -666,7 +669,7 @@ export function updateTask(
     .prepare(
       `update tasks set title = ?, priority = ?, project_id = ?, not_before = ?, deadline = ?,
                         assignee_hint = ?, verification = ?, finish_policy = ?,
-                        session_sharing = ?, preemptible = ?,
+                        session_sharing = ?, completion_mode = ?, preemptible = ?,
                         est_tokens = ?, constraints_json = ?, updated_at = ?
         where id = ?`
     )
@@ -680,6 +683,7 @@ export function updateTask(
       patch.verification ?? current.verification,
       patch.finishPolicy ?? current.finishPolicy,
       patch.sessionSharing ?? current.sessionSharing,
+      patch.completionMode ?? current.completionMode,
       (patch.preemptible ?? current.preemptible) ? 1 : 0,
       patch.estTokens !== undefined ? patch.estTokens : current.estTokens,
       JSON.stringify(patch.constraints ?? current.constraints),

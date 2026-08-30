@@ -35,8 +35,21 @@ import { addMessage, getTask, runForSession, setStatus } from './tasks.js'
  * gone unanswered long enough that holding the session open has stopped paying for itself.
  */
 
-/** After this, the approval stops being an interrupt and becomes a decision someone has to schedule. */
-export const DEFAULT_ESCALATE_AFTER_MS = 30 * 60 * 1000
+/**
+ * After this, the approval stops being an interrupt and becomes a decision someone has to schedule.
+ *
+ * ⛔ **It must be shorter than `WAIT_TIMEOUT_MS`, and it was not.** At 30 minutes against a
+ * 10-minute wait, the waiter always fired first and wrote `answered_at` - which is the exact column
+ * `escalateStale` filters on - so no approval that actually waited could ever reach `awaiting_human`.
+ * The escalation path had been unreachable since it was written, and had no test. Found 2026-08-30
+ * while building the Question object, which has the same clock and must not repeat the mistake.
+ *
+ * ⚠️ Five minutes is not a guess at operator patience; it is the only interval that leaves the
+ * escalation useful. An approval that escalates at 5 has five more minutes in which somebody can
+ * still answer it from the bar and unblock the live session - after which it denies, because an
+ * unanswered permission is not consent.
+ */
+export const DEFAULT_ESCALATE_AFTER_MS = 5 * 60 * 1000
 
 /** How long a blocked caller waits before we answer for it. Must be under the caller's own timeout. */
 const WAIT_TIMEOUT_MS = 10 * 60 * 1000

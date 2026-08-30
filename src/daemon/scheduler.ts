@@ -1,5 +1,5 @@
 import type { Project, Run, RunQuota, Task, TaskStatus } from '@shared/tasks.js'
-import { resolveModelChoice } from '@shared/tasks.js'
+import { resolveCompletionMode, resolveModelChoice } from '@shared/tasks.js'
 import type { QuotaWindow, Session, Worker } from '@shared/protocol.js'
 import { adapter } from './adapters/index.js'
 import { lastQuota, refreshUsage, sessionWindowFor } from './quota.js'
@@ -1835,15 +1835,32 @@ export function promptFor(
   // project refuses to make. What changes is that the operator is told *why* the hand-off is
   // structural rather than being left to read it as the agent having failed.
   if (adapter(adapterId).info.capabilities.mcp) {
+    // ⛔ The completion mode changes what "finished" means, so it belongs in the same sentence
+    // as `task_complete` rather than somewhere earlier in the prompt. ⚠️ `ask_human` is offered
+    // in **both** modes: stopping for a decision that changes what you build is never the thing being
+    // discouraged, and an autonomous agent that guessed instead would be the failure this all exists
+    // to prevent.
+    const checkpointed =
+      resolveCompletionMode(
+        task,
+        task.projectId ? getProject(task.projectId) : null,
+        settings().completionMode
+      ).mode === 'checkpointed'
     parts.push(
-      'When the work is finished, call the MCP tool `task_complete` with a one-line summary. ' +
+      (checkpointed
+        ? 'Work in phases. At each phase boundary call the MCP tool `checkpoint` with what you have ' +
+          'done and what you propose to do next, and wait for the answer before starting the next ' +
+          'phase. When every phase is done, call `task_complete` with a one-line summary. '
+        : 'Work to the end without stopping between phases. When the work is finished, call the MCP ' +
+          'tool `task_complete` with a one-line summary. ') +
         'If you need a decision from a person, call `ask_human` rather than guessing — offer the ' +
         'options you are choosing between, and it waits for a real answer.'
     )
   } else {
     parts.push(
       'When the work is finished, commit what you have and end with a one-line summary of what ' +
-        'changed. If you need a decision from a person, say so plainly and stop rather than guessing.'
+        'changed. If you need a decision from a person, end your reply with a line beginning ' +
+        '`NEEDS DECISION:` followed by the question, and stop rather than guessing.'
     )
   }
   return parts.join('\n\n')
@@ -2303,6 +2320,27 @@ export async function onStreamResult(
 ): Promise<void> {
   if (!result.isError) {
     if (session.adapterId && !adapter(session.adapterId).info.capabilities.mcp) {
+      // ⛔ An adapter with no MCP has no `ask_human`, so the only channel left is the prompt
+      // contract it was given: end with `NEEDS DECISION:` and stop. A run that did is **not**
+      // complete, and completing it would file an unanswered question as finished work.
+      //
+      // ⚠️ This is a contract, not prose parsing. The agent was told this exact prefix and the
+      // match is anchored to a line start - nothing here reads intent out of generated text, which
+      // is the inference this project refuses to make.
+      const asked = needsDecisionIn(result.text)
+      if (asked) {
+        const run = runForSession(session.id)
+        if (run) {
+          await endUnfinishedRun(
+            session,
+            run,
+            `The agent stopped to ask you something: "${asked.slice(0, 400)}"`,
+            'blocked'
+          )
+          closeSession(session.id)
+          return
+        }
+      }
       await completeTask(session.id, result.text?.trim() || 'Completed')
     }
     return
@@ -2319,6 +2357,20 @@ export async function onStreamResult(
   // ⛔ Closed here, and this is not tidiness. The process does not exit on an `api_error`; leaving it
   // would hold this worker's only work slot against a session that can never make progress.
   closeSession(session.id)
+}
+
+/**
+ * The question an MCP-less agent was told to end with, or null.
+ *
+ * ⛔ Anchored to the start of a line and to the exact words the prompt asked for. A looser
+ * match - anywhere in the text, or any sentence that sounds like a question - would be reading intent
+ * out of generated prose, and would fire on an agent merely *describing* a decision it had made.
+ */
+export function needsDecisionIn(text: string | null): string | null {
+  if (!text) return null
+  const match = /^[ \t>*-]*NEEDS DECISION:[ \t]*(.+)$/im.exec(stripAnsi(text))
+  const asked = match?.[1]?.trim()
+  return asked ? asked : null
 }
 
 /**
