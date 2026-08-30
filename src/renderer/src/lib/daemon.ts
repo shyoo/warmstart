@@ -40,36 +40,29 @@ export interface FleetEntry {
 }
 
 /**
- * How the fleet is doing, in the three numbers the sidebar shows.
- *
- * ⛔ **`ready` is the daemon's own answer, counted — never a rule reimplemented here.** Both halves
- * arrive on the fleet entry: `unavailable` is `accountUnavailability()` and `atCapacity` is the
- * scheduler's own gate. The renderer could not ask either honestly — whether a vendor CLI is
- * installed is a filesystem question — so a local copy would necessarily be looser, and looser
- * always errs the same way: calling a worker ready that the scheduler is refusing, which is the
- * exact lie the Controller panel told for months before `eligibility.ts` existed.
+ * How the fleet is doing, in the three numbers the sidebar and status bar show:
+ * running / active / total workers.
  *
  * ⚠️ `running` counts **workers, not sessions**, so it is comparable to `total`: a worker with
  * `maxConcurrent: 3` running three tasks is one busy account. Only `work` sessions count — a login
  * terminal or a 30-second quota probe is not the fleet doing work.
  *
- * ⚠️ The three do not partition the fleet and are not meant to. A worker with spare concurrency is
- * running *and* ready; `total - running - ready` is not a count of anything.
+ * ⚠️ `active` counts enabled workers (`worker.enabled === true`).
+ *
+ * ⚠️ `total` counts all configured workers in the fleet (`fleet.length`).
  */
 export function fleetCounts(fleet: FleetEntry[]): {
   running: number
-  ready: number
+  active: number
   total: number
 } {
   let running = 0
-  let ready = 0
+  let active = 0
   for (const entry of fleet) {
-    if (entry.sessions.some((s) => s.purpose === 'work')) running++
-    // ⚠️ `=== null`, not falsy. `undefined` is a daemon that did not answer — an older build behind
-    // a newer renderer — and counting *not answered* as ready is the one direction that misleads.
-    if (entry.unavailable === null && entry.atCapacity === false) ready++
+    if (entry.sessions?.some((s) => s.purpose === 'work')) running++
+    if (entry.worker?.enabled) active++
   }
-  return { running, ready, total: fleet.length }
+  return { running, active, total: fleet.length }
 }
 
 export function useAppInfo(): AppInfo | null {

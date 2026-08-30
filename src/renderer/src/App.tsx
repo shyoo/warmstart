@@ -259,23 +259,13 @@ export function App(): React.JSX.Element {
             onClick={() => setRoute({ kind: 'settings', page: 'workers' })}
           >
             Workers
-            {/* ⛔ Three numbers, because one was the wrong one. `fleet.length` counted accounts that
-                had been *commissioned* — which includes the one that is signed out, the one held out
-                after a run died on it, and the one somebody switched off — so the sidebar said 4
-                while nothing could take a task. Running and ready are what an operator with a queue
-                is actually asking about; the total is still there, last, where it belongs. */}
             <span
               className="nav-count num"
               title={
-                `${counts.running} of ${counts.total} worker${counts.total === 1 ? '' : 's'} running work · ` +
-                `${counts.ready} ready to take a task now
-` +
-                'Ready is the scheduler’s own test: enabled, signed in, its CLI installed, not ' +
-                'held out after a failed run, and with a free slot. A worker can be both running and ' +
-                'ready, so these do not add up to the total.'
+                `${counts.running} running · ${counts.active} active · ${counts.total} total worker${counts.total === 1 ? '' : 's'}`
               }
             >
-              {counts.running}/{counts.ready}/{counts.total}
+              {counts.running}/{counts.active}/{counts.total}
             </span>
           </NavItem>
           <NavItem
@@ -372,8 +362,11 @@ export function App(): React.JSX.Element {
                 : `orchestratord: ${status.state}`}
           </span>
           <span className="statusbar-spacer" />
-          <span className="num">
-            {fleet.length} worker{fleet.length === 1 ? '' : 's'} · {liveSessions.length} session
+          <span
+            className="num"
+            title={`${counts.running} running · ${counts.active} active · ${counts.total} total worker${counts.total === 1 ? '' : 's'}`}
+          >
+            {counts.running}/{counts.active}/{counts.total} worker{counts.total === 1 ? '' : 's'} · {liveSessions.length} session
             {liveSessions.length === 1 ? '' : 's'}
           </span>
           <span>{info?.platform}</span>
