@@ -8,7 +8,7 @@ started in CI, never run against a real agent CLI.
 if you add a line, find the one it obsoletes and cut it in the same edit. Finished work moves to
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
-**Baseline (2026-08-30, measured):** typecheck · lint · build clean · `npm test` 759/761 (2 POSIX-only
+**Baseline (2026-08-30, measured):** typecheck · lint · build clean · `npm test` 760/762 (2 POSIX-only
 skipped) · `test:daemon` 125/125 · `test:ui` 142/142 · `test:pack` 18/18 · L4 (opt-in) landed a real
 agent commit on origin/main. Electron 44.0.0, electron-builder 26.15.3, 0 npm vulnerabilities.
 CLIs here: claude 2.1.251 · agy 1.1.22 · codex 0.151.0.

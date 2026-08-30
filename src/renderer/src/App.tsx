@@ -297,6 +297,7 @@ export function App(): React.JSX.Element {
                 fleet={fleet}
                 onBack={() => setRoute({ kind: 'unassigned' })}
                 backLabel="Unassigned"
+                onOpenTask={(taskId) => setRoute({ kind: 'unassigned', taskId })}
               />
             ) : (
               <div className="stack">

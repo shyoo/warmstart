@@ -93,7 +93,12 @@ export function Project({
         />
       ) : tab === 'thread' ? (
         taskId ? (
-          <TaskThread taskId={taskId} fleet={fleet} onBack={() => setTab('tasks')} />
+          <TaskThread
+            taskId={taskId}
+            fleet={fleet}
+            onBack={() => setTab('tasks')}
+            onOpenTask={openTask}
+          />
         ) : (
           // ⚠️ An empty state rather than a hidden tab. A tab that appeared and disappeared as you
           // clicked around would move the four beside it, and this one is a destination you can

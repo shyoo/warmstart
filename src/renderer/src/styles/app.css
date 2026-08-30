@@ -1856,6 +1856,88 @@ select:focus-visible,
   overflow-wrap: anywhere;
 }
 
+.dep-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+}
+
+.dep-item {
+  min-width: 0;
+}
+
+.dep-link {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--sp-1);
+  width: 100%;
+  padding: 1px var(--sp-1);
+  margin: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: var(--text-dense);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease);
+}
+
+.dep-link:hover {
+  background: var(--color-surface-2);
+}
+
+.dep-seq {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--color-accent);
+  flex-shrink: 0;
+}
+
+.dep-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dep-link--done .dep-title {
+  color: var(--color-text-dim);
+}
+
+/* ---- blocked task banner ------------------------------------------------ */
+
+.blocked-banner {
+  padding: var(--sp-2) var(--sp-3);
+  margin-bottom: var(--sp-3);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+}
+
+.blocked-banner-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-2);
+}
+
+.blocked-banner-title {
+  font-size: var(--text-dense);
+  font-weight: 600;
+  color: var(--state-warn);
+}
+
+.blocked-banner-deps {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
 /* ---- draft task controls ------------------------------------------------ */
 
 .draft-banner {

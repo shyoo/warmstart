@@ -33,6 +33,8 @@ export interface TaskDetailData {
   activity: Array<{ text: string; ts: number }>
   /** How many tasks are held at `blocked` waiting on this one. Counted by the daemon. */
   blocking: number
+  dependencies?: Task[]
+  dependents?: Task[]
   resolvedFinish?: ResolvedFinishPolicy
   resolvedSharing?: ResolvedSessionSharing
   inheritedFinish?: ResolvedFinishPolicy
@@ -56,13 +58,15 @@ export function TaskThread({
   taskId,
   fleet,
   onBack,
-  backLabel = 'Tasks'
+  backLabel = 'Tasks',
+  onOpenTask
 }: {
   taskId: string
   /** Only so a worker id can be drawn as the name of an account. */
   fleet: FleetEntry[]
   onBack: () => void
   backLabel?: string
+  onOpenTask?: (taskId: string) => void
 }): React.JSX.Element {
   const [detail, setDetail] = useState<TaskDetailData | null>(null)
   const [missing, setMissing] = useState(false)
@@ -128,6 +132,7 @@ export function TaskThread({
       now={now}
       refresh={refresh}
       back={back}
+      onOpenTask={onOpenTask}
     />
   )
 }
@@ -243,7 +248,8 @@ function TaskDetail({
   blocking,
   now,
   refresh,
-  back
+  back,
+  onOpenTask
 }: {
   detail: TaskDetailData
   /** The live tail, kept outside the detail so it survives a re-fetch of it. */
@@ -255,8 +261,9 @@ function TaskDetail({
   refresh: () => Promise<void>
   /** The way back to the list. Passed in, because what "back" means depends on where you came from. */
   back: React.ReactNode
+  onOpenTask?: (taskId: string) => void
 }): React.JSX.Element {
-  const { task, messages, runs, sessions } = detail
+  const { task, messages, runs, sessions, dependencies = [], dependents = [] } = detail
   // ⛔ Served, never compiled in — the renderer holds no cost models, and the capability flags that
   // decide whether an effort control exists at all live with the adapter, not here.
   const [modelOptions, setModelOptions] = useState<ModelOptions[]>([])
@@ -338,6 +345,37 @@ function TaskDetail({
             />
           )}
 
+          {task.status === 'blocked' && (
+            <div className="blocked-banner">
+              <div className="blocked-banner-header">
+                <span className="blocked-banner-title">
+                  Blocked by {dependencies.length > 0 ? `${dependencies.length} prerequisite ${dependencies.length === 1 ? 'task' : 'tasks'}` : 'unmet dependencies'}
+                </span>
+                <span className="dim">Admitted automatically when prerequisites complete</span>
+              </div>
+              {dependencies.length > 0 && (
+                <div className="blocked-banner-deps">
+                  {dependencies.map((dep) => (
+                    <button
+                      key={dep.id}
+                      type="button"
+                      className="dep-link"
+                      onClick={() => onOpenTask?.(dep.id)}
+                      title={`Open t${dep.seq}: ${dep.title} (${statusLabel(dep)})`}
+                    >
+                      <span className="dep-seq">t{dep.seq}</span>
+                      <span className="dep-title">{dep.title}</span>
+                      <span className={`status ${STATUS_TONE[dep.status] ?? ''}`}>
+                        {statusLabel(dep)}
+                        {IN_FLIGHT.has(dep.status) && <Working />}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           <Thread messages={messages} runs={runs} activity={activity} live={live} />
 
           {detail.previewPrompt && task.status !== 'draft' && task.status !== 'running' && (
@@ -377,6 +415,22 @@ function TaskDetail({
           {task.holdReason && (
             <Fact label={task.status === 'awaiting_human' ? 'wants' : 'waiting on'}>
               {task.holdReason}
+            </Fact>
+          )}
+          <Fact label="depends on">
+            <DependencyList
+              tasks={dependencies}
+              fallbackIds={task.dependsOn}
+              onOpenTask={onOpenTask}
+            />
+          </Fact>
+          {(dependents.length > 0 || blocking > 0) && (
+            <Fact label="blocks">
+              <DependencyList
+                tasks={dependents}
+                fallbackCount={blocking}
+                onOpenTask={onOpenTask}
+              />
             </Fact>
           )}
           <Fact label="worker">
@@ -935,6 +989,61 @@ function Fact({ label, children }: { label: string; children: React.ReactNode })
     <div className="fact">
       <span className="fact-label">{label}</span>
       <span className="fact-value">{children}</span>
+    </div>
+  )
+}
+
+function DependencyList({
+  tasks,
+  fallbackIds,
+  fallbackCount,
+  onOpenTask
+}: {
+  tasks: Task[]
+  fallbackIds?: string[]
+  fallbackCount?: number
+  onOpenTask?: (taskId: string) => void
+}): React.JSX.Element {
+  if (tasks.length === 0) {
+    if (fallbackIds && fallbackIds.length > 0) {
+      return (
+        <span className="dim">
+          {fallbackIds.length} {fallbackIds.length === 1 ? 'task' : 'tasks'}
+        </span>
+      )
+    }
+    if (fallbackCount && fallbackCount > 0) {
+      return (
+        <span className="dim">
+          {fallbackCount} {fallbackCount === 1 ? 'task' : 'tasks'}
+        </span>
+      )
+    }
+    return <span className="dim">none</span>
+  }
+
+  return (
+    <div className="dep-list">
+      {tasks.map((dep) => {
+        const isDone = dep.status === 'completed'
+        return (
+          <div key={dep.id} className="dep-item">
+            <button
+              type="button"
+              className={`dep-link ${isDone ? 'dep-link--done' : ''}`}
+              onClick={() => onOpenTask?.(dep.id)}
+              title={`Open t${dep.seq}: ${dep.title} (${statusLabel(dep)})`}
+            >
+              <span className="dep-seq">t{dep.seq}</span>
+              <span className="dep-title">{dep.title}</span>
+              <span className={`status ${STATUS_TONE[dep.status] ?? ''}`}>
+                {statusLabel(dep)}
+                {IN_FLIGHT.has(dep.status) && <Working />}
+              </span>
+            </button>
+          </div>
+        )
+      })}
     </div>
   )
 }

@@ -50,6 +50,7 @@ import {
   addMessage,
   blockedDependentsOf,
   createTask,
+  dependentsOf,
   getTask,
   lastMessageId,
   listTasks,
@@ -390,6 +391,12 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
           : (listWorkers().find((w) => w.retiredAt === null) ?? null)
       const adapterId = assignedWorker?.adapterId ?? 'claude-code'
       const previewPrompt = promptFor(task, adapterId, false, { markDelivered: false })
+      const dependencies = (task.dependsOn || [])
+        .map((id) => getTask(id))
+        .filter((t): t is typeof task => !!t && t.deletedAt === null)
+      const dependents = dependentsOf(p.id)
+        .map((id) => getTask(id))
+        .filter((t): t is typeof task => !!t && t.deletedAt === null)
       return {
         task,
         messages: messagesFor(p.id),
@@ -397,6 +404,8 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
         sessions,
         activity: activityFor(p.id),
         blocking: blockedDependentsOf(p.id),
+        dependencies,
+        dependents,
         resolvedFinish: resolveFinishPolicy(task, project),
         resolvedSharing: resolveSessionSharing(task, project),
         inheritedFinish: resolveFinishPolicy(null, project),

@@ -163,4 +163,30 @@ describe('run prompt persistence and task.get preview', () => {
     // Because worker is agy (antigravity-cli with mcp: false), it has commit instruction
     expect(detail.previewPrompt).toContain('commit what you have and end with a one-line summary')
   })
+
+  it('task.get returns dependencies and dependents with full task details', async () => {
+    const handlers = api.buildApi({ version: '1.0.0', port: 1234, startedAt: Date.now() })
+    const dep1 = tasks.createTask({ title: 'Prerequisite 1' })
+    tasks.setStatus(dep1.id, 'completed')
+    const dep2 = tasks.createTask({ title: 'Prerequisite 2' })
+    tasks.setStatus(dep2.id, 'running')
+    const main = tasks.createTask({
+      title: 'Main task with dependencies',
+      dependsOn: [dep1.id, dep2.id]
+    })
+    const child = tasks.createTask({
+      title: 'Downstream task',
+      dependsOn: [main.id]
+    })
+
+    const detail = (await handlers['task.get']({ id: main.id })) as NonNullable<
+      Awaited<ReturnType<(typeof handlers)['task.get']>>
+    >
+    expect(detail).not.toBeNull()
+    expect(detail.dependencies).toBeDefined()
+    expect(detail.dependencies?.map((d) => d.title)).toEqual(['Prerequisite 1', 'Prerequisite 2'])
+    expect(detail.dependents).toBeDefined()
+    expect(detail.dependents?.map((d) => d.id)).toEqual([child.id])
+    expect(detail.dependents?.map((d) => d.title)).toEqual(['Downstream task'])
+  })
 })

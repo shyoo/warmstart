@@ -955,6 +955,10 @@ export interface RpcMap {
        * worse answer than a `count(*)`.
        */
       blocking: number
+      /** Tasks this task depends on (prerequisites). */
+      dependencies?: Task[]
+      /** Tasks that depend on this task (downstream dependents). */
+      dependents?: Task[]
       resolvedFinish?: ResolvedFinishPolicy
       resolvedSharing?: ResolvedSessionSharing
       inheritedFinish?: ResolvedFinishPolicy
