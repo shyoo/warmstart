@@ -15,7 +15,8 @@ import { duration } from './format'
 export const STATUS_TONE: Record<string, string> = {
   running: 'state-running',
   assigned: 'state-running',
-  ready: 'state-ok',
+  ready: 'state-running',
+  queued: 'state-running',
   completed: 'state-ok',
   failed: 'state-danger',
   awaiting_human: 'state-human',

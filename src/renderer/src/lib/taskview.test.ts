@@ -6,7 +6,7 @@ import {
   resolveFinishPolicy,
   resolveSessionSharing
 } from '@shared/tasks'
-import { projectWorkState, statusLabel, workspacePathFor } from './taskview.js'
+import { projectWorkState, STATUS_TONE, statusLabel, workspacePathFor } from './taskview.js'
 import { readFleetCollapsed, writeFleetCollapsed } from './prefs.js'
 
 /**
@@ -49,6 +49,21 @@ describe('the word a person reads beside a task', () => {
   it('still calls a dispatching task dispatching', () => {
     // The rename that was already here, which this must not have displaced.
     expect(statusLabel(task({ status: 'assigned' }))).toBe('dispatching')
+  })
+})
+
+describe('task status tone mapping', () => {
+  it('maps ready and queued to blue (state-running)', () => {
+    expect(STATUS_TONE.ready).toBe('state-running')
+    expect(STATUS_TONE.queued).toBe('state-running')
+  })
+
+  it('maps only completed to green (state-ok)', () => {
+    expect(STATUS_TONE.completed).toBe('state-ok')
+    const okStatuses = Object.entries(STATUS_TONE)
+      .filter(([, tone]) => tone === 'state-ok')
+      .map(([status]) => status)
+    expect(okStatuses).toEqual(['completed'])
   })
 })
 
