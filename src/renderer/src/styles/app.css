@@ -967,9 +967,28 @@ body {
 .pager {
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: space-between;
   gap: var(--sp-3);
   padding-top: var(--sp-2);
+  font-size: var(--text-meta);
+}
+
+.pager-nav {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+
+.pager-size {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--text-meta);
+}
+
+.pager-size select {
+  min-width: 0;
+  padding: 2px var(--sp-2);
   font-size: var(--text-meta);
 }
 

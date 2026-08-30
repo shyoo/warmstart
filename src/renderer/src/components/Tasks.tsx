@@ -20,7 +20,13 @@ import type { ModelOptions, Settings } from '@shared/protocol'
 import { rpc, useActivity, useDaemonEvents, useNow, type FleetEntry } from '../lib/daemon'
 import { showsLiveOutput } from '../lib/live'
 import { tokens, when } from '../lib/format'
-import { readViews, writeViews } from '../lib/prefs'
+import {
+  PAGE_SIZE_OPTIONS,
+  readTaskPageSize,
+  readViews,
+  writeTaskPageSize,
+  writeViews
+} from '../lib/prefs'
 import {
   assigneeLabel,
   CANCELLABLE,
@@ -30,14 +36,6 @@ import {
   STATUS_TONE,
   Working
 } from '../lib/taskview'
-
-/**
- * How many rows one page holds.
- *
- * ⚠️ Twenty-five, which fits comfortably on screen without excessive scrolling. The pager exists
- * so the table has a bound, keeping the control surface dense and responsive.
- */
-const PAGE_SIZE = 25
 
 /**
  * A column header you can sort by.
@@ -123,6 +121,7 @@ export function Tasks({
    * their filter apply itself a moment after the page appeared.
    */
   const [views, setViews] = useState<TaskView[]>(readViews)
+  const [pageSize, setPageSize] = useState<number>(readTaskPageSize)
   const [sort, setSort] = useState<TaskSort>('updated')
   const [asc, setAsc] = useState(false)
   const [page, setPage] = useState(0)
@@ -158,17 +157,17 @@ export function Tasks({
       views,
       sort,
       asc,
-      limit: PAGE_SIZE,
-      offset: page * PAGE_SIZE
+      limit: pageSize,
+      offset: page * pageSize
     })
-    if (page > 0 && page * PAGE_SIZE >= got.total) {
-      setPage(Math.max(0, Math.ceil(got.total / PAGE_SIZE) - 1))
+    if (page > 0 && page * pageSize >= got.total) {
+      setPage(Math.max(0, Math.ceil(got.total / pageSize) - 1))
       return
     }
     setTasks(got.tasks)
     setTotal(got.total)
     setCounts(got.counts)
-  }, [projectId, views, sort, asc, page])
+  }, [projectId, views, sort, asc, page, pageSize])
 
   useEffect(() => {
     void refresh()
@@ -180,7 +179,7 @@ export function Tasks({
   useEffect(() => {
     setPage(0)
     setMenuTaskId(null)
-  }, [views, sort, asc, projectId])
+  }, [views, sort, asc, projectId, pageSize])
 
   const toggleView = (view: TaskView): void => {
     const next = views.includes(view) ? views.filter((v) => v !== view) : [...views, view]
@@ -203,7 +202,7 @@ export function Tasks({
     setAsc(false)
   }
 
-  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE))
+  const pages = Math.max(1, Math.ceil(total / pageSize))
 
   useDaemonEvents((event) => {
     if (event.type === 'task.changed' || event.type === 'run.changed') void refresh()
@@ -517,23 +516,52 @@ export function Tasks({
         </table>
       )}
 
-      {/* ⛔ Drawn only when there is more than one page. A pager reading "1 of 1" beside four rows
-          is furniture that says nothing and takes a line to say it. */}
-      {pages > 1 && (
+      {total > 0 && (
         <div className="pager">
-          <button className="btn btn--ghost" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>
-            ← Newer
-          </button>
-          <span className="dim">
-            page {page + 1} of {pages} · {total} task{total === 1 ? '' : 's'}
-          </span>
-          <button
-            className="btn btn--ghost"
-            disabled={page >= pages - 1}
-            onClick={() => setPage((p) => p + 1)}
-          >
-            Older →
-          </button>
+          <div className="pager-nav">
+            {pages > 1 && (
+              <button
+                className="btn btn--ghost"
+                disabled={page === 0}
+                onClick={() => setPage((p) => p - 1)}
+              >
+                ← Newer
+              </button>
+            )}
+            <span className="dim">
+              {pages > 1
+                ? `page ${page + 1} of ${pages} · ${total} task${total === 1 ? '' : 's'}`
+                : `${total} task${total === 1 ? '' : 's'}`}
+            </span>
+            {pages > 1 && (
+              <button
+                className="btn btn--ghost"
+                disabled={page >= pages - 1}
+                onClick={() => setPage((p) => p + 1)}
+              >
+                Older →
+              </button>
+            )}
+          </div>
+          <label className="pager-size">
+            <span className="dim">per page</span>
+            <select
+              aria-label="Tasks per page"
+              value={pageSize}
+              onChange={(e) => {
+                const next = Number(e.target.value)
+                setPageSize(next)
+                writeTaskPageSize(next)
+                setPage(0)
+              }}
+            >
+              {PAGE_SIZE_OPTIONS.map((opt) => (
+                <option key={opt} value={opt}>
+                  {opt}
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
       )}
     </div>

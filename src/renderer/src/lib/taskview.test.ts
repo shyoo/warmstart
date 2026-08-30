@@ -7,7 +7,13 @@ import {
   resolveSessionSharing
 } from '@shared/tasks'
 import { projectWorkState, STATUS_TONE, statusLabel, workspacePathFor } from './taskview.js'
-import { readFleetCollapsed, writeFleetCollapsed } from './prefs.js'
+import {
+  DEFAULT_PAGE_SIZE,
+  readFleetCollapsed,
+  readTaskPageSize,
+  writeFleetCollapsed,
+  writeTaskPageSize
+} from './prefs.js'
 
 /**
  * ⛔ Reported from the app on 2026-08-29, running one worker with `maxConcurrent: 1`. Two tasks were
@@ -157,6 +163,27 @@ describe('preferences persistence in localStorage', () => {
 
     writeFleetCollapsed(false)
     expect(readFleetCollapsed()).toBe(false)
+  })
+
+  it('defaults to 25 for task page size when unset', () => {
+    expect(readTaskPageSize()).toBe(DEFAULT_PAGE_SIZE)
+    expect(readTaskPageSize()).toBe(25)
+  })
+
+  it('persists and restores task page size', () => {
+    writeTaskPageSize(50)
+    expect(readTaskPageSize()).toBe(50)
+
+    writeTaskPageSize(100)
+    expect(readTaskPageSize()).toBe(100)
+  })
+
+  it('falls back to default for invalid or unknown stored page size', () => {
+    store.set('multi_agent_controller.taskPageSize', 'not-a-number')
+    expect(readTaskPageSize()).toBe(DEFAULT_PAGE_SIZE)
+
+    store.set('multi_agent_controller.taskPageSize', '999')
+    expect(readTaskPageSize()).toBe(DEFAULT_PAGE_SIZE)
   })
 })
 

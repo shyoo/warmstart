@@ -71,4 +71,39 @@ export function writeFleetCollapsed(collapsed: boolean): void {
   }
 }
 
+const PAGE_SIZE_KEY = 'multi_agent_controller.taskPageSize'
+export const DEFAULT_PAGE_SIZE = 25
+export const PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const
+export type PageSizeOption = (typeof PAGE_SIZE_OPTIONS)[number]
+
+/**
+ * How many tasks to display per page in the task table.
+ *
+ * ⛔ Per-display preference stored in `localStorage`, consistent with task view filters and sidebar width.
+ */
+export function readTaskPageSize(): PageSizeOption {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return DEFAULT_PAGE_SIZE
+    const raw = window.localStorage.getItem(PAGE_SIZE_KEY)
+    if (!raw) return DEFAULT_PAGE_SIZE
+    const parsed = Number.parseInt(raw, 10)
+    if ((PAGE_SIZE_OPTIONS as readonly number[]).includes(parsed)) {
+      return parsed as PageSizeOption
+    }
+    return DEFAULT_PAGE_SIZE
+  } catch {
+    return DEFAULT_PAGE_SIZE
+  }
+}
+
+export function writeTaskPageSize(size: number): void {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return
+    window.localStorage.setItem(PAGE_SIZE_KEY, String(size))
+  } catch {
+    // A preference that cannot be saved is not an error worth showing anybody.
+  }
+}
+
+
 
