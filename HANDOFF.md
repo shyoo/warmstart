@@ -18,8 +18,8 @@ loop. Content-addressed: **92s cold, ~0s warm**. ⛔ **One packaged app — `rel
 running the repo's copy while building blocks the pack step, correctly.
 
 ⚠️ **With no agent CLI the daemon suite skips 5 checks**, each with a stated reason — the CI state;
-simulate it with a PATH of System32, node and git and an empty `HOME`. **All ten CI jobs pass on all
-three platforms**; what that misses is below.
+simulate it with a PATH of System32, node and git and an empty `HOME`. ⛔ **CI itself has not run since
+2026-08-29T21:54Z**: 12 pushes, each blocked by GitHub billing — **nothing is verified off Windows.**
 
 ---
 
