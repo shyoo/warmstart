@@ -34,11 +34,10 @@ import {
 /**
  * How many rows one page holds.
  *
- * ⚠️ Fifty, which is more than a screen. The pager exists so the table has a bound, not so it has
- * to be walked — a page short enough to need paging on an ordinary project would make the feature a
- * nuisance rather than a relief.
+ * ⚠️ Twenty-five, which fits comfortably on screen without excessive scrolling. The pager exists
+ * so the table has a bound, keeping the control surface dense and responsive.
  */
-const PAGE_SIZE = 50
+const PAGE_SIZE = 25
 
 /**
  * A column header you can sort by.
@@ -162,6 +161,10 @@ export function Tasks({
       limit: PAGE_SIZE,
       offset: page * PAGE_SIZE
     })
+    if (page > 0 && page * PAGE_SIZE >= got.total) {
+      setPage(Math.max(0, Math.ceil(got.total / PAGE_SIZE) - 1))
+      return
+    }
     setTasks(got.tasks)
     setTotal(got.total)
     setCounts(got.counts)
