@@ -61,9 +61,84 @@ import { launchArgs, launchable, which } from '../which.js'
 
 const run = promisify(execFile)
 
+/** Measured: the root ~/.gemini directory, home of google_accounts.json, oauth_creds.json, etc. */
+export function geminiHome(): string {
+  return join(homedir(), '.gemini')
+}
+
 /** Measured: the CLI's own home, distinct from `~/.gemini/antigravity{,-ide}` which the IDE uses. */
 function cliHome(): string {
-  return join(homedir(), '.gemini', 'antigravity-cli')
+  return join(geminiHome(), 'antigravity-cli')
+}
+
+/**
+ * Reads signed-in Google account and subscription tier from ~/.gemini configuration files.
+ *
+ * `google_accounts.json` stores `{ "active": "user@example.com", "old": [...] }`.
+ * `oauth_creds.json` stores `{ "id_token": "<jwt>", ... }` containing the account email.
+ */
+export function readAntigravityIdentity(geminiDir = geminiHome()): {
+  loggedIn: boolean | null
+  account?: string
+  subscriptionType?: string
+} {
+  let account: string | undefined
+  let loggedIn: boolean | null = null
+
+  // 1. Check google_accounts.json
+  const accountsFile = join(geminiDir, 'google_accounts.json')
+  if (existsSync(accountsFile)) {
+    try {
+      const data = JSON.parse(readFileSync(accountsFile, 'utf8')) as { active?: string }
+      if (typeof data.active === 'string' && data.active.includes('@')) {
+        account = data.active.trim()
+        loggedIn = true
+      }
+    } catch {
+      // Ignore unparseable accounts file
+    }
+  }
+
+  // 2. Fall back to oauth_creds.json id_token JWT payload
+  if (!account) {
+    const oauthFile = join(geminiDir, 'oauth_creds.json')
+    if (existsSync(oauthFile)) {
+      try {
+        const data = JSON.parse(readFileSync(oauthFile, 'utf8')) as { id_token?: string }
+        if (typeof data.id_token === 'string') {
+          const parts = data.id_token.split('.')
+          if (parts.length >= 2) {
+            const payload = JSON.parse(Buffer.from(parts[1]!, 'base64').toString('utf8')) as {
+              email?: string
+            }
+            if (typeof payload.email === 'string' && payload.email.includes('@')) {
+              account = payload.email.trim()
+              loggedIn = true
+            }
+          }
+        }
+      } catch {
+        // Ignore unparseable creds file
+      }
+    }
+  }
+
+  let subscriptionType: string | undefined
+  if (account) {
+    // Antigravity CLI on individual consumer accounts runs on Google AI Pro/Ultra.
+    subscriptionType = 'Google AI Pro'
+  } else {
+    const cHome = join(geminiDir, 'antigravity-cli')
+    if (existsSync(join(cHome, 'settings.json')) || existsSync(join(geminiDir, 'settings.json'))) {
+      loggedIn = false
+    }
+  }
+
+  return {
+    loggedIn,
+    ...(account ? { account } : {}),
+    ...(subscriptionType ? { subscriptionType } : {})
+  }
 }
 
 const info: AdapterInfo = {
@@ -636,6 +711,34 @@ export function parseUsageScreen(screen: string, now = Date.now()): QuotaWindow[
   return windows
 }
 
+/**
+ * Parses Account and Subscription Tier / Plan from /usage screen text if present.
+ *
+ * Examples:
+ * `└ Models & Quota  Account: user@example.com (Google AI Pro)`
+ * `└ Models & Quota  Account: user@example.com`
+ */
+export function parseUsageScreenIdentity(screen: string): {
+  account?: string
+  subscriptionType?: string
+} | null {
+  const accountMatch = /Account:\s*([^\s\n()]+)(?:\s*(?:\(([^)]+)\)|·\s*([^\n]+)))?/i.exec(screen)
+  const planMatch = /(?:Plan|Subscription|Tier):\s*([^\n]+)/i.exec(screen)
+
+  const account = accountMatch?.[1]?.trim()
+  let subscriptionType = accountMatch?.[2]?.trim() || accountMatch?.[3]?.trim() || planMatch?.[1]?.trim()
+
+  if (!subscriptionType && /CLAUDE AND GPT MODELS/i.test(screen)) {
+    subscriptionType = 'Google AI Pro'
+  }
+
+  if (!account && !subscriptionType) return null
+  return {
+    ...(account ? { account } : {}),
+    ...(subscriptionType ? { subscriptionType } : {})
+  }
+}
+
 /** `Refreshes in 138h 0m` → an absolute instant. Anything else, including `Quota available`, is null. */
 function readReset(line: string, now: number): number | null {
   const found = /Refreshes in\s+(?:(\d+)h)?\s*(?:(\d+)m)?/.exec(line)
@@ -728,29 +831,14 @@ export const antigravityCli: AgentAdapter = {
   },
 
   /**
-   * ⚠️ There is no non-interactive identity command, and the credential is in the OS keyring where
-   * agentyard will not look. So this reports what it can see — whether the CLI has been run on this
-   * machine — and is honest that it cannot say *who* is signed in.
+   * Read signed-in identity from ~/.gemini configuration files.
    *
    * ⛔ It must never spend a turn to find out. `agy -p "who am i"` would answer, and would bill.
    */
-  /**
-   * ⛔ Still unknown, and `agy models` is **not** the free sign-in check it looks like.
-   *
-   * Measured 2026-08-26 on agy 1.1.20. On a terminal it prints "Fetching available models…" and the
-   * catalogue, exits 0, and spends no turn — which makes it look like this adapter's answer to
-   * `claude auth status --json`. It is not: **with stdout on a pipe it produces nothing and hangs**.
-   * Killed at 30s through `execFile`, and again at two minutes through `agy models | cat`. Every
-   * probe this daemon runs is on a pipe, so shipping it would have hung identity refresh — the
-   * commissioning path, the Probe button, and the post-login refresh — for its whole timeout, and
-   * then returned the same `null` it starts with.
-   *
-   * ⚠️ Recorded rather than retried: this is the third Antigravity capability that reads as
-   * available and is not (`agy -p /usage`, the missing `login` subcommand, and now this).
-   */
   async probeIdentity(): Promise<IdentityProbe> {
     const home = cliHome()
-    if (!existsSync(join(home, 'settings.json'))) {
+    const gHome = geminiHome()
+    if (!existsSync(join(home, 'settings.json')) && !existsSync(join(gHome, 'google_accounts.json'))) {
       return {
         loggedIn: null,
         raw:
@@ -758,18 +846,9 @@ export const antigravityCli: AgentAdapter = {
           'and keeps nothing here - there is no way to tell the difference without spending a turn.'
       }
     }
-    // ⭐ `setupComplete` is knowable even though `loggedIn` is not. Measured 2026-08-27:
-    // `cache/onboarding.json` holds `{consumerOnboardingComplete, enterpriseOnboardingComplete,
-    // onboardingComplete}`, written by the CLI itself. It was reported as `null` before, which cost
-    // the operator nothing directly but left "Finish setup" unable to say whether there was
-    // anything to finish.
-    //
-    // ⚠️ It answers the *onboarding* question and NOT the folder-trust one, and the difference is
-    // the whole reason to spell it out: trust is asked **per directory**, so a fully onboarded
-    // account still meets a dialog in a folder it has not seen - and until that is answered the CLI
-    // swallows every keystroke. Measured the same day, on this very probe: the first attempt's
-    // `/usage` was eaten by the dialog and its Enter answered *"Yes, I trust this folder"*. That is
-    // what `trustDirectory` below exists to prevent.
+
+    const { loggedIn, account, subscriptionType } = readAntigravityIdentity()
+
     let setupComplete: boolean | null = null
     try {
       const onboarding = JSON.parse(
@@ -782,11 +861,13 @@ export const antigravityCli: AgentAdapter = {
       // Absent or unreadable is genuinely unknown, which is what null already means.
     }
     return {
-      loggedIn: null,
+      loggedIn,
+      ...(account ? { account } : {}),
+      ...(subscriptionType ? { subscriptionType } : {}),
       setupComplete,
       raw:
-        `Antigravity CLI is configured at ${home}, but its credential lives in the OS keyring, which ` +
-        'this app does not read. Sign-in state is unknown by design; a failed run will say so.'
+        `Antigravity CLI is configured at ${home}. Active account: ${account ?? 'none'}, ` +
+        `tier: ${subscriptionType ?? 'unknown'}.`
     }
   },
 

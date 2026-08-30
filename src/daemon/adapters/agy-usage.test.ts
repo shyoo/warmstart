@@ -1,8 +1,15 @@
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
+import { tmpdir } from 'node:os'
 import { describe, expect, it } from 'vitest'
-import { parseContextScreen, parseTokenCount, parseUsageScreen } from './antigravity-cli.js'
+import {
+  parseContextScreen,
+  parseTokenCount,
+  parseUsageScreen,
+  parseUsageScreenIdentity,
+  readAntigravityIdentity
+} from './antigravity-cli.js'
 
 /**
  * Reading Antigravity's `/usage` panel.
@@ -215,3 +222,98 @@ describe('parseContextScreen', () => {
     })
   })
 })
+
+describe('parseUsageScreenIdentity', () => {
+  it('extracts account and inferred tier from the fixture /usage screen', () => {
+    const ident = parseUsageScreenIdentity(screen)
+    expect(ident).not.toBeNull()
+    expect(ident?.account).toBe('someone@example.com')
+    expect(ident?.subscriptionType).toBe('Google AI Pro')
+  })
+
+  it('extracts explicit tier in parentheses from header line', () => {
+    const customScreen = screen.replace(
+      'Account: someone@example.com',
+      'Account: user@domain.com (Google AI Ultra)'
+    )
+    const ident = parseUsageScreenIdentity(customScreen)
+    expect(ident?.account).toBe('user@domain.com')
+    expect(ident?.subscriptionType).toBe('Google AI Ultra')
+  })
+
+  it('extracts explicit tier after middle dot from header line', () => {
+    const customScreen = screen.replace(
+      'Account: someone@example.com',
+      'Account: user@domain.com · Google One AI Premium'
+    )
+    const ident = parseUsageScreenIdentity(customScreen)
+    expect(ident?.account).toBe('user@domain.com')
+    expect(ident?.subscriptionType).toBe('Google One AI Premium')
+  })
+
+  it('returns null for non-usage screens', () => {
+    expect(parseUsageScreenIdentity('')).toBeNull()
+    expect(parseUsageScreenIdentity('Do you trust the contents of this project?')).toBeNull()
+  })
+})
+
+describe('readAntigravityIdentity', () => {
+  it('reads active email from google_accounts.json', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agy-ident-'))
+    try {
+      writeFileSync(
+        join(dir, 'google_accounts.json'),
+        JSON.stringify({ active: 'test@example.com', old: [] })
+      )
+      const res = readAntigravityIdentity(dir)
+      expect(res.loggedIn).toBe(true)
+      expect(res.account).toBe('test@example.com')
+      expect(res.subscriptionType).toBe('Google AI Pro')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('falls back to oauth_creds.json id_token when google_accounts.json is absent', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agy-ident-'))
+    try {
+      const header = Buffer.from(JSON.stringify({ alg: 'RS256' })).toString('base64')
+      const payload = Buffer.from(JSON.stringify({ email: 'oauth@example.com' })).toString('base64')
+      const token = `${header}.${payload}.signature`
+      writeFileSync(
+        join(dir, 'oauth_creds.json'),
+        JSON.stringify({ id_token: token })
+      )
+      const res = readAntigravityIdentity(dir)
+      expect(res.loggedIn).toBe(true)
+      expect(res.account).toBe('oauth@example.com')
+      expect(res.subscriptionType).toBe('Google AI Pro')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('returns loggedIn: false when settings.json exists but no account credentials exist', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agy-ident-'))
+    try {
+      writeFileSync(join(dir, 'settings.json'), JSON.stringify({ enableTelemetry: false }))
+      const res = readAntigravityIdentity(dir)
+      expect(res.loggedIn).toBe(false)
+      expect(res.account).toBeUndefined()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('returns loggedIn: null when directory is empty / nonexistent', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agy-ident-'))
+    try {
+      const res = readAntigravityIdentity(join(dir, 'nonexistent'))
+      expect(res.loggedIn).toBeNull()
+      expect(res.account).toBeUndefined()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+

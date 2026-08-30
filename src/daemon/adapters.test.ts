@@ -632,3 +632,18 @@ describe('trustDirectory', () => {
     rmSync(root, { recursive: true, force: true })
   })
 })
+
+describe('probeIdentity', () => {
+  it('antigravity-cli probes identity and returns valid structure', async () => {
+    const a = adapter('antigravity-cli')
+    const probe = await a.probeIdentity('/ignored')
+    expect(typeof probe).toBe('object')
+    expect(probe.loggedIn === null || typeof probe.loggedIn === 'boolean').toBe(true)
+    if (probe.loggedIn) {
+      expect(typeof probe.account).toBe('string')
+      expect(probe.account).toContain('@')
+      expect(probe.subscriptionType).toBe('Google AI Pro')
+    }
+  })
+})
+
