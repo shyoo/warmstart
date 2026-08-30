@@ -8,8 +8,8 @@ started in CI, never run against a real agent CLI.
 if you add a line, find the one it obsoletes and cut it in the same edit. Finished work moves to
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
-**Baseline (2026-08-29, measured):** typecheck · lint · build clean · `npm test` 718/720 (2 POSIX-only
-skipped) · `test:daemon` 125/125 · `test:ui` 140/140 · `test:pack` 18/18 · L4 (opt-in) landed a real
+**Baseline (2026-08-30, measured):** typecheck · lint · build clean · `npm test` 736/738 (2 POSIX-only
+skipped) · `test:daemon` 125/125 · `test:ui` 142/142 · `test:pack` 18/18 · L4 (opt-in) landed a real
 agent commit on origin/main. Electron 44.0.0, electron-builder 26.15.3, 0 npm vulnerabilities.
 CLIs here: claude 2.1.251 · agy 1.1.22 · codex 0.151.0.
 
@@ -37,7 +37,7 @@ gaps are below. Scope: `transient_docs/implementation_plan_2026-08-24.md` §14, 
 src/daemon/            orchestratord. Runs as Electron-with-ELECTRON_RUN_AS_NODE, detached.
   index.ts             entry: lock, db, server, poller, scheduler, tailer wiring, shutdown
   server.ts  api.ts    HTTP+WS on 127.0.0.1:<random>, bearer token, typed RPC
-  db.ts                node:sqlite + numbered migrations (v18)
+  db.ts                node:sqlite + numbered migrations (v19)
   costmodel.ts         the four questions; user dir > bundled > compiled-in
   workers.ts           registry, isolation roots, retire-keeps-credentials, the fleet's display
                        order - ⛔ display only (+ workerorder.test.ts)
@@ -60,9 +60,9 @@ src/daemon/            orchestratord. Runs as Electron-with-ELECTRON_RUN_AS_NODE
   conversations.ts     which conversation served which tasks - a join, never stored (+ .test.ts)
   sharing.ts           who may borrow whose conversation: three tiers, mechanical gates, off by
                        default (+ .test.ts). docs/sessions.md is the spec for both
-  finish.ts            what finishing means: one policy resolved task > project > fleet, the
+  finish.ts            what finishing means: one policy, resolved task > project > fleet, the
                        decision that follows, and the loose-ends scan (+ .test.ts). ⛔ The tool
-                       never writes a commit. docs/landing.md is the user-facing spec
+                       never writes a commit. docs/landing.md is the spec (+ conflict.test.ts)
   log.ts               a file per day, a ring buffer for a UI that just opened, every level
                        broadcast (+ .test.ts)
   cacheclock.ts        the six moves - what the whole cost model exists for. A move is a request;
@@ -116,10 +116,10 @@ docs/                  cost-model.md, glossary.md, adapters.md, landing.md, sess
 - ⭐ **The stall watchdog can now tell stuck from slow** (2026-08-29): after 12m of silence it samples the run's whole process tree, and a flat CPU total says stuck. ⛔ It reports and never kills or changes status — a run blocked on the network looks the same. ⚠️ It has caught one real incident by hand and none in flight.
 - ⭐ **One finish policy, resolved task > project > fleet** (`docs/landing.md`): `await-human` ·
   `agent-lands` · `pull-request` · `custom`, replacing `landing.strategy` and `verification`. ⛔ **The
-  tool never writes a commit** and never destroys work it will not land — loose work gets one
-  instruction to the agent, then rests intact and appears under **Loose ends** with every stash and
-  unlanded branch. `agent-lands` also requires the project to define checks and for them to pass;
-  `mandate.land` stays the authority and no UI may widen it.
+  tool never writes a commit** and never destroys work it will not land. Loose work — and, since
+  2026-08-30, **a branch that will not rebase** — gets *one* instruction to the still-live agent and
+  otherwise rests intact under **Loose ends**. ⚠️ The conflict ask is proven against a real repo in
+  `conflict.test.ts` and **has never fired in flight**. `mandate.land` stays the authority throughout.
 - ⭐ **The daemon's log is readable from inside the app** (Settings > Logs): live, filterable, backed
   by a ring buffer so a window opened late still sees the past, and a file per day kept a fortnight.
 - ⭐ **Model and effort are choosable, inherited and visible** (2026-08-29): **task → worker → the
@@ -131,7 +131,7 @@ docs/                  cost-model.md, glossary.md, adapters.md, landing.md, sess
   `--conversation` measured 2026-08-28). ⚠️ **No Antigravity task has ever completed** - with
   `mcp: false` it cannot call `task_complete`, so `awaiting_human` is honest there - and R13 stands.
   ⛔ It restores a conversation but reports `cache_read_tokens: 0` throughout: context, not cache.
-- ⛔ **Anything needing a real agent CLI is unproven off Windows.** CI proves three platforms build, start, package and schedule; its runners have no CLI, so `docs/adapters.md` is Windows-only.
+- ⛔ **Nothing is proven off Windows.** CI runners carry no agent CLI, so `docs/adapters.md` was always Windows-only — and CI has not run at all since 2026-08-29 (see the top of this file).
 - ⛔ **Unsigned.** SmartScreen warns and Gatekeeper refuses — a certificate and an Apple Developer account, not a config line.
 
 ## Next

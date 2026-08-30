@@ -2039,3 +2039,66 @@ reads as an anecdote and two read as a pattern.
 which is consistent with a rolling 30-day window that has not started — but that has never been seen
 on a window with real usage in it, and it is written down as measured behaviour rather than as how
 the window works.
+
+## A conflict found two branches too late (2026-08-30)
+
+t39 and t43 both finished, both failed to land, and both had to be resolved by hand: ask the agent to
+fix the conflict, then press Land again. The operator asked whether a button that sends *"resolve the
+git conflict and retry landing"* into the same conversation would be the fix.
+
+⭐ **That button already existed** — it was just never wired to this. `decideFinish` returns
+`ask-agent` for uncommitted work, and the scheduler answers it with `sendPrompt(sessionId, …)`,
+guarded by `finish_asked_at` so it can never loop. Everything the proposal needed was built and in
+production.
+
+⛔ **The conflict simply never reached it.** `decideFinish` returned `land`; only *then* did
+`landTask` fetch, rebase, and fail — two branches past the one path that can hand a problem back to a
+live conversation. And on failure it ran `rebase --abort`, so the evidence went too. The manual fix
+was re-deriving from scratch a conflict the daemon had just seen and thrown away.
+
+So the fix is a **timing** change, not a feature:
+
+1. **Ask before deciding.** `git merge-tree --write-tree` merges in memory — it writes objects, never
+   the index or the working tree — so *would this rebase?* is safe to ask while the agent is still
+   working in that workspace. It slots in exactly where `readTrunkMovement` already does: an async
+   git read whose result is passed into the pure `decideFinish`, producing a verdict.
+2. **Hand the conflict over intact.** On the in-flight path the rebase is started and *left stopped
+   at the conflict*, so the agent opens the file and the markers are already there. `landTask` keeps
+   its abort, because nobody holds that workspace.
+
+⚠️ **The parser was rewritten after being written twice.** The first version parsed `merge-tree`'s
+English (`CONFLICT (content): Merge conflict in x`), which varies by conflict type — modify/delete
+and rename/rename produce different sentences. The output's *first* half is an unmerged-index block,
+`<mode> <oid> <stage>\t<path>`, machine-readable by design. Captured verbatim as a fixture and read
+from there instead.
+
+⛔ **Two bugs in the first draft, both caught by writing it out rather than by a test:**
+  - The column was appended to an **existing migration**, which every installed database has already
+    run — so no existing install would ever have received it. It is migration 18 on its own now.
+  - The self-resolving path fell through the entire `else if` chain. A conflict that another task
+    takes away between the probe and the rebase leaves `decision.kind === 'resolve-conflict'`, so
+    `if (decision.kind === 'land')` was false and the task landed *nothing*, silently. The chain now
+    opens on a `landNow` flag.
+
+⚠️ **A second guard, not a reuse of the first.** `finish_asked_at` means *we asked it to commit*;
+`conflict_asked_at` means *we asked it to resolve a rebase*. Sharing one column would have denied a
+conflict ask to any task that had already been asked to commit — it would have arrived at
+`awaiting_human` carrying a conflict nobody ever asked it to fix.
+
+⛔ **A task whose mandate excludes `land` is never asked to resolve a merge.** That is authoring a
+commit on somebody's trunk by a longer route, and the gate goes first — which is why the check sits
+*after* `mandateAllows`, not before it.
+
+⚠️ **A workspace left mid-rebase cannot be parked**, because `git switch` refuses. Every path that
+gives up aborts first, and `parkWorkspace` now aborts blind as a net for the one case no caller can
+cover: a daemon that dies between starting the rebase and sending the prompt. Aborting discards
+nothing — `conflict.test.ts` asserts the branch and its commit come back exactly.
+
+⭐ **Tested against a real repository, not a mock.** Every claim here is a claim about git — that
+`merge-tree` writes nothing, that it exits 1 on a conflict, the shape of its output, that an aborted
+rebase loses no work — and a fake git would prove none of them. The defect being fixed came from
+believing something about git that had never been measured.
+
+⚠️ **Unproven where it counts.** The conflict ask has never fired against a live agent. What is
+measured is the git half; what is not is whether an agent handed a stopped rebase actually finishes
+it.

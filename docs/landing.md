@@ -60,9 +60,48 @@ with a bar. All of these must hold:
 4. **The project defines `check` commands, and they pass.** A project with no checks has nothing
    proving the work builds, so landing it unattended would be a guess. It stops and tells you to add
    them.
-5. **The rebase onto the target applies** without conflict.
+5. **The rebase onto the target applies.** If it does not, the task is not stopped — the agent is
+   asked to resolve it, once. See [below](#when-the-branch-will-not-rebase).
 
 Any failure sends the task to `awaiting_human` naming the condition — never a bare "could not land".
+
+## When the branch will not rebase
+
+The commonest reason a finished task does not land is that the target moved underneath it. Two tasks
+cut from the same trunk, both touching the same lines: the first lands, and the second no longer
+rebases. Nothing is wrong with either one.
+
+⭐ **This is asked before the decision to land, not discovered during it.** `git merge-tree` merges
+the branch and the target **in memory** — it writes no index and no working tree — so the question
+*would this rebase?* is safe to ask while the agent is still working in that workspace. That timing
+is the whole point: it means the conflict can be handed back to the conversation that wrote the code,
+instead of surfacing after the session is gone.
+
+When it conflicts, the tool starts the rebase and **leaves it stopped at the conflict**, then asks:
+
+> Your branch no longer rebases onto `origin/main` — it moved while you were working.
+>
+> I have started the rebase for you and left it stopped at the conflict. These files are conflicted:
+>
+>     src/renderer/src/components/FleetStrip.tsx
+>
+> Resolve each one, `git add` it, then `git rebase --continue` until the rebase finishes, and report
+> the task complete again. ⛔ Keep both sides' intent — the other change landed on purpose. Do not
+> `git rebase --abort`, do not force-push, and do not start new work.
+
+⚠️ **The markers are left in the tree deliberately.** An agent handed an *aborted* rebase has to
+reproduce the conflict before it can start on it, which is most of the round trip.
+
+⚠️ **Once, and only once** — the same rule as the uncommitted-work ask, and a **separate** counter.
+A task that was already asked to commit still gets its one conflict ask; sharing one counter would
+drop it into `awaiting_human` carrying a conflict nobody had ever asked it to fix.
+
+⛔ **A task whose mandate excludes `land` is never asked.** Resolving a merge is authoring a commit on
+somebody's trunk by a longer route, and authority is checked first.
+
+If the agent cannot be reached, or is asked and the branch still does not rebase, the rebase is put
+back and the task rests in `awaiting_human` naming the conflicting files. Nothing is discarded either
+way — aborting a rebase returns the branch to exactly where it started.
 
 ## When the agent leaves work uncommitted
 

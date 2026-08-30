@@ -64,6 +64,7 @@ interface TaskRow {
   finish_policy: string
   session_sharing: string
   finish_asked_at: number | null
+  conflict_asked_at: number | null
   preemptible: number
   est_tokens: number | null
   cancel_json: string | null
@@ -124,6 +125,7 @@ function toTask(r: TaskRow): Task {
     finishPolicy: (r.finish_policy || 'inherit') as Task['finishPolicy'],
     sessionSharing: (r.session_sharing || 'inherit') as Task['sessionSharing'],
     finishAskedAt: r.finish_asked_at,
+    conflictAskedAt: r.conflict_asked_at,
     preemptible: r.preemptible === 1,
     estTokens: r.est_tokens,
     cancel: r.cancel_json ? (JSON.parse(r.cancel_json) as Task['cancel']) : null,
@@ -969,6 +971,21 @@ export function schedulingOrder(a: Task, b: Task): number {
  */
 export function markFinishAsked(taskId: string): void {
   db().prepare('update tasks set finish_asked_at = ?, updated_at = ? where id = ?').run(
+    Date.now(),
+    Date.now(),
+    taskId
+  )
+}
+
+/**
+ * Record that the conflict-resolution instruction has been sent, so it is never sent twice.
+ *
+ * ⛔ Separate from `markFinishAsked` on purpose — see the migration. Written *before* the prompt
+ * goes out, for the same reason: a send that throws still counts as an ask, and the failure path
+ * hands the task to a person rather than trying again.
+ */
+export function markConflictAsked(taskId: string): void {
+  db().prepare('update tasks set conflict_asked_at = ?, updated_at = ? where id = ?').run(
     Date.now(),
     Date.now(),
     taskId

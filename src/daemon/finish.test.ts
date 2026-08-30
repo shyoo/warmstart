@@ -7,6 +7,7 @@ import type { WorkspaceState } from './worktrees.js'
 // ⚠️ A type-only import beside the dynamic one below: `finish` is a runtime binding for a module
 // loaded after the data dir is set, and a value cannot be used as a type namespace.
 import type { TrunkReading } from './finish.js'
+import type { MergeReading } from './landing.js'
 
 /**
  * What finishing a task means, and who does the committing.
@@ -526,5 +527,145 @@ describe('a branch whose work reached the remote without passing through here', 
       trunk: { before: 'aaaaaaaa1111', after: 'bbbbbbbb2222', commits: ['bbbbbbb not ours'] }
     })
     expect(decision.kind).toBe('trunk-moved')
+  })
+})
+
+describe('a branch that will not rebase onto its target', () => {
+  /**
+   * ⛔ **The gap this closes.** A conflict used to be found inside `landTask`, which runs *after*
+   * `decideFinish` has already chosen `land` — so the one path that can hand a problem back to the
+   * live conversation had been passed two branches earlier, and every conflict became a dead-end
+   * `awaiting_human`. Measured on t39 and t43 (2026-08-30): both branches were cut from an older
+   * trunk, neither was rebased while it ran, and both were resolved by hand.
+   *
+   * ⚠️ The reading is taken with `git merge-tree`, which merges in memory and touches nothing, so
+   * asking is safe while the agent is still working in that workspace.
+   */
+  const conflicted = (over: Partial<MergeReading> = {}): MergeReading => ({
+    base: 'origin/main',
+    clean: false,
+    conflictedPaths: ['src/a.ts', 'src/b.ts'],
+    rebaseInProgress: false,
+    ...over
+  })
+
+  it('asks the agent to resolve it, and names the files', () => {
+    const decision = finish.decideFinish({
+      task: makeTask(),
+      project: projectWith({ finish: 'agent-lands' }),
+      state: clean(),
+      hasChecks: true,
+      merge: conflicted()
+    })
+    expect(decision.kind).toBe('resolve-conflict')
+    if (decision.kind !== 'resolve-conflict') return
+    expect(decision.base).toBe('origin/main')
+    expect(decision.paths).toEqual(['src/a.ts', 'src/b.ts'])
+    expect(decision.instruction).toContain('src/a.ts')
+    expect(decision.instruction).toContain('git rebase --continue')
+    // ⛔ Told the opposite, explicitly. Both are the tempting shortcuts out of a conflict and both
+    // discard work somebody landed on purpose, so the instruction names them as forbidden rather
+    // than trusting the agent not to think of them.
+    expect(decision.instruction).toContain('Do not `git rebase --abort`')
+    expect(decision.instruction).toContain('do not force-push')
+    expect(decision.instruction).toContain("Keep both sides' intent")
+  })
+
+  it('lands when the reading is clean', () => {
+    const decision = finish.decideFinish({
+      task: makeTask(),
+      project: projectWith({ finish: 'agent-lands' }),
+      state: clean(),
+      hasChecks: true,
+      merge: { base: 'origin/main', clean: true, conflictedPaths: [], rebaseInProgress: false }
+    })
+    expect(decision.kind).toBe('land')
+  })
+
+  it('lands when there is no reading at all, rather than guessing', () => {
+    // ⚠️ `null` is *unknown*, exactly like a null `trunk`: a git too old for `merge-tree`, a target
+    // that does not resolve. `landTask` still attempts the real rebase, so nothing is lost by
+    // declining to fire — whereas refusing to land on an unknown would strand every such task.
+    const decision = finish.decideFinish({
+      task: makeTask(),
+      project: projectWith({ finish: 'agent-lands' }),
+      state: clean(),
+      hasChecks: true,
+      merge: null
+    })
+    expect(decision.kind).toBe('land')
+  })
+
+  it('asks once, then hands it to a person', () => {
+    const task = makeTask()
+    db.db().prepare('update tasks set conflict_asked_at = ? where id = ?').run(Date.now(), task.id)
+    const decision = finish.decideFinish({
+      task: tasks.requireTask(task.id),
+      project: projectWith({ finish: 'agent-lands' }),
+      state: clean(),
+      hasChecks: true,
+      merge: conflicted()
+    })
+    expect(decision.kind).toBe('await-human')
+    if (decision.kind !== 'await-human') return
+    expect(decision.reason).toContain('src/a.ts')
+    expect(decision.reason).toContain('intact')
+  })
+
+  it('keeps the two guards independent', () => {
+    // ⛔ A task asked to *commit* has `finish_asked_at` set. Sharing one column would deny it its
+    // one conflict ask and drop it straight into `awaiting_human` carrying a conflict nobody had
+    // ever asked it to fix.
+    const decision = finish.decideFinish({
+      task: makeTask({ asked: true }),
+      project: projectWith({ finish: 'agent-lands' }),
+      state: clean(),
+      hasChecks: true,
+      merge: conflicted()
+    })
+    expect(decision.kind).toBe('resolve-conflict')
+  })
+
+  it('does not ask a task that has no authority to land', () => {
+    // ⛔ Resolving a merge is authoring a commit on somebody's trunk by a longer route. The mandate
+    // gate comes first, and no convenience may widen it.
+    const decision = finish.decideFinish({
+      task: makeTask({ land: false }),
+      project: projectWith({ finish: 'agent-lands' }),
+      state: clean(),
+      hasChecks: true,
+      merge: conflicted()
+    })
+    expect(decision.kind).toBe('await-human')
+    if (decision.kind !== 'await-human') return
+    expect(decision.reason).toContain('no authority to land')
+  })
+
+  it('asks on `pull-request` too, which returns `land` by a different route', () => {
+    const decision = finish.decideFinish({
+      task: makeTask({ finishPolicy: 'pull-request' }),
+      project: projectWith({ finish: 'pull-request' }),
+      state: clean(),
+      hasChecks: false,
+      merge: conflicted()
+    })
+    expect(decision.kind).toBe('resolve-conflict')
+  })
+
+  it('reads an abandoned rebase before it reads uncommitted work', () => {
+    // ⛔ Conflicted files are *dirty*, so without this the operator is told to commit a half-merged
+    // tree. Checked first, and the sentence names what is actually wrong.
+    const decision = finish.decideFinish({
+      task: makeTask(),
+      project: projectWith({ finish: 'agent-lands' }),
+      state: clean({ dirtyFiles: ['src/a.ts', 'src/b.ts'] }),
+      hasChecks: true,
+      merge: conflicted({ rebaseInProgress: true })
+    })
+    expect(decision.kind).toBe('await-human')
+    if (decision.kind !== 'await-human') return
+    expect(decision.reason).toContain('rebase')
+    expect(decision.reason).toContain('git rebase --abort')
+    expect(decision.reason).not.toContain('uncommitted')
   })
 })

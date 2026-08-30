@@ -1,0 +1,12 @@
+e0320085aaecee30451a5f0e41b1c9d147c2a679
+100644 4cb29ea38f70d7c61b2a3a25b02e3bdf44905402 1	a.txt
+100644 9b52222367b76783829c9fcd9851e1cb882c3546 2	a.txt
+100644 f6b503b554edb88d491ed9d7ba4ee354bb015cb8 3	a.txt
+100644 2fa992c0b8b5c6acd2bdd4fa31de29d29799bdd5 1	b.txt
+100644 b5d9bfd696c6c9e886b9ca57773de8babac79081 2	b.txt
+100644 80858c1ab821392fd59a897dbaedd7d07e1ac403 3	b.txt
+
+Auto-merging a.txt
+CONFLICT (content): Merge conflict in a.txt
+Auto-merging b.txt
+CONFLICT (content): Merge conflict in b.txt

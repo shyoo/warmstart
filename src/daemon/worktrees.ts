@@ -440,6 +440,13 @@ export async function parkWorkspace(project: Project, path: string): Promise<voi
   if (project.vcs !== 'git') return
   try {
     const base = await baseRef(project)
+    // ⛔ Blind, and deliberately first. `git switch` **refuses** while a rebase is in progress, so a
+    // workspace abandoned mid-rebase can never be parked and the slot is lost until somebody notices
+    // by hand. `beginConflictResolution` leaves exactly that state on purpose and every caller is
+    // required to undo it — this is the net for the time one of them does not, which is a daemon
+    // crash between starting the rebase and sending the prompt.
+    // ⚠️ Aborting discards no work: the branch goes back to where the rebase started.
+    await gitOk(path, ['rebase', '--abort'])
     await rescueDirt(path, base)
     await git(path, ['switch', '--detach', base])
   } catch (err) {

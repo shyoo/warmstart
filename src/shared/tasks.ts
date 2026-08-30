@@ -274,6 +274,8 @@ export interface Task {
    * costume, and each repeat here is a billed turn spent telling an agent to do what it just did.
    */
   finishAskedAt: number | null
+  /** When the agent was asked to resolve a rebase conflict. ⛔ One ask, then a person. */
+  conflictAskedAt: number | null
   preemptible: boolean
   estTokens: number | null
   cancel: CancelRecord | null

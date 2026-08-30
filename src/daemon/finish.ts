@@ -14,6 +14,7 @@ import { db, rows } from './db.js'
 import { log } from './log.js'
 import { listProjects, policyFor } from './projects.js'
 import { mandateAllows } from './tasks.js'
+import type { MergeReading } from './landing.js'
 import { ensurePool, workspaceState } from './worktrees.js'
 import type { WorkspaceState } from './worktrees.js'
 import { settings } from './settings.js'
@@ -60,6 +61,18 @@ export type FinishDecision =
    * agent had simply had nothing to do.
    */
   | { kind: 'trunk-moved'; reason: string; commits: string[] }
+  /**
+   * The branch will not rebase onto its target, and the agent that wrote it is still there.
+   *
+   * ⛔ **The verdict this file was missing.** A conflict used to be discovered inside `landTask`,
+   * which runs *after* this function has already chosen `land` — so the one path that can hand a
+   * problem back to the live conversation had been passed two branches earlier, and every conflict
+   * became a dead-end `awaiting_human` for a person to resolve by hand. Measured on t39 and t43.
+   *
+   * ⚠️ The caller starts the rebase and leaves it conflicted before sending `instruction`, so the
+   * markers are in the tree when the agent goes looking. It must abort if it cannot send.
+   */
+  | { kind: 'resolve-conflict'; instruction: string; reason: string; base: string; paths: string[] }
   /** The project's own finish policy already ran and left the branch clean. */
   | { kind: 'done'; reason: string }
 
@@ -77,6 +90,14 @@ export interface FinishInputs {
    * it is also not evidence, so a null declines to fire rather than guessing in either direction.
    */
   trunk?: TrunkReading | null
+  /**
+   * Whether the branch would rebase onto its target, read without touching anything.
+   *
+   * ⚠️ `null` is **no reading**, exactly like `trunk`: a git too old for `merge-tree`, a target that
+   * does not resolve, a fetch that failed. Unknown declines to fire rather than guessing, and
+   * `landTask` remains the backstop that actually attempts the rebase.
+   */
+  merge?: MergeReading | null
 }
 
 export interface TrunkReading {
@@ -88,9 +109,32 @@ export interface TrunkReading {
   commits: string[]
 }
 
-export function decideFinish({ task, project, state, hasChecks, trunk }: FinishInputs): FinishDecision {
+export function decideFinish({
+  task,
+  project,
+  state,
+  hasChecks,
+  trunk,
+  merge
+}: FinishInputs): FinishDecision {
   const { policy, instruction } = resolveFinishPolicy(task, project)
   const loose = state.dirtyFiles.length + state.untrackedFiles.length
+
+  // 0. A rebase this tool started and the agent did not finish. ⛔ Checked before anything else,
+  //    because the conflicted files are *dirty* to step 1 and it would tell somebody to commit a
+  //    half-merged tree. The work is intact either way — an abandoned rebase discards nothing — but
+  //    the sentence has to name what is actually wrong.
+  if (merge?.rebaseInProgress) {
+    return {
+      kind: 'await-human',
+      reason:
+        `a rebase onto \`${merge.base}\` is still in progress in ${state.path} and was not finished` +
+        (merge.conflictedPaths.length
+          ? `: ${merge.conflictedPaths.join(', ')} remain conflicted. `
+          : '. ') +
+        'Resolve them and `git rebase --continue`, or `git rebase --abort` to put the branch back.'
+    }
+  }
 
   // 1. Work that is not committed. ⛔ The tool does not commit it — deciding what to stage, what to
   //    leave and what to test first is judgement that differs per project and per person, and a
@@ -183,7 +227,7 @@ export function decideFinish({ task, project, state, hasChecks, trunk }: FinishI
     }
   }
 
-  if (policy === 'pull-request') return { kind: 'land' }
+  if (policy === 'pull-request') return landOrResolve(task, state, merge)
 
   // 4. `agent-lands`, which is the only policy that pushes to a trunk unattended, so it is the only
   //    one with a bar. ⛔ Authority first: a task whose mandate excludes `land` may not, whatever a
@@ -202,7 +246,50 @@ export function decideFinish({ task, project, state, hasChecks, trunk }: FinishI
         'array to its project.json to let the fleet land unattended.'
     }
   }
-  return { kind: 'land' }
+  return landOrResolve(task, state, merge)
+}
+
+/**
+ * Land, unless the branch will not rebase — in which case ask the agent once.
+ *
+ * ⛔ Called from **both** landing policies rather than written once at the end, because
+ * `pull-request` returns `land` earlier and a conflict is no less real on that path.
+ *
+ * ⚠️ Deliberately placed *after* the mandate and checks gates. A task with no authority to land has
+ * no business being asked to resolve a merge either — that is authoring a commit on somebody's trunk
+ * by a longer route, and `mandateAllows` is the one gate no UI and no convenience may widen.
+ */
+function landOrResolve(
+  task: Task,
+  state: WorkspaceState,
+  merge: MergeReading | null | undefined
+): FinishDecision {
+  if (!merge || merge.clean) return { kind: 'land' }
+  const paths = merge.conflictedPaths
+  const list = paths.length ? paths.map((p) => `  ${p}`).join('\n') : '  (git did not name them)'
+  // ⚠️ Asked once. A second ask on a conflict the agent already failed to resolve is the runaway
+  // `finish_asked_at` exists to prevent, wearing a different hat.
+  if (task.conflictAskedAt !== null) {
+    return {
+      kind: 'await-human',
+      reason:
+        `\`${state.branch}\` still does not rebase onto \`${merge.base}\` after the agent was asked ` +
+        `to resolve it. Conflicting: ${paths.join(', ') || 'unknown'}. The branch is intact.`
+    }
+  }
+  return {
+    kind: 'resolve-conflict',
+    base: merge.base,
+    paths,
+    reason: `\`${state.branch}\` does not rebase onto \`${merge.base}\``,
+    instruction:
+      `Your branch no longer rebases onto \`${merge.base}\` — it moved while you were working.\n\n` +
+      'I have started the rebase for you and left it stopped at the conflict. These files are ' +
+      `conflicted:\n${list}\n\n` +
+      'Resolve each one, `git add` it, then `git rebase --continue` until the rebase finishes, and ' +
+      "report the task complete again. ⛔ Keep both sides' intent — the other change landed on " +
+      'purpose. Do not `git rebase --abort`, do not force-push, and do not start new work.'
+  }
 }
 
 // ---------------------------------------------------------------------------- loose ends

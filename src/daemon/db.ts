@@ -628,6 +628,20 @@ const MIGRATIONS: string[] = [
   // Null for runs predating this column.
   `
   alter table runs add column prompt text;
+  `,
+
+  // 19 - the agent was asked to resolve a rebase conflict.
+  //
+  // ⛔ A **second** guard, not a reuse of the first, and they have to stay independent.
+  // 'finish_asked_at' means *we asked this agent to commit its work*; this means *we asked it to
+  // resolve a rebase conflict*. Different questions, asked at different moments. Sharing one column
+  // would silently deny a conflict ask to any task that had already been asked to commit - it would
+  // arrive at 'awaiting_human' carrying a conflict nobody ever asked it to fix. One ask each, then
+  // a person.
+  //
+  // ⚠️ Null for every existing task, which is correct: none of them was ever asked.
+  `
+  alter table tasks add column conflict_asked_at integer;
   `
 ]
 

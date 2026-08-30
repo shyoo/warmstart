@@ -1,4 +1,6 @@
 import { execFile } from 'node:child_process'
+import { existsSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { promisify } from 'node:util'
 import type { LandingResult, LandingStrategyId, Project, ResourceClaim, Task } from '@shared/tasks.js'
 import { policyFor } from './projects.js'
@@ -53,6 +55,166 @@ async function hasRemote(cwd: string): Promise<boolean> {
 
 async function isClean(cwd: string): Promise<boolean> {
   return (await git(cwd, ['status', '--porcelain'])).length === 0
+}
+
+// ---------------------------------------------------------------------------- will it rebase?
+
+/**
+ * Whether this branch would rebase onto its target, asked **without touching anything**.
+ *
+ * ⭐ **The point of asking early.** Until 2026-08-30 a conflict was discovered inside `landTask`,
+ * which is after `decideFinish` has already chosen `land` — so the one path that can hand a problem
+ * back to the live conversation had been passed two branches earlier, and the conflict became a
+ * dead-end `awaiting_human` instead. Measured on t39 and t43: both were cut from an older trunk,
+ * neither was ever rebased while it ran, and both had to be resolved by hand.
+ *
+ * ⛔ `git merge-tree --write-tree` merges **in memory**: it writes objects, never the index or the
+ * working tree, and exits non-zero with the conflicted paths on stdout. So this is safe to ask at
+ * any moment, including while an agent is still working in the same workspace. Requires git ≥ 2.38;
+ * measured against 2.54.0 on 2026-08-30.
+ *
+ * ⚠️ Returns `null` for *no reading* — not for "it is clean". A missing target, a git too old, a
+ * repository that cannot be fetched. `decideFinish` treats null the way it treats a null `trunk`:
+ * unknown is not innocence, but it is not evidence either, so it declines to fire.
+ */
+export interface MergeReading {
+  /** What it was compared against — `origin/main`, or `main` on a project with no remote. */
+  base: string
+  clean: boolean
+  /** Paths git reported as conflicting. Empty when `clean`. */
+  conflictedPaths: string[]
+  /**
+   * A rebase this tool started and nobody finished.
+   *
+   * ⛔ Read *first* by `decideFinish`, because a conflicted working tree otherwise reads as
+   * ordinary uncommitted work and gets the wrong sentence entirely.
+   */
+  rebaseInProgress: boolean
+}
+
+/** Is the workspace sitting in the middle of a rebase right now? */
+async function rebaseInProgress(cwd: string): Promise<boolean> {
+  try {
+    const dir = await git(cwd, ['rev-parse', '--git-path', 'rebase-merge'])
+    const apply = await git(cwd, ['rev-parse', '--git-path', 'rebase-apply'])
+    return existsSync(resolve(cwd, dir)) || existsSync(resolve(cwd, apply))
+  } catch {
+    return false
+  }
+}
+
+export async function readMergeability(
+  project: Project,
+  workspacePath: string,
+  branch: string
+): Promise<MergeReading | null> {
+  const target = policyFor(project).landingTarget
+  try {
+    if (await rebaseInProgress(workspacePath)) {
+      return {
+        base: target,
+        clean: false,
+        conflictedPaths: await conflictedPaths(workspacePath),
+        rebaseInProgress: true
+      }
+    }
+    const remote = await hasRemote(workspacePath)
+    // ⚠️ Fetch first or this answers about a target from whenever the workspace was last updated,
+    // which is the staleness that caused the conflict in the first place.
+    if (remote) await git(workspacePath, ['fetch', 'origin', '--prune'])
+    const base = remote ? `origin/${target}` : target
+    // Both sides must resolve; a target that does not exist yet is no reading rather than a conflict.
+    await git(workspacePath, ['rev-parse', '--verify', `${base}^{commit}`])
+    try {
+      await git(workspacePath, ['merge-tree', '--write-tree', base, branch])
+      return { base, clean: true, conflictedPaths: [], rebaseInProgress: false }
+    } catch (err) {
+      // ⚠️ Non-zero is *conflicted*, which is an answer. It is also how git reports a bad argument,
+      // so the paths are parsed out rather than the exit code trusted on its own.
+      // ⚠️ `execFile` hangs the child's stdout off the error; typed loosely, so it is narrowed to a
+      // string here rather than stringified blind.
+      const raw = err instanceof Error && 'stdout' in err ? (err as { stdout?: unknown }).stdout : ''
+      const out = typeof raw === 'string' ? raw : ''
+      const paths = parseMergeTreeConflicts(out)
+      if (paths.length === 0) {
+        log.debug(`merge-tree gave no conflicted paths for ${branch}; treating as no reading`)
+        return null
+      }
+      return { base, clean: false, conflictedPaths: paths, rebaseInProgress: false }
+    }
+  } catch (err) {
+    log.debug(`could not read mergeability for ${branch}:`, err)
+    return null
+  }
+}
+
+/**
+ * The conflicted paths out of `merge-tree`'s report.
+ *
+ * ⭐ **Read from the unmerged-index block, not from the prose.** The output has two halves: an oid,
+ * then one `<mode> <oid> <stage>\t<path>` line per conflicted stage, then a blank line, then
+ * human-readable messages. The first half is machine-readable by design and names every conflicted
+ * path exactly; the second is English that varies by conflict type — `Merge conflict in x`,
+ * `x deleted in A and modified in B`, rename pairs — and parsing it was a guess. Captured verbatim
+ * in `__fixtures__/git-merge-tree-conflict.txt` (git 2.54.0, 2026-08-30).
+ *
+ * ⚠️ A path appears once per stage (1 = base, 2 = ours, 3 = theirs), so three lines are one file.
+ * Deduplicated and sorted, because this list is read aloud to an agent.
+ */
+export function parseMergeTreeConflicts(stdout: string): string[] {
+  const paths = new Set<string>()
+  for (const line of stdout.split('\n')) {
+    const clean = line.replace(/\r$/, '')
+    // ⛔ Stop at the blank line. Everything past it is prose, and a filename in a sentence is not a
+    // filename we can trust.
+    if (clean === '') break
+    const m = clean.match(/^\d{6} [0-9a-f]{40,64} [123]\t(.+)$/)
+    if (m?.[1]) paths.add(m[1])
+  }
+  return [...paths].sort()
+}
+
+/** Paths git has marked unmerged in the index. */
+async function conflictedPaths(cwd: string): Promise<string[]> {
+  try {
+    const out = await git(cwd, ['diff', '--name-only', '--diff-filter=U'])
+    return out ? out.split('\n').map((l) => l.trim()).filter(Boolean) : []
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Start the rebase and **leave it conflicted** for the agent to finish.
+ *
+ * ⛔ This is the half of the fix that matters. `landTask` aborts on conflict — correctly, because
+ * nobody is holding that workspace — and an agent asked to fix an aborted rebase has to reproduce it
+ * before it can start. Here the session is still live and still holds the workspace, so the conflict
+ * markers are left exactly where the agent will look for them and `git rebase --continue` finishes
+ * the job.
+ *
+ * ⚠️ **Every caller must abort on every path that gives up.** A workspace left mid-rebase cannot be
+ * parked — `git switch` refuses — so a slot abandoned in this state is a slot lost until somebody
+ * notices. `abortRebase` below is that undo, and `parkWorkspace` calls it defensively too.
+ *
+ * ⭐ A rebase that unexpectedly *succeeds* is reported, not treated as an error: between the probe
+ * and here another task can land and take the conflict with it.
+ */
+export async function beginConflictResolution(
+  workspacePath: string,
+  base: string
+): Promise<{ resolved: boolean; paths: string[] }> {
+  try {
+    await git(workspacePath, ['rebase', base])
+    return { resolved: true, paths: [] }
+  } catch {
+    return { resolved: false, paths: await conflictedPaths(workspacePath) }
+  }
+}
+
+/** Undo `beginConflictResolution`, so the workspace can be parked again. Safe to call blind. */
+export async function abortRebase(workspacePath: string): Promise<void> {
+  await git(workspacePath, ['rebase', '--abort']).catch(() => undefined)
 }
 
 /**

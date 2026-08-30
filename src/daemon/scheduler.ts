@@ -21,6 +21,7 @@ import {
   runsFor,
   schedulingOrder,
   setHoldReason,
+  markConflictAsked,
   markFinishAsked,
   setRunQuota,
   setStatus,
@@ -62,7 +63,13 @@ import {
   sessionsForWorker,
   spawnSession
 } from './sessions.js'
-import { finishWithoutLanding, landTask } from './landing.js'
+import {
+  abortRebase,
+  beginConflictResolution,
+  finishWithoutLanding,
+  landTask,
+  readMergeability
+} from './landing.js'
 import {
   describeTree,
   looksStuck,
@@ -1750,12 +1757,17 @@ export async function completeTask(sessionId: string, summary: string): Promise<
     // no remote, so a reading taken afterwards would report the tool's own push as the movement it
     // is looking for — a tripwire that fires on its own footsteps is worse than none.
     const trunk = await readTrunkMovement(project, policy.landingTarget, run)
+    // ⭐ Asked **before** the decision, and it touches nothing — `merge-tree` merges in memory. This
+    // is what lets a conflict be handed back to the live conversation instead of becoming a dead-end
+    // `awaiting_human` discovered inside `landTask` two branches later. See `readMergeability`.
+    const merge = await readMergeability(project, held.workspace.path, task.branch)
     const decision = decideFinish({
       task,
       project,
       state,
       hasChecks: policy.check.length > 0,
-      trunk
+      trunk,
+      merge
     })
     log.info(`t${task.seq} finish: ${decision.kind} (${resolveFinishPolicy(task, project).policy})`)
 
@@ -1776,7 +1788,58 @@ export async function completeTask(sessionId: string, summary: string): Promise<
       return
     }
 
-    if (decision.kind === 'land') {
+    // ⚠️ Not `decision.kind === 'land'` any more: a conflict that resolves itself below arrives here
+    //    with kind `resolve-conflict` and still has to land. Reading the kind directly is what made
+    //    the first draft of this fall through the whole chain and silently land nothing.
+    let landNow = decision.kind === 'land'
+
+    if (decision.kind === 'resolve-conflict') {
+      // ⛔ Returns without ending the run, exactly like `ask-agent` above: the agent is still working
+      //    and will report completion again, so closing the run here would orphan a live session and
+      //    release the workspace holding the half-finished rebase.
+      //
+      // ⭐ The rebase is started *here* and deliberately left stopped at the conflict. `landTask`
+      //    aborts on conflict — correctly, because nobody holds that workspace — and an agent handed
+      //    an aborted rebase has to reproduce it before it can begin. This one finds the markers
+      //    already in its tree.
+      const begun = await beginConflictResolution(held.workspace.path, decision.base)
+      if (begun.resolved) {
+        // ⭐ Another task landed between the probe and here and took the conflict with it. Nothing to
+        //    ask, and ⛔ nothing to *mark* — a task that was never asked keeps its one ask.
+        log.info(`t${task.seq} conflict resolved itself before the agent was asked; landing`)
+        landNow = true
+      } else {
+        const paths = begun.paths.length ? begun.paths : decision.paths
+        addMessage(task.id, 'system', decision.instruction)
+        // ⛔ Marked before the prompt goes out, and only on the path that actually prompts. A send
+        //    that throws still counts as an ask — the failure path hands the task to a person — but
+        //    a conflict that never needed asking about must not spend the one ask.
+        markConflictAsked(task.id)
+        try {
+          sendPrompt(sessionId, decision.instruction)
+          log.info(
+            `t${task.seq} asked to resolve ${paths.length} conflicted path(s) onto ${decision.base}`
+          )
+        } catch (err) {
+          // ⛔ Abort before giving up. A workspace left mid-rebase cannot be parked — `git switch`
+          //    refuses — so a slot abandoned in this state is one slot fewer for the fleet until
+          //    somebody notices by hand.
+          log.warn(`could not send the conflict instruction for t${task.seq}:`, err)
+          await abortRebase(held.workspace.path)
+          addMessage(
+            task.id,
+            'system',
+            'Could not reach the session to ask, so the rebase was put back and nothing was lost. ' +
+              `Over to you: \`${task.branch}\` conflicts with \`${decision.base}\` in ` +
+              `${paths.join(', ') || 'unknown files'}.`
+          )
+          setStatus(task.id, 'awaiting_human', { assignee: 'human', holdReason: decision.reason })
+        }
+        return
+      }
+    }
+
+    if (landNow) {
       const result = await landTask({
         project,
         task,
@@ -1823,7 +1886,10 @@ export async function completeTask(sessionId: string, summary: string): Promise<
       addMessage(task.id, 'system', `Finished — ${decision.reason}${retired.note}`)
       setStatus(task.id, 'completed')
     } else {
-      addMessage(task.id, 'system', `Finished — ${decision.reason}`)
+      // ⚠️ Narrowed by hand: the chain now opens on `landNow` rather than on a kind, so TypeScript
+      //    cannot rule out the kinds that carry no reason. `relandTask` reads it the same way.
+      const why = 'reason' in decision ? decision.reason : 'nothing to land'
+      addMessage(task.id, 'system', `Finished — ${why}`)
       setStatus(task.id, 'completed')
     }
   } else if (task.verification === 'required') {
