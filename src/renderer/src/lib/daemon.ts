@@ -59,7 +59,13 @@ export function fleetCounts(fleet: FleetEntry[]): {
   let running = 0
   let active = 0
   for (const entry of fleet) {
-    if (entry.sessions?.some((s) => s.purpose === 'work')) running++
+    if (
+      entry.sessions?.some(
+        (s) => s.purpose === 'work' && s.state !== 'closed' && s.state !== 'failed'
+      )
+    ) {
+      running++
+    }
     if (entry.worker?.enabled) active++
   }
   return { running, active, total: fleet.length }

@@ -10,7 +10,8 @@ import { fleetCounts, type FleetEntry } from './daemon.js'
  * and a check for "a busy worker counts as running" would pass on a fleet that is never busy.
  */
 
-const session = (purpose: Session['purpose']): Session => ({ purpose }) as Session
+const session = (purpose: Session['purpose'], state: Session['state'] = 'live'): Session =>
+  ({ purpose, state }) as Session
 
 const entry = (over: Partial<FleetEntry> = {}): FleetEntry => ({
   worker: { enabled: true } as FleetEntry['worker'],
@@ -42,6 +43,13 @@ describe('what the sidebar and status bar say about the fleet', () => {
       sessions: [session('work')]
     })
     expect(fleetCounts([busyDisabled])).toEqual({ running: 1, active: 0, total: 1 })
+  })
+
+  it('does not count closed or failed work sessions as running', () => {
+    const closed = entry({
+      sessions: [session('work', 'closed'), session('work', 'failed')]
+    })
+    expect(fleetCounts([closed])).toEqual({ running: 0, active: 1, total: 1 })
   })
 
   // ⚠️ A login terminal and a 30-second quota probe are not the fleet doing work.

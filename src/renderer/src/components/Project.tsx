@@ -164,11 +164,18 @@ function ProjectSessions({
   openSession: string | null
   setOpenSession: (id: string | null) => void
 }): React.JSX.Element {
-  const all = fleet.flatMap((f) => f.sessions.map((s) => ({ session: s, worker: f.worker })))
+  const all = fleet.flatMap((f) =>
+    f.sessions
+      .filter((s) => s.state !== 'closed' && s.state !== 'failed')
+      .map((s) => ({ session: s, worker: f.worker }))
+  )
   const mine = all.filter((s) => s.session.projectId === project.id)
   const unattributed = all.filter((s) => s.session.projectId === null)
   const shown = mine.length > 0 ? mine : unattributed
-  const selected = openSession ?? shown[0]?.session.id ?? null
+  const selected =
+    openSession && shown.some((s) => s.session.id === openSession)
+      ? openSession
+      : (shown[0]?.session.id ?? null)
 
   if (shown.length === 0) {
     return (
