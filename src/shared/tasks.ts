@@ -565,9 +565,12 @@ export interface Consult {
   kind: ConsultKind
   /** The task this is about, where there is one. */
   subjectId: string | null
+  subjectSeq?: number | null
+  subjectTitle?: string | null
   status: ConsultStatus
   question: string
   workerId: string | null
+  workerLabel?: string | null
   sessionId: string | null
   answer: unknown
   /** What was applied, in one line. Populated for answers and fallbacks alike. */

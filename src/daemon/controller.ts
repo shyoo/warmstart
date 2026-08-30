@@ -17,6 +17,7 @@ import {
   spawnSession
 } from './sessions.js'
 import { applyConsult, fallbackFor, questionStillStands } from './judgment.js'
+import { getTask } from './tasks.js'
 
 /**
  * The controller.
@@ -90,13 +91,18 @@ interface ConsultRow {
 }
 
 function toConsult(r: ConsultRow): Consult {
+  const task = r.subject_id ? getTask(r.subject_id) : null
+  const worker = r.worker_id ? listWorkers().find((w) => w.id === r.worker_id) : null
   return {
     id: r.id,
     kind: r.kind as ConsultKind,
     subjectId: r.subject_id,
+    subjectSeq: task?.seq ?? null,
+    subjectTitle: task?.title ?? null,
     status: r.status as ConsultStatus,
     question: r.question,
     workerId: r.worker_id,
+    workerLabel: worker?.label ?? null,
     sessionId: r.session_id,
     answer: r.answer_json ? safeParse(r.answer_json) : null,
     outcome: r.outcome,
