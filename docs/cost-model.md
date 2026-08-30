@@ -365,6 +365,14 @@ the slot. `used_percent` is the server's snapshot **at request time**, so it lag
 `cached_input_tokens`, so per-turn metering off the rollout is available. `metering` stays `'stream'`
 until that path is written and measured.
 
+⛔ **R12 is closed, and the answer is no** (2026-08-30, codex-cli 0.151.0). Headless compaction is not
+reachable on `codex exec` and the obstacle is not compaction — it is that **there is no second input**.
+`exec` reads its prompt from stdin **to EOF**, runs that one turn and exits, so `/compact` has nowhere
+to go: no live session, no open pipe, nothing to send it on. `manualCompact` stays `false` for a
+reason stronger than the conservative default it was set to, and no cache-clock move applies to a
+codex session. ⚠️ This would change if the adapter moved to `codex app-server`, which holds a real
+JSON-RPC conversation; that is a rewrite, not a flag.
+
 ### What else was tried, and why it is not what we use
 
 Kept because the vendor surface moves, and each of these becomes right the moment one fact changes.

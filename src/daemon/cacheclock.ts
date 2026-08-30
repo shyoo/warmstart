@@ -438,6 +438,18 @@ export async function runCacheClock(ctx: ClockContext): Promise<ClockResult> {
 }
 
 async function execute(session: Session, decision: ClockDecision): Promise<void> {
+  // ⛔ Every move below is a *prompt*, and a `streamPrompts: 'once'` session has no input left to
+  // put one on once its turn has started - there is no warm prefix to refresh on a CLI that exits
+  // after one turn. `sendPrompt` says so by throwing; the clock's job is to notice and move on, not
+  // to take the tick down with it.
+  try {
+    await executeMove(session, decision)
+  } catch (err) {
+    log.warn(`clock move '${decision.move}' on ${session.id.slice(0, 8)} was refused:`, err)
+  }
+}
+
+async function executeMove(session: Session, decision: ClockDecision): Promise<void> {
   switch (decision.move) {
     case 'keepalive':
       // The cheapest possible turn: a read of the whole prefix, which refreshes the TTL, plus a

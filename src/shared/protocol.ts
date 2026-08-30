@@ -518,6 +518,24 @@ export interface AdapterCapabilities {
   selectableEffort: boolean
   quotaProbe: 'cli' | 'api' | 'none'
   /**
+   * Does this CLI's `stream` transport hold a conversation on stdin, or read one prompt and stop?
+   *
+   * ⛔ Added 2026-08-29 because the answer was assumed and the assumption cost a worker. `codex exec`
+   * takes its prompt from **stdin read to EOF** — it prints `Reading prompt from stdin...` and then
+   * blocks until the pipe closes. agentyard writes the prompt and keeps the pipe open, the way Claude
+   * Code and Antigravity both need, so every codex dispatch sat at 0% CPU forever: no output, no
+   * rollout file, nothing to meter, and a task that looked assigned and was simply never asked.
+   *
+   *  - `conversation` — stdin stays open and takes prompt after prompt. Claude Code, Antigravity.
+   *  - `once`         — one prompt, then EOF, then the process runs that turn and exits. Codex.
+   *
+   * ⚠️ `once` is a real limit on the scheduler, not a detail of encoding: a wrap-up nudge, a finish
+   * instruction and a conflict-resolution prompt all arrive *after* the first prompt, and on a `once`
+   * adapter there is no stdin left to put them on. `sendPrompt` refuses them loudly rather than
+   * writing into a closed pipe, which is how that becomes a reported gap instead of a second silence.
+   */
+  streamPrompts: 'conversation' | 'once'
+  /**
    * Will this CLI accept a session id agentyard chose?
    *
    * ⛔ Load-bearing twice over, and it took M5 to notice. When false, the transcript path cannot be

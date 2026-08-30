@@ -2162,3 +2162,60 @@ were weighed and found small*. `quotaRisk` was not small. Its basis line is what
 parses each string and evaluates it against the real weight on all four presets. ⚠️ Written as a
 hand-rolled parser rather than `Function(…)`: a test that reaches for implied eval to check a
 published constant has traded a real guarantee for a convenient one.
+
+## A prompt nobody sent, and the two walls behind it (2026-08-30)
+
+t52 was filed, routed to CodexFirst, dispatched, and then sat for fifty minutes reporting `running`.
+The process was alive the whole time. It had used **62 milliseconds of CPU**.
+
+`codex exec` takes its prompt from **stdin, read to EOF** — `exec --help`: *"If not provided as an
+argument (or if `-` is used), instructions are read from stdin."* `sendPrompt` wrote the prompt and
+left the pipe open, which is exactly right for Claude Code and Antigravity, both of which hold a
+conversation there. Codex blocked on a read that would never return. Reproduced against the real CLI:
+18 seconds, 34 bytes of output, all of it `Reading prompt from stdin...`. Closing the pipe instead,
+the same command completed a turn.
+
+⛔ **The envelope was the lesser half, and it is the more instructive one.** The codex adapter had
+`decodeStream` and no `encodeStreamPrompt`, so `sendPrompt` fell through to a default — and the
+default was *Claude Code's* `{"type":"user",…}` shape. Codex has no envelope; stdin **is** the
+prompt, so it would have read those characters as the first words of the task. The output half of the
+stream transport was documented as having no shared format and enforced by the fact that a missing
+decoder visibly produces nothing. The input half had the same problem, no rule, and **no symptom**,
+because a default that guesses a vendor fails silently by construction. There is now a drift guard:
+any adapter offering `stream` must be able to encode as well as decode.
+
+### The two walls behind it
+
+Fixing stdin alone would have moved the failure rather than removed it.
+
+⛔ **`mcp: true`, on an adapter whose own `plan()` warns it cannot register one.** Codex has MCP;
+`codex mcp add` writes into the shared config, so a session cannot carry the per-session identity
+`task_complete` needs. The prompt builder reads that field, so every codex prompt ended by naming a
+tool that was never registered — and the comment above that branch already described the trap
+exactly, having been written for Antigravity. `AGENTS.md` said *"a capability is a fact about a CLI"*;
+the fix is that it is a fact about **this adapter**, and the rule now says so.
+
+⛔ **`turn.completed` decoded as a usage record only.** It is the usage record *and* the terminal one,
+because `codex exec` runs a single turn and exits. A successful run therefore emitted no terminal
+event at all: nothing called `onStreamResult`, nothing completed the task, and the process exit fell
+to `onSessionExit`, whose only sentence is *"ended without reporting completion."* Every codex run
+would have done the work and then been recorded as having failed to finish.
+
+### What the capability had to say
+
+`streamPrompts: 'conversation' | 'once'`. Not an encoding detail — a limit the scheduler has to
+respect. A `once` session has no stdin left after its first prompt, so a wrap-up nudge, a finish
+instruction and a conflict-resolution ask all have nowhere to go; `sendPrompt` refuses them with a
+sentence saying why, and the eight follow-up call sites already degrade to a human hand-off. It also
+means such a session is **never warm**: `warmSessionFor` now declines it, because reuse would have
+reported a cache saving that does not exist while delivering the prompt into a closed pipe.
+
+⭐ **The watchdog was right and had already said so.** Thirteen minutes in, the stall watchdog sampled
+t52's process tree, found no CPU gained in 70 seconds, called it *"stuck rather than slow"* and posted
+the tree to the thread. The diagnosis was sitting on the task before anybody looked at it. What it
+could not say was *why* — which is the argument for reporting evidence rather than a verdict.
+
+⚠️ **The orphans were not killed by this session.** Three processes were still holding CodexFirst's
+slot at diagnosis time; by the time they were to be stopped they were already gone, because the
+operator quit the app and the daemon shut down cleanly and took its children with it. Recorded
+because "I killed them" and "they died" are different facts and only one of them was true.

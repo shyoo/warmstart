@@ -8,18 +8,18 @@ started in CI, never run against a real agent CLI.
 if you add a line, find the one it obsoletes and cut it in the same edit. Finished work moves to
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
-**Baseline (2026-08-30, measured):** typecheck · lint · build clean · `npm test` 760/762 (2 POSIX-only
+**Baseline (2026-08-30, measured):** typecheck · lint · build clean · `npm test` 766/768 (2 POSIX-only
 skipped) · `test:daemon` 125/125 · `test:ui` 142/142 · `test:pack` 18/18 · L4 (opt-in) landed a real
 agent commit on origin/main. Electron 44.0.0, electron-builder 26.15.3, 0 npm vulnerabilities.
 CLIs here: claude 2.1.251 · agy 1.1.22 · codex 0.151.0.
 
-⭐ **`scripts/build-win.ps1` runs all of the above**; `-Help` lists its options, `-Restart` is the inner
-loop. Content-addressed: **92s cold, ~0s warm**. ⛔ **One packaged app — `release\win-unpacked\`** — and
-running the repo's copy while building blocks the pack step, correctly.
+⭐ **`scripts/build-win.ps1` runs all of the above** (`-Help` for options, `-Restart` for the inner loop);
+content-addressed, **92s cold, ~0s warm**. ⛔ **One packaged app — `release\win-unpacked\`**, so running
+the repo's copy while building blocks the pack step, correctly.
 
 ⚠️ **With no agent CLI the daemon suite skips 5 checks**, each with a stated reason — the CI state;
 simulate it with a PATH of System32, node and git and an empty `HOME`. ⛔ **CI itself has not run since
-2026-08-29T21:54Z**: 12 pushes, each blocked by GitHub billing — **nothing is verified off Windows.**
+2026-08-29T21:54Z**: 24 runs, each dead in 2–5s on GitHub billing — **nothing is verified off Windows.**
 
 ---
 
@@ -105,16 +105,15 @@ docs/                  cost-model.md, glossary.md, adapters.md, landing.md, sess
 - ⭐ **All three providers have a free quota probe** (**R3 closed**, `docs/cost-model.md` §5). A
   stale-but-known reading is labelled, not dropped, and Antigravity's **two pools gate separately**.
   ⭐ **Codex joined 2026-08-29**: `codex app-server`'s `account/rateLimits/read` (~700ms, live, what
-  `/status` shows), else its rollout. ⛔ **Free reports quota too** — one 30-day window, so an id comes from a window's *length*, never its slot.
+  `/status` shows), else its rollout. ⛔ **Free reports quota too** — one 30-day window.
 - ⚠️ **The compaction reserve still reports `unknown`** (**R2**, `docs/cost-model.md` §10). ⭐ But
   quota is a routing input again (2026-08-30): `windowRisk` slopes from 50% to the 92% gate, on the
-  window the gate read, saturating where it cuts. ⛔ It had been *nothing* — both triggers unreachable
-  — costing four consults answered from worker names. ⭐ Every score now prints its derivation.
+  window the gate read, saturating where it cuts, and every score prints its derivation.
 - ⚠️ **Two things have never been exercised end to end: the tray *icon*, and keepalive *execution*.** The tray switch and `daemon.shutdown` are covered; the keepalive arithmetic is unit-tested and its firing is not.
 - ⭐ **Every intervention on a live session has an off switch** — Settings > Global: `autoCompact` and
   `autoPreempt` **on**, `autoRunawayStop` **off**, plus configurable `probeIntervalMinutes` (default 5m).
 - ⭐ **A full workspace pool holds a task instead of failing it** (2026-08-29): `poolPressure` gates before routing, and contention throws `Contended`, which the tick returns to `ready`. ⛔ No dependency edge — a hold is re-decided every tick, so priority still wins. ⚠️ `poolSize` is untouched; a fleet wider than its pool is *named* on the row, not silently grown.
-- ⭐ **The stall watchdog can now tell stuck from slow** (2026-08-29): after 12m of silence it samples the run's whole process tree, and a flat CPU total says stuck. ⛔ It reports and never kills or changes status — a run blocked on the network looks the same. ⚠️ It has caught one real incident by hand and none in flight.
+- ⭐ **The stall watchdog tells stuck from slow, and has now fired in flight** (2026-08-30): 13m into t52's hung codex run it sampled the process tree, found 0.0s of CPU gained in 70s, and posted the tree to the thread — the whole diagnosis, before anybody looked. ⛔ It reports and never kills or changes status.
 - ⭐ **One finish policy, resolved task > project > fleet** (`docs/landing.md`): `await-human` ·
   `agent-lands` · `pull-request` · `custom`, replacing `landing.strategy` and `verification`. ⛔ **The
   tool never writes a commit** and never destroys work it will not land. Loose work — and, since
@@ -127,11 +126,14 @@ docs/                  cost-model.md, glossary.md, adapters.md, landing.md, sess
   CLI's own default**, via `resolveModelChoice`, shared by the scheduler and both forms. Multi-pool
   workers (e.g. Antigravity) configure default models per pool and the scheduler auto-balances
   based on available quota/budget. ⚠️ **`selectableEffort` is true for `claude-code` only**.
-- ⭐ **Antigravity runs, reports its quota, and resumes a conversation by id** (**R9** closed the
-  opposite way round from how it was asked, `docs/cost-model.md` §5; the stream shapes and
-  `--conversation` measured 2026-08-28). ⚠️ **No Antigravity task has ever completed** - with
-  `mcp: false` it cannot call `task_complete`, so `awaiting_human` is honest there - and R13 stands.
-  ⛔ It restores a conversation but reports `cache_read_tokens: 0` throughout: context, not cache.
+- ⛔ **Codex could never have completed a task, three bugs deep** (fixed 2026-08-30, `docs/adapters.md`).
+  `codex exec` reads its prompt from **stdin to EOF**; the daemon held the pipe open, so t52 sat
+  **50 minutes on 62ms of CPU** reporting `running`. Behind it: `mcp: true` on an adapter that cannot
+  register one, and `turn.completed` decoded without its terminal half. ⚠️ **No codex task has completed yet** — measured, unproven in flight.
+- ⭐ **Antigravity runs, reports its quota, and resumes a conversation by id** (**R9**,
+  `docs/cost-model.md` §5; measured 2026-08-28). ⚠️ **No Antigravity task has ever completed**: with
+  `mcp: false` and no terminal record to read, `awaiting_human` is honest there and R13 stands. ⛔ It
+  restores a conversation but reports `cache_read_tokens: 0`: context, not cache.
 - ⛔ **Nothing is proven off Windows.** CI runners carry no agent CLI, so `docs/adapters.md` was always Windows-only — and CI has not run at all since 2026-08-29 (see the top of this file).
 - ⛔ **Unsigned.** SmartScreen warns and Gatekeeper refuses — a certificate and an Apple Developer account, not a config line.
 
@@ -184,14 +186,12 @@ is what the CLI spent that never reached a transcript.
 | **R6** | Is `/compact` honoured as a user message on `stream`? | Send it into a live stream session and watch for a `compact_boundary` record | ⚠️ Not urgent — the clock gives up after two ignored attempts. A `no` makes handoff-and-close the only move on that transport |
 | **R7** | Does the live rate-limit `status` warn before it refuses? | Let one window fill while watching `rate_limit_samples` | Decides whether the live signal is an early warning or an obituary |
 | **R8** | Does a real model answer a consult in the shape the validators accept? | Designate a controller, file a `plan` task, run `controller.drain`, read the row: `answered` or `fallback`, and the `fallbackReason` | The one M4 path L1 cannot reach |
-| **R12** | Is headless compaction reachable on codex? | Try to drive compaction from `codex exec`; watch for a compaction record | If yes, `manualCompact` flips true and two cache-clock moves become available on that provider |
 
-R1, R6 change the cache clock. **R10/R11 closed 2026-08-29** (§5). ⚠️ **R5 dropped**: resuming is measured and shipped within an account; its transplant needs a second subscription.
+R1, R6 change the cache clock. **R10/R11 closed 2026-08-29**, **R12 closed 2026-08-30** (§5). ⚠️ **R5 dropped**: resuming is measured and shipped within an account; its transplant needs a second subscription.
 
 ## Standing decisions worth not relitigating
 
-⛔ The invariants live in `AGENTS.md`. These are the ones most often re-argued by somebody who has not
-read it:
+⛔ The invariants live in `AGENTS.md`; these are the ones most re-argued by somebody who has not read it:
 
 - **Daemon, not all-in-Electron.** The premise is unattended progress across quota windows.
 - **Deterministic scheduler; LLM on judgment events only.** A loop running every 10s for weeks must not bill anything, and the fleet survives with no controller at all.

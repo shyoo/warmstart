@@ -64,6 +64,14 @@ const AUTO_TRUST_SCRATCH = process.env.MULTI_AGENT_CONTROLLER_AUTO_TRUST !== '0'
 interface Channel {
   pid: number | undefined
   write(data: string): void
+  /**
+   * Close the input side and leave the process running.
+   *
+   * ⛔ Not `kill`. A CLI that reads its prompt from stdin to EOF - `codex exec` - only starts
+   * working once this is called, so for a `streamPrompts: 'once'` adapter this is the go signal and
+   * not a teardown. A PTY has no separate input side to close, which is why it is a no-op there.
+   */
+  end(): void
   resize(cols: number, rows: number): void
   kill(): void
 }
@@ -76,6 +84,8 @@ interface Live {
   purpose: SessionPurpose
   /** Only for the `stream` transport, where output is a machine protocol rather than a screen. */
   parser: StreamParser | null
+  /** Set once a `streamPrompts: 'once'` session has had its one prompt and its stdin closed. */
+  promptedOnce: boolean
 }
 
 const live = new Map<string, Live>()
@@ -700,7 +710,8 @@ export function spawnSession(opts: SpawnOptions): Session {
     // almost nothing, and a parser keyed on the wrong dialect returns an empty list for every line
     // rather than an error. An adapter that offers `stream` and no decoder gets nothing, loudly.
     parser:
-      transport === 'stream' && ad.decodeStream ? new StreamParser(ad.decodeStream) : null
+      transport === 'stream' && ad.decodeStream ? new StreamParser(ad.decodeStream) : null,
+    promptedOnce: false
   })
 
   log.info(
@@ -803,12 +814,28 @@ function setState(id: string, state: SessionState): void {
  * every dispatch into a fresh worktree with nobody there to answer it; and `--permission-prompt-tool`
  * only exists in non-interactive mode, which is the whole structured-approval channel. A `pty`
  * session is for a human at the keyboard, where both of those are fine.
+ *
+ * ⛔ There is no default wire shape and this used to pretend there was. An adapter with no
+ * `encodeStreamPrompt` fell through to Claude Code's `{"type":"user",...}` envelope, which for codex
+ * meant its prompt began with the literal characters `{"type":"user"` — and the envelope was the
+ * lesser half of the bug. See `AdapterCapabilities.streamPrompts`.
  */
 export function sendPrompt(id: string, text: string): void {
   const entry = live.get(id)
   if (!entry) throw new Error(`session '${id}' is not live`)
   if (entry.session.transport === 'stream') {
     const ad = adapter(entry.session.adapterId)
+    const once = ad.info.capabilities.streamPrompts === 'once'
+    // ⛔ Loud, not silent. A one-shot session's stdin is gone after the first prompt, so a wrap-up
+    // nudge or a finish instruction has nowhere to go — and writing into a closed pipe would throw
+    // somewhere unhelpful or, worse, succeed into a void. The caller logs this and the operator
+    // learns the account cannot be steered mid-turn, which is true and is the point.
+    if (once && entry.promptedOnce) {
+      throw new Error(
+        `session '${id}' takes one prompt only (${ad.info.label} reads stdin to EOF); ` +
+          'a second prompt needs a new session'
+      )
+    }
     const payload = ad.encodeStreamPrompt
       ? ad.encodeStreamPrompt(text)
       : JSON.stringify({
@@ -816,11 +843,17 @@ export function sendPrompt(id: string, text: string): void {
           message: { role: 'user', content: [{ type: 'text', text }] }
         })
     entry.channel.write(`${payload}\n`)
+    if (once) {
+      // ⛔ The EOF *is* the go signal. `codex exec` prints `Reading prompt from stdin...` and blocks
+      // until the pipe closes; without this the process sits at 0% CPU indefinitely, which is what
+      // t52 did for 50 minutes while reporting as `running`.
+      entry.promptedOnce = true
+      entry.channel.end()
+    }
   } else {
     entry.channel.write(`${text}\r`)
   }
 }
-
 export function writeSession(id: string, data: string): void {
   const entry = live.get(id)
   if (!entry) throw new Error(`session '${id}' is not live`)
@@ -1014,6 +1047,9 @@ function openPty(
   return {
     pid: proc.pid,
     write: (data) => proc.write(data),
+    // A pseudo-terminal has one channel, not two: there is no input half to close without closing
+    // the terminal. Nothing that needs EOF uses a PTY.
+    end: () => undefined,
     resize: (c, r) => proc.resize(c, r),
     kill: () => proc.kill()
   }
@@ -1052,6 +1088,9 @@ function openPipes(
     pid: child.pid,
     write: (data) => {
       child.stdin?.write(data)
+    },
+    end: () => {
+      child.stdin?.end()
     },
     // A pipe has no geometry. Silently doing nothing is the correct behaviour, not a failure.
     resize: () => undefined,

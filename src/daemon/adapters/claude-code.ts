@@ -38,6 +38,8 @@ const info: AdapterInfo = {
     // messages cache — see docs/cost-model.md §11 for why that is a different decision.
     selectableEffort: true,
     quotaProbe: 'cli',
+    // stdin stays open and takes prompt after prompt; that is what the stream transport is for.
+    streamPrompts: 'conversation',
     // `--session-id` takes a uuid we choose, which is what makes the transcript path knowable before
     // the file exists and what lets orphan reaping prove a pid is ours.
     mintsSessionId: true,

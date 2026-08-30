@@ -261,6 +261,12 @@ between them via `--resume`.
 > non-interactive mode** — so unattended work runs on `stream`, and `pty` is for a human at the
 > keyboard.
 
+> ⛔ **A stream transport is not automatically a conversation.** `codex exec` reads one prompt from
+> stdin **to EOF**, runs that turn and exits, so its pipe must be closed for work to begin and there
+> is no second prompt to send. Adapters say which they are (`streamPrompts`), because a scheduler that
+> assumes a conversation will hold the pipe open and wait forever — and a session that will not take a
+> follow-up cannot be steered, wrapped up, or asked to resolve a conflict.
+
 **`task_complete`** — the worker-tier MCP call that reports a task finished. ⛔ The *only* signal that
 a task succeeded. A clean exit code says nothing about whether the work was done, and reading the
 terminal to guess is what this design refuses to do; a session that ends without it lands in

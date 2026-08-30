@@ -183,6 +183,8 @@ const info: AdapterInfo = {
     // slash command - free, no turn - and the panel it draws is the only place the number exists.
     // See parseUsageScreen for why reading a screen is defensible here and nowhere else.
     quotaProbe: 'cli',
+    // stdin stays open and takes prompt after prompt; that is what the stream transport is for.
+    streamPrompts: 'conversation',
     mintsSessionId: false,
     // ⚠️ Not from a transcript: agy writes conversations as SQLite, which the line-oriented tailer
     // cannot read. But usage IS in the stream - measured 2026-08-25 - so the work is metered after

@@ -76,7 +76,15 @@ const info: AdapterInfo = {
     forkSession: true,
     nativeWorktree: false,
     multimodalInput: true,
-    mcp: true,
+    // ⛔ `false`, and it is a claim about **this adapter**, not about codex. Codex has MCP; what it
+    // has no way to do is take a *per-session* registration - `codex mcp add` writes into the shared
+    // config, so a session cannot be given the identity `task_complete` needs. `plan()` has warned
+    // about that since it was written. Declaring `true` anyway put the sentence *"call the MCP tool
+    // `task_complete`"* at the end of every codex prompt, for a tool that was never registered: the
+    // agent finishes, hunts for a tool that is not there, and the run can only end in
+    // `awaiting_human` however well the work went. The `false` branch tells it to commit and
+    // summarise instead, and `onStreamResult` completes the task off the terminal record.
+    mcp: false,
     // ⚠️ `model_reasoning_effort` is a documented config key and `-c key=value` is a real flag, but
     // the pair has not been run here, and this adapter's verification says `measured`. Declaring it
     // true on documentation alone is exactly the trade AGENTS.md forbids — it would present a
@@ -90,6 +98,16 @@ const info: AdapterInfo = {
     // ⚠️ Still no `usageRefresh`: making this reading current means spending a turn, so an idle
     // codex worker goes stale and the staleness ladder is the honest answer.
     quotaProbe: 'cli',
+    /**
+     * ⛔ `once`, measured 2026-08-29 against codex-cli 0.151.0. `codex exec` with no positional
+     * PROMPT reads stdin **to EOF** — `exec --help` says so and the process says so, printing
+     * `Reading prompt from stdin...` before it blocks. It is a one-shot: one prompt, one turn, exit.
+     * This adapter declared nothing, `sendPrompt` therefore wrapped the text in Claude Code's
+     * `{"type":"user",...}` envelope and left the pipe open, and every codex dispatch hung on a read
+     * that would never return — 50 minutes and 62ms of CPU on t52, with no rollout file to meter and
+     * no error anywhere to say so.
+     */
+    streamPrompts: 'once',
     // `codex exec resume <SESSION_ID>` takes an id, but the id is codex's to create - there is no
     // flag that supplies one for a *new* session.
     mintsSessionId: false,
@@ -117,12 +135,13 @@ const info: AdapterInfo = {
   login: { kind: 'cli', argv: ['login'] },
   verification: {
     level: 'measured',
-    asOf: '2026-08-25',
+    asOf: '2026-08-29',
     note:
-      'codex-cli 0.149.1 on Windows. Flag surface, CODEX_HOME, doctor JSON shape and the model list ' +
-      'in models_cache.json all read from the running CLI. ⚠️ Still unmeasured: the JSONL event ' +
-      'shapes under --json, whether rollout files carry meterable usage (HANDOFF R10), and anything ' +
-      'about quota.'
+      'codex-cli 0.151.0 on Windows. Flag surface, CODEX_HOME, doctor JSON shape and the model list ' +
+      'in models_cache.json read from the running CLI (0.149.1, 2026-08-25). Quota, the --json event ' +
+      'shapes and the stdin contract re-measured against 0.151.0 on 2026-08-29: exec reads its ' +
+      'prompt from stdin to EOF and blocks until the pipe closes, and turn.completed is both the ' +
+      'usage record and the terminal one.'
   }
 }
 
@@ -179,18 +198,23 @@ function decodeStream(record: Record<string, unknown>): StreamEvent | StreamEven
   if (type === 'turn.completed' || type === 'turn.failed') {
     const usage = asRecord(record.usage)
     const failed = type === 'turn.failed'
-    // ⛔ Usage first: `turn.completed` is both the terminal record and the only usage record, and a
-    // caller that saw only the result would never learn what the turn cost.
-    if (usage && !failed) return { kind: 'usage', usage: readUsage(usage), final: true }
-    return {
+    const result: StreamEvent = {
       kind: 'result',
       text: null,
       costUsd: null,
       isError: failed,
       terminalReason: type
     }
+    // ⛔ Usage **and** result, in that order, and the result half was missing. `turn.completed` is
+    // both the only usage record and the terminal one - `codex exec` runs a single turn and exits -
+    // so returning usage alone meant a successful codex run produced no terminal event at all.
+    // Nothing called `onStreamResult`, nothing completed the task, and the process exit landed in
+    // `onSessionExit`, which can only report "ended without reporting completion" and hand the task
+    // to a person. Every codex run would have finished its work and then been marked as failing to
+    // finish. Measured 2026-08-29 against codex-cli 0.151.0.
+    if (usage && !failed) return [{ kind: 'usage', usage: readUsage(usage), final: true }, result]
+    return result
   }
-
   return type ? { kind: 'other', type } : null
 }
 
@@ -548,6 +572,17 @@ export function rolloutQuota(isolationRoot: string): Omit<QuotaSnapshot, 'worker
 export const openaiCompatible: AgentAdapter = {
   info,
   decodeStream,
+
+  /**
+   * ⛔ Raw text, and deliberately not JSON. `codex exec` treats **everything on stdin** as the
+   * prompt — there is no envelope to speak, so a `{"type":"user",...}` wrapper is not a protocol
+   * mismatch that fails, it is a prompt whose first characters are `{"type":"user"`. The vendors
+   * agree on the output side no more than the input side; see `decodeStream`.
+   *
+   * ⚠️ The newline `sendPrompt` appends is harmless here and the EOF after it is what matters. See
+   * `capabilities.streamPrompts`.
+   */
+  encodeStreamPrompt: (text: string) => text,
 
   isInstalled(): boolean {
     return which(info.command) !== null

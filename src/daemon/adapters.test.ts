@@ -406,6 +406,102 @@ describe('the measured surprises, kept as regressions', () => {
  * type error cannot connect them. Renaming the project moved one and not the other, and the failure
  * mode is silent: the CLI asks a tool that does not exist and every approval hangs or denies.
  */
+describe('a stream transport has two halves, and only one of them was wired', () => {
+  /**
+   * ⛔ The rule this whole block exists for. `decodeStream` is documented as required for any
+   * adapter offering `stream`, and it was enforced by the fact that a missing decoder produces
+   * visibly nothing. The *input* half had no such rule and no such symptom: `sendPrompt` fell
+   * through to Claude Code's `{"type":"user",...}` envelope for any adapter that declared no
+   * encoder, so codex received a prompt beginning with the literal text `{"type":"user"` and
+   * nobody could tell, because it never got as far as reading it.
+   */
+  it('every adapter offering the stream transport can encode a prompt for it', () => {
+    for (const ad of ALL) {
+      if (!ad.info.capabilities.transports.includes('stream')) continue
+      expect(
+        ad.encodeStreamPrompt,
+        `${ad.info.id} offers the stream transport with no encodeStreamPrompt; ` +
+          "sendPrompt would silently send it another vendor's envelope"
+      ).toBeTypeOf('function')
+      expect(ad.decodeStream, `${ad.info.id} offers the stream transport with no decoder`).toBeTypeOf(
+        'function'
+      )
+    }
+  })
+
+  it('codex takes its prompt as raw text, because stdin *is* the prompt', () => {
+    // ⛔ Measured 2026-08-29, codex-cli 0.151.0. `codex exec --help`: "If not provided as an argument
+    // (or if `-` is used), instructions are read from stdin." There is no envelope to speak - JSON
+    // on stdin is not a protocol frame, it is a prompt that happens to look like JSON.
+    const encode = adapter('openai-compatible').encodeStreamPrompt
+    expect(encode).toBeTypeOf('function')
+    expect(encode?.('fix the thing')).toBe('fix the thing')
+    expect(encode?.('fix the thing')).not.toContain('"type"')
+  })
+
+  it('codex declares that its stdin takes one prompt and then must close', () => {
+    // ⛔ The half that actually hung t52. Measured 2026-08-29: `codex exec` prints
+    // `Reading prompt from stdin...` and blocks until EOF. Left open, the process sat for 50
+    // minutes on 62ms of CPU - running, by every signal the daemon had, and never asked anything.
+    expect(adapter('openai-compatible').info.capabilities.streamPrompts).toBe('once')
+  })
+
+  it('the CLIs that hold a conversation on stdin say so, and are not lumped in', () => {
+    // ⚠️ The point of the field is that it discriminates. If every adapter answered the same way it
+    // would be a constant, and the next one-shot CLI would hang exactly as codex did.
+    expect(adapter('claude-code').info.capabilities.streamPrompts).toBe('conversation')
+    expect(adapter('antigravity-cli').info.capabilities.streamPrompts).toBe('conversation')
+    const answers = new Set(ALL.map((a) => a.info.capabilities.streamPrompts))
+    expect(answers.size).toBeGreaterThan(1)
+  })
+
+  it('a successful codex turn produces a terminal record, not only a usage record', () => {
+    // ⛔ `turn.completed` is both the only usage record and the last record `codex exec` writes.
+    // Returning usage alone left a successful run with no terminal event: nothing completed the
+    // task, and the process exit was then read as "ended without reporting completion" - a run that
+    // did the work and was marked as having failed to finish. Measured 2026-08-29, codex-cli 0.151.0.
+    const decode = adapter('openai-compatible').decodeStream
+    expect(decode).toBeTypeOf('function')
+    const out = decode?.({
+      type: 'turn.completed',
+      usage: {
+        input_tokens: 13015,
+        cached_input_tokens: 11008,
+        cache_write_input_tokens: 0,
+        output_tokens: 5,
+        reasoning_output_tokens: 0
+      }
+    })
+    const events = Array.isArray(out) ? out : out ? [out] : []
+    // Usage first: a caller that stopped at the terminal record would never learn what it cost.
+    expect(events.map((e) => e.kind)).toEqual(['usage', 'result'])
+    const result = events[1]
+    expect(result?.kind === 'result' && result.isError).toBe(false)
+  })
+
+  it('codex is not told to call a tool it was never given', () => {
+    // ⛔ Codex has MCP; this adapter cannot pass a *per-session* registration, which is what
+    // `task_complete` needs - `plan()` has said so since it was written while `capabilities.mcp`
+    // said the opposite. The prompt builder reads this field, so `true` appended "call the MCP tool
+    // `task_complete`" to every codex prompt for a tool that did not exist.
+    expect(adapter('openai-compatible').info.capabilities.mcp).toBe(false)
+  })
+
+  it('a one-shot CLI is never offered as a warm session to continue', () => {
+    // ⛔ A consequence, not a field. `codex exec` exits after its turn, so there is no conversation
+    // left to reuse - and reuse would have reported a cache saving that does not exist while
+    // delivering the prompt into a pipe that closed when the first one went out.
+    const once = ALL.filter((a) => a.info.capabilities.streamPrompts === 'once')
+    expect(once.length).toBeGreaterThan(0)
+    for (const ad of once) {
+      expect(
+        ad.info.capabilities.resumeSession,
+        `${ad.info.id} cannot both be one-shot and resume a session on this adapter`
+      ).toBe(false)
+    }
+  })
+})
+
 describe('the MCP server is called the same thing at both ends', () => {
   it('the approve tool names the server the config registers', () => {
     expect(APPROVE_TOOL).toBe(`mcp__${MCP_SERVER_NAME}__approve`)

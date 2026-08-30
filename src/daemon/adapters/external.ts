@@ -75,6 +75,9 @@ function capabilitiesFrom(file: ExternalAdapterFile): AdapterInfo['capabilities'
     // declaration that got it wrong would fail at spawn on somebody's account rather than here.
     selectableEffort: false,
     quotaProbe: 'none',
+    // Irrelevant until a declarative adapter can decode a stream, and `conversation` is the
+    // shape a PTY has anyway.
+    streamPrompts: 'conversation',
     // ⛔ Also not negotiable. Minting a session id means agentyard can prove a process is its own and
     // may kill it. A declaration cannot grant itself that.
     mintsSessionId: false,

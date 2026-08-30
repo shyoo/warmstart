@@ -411,6 +411,11 @@ interface WorkerChoice {
 function warmSessionFor(task: Task): Session | null {
   const idle = (session: Session | null): Session | null => {
     if (!session || session.state === 'closed' || session.state === 'failed') return null
+    // ⛔ A `streamPrompts: 'once'` session is never warm, whatever its state says. Its CLI reads
+    // one prompt from stdin, runs that turn and exits - there is no conversation still sitting there
+    // to continue, and handing it a second prompt is a write into a pipe that closed when the first
+    // one went out. Reuse here would report a saving that does not exist and deliver nothing.
+    if (adapter(session.adapterId).info.capabilities.streamPrompts === 'once') return null
     // A session with an open run is busy; only an idle one can take work.
     return hasOpenRun(session.id) ? null : session
   }

@@ -227,12 +227,15 @@ These are not preferences; breaking one breaks the product.
   acceptance criteria only. **The prompt is written at promotion**, from what the preceding work
   actually learned. A prompt written at creation is a guess, and a stale prompt is worse than none
   because somebody follows it.
-- ⛔ **A capability is a fact about a CLI, and it needs provenance.** `AdapterInfo.verification` says
-  whether the block was *measured* against a running binary or only *documented*. M5 wrote two
-  adapters from vendor documentation and then installed both CLIs: `--ask-for-approval` does not exist
-  on `codex exec`, `-p` means `--profile` there and `--print` on `agy`, and `agy` has an
-  `accept-edits` mode the docs never mentioned. Every one would have failed on the first spawn.
-  ⛔ Never promote a claim to `measured` without having watched it be true.
+- ⛔ **A capability is a fact about *this adapter*, not the vendor's CLI, and it needs provenance.**
+  `AdapterInfo.verification` says whether the block was *measured* against a running binary or only
+  *documented*. M5 wrote two adapters from vendor docs and then installed both CLIs:
+  `--ask-for-approval` does not exist on `codex exec`, `-p` means `--profile` there and `--print` on
+  `agy`. ⚠️ The *adapter* half reads as pedantry and is not: codex declared `mcp: true` because codex
+  has MCP, while this adapter cannot pass a **per-session** registration — so every codex prompt ended
+  by naming `task_complete`, a tool never registered, and the run could only end in `awaiting_human`.
+  Ask what this code can do, never what the vendor can, and ⛔ never promote a claim to `measured`
+  without having watched it be true.
 - ⛔ **Conservative is the cheap direction on a capability.** Claiming one that turns out to be absent
   strands a session at a window boundary; omitting one that is present costs a missed optimisation.
   When a capability is uncertain, declare the pessimistic answer and record the question.
