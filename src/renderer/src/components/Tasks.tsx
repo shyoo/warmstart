@@ -578,7 +578,7 @@ function NewTask({
   const [workerId, setWorkerId] = useState('')
   const [model, setModel] = useState('')
   const [effort, setEffort] = useState('')
-  const [saving, setSaving] = useState(false)
+  const [saving, setSaving] = useState<'draft' | 'ready' | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   /**
@@ -641,8 +641,8 @@ function NewTask({
   const effectiveModel = forAdapter?.models.find((m) => m.id === (resolved.model ?? '')) ?? null
   const efforts = canSetEffort ? (effectiveModel?.effortLevels ?? []) : []
 
-  const submit = async () => {
-    setSaving(true)
+  const submit = async (targetStatus: 'draft' | 'ready' = 'ready') => {
+    setSaving(targetStatus)
     try {
       if (plan) {
         // ⛔ A plan task is decomposed, not dispatched. Its children arrive as drafts and their
@@ -656,6 +656,7 @@ function NewTask({
           priority,
           finishPolicy,
           sessionSharing,
+          status: targetStatus,
           // ⚠️ Absent, not empty. The daemon reads a *present* `constraints` as an instruction to
           // validate one, and an object of empty strings would be three constraints that name
           // nothing rather than three questions left to the scheduler.
@@ -675,7 +676,7 @@ function NewTask({
     } catch (err) {
       onError(err instanceof Error ? err.message : String(err))
     } finally {
-      setSaving(false)
+      setSaving(null)
     }
   }
 
@@ -864,7 +865,7 @@ function NewTask({
           onChange={(e) => setTitle(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && title.trim() && !saving) {
-              void submit()
+              void submit('ready')
             }
           }}
         />
@@ -875,13 +876,32 @@ function NewTask({
                 'nothing — you promote them one at a time, and each prompt is written then.'
               : 'Sent to the agent as written, after any handoff from an earlier run.'}
           </span>
-          <button
-            className="btn btn--primary"
-            disabled={saving || !title.trim()}
-            onClick={() => void submit()}
-          >
-            {saving ? 'Filing…' : plan ? 'File and decompose' : 'File task'}
-          </button>
+          {plan ? (
+            <button
+              className="btn btn--primary"
+              disabled={!!saving || !title.trim()}
+              onClick={() => void submit('ready')}
+            >
+              {saving ? 'Filing…' : 'File and decompose'}
+            </button>
+          ) : (
+            <div className="ask-actions">
+              <button
+                className="btn"
+                disabled={!!saving || !title.trim()}
+                onClick={() => void submit('draft')}
+              >
+                {saving === 'draft' ? 'Saving…' : 'Save draft'}
+              </button>
+              <button
+                className="btn btn--primary"
+                disabled={!!saving || !title.trim()}
+                onClick={() => void submit('ready')}
+              >
+                {saving === 'ready' ? 'Filing…' : 'File task'}
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>

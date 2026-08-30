@@ -657,7 +657,7 @@ export function updateTask(
       | 'estTokens'
       | 'constraints'
     >
-  >
+  > & { prompt?: string }
 ): Task {
   const current = requireTask(id)
   db()
@@ -669,7 +669,7 @@ export function updateTask(
         where id = ?`
     )
     .run(
-      patch.title?.trim() || current.title,
+      patch.title !== undefined ? (patch.title.trim() || current.title) : current.title,
       patch.priority ?? current.priority,
       patch.projectId !== undefined ? patch.projectId : current.projectId,
       patch.notBefore !== undefined ? patch.notBefore : current.notBefore,
@@ -684,6 +684,19 @@ export function updateTask(
       Date.now(),
       id
     )
+
+  if (patch.prompt !== undefined) {
+    const promptText = patch.prompt.trim() || patch.title?.trim() || current.title
+    const firstMsg = db()
+      .prepare('select id from task_messages where task_id = ? order by ts, id limit 1')
+      .get(id) as { id: number } | undefined
+    if (firstMsg) {
+      db().prepare('update task_messages set text = ? where id = ?').run(promptText, firstMsg.id)
+    } else if (promptText) {
+      addMessage(id, 'human', promptText)
+    }
+  }
+
   const task = admit(id)
   emit({ type: 'task.changed', task })
   return task

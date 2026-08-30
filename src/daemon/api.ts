@@ -397,6 +397,9 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
     'task.create': (p) => createTask({ ...p, ...(p.constraints ? { constraints: checkConstraints(p.constraints) } : {}) }),
     'task.update': (p) => {
       const { id, ...patch } = p
+      if (patch.constraints) {
+        patch.constraints = checkConstraints(patch.constraints)
+      }
       return updateTask(id, patch)
     },
     /**
@@ -438,6 +441,26 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
       })
       return updateTask(p.id, { constraints })
     },
+    'task.setWorker': (p) => {
+      const task = requireTask(p.id)
+      if (!p.workerId) {
+        // Reassigned to auto / scheduler choice: clear workerId, adapterId, model, effort
+        const { workerId, adapterId, model, effort, ...rest } = task.constraints
+        return updateTask(p.id, { constraints: rest })
+      }
+      const worker = requireWorker(p.workerId)
+      // If the adapter changed, clear model and effort because they belong to the previous adapter
+      const adapterChanged = task.constraints.adapterId && task.constraints.adapterId !== worker.adapterId
+      const constraints = checkConstraints({
+        ...task.constraints,
+        workerId: worker.id,
+        adapterId: worker.adapterId,
+        model: adapterChanged ? undefined : task.constraints.model,
+        effort: adapterChanged ? undefined : task.constraints.effort
+      })
+      return updateTask(p.id, { constraints })
+    },
+    'task.setPriority': (p) => updateTask(p.id, { priority: p.priority }),
     'task.land': async (p) => {
       const result = await relandTask(p.id)
       return { task: requireTask(p.id), landed: result.ok, ...(result.reason ? { reason: result.reason } : {}) }

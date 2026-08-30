@@ -957,7 +957,7 @@ export interface RpcMap {
     } | null
   }
   'task.create': { params: TaskCreateParams; result: Task }
-  'task.update': { params: { id: string } & Record<string, unknown>; result: Task }
+  'task.update': { params: TaskUpdateParams; result: Task }
   'task.message': {
     params: { id: string; text: string }
     /**
@@ -1046,6 +1046,20 @@ export interface RpcMap {
     params: { id: string; model: string | null; effort: string | null }
     result: Task
   }
+  /**
+   * Choose the worker this task's **next** run uses, or null to reassign to Auto / scheduler choice.
+   */
+  'task.setWorker': {
+    params: { id: string; workerId: string | null }
+    result: Task
+  }
+  /**
+   * Set a task's priority level.
+   */
+  'task.setPriority': {
+    params: { id: string; priority: 'P0' | 'P1' | 'P2' | 'P3' }
+    result: Task
+  }
   'task.setSessionSharing': { params: { id: string; sessionSharing: SessionSharingChoice }; result: Task }
   /** Land a branch whose task already finished. The loose-ends list and the task pane both use it. */
   'task.land': { params: { id: string }; result: { task: Task; landed: boolean; reason?: string } }
@@ -1129,6 +1143,23 @@ export interface TaskCreateParams {
   status?: 'draft' | 'ready'
   kind?: TaskKind
   estTokens?: number | null
+}
+
+export interface TaskUpdateParams {
+  id: string
+  title?: string
+  priority?: 'P0' | 'P1' | 'P2' | 'P3'
+  projectId?: string | null
+  notBefore?: number | null
+  deadline?: number | null
+  assigneeHint?: string | null
+  verification?: 'required' | 'not_required' | 'auto'
+  finishPolicy?: FinishPolicyChoice
+  sessionSharing?: SessionSharingChoice
+  preemptible?: boolean
+  estTokens?: number | null
+  constraints?: TaskConstraints
+  prompt?: string
 }
 
 export type RpcMethod = keyof RpcMap

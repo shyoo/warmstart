@@ -1523,6 +1523,12 @@ select:focus-visible,
   max-width: 60ch;
 }
 
+.ask-actions {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: center;
+}
+
 /* ---- terminal ---------------------------------------------------------- */
 
 .term {
@@ -1848,6 +1854,95 @@ select:focus-visible,
 
 .fact-value {
   overflow-wrap: anywhere;
+}
+
+/* ---- draft task controls ------------------------------------------------ */
+
+.draft-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
+  margin-bottom: var(--sp-3);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+}
+
+.draft-banner-title {
+  font-size: var(--text-dense);
+  color: var(--color-text);
+}
+
+.draft-banner-sub {
+  font-size: var(--text-meta);
+  color: var(--color-text-dim);
+  margin-top: 2px;
+}
+
+.draft-banner-actions {
+  display: flex;
+  gap: var(--sp-2);
+  flex-shrink: 0;
+}
+
+.draft-card {
+  padding: var(--sp-3);
+  margin-bottom: var(--sp-3);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+}
+
+.draft-card-head {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-dim);
+  margin-bottom: var(--sp-2);
+}
+
+.draft-card-fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+.draft-input {
+  font: inherit;
+  font-size: var(--text-dense);
+  padding: var(--sp-1) var(--sp-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+.draft-input:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+.draft-textarea {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  padding: var(--sp-1) var(--sp-2);
+}
+
+.draft-textarea:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+.draft-card-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: var(--sp-3);
+  padding-top: var(--sp-2);
+  border-top: 1px solid var(--color-border);
 }
 
 /* ---- the decision a person owes ---------------------------------------- */

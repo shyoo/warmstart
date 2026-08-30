@@ -17,7 +17,6 @@ import { conversationIdFor } from '../lib/conversation'
 import { showsLiveOutput } from '../lib/live'
 import { duration, tokens, when } from '../lib/format'
 import {
-  assigneeLabel,
   elapsed,
   IN_FLIGHT,
   statusLabel,
@@ -288,7 +287,8 @@ function TaskDetail({
    * false and the effort is dropped at dispatch, so showing one here would describe a flag that is
    * never sent — and that the CLI would refuse if it were.
    */
-  const assigned = fleet.find((e) => e.worker.id === task.assignee)?.worker ?? null
+  const assigned =
+    fleet.find((e) => e.worker.id === (task.constraints.workerId || task.assignee))?.worker ?? null
   const canSetEffort =
     modelOptions.find((o) => o.adapterId === assigned?.adapterId)?.selectableEffort ?? false
   const resolved = resolveModelChoice(task.constraints, assigned, canSetEffort)
@@ -321,6 +321,21 @@ function TaskDetail({
 
       <div className="detail-grid">
         <div className="detail-main">
+          {task.status === 'draft' && (
+            <DraftControls
+              task={task}
+              initialPrompt={messages[0]?.text ?? task.title}
+              onPromote={async () => {
+                await rpc('task.promote', { id: task.id })
+                await refresh()
+              }}
+              onUpdate={async (title, prompt) => {
+                await rpc('task.update', { id: task.id, title, prompt })
+                await refresh()
+              }}
+            />
+          )}
+
           <Thread messages={messages} activity={activity} live={live} />
 
           {/* ⛔ Here, with the composer, and not in the ledger on the right. All three answers to
@@ -330,7 +345,7 @@ function TaskDetail({
           {task.status === 'awaiting_human' && (
             <Decide task={task} blocking={blocking} onResolve={resolve} onStop={cancel} />
           )}
-          <Compose task={task} refresh={refresh} />
+          {task.status !== 'draft' && <Compose task={task} refresh={refresh} />}
         </div>
 
         <aside className="detail-side">
@@ -345,7 +360,9 @@ function TaskDetail({
               {task.holdReason}
             </Fact>
           )}
-          <Fact label="worker">{assigneeLabel(task, fleet)}</Fact>
+          <Fact label="worker">
+            <WorkerPicker task={task} fleet={fleet} onChanged={refresh} />
+          </Fact>
 
           {/* ⭐ The question this whole cost model exists to answer, and the one the UI could not.
               A worker id says which account paid; only the session says whether the run continued
@@ -463,7 +480,9 @@ function TaskDetail({
               onChanged={refresh}
             />
           </Fact>
-          <Fact label="priority">{task.priority}</Fact>
+          <Fact label="priority">
+            <PriorityPicker task={task} onChanged={refresh} />
+          </Fact>
           <Fact label="filed">{when(task.createdAt)}</Fact>
           {task.firstRunAt && <Fact label="started">{when(task.firstRunAt)}</Fact>}
           <Fact label="took">{elapsed(task, now)}</Fact>
@@ -1118,3 +1137,197 @@ function SharingPicker({
     </>
   )
 }
+
+function WorkerPicker({
+  task,
+  fleet,
+  onChanged
+}: {
+  task: Task
+  fleet: FleetEntry[]
+  onChanged?: () => Promise<void>
+}): React.JSX.Element {
+  const [busy, setBusy] = useState(false)
+  const pinnable = fleet.filter((e) => e.worker.enabled).map((e) => e.worker)
+  const currentWorkerId = task.constraints.workerId ?? ''
+
+  const choose = async (workerId: string): Promise<void> => {
+    setBusy(true)
+    try {
+      await rpc('task.setWorker', { id: task.id, workerId: workerId || null })
+      if (onChanged) await onChanged()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <>
+      <select
+        className="tbl-sub-select"
+        value={currentWorkerId}
+        disabled={busy}
+        aria-label="Worker"
+        onChange={(e) => void choose(e.target.value)}
+      >
+        <option value="">Auto — scheduler choice</option>
+        {pinnable.map((w) => (
+          <option key={w.id} value={w.id}>
+            {w.label}
+          </option>
+        ))}
+      </select>
+      {task.ranOn && !currentWorkerId && (
+        <div className="tbl-sub dim">
+          last run on {fleet.find((f) => f.worker.id === task.ranOn)?.worker.label ?? task.ranOn.slice(0, 8)}
+        </div>
+      )}
+    </>
+  )
+}
+
+function PriorityPicker({
+  task,
+  onChanged
+}: {
+  task: Task
+  onChanged?: () => Promise<void>
+}): React.JSX.Element {
+  const [busy, setBusy] = useState(false)
+
+  const choose = async (priority: 'P0' | 'P1' | 'P2' | 'P3'): Promise<void> => {
+    setBusy(true)
+    try {
+      await rpc('task.setPriority', { id: task.id, priority })
+      if (onChanged) await onChanged()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <select
+      className="tbl-sub-select"
+      value={task.priority}
+      disabled={busy}
+      aria-label="Priority"
+      onChange={(e) => void choose(e.target.value as 'P0' | 'P1' | 'P2' | 'P3')}
+    >
+      {(['P0', 'P1', 'P2', 'P3'] as const).map((p) => (
+        <option key={p} value={p}>
+          {p}
+        </option>
+      ))}
+    </select>
+  )
+}
+
+function DraftControls({
+  task,
+  initialPrompt,
+  onPromote,
+  onUpdate
+}: {
+  task: Task
+  initialPrompt: string
+  onPromote: () => Promise<void>
+  onUpdate: (title: string, prompt: string) => Promise<void>
+}): React.JSX.Element {
+  const [editing, setEditing] = useState(false)
+  const [title, setTitle] = useState(task.title)
+  const [prompt, setPrompt] = useState(initialPrompt)
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    setTitle(task.title)
+    setPrompt(initialPrompt)
+  }, [task.title, initialPrompt])
+
+  const save = async () => {
+    setBusy(true)
+    try {
+      await onUpdate(title, prompt)
+      setEditing(false)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const fileTask = async () => {
+    setBusy(true)
+    try {
+      if (editing && (title !== task.title || prompt !== initialPrompt)) {
+        await onUpdate(title, prompt)
+      }
+      await onPromote()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (editing) {
+    return (
+      <div className="draft-card">
+        <div className="draft-card-head">Edit Draft</div>
+        <div className="draft-card-fields">
+          <label className="form-label">Title</label>
+          <input
+            className="draft-input"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="Task title"
+          />
+          <label className="form-label" style={{ marginTop: 'var(--sp-2)' }}>
+            Prompt / Instructions
+          </label>
+          <textarea
+            className="ask-input draft-textarea"
+            rows={4}
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            placeholder="Describe the work as you would to a colleague"
+          />
+        </div>
+        <div className="draft-card-foot">
+          <button className="btn" disabled={busy} onClick={() => setEditing(false)}>
+            Cancel
+          </button>
+          <div className="ask-actions">
+            <button className="btn" disabled={busy || !title.trim()} onClick={() => void save()}>
+              {busy ? 'Saving…' : 'Save draft'}
+            </button>
+            <button
+              className="btn btn--primary"
+              disabled={busy || !title.trim()}
+              onClick={() => void fileTask()}
+            >
+              {busy ? 'Filing…' : 'File task'}
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="draft-banner">
+      <div className="draft-banner-body">
+        <div className="draft-banner-title">
+          <strong>Draft</strong> · This task has not been dispatched to the queue.
+        </div>
+        <div className="draft-banner-sub">
+          You can edit the prompt or change policies in the sidebar, and file the task when ready.
+        </div>
+      </div>
+      <div className="draft-banner-actions">
+        <button className="btn" onClick={() => setEditing(true)}>
+          Edit draft
+        </button>
+        <button className="btn btn--primary" disabled={busy} onClick={() => void fileTask()}>
+          {busy ? 'Filing…' : 'File task'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
