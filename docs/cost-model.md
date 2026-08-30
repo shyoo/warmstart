@@ -397,6 +397,63 @@ rate-limit status the vendor sent. ⚠️ Worth remembering when R2 does land �
 across the fleet contributes nothing, and one that varies as a side effect of unrelated state is a
 bias, not a measurement.
 
+### Quota is a slope, and for three days it was nothing at all (2026-08-30)
+
+Making `quotaRisk` move only on checked evidence was right, and it left the term with **no reachable
+trigger**. `at_risk` needs `remainingTokens` in tokens, which is R2; the live rate-limit status only
+turns after the vendor has already refused. So the term read `0` for every worker on every tick, at
+weight 0.908 — and quota stopped being a routing input entirely.
+
+⛔ **What that cost, measured.** Four consecutive routing consults (t39–t42) were spent choosing
+between `-0.120` and `-0.120`. The two accounts were not alike: one stood at 64% of its weekly, the
+other at 98% of a five-hour pool. Every answer reasoned from the worker *labels* — *"since Claude is
+the assistant running this controller"* — because the numbers gave the controller nothing else. A
+real turn, four times, to break a tie the scorer had manufactured.
+
+The fix is a slope under the existing evidence, not a replacement for it:
+
+```
+windowRisk(percent) = clamp01((percent − 50) / (92 − 50))
+quotaRisk           = max(vendor evidence, windowRisk(trusted window))
+```
+
+| | |
+|---|---|
+| Below **50%** | 0. ⛔ A term rising from the first token is a *load balancer*, not a risk model, and it would fight the warm-session preference this whole model exists to express |
+| 50% → 92% | linear |
+| At **92%** | exactly 1.0 — ⭐ the same percentage at which the hard gate excludes the candidate, so the slope hands over to the cliff **with no step in between**. A worker is never simultaneously nearly-excluded and cheap |
+| No trusted reading | 0. ⛔ Unknown is not bad news, and a stale percentage may not move a score |
+| Vendor says `at_risk` or not `allowed` | 1.0, overriding the slope |
+
+⚠️ **It reads the window the gate read**, hoisted out of the gate rather than looked up again — on a
+two-pool account (Antigravity) the answer depends on which pool the task's model draws from, and a
+fleet whose hard cut and soft preference disagree about that is worse than either alone.
+
+⭐ On the t39–t42 readings this separates the candidates by `(1.00 − 0.33) × 0.908 = 0.61`, six times
+`ROUTE_EPSILON`. **No consult would have been asked at all.**
+
+### Every score shows its own derivation (2026-08-30)
+
+⛔ **A number nobody can check is a number nobody can correct.** The dead `quotaRisk` term survived
+because a rendered `-0.120` looks exactly like a working measurement. Routing decisions now publish
+the arithmetic — in the consult prompt, which the Controller panel renders verbatim, and in the
+daemon log on *every* dispatch, not only the consulted ones:
+
+- a legend, printed once, stating that **higher wins**, that the scale is **linear and unitless**
+  (nothing logarithmic, normalised or capped), and that gaps at or below `ROUTE_EPSILON` mean nothing;
+- each weight beside the arithmetic that produced it — `1.249 = 0.8 + 2.0×cost − 0.7×velocity` — and
+  the objective vector it came from, with where to change it;
+- per candidate, every term's value, weight, contribution and **the basis for that value** in words.
+
+⚠️ **Zero rows are printed, not dropped.** A table showing only what contributed reads as *"the rest
+were weighed and found small"*; `quotaRisk` was not small, it was unmeasurable, and only its basis
+line could say so.
+
+⛔ **The published formulas cannot drift from the code.** `WEIGHT_FORMULAS` sits beside `weights()`,
+and `cost.test.ts` parses each string and evaluates it against the real weight across all four
+presets — so editing the arithmetic without editing the derivation fails the suite rather than
+somebody's reading of a routing decision.
+
 ### The compaction reserve
 
 The last row creates a **point of no return**. If a worker reaches true exhaustion holding a large

@@ -8,7 +8,7 @@ started in CI, never run against a real agent CLI.
 if you add a line, find the one it obsoletes and cut it in the same edit. Finished work moves to
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
-**Baseline (2026-08-30, measured):** typecheck · lint · build clean · `npm test` 736/738 (2 POSIX-only
+**Baseline (2026-08-30, measured):** typecheck · lint · build clean · `npm test` 759/761 (2 POSIX-only
 skipped) · `test:daemon` 125/125 · `test:ui` 142/142 · `test:pack` 18/18 · L4 (opt-in) landed a real
 agent commit on origin/main. Electron 44.0.0, electron-builder 26.15.3, 0 npm vulnerabilities.
 CLIs here: claude 2.1.251 · agy 1.1.22 · codex 0.151.0.
@@ -71,7 +71,7 @@ src/daemon/            orchestratord. Runs as Electron-with-ELECTRON_RUN_AS_NODE
   settings.ts          the fleet defaults: autoCompact, autoPreempt, autoOverrunPreempt,
                        autoRunawayStop, probeIntervalMinutes, finishPolicy, sessionSharing
   reserve.ts           the compaction reserve, and every belief with its basis attached
-  objective.ts         the weight vector, in exactly two consumers    (+ cost.test.ts)
+  objective.ts         the weight vector + every weight’s published formula (+ cost.test.ts)
   controller.ts        the consult queue, the caps, and choosing who answers (+ controller.test.ts,
                        controllerchoice.test.ts - who may be asked, and who may not)
   judgment.ts          the four events: question, closed answer set, fallback (+ judgment.test.ts)
@@ -106,9 +106,10 @@ docs/                  cost-model.md, glossary.md, adapters.md, landing.md, sess
   stale-but-known reading is labelled, not dropped, and Antigravity's **two pools gate separately**.
   ⭐ **Codex joined 2026-08-29**: `codex app-server`'s `account/rateLimits/read` (~700ms, live, what
   `/status` shows), else its rollout. ⛔ **Free reports quota too** — one 30-day window, so an id comes from a window's *length*, never its slot.
-- ⚠️ **The compaction reserve still reports `unknown`** — it needs `remaining` in *tokens*, so **R2**
-  is the blocker, not a stale percentage (`docs/cost-model.md` §10). ⛔ Until it lands it scores zero
-  as a routing input; only checked evidence may move a score.
+- ⚠️ **The compaction reserve still reports `unknown`** (**R2**, `docs/cost-model.md` §10). ⭐ But
+  quota is a routing input again (2026-08-30): `windowRisk` slopes from 50% to the 92% gate, on the
+  window the gate read, saturating where it cuts. ⛔ It had been *nothing* — both triggers unreachable
+  — costing four consults answered from worker names. ⭐ Every score now prints its derivation.
 - ⚠️ **Two things have never been exercised end to end: the tray *icon*, and keepalive *execution*.** The tray switch and `daemon.shutdown` are covered; the keepalive arithmetic is unit-tested and its firing is not.
 - ⭐ **Every intervention on a live session has an off switch** — Settings > Global: `autoCompact` and
   `autoPreempt` **on**, `autoRunawayStop` **off**, plus configurable `probeIntervalMinutes` (default 5m).
@@ -139,8 +140,7 @@ docs/                  cost-model.md, glossary.md, adapters.md, landing.md, sess
 M0–M6 are done. What is left is not a milestone but a list, in the order it would pay off:
 
 1. **Run the suites on macOS or Linux with an agent CLI installed** — the largest unmeasured surface.
-2. **R2 (`tokens_per_percent`)** — the last thing between a refreshable percentage and a compaction
-   reserve that reports a number. Now cheap to run, because the percentage refreshes on demand.
+2. **R2 (`tokens_per_percent`)** — now only the *reserve* needs it; routing reads percentages directly.
 3. **Signing and notarisation**, without which the installers warn or refuse.
 4. **Resident sessions — built; two things unproven.** `docs/sessions.md` is the spec. A live trial
    put **five tasks through one conversation**, two committing borrowers kept apart.

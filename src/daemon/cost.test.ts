@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { PRESETS, normalise, parseObjective, policy, weights } from './objective.js'
+import type { Objective } from '@shared/tasks.js'
+import { PRESETS, normalise, parseObjective, policy, WEIGHT_FORMULAS, weights } from './objective.js'
 
 /**
  * M3's pure logic. Each of these is a place where being wrong costs money quietly rather than
@@ -88,5 +89,65 @@ describe('cost policy', () => {
     expect(policy(PRESETS.velocity).keepaliveWhenQuotaUnknown).toBe(true)
     expect(policy(PRESETS.economy).keepaliveWhenQuotaUnknown).toBe(false)
     expect(policy(PRESETS.quality).keepaliveWhenQuotaUnknown).toBe(false)
+  })
+})
+
+describe('the published weight formulas', () => {
+  /**
+   * ⛔ **A derivation that can drift from its code is worse than none**, because it is believed. The
+   * strings in `WEIGHT_FORMULAS` are printed to an operator and to the controller as the reason a
+   * weight is what it is; this evaluates each one and checks it against `weights()`, so editing the
+   * arithmetic without editing the published formula fails here rather than in somebody's reading of
+   * a routing decision.
+   */
+  const evaluate = (formula: string, o: Objective): number => {
+    // ⛔ Parsed, never evaluated. `Function(…)` on a string is implied eval, and a test that reaches
+    // for it to check a published constant has traded a real guarantee for a convenient one.
+    // The grammar is deliberately tiny: signed terms of `number` or `number×name`.
+    const vars: Record<string, number> = {
+      cost: o.cost,
+      velocity: o.velocity,
+      quality: o.quality
+    }
+    let total = 0
+    for (const [, sign, body] of formula.matchAll(/([+−-]?)\s*([\d.]+(?:×[a-z]+)?)/g)) {
+      const factor = sign === '−' || sign === '-' ? -1 : 1
+      const [num, name] = (body as string).split('×')
+      const scalar = Number(num)
+      if (Number.isNaN(scalar)) throw new Error(`unparsed term: ${body} in ${formula}`)
+      if (name === undefined) {
+        total += factor * scalar
+      } else {
+        const v = vars[name]
+        if (v === undefined) throw new Error(`unknown variable ${name} in ${formula}`)
+        total += factor * scalar * v
+      }
+    }
+    return total
+  }
+
+  const vectors: Objective[] = [
+    { cost: 0.34, velocity: 0.33, quality: 0.33 },
+    { cost: 0.7, velocity: 0.15, quality: 0.15 },
+    { cost: 0.15, velocity: 0.7, quality: 0.15 },
+    { cost: 0.15, velocity: 0.15, quality: 0.7 }
+  ]
+
+  it('evaluate to exactly the weights the scheduler uses, on every preset', () => {
+    for (const v of vectors) {
+      const w = weights(v)
+      for (const [name, formula] of Object.entries(WEIGHT_FORMULAS)) {
+        expect(evaluate(formula, v), `${name} on ${JSON.stringify(v)}`).toBeCloseTo(
+          w[name as keyof typeof w],
+          10
+        )
+      }
+    }
+  })
+
+  it('cover every weight, so none is printed without a derivation', () => {
+    const declared = Object.keys(WEIGHT_FORMULAS).sort()
+    const actual = Object.keys(weights(vectors[0] as Objective)).sort()
+    expect(declared).toEqual(actual)
   })
 })

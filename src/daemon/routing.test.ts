@@ -499,3 +499,147 @@ describe('what a CLI said, on its way into a sentence', () => {
     expect(scheduler.deadOnArrival).toBeTypeOf('function')
   })
 })
+
+describe('the routing score shows its own arithmetic', () => {
+  /**
+   * ⛔ **Why this exists.** Measured on t39–t42 (2026-08-30): four consecutive routing consults were
+   * spent choosing between `-0.120` and `-0.120`, on two accounts holding completely different
+   * windows — one at 64% of its weekly, the other at 98% of a five-hour pool. Two equal numbers with
+   * no derivation is not a tie, it is a missing input, and every one of those answers reasoned from
+   * the *worker labels* because the numbers said nothing.
+   *
+   * ⚠️ A rendered `-1.249` is no better on its own. These check that the output answers the three
+   * questions a bare number provokes: where the weight came from, why the value is what it is, and
+   * which direction wins.
+   */
+  const term = (name: string, weight: number, value: number, sign: 1 | -1, basis = 'because') => ({
+    name,
+    weight,
+    weightFormula: `${weight} = published formula`,
+    value,
+    basis,
+    sign,
+    contribution: sign * weight * value
+  })
+
+  it('states that higher wins, and on what scale', () => {
+    // ⛔ Neither is inferable from a number. `-0.120` could be a rank, a cost, or a log-odds, and a
+    // reader with no legend guessed — which is exactly what the controller did four times.
+    const legend = scheduler.scoreLegend({ cost: 0.34, velocity: 0.33, quality: 0.33 }).join('\n')
+    expect(legend).toContain('HIGHER WINS')
+    expect(legend).toContain('linear and unitless')
+    expect(legend).toMatch(/nothing is logarithmic/i)
+  })
+
+  it('derives every weight from the objective vector, and says so', () => {
+    const legend = scheduler.scoreLegend({ cost: 0.34, velocity: 0.33, quality: 0.33 }).join('\n')
+    // The weight, and the arithmetic that produced it, on the same line.
+    expect(legend).toContain('1.249 = 0.8 + 2.0×cost − 0.7×velocity')
+    expect(legend).toContain('cost 0.34 · velocity 0.33 · quality 0.33')
+    // ⚠️ And where to change it, because a number nobody can move is not an explanation either.
+    expect(legend).toContain('Settings > Global')
+  })
+
+  it('says which direction each term pushes, and what a value of 1 would mean', () => {
+    const legend = scheduler.scoreLegend({ cost: 0.34, velocity: 0.33, quality: 0.33 }).join('\n')
+    expect(legend).toMatch(/cold\s+penalty/)
+    expect(legend).toMatch(/warm\s+bonus/)
+    expect(legend).toContain('1 = no session to reuse')
+    // The one term that is not derived from the objective has to say so rather than look like one.
+    expect(legend).toContain('fixed, not from the objective')
+  })
+
+  it('prints every term with its value, its weight, its contribution and its basis', () => {
+    const terms = [
+      term('cold', 1.249, 1, -1, 'no session to reuse, so a start pays a full cache write'),
+      term('capabilityFit', 1.129, 1, 1, 'the task requires no specific capability')
+    ]
+    const out = scheduler
+      .formatScore({ total: terms.reduce((s, t) => s + t.contribution, 0), terms })
+      .join('\n')
+    expect(out).toContain('why the value is that')
+    expect(out).toMatch(/cold\s+1\.00 × -1\.249 = {2}-1\.249\s+no session to reuse/)
+    expect(out).toMatch(/TOTAL[\s×=]+-0\.120/)
+  })
+
+  it('prints the zero terms too, with the reason they are zero', () => {
+    // ⛔ The whole finding. Dropping them reads as "considered and found small"; `quotaRisk` is not
+    // small, it is unmeasurable on this fleet, and only its basis can say that.
+    const terms = [
+      term('cold', 1.249, 1, -1),
+      term('quotaRisk', 0.908, 0, -1, 'reserve verdict unknown — remaining quota % is not an input')
+    ]
+    const out = scheduler
+      .formatScore({ total: terms.reduce((s, t) => s + t.contribution, 0), terms })
+      .join('\n')
+    expect(out).toContain('quotaRisk')
+    expect(out).toContain('remaining quota % is not an input')
+    expect(out).toMatch(/quotaRisk\s+0\.00/)
+  })
+
+  it('adds up: the printed contributions sum to the printed total', () => {
+    // ⚠️ The invariant that makes the table trustworthy — a derivation that does not reconcile with
+    // its own total is worse than no derivation.
+    const terms = [
+      term('warm', 1.55, 0.4, 1),
+      term('cold', 1.249, 0, -1),
+      term('capabilityFit', 1.129, 0.5, 1),
+      term('unproven', 0.35, 0.5, -1)
+    ]
+    const total = terms.reduce((s, t) => s + t.contribution, 0)
+    const out = scheduler.formatScore({ total, terms })
+    const printed = out
+      .filter((l) => / = /.test(l) && !l.includes('TOTAL') && !l.includes('contrib'))
+      .map((l) => Number((l.split('=')[1] ?? '').trim().split(/\s+/)[0]))
+    expect(printed.reduce((s, n) => s + n, 0)).toBeCloseTo(total, 2)
+    expect(out.at(-1)).toContain(total.toFixed(3))
+  })
+})
+
+describe('quota as a slope rather than a switch', () => {
+  /**
+   * ⛔ **The term that had stopped working.** Until 2026-08-30 `quotaRisk` was binary and both of its
+   * triggers were unreachable on this fleet: `at_risk` needs `remainingTokens` in tokens (R2, open)
+   * and the live rate-limit status only turns after the vendor has already refused. So it read 0 for
+   * every worker, always, at weight 0.908 — and two accounts, one at 64% of its weekly and one at
+   * 98% of a five-hour pool, scored an identical -0.120 through four consecutive routing consults.
+   */
+  it('scores nothing at all below the floor', () => {
+    // ⛔ Not a load balancer. A term rising from the first token would prefer the emptiest account
+    // always, which fights the one preference this cost model exists to express — that a warm
+    // session is the cheapest thing available.
+    expect(scheduler.windowRisk(0)).toBe(0)
+    expect(scheduler.windowRisk(25)).toBe(0)
+    expect(scheduler.windowRisk(50)).toBe(0)
+  })
+
+  it('rises linearly between the floor and the hard gate', () => {
+    // 50 → 92 is the span; 71 is its midpoint.
+    expect(scheduler.windowRisk(71)).toBeCloseTo(0.5, 2)
+    expect(scheduler.windowRisk(60)).toBeCloseTo(10 / 42, 2)
+    expect(scheduler.windowRisk(85)).toBeCloseTo(35 / 42, 2)
+  })
+
+  it('reaches exactly 1.0 where the candidate would be excluded outright', () => {
+    // ⭐ The property that matters: the slope hands over to the cliff with no step in between, so a
+    // worker is never simultaneously nearly-excluded and cheap.
+    expect(scheduler.windowRisk(92)).toBe(1)
+    expect(scheduler.windowRisk(99)).toBe(1)
+    expect(scheduler.windowRisk(100)).toBe(1)
+  })
+
+  it('treats a missing or nonsense reading as zero, never as a guess', () => {
+    // ⛔ AGENTS.md: only checked evidence may move a score. Unknown is not bad news.
+    expect(scheduler.windowRisk(Number.NaN)).toBe(0)
+    expect(scheduler.windowRisk(-5)).toBe(0)
+  })
+
+  it('separates the two accounts that four consults could not', () => {
+    // The real readings from 2026-08-30, and the whole point of the change: these must not tie.
+    const claudeSecond = scheduler.windowRisk(64)
+    const antigravity = scheduler.windowRisk(98)
+    expect(antigravity).toBeGreaterThan(claudeSecond)
+    // At weight 0.908 the gap is far wider than ROUTE_EPSILON (0.1), so no consult is spent at all.
+    expect((antigravity - claudeSecond) * 0.908).toBeGreaterThan(0.1)
+  })
+})

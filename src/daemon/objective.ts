@@ -63,6 +63,26 @@ export interface Weights {
   capabilityFit: number
 }
 
+/**
+ * Each weight's derivation, as the arithmetic it actually is.
+ *
+ * ⛔ **Published so a score can be checked rather than believed.** A rendered `1.249` tells an
+ * operator nothing — not where it came from, not whether it is large, not what would move it. These
+ * strings are printed beside the number they produce, and `objective.test.ts` evaluates every one of
+ * them against `weights()` so the published derivation cannot drift from the code that computes it.
+ *
+ * ⚠️ Written with `×` and `−` because they are read by people, and parsed back by that test.
+ */
+export const WEIGHT_FORMULAS: Record<keyof Weights, string> = {
+  warm: '1.0 + 2.2×cost − 0.6×velocity',
+  affinity: '0.8 + 1.0×cost + 0.4×quality',
+  contextRot: '0.6 + 1.6×quality',
+  projectSwitch: '0.3 + 0.6×cost',
+  quotaRisk: '0.5 + 1.2×cost',
+  cold: '0.8 + 2.0×cost − 0.7×velocity',
+  capabilityFit: '0.7 + 1.3×quality'
+}
+
 export function weights(objective: Objective): Weights {
   const { cost, velocity, quality } = objective
   return {

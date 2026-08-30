@@ -533,6 +533,16 @@ export interface RouteCandidate {
   score: number
   warm: boolean
   note: string
+  /**
+   * The score's derivation, printed under it.
+   *
+   * ⛔ **Two equal numbers and no way to tell them apart is not a tie, it is a missing input.**
+   * Measured on t39–t42 (2026-08-30): four consecutive consults offered `-0.120` against `-0.120`,
+   * and each answer reasoned from the *labels* — "Claude is the assistant running this controller",
+   * "the candidate named Antigravity" — because the numbers said nothing. Printing the formula lets
+   * the reader see which terms are live and which are dead before weighing them.
+   */
+  formula?: string[]
 }
 
 /**
@@ -543,7 +553,11 @@ export interface RouteCandidate {
  * and only when the deterministic scorer genuinely cannot separate two candidates. Everywhere else,
  * the arithmetic decides and nothing is spent.
  */
-export function routeQuestion(task: Task, candidates: RouteCandidate[]): string {
+export function routeQuestion(
+  task: Task,
+  candidates: RouteCandidate[],
+  legend: string[] = []
+): string {
   return [
     'You are the controller for Multi Agent Controller. Two accounts score within a hair of each other for a large',
     'task, so the arithmetic cannot separate them. Pick one.',
@@ -551,20 +565,33 @@ export function routeQuestion(task: Task, candidates: RouteCandidate[]): string 
     `# Task t${task.seq}`,
     task.title,
     `estimated ${estimateTask(task).tokens} tokens (${estimateTask(task).basis})`,
+    // ⛔ How a score is built, once, before any candidate's numbers. Without it the figures below are
+    // unfalsifiable: a reader cannot tell whether -0.120 is good, whether higher or lower wins, or
+    // what scale it is on. Measured on t39-t42 - four consults answered from the worker *labels*
+    // because two bare equal numbers gave the controller nothing else to reason from.
+    ...(legend.length ? ['', '# How a score is built', ...legend] : []),
     '',
     '# Candidates',
-    ...candidates.map(
-      (c) =>
-        `- ${c.worker.id} — ${c.worker.label}: score ${c.score.toFixed(3)}, ` +
-        `${c.warm ? 'already holds this task’s context' : 'cold start'}${c.note ? `, ${c.note}` : ''}`
-    ),
+    ...candidates.flatMap((c) => [
+      '',
+      `- ${c.worker.id} — ${c.worker.label}: score ${c.score.toFixed(3)}, ` +
+        `${c.warm ? 'already holds this task’s context' : 'cold start'}${c.note ? `, ${c.note}` : ''}`,
+      // ⚠️ Indented under its own candidate rather than gathered into one table: a reader comparing
+      // two candidates is comparing two of these blocks line for line.
+      ...(c.formula ?? [])
+    ]),
     '',
     '# How to answer',
     '```json',
     '{"workerId":"<one of the ids above, verbatim>","why":"..."}',
     '```',
     '',
-    'Any id not in that list is discarded and the highest-scoring candidate is used instead.'
+    'Any id not in that list is discarded and the highest-scoring candidate is used instead.',
+    '',
+    '⚠️ A term whose contribution is 0.000 is not a small effect — on this fleet it is usually one',
+    'that cannot be measured at all, and its basis says which. Reason from what the table actually',
+    'shows, and say plainly when nothing in it separates the candidates rather than inventing a',
+    'reason from their names.'
   ].join('\n')
 }
 

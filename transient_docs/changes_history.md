@@ -2102,3 +2102,63 @@ believing something about git that had never been measured.
 ⚠️ **Unproven where it counts.** The conflict ask has never fired against a live agent. What is
 measured is the git half; what is not is whether an agent handed a stopped rebase actually finishes
 it.
+
+## Four consults spent on a tie the scorer invented (2026-08-30)
+
+The operator opened t42's routing decision and asked two questions of it: where was CodexFirst, and
+how could ClaudeSecond and Antigravity both score `-0.120` when their windows were nothing alike.
+
+⭐ **The first was not a bug.** t42's consult was created at 23:05:06Z; CodexFirst was commissioned at
+00:41:45Z, ninety-six minutes later. It passes every gate now, and will place last until it earns a
+turn — `turns = 0` against ClaudeSecond's 508, so `UNPROVEN_PENALTY` costs it 0.175. That is the
+tie-break working, not a fault.
+
+⛔ **The second was.** The score is `-1.249×1 (cold) + 1.129×1 (capabilityFit)`, and every other term
+read zero — including `quotaRisk`, at weight 0.908. Both of its triggers were unreachable here:
+`at_risk` requires `remainingTokens` in *tokens*, which is R2 and still open, and the live rate-limit
+status only turns after the vendor has already refused. So remaining quota was not an input to
+routing at all. It was a **cliff with no slope**: excluded above 92%, and worth exactly nothing below.
+
+⚠️ **This was caused by a previous correct fix.** On 2026-08-27 `unknown` had been scored 0.5, which
+made the term measure *does this worker have a session* rather than risk; scoring it zero was right
+and left the term with nothing that could ever move it. Honest-zero is where a term rests, not where
+it lives. `AGENTS.md` now carries both halves, because the first on its own produced this.
+
+⛔ **What it cost, from the `consults` table.** Four consecutive routing questions — t39, t40, t41,
+t42 — each offering `-0.120` against `-0.120`, each answered from the worker *labels*:
+
+> *"Scores are tied, so treated as a coin-flip tiebreak; picking the ClaudeSecond candidate as the
+> default since Claude is the assistant running this controller."*
+
+A real billed turn, four times, to break a tie the arithmetic had manufactured. The judgment layer
+was working exactly as designed; it had been handed a question with no answer in it.
+
+⭐ **The slope.** `windowRisk = clamp01((percent − 50) / (92 − 50))`, taken as `max(vendor evidence,
+windowRisk)` so the vendor's own word still saturates the term. Three choices worth keeping:
+
+- **Zero below 50%.** A term rising from the first token is a load balancer, not a risk model, and it
+  would fight the warm-session preference the whole cost model exists to express.
+- **Exactly 1.0 at 92%**, which is where the hard gate already excludes the candidate. The slope hands
+  over to the cliff with no step, so a worker is never nearly-excluded and cheap at the same time.
+- **The window the gate read**, hoisted rather than looked up again. Antigravity meters two pools, so
+  the answer depends on which the task's model draws from, and a hard cut and a soft preference
+  disagreeing about that is worse than either alone.
+
+On the real readings this separates the two by `0.61` — six times `ROUTE_EPSILON`. None of those four
+consults would have been asked.
+
+⛔ **And the reason it went unnoticed: a rendered number explains nothing.** `-0.120` looks exactly
+like a working measurement. The first attempt at a fix printed `−1.249×1.00 (cold) +1.129×1.00
+(capabilityFit) = -0.120`, and the operator's answer was the right one — that still does not say where
+`-1.249` came from, whether higher or lower wins, or what scale it is on. So the derivation now
+carries all three: a legend stating **higher wins**, **linear and unitless**, and what ε means; every
+weight beside the arithmetic that produced it and the objective vector it came from; and per
+candidate every term's value, weight, contribution and the **basis in words** for that value.
+
+⚠️ **Zero rows are printed, not dropped.** A table showing only what contributed reads as *the rest
+were weighed and found small*. `quotaRisk` was not small. Its basis line is what says so.
+
+⛔ **The published formulas cannot drift.** `WEIGHT_FORMULAS` lives beside `weights()`, and a test
+parses each string and evaluates it against the real weight on all four presets. ⚠️ Written as a
+hand-rolled parser rather than `Function(…)`: a test that reaches for implied eval to check a
+published constant has traded a real guarantee for a convenient one.

@@ -1,6 +1,6 @@
 import type { Project, Run, RunQuota, Task, TaskStatus } from '@shared/tasks.js'
 import { resolveModelChoice } from '@shared/tasks.js'
-import type { Session, Worker } from '@shared/protocol.js'
+import type { QuotaWindow, Session, Worker } from '@shared/protocol.js'
 import { adapter } from './adapters/index.js'
 import { lastQuota, refreshUsage, sessionWindowFor } from './quota.js'
 import { getWorker, listWorkers, recordDispatchFailure } from './workers.js'
@@ -87,7 +87,14 @@ import { windowResetsAt, lastRateLimit } from './quota.js'
 import { reserveState } from './reserve.js'
 import { settings } from './settings.js'
 import { estimateTask, overrunFactor } from './estimator.js'
-import { DEFAULT_OBJECTIVE, policy, resolveObjective, weights } from './objective.js'
+import type { Objective } from '@shared/tasks.js'
+import {
+  DEFAULT_OBJECTIVE,
+  policy,
+  resolveObjective,
+  WEIGHT_FORMULAS,
+  weights
+} from './objective.js'
 import { runCacheClock } from './cacheclock.js'
 import { costModel } from './costmodel.js'
 
@@ -377,6 +384,14 @@ interface WorkerChoice {
   reason: string
   quotaUnverified: boolean
   score: number
+  /**
+   * How that score was arrived at, term by term.
+   *
+   * ⛔ Carried rather than recomputed, so the derivation shown to a person and to the controller is
+   * the *same arithmetic* that ordered the candidates — not a second implementation that can drift
+   * from it. Absent only on the no-candidate result, where there is nothing to explain.
+   */
+  breakdown?: ScoreBreakdown
   /** ⚠️ Not "no worker" - "not yet". A routing question is open and the answer is worth the wait. */
   deferred?: boolean
 }
@@ -529,6 +544,11 @@ function chooseTarget(task: Task): WorkerChoice {
     }
 
     const quota = lastQuota(worker.id)
+    // ⛔ Hoisted out of the gate below so the *score* reads the same window the *gate* read. Two
+    // lookups would be two chances to disagree, and a fleet where the hard cut and the soft
+    // preference disagree about which pool a task draws on is worse than either alone.
+    // ⚠️ Stays null on a stale or missing reading, which is what keeps the term at zero there.
+    let trustedWindow: QuotaWindow | null = null
     if (quota && !quota.stale) {
       // ⭐ **The pool this task's model would actually draw on.** Antigravity meters Gemini apart
       // from Claude/GPT, so an account can be spent for one and untouched for the other; holding a
@@ -539,6 +559,7 @@ function chooseTarget(task: Task): WorkerChoice {
       const choice = resolveModelChoice(task.constraints, worker, false, quota)
       const pool = poolFor(worker, choice.model)
       const session = sessionWindowFor(quota.windows, pool)
+      trustedWindow = session ?? null
       if (session && session.percent >= QUOTA_HIGH_WATER) {
         // Names the window, because "at 91% of its 5h window" on a two-pool account is a sentence
         // the operator cannot check against what the CLI's own panel shows them.
@@ -563,7 +584,11 @@ function chooseTarget(task: Task): WorkerChoice {
       session,
       reason: '',
       quotaUnverified,
-      score: scoreCandidate(task, worker, session, w)
+      ...(() => {
+        // One computation, used for both the ordering and the explanation.
+        const breakdown = scoreCandidate(task, worker, session, w, trustedWindow)
+        return { score: breakdown.total, breakdown }
+      })()
     })
   }
 
@@ -617,12 +642,13 @@ function chooseTarget(task: Task): WorkerChoice {
     worker: c.worker as Worker,
     score: c.score,
     warm: !!c.session,
-    note: c.quotaUnverified ? 'quota reading not trustworthy' : ''
+    note: c.quotaUnverified ? 'quota reading not trustworthy' : '',
+    ...(c.breakdown ? { formula: formatScore(c.breakdown) } : {})
   }))
   const queued = enqueueConsult({
     kind: 'route',
     subjectId: task.id,
-    question: routeQuestion(task, shortlist)
+    question: routeQuestion(task, shortlist, scoreLegend(objective))
   })
   if (!queued) return best
   return {
@@ -650,6 +676,44 @@ function askForPlan(task: Task): boolean {
   setStatus(task.id, 'assigned', { assignee: 'controller' })
   addMessage(task.id, 'system', 'Queued for decomposition. Its children arrive as drafts.')
   return true
+}
+
+/**
+ * Below this share of a window, being partly spent is not yet a reason to prefer anyone else.
+ *
+ * ⛔ **Not zero, deliberately.** A term that rises from the first token makes the scheduler prefer
+ * the emptiest account always, which is a *load balancer*, not a risk model — and it would fight the
+ * one preference this cost model exists to express, that a warm session is the cheapest thing
+ * available. Half a window is the point past which finishing a large task on that account stops
+ * being a safe assumption.
+ */
+export const QUOTA_RISK_FLOOR = 50
+
+/**
+ * How risky is this window, as a slope rather than a switch.
+ *
+ * ⭐ **The term t39–t42 needed and did not have.** Until 2026-08-30 `quotaRisk` was binary and both
+ * of its triggers were unreachable on this fleet: `at_risk` needs `remainingTokens` in tokens (R2,
+ * still open) and the live rate-limit status only turns after the vendor has already refused. So it
+ * read 0 for every worker, always, and two accounts — one at 64% of its weekly, one at 98% of a
+ * five-hour pool — scored identically through four consecutive routing consults.
+ *
+ * ⭐ **It saturates exactly where the hard gate begins.** `windowRisk(QUOTA_HIGH_WATER) === 1`, and
+ * at that same percentage the candidate is excluded outright, so the soft preference hands over to
+ * the cliff with no step in between. A worker is never nearly-excluded and cheap at the same time.
+ *
+ * ⛔ **Only ever called with a reading the caller already decided to trust.** A stale percentage
+ * scoring anything at all is the fault AGENTS.md names: only checked evidence may move a score, and
+ * a number nobody re-read is not evidence. Absence of a reading is 0, not a guess.
+ */
+export function windowRisk(
+  percent: number,
+  highWater = QUOTA_HIGH_WATER,
+  floor = QUOTA_RISK_FLOOR
+): number {
+  if (!Number.isFinite(percent) || percent <= floor) return 0
+  if (highWater <= floor) return 1
+  return Math.min(1, (percent - floor) / (highWater - floor))
 }
 
 /**
@@ -682,12 +746,146 @@ export function quotaRiskOf(workerId: string): 0 | 1 {
  * "add X, test X, document X" lands on one session because `warm` and `affinity` both peak there, and
  * three big independent tasks go to three workers whole because `cold` prices the alternative.
  */
+/**
+ * One term of the routing score, kept as its parts rather than as a total.
+ *
+ * ⛔ **Because a number with no derivation cannot be checked, and this one was wrong in a way nobody
+ * could see.** Measured on t39–t42 (2026-08-30): ClaudeSecond and Antigravity scored an identical
+ * `-0.120` on four consecutive routing consults while holding completely different windows — one at
+ * 64% of its weekly, the other at 98% of a five-hour pool. The controller was handed two equal
+ * numbers and no way to tell them apart, and spent a turn each time guessing from the worker labels.
+ *
+ * ⚠️ Every field exists to answer a question a bare number provokes: *where did this weight come
+ * from* (`weightFormula`), *why is the value what it is* (`basis`), and *which direction helps*
+ * (`sign`). A term that cannot answer all three is not explainable and should not be scored.
+ */
+export interface ScoreTerm {
+  name: string
+  /** The objective weight — identical for every candidate, since it derives from the vector alone. */
+  weight: number
+  /** That weight's own arithmetic, e.g. `0.8 + 2.0×cost − 0.7×velocity`. From `WEIGHT_FORMULAS`. */
+  weightFormula: string
+  /** What this candidate measured for the term, normally 0..1. */
+  value: number
+  /** Where that value came from, in words — the reading, the count, or the absence behind it. */
+  basis: string
+  /** `+1` for terms that help, `-1` for penalties — the sign as it appears in the sum. */
+  sign: 1 | -1
+  /** `sign * weight * value`. Summing this over every term gives `total`. */
+  contribution: number
+}
+
+export interface ScoreBreakdown {
+  total: number
+  terms: ScoreTerm[]
+}
+
+/** The direction each weight pushes. ⛔ Must match the signs used in `scoreCandidate`. */
+const SIGN_OF: Record<keyof ReturnType<typeof weights>, 1 | -1> = {
+  warm: 1,
+  affinity: 1,
+  contextRot: -1,
+  projectSwitch: -1,
+  quotaRisk: -1,
+  cold: -1,
+  capabilityFit: 1
+}
+
+/** `score = Σ sign × weight × value`, and nothing else. */
+function breakdownOf(
+  parts: Array<[string, number, string, number, 1 | -1, string]>
+): ScoreBreakdown {
+  const terms = parts.map(([name, weight, weightFormula, value, sign, basis]) => ({
+    name,
+    weight,
+    weightFormula,
+    value,
+    basis,
+    sign,
+    contribution: sign * weight * value
+  }))
+  return { total: terms.reduce((sum, t) => sum + t.contribution, 0), terms }
+}
+
+/**
+ * The shared header: what a score *is*, before any candidate's numbers are read.
+ *
+ * ⛔ **Printed once, above the candidates, because the weights do not vary between them.** Repeating
+ * eight identical weight derivations per candidate would bury the only thing that differs — the
+ * values — and that is the whole question being asked.
+ *
+ * ⚠️ It states the three things a bare number cannot: **higher wins**, the scale is **linear and
+ * unitless** (nothing here is logarithmic, normalised or capped), and gaps at or below ε are treated
+ * as no difference at all.
+ */
+export function scoreLegend(objective: Objective, epsilon = ROUTE_EPSILON): string[] {
+  const w = weights(objective)
+  const vector =
+    `cost ${objective.cost.toFixed(2)} · velocity ${objective.velocity.toFixed(2)} · ` +
+    `quality ${objective.quality.toFixed(2)}`
+  const names = Object.keys(WEIGHT_FORMULAS) as Array<keyof typeof WEIGHT_FORMULAS>
+  return [
+    'A score is the sum of (± weight × value). HIGHER WINS. The scale is linear and unitless —',
+    'nothing is logarithmic, normalised or capped — so a gap of 0.2 is exactly twice a gap of 0.1',
+    `and means only that one candidate is preferred by that much. A gap of ${epsilon} or less counts`,
+    'as no difference at all, which is why this question is being asked.',
+    '',
+    `Weights come from the objective vector — ${vector} — set in Settings > Global.`,
+    'They are IDENTICAL for every candidate below; only the values differ.',
+    '',
+    `  ${'term'.padEnd(14)} ${'dir'.padEnd(7)} ${'weight = f(objective)'.padEnd(38)} value means`,
+    ...names.map(
+      (name) =>
+        `  ${name.padEnd(14)} ${(SIGN_OF[name] === 1 ? 'bonus' : 'penalty').padEnd(7)} ` +
+        `${(w[name].toFixed(3) + ' = ' + WEIGHT_FORMULAS[name]).padEnd(38)} ${VALUE_MEANS[name]}`
+    ),
+    `  ${'unproven'.padEnd(14)} ${'penalty'.padEnd(7)} ` +
+      `${(UNPROVEN_PENALTY.toFixed(3) + ' = fixed, not from the objective').padEnd(38)} ` +
+      `${VALUE_MEANS.unproven}`
+  ]
+}
+
+/** What a value of 1 would mean for each term, so a reader knows which end is which. */
+const VALUE_MEANS: Record<string, string> = {
+  warm: '1 = a full hour of prompt cache left',
+  affinity: '1 = a session already holds this task',
+  contextRot: '1 = the context window is full',
+  projectSwitch: '1 = the session is on another project',
+  quotaRisk: `1 = at ${QUOTA_HIGH_WATER}% of its window (0 below ${QUOTA_RISK_FLOOR}%, linear between)`,
+  cold: '1 = no session to reuse',
+  capabilityFit: '1 = every capability the task needs is present',
+  unproven: '1.5 max = never probed and never worked'
+}
+
+/**
+ * One candidate's numbers, as lines under its name.
+ *
+ * ⚠️ **Zero terms are printed, not dropped.** A derivation showing only what contributed reads as
+ * though the rest had been weighed and found small; printing `0` beside its basis is what shows that
+ * `quotaRisk` is not small but *unmeasurable on this fleet*, which was the finding.
+ */
+export function formatScore(b: ScoreBreakdown): string[] {
+  return [
+    `  ${'term'.padEnd(14)} ${'value'.padStart(6)} × ${'weight'.padStart(6)} = ${'contrib'.padStart(7)}   why the value is that`,
+    ...b.terms.map(
+      (t) =>
+        `  ${t.name.padEnd(14)} ${t.value.toFixed(2).padStart(6)} × ` +
+        `${((t.sign < 0 ? '-' : '+') + t.weight.toFixed(3)).padStart(6)} = ` +
+        `${((t.contribution >= 0 ? '+' : '-') + Math.abs(t.contribution).toFixed(3)).padStart(7)}   ${t.basis}`
+    ),
+    `  ${'TOTAL'.padEnd(14)} ${' '.repeat(6)}   ${' '.repeat(6)} = ` +
+      `${((b.total >= 0 ? '+' : '-') + Math.abs(b.total).toFixed(3)).padStart(7)}`
+  ]
+}
+
 function scoreCandidate(
   task: Task,
   worker: Worker,
   session: Session | null,
-  w: ReturnType<typeof weights>
-): number {
+  w: ReturnType<typeof weights>,
+  /** The window the gate just read, or null when there was nothing trustworthy to read. */
+  trustedWindow: QuotaWindow | null
+): ScoreBreakdown {
   const now = Date.now()
 
   const warmth = session?.cacheExpiresAt
@@ -700,29 +898,106 @@ function scoreCandidate(
   // Context rot is documented rather than folklore, and it does not start at zero context - it bites
   // as the window fills. Roughly nothing below half, rising after.
   let rot = 0
+  let rotBasis = 'no session, so no context to have rotted'
   if (session?.contextTokens) {
     const model = costModel(adapter(session.adapterId).info.policy.costModelId)
     const window = model.modelSpec(session.model ?? '')?.context_window ?? 200_000
     const used = session.contextTokens / window
     rot = Math.max(0, (used - 0.5) * 2)
+    rotBasis =
+      `${Math.round(session.contextTokens / 1000)}k of ${Math.round(window / 1000)}k context used ` +
+      `(${Math.round(used * 100)}%), and rot starts above 50%`
   }
 
-  const quotaRisk = quotaRiskOf(worker.id)
+  // ⛔ **Two sources, and the worse one wins.** `quotaRiskOf` is the vendor's own word — an
+  // `at_risk` reserve or a live status that is no longer `allowed` — and it saturates the term
+  // outright. `windowRisk` is the slope underneath it, which is what makes a percentage matter at
+  // all. Before 2026-08-30 only the first existed and neither of its triggers was reachable here, so
+  // the term read 0 for the whole fleet and quota stopped being a routing input entirely.
+  const evidence = quotaRiskOf(worker.id)
+  const fromWindow = trustedWindow ? windowRisk(trustedWindow.percent) : 0
+  const quotaRisk = Math.max(evidence, fromWindow)
+  const reserve = reserveState(worker.id)
+  const rate = lastRateLimit(worker.id)
+  // The basis names *which* source spoke, because 0.62 from a percentage and 1.0 from a refusal are
+  // different facts that a single number cannot distinguish.
+  const quotaBasis = trustedWindow
+    ? `${Math.round(trustedWindow.percent)}% of its ${trustedWindow.label ?? trustedWindow.id} ` +
+      `window; risk climbs from ${QUOTA_RISK_FLOOR}% and hits 1.0 at ${QUOTA_HIGH_WATER}%, where the ` +
+      `hard gate takes over` +
+      (evidence > fromWindow ? `. Overridden to 1.0: vendor status ${rate?.status ?? reserve.verdict}` : '')
+    : `no quota reading this fleet trusts (reserve verdict ${reserve.verdict})` +
+      `${rate ? `, vendor status ${rate.status}` : ''} — unknown scores 0, never a guess`
 
   const needs = task.constraints.needs ?? []
   const caps = adapter(worker.adapterId).info.capabilities as unknown as Record<string, unknown>
-  const fit = needs.length === 0 ? 1 : needs.filter((n) => caps[n] === true).length / needs.length
+  const met = needs.filter((n) => caps[n] === true)
+  const fit = needs.length === 0 ? 1 : met.length / needs.length
 
-  return (
-    w.warm * warmth +
-    w.affinity * affinity -
-    w.contextRot * rot -
-    w.projectSwitch * projectSwitch -
-    w.quotaRisk * quotaRisk -
-    w.cold * cold +
-    w.capabilityFit * fit -
-    UNPROVEN_PENALTY * unproven(worker, hasEverWorked(worker.id))
-  )
+  const everWorked = hasEverWorked(worker.id)
+  const doubt = unproven(worker, everWorked)
+
+  // ⛔ The order and the signs here ARE the formula. Anything added must be added here, or the
+  // published derivation stops matching the number it claims to explain.
+  return breakdownOf([
+    [
+      'warm',
+      w.warm,
+      WEIGHT_FORMULAS.warm,
+      warmth,
+      1,
+      session?.cacheExpiresAt
+        ? `${Math.round(Math.max(0, session.cacheExpiresAt - now) / 60000)}m left of a 60m cache TTL`
+        : 'no session, so no live prompt cache'
+    ],
+    [
+      'affinity',
+      w.affinity,
+      WEIGHT_FORMULAS.affinity,
+      affinity,
+      1,
+      session ? 'a session already holds this task' : 'no session to reuse'
+    ],
+    ['contextRot', w.contextRot, WEIGHT_FORMULAS.contextRot, rot, -1, rotBasis],
+    [
+      'projectSwitch',
+      w.projectSwitch,
+      WEIGHT_FORMULAS.projectSwitch,
+      projectSwitch,
+      -1,
+      projectSwitch ? 'the reusable session is on another project' : 'no project switch involved'
+    ],
+    ['quotaRisk', w.quotaRisk, WEIGHT_FORMULAS.quotaRisk, quotaRisk, -1, quotaBasis],
+    [
+      'cold',
+      w.cold,
+      WEIGHT_FORMULAS.cold,
+      cold,
+      -1,
+      cold ? 'no session to reuse, so a start pays a full cache write' : 'reusing a live session'
+    ],
+    [
+      'capabilityFit',
+      w.capabilityFit,
+      WEIGHT_FORMULAS.capabilityFit,
+      fit,
+      1,
+      needs.length === 0
+        ? 'the task requires no specific capability, so every adapter fits'
+        : `${met.length} of ${needs.length} required capabilities present`
+    ],
+    [
+      'unproven',
+      UNPROVEN_PENALTY,
+      'fixed, not from the objective',
+      doubt,
+      -1,
+      everWorked
+        ? 'a metered turn has come out of this account'
+        : 'no turn has ever come out of this account' +
+          (worker.identity ? '' : ', and it has never been probed')
+    ]
+  ])
 }
 
 /**
@@ -1045,6 +1320,12 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
       (revive ? `, resuming conversation ${(revive.vendorSessionId ?? revive.id).slice(0, 8)}` : '') +
       (quotaUnverified ? ' — on an unverified quota reading' : '')
   )
+  // ⛔ The derivation, on **every** dispatch and not only the consulted ones. A routing decision
+  // nobody questioned is exactly the one whose arithmetic goes unchecked for months, which is how a
+  // term that had silently stopped discriminating survived four consults before anybody noticed.
+  if (choice.breakdown) {
+    log.info([`t${task.seq} score:`, ...formatScore(choice.breakdown)].join('\n'))
+  }
 }
 
 /**

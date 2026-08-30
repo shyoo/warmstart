@@ -120,14 +120,22 @@ These are not preferences; breaking one breaks the product.
   including the ones that did nothing. A scheduler that spends money and cannot say why is one you
   will either over-trust or switch off.
 - ⛔ **`unknown` is a verdict, not a synonym for `ok` — and not a synonym for "half as bad" either.**
-  The reserve has three states for a reason, and scoring `unknown` as 0.5 looked cautious and was
-  not: `reserveState` returns `ok` for a worker holding **no** live sessions and `unknown` for one
-  holding any, so the routing term stopped measuring risk and started measuring *does this worker
-  have a session*. At weight ~0.9 that penalised being busy by 0.45 — several times every term that
-  actually discriminates — and an idle worker beat a busy one always. Measured 2026-08-27: a
-  never-signed-in account won a dispatch over two working ones on exactly this. ⚠️ A term identical
-  across the fleet contributes nothing and belongs at zero; one that differs *only* by session count
-  is worse than nothing. Only checked evidence may move a score.
+  Scoring it 0.5 looked cautious and was not: `reserveState` returns `ok` for a worker holding **no**
+  live sessions and `unknown` for one holding any, so the routing term stopped measuring risk and
+  started measuring *does this worker have a session*. At weight ~0.9 that penalised being busy by
+  0.45 and an idle worker beat a busy one always. Measured 2026-08-27: a never-signed-in account won
+  a dispatch over two working ones on exactly this. Only checked evidence may move a score.
+- ⛔ **But a term stuck at zero for the whole fleet is a missing input, not a safe default.** Fixing
+  the above left `quotaRisk` with no reachable trigger at all — `at_risk` needs R2, and the live
+  status only turns after the vendor has refused — so quota vanished from routing and nobody noticed
+  for three days. Measured 2026-08-30: four consecutive consults spent choosing between `-0.120` and
+  `-0.120`, on accounts at 64% and 98% of their windows. ⚠️ Honest-zero is where a term *rests*, never
+  where it *lives*; if nothing can move it, it needs a source, and a percentage is one.
+- ⛔ **A score must publish its own arithmetic.** The dead term survived because a rendered `-0.120`
+  looks exactly like a working measurement. Every routing decision now prints the weight beside the
+  formula that produced it, each value beside its basis, and the zero rows **with** the rest — and
+  `cost.test.ts` evaluates every published formula against `weights()`, so a derivation cannot drift
+  from the code it claims to explain. A number nobody can check is a number nobody can correct.
 - ⛔ **`awaiting_human` must say what it wants and offer somewhere to answer.** It is the one status
   explicitly about the operator and it was the only resting state with nothing to press — a task whose
   work was done but had not landed sat there beside a run marked `completed`, and the only exits were
