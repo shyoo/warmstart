@@ -142,35 +142,64 @@ server.registerTool(
 if (TIER === 'worker') {
 /**
  * The worker tier's way to ask a person something, rather than guessing and being wrong expensively.
+ *
+ * ⛔ **This replaced `request_human`, which could not carry an answer.** That tool routed through
+ * the approval path, whose answer set is closed at allow/deny — so an agent that asked *"OAuth,
+ * session cookies, or magic link?"* got back `The operator agreed.` The question travelled all the
+ * way to a person and the reply had nowhere to sit. See daemon/questions.ts.
+ *
+ * ⚠️ This call blocks, and it can block for minutes: the daemon holds it until somebody answers or
+ * until the session's prompt cache expires. That is deliberate — an answer that arrives while the
+ * session is still warm costs a cache read, and the same answer after a restart costs a full rebuild.
  */
 server.registerTool(
-  'request_human',
+  'ask_human',
   {
-    title: 'Ask the operator a question',
+    title: 'Ask the operator a question and wait for the answer',
     description:
-      'Put a question to the operator and wait. Use this instead of guessing when the answer changes ' +
-      'what you build.',
-    inputSchema: { question: z.string() }
+      'Put a question to the operator and wait for a real answer. Use this instead of guessing ' +
+      'whenever the answer changes what you build. Offer options when there is a fixed set of ' +
+      'sensible ones — the operator answers those in one click — and leave them out for an open ' +
+      'question. If nobody answers in time you are told so plainly; stop rather than guessing.',
+    inputSchema: {
+      question: z.string().describe('The question, in full. The operator sees exactly this text.'),
+      header: z.string().optional().describe('A few words naming the decision, e.g. "Auth approach"'),
+      options: z
+        .array(
+          z.object({
+            label: z.string().describe('The choice, as the operator will see it on a button'),
+            detail: z.string().optional().describe('What choosing this means, and what it costs')
+          })
+        )
+        .optional()
+        .describe('Leave empty for an open question'),
+      multi_select: z.boolean().optional().describe('May the operator choose more than one?')
+    }
   },
   async (args) => {
     const sessionId = process.env.MULTI_AGENT_CONTROLLER_SESSION_ID ?? ''
+    const options = args.options ?? []
+    // ⛔ The kind is derived from what was actually supplied, not asked for separately. A caller that
+    // says `choice` and sends no options has described a question nobody can answer.
+    const kind = options.length === 0 ? 'text' : args.multi_select ? 'multi' : 'choice'
     try {
-      const answer = await rpc('approval.request', {
+      const resolution = await rpc('question.ask', {
         sessionId,
-        origin: 'tool_gate',
-        tool: 'request_human',
-        target: '',
-        summary: args.question,
-        raw: ''
+        origin: 'ask_human',
+        kind,
+        question: args.question,
+        ...(args.header ? { header: args.header } : {}),
+        ...(options.length > 0
+          ? {
+              options: options.map((option, index) => ({
+                id: `opt${index + 1}`,
+                label: option.label,
+                ...(option.detail ? { detail: option.detail } : {})
+              }))
+            }
+          : {})
       })
-      return {
-        content: [
-          {
-            type: 'text' as const,
-            text: answer.decision === 'allow' ? 'The operator agreed.' : 'The operator declined.'
-          }
-        ]
-      }
+      return { content: [{ type: 'text' as const, text: resolution.reply }] }
     } catch (err) {
       return {
         content: [

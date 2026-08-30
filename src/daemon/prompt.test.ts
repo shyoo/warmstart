@@ -48,7 +48,7 @@ describe('promptFor prompt construction', () => {
     expect(prompt).toContain('Fix issue with login')
     expect(prompt).toContain('Please inspect auth.ts and fix the login redirect.')
     expect(prompt).toContain('call the MCP tool `task_complete` with a one-line summary')
-    expect(prompt).toContain('call `request_human` rather than guessing')
+    expect(prompt).toContain('call `ask_human` rather than guessing')
   })
 
   it('builds prompt for a non-MCP adapter with commit instruction', () => {

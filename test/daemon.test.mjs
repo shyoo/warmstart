@@ -1001,7 +1001,7 @@ async function runApprovalChecks(d) {
     const tools = await client.tools()
     check(
       'the worker tier exposes exactly the tools it should',
-      ['approve', 'request_human', 'task_complete', 'task_create', 'handoff'].every((n) =>
+      ['approve', 'ask_human', 'task_complete', 'task_create', 'handoff'].every((n) =>
         tools.includes(n)
       ),
       tools.join(', ')
@@ -1064,6 +1064,65 @@ async function runApprovalChecks(d) {
       arguments: { summary: 'done' }
     })
     check('a worker tool on a task-less session degrades quietly', !orphan.result?.isError)
+
+    // ---------------------------------------------------------------- questions, over the same MCP
+    //
+    // ⛔ The thing an approval could never do. `request_human` routed through the approval path and
+    // could answer only allow/deny, so an agent asking "OAuth, cookies, or magic link?" was told
+    // "The operator agreed." Here the answer is content, and it comes back as the label a person
+    // actually clicked.
+    const asking = mcp('tools/call', {
+      name: 'ask_human',
+      arguments: {
+        question: 'Which authentication approach should this use?',
+        header: 'Auth approach',
+        options: [
+          { label: 'OAuth (external provider)', detail: 'No password storage.' },
+          { label: 'Server-side session cookies' },
+          { label: 'Magic-link email' }
+        ]
+      }
+    })
+    await wait(2500)
+    const openQuestions = await d.rpc('question.list')
+    const pendingQ = openQuestions.find((q) => q.question.includes('authentication approach'))
+    check('a question from the agent reaches the queue', Boolean(pendingQ), `${openQuestions.length} open`)
+    check(
+      'and it carries the answer set the agent wrote, not a yes/no',
+      pendingQ?.options?.length === 3 && pendingQ.kind === 'choice',
+      JSON.stringify(pendingQ?.options ?? [])
+    )
+    check(
+      "the asker's own prose about each option survives",
+      pendingQ?.options?.[0]?.detail === 'No password storage.'
+    )
+
+    await d.rpc('question.answer', {
+      id: pendingQ.id,
+      optionIds: [pendingQ.options[1].id],
+      text: 'and keep the session table small'
+    })
+    const answered = (await asking).result?.content?.[0]?.text ?? ''
+    check(
+      'the human answer reaches the blocked agent as content',
+      answered.includes('Server-side session cookies') && answered.includes('session table small'),
+      answered
+    )
+    check('and the question leaves the queue', (await d.rpc('question.list')).length === 0)
+
+    // An open question is answerable long after the asker has gone; a park is not a dead end.
+    const parking = mcp('tools/call', {
+      name: 'ask_human',
+      arguments: { question: 'What should the retry budget be?' }
+    })
+    await wait(2000)
+    const openText = (await d.rpc('question.list')).find((q) => q.question.includes('retry budget'))
+    check('an open question needs no options at all', openText?.kind === 'text', openText?.kind)
+    await d.rpc('question.answer', { id: openText.id, text: 'three attempts' })
+    check(
+      'a free-text answer reaches the agent verbatim',
+      ((await parking).result?.content?.[0]?.text ?? '').includes('three attempts')
+    )
   } finally {
     client.close()
   }

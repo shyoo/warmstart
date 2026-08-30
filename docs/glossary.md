@@ -138,9 +138,27 @@ account is spending on a task.
 
 **Approval** — *an interrupt on a session*, not a task: a permission or tool gate that blocks one
 live session, with a closed answer set supplied by the adapter and a deadline equal to that session's
-cache expiry. Answered by project policy where possible, by one keystroke on the **Approvals bar**
+cache expiry. Answered by project policy where possible, by one keystroke on the **Attention bar**
 otherwise. ⛔ Never captured by parsing the terminal — a mis-read approval card is an unattended
 *yes*. Becomes an `awaiting_human` task only after it goes unanswered past `escalate_after`.
+
+**Question** — *the third object.* An interrupt on one live session, like an **Approval** — but with
+an answer set written by **whoever asked**, and an answer that is *content returned into the tool
+result*, not a verdict. ⛔ That is why it is not an approval: you cannot remember "OAuth" as a project
+rule, and a default of *no* answers nothing. Asked with `ask_human`, or intercepted from a CLI's own
+question tool. Answered on the **Attention bar** where the options are few and short, in the task
+thread otherwise — and always with a text box, because an option plus a caveat is a better answer
+than either alone.
+
+**Parked** — *a question that outlived its session.* Nobody answered before the session's cache
+expired, so holding the process stopped paying for itself: the task rests at `awaiting_human` and the
+question **stays open**. ⛔ Not an answer and not a refusal — timing out has never been either.
+Answering a parked question writes it into the thread, where the next run's prompt carries it.
+
+**`blocked`** — *a run that stopped to ask, not one that broke.* A `RunOutcome` beside `completed`
+and `failed`. ⛔ It did the work up to the question and metered its turns, so it does not count
+towards triage and does not bench the worker; ⚠️ it is not `completed` either, and the estimator
+medians only completed runs.
 
 **Resting state** — where a cancelled task comes to rest: `paused_user` (*not now*), `draft` (*not
 like this* — re-enters admission), or `cancelled` (*not at all*, terminal but on the record).

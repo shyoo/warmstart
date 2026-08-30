@@ -27,6 +27,7 @@ let db: typeof import('./db.js')
 let workers: typeof import('./workers.js')
 let tasks: typeof import('./tasks.js')
 let scheduler: typeof import('./scheduler.js')
+let questions: typeof import('./questions.js')
 
 const ORG_DISABLED =
   'Your organization has disabled Claude subscription access for Claude Code. ' +
@@ -136,6 +137,7 @@ beforeAll(async () => {
   workers = await import('./workers.js')
   tasks = await import('./tasks.js')
   scheduler = await import('./scheduler.js')
+  questions = await import('./questions.js')
   db.openDb(join(dir, 'runfail.db'))
 })
 
@@ -288,6 +290,114 @@ describe('a run that did work and then failed', () => {
     })
     expect(workers.requireWorker(worker.id).health).toBeNull()
     expect(tasks.getTask(task.id)?.status).toBe('awaiting_human')
+  })
+})
+
+/**
+ * A session that ended because the agent was waiting for a person.
+ *
+ * ⛔ Measured 2026-08-30 on claude-code 2.1.251 (R14.c). This is not a new *outcome* — the task still
+ * rests at `awaiting_human`, which was always the honest answer — it is a new *reason*. The operator
+ * used to be handed "nothing here can tell whether the work was finished" for a case where the agent
+ * had said, in a record on the wire, exactly what it wanted.
+ */
+describe('a session that stopped to ask', () => {
+  const ASKED = "let me know which approach you'd like (OAuth, session cookies, or magic-link email)"
+
+  it('quotes what the agent was waiting for instead of reporting an unknown', async () => {
+    const { task, session } = seedRunningTask({ metered: 500 })
+    scheduler.noteTurnStatus(session.id, {
+      category: 'blocked',
+      detail: ASKED,
+      needsAction: ASKED
+    })
+    await scheduler.onSessionExit(session, 0)
+
+    const settled = tasks.getTask(task.id)
+    expect(settled?.status).toBe('awaiting_human')
+    expect(settled?.holdReason).toContain('which approach')
+    expect(settled?.holdReason).not.toContain('Nothing here can tell')
+  })
+
+  it('⛔ does not file it as a failed run', async () => {
+    // The decision, 2026-08-30: a run that stopped for an answer is in progress, not broken. Filing
+    // it as `failed` was inferred from nothing but the absence of a completion signal.
+    const { run, task, session } = seedRunningTask({ metered: 500 })
+    scheduler.noteTurnStatus(session.id, { category: 'blocked', detail: ASKED, needsAction: ASKED })
+    await scheduler.onSessionExit(session, 0)
+
+    expect(tasks.requireRun(run.id).outcome).toBe('blocked')
+    expect(tasks.getTask(task.id)?.status).toBe('awaiting_human')
+  })
+
+  it('does not count towards the failures that summon triage', async () => {
+    // ⚠️ `maybeTriage` asks why a task keeps *failing*. A task that keeps asking good questions is
+    // the system working, and three of those in a row must not look like a pattern of failure.
+    const { task, session } = seedRunningTask({ metered: 500 })
+    scheduler.noteTurnStatus(session.id, { category: 'blocked', detail: ASKED, needsAction: ASKED })
+    await scheduler.onSessionExit(session, 0)
+
+    const failed = tasks.runsFor(task.id).filter((r) => r.outcome === 'failed')
+    expect(failed).toHaveLength(0)
+  })
+
+  it('still files a genuine failure as failed', async () => {
+    const { run, session } = seedRunningTask({ metered: 500 })
+    await scheduler.onStreamResult(session, {
+      isError: true,
+      text: 'the tool exploded',
+      terminalReason: 'error_during_execution'
+    })
+    expect(tasks.requireRun(run.id).outcome).toBe('failed')
+  })
+
+  it('is blocked because a question was open, even with no vendor record to say so', async () => {
+    // ⛔ Stronger evidence than `post_turn_summary`: we watched the question be asked. An adapter
+    // that emits no such record at all still gets the right outcome here.
+    const { run, task, session } = seedRunningTask({ metered: 500 })
+    void questions.askQuestion({
+      sessionId: session.id,
+      origin: 'ask_human',
+      kind: 'text',
+      question: 'Which database should this use?'
+    })
+    await scheduler.onSessionExit(session, 0)
+
+    expect(tasks.requireRun(run.id).outcome).toBe('blocked')
+    expect(tasks.getTask(task.id)?.status).toBe('awaiting_human')
+    expect(tasks.getTask(task.id)?.holdReason).toContain('Which database')
+    // Still open, so answering it later is what starts the work again.
+    expect(questions.openQuestions()[0]?.answeredAt).toBeNull()
+  })
+
+  it('reports the unknown honestly when the agent said nothing', async () => {
+    const { task, session } = seedRunningTask({ metered: 500 })
+    await scheduler.onSessionExit(session, 0)
+    expect(tasks.getTask(task.id)?.holdReason).toContain('Nothing here can tell')
+  })
+
+  it('⚠️ forgets a block that a later turn cleared', async () => {
+    // A turn that blocked and a later turn that did not must not leave a stale sentence behind to be
+    // reported as the reason this session ended.
+    const { task, session } = seedRunningTask({ metered: 500 })
+    scheduler.noteTurnStatus(session.id, { category: 'blocked', detail: ASKED, needsAction: ASKED })
+    scheduler.noteTurnStatus(session.id, { category: 'in_progress', detail: null, needsAction: null })
+    await scheduler.onSessionExit(session, 0)
+    expect(tasks.getTask(task.id)?.holdReason).toContain('Nothing here can tell')
+  })
+
+  it('does not carry one session’s block into the next', async () => {
+    const first = seedRunningTask({ metered: 500 })
+    scheduler.noteTurnStatus(first.session.id, {
+      category: 'blocked',
+      detail: ASKED,
+      needsAction: ASKED
+    })
+    await scheduler.onSessionExit(first.session, 0)
+
+    const second = seedRunningTask({ metered: 500 })
+    await scheduler.onSessionExit(second.session, 0)
+    expect(tasks.getTask(second.task.id)?.holdReason).toContain('Nothing here can tell')
   })
 })
 

@@ -221,6 +221,21 @@ function decodeStream(record: Record<string, unknown>): StreamEvent | StreamEven
     return text ? { kind: 'assistant_text', text } : { kind: 'other', type }
   }
 
+  // ⛔ The record that says the agent stopped *for a person* rather than because it was finished.
+  // Measured 2026-08-30 on 2.1.251 (R14.c): an `AskUserQuestion` that went unanswered produced
+  // `status_category: "blocked"` with `needs_action` naming what was wanted — beside a `result` that
+  // was indistinguishable from success. Decoded as `other` until then, so the reason existed on the
+  // wire and never reached the operator.
+  if (type === 'system' && record.subtype === 'post_turn_summary') {
+    const str = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v : null)
+    return {
+      kind: 'turn_status',
+      category: typeof record.status_category === 'string' ? record.status_category : 'unknown',
+      detail: str(record.status_detail),
+      needsAction: str(record.needs_action)
+    }
+  }
+
   if (type === 'system' && record.subtype === 'init') {
     return {
       kind: 'init',

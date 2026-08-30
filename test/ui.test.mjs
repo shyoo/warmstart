@@ -203,7 +203,7 @@ try {
     'this is what a stranger sees on first launch'
   )
   check(
-    'the approvals bar is absent when there is nothing to answer',
+    'the attention bar is absent when there is nothing to answer',
     (await evaluate('!!document.querySelector(".approvals")')) === false
   )
 
@@ -629,6 +629,56 @@ try {
     'the session it belongs to does not exist'
   )
 
+  // ⛔ A question is not an approval, and the bar has to carry both without flattening either. This
+  // is the case `request_human` could not express at all: three options with prose, answered with a
+  // choice, where the old path could only offer allow/deny.
+  await evaluate(`
+    void window.agentyard.rpc('question.ask', {
+      sessionId: 'ui-test', origin: 'ask_human', kind: 'choice',
+      question: 'Which authentication approach should this use?', header: 'Auth approach',
+      options: [
+        { id: 'oauth', label: 'OAuth', detail: 'No password storage.' },
+        { id: 'cookies', label: 'Session cookies' },
+        { id: 'magic', label: 'Magic link' }
+      ]
+    }).catch(() => {}); 'sent'
+  `)
+  await wait(2500)
+  const bothWaiting = await evaluate('document.querySelector(".approvals")?.innerText ?? ""')
+  check(
+    'a question and an approval queue in the same strip',
+    bothWaiting.includes('rm -rf build') && bothWaiting.includes('more'),
+    bothWaiting
+  )
+
+  // Clear the approval so the question becomes the one on show. Oldest first, across both kinds.
+  await evaluate(`
+    (async () => {
+      const open = await window.agentyard.rpc('approval.list')
+      for (const a of open) await window.agentyard.rpc('approval.answer', { id: a.id, decision: 'deny' })
+    })(); 'answered'
+  `)
+  await wait(2000)
+  const asking = await evaluate(`
+    JSON.stringify({
+      text: document.querySelector('.approvals')?.innerText ?? '',
+      question: !!document.querySelector('.approvals--question'),
+      buttons: [...document.querySelectorAll('.attention-answers button')].map(b => b.innerText.trim())
+    })
+  `)
+  const ask = JSON.parse(asking)
+  check('the question takes the strip once the approval is answered', ask.text.includes('Auth approach'), ask.text)
+  check(
+    'and it is not dressed as a warning',
+    ask.question === true,
+    'amber says something may be about to go wrong; an agent asking which design you want is not that'
+  )
+  check(
+    'its own options are the buttons, not allow/deny',
+    ask.buttons.join('|') === 'OAuth|Session cookies|Magic link',
+    ask.buttons.join(', ')
+  )
+
   section('layout')
   const heights = await evaluate(`
     JSON.stringify({
@@ -638,11 +688,25 @@ try {
   `)
   const { approvals, content } = JSON.parse(heights)
   check(
-    'the approvals strip stays a strip',
+    'the attention strip stays a strip',
     approvals > 0 && approvals < 90,
     `${Math.round(approvals)}px — a fixed grid-template-rows used to hand it the flexible row`
   )
   check('the content pane takes the remaining height', content > approvals * 3, `${Math.round(content)}px`)
+
+  // ⛔ One click answers it, and the answer is the option's own label. The whole point of the object.
+  await evaluate(
+    `[...document.querySelectorAll('.attention-answers button')].find(b => b.innerText.trim() === 'Session cookies')?.click()`
+  )
+  await wait(2000)
+  const settled = await evaluate(`
+    (async () => JSON.stringify({
+      bar: !!document.querySelector('.approvals'),
+      open: (await window.agentyard.rpc('question.list')).length
+    }))()
+  `)
+  const done = JSON.parse(settled)
+  check('answering a question in one click empties the bar', done.bar === false && done.open === 0, settled)
 
   section('cost')
   await evaluate(

@@ -1,14 +1,17 @@
 /**
  * The task domain.
  *
- * Two objects that look alike in a UI and are nothing alike in the scheduler:
+ * Three objects that look alike in a UI and are nothing alike in the scheduler:
  *
  *  - a **Task** is a thread of work with an assignee. It can be scheduled, reassigned, made to
  *    depend on other work, and it outlives every session that touches it.
  *  - an **Approval** is an interrupt on one live session. It blocks that session right now, only
  *    that session can consume the answer, its answer set is closed, and it dies with the session.
+ *  - a **Question** is an interrupt too, but its answer set is written by whoever asked and its
+ *    answer is *content*. So it can never become a project rule the way an approval can, an
+ *    unanswered one parks rather than denying, and it outlives its session on purpose.
  *
- * Filing the second as the first is wrong on every axis a Task exists for. See the implementation
+ * Filing any of them as another is wrong on every axis the first exists for. See the implementation
  * plan §7.3 and §7.4.
  */
 
@@ -430,7 +433,26 @@ export interface RunQuota {
   stale: boolean
 }
 
-export type RunOutcome = 'completed' | 'failed' | 'cancelled' | 'terminated' | 'preempted'
+/**
+ * How a run ended.
+ *
+ * ⛔ **`blocked` is not a kind of failure.** A run that stopped because the agent asked a person
+ * something did work, metered turns, and is one answer away from continuing — filing that as `failed`
+ * says the opposite of what happened, and it was doing so on the strength of nothing more than the
+ * absence of a completion signal. Measured 2026-08-30 (R14.c): the CLI says which of the two it is,
+ * in `post_turn_summary`, and the terminal record cannot.
+ *
+ * ⚠️ `blocked` is still not `completed`, and nothing that reasons about finished work may treat it as
+ * one: the estimator medians `completed` runs only, because a run that stopped half way through is
+ * not a measurement of what the whole job costs.
+ */
+export type RunOutcome =
+  | 'completed'
+  | 'blocked'
+  | 'failed'
+  | 'cancelled'
+  | 'terminated'
+  | 'preempted'
 
 // ---------------------------------------------------------------------------- approval
 
@@ -459,6 +481,82 @@ export interface Approval {
   answer: ApprovalDecision | null
   answeredBy: 'policy' | 'human' | 'timeout' | null
   escalatedAt: number | null
+}
+
+// ---------------------------------------------------------------------------- question
+
+/**
+ * A question put to a person by an agent that is still running.
+ *
+ * ⛔ **The third object, and it is neither of the other two.** A Task is schedulable, durable and
+ * outlives every session. An Approval is an interrupt on one live session whose answer set is closed
+ * at allow/deny and whose answer can become a rule. A Question is an interrupt like the second with
+ * an answer set supplied by **whoever asked** — and an answer that is *content*, returned into the
+ * tool result, not a verdict. You cannot remember the answer to "which auth approach" as a project
+ * rule, and a default of "no" answers nothing.
+ *
+ * ⚠️ It can outlive its session. See `parkedAt`.
+ */
+export type QuestionKind = 'text' | 'choice' | 'multi'
+
+/**
+ * Where the question came from.
+ *
+ * ⚠️ `native_tool` is a question the vendor's own CLI raised — measured on Claude Code's
+ * `AskUserQuestion`, 2026-08-30 — and it arrives whether or not the agent was ever told this tool
+ * exists. `ask_human` is one the agent asked for deliberately. Worth keeping apart: the first says
+ * something about the CLI, the second about the prompt.
+ */
+export type QuestionOrigin = 'ask_human' | 'native_tool' | 'checkpoint'
+
+export interface QuestionOption {
+  id: string
+  label: string
+  /** The asker's own prose about what choosing this means. Never summarised or rewritten. */
+  detail?: string
+}
+
+export interface QuestionAnswer {
+  /** Empty for a `text` question; one entry for `choice`; any number for `multi`. */
+  optionIds: string[]
+  /** Free text, which every kind may carry — an option plus a caveat is a common and useful answer. */
+  text: string | null
+}
+
+export interface Question {
+  id: string
+  sessionId: string
+  runId: string | null
+  taskId: string | null
+  projectId: string | null
+  origin: QuestionOrigin
+  kind: QuestionKind
+  question: string
+  /** A short label for the question, where the asker gave one. Claude Code's `AskUserQuestion` does. */
+  header: string | null
+  options: QuestionOption[]
+  askedAt: number
+  /** The blocked session's cache expiry. Waiting is priced, which is why this is not a notification. */
+  deadlineAt: number | null
+  answeredAt: number | null
+  answer: QuestionAnswer | null
+  answeredBy: 'human' | null
+  /**
+   * When the session that asked went away with this still open.
+   *
+   * ⛔ A parked question is **not** an answered one and not a closed one. D1: nobody answered before
+   * the cache expired, so holding the process stopped paying for itself and the task went to
+   * `awaiting_human` — but the question is exactly as valid as it was, and answering it is what
+   * starts the work again. Timing out has never been an answer here.
+   */
+  parkedAt: number | null
+}
+
+/** What the asker is told. `reply` is the sentence handed back to the agent, wherever it asked from. */
+export interface QuestionResolution {
+  status: 'answered' | 'parked' | 'void'
+  reply: string
+  answer: QuestionAnswer | null
 }
 
 /** A remembered answer. `Bash(npm test)`-shaped, matched by tool plus a glob over the target. */

@@ -15,7 +15,7 @@ import { Conversations } from './components/Conversations'
 import { Logs } from './components/Logs'
 import { FleetSettings } from './components/FleetSettings'
 import { Doctor } from './components/Doctor'
-import { Approvals } from './components/Approvals'
+import { Attention } from './components/Attention'
 import { Projects } from './components/Projects'
 import { Tasks } from './components/Tasks'
 import { TaskThread } from './components/TaskThread'
@@ -30,7 +30,7 @@ import { ProjectDot, projectWorkState } from './lib/taskview'
  * The shell.
  *
  * Two strips above the work, in the order an operator needs them: the fleet, so the cost of what is
- * running is never hidden, and the Approvals bar, which is empty almost always and takes one
+ * running is never hidden, and the Attention bar, which is empty almost always and takes one
  * keystroke when it is not.
  */
 
@@ -281,7 +281,7 @@ export function App(): React.JSX.Element {
 
       <main className="main">
         <FleetStrip fleet={fleet} now={now} />
-        {connected && <Approvals now={now} />}
+        {connected && <Attention now={now} onOpenTask={(taskId) => setRoute({ kind: 'unassigned', taskId })} />}
 
         <div className="content">
           {!connected ? (

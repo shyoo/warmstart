@@ -186,10 +186,13 @@ These are not preferences; breaking one breaks the product.
 - ⛔ **The objective vector is consumed in exactly two places:** `weights()` for scheduler scoring and
   `policy()` for the cache clock, the model selector and preemption. A third consumer means one of
   those two is missing a field.
-- ⛔ **An approval is not a task.** A permission prompt blocks one live session, has a closed answer
-  set and a deadline set by that session's cache expiry. It goes on the Approvals bar, is answered by
-  policy or one keystroke, and becomes an `awaiting_human` task only if it goes unanswered past
-  `escalate_after`. Approvals are captured through a structured channel — never by reading the screen.
+- ⛔ **Three objects, and the differences are load-bearing.** A **Task** is schedulable, durable, and
+  outlives every session. An **Approval** blocks one live session, has a **closed** answer set, a
+  deadline set by that session's cache expiry, and an answer that can become a project rule. A
+  **Question** blocks a session too, but its answer set is written by whoever asked and its answer is
+  *content*, so it can never be a rule and a default of *no* answers nothing. Approvals and questions
+  share the Attention bar; both are captured through a structured channel — never by reading the
+  screen. ⚠️ An unanswered approval **denies**; an unanswered question **parks** and stays open.
 - ⛔ **A landing that landed nothing must not say it landed.** Measured 2026-08-27: a question-only
   task changed no file and was reported as *"Landed as a166a6a onto main"* — every step had
   succeeded (clean workspace, no-op rebase, passing checks, a push that moved nothing, and

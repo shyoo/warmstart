@@ -8,8 +8,8 @@ started in CI, never run against a real agent CLI.
 if you add a line, find the one it obsoletes and cut it in the same edit. Finished work moves to
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
-**Baseline (2026-08-30, measured):** typecheck · lint · build clean · `npm test` 766/768 (2 POSIX-only
-skipped) · `test:daemon` 125/125 · `test:ui` 142/142 · `test:pack` 18/18 · L4 (opt-in) landed a real
+**Baseline (2026-08-30, measured):** typecheck · lint · build clean · `npm test` 793/795 (2 POSIX-only
+skipped) · `test:daemon` 132/132 · `test:ui` 147/147 · `test:pack` 18/18 · L4 (opt-in) landed a real
 agent commit on origin/main. Electron 44.0.0, electron-builder 26.15.3, 0 npm vulnerabilities.
 CLIs here: claude 2.1.251 · agy 1.1.22 · codex 0.151.0.
 
@@ -19,7 +19,7 @@ the repo's copy while building blocks the pack step, correctly.
 
 ⚠️ **With no agent CLI the daemon suite skips 5 checks**, each with a stated reason — the CI state;
 simulate it with a PATH of System32, node and git and an empty `HOME`. ⛔ **CI itself has not run since
-2026-08-29T21:54Z**: 24 runs, each dead in 2–5s on GitHub billing — **nothing is verified off Windows.**
+2026-08-29T21:54Z**: 26 runs, each dead in 2–5s on GitHub billing — **nothing is verified off Windows.**
 
 ---
 
@@ -88,7 +88,7 @@ src/daemon/            orchestratord. Runs as Electron-with-ELECTRON_RUN_AS_NODE
     external.ts        declarative adapters from <dataDir>/adapters/*.json  (+ external.test.ts)
     generic.ts         the driver behind one. ⛔ JSON only, never JavaScript
 src/mcp/               the MCP server the agent CLI spawns. Two tiers chosen by the daemon: worker
-                       (task_complete, task_create, request_human, handoff) and controller
+                       (task_complete, task_create, ask_human, handoff) and controller
                        (fleet/task/approval/estimate). ⛔ Neither can delete anything.
 src/main/              window host + the daemon's only client (holds the token); the tray, and
                        `uisettings.ts` - preferences main must read when the daemon is not answering
@@ -103,39 +103,36 @@ docs/                  cost-model.md, glossary.md, adapters.md, landing.md, sess
 ## What is true right now and not yet proven
 
 - ⭐ **All three providers have a free quota probe** (**R3 closed**, `docs/cost-model.md` §5). A
-  stale-but-known reading is labelled, not dropped, and Antigravity's **two pools gate separately**.
-  ⭐ **Codex joined 2026-08-29**: `codex app-server`'s `account/rateLimits/read` (~700ms, live, what
-  `/status` shows), else its rollout. ⛔ **Free reports quota too** — one 30-day window.
-- ⚠️ **The compaction reserve still reports `unknown`** (**R2**, `docs/cost-model.md` §10). ⭐ But
-  quota is a routing input again (2026-08-30): `windowRisk` slopes from 50% to the 92% gate, on the
-  window the gate read, saturating where it cuts, and every score prints its derivation.
-- ⚠️ **Two things have never been exercised end to end: the tray *icon*, and keepalive *execution*.** The tray switch and `daemon.shutdown` are covered; the keepalive arithmetic is unit-tested and its firing is not.
-- ⭐ **Every intervention on a live session has an off switch** — Settings > Global: `autoCompact` and
-  `autoPreempt` **on**, `autoRunawayStop` **off**, plus configurable `probeIntervalMinutes` (default 5m).
-- ⭐ **A full workspace pool holds a task instead of failing it** (2026-08-29): `poolPressure` gates before routing, and contention throws `Contended`, which the tick returns to `ready`. ⛔ No dependency edge — a hold is re-decided every tick, so priority still wins. ⚠️ `poolSize` is untouched; a fleet wider than its pool is *named* on the row, not silently grown.
-- ⭐ **The stall watchdog tells stuck from slow, and has now fired in flight** (2026-08-30): 13m into t52's hung codex run it sampled the process tree, found 0.0s of CPU gained in 70s, and posted the tree to the thread — the whole diagnosis, before anybody looked. ⛔ It reports and never kills or changes status.
+  stale-but-known reading is labelled, not dropped; Antigravity's two pools gate separately.
+- ⚠️ **The compaction reserve still reports `unknown`** (**R2**, `docs/cost-model.md` §10). ⭐ But quota is a routing input again: `windowRisk` slopes to the 92% gate and every score prints its derivation.
+- ⚠️ **Never exercised end to end: the tray *icon*, and keepalive *execution*.** The switch and `daemon.shutdown` are covered; the keepalive arithmetic is unit-tested and its firing is not.
+- ⭐ **Every intervention on a live session has an off switch** — Settings > Global: `autoCompact`/`autoPreempt` **on**, `autoRunawayStop` **off**, `probeIntervalMinutes` 5m.
+- ⭐ **A full workspace pool holds a task rather than failing it** (2026-08-29). ⛔ No dependency edge: a hold is re-decided every tick, so priority wins. ⚠️ A fleet wider than its pool is *named*, never silently grown.
+- ⭐ **The stall watchdog tells stuck from slow, and has now fired in flight** (2026-08-30): 13m into a hung codex run it posted the process tree and 0.0s of CPU gained in 70s to the thread — the diagnosis, before anybody looked. ⛔ It reports and never kills.
 - ⭐ **One finish policy, resolved task > project > fleet** (`docs/landing.md`): `await-human` ·
-  `agent-lands` · `pull-request` · `custom`, replacing `landing.strategy` and `verification`. ⛔ **The
-  tool never writes a commit** and never destroys work it will not land. Loose work — and, since
-  2026-08-30, **a branch that will not rebase** — gets *one* instruction to the still-live agent and
-  otherwise rests intact under **Loose ends**. ⚠️ The conflict ask is proven against a real repo in
-  `conflict.test.ts` and **has never fired in flight**. `mandate.land` stays the authority throughout.
-- ⭐ **The daemon's log is readable from inside the app** (Settings > Logs): live, filterable, backed
-  by a ring buffer so a window opened late still sees the past, and a file per day kept a fortnight.
+  `agent-lands` · `pull-request` · `custom`. ⛔ **The tool never writes a commit** and never destroys
+  work it will not land; loose work and an unrebasable branch each get *one* instruction to the live
+  agent, then rest under **Loose ends**. ⚠️ The conflict ask **has never fired in flight**
+  (`conflict.test.ts`). `mandate.land` is the authority throughout.
+- ⭐ **An agent can ask a person a real question** (2026-08-30, plan in `transient_docs/`). `ask_human`
+  and the **Question** object replace `request_human`, which went through the approval path and could
+  only answer allow/deny — *"OAuth, cookies or magic link?"* came back as *"The operator agreed."*
+  Unanswered now **parks**: the task rests at `awaiting_human`, the question stays open.
+  ⚠️ **No agent has called it in flight**; L1/L2/L3 cover it. ⚠️ The thread card has **no rendering
+  test** — seeding one needs a live run. ⚠️ **R15**: can an MCP client hold a tool call for minutes?
+- ⭐ **The daemon's log is readable from inside the app** (Settings > Logs): live, filterable, ring-buffered so a late window still sees the past; a file per day, kept a fortnight.
 - ⭐ **Model and effort are choosable, inherited and visible** (2026-08-29): **task → worker → the
-  CLI's own default**, via `resolveModelChoice`, shared by the scheduler and both forms. Multi-pool
-  workers (e.g. Antigravity) configure default models per pool and the scheduler auto-balances
-  based on available quota/budget. ⚠️ **`selectableEffort` is true for `claude-code` only**.
-- ⛔ **Codex could never have completed a task, three bugs deep** (fixed 2026-08-30, `docs/adapters.md`).
-  `codex exec` reads its prompt from **stdin to EOF**; the daemon held the pipe open, so t52 sat
-  **50 minutes on 62ms of CPU** reporting `running`. Behind it: `mcp: true` on an adapter that cannot
-  register one, and `turn.completed` decoded without its terminal half. ⚠️ **No codex task has completed yet** — measured, unproven in flight.
-- ⭐ **Antigravity runs, reports its quota, and resumes a conversation by id** (**R9**,
-  `docs/cost-model.md` §5; measured 2026-08-28). ⚠️ **No Antigravity task has ever completed**: with
-  `mcp: false` and no terminal record to read, `awaiting_human` is honest there and R13 stands. ⛔ It
-  restores a conversation but reports `cache_read_tokens: 0`: context, not cache.
-- ⛔ **Nothing is proven off Windows.** CI runners carry no agent CLI, so `docs/adapters.md` was always Windows-only — and CI has not run at all since 2026-08-29 (see the top of this file).
-- ⛔ **Unsigned.** SmartScreen warns and Gatekeeper refuses — a certificate and an Apple Developer account, not a config line.
+  CLI's own default**, via `resolveModelChoice`. Multi-pool workers set a default per pool and the
+  scheduler balances on quota. ⚠️ **`selectableEffort` is true for `claude-code` only**.
+- ⛔ **Codex could never have completed a task, three bugs deep** (fixed 2026-08-30,
+  `docs/adapters.md`): stdin held open against a CLI that reads to EOF, `mcp: true` on an adapter that
+  cannot register one, and `turn.completed` decoded without its terminal half. ⚠️ **No codex task has
+  completed yet** — measured, unproven in flight.
+- ⭐ **Antigravity runs, reports its quota, and resumes a conversation by id** (**R9**, measured
+  2026-08-28). ⚠️ **No Antigravity task has ever completed**: with `mcp: false` and no terminal record,
+  `awaiting_human` is honest there and R13 stands. ⛔ It restores context, not cache
+  (`cache_read_tokens: 0`).
+- ⛔ **Nothing is proven off Windows.** CI runners carry no agent CLI, and CI has not run at all since 2026-08-29 (see the top of this file). ⛔ **Unsigned**: SmartScreen warns, Gatekeeper refuses — a certificate and an Apple Developer account, not a config line.
 
 ## Next
 
@@ -144,22 +141,24 @@ M0–M6 are done. What is left is not a milestone but a list, in the order it wo
 1. **Run the suites on macOS or Linux with an agent CLI installed** — the largest unmeasured surface.
 2. **R2 (`tokens_per_percent`)** — now only the *reserve* needs it; routing reads percentages directly.
 3. **Signing and notarisation**, without which the installers warn or refuse.
-4. **Resident sessions — built; two things unproven.** `docs/sessions.md` is the spec. A live trial
-   put **five tasks through one conversation**, two committing borrowers kept apart.
-   ⚠️ The **60% share ceiling has never fired** (context 43k → 49k). ⚠️ Sharing is off at every tier.
-   - **`git worktree lock` and a provenance marker.** Claude Code's sweep uses both and this pool
-     uses neither. Only bites when the daemon dies mid-run, which is when nobody is watching.
-5. **The trunk tripwire is built and has never fired.** A run whose branch is empty while the
-   trunk's target moved now goes to `awaiting_human` naming the commits (migration 14,
-   `decideFinish`'s `trunk-moved`). ⚠️ Unproven against a real incident — the failure it watches for
-   has been fixed by `--add-dir`, so provoking it means reintroducing the bug on purpose.
+4. **Resident sessions — built; two things unproven** (`docs/sessions.md`). A live trial put five
+   tasks through one conversation. ⚠️ The **60% share ceiling has never fired**; sharing is off at
+   every tier. ⚠️ The workspace pool uses neither `git worktree lock` nor a provenance marker, which
+   bites only when the daemon dies mid-run — when nobody is watching.
+5. **The trunk tripwire is built and has never fired.** An empty branch under a moved trunk goes to
+   `awaiting_human` naming the commits (`decideFinish`'s `trunk-moved`). ⚠️ Provoking it means
+   reintroducing the bug `--add-dir` fixed.
 6. **`antigravity-cli` still has no real isolation root.** `envFor()` sets no `HOME`, so all four
    workers share the operator's `~/.gemini`. Per-worker `HOME` is the fix; the credential is in the
    OS keyring so sign-in *should* survive, and "should" is doing the work there.
 7. **The project Thread tab has no automated coverage.** `test/ui.test.mjs` files every task with no
    project, so that tab is checked by `typecheck` and by hand only. Needs a real project root.
-8. **Meter codex off its rollout** — R10 is answered (§5), but `metering` stays `'stream'`, so a PTY-hosted codex run is unmetered.
-9. **Compute `overrunFactor` in cost, not raw tokens**, and let preempted runs feed `estimateTask`.
+8. **Finish human-in-the-loop** (plan in `transient_docs/`): thread write-through, intercepting
+   Claude's own `AskUserQuestion` through `approve` (measured, R14), `checkpoint` + a per-task
+   completion mode, a `NEEDS DECISION:` fallback for MCP-less adapters, and the unreachable approval
+   escalation — `WAIT_TIMEOUT_MS` fires first, so `escalateStale` is dead code with no test.
+9. **Meter codex off its rollout** — R10 is answered (§5), but `metering` stays `'stream'`, so a PTY-hosted codex run is unmetered.
+10. **Compute `overrunFactor` in cost, not raw tokens**, and let preempted runs feed `estimateTask`.
    ⚠️ It measures the wrong thing today — 92–98% of a run's tokens are cache reads, so it fires on
    long work, which is why `autoRunawayStop` ships off. The cost model already prices cache reads
    separately, so nothing needs measuring first.

@@ -1,0 +1,362 @@
+import { randomUUID } from 'node:crypto'
+import type {
+  Question,
+  QuestionAnswer,
+  QuestionKind,
+  QuestionOption,
+  QuestionOrigin,
+  QuestionResolution
+} from '@shared/tasks.js'
+import { db, row, rows } from './db.js'
+import { emit } from './events.js'
+import { log } from './log.js'
+import { getSession } from './sessions.js'
+import { costModel } from './costmodel.js'
+import { adapter } from './adapters/index.js'
+import { addMessage, getTask, runForSession, setStatus } from './tasks.js'
+
+/**
+ * Questions.
+ *
+ * ⛔ **A question is not an approval.** They look alike for about one sentence — both interrupt one
+ * live session, both are answered by a person — and then everything an approval is good at becomes
+ * wrong. An approval's answer set is closed at allow/deny; a question's is written by whoever asked.
+ * An approval's answer can be remembered as a project rule, which is how that queue empties itself;
+ * "OAuth" is not a rule and never will be. An approval denies by default, because an unanswered
+ * question about `rm -rf` is not consent — while a design question that defaults to *no* has not been
+ * answered at all, and the agent is then told the operator *refused* and builds on that.
+ *
+ * That last one was live behaviour until this existed. `request_human` routed through the approval
+ * path, so every question an agent asked came back as `The operator agreed.` or `The operator
+ * declined.` The question travelled; the answer had nowhere to sit.
+ *
+ * ⛔ **And it is not a Task.** A task is schedulable, durable, and outlives every session; a question
+ * is an interrupt with a clock on it. Filing questions as tasks would bury the board in rows nobody
+ * re-reads and hand the scheduler work it cannot schedule.
+ *
+ * Three ways one ends, and only the first is an answer:
+ *
+ *  1. **A person answers it** — the session is still live, and the reply goes back into the tool
+ *     result it was called from.
+ *  2. **It is parked** (D1) — nobody answered before the session's cache expired, so holding the
+ *     process stopped paying for itself. The task rests at `awaiting_human` and **the question stays
+ *     open**, because it is exactly as good a question as it was a minute ago.
+ *  3. **Its session dies** — nothing can consume the answer any more, so it is parked too.
+ */
+
+/**
+ * How long to hold a session open for an answer.
+ *
+ * ⛔ The deadline is the blocked session's own cache expiry, because that is what waiting costs:
+ * past it, resuming costs a full cold rebuild rather than a `0.1·C` read. But a clock read off a
+ * session is a number that can be missing, or already in the past on a session that has been idle —
+ * and a zero-length wait is a question nobody could possibly answer, dressed up as a question.
+ *
+ * ⚠️ The ceiling is an hour because that is the longest a prompt cache lives: measured in the R14
+ * capture, 2026-08-30, `cache_creation.ephemeral_1h_input_tokens` against a 1h TTL. Holding a
+ * process past that waits on a session that has already gone cold.
+ */
+export const MIN_WAIT_MS = 5 * 60 * 1000
+export const MAX_WAIT_MS = 60 * 60 * 1000
+
+interface QuestionRow {
+  id: string
+  session_id: string
+  run_id: string | null
+  task_id: string | null
+  project_id: string | null
+  origin: string
+  kind: string
+  question: string
+  header: string | null
+  options_json: string | null
+  asked_at: number
+  deadline_at: number | null
+  answered_at: number | null
+  answer_json: string | null
+  answered_by: string | null
+  parked_at: number | null
+}
+
+function toQuestion(r: QuestionRow): Question {
+  return {
+    id: r.id,
+    sessionId: r.session_id,
+    runId: r.run_id,
+    taskId: r.task_id,
+    projectId: r.project_id,
+    origin: r.origin as QuestionOrigin,
+    kind: r.kind as QuestionKind,
+    question: r.question,
+    header: r.header,
+    options: parseOptions(r.options_json),
+    askedAt: r.asked_at,
+    deadlineAt: r.deadline_at,
+    answeredAt: r.answered_at,
+    answer: parseAnswer(r.answer_json),
+    answeredBy: r.answered_by as Question['answeredBy'],
+    parkedAt: r.parked_at
+  }
+}
+
+/**
+ * ⚠️ A malformed blob is read as "no options" rather than thrown.
+ *
+ * A question whose options cannot be read is still a question a person can answer in prose, and
+ * failing the whole row would lose the text as well as the choices.
+ */
+function parseOptions(json: string | null): QuestionOption[] {
+  if (!json) return []
+  try {
+    const parsed: unknown = JSON.parse(json)
+    return Array.isArray(parsed) ? (parsed as QuestionOption[]) : []
+  } catch {
+    return []
+  }
+}
+
+function parseAnswer(json: string | null): QuestionAnswer | null {
+  if (!json) return null
+  try {
+    return JSON.parse(json) as QuestionAnswer
+  } catch {
+    return null
+  }
+}
+
+// ---------------------------------------------------------------------------- asking
+
+const waiters = new Map<string, (resolution: QuestionResolution) => void>()
+const timers = new Map<string, NodeJS.Timeout>()
+
+export interface QuestionRequest {
+  sessionId: string
+  origin: QuestionOrigin
+  kind: QuestionKind
+  question: string
+  header?: string
+  options?: QuestionOption[]
+}
+
+/**
+ * Ask, and wait.
+ *
+ * ⛔ Never answers on the asker's behalf. There is no policy layer here and there should not be one:
+ * the whole reason this object exists is that the answer is not derivable from anything the machine
+ * holds. It waits, and if nobody comes it says so plainly rather than inventing a preference.
+ */
+export async function askQuestion(request: QuestionRequest): Promise<QuestionResolution> {
+  const session = getSession(request.sessionId)
+  const run = runForSession(request.sessionId)
+  const task = run?.taskId ? getTask(run.taskId) : null
+
+  const deadlineAt = session
+    ? costModel(adapter(session.adapterId).info.policy.costModelId).cacheExpiryFor(session)
+    : null
+
+  const id = randomUUID()
+  const now = Date.now()
+  const options = normaliseOptions(request.kind, request.options ?? [])
+
+  db()
+    .prepare(
+      `insert into questions (id, session_id, run_id, task_id, project_id, origin, kind, question,
+                              header, options_json, asked_at, deadline_at, answered_at, answer_json,
+                              answered_by, parked_at)
+       values (?,?,?,?,?,?,?,?,?,?,?,?,null,null,null,null)`
+    )
+    .run(
+      id,
+      request.sessionId,
+      run?.id ?? null,
+      task?.id ?? null,
+      task?.projectId ?? null,
+      request.origin,
+      request.kind,
+      request.question,
+      request.header ?? null,
+      options.length > 0 ? JSON.stringify(options) : null,
+      now,
+      deadlineAt
+    )
+
+  const question = requireQuestion(id)
+  emit({ type: 'question.opened', question })
+  log.info(`question ${id.slice(0, 8)}: ${request.question.slice(0, 120)} — waiting for a person`)
+
+  return await waitFor(id, waitMsFor(deadlineAt, now))
+}
+
+/**
+ * ⛔ Option ids are minted here when the asker did not supply them, and they must be stable within
+ * one question: the answer travels back as an id, and an id derived from an index would silently
+ * point at a different option if anything ever reordered the list.
+ */
+function normaliseOptions(kind: QuestionKind, options: QuestionOption[]): QuestionOption[] {
+  if (kind === 'text') return []
+  return options.map((option, index) => ({
+    id: option.id?.trim() || `opt${index + 1}`,
+    label: option.label,
+    ...(option.detail ? { detail: option.detail } : {})
+  }))
+}
+
+/** See MIN_WAIT_MS. A missing or already-expired clock still buys the operator a usable window. */
+export function waitMsFor(deadlineAt: number | null, now: number): number {
+  if (deadlineAt === null) return MIN_WAIT_MS
+  return Math.min(MAX_WAIT_MS, Math.max(MIN_WAIT_MS, deadlineAt - now))
+}
+
+function waitFor(id: string, ms: number): Promise<QuestionResolution> {
+  return new Promise((resolve) => {
+    timers.set(
+      id,
+      setTimeout(() => {
+        waiters.delete(id)
+        timers.delete(id)
+        resolve(park(id, 'nobody answered before this session stopped paying for itself'))
+      }, ms)
+    )
+    waiters.set(id, (resolution) => {
+      const timer = timers.get(id)
+      if (timer) clearTimeout(timer)
+      timers.delete(id)
+      waiters.delete(id)
+      resolve(resolution)
+    })
+  })
+}
+
+// ---------------------------------------------------------------------------- answering
+
+/**
+ * A person answers.
+ *
+ * ⛔ Answering a **parked** question is the normal case, not an edge case. The session it was asked
+ * from is long gone by then, so there is no waiter to resolve and nothing to return the reply to —
+ * the answer goes into the task's thread instead, where the next run's prompt will carry it. That is
+ * what makes a park recoverable rather than a dead end.
+ */
+export function answerQuestion(id: string, answer: QuestionAnswer, by: 'human' = 'human'): Question {
+  const existing = requireQuestion(id)
+  if (existing.answeredAt) return existing
+
+  db()
+    .prepare('update questions set answered_at = ?, answer_json = ?, answered_by = ? where id = ?')
+    .run(Date.now(), JSON.stringify(answer), by, id)
+
+  const answered = requireQuestion(id)
+  emit({ type: 'question.answered', question: answered })
+
+  const reply = renderAnswer(answered)
+  const waiter = waiters.get(id)
+  if (waiter) {
+    waiter({ status: 'answered', reply, answer })
+  } else if (answered.taskId) {
+    // ⚠️ Recorded as a human message rather than a system note: it is one, and the prompt builder
+    // delivers outstanding human messages to the next run. A system note would be seen by a person
+    // and by nothing else.
+    addMessage(answered.taskId, 'human', `${answered.question}\n\n${reply}`)
+  }
+  log.info(`question ${id.slice(0, 8)} answered: ${reply.slice(0, 120)}`)
+  return answered
+}
+
+/**
+ * Render an answer as the sentence the agent reads.
+ *
+ * ⛔ One place, because both callers must word it identically: an `ask_human` tool result and an
+ * `AskUserQuestion` interception are the same answer arriving through two different doors, and an
+ * agent that got a different sentence depending on the door would behave differently for no reason.
+ */
+export function renderAnswer(question: Question): string {
+  const answer = question.answer
+  if (!answer) return 'No answer was given.'
+  const chosen = answer.optionIds
+    .map((id) => question.options.find((o) => o.id === id)?.label ?? id)
+    .filter(Boolean)
+  const parts: string[] = []
+  if (chosen.length > 0) parts.push(`The operator chose: ${chosen.join(', ')}.`)
+  if (answer.text?.trim()) parts.push(answer.text.trim())
+  return parts.length > 0 ? parts.join(' ') : 'The operator gave no answer.'
+}
+
+// ---------------------------------------------------------------------------- parking
+
+/**
+ * The question outlives the session (D1).
+ *
+ * ⛔ `answered_at` is deliberately left null. This is not a timeout answer and not a refusal — the
+ * two things that changed are that the process waiting for it has stopped being worth holding, and
+ * that a person now owns the task. The question is untouched and still answerable.
+ */
+function park(id: string, why: string): QuestionResolution {
+  const question = requireQuestion(id)
+  if (question.answeredAt || question.parkedAt) {
+    return { status: 'void', reply: 'This question is no longer open.', answer: question.answer }
+  }
+
+  db().prepare('update questions set parked_at = ? where id = ?').run(Date.now(), id)
+  const parked = requireQuestion(id)
+  emit({ type: 'question.parked', question: parked })
+
+  if (parked.taskId) {
+    const asked = parked.question.slice(0, 300)
+    addMessage(parked.taskId, 'system', `Waiting on a decision: ${asked}\n(${why})`)
+    setStatus(parked.taskId, 'awaiting_human', {
+      assignee: 'human',
+      holdReason: `the agent asked and is waiting on you: ${asked}`
+    })
+  }
+  log.warn(`question ${id.slice(0, 8)} parked: ${why}`)
+  return {
+    status: 'parked',
+    reply:
+      'No answer arrived in time, so this task has been handed to a person with the question ' +
+      'attached. Do not guess: stop here, and say what you were about to do next.',
+    answer: null
+  }
+}
+
+/**
+ * A session that has gone means nothing can consume the answer in that turn any more.
+ *
+ * ⛔ Parked, never denied. `voidApprovalsForSession` answers `deny` because a permission it can no
+ * longer grant must not be treated as granted; the opposite is true here — a question whose asker
+ * died is still the right question, and the person it is waiting on has not stopped existing.
+ */
+export function parkQuestionsForSession(sessionId: string): number {
+  let parked = 0
+  for (const question of openQuestions()) {
+    if (question.sessionId !== sessionId) continue
+    const resolution = park(question.id, 'the session that asked it ended')
+    waiters.get(question.id)?.(resolution)
+    const timer = timers.get(question.id)
+    if (timer) clearTimeout(timer)
+    timers.delete(question.id)
+    waiters.delete(question.id)
+    parked++
+  }
+  return parked
+}
+
+// ---------------------------------------------------------------------------- reading
+
+export function requireQuestion(id: string): Question {
+  const r = row<QuestionRow>(db().prepare('select * from questions where id = ?').get(id))
+  if (!r) throw new Error(`no question '${id}'`)
+  return toQuestion(r)
+}
+
+/** Everything still waiting on a person, parked or not. Both belong in the same place to answer. */
+export function openQuestions(): Question[] {
+  return rows<QuestionRow>(
+    db().prepare('select * from questions where answered_at is null order by asked_at').all()
+  ).map(toQuestion)
+}
+
+export function questionsForTask(taskId: string): Question[] {
+  return rows<QuestionRow>(
+    db().prepare('select * from questions where task_id = ? order by asked_at desc').all(taskId)
+  ).map(toQuestion)
+}

@@ -30,6 +30,7 @@ import {
 import { enqueueConsult, hasPendingConsult, latestAnswer } from './controller.js'
 import { decomposeQuestion, routeQuestion, triageQuestion, type RouteCandidate } from './judgment.js'
 import { escalateStale, voidApprovalsForSession } from './approvals.js'
+import { parkQuestionsForSession } from './questions.js'
 import {
   Contended,
   availability,
@@ -372,7 +373,15 @@ async function captureQuotaAfter(run: Run): Promise<void> {
   } catch (err) {
     log.warn(`could not read the closing quota for run ${run.id.slice(0, 8)}:`, err)
   }
-  setRunQuota(run.id, 'after', runQuota(run.workerId))
+  // ⛔ Guarded too, and this is not belt-and-braces. Every caller invokes this as `void
+  // captureQuotaAfter(...)`, so there is nobody to catch what it throws: anything escaping here is an
+  // unhandled rejection in a daemon that is supposed to outlive the window. Only the `await` above
+  // was covered, which left the two calls that read and write the store bare.
+  try {
+    setRunQuota(run.id, 'after', runQuota(run.workerId))
+  } catch (err) {
+    log.warn(`could not record the closing quota for run ${run.id.slice(0, 8)}:`, err)
+  }
 }
 
 // ---------------------------------------------------------------------------- gates
@@ -1828,7 +1837,8 @@ export function promptFor(
   if (adapter(adapterId).info.capabilities.mcp) {
     parts.push(
       'When the work is finished, call the MCP tool `task_complete` with a one-line summary. ' +
-        'If you need a decision from a person, call `request_human` rather than guessing.'
+        'If you need a decision from a person, call `ask_human` rather than guessing — offer the ' +
+        'options you are choosing between, and it waits for a real answer.'
     )
   } else {
     parts.push(
@@ -2207,20 +2217,60 @@ export async function completeTask(sessionId: string, summary: string): Promise<
 }
 
 /**
+ * What the agent last said it was waiting on, per session.
+ *
+ * ⛔ Kept because the record arrives **before** the terminal one and the terminal one cannot carry it.
+ * Measured 2026-08-30 on claude-code 2.1.251 (R14.c): an agent that asks a question and stops emits
+ * `status_category: "blocked"` with a `needs_action` sentence, then a `result` that is byte-for-byte
+ * the shape of a success. By the time `onSessionExit` runs, the only thing that knew why is gone.
+ *
+ * ⚠️ Last one wins, and a category that is not `blocked` clears it. A turn that blocked and a later
+ * turn that did not must not leave a stale sentence behind to be reported as the reason.
+ */
+const blockedOn = new Map<string, string>()
+
+/** Exported for its test. Sessions are cleaned up by `onSessionExit`, which always runs on exit. */
+export function noteTurnStatus(sessionId: string, event: { category: string; detail: string | null; needsAction: string | null }): void {
+  const said = (event.needsAction ?? event.detail ?? '').trim()
+  if (event.category === 'blocked' && said) blockedOn.set(sessionId, said)
+  else blockedOn.delete(sessionId)
+}
+
+/**
  * A session ended without reporting completion.
  *
  * That is not a success and not necessarily a failure - it is an unknown, and the honest thing is to
  * say so and hand it to a person rather than guess from an exit code.
+ *
+ * ⭐ Unless the agent said why, in which case there is no unknown to report. `blockedOn` carries the
+ * CLI's own `needs_action` sentence, and quoting it is the difference between "something happened,
+ * over to you" and "it is waiting for you to choose between OAuth and session cookies".
  */
 export async function onSessionExit(session: Session, exitCode: number | null): Promise<void> {
   voidApprovalsForSession(session.id)
+  // ⛔ Parked, not voided, and *before* the run is wound up so the task lands on the more specific
+  // reason. An unanswered question is the strongest evidence there is that the agent was waiting
+  // rather than broken - stronger than the vendor's own record, because we watched it be asked.
+  const parked = parkQuestionsForSession(session.id)
+  const waiting = blockedOn.get(session.id)
+  blockedOn.delete(session.id)
   const run = runForSession(session.id)
   if (run) {
-    await endFailedRun(
+    const why = waiting
+      ? `The agent stopped to ask you something: "${waiting.slice(0, 400)}" ` +
+        `The session then ended (exit ${exitCode}) without reporting completion.`
+      : parked > 0
+        ? `The agent asked ${parked === 1 ? 'a question' : `${parked} questions`} that ` +
+          `${parked === 1 ? 'was' : 'were'} still unanswered when the session ended (exit ${exitCode}).`
+        : `The session ended (exit ${exitCode}) without reporting completion. ` +
+          'Nothing here can tell whether the work was finished, so it is over to you.'
+    await endUnfinishedRun(
       session,
       run,
-      `The session ended (exit ${exitCode}) without reporting completion. ` +
-        'Nothing here can tell whether the work was finished, so it is over to you.'
+      why,
+      // ⛔ Not a failure. The agent did the work it was asked for up to the point where it needed
+      // an answer, and an unanswered question is not a fault of the run.
+      waiting || parked > 0 ? 'blocked' : 'failed'
     )
   }
   // ⛔ Run or no run, and after the run either way. This is the moment the workspace goes back,
@@ -2244,7 +2294,7 @@ export async function onSessionExit(session: Session, exitCode: number | null): 
  * stayed `running`, and the worker's only concurrency slot stayed held. Indefinitely.
  *
  * ⚠️ A failed *result* is not always a failed *run*: an agent that hits a tool error and reports it
- * has still done work and still metered turns. `endFailedRun` decides which of the two this is from
+ * has still done work and still metered turns. `endUnfinishedRun` decides which of the two this is from
  * the metering, not from the wording.
  */
 export async function onStreamResult(
@@ -2265,7 +2315,7 @@ export async function onStreamResult(
     `The agent reported a failure${result.terminalReason ? ` (${result.terminalReason})` : ''}` +
     (said ? `: ${said.slice(0, 400)}` : ' and said nothing about it.')
 
-  await endFailedRun(session, run, why)
+  await endUnfinishedRun(session, run, why, 'failed')
   // ⛔ Closed here, and this is not tidiness. The process does not exit on an `api_error`; leaving it
   // would hold this worker's only work slot against a session that can never make progress.
   closeSession(session.id)
@@ -2277,12 +2327,26 @@ export async function onStreamResult(
  * ⛔ Both callers ask the same question first, and it is not "did this fail" — it is **who failed**.
  * A run that never produced a metered turn did not fail at the work; it failed at the account, and
  * charging it to the task sends somebody to debug a prompt that was never delivered to anything.
+ *
+ * ⛔ And there is a third answer, which is **nobody**. A run that stopped because the agent asked a
+ * person something has not failed at anything: it did the work up to the question, metered its turns,
+ * and needs one answer to carry on. It used to be filed as `failed` on no evidence beyond the absence
+ * of a completion signal — which also meant three questions in a row looked like a task that kept
+ * failing and would summon `maybeTriage` to explain a pattern that was not there.
  */
-async function endFailedRun(session: Session, run: Run, why: string): Promise<void> {
+async function endUnfinishedRun(
+  session: Session,
+  run: Run,
+  why: string,
+  outcome: 'failed' | 'blocked'
+): Promise<void> {
   const task = run.taskId ? getTask(run.taskId) : null
-  finishRun(run.id, 'failed', why)
+  finishRun(run.id, outcome, why)
 
-  const dead = deadOnArrival(session, run)
+  // ⛔ A blocked run is never dead on arrival, and the check is skipped rather than merely failing:
+  // `deadOnArrival` reports on a dispatch that produced nothing, and this one produced a question.
+  // Benching the worker over it would take a healthy account out of the fleet for doing its job.
+  const dead = outcome === 'blocked' ? null : deadOnArrival(session, run)
 
   if (task && (task.status === 'running' || task.status === 'assigned')) {
     if (dead) {
@@ -2306,7 +2370,10 @@ async function endFailedRun(session: Session, run: Run, why: string): Promise<vo
       // ⛔ The deterministic outcome happens first and unconditionally, so the task is already in a
       // safe and visible state whether or not a controller ever answers.
       setStatus(task.id, 'awaiting_human', { assignee: 'human', holdReason: why })
-      maybeTriage(task.id)
+      // ⚠️ Not for a blocked run. `maybeTriage` exists to ask why a task keeps *failing*, and a task
+      // that keeps asking good questions is the system working. It would find nothing, having counted
+      // no failures - but a consult that can only answer "nothing is wrong" should not be enqueued.
+      if (outcome !== 'blocked') maybeTriage(task.id)
     }
   }
 

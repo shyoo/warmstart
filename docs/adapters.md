@@ -22,6 +22,8 @@ first spawn.** That is the whole reason `AdapterInfo.verification` exists.
 | Can compact | ✔ | ⛔ | ⛔ *(conservative)* |
 | Classifier reviews actions | ✔ `auto` | ⛔ | ⛔ |
 | Approvals | `permission_prompt_tool` | settings rules | settings rules |
+| Raises its own questions | ✔ **`AskUserQuestion`, and it reaches our hook** — see below | not measured | not measured |
+| Says why a turn stopped | ✔ **`post_turn_summary`** carries `status_category` + `needs_action` | ⛔ none seen | ⛔ none seen |
 | Multi Agent Controller MCP tools | ✔ | ⛔ global registration only | ⛔ global registration only |
 | Prompt arrives on stdin as | a conversation, pipe stays open | a conversation, pipe stays open | ⛔ **one prompt, then EOF** — `codex exec` is one-shot |
 | Accepts our session id | ✔ | ⛔ | ⛔ |
@@ -59,6 +61,10 @@ Written from documentation, then run. Each of these was wrong:
 | *(shared)* | one `stream-json` format, and an *input* half that could be defaulted | ⛔ **Three dialects on the way in as well, and codex has none.** `codex exec` reads its prompt from **stdin to EOF** — `exec --help`: *"If not provided as an argument (or if `-` is used), instructions are read from stdin"* — so there is no envelope, and `sendPrompt`'s Claude-shaped default made the prompt begin with the literal text `{"type":"user"`. The worse half is EOF: with the pipe held open, codex prints `Reading prompt from stdin...` and blocks. Measured 2026-08-29 on 0.151.0 — a reproduction sat 18s for 34 bytes; in production t52 sat **50 minutes on 62ms of CPU**, reporting as `running`. Adapters now declare `streamPrompts: 'conversation' \| 'once'` |
 | `openai-compatible` | `mcp: true`, because codex has MCP | ⛔ **The capability is about this adapter, not the CLI.** `codex mcp add` registers into the shared config, so a session cannot carry the per-session identity `task_complete` needs — `plan()` warned about that while the field said otherwise. The prompt builder reads it, so every codex prompt ended by naming a tool that was never registered, and the run could only end in `awaiting_human` |
 | `openai-compatible` | `turn.completed` is the usage record | **It is the usage record *and* the terminal one.** `codex exec` runs one turn and exits, so decoding it as usage alone left a successful run with no terminal event at all: nothing completed the task, and the process exit read as *"ended without reporting completion"* |
+| `claude-code` | a turn that ends is a turn that finished | ⛔ **The terminal record cannot tell the two apart.** Measured 2026-08-30 on **2.1.251** (R14.c): an agent that asked a question and stopped emits `{"type":"system","subtype":"post_turn_summary","status_category":"blocked","needs_action":"…"}` — and then a `result` reading `stop_reason: end_turn`, `terminal_reason: completed`, `is_error: false`, i.e. byte-for-byte the shape of success. The reason was on the wire the whole time and was decoded as `other`. Now `StreamEvent.turn_status`, and a run that ends this way is `blocked` rather than `failed` |
+| `claude-code` | `AskUserQuestion` is interactive-only, so headless work never sees it | ⛔ **It is in the headless tool list and it routes to `--permission-prompt-tool`,** carrying the whole question: `questions[]`, each with `question`, `header`, `options[{label, description}]` and `multiSelect`. Measured 2026-08-30 on 2.1.251. Until then our hook flattened all of it to Allow/Always/Deny — the operator was shown a yes/no where the agent had asked a three-way design question |
+| `claude-code` | the permission hook could answer such a question by allowing it | ⛔ **Allow is not an answer.** Returning `{behavior:'allow', updatedInput}` yields the tool result **`The user did not answer the questions.`** — the hook gates *asking*, not *answering*. ⭐ `{behavior:'deny', message}` **does** reach the model as the tool result and is acted on (*"Got it — server-side session cookies it is."*), so that is the answer channel. ⚠️ It arrives with `is_error: true` and lands in the result's `permission_denials`; nothing reads that field today |
+| `claude-code` | usage is not in the stream — it comes from the transcript | ⚠️ **Unresolved.** Measured 2026-08-25 on 2.1.223 and still what the matrix says; but the 2026-08-30 capture on 2.1.251 shows a full `usage` block *with* `iterations` on the `result` record. One of the two readings is out of date. The transcript stays authoritative either way — it is exact and sees the compaction sampling iteration — so nothing depends on this, but the row should not be trusted until it is re-measured |
 | `antigravity-cli` | `agy -p /usage` might be a free quota probe | ⛔ **it is not.** Measured: taken as a *prompt*, spent 14,603 input + 264 output tokens, and began listing directories trying to work out what "/usage" meant |
 | `antigravity-cli` | unmeterable (SQLite conversations) | **meterable after all** — usage is in the stream. `metering: 'stream'` |
 | `claude-code` | the folder-trust dialog only affects fresh worktrees | ⛔ **It affects any folder, per account, and it swallows every keystroke until answered.** Measured 2026-08-27: the usage probe was spawning in the user's home - untrusted in the worker's config - so `/usage` was typed into the dialog and Enter accepted the folder. Projectless sessions now run in `<dataDir>/scratch` and `trustDirectory()` pre-answers it for that directory only |
@@ -244,13 +250,14 @@ Everything below needs a **signed-in account and a real turn**, which is where f
 
 | # | Question | Adapter |
 |---|---|---|
-| **R12** | Is headless compaction reachable on codex at all? Its session lifecycle has compaction, but no documented way to drive it from `exec`. If it is, `manualCompact` flips true and two cache-clock moves become available | `openai-compatible` |
 | **R13** | Is agy's `result.usage` the *turn's* total or the *conversation's*? Measured on a single-turn run, where the two are identical. If it is cumulative, multi-turn sessions are over-billed | `antigravity-cli` |
 
 **Answered by measurement on 2026-08-27:** the print flag (above), and with it the first
 confirmation that a corrected argv reaches a signed-in Antigravity account: the CLI returns a
 valid `init` record listing 50-odd tools, with no turn spent. ⚠️ Everything past `init` on this
 adapter is still unmeasured, because it needs a real turn — R11 and R13 below.
+
+✅ **R12 closed 2026-08-30, negatively** (`docs/cost-model.md` §5): headless compaction is unreachable on `codex exec` — not because of compaction, but because a `streamPrompts: 'once'` CLI has no second input to drive it with.
 
 **Answered by measurement on 2026-08-25:** R9 in *print* mode (no — `agy -p /usage` spends a turn
 and does not answer) and R11 (three dialects, all decoded and regression-tested against verbatim

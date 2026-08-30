@@ -642,6 +642,45 @@ const MIGRATIONS: string[] = [
   // ⚠️ Null for every existing task, which is correct: none of them was ever asked.
   `
   alter table tasks add column conflict_asked_at integer;
+  `,
+
+  // 20 - a question a person has to answer, which is not an approval and not a task.
+  //
+  // ⛔ **Not a widening of `approvals`.** An approval's answer set is closed at allow/deny, its
+  // answer can be remembered as a project rule, and deny wins by default. Every one of those is
+  // wrong for "OAuth, session cookies, or magic link?": the answer set is written by whoever asks,
+  // it can never be a rule, and a default of "no" is not an answer at all. Measured 2026-08-30
+  // (R14.a): the vendor hands us `questions[]` with labels and per-option prose, and the old path
+  // flattened all of it to three buttons.
+  //
+  // ⚠️ `answered_at` stays null across a park, on purpose. D1: when nobody answers before the
+  // session's cache expires the session dies and the task rests at 'awaiting_human', but the
+  // question is still open and still answerable an hour later. `parked_at` records that the thing
+  // that was going to consume the answer has gone; it does not close the row.
+  //
+  // ⚠️ No foreign key on session_id, for the same reason as approvals: a question can outlive the
+  // session that asked it, and that is the normal case rather than the error case.
+  `
+  create table questions (
+    id           text primary key,
+    session_id   text not null,
+    run_id       text,
+    task_id      text,
+    project_id   text,
+    origin       text not null,
+    kind         text not null,
+    question     text not null,
+    header       text,
+    options_json text,
+    asked_at     integer not null,
+    deadline_at  integer,
+    answered_at  integer,
+    answer_json  text,
+    answered_by  text,
+    parked_at    integer
+  );
+  create index questions_open on questions(answered_at, asked_at);
+  create index questions_task on questions(task_id, asked_at desc);
   `
 ]
 

@@ -7,6 +7,11 @@ import type {
   Consult,
   Objective,
   Project,
+  Question,
+  QuestionKind,
+  QuestionOption,
+  QuestionOrigin,
+  QuestionResolution,
   ReserveReport,
   ResourceAvailability,
   RestingState,
@@ -1031,6 +1036,38 @@ export interface RpcMap {
     result: Approval
   }
   'approval.rules': { params: { projectId?: string }; result: ApprovalRule[] }
+
+  // ---- questions -----------------------------------------------------------------------
+  //
+  // ⛔ Separate from `approval.*` because the two answer different shapes of thing. An approval is
+  // answered with a verdict from a closed set; a question is answered with content the asker defined
+  // the shape of. See daemon/questions.ts.
+  /**
+   * Called by the MCP server on the agent's behalf. **Blocks until a person answers or it parks.**
+   *
+   * ⚠️ That can be minutes. `questions.ts` holds the session until its prompt cache expires, floored
+   * at 5 minutes and capped at an hour, because that is what waiting actually costs. Whether every
+   * MCP client tolerates a tool call that long is **not measured** — if one gives up first, the tool
+   * call fails and the question is left open, which parks on schedule and loses nothing but the turn.
+   */
+  'question.ask': {
+    params: {
+      sessionId: string
+      origin: QuestionOrigin
+      kind: QuestionKind
+      question: string
+      header?: string
+      options?: QuestionOption[]
+    }
+    result: QuestionResolution
+  }
+  /** Everything waiting on a person, parked included — both are answered the same way. */
+  'question.list': { params: Record<string, never>; result: Question[] }
+  'question.forTask': { params: { taskId: string }; result: Question[] }
+  'question.answer': {
+    params: { id: string; optionIds?: string[]; text?: string }
+    result: Question
+  }
   'approval.addRule': {
     params: { text: string; effect: 'allow' | 'deny'; projectId?: string | null }
     result: ApprovalRule
@@ -1214,6 +1251,10 @@ export type DaemonEvent =
   | { type: 'run.changed'; run: Run }
   | { type: 'approval.opened'; approval: Approval }
   | { type: 'approval.answered'; approval: Approval }
+  | { type: 'question.opened'; question: Question }
+  | { type: 'question.answered'; question: Question }
+  /** ⚠️ Not closed. The asker has gone; the question is still open and still answerable. */
+  | { type: 'question.parked'; question: Question }
   | { type: 'quota.changed'; quota: QuotaSnapshot }
   | { type: 'session.changed'; session: Session }
   | { type: 'session.data'; sessionId: string; data: string }

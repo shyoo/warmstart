@@ -1671,6 +1671,148 @@ select:focus-visible,
   font-size: var(--text-meta);
 }
 
+/*
+ * ⛔ A question is not a warning, so the strip does not wear the warning colour for one. Amber says
+ * *something may be about to go wrong*; an agent asking which of three designs you want is the system
+ * working, and colouring it as an alert would teach the operator to dread the bar.
+ */
+.approvals--question {
+  background: color-mix(in srgb, var(--state-human) 8%, var(--color-surface));
+}
+
+.approvals--question .approvals-mark {
+  background: var(--state-human);
+}
+
+.attention-answers {
+  display: flex;
+  gap: var(--sp-1);
+  flex: 0 0 auto;
+}
+
+/* ---- questions ---------------------------------------------------------- */
+
+/*
+ * ⛔ Sits in the thread, between what the agent said and the box for replying. It is a turn in the
+ * conversation, not a panel of settings.
+ */
+.question-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  margin: var(--sp-3) 0;
+}
+
+.question-card {
+  border: 1px solid var(--state-human);
+  border-radius: var(--radius);
+  padding: var(--sp-3);
+  background: color-mix(in srgb, var(--state-human) 6%, var(--color-surface));
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.question-card--parked {
+  border-style: dashed;
+}
+
+.question-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+}
+
+.question-parked {
+  font-size: var(--text-meta);
+}
+
+.question-text {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.question-options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+.question-option {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-2);
+  text-align: left;
+  padding: var(--sp-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  color: var(--color-text);
+  cursor: pointer;
+  font: inherit;
+}
+
+.question-option:hover:not(:disabled) {
+  border-color: var(--state-human);
+}
+
+.question-option--on {
+  border-color: var(--state-human);
+  background: color-mix(in srgb, var(--state-human) 12%, var(--color-bg));
+}
+
+.question-mark {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  border: 1px solid var(--color-border);
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: var(--state-human);
+}
+
+/* A checkbox, because more than one may be chosen and a radio would say otherwise. */
+.question-mark--multi {
+  border-radius: var(--radius-sm);
+}
+
+.question-option--on .question-mark {
+  border-color: var(--state-human);
+}
+
+.question-option-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.question-option-detail {
+  color: var(--color-text-dim);
+  font-size: var(--text-meta);
+}
+
+.question-input {
+  width: 100%;
+  resize: vertical;
+}
+
+.question-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.question-hint {
+  margin: 0;
+  font-size: var(--text-meta);
+}
+
 /* ---- task table --------------------------------------------------------- */
 
 .tbl tr {

@@ -14,6 +14,7 @@ import {
 import type { ModelOptions, Session } from '@shared/protocol'
 import { rpc, useActivity, useDaemonEvents, useNow, type FleetEntry } from '../lib/daemon'
 import { conversationIdFor } from '../lib/conversation'
+import { TaskQuestions } from './Questions'
 import { showsLiveOutput } from '../lib/live'
 import { duration, tokens, when } from '../lib/format'
 import {
@@ -377,6 +378,11 @@ function TaskDetail({
           )}
 
           <Thread messages={messages} runs={runs} activity={activity} live={live} />
+
+          {/* ⛔ Between the conversation and the box for replying, because that is what it is: the
+              agent's turn to speak ended with a question, and this is where the answer goes. In the
+              ledger on the right it would read as a fact about the task rather than a prompt. */}
+          <TaskQuestions taskId={task.id} />
 
           {detail.previewPrompt && task.status !== 'draft' && task.status !== 'running' && (
             <div className="thread-preview-prompt">
@@ -1095,6 +1101,19 @@ function SessionFact({ runs, sessions }: { runs: Run[]; sessions: Session[] }): 
 }
 
 /**
+ * How an outcome reads at a glance.
+ *
+ * ⛔ `blocked` is not a warning. The agent asked a person something and stopped; the run did its
+ * work and is one answer away from continuing. It gets the same colour as `awaiting_human` — which is
+ * what the task itself is now — rather than the amber that means something went wrong.
+ */
+function outcomeClass(outcome: Run['outcome']): string {
+  if (outcome === 'completed') return 'ok'
+  if (outcome === 'blocked') return 'state-human'
+  return outcome ? 'warn' : 'state-running'
+}
+
+/**
  * One attempt, with what it cost — twice over, and deliberately not reconciled.
  *
  * ⛔ The token counts are exact assistant-turn metering from the agent's own transcript. The window
@@ -1138,7 +1157,15 @@ function RunRow({
             {run.startedWarm ? 'warm' : 'new'}
           </span>
         )}
-        <span className={run.outcome === 'completed' ? 'ok' : run.outcome ? 'warn' : 'state-running'}>
+        <span
+          className={outcomeClass(run.outcome)}
+          title={
+            run.outcome === 'blocked'
+              ? 'The agent stopped to ask something rather than because anything went wrong. ' +
+                'Answer it and the task carries on.'
+              : undefined
+          }
+        >
           {run.outcome ?? 'running'}
         </span>
         <span className="num dim">{duration((run.endedAt ?? now) - run.startedAt)}</span>

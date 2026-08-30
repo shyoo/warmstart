@@ -64,6 +64,46 @@ describe('claude-code', () => {
     expect(events.some((e) => e.kind === 'usage')).toBe(false)
   })
 
+  /**
+   * ⛔ Verbatim from the R14 capture, 2026-08-30, claude-code 2.1.251. The agent asked a
+   * multiple-choice question, nobody answered, and it stopped — and the two records below are what
+   * came out. Read them together: only the first says anything happened that needs a person.
+   */
+  const POST_TURN_BLOCKED =
+    '{"type":"system","subtype":"post_turn_summary","summarizes_uuid":"ee873804",' +
+    '"status_category":"blocked",' +
+    '"status_detail":"let me know which approach you\'d like (OAuth, server-side session cookies, ' +
+    'or magic-link email) whenever you\'re ready.",' +
+    '"needs_action":"let me know which approach you\'d like (OAuth, server-side session cookies, ' +
+    'or magic-link email) whenever you\'re ready.","uuid":"834bea03"}'
+  const RESULT_OF_A_BLOCKED_TURN =
+    '{"type":"result","subtype":"success","stop_reason":"end_turn","terminal_reason":"completed",' +
+    '"is_error":false,"result":"I\'ll wait — let me know which approach you\'d like.",' +
+    '"total_cost_usd":0.1967302}'
+
+  it('decodes the record that says the agent stopped for a person', () => {
+    const [event] = parse('claude-code', [POST_TURN_BLOCKED])
+    expect(event).toMatchObject({ kind: 'turn_status', category: 'blocked' })
+    expect(event?.kind === 'turn_status' && event.needsAction).toContain('which approach')
+  })
+
+  it('⛔ cannot tell a blocked turn from a finished one by its result alone', () => {
+    // This is the whole reason `turn_status` exists. The terminal record of a turn that stopped to
+    // ask a question is byte-for-byte the shape of one that finished the work: end_turn, completed,
+    // not an error. Anything reading only this reports "done" or "ended without saying why".
+    const [result] = parse('claude-code', [RESULT_OF_A_BLOCKED_TURN])
+    expect(result).toMatchObject({ kind: 'result', isError: false, terminalReason: 'completed' })
+  })
+
+  it('takes the category as it comes and does not invent a taxonomy', () => {
+    // ⚠️ `blocked` is the only value measured. A vendor may add others, and a decoder that mapped
+    // the unknown onto a known one would be guessing about the thing this record exists to say.
+    const [event] = parse('claude-code', [
+      '{"type":"system","subtype":"post_turn_summary","status_category":"something_new"}'
+    ])
+    expect(event).toMatchObject({ kind: 'turn_status', category: 'something_new', needsAction: null })
+  })
+
   it('encodes stream prompts with the `type` user envelope', () => {
     const encoded = adapter('claude-code').encodeStreamPrompt?.('hello world')
     expect(encoded).toBeDefined()
@@ -343,6 +383,23 @@ describe('renderForHuman', () => {
       info: { status: 'allowed_warning', resetsAt: null, rateLimitType: 'five_hour' }
     })
     expect(out).toContain('allowed_warning')
+  })
+
+  it('tells a watching person the agent is waiting on them', () => {
+    const out = renderForHuman({
+      kind: 'turn_status',
+      category: 'blocked',
+      detail: null,
+      needsAction: 'let me know which approach you want'
+    })
+    expect(out).toContain('waiting on you')
+    expect(out).toContain('which approach')
+  })
+
+  it('says nothing for a turn status that is not about a person', () => {
+    expect(
+      renderForHuman({ kind: 'turn_status', category: 'in_progress', detail: 'x', needsAction: null })
+    ).toBe('')
   })
 
   it('ends a turn with a verdict a person can act on', () => {

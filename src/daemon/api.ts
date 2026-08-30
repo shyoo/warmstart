@@ -73,6 +73,7 @@ import {
   removeRule,
   requestApproval
 } from './approvals.js'
+import { answerQuestion, askQuestion, openQuestions, questionsForTask } from './questions.js'
 import { allAvailability } from './resources.js'
 import { activityFor } from './activity.js'
 import {
@@ -539,6 +540,21 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
         : { decision: 'allow' as const }
     },
     'approval.answer': (p) => answerApproval(p.id, p.decision, 'human'),
+
+    // ---- questions ---------------------------------------------------------------------
+    'question.ask': async (p) =>
+      await askQuestion({
+        sessionId: p.sessionId,
+        origin: p.origin,
+        kind: p.kind,
+        question: p.question,
+        ...(p.header ? { header: p.header } : {}),
+        ...(p.options ? { options: p.options } : {})
+      }),
+    'question.list': () => openQuestions(),
+    'question.forTask': (p) => questionsForTask(p.taskId),
+    'question.answer': (p) =>
+      answerQuestion(p.id, { optionIds: p.optionIds ?? [], text: p.text ?? null }),
     'approval.rules': (p) => listRules(p.projectId ?? null),
     'approval.addRule': (p) =>
       addRule({ projectId: p.projectId ?? null, text: p.text, effect: p.effect }),

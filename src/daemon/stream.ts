@@ -62,6 +62,19 @@ export type StreamEvent =
   | { kind: 'assistant_text'; text: string }
   /** ⚠️ Cumulative for the turn, not a delta. Callers must replace rather than add. */
   | { kind: 'usage'; usage: StreamUsage; final: boolean }
+  /**
+   * The CLI's own account of **why** a turn ended, which the terminal record cannot give.
+   *
+   * ⛔ Measured 2026-08-30 on claude-code 2.1.251 (R14.c): an agent that asked a question and stopped
+   * emits `post_turn_summary` with `status_category: "blocked"` and a `needs_action` sentence — while
+   * its `result` reads `stop_reason: "end_turn"`, `terminal_reason: "completed"`, `is_error: false`,
+   * i.e. **identical to a finished task**. Without this record, "the agent is waiting on you" and
+   * "the agent is done" are the same bytes, and the operator gets `awaiting_human` with no reason.
+   *
+   * ⚠️ `category` is an open string. `blocked` is the only value measured; a vendor may add others,
+   * and nothing may assume that not-blocked means anything at all.
+   */
+  | { kind: 'turn_status'; category: string; detail: string | null; needsAction: string | null }
   | { kind: 'init'; sessionId: string | null; model: string | null; permissionMode: string | null }
   | { kind: 'other'; type: string }
 
@@ -112,6 +125,12 @@ export function renderForHuman(event: StreamEvent): string {
         dim(`— ${event.isError ? 'failed' : 'done'}${event.terminalReason ? `: ${event.terminalReason}` : ''}`) +
         eol
       )
+    // ⚠️ Only when it says the turn stopped for a person. Every other category is bookkeeping the
+    // scheduler wants and a reader watching the pane does not.
+    case 'turn_status':
+      return event.category === 'blocked'
+        ? dim(`— waiting on you${event.needsAction ? `: ${event.needsAction}` : ''}`) + eol
+        : ''
     // ⛔ Everything else is protocol. It goes to the scheduler and not to the screen.
     case 'other':
       return ''

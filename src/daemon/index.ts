@@ -16,6 +16,7 @@ import {
 } from './sessions.js'
 import { reconcileClaims } from './resources.js'
 import {
+  noteTurnStatus,
   onSessionExit,
   onStreamResult,
   reconcileTasks,
@@ -138,6 +139,10 @@ async function main(): Promise<void> {
       // ⛔ And the record that says the turn failed, which nothing was listening to. A `stream`
       // session that hits an `api_error` does not exit, so waiting for `onExit` waits forever.
       if (event.kind === 'result') void onStreamResult(session, event)
+      // ⛔ Held rather than acted on, because it arrives *before* the terminal record and describes
+      // something the terminal record cannot say: that the turn stopped for a person. See
+      // `noteTurnStatus`.
+      if (event.kind === 'turn_status') noteTurnStatus(session.id, event)
     },
     onExit(sessionId, exitCode) {
       const finished = getSession(sessionId)

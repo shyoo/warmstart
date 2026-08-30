@@ -175,7 +175,7 @@ export function Controller({ now }: { now: number }): React.JSX.Element {
           </div>
           <p className="compose-hint">
             {available
-              ? 'Enter sends. Its tool use goes through the Approvals bar, the same as an agent’s.'
+              ? 'Enter sends. Its tool use goes through the Attention bar, the same as an agent’s.'
               : 'Every controller account is out of window or not designated. Judgment calls take ' +
                 'their deterministic answer until one is back — nothing stalls, it just waits.'}
           </p>

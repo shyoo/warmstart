@@ -2219,3 +2219,78 @@ could not say was *why* — which is the argument for reporting evidence rather 
 slot at diagnosis time; by the time they were to be stopped they were already gone, because the
 operator quit the app and the daemon shut down cleanly and took its children with it. Recorded
 because "I killed them" and "they died" are different facts and only one of them was true.
+
+
+## A question that could only be answered yes or no (2026-08-30)
+
+The tool assumed a task runs from dispatch to completion with nobody in the loop. Two real shapes of
+work break that: an agent that needs a decision only a person can make, and an agent that breaks work
+into phases and stops between them. Neither is a failure to design out — a complex design prompt
+*should* stop and ask.
+
+⛔ **A tool existed for this and could not carry an answer.** `request_human` routed through
+`approval.request`, whose answer set is closed at `allow | allow_always | deny`. So an agent asking
+*"OAuth, session cookies, or magic link?"* received, literally, `The operator agreed.` The question
+travelled the whole way to a person and the reply had nowhere to sit. The operator, meanwhile, was
+shown three buttons for a three-way design question.
+
+### What the measurement changed
+
+R14 (2026-08-30, claude-code 2.1.251) was run before building, and it moved the plan twice.
+
+⭐ **Claude Code's own `AskUserQuestion` reaches our permission hook**, carrying `questions[]` with
+labels, per-option prose and `multiSelect`. So the highest-fidelity path needs no cooperation from the
+prompt at all — the agent does not have to know our tools exist.
+
+⛔ **But allow is not an answer.** Returning `{behavior:'allow'}` yields the tool result *"The user
+did not answer the questions."* The hook gates *asking*, not *answering*. A second probe settled the
+alternative: `{behavior:'deny', message}` **does** reach the model as the tool result and is acted on.
+So a question can be answered in place, in the same turn — at the cost of `is_error: true` and a row
+in `permission_denials`, both written down where they happen.
+
+⭐ **And the vendor already says when it is blocked.** `post_turn_summary` carries
+`status_category: "blocked"` and a `needs_action` sentence — while the `result` record beside it reads
+`end_turn` / `completed` / `is_error: false`, byte-for-byte the shape of success. The reason a run
+stopped was on the wire the whole time, decoded as `other` and dropped. That record is now
+`StreamEvent.turn_status`, and it turned "the session ended, nothing here can tell whether the work
+was finished" into the agent's own sentence about what it wanted.
+
+### Three objects, not two
+
+A **Question** is not an Approval and not a Task. An approval's answer set is closed and its answer
+can become a project rule; a question's answer set is written by whoever asked and can never be one.
+An approval that goes unanswered **denies** — correct for `rm -rf`, and exactly wrong for *"which
+design do you want"*, where the agent is then told the operator refused and builds on that.
+
+So an unanswered question **parks**: `answered_at` stays null, the task rests at `awaiting_human`, and
+the question is as answerable an hour later as it was at the start. Answering a parked question writes
+it into the thread, where the next run's prompt carries it — without that last hop a park would be a
+dead end.
+
+⛔ **A blocked run is not a failed run** (owner's call). It did the work up to the question and metered
+its turns. Filing it as `failed` was inferred from nothing but the absence of a completion signal — and
+it meant three good questions in a row looked like a task that kept failing, which would have summoned
+`maybeTriage` to explain a pattern that was not there.
+
+⚠️ **An open question turned out to be better evidence than the vendor's record.** `post_turn_summary`
+is the agent reporting its own state; an open question is something we watched being asked. So the run
+outcome keys on either, which means adapters that emit no such record get the right answer too.
+
+### Rejected
+
+**Parsing prose to find a question.** Reading intent out of generated text is the inference this
+project refuses to make. An anchored `NEEDS DECISION:` prefix the agent was told to use, and a
+vendor's own `status_category` field, are contracts — a different thing.
+
+**Widening `Approval` instead.** Everything that makes an approval good — rules, `allow_always`, glob
+matching, deny-wins — is meaningless for a design decision, and each would have had to be special-cased
+away.
+
+**A text box in the Attention bar.** A `choice` question with three short labels answers there in one
+click; anything larger opens the task, because a decision with three paragraphs of rationale is not a
+44px strip.
+
+⚠️ **`escalateStale` is dead code**, found while reading the approval path and not fixed here:
+`WAIT_TIMEOUT_MS` (10 min) fires before `DEFAULT_ESCALATE_AFTER_MS` (30 min) and writes `answered_at`,
+which is the column `escalateStale` filters on. No approval that actually waits can reach
+`awaiting_human`, and the function has no test.
