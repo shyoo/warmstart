@@ -633,6 +633,36 @@ describe('trustDirectory', () => {
   })
 })
 
+describe('probeQuota', () => {
+  it('claude-code labels windows as Claude 5h / Claude 7d and orders 5h above 7d', async () => {
+    const a = adapter('claude-code')
+    const root = mkdtempSync(join(tmpdir(), 'agentyard-claude-quota-'))
+    const file = join(root, '.claude.json')
+    writeFileSync(
+      file,
+      JSON.stringify({
+        cachedUsageUtilization: {
+          fetchedAtMs: 1_700_000_000_000,
+          utilization: {
+            limits: [
+              { kind: 'weekly', group: 'weekly', percent: 20, resets_at: '2026-09-03T00:00:00Z' },
+              { kind: 'session', group: 'session', percent: 30, resets_at: '2026-08-30T05:30:00Z' }
+            ]
+          }
+        }
+      })
+    )
+
+    const res = await a.probeQuota(root)
+    expect(res.windows.map((w) => w.label)).toEqual(['Claude 5h', 'Claude 7d'])
+    expect(res.windows.map((w) => w.id)).toEqual(['session', 'weekly'])
+    expect(res.windows[0]!.percent).toBe(30)
+    expect(res.windows[1]!.percent).toBe(20)
+
+    rmSync(root, { recursive: true, force: true })
+  })
+})
+
 describe('probeIdentity', () => {
   it('antigravity-cli probes identity and returns valid structure', async () => {
     const a = adapter('antigravity-cli')

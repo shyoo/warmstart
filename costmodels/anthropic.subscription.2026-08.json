@@ -80,9 +80,9 @@
     "kind": "rolling_windows",
     "probe": "cli",
     "windows": [
-      { "id": "5h", "label": "session" },
-      { "id": "7d", "label": "weekly_all" },
-      { "id": "7d_opus", "label": "weekly_opus", "optional": true }
+      { "id": "5h", "label": "Claude 5h" },
+      { "id": "7d", "label": "Claude 7d" },
+      { "id": "7d_opus", "label": "Claude 7d Opus", "optional": true }
     ],
     "reports": "percent",
     "$comment": "Percent only. tokens_per_percent is learned per (worker, model, tokenizer) - see docs/cost-model.md §5.",

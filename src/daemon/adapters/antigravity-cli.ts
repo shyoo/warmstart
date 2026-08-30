@@ -609,6 +609,7 @@ export function parseUsageScreen(screen: string, now = Date.now()): QuotaWindow[
 
   // ⛔ Keyed by window id so repaints across backscroll do not duplicate windows.
   const windowsById = new Map<string, QuotaWindow>()
+  const groupOrder = new Map<string, number>()
 
   if (hasUsage) {
     let group: { id: string; label: string } | null = null
@@ -621,7 +622,11 @@ export function parseUsageScreen(screen: string, now = Date.now()): QuotaWindow[
       const heading = /^\s*([A-Z][A-Z0-9 &]*?)\s+MODELS\s*$/.exec(line)
       if (heading?.[1]) {
         const name = heading[1].trim()
-        group = { id: name.toLowerCase().replace(/[^a-z0-9]+/g, '-'), label: formatGroupLabel(name) }
+        const groupId = name.toLowerCase().replace(/[^a-z0-9]+/g, '-')
+        group = { id: groupId, label: formatGroupLabel(name) }
+        if (!groupOrder.has(groupId)) {
+          groupOrder.set(groupId, groupOrder.size)
+        }
         kind = null
         continue
       }
@@ -667,7 +672,18 @@ export function parseUsageScreen(screen: string, now = Date.now()): QuotaWindow[
     }
   }
 
-  const windows = Array.from(windowsById.values())
+  const windows = Array.from(windowsById.values()).sort((a, b) => {
+    if (a.id === 'context') return 1
+    if (b.id === 'context') return -1
+    const groupA = a.group ?? a.id.slice(a.id.indexOf(':') + 1)
+    const groupB = b.group ?? b.id.slice(b.id.indexOf(':') + 1)
+    const orderA = groupOrder.get(groupA) ?? 0
+    const orderB = groupOrder.get(groupB) ?? 0
+    if (orderA !== orderB) return orderA - orderB
+    const rankA = a.id.startsWith('5h') ? 0 : 1
+    const rankB = b.id.startsWith('5h') ? 0 : 1
+    return rankA - rankB
+  })
   if (windows.length === 0) return null
 
   // ⛔ A group must contribute BOTH of its windows or the read is not trustworthy. This panel is

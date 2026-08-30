@@ -39,10 +39,10 @@ describe('the /usage panel', () => {
     // Gemini weekly + Gemini 5h + Claude/GPT weekly + Claude/GPT 5h.
     expect(windows).toHaveLength(4)
     expect(windows?.map((w) => w.label)).toEqual([
-      'Gemini 7d',
       'Gemini 5h',
-      'Claude/GPT 7d',
-      'Claude/GPT 5h'
+      'Gemini 7d',
+      'Claude/GPT 5h',
+      'Claude/GPT 7d'
     ])
   })
 

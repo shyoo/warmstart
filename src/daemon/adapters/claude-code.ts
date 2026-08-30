@@ -423,10 +423,30 @@ export const claudeCode: AgentAdapter = {
           error: 'no cachedUsageUtilization in .claude.json'
         }
       }
+      const formatClaudeLabel = (kind: string, group?: string): string => {
+        const k = (group ?? kind).toLowerCase()
+        if (k === 'session' || k === '5h') return 'Claude 5h'
+        if (k === 'weekly' || k === '7d' || k === 'weekly_all') return 'Claude 7d'
+        if (k === 'weekly_opus' || k === '7d_opus') return 'Claude 7d Opus'
+        return `Claude ${group ?? kind}`
+      }
+
+      const claudeWindowRank = (kind: string, group?: string): number => {
+        const k = (group ?? kind).toLowerCase()
+        if (k === 'session' || k === '5h') return 0
+        if (k === 'weekly' || k === '7d' || k === 'weekly_all') return 1
+        if (k === 'weekly_opus' || k === '7d_opus') return 2
+        return 3
+      }
+
+      const sortedLimits = [...limits].sort(
+        (a, b) => claudeWindowRank(a.kind, a.group) - claudeWindowRank(b.kind, b.group)
+      )
+
       return {
-        windows: limits.map((l) => ({
+        windows: sortedLimits.map((l) => ({
           id: l.kind,
-          label: l.group ?? l.kind,
+          label: formatClaudeLabel(l.kind, l.group),
           percent: l.percent,
           resetsAt: l.resets_at ? Date.parse(l.resets_at) : null
         })),
