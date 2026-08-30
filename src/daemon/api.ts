@@ -13,6 +13,7 @@ import { existsSync } from 'node:fs'
 import { adapter, adapters } from './adapters/index.js'
 import {
   createWorker,
+  getWorker,
   listWorkers,
   refreshIdentity,
   reorderWorkers,
@@ -78,6 +79,7 @@ import {
   completeTask,
   continueTask,
   deliverToLiveSession,
+  promptFor,
   relandTask,
   resolveTask,
   tick
@@ -381,6 +383,13 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
         .map((id) => getSession(id))
         .filter((s): s is NonNullable<typeof s> => !!s)
       const project = task.projectId ? getProject(task.projectId) : null
+      const assignedWorker = task.constraints.workerId
+        ? getWorker(task.constraints.workerId)
+        : task.assignee
+          ? getWorker(task.assignee)
+          : (listWorkers().find((w) => w.retiredAt === null) ?? null)
+      const adapterId = assignedWorker?.adapterId ?? 'claude-code'
+      const previewPrompt = promptFor(task, adapterId, false, { markDelivered: false })
       return {
         task,
         messages: messagesFor(p.id),
@@ -391,7 +400,8 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
         resolvedFinish: resolveFinishPolicy(task, project),
         resolvedSharing: resolveSessionSharing(task, project),
         inheritedFinish: resolveFinishPolicy(null, project),
-        inheritedSharing: resolveSessionSharing(null, project)
+        inheritedSharing: resolveSessionSharing(null, project),
+        previewPrompt
       }
     },
     'task.create': (p) => createTask({ ...p, ...(p.constraints ? { constraints: checkConstraints(p.constraints) } : {}) }),

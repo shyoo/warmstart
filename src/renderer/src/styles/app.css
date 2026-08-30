@@ -2254,6 +2254,99 @@ select:focus-visible,
   word-break: break-word;
 }
 
+.msg-prompt-box {
+  margin-top: var(--sp-2);
+}
+
+/* ---- prompt disclosure ------------------------------------------------- */
+
+.prompt-disclosure {
+  margin: var(--sp-2) 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-2);
+  font-size: var(--text-dense);
+  overflow: hidden;
+}
+
+.prompt-disclosure-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px var(--sp-2);
+  background: var(--color-surface);
+  cursor: pointer;
+  user-select: none;
+  font-size: var(--text-meta);
+  color: var(--color-text-faint);
+  transition: background var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease);
+}
+
+.prompt-disclosure-summary:hover {
+  background: var(--color-surface-2);
+  color: var(--color-text);
+}
+
+.prompt-disclosure-title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  font-weight: 500;
+}
+
+.prompt-disclosure-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.prompt-copy-btn {
+  padding: 1px 6px;
+  font-size: 10px;
+  height: 18px;
+  line-height: 1;
+}
+
+.prompt-disclosure-body {
+  padding: var(--sp-2);
+  border-top: 1px solid var(--color-border);
+  background: var(--color-bg);
+}
+
+.prompt-pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--color-text);
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.thread-preview-prompt {
+  margin: var(--sp-2) 0 var(--sp-3) 0;
+}
+
+.draft-preview-prompt {
+  margin-top: var(--sp-2);
+}
+
+.side-run-prompt {
+  margin-top: var(--sp-1);
+}
+
+.side-run-prompt .prompt-disclosure {
+  margin: 0;
+}
+
+.side-run-prompt .prompt-pre {
+  max-height: 200px;
+}
+
 /* Adapter facts at commissioning: a short list where a warning must read as a warning. */
 .facts {
   list-style: none;

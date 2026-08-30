@@ -37,6 +37,7 @@ export interface TaskDetailData {
   resolvedSharing?: ResolvedSessionSharing
   inheritedFinish?: ResolvedFinishPolicy
   inheritedSharing?: ResolvedSessionSharing
+  previewPrompt?: string
 }
 
 /**
@@ -325,6 +326,7 @@ function TaskDetail({
             <DraftControls
               task={task}
               initialPrompt={messages[0]?.text ?? task.title}
+              previewPrompt={detail.previewPrompt}
               onPromote={async () => {
                 await rpc('task.promote', { id: task.id })
                 await refresh()
@@ -336,7 +338,16 @@ function TaskDetail({
             />
           )}
 
-          <Thread messages={messages} activity={activity} live={live} />
+          <Thread messages={messages} runs={runs} activity={activity} live={live} />
+
+          {detail.previewPrompt && task.status !== 'draft' && task.status !== 'running' && (
+            <div className="thread-preview-prompt">
+              <PromptDisclosure
+                prompt={detail.previewPrompt}
+                label="Prompt to be sent on next dispatch"
+              />
+            </div>
+          )}
 
           {/* ⛔ Here, with the composer, and not in the ledger on the right. All three answers to
               "a decision is wanted from you" are the same kind of thing — finish it, park it, or say
@@ -562,12 +573,61 @@ function TaskDetail({
  * run ends; nothing here is written to `task_messages`. Marked as live for exactly that reason —
  * text that will be replaced must not look like text that has been kept.
  */
+/**
+ * Collapsible prompt disclosure with character count and copy-to-clipboard.
+ */
+function PromptDisclosure({
+  prompt,
+  label = 'Prompt sent to agent',
+  defaultOpen = false
+}: {
+  prompt: string
+  label?: string
+  defaultOpen?: boolean
+}): React.JSX.Element {
+  const [copied, setCopied] = useState(false)
+  const copy = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    e.preventDefault()
+    void navigator.clipboard.writeText(prompt).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    })
+  }
+
+  return (
+    <details className="prompt-disclosure" open={defaultOpen}>
+      <summary className="prompt-disclosure-summary">
+        <span className="prompt-disclosure-title">
+          <span className="prompt-disclosure-icon">📋</span> {label}
+        </span>
+        <span className="prompt-disclosure-meta">
+          <span>{prompt.length.toLocaleString()} chars</span>
+          <button
+            type="button"
+            className="btn btn--xs btn--ghost prompt-copy-btn"
+            onClick={copy}
+            title="Copy full prompt text"
+          >
+            {copied ? 'Copied' : 'Copy'}
+          </button>
+        </span>
+      </summary>
+      <div className="prompt-disclosure-body">
+        <pre className="prompt-pre">{prompt}</pre>
+      </div>
+    </details>
+  )
+}
+
 function Thread({
   messages,
+  runs,
   activity,
   live
 }: {
   messages: TaskMessage[]
+  runs: Run[]
   activity: Array<{ text: string; ts: number }>
   live: boolean
 }): React.JSX.Element {
@@ -585,21 +645,38 @@ function Thread({
       {messages.length === 0 && !showLive && (
         <p className="dim">Nothing has been said on this task yet.</p>
       )}
-      {messages.map((m) => (
-        <div key={m.id} className={`msg msg--${m.role}`}>
-          <span className="msg-role">
-            {m.role}
-            {/* ⛔ On every message. A thread with no clock cannot answer "did the agent reply to
-                that, or was it already saying this?" — and on a task that ran over two days, which
-                is ordinary here, it cannot even say which day. The exact moment is in the title,
-                because the column has room for a short form and not for both. */}
-            <span className="msg-when" title={new Date(m.ts).toLocaleString()}>
-              {when(m.ts)}
+      {messages.map((m) => {
+        const runForMsg = m.runId
+          ? runs.find((r) => r.id === m.runId)
+          : m.role === 'system'
+            ? runs.find((r) => r.prompt && Math.abs(r.startedAt - m.ts) < 5000)
+            : null
+        return (
+          <div key={m.id} className={`msg msg--${m.role}`}>
+            <span className="msg-role">
+              {m.role}
+              {/* ⛔ On every message. A thread with no clock cannot answer "did the agent reply to
+                  that, or was it already saying this?" — and on a task that ran over two days, which
+                  is ordinary here, it cannot even say which day. The exact moment is in the title,
+                  because the column has room for a short form and not for both. */}
+              <span className="msg-when" title={new Date(m.ts).toLocaleString()}>
+                {when(m.ts)}
+              </span>
             </span>
-          </span>
-          <span className="msg-text">{m.text}</span>
-        </div>
-      ))}
+            <span className="msg-text">
+              {m.text}
+              {runForMsg?.prompt && (
+                <div className="msg-prompt-box">
+                  <PromptDisclosure
+                    prompt={runForMsg.prompt}
+                    label={`Prompt sent for run ${runForMsg.id.slice(0, 8)}`}
+                  />
+                </div>
+              )}
+            </span>
+          </div>
+        )
+      })}
 
       {showLive && (
         <div className="msg msg--agent msg--live">
@@ -975,6 +1052,11 @@ function RunRow({
         </span>
       </div>
       <QuotaDelta run={run} />
+      {run.prompt && (
+        <div className="side-run-prompt">
+          <PromptDisclosure prompt={run.prompt} label={`Run ${run.id.slice(0, 8)} prompt`} />
+        </div>
+      )}
     </div>
   )
 }
@@ -1374,11 +1456,13 @@ function PriorityPicker({
 function DraftControls({
   task,
   initialPrompt,
+  previewPrompt,
   onPromote,
   onUpdate
 }: {
   task: Task
   initialPrompt: string
+  previewPrompt?: string
   onPromote: () => Promise<void>
   onUpdate: (title: string, prompt: string) => Promise<void>
 }): React.JSX.Element {
@@ -1467,6 +1551,14 @@ function DraftControls({
         <div className="draft-banner-sub">
           You can edit the prompt or change policies in the sidebar, and file the task when ready.
         </div>
+        {previewPrompt && (
+          <div className="draft-preview-prompt">
+            <PromptDisclosure
+              prompt={previewPrompt}
+              label="Prompt to be sent to agent"
+            />
+          </div>
+        )}
       </div>
       <div className="draft-banner-actions">
         <button className="btn" onClick={() => setEditing(true)}>

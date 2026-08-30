@@ -959,6 +959,7 @@ export interface RpcMap {
       resolvedSharing?: ResolvedSessionSharing
       inheritedFinish?: ResolvedFinishPolicy
       inheritedSharing?: ResolvedSessionSharing
+      previewPrompt?: string
     } | null
   }
   'task.create': { params: TaskCreateParams; result: Task }

@@ -8,7 +8,7 @@ started in CI, never run against a real agent CLI.
 if you add a line, find the one it obsoletes and cut it in the same edit. Finished work moves to
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
-**Baseline (2026-08-29, measured):** typecheck · lint · build clean · `npm test` 711/713 (2 POSIX-only
+**Baseline (2026-08-29, measured):** typecheck · lint · build clean · `npm test` 718/720 (2 POSIX-only
 skipped) · `test:daemon` 125/125 · `test:ui` 140/140 · `test:pack` 18/18 · L4 (opt-in) landed a real
 agent commit on origin/main. Electron 44.0.0, electron-builder 26.15.3, 0 npm vulnerabilities.
 CLIs here: claude 2.1.251 · agy 1.1.22 · codex 0.151.0.
@@ -37,7 +37,7 @@ gaps are below. Scope: `transient_docs/implementation_plan_2026-08-24.md` §14, 
 src/daemon/            orchestratord. Runs as Electron-with-ELECTRON_RUN_AS_NODE, detached.
   index.ts             entry: lock, db, server, poller, scheduler, tailer wiring, shutdown
   server.ts  api.ts    HTTP+WS on 127.0.0.1:<random>, bearer token, typed RPC
-  db.ts                node:sqlite + numbered migrations (v17)
+  db.ts                node:sqlite + numbered migrations (v18)
   costmodel.ts         the four questions; user dir > bundled > compiled-in
   workers.ts           registry, isolation roots, retire-keeps-credentials, the fleet's display
                        order - ⛔ display only (+ workerorder.test.ts)

@@ -411,6 +411,13 @@ export interface Run {
    * as *new* would be an assertion nobody measured. The UI says nothing at all for null.
    */
   startedWarm: boolean | null
+  /**
+   * The exact prompt sent to the agent CLI for this run.
+   *
+   * Includes prepended handoff notes, branch notices, the task prompt and completion instructions.
+   * Null for runs that predated this column.
+   */
+  prompt: string | null
 }
 
 /** A quota reading kept beside a run, with enough of its basis to be distrusted properly. */

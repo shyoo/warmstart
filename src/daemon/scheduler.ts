@@ -957,6 +957,21 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
     ...(picked.effort ? { effort: picked.effort } : {})
   })
 
+  // ⚠️ A revived conversation remembers a tree that has since moved. `prepareWorkspace` switched the
+  // worktree while the agent was not running, so nothing warned it — and its context is full of file
+  // contents from the branch it was last on.
+  const movedSince = revive && revive.currentBranch && branch && revive.currentBranch !== branch
+  const branchNotice = movedSince
+    ? `⚠️ This workspace has moved since your last turn: it was on \`${revive.currentBranch}\` and ` +
+      `is now on \`${branch}\`. Any file you read earlier came from the other branch — re-read ` +
+      'anything you are going to rely on rather than trusting what is in this conversation.'
+    : null
+
+  const promptText = promptFor(task, worker.adapterId, revive !== null, {
+    branchNotice,
+    markDelivered: true
+  })
+
   const run = startRun({
     taskId: task.id,
     workerId: worker.id,
@@ -969,7 +984,8 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
     // the two kinds of run together.
     startedWarm: revive !== null,
     // ⭐ The tripwire's first half. See `decideFinish`'s `trunk-moved` branch for what it is for.
-    trunkShaBefore: project ? await trunkTargetSha(project, policyFor(project).landingTarget) : null
+    trunkShaBefore: project ? await trunkTargetSha(project, policyFor(project).landingTarget) : null,
+    prompt: promptText
   })
   setRunQuota(run.id, 'before', runQuota(worker.id))
   // A new attempt, so the peephole starts empty. ⛔ Cleared here and never on completion: what the
@@ -991,16 +1007,6 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
   // `releaseFor` that hands it back either way.
   acquireSessionLease(session.id, task.id)
 
-  // ⚠️ A revived conversation remembers a tree that has since moved. `prepareWorkspace` switched the
-  // worktree while the agent was not running, so nothing warned it — and its context is full of file
-  // contents from the branch it was last on.
-  const movedSince = revive && revive.currentBranch && branch && revive.currentBranch !== branch
-  const branchNotice = movedSince
-    ? `⚠️ This workspace has moved since your last turn: it was on \`${revive.currentBranch}\` and ` +
-      `is now on \`${branch}\`. Any file you read earlier came from the other branch — re-read ` +
-      'anything you are going to rely on rather than trusting what is in this conversation.'
-    : null
-
   setStatus(task.id, 'running', {
     assignee: worker.id,
     ...(branch ? { branch } : {})
@@ -1010,16 +1016,14 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
     'system',
     `${revive ? 'Resumed the earlier conversation' : 'Started'} on ${worker.label}` +
       `${branch ? ` in ${workspace?.path} on \`${branch}\`` : ''}` +
-      (quotaUnverified ? ' — quota reading was not trustworthy, so this run is marked unverified.' : '')
+      (quotaUnverified ? ' — quota reading was not trustworthy, so this run is marked unverified.' : ''),
+    run.id
   )
 
   // The CLI needs a moment before it starts reading stdin; a message sent too early is dropped.
   setTimeout(() => {
     try {
-      sendPrompt(
-        session.id,
-        [branchNotice, promptFor(task, worker.adapterId, revive !== null)].filter(Boolean).join('\n\n')
-      )
+      sendPrompt(session.id, promptText)
     } catch (err) {
       log.warn(`could not send the prompt for t${task.seq}:`, err)
     }
@@ -1147,6 +1151,11 @@ async function dispatchIntoWarmSession(
 
   applyPermissionRules(worker, project)
 
+  const promptText = promptFor(task, worker.adapterId, true, {
+    branchNotice: notice,
+    markDelivered: true
+  })
+
   const run = startRun({
     taskId: task.id,
     workerId: worker.id,
@@ -1156,7 +1165,8 @@ async function dispatchIntoWarmSession(
     costModelId: adapter(worker.adapterId).info.policy.costModelId,
     // The session never closed, which is the warmest a run gets.
     startedWarm: true,
-    trunkShaBefore: project ? await trunkTargetSha(project, policyFor(project).landingTarget) : null
+    trunkShaBefore: project ? await trunkTargetSha(project, policyFor(project).landingTarget) : null,
+    prompt: promptText
   })
   setRunQuota(run.id, 'before', runQuota(worker.id))
   clearActivity(task.id)
@@ -1181,17 +1191,13 @@ async function dispatchIntoWarmSession(
         ? ` — about ${saved} input-token-equivalents cheaper than a cold start.`
         : saved === null
           ? ' — cheaper than a cold start, though this provider’s cache is not priced, so by how much is unknown.'
-          : '.')
+          : '.'),
+    run.id
   )
   // ⚠️ The branch notice goes **first**, before the task's own words. An agent that reads the work
   // before it reads "the files you remember are from another branch" has already started planning
   // against a tree that is not there.
-  sendPrompt(
-    session.id,
-    // ⛔ `resumed: true` — this session never closed, so it holds the brief already. Restating it
-    // here would read as being asked to do the work a second time.
-    [notice, promptFor(task, worker.adapterId, true)].filter(Boolean).join('\n\n')
-  )
+  sendPrompt(session.id, promptText)
   log.info(
     `t${task.seq} continued warm on ${worker.label} (run ${run.id.slice(0, 8)}, ` +
       `saved ${saved === null ? 'unknown' : `~${saved}`})`
@@ -1467,8 +1473,16 @@ async function preempt(
  * The handoff from a previous run is prepended, because a successor that has to rediscover the state
  * of the branch pays for it twice - once in tokens and once in the mistakes it makes meanwhile.
  */
-function promptFor(task: Task, adapterId: string, resumed = false): string {
+export function promptFor(
+  task: Task,
+  adapterId: string,
+  resumed = false,
+  opts: { markDelivered?: boolean; branchNotice?: string | null } = { markDelivered: true }
+): string {
   const parts: string[] = []
+  if (opts.branchNotice) {
+    parts.push(opts.branchNotice)
+  }
   if (task.handoffNote) {
     parts.push(
       ['Continuing earlier work. Handoff from the previous session:', task.handoffNote, ''].join('\n')
@@ -1488,17 +1502,20 @@ function promptFor(task: Task, adapterId: string, resumed = false): string {
     (m, i) => m.role === 'human' || m.role === 'controller' || (m.role === 'agent' && i === 0)
   )
   const outstanding = thread.filter((m, i) => (i === 0 && !resumed) || m.deliveredAt === null)
+  const initialPrefixCount = (opts.branchNotice ? 1 : 0) + (task.handoffNote ? 1 : 0)
   if (thread.length === 0 && !resumed) {
     parts.push(task.title)
   } else {
     for (const message of outstanding) {
-      if (parts.length === (task.handoffNote ? 1 : 0) && message.text !== task.title) {
+      if (parts.length === initialPrefixCount && message.text !== task.title) {
         parts.push(task.title)
       }
       parts.push(message.text)
     }
   }
-  markDelivered(outstanding.map((m) => m.id))
+  if (opts.markDelivered && outstanding.length > 0) {
+    markDelivered(outstanding.map((m) => m.id))
+  }
 
   // ⛔ Only name tools this adapter actually gets. `mcp: false` means the daemon spawns it with no
   // MCP server at all - true for Antigravity, whose `agy mcp add` registers globally and so cannot

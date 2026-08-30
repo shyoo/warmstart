@@ -234,6 +234,7 @@ describe('a dispatch that produced nothing', () => {
       note: null,
       quotaBefore: null,
       quotaAfter: null,
+      prompt: null,
       ...patch
     })
 

@@ -619,6 +619,15 @@ const MIGRATIONS: string[] = [
     where other.created_at < workers.created_at
        or (other.created_at = workers.created_at and other.id < workers.id)
   );
+  `,
+
+  // 18 - the exact prompt sent to the agent CLI for this run.
+  //
+  // Records what the CLI was actually told - including prepended handoff notes from previous
+  // sessions, branch switch notices, and completion instructions (e.g. MCP task_complete vs commit).
+  // Null for runs predating this column.
+  `
+  alter table runs add column prompt text;
   `
 ]
 

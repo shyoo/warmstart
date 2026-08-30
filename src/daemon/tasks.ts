@@ -793,6 +793,7 @@ interface RunRow {
   quota_after_json: string | null
   started_warm: number | null
   trunk_sha_before?: string | null
+  prompt?: string | null
 }
 
 function toRun(r: RunRow): Run {
@@ -816,7 +817,8 @@ function toRun(r: RunRow): Run {
     trunkShaBefore: r.trunk_sha_before ?? null,
     // ⛔ Null is not false. Every run that predates the column recorded nothing, and saying `cold`
     // for those would be a measurement nobody took.
-    startedWarm: r.started_warm === null ? null : r.started_warm === 1
+    startedWarm: r.started_warm === null ? null : r.started_warm === 1,
+    prompt: r.prompt ?? null
   }
 }
 
@@ -858,13 +860,15 @@ export function startRun(input: {
    * that does not resolve. The finish check reads null as "cannot say" and declines to fire.
    */
   trunkShaBefore?: string | null | undefined
+  /** The actual prompt sent to the agent CLI for this run. */
+  prompt?: string | null | undefined
 }): Run {
   const id = randomUUID()
   db()
     .prepare(
       `insert into runs (id, task_id, project_id, session_id, worker_id, started_at,
-                         quota_unverified, cost_model_id, started_warm, trunk_sha_before)
-       values (?,?,?,?,?,?,?,?,?,?)`
+                         quota_unverified, cost_model_id, started_warm, trunk_sha_before, prompt)
+       values (?,?,?,?,?,?,?,?,?,?,?)`
     )
     .run(
       id,
@@ -876,7 +880,8 @@ export function startRun(input: {
       input.quotaUnverified ? 1 : 0,
       input.costModelId,
       input.startedWarm === undefined ? null : input.startedWarm ? 1 : 0,
-      input.trunkShaBefore ?? null
+      input.trunkShaBefore ?? null,
+      input.prompt ?? null
     )
   const run = requireRun(id)
   emit({ type: 'run.changed', run })
