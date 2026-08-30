@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { adapter, adapters } from './adapters/index.js'
 import { costModel, loadCostModels } from './costmodel.js'
+import { spawnEnv } from './which.js'
 import { APPROVE_TOOL, MCP_SERVER_NAME } from './mcpconfig.js'
 
 /**
@@ -773,3 +774,98 @@ describe('probeIdentity', () => {
   })
 })
 
+/**
+ * What a spawned agent CLI inherits.
+ *
+ * ⛔ Measured 2026-08-30: a Claude Code session's environment carries around twenty `CLAUDE*`
+ * variables — `CLAUDE_CODE_HOST_SESSION_ID`, `CLAUDE_CODE_MESSAGING_SOCKET`,
+ * `CLAUDE_CODE_MESSAGING_TOKEN`, `CLAUDE_CODE_BRIDGE_SESSION_ID`, `CLAUDECODE=1` — and every adapter
+ * built its environment by copying `process.env` wholesale. A daemon started from inside such a
+ * session handed each worker the operator's own session handle and messaging socket, on an account
+ * it was not commissioned with. An isolation root that inherits the host's identity is not isolated.
+ */
+describe('the environment a worker inherits', () => {
+  const HOST = {
+    CLAUDECODE: '1',
+    CLAUDE_CODE_HOST_SESSION_ID: 'the-operators-session',
+    CLAUDE_CODE_MESSAGING_TOKEN: 'a-secret',
+    CLAUDE_CODE_ENTRYPOINT: 'claude-desktop',
+    CLAUDE_CONFIG_DIR: 'C:/Users/operator/.claude',
+    CLAUDE_AGENT_SDK_VERSION: '9.9.9',
+    ANTHROPIC_API_KEY: 'sk-should-not-travel'
+  }
+
+  const withHostEnv = <T,>(run: () => T): T => {
+    const saved: Record<string, string | undefined> = {}
+    for (const [k, v] of Object.entries(HOST)) {
+      saved[k] = process.env[k]
+      process.env[k] = v
+    }
+    try {
+      return run()
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k]
+        else process.env[k] = v
+      }
+    }
+  }
+
+  it('carries none of the host session across', () => {
+    const env = withHostEnv(() => spawnEnv())
+    for (const key of Object.keys(HOST)) {
+      expect(env[key], `${key} must not reach a worker`).toBeUndefined()
+    }
+  })
+
+  it('still carries the operating system, because a spawn needs it', () => {
+    // ⛔ The reason this is a deny by prefix and not a whitelist of what to keep. A whitelist has to
+    // enumerate everything a CLI needs on three platforms, and one omission is a spawn that fails
+    // in a way nobody can trace — which is exactly how a hand-set PATH broke a probe on 2026-08-30.
+    const env = withHostEnv(() => spawnEnv())
+    expect(Object.keys(env).length).toBeGreaterThan(5)
+    // ⚠️ Looked up case-insensitively, because `process.env` on Windows is a case-insensitive
+    // proxy while a plain object is not: `Object.keys` yields `SYSTEMROOT` and `process.env.SystemRoot`
+    // still reads. Harmless for a spawn - the OS is case-insensitive when the child reads it back -
+    // but it makes an exact-key assertion here a test of Windows trivia rather than of this function.
+    const find = (name: string): string | undefined =>
+      Object.entries(env).find(([k]) => k.toLowerCase() === name.toLowerCase())?.[1]
+    const os = process.platform === 'win32' ? 'SystemRoot' : 'HOME'
+    if (process.env[os]) expect(find(os)).toBe(process.env[os])
+  })
+
+  it('and a variable the vendor adds later is denied before anybody hears of it', () => {
+    const saved = process.env.CLAUDE_CODE_SOMETHING_INVENTED_TOMORROW
+    process.env.CLAUDE_CODE_SOMETHING_INVENTED_TOMORROW = 'x'
+    try {
+      expect(spawnEnv().CLAUDE_CODE_SOMETHING_INVENTED_TOMORROW).toBeUndefined()
+    } finally {
+      if (saved === undefined) delete process.env.CLAUDE_CODE_SOMETHING_INVENTED_TOMORROW
+      else process.env.CLAUDE_CODE_SOMETHING_INVENTED_TOMORROW = saved
+    }
+  })
+
+  it('every adapter that spawns a CLI goes through it', () => {
+    // ⚠️ The drift guard. Each adapter built its own environment by hand, and all three had the same
+    // hole; a fourth written from the pattern of the first would have had it too.
+    for (const id of ['claude-code', 'antigravity-cli', 'openai-compatible']) {
+      const plan = withHostEnv(() =>
+        adapter(id).plan({
+          sessionId: '00000000-0000-4000-8000-000000000000',
+          isolationRoot: 'C:/isolation/root',
+          transport: 'stream',
+          cwd: 'C:/anywhere'
+        } as never)
+      )
+      for (const key of Object.keys(HOST)) {
+        // ⚠️ Except the one each adapter sets for itself, which must be the *worker's* root and never
+        // the inherited value.
+        if (key === 'CLAUDE_CONFIG_DIR' && id === 'claude-code') {
+          expect(plan.env?.CLAUDE_CONFIG_DIR).toBe('C:/isolation/root')
+          continue
+        }
+        expect(plan.env?.[key], `${id} leaks ${key}`).toBeUndefined()
+      }
+    }
+  })
+})

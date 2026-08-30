@@ -2409,3 +2409,76 @@ there is a button that files an ordinary task for an agent to work them out.
 ⛔ That last one was the owner's amendment and it resolves the objection to it: an agent
 proposing check commands as a task with a reviewable diff is ordinary work, while an agent editing in
 place the gate that decides whether its own work is verified is not. The button can only do the first.
+
+
+## An isolation root that inherited the operator's session (2026-08-30)
+
+The operator noticed a growing list of sessions in the Claude Code desktop app, named like
+`shyoo-12700k-humming-hellman`, and asked whether the tool had made them.
+
+⛔ **The name is on no file on this machine.** Searched every Claude Code state file under
+`~/.claude`, all five worker isolation roots, and the app's data directory; the only hit was this
+conversation's own transcript, where the operator had typed it. The shape identifies it: `claude
+--help` documents `--remote-control-session-name-prefix`, *"default: hostname"*, and `shyoo-12700k`
+is the hostname. So the list is served from the account, not from disk - which means the tool cannot
+sweep it, and saying so was the answer to half the question. Deleting the four local session index
+files would have changed nothing visible: `claude agents --json` already filters dead pids, and it
+listed only the operator's own session.
+
+### What the tool was actually doing
+
+```
+probe    pty     150   (2026-08-27 -> 2026-08-30)
+work     stream   14   (2026-08-26 -> 2026-08-29)
+consult  stream    7
+login    pty       6
+```
+
+⚠️ **Ten interactive `claude` processes opened to read a number for every one that touched the
+operator's code.** The quota probe types `/usage` into a real PTY, and each such session registers a
+`bridgeSessionId` with the vendor. The mechanism was working exactly as designed - at most one refresh
+per sweep, only past `REFRESH_AFTER_MS` - the design simply spent more than it bought. Two hours
+replaces thirty minutes.
+
+⭐ What makes that cheap rather than merely rarer: the vendor's on-disk cache is refreshed by
+**any** use of an account, including this fleet's own work sessions. An account running tasks keeps
+its reading current for free, so the interactive refresh only ever mattered for an idle account -
+whose quota, by construction, is not moving.
+
+### The leak found on the way
+
+Every adapter built its environment by copying `process.env` wholesale and deleting three or four API
+keys. A Claude Code session's environment carries around twenty `CLAUDE*` variables, among them
+`CLAUDE_CODE_HOST_SESSION_ID`, `CLAUDE_CODE_MESSAGING_SOCKET`, `CLAUDE_CODE_MESSAGING_TOKEN` and
+`CLAUDE_CODE_BRIDGE_SESSION_ID`. A daemon started from inside such a session would hand every worker
+the operator's own session handle and messaging socket - and an inherited `CLAUDE_CONFIG_DIR` would
+point the worker at the operator's credentials rather than the ones it was commissioned with.
+
+⚠️ Not currently happening: the worker session files report `entrypoint: "cli"` and `"sdk-cli"`,
+not `"claude-desktop"`, so this daemon did not inherit one. It was one launch context away.
+
+### Denying a namespace rather than whitelisting what to keep
+
+The operator asked for a whitelist. `spawnEnv()` denies `CLAUDE*` and `ANTHROPIC_*` by prefix
+instead, and the deviation was flagged rather than made quietly. A whitelist has to enumerate
+everything a CLI needs on three platforms - on Windows alone `SystemRoot`, `ComSpec`, `PATHEXT`,
+`APPDATA`, `LOCALAPPDATA`, `TEMP`, `PROCESSOR_ARCHITECTURE` and more - and one omission is a spawn
+that fails in a way nobody can trace. That failure had already happened earlier the same day: a
+hand-set `PATH` on an R14 probe made `claude.exe` vanish with `ENOENT`. Denying a vendor namespace is
+the opposite trade: the OS environment passes through untouched, and a variable the vendor adds next
+month is denied before anybody has heard of it.
+
+⚠️ A test taught one piece of Windows trivia worth writing down: `process.env` is a
+case-insensitive proxy while a plain object is not, so `Object.keys` yields `SYSTEMROOT` and
+`env.SystemRoot` reads `undefined`. Harmless for a spawn - the OS is case-insensitive when the child
+reads it back - but an exact-key assertion tests Windows rather than the function, and the first draft
+of the test failed on it.
+
+### Not done
+
+⛔ Whether the bridge registration can be suppressed at all is **unmeasured**. There are
+settings keys `remoteControl`, `remoteControlAtStartup`, `remoteControlSessionNamePrefix` and env
+vars `CLAUDE_CODE_REMOTE`, `CLAUDE_CODE_FORCE_BRIDGE`, and none of them was tried. Guessing would be
+the `mcp: true` mistake again: a capability asserted from a flag's existence rather than from watching
+it be true. The measurement is one PTY spawned with the setting and one without, diffed for
+`bridgeSessionId`.

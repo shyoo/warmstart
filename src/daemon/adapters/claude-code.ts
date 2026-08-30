@@ -6,7 +6,7 @@ import type { AdapterDetection, AdapterInfo, QuotaSnapshot } from '@shared/proto
 import type { AgentAdapter, IdentityProbe, SpawnPlan, SpawnRequest } from './types.js'
 import { asRecord, textBlocks, type StreamEvent } from '../stream.js'
 import { log } from '../log.js'
-import { launchArgs, launchable, which } from '../which.js'
+import { launchArgs, launchable, spawnEnv, which } from '../which.js'
 import { APPROVE_TOOL } from '../mcpconfig.js'
 import { paths } from '../paths.js'
 
@@ -165,8 +165,11 @@ function readFileSafe(file: string): string {
 }
 
 function envFor(isolationRoot: string): Record<string, string> {
-  const env: Record<string, string> = {}
-  for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v
+  // ⛔ `spawnEnv` first: it drops the whole `CLAUDE*` namespace, so a daemon started from
+  // inside a Claude Code session cannot hand this worker the operator's session id, messaging socket
+  // or bridge id. `CLAUDE_CONFIG_DIR` is then set to the root this worker was commissioned with -
+  // the inherited one would have pointed at the operator's own credentials.
+  const env = spawnEnv()
   env.CLAUDE_CONFIG_DIR = isolationRoot
   // ⛔ An API key in the environment outranks the subscription login this worker was commissioned
   // with, silently billing a different account. The isolation root is the only credential we honour.

@@ -35,12 +35,23 @@ export const STALE_AFTER_MS = 15 * 60 * 1000
 /**
  * How old a reading has to be before it is worth starting a process to replace it.
  *
- * ⚠️ Deliberately longer than `STALE_AFTER_MS`, and the gap is not an oversight. Fifteen minutes is
- * how long a number may be *trusted*; thirty is how often it is worth *spending a terminal* to
- * renew one. Setting these equal would mean a fleet permanently refreshing, since a reading becomes
+ * ⚠️ Deliberately much longer than `STALE_AFTER_MS`, and the gap is not an oversight. Fifteen
+ * minutes is how long a number may be *trusted*; this is how often it is worth *spending a terminal*
+ * to renew one. Setting them equal would mean a fleet permanently refreshing, since a reading becomes
  * untrusted at exactly the moment it becomes renewable.
+ *
+ * ⛔ **Two hours, raised from thirty minutes on 2026-08-30, because the old number was spending far
+ * more than it bought.** Measured on this install: **150 probe PTY sessions against 14 that did any
+ * work** over four days - ten interactive `claude` processes opened to read a number for every one
+ * that touched the operator's code. Each registers a session with the vendor's bridge, and they
+ * accumulate in the desktop app's session list until somebody archives them by hand.
+ *
+ * ⭐ What makes this cheap rather than merely less frequent: the vendor's own on-disk cache is
+ * refreshed by **any** use of that account, including this fleet's own work sessions. An account that
+ * is running tasks keeps its own reading current for free; the interactive refresh only ever mattered
+ * for an account sitting idle - whose quota, by construction, is not moving.
  */
-export const REFRESH_AFTER_MS = 30 * 60 * 1000
+export const REFRESH_AFTER_MS = 2 * 60 * 60 * 1000
 
 /** How long a stored answer to "who is signed in, and is this root set up?" may go unchecked. */
 export const IDENTITY_STALE_AFTER_MS = 15 * 60 * 1000

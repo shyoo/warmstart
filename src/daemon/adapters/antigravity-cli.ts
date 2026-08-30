@@ -14,7 +14,7 @@ import type {
 } from './types.js'
 import { asRecord, num, type StreamEvent, type StreamUsage } from '../stream.js'
 import { log } from '../log.js'
-import { launchArgs, launchable, which } from '../which.js'
+import { launchArgs, launchable, spawnEnv, which } from '../which.js'
 
 /**
  * Antigravity CLI (`agy`) — the Google adapter.
@@ -265,8 +265,10 @@ const info: AdapterInfo = {
 }
 
 function envFor(): Record<string, string> {
-  const env: Record<string, string> = {}
-  for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v
+  // ⛔ See `spawnEnv`. ⚠️ This adapter has no isolation root to set - Antigravity keeps
+  // its credential in the OS keyring - which makes it the one that inherits the most and can correct
+  // the least, so dropping the host session's namespace matters here rather than less.
+  const env = spawnEnv()
   // ⛔ An API key in the environment silently outranks the subscription this worker was commissioned
   // with and bills somewhere else. The commissioned identity is the only one honoured.
   delete env.GEMINI_API_KEY

@@ -8,7 +8,7 @@ started in CI, never run against a real agent CLI.
 if you add a line, find the one it obsoletes and cut it in the same edit. Finished work moves to
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
-**Baseline (2026-08-30, measured):** typecheck · lint · build clean · `npm test` 821/823 (2 POSIX-only
+**Baseline (2026-08-30, measured):** typecheck · lint · build clean · `npm test` 826/828 (2 POSIX-only
 skipped) · `test:daemon` 141/141 · `test:ui` 149/149 · `test:pack` 18/18 · L4 (opt-in) landed a real
 agent commit on origin/main. Electron 44.0.0, electron-builder 26.15.3, 0 npm vulnerabilities.
 CLIs here: claude 2.1.251 · agy 1.1.22 · codex 0.151.0.
@@ -102,10 +102,9 @@ docs/                  cost-model.md, glossary.md, adapters.md, landing.md, sess
 
 ## What is true right now and not yet proven
 
-- ⭐ **All three providers have a free quota probe** (**R3 closed**, `docs/cost-model.md` §5). A
-  stale-but-known reading is labelled, not dropped; Antigravity's two pools gate separately.
+- ⭐ **All three providers have a free quota probe** (**R3 closed**). ⚠️ Free of tokens, not of *sessions*: each `/usage` refresh opens a PTY that registers with the vendor's bridge — 150 against 14 real work sessions in four days, so `REFRESH_AFTER_MS` is now 2h. ⛔ Those already registered are account-side; only the operator can archive them.
 - ⚠️ **The compaction reserve still reports `unknown`** (**R2**). ⭐ Quota is a routing input again: `windowRisk` slopes to the 92% gate and every score prints its derivation.
-- ⚠️ **Never exercised end to end: the tray *icon*, and keepalive firing.** Its arithmetic is unit-tested.
+- ⚠️ **Never exercised end to end: the tray *icon*, and keepalive firing** (its arithmetic is unit-tested).
 - ⭐ **Every intervention on a live session has an off switch** — Settings > Global: `autoCompact`/`autoPreempt` **on**, `autoRunawayStop` **off**, `probeIntervalMinutes` 5m.
 - ⭐ **A full workspace pool holds a task rather than failing it** (2026-08-29). ⛔ No dependency edge: a hold is re-decided every tick, so priority wins. ⚠️ A fleet wider than its pool is *named*, never silently grown.
 - ⭐ **The stall watchdog tells stuck from slow, and has fired in flight** (2026-08-30): 13m into a hung codex run it posted the process tree and 0.0s of CPU gained in 70s. ⛔ It reports and never kills.
@@ -128,7 +127,7 @@ docs/                  cost-model.md, glossary.md, adapters.md, landing.md, sess
 - ⭐ **Model and effort are choosable, inherited and visible** (2026-08-29): **task → worker → the
   CLI's own default**, via `resolveModelChoice`. Multi-pool workers set a default per pool and the
   scheduler balances on quota. ⚠️ **`selectableEffort` is true for `claude-code` only**.
-- ⛔ **Codex could never have completed a task, three bugs deep** (fixed 2026-08-30, `docs/adapters.md`): stdin held open against a CLI that reads to EOF, `mcp: true` on an adapter that cannot register one, and `turn.completed` decoded without its terminal half. ⚠️ **No codex task has completed yet.**
+- ⛔ **Codex could never have completed a task, three bugs deep** (fixed 2026-08-30, `docs/adapters.md`): stdin held open against a CLI reading to EOF, `mcp: true` on an adapter that cannot register one, and `turn.completed` without its terminal half. ⚠️ **No codex task has completed yet.**
 - ⭐ **Antigravity runs, reports its quota, and resumes a conversation by id** (**R9**, measured
   2026-08-28). ⚠️ **No Antigravity task has ever completed**: with `mcp: false` and no terminal record,
   `awaiting_human` is honest there and R13 stands. ⛔ It restores context, not cache

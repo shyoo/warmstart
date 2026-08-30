@@ -330,8 +330,17 @@ costmodels/             versioned pricing data
   simply skipped — the work was already on the trunk. Nothing in the daemon detects this. If a task
   finishes with `nothing-to-land` and the work plainly happened, check `git reflog` in the trunk
   before assuming the agent did nothing.
-- ⛔ **`antigravity-cli` has an isolation root that nothing writes to.** `envFor()` copies the
-  ambient environment and unsets three API keys; it sets no `HOME` and no Gemini directory, and
+- ⛔ **A spawned CLI gets `spawnEnv()`, never a copy of `process.env`.** It denies the whole
+  `CLAUDE*` / `ANTHROPIC_*` namespace by prefix, because a Claude Code session's environment carries
+  ~20 such variables - `CLAUDE_CODE_HOST_SESSION_ID`, `CLAUDE_CODE_MESSAGING_SOCKET`,
+  `CLAUDE_CODE_MESSAGING_TOKEN`, `CLAUDE_CODE_BRIDGE_SESSION_ID`, `CLAUDECODE=1` - and every adapter
+  used to copy them wholesale. A daemon started from inside such a session handed each worker the
+  operator's own session handle on an account it was not commissioned with. ⚠️ Deny by prefix, not a
+  whitelist of what to keep: a whitelist must enumerate what a CLI needs on three platforms, and one
+  omission is a spawn that fails untraceably. Each adapter still deletes its own provider's API keys
+  afterwards - that is the separate rule about credential precedence.
+- ⛔ **`antigravity-cli` has an isolation root that nothing writes to.** `envFor()` sets no `HOME`
+  and no Gemini directory, and
   `trustDirectory`/`writePermissions` ignore the `_isolationRoot` they are handed.
   `<dataDir>/workers/antigravity/` is empty; credentials, conversations and a persistent
   cross-session "brain" all live in the operator's own `~/.gemini`. That brain carries absolute paths

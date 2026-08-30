@@ -315,6 +315,18 @@ describe('an account that needs signing in again', () => {
     expect(quota.shouldBackgroundRefresh(worker.id)).toBe(true)
   })
 
+  it('⛔ does not open a terminal to re-read a number that is barely older than the last one', () => {
+    // Measured 2026-08-30: **150 probe PTY sessions against 14 that did any work** over four days -
+    // ten interactive `claude` processes opened to read a number for every one that touched the
+    // operator's code. Each registers a session with the vendor's bridge and accumulates in the
+    // desktop app until somebody archives it by hand. The threshold is the whole control, so it is
+    // asserted rather than left as a constant nobody rechecks.
+    expect(quota.REFRESH_AFTER_MS).toBeGreaterThanOrEqual(2 * 60 * 60 * 1000)
+    // ⚠️ And still comfortably longer than how long a reading may be trusted, or the fleet
+    // refreshes permanently: a number becomes untrusted exactly when it becomes renewable.
+    expect(quota.REFRESH_AFTER_MS).toBeGreaterThan(quota.STALE_AFTER_MS * 2)
+  })
+
   it('is not probed while switched off or signed out either', () => {
     const worker = seedWorker('sweep-gates', Date.now())
     workers.updateWorker(worker.id, { enabled: false })

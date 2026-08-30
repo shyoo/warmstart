@@ -198,18 +198,28 @@ folder and **swallows every keystroke until answered**. Sessions with no project
 directory alone. `WorkerIdentity.setupComplete` reports the rest, and the Workers panel offers
 **Finish setup**.
 
-`refreshUsage()` in `quota.ts` does this on a **30-minute** floor (`REFRESH_AFTER_MS`, deliberately
+`refreshUsage()` in `quota.ts` does this on a **two-hour** floor (`REFRESH_AFTER_MS`, deliberately much
 longer than the 15-minute `STALE_AFTER_MS`) and on the Probe button. It is free of tokens, not of
 everything: it starts a real process for ~30s, so at most one worker is refreshed per sweep. ⛔ Never
-in a scheduler tick. The command is declared per adapter as `usageRefresh`, never branched on an
+in a scheduler tick.
+
+⛔ **The floor was 30 minutes until 2026-08-30, and it was spending far more than it bought.**
+Measured on this install: **150 probe PTY sessions against 14 that did any work** over four days - ten
+interactive `claude` processes opened to read a number for every one that touched the operator's code.
+Each registers a session with the vendor's bridge, and they accumulate in the desktop app's session
+list until somebody archives them by hand.
+
+⭐ What makes two hours cheap rather than merely rarer: the vendor's on-disk cache is refreshed by
+**any** use of that account, including this fleet's own work sessions. An account that is running
+tasks keeps its own reading current for free, so the interactive refresh only ever mattered for an
+account sitting idle - whose quota, by construction, is not moving. The command is declared per adapter as `usageRefresh`, never branched on an
 adapter name; only `claude-code` declares one today.
 
 ### ⛔ An account that cannot authenticate is not asked again (2026-08-27)
 
 Rung 0 is free in tokens and **not** free in processes: it opens a real interactive session and types
 into it. So the background sweep skips any worker a dispatch has already proved work dies on
-(`health.state === 'suspect'`). Before this, a lapsed subscription meant a CLI spawned every thirty
-minutes, forever, to watch it fail to authenticate - and the reading stayed `unknown` either way.
+(`health.state === 'suspect'`). Before this, a lapsed subscription meant a CLI spawned on every eligible sweep, forever, to watch it fail to authenticate - and the reading stayed `unknown` either way.
 
 ⚠️ The *background* sweep only. Pressing Probe still refreshes: it is one of the two things that lift
 the hold, and a quarantine nobody can attempt to clear by hand is worse than the fault it prevents.

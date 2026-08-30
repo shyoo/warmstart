@@ -78,3 +78,44 @@ export function launchArgs(resolved: string, args: string[]): { command: string;
   const { command, prefixArgs } = launchable(resolved)
   return { command, args: [...prefixArgs, ...args] }
 }
+
+/**
+ * Variables a spawned agent CLI must never inherit from whatever launched the daemon.
+ *
+ * ⛔ **An isolation root that inherits the host's session identity is not isolated.** Measured
+ * 2026-08-30: a Claude Code session's environment carries around twenty `CLAUDE*` variables,
+ * including `CLAUDE_CODE_HOST_SESSION_ID`, `CLAUDE_CODE_MESSAGING_SOCKET`,
+ * `CLAUDE_CODE_MESSAGING_TOKEN`, `CLAUDE_CODE_BRIDGE_SESSION_ID` and `CLAUDECODE=1`. Every adapter
+ * built its environment by copying `process.env` wholesale and deleting three or four API keys, so a
+ * daemon started from inside such a session would hand each worker the operator's own session
+ * handle, messaging socket and bridge id — on an account it was not commissioned with.
+ *
+ * ⚠️ `CLAUDE_CONFIG_DIR` and `CODEX_HOME` match this pattern and are stripped here too. That is
+ * correct and deliberate: they are set by the adapter **after** this runs, to the isolation root the
+ * worker was commissioned with, and a value inherited from the host is the exact bug — the worker
+ * would read the operator's credentials rather than its own.
+ */
+const HOST_SESSION = /^(CLAUDE|ANTHROPIC_)/i
+
+/**
+ * The base environment for any spawned agent CLI.
+ *
+ * ⛔ A deny by **prefix**, not a whitelist of what to keep, and the choice is deliberate. A whitelist
+ * would have to enumerate everything a CLI needs on three platforms — on Windows alone `SystemRoot`,
+ * `ComSpec`, `PATHEXT`, `APPDATA`, `LOCALAPPDATA`, `TEMP`, `PROCESSOR_ARCHITECTURE` and a dozen more
+ * — and one omission is a spawn that fails in a way nobody can trace. Denying a vendor namespace is
+ * the opposite trade: the OS environment passes through untouched, and a variable the vendor adds
+ * next month is denied before anybody has heard of it.
+ *
+ * ⚠️ Each adapter still deletes its **own** provider's API keys afterwards. Those are a different
+ * rule — a key in the environment silently outranks the subscription a worker was commissioned with
+ * and bills somewhere else — and they are kept where the adapter that knows about them lives.
+ */
+export function spawnEnv(): Record<string, string> {
+  const env: Record<string, string> = {}
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value === undefined || HOST_SESSION.test(key)) continue
+    env[key] = value
+  }
+  return env
+}

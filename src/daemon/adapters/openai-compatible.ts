@@ -13,7 +13,7 @@ import type {
 } from './types.js'
 import { asRecord, num, type StreamEvent, type StreamUsage } from '../stream.js'
 import { log } from '../log.js'
-import { launchArgs, launchable, which } from '../which.js'
+import { launchArgs, launchable, spawnEnv, which } from '../which.js'
 
 /**
  * Codex CLI — the OpenAI-compatible adapter.
@@ -146,8 +146,9 @@ const info: AdapterInfo = {
 }
 
 function envFor(isolationRoot: string): Record<string, string> {
-  const env: Record<string, string> = {}
-  for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v
+  // ⛔ See `spawnEnv`. A codex session has no business inheriting the host Claude session's
+  // identity either, and `CODEX_HOME` is set below to the root this worker was commissioned with.
+  const env = spawnEnv()
   env.CODEX_HOME = isolationRoot
   // ⛔ Same rule as every other adapter: a key in the environment silently outranks the account this
   // worker was commissioned with and bills somewhere else.
