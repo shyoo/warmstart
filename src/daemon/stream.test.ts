@@ -207,7 +207,7 @@ describe('antigravity-cli', () => {
     const events = parse('antigravity-cli', [toolCall])
     const assistant = events.find((e) => e.kind === 'assistant_text')
     expect(assistant).toBeDefined()
-    expect((assistant as { text: string }).text).toBe('[Tool: Running command — Command execution]')
+    expect((assistant as { text: string }).text).toBe('[Tool: Running command — Command execution]\n')
   })
 
   it('formats command-line and target-file parameters when tool action is not set', () => {
@@ -215,13 +215,13 @@ describe('antigravity-cli', () => {
       '{"event":"step_update","step_update":{"conversation_id":"379cc136","step_index":2,"state":"ACTIVE",' +
       '"step_type":"tool","tool_name":"run_command","tool_info":{"name":"run_command","parameters":{"CommandLine":"npm test"}}}}'
     const [runEvent] = parse('antigravity-cli', [runCall])
-    expect(runEvent).toMatchObject({ kind: 'assistant_text', text: '[run: npm test]' })
+    expect(runEvent).toMatchObject({ kind: 'assistant_text', text: '[run: npm test]\n' })
 
     const fileCall =
       '{"event":"step_update","step_update":{"conversation_id":"379cc136","step_index":3,"state":"ACTIVE",' +
       '"step_type":"tool","tool_name":"view_file","tool_info":{"name":"view_file","parameters":{"TargetFile":"src/index.ts"}}}}'
     const [fileEvent] = parse('antigravity-cli', [fileCall])
-    expect(fileEvent).toMatchObject({ kind: 'assistant_text', text: '[view_file: src/index.ts]' })
+    expect(fileEvent).toMatchObject({ kind: 'assistant_text', text: '[view_file: src/index.ts]\n' })
   })
 
   it('extracts result text from various result formats and trims whitespace', () => {

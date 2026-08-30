@@ -321,50 +321,43 @@ function formatToolActivity(step: Record<string, unknown>): string | null {
     asRecord(step.tool_input) ??
     asRecord(step.args)
 
+  let summary: string | null = null
+
   if (params) {
     if (typeof params.toolAction === 'string' && params.toolAction.trim()) {
-      const summary =
+      const actionSummary =
         typeof params.toolSummary === 'string' && params.toolSummary.trim()
           ? ` — ${params.toolSummary.trim()}`
           : ''
-      return `[Tool: ${params.toolAction.trim()}${summary}]`
-    }
-    if (typeof params.CommandLine === 'string' && params.CommandLine.trim()) {
-      return `[run: ${params.CommandLine.trim()}]`
-    }
-    if (typeof params.command === 'string' && params.command.trim()) {
-      return `[run: ${params.command.trim()}]`
-    }
-    if (typeof params.TargetFile === 'string' && params.TargetFile.trim()) {
-      return `[${toolName || 'file'}: ${params.TargetFile.trim()}]`
-    }
-    if (typeof params.AbsolutePath === 'string' && params.AbsolutePath.trim()) {
-      return `[${toolName || 'file'}: ${params.AbsolutePath.trim()}]`
-    }
-    if (typeof params.path === 'string' && params.path.trim()) {
-      return `[${toolName || 'file'}: ${params.path.trim()}]`
-    }
-    if (typeof params.Query === 'string' && params.Query.trim()) {
-      return `[search: "${params.Query.trim()}"]`
-    }
-    if (typeof params.Pattern === 'string' && params.Pattern.trim()) {
-      return `[find: "${params.Pattern.trim()}"]`
-    }
-    if (typeof params.DirectoryPath === 'string' && params.DirectoryPath.trim()) {
-      return `[list: ${params.DirectoryPath.trim()}]`
-    }
-    if (typeof params.Url === 'string' && params.Url.trim()) {
-      return `[fetch: ${params.Url.trim()}]`
-    }
-    if (typeof params.Description === 'string' && params.Description.trim()) {
-      return `[${toolName || 'tool'}: ${params.Description.trim()}]`
+      summary = `[Tool: ${params.toolAction.trim()}${actionSummary}]`
+    } else if (typeof params.CommandLine === 'string' && params.CommandLine.trim()) {
+      summary = `[run: ${params.CommandLine.trim()}]`
+    } else if (typeof params.command === 'string' && params.command.trim()) {
+      summary = `[run: ${params.command.trim()}]`
+    } else if (typeof params.TargetFile === 'string' && params.TargetFile.trim()) {
+      summary = `[${toolName || 'file'}: ${params.TargetFile.trim()}]`
+    } else if (typeof params.AbsolutePath === 'string' && params.AbsolutePath.trim()) {
+      summary = `[${toolName || 'file'}: ${params.AbsolutePath.trim()}]`
+    } else if (typeof params.path === 'string' && params.path.trim()) {
+      summary = `[${toolName || 'file'}: ${params.path.trim()}]`
+    } else if (typeof params.Query === 'string' && params.Query.trim()) {
+      summary = `[search: "${params.Query.trim()}"]`
+    } else if (typeof params.Pattern === 'string' && params.Pattern.trim()) {
+      summary = `[find: "${params.Pattern.trim()}"]`
+    } else if (typeof params.DirectoryPath === 'string' && params.DirectoryPath.trim()) {
+      summary = `[list: ${params.DirectoryPath.trim()}]`
+    } else if (typeof params.Url === 'string' && params.Url.trim()) {
+      summary = `[fetch: ${params.Url.trim()}]`
+    } else if (typeof params.Description === 'string' && params.Description.trim()) {
+      summary = `[${toolName || 'tool'}: ${params.Description.trim()}]`
     }
   }
 
-  if (toolName) {
-    return `[Tool: ${toolName}]`
+  if (!summary && toolName) {
+    summary = `[Tool: ${toolName}]`
   }
-  return null
+
+  return summary ? `${summary}\n` : null
 }
 
 function decodeStream(record: Record<string, unknown>): StreamEvent | StreamEvent[] | null {
