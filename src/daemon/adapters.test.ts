@@ -613,4 +613,22 @@ describe('trustDirectory', () => {
     expect(readFileSync(file, 'utf8')).toBe('{ this is not json')
     rmSync(root, { recursive: true, force: true })
   })
+
+  it('pre-configures sandbox and trusts directory for codex', () => {
+    const a = ALL.find((x) => x.info.id === 'openai-compatible')
+    if (!a?.trustDirectory) return
+
+    const root = mkdtempSync(join(tmpdir(), 'agentyard-trust-'))
+    const file = join(root, 'config.toml')
+    const dir = join(root, 'scratch')
+
+    a.trustDirectory(root, dir)
+    const content = readFileSync(file, 'utf8')
+    expect(content).toContain('[windows]')
+    expect(content).toContain('sandbox = "elevated"')
+    expect(content).toContain(`[projects.'${dir}']`)
+    expect(content).toContain('trust_level = "trusted"')
+
+    rmSync(root, { recursive: true, force: true })
+  })
 })

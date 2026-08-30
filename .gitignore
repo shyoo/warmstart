@@ -36,7 +36,9 @@ release/
 .env.*
 !.env.example
 
-# Editors / OS
+# Editors / OS / Agent Aliases
+.agent/
+.agents/
 .vscode/*
 !.vscode/extensions.json
 .idea/

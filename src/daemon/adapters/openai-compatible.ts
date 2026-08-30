@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { AdapterDetection, AdapterInfo, QuotaSnapshot } from '@shared/protocol.js'
 import type {
@@ -328,6 +328,36 @@ export const openaiCompatible: AgentAdapter = {
       return { path }
     } catch (err) {
       return { path: null, error: err instanceof Error ? err.message : String(err) }
+    }
+  },
+
+  /**
+   * Pre-answer Codex's "do you trust this directory?" dialog and sandbox configuration.
+   *
+   * ⛔ Codex asks both "Do you trust the contents of this directory?" and sandbox setup
+   * on Windows in fresh CODEX_HOME roots. Unanswered, they swallow all input in interactive/PTY sessions.
+   * Writing config.toml in CODEX_HOME pre-answers both.
+   */
+  trustDirectory(isolationRoot: string, dir: string): void {
+    const file = join(isolationRoot, 'config.toml')
+    try {
+      mkdirSync(isolationRoot, { recursive: true })
+      const content = existsSync(file) ? readFileSync(file, 'utf8') : ''
+      const normalDir = dir.toLowerCase()
+
+      let updated = content
+      if (!content.includes('[windows]')) {
+        updated = `[windows]\nsandbox = "elevated"\n\n` + updated
+      }
+      if (!content.includes(`[projects.'${normalDir}']`) && !content.includes(`[projects.'${dir}']`)) {
+        updated = updated.trim() + `\n\n[projects.'${dir}']\ntrust_level = "trusted"\n`
+      }
+      if (updated.trim() !== content.trim()) {
+        writeFileSync(file, updated.trim() + '\n')
+        log.info(`pre-trusted ${dir} for codex in ${file}`)
+      }
+    } catch (err) {
+      log.warn(`could not record folder trust in ${file}:`, err)
     }
   },
 
