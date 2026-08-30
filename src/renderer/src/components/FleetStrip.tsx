@@ -53,15 +53,19 @@ export function FleetStrip({ fleet, now }: { fleet: FleetEntry[]; now: number })
     })
   }
 
+  const activeFleet = fleet.filter((entry) => entry.worker.enabled)
+
   return (
     <div className={`fleet-wrap${collapsed ? ' fleet-wrap--collapsed' : ''}`}>
       <div className="fleet">
         <span className="fleet-label">Fleet</span>
-        {fleet.length === 0 ? (
-          <span className="fleet-empty">no workers configured</span>
+        {activeFleet.length === 0 ? (
+          <span className="fleet-empty">
+            {fleet.length === 0 ? 'no workers configured' : 'no active workers'}
+          </span>
         ) : (
           <div className="fleet-cards">
-            {fleet.map((entry) => (
+            {activeFleet.map((entry) => (
               <WorkerCard key={entry.worker.id} entry={entry} now={now} />
             ))}
           </div>

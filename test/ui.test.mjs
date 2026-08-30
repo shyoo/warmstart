@@ -846,7 +846,7 @@ try {
 
   // ⛔ A suspect worker without quota windows shows `error · see Settings > Workers` and suppresses `quota unknown`
   const suspectWorkerId = await evaluate(
-    `window.agentyard.rpc('worker.create', { adapterId: 'claude-code', label: 'suspect worker', enabled: false }).then(w => w.id)`
+    `window.agentyard.rpc('worker.create', { adapterId: 'claude-code', label: 'suspect worker', enabled: true }).then(w => w.id)`
   )
   {
     const store = new DatabaseSync(join(dataDir, 'multi_agent_controller.db'))
@@ -1136,6 +1136,14 @@ try {
   )
   check('and the daemon agrees, which is the only opinion that gates dispatch', persisted === 'false', persisted)
 
+  const firstLabel = await evaluate(
+    `window.agentyard.rpc('fleet.list').then(f => f[0]?.worker?.label)`
+  )
+  const stripWithOff = await evaluate(
+    `[...document.querySelectorAll('.wcard .wcard-name')].map(n => n.innerText)`
+  )
+  check('and disabled worker is hidden from the fleet strip', !stripWithOff.includes(firstLabel))
+
   await evaluate(`${rowSwitch}.click()`)
   await wait(1200)
   check(
@@ -1143,6 +1151,10 @@ try {
     (await evaluate(`${rowSwitch}?.getAttribute('aria-checked')`)) === 'true',
     'off is not retirement — nothing is deleted and nothing needs re-commissioning'
   )
+  const stripWithOn = await evaluate(
+    `[...document.querySelectorAll('.wcard .wcard-name')].map(n => n.innerText)`
+  )
+  check('and turning it back on restores it to the fleet strip', stripWithOn.includes(firstLabel))
 
   // ⭐ How many tasks one account may run at once. The daemon has gated on this since M1 —
   // `atCapacity` before dispatch, `spawnSession` at the door — and until 2026-08-29 the Workers
