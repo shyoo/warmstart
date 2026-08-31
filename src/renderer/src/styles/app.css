@@ -2811,6 +2811,32 @@ select:focus-visible,
   font-size: var(--text-meta);
 }
 
+/* ---- setting row whose control is a picker rather than a switch -------- */
+/*
+ * ⛔ A picker cannot be 40px wide like the switch, so it cannot lead the row the way the switch
+ * does. While it did, it took `width: 100%` as its flex basis - over half the panel - and pushed
+ * every title and note in these sections into the right-hand half, wrapping "Background poller ·
+ * Every 5 minutes" onto two lines and leaving the prose out of line with the switch rows above it.
+ * So the control sits at the end of the *title* line instead, in a column that never grows, and the
+ * note runs the full width underneath - the same width, and the same left edge, as a switch row's.
+ */
+.picker-row {
+  padding-left: calc(40px + var(--sp-3)); /* the switch (40px) plus a `.switch-row` gap */
+}
+
+.picker-row-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-4);
+}
+
+/* ⚠️ Wide enough for the longest label it offers ("commit, verify, merge and push") and no wider. */
+.finish-picker.picker-row-control {
+  flex: none;
+  width: 260px;
+}
+
 /* ---- Setting button selector (value + ✏️ in rounded dark button) ---- */
 .setting-btn-select-wrap {
   position: relative;

@@ -101,67 +101,67 @@ export function FleetSettings(): React.JSX.Element {
 
       <section className="doc-section">
         <h3>Reusing conversations</h3>
-        <div className="switch-row">
-          <select
-            className="finish-picker"
-            aria-label="Fleet session sharing"
-            value={sessionSharing}
-            disabled={busy || settings === null}
-            onChange={(e) => void chooseSharing(e.target.value as SessionSharing)}
-          >
-            <option value="off">every task starts a new one</option>
-            <option value="on">reuse one in the same project</option>
-          </select>
-          <div>
+        <div className="picker-row">
+          <div className="picker-row-head">
             <p className="switch-state">
               <strong>Session sharing</strong> · {sessionSharing}
               <span className="dim"> — may a task join a conversation already open?</span>
             </p>
-            <p className="note">
-              ⛔ <strong>Off by default, and this is an information boundary rather than a
-              performance switch.</strong> An agent that joins a conversation sees everything said in
-              it, so sharing only ever happens within one project, on one account, and never into a
-              conversation somebody else is mid-turn in. What it buys is real and measured: a cold
-              turn on this machine rebuilt <strong>41,542</strong> tokens of prompt prefix that a
-              reused conversation read back for <strong>65</strong>.{' '}
-              ⚠️ It changes nothing about <em>authority</em> — a task&rsquo;s mandate still decides what
-              it may do. Overridden per project with <code>session.share</code> in{' '}
-              <code>project.json</code>, and per task from its detail pane.
-            </p>
+            <select
+              className="finish-picker picker-row-control"
+              aria-label="Fleet session sharing"
+              value={sessionSharing}
+              disabled={busy || settings === null}
+              onChange={(e) => void chooseSharing(e.target.value as SessionSharing)}
+            >
+              <option value="off">every task starts a new one</option>
+              <option value="on">reuse one in the same project</option>
+            </select>
           </div>
+          <p className="note">
+            ⛔ <strong>Off by default, and this is an information boundary rather than a
+            performance switch.</strong> An agent that joins a conversation sees everything said in
+            it, so sharing only ever happens within one project, on one account, and never into a
+            conversation somebody else is mid-turn in. What it buys is real and measured: a cold
+            turn on this machine rebuilt <strong>41,542</strong> tokens of prompt prefix that a
+            reused conversation read back for <strong>65</strong>.{' '}
+            ⚠️ It changes nothing about <em>authority</em> — a task&rsquo;s mandate still decides what
+            it may do. Overridden per project with <code>session.share</code> in{' '}
+            <code>project.json</code>, and per task from its detail pane.
+          </p>
         </div>
       </section>
 
       <section className="doc-section">
         <h3>When a task finishes</h3>
-        <div className="switch-row">
-          <select
-            className="finish-picker"
-            aria-label="Fleet finish policy"
-            value={finishPolicy}
-            disabled={busy || settings === null}
-            onChange={(e) => void chooseFinishPolicy(e.target.value as FinishPolicy)}
-          >
-            {FINISH_ORDER.map((p) => (
-              <option key={p} value={p}>
-                {FINISH_LABELS[p]}
-              </option>
-            ))}
-          </select>
-          <div>
+        <div className="picker-row">
+          <div className="picker-row-head">
             <p className="switch-state">
               <strong>Finish policy</strong> · {finishPolicy}
               <span className="dim"> — default landing strategy for completed tasks.</span>
             </p>
-            <p className="note">
-              The fleet-wide default, used by any project that has not set <code>landing.finish</code> in
-              its <code>project.json</code>, and by any task left on <em>inherit</em>. ⛔ Multi Agent
-              Controller never writes a commit for an agent and never discards work it declines to land —
-              anything it will not land appears under <strong>Loose ends</strong> on Overview.{' '}
-              <em>agent lands it</em> additionally requires the project to define check commands and for
-              them to pass. See <code>docs/landing.md</code>.
-            </p>
+            <select
+              className="finish-picker picker-row-control"
+              aria-label="Fleet finish policy"
+              value={finishPolicy}
+              disabled={busy || settings === null}
+              onChange={(e) => void chooseFinishPolicy(e.target.value as FinishPolicy)}
+            >
+              {FINISH_ORDER.map((p) => (
+                <option key={p} value={p}>
+                  {FINISH_LABELS[p]}
+                </option>
+              ))}
+            </select>
           </div>
+          <p className="note">
+            The fleet-wide default, used by any project that has not set <code>landing.finish</code> in
+            its <code>project.json</code>, and by any task left on <em>inherit</em>. ⛔ Multi Agent
+            Controller never writes a commit for an agent and never discards work it declines to land —
+            anything it will not land appears under <strong>Loose ends</strong> on Overview.{' '}
+            <em>agent lands it</em> additionally requires the project to define check commands and for
+            them to pass. See <code>docs/landing.md</code>.
+          </p>
         </div>
       </section>
 
@@ -244,34 +244,34 @@ export function FleetSettings(): React.JSX.Element {
 
       <section className="doc-section">
         <h3>Quota probe frequency</h3>
-        <div className="switch-row">
-          <select
-            className="finish-picker"
-            aria-label="Quota probe frequency"
-            value={probeIntervalMinutes}
-            disabled={busy || settings === null}
-            onChange={(e) => void chooseProbeInterval(Number(e.target.value))}
-          >
-            <option value={1}>Every 1 minute</option>
-            <option value={2}>Every 2 minutes</option>
-            <option value={5}>Every 5 minutes (default)</option>
-            <option value={10}>Every 10 minutes</option>
-            <option value={15}>Every 15 minutes</option>
-            <option value={30}>Every 30 minutes</option>
-            <option value={60}>Every 60 minutes</option>
-          </select>
-          <div>
+        <div className="picker-row">
+          <div className="picker-row-head">
             <p className="switch-state">
               <strong>Background poller</strong> · Every {probeIntervalMinutes} minute{probeIntervalMinutes === 1 ? '' : 's'}
               <span className="dim"> — how often orchestratord sweeps workers for updated quota data.</span>
             </p>
-            <p className="note">
-              Reading the local CLI usage cache is free. Refreshing a stale cache opens a background
-              interactive session without spending tokens. Lower intervals keep quota readings fresh
-              at the cost of occasional background subprocesses; higher intervals reduce background
-              activity.
-            </p>
+            <select
+              className="finish-picker picker-row-control"
+              aria-label="Quota probe frequency"
+              value={probeIntervalMinutes}
+              disabled={busy || settings === null}
+              onChange={(e) => void chooseProbeInterval(Number(e.target.value))}
+            >
+              <option value={1}>Every 1 minute</option>
+              <option value={2}>Every 2 minutes</option>
+              <option value={5}>Every 5 minutes (default)</option>
+              <option value={10}>Every 10 minutes</option>
+              <option value={15}>Every 15 minutes</option>
+              <option value={30}>Every 30 minutes</option>
+              <option value={60}>Every 60 minutes</option>
+            </select>
           </div>
+          <p className="note">
+            Reading the local CLI usage cache is free. Refreshing a stale cache opens a background
+            interactive session without spending tokens. Lower intervals keep quota readings fresh
+            at the cost of occasional background subprocesses; higher intervals reduce background
+            activity.
+          </p>
         </div>
       </section>
     </div>
