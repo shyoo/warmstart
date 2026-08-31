@@ -3068,7 +3068,24 @@ export async function relandTask(taskId: string): Promise<{ ok: boolean; reason?
       branch: task.branch,
       policy: resolveFinishPolicy(task, project).policy
     })
-    if (result.ok) setStatus(task.id, 'completed')
+    if (result.ok) {
+      setStatus(task.id, 'completed')
+      // ⛔ And close the run this task was still in the middle of, if it had one.
+      //
+      // ⚠️ It usually has none — this is the *land again* button on a task that finished long ago.
+      // But a `running` task can reach here now, and setting the status without ending its run
+      // leaves a completed task owning an open run, a live session and a claimed workspace that
+      // nothing will ever release. Measured by doing it: t58, landed by hand on 2026-08-30, came
+      // back `completed` with `run 44ad4938 … ended=OPEN` and ws3 still claimed. ⭐ Only
+      // `reconcileClaims` at the next startup would have freed it, because `reconcileTasks` sweeps
+      // `running` tasks and this one is no longer running — the status change is what hides it.
+      const open = runsFor(task.id).find((r) => !r.endedAt)
+      if (open) {
+        finishRun(open.id, 'completed', 'landed by hand while the run was still open')
+        await releaseFor(open.id, task.id, project.id)
+        if (open.sessionId) releaseAllFor(open.sessionId)
+      }
+    }
     return { ok: result.ok, ...(result.reason ? { reason: result.reason } : {}) }
   } finally {
     // ⚠️ Parked and released in every path, including the refusals above. A workspace held by a

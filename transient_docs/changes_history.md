@@ -2695,3 +2695,16 @@ incident it exists to catch.
 in a build the running daemon had not loaded, and restarting would have sent `reconcileTasks` through
 it first — `running` becomes `ready`, which would have re-dispatched a fresh run to redo work already
 committed. The next task that goes quiet after being asked is the real test.
+
+### The same shape, one layer up
+
+⛔ Landing t58 by hand exposed the identical fault in `relandTask`: it set the task to `completed`
+and left the run open. The task came back `completed` with `run 44ad4938 … ended=OPEN`, a live
+session, and ws3 still claimed — and **the status change is what hid it**, because `reconcileTasks`
+sweeps `running` tasks and this one no longer was. Only `reconcileClaims` at the next startup would
+have freed the workspace, so the pool ran a slot short until then and nothing said why.
+
+That is the same mistake as the one above wearing different clothes: a path that changes a task's
+status without ending the run it belongs to. `relandTask` now closes any open run and releases what
+it held. ⚠️ Found by doing it rather than by reading the code — the leak was invisible until a
+`running` task was landed by hand, which nothing had ever done before today.
