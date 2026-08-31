@@ -308,3 +308,71 @@ describe('the switches that gate all of this', () => {
     expect(settings.settings().autoPreempt).toBe(true)
   })
 })
+
+/**
+ * The other end of a preemption: giving the task back.
+ *
+ * ⛔ `preempt` parks a task as `paused_quota` carrying `not_before = resetsAt`, and its own comment
+ * says it *"resumes itself"*. Nothing did. `admitScheduled` reads `status = 'scheduled'`; `admit`
+ * refuses everything in `TERMINAL_OR_HELD`, which lists this status; `resumeTask` took only
+ * `paused_user` and `cancelled`. Measured on t60, 2026-08-31: parked 05:09:25Z with `not_before`
+ * 06:40:00Z, still `paused_quota` at 06:44:50Z on a worker whose window had already reset.
+ */
+describe('a task parked for a quota window', () => {
+  const park = (notBefore: number | null) => {
+    const workerId = seedWorker()
+    const task = tasks.createTask({ title: 'parked for quota', createdBy: { kind: 'human' } })
+    db.db()
+      .prepare('update tasks set not_before = ? where id = ?')
+      .run(notBefore, task.id)
+    tasks.setStatus(task.id, 'paused_quota', { assignee: workerId })
+    return task
+  }
+
+  it('⭐ comes back on its own once the reset has passed', () => {
+    const task = park(Date.now() - 60_000)
+    expect(tasks.resumeQuotaPaused()).toBe(1)
+
+    const back = tasks.requireTask(task.id)
+    expect(back.status).toBe('ready')
+    // ⛔ `not_before` is cleared with it. Left behind, it would put the task straight back to
+    //    `scheduled` on the next `admit()` for a deadline that has already gone by.
+    expect(back.notBefore).toBeNull()
+    expect(back.assignee).toBeNull()
+    expect(tasks.messagesFor(task.id).some((m) => m.text.includes('has reset'))).toBe(true)
+  })
+
+  it('waits while the window is still shut', () => {
+    const task = park(Date.now() + 60 * 60 * 1000)
+    expect(tasks.resumeQuotaPaused()).toBe(0)
+    expect(tasks.requireTask(task.id).status).toBe('paused_quota')
+  })
+
+  it('does not strand a quota pause that carries no reset time', () => {
+    // ⚠️ It should not happen — `preempt` always sets one — and if it ever does, parked for ever is
+    //    the worse of the two wrong answers. Matches `admitScheduled`'s own predicate.
+    const task = park(null)
+    expect(tasks.resumeQuotaPaused()).toBe(1)
+    expect(tasks.requireTask(task.id).status).toBe('ready')
+  })
+
+  it('leaves a pause a person chose alone', () => {
+    // ⛔ `paused_user` has no clock on it and is not this function's business.
+    const workerId = seedWorker()
+    const task = tasks.createTask({ title: 'stopped by hand', createdBy: { kind: 'human' } })
+    db.db().prepare('update tasks set not_before = ? where id = ?').run(Date.now() - 60_000, task.id)
+    tasks.setStatus(task.id, 'paused_user', { assignee: workerId })
+    expect(tasks.resumeQuotaPaused()).toBe(0)
+    expect(tasks.requireTask(task.id).status).toBe('paused_user')
+  })
+
+  it('can also be resumed by hand, which it could not be before', async () => {
+    // ⛔ `paused_quota` is reached by the machine, so it had no Resume button and `resumeTask` turned
+    //    it away — an operator who could see the window had reset had no way to say so.
+    const cancel = await import('./cancel.js')
+    const task = park(Date.now() + 60 * 60 * 1000)
+    const resumed = cancel.resumeTask(task.id)
+    expect(resumed.status).toBe('ready')
+    expect(resumed.notBefore).toBeNull()
+  })
+})

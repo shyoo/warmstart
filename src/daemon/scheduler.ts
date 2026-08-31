@@ -2,13 +2,14 @@ import type { Project, QuestionOption, Run, RunQuota, Task, TaskStatus } from '@
 import { policyVerifies, resolveCompletionMode, resolveModelChoice } from '@shared/tasks.js'
 import type { QuotaWindow, Session, Worker } from '@shared/protocol.js'
 import { adapter } from './adapters/index.js'
-import { lastQuota, refreshUsage, sessionWindowFor } from './quota.js'
+import { lastQuota, refreshUsage, sessionWindowFor, windowExpired } from './quota.js'
 import { getWorker, listWorkers, recordDispatchFailure } from './workers.js'
 import { accountUnavailability } from './eligibility.js'
 import { getProject, policyFor, reloadProject } from './projects.js'
 import {
   admitDependents,
   admitScheduled,
+  resumeQuotaPaused,
   addMessage,
   finishRun,
   getTask,
@@ -166,6 +167,10 @@ export interface TickResult {
 
 export async function tick(): Promise<TickResult> {
   admitScheduled()
+  // ⛔ Beside `admitScheduled` and not inside it, because the two read different statuses. A task
+  // parked for a quota window is the one kind of hold that ends on a clock rather than on a person,
+  // and until this call existed nothing anywhere put one back (t60, 2026-08-31).
+  resumeQuotaPaused()
   escalateStale()
   // ⛔ Before dispatching anything: a window about to close, or a run past its estimate, is a cost
   // event that outranks starting new work.
@@ -580,7 +585,21 @@ export function chooseTarget(task: Task): WorkerChoice {
       // ⚠️ `false` for effort: the pool follows the model, and effort has no bearing on it.
       const choice = resolveModelChoice(task.constraints, worker, false, quota)
       const pool = poolFor(worker, choice.model)
-      const session = sessionWindowFor(quota.windows, pool)
+      // ⛔ **A window whose reset has already passed describes a window that no longer exists.**
+      // `stale` is an age test only, so a reading taken two minutes before a reset stays trusted for
+      // hours afterwards and gates a worker on a percentage that expired with the window it counted.
+      // Measured on t60, 2026-08-31: ClaudeThird's 5h window read 88% with `resetsAt` 06:39:59Z, and
+      // was still being offered as 88% at 06:46Z. ⚠️ Untrusted, **not** zero: what the new window
+      // holds is unknown until something reads it, and `quotaUnverified` is how the fleet already
+      // says that. `nextResetAt` has always ignored a reset in the past; this is the same rule
+      // applied to the number beside it.
+      const reading = sessionWindowFor(quota.windows, pool)
+      const expired = reading ? windowExpired(reading) : false
+      // ⚠️ Marked unverified only when a reading was there and had run out. A pool with no window at
+      // all is the pre-existing case and keeps its pre-existing answer; this is about a number that
+      // was believed for longer than it was true.
+      if (expired) quotaUnverified = true
+      const session = expired ? null : reading
       trustedWindow = session ?? null
       if (session && session.percent >= QUOTA_HIGH_WATER) {
         // Names the window, because "at 91% of its 5h window" on a two-pool account is a sentence

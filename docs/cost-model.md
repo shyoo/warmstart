@@ -154,8 +154,18 @@ So the probe is a **ladder, and its rung is always reported**:
 | Rung | Source | Trust |
 |---|---|---|
 | 1 | `cachedUsageUtilization` with a fresh `fetchedAtMs` | current |
+| 1b | the same, fresh, but the window's own `resetsAt` has passed | ⛔ **expired — unknown, never zero.** Age is not the only way a percentage stops being true |
 | 2 | the same, stale | **reported as *unknown*, with its age** — never as a number |
 | 3 | nothing | unknown; degrade conservatively. ⚠️ Two distinct causes, and the UI separates them: **never probed**, and **probed but the account has no usage cache yet** — the CLI writes `cachedUsageUtilization` only after real work, so a freshly signed-in worker reports nothing until it has been used once |
+
+⚠️ **Rung 1b is fresh and wrong at the same time**, which is why it is not a special case of rung 2.
+A reading taken two minutes before a reset is as fresh as a reading gets, and every number in it
+expires with the window it counted — while `STALE_AFTER_MS` keeps vouching for it for hours.
+Measured on t60, 2026-08-31: a 5h window read `percent: 88` with `resetsAt` 06:39:59Z and was still
+being offered as 88% at 06:46Z, on an account whose window had emptied. `windowExpired()` is the
+test; `windowResetsAt` had always discarded a reset in the past, and this applies the same rule to
+the percentage beside it. ⛔ Expired means the new window's contents are **unknown**, so the run is
+marked `quotaUnverified` — deriving *empty* from *reset* would be inventing a number.
 
 ⛔ **A stale percentage rendered as current is worse than no percentage.** It makes the compaction
 reserve look satisfied when it is not, and that failure strands context — the one loss the whole cost

@@ -573,6 +573,49 @@ export function admitDependents(taskId: string): void {
   for (const id of dependentsOf(taskId)) admit(id)
 }
 
+/**
+ * The other half of the clock tick: a quota pause whose reset has arrived.
+ *
+ * ⛔ **Nothing did this, and three places said it did.** `preempt` parks a task as `paused_quota`
+ * carrying `not_before = resetsAt`, and its own comment reads *"it carries `not_before = resets_at`
+ * and resumes itself"*. It did not. `admitScheduled` selects `status = 'scheduled'` only; `admit`
+ * refuses every status in `TERMINAL_OR_HELD`, which includes this one; and `resumeTask` accepts only
+ * `paused_user` and `cancelled`. So `not_before` on a `paused_quota` row was read by **nothing** —
+ * the task's thread promised *"Resuming automatically after the reset"*, Settings promised it
+ * restarts itself, and the only way out was for a person to type something at it.
+ *
+ * ⭐ Measured on t60, 2026-08-31: paused 05:09:25Z with `not_before` 06:40:00Z, still `paused_quota`
+ * at 06:44:50Z — five minutes past its own resume time, on a worker whose window had reset.
+ *
+ * ⚠️ It goes to `ready`, not straight to a worker: the dispatch gate re-reads the quota and may
+ * still decline, which is the honest outcome and a visible one — a task held at `ready` carries the
+ * reason on its row, where `paused_quota` for ever carried nothing.
+ *
+ * ⚠️ A null `not_before` resumes too, matching `admitScheduled`'s own predicate. A quota pause with
+ * no reset time has no other way out at all, and leaving it parked for ever is the worse of the two
+ * wrong answers.
+ */
+export function resumeQuotaPaused(): number {
+  const due = rows<TaskRow>(
+    db()
+      .prepare(
+        "select * from tasks where status = 'paused_quota' and (not_before is null or not_before <= ?)"
+      )
+      .all(Date.now())
+  )
+  for (const r of due) {
+    db().prepare('update tasks set not_before = null where id = ?').run(r.id)
+    addMessage(
+      r.id,
+      'system',
+      'The quota window this task was waiting on has reset. Back in the queue — the dispatch gate ' +
+        'reads the quota again, so a worker still over its limit will hold it rather than run it.'
+    )
+    setStatus(r.id, 'ready', { assignee: null })
+  }
+  return due.length
+}
+
 /** The scheduler's clock tick: `scheduled` tasks whose `not_before` has arrived become `ready`. */
 export function admitScheduled(): number {
   const due = rows<TaskRow>(

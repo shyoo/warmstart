@@ -209,8 +209,15 @@ function delay(ms: number): Promise<void> {
 /** Leaving `paused_user` keeps everything: thread, handoff, branch, estimates. */
 export function resumeTask(taskId: string): Task {
   const task = requireTask(taskId)
-  if (task.status !== 'paused_user' && task.status !== 'cancelled') return task
-  db().prepare('update tasks set cancel_json = null where id = ?').run(taskId)
+  // ⛔ `paused_quota` included, and it was the one that needed it most. That status is reached by the
+  // machine rather than by a person, so it had no Resume button at all and this function turned it
+  // away — an operator who could see the window had reset had no way to say so. ⚠️ Its `not_before`
+  // is cleared with it: resuming by hand *is* the statement that the wait is over, and leaving a
+  // resume time behind would let `resumeQuotaPaused` argue with the person who pressed the button.
+  if (task.status !== 'paused_user' && task.status !== 'cancelled' && task.status !== 'paused_quota') {
+    return task
+  }
+  db().prepare('update tasks set cancel_json = null, not_before = null where id = ?').run(taskId)
   addMessage(taskId, 'system', 'Resumed.')
   setStatus(taskId, task.status === 'cancelled' ? 'draft' : 'ready')
   return requireTask(taskId)

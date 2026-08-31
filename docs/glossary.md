@@ -248,7 +248,10 @@ it lapses: send it queued work, keepalive, compact, or let it go. See `cost-mode
 `/compact` fails at true 100%, which strands the context entirely. See `cost-model.md` §5.
 
 **Preemption** — stopping a run before a quota window closes: wrap up, commit what compiles, write a
-handoff, then compact or close. The task returns to the queue with `not_before = resets_at`.
+handoff, then compact or close. The task rests at `paused_quota` with `not_before = resets_at`, and
+`resumeQuotaPaused()` — a clock tick beside `admitScheduled()` — puts it back to `ready` when that
+time arrives. ⛔ It returns to the **queue**, not to a worker: the dispatch gate reads the quota again
+and may still hold it, which is honest and visible in a way `paused_quota` for ever was not.
 ⚠️ The same protocol also serves a **runaway stop** (`settings.autoRunawayStop`, default off), which
 ends differently: no window is closing, so there is nothing to resume after and the task rests at
 `awaiting_human` with no `not_before`. Preemption pauses; a runaway stop hands back.

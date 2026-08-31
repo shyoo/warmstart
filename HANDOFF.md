@@ -8,7 +8,7 @@ started in CI, never run against a real agent CLI.
 if you add a line, find the one it obsoletes and cut it in the same edit. Finished work moves to
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
-**Baseline (2026-08-31, measured):** typecheck · lint · build clean · `npm test` 875/877 (2 POSIX-only
+**Baseline (2026-08-31, measured):** typecheck · lint · build clean · `npm test` 882/884 (2 POSIX-only
 skipped) · `test:daemon` 141/141 · `test:ui` 150/150 · `test:pack` 18/18 · L4 (opt-in) landed a real
 agent commit on origin/main. Electron 44.0.0, electron-builder 26.15.3, 0 npm vulnerabilities.
 CLIs here: claude 2.1.251 · agy 1.1.22 · codex 0.151.0.
@@ -111,6 +111,7 @@ docs/                  cost-model.md, glossary.md, adapters.md, landing.md, sess
 - ⚠️ **Never exercised end to end: the tray *icon*, and keepalive firing** (its arithmetic is unit-tested).
 - ⭐ **Every intervention on a live session has an off switch** — Settings > Global: `autoCompact`/`autoPreempt` **on**, `autoRunawayStop` **off**, `probeIntervalMinutes` 5m.
 - ⭐ **A full workspace pool holds a task rather than failing it** (2026-08-29). ⛔ No dependency edge: a hold is re-decided every tick, so priority wins. ⚠️ A fleet wider than its pool is *named*, never silently grown.
+- ⭐ **A quota pause now ends on its own clock** (2026-08-31, t60). `preempt` parks a task as `paused_quota` carrying `not_before = resetsAt` and three places said it *"resumes itself"* — `admitScheduled` reads only `scheduled`, `admit` refuses every held status, `resumeTask` took neither, so that field was read by **nothing** and t60 sat 291s past its own resume time with no button either. `resumeQuotaPaused()` runs in `tick()`; `resumeTask` and the menu now accept it. ⛔ Back to `ready`, not to a worker. ⭐ Beside it: `stale` is an **age** test, so a reading two minutes old whose window has since reset was trusted for hours (measured: 88% on a window that reset 6m earlier). `windowExpired()` makes an expired window **unknown, never zero**. ⚠️ Neither has run in flight.
 - ⭐ **The stall watchdog tells stuck from slow, and has fired in flight** (2026-08-30): 13m into a hung codex run it posted the process tree and 0.0s of CPU gained in 70s. ⛔ It reports and never kills.
 - ⭐ **A question shows on the task, and a stale branch has a way back** (2026-08-30, t59). `askQuestion` never changed the status, so a task waiting seven minutes on a person read `running`; it now rests at `awaiting_human` and is put back when the answer is taken. ⛔ And `readMergeability` asked about `origin/<target>` while `merge-local` rebases onto the **local** one — on the default policy the pre-flight check answered about a different ref, so conflicts were found inside `landTask`, two branches past the `resolve-conflict` verdict built to hand them back. Both bases now come from `landingBaseFor`. A **Resolve & retry** button sends a conflicted branch back to an agent. ⚠️ None of the three has run in flight.
 - ⭐ **A task asked to finish can no longer hang on an answer that never comes** (2026-08-30). `ask-agent` leaves the run open and bet the agent would report again; nothing checked. t58 obeyed in 17s, never reported, and sat `running` for 50m holding ws3. `runWatchdogs` now re-runs `decideFinish` against the tree once the session has been silent past `finishReplyOverdue`. ⚠️ Fired in flight **once, by hand** on t58; the automatic path is unproven.
@@ -172,10 +173,9 @@ M0–M6 are done. What is left is not a milestone but a list, in the order it wo
 
 ## Measurement runs owed
 
-Each is cheap and needs a **quiet worker** - one session, nothing else on that account. Record the
-result in `docs/cost-model.md` with the date and CLI version, then delete the row. **The instrument:**
-a run records a quota reading either side of itself and transcript metering beside it; the difference
-is what the CLI spent that never reached a transcript.
+Each is cheap and needs a **quiet worker** - one session, nothing else on that account. Record the result in `docs/cost-model.md` with the
+date and CLI version, then delete the row. **The instrument:** a run records a quota reading either side of itself and transcript metering
+beside it; the difference is what the CLI spent that never reached a transcript.
 
 | # | Question | Method | What it changes |
 |---|---|---|---|

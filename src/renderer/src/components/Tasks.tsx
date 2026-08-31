@@ -437,7 +437,12 @@ export function Tasks({
                                 Cancel
                               </button>
                             )}
-                            {(task.status === 'paused_user' || task.status === 'cancelled') && (
+                            {/* ⛔ `paused_quota` included. It resumes itself on the reset now, but an
+                                operator looking at a window that has visibly rolled over should not
+                                have to wait for a clock they can already see has passed. */}
+                            {(task.status === 'paused_user' ||
+                              task.status === 'cancelled' ||
+                              task.status === 'paused_quota') && (
                               <button
                                 type="button"
                                 role="menuitem"

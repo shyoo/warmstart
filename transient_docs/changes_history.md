@@ -2875,3 +2875,67 @@ has put it somewhere deliberate, and an answer is not a request to overrule that
 ⚠️ Codex gets all of this for free — it is the same `!mcp` branch, not a second implementation — and
 neither adapter has exercised it in flight. t63 itself predates the fix and has no row; its question
 lives on in its hold reason and is answered as an ordinary note.
+
+## A pause with no clock behind it (2026-08-31)
+
+t60 sat at `paused_quota` long past the reset it was waiting for, on a worker whose window the
+operator could see had already rolled over. The reported suspicion was staleness. It was not.
+
+### Three doors, all shut
+
+`preempt` parks a task as `paused_quota` carrying `not_before = resetsAt`, and its own comment says
+*"it carries `not_before = resets_at` and resumes itself"*. Nothing did:
+
+- `admitScheduled()` selects `status = 'scheduled'` and nothing else.
+- `admit()` returns early for every status in `TERMINAL_OR_HELD`, which lists `paused_quota` — and
+  correctly, since those are *"reached deliberately and not derived"*.
+- `resumeTask()` accepted `paused_user` and `cancelled` only.
+
+So `not_before` on a `paused_quota` row was read by **no code at all**. Measured from the live daemon
+on 2026-08-31: paused 05:09:25Z with `not_before` 06:40:00Z, still `paused_quota` at 06:44:50Z, 291
+seconds past its own resume time.
+
+⛔ Three places said otherwise, one of them to the operator's face: the docstring above, the thread
+message *"Resuming automatically after the reset"*, and Settings copy reading *"so it restarts
+itself"*. The UI offered Resume for `paused_user` and `cancelled` only, so the task had no button
+either — the sole way out was `continueTask`, i.e. typing a note at it.
+
+⭐ `resumeQuotaPaused()` now runs in `tick()` beside `admitScheduled()`, deliberately beside rather
+than inside: the two read different statuses, and folding a held status into the derived-status pass
+would let any `admit()` call anywhere un-pause a task. It goes to `ready`, not to a worker — the
+dispatch gate re-reads quota and may still decline, which is both honest and *visible*, because a
+task held at `ready` carries its reason where `paused_quota` for ever carried nothing.
+
+### The staleness was real, and was not the cause
+
+The reported symptom pointed at the reading, so it is worth writing down why that was the wrong
+suspect: the gate is `if (quota && !quota.stale)`, so a stale reading never gates anything — it
+dispatches with `quotaUnverified` set. And nothing reads a worker's quota on behalf of a
+`paused_quota` task in the first place, fresh or stale, because such a task never re-enters the
+candidate list.
+
+⭐ But the suspicion found a second defect one layer down. `stale` is an **age** test, and age is not
+the only way a percentage stops being true. Measured on the same account at the same moment:
+
+```
+sampledAt  05:04:47Z   ageMs 6,099,261   source config-cache
+5h window  percent 88   resetsAt 06:39:59Z   ← already passed
+```
+
+A reading taken two minutes before a reset is as fresh as a reading gets, and every number in it
+expires with the window it counted. `windowExpired()` now says so, and the dispatch gate treats an
+expired window as **unknown rather than zero** — `quotaUnverified`, not free capacity, because what
+the new window holds cannot be derived from the old one. `windowResetsAt` had discarded a reset in
+the past since it was written; this is the same rule applied to the percentage sitting beside it.
+
+⚠️ Narrow on purpose. Only a reading that existed and ran out is marked unverified; a pool with no
+window at all keeps its previous answer, and a provider that sends no `resetsAt` — codex's 30d window
+— is untouched by any of it.
+
+### And a button, because a clock is not always fast enough
+
+`resumeTask` and the task menu now accept `paused_quota`. That status is reached by the machine, so
+it had no manual route at all, and an operator looking at a window that has visibly rolled over
+should not have to wait for a clock they can already read. Resuming by hand clears `not_before` with
+it: pressing the button *is* the statement that the wait is over, and a resume time left behind would
+let `resumeQuotaPaused` argue with the person who pressed it.

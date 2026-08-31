@@ -235,3 +235,30 @@ describe('QuotaPoller.sweep', () => {
     expect(after?.windows[0]?.percent).toBe(25)
   })
 })
+
+/**
+ * Fresh and wrong at the same time.
+ *
+ * ⛔ `stale` is an age test, and age is not the only way a percentage stops being true. A reading
+ * taken two minutes before a window resets is as fresh as a reading gets, and every number in it
+ * expires with the window it counted — while `STALE_AFTER_MS` keeps vouching for it for hours.
+ * Measured on t60, 2026-08-31: ClaudeThird's 5h window read `percent: 88` with `resetsAt` 06:39:59Z
+ * and was still being offered as 88% at 06:46Z, on an account whose window had emptied.
+ */
+describe('a window that has already turned over', () => {
+  it('is expired once its reset has passed, however new the reading is', () => {
+    const now = Date.now()
+    expect(quota.windowExpired({ id: 'session', label: '5h', percent: 88, resetsAt: now - 1 })).toBe(
+      true
+    )
+    expect(
+      quota.windowExpired({ id: 'session', label: '5h', percent: 88, resetsAt: now + 60_000 })
+    ).toBe(false)
+  })
+
+  it('says nothing about a window that never carried a reset time', () => {
+    // ⚠️ Absent is not past. A provider that reports no reset — codex's 30d window among them — must
+    //    not have its readings thrown away on a field it does not send.
+    expect(quota.windowExpired({ id: '30d', label: '30d', percent: 37, resetsAt: null })).toBe(false)
+  })
+})

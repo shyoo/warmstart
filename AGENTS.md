@@ -149,6 +149,10 @@ These are not preferences; breaking one breaks the product.
   `admitScheduled()` looks at `scheduled` ones and nothing else touches them. A second copy of it in
   scheduler.ts re-set each dependent to the status it already had, so for months **no completed task
   ever unblocked anything and the DAG never advanced past its first edge**. Never reimplement it.
+  ⛔ **And every held status needs something that ends the hold.** `paused_quota` is set by the
+  machine and was cleared by nothing — `admit()` refuses it as held, `admitScheduled()` reads only
+  `scheduled` — so `not_before` on such a row was read by no code at all while three places promised
+  it resumed itself (t60). `resumeQuotaPaused()` is that clock; a new held status owes one too.
 - ⛔ **A contended resource is a hold, never a failure.** `claim()` returning null means *not yet*,
   and a caller that reads it as *no* throws away work for being unlucky. Measured 2026-08-29: the
   enabled fleet could run five sessions against a pool of three, so `dispatch` threw

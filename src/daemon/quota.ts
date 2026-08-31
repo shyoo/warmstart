@@ -1,4 +1,4 @@
-import type { QuotaSnapshot } from '@shared/protocol.js'
+import type { QuotaSnapshot, QuotaWindow } from '@shared/protocol.js'
 import { db, row, rows } from './db.js'
 import { adapter } from './adapters/index.js'
 import { stripAnsi } from './stream.js'
@@ -399,6 +399,25 @@ export function lastRateLimit(workerId: string): LiveRateLimit | null {
   return r
     ? { status: r.status, windowId: r.window_id, resetsAt: r.resets_at, sampledAt: r.sampled_at }
     : null
+}
+
+/**
+ * A window that has already turned over, and therefore counts nothing.
+ *
+ * ⛔ **`stale` is an age test and this is not.** A reading taken two minutes before a reset is as
+ * fresh as a reading gets, and every number in it stops being true the moment the window rolls. The
+ * dispatch gate believed one for the better part of two hours: measured on t60, 2026-08-31,
+ * ClaudeThird's 5h window read `percent: 88` with `resetsAt` 06:39:59Z and was still offered as 88%
+ * at 06:46Z, on an account whose window had emptied.
+ *
+ * ⚠️ Expired means **unknown**, never zero. What the new window holds cannot be derived from the old
+ * one, and a caller that reads this as free capacity is making up a number.
+ *
+ * ⭐ `windowResetsAt` has always discarded a reset in the past for exactly this reason; this is that
+ * rule applied to the percentage sitting beside it.
+ */
+export function windowExpired(window: QuotaWindow, now = Date.now()): boolean {
+  return window.resetsAt !== null && window.resetsAt !== undefined && window.resetsAt <= now
 }
 
 /**
