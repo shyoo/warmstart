@@ -724,6 +724,19 @@ body {
   animation: project-dot-attention 2s ease-in-out infinite;
 }
 
+/* Held on quota: the same yellow, standing still - nobody is being waited on. */
+.project-dot--paused {
+  background: var(--state-warn);
+  border: 1px solid var(--state-warn);
+  box-shadow: 0 0 5px var(--state-warn);
+  opacity: 0.8;
+}
+
+.nav-item:hover .project-dot--paused,
+.nav-item--active .project-dot--paused {
+  opacity: 1;
+}
+
 @keyframes project-dot-blink {
   0%, 100% {
     opacity: 0.25;
@@ -1810,6 +1823,15 @@ select:focus-visible,
   background: color-mix(in srgb, var(--state-human) 12%, var(--color-bg));
 }
 
+/* The write-your-own row: the same control, dashed to say the content is not supplied. */
+.question-option--other {
+  border-style: dashed;
+}
+
+.question-option--other.question-option--on {
+  border-style: solid;
+}
+
 .question-mark {
   flex: 0 0 auto;
   width: 16px;
@@ -2274,6 +2296,42 @@ select:focus-visible,
 
 .decide-what strong {
   color: var(--color-text);
+}
+
+/*
+ * The worker / model / effort selectors on the Reassign option: one row, three equal shares.
+ * ⛔ `flex: 1 1 0` and not `1 1 auto`. With an `auto` basis each selector is sized by its own
+ * longest label first and only then shrunk, which is what put them on three lines in a column this
+ * narrow. A zero basis makes the row's width the only input, so they always fit beside each other.
+ */
+.reassign-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  margin-bottom: var(--sp-1);
+}
+
+.reassign-select {
+  flex: 1 1 0;
+  min-width: 0;
+  width: auto;
+}
+
+/* The rightmost menu opens leftwards, so a 190px-wide list does not hang off the card. */
+.reassign-row .reassign-select:last-child .setting-btn-select-menu {
+  left: auto;
+  right: 0;
+}
+
+/* Below the point where three shares stop being readable, a stack is the honest answer. */
+@media (max-width: 560px) {
+  .reassign-row {
+    flex-wrap: wrap;
+  }
+
+  .reassign-select {
+    flex: 1 1 140px;
+  }
 }
 
 @media (max-width: 700px) {

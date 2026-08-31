@@ -1382,6 +1382,220 @@ try {
     'both commissioned workers are enabled'
   )
 
+  // ⛔ Left to the end on purpose: each of these three rewrites the task table's statuses to put the
+  // app into the state being drawn, and every earlier section reads those statuses.
+  section('a project held on quota')
+  // ⭐ Reported 2026-08-31. The dot before a project name is the whole of what the sidebar says
+  // about a project you are not looking at, and a task stopped on an exhausted account drew the
+  // same hollow ring as a project with nothing in it - so *stopped, and the account is why* read as
+  // *nothing going on here*. ⚠️ Seeded through the store: no RPC parks a task on quota, and this
+  // suite has no credentials to exhaust.
+  const orphanIds = JSON.parse(
+    await evaluate(
+      `window.agentyard.rpc('task.list', {}).then(t => JSON.stringify(t.filter(x => x.projectId === null).map(x => x.id)))`
+    )
+  )
+  const heldId = orphanIds[0]
+  const dotClass = async () =>
+    await evaluate(
+      `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim().startsWith('Unassigned'))?.querySelector('.project-dot')?.className ?? ''`
+    )
+  {
+    const store = new DatabaseSync(join(dataDir, 'multi_agent_controller.db'))
+    // Everything else at rest, so the one status under test is the one the dot is answering.
+    store.prepare('update tasks set status = ?').run('completed')
+    store.prepare('update tasks set status = ? where id = ?').run('paused_quota', heldId)
+    store.close()
+  }
+  // A task event is what makes the sidebar re-read; the edit itself changes nothing.
+  await evaluate(
+    `window.agentyard.rpc('task.setPriority', { id: ${JSON.stringify(heldId)}, priority: 'P2' })`
+  )
+  await wait(1500)
+  const heldDot = await dotClass()
+  check(
+    'a task held on quota gives the project a dot of its own',
+    /project-dot--paused\b/.test(heldDot),
+    heldDot
+  )
+  check(
+    'and it is not the idle ring',
+    !/project-dot--idle\b/.test(heldDot),
+    'idle is the state of a project with nothing in it, which this is not'
+  )
+  // ⛔ Yellow, and actually painted. The class name is half the assertion - a rule that never
+  // landed in the stylesheet leaves a correctly-named element drawn as nothing at all.
+  const heldColour = await evaluate(
+    `getComputedStyle(document.querySelector('.project-dot--paused')).backgroundColor`
+  )
+  const warn = await evaluate(
+    `getComputedStyle(document.documentElement).getPropertyValue('--state-warn').trim()`
+  )
+  check(
+    'the dot is drawn in the warning colour rather than left transparent',
+    heldColour !== 'rgba(0, 0, 0, 0)' && heldColour !== 'transparent',
+    `${heldColour} against --state-warn ${warn}`
+  )
+
+  section('reassigning a task that is waiting on you')
+  // ⭐ Three selectors - worker, model, effort - that each sized themselves to their own longest
+  // label and so wrapped onto a line each in a column this narrow, turning one decision into a
+  // stack. They share the row now and ellipsize.
+  {
+    const store = new DatabaseSync(join(dataDir, 'multi_agent_controller.db'))
+    store
+      .prepare('update tasks set status = ?, assignee = ? where id = ?')
+      .run('awaiting_human', 'human', heldId)
+    store.close()
+  }
+  await evaluate(
+    `window.agentyard.rpc('task.setPriority', { id: ${JSON.stringify(heldId)}, priority: 'P1' })`
+  )
+  await wait(1200)
+  await evaluate(
+    `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim().startsWith('Unassigned'))?.click()`
+  )
+  await wait(1200)
+  await evaluate(
+    `[...document.querySelectorAll('.tbl tbody tr')].find(r => r.innerText.includes('awaiting_human'))?.click()`
+  )
+  await wait(1500)
+  check(
+    'the decide panel offers a reassignment',
+    (await evaluate(`!!document.querySelector('.reassign-row')`)) === true,
+    'the panel only renders while the task is waiting on a person'
+  )
+  // Pick a real worker, which is what brings the model selector - and on a selectable-effort
+  // adapter the effort selector - onto the row beside it. Three is the crowded case.
+  await evaluate(`document.querySelector('.reassign-row .setting-btn-select')?.click()`)
+  await wait(600)
+  await evaluate(
+    `[...document.querySelectorAll('.reassign-row .setting-btn-select-option')].find(o => !o.innerText.includes('Auto'))?.click()`
+  )
+  await wait(1500)
+  const row = JSON.parse(
+    await evaluate(`
+      (() => {
+        const wrap = document.querySelector('.reassign-row');
+        const kids = [...document.querySelectorAll('.reassign-select')];
+        return JSON.stringify({
+          count: kids.length,
+          tops: kids.map(k => Math.round(k.getBoundingClientRect().top)),
+          widest: Math.max(0, ...kids.map(k => Math.round(k.getBoundingClientRect().width))),
+          row: Math.round(wrap.getBoundingClientRect().width),
+          height: Math.round(wrap.getBoundingClientRect().height),
+          overflows: kids.some(k => k.getBoundingClientRect().right > wrap.getBoundingClientRect().right + 1)
+        });
+      })()
+    `)
+  )
+  check(
+    'choosing a worker brings its model out beside it, not under it',
+    row.count >= 2,
+    JSON.stringify(row)
+  )
+  check(
+    'and every selector sits on the same row',
+    new Set(row.tops).size === 1,
+    `tops ${row.tops.join(', ')} - an auto flex-basis sized each one to its own longest label`
+  )
+  check(
+    'none of them is wider than the row it shares',
+    !row.overflows && row.widest <= row.row,
+    JSON.stringify(row)
+  )
+  check(
+    'so the whole choice is one line high',
+    row.height < 40,
+    `${row.height}px - three stacked selectors ran to about 80`
+  )
+
+  section('an answer that is not on the list')
+  // ⭐ A question's options are one agent's guess at what you might say, and the answer set is
+  // genuinely open. The free-text box was always there, but under a list of choices it reads as a
+  // footnote to whichever one you picked - so *none of these* had no row to click. Claude Code's own
+  // AskUserQuestion offers Other for the same reason.
+  // ⚠️ Fired and not awaited. `question.ask` is the *asker's* side of the call and does not return
+  // until somebody answers - awaiting it here would hang this suite for exactly as long as the
+  // agent it is standing in for would have hung.
+  await evaluate(`
+    void window.agentyard.rpc('question.ask', {
+      sessionId: 'ui-test-other', origin: 'ask_human', kind: 'choice',
+      taskId: ${JSON.stringify(heldId)},
+      question: 'Which database should this use?', header: 'Storage',
+      options: [
+        { id: 'sqlite', label: 'SQLite' },
+        { id: 'postgres', label: 'Postgres' }
+      ]
+    }).catch(() => {}); 'sent'
+  `)
+  await wait(2500)
+  const askedId = await evaluate(
+    `window.agentyard.rpc('question.list').then(qs => qs[0]?.id ?? '')`
+  )
+  check('the question is open and waiting on a person', askedId !== '', askedId)
+  {
+    // ⚠️ Attached to the task through the store. A question takes its task from the *run* of the
+    // session that asked, and this suite spends nothing and so starts no run - so the join that
+    // puts the card in a thread has to be made by hand here.
+    const store = new DatabaseSync(join(dataDir, 'multi_agent_controller.db'))
+    store.prepare('update questions set task_id = ? where id = ?').run(heldId, askedId)
+    store.close()
+  }
+  // Leave the thread and come back, so the card re-reads the questions for this task.
+  await evaluate(`document.querySelector('.back-to-list')?.click()`)
+  await wait(1000)
+  await evaluate(
+    `[...document.querySelectorAll('.tbl tbody tr')].find(r => r.innerText.includes('awaiting_human'))?.click()`
+  )
+  await wait(1500)
+  const otherRow = await evaluate(
+    `document.querySelector('.question-card .question-option--other')?.innerText ?? ''`
+  )
+  check(
+    'a question card offers a row for an answer nobody listed',
+    /other/i.test(otherRow),
+    JSON.stringify(otherRow)
+  )
+  await evaluate(`document.querySelector('.question-card .question-option--other')?.click()`)
+  await wait(600)
+  check(
+    'choosing it marks the row, so the card says which answer is being given',
+    (await evaluate(
+      `!!document.querySelector('.question-card .question-option--other.question-option--on')`
+    )) === true
+  )
+  // ⚠️ React owns the value; the native setter plus a bubbling input event is what a keystroke
+  // looks like from its side.
+  await evaluate(
+    `(() => { const el = document.querySelector('.question-card .question-input');` +
+      ` if (!el) return 'no box';` +
+      ` const set = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;` +
+      ` set.call(el, 'Neither - it already has one.');` +
+      ` el.dispatchEvent(new Event('input', { bubbles: true })); return 'typed'; })()`
+  )
+  await wait(600)
+  await evaluate(
+    `[...document.querySelectorAll('.question-card .question-actions .btn')].find(b => /Answer/.test(b.innerText))?.click()`
+  )
+  await wait(2000)
+  const written = JSON.parse(
+    await evaluate(`
+      window.agentyard.rpc('question.forTask', { taskId: ${JSON.stringify(heldId)} })
+        .then(qs => JSON.stringify(qs.find(q => q.id === ${JSON.stringify(askedId)})?.answer ?? null))
+    `)
+  )
+  check(
+    'and the typed answer is what reaches the agent',
+    written?.text === 'Neither - it already has one.',
+    JSON.stringify(written)
+  )
+  check(
+    '⛔ on its own, with no option attached to it',
+    Array.isArray(written?.optionIds) && written.optionIds.length === 0,
+    'Other plus a choice would hand the agent both, which is not what the word means'
+  )
+
   const errors = await evaluate('window.__agentyardErrors?.length ?? 0')
   check('no uncaught renderer errors', errors === 0)
 } catch (err) {

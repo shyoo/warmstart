@@ -79,13 +79,20 @@ export const CANCELLABLE = new Set([
   'paused_quota'
 ])
 
-export type ProjectWorkState = 'working' | 'needs_attention' | 'idle'
+export type ProjectWorkState = 'working' | 'needs_attention' | 'paused' | 'idle'
 
 /**
  * Computes the work state for a project based on its tasks:
  * - 'needs_attention': At least one task is awaiting human input or paused by user.
  * - 'working': At least one task is active/in-flight and no tasks need human action.
- * - 'idle': No active tasks and no human action needed.
+ * - 'paused': Nothing is moving, but at least one task is held on quota and will resume itself.
+ * - 'idle': Nothing is running, held or waiting on anyone.
+ *
+ * ⛔ `paused_quota` is not idle. The dot is the only thing the sidebar says about a project you are
+ * not looking at, and a task parked on an exhausted account rendered as a blank ring read as *this
+ * project has nothing going on* — while the work was stopped and the account was the reason. It is
+ * not `needs_attention` either: nobody is being waited on, the quota window reopens on its own and
+ * the scheduler picks the task back up. So it is its own state, warned in colour and calm in motion.
  */
 export function projectWorkState(tasks: Array<Pick<Task, 'status'>>): ProjectWorkState {
   if (tasks.some((t) => t.status === 'awaiting_human' || t.status === 'paused_user')) {
@@ -93,6 +100,9 @@ export function projectWorkState(tasks: Array<Pick<Task, 'status'>>): ProjectWor
   }
   if (tasks.some((t) => IN_FLIGHT.has(t.status))) {
     return 'working'
+  }
+  if (tasks.some((t) => t.status === 'paused_quota')) {
+    return 'paused'
   }
   return 'idle'
 }
@@ -104,7 +114,9 @@ export function ProjectDot({ state }: { state: ProjectWorkState }): React.JSX.El
       ? 'Tasks in progress'
       : state === 'needs_attention'
         ? 'Human action needed'
-        : 'Idle'
+        : state === 'paused'
+          ? 'Paused on quota — resumes when the account’s window reopens'
+          : 'Idle'
   return <span className={`project-dot project-dot--${state}`} title={title} aria-label={title} />
 }
 

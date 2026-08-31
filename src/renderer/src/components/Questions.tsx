@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Question } from '@shared/tasks'
 import { rpc, useDaemonEvents } from '../lib/daemon'
 
@@ -29,17 +29,43 @@ export function QuestionCard({
   const [chosen, setChosen] = useState<string[]>([])
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
+  /**
+   * The **Other** row: an answer the asker did not think of.
+   *
+   * ⛔ Its own row among the options and not just the box underneath, which is what this used to
+   * be. The box was there the whole time, but beneath a list of numbered choices it reads as a
+   * footnote to whichever one you picked — so an operator whose real answer was *none of these*
+   * either picked the closest option and hoped the caveat carried it, or answered nothing. Claude
+   * Code's own `AskUserQuestion` offers *Other* as a choice for exactly this reason, and the set of
+   * answers is genuinely open: the options are one agent's guess at what you might say.
+   *
+   * ⚠️ Selecting it clears the chosen options rather than adding to them. "Other, and also option
+   * two" is not what the word means, and `renderAnswer` would hand the agent both.
+   */
+  const [other, setOther] = useState(false)
+  const textRef = useRef<HTMLTextAreaElement>(null)
 
   const multi = question.kind === 'multi'
   const hasOptions = question.options.length > 0
 
   const toggle = (id: string): void => {
+    setOther(false)
     setChosen((prev) =>
       multi ? (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]) : [id]
     )
   }
 
-  const answer = async (optionIds = chosen): Promise<void> => {
+  const chooseOther = (): void => {
+    setOther((prev) => {
+      if (prev) return false
+      setChosen([])
+      // ⚠️ After the state settles, so the box it focuses is the one this click just made relevant.
+      setTimeout(() => textRef.current?.focus(), 0)
+      return true
+    })
+  }
+
+  const answer = async (optionIds = other ? [] : chosen): Promise<void> => {
     setBusy(true)
     try {
       await rpc('question.answer', {
@@ -56,7 +82,7 @@ export function QuestionCard({
   // ⛔ Nothing chosen and nothing typed is not an answer. The agent is waiting on content, and an
   // empty submission would reach it as "the operator gave no answer" — which is what parking already
   // says, more honestly, without anyone having pressed a button.
-  const empty = chosen.length === 0 && !text.trim()
+  const empty = (other || chosen.length === 0) && !text.trim()
 
   if (compact) {
     return (
@@ -109,18 +135,37 @@ export function QuestionCard({
               </span>
             </button>
           ))}
-          {multi && <p className="question-hint dim">Choose as many as apply.</p>}
+          {/* The row for an answer that is not on the list. Same shape as the options, because it
+              is one of them — the difference is that you write it. */}
+          <button
+            type="button"
+            className={`question-option question-option--other${other ? ' question-option--on' : ''}`}
+            disabled={busy}
+            onClick={chooseOther}
+          >
+            <span className={`question-mark${multi ? ' question-mark--multi' : ''}`}>
+              {other ? '✓' : ''}
+            </span>
+            <span className="question-option-body">
+              <span className="question-option-label">Other — write your own answer</span>
+              <span className="question-option-detail">
+                None of these fits. What you type below is sent on its own, with no option attached.
+              </span>
+            </span>
+          </button>
+          {multi && !other && <p className="question-hint dim">Choose as many as apply.</p>}
         </div>
       )}
 
       <textarea
+        ref={textRef}
         className="ask-input question-input"
-        rows={hasOptions ? 2 : 3}
+        rows={hasOptions && !other ? 2 : 3}
         value={text}
         placeholder={
-          hasOptions
-            ? 'Anything to add? A choice plus a caveat is a better answer than either alone.'
-            : 'Your answer — this goes back to the agent as it is.'
+          !hasOptions || other
+            ? 'Your answer — this goes back to the agent as it is.'
+            : 'Anything to add? A choice plus a caveat is a better answer than either alone.'
         }
         onChange={(e) => setText(e.target.value)}
       />
@@ -134,9 +179,11 @@ export function QuestionCard({
           {busy ? 'Answering…' : 'Answer'}
         </button>
         <span className="dim question-hint">
-          {question.parkedAt
-            ? 'Recorded on the thread, and carried into the next run’s prompt.'
-            : 'The agent is holding for this.'}
+          {other && !text.trim()
+            ? 'Write the answer above — Other sends what you type and nothing else.'
+            : question.parkedAt
+              ? 'Recorded on the thread, and carried into the next run’s prompt.'
+              : 'The agent is holding for this.'}
         </span>
       </div>
     </div>

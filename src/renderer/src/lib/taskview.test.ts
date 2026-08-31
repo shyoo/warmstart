@@ -225,6 +225,38 @@ describe('project work state for left pane indicators', () => {
     expect(projectWorkState(tasks)).toBe('needs_attention')
   })
 
+  /**
+   * ⛔ Reported from the app on 2026-08-31. A project whose only task was `paused_quota` drew the
+   * same hollow ring as a project with nothing in it — so the sidebar's one-glance answer for a
+   * stopped account was "nothing going on here".
+   */
+  it('returns paused when a task is held on quota', () => {
+    expect(projectWorkState([{ status: 'paused_quota' }])).toBe('paused')
+  })
+
+  it('still returns paused when everything else has come to rest', () => {
+    const tasks: Array<{ status: TaskStatus }> = [
+      { status: 'completed' },
+      { status: 'cancelled' },
+      { status: 'paused_quota' }
+    ]
+    expect(projectWorkState(tasks)).toBe('paused')
+  })
+
+  it('prefers working over paused — something is actually moving', () => {
+    // ⚠️ The dot has one thing to say, and a run in flight is the more useful of the two.
+    const tasks: Array<{ status: TaskStatus }> = [{ status: 'running' }, { status: 'paused_quota' }]
+    expect(projectWorkState(tasks)).toBe('working')
+  })
+
+  it('prefers needs_attention over paused — a person is being waited on', () => {
+    const tasks: Array<{ status: TaskStatus }> = [
+      { status: 'paused_quota' },
+      { status: 'awaiting_human' }
+    ]
+    expect(projectWorkState(tasks)).toBe('needs_attention')
+  })
+
   it('prioritizes needs_attention over working when tasks in both states exist', () => {
     const tasks: Array<{ status: TaskStatus }> = [
       { status: 'running' },

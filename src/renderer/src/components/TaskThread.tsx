@@ -964,10 +964,15 @@ function Decide({
           Reassign
         </button>
         <div className="decide-what">
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center', marginBottom: '4px' }}>
+          {/* ⚠️ One row, and it stays one row. Each selector used to size itself to its own longest
+              label — "Auto (scheduler decides)", "account default (claude-opus-5)" — so the three of
+              them asked for more width than the column has and wrapped onto a line each, turning one
+              decision into a stack. They share the row equally now and ellipsize instead; the full
+              label is still on the button that opens the menu, and in the menu itself. */}
+          <div className="reassign-row">
             <SettingButtonSelect
+              className="reassign-select"
               value={selectedWorkerId}
-              style={{ minWidth: '160px', width: 'auto', flex: '1 1 auto' }}
               disabled={busy}
               ariaLabel="Reassign worker"
               options={[
@@ -995,8 +1000,8 @@ function Decide({
 
             {offeredModels.length > 0 && (
               <SettingButtonSelect
+                className="reassign-select"
                 value={selectedModel}
-                style={{ width: 'auto', flex: '1 1 auto' }}
                 disabled={busy}
                 ariaLabel="Reassign model"
                 options={[
@@ -1017,8 +1022,8 @@ function Decide({
 
             {offeredEfforts.length > 0 && (
               <SettingButtonSelect
+                className="reassign-select"
                 value={selectedEffort}
-                style={{ width: 'auto', flex: '1 1 auto' }}
                 disabled={busy}
                 ariaLabel="Reassign effort"
                 options={[
