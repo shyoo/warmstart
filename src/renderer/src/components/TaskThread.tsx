@@ -845,6 +845,21 @@ function Decide({
         ? 'The one task waiting on it stays blocked — only a completed task releases it.'
         : `The ${blocking} tasks waiting on it stay blocked — only a completed task releases them.`
 
+  // ⛔ Offered only when the thing that stopped it is a conflict, and read from `holdReason`
+  // because that is where `landTask`'s failure is actually recorded. A *fix the conflict* button on
+  // a task that failed its checks would send an agent to rebase something that rebases fine.
+  const conflicted = /conflict/i.test(task.holdReason ?? '')
+
+  const handleResolveConflict = async () => {
+    setBusy(true)
+    try {
+      await rpc('task.resolveConflict', { id: task.id })
+      await onRefresh()
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const handleReassign = async () => {
     setBusy(true)
     try {
@@ -906,6 +921,25 @@ function Decide({
           Resume picks back up. {holds} The branch and the workspace are kept.
         </span>
       </div>
+
+      {conflicted && (
+        <div className="decide-option">
+          <button
+            className="btn btn--primary"
+            title="Dispatches a run on this thread that rebases the branch onto the landing target, resolves the conflicts and reports complete again."
+            disabled={busy}
+            onClick={() => void handleResolveConflict()}
+          >
+            Resolve &amp; retry
+          </button>
+          <span className="decide-what">
+            <strong>The work is fine, the branch is stale.</strong> Sends the branch back to an agent
+            to rebase onto the landing target and resolve the conflicts, then report complete again —
+            same thread, so it keeps the context it already has. Nothing is discarded and the branch
+            is never reset.
+          </span>
+        </div>
+      )}
 
       <div className="decide-option">
         <button

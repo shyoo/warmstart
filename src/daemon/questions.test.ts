@@ -356,3 +356,78 @@ describe('answering', () => {
     expect(questions.questionsForTask(task.id).map((q) => q.question)).toEqual(['Second?', 'First?'])
   })
 })
+
+/**
+ * What the task says while a person is being waited on.
+ *
+ * ⛔ **It said `running`, which is true of the process and useless to the operator.** A question is
+ * the one moment the work cannot proceed without a person, and the status is where anybody looks to
+ * find that out — so a task quietly waiting on a human was indistinguishable from one hard at work.
+ *
+ * ⭐ Measured on t59, 2026-08-30: five questions, the first open from 03:08:16 to 03:15:06. Seven
+ * minutes reading `running`, and the operator only noticed because they happened to look at the
+ * session's own terminal.
+ */
+describe('the status while a question is open', () => {
+  it('says a person is being waited on, and says why', async () => {
+    const { task, session } = seedAsker()
+    expect(tasks.requireTask(task.id).status).toBe('running')
+
+    const pending = questions.askQuestion({
+      sessionId: session.id,
+      origin: 'ask_human',
+      kind: 'choice',
+      question: 'Which authentication approach?',
+      options: THREE_WAYS
+    })
+
+    const waiting = tasks.requireTask(task.id)
+    expect(waiting.status).toBe('awaiting_human')
+    expect(waiting.assignee).toBe('human')
+    // ⚠️ The question itself, not a generic "needs attention". The hold reason is what the task
+    //    list shows, and it is the difference between knowing to go and look and not.
+    expect(waiting.holdReason).toContain('Which authentication approach?')
+
+    const [open] = questions.openQuestions()
+    questions.answerQuestion(open!.id, { optionIds: ['cookies'], text: null })
+    await expect(pending).resolves.toMatchObject({ status: 'answered' })
+
+    // ⛔ And back, because the agent took the answer as its tool result and is working again. The
+    //    run was never ended and the workspace never released — this is a label on a live run.
+    const resumed = tasks.requireTask(task.id)
+    expect(resumed.status).toBe('running')
+    expect(resumed.holdReason).toBeNull()
+  })
+
+  it('leaves a task alone that a person moved while the question was open', async () => {
+    // ⛔ An operator who pressed *Stop here* has made a deliberate decision, and an answer arriving
+    //    afterwards must not overrule it by putting the task back to `running`.
+    const { task, session } = seedAsker()
+    const pending = questions.askQuestion({
+      sessionId: session.id,
+      origin: 'ask_human',
+      kind: 'text',
+      question: 'What should the retry budget be?'
+    })
+    tasks.setStatus(task.id, 'paused_user', { assignee: 'human' })
+
+    const [open] = questions.openQuestions()
+    questions.answerQuestion(open!.id, { optionIds: [], text: 'three' })
+    await expect(pending).resolves.toMatchObject({ status: 'answered' })
+    expect(tasks.requireTask(task.id).status).toBe('paused_user')
+  })
+
+  it('does not touch a task that was never running', async () => {
+    // ⚠️ A question asked from a session with no run behind it — a bare terminal — has no task to
+    //    label, and one already resting must not be dragged back into a state it left.
+    const { task, session } = seedAsker()
+    tasks.setStatus(task.id, 'awaiting_human', { assignee: 'human', holdReason: 'something else' })
+    void questions.askQuestion({
+      sessionId: session.id,
+      origin: 'ask_human',
+      kind: 'text',
+      question: 'Anything?'
+    })
+    expect(tasks.requireTask(task.id).holdReason).toBe('something else')
+  })
+})

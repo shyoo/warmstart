@@ -192,6 +192,26 @@ export async function askQuestion(request: QuestionRequest): Promise<QuestionRes
   // outstanding *human* messages, and takes an `agent` message only when it is first in the thread.
   // So this is visible to a person and is never re-sent to an agent.
   if (task) addMessage(task.id, 'agent', renderAsk(request), run?.id ?? null)
+
+  // ⛔ **And the task says so.** A question is the one moment the work cannot proceed without a
+  // person, and the status is where anybody looks to find that out. It read `running` throughout —
+  // true of the process and useless to the operator, who had no way to tell a task that was working
+  // from one that had been waiting on them for seven minutes (t59, 2026-08-30: five questions, the
+  // first open 03:08:16 to 03:15:06).
+  //
+  // ⚠️ Set only from `running`, and put back by `answerQuestion`. The run is deliberately **not**
+  // ended and the session keeps its workspace — the agent is still there holding the tool call, and
+  // this is a label on a live run rather than the end of one.
+  //
+  // ⭐ It also stops `runWatchdogs` counting the wait against the agent: every check in there is
+  // scoped to `running`, so a question left open past `STALL_AFTER_MS` used to earn a stall report
+  // for a session that was doing exactly what it was told.
+  if (task && task.status === 'running') {
+    setStatus(task.id, 'awaiting_human', {
+      assignee: 'human',
+      holdReason: `the agent asked and is waiting on you: ${request.question.slice(0, 300)}`
+    })
+  }
   log.info(`question ${id.slice(0, 8)}: ${request.question.slice(0, 120)} — waiting for a person`)
 
   return await waitFor(id, waitMsFor(deadlineAt, now))
@@ -275,6 +295,18 @@ export function answerQuestion(id: string, answer: QuestionAnswer, by: 'human' =
       const written = messagesFor(answered.taskId)
       const last = written[written.length - 1]
       if (last) markDelivered([last.id])
+      // ⛔ Only when the answer was taken by a live waiter. That agent has its reply and is working
+      // again, so the label `askQuestion` put on goes back. A **parked** question has no waiter:
+      // answering it leaves the task at `awaiting_human` on purpose, because nothing is running
+      // there and the reply travels in the next run's prompt instead.
+      //
+      // ⚠️ Guarded on the status this actually set. An operator who pressed *Stop here* while the
+      // question was open has moved the task somewhere deliberate, and putting it back to `running`
+      // would overrule them.
+      const task = getTask(answered.taskId)
+      if (task?.status === 'awaiting_human') {
+        setStatus(answered.taskId, 'running', { assignee: 'agent', holdReason: null })
+      }
     }
   }
   log.info(`question ${id.slice(0, 8)} answered: ${reply.slice(0, 120)}`)

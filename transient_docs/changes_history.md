@@ -2708,3 +2708,79 @@ That is the same mistake as the one above wearing different clothes: a path that
 status without ending the run it belongs to. `relandTask` now closes any open run and releases what
 it held. ⚠️ Found by doing it rather than by reading the code — the leak was invisible until a
 `running` task was landed by hand, which nothing had ever done before today.
+
+## Two answers to one question about a branch (2026-08-30)
+
+t59 raised two complaints. They turned out to be unrelated, and the second had a cause underneath it
+that nobody had asked about.
+
+### A task that was waiting on a person and did not say so
+
+`askQuestion` inserts the question, writes it to the thread, emits `question.opened`, and waits. It
+never touched the task's status, so the task read `running` for the whole wait — true of the process
+and useless to the operator. On t59 the first question was open from 03:08:16 to 03:15:06; seven
+minutes in which the one screen anybody checks said the agent was working.
+
+⚠️ The only `setStatus` in that file was in the **park** path, which fires when a question times out
+unanswered. So the status became honest precisely when it stopped mattering.
+
+It now rests at `awaiting_human` with the question as its hold reason, and `answerQuestion` puts it
+back to `running` when a live waiter takes the answer. ⛔ The run is deliberately not ended and the
+workspace not released: the agent is still there holding the tool call, and this is a label on a live
+run rather than the end of one.
+
+⭐ A side effect worth having: every check in `runWatchdogs` is scoped to `running`, so a question
+open past `STALL_AFTER_MS` used to earn a stall report for a session doing exactly what it was told.
+
+⚠️ Two guards, both tested. Answering a **parked** question leaves the task where it is — nothing is
+running there and the reply travels in the next run's prompt. And an operator who pressed *Stop here*
+while the question was open is not overruled by an answer arriving afterwards.
+
+### One rule, two copies, and they disagreed
+
+The second complaint was that a failed landing offers *mark done*, *stop here* and *reassign* — none
+of which is **fix the conflict and commit again**. Fair, and the missing button is the small half.
+
+The large half is why t59 met that conflict at all. `decideFinish` has a `resolve-conflict` verdict
+written for exactly this, whose own comment says a conflict *"used to be discovered inside
+`landTask`, which runs after this function has already chosen `land` ... and every conflict became a
+dead-end `awaiting_human`"*. That is precisely what happened again, because the pre-flight check was
+asking about the wrong ref:
+
+```
+merge-tree origin/main HEAD   -> CLEAN
+merge-tree main       HEAD    -> CONFLICT
+```
+
+`merge-local` rebases onto the **local** target and says so in its own comment — *"never
+`origin/<target>`; rebasing onto the remote would quietly make this policy depend on a fetch, which
+is the thing it exists to avoid."* `readMergeability` had a second copy of the rule and always
+preferred the remote. Both are defensible in isolation; together, on `commit-and-merge` — the fleet
+default — the check answered about a different base than the act.
+
+⚠️ It needed a trunk ahead of its remote to show up, which `commit-and-merge` produces by design and
+which this repository had been in for hours: two unpushed commits, one of them a migration, against
+t59's own migration 22.
+
+`landingBaseFor` is now the single answer, and `readMergeability`, `merge-local` and `auto-land` all
+ask it. ⛔ The fix is not "use the local ref" — that would break `commit-and-push`, which really does
+rebase onto the remote. It is that there is one function and the strategies cannot drift again.
+
+### The button
+
+`task.resolveConflict` composes an instruction naming the ref from `landingBaseFor`, writes it to the
+thread and continues the task — same thread, so the agent keeps the context it has. It appears only
+when `holdReason` mentions a conflict, because *fix the conflict* on a task that failed its checks
+would send an agent to rebase something that rebases fine.
+
+⚠️ It does **not** pre-start the rebase, unlike the `resolve-conflict` verdict inside
+`landCompletion`. That path has the workspace held by a live session and can leave the markers in the
+tree. This one runs after everything was released, and the next run may be handed a different
+workspace from the pool — so a rebase started here could be started in a directory the agent never
+sees. Naming the command is reliable where pre-running it is not.
+
+### Not done
+
+⚠️ None of the three has run in flight. The base fix is proven by a test that builds a repository
+whose local `main` is ahead of `origin/main` and asserts both readings, and by the measurement above
+against t59's own workspace — but no landing has yet been *saved* by it.

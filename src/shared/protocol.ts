@@ -1151,6 +1151,17 @@ export interface RpcMap {
   }
   /** Land a branch whose task already finished. The loose-ends list and the task pane both use it. */
   'task.land': { params: { id: string }; result: { task: Task; landed: boolean; reason?: string } }
+  /**
+   * Hand a failed landing back to an agent to rebase and resolve.
+   *
+   * ⛔ The fourth option a stuck landing needed. When `landTask` fails on a conflict the task rests
+   * at `awaiting_human`, where the choices were *mark done*, *stop here* and *reassign* — none of
+   * which is *fix the conflict and commit again*, which is the only one anybody wants.
+   */
+  'task.resolveConflict': {
+    params: { id: string }
+    result: { task: Task; started: boolean; reason?: string }
+  }
   /** Work that exists and is going nowhere: uncommitted files, unlanded branches, rescued stashes. */
   /**
    * Every work conversation and what it served. ⚠️ Read-only and derived; there is deliberately no

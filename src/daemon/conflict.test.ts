@@ -8,6 +8,7 @@ import type { Project } from '@shared/tasks.js'
 import {
   abortRebase,
   beginConflictResolution,
+  landingBaseFor,
   parseMergeTreeConflicts,
   readMergeability
 } from './landing.js'
@@ -145,4 +146,92 @@ describe('beginConflictResolution', () => {
     expect(begun.resolved).toBe(true)
     expect(begun.paths).toEqual([])
   }, 30000)
+})
+
+/**
+ * The base the check asks about must be the base the landing uses.
+ *
+ * ⛔ **They were two separate copies of one rule, and they disagreed on the default policy.**
+ * `merge-local` rebases onto the *local* target and says so in its own comment; `readMergeability`
+ * always preferred `origin/<target>` when a remote existed. On `commit-and-merge` — the fleet
+ * default — the pre-flight check therefore answered about a **different ref** than the one used.
+ *
+ * ⭐ Measured on t59, 2026-08-30, against a trunk two commits ahead of its remote:
+ * `merge-tree origin/main HEAD` said clean, `merge-tree main HEAD` said conflict. `decideFinish`
+ * was told clean, chose `land`, and `git rebase main` failed inside `landTask` — so
+ * `resolve-conflict`, the one verdict that hands a conflict back to a live agent, was passed two
+ * branches earlier and the task dead-ended at `awaiting_human`.
+ */
+describe('the base a landing will actually use', () => {
+  let ahead: string
+  let remote: string
+
+  beforeAll(async () => {
+    // A repo whose local `main` is ahead of `origin/main`, which is the whole scenario: work landed
+    // locally under `commit-and-merge` and was deliberately not pushed.
+    const dir = mkdtempSync(join(tmpdir(), 'agentyard-base-'))
+    remote = join(dir, 'origin.git')
+    ahead = join(dir, 'work')
+    await run('git', ['init', '-q', '--bare', '-b', 'main', remote])
+    await run('git', ['clone', '-q', remote, ahead])
+    await git(ahead, ['config', 'user.email', 't@example.com'])
+    await git(ahead, ['config', 'user.name', 'Test'])
+    writeFileSync(join(ahead, 'm.txt'), 'base\n')
+    await git(ahead, ['add', '-A'])
+    await git(ahead, ['commit', '-qm', 'base'])
+    await git(ahead, ['push', '-q', 'origin', 'main'])
+
+    // The task branch, off the pushed base.
+    await git(ahead, ['checkout', '-q', '-b', 'topic'])
+    writeFileSync(join(ahead, 'm.txt'), 'topic\n')
+    await git(ahead, ['add', '-A'])
+    await git(ahead, ['commit', '-qm', 'topic'])
+
+    // And a commit on local main only — never pushed — that touches the same line.
+    await git(ahead, ['checkout', '-q', 'main'])
+    writeFileSync(join(ahead, 'm.txt'), 'landed-locally\n')
+    await git(ahead, ['add', '-A'])
+    await git(ahead, ['commit', '-qm', 'landed while topic ran'])
+    await git(ahead, ['checkout', '-q', 'topic'])
+  })
+
+  const proj = (): Project =>
+    ({ id: 'p2', name: 'p', root: ahead, vcs: 'git', config: { schema_version: 1 } }) as Project
+
+  it('names the local target for the policy that merges locally, remote or not', () => {
+    // ⛔ `commit-and-merge` never touches the remote by design, so its base cannot be `origin/main`
+    //    however many remotes exist.
+    expect(landingBaseFor(proj(), 'commit-and-merge', true)).toBe('main')
+    expect(landingBaseFor(proj(), 'commit-and-merge', false)).toBe('main')
+  })
+
+  it('leaves the rungs that never rebase on the remote reading', () => {
+    // ⚠️ `commit-and-verify` maps to `verify-only`, which runs the checks against the branch exactly
+    //    as committed and rebases nothing — so its base is advisory and the remote is the more
+    //    useful thing to have been told about. Asserted so that a future change to `FOR_POLICY`
+    //    has to come back here and decide deliberately rather than silently.
+    expect(landingBaseFor(proj(), 'commit-and-verify', true)).toBe('origin/main')
+    expect(landingBaseFor(proj(), 'commit-only', true)).toBe('origin/main')
+  })
+
+  it('names the remote for a policy that pushes there', () => {
+    expect(landingBaseFor(proj(), 'commit-and-push', true)).toBe('origin/main')
+    // No remote is not a conflict, it is just the local ref.
+    expect(landingBaseFor(proj(), 'commit-and-push', false)).toBe('main')
+  })
+
+  it('reports the conflict that the default policy is actually going to hit', async () => {
+    // ⭐ The regression, end to end. The same branch, the same repository, two answers — and the
+    //    old code returned the wrong one for the policy this fleet runs on.
+    const merging = await readMergeability(proj(), ahead, 'topic', 'commit-and-merge')
+    expect(merging?.base).toBe('main')
+    expect(merging?.clean, 'topic conflicts with the commit on local main').toBe(false)
+
+    // ⚠️ And the other policy still gets its own honest answer: against the *pushed* main this
+    //    branch really does apply cleanly, so `commit-and-push` is not told about a conflict it
+    //    would not meet.
+    const pushing = await readMergeability(proj(), ahead, 'topic', 'commit-and-push')
+    expect(pushing?.base).toBe('origin/main')
+    expect(pushing?.clean).toBe(true)
+  })
 })

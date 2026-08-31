@@ -61,7 +61,7 @@ async function git(cwd: string, args: string[]): Promise<string> {
   return stdout.trim()
 }
 
-async function hasRemote(cwd: string): Promise<boolean> {
+export async function hasRemote(cwd: string): Promise<boolean> {
   try {
     await git(cwd, ['remote', 'get-url', 'origin'])
     return true
@@ -120,10 +120,37 @@ async function rebaseInProgress(cwd: string): Promise<boolean> {
   }
 }
 
+/**
+ * The ref a landing will actually rebase onto.
+ *
+ * ⛔ **One answer, because two of them was the bug.** `merge-local` rebases onto the *local* target
+ * and says so in its own comment — *"never `origin/<target>`; rebasing onto the remote would
+ * quietly make this policy depend on a fetch, which is the thing it exists to avoid"*. `auto-land`
+ * rebases onto `origin/<target>`. `readMergeability` had its own third copy of the rule and always
+ * preferred the remote, so on the default policy the pre-flight check answered about a **different
+ * base** than the one used.
+ *
+ * ⭐ Measured on t59, 2026-08-30, with a trunk two commits ahead of its remote:
+ * `merge-tree origin/main HEAD` said **clean**, `merge-tree main HEAD` said **conflict**.
+ * `decideFinish` was told clean, chose `land`, and `git rebase main` then failed inside `landTask` —
+ * so `resolve-conflict`, the one verdict that hands a conflict back to the agent that is still
+ * there, was passed two branches earlier. The task dead-ended at `awaiting_human`, which is exactly
+ * the failure that verdict was written to prevent.
+ *
+ * ⚠️ Callers still do their own fetch. This decides the name only, so that asking what the base is
+ * cannot have the side effect of changing what it points at.
+ */
+export function landingBaseFor(project: Project, policy: FinishPolicy | undefined, remote: boolean): string {
+  const target = policyFor(project).landingTarget
+  if (strategyFor(project, policy).id === 'merge-local') return target
+  return remote ? `origin/${target}` : target
+}
+
 export async function readMergeability(
   project: Project,
   workspacePath: string,
-  branch: string
+  branch: string,
+  policy?: FinishPolicy
 ): Promise<MergeReading | null> {
   const target = policyFor(project).landingTarget
   try {
@@ -139,7 +166,10 @@ export async function readMergeability(
     // ⚠️ Fetch first or this answers about a target from whenever the workspace was last updated,
     // which is the staleness that caused the conflict in the first place.
     if (remote) await git(workspacePath, ['fetch', 'origin', '--prune'])
-    const base = remote ? `origin/${target}` : target
+    // ⛛ Through `landingBaseFor`, so this asks about the ref the landing will really use. Reading
+    // `origin/<target>` under a policy that rebases onto the local one is how t59 was told a
+    // conflicted branch was clean.
+    const base = landingBaseFor(project, policy, remote)
     // Both sides must resolve; a target that does not exist yet is no reading rather than a conflict.
     await git(workspacePath, ['rev-parse', '--verify', `${base}^{commit}`])
     try {
@@ -485,15 +515,20 @@ export const mergeLocal: LandingStrategy = {
     try {
       // ⚠️ The local target, never `origin/<target>`. Rebasing onto the remote would quietly make
       // this policy depend on a fetch, which is the thing it exists to avoid.
+      //
+      // ⛔ Through the same helper `readMergeability` asks, and that is the whole point: the two had
+      // separate copies of this rule, disagreed on the default policy, and t59 was told its branch
+      // was clean against `origin/main` and then failed rebasing onto `main`.
+      const base = landingBaseFor(ctx.project, ctx.policy, false)
       try {
-        await git(ctx.workspacePath, ['rebase', target])
+        await git(ctx.workspacePath, ['rebase', base])
       } catch (err) {
         await git(ctx.workspacePath, ['rebase', '--abort']).catch(() => undefined)
         return {
           strategy: 'merge-local',
           ok: false,
           branch: ctx.branch,
-          reason: `rebase onto ${target} conflicted: ${err instanceof Error ? err.message : String(err)}`
+          reason: `rebase onto ${base} conflicted: ${err instanceof Error ? err.message : String(err)}`
         }
       }
 
@@ -738,7 +773,8 @@ export const autoLand: LandingStrategy = {
     try {
       const remote = await hasRemote(ctx.workspacePath)
       if (remote) await git(ctx.workspacePath, ['fetch', 'origin', '--prune'])
-      const base = remote ? `origin/${target}` : target
+      // ⛔ The same helper `readMergeability` asks, so the check and the act cannot disagree.
+      const base = landingBaseFor(ctx.project, ctx.policy, remote)
 
       try {
         await git(ctx.workspacePath, ['rebase', base])

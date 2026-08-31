@@ -87,6 +87,7 @@ import {
   deliverToLiveSession,
   promptFor,
   relandTask,
+  resolveConflictOnTask,
   resolveTask,
   tick
 } from './scheduler.js'
@@ -503,6 +504,11 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
     'task.land': async (p) => {
       const result = await relandTask(p.id)
       return { task: requireTask(p.id), landed: result.ok, ...(result.reason ? { reason: result.reason } : {}) }
+    },
+
+    'task.resolveConflict': async (p) => {
+      const result = await resolveConflictOnTask(p.id)
+      return { task: requireTask(p.id), started: result.ok, ...(result.reason ? { reason: result.reason } : {}) }
     },
 
     'task.message': (p) => {

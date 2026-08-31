@@ -73,6 +73,8 @@ import {
 import {
   abortRebase,
   beginConflictResolution,
+  hasRemote,
+  landingBaseFor,
   finishWithoutLanding,
   landTask,
   readMergeability
@@ -2262,7 +2264,10 @@ async function landCompletion(
     // ⭐ Asked **before** the decision, and it touches nothing — `merge-tree` merges in memory. This
     // is what lets a conflict be handed back to the live conversation instead of becoming a dead-end
     // `awaiting_human` discovered inside `landTask` two branches later. See `readMergeability`.
-    const merge = await readMergeability(project, held.workspace.path, task.branch)
+    // ⛔ The *finish* policy, not the project policy beside it. It decides which ref the landing
+    // will rebase onto, so the mergeability check has to be told it or it answers about another.
+    const finishPolicy = resolveFinishPolicy(task, project).policy
+    const merge = await readMergeability(project, held.workspace.path, task.branch, finishPolicy)
     const decision = decideFinish({
       task,
       project,
@@ -2271,7 +2276,7 @@ async function landCompletion(
       trunk,
       merge
     })
-    log.info(`t${task.seq} finish: ${decision.kind} (${resolveFinishPolicy(task, project).policy})`)
+    log.info(`t${task.seq} finish: ${decision.kind} (${finishPolicy})`)
 
 
     if (decision.kind === 'ask-agent') {
@@ -3036,6 +3041,55 @@ export { policyFor }
  * trunk. `prepareWorkspace` already switches to an existing branch, so the pooled path is also the
  * shorter one.
  */
+/**
+ * Hand a failed landing back to an agent, with the rebase named.
+ *
+ * ⛔ **The fourth option a stuck landing needed.** When `landTask` fails on a conflict the task
+ * rests at `awaiting_human`, and the three choices offered there were *mark done*, *stop here* and
+ * *reassign* — none of which is the thing anybody actually wants, which is **fix the conflict and
+ * commit again**. Measured on t59, 2026-08-30: the branch was sound, the work was committed, and a
+ * migration collided with one that had landed while it ran. The operator's only routes were to
+ * declare unverified work finished, park it, or pay for a whole fresh run on a different worker.
+ *
+ * ⚠️ It does **not** start the rebase first, unlike the `resolve-conflict` verdict inside
+ * `landCompletion`. That path has the workspace already held by a live session and can leave the
+ * markers in the tree; this one runs after everything was released, and the next run may be handed
+ * a different workspace from the pool — so a rebase started here could be started in a directory
+ * the agent never sees. Naming the command is reliable where pre-running it is not.
+ *
+ * ⭐ The base comes from `landingBaseFor`, so the instruction names the ref the landing will really
+ * use. Telling an agent to rebase onto `origin/main` when the policy merges onto `main` is the
+ * mismatch that caused this conflict to be missed in the first place.
+ */
+export async function resolveConflictOnTask(
+  taskId: string
+): Promise<{ ok: boolean; reason?: string }> {
+  const task = getTask(taskId)
+  if (!task) return { ok: false, reason: 'no such task' }
+  if (!task.branch) return { ok: false, reason: 'this task has no branch to rebase' }
+  const project = task.projectId ? getProject(task.projectId) : null
+  if (!project || project.vcs !== 'git') return { ok: false, reason: 'not a git project' }
+  if (task.status === 'running' || task.status === 'assigned') {
+    // ⚠️ A live run will be asked by `decideFinish` when it reports, and that path can hand it the
+    // conflict with the markers already in the tree. Cutting in here would be the worse version.
+    return { ok: false, reason: 'this task is already running; it will be asked when it reports' }
+  }
+
+  const base = landingBaseFor(project, resolveFinishPolicy(task, project).policy, await hasRemote(project.root))
+  const instruction =
+    `The landing failed because \`${task.branch}\` does not rebase cleanly onto \`${base}\`. ` +
+    `Run \`git rebase ${base}\`, resolve every conflict, and finish the rebase. ` +
+    'Keep both sides of the change wherever they are compatible — the other side is work that has ' +
+    'already landed, so discarding it is never the answer. ' +
+    'Do not force-push and do not reset the branch. ' +
+    'When the rebase is done and the tree is clean, report the task complete again.'
+
+  addMessage(task.id, 'human', instruction)
+  const outcome = continueTask(task.id)
+  log.info(`t${task.seq}: asked an agent to rebase onto ${base} and resolve (${outcome})`)
+  return { ok: true }
+}
+
 export async function relandTask(taskId: string): Promise<{ ok: boolean; reason?: string }> {
   const task = getTask(taskId)
   if (!task) return { ok: false, reason: 'no such task' }
