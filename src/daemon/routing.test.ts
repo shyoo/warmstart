@@ -19,6 +19,7 @@ let quota: typeof import('./quota.js')
 let workers: typeof import('./workers.js')
 let tasks: typeof import('./tasks.js')
 let scheduler: typeof import('./scheduler.js')
+let controller: typeof import('./controller.js')
 
 /**
  * A worker whose isolation root holds a vendor usage cache, exactly as Claude Code writes one.
@@ -54,6 +55,7 @@ beforeAll(async () => {
   workers = await import('./workers.js')
   tasks = await import('./tasks.js')
   scheduler = await import('./scheduler.js')
+  controller = await import('./controller.js')
   db.openDb(join(dir, 'routing.db'))
 })
 
@@ -746,3 +748,24 @@ describe('quota as a slope rather than a switch', () => {
     expect((antigravity - claudeSecond) * 0.908).toBeGreaterThan(0.1)
   })
 })
+
+describe('gating controller consults on fresh quota', () => {
+  it('defers consulting the controller when tied candidates have stale quota', async () => {
+    const w1 = seedWorker('tie-worker-1', 1_787_000_000_000)
+    const w2 = seedWorker('tie-worker-2', 1_787_000_000_000)
+    workers.updateWorker(w1.id, { enabled: true })
+    workers.updateWorker(w2.id, { enabled: true })
+
+    const task = tasks.createTask({
+      title: 'Large task that could trigger consult',
+      estTokens: 200_000
+    })
+
+    const choice = scheduler.chooseTarget(task)
+    expect(choice.deferred).toBe(true)
+    expect(choice.reason).toContain('reading quota for tied candidates')
+    expect(choice.worker).toBeNull()
+    expect(controller.hasPendingConsult('route', task.id)).toBe(false)
+  })
+})
+

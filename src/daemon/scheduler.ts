@@ -394,7 +394,7 @@ async function captureQuotaAfter(run: Run): Promise<void> {
 
 // ---------------------------------------------------------------------------- gates
 
-interface WorkerChoice {
+export interface WorkerChoice {
   worker: Worker | null
   /** A live, idle session already holding this task's context. Reusing it is the cheapest move here. */
   session: Session | null
@@ -509,7 +509,7 @@ function pastSessionsFor(task: Task): Session[] {
  *
  * ⛔ The gates ask capabilities, never adapter names.
  */
-function chooseTarget(task: Task): WorkerChoice {
+export function chooseTarget(task: Task): WorkerChoice {
   const reasons: string[] = []
   let quotaUnverified = false
   const objective = resolveObjective(undefined, undefined)
@@ -664,6 +664,21 @@ function chooseTarget(task: Task): WorkerChoice {
       worker: null,
       deferred: true,
       reason: 'waiting on a routing decision (the top score is used if none arrives)'
+    }
+  }
+
+  // ⛔ Do not spend tokens asking the controller if any of the tied candidates has unverified/stale
+  // quota that can be refreshed. Stale quota zeroes out windowRisk and manufactures false ties.
+  // Refresh the tied candidates first; if fresh numbers break the tie or gate a worker, no consult
+  // is needed.
+  const tied = candidates.filter((c) => Math.abs(best.score - c.score) <= ROUTE_EPSILON)
+  const refreshing = tied.map((c) => (c.worker ? needsBaseline(c.worker) : null)).filter(Boolean)
+  if (refreshing.length > 0) {
+    return {
+      ...best,
+      worker: null,
+      deferred: true,
+      reason: 'reading quota for tied candidates before asking the controller'
     }
   }
 
