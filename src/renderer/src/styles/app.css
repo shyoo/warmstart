@@ -2811,6 +2811,146 @@ select:focus-visible,
   font-size: var(--text-meta);
 }
 
+/* ---- Setting button selector (value + ✏️ in rounded dark button) ---- */
+.setting-btn-select-wrap {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  width: 100%;
+  vertical-align: middle;
+}
+
+.setting-btn-select {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-1);
+  width: 100%;
+  min-width: 0;
+  padding: 3px 8px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  font: inherit;
+  font-size: var(--text-dense);
+  line-height: var(--leading-tight);
+  text-align: left;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  transition: background var(--motion-fast) var(--ease),
+              border-color var(--motion-fast) var(--ease),
+              box-shadow var(--motion-fast) var(--ease);
+}
+
+.setting-btn-select:hover:not(:disabled) {
+  background: rgba(0, 0, 0, 0.4);
+  border-color: var(--color-border-strong);
+}
+
+.setting-btn-select--open,
+.setting-btn-select:focus-visible {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 1px var(--color-accent-dim);
+}
+
+.setting-btn-select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.setting-btn-select-value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.setting-btn-select-icon {
+  font-size: 11px;
+  opacity: 0.75;
+  flex-shrink: 0;
+  line-height: 1;
+  margin-left: 2px;
+  transition: opacity var(--motion-fast) var(--ease);
+}
+
+.setting-btn-select:hover .setting-btn-select-icon {
+  opacity: 1;
+}
+
+.setting-btn-select-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 120;
+  min-width: 190px;
+  max-width: 320px;
+  max-height: 260px;
+  overflow-y: auto;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.setting-btn-select-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  width: 100%;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--text-dense);
+  line-height: var(--leading-tight);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease),
+              color var(--motion-fast) var(--ease);
+}
+
+.setting-btn-select-option:hover {
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.setting-btn-select-option--selected {
+  color: var(--color-accent);
+  font-weight: 500;
+  background: rgba(122, 162, 247, 0.12);
+}
+
+.setting-btn-select-option--selected:hover {
+  background: rgba(122, 162, 247, 0.2);
+}
+
+.setting-btn-select-option-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.setting-btn-select-check {
+  color: var(--color-accent);
+  font-size: 11px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+
 /* ⛔ A button, not a span. This is the string somebody pastes after `--resume`, so it has to be
    takeable — and a click target that looks like text is why it carries a hover and a title. */
 .side-run-conv {

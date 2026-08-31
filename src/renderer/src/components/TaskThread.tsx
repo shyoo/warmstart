@@ -18,6 +18,7 @@ import {
 import type { ModelOptions, Session } from '@shared/protocol'
 import { rpc, useActivity, useDaemonEvents, useNow, type FleetEntry } from '../lib/daemon'
 import { conversationIdFor } from '../lib/conversation'
+import { SettingButtonSelect, type SettingOption } from './SettingButtonSelect'
 import { TaskQuestions } from './Questions'
 import { showsLiveOutput } from '../lib/live'
 import { duration, tokens, when } from '../lib/format'
@@ -463,60 +464,59 @@ function TaskDetail({
             {/* ⚠️ Only where the account's CLI has models to offer. A fleet whose cost models failed
                 to load still runs work; it just cannot be re-pointed from here. */}
             {offered.length > 0 && (
-              <select
-                className="tbl-sub-select"
+              <SettingButtonSelect
+                style={{ marginTop: 'var(--sp-1)' }}
                 value={task.constraints.model ?? ''}
+                options={[
+                  {
+                    value: '',
+                    label:
+                      assigned?.defaultModels && Object.values(assigned.defaultModels).filter(Boolean).length > 1
+                        ? 'account default (Auto-balance across pools)'
+                        : assigned?.defaultModel
+                          ? `account default (${assigned.defaultModel})`
+                          : 'CLI default'
+                  },
+                  ...offered.map((m) => ({ value: m.id, label: m.id }))
+                ]}
+                ariaLabel="Model"
                 title={
                   'Which model the next run uses. A conversation already open keeps the model it ' +
                   'started with — caches belong to one model, so switching mid-conversation throws ' +
                   'the cached context away.'
                 }
-                onChange={(e) => {
+                onChange={(val) => {
                   void rpc('task.setModel', {
                     id: task.id,
-                    model: e.target.value || null,
+                    model: val || null,
                     // ⛔ Cleared with the model. A level legal for the old model need not be legal
                     // for the new one, and the daemon refuses the pair rather than storing it.
                     effort: null
                   }).then(refresh)
                 }}
-              >
-                <option value="">
-                  {assigned?.defaultModels && Object.values(assigned.defaultModels).filter(Boolean).length > 1
-                    ? 'account default (Auto-balance across pools)'
-                    : assigned?.defaultModel
-                      ? `account default (${assigned.defaultModel})`
-                      : 'CLI default'}
-                </option>
-                {offered.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.id}
-                  </option>
-                ))}
-              </select>
+              />
             )}
             {taskEfforts.length > 0 && (
-              <select
-                className="tbl-sub-select"
+              <SettingButtonSelect
+                style={{ marginTop: 'var(--sp-1)' }}
                 value={task.constraints.effort ?? ''}
+                options={[
+                  {
+                    value: '',
+                    label: assigned?.defaultEffort ? `account default (${assigned.defaultEffort})` : 'CLI default'
+                  },
+                  ...taskEfforts.map((level) => ({ value: level, label: level }))
+                ]}
+                ariaLabel="Effort"
                 title="How hard the model thinks on the next run."
-                onChange={(e) => {
+                onChange={(val) => {
                   void rpc('task.setModel', {
                     id: task.id,
                     model: task.constraints.model ?? null,
-                    effort: e.target.value || null
+                    effort: val || null
                   }).then(refresh)
                 }}
-              >
-                <option value="">
-                  {assigned?.defaultEffort ? `account default (${assigned.defaultEffort})` : 'CLI default'}
-                </option>
-                {taskEfforts.map((level) => (
-                  <option key={level} value={level}>
-                    {level}
-                  </option>
-                ))}
-              </select>
+              />
             )}
             <CacheCost session={liveSession ?? null} changing="model" />
           </Fact>
@@ -952,13 +952,19 @@ function Decide({
         </button>
         <div className="decide-what">
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center', marginBottom: '4px' }}>
-            <select
-              className="tbl-sub-select"
+            <SettingButtonSelect
               value={selectedWorkerId}
-              style={{ minWidth: '160px' }}
+              style={{ minWidth: '160px', width: 'auto', flex: '1 1 auto' }}
               disabled={busy}
-              onChange={(e) => {
-                const nextWorkerId = e.target.value
+              ariaLabel="Reassign worker"
+              options={[
+                { value: '', label: 'Auto (scheduler decides)' },
+                ...fleet.map((e) => ({
+                  value: e.worker.id,
+                  label: `${e.worker.label} (${e.worker.adapterId})`
+                }))
+              ]}
+              onChange={(nextWorkerId) => {
                 setSelectedWorkerId(nextWorkerId)
                 if (!nextWorkerId) {
                   setSelectedModel('')
@@ -972,56 +978,47 @@ function Decide({
                   }
                 }
               }}
-            >
-              <option value="">Auto (scheduler decides)</option>
-              {fleet.map((e) => (
-                <option key={e.worker.id} value={e.worker.id}>
-                  {e.worker.label} ({e.worker.adapterId})
-                </option>
-              ))}
-            </select>
+            />
 
             {offeredModels.length > 0 && (
-              <select
-                className="tbl-sub-select"
+              <SettingButtonSelect
                 value={selectedModel}
+                style={{ width: 'auto', flex: '1 1 auto' }}
                 disabled={busy}
-                onChange={(e) => {
-                  setSelectedModel(e.target.value)
+                ariaLabel="Reassign model"
+                options={[
+                  {
+                    value: '',
+                    label: selectedWorker?.defaultModel
+                      ? `account default (${selectedWorker.defaultModel})`
+                      : 'CLI default model'
+                  },
+                  ...offeredModels.map((m) => ({ value: m.id, label: m.id }))
+                ]}
+                onChange={(val) => {
+                  setSelectedModel(val)
                   setSelectedEffort('')
                 }}
-              >
-                <option value="">
-                  {selectedWorker?.defaultModel
-                    ? `account default (${selectedWorker.defaultModel})`
-                    : 'CLI default model'}
-                </option>
-                {offeredModels.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.id}
-                  </option>
-                ))}
-              </select>
+              />
             )}
 
             {offeredEfforts.length > 0 && (
-              <select
-                className="tbl-sub-select"
+              <SettingButtonSelect
                 value={selectedEffort}
+                style={{ width: 'auto', flex: '1 1 auto' }}
                 disabled={busy}
-                onChange={(e) => setSelectedEffort(e.target.value)}
-              >
-                <option value="">
-                  {selectedWorker?.defaultEffort
-                    ? `account default (${selectedWorker.defaultEffort})`
-                    : 'CLI default effort'}
-                </option>
-                {offeredEfforts.map((level) => (
-                  <option key={level} value={level}>
-                    {level}
-                  </option>
-                ))}
-              </select>
+                ariaLabel="Reassign effort"
+                options={[
+                  {
+                    value: '',
+                    label: selectedWorker?.defaultEffort
+                      ? `account default (${selectedWorker.defaultEffort})`
+                      : 'CLI default effort'
+                  },
+                  ...offeredEfforts.map((level) => ({ value: level, label: level }))
+                ]}
+                onChange={(val) => setSelectedEffort(val)}
+              />
             )}
           </div>
           <span>
@@ -1470,24 +1467,24 @@ function FinishPicker({
     ? FINISH_LABELS[inheritedFinish.policy] ?? inheritedFinish.policy
     : 'agent lands it'
 
+  const options: SettingOption[] = [
+    { value: 'inherit', label: `inherit (${inheritedLabel})` },
+    ...FINISH_ORDER.map((p) => ({
+      value: p,
+      label: FINISH_LABELS[p]
+    }))
+  ]
+
   return (
     <>
-      <select
-        className="finish-picker"
+      <SettingButtonSelect
         value={task.finishPolicy}
+        options={options}
         disabled={busy}
-        aria-label="Finish policy"
-        onChange={(e) => void choose(e.target.value as FinishPolicyChoice)}
-      >
-        {/* ⛔ Driven by FINISH_ORDER, never a hand-written list. Three dropdowns carried
-            copies of these options and all three still offered `agent-lands` after it was renamed. */}
-        <option value="inherit">inherit ({inheritedLabel})</option>
-        {FINISH_ORDER.map((p) => (
-          <option key={p} value={p}>
-            {FINISH_LABELS[p]}
-          </option>
-        ))}
-      </select>
+        ariaLabel="Finish policy"
+        title="What happens to this task's work when it is done."
+        onChange={(val) => void choose(val as FinishPolicyChoice)}
+      />
       {note && <div className="note">{note}</div>}
     </>
   )
@@ -1534,24 +1531,26 @@ function SharingPicker({
     ? SHARING_LABELS[inheritedSharing.sharing] ?? inheritedSharing.sharing
     : 'always start a new one'
 
+  const options: SettingOption[] = [
+    { value: 'inherit', label: `inherit (${inheritedLabel})` },
+    { value: 'on', label: 'reuse one if possible' },
+    { value: 'off', label: 'always start a new one' }
+  ]
+
   return (
     <>
-      <select
-        className="finish-picker"
+      <SettingButtonSelect
         value={task.sessionSharing}
+        options={options}
         disabled={busy}
-        aria-label="Session sharing"
+        ariaLabel="Session sharing"
         title={
           'Whether this task may continue in a conversation another task in this project has ' +
           'already been having. Cheaper — a cold start rebuilt 41,542 tokens of prefix that a ' +
           'reused one read back for 65 — but the agent sees everything said in that conversation.'
         }
-        onChange={(e) => void choose(e.target.value as SessionSharingChoice)}
-      >
-        <option value="inherit">inherit ({inheritedLabel})</option>
-        <option value="on">reuse one if possible</option>
-        <option value="off">always start a new one</option>
-      </select>
+        onChange={(val) => void choose(val as SessionSharingChoice)}
+      />
       {note && <div className="note">{note}</div>}
     </>
   )
@@ -1593,24 +1592,26 @@ function CompletionPicker({
     ? COMPLETION_LABELS[inheritedCompletion.mode] ?? inheritedCompletion.mode
     : 'run to the end'
 
+  const options: SettingOption[] = [
+    { value: 'inherit', label: `inherit (${inheritedLabel})` },
+    { value: 'autonomous', label: 'run to the end' },
+    { value: 'checkpointed', label: 'check in at each phase' }
+  ]
+
   return (
     <>
-      <select
-        className="finish-picker"
+      <SettingButtonSelect
         value={task.completionMode}
+        options={options}
         disabled={busy}
-        aria-label="Completion mode"
+        ariaLabel="Completion mode"
         title={
           'How far the agent goes before it stops. Running to the end is the default and does not ' +
           'stop it asking you a question when one changes what it builds; checking in makes it ' +
           'report at each phase boundary and wait. Takes effect on the next run.'
         }
-        onChange={(e) => void choose(e.target.value as CompletionModeChoice)}
-      >
-        <option value="inherit">inherit ({inheritedLabel})</option>
-        <option value="autonomous">run to the end</option>
-        <option value="checkpointed">check in at each phase</option>
-      </select>
+        onChange={(val) => void choose(val as CompletionModeChoice)}
+      />
       {note && <div className="note">{note}</div>}
     </>
   )
@@ -1639,22 +1640,24 @@ function WorkerPicker({
     }
   }
 
+  const options: SettingOption[] = [
+    { value: '', label: 'Auto — scheduler choice' },
+    ...pinnable.map((w) => ({
+      value: w.id,
+      label: w.label
+    }))
+  ]
+
   return (
     <>
-      <select
-        className="tbl-sub-select"
+      <SettingButtonSelect
         value={currentWorkerId}
+        options={options}
         disabled={busy}
-        aria-label="Worker"
-        onChange={(e) => void choose(e.target.value)}
-      >
-        <option value="">Auto — scheduler choice</option>
-        {pinnable.map((w) => (
-          <option key={w.id} value={w.id}>
-            {w.label}
-          </option>
-        ))}
-      </select>
+        ariaLabel="Worker"
+        title="Pin a worker to restrict this task to that worker, or let the scheduler decide."
+        onChange={(val) => void choose(val)}
+      />
       {task.ranOn && !currentWorkerId && (
         <div className="tbl-sub dim">
           last run on {fleet.find((f) => f.worker.id === task.ranOn)?.worker.label ?? task.ranOn.slice(0, 8)}
@@ -1683,20 +1686,20 @@ function PriorityPicker({
     }
   }
 
+  const options: SettingOption[] = (['P0', 'P1', 'P2', 'P3'] as const).map((p) => ({
+    value: p,
+    label: p
+  }))
+
   return (
-    <select
-      className="tbl-sub-select"
+    <SettingButtonSelect
       value={task.priority}
+      options={options}
       disabled={busy}
-      aria-label="Priority"
-      onChange={(e) => void choose(e.target.value as 'P0' | 'P1' | 'P2' | 'P3')}
-    >
-      {(['P0', 'P1', 'P2', 'P3'] as const).map((p) => (
-        <option key={p} value={p}>
-          {p}
-        </option>
-      ))}
-    </select>
+      ariaLabel="Priority"
+      title="Priority orders the queue: P0 runs before P1, P2, P3."
+      onChange={(val) => void choose(val as 'P0' | 'P1' | 'P2' | 'P3')}
+    />
   )
 }
 
