@@ -51,6 +51,16 @@ export interface ProjectConfig {
   mandate?: Partial<Mandate>
 }
 
+export interface ProjectPolicyPatch {
+  finish?: FinishPolicyChoice
+  landingTarget?: string
+  finishInstruction?: string | null
+  sessionShare?: SessionSharingChoice
+  completion?: CompletionModeChoice
+  poolSize?: number
+  prepare?: string[]
+}
+
 export interface Project {
   id: string
   name: string

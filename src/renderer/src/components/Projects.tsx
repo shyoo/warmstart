@@ -12,14 +12,11 @@ import { rpc } from '../lib/daemon'
 export function Projects({
   projects,
   resources,
-  refresh,
-  only
+  refresh
 }: {
   projects: Project[]
   resources: ResourceAvailability[]
   refresh: () => Promise<void>
-  /** Render one project's settings rather than the whole list plus the add form. */
-  only?: string
 }): React.JSX.Element {
   const [root, setRoot] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -40,23 +37,21 @@ export function Projects({
     }
   }
 
-  const shown = only ? projects.filter((p) => p.id === only) : projects
-
   return (
     <div className="panel">
       <header className="panel-head">
         <div>
-          <h2>{only ? 'Project settings' : 'Projects'}</h2>
+          <h2>Projects</h2>
           <p className="panel-sub">
-            A directory plus policy. Git is optional — branching and parallel workspaces are
-            capabilities a project declares, not assumptions this app makes.
+            Every project this install knows about. Policy for one of them — how its tasks finish,
+            what verifies them, how many run at once — lives on that project&rsquo;s own{' '}
+            <strong>Settings</strong> tab.
           </p>
         </div>
       </header>
 
       {error && <div className="alert">{error}</div>}
 
-      {!only && (
       <div className="form">
         <div className="form-row">
           <label>Add</label>
@@ -77,9 +72,8 @@ export function Projects({
           </button>
         </div>
       </div>
-      )}
 
-      {shown.length === 0 ? (
+      {projects.length === 0 ? (
         <div className="empty-inline">
           <p>No projects yet.</p>
           <p className="dim">Tasks can run without one, but they get no workspace and no branch.</p>
@@ -98,7 +92,7 @@ export function Projects({
             </tr>
           </thead>
           <tbody>
-            {shown.map((project) => {
+            {projects.map((project) => {
               const pool = resources.find((r) => r.resource.id === `workspace:${project.id}`)
               return (
                 <tr key={project.id}>
@@ -154,8 +148,10 @@ export function Projects({
         <section className="doc-section">
           <h3>Resources</h3>
           <p className="panel-sub">
-            Anything contended for — a workspace pool, the landing lock, a browser profile, a metered
-            API. If the scheduler owns the claim, nothing has to lock.
+            Anything the fleet contends for — a workspace pool, a project&rsquo;s landing lock, a
+            browser profile, a metered API. The scheduler hands them out, so nothing has to lock; a
+            task that cannot get one <strong>waits</strong> and is never failed for want of it. This
+            is the fleet-wide view — one project&rsquo;s own are on its Settings tab.
           </p>
           <table className="tbl">
             <tbody>

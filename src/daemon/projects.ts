@@ -4,6 +4,8 @@ import { basename, join, resolve } from 'node:path'
 import { canonicalPath } from './fspath.js'
 import { execFileSync } from 'node:child_process'
 import type { LandingStrategyId, Project, ProjectConfig, Vcs } from '@shared/tasks.js'
+import type { ProjectPolicyPatch } from '@shared/tasks.js'
+import { readFinishPolicy } from '@shared/tasks.js'
 import { db, row, rows } from './db.js'
 import { emit } from './events.js'
 import { log } from './log.js'
@@ -222,6 +224,28 @@ export function proposeChecks(root: string): string[] {
  * who pulls, which is correct - the check list is a property of the project, not of this install.
  */
 export function setProjectChecks(id: string, checks: string[]): Project {
+  return editProjectConfig(id, (config, project) => {
+    // ⚠️ Trimmed and emptied of blanks, because a stray empty string in this array is a shell command
+    // that runs nothing and fails, which would block every landing on the project.
+    config.check = checks.map((c) => c.trim()).filter(Boolean)
+    log.info(`project ${project.name}: ${config.check.length} check command(s) written`)
+  })
+}
+
+/**
+ * Read `project.json`, let a caller change part of it, write it back, reload.
+ *
+ * ⛔ **Narrow on purpose.** It reads what is there, hands the parsed object to one mutator, and
+ * writes it back — everything the mutator did not touch survives, and a file that does not parse
+ * makes this throw rather than overwrite work somebody hand-edited.
+ *
+ * ⚠️ The file is committed to the repository it configures, so a change here is a change for
+ * everyone who pulls. That is correct: these are properties of the project, not of this install.
+ */
+function editProjectConfig(
+  id: string,
+  mutate: (config: ProjectConfig, project: Project) => void
+): Project {
   const project = requireProject(id)
   const dir = join(project.root, '.multi_agent_controller')
   const path = join(dir, 'project.json')
@@ -242,12 +266,76 @@ export function setProjectChecks(id: string, checks: string[]): Project {
     config = { schema_version: 1, name: project.name, vcs: project.vcs }
   }
 
-  // ⚠️ Trimmed and emptied of blanks, because a stray empty string in this array is a shell command
-  // that runs nothing and fails, which would block every landing on the project.
-  config.check = checks.map((c) => c.trim()).filter(Boolean)
-  writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`)
-  log.info(`project ${project.name}: ${config.check.length} check command(s) written to ${path}`)
+  mutate(config, project)
+  writeFileSync(path, `${JSON.stringify(config, null, 2)}
+`)
   return reloadProject(id) ?? project
+}
+
+/**
+ * Per-project policy, set from the app rather than by hand-editing JSON.
+ *
+ * ⛔ **Every field here is one a project may already override in `project.json`** — this writes the
+ * same keys the resolvers already read, in the same spellings, so a project configured from the UI
+ * and one configured by an editor are the same file. Nothing new is invented at this tier.
+ *
+ * ⛔ `inherit` is written as the literal string, never as a deleted key. The two are the same to
+ * every resolver, but only one of them survives a fleet default changing later with the operator's
+ * decision still legible — *this project deliberately follows the fleet* is worth keeping.
+ *
+ * ⚠️ Validated here rather than trusted from the renderer, because the daemon's RPC surface is not
+ * only reachable from it, and a bad `finish` string would resolve to `inherit` silently forever.
+ */
+
+export function setProjectPolicy(id: string, patch: ProjectPolicyPatch): Project {
+  return editProjectConfig(id, (config, project) => {
+    if (patch.finish !== undefined) {
+      const finish = readFinishPolicy(patch.finish)
+      if (!finish) throw new Error(`not a finish policy: ${String(patch.finish)}`)
+      config.landing = { ...config.landing, finish }
+      // ⛔ The pre-2026-08-28 key is dropped the moment the new one is set from here. Leaving both
+      // would be harmless to `projectFinishChoice`, which prefers `finish` — but a person reading
+      // their own committed file would see two answers to one question.
+      delete config.landing.strategy
+    }
+    if (patch.landingTarget !== undefined) {
+      const target = patch.landingTarget.trim()
+      if (!target) throw new Error('landing target cannot be empty')
+      config.landing = { ...config.landing, target }
+    }
+    if (patch.finishInstruction !== undefined) {
+      const instruction = patch.finishInstruction?.trim()
+      config.landing = { ...config.landing }
+      // ⚠️ Empty means *use the default instruction*, which is an absent key rather than an empty
+      // string — `finishInstructionFor` falls back on falsy, and an empty string in the file reads
+      // as "this project tells the agent nothing", which is not a thing anybody means.
+      if (instruction) config.landing.finishInstruction = instruction
+      else delete config.landing.finishInstruction
+    }
+    if (patch.sessionShare !== undefined) {
+      if (!['on', 'off', 'inherit'].includes(patch.sessionShare)) {
+        throw new Error(`not a sharing choice: ${String(patch.sessionShare)}`)
+      }
+      config.session = { ...config.session, share: patch.sessionShare }
+    }
+    if (patch.completion !== undefined) {
+      if (!['autonomous', 'checkpointed', 'inherit'].includes(patch.completion)) {
+        throw new Error(`not a completion mode: ${String(patch.completion)}`)
+      }
+      config.session = { ...config.session, completion: patch.completion }
+    }
+    if (patch.poolSize !== undefined) {
+      const size = Math.trunc(patch.poolSize)
+      if (!Number.isFinite(size) || size < 1 || size > 32) {
+        throw new Error(`workspace pool size must be between 1 and 32, not ${String(patch.poolSize)}`)
+      }
+      config.workspaces = { ...config.workspaces, poolSize: size }
+    }
+    if (patch.prepare !== undefined) {
+      config.prepare = patch.prepare.map((c) => c.trim()).filter(Boolean)
+    }
+    log.info(`project ${project.name}: policy updated (${Object.keys(patch).join(', ')})`)
+  })
 }
 
 // ------------------------------------------------------------------ resolved policy

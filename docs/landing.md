@@ -59,7 +59,10 @@ The policy is resolved **task → project → fleet**, taking the first that is 
   starts a ten-job CI matrix, three of them macOS at 10x billing. Measured on this repository, 103
   runs in five days and an exhausted allowance. Nothing about finishing a task needed a remote, so a
   push is now something a person does on purpose.
-- **Project** — `landing.finish` in `.multi_agent_controller/project.json`.
+- **Project** — the project's **Settings** tab → **Policy** → *Finish policy*, which writes
+  `landing.finish` into `.multi_agent_controller/project.json`. Editing that file by hand is the same
+  thing; the page writes the same key in the same spelling and drops the legacy `landing.strategy`
+  when it does, so the file never carries two answers to one question.
 - **Task** — the **finish** dropdown in the task's detail pane, changeable at any time, including
   while the task is running and after it has finished.
 

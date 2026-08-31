@@ -2939,3 +2939,71 @@ it had no manual route at all, and an operator looking at a window that has visi
 should not have to wait for a clock they can already read. Resuming by hand clears `not_before` with
 it: pressing the button *is* the statement that the wait is over, and a resume time left behind would
 let `resumeQuotaPaused` argue with the person who pressed it.
+
+---
+
+## A tier with a reader and no writer (2026-08-31, t68)
+
+Three settings in this app resolve **task → project → fleet**: the finish policy, session sharing and
+completion mode. `resolveFinishPolicy`, `resolveSessionSharing` and `resolveCompletionMode` have
+consulted the project rung since M2, the task pane has offered `inherit (…)` beside each of them, and
+Settings › Global has always been able to set the fleet's answer.
+
+The middle rung had no writer at all. The only way to make a project decide anything was to edit
+`.multi_agent_controller/project.json` by hand — a committed file, in a repository the app knows the
+path to, from a page that was already open. So the app shipped a dropdown whose most interesting
+value pointed at a tier the operator could not reach from inside it.
+
+### The page it was on
+
+The project's **Settings** tab opened with **Verification** — a textarea of shell commands — and then
+embedded `Projects`, the *fleet-wide* project list, filtered to one row by an `only` prop. That
+filter shrank the table and nothing else: the panel kept the fleet's heading, and under it the whole
+install's resource list, every project's workspace pool and landing lock together. A page called
+Project settings answered *what is this project* third and *what do other projects contend for*
+last.
+
+It is now four panels in the order somebody reads them: **Project settings** (what it is, where its
+config came from, what its policy currently resolves to, with Reload and Write config), **Policy**,
+**Verification**, and **what this project contends for** — which is filtered on
+`resource.projectId` and disappears when there is nothing. The fleet-wide table stays on Settings ›
+Global, where a fleet-wide list belongs, and now says what a resource *is for*: a task that cannot
+claim one **waits**, and is never failed for want of it.
+
+### What the writer had to be
+
+`project.setPolicy` writes the keys the resolvers already read, in the spellings `project.json`
+already uses — `landing.finish`, `landing.target`, `landing.finishInstruction`, `session.share`,
+`session.completion`, `workspaces.poolSize` — so a project configured from the app and one configured
+in an editor are the same file. Three properties are load-bearing, and each has a test:
+
+- ⛔ **A patch, not a save.** It reads the file, changes exactly the keys it was asked about, writes
+  it back. A key from a newer version of the tool, or one somebody added by hand, survives having a
+  dropdown changed. `setProjectChecks` — the only previous write path — was already built this way
+  and both now share `editProjectConfig`.
+- ⛔ **`inherit` is written as a value, never as a deleted key.** Identical to every resolver, and not
+  identical to a person: *this project deliberately follows the fleet* is a decision worth keeping
+  when the fleet default later changes.
+- ⛔ **It refuses rather than guesses.** A `project.json` that does not parse is not overwritten, and
+  a finish policy the resolvers could only read as silence is rejected at the RPC rather than stored
+  and silently ignored. Setting `landing.finish` also drops the legacy `landing.strategy`, so the
+  file never carries two answers to one question.
+
+### The box that was not a box
+
+The check-command editor used `.ask-input`, whose entire design is to be *invisible*: `border: 0`,
+`background: transparent`, because it lives inside the already-bordered message composer. Dropped
+onto a panel it read as body text that could somehow be typed into, and on the light theme it was
+indistinguishable from the paragraph above it — a field holding the commands that gate every landing.
+It now uses `.text-input`, which is drawn as a field.
+
+The same borrowing explained the dead space under the panel: `.ask-input` carries
+`field-sizing: content` while the textarea also had a `rows` attribute, so the box grew to its
+content and the row count still reserved height beneath it. The panel ended in a band of empty
+surface that looked like a section which had failed to load.
+
+⚠️ Not proven in flight. `projectpolicy.test.ts` (7) covers the writer against real files on disk;
+`ui.test.mjs` (+7) drives the real page — panel order, that no other project's row is on it, that the
+textarea computes a visible border and background, and that choosing a finish policy from the control
+lands in the repository's `project.json` and comes back reading *from the project*. No agent has yet
+run under a policy set this way.

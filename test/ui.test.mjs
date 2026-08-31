@@ -1,6 +1,6 @@
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { DatabaseSync } from 'node:sqlite'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createRequire } from 'node:module'
@@ -37,6 +37,9 @@ const WebSocket = require('ws')
 const PORT = await freePort()
 const dataDir = mkdtempSync(join(tmpdir(), 'agentyard-ui-'))
 let app = null
+// ⚠️ A real directory with a real repo in it: `project.add` refuses a root that does not exist, and
+// the workspace-pool control is a git capability. Cleaned up beside the data dir.
+let projectRoot = null
 // ⚠️ Runs in about two minutes on this machine; ten is the ceiling, not the expectation.
 const budget = startDeadline(10 * 60 * 1000, 'ui', () => killTree(app?.pid, 'electron'))
 let socket = null
@@ -1596,6 +1599,110 @@ try {
     'Other plus a choice would hand the agent both, which is not what the word means'
   )
 
+  section('project settings')
+  // ⛔ The one tab in this app that writes into somebody's **repository**. Its policy tier — finish,
+  // sharing, completion — resolved through the project since M2 and could only be *set* by hand-
+  // editing committed JSON, so a control that reads back what it wrote is the whole point of the
+  // section rather than a nicety.
+  projectRoot = mkdtempSync(join(tmpdir(), 'agentyard-ui-project-'))
+  execFileSync('git', ['init', '--initial-branch=main'], { cwd: projectRoot, stdio: 'ignore' })
+  await evaluate(
+    `window.agentyard.rpc('project.add', { root: ${JSON.stringify(projectRoot)}, name: 'ui project' })`
+  )
+  await wait(1200)
+  await evaluate(
+    `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim().startsWith('ui project'))?.click()`
+  )
+  await wait(800)
+  await evaluate(
+    `[...document.querySelectorAll('.tab')].find(b => b.innerText.trim() === 'Settings')?.click()`
+  )
+  await waitFor(
+    async () => await evaluate(`!!document.querySelector('.policy-row')`),
+    'the project settings tab to render'
+  )
+
+  const panelHeads = await evaluate(
+    `JSON.stringify([...document.querySelectorAll('.content .panel-head h2')].map(h => h.innerText.trim()))`
+  )
+  const heads = JSON.parse(panelHeads)
+  check(
+    'the page opens with what the project *is*, not with a list of shell commands',
+    heads[0] === 'Project settings',
+    heads.join(' | ')
+  )
+  check(
+    'and the policy it sets comes before the commands that verify it',
+    heads.indexOf('Policy') > 0 && heads.indexOf('Policy') < heads.indexOf('Verification'),
+    heads.join(' | ')
+  )
+  check(
+    'one project at a time: no other project’s row is on it',
+    (await evaluate(
+      `[...document.querySelectorAll('.content .tbl tbody tr')].length >= 1 &&
+       !document.querySelector('.content').innerText.includes('Add project')`
+    )) === true,
+    'this tab used to embed the fleet-wide project table, add form and all'
+  )
+
+  // ⛔ A textarea holding the commands that gate every landing, which borrowed the composer's
+  // deliberately invisible styling: `border: 0`, `background: transparent`. On a light theme it was
+  // indistinguishable from the paragraph above it.
+  const checksBox = await evaluate(`
+    (() => {
+      const el = document.querySelector('.checks-input');
+      if (!el) return null;
+      const s = getComputedStyle(el);
+      return JSON.stringify({ border: s.borderTopWidth, bg: s.backgroundColor });
+    })()
+  `)
+  const box = checksBox ? JSON.parse(checksBox) : null
+  check(
+    'the check-command box is drawn as a box',
+    box !== null && Number.parseFloat(box.border) > 0 && box.bg !== 'rgba(0, 0, 0, 0)',
+    checksBox ?? 'no .checks-input on the page'
+  )
+
+  // ⛔ The fix itself: the middle tier is settable, and what it resolves to says where it came from.
+  const inheritedRow = await evaluate(
+    `[...document.querySelectorAll('.policy-row')].find(r => r.innerText.includes('Finish policy'))?.innerText ?? ''`
+  )
+  check(
+    'a project that has decided nothing says it is inheriting, and from where',
+    inheritedRow.includes('from the fleet'),
+    inheritedRow.split('\n')[0]
+  )
+
+  await evaluate(`
+    (() => {
+      const row = [...document.querySelectorAll('.policy-row')].find(r => r.innerText.includes('Finish policy'));
+      row.querySelector('.setting-btn-select').click();
+    })()
+  `)
+  await wait(400)
+  await evaluate(`
+    (() => {
+      const opts = [...document.querySelectorAll('.setting-btn-select-option')];
+      opts.find(o => o.innerText.includes('commit only')).click();
+    })()
+  `)
+  await wait(1500)
+  check(
+    'choosing one writes it into the project’s committed config',
+    JSON.parse(
+      readFileSync(join(projectRoot, '.multi_agent_controller', 'project.json'), 'utf8')
+    ).landing?.finish === 'commit-only',
+    'project.setPolicy is the only write path this page has'
+  )
+  const decidedRow = await evaluate(
+    `[...document.querySelectorAll('.policy-row')].find(r => r.innerText.includes('Finish policy'))?.innerText ?? ''`
+  )
+  check(
+    'and the page then says the answer came from the project',
+    decidedRow.includes('from the project'),
+    decidedRow.split('\n')[0]
+  )
+
   const errors = await evaluate('window.__agentyardErrors?.length ?? 0')
   check('no uncaught renderer errors', errors === 0)
 } catch (err) {
@@ -1609,6 +1716,7 @@ try {
   await wait(500)
   try {
     rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+    if (projectRoot) rmSync(projectRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
   } catch {
     // A locked profile directory is not worth failing a passing test over.
   }

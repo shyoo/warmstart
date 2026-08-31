@@ -11,6 +11,7 @@ import type {
   Objective,
   ObjectiveChoice,
   Project,
+  ProjectPolicyPatch,
   Question,
   QuestionKind,
   QuestionOption,
@@ -1077,6 +1078,13 @@ export interface RpcMap {
   'project.proposeChecks': { params: { id: string }; result: { checks: string[] } }
   /** Write the check list into the project's committed `project.json`. */
   'project.setChecks': { params: { id: string; checks: string[] }; result: Project }
+  /**
+   * Set per-project policy — the tier between the fleet default and the task.
+   *
+   * ⛔ A patch, not a whole config: an absent field is *left alone*, and `inherit` is a real value
+   * meaning "follow the fleet". Every key it writes is one `project.json` already supported.
+   */
+  'project.setPolicy': { params: { id: string } & ProjectPolicyPatch; result: Project }
 
   'approval.list': { params: void; result: Approval[] }
   /** Called by the MCP server on the agent's behalf. Blocks until policy or a person answers. */

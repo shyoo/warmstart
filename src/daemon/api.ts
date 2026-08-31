@@ -49,6 +49,7 @@ import {
   reloadProject,
   requireProject,
   setProjectChecks,
+  setProjectPolicy,
   writeStarterConfig
 } from './projects.js'
 import {
@@ -546,6 +547,7 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
     // ---- approvals ---------------------------------------------------------------------
     'project.proposeChecks': (p) => ({ checks: proposeChecks(requireProject(p.id).root) }),
     'project.setChecks': (p) => setProjectChecks(p.id, p.checks),
+    'project.setPolicy': ({ id, ...patch }) => setProjectPolicy(id, patch),
 
     'approval.list': () => openApprovals(),
     'approval.request': async (p) => {

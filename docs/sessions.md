@@ -45,7 +45,7 @@ this feature does not turn it on.
 | tier | where | values |
 |---|---|---|
 | Fleet | Settings → Global → **Reusing conversations** | `off` · `on` |
-| Project | `session.share` in `.multi_agent_controller/project.json` | `off` · `on` · `inherit` |
+| Project | the project's **Settings** tab → **Policy** → *Reusing conversations*, or `session.share` in `.multi_agent_controller/project.json` | `off` · `on` · `inherit` |
 | Task | the **conversation** dropdown on New Task and its **Thread** tab | `inherit` · `on` · `off` |
 
 Resolved **task → project → fleet**, taking the first that is not `inherit`.

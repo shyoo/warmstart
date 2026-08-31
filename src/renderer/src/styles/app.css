@@ -1399,6 +1399,79 @@ select {
   text-align: right;
 }
 
+/*
+ * A box you type into, drawn as a box.
+ *
+ * ⛔ Textareas are not covered by the rule above — it lists `input[type=text]`, untyped inputs and
+ * `select`. The check-command editor therefore borrowed `.ask-input`, whose whole design is to be
+ * *invisible*: `border: 0`, `background: transparent`, because it sits inside an already-bordered
+ * composer. Dropped onto a panel it read as body text you could somehow type in, and on a light
+ * theme it was indistinguishable from the paragraph above it. A field that holds shell commands
+ * which gate every landing has to look like a field.
+ */
+.text-input {
+  font: inherit;
+  font-size: var(--text-dense);
+  line-height: var(--leading-body);
+  background: var(--color-bg);
+  color: var(--color-text);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  padding: var(--sp-2);
+  width: 100%;
+  min-width: 0;
+}
+
+.text-input:focus-visible {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 1px var(--color-accent-dim);
+}
+
+.text-input::placeholder {
+  color: var(--color-text-faint);
+}
+
+.text-input:disabled {
+  opacity: 0.6;
+}
+
+/*
+ * One setting: the control, then what it resolves to and why.
+ *
+ * ⚠️ The control column is fixed so a column of them lines up — a page of settings whose controls
+ * each start at a different x reads as unrelated widgets rather than as one list of decisions.
+ */
+.policy-row {
+  display: grid;
+  grid-template-columns: minmax(0, 260px) 1fr;
+  align-items: start;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-4);
+}
+
+.policy-control {
+  min-width: 0;
+}
+
+.policy-control--text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  align-items: flex-start;
+}
+
+.policy-textarea {
+  font-family: var(--font-mono, monospace);
+  resize: vertical;
+}
+
+@media (max-width: 900px) {
+  .policy-row {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* A second, quieter select stacked under the first in one cell — effort under its model. */
 .tbl-sub-select {
   display: block;
@@ -1732,17 +1805,29 @@ select:focus-visible,
 
 /* ---- project checks ------------------------------------------------------ */
 
+/*
+ * ⚠️ `gap`, and nothing that reserves height. The panel used to be a flex column whose textarea
+ * carried `field-sizing: content` from `.ask-input` *and* a `rows` attribute: the two disagreed, the
+ * box grew to its content while the row count still claimed space, and the panel ended in a band of
+ * empty surface that looked like a section that had failed to load.
+ */
 .checks-panel {
   display: flex;
   flex-direction: column;
-  gap: var(--sp-2);
+  gap: var(--sp-3);
   margin-bottom: var(--sp-4);
 }
 
+.checks-panel .panel-head {
+  margin-bottom: 0;
+}
+
 .checks-input {
-  width: 100%;
+  field-sizing: auto;
   resize: vertical;
   font-family: var(--font-mono, monospace);
+  min-height: 5.5em;
+  max-height: none;
 }
 
 .checks-actions {

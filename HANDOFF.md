@@ -8,8 +8,8 @@ started in CI, never run against a real agent CLI.
 if you add a line, find the one it obsoletes and cut it in the same edit. Finished work moves to
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
-**Baseline (2026-08-31, measured):** typecheck · lint · build clean · `npm test` 882/884 (2 POSIX-only
-skipped) · `test:daemon` 141/141 · `test:ui` 150/150 · `test:pack` 18/18 · L4 (opt-in) landed a real
+**Baseline (2026-08-31, measured):** typecheck · lint · build clean · `npm test` 897/899 (2 POSIX-only
+skipped) · `test:daemon` 141/141 · `test:ui` 170/170 · `test:pack` 18/18 · L4 (opt-in) landed a real
 agent commit on origin/main. Electron 44.0.0, electron-builder 26.15.3, 0 npm vulnerabilities.
 CLIs here: claude 2.1.251 · agy 1.1.22 · codex 0.151.0.
 
@@ -96,7 +96,7 @@ src/mcp/               the MCP server the agent CLI spawns. Two tiers chosen by 
                        (fleet/task/approval/estimate). ⛔ Neither can delete anything.
 src/main/              window host + the daemon's only client (holds the token); the tray, and
                        `uisettings.ts` - preferences main must read when the daemon is not answering
-src/renderer/          fleet strip, approvals bar, tasks, projects, workers, global, xterm pane,
+src/renderer/          fleet strip, approvals bar, tasks, project settings (policy tier), workers,
                        Logs, LooseEnds, Conversations (who shared what) (+ lib/format.test.ts)
 costmodels/            anthropic.* - google.antigravity.* - openai.codex.*; compiled in, so a
                        packaging slip cannot leave the scheduler unable to price
@@ -118,6 +118,7 @@ docs/                  cost-model.md, glossary.md, adapters.md, landing.md, sess
 - ⭐ **Finishing is a ladder, and the default no longer pushes** (2026-08-30, `docs/landing.md`): `await-human` · `commit-only` · `commit-and-verify` · **`commit-and-merge`** · `commit-and-push`, plus `pull-request` and `custom`. The old default pushed on every completed task, and every push starts a ten-job CI matrix — 103 runs in five days, allowance exhausted 2026-08-29. ⛔ The tool never writes a commit, never destroys work it will not land, and never merges into a trunk somebody is working in. ⚠️ `commit-and-merge` has **never run in flight**, nor has the conflict ask. ⭐ `runChecks` runs `check` in the **daemon**, outside any worker sandbox — and the one-shot prompt now says so.
 - ⭐ **An agent can ask a person a real question, and be answered** (2026-08-30; `docs/glossary.md`). The **Question** object replaces `request_human`, which went through the approval path and could only answer allow/deny. Four ways in: `ask_human`, Claude Code's own `AskUserQuestion` intercepted at `approve` (measured, R14), `checkpoint`, and — on an adapter with **no MCP and therefore no `ask_human`** — the `NEEDS DECISION:` line its prompt asks it to end with, plus one `- option — detail` bullet per choice. ⛔ That line was matched, quoted into `hold_reason` and **thrown away**, so antigravity and codex could ask questions that were structurally unanswerable (t63, 2026-08-30: three named designs, no reply channel). It now files a real question, born **parked** — the turn is over, so there is no waiter — and answering a parked question **re-queues the task**, which nothing did before. Unanswered **parks**; a run that stopped to ask is `blocked`, not `failed`. ⚠️ **Only Claude has used any of it in flight**; the MCP-less path is unproven, and t63 itself predates it. ⚠️ The thread card has **no rendering test**; seeding one needs a live run. ⚠️ **R15**: can an MCP client hold a tool call for minutes?
 - ⭐ **The daemon's log is readable from inside the app** (Settings > Logs): live, filterable, ring-buffered so a late window still sees the past; a file per day, kept a fortnight.
+- ⭐ **The middle tier is settable at last** (2026-08-31, t68). Finish policy, session sharing and completion mode all resolve **task → project → fleet**, and the *project* rung of all three could only be reached by hand-editing committed JSON — the task pane offered `inherit (…)` against a tier with no writer. `project.setPolicy` patches the same keys `project.json` already uses, with landing target and workspace pool size beside them, and the project's **Settings** tab now reads Project settings → Policy → Verification → this project's own resources. ⛔ It **patches**: keys it was not asked about, including ones from a newer version, survive, and it refuses rather than overwrites a file that will not parse (`projectpolicy.test.ts`; `ui.test.mjs` +7). ⚠️ The check-command textarea had borrowed `.ask-input`, whose whole design is to be invisible.
 - ⭐ **Model and effort are choosable, inherited and visible** (2026-08-29): **task → worker → the
   CLI's own default**, via `resolveModelChoice`. Multi-pool workers set a default per pool and the
   scheduler balances on quota. ⚠️ **`selectableEffort` is true for `claude-code` only**.
@@ -153,8 +154,7 @@ M0–M6 are done. What is left is not a milestone but a list, in the order it wo
 6. **`antigravity-cli` still has no real isolation root.** `envFor()` sets no `HOME`, so all four
    workers share the operator's `~/.gemini`. Per-worker `HOME` is the fix; the credential is in the
    OS keyring so sign-in *should* survive, and "should" is doing the work there.
-7. **The project Thread tab has no automated coverage.** `test/ui.test.mjs` files every task with no
-   project, so that tab is checked by `typecheck` and by hand only. Needs a real project root.
+7. **The project Thread tab still has no automated coverage.** `test/ui.test.mjs` seeds a real git project since 2026-08-31 and drives its **Settings** tab; Thread, Sessions and Cost are checked by hand.
 8. **Put human-in-the-loop and `commit-and-merge` in front of a real agent.** Both are built and
    neither has been used by one. Dispatch a design task to a Claude worker, answer what it asks, and
    watch it merge locally — the one thing L1–L3 cannot prove. Costs tokens.
