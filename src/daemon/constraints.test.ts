@@ -132,9 +132,44 @@ describe('choosing an effort level', () => {
     }
   })
 
-  it('means nothing without a model, and says so', () => {
+  it('means nothing without a model *anywhere*, and says so', () => {
+    // `claude` holds no default of its own, so nothing on either side names the model the level
+    // would be sent with and the CLI would pick one at dispatch.
     expect(() => api.checkConstraints({ workerId: claude.id, effort: 'high' })).toThrow(
       /without a model/
+    )
+  })
+
+  it('is checked against the account default when the task leaves the model on inherit', () => {
+    // ⭐ The bug this pair exists for. The New Task form's model control offers *inherit
+    // (claude-opus-5)* and lists that model's effort levels underneath it, then filed a task with an
+    // effort and no model — and the door refused it for naming no model. It names one: the account's.
+    const w = workers.createWorker({
+      adapterId: 'claude-code',
+      label: 'inherit-effort',
+      enabled: false
+    })
+    workers.updateWorker(w.id, { defaultModel: 'claude-opus-5' })
+    expect(() => api.checkConstraints({ workerId: w.id, effort: 'high' })).not.toThrow()
+    expect(() => api.checkConstraints({ workerId: w.id, effort: 'telepathy' })).toThrow(
+      /no effort level/
+    )
+  })
+
+  it('holds an inherited level to every pool default, not just the one winning today', () => {
+    // ⛔ A multi-pool account picks between its defaults at dispatch on live quota. A level legal for
+    // one pool and not the other would file cleanly and then fail whenever the other pool won.
+    const w = workers.createWorker({
+      adapterId: 'claude-code',
+      label: 'inherit-effort-pools',
+      enabled: false
+    })
+    // `claude-haiku-4-5` lists no effort levels at all — see `checkWorkerDefaults`'s own test.
+    workers.updateWorker(w.id, {
+      defaultModels: { a: 'claude-opus-5', b: 'claude-haiku-4-5' }
+    })
+    expect(() => api.checkConstraints({ workerId: w.id, effort: 'high' })).toThrow(
+      /'claude-haiku-4-5' has no effort level/
     )
   })
 })

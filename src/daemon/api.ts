@@ -6,7 +6,8 @@ import type {
   RpcMethod,
   RpcParams,
   RpcResult,
-  Settings
+  Settings,
+  Worker
 } from '@shared/protocol.js'
 import type { TaskConstraints } from '@shared/tasks.js'
 import { resolveCompletionMode } from '@shared/tasks.js'
@@ -844,11 +845,28 @@ export function checkWorkerDefaults(
   }
 }
 
+/**
+ * Every model this task could actually be dispatched on when it pins none of its own.
+ *
+ * ⚠️ Plural on purpose. A multi-pool account holds one default per pool and the scheduler picks
+ * between them at dispatch on live quota, so an effort level has to be legal for *all* of them —
+ * validating only the one that happens to win today would let the other pool fail at dispatch.
+ */
+function inheritedModels(worker: Worker | null): string[] {
+  if (!worker) return []
+  const models = Object.values(worker.defaultModels ?? {}).filter(
+    (m): m is string => typeof m === 'string' && m.trim() !== ''
+  )
+  if (worker.defaultModel) models.push(worker.defaultModel)
+  return [...new Set(models)]
+}
+
 export function checkConstraints(c: TaskConstraints): TaskConstraints {
   const checked: TaskConstraints = { ...c }
 
+  let worker: Worker | null = null
   if (c.workerId) {
-    const worker = requireWorker(c.workerId)
+    worker = requireWorker(c.workerId)
     checked.adapterId = worker.adapterId
   }
 
@@ -862,21 +880,40 @@ export function checkConstraints(c: TaskConstraints): TaskConstraints {
     const info = adapter(adapterId).info
     const cm = costModel(info.policy.costModelId)
 
+    if (c.effort && !info.capabilities.selectableEffort) {
+      throw new Error(`${info.label} takes no effort flag — effort is set inside the session`)
+    }
+
     if (c.model) {
       const spec = cm.modelSpec(c.model)
       if (!spec) {
         throw new Error(`'${c.model}' is not a model ${info.label} can be priced for`)
       }
-      if (c.effort) {
-        if (!info.capabilities.selectableEffort) {
-          throw new Error(`${info.label} takes no effort flag — effort is set inside the session`)
-        }
-        if (!spec.effort_levels.includes(c.effort)) {
-          throw new Error(`'${c.model}' has no effort level '${c.effort}'`)
-        }
+      if (c.effort && !spec.effort_levels.includes(c.effort)) {
+        throw new Error(`'${c.model}' has no effort level '${c.effort}'`)
       }
     } else if (c.effort) {
-      throw new Error('an effort level means nothing without a model to apply it to')
+      // ⭐ Leaving the model on *inherit* is not leaving it unanswered. `resolveModelChoice` falls to
+      // the account's own default, which is the model the New Task form names in the inherit option
+      // and offers these very effort levels for — so the level is checked against that model rather
+      // than refused for naming none. Refusing here made "the usual model, but think harder"
+      // unfileable, which is the one combination the resolver exists to support.
+      const inherited = inheritedModels(worker)
+      if (inherited.length === 0) {
+        // Nothing here or on the account names a model, so the CLI picks one at dispatch and no
+        // level can be checked against it. ⛔ Still refused: an unverifiable effort flag fails the
+        // whole run later rather than this call now.
+        throw new Error('an effort level means nothing without a model to apply it to')
+      }
+      for (const m of inherited) {
+        const spec = cm.modelSpec(m)
+        if (!spec) {
+          throw new Error(`'${m}' is not a model ${info.label} can be priced for`)
+        }
+        if (!spec.effort_levels.includes(c.effort)) {
+          throw new Error(`'${m}' has no effort level '${c.effort}'`)
+        }
+      }
     }
   }
 
