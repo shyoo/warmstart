@@ -2,6 +2,7 @@ import type { Settings } from '@shared/protocol.js'
 import { DEFAULT_FLEET_COMPLETION, DEFAULT_FLEET_FINISH, DEFAULT_FLEET_SHARING } from '@shared/tasks.js'
 import { db, row } from './db.js'
 import { log } from './log.js'
+import { DEFAULT_OBJECTIVE, parseObjective } from './objective.js'
 
 /**
  * Fleet settings: the handful of switches that are the operator's to throw, not the scheduler's to
@@ -92,6 +93,14 @@ export const DEFAULT_SETTINGS: Settings = {
   completionMode: DEFAULT_FLEET_COMPLETION,
 
   /**
+   * What the scheduler optimises for, fleet-wide, when a project or task has not specified otherwise.
+   *
+   * ⛔ A weight vector, not a mode name. Presets (economy, balanced, velocity, quality) are just
+   * named vectors; the operator can choose a preset or supply custom weights.
+   */
+  objective: DEFAULT_OBJECTIVE,
+
+  /**
    * How often (in minutes) orchestratord sweeps workers in the background for quota updates.
    *
    * ⚠️ Default 5 minutes. A sweep reads the local usage cache (free) and, at most once per sweep
@@ -117,16 +126,17 @@ export function settings(): Settings {
 }
 
 export function setSetting<K extends keyof Settings>(key: K, value: Settings[K]): Settings {
+  const sanitized = (key === 'objective' ? (parseObjective(value) ?? DEFAULT_OBJECTIVE) : value) as Settings[K]
   db()
     .prepare(
       `insert into settings (key, value, updated_at) values (?,?,?)
          on conflict(key) do update set value = excluded.value, updated_at = excluded.updated_at`
     )
-    .run(key, JSON.stringify(value), Date.now())
-  log.info(`setting ${key} = ${JSON.stringify(value)}`)
+    .run(key, JSON.stringify(sanitized), Date.now())
+  log.info(`setting ${key} = ${JSON.stringify(sanitized)}`)
   for (const listener of changeListeners) {
     try {
-      listener(key, value)
+      listener(key, sanitized)
     } catch (err) {
       log.warn(`error in setting change listener for ${key}:`, err)
     }
@@ -148,7 +158,17 @@ function read(): Partial<Settings> {
       // ⚠️ The cast widened when `finishPolicy` joined three booleans: the value type is no longer
       // uniform across keys, and indexing a heterogeneous record by a loop variable defeats the
       // narrowing. The parse is unvalidated either way - a corrupt row falls back below.
-      ;(out as Record<string, unknown>)[key] = JSON.parse(r.value)
+      const parsed: unknown = JSON.parse(r.value)
+      if (key === 'objective') {
+        const obj = parseObjective(parsed)
+        if (obj) {
+          out.objective = obj
+        } else {
+          log.warn('setting objective is not valid - using the default')
+        }
+      } else {
+        ;(out as Record<string, unknown>)[key] = parsed
+      }
     } catch {
       log.warn(`setting ${key} is not valid JSON - using the default`)
     }

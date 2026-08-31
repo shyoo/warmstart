@@ -1,6 +1,16 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { FinishPolicy, SessionSharing } from '@shared/tasks'
-import { DEFAULT_FLEET_FINISH, FINISH_LABELS, FINISH_ORDER } from '@shared/tasks'
+import type { FinishPolicy, Objective, ObjectivePreset, SessionSharing } from '@shared/tasks'
+import {
+  DEFAULT_FLEET_FINISH,
+  DEFAULT_OBJECTIVE,
+  FINISH_LABELS,
+  FINISH_ORDER,
+  OBJECTIVE_PRESET_LABELS,
+  OBJECTIVE_PRESET_ORDER,
+  PRESETS,
+  normalise,
+  presetOf
+} from '@shared/tasks'
 import type { Settings } from '@shared/protocol'
 import { rpc } from '../lib/daemon'
 
@@ -72,6 +82,40 @@ export function FleetSettings(): React.JSX.Element {
     []
   )
 
+  const chooseObjectivePreset = useCallback(
+    async (presetOrCustom: ObjectivePreset | 'custom') => {
+      if (presetOrCustom === 'custom') return
+      setBusy(true)
+      setError(null)
+      try {
+        setSettings(await rpc('settings.set', { objective: PRESETS[presetOrCustom] }))
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err))
+      } finally {
+        setBusy(false)
+      }
+    },
+    []
+  )
+
+  const updateCustomObjective = useCallback(
+    async (partial: Partial<Objective>) => {
+      if (!settings) return
+      const current = settings.objective ?? DEFAULT_OBJECTIVE
+      const next = normalise({ ...current, ...partial })
+      setBusy(true)
+      setError(null)
+      try {
+        setSettings(await rpc('settings.set', { objective: next }))
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err))
+      } finally {
+        setBusy(false)
+      }
+    },
+    [settings]
+  )
+
   const chooseProbeInterval = useCallback(
     async (minutes: number) => {
       setBusy(true)
@@ -94,10 +138,88 @@ export function FleetSettings(): React.JSX.Element {
   const finishPolicy = settings?.finishPolicy ?? DEFAULT_FLEET_FINISH
   const sessionSharing = settings?.sessionSharing ?? 'off'
   const probeIntervalMinutes = settings?.probeIntervalMinutes ?? 5
+  const objective = settings?.objective ?? DEFAULT_OBJECTIVE
+  const currentPreset = presetOf(objective)
 
   return (
     <div>
       {error && <div className="alert">{error}</div>}
+
+      <section className="doc-section">
+        <h3>Optimization objective</h3>
+        <div className="switch-row">
+          <select
+            className="finish-picker"
+            aria-label="Fleet optimization objective"
+            value={currentPreset ?? 'custom'}
+            disabled={busy || settings === null}
+            onChange={(e) => void chooseObjectivePreset(e.target.value as ObjectivePreset | 'custom')}
+          >
+            {OBJECTIVE_PRESET_ORDER.map((p) => (
+              <option key={p} value={p}>
+                {OBJECTIVE_PRESET_LABELS[p]}
+              </option>
+            ))}
+            <option value="custom">custom weight vector</option>
+          </select>
+          <div>
+            <p className="switch-state">
+              <strong>Optimization objective</strong> · {currentPreset ?? 'custom'}
+              <span className="dim">
+                {' '}
+                — cost {(objective.cost * 100).toFixed(0)}% · velocity {(objective.velocity * 100).toFixed(0)}% · quality{' '}
+                {(objective.quality * 100).toFixed(0)}%
+              </span>
+            </p>
+            <p className="note">
+              What the scheduler and cache clock optimize for fleet-wide. <em>Economy</em> minimizes token spend by hugging
+              warm sessions; <em>velocity</em> tolerates cold starts to begin sooner and keeps context hot; <em>quality</em>{' '}
+              punishes context rot hardest. Overridden per project via <code>objective</code> in <code>project.json</code>,
+              and per task in the thread detail pane.
+            </p>
+            {!currentPreset && (
+              <div style={{ marginTop: 'var(--sp-2)', display: 'flex', flexDirection: 'column', gap: 'var(--sp-1)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)' }}>
+                  <label style={{ width: '60px' }}>Cost:</label>
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    value={Math.round(objective.cost * 100)}
+                    disabled={busy || settings === null}
+                    onChange={(e) => void updateCustomObjective({ cost: Number(e.target.value) / 100 })}
+                  />
+                  <span className="num">{(objective.cost * 100).toFixed(0)}%</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)' }}>
+                  <label style={{ width: '60px' }}>Velocity:</label>
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    value={Math.round(objective.velocity * 100)}
+                    disabled={busy || settings === null}
+                    onChange={(e) => void updateCustomObjective({ velocity: Number(e.target.value) / 100 })}
+                  />
+                  <span className="num">{(objective.velocity * 100).toFixed(0)}%</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)' }}>
+                  <label style={{ width: '60px' }}>Quality:</label>
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    value={Math.round(objective.quality * 100)}
+                    disabled={busy || settings === null}
+                    onChange={(e) => void updateCustomObjective({ quality: Number(e.target.value) / 100 })}
+                  />
+                  <span className="num">{(objective.quality * 100).toFixed(0)}%</span>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </section>
 
       <section className="doc-section">
         <h3>Reusing conversations</h3>

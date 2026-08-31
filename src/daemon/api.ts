@@ -97,7 +97,7 @@ import { chatHistory, resetChat, sendChat } from './chat.js'
 import { costFactors, estimateTask } from './estimator.js'
 import { recentClockEvents, remainingTokens, reserveState } from './reserve.js'
 import { decide, medianHumanLatencyMs } from './cacheclock.js'
-import { DEFAULT_OBJECTIVE } from './objective.js'
+import { DEFAULT_OBJECTIVE, parseObjective, resolveObjective } from './objective.js'
 import { setSetting, settings } from './settings.js'
 import { lastRateLimit, windowResetsAt } from './quota.js'
 import { listConversations } from './conversations.js'
@@ -417,6 +417,8 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
         inheritedFinish: resolveFinishPolicy(null, project),
         inheritedSharing: resolveSessionSharing(null, project),
         inheritedCompletion: resolveCompletionMode(null, project, settings().completionMode),
+        inheritedObjective: resolveObjective(project?.config?.objective, null, settings().objective),
+        resolvedObjective: resolveObjective(project?.config?.objective, task.objective, settings().objective),
         previewPrompt
       }
     },
@@ -458,6 +460,7 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
      */
     'task.setSessionSharing': (p) => updateTask(p.id, { sessionSharing: p.sessionSharing }),
     'task.setCompletionMode': (p) => updateTask(p.id, { completionMode: p.completionMode }),
+    'task.setObjective': (p) => updateTask(p.id, { objective: p.objective }),
     /**
      * ⚠️ Next run only. Nothing is sent into a session that is already talking — see the note on the
      * protocol type for what a mid-conversation switch costs.
@@ -642,13 +645,14 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
     'settings.set': (p) => {
       let current = settings()
       for (const [key, value] of Object.entries(p) as Array<[keyof Settings, Settings[keyof Settings]]>) {
-        current = setSetting(key, value)
+        const sanitized = key === 'objective' ? (parseObjective(value) ?? DEFAULT_OBJECTIVE) : value
+        current = setSetting(key, sanitized as never)
       }
       return current
     },
 
     'cost.report': () => {
-      const objective = DEFAULT_OBJECTIVE
+      const objective = settings().objective ?? DEFAULT_OBJECTIVE
       const live = listSessions()
       return {
         generatedAt: Date.now(),

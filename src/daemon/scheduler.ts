@@ -248,7 +248,7 @@ export async function tick(): Promise<TickResult> {
 
   // The cache clock runs after dispatch, so a session the scheduler just chose is recognised as
   // move 1 - an expiring asset turned into work - rather than being kept alive for its own sake.
-  const clock = await runCacheClock({ objective: DEFAULT_OBJECTIVE, dispatchTargets })
+  const clock = await runCacheClock({ objective: settings().objective ?? DEFAULT_OBJECTIVE, dispatchTargets })
 
   const parts: string[] = []
   if (dispatched) parts.push(`dispatched ${dispatched}`)
@@ -517,7 +517,8 @@ function pastSessionsFor(task: Task): Session[] {
 export function chooseTarget(task: Task): WorkerChoice {
   const reasons: string[] = []
   let quotaUnverified = false
-  const objective = resolveObjective(undefined, undefined)
+  const project = task.projectId ? getProject(task.projectId) : undefined
+  const objective = resolveObjective(project?.config?.objective, task.objective, settings().objective)
   const w = weights(objective)
 
   const warm = warmSessionFor(task)
@@ -1361,7 +1362,8 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
     startedWarm: revive !== null,
     // ⭐ The tripwire's first half. See `decideFinish`'s `trunk-moved` branch for what it is for.
     trunkShaBefore: project ? await trunkTargetSha(project, policyFor(project).landingTarget) : null,
-    prompt: promptText
+    prompt: promptText,
+    objective: resolveObjective(project?.config?.objective, task.objective, settings().objective)
   })
   setRunQuota(run.id, 'before', runQuota(worker.id))
   // A new attempt, so the peephole starts empty. ⛔ Cleared here and never on completion: what the
@@ -1548,7 +1550,8 @@ async function dispatchIntoWarmSession(
     // The session never closed, which is the warmest a run gets.
     startedWarm: true,
     trunkShaBefore: project ? await trunkTargetSha(project, policyFor(project).landingTarget) : null,
-    prompt: promptText
+    prompt: promptText,
+    objective: resolveObjective(project?.config?.objective, task.objective, settings().objective)
   })
   setRunQuota(run.id, 'before', runQuota(worker.id))
   clearActivity(task.id)
@@ -1699,7 +1702,9 @@ async function runWatchdogs(): Promise<void> {
 
     // 1. The window boundary. This is the case the whole tool was built for.
     const reset = windowResetsAt(run.workerId)
-    const margin = policy(DEFAULT_OBJECTIVE).preemptMarginMs
+    const project = task.projectId ? getProject(task.projectId) : null
+    const taskObjective = resolveObjective(project?.config?.objective, task.objective, switches.objective)
+    const margin = policy(taskObjective).preemptMarginMs
     if (switches.autoPreempt && reset && reset.at - Date.now() <= margin && task.preemptible) {
       await preempt(task, session, reset.at, reset.source)
       continue

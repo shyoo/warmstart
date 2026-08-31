@@ -7,6 +7,7 @@ import {
   type Budget,
   type Mandate,
   type MandateOperation,
+  type Objective,
   type Principal,
   type Priority,
   type Run,
@@ -64,6 +65,7 @@ interface TaskRow {
   finish_policy: string
   session_sharing: string
   completion_mode: string
+  objective_json: string | null
   finish_asked_at: number | null
   conflict_asked_at: number | null
   preemptible: number
@@ -126,6 +128,7 @@ function toTask(r: TaskRow): Task {
     finishPolicy: (r.finish_policy || 'inherit') as Task['finishPolicy'],
     sessionSharing: (r.session_sharing || 'inherit') as Task['sessionSharing'],
     completionMode: (r.completion_mode || 'inherit') as Task['completionMode'],
+    objective: r.objective_json ? (JSON.parse(r.objective_json) as Task['objective']) : 'inherit',
     finishAskedAt: r.finish_asked_at,
     conflictAskedAt: r.conflict_asked_at,
     preemptible: r.preemptible === 1,
@@ -319,6 +322,8 @@ export interface CreateTaskInput {
   verification?: Task['verification']
   finishPolicy?: Task['finishPolicy']
   sessionSharing?: Task['sessionSharing']
+  completionMode?: Task['completionMode']
+  objective?: Task['objective']
   preemptible?: boolean
   estTokens?: number | null
   mandate?: Partial<Mandate>
@@ -379,9 +384,9 @@ export function createTask(input: CreateTaskInput): Task {
       `insert into tasks (id, seq, project_id, title, kind, status, priority, created_by_json,
                           parent_task_id, lineage_depth, assignee_hint, mandate_json, budget_json,
                           not_before, deadline, requires_json, constraints_json, verification,
-                          finish_policy, session_sharing, preemptible, est_tokens,
+                          finish_policy, session_sharing, completion_mode, objective_json, preemptible, est_tokens,
                           created_at, updated_at)
-       values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+       values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
     )
     .run(
       id,
@@ -406,6 +411,8 @@ export function createTask(input: CreateTaskInput): Task {
       // never expressed a preference follows its project as the project changes.
       input.finishPolicy ?? 'inherit',
       input.sessionSharing ?? 'inherit',
+      input.completionMode ?? 'inherit',
+      input.objective && input.objective !== 'inherit' ? JSON.stringify(input.objective) : null,
       input.preemptible === false ? 0 : 1,
       input.estTokens ?? null,
       now,
@@ -701,6 +708,7 @@ export function updateTask(
       | 'finishPolicy'
       | 'sessionSharing'
       | 'completionMode'
+      | 'objective'
       | 'preemptible'
       | 'estTokens'
       | 'constraints'
@@ -712,7 +720,7 @@ export function updateTask(
     .prepare(
       `update tasks set title = ?, priority = ?, project_id = ?, not_before = ?, deadline = ?,
                         assignee_hint = ?, verification = ?, finish_policy = ?,
-                        session_sharing = ?, completion_mode = ?, preemptible = ?,
+                        session_sharing = ?, completion_mode = ?, objective_json = ?, preemptible = ?,
                         est_tokens = ?, constraints_json = ?, updated_at = ?
         where id = ?`
     )
@@ -727,6 +735,13 @@ export function updateTask(
       patch.finishPolicy ?? current.finishPolicy,
       patch.sessionSharing ?? current.sessionSharing,
       patch.completionMode ?? current.completionMode,
+      patch.objective !== undefined
+        ? patch.objective === 'inherit' || patch.objective === null
+          ? null
+          : JSON.stringify(patch.objective)
+        : current.objective === 'inherit' || !current.objective
+          ? null
+          : JSON.stringify(current.objective),
       (patch.preemptible ?? current.preemptible) ? 1 : 0,
       patch.estTokens !== undefined ? patch.estTokens : current.estTokens,
       JSON.stringify(patch.constraints ?? current.constraints),
@@ -840,6 +855,7 @@ interface RunRow {
   note: string | null
   quota_before_json: string | null
   quota_after_json: string | null
+  objective_json?: string | null
   started_warm: number | null
   adapter_id?: string | null
   model?: string | null
@@ -865,6 +881,7 @@ function toRun(r: RunRow): Run {
     note: r.note,
     quotaBefore: r.quota_before_json ? (JSON.parse(r.quota_before_json) as RunQuota) : null,
     quotaAfter: r.quota_after_json ? (JSON.parse(r.quota_after_json) as RunQuota) : null,
+    objective: r.objective_json ? (JSON.parse(r.objective_json) as Objective) : null,
     trunkShaBefore: r.trunk_sha_before ?? null,
     // ⛔ Null is not false. Every run that predates the column recorded nothing, and saying `cold`
     // for those would be a measurement nobody took.
@@ -915,6 +932,8 @@ export function startRun(input: {
   trunkShaBefore?: string | null | undefined
   /** The actual prompt sent to the agent CLI for this run. */
   prompt?: string | null | undefined
+  /** The effective optimization objective vector active when this run was dispatched. */
+  objective?: Objective | null | undefined
 }): Run {
   const id = randomUUID()
   const key = runKey(input.workerId, input.sessionId)
@@ -922,8 +941,8 @@ export function startRun(input: {
     .prepare(
       `insert into runs (id, task_id, project_id, session_id, worker_id, started_at,
                          quota_unverified, cost_model_id, started_warm, adapter_id, model,
-                         trunk_sha_before, prompt)
-       values (?,?,?,?,?,?,?,?,?,?,?,?,?)`
+                         trunk_sha_before, prompt, objective_json)
+       values (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
     )
     .run(
       id,
@@ -941,7 +960,8 @@ export function startRun(input: {
       key.adapterId,
       key.model,
       input.trunkShaBefore ?? null,
-      input.prompt ?? null
+      input.prompt ?? null,
+      input.objective ? JSON.stringify(input.objective) : null
     )
   const run = requireRun(id)
   emit({ type: 'run.changed', run })

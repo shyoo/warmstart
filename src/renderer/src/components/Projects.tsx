@@ -91,6 +91,7 @@ export function Projects({
               <th>Project</th>
               <th>VCS</th>
               <th>Config</th>
+              <th>Objective</th>
               <th>Landing</th>
               <th>Workspaces</th>
               <th />
@@ -115,6 +116,7 @@ export function Projects({
                       <span className="dim">defaults</span>
                     )}
                   </td>
+                  <td className="dim">{project.config.objective ?? 'inherited'}</td>
                   <td className="dim">
                     {project.config.landing?.strategy ?? 'auto-land'} →{' '}
                     {project.config.landing?.target ?? 'main'}

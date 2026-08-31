@@ -1,6 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import type { Objective } from '@shared/tasks.js'
-import { PRESETS, normalise, parseObjective, policy, WEIGHT_FORMULAS, weights } from './objective.js'
+import {
+  PRESETS,
+  DEFAULT_OBJECTIVE,
+  normalise,
+  parseObjective,
+  presetOf,
+  resolveObjective,
+  policy,
+  WEIGHT_FORMULAS,
+  weights
+} from './objective.js'
 
 /**
  * M3's pure logic. Each of these is a place where being wrong costs money quietly rather than
@@ -30,6 +40,26 @@ describe('objectives', () => {
     expect(parseObjective({ cost: 1, velocity: 0, quality: 0 })?.cost).toBe(1)
     expect(parseObjective('nope')).toBeNull()
     expect(parseObjective(42)).toBeNull()
+  })
+
+  it('presetOf recognises preset vectors and returns null for custom vectors', () => {
+    expect(presetOf(PRESETS.economy)).toBe('economy')
+    expect(presetOf(PRESETS.balanced)).toBe('balanced')
+    expect(presetOf(PRESETS.velocity)).toBe('velocity')
+    expect(presetOf(PRESETS.quality)).toBe('quality')
+    expect(presetOf({ cost: 0.5, velocity: 0.25, quality: 0.25 })).toBeNull()
+  })
+
+  it('resolveObjective follows 3-tier precedence: task -> project -> fleet/default', () => {
+    const fleetDefault = PRESETS.economy
+    // 1. Task override takes top precedence
+    expect(resolveObjective('quality', 'velocity', fleetDefault)).toEqual(PRESETS.velocity)
+    // 2. Project override applies when task is not set / inherits
+    expect(resolveObjective('quality', 'inherit', fleetDefault)).toEqual(PRESETS.quality)
+    expect(resolveObjective({ config: { objective: 'quality' } }, null, fleetDefault)).toEqual(PRESETS.quality)
+    // 3. Fleet fallback applies when neither project nor task overrides
+    expect(resolveObjective(null, 'inherit', fleetDefault)).toEqual(fleetDefault)
+    expect(resolveObjective(undefined, undefined)).toEqual(DEFAULT_OBJECTIVE)
   })
 })
 

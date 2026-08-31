@@ -1,51 +1,40 @@
 import type { Objective, ObjectivePreset } from '@shared/tasks.js'
+import {
+  PRESETS,
+  DEFAULT_OBJECTIVE,
+  normalise,
+  parseObjective,
+  presetOf
+} from '@shared/tasks.js'
 
-/**
- * Objectives: cost, velocity, quality.
- *
- * Different people want different things, and the same person wants different things on different
- * days. So it is a **weight vector**, not a mode.
- *
- * ⛔ **Nothing may branch on a preset's name**, and the vector is consumed in exactly two places:
- * `weights()`, which feeds scheduler scoring, and `policy()`, which the cache clock, the model
- * selector and preemption consult. Anything else reading an objective is a design smell — if a third
- * consumer appears, one of these two is missing a field.
- */
-
-export const PRESETS: Record<ObjectivePreset, Objective> = {
-  economy: { cost: 0.7, velocity: 0.15, quality: 0.15 },
-  balanced: { cost: 0.34, velocity: 0.33, quality: 0.33 },
-  velocity: { cost: 0.15, velocity: 0.7, quality: 0.15 },
-  quality: { cost: 0.15, velocity: 0.15, quality: 0.7 }
-}
-
-export const DEFAULT_OBJECTIVE: Objective = PRESETS.balanced
-
-export function normalise(objective: Partial<Objective>): Objective {
-  const cost = Math.max(0, objective.cost ?? 0)
-  const velocity = Math.max(0, objective.velocity ?? 0)
-  const quality = Math.max(0, objective.quality ?? 0)
-  const total = cost + velocity + quality
-  if (total === 0) return DEFAULT_OBJECTIVE
-  return { cost: cost / total, velocity: velocity / total, quality: quality / total }
-}
-
-/** A preset name, an explicit vector, or nothing. Presets are just named vectors. */
-export function parseObjective(value: unknown): Objective | null {
-  if (typeof value === 'string') {
-    const preset = PRESETS[value.toLowerCase() as ObjectivePreset]
-    return preset ? { ...preset } : null
-  }
-  if (value && typeof value === 'object') {
-    const record = value as Partial<Objective>
-    if ('cost' in record || 'velocity' in record || 'quality' in record) return normalise(record)
-  }
-  return null
+export {
+  PRESETS,
+  DEFAULT_OBJECTIVE,
+  normalise,
+  parseObjective,
+  presetOf,
+  type ObjectivePreset
 }
 
 /** Global default → project override → task override. The result is recorded on every Run. */
-export function resolveObjective(project?: unknown, task?: unknown): Objective {
-  return parseObjective(task) ?? parseObjective(project) ?? DEFAULT_OBJECTIVE
+export function resolveObjective(
+  project?: unknown,
+  task?: unknown,
+  fallback: Objective = DEFAULT_OBJECTIVE
+): Objective {
+  const taskObj = parseObjective(
+    task && typeof task === 'object' && 'objective' in task
+      ? task.objective
+      : task
+  )
+  const projectObj = parseObjective(
+    project && typeof project === 'object' && 'config' in project
+      ? (project.config as { objective?: unknown } | undefined)?.objective
+      : project && typeof project === 'object' && 'objective' in project
+      ? project.objective
+      : project
+  )
+  return taskObj ?? projectObj ?? fallback
 }
 
 // ---------------------------------------------------------------------------- consumer 1

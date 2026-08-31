@@ -4,14 +4,18 @@ import {
   FINISH_ORDER,
   resolveModelChoice,
   COMPLETION_LABELS,
+  OBJECTIVE_PRESET_ORDER,
   SHARING_LABELS,
+  presetOf,
+  type CompletionModeChoice,
   type FinishPolicyChoice,
+  type Objective,
+  type ObjectiveChoice,
+  type ResolvedCompletionMode,
   type ResolvedFinishPolicy,
+  type ResolvedSessionSharing,
   type Run,
   type SessionSharingChoice,
-  type ResolvedSessionSharing,
-  type CompletionModeChoice,
-  type ResolvedCompletionMode,
   type Task,
   type TaskMessage
 } from '@shared/tasks'
@@ -46,6 +50,8 @@ export interface TaskDetailData {
   inheritedFinish?: ResolvedFinishPolicy
   inheritedSharing?: ResolvedSessionSharing
   inheritedCompletion?: ResolvedCompletionMode
+  inheritedObjective?: Objective
+  resolvedObjective?: Objective
   previewPrompt?: string
 }
 
@@ -571,6 +577,13 @@ function TaskDetail({
             <CompletionPicker
               task={task}
               inheritedCompletion={detail.inheritedCompletion}
+              onChanged={refresh}
+            />
+          </Fact>
+          <Fact label="objective">
+            <ObjectivePicker
+              task={task}
+              inheritedObjective={detail.inheritedObjective}
               onChanged={refresh}
             />
           </Fact>
@@ -1612,6 +1625,73 @@ function CompletionPicker({
         }
         onChange={(val) => void choose(val as CompletionModeChoice)}
       />
+      {note && <div className="note">{note}</div>}
+    </>
+  )
+}
+
+/**
+ * What this task is optimising for.
+ *
+ * ⚠️ Records a preference and nothing else — effective on the next run.
+ */
+function ObjectivePicker({
+  task,
+  inheritedObjective,
+  onChanged
+}: {
+  task: Task
+  inheritedObjective?: Objective
+  onChanged?: () => Promise<void>
+}): React.JSX.Element {
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState<string | null>(null)
+
+  const choose = async (objective: ObjectiveChoice): Promise<void> => {
+    setBusy(true)
+    setNote(null)
+    try {
+      await rpc('task.setObjective', { id: task.id, objective })
+      if (onChanged) await onChanged()
+    } catch (err) {
+      setNote(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const inheritedPreset = inheritedObjective ? presetOf(inheritedObjective) : null
+  const inheritedLabel =
+    inheritedPreset ??
+    (inheritedObjective
+      ? `${Math.round(inheritedObjective.cost * 100)}%/${Math.round(inheritedObjective.velocity * 100)}%/${Math.round(inheritedObjective.quality * 100)}%`
+      : 'balanced')
+
+  const currentChoice =
+    typeof task.objective === 'string'
+      ? task.objective
+      : task.objective
+        ? presetOf(task.objective) ?? 'custom'
+        : 'inherit'
+
+  return (
+    <>
+      <select
+        className="finish-picker"
+        value={currentChoice}
+        disabled={busy}
+        aria-label="Optimization objective"
+        title="Optimization objective (cost, velocity, quality) for this task's next run."
+        onChange={(e) => void choose(e.target.value as ObjectiveChoice)}
+      >
+        <option value="inherit">inherit ({inheritedLabel})</option>
+        {OBJECTIVE_PRESET_ORDER.map((p) => (
+          <option key={p} value={p}>
+            {p}
+          </option>
+        ))}
+        {currentChoice === 'custom' && <option value="custom">custom</option>}
+      </select>
       {note && <div className="note">{note}</div>}
     </>
   )

@@ -9,6 +9,7 @@ import type {
   CompletionModeChoice,
   Consult,
   Objective,
+  ObjectiveChoice,
   Project,
   Question,
   QuestionKind,
@@ -97,6 +98,11 @@ export interface Settings {
    * (fleet -> project -> task), and ⛔ **autonomous** unless somebody chooses otherwise.
    */
   completionMode: CompletionMode
+  /**
+   * What the scheduler optimises for, fleet-wide, when a project or task has not specified otherwise.
+   * Default balanced (34% cost, 33% velocity, 33% quality).
+   */
+  objective: Objective
   /**
    * How often (in minutes) orchestratord sweeps workers in the background for quota updates.
    * Default 5 minutes.
@@ -1029,6 +1035,8 @@ export interface RpcMap {
       inheritedFinish?: ResolvedFinishPolicy
       inheritedSharing?: ResolvedSessionSharing
       inheritedCompletion?: ResolvedCompletionMode
+      inheritedObjective?: Objective
+      resolvedObjective?: Objective
       previewPrompt?: string
     } | null
   }
@@ -1183,6 +1191,11 @@ export interface RpcMap {
     params: { id: string; completionMode: CompletionModeChoice }
     result: Task
   }
+  /** Choose what this task is optimising for, or 'inherit' to follow project/fleet. */
+  'task.setObjective': {
+    params: { id: string; objective: ObjectiveChoice }
+    result: Task
+  }
   /** Land a branch whose task already finished. The loose-ends list and the task pane both use it. */
   'task.land': { params: { id: string }; result: { task: Task; landed: boolean; reason?: string } }
   /**
@@ -1288,6 +1301,8 @@ export interface TaskCreateParams {
   verification?: 'required' | 'not_required' | 'auto'
   finishPolicy?: FinishPolicyChoice
   sessionSharing?: SessionSharingChoice
+  completionMode?: CompletionModeChoice
+  objective?: ObjectiveChoice
   status?: 'draft' | 'ready'
   kind?: TaskKind
   estTokens?: number | null
@@ -1304,6 +1319,8 @@ export interface TaskUpdateParams {
   verification?: 'required' | 'not_required' | 'auto'
   finishPolicy?: FinishPolicyChoice
   sessionSharing?: SessionSharingChoice
+  completionMode?: CompletionModeChoice
+  objective?: ObjectiveChoice
   preemptible?: boolean
   estTokens?: number | null
   constraints?: TaskConstraints

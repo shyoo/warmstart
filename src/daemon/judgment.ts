@@ -17,7 +17,8 @@ import { listWorkers } from './workers.js'
 import { costModel } from './costmodel.js'
 import { adapter } from './adapters/index.js'
 import { estimateTask, pessimisticOn } from './estimator.js'
-import { DEFAULT_OBJECTIVE } from './objective.js'
+import { resolveObjective } from './objective.js'
+import { settings } from './settings.js'
 import { log } from './log.js'
 
 /**
@@ -419,7 +420,9 @@ function applyTriage(task: Task, answer: Record<string, unknown>): ApplyResult {
  * anything. Plan §7.2.
  */
 export function riskOf(task: Task): { gate: RiskGate; why: string } {
-  const cost = DEFAULT_OBJECTIVE.cost
+  const project = task.projectId ? getProject(task.projectId) : null
+  const objective = resolveObjective(project?.config?.objective, task.objective, settings().objective)
+  const cost = objective.cost
   // A cost-weighted operator gates one generation sooner: the cheapest agent-authored task is the
   // one that was never admitted.
   const gateAboveDepth = cost > 0.5 ? 1 : 2

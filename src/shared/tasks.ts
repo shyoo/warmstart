@@ -271,6 +271,8 @@ export interface Task {
   sessionSharing: SessionSharingChoice
   /** How far the agent is expected to get before it stops. `inherit` follows the project. */
   completionMode: CompletionModeChoice
+  /** What this task is optimising for, or `inherit` to follow project/fleet. */
+  objective: ObjectiveChoice
   /**
    * When the finish instruction was sent to the agent, if it has been.
    *
@@ -436,6 +438,8 @@ export interface Run {
    * Null for runs that predated this column.
    */
   prompt: string | null
+  /** The effective optimization objective vector active when this run was dispatched. */
+  objective?: Objective | null
 }
 
 /** A quota reading kept beside a run, with enough of its basis to be distrusted properly. */
@@ -635,6 +639,62 @@ export interface Objective {
 }
 
 export type ObjectivePreset = 'economy' | 'balanced' | 'velocity' | 'quality'
+export type ObjectiveChoice = ObjectivePreset | Objective | 'inherit'
+
+export const PRESETS: Record<ObjectivePreset, Objective> = {
+  economy: { cost: 0.7, velocity: 0.15, quality: 0.15 },
+  balanced: { cost: 0.34, velocity: 0.33, quality: 0.33 },
+  velocity: { cost: 0.15, velocity: 0.7, quality: 0.15 },
+  quality: { cost: 0.15, velocity: 0.15, quality: 0.7 }
+}
+
+export const OBJECTIVE_PRESET_ORDER: ObjectivePreset[] = ['balanced', 'economy', 'velocity', 'quality']
+
+export const OBJECTIVE_PRESET_LABELS: Record<ObjectivePreset, string> = {
+  balanced: 'balanced (34% cost, 33% velocity, 33% quality)',
+  economy: 'economy (70% cost, 15% velocity, 15% quality)',
+  velocity: 'velocity (15% cost, 70% velocity, 15% quality)',
+  quality: 'quality (15% cost, 15% velocity, 70% quality)'
+}
+
+export const DEFAULT_OBJECTIVE: Objective = PRESETS.balanced
+
+export function normalise(objective: Partial<Objective>): Objective {
+  const cost = Math.max(0, objective.cost ?? 0)
+  const velocity = Math.max(0, objective.velocity ?? 0)
+  const quality = Math.max(0, objective.quality ?? 0)
+  const total = cost + velocity + quality
+  if (total === 0) return DEFAULT_OBJECTIVE
+  return { cost: cost / total, velocity: velocity / total, quality: quality / total }
+}
+
+/** A preset name, an explicit vector, or nothing. Presets are just named vectors. */
+export function parseObjective(value: unknown): Objective | null {
+  if (typeof value === 'string') {
+    const preset = PRESETS[value.toLowerCase() as ObjectivePreset]
+    return preset ? { ...preset } : null
+  }
+  if (value && typeof value === 'object') {
+    const record = value as Partial<Objective>
+    if ('cost' in record || 'velocity' in record || 'quality' in record) return normalise(record)
+  }
+  return null
+}
+
+/** Return the matching preset name if the objective matches a preset vector, or null if custom. */
+export function presetOf(objective: Objective): ObjectivePreset | null {
+  const eps = 0.005
+  for (const [key, preset] of Object.entries(PRESETS) as Array<[ObjectivePreset, Objective]>) {
+    if (
+      Math.abs(objective.cost - preset.cost) < eps &&
+      Math.abs(objective.velocity - preset.velocity) < eps &&
+      Math.abs(objective.quality - preset.quality) < eps
+    ) {
+      return key
+    }
+  }
+  return null
+}
 
 /** What the cache clock decided to do with a session, and why. */
 export type CacheMove = 'dispatch' | 'keepalive' | 'compact' | 'let_expire' | 'handoff_close' | 'none'
