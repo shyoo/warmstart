@@ -2563,3 +2563,67 @@ and the parser agree; everything else in that file is arithmetic on strings some
 fits, **not a measurement taken here**. What was measured is that the test fails whenever the query
 is unavailable, for any reason. ⛔ No codex run has been through the corrected prompt: both fixes are
 proven by test and unproven in flight.
+
+## A worker that could edit but never commit (2026-08-30)
+
+The prompt fix earlier the same day made codex's landing instruction coherent. It did not help,
+because the agent could not have committed under any wording.
+
+> Could not commit: sandbox denies writes to `.git/worktrees/ws1/index.lock`, so sync/rebase and
+> staging both failed.
+
+That report is exactly right, and it names a fault in this tool's architecture rather than in the
+task. A pooled workspace is a `git worktree`, so `<worktree>/.git` is a **file** holding
+`gitdir: <trunk>/.git/worktrees/<slot>`. A commit on that branch writes the index into the slot
+directory, the new objects into the common `<trunk>/.git/objects`, and the branch ref into the
+common `<trunk>/.git/refs/heads/…`. `codex exec --sandbox workspace-write` makes the working
+directory writable and nothing else, and not one of those three paths is inside it.
+
+So every codex run in every pooled worktree could read, reason and edit, and could never commit —
+for every task, not only this one. It cost three runs, roughly 1.8M tokens, and took the 30-day
+codex allowance from 0% to 34% producing work that had nowhere to go.
+
+⚠️ The failure was legible only from inside the sandbox, which is why it survived so long. From the
+outside the agent looks like one that declined to finish: the thread said *"3 file(s) are still
+uncommitted… the work is intact"*, which is true, complete, and points at the wrong party.
+
+### The fix, and what it costs
+
+`codex exec` has `--add-dir`, *"Additional directories that should be writable alongside the primary
+workspace"*. `gitWritableRoots` reads `<cwd>/.git`; a directory means an ordinary clone and it grants
+nothing, a file means a worktree and it resolves the slot directory and, through `commondir`, the
+trunk's `.git`. `plan()` passes one `--add-dir` per root.
+
+⛔ The grant is wider than the fault. The common `.git` holds every branch's refs and every task's
+objects, so a worker handed it can reach another task's work. There is no narrower grant: two of the
+three paths a commit needs are shared between worktrees by construction. The genuinely isolated fix
+is a real clone per worker, where `.git` sits inside the workspace and nothing needs widening — an
+architecture change, deliberately not smuggled in as part of a bug fix.
+
+⛔ What was **not** done is relax `--sandbox`. `danger-full-access` would have made the symptom
+disappear and removed the only boundary a CLI with no approval callback has. Widening the writable
+set from a measured requirement and removing the boundary are not the same move, however similar the
+green test afterwards looks.
+
+### The fixture had to be real
+
+The tests build an actual repository and an actual `git worktree` rather than writing a `.git` file
+by hand. The entire fault is the gap between what a worktree's `.git` *is* and what everyone assumes
+it is, and a hand-written fixture would have encoded the assumption instead of testing it. They
+assert by containment — that each of the three real paths falls under some granted root — because
+which root covers which path is an implementation detail.
+
+⚠️ The first draft guarded each test with `if (!made) return`, so a machine without git would have
+passed all four while asserting nothing. That is the same fault as the `stall.test.ts` bug fixed
+hours earlier, reintroduced by the person who had just fixed it, in a file whose sibling still
+carried the fresh comment about it. The guard is now `expect(made).toBe(true)` and the fixture
+builder has no try/catch: git is not optional in a repository whose workspace model *is* worktrees.
+
+### Not done
+
+⚠️ `--add-dir` is proven **on the argv** — `gitWritableRoots` returns the two real paths for `ws1`
+and both reach the command line behind the flag. Whether codex's sandbox then honours them is
+**unmeasured**; that needs one real run. The three sandbox limits the same agent reported alongside
+this — process-command-line inspection, denied network for dependency downloads, and therefore
+unrunnable `test:daemon`/`test:ui`/`test:pack` — are untouched, and are the argument for leaning on
+the daemon-side `check` list rather than expecting a worker to verify.

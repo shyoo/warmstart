@@ -1,8 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { execFileSync } from 'node:child_process'
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { delimiter, join } from 'node:path'
+import { delimiter, join, resolve } from 'node:path'
 import { adapter, adapters } from './adapters/index.js'
+import { gitWritableRoots } from './adapters/openai-compatible.js'
 import { costModel, loadCostModels } from './costmodel.js'
 import { spawnEnv } from './which.js'
 import { APPROVE_TOOL, MCP_SERVER_NAME } from './mcpconfig.js'
@@ -867,5 +869,106 @@ describe('the environment a worker inherits', () => {
         expect(plan.env?.[key], `${id} leaks ${key}`).toBeUndefined()
       }
     }
+  })
+})
+
+/**
+ * ⛔ The fault that made every codex worktree commit impossible.
+ *
+ * Measured on t56, 2026-08-30, across three runs and ~1.8M tokens: *"Could not commit: sandbox
+ * denies writes to `.git/worktrees/ws1/index.lock`, so sync/rebase and staging both failed."*
+ * `--sandbox workspace-write` makes `cwd` writable and a worktree keeps none of its git metadata
+ * there — `<worktree>/.git` is a *file* pointing into the trunk. The agent could edit and could
+ * never commit, on every pooled worktree, for every task.
+ *
+ * ⚠️ Built against a **real** `git worktree add`, not a fixture. The whole fault is the difference
+ * between what a worktree's `.git` is and what everyone assumes it is, and a hand-written fixture
+ * would encode the assumption rather than test it.
+ */
+describe('a worker that has to be able to commit', () => {
+  let trunk: string
+  let work: string
+  let made = false
+
+  beforeAll(() => {
+    trunk = mkdtempSync(join(tmpdir(), 'agentyard-worktree-trunk-'))
+    work = join(mkdtempSync(join(tmpdir(), 'agentyard-worktree-ws-')), 'ws1')
+    const git = (args: string[], cwd: string): void => {
+      execFileSync('git', args, { cwd, stdio: 'pipe' })
+    }
+    // ⛔ No try/catch. git is not optional here: this repo's entire workspace model is
+    // `git worktree`, so a machine without it cannot run the thing under test at all — and a
+    // swallowed failure would leave these four tests passing while asserting nothing, which is
+    // precisely the `stall.test.ts` fault fixed earlier today.
+    git(['init', '-q', '-b', 'main'], trunk)
+    git(['config', 'user.email', 'test@example.com'], trunk)
+    git(['config', 'user.name', 'test'], trunk)
+    writeFileSync(join(trunk, 'a.txt'), 'a\n')
+    git(['add', '-A'], trunk)
+    git(['commit', '-qm', 'first'], trunk)
+    git(['worktree', 'add', '-q', '-b', 'topic', work], trunk)
+    made = true
+  })
+
+  afterAll(() => {
+    try {
+      rmSync(trunk, { recursive: true, force: true })
+      rmSync(join(work, '..'), { recursive: true, force: true })
+    } catch {
+      // Windows file locks
+    }
+  })
+
+  it('is given every directory its commit writes to, none of which is its own', () => {
+    expect(made, 'the worktree fixture must actually have been built').toBe(true)
+    const roots = gitWritableRoots(work)
+    // ⛔ The three paths a commit on a worktree branch touches: the index in the slot directory, and
+    //    the objects and the branch ref in the common `.git`. Asserted by *containment*, because
+    //    which of the returned roots covers which path is an implementation detail and the
+    //    requirement is only that each one is covered.
+    const covered = (p: string): boolean =>
+      roots.some((r) => resolve(p).toLowerCase().startsWith(resolve(r).toLowerCase()))
+    const gitDir = resolve(work, /gitdir:\s*(.+)/.exec(readFileSync(join(work, '.git'), 'utf8'))![1]!.trim())
+    expect(covered(join(gitDir, 'index.lock'))).toBe(true)
+    expect(covered(join(trunk, '.git', 'objects'))).toBe(true)
+    expect(covered(join(trunk, '.git', 'refs', 'heads', 'topic'))).toBe(true)
+    // ⚠️ And `cwd` itself is not among them: `workspace-write` already grants it, and passing it
+    //    again would say this function had found something it had not.
+    expect(roots.map((r) => resolve(r).toLowerCase())).not.toContain(resolve(work).toLowerCase())
+  })
+
+  it('asks for nothing extra in an ordinary clone, where the metadata is already inside', () => {
+    expect(made, 'the worktree fixture must actually have been built').toBe(true)
+    // ⛔ The guard against widening by habit. In a normal checkout `.git` is a directory under
+    //    `cwd`, the sandbox already covers it, and granting the same path twice would be noise that
+    //    hides the one case that matters.
+    expect(gitWritableRoots(trunk)).toEqual([])
+  })
+
+  it('says nothing about a directory that is not a repository at all', () => {
+    // ⚠️ `--skip-git-repo-check` means a `vcs: none` project runs here too.
+    const bare = mkdtempSync(join(tmpdir(), 'agentyard-worktree-none-'))
+    try {
+      expect(gitWritableRoots(bare)).toEqual([])
+    } finally {
+      rmSync(bare, { recursive: true, force: true })
+    }
+  })
+
+  it('puts them on the codex argv, so the sandbox actually hears about them', () => {
+    expect(made, 'the worktree fixture must actually have been built').toBe(true)
+    const plan = adapter('openai-compatible').plan({
+      sessionId: 'ignored',
+      isolationRoot: 'C:/tmp/root',
+      cwd: work,
+      transport: 'stream'
+    })
+    for (const root of gitWritableRoots(work)) {
+      expect(plan.args[plan.args.indexOf(root) - 1]).toBe('--add-dir')
+    }
+    // ⛔ And the sandbox is still on. Widening the writable set is the fix; removing the boundary
+    //    is the thing this must never quietly become.
+    expect(plan.args).toContain('workspace-write')
+    expect(plan.args).not.toContain('--dangerously-bypass-approvals-and-sandbox')
   })
 })

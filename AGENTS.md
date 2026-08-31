@@ -317,6 +317,14 @@ costmodels/             versioned pricing data
   everywhere else. ⚠️ Both failures are silent: a missed match costs a cold start, and in the
   workspace pool it hands the task a **different worktree** than the one its conversation describes.
 
+- ⛔ **A sandboxed worker in a `git worktree` cannot commit unless the trunk's `.git` is writable.**
+  `<worktree>/.git` is a file, not a directory: the index lives in `<trunk>/.git/worktrees/<slot>`
+  and the objects and branch ref in the common `<trunk>/.git`, so a sandbox scoped to the
+  workspace forbids all three. codex is granted them with `--add-dir` (`gitWritableRoots` in
+  `adapters/openai-compatible.ts`). ⚠️ Widening a worker's writable set is not free — the common
+  `.git` carries every other task's refs — so it is granted from the measured requirement and
+  never by reflex, and `--sandbox` itself is never relaxed to buy the same thing.
+
 - ⛔ **A test may not assert a host capability.** `expect(sampleProcessTree(pid)).not.toBeNull()`
   reads as a test of this code and is a test of whether *this machine* permits process
   enumeration. A codex worker runs under `--sandbox workspace-write`, which denies the WMI query

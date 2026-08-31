@@ -1,7 +1,7 @@
 import { execFile, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import type { AdapterDetection, AdapterInfo, QuotaSnapshot } from '@shared/protocol.js'
 import type {
   AgentAdapter,
@@ -14,6 +14,62 @@ import type {
 import { asRecord, num, type StreamEvent, type StreamUsage } from '../stream.js'
 import { log } from '../log.js'
 import { launchArgs, launchable, spawnEnv, which } from '../which.js'
+
+/**
+ * The directories a `git commit` in `cwd` has to write to, other than `cwd` itself.
+ *
+ * ⛔ **A worktree keeps none of its git metadata inside itself.** `<worktree>/.git` is a *file*
+ * holding `gitdir: <trunk>/.git/worktrees/<slot>`, and a commit writes the index there, the new
+ * objects into the common `.git/objects`, and the branch ref into the common `.git/refs/heads`.
+ * Every one of those is outside the sandbox `--sandbox workspace-write` draws around `cwd`.
+ *
+ * ⭐ Measured on t56, 2026-08-30, across three runs and ~1.8M tokens that could never have landed:
+ * *"Could not commit: sandbox denies writes to `.git/worktrees/ws1/index.lock`, so sync/rebase and
+ * staging both failed."* The agent edited the files it was asked to and could not commit them — not
+ * a t56 fault and not a codex fault, but every pooled worktree on this adapter, for every task.
+ *
+ * ⚠️ This returns the **common** `.git`, which is wider than the one slot: it holds every branch's
+ * refs and every task's objects, so a worker given it could rewrite refs belonging to another task.
+ * That is not an oversight and there is no narrower grant — a worktree commit genuinely needs all
+ * three paths, and two of them are shared by construction. The narrow fix is a different
+ * architecture (a real clone per worker, `.git` inside the workspace), not a smaller flag.
+ *
+ * ⚠️ Returns empty for an ordinary clone, where `.git` is a directory already inside `cwd` and
+ * nothing needs widening, and for a directory that is not a repository at all — a project declared
+ * `vcs: none` runs here too, under `--skip-git-repo-check`.
+ */
+export function gitWritableRoots(cwd: string): string[] {
+  try {
+    const dotGit = join(cwd, '.git')
+    if (!existsSync(dotGit)) return []
+    // A directory means an ordinary clone: the metadata is already inside the workspace.
+    if (statSync(dotGit).isDirectory()) return []
+
+    const pointer = readFileSync(dotGit, 'utf8').trim()
+    const match = /^gitdir:\s*(.+)$/m.exec(pointer)
+    if (!match?.[1]) return []
+    const gitDir = resolve(cwd, match[1].trim())
+    if (!existsSync(gitDir)) return []
+
+    const roots = [gitDir]
+    // ⚠️ `commondir` is written relative to `gitDir` (`../..` for a standard worktree). Resolved,
+    // it is the trunk's `.git` — where objects and refs live. Absent on some layouts, in which
+    // case the slot directory is all there is to grant.
+    const commonFile = join(gitDir, 'commondir')
+    if (existsSync(commonFile)) {
+      const common = resolve(gitDir, readFileSync(commonFile, 'utf8').trim())
+      if (existsSync(common)) roots.push(common)
+    }
+    // Deduplicated, and the common dir usually contains the slot dir — but only usually, so both
+    // are passed rather than assuming the containment.
+    return [...new Set(roots)]
+  } catch (err) {
+    // ⚠️ Never fatal. Failing to widen produces the old behaviour — an agent that cannot commit —
+    // which is bad; refusing to spawn produces no agent at all, which is worse.
+    log.warn(`could not work out git metadata roots for ${cwd}:`, err)
+    return []
+  }
+}
 
 /**
  * Codex CLI — the OpenAI-compatible adapter.
@@ -771,6 +827,12 @@ export const openaiCompatible: AgentAdapter = {
       args.push('exec', '--json')
       args.push('--sandbox', req.permissionMode ?? info.policy.defaultPermissionMode)
       args.push('--cd', req.cwd)
+      // ⛔ Without this the agent can edit and can never commit. `workspace-write` makes `cwd`
+      // writable, and a pooled worktree keeps its index, objects and refs in the trunk's `.git`
+      // — outside it. Measured on t56, 2026-08-30: three runs, ~1.8M tokens, every commit refused
+      // at `.git/worktrees/ws1/index.lock`. See `gitWritableRoots` for what this grants and why
+      // there is no narrower grant.
+      for (const root of gitWritableRoots(req.cwd)) args.push('--add-dir', root)
       // `exec` refuses to start outside a git repository. agentyard's pooled worktrees are git, but a
       // project declared `vcs: none` is not, and refusing to start is a worse failure than running.
       args.push('--skip-git-repo-check')
