@@ -131,6 +131,21 @@ export function FleetSettings(): React.JSX.Element {
     []
   )
 
+  const chooseIdleProbeInterval = useCallback(
+    async (minutes: number) => {
+      setBusy(true)
+      setError(null)
+      try {
+        setSettings(await rpc('settings.set', { idleProbeIntervalMinutes: minutes }))
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err))
+      } finally {
+        setBusy(false)
+      }
+    },
+    []
+  )
+
   const autoCompact = settings?.autoCompact ?? true
   const autoPreempt = settings?.autoPreempt ?? true
   const autoOverrunPreempt = settings?.autoOverrunPreempt ?? true
@@ -138,6 +153,7 @@ export function FleetSettings(): React.JSX.Element {
   const finishPolicy = settings?.finishPolicy ?? DEFAULT_FLEET_FINISH
   const sessionSharing = settings?.sessionSharing ?? 'off'
   const probeIntervalMinutes = settings?.probeIntervalMinutes ?? 5
+  const idleProbeIntervalMinutes = settings?.idleProbeIntervalMinutes ?? 20
   const objective = settings?.objective ?? DEFAULT_OBJECTIVE
   const currentPreset = presetOf(objective)
 
@@ -369,12 +385,13 @@ export function FleetSettings(): React.JSX.Element {
         <div className="picker-row">
           <div className="picker-row-head">
             <p className="switch-state">
-              <strong>Background poller</strong> · Every {probeIntervalMinutes} minute{probeIntervalMinutes === 1 ? '' : 's'}
-              <span className="dim"> — how often orchestratord sweeps workers for updated quota data.</span>
+              <strong>While a task is running</strong> · Every {probeIntervalMinutes} minute
+              {probeIntervalMinutes === 1 ? '' : 's'}
+              <span className="dim"> — the accounts doing the work, whose windows are moving.</span>
             </p>
             <select
               className="finish-picker picker-row-control"
-              aria-label="Quota probe frequency"
+              aria-label="Quota probe frequency while running"
               value={probeIntervalMinutes}
               disabled={busy || settings === null}
               onChange={(e) => void chooseProbeInterval(Number(e.target.value))}
@@ -388,14 +405,48 @@ export function FleetSettings(): React.JSX.Element {
               <option value={60}>Every 60 minutes</option>
             </select>
           </div>
-          {/* ⛔ It sweeps, it does not refresh. Saying otherwise made this dial read as a
-              freshness setting, which is exactly how a five-minute interval came to be read as a
-              promise of a five-minute-old number while an idle account sat two hours old. */}
+          {/* ⛔ The sweep itself only re-reads what each CLI has already written to disk. Saying
+              otherwise made this dial read as a freshness setting, which is exactly how a
+              five-minute interval came to be read as a promise of a five-minute-old number while an
+              idle account sat two hours old. ⭐ On an account with a run *in flight* it does
+              refresh, because that is the one window actually moving. */}
           <p className="note">
-            This sweep only re-reads what each CLI has already written to disk — free, no
-            subprocess, no tokens. It makes a reading newer only when the vendor has refreshed its
-            own cache, which happens when the account does work. A worker about to be given a task
-            has its quota refreshed at that moment instead, and Probe does it on demand.
+            On an account with a run in flight this <em>refreshes</em> the CLI&apos;s usage cache
+            rather than only re-reading it — a background subprocess, no tokens — which is what makes
+            the number on the fleet card move on this cadence. Everywhere else the sweep re-reads
+            what the vendor has already written, and a worker about to be given a task has its quota
+            refreshed at that moment instead. Probe does it on demand.
+          </p>
+        </div>
+
+        <div className="picker-row">
+          <div className="picker-row-head">
+            <p className="switch-state">
+              <strong>When nothing is running</strong> · Every {idleProbeIntervalMinutes} minute
+              {idleProbeIntervalMinutes === 1 ? '' : 's'}
+              <span className="dim"> — a quiet fleet&apos;s windows do not move on their own.</span>
+            </p>
+            <select
+              className="finish-picker picker-row-control"
+              aria-label="Quota probe frequency when idle"
+              value={idleProbeIntervalMinutes}
+              disabled={busy || settings === null}
+              onChange={(e) => void chooseIdleProbeInterval(Number(e.target.value))}
+            >
+              <option value={5}>Every 5 minutes</option>
+              <option value={10}>Every 10 minutes</option>
+              <option value={20}>Every 20 minutes (default)</option>
+              <option value={30}>Every 30 minutes</option>
+              <option value={60}>Every 60 minutes</option>
+              <option value={120}>Every 2 hours</option>
+            </select>
+          </div>
+          <p className="note">
+            Never faster than the running cadence. Two things ignore this number and happen anyway: a
+            worker is read <strong>within 30 seconds of the reset time</strong> any task parked on its
+            window is waiting for, and it is read <strong>immediately</strong> when a CLI reports a
+            rate-limit warning or a run is preempted for quota — so what the fleet card shows and what
+            stopped a run cannot drift apart.
           </p>
         </div>
       </section>

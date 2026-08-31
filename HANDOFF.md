@@ -8,8 +8,8 @@ started in CI, never run against a real agent CLI.
 if you add a line, find the one it obsoletes and cut it in the same edit. Finished work moves to
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
-**Baseline (2026-09-01, measured):** typecheck · lint · build clean · `npm test` 948/950 (2 POSIX-only
-skipped) · `test:daemon` 141/141 · `test:ui` 172/172 · `test:pack` 18/18 · L4 (opt-in) landed a real
+**Baseline (2026-09-01, measured):** typecheck · lint · build clean · `npm test` 1000/1002 (2 POSIX-only
+skipped) · `test:daemon` 141/141 · `test:ui` 176/176 · `test:pack` 18/18 · L4 (opt-in) landed a real
 agent commit on origin/main. Electron 44.0.0, electron-builder 26.15.3, 0 npm vulnerabilities.
 CLIs here: claude 2.1.252 · agy 1.1.22 · codex 0.151.0.
 
@@ -40,11 +40,12 @@ gaps are below. Scope: `transient_docs/implementation_plan_2026-08-24.md` §14, 
 src/daemon/            orchestratord. Runs as Electron-with-ELECTRON_RUN_AS_NODE, detached.
   index.ts             entry: lock, db, server, poller, scheduler, tailer wiring, shutdown
   server.ts  api.ts    HTTP+WS on 127.0.0.1:<random>, bearer token, typed RPC
-  db.ts                node:sqlite + numbered migrations (v25)
+  db.ts                node:sqlite + numbered migrations (v26)
   costmodel.ts         the four questions; user dir > bundled > compiled-in
-  workers.ts           registry, isolation roots, retire-keeps-credentials, the fleet's display
-                       order - ⛔ display only (+ workerorder.test.ts)
-  quota.ts             the staleness ladder - read this before trusting a percentage
+  workers.ts           registry, isolation roots, retire-keeps-credentials, display order only
+                       (+ workerorder.test.ts)
+  quota.ts             the staleness ladder + the self-pacing poller: active/idle cadence, a parked
+                       task's own release time, the urgent queue (+ quotaprobing/quotacycle tests)
   sessions.ts          two transports: pty (node-pty) and stream (real pipes); orphan reaping;
                        resuming a conversation a closed session left behind  (+ resume.test.ts)
   transcript.ts        metering: iterations[], TTL split, cache clock  (+ .test.ts)
@@ -73,7 +74,7 @@ src/daemon/            orchestratord. Runs as Electron-with-ELECTRON_RUN_AS_NODE
   compaction.ts        the compaction ledger. ⛔ Records the *ask*, so one that never landed shows
   lifecycle.ts         how the daemon is asked to stop itself. ⛔ Asked, never killed by pid
   settings.ts          the fleet defaults: autoCompact, autoPreempt, autoOverrunPreempt,
-                       autoRunawayStop, probeIntervalMinutes, finishPolicy, sessionSharing
+                       autoRunawayStop, probe intervals (active + idle), finishPolicy, sessionSharing
   reserve.ts           the compaction reserve, and every belief with its basis attached
   objective.ts         the weight vector + every weight’s published formula (+ cost.test.ts)
   controller.ts        the consult queue, the caps, and choosing who answers (+ controller.test.ts,
@@ -108,6 +109,7 @@ docs/                  cost-model.md, glossary.md, adapters.md, landing.md, sess
 ## What is true right now and not yet proven
 
 - ⭐ **All three providers have a free quota probe** (**R3 closed**). ⚠️ Free of tokens, not of *sessions*: each `/usage` refresh opens a PTY that registers with the vendor's bridge — 150 against 14 real work sessions in four days. ⛔ Those already registered are account-side; only the operator can archive them. ⭐ **There is no refresh clock any more** (2026-08-31, `transient_docs/quota_staleness_2026-08-31.md`): `ensureFreshQuota()` refreshes **at the dispatch gate and when a run ends**, backing off on the **attempt** rather than the reading's age — age-keyed retry said *yes* forever on the one worker that could not answer, starving every worker behind it. ⚠️ The UI prints `read 2h ago`, never the word `stale`; warning colour is reserved for *every check since has failed*. ⚠️ Not yet run in flight.
+- ⭐ **And the fleet now says *when* it needs one** (2026-08-31, t70/t71, `docs/cost-model.md`). t70 was preempted at the top of its 5h window while the card read **63%**: the trigger was a live `rate_limit_event`, the card was the last thing the vendor happened to write, and nothing reconciled them. The poller no longer runs on one interval — it asks `probeDemand()` what the fleet is doing, computes its own delay, and asks `refreshNow()` (**the same ledger** `ensureFreshQuota` uses, so never two terminals on one account) in the three cases where something *is* about to act on the number: a **run in flight** (at the operator's own cadence — the only window that moves), a **parked task 30s past its reset**, and a **live rate-limit warning or quota preemption** (`requestUrgentProbe`). ⛔ And `not_before` was the **only** release test, so a task parked `now+5h` by the overrun path's fallback stayed parked with a hand-probed **0%** on the account — `quotaReleaseFor` is the second, held to the dispatch gate's own standard. ⛔ `QuotaWindow.group` was **dropped on the way into the store** (**migration 26**), so the per-pool gate had been falling back to the busiest pool for every reader that goes through `quota_samples` — i.e. every gate. ⚠️ Idle probing is its own setting (`idleProbeIntervalMinutes`, 20m). ⚠️ **None of it has run in flight**; 52 unit checks cover it.
 - ⭐ **A vendor caution no longer ends a run** (2026-08-31, t71). `lastRateLimit` returned the newest sample of **any** window, so a `seven_day` advisory landing 12s after a healthy `five_hour` reading preempted three runs at 5h **17% · 0% · 19%** and parked the task until **2026-09-07**. Now `rejected` stops a run alone; `allowed_warning` needs this fleet's own reading of *that* window to agree (≥80%); `resumeAt` comes from the sample that decided; an expired or stale sample is forgotten; and a later advisory cannot mask an earlier refusal. ⚠️ Replayed over the real samples all three preemptions vanish; none has been re-run in flight.
 - ⭐ **`/compact` had never once run, and now says so either way** (2026-08-31). `autoCompact` was on from 07:48Z with the newest `clock_events` row dated 2026-08-27, because `expectedIdleMs` returns exactly 2h whenever anything is in flight while the balanced threshold is 2.02h — move 4 was unreachable on any fleet that was doing anything. That placeholder is flagged `confident: false` and no longer buys a keepalive on a large context. ⛔ **Migration 24** `compactions` records the **ask** as well as the outcome, so one that never landed is visible; the thread posts a system message and the task pane draws before → after.
 - ⭐ **A held task now says *when*, and a person may overrule the 92% gate** (2026-09-01, t71). Two faults from one discarded number. ⛔ t71 was **pinned** — `constraints.workerId`, set by hand — so nothing routed it to a full account; `chooseTarget` skips every other worker on its first line. But the gate that held it wrote *"ClaudeThird at 92% of its Claude 5h window"* and threw away the `resets_at` **2h29m** behind it, so (a) the operator could not tell a five-minute wait from a five-hour one, and (b) `expectedIdleMs` read `ready` as *dispatchable* and answered "work queued now" — the one answer that suppresses cache-clock moves 2/3/4 on **every live session**, for the whole window. **Migration 25**: `hold_until` (descriptive only, deliberately *not* `not_before`, which `admit()` reads) and `quota_override_until`. ⛔ The override lifts the dispatch cliff and the matching 95% mid-run preempt and **nothing else** — not a disabled account, not capacity, not the window boundary, and never a vendor `rejected`; nor does it touch `windowRisk`, so an overridden account still scores last. ⚠️ Neither has run in flight.
@@ -115,7 +117,6 @@ docs/                  cost-model.md, glossary.md, adapters.md, landing.md, sess
 - ⚠️ **Never exercised end to end: the tray *icon*, keepalive firing, and a compaction landing** (each one's arithmetic is unit-tested).
 - ⭐ **Every intervention on a live session has an off switch** — Settings > Global: `autoCompact`/`autoPreempt` **on**, `autoRunawayStop` **off**, `probeIntervalMinutes` 5m.
 - ⭐ **A full workspace pool holds a task rather than failing it** (2026-08-29). ⛔ No dependency edge: a hold is re-decided every tick, so priority wins. ⚠️ A fleet wider than its pool is *named*, never silently grown.
-- ⭐ **A quota pause now ends on its own clock** (2026-08-31, t60). `preempt` parks a task as `paused_quota` carrying `not_before = resetsAt` and three places said it *"resumes itself"* — `admitScheduled` reads only `scheduled`, `admit` refuses every held status, `resumeTask` took neither, so that field was read by **nothing** and t60 sat 291s past its own resume time with no button either. `resumeQuotaPaused()` runs in `tick()`; `resumeTask` and the menu now accept it. ⛔ Back to `ready`, not to a worker. ⭐ Beside it: `stale` is an **age** test, so a reading two minutes old whose window has since reset was trusted for hours (measured: 88% on a window that reset 6m earlier). `windowExpired()` makes an expired window **unknown, never zero**. ⚠️ Neither has run in flight.
 - ⭐ **The stall watchdog tells stuck from slow, and has fired in flight** (2026-08-30): 13m into a hung codex run it posted the process tree and 0.0s of CPU gained in 70s. ⛔ It reports and never kills.
 - ⭐ **A question shows on the task, and a stale branch has a way back** (2026-08-30, t59). `askQuestion` never changed the status, so a task waiting seven minutes on a person read `running`; it now rests at `awaiting_human` and is put back when the answer is taken. ⛔ And `readMergeability` asked about `origin/<target>` while `merge-local` rebases onto the **local** one — on the default policy the pre-flight check answered about a different ref, so conflicts were found inside `landTask`, two branches past the `resolve-conflict` verdict built to hand them back. Both bases now come from `landingBaseFor`. A **Resolve & retry** button sends a conflicted branch back to an agent. ⚠️ None of the three has run in flight.
 - ⭐ **A task asked to finish can no longer hang on an answer that never comes** (2026-08-30). `ask-agent` leaves the run open and bet the agent would report again; nothing checked. t58 obeyed in 17s, never reported, and sat `running` for 50m holding ws3. `runWatchdogs` now re-runs `decideFinish` against the tree once the session has been silent past `finishReplyOverdue`. ⚠️ Fired in flight **once, by hand** on t58; the automatic path is unproven.
@@ -189,6 +190,5 @@ R1, R6 change the cache clock. **R7 closed 2026-08-31** — it *does* warn first
 
 - **Daemon, not all-in-Electron.** The premise is unattended progress across quota windows.
 - **Deterministic scheduler; LLM on judgment events only.** A loop running every 10s for weeks must not bill anything, and the fleet survives with no controller at all.
-- **PTY-hosted CLI, transcript for state.** We own stdin, so `/compact` is a function call. ⚠️ ANSI parsing
-  determines state in exactly one declared place - a quota reading. Never a session's state.
+- **PTY-hosted CLI, transcript for state.** We own stdin, so `/compact` is a function call. ⚠️ ANSI parsing determines state in exactly one declared place - a quota reading. Never a session's state.
 - **Capabilities and objectives are data.** No `if (adapter === …)`, no `if (mode === …)`.

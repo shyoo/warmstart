@@ -1105,11 +1105,19 @@ try {
   // ⚠️ Put back, so the rest of the suite runs against the shipped default.
   await evaluate(`window.agentyard.rpc('settings.set', { sessionSharing: 'off' })`)
 
-  // ⛔ Global settings: probe frequency selector and fleet intervention toggles
+  // ⛔ Global settings: the two probe cadences and the fleet intervention toggles.
+  //
+  // ⚠️ Two controls, not one, since 2026-08-31. A single interval had to serve both an account
+  // spending its window right now and a fleet with nothing running, and it answered neither: the
+  // number said five minutes while the reading behind it could be two hours old.
   const probePicker = `[...document.querySelectorAll('select')].find(
-     s => s.getAttribute('aria-label') === 'Quota probe frequency')`
-  check('the probe frequency control exists under Global', (await evaluate(`!!(${probePicker})`)) === true)
+     s => s.getAttribute('aria-label') === 'Quota probe frequency while running')`
+  const idlePicker = `[...document.querySelectorAll('select')].find(
+     s => s.getAttribute('aria-label') === 'Quota probe frequency when idle')`
+  check('the running probe frequency control exists under Global', (await evaluate(`!!(${probePicker})`)) === true)
+  check('the idle probe frequency control exists beside it', (await evaluate(`!!(${idlePicker})`)) === true)
   check('starts at 5 minutes default', (await evaluate(`${probePicker}?.value`)) === '5')
+  check('and the idle cadence starts at 20', (await evaluate(`${idlePicker}?.value`)) === '20')
   await evaluate(`
     (() => {
       const s = ${probePicker};
@@ -1123,7 +1131,28 @@ try {
     'probe frequency change reaches daemon',
     (await evaluate(`window.agentyard.rpc('settings.get', {}).then(s => s.probeIntervalMinutes)`)) === 10
   )
-  await evaluate(`window.agentyard.rpc('settings.set', { probeIntervalMinutes: 5 })`)
+  await evaluate(`
+    (() => {
+      const s = ${idlePicker};
+      s.value = '60';
+      s.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    })()
+  `)
+  await wait(1200)
+  check(
+    'the idle cadence is a separate setting, stored separately',
+    (await evaluate(`window.agentyard.rpc('settings.get', {}).then(s => s.idleProbeIntervalMinutes)`)) === 60
+  )
+  check(
+    'and the panel says what ignores both of them',
+    (await evaluate('document.querySelector(".content")?.innerText ?? ""')).includes(
+      'within 30 seconds of the reset time'
+    ),
+    'a parked task is probed at its release time and a rate-limit warning is probed at once - if the ' +
+      'panel does not say so, the operator reads the interval as the whole story'
+  )
+  await evaluate(`window.agentyard.rpc('settings.set', { probeIntervalMinutes: 5, idleProbeIntervalMinutes: 20 })`)
 
   const autoCompactBtn = `[...document.querySelectorAll('button[role="switch"]')].find(
      b => b.getAttribute('aria-label') === 'Automatic compaction')`

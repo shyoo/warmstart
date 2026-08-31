@@ -101,13 +101,33 @@ export const DEFAULT_SETTINGS: Settings = {
   objective: DEFAULT_OBJECTIVE,
 
   /**
-   * How often (in minutes) orchestratord sweeps workers in the background for quota updates.
+   * How often (in minutes) orchestratord sweeps workers for quota **while a run is in flight**.
    *
-   * ⚠️ Default 5 minutes. A sweep reads the local usage cache (free) and, at most once per sweep
-   * when a worker's cache is genuinely stale (>30m), refreshes usage via an interactive background
-   * session (also free of tokens, but spends a subprocess).
+   * ⚠️ Default 5 minutes, and since 2026-08-31 the number is honoured rather than approximated. A
+   * sweep reads the local usage cache (free); on a worker that is *actually running something* it
+   * now also **refreshes** that cache on this cadence, because the whole reason to watch a busy
+   * account closely is that its window is the only one moving. On every other worker the refresh
+   * stays behind `REFRESH_AFTER_MS`.
+   *
+   * ⛔ The measured failure this fixes: the cadence was described as five minutes and the *number*
+   * only ever moved when the vendor happened to rewrite its own cache, so a card could sit at 63%
+   * while the run beside it was preempted on a live signal that said 93%. Two numbers, one account,
+   * no way for the operator to reconcile them.
    */
-  probeIntervalMinutes: 5
+  probeIntervalMinutes: 5,
+
+  /**
+   * How often (in minutes) orchestratord sweeps workers when **nothing is running**.
+   *
+   * ⛔ Default 20, deliberately slower than the active cadence rather than equal to it. An idle
+   * account's window does not move on its own, so the only thing frequent polling buys on a quiet
+   * fleet is background processes — 150 probe sessions against 14 that did work, measured over four
+   * days, which is what made `REFRESH_AFTER_MS` two hours in the first place.
+   *
+   * ⚠️ Idle is not the same as *nothing to wait for*: a task parked on a quota window is probed at
+   * its release time regardless of this number. See `QuotaPoller.nextDelayMs`.
+   */
+  idleProbeIntervalMinutes: 20
 }
 
 type SettingChangeListener = <K extends keyof Settings>(key: K, value: Settings[K]) => void

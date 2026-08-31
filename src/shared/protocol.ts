@@ -106,10 +106,24 @@ export interface Settings {
    */
   objective: Objective
   /**
-   * How often (in minutes) orchestratord sweeps workers in the background for quota updates.
+   * How often (in minutes) orchestratord sweeps workers for quota **while a run is in flight**.
    * Default 5 minutes.
+   *
+   * ⚠️ This is the *active* cadence, and since 2026-08-31 it means what it says: on a worker with a
+   * run in flight the sweep now **refreshes** the vendor's cache on this interval rather than only
+   * re-reading a file the vendor may not have written for hours. The old behaviour is why a fleet
+   * card could read 63% while the run beside it was being preempted at 93%.
    */
   probeIntervalMinutes: number
+  /**
+   * How often (in minutes) orchestratord sweeps workers when **nothing is running**. Default 20.
+   *
+   * ⛔ A separate control on purpose. An idle account's window is, by construction, not moving, so
+   * the frequent cadence buys nothing there and costs a background process per sweep. The two
+   * questions — *how closely do we watch work in flight* and *how often do we look at a quiet fleet*
+   * — have different answers and used to share one number.
+   */
+  idleProbeIntervalMinutes: number
 }
 
 /** The per-agent cost scale, as the Cost screen shows it. Mirrors `estimator.ts`'s own types. */

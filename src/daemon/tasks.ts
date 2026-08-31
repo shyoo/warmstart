@@ -606,25 +606,55 @@ export function admitDependents(taskId: string): void {
  * no reset time has no other way out at all, and leaving it parked for ever is the worse of the two
  * wrong answers.
  */
-export function resumeQuotaPaused(): number {
-  const due = rows<TaskRow>(
-    db()
-      .prepare(
-        "select * from tasks where status = 'paused_quota' and (not_before is null or not_before <= ?)"
-      )
-      .all(Date.now())
+export function resumeQuotaPaused(released?: (task: Task) => string | null): number {
+  const parked = rows<TaskRow>(
+    db().prepare("select * from tasks where status = 'paused_quota'").all()
   )
-  for (const r of due) {
+  const now = Date.now()
+  let resumed = 0
+  for (const r of parked) {
+    const onTime = r.not_before === null || r.not_before <= now
+    // ⭐ **A clock is evidence, not the only evidence.** `not_before` is a *prediction* made at the
+    // moment of parking, and on the overrun path it can be a pure guess — a rate-limit warning with
+    // no reset time attached parks the task five hours out by arithmetic, not by measurement. So a
+    // task whose account has since been read and found to be *empty* stayed parked for hours with
+    // 0% used and no button; that is the failure this second test exists for. Measured by hand on
+    // 2026-08-31: a manual probe read 0% of the window and nothing resumed.
+    //
+    // ⚠️ The predicate is passed in rather than computed here, because deciding whether a *worker*
+    // has room is the scheduler's question and it needs the model, the pool and the gate to answer
+    // it. This module owns only the transition.
+    const early = onTime ? null : released?.(toTask(r)) ?? null
+    if (!onTime && !early) continue
+
     db().prepare('update tasks set not_before = null where id = ?').run(r.id)
     addMessage(
       r.id,
       'system',
-      'The quota window this task was waiting on has reset. Back in the queue — the dispatch gate ' +
-        'reads the quota again, so a worker still over its limit will hold it rather than run it.'
+      early
+        ? `Back in the queue ahead of its own timer: ${early} The dispatch gate reads the quota ` +
+            'again, so a worker still over its limit will hold this rather than run it.'
+        : 'The quota window this task was waiting on has reset. Back in the queue — the dispatch ' +
+            'gate reads the quota again, so a worker still over its limit will hold it rather than ' +
+            'run it.'
     )
     setStatus(r.id, 'ready', { assignee: null })
+    resumed += 1
   }
-  return due.length
+  return resumed
+}
+
+/**
+ * Every task parked on a quota window, with the account it is waiting on and when it is due back.
+ *
+ * ⛔ What the quota poller schedules its next look from. A task parked until 06:39 whose account is
+ * next read at 06:58 is a task that waited nineteen minutes past its own release for nothing, on a
+ * fleet whose entire premise is unattended progress across windows.
+ */
+export function quotaParkedTasks(): Array<{ task: Task; workerId: string | null; at: number | null }> {
+  return listTasks()
+    .filter((t) => t.status === 'paused_quota')
+    .map((task) => ({ task, workerId: task.ranOn ?? task.assignee ?? null, at: task.notBefore ?? null }))
 }
 
 /** The scheduler's clock tick: `scheduled` tasks whose `not_before` has arrived become `ready`. */

@@ -270,6 +270,56 @@ minutes and starved every worker behind it in `listWorkers()` order, indefinitel
 idle account is ordinary, so the strip shows `read 2h ago` and reserves the warning colour for the
 case that is a fault — every check since has failed.
 
+### ⭐ The poller paces itself, and the cadence means a refresh (2026-08-31)
+
+⛔ **The claim above — that a working account keeps its own cache current for free — is not reliable
+enough to build a display on.** Measured on t70: a run was preempted at the top of its five-hour
+window while the fleet card over that account read **63%**, because the card was the last thing the
+vendor happened to write and the trigger was a live `rate_limit_event` riding the turn. Both numbers
+were honestly reported and there was nothing in the app that could reconcile them.
+
+So the poller no longer runs on one interval. It asks the scheduler (`probeDemand()` in
+`scheduler.ts`) what the fleet is doing and computes its own next delay:
+
+| state | what happens |
+|---|---|
+| a run in flight on an account | `probeIntervalMinutes` (**5m**), and on that account a **refresh**, not a re-read — the account whose window is actually being spent is the one worth a terminal, so the ten-minute backoff yields to the operator's own cadence there |
+| nothing running | `idleProbeIntervalMinutes` (**20m**), a re-read only. ⛔ No refresh at all: an idle account's window does not move, and the clock that used to refresh one was retired the same day (above) |
+| a task parked `paused_quota` | a forced refresh **`RELEASE_PROBE_GRACE_MS` (30s) after its `not_before`**, so an unattended resume happens on the window's clock and not on the poller's |
+| a live rate-limit warning, or a quota preemption | a forced refresh **at once** (`requestUrgentProbe`), because the operator has just been shown a decision made on a number their screen does not have |
+
+⭐ **All four rows go through one ledger.** The sweep asks `refreshNow()`, which shares
+`refreshAttempts` with `ensureFreshQuota()` — so the dispatch gate and the poller wanting the same
+account inside a minute open **one** terminal between them, not two. What the sweep may vary is the
+floor: `REFRESH_BACKOFF_MS` (10m) for a one-off reason, the active cadence for a run in flight, and
+never below `MIN_FORCED_GAP_MS` (60s) whatever the setting says.
+
+⚠️ These two changes are the same rule read from opposite ends. Freshness is worth a terminal exactly
+when something is about to act on the number: the gate knows *a task is about to run here*, and the
+poller knows *a run is in flight / a park is due back / the vendor just warned us*. Neither is a
+clock, and there is no longer one anywhere.
+
+### ⛔ A quota park ends on *either* its clock or a measurement (2026-08-31)
+
+`not_before` on a `paused_quota` task is a **prediction made at the moment of parking**, and on the
+overrun path it is not even that: a rate-limit warning with no reset time attached parks the task
+`now + 5h` by arithmetic. Measured by hand on 2026-08-31 — a probe read the window at **0% used** and
+every task waiting on that account stayed parked, because the only question anything asked was *is it
+time yet*.
+
+`quotaReleaseFor()` is the second test, held to exactly the dispatch gate's standard: the reading must
+exist, be fresh (`stale` is an age test), describe a window that has not since rolled over, and sit
+below `QUOTA_HIGH_WATER`. ⛔ An **expired** window releases on its own terms — that is the thing the
+task was waiting for. Anything looser would release a task the next tick would immediately hold again.
+
+### ⛔ A window's pool survives being stored (2026-08-31)
+
+`QuotaWindow.group` is what `sessionWindowFor` finds a task's own pool by, and it was parsed, carried
+through the adapter, and then **dropped on the way into `quota_samples`** — so every reader that goes
+through the store (which is every gate) saw windows with no group and silently fell back to the
+*busiest* pool on the account. The per-pool logic was measured against in-memory windows on
+2026-08-27 and was inert against stored ones from that day until migration 26 added the column.
+
 ### ⛔ An account that cannot authenticate is not asked again (2026-08-27)
 
 Rung 0 is free in tokens and **not** free in processes: it opens a real interactive session and types

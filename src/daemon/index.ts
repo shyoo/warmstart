@@ -20,6 +20,7 @@ import {
   noteTurnStatus,
   onSessionExit,
   onStreamResult,
+  probeDemand,
   reconcileTasks,
   startScheduler,
   stopScheduler
@@ -168,11 +169,21 @@ async function main(): Promise<void> {
   // probe that account?" had no answer anywhere in the app.
   onLog((entry) => emit({ type: 'log', ...entry }))
 
-  const poller = new QuotaPoller((quota) => emit({ type: 'quota.changed', quota }))
+  // ⛔ The poller no longer runs on a fixed interval. It asks the scheduler what the fleet is doing
+  // and paces itself: the active cadence while a run is in flight, the idle one when nothing is, and
+  // a look thirty seconds after any parked task's window is due back. `probeDemand` is passed in
+  // rather than imported by `quota.ts` so the module that decides *when to look* stays out of the
+  // module that decides *what to run*.
+  const poller = new QuotaPoller((quota) => emit({ type: 'quota.changed', quota }), {
+    demand: probeDemand
+  })
   poller.start()
   onSettingChange((key, value) => {
     if (key === 'probeIntervalMinutes' && typeof value === 'number') {
       poller.setIntervalMinutes(value)
+    }
+    if (key === 'idleProbeIntervalMinutes' && typeof value === 'number') {
+      poller.setIdleIntervalMinutes(value)
     }
   })
   startScheduler()

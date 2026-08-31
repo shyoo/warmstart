@@ -802,6 +802,23 @@ const MIGRATIONS: string[] = [
   `
   alter table tasks add column hold_until integer;
   alter table tasks add column quota_override_until integer;
+  `,
+
+  // 26 - ⛔ **Which pool a window belongs to, kept.** The whole per-pool gate rests on
+  // `QuotaWindow.group` — Antigravity meters Gemini apart from Claude/GPT, and `sessionWindowFor`
+  // finds a task's own window by asking which group it is in. That field was parsed, carried
+  // through the adapter, used once, and then **dropped on the way into this table**, so every
+  // reader that goes through the store (which is every gate: `chooseTarget`, the mid-run watchdog,
+  // the resume check) saw windows with no group and silently fell back to the *busiest* pool.
+  //
+  // ⚠️ The effect was a refusal with no cause, and an invisible one: a Gemini task held out because
+  // the Claude/GPT window was nearly spent, on pools that do not share. The pool logic was measured
+  // against in-memory windows on 2026-08-27 and has been inert against stored ones ever since.
+  //
+  // ⛔ Nullable, and null keeps its meaning: a single-pool provider's window has no group and must
+  // not acquire one.
+  `
+  alter table quota_samples add column window_group text;
   `
 ]
 

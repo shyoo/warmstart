@@ -2,13 +2,22 @@ import type { Project, QuestionOption, Run, RunQuota, Task, TaskStatus } from '@
 import { policyVerifies, resolveCompletionMode, resolveModelChoice } from '@shared/tasks.js'
 import type { QuotaWindow, Session, Worker } from '@shared/protocol.js'
 import { adapter } from './adapters/index.js'
-import { ensureFreshQuota, lastQuota, refreshUsage, sessionWindowFor, windowExpired } from './quota.js'
+import type { ProbeDemand } from './quota.js'
+import {
+  ensureFreshQuota,
+  lastQuota,
+  refreshUsage,
+  requestUrgentProbe,
+  sessionWindowFor,
+  windowExpired
+} from './quota.js'
 import { getWorker, listWorkers, recordDispatchFailure } from './workers.js'
 import { accountUnavailability } from './eligibility.js'
 import { getProject, policyFor, reloadProject } from './projects.js'
 import {
   admitDependents,
   admitScheduled,
+  quotaParkedTasks,
   resumeQuotaPaused,
   addMessage,
   finishRun,
@@ -285,7 +294,10 @@ export async function tick(): Promise<TickResult> {
   // ⛔ Beside `admitScheduled` and not inside it, because the two read different statuses. A task
   // parked for a quota window is the one kind of hold that ends on a clock rather than on a person,
   // and until this call existed nothing anywhere put one back (t60, 2026-08-31).
-  resumeQuotaPaused()
+  //
+  // ⚠️ And a clock is not the only way that hold ends. `quotaReleaseFor` is what lets a *measured*
+  // reading beat the estimate the park was made on — see it for the failure that made it necessary.
+  resumeQuotaPaused(quotaReleaseFor)
   escalateStale()
   // ⛔ Before dispatching anything: a window about to close, or a run past its estimate, is a cost
   // event that outranks starting new work.
@@ -467,6 +479,88 @@ function runQuota(workerId: string): RunQuota | null {
     windows: quota.windows.map((w) => ({ id: w.id, label: w.label, percent: w.percent })),
     sampledAt: quota.sampledAt,
     stale: quota.stale
+  }
+}
+
+/**
+ * Has the window a task is parked on actually come back, whatever its timer says?
+ *
+ * ⛔ **The bug this closes.** A quota park carries `not_before`, and on the overrun path that value
+ * can be a guess: a rate-limit warning with no reset time attached parks the task `now + 5h` by
+ * arithmetic. Measured by hand on 2026-08-31 — a probe read the window at 0% used and every task
+ * waiting on that account stayed `paused_quota`, because the only question anything asked was *is
+ * it time yet*, never *is there room now*.
+ *
+ * ⚠️ Held to the same standard as a dispatch, not a looser one. The reading must exist, must be
+ * fresh (`stale` is an age test), must not describe a window that has since rolled over, and must
+ * sit below the same `QUOTA_HIGH_WATER` the gate uses — otherwise a task released here would be
+ * held again on the very next tick, which is worse than staying parked because it costs a message
+ * every time. ⛔ An **expired** window is a release on its own terms: `windowExpired` means the
+ * window this reading counted no longer exists, which is exactly what the task was waiting for.
+ *
+ * ⛔ **`quotaOverrideUntil` is deliberately not consulted here.** A person overruling the water mark
+ * lifts the *dispatch cut* and the matching mid-run preempt, and explicitly not the window boundary
+ * — and a `paused_quota` park is the window boundary. Reading it here would turn "92% is enough for
+ * this task" into "start again inside a window the fleet was wrapped up to survive", which is a
+ * different permission from the one that was granted.
+ *
+ * Returns the sentence the operator reads on the task, or null to leave it parked.
+ */
+export function quotaReleaseFor(task: Task): string | null {
+  const workerId = task.ranOn ?? task.assignee ?? null
+  if (!workerId) return null
+  const worker = getWorker(workerId)
+  if (!worker) return null
+
+  const quota = lastQuota(workerId)
+  if (!quota || quota.stale || quota.windows.length === 0) return null
+
+  const choice = resolveModelChoice(task.constraints, worker, false, quota)
+  const window = sessionWindowFor(quota.windows, poolFor(worker, choice.model))
+  if (!window) return null
+
+  const age = Math.round(quota.ageMs / 1000)
+  if (windowExpired(window)) {
+    return `${worker.label}'s ${window.label ?? '5h'} window has rolled over since this was parked.`
+  }
+  if (window.percent < QUOTA_HIGH_WATER) {
+    return (
+      `${worker.label} is at ${Math.round(window.percent)}% of its ${window.label ?? '5h'} window ` +
+      `on a reading ${age}s old, which is below the ${QUOTA_HIGH_WATER}% gate.`
+    )
+  }
+  return null
+}
+
+/**
+ * What the quota poller needs to know to decide when to look next.
+ *
+ * ⭐ Two facts, both of which live here and neither of which the poller can derive: which accounts
+ * have a run in flight (their windows are the only ones moving, so they get the *active* cadence and
+ * a real refresh rather than a re-read), and which accounts a parked task is waiting on, so the
+ * fleet looks at one the moment its window is due back instead of whenever the interval next comes
+ * round.
+ *
+ * ⚠️ A parked task with no worker and no time contributes nothing: there is no account to look at
+ * and no moment to look at it.
+ */
+export function probeDemand(): ProbeDemand {
+  const activeWorkerIds = [
+    ...new Set(
+      listTasks()
+        .filter((t) => t.status === 'running')
+        .flatMap((t) => runsFor(t.id).filter((r) => !r.endedAt).map((r) => r.workerId))
+    )
+  ]
+  const releases = new Map<string, number>()
+  for (const parked of quotaParkedTasks()) {
+    if (!parked.workerId || parked.at === null) continue
+    const soonest = releases.get(parked.workerId)
+    if (soonest === undefined || parked.at < soonest) releases.set(parked.workerId, parked.at)
+  }
+  return {
+    activeWorkerIds,
+    releases: [...releases].map(([workerId, at]) => ({ workerId, at }))
   }
 }
 
@@ -2052,13 +2146,32 @@ async function preempt(
     log.warn(`could not send the wrap-up for t${task.seq}:`, err)
   }
 
+  // ⛔ The evidence, not just the verdict. A run wrapped up for being at the top of its window while
+  // the fleet card over it read 63% is the single most confusing thing this scheduler can do (t70),
+  // and the cause is that the two numbers come from different rungs: the trigger can be a *live*
+  // signal riding the turn, the card is the last cached reading. Both go in the message.
+  const shown = because === 'runaway' ? null : lastQuota(run?.workerId ?? session.workerId)
+  const shownLine =
+    shown && shown.windows.length
+      ? ' The last cached reading for this account was ' +
+        shown.windows.map((x) => `${x.label ?? x.id} ${Math.round(x.percent)}%`).join(' · ') +
+        ` (${Math.round(shown.ageMs / 60000)}m old${shown.stale ? ', stale' : ''}), which is why the ` +
+        'fleet card may show a lower number than the one that stopped this run; a fresh reading has ' +
+        'been asked for.'
+      : ''
   addMessage(
     task.id,
     'system',
     because === 'runaway'
       ? 'Preempted: this run was well past its estimate.'
-      : `Preempted before the quota window closes (${because}). Resuming automatically after the reset.`
+      : `Preempted before the quota window closes (${because}). Resuming automatically after the ` +
+        `reset, expected ${new Date(resumeAt).toISOString()}.${shownLine}`
   )
+  // ⭐ Go and make the displayed number true. The probe itself is the poller's job and its gates
+  // still apply; this only says that this account is now worth looking at.
+  if (because !== 'runaway') {
+    requestUrgentProbe(run?.workerId ?? session.workerId, `a run was preempted here (${because})`)
+  }
 
   // Give the wrap-up a turn to land, then park the task so it resumes itself.
   setTimeout(() => {

@@ -255,16 +255,28 @@ const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(
 function store(s: QuotaSnapshot): void {
   const stmt = db().prepare(
     `insert or replace into quota_samples
-       (worker_id, window_id, label, percent, resets_at, source, error, sampled_at)
-     values (?, ?, ?, ?, ?, ?, ?, ?)`
+       (worker_id, window_id, label, percent, resets_at, source, error, sampled_at, window_group)
+     values (?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
   if (s.windows.length === 0) {
     // Record the failure too. A gap in the series is indistinguishable from a healthy quiet period.
-    stmt.run(s.workerId, '', '', 0, null, s.source, s.error ?? 'no windows reported', s.sampledAt)
+    stmt.run(s.workerId, '', '', 0, null, s.source, s.error ?? 'no windows reported', s.sampledAt, null)
     return
   }
   for (const w of s.windows) {
-    stmt.run(s.workerId, w.id, w.label, w.percent, w.resetsAt, s.source, s.error ?? null, s.sampledAt)
+    // ⛔ `group` goes in. It is what `sessionWindowFor` finds a task's own pool by, and dropping it
+    // here made every gate that reads this table fall back to the busiest window on the account.
+    stmt.run(
+      s.workerId,
+      w.id,
+      w.label,
+      w.percent,
+      w.resetsAt,
+      s.source,
+      s.error ?? null,
+      s.sampledAt,
+      w.group ?? null
+    )
   }
 }
 
@@ -276,6 +288,8 @@ interface SampleRow {
   source: string
   error: string | null
   sampled_at: number
+  /** ⚠️ Null on every row written before the column existed, and on every single-pool provider. */
+  window_group: string | null
 }
 
 /** The most recent sample for a worker, however old. Callers must look at `stale`. */
@@ -343,7 +357,8 @@ function sampleAt(workerId: string, at: number | null): DatedQuota | null {
       id: r.window_id,
       label: r.label,
       percent: r.percent,
-      resetsAt: r.resets_at
+      resetsAt: r.resets_at,
+      ...(r.window_group ? { group: r.window_group } : {})
     })),
     sampledAt: first.sampled_at,
     source: first.source as QuotaSnapshot['source'],
@@ -428,6 +443,16 @@ export function recordRateLimit(
 
   if (info.status !== 'allowed') {
     log.warn(`worker ${workerId.slice(0, 8)} rate limit status is '${info.status}' (${info.rateLimitType})`)
+    // ⭐ **The side channel, connected.** This record is the vendor telling us, for free and in the
+    // middle of a paid turn, that the window it is billing against has moved somewhere worth
+    // knowing about. Recording it and stopping there is how t70 came to be preempted at the top of
+    // its window while the fleet card over it still read 63%: the gate had a new fact and the
+    // operator had an old one. Asking for a refresh here is what makes the two agree — the probe
+    // itself still happens in the poller, under the poller's gates and its cooldown.
+    requestUrgentProbe(
+      workerId,
+      `the CLI reported rate-limit status '${info.status}' on the ${info.rateLimitType} window`
+    )
   }
 }
 
@@ -565,16 +590,129 @@ export function windowResetsAt(workerId: string): { at: number; source: string }
 
 export type QuotaListener = (q: DatedQuota) => void
 
+/**
+ * How long after a parked task's release time the fleet looks at that account.
+ *
+ * ⚠️ Not zero. `resetsAt` is the vendor's own boundary and the window it describes is emptied *at*
+ * it, not before; probing on the dot reads the old window one last time and parks the task for
+ * another whole interval on a number that expired a second later.
+ */
+export const RELEASE_PROBE_GRACE_MS = 30_000
+
+/**
+ * However good the reason, never two terminals on one account inside this.
+ *
+ * ⚠️ A floor under whatever `minGapMs` a caller passes, not a replacement for `REFRESH_BACKOFF_MS`.
+ * A live rate-limit warning and a run in flight are both real reasons to look now; neither is a
+ * reason to look every ten seconds.
+ */
+const MIN_FORCED_GAP_MS = 60_000
+
+/** Even a poller with something urgent to do does not spin. */
+const MIN_DELAY_MS = 1_000
+
+/**
+ * What the fleet needs looked at right now, asked of the scheduler rather than derived here.
+ *
+ * ⛔ Injected, not imported. The poller decides *when* to look at an account; only the scheduler
+ * knows which accounts are running something and which tasks are parked on a window. Importing
+ * `tasks.js` here would put the quota module inside the task module's cycle for the sake of two
+ * lists, and would make every poller test drag the whole scheduler in behind it.
+ */
+export interface ProbeDemand {
+  /** Workers with a run in flight. Their windows are the only ones actually moving. */
+  activeWorkerIds: string[]
+  /**
+   * Every task parked on a quota window, as (worker, when it is due back).
+   *
+   * ⭐ This is what makes an automatic resume timely rather than eventual. A task parked until
+   * 06:39 used to wait for whichever background sweep happened next — up to a full interval past
+   * its own release time, on a fleet whose whole premise is unattended progress.
+   */
+  releases: Array<{ workerId: string; at: number }>
+}
+
+const NO_DEMAND: ProbeDemand = { activeWorkerIds: [], releases: [] }
+
+export interface QuotaPollerOptions {
+  /** Overrides the configured *active* cadence. Tests only; the setting is the real control. */
+  intervalMs?: number
+  /** Overrides the configured *idle* cadence. Tests only. */
+  idleIntervalMs?: number
+  demand?: () => ProbeDemand
+}
+
+// ------------------------------------------------------------------- the side channel
+
+/**
+ * Accounts something has just learned a new fact about, and why.
+ *
+ * ⭐ **The gap this closes.** A `rate_limit_event` rides a turn already being paid for and is the
+ * only quota signal that is both live and free — and until 2026-08-31 it was recorded and then sat
+ * there. So a run could be preempted at `allowed_warning` while the fleet card beside it still
+ * showed the last cached percentage, hours old and much lower: measured on t70, a card reading 63%
+ * over a run wrapped up at the top of its window. Two numbers about one account, and nothing in the
+ * app to reconcile them.
+ *
+ * ⚠️ A request, not a probe. It is drained by the poller's next sweep, which is woken immediately —
+ * so the expensive part (a process) still happens in one place, under one set of gates.
+ */
+const urgentProbes = new Map<string, string>()
+
+/** Pollers that are running, so a signal anywhere can wake the loop that acts on it. */
+const livePollers = new Set<QuotaPoller>()
+
+/**
+ * Ask for this account to be looked at now, because something just said its window moved.
+ *
+ * ⛔ Deliberately callable with no poller running: the request is stored either way and the next
+ * sweep takes it. A daemon starting up mid-signal must not lose the signal.
+ */
+export function requestUrgentProbe(workerId: string, why: string): void {
+  const existing = urgentProbes.get(workerId)
+  urgentProbes.set(workerId, existing && existing !== why ? `${existing}; ${why}` : why)
+  for (const poller of livePollers) poller.kick()
+}
+
+/** ⚠️ Test seam. What is queued and not yet serviced. */
+export function pendingUrgentProbes(): Map<string, string> {
+  return new Map(urgentProbes)
+}
+
+export function clearUrgentProbes(): void {
+  urgentProbes.clear()
+}
+
 export class QuotaPoller {
   private timer: NodeJS.Timeout | null = null
-  private intervalMs: number
+  private intervalMs: number | null
+  private idleIntervalMs: number | null
+  private readonly demand: () => ProbeDemand
+  private running = false
+  private sweeping = false
+  private resweep = false
+  /** The last release time already probed for a worker, so a due release is serviced once. */
+  private serviced = new Map<string, number>()
 
   constructor(
     private readonly listener: QuotaListener,
-    intervalMs?: number
+    options: QuotaPollerOptions = {}
   ) {
-    const configuredMinutes = settings().probeIntervalMinutes ?? 5
-    this.intervalMs = intervalMs ?? configuredMinutes * 60 * 1000
+    this.intervalMs = options.intervalMs ?? null
+    this.idleIntervalMs = options.idleIntervalMs ?? null
+    this.demand = options.demand ?? (() => NO_DEMAND)
+  }
+
+  /** The cadence while a run is in flight. */
+  private activeMs(): number {
+    return this.intervalMs ?? Math.max(1, settings().probeIntervalMinutes ?? 5) * 60_000
+  }
+
+  /** The cadence when nothing is running. ⚠️ Never faster than the active one. */
+  private idleMs(): number {
+    const configured =
+      this.idleIntervalMs ?? Math.max(1, settings().idleProbeIntervalMinutes ?? 20) * 60_000
+    return Math.max(configured, this.activeMs())
   }
 
   setIntervalMinutes(minutes: number): void {
@@ -582,24 +720,148 @@ export class QuotaPoller {
     const ms = safeMinutes * 60 * 1000
     if (this.intervalMs === ms) return
     this.intervalMs = ms
-    log.info(`quota poller interval set to ${safeMinutes}m`)
-    if (this.timer) {
-      clearInterval(this.timer)
-      this.timer = setInterval(() => void this.sweep(), this.intervalMs)
-      this.timer.unref?.()
+    log.info(`quota poller active interval set to ${safeMinutes}m`)
+    this.reschedule()
+  }
+
+  setIdleIntervalMinutes(minutes: number): void {
+    const safeMinutes = Math.max(1, Math.min(1440, minutes))
+    const ms = safeMinutes * 60 * 1000
+    if (this.idleIntervalMs === ms) return
+    this.idleIntervalMs = ms
+    log.info(`quota poller idle interval set to ${safeMinutes}m`)
+    this.reschedule()
+  }
+
+  /**
+   * When the next sweep is due, from what the fleet is actually doing.
+   *
+   * ⛔ Three inputs, and the soonest wins: something urgent (now), the cadence for the fleet's
+   * current state (active or idle), and the release time of the earliest task parked on a window.
+   * ⚠️ Public because it is the arithmetic worth testing directly — it is the whole difference
+   * between a task that comes back thirty seconds after its window resets and one that comes back
+   * in twenty minutes.
+   */
+  nextDelayMs(now = Date.now()): number {
+    if (urgentProbes.size > 0) return MIN_DELAY_MS
+    const demand = this.readDemand()
+    let delay = demand.activeWorkerIds.length > 0 ? this.activeMs() : this.idleMs()
+    for (const release of this.pendingReleases(demand, now)) {
+      delay = Math.min(delay, Math.max(0, release.at + RELEASE_PROBE_GRACE_MS - now))
     }
+    return Math.max(MIN_DELAY_MS, delay)
   }
 
   start(): void {
-    if (this.timer) return
-    void this.sweep()
-    this.timer = setInterval(() => void this.sweep(), this.intervalMs)
-    this.timer.unref?.()
+    if (this.running) return
+    this.running = true
+    livePollers.add(this)
+    void this.cycle()
   }
 
   stop(): void {
-    if (this.timer) clearInterval(this.timer)
+    this.running = false
+    livePollers.delete(this)
+    if (this.timer) clearTimeout(this.timer)
     this.timer = null
+  }
+
+  /** Something happened; look now rather than at the end of the interval. */
+  kick(): void {
+    if (!this.running) return
+    if (this.sweeping) {
+      this.resweep = true
+      return
+    }
+    if (this.timer) clearTimeout(this.timer)
+    this.timer = null
+    void this.cycle()
+  }
+
+  private reschedule(): void {
+    if (!this.running || this.sweeping) return
+    if (this.timer) clearTimeout(this.timer)
+    this.timer = setTimeout(() => void this.cycle(), this.nextDelayMs())
+    this.timer.unref?.()
+  }
+
+  private async cycle(): Promise<void> {
+    this.timer = null
+    this.sweeping = true
+    try {
+      await this.sweep()
+    } catch (err) {
+      log.warn('quota sweep failed:', err)
+    } finally {
+      this.sweeping = false
+    }
+    if (!this.running) return
+    if (this.resweep) {
+      this.resweep = false
+      void this.cycle()
+      return
+    }
+    this.timer = setTimeout(() => void this.cycle(), this.nextDelayMs())
+    this.timer.unref?.()
+  }
+
+  private readDemand(): ProbeDemand {
+    try {
+      return this.demand()
+    } catch (err) {
+      // ⚠️ Never fatal. A poller that cannot ask what the fleet is doing falls back to the idle
+      // cadence, which is the pre-2026-08-31 behaviour and is merely slower, never wrong.
+      log.warn('could not read what the fleet needs probed:', err)
+      return NO_DEMAND
+    }
+  }
+
+  /** Releases this poller has not already gone and looked at. */
+  private pendingReleases(
+    demand: ProbeDemand,
+    now: number
+  ): Array<{ workerId: string; at: number }> {
+    const live = new Set(demand.releases.map((r) => r.workerId))
+    for (const workerId of [...this.serviced.keys()]) {
+      if (!live.has(workerId)) this.serviced.delete(workerId)
+    }
+    void now
+    return demand.releases.filter((r) => this.serviced.get(r.workerId) !== r.at)
+  }
+
+  /**
+   * Why this worker is being *refreshed* rather than merely re-read, if it is.
+   *
+   * ⭐ The distinction the old sweep did not make. `probeWorker` reads a file the vendor writes on
+   * its own schedule; `refreshUsage` makes that file current. A five-minute cadence that only ever
+   * did the former is a five-minute cadence over a number that can be two hours old — which is what
+   * "the probe interval is set to 5m and the percentage does not move" actually was.
+   *
+   * ⚠️ Public for the same reason `mayRefreshUsage` is: this is the decision worth testing,
+   * and driving a sweep to reach it opens real processes against real accounts.
+   */
+  forcedRefresh(
+    workerId: string,
+    demand: ProbeDemand,
+    now: number
+  ): { why: string; release?: number } | null {
+    const urgent = urgentProbes.get(workerId)
+    if (urgent) return { why: urgent }
+
+    const due = this.pendingReleases(demand, now).find(
+      (r) => r.workerId === workerId && r.at + RELEASE_PROBE_GRACE_MS <= now
+    )
+    if (due) {
+      return { why: 'a task is parked on this window and its reset time has passed', release: due.at }
+    }
+
+    if (demand.activeWorkerIds.includes(workerId)) {
+      const last = lastQuota(workerId)
+      if (!last || last.windows.length === 0 || last.ageMs >= this.activeMs()) {
+        return { why: 'a run is in flight on this account' }
+      }
+    }
+    return null
   }
 
   /**
@@ -623,7 +885,21 @@ export class QuotaPoller {
    * schedules work - the fleet degrades to "unknown, treat conservatively" and keeps running.
    */
   async sweep(): Promise<void> {
+    // ⛔ **The sweep starts no process on its own account, and asks for one where the fleet has
+    // named a reason.** Those are the same rule rather than two: a terminal is worth spending
+    // exactly when something is about to act on the number. A run in flight *is* acting on it; a
+    // task parked on a window whose reset has passed is about to; a live rate-limit warning has just
+    // changed it. An account nobody is routing work to is none of those and keeps the reading it
+    // has — which is what retiring the refresh clock (2026-08-31) was for.
+    const now = Date.now()
+    const demand = this.readDemand()
+
     for (const w of listWorkers()) {
+      // ⛔ The queued request is consumed with the worker it names, serviceable or not. A signal
+      // about an account nobody may probe must not sit in the queue forever holding the loop at its
+      // floor.
+      const forced = this.forcedRefresh(w.id, demand, now)
+      urgentProbes.delete(w.id)
       if (w.retiredAt || !w.enabled || w.health?.state === 'suspect') continue
       try {
         // ⚠️ Identity is a cached belief and nothing used to expire it. ClaudeFirst read "not signed
@@ -631,6 +907,22 @@ export class QuotaPoller {
         // was written before somebody signed in and only a button nobody knew about would have
         // corrected it. Free: a local subprocess, and only when the answer is genuinely old.
         await refreshIdentityIfStale(w.id, IDENTITY_STALE_AFTER_MS)
+
+        // ⚠️ Marked serviced whether or not a terminal opens. Otherwise the poller holds itself at
+        // its floor forever, re-deciding every second that an account it may not touch is overdue.
+        if (forced?.release !== undefined) this.serviced.set(w.id, forced.release)
+
+        if (forced) {
+          // ⛔ Through the same ledger the dispatch gate uses, so two reasons to refresh one account
+          // inside a minute open one terminal between them rather than two. The floor is the
+          // caller's: see `refreshNow` and `forcedGapMs`.
+          if (await refreshNow(w.id, this.forcedGapMs(forced))) {
+            log.info(`refreshed ${w.label}'s quota: ${forced.why}`)
+            const reading = lastQuotaReading(w.id)
+            if (reading) this.listener(reading)
+            continue
+          }
+        }
         // ⛔ An adapter whose usage is screen-answered writes no cache to disk: `probeQuota` returns
         // empty windows with an error. Running it here would wipe out the last successful reading and
         // replace it with `quota unknown` every five minutes.
@@ -650,6 +942,17 @@ export class QuotaPoller {
     }
   }
 
+  /**
+   * How long this account may go between forced refreshes, by the reason it is being refreshed for.
+   *
+   * ⭐ A run in flight is watched at the cadence the operator chose, because that is the account
+   * whose window is moving and the reason the control exists at all. A one-off — a release that has
+   * come due, a live warning — takes the floor: asking twice inside a minute cannot produce a
+   * different answer.
+   */
+  private forcedGapMs(forced: { release?: number }): number {
+    return forced.release === undefined ? this.activeMs() : MIN_FORCED_GAP_MS
+  }
 }
 
 /**
@@ -699,19 +1002,54 @@ const refreshAttempts = new Map<string, RefreshAttempt>()
  * scheduler tick that calls this is on a ten-second loop that must not block behind it.
  */
 export function ensureFreshQuota(workerId: string): boolean {
-  if (!mayRefreshUsage(workerId)) return false
-
-  const prior = refreshAttempts.get(workerId)
-  if (prior?.inFlight) return true
-  if (prior && Date.now() - prior.at < REFRESH_BACKOFF_MS) return false
-
-  refreshAttempts.set(workerId, { at: Date.now(), inFlight: true })
+  const claim = claimRefresh(workerId, REFRESH_BACKOFF_MS)
+  if (claim !== 'start') return claim === 'in-flight'
   void refreshUsage(workerId)
     .catch((err: unknown) => log.warn(`quota refresh failed for ${workerId}:`, err))
-    // ⚠️ Timed from when it *finished*, not when it started, so a refresh that took half a minute
-    // does not have that half minute counted against its own backoff.
-    .finally(() => refreshAttempts.set(workerId, { at: Date.now(), inFlight: false }))
+    .finally(() => endRefresh(workerId))
   return true
+}
+
+/**
+ * The same request, awaited, for the one caller that is allowed to wait: the poller's own sweep.
+ *
+ * ⛔ **Not a second policy — the same ledger.** A dispatch gate and a sweep can want one account
+ * refreshed within seconds of each other, and two ledgers would open two terminals on it.
+ *
+ * ⚠️ `minGapMs` is the caller's floor rather than a fixed ten minutes, and that is the only place
+ * the two rungs differ. Ten minutes is right for *a task is about to run here* — asked again a
+ * minute later the answer has not moved. It is wrong for an account with a run **in flight**, which
+ * is the one window actually moving and the one the operator chose a cadence for.
+ * ⛔ Never below `MIN_FORCED_GAP_MS`, so no setting can turn this into a terminal per sweep.
+ */
+export async function refreshNow(workerId: string, minGapMs = REFRESH_BACKOFF_MS): Promise<boolean> {
+  if (claimRefresh(workerId, Math.max(MIN_FORCED_GAP_MS, minGapMs)) !== 'start') return false
+  try {
+    await refreshUsage(workerId)
+  } catch (err) {
+    log.warn(`quota refresh failed for ${workerId}:`, err)
+  } finally {
+    endRefresh(workerId)
+  }
+  return true
+}
+
+/** ⛔ The whole of "may we, and is it worth it?", in one place, for both rungs. */
+function claimRefresh(workerId: string, minGapMs: number): 'start' | 'in-flight' | 'too-soon' | 'no' {
+  if (!mayRefreshUsage(workerId)) return 'no'
+  const prior = refreshAttempts.get(workerId)
+  if (prior?.inFlight) return 'in-flight'
+  if (prior && Date.now() - prior.at < minGapMs) return 'too-soon'
+  refreshAttempts.set(workerId, { at: Date.now(), inFlight: true })
+  return 'start'
+}
+
+/**
+ * ⚠️ Timed from when it *finished*, not when it started, so a refresh that took half a minute does
+ * not have that half minute counted against its own backoff.
+ */
+function endRefresh(workerId: string): void {
+  refreshAttempts.set(workerId, { at: Date.now(), inFlight: false })
 }
 
 /** Test seam: the attempt ledger is process-local state, and a test that seeds a fleet needs it empty. */

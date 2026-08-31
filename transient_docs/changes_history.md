@@ -4,6 +4,66 @@ What earlier milestones **measured**, and what each measurement cost the design.
 `HANDOFF.md`, which is current state rather than a changelog. ⛔ Durable facts live in
 `docs/cost-model.md`; this file keeps the reasoning and the dates.
 
+## Two numbers about one account, and nothing to reconcile them (2026-08-31, t70)
+
+t70 was wrapped up at the top of its five-hour window while the fleet card over that account read
+**63%**. Both numbers were honestly reported. The trigger was a live `rate_limit_event` riding a turn
+already being paid for; the card was the last thing the vendor happened to write to its own cache.
+The operator's question — *why did that stop?* — had no answer anywhere in the app.
+
+Pulling on it found four separate faults, and a fifth beside them:
+
+1. **The "5-minute probe interval" was a five-minute re-read of a file somebody else writes.**
+   `probeWorker` reads `cachedUsageUtilization`; only `refreshUsage` makes it current, and that was
+   behind a two-hour floor for *every* account. The floor was right — 150 probe PTY sessions against
+   14 that did work, measured over four days — but it was applied to the one account whose window was
+   actually moving. A worker with a run in flight is now refreshed on the active cadence; an idle one
+   is not refreshed by any clock at all and gets its own, slower *re-read* setting
+   (`idleProbeIntervalMinutes`, 20m). The poller no longer runs on `setInterval`: it asks
+   `probeDemand()` what the fleet is doing and computes its next delay.
+
+   ⭐ **This met `main`'s answer to the same problem in the rebase, and the two agree.** 225751c had
+   already deleted the sweep's refresh clock outright and moved freshness to `ensureFreshQuota()` at
+   the dispatch gate and at the end of a run, backing off on the *attempt* rather than the reading's
+   age. That is the same rule from the other end — spend a terminal when something is about to act on
+   the number — so the merged code keeps one ledger (`refreshAttempts`) with two entry points:
+   `ensureFreshQuota` (fire-and-forget, for the gate) and `refreshNow` (awaited, for the sweep, with
+   the caller's own floor under `MIN_FORCED_GAP_MS`). Nothing refreshes on a clock any more; the
+   sweep only asks when the fleet has named a reason.
+2. **The free live signal was recorded and acted on by nobody.** `recordRateLimit` wrote a row and
+   warned to the log. It now also files an urgent probe request, which wakes the poller — so the
+   number on the card catches up with the number that made the decision. A quota preemption files one
+   too, and the preemption message now quotes the cached reading *and its age* beside the trigger,
+   because "63% vs 93%" is only confusing while the two are unattributed.
+
+   ⭐ This gained a second purpose in the rebase. `main`'s later fix (*A caution read as a refusal*)
+   stopped an `allowed_warning` preempting on its own — it now needs this fleet's own reading of
+   **that window** to agree at ≥80%. Which means the advisory's real job is to make us go and look,
+   and going and looking is exactly what `requestUrgentProbe` does with it.
+3. **A parked task waited on the poller's interval, not on its own reset time.** A task due back at
+   06:39 on a 20-minute cadence was looked at whenever the sweep next came round. The poller now
+   schedules a forced refresh 30 seconds past the earliest `not_before` (`RELEASE_PROBE_GRACE_MS` —
+   not zero, because the window is emptied *at* the boundary and probing on the dot reads the old one
+   one last time).
+4. **`not_before` was the only test a park was ever released by**, and it is a *prediction* made at
+   the moment of parking — on the overrun path, `now + 5h` by arithmetic when a rate-limit warning
+   carries no reset time. Measured by hand: a probe read the window at **0% used** and every task on
+   that account stayed parked. `quotaReleaseFor` is the second test, held to exactly the dispatch
+   gate's standard (fresh, not from a window that has since rolled, below `QUOTA_HIGH_WATER`); an
+   expired window releases on its own terms. Anything looser would release a task the next tick would
+   immediately hold again, which is worse than staying parked because it costs a message every time.
+5. **`QuotaWindow.group` was dropped on the way into the store.** The per-pool gate — Antigravity
+   meters Gemini apart from Claude/GPT — was measured against in-memory windows on 2026-08-27 and has
+   been inert for every reader that goes through `quota_samples` ever since, which is every gate:
+   `sessionWindowFor` found no group and fell back to the **busiest** pool on the account. Migration
+   26 adds the column. Found by a test that seeded a two-pool reading through the store and could not
+   reproduce a behaviour the docs said had been measured.
+
+⚠️ **None of it has run in flight.** 52 unit checks cover it — `quotaprobing.test.ts` for the pacing
+and the side channel, `quotacycle.test.ts` for a fleet of parked tasks across three agents being
+released (or not) by clock, by measurement, by pool and by staleness. The durable facts are in
+`docs/cost-model.md`.
+
 ## One estimate for six agents, when they differ by 81x (2026-08-30)
 
 `estimateTask` medianed every completed run together, so the fleet had one number for "work like
