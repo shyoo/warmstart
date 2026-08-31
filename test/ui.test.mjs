@@ -933,7 +933,12 @@ try {
   await wait(1500)
   const strip = await evaluate(`document.querySelector('.fleet')?.innerText ?? ''`)
   check('a stale reading still shows its numbers', /11%/.test(strip), JSON.stringify(strip.slice(0, 90)))
-  check('and says that they are stale', /stale/i.test(strip))
+  // ⛔ **The age, not the word.** An idle account's reading is old because nothing has used the
+  // account — its window is not moving either — and printing `stale` over that sent operators to
+  // press Probe on accounts that were fine. The word is still the *gate* (`quotareading.test.ts`);
+  // it is no longer the label.
+  check('and says how old they are, rather than calling them stale', /read\s+20h ago/i.test(strip), JSON.stringify(strip.slice(0, 120)))
+  check('⛔ without the word that made old read as broken', !/stale/i.test(strip))
   check(
     'rather than calling a measured account unknown',
     !/quota unknown/i.test(strip),
