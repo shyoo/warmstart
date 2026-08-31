@@ -163,6 +163,45 @@ export function Cost({ now }: { now: number }): React.JSX.Element {
       </section>
 
       <section className="doc-section">
+        <h3>What each agent costs</h3>
+        <p className="panel-sub">
+          Learned from completed runs, priced in input-token-equivalents so cache reads count for
+          what they cost rather than for how many there were. The estimator multiplies a
+          fleet-neutral task size (
+          <span className="num">{tokens(report.costFactors.neutralPriced)}</span> priced) by these.
+        </p>
+        {report.costFactors.keys.length === 0 ? (
+          <p className="dim">Nothing has completed yet, so every agent is assumed to cost the same.</p>
+        ) : (
+          <table className="tbl">
+            <tbody>
+              {report.costFactors.keys.map((k) => (
+                <tr key={`${k.adapterId}/${k.model ?? '?'}`}>
+                  <td className="tbl-strong">{k.adapterId}</td>
+                  <td>{k.model ?? <span className="dim">model not recorded</span>}</td>
+                  <td className="num tbl-num">×{k.factor.toFixed(2)}</td>
+                  <td className="num tbl-num">{tokens(k.medianPriced)}</td>
+                  <td className="dim">
+                    {k.samples} run{k.samples === 1 ? '' : 's'} · measured ×{k.ratio.toFixed(2)}
+                    {k.assumed ? ' · cache multipliers assumed' : ''}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        <p className="note">
+          <strong>Read the sample count, not just the multiplier.</strong> Each factor is pulled
+          toward 1 by how little has been measured, so a key with three runs shows about a third of
+          its apparent ratio — the measured column is what the data said before that. Nothing here
+          separates <em>this agent is expensive</em> from <em>this agent gets the big tasks</em>: no
+          task has yet run on two different agents. Warm starts are divided out first (currently ×
+          {report.costFactors.warmFactor.toFixed(2)} warm from {report.costFactors.warmSamples} runs,
+          ×{report.costFactors.coldFactor.toFixed(2)} cold from {report.costFactors.coldSamples}).
+        </p>
+      </section>
+
+      <section className="doc-section">
         <h3>What it has done</h3>
         <p className="panel-sub">
           Median time you take to answer:{' '}

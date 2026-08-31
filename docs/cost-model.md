@@ -619,9 +619,55 @@ runs and the estimator's picture of "work like this" gets *shorter*, not more ac
 
 This is why `settings.autoRunawayStop` ships **off** and `settings.autoPreempt` ships **on**: a
 window reset time is measured, an overrun factor in raw tokens is inferred from a metric that does
-not mean what the gate needs it to mean. Turning the switch on is the operator's call until the
-factor is computed in cost — the cost model already prices cache reads separately, so the arithmetic
-exists; nothing has wired it into `overrunFactor` yet.
+not mean what the gate needs it to mean.
+
+### Both halves of that were fixed on 2026-08-30, and the switch still ships off
+
+`overrunFactor` now divides **priced** cost by an estimate **for the run's own agent and model**.
+`CostModel.priceRun` is where the arithmetic lives, per §8.
+
+The second half is the larger one. Measured on this install, 2026-08-30, 73 completed runs, median
+**total tokens** per run by the run's `(adapter, model)`:
+
+| adapter / model | completed runs | median total | median priced | warm starts |
+|---|---:|---:|---:|---:|
+| antigravity-cli / gemini-3.7-flash-medium | 35 | 12,477,352 | 2,033,366 | 7 |
+| antigravity-cli / (model unrecorded) | 17 | 8,630,903 | 1,431,917 | 3 |
+| antigravity-cli / claude-sonnet-4-6 | 1 | 7,656,282 | 1,078,598 | 0 |
+| claude-code / claude-opus-5 | 3 | 2,672,121 | 305,605 | 1 |
+| openai-compatible / (unrecorded) | 3 | 322,805 | 61,490 | 0 |
+| claude-code / claude-sonnet-5 | 14 | 153,091 | 21,948 | 8 |
+
+⛔ **81x between the two best-sampled keys, and 93x priced — so pricing does not explain it.** The old
+single median (2,921,371 raw) sat between the humps and described neither: every Antigravity run
+started life at ~4x its estimate before doing anything unusual, against a watchdog that fires at 3x,
+while a Sonnet run could not reach 3x by being genuinely wasteful. `estimateTask` now answers
+`size(task) × factor(adapter, model)`; running the new estimator over that same snapshot gives:
+
+| key | n | factor | estimate for one task (raw / priced) |
+|---|---:|---:|---|
+| antigravity-cli / gemini-3.7-flash-medium | 35 | ×2.96 | 8,651,360 / 1,403,769 |
+| claude-code / claude-opus-5 | 3 | ×0.79 | 2,316,886 / 375,938 |
+| claude-code / claude-sonnet-5 | 14 | ×0.10 | 286,153 / 46,431 |
+| *fleet-neutral (what every one of them used to get)* | 73 | ×1 | 2,921,371 / 474,022 |
+
+⚠️ **Three things about those factors are load-bearing, and all three are in `estimator.ts`.**
+Factors are shrunk toward 1 in **log space** by `n/(n+5)` — linear shrinkage flattened the measured
+80x spread to 5x, because ×8 and ×⅛ are the same distance from 1 only multiplicatively. They are
+measured against the fleet's **geometric mean**, not its median: run counts are lopsided (35 against
+14) and a pooled median lands inside whichever hump is busier. And warmth is divided out first
+(measured ×0.92 warm over 19 runs, ×1.21 cold over 47), because 8 of Sonnet's 14 completed runs were
+warm against 1 of Opus's 3.
+
+⛔ **What none of this measures: zero of the 54 tasks with runs has ever run on two different keys.**
+Nothing in this data separates *that agent is expensive* from *that agent gets the big tasks*. The
+shrinkage and the published sample counts are the honest response to that, not a fix for it.
+
+⚠️ Google and OpenAI publish no cache multipliers (§12), so their runs are priced with Anthropic's
+standing in — `priceRun` marks those results `assumed` and the Cost screen says so on the row. And
+the estimate still cannot correct itself: the sample query reads `outcome = 'completed'` as it always
+did, so a preempted run contributes nothing and stopping long runs makes the picture of "work like
+this" *shorter*, not more accurate. Turning `autoRunawayStop` on remains the operator's call.
 
 ---
 

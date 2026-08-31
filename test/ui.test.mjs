@@ -739,6 +739,12 @@ try {
     'shows cache clock and reserves sections',
     /cache clock/i.test(costPanel) && /save what it holds/i.test(costPanel)
   )
+  check(
+    'it says what each agent costs, or that nothing has been measured yet',
+    /what each agent costs/i.test(costPanel) &&
+      (/×\d/.test(costPanel) || /nothing has completed yet/i.test(costPanel)),
+    'the estimator multiplies by these; a multiplier nobody can see is a multiplier nobody can check'
+  )
 
   section('controller')
   // Controller has its own destination under Overview in the sidebar.

@@ -798,6 +798,8 @@ interface RunRow {
   quota_before_json: string | null
   quota_after_json: string | null
   started_warm: number | null
+  adapter_id?: string | null
+  model?: string | null
   trunk_sha_before?: string | null
   prompt?: string | null
 }
@@ -824,6 +826,8 @@ function toRun(r: RunRow): Run {
     // ⛔ Null is not false. Every run that predates the column recorded nothing, and saying `cold`
     // for those would be a measurement nobody took.
     startedWarm: r.started_warm === null ? null : r.started_warm === 1,
+    adapterId: r.adapter_id ?? null,
+    model: r.model ?? null,
     prompt: r.prompt ?? null
   }
 }
@@ -870,11 +874,13 @@ export function startRun(input: {
   prompt?: string | null | undefined
 }): Run {
   const id = randomUUID()
+  const key = runKey(input.workerId, input.sessionId)
   db()
     .prepare(
       `insert into runs (id, task_id, project_id, session_id, worker_id, started_at,
-                         quota_unverified, cost_model_id, started_warm, trunk_sha_before, prompt)
-       values (?,?,?,?,?,?,?,?,?,?,?)`
+                         quota_unverified, cost_model_id, started_warm, adapter_id, model,
+                         trunk_sha_before, prompt)
+       values (?,?,?,?,?,?,?,?,?,?,?,?,?)`
     )
     .run(
       id,
@@ -886,6 +892,11 @@ export function startRun(input: {
       input.quotaUnverified ? 1 : 0,
       input.costModelId,
       input.startedWarm === undefined ? null : input.startedWarm ? 1 : 0,
+      // ⛔ Stamped here rather than joined later. The session this run is about to use will be closed
+      // and eventually rewritten; the record of who spent the tokens has to outlive it, because the
+      // estimator's per-agent factor is only as good as the key on the oldest run it can still read.
+      key.adapterId,
+      key.model,
       input.trunkShaBefore ?? null,
       input.prompt ?? null
     )
@@ -894,10 +905,46 @@ export function startRun(input: {
   return run
 }
 
+/**
+ * Which agent and model a run is about to be charged to.
+ *
+ * ⚠️ The model is read from the session and is often still null at dispatch: Antigravity names its
+ * own model on the transcript's first usage record, so nothing knows it until a turn has landed.
+ * `finishRun` asks again. Null after that is a real answer - a run that never said what it was.
+ */
+function runKey(workerId: string, sessionId: string | null): {
+  adapterId: string | null
+  model: string | null
+} {
+  const session = sessionId
+    ? (db().prepare('select adapter_id, model from sessions where id = ?').get(sessionId) as
+        | { adapter_id: string; model: string | null }
+        | undefined)
+    : undefined
+  if (session) return { adapterId: session.adapter_id, model: session.model }
+  const worker = db().prepare('select adapter_id from workers where id = ?').get(workerId) as
+    | { adapter_id: string }
+    | undefined
+  return { adapterId: worker?.adapter_id ?? null, model: null }
+}
+
 export function finishRun(id: string, outcome: RunOutcome, note?: string): Run {
   db()
     .prepare('update runs set ended_at = ?, outcome = ?, note = coalesce(?, note) where id = ?')
     .run(Date.now(), outcome, note ?? null, id)
+  // ⛔ Asked a second time, because the first answer was taken before the run had spoken. A session
+  // learns its model from the transcript, so on every provider that names its own this is where the
+  // key is actually filled in. `coalesce` never overwrites what dispatch already knew.
+  db()
+    .prepare(
+      `update runs
+          set adapter_id = coalesce(adapter_id,
+                (select s.adapter_id from sessions s where s.id = runs.session_id)),
+              model = coalesce(model,
+                (select s.model from sessions s where s.id = runs.session_id))
+        where id = ?`
+    )
+    .run(id)
   const run = requireRun(id)
   emit({ type: 'run.changed', run })
   return run

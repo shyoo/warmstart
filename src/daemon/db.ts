@@ -708,6 +708,39 @@ const MIGRATIONS: string[] = [
   // them (decompose, triage, gate) never set it.
   `
   alter table consults add column detail text;
+  `,
+
+  // 23 - which agent and which model actually spent a run's tokens.
+  //
+  // ⛔ Measured on this install 2026-08-30, 73 completed runs: the median run on
+  // `antigravity-cli/gemini-3.7-flash-medium` totalled 12,477,352 tokens against 153,091 on
+  // `claude-code/claude-sonnet-5` — **81x**, and 93x after pricing. One median across all of them,
+  // which is what `estimateTask` computed until now, is a central tendency of nothing: it called
+  // every agy run a runaway before it had done anything unusual and under-estimated every one of
+  // them for the parent-budget gate. The estimator cannot condition on a key it cannot read.
+  //
+  // ⛔ Denormalised out of `sessions` on purpose, and this is the whole reason the columns exist.
+  // Runs are never deleted, sessions are closed and rewritten constantly, and 17 of the 52
+  // Antigravity runs on this install had already lost their model that way. The record of what a run
+  // cost must not depend on the conversation still being there.
+  //
+  // ⚠️ `model` stays null on runs whose session never learned one. Antigravity names its own model
+  // on the transcript's first usage record, so a run that died before saying anything has no answer
+  // — and null is that answer. `estimateTask` falls back to the adapter-only key for those.
+  `
+  alter table runs add column adapter_id text;
+  alter table runs add column model text;
+
+  update runs
+     set adapter_id = (select s.adapter_id from sessions s where s.id = runs.session_id),
+         model      = (select s.model      from sessions s where s.id = runs.session_id)
+   where session_id is not null;
+
+  update runs
+     set adapter_id = (select w.adapter_id from workers w where w.id = runs.worker_id)
+   where adapter_id is null;
+
+  create index runs_key on runs(adapter_id, model, outcome, started_at desc);
   `
 ]
 

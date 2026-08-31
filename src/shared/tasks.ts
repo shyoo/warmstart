@@ -384,6 +384,16 @@ export interface Run {
   cacheReadTokens: number
   cacheWriteTokens: number
   costModelId: string | null
+  /**
+   * Which agent and model spent this run's tokens, stamped on the run rather than joined from the
+   * session that has since been closed.
+   *
+   * ⚠️ Both are nullable. `adapterId` is null only on runs that predate the column; `model` is null
+   * there too, and on any run whose session never learned one. The estimator treats a null model as
+   * "this adapter, model unknown" and falls back a rung rather than inventing one.
+   */
+  adapterId: string | null
+  model: string | null
   note: string | null
   /**
    * The account's own window, read either side of this run.

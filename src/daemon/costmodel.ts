@@ -84,6 +84,24 @@ export interface PriceableSession {
 /** Output is billed at 5x input; costs below are in input-token-equivalents. cost-model.md §3. */
 const OUTPUT_MULTIPLE = 5
 
+/**
+ * Standing in for a multiplier nobody has published, on the providers that publish none.
+ *
+ * ⛔ Not a measurement, and `priceRun` says so on every result it uses them for. They are Anthropic's
+ * numbers (§1) reused, chosen because they are the only cache multipliers this repo has ever
+ * verified. Replace them with a provider's own the day it publishes them — cost-model.md §12 Owed.
+ */
+const ASSUMED_CACHE_READ = 0.1
+const ASSUMED_CACHE_WRITE = 1.25
+
+/** The four counters a run (or a turn) records. */
+export interface RunUsage {
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
+}
+
 export class CostModel {
   readonly id: string
   readonly provider: string
@@ -144,6 +162,39 @@ export class CostModel {
       multiplier * (session.contextTokens ?? 0) +
       OUTPUT_MULTIPLE * this.data.compaction.summary_output_tokens
     )
+  }
+
+  /**
+   * What a whole run cost, in input-token-equivalents.
+   *
+   * ⛔ The unit every cross-agent comparison is made in, and the reason it lives here rather than in
+   * the estimator: raw metered totals are 92-98% cache reads (cost-model.md §10), billed at a
+   * fraction, so summing the four counters compares run *length*, not spend.
+   *
+   * ⚠️ `assumed` is the honest half. Anthropic sells a read multiplier and this prices against it.
+   * Google and OpenAI are `unpriced` here — Google bills cache storage per token-hour, OpenAI caches
+   * server-side with no published client multiplier — so their cache columns are priced at
+   * `ASSUMED_CACHE_READ`, which is Anthropic's number standing in for one nobody has measured.
+   * ⛔ Every consumer must carry `assumed` through to whatever it shows a person. A ratio between an
+   * exactly-priced provider and an assumed one moves with that assumption, and a reader who cannot
+   * see it has no way to know that.
+   */
+  priceRun(usage: RunUsage): { tokens: number; assumed: boolean; basis: string } {
+    const assumed = !this.canPriceCache()
+    const read = assumed ? ASSUMED_CACHE_READ : (this.data.cache.read_multiplier as number)
+    const write = assumed ? ASSUMED_CACHE_WRITE : (this.defaultTtl()?.write_multiplier ?? ASSUMED_CACHE_WRITE)
+    const tokens =
+      usage.inputTokens +
+      OUTPUT_MULTIPLE * usage.outputTokens +
+      read * usage.cacheReadTokens +
+      write * usage.cacheWriteTokens
+    return {
+      tokens: Math.round(tokens),
+      assumed,
+      basis:
+        `input + ${OUTPUT_MULTIPLE}·output + ${read}·cache_read + ${write}·cache_write` +
+        (assumed ? ` (${this.provider} cache pricing is unpublished; multipliers assumed)` : '')
+    }
   }
 
   /** Rebuilding a lapsed prefix from nothing: a full cache write at the default TTL's multiplier. */

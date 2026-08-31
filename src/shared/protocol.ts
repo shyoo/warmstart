@@ -70,10 +70,12 @@ export interface Settings {
   /**
    * May the scheduler stop a run for going far past its token estimate? Default **false**.
    *
-   * ⚠️ Off by design, not by oversight. The estimate is a median over completed runs and the factor
-   * is measured in raw tokens — overwhelmingly cache reads, which accumulate with a session's length
-   * rather than its waste. Until that is calibrated the trigger fires on long work, not expensive
-   * work, so the operator opts in.
+   * ⚠️ Off by design, not by oversight — though for a smaller reason since 2026-08-30. The factor is
+   * now priced rather than counted, and taken against an estimate for the run's *own* agent and
+   * model, which is what stopped every Antigravity run reading as a runaway at 4x before it had done
+   * anything unusual. What is still true: the estimate learns only from runs that *completed*, so
+   * stopping long runs makes its picture of work like this shorter rather than truer. The operator
+   * opts in. cost-model.md §10.
    */
   autoRunawayStop: boolean
   /**
@@ -102,6 +104,31 @@ export interface Settings {
   probeIntervalMinutes: number
 }
 
+/** The per-agent cost scale, as the Cost screen shows it. Mirrors `estimator.ts`'s own types. */
+export interface CostFactorReport {
+  keys: Array<{
+    adapterId: string
+    /** Null is the adapter-wide rung: that agent's runs whose model was never recorded. */
+    model: string | null
+    samples: number
+    medianPriced: number
+    /** What the data says before shrinkage. Published so the shrinkage is visible, not implied. */
+    ratio: number
+    /** What is actually applied. */
+    factor: number
+    assumed: boolean
+  }>
+  warmFactor: number
+  coldFactor: number
+  warmSamples: number
+  coldSamples: number
+  /** The fleet's median run with every factor divided out — the unit `factor` multiplies. */
+  neutralPriced: number
+  neutralRaw: number
+  samples: number
+  assumed: boolean
+}
+
 export interface CostReport {
   generatedAt: number
   objective: Objective
@@ -124,6 +151,13 @@ export interface CostReport {
    * declined compactions is the kind of disagreement nobody trusts afterwards.
    */
   settings: Settings
+  /**
+   * What each agent and model costs relative to the fleet, learned from completed runs.
+   *
+   * ⛔ Shown with its sample count and its unshrunk ratio, never as a bare multiplier. A 12x from 35
+   * runs and a 12x from one are different claims, and the second is mostly the prior.
+   */
+  costFactors: CostFactorReport
   workers: Array<{
     workerId: string
     label: string
@@ -1194,10 +1228,25 @@ export interface RpcMap {
   'controller.drain': { params: void; result: { answered: number; note: string } }
   /** Decompose a coarse goal into draft children. Files a `plan` task, which is the unit of work. */
   'task.plan': { params: { title: string; projectId?: string | null; prompt?: string }; result: Task }
-  /** What work like this has cost before, from completed runs. Median, never mean. */
+  /**
+   * What work like this has cost before, from completed runs. Median, never mean.
+   *
+   * ⚠️ Pass a worker to get the answer *for that agent*. Without one the estimate is fleet-neutral,
+   * and on this install the two differ by 81x — see `estimator.ts`.
+   */
   'task.estimate': {
-    params: { id: string }
-    result: { tokens: number; confidence: 'none' | 'low' | 'medium' | 'high'; basis: string }
+    params: { id: string; workerId?: string }
+    result: {
+      tokens: number
+      /** The same number in input-token-equivalents, the unit comparisons are made in. */
+      pricedTokens: number
+      confidence: 'none' | 'low' | 'medium' | 'high'
+      basis: string
+      /** The agent/model multiplier applied; 1 when no worker was named or none is known yet. */
+      factor: number
+      /** True when a provider that publishes no cache multipliers was priced with assumed ones. */
+      assumed: boolean
+    }
   }
 
   'chat.history': { params: { threadId?: string } | void; result: ChatMessage[] }

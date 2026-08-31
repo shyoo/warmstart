@@ -4,6 +4,33 @@ What earlier milestones **measured**, and what each measurement cost the design.
 `HANDOFF.md`, which is current state rather than a changelog. ⛔ Durable facts live in
 `docs/cost-model.md`; this file keeps the reasoning and the dates.
 
+## One estimate for six agents, when they differ by 81x (2026-08-30)
+
+`estimateTask` medianed every completed run together, so the fleet had one number for "work like
+this" regardless of who would do it. Measured on this install, 73 completed runs: the median run on
+`antigravity-cli/gemini-3.7-flash-medium` totalled 12,477,352 tokens against 153,091 on
+`claude-code/claude-sonnet-5`. **81x, and 93x after pricing** — so this was not an accounting artefact
+of cache reads, it was the work itself.
+
+The single median (2,921,371) sat between the humps and described neither. Two consequences, both
+live: every Antigravity run stood at ~4x its estimate before doing anything unusual, against a
+runaway watchdog that fires at 3x, while a Sonnet run could not reach 3x by being genuinely wasteful;
+and the parent-budget gate admitted Antigravity children against budgets twenty times too small.
+
+The estimate is now `size(task) × factor(adapter, model)`, priced in input-token-equivalents by a new
+`CostModel.priceRun`, with `runs.adapter_id` and `runs.model` stamped on the run (migration 23) so the
+key outlives the session — 17 of this install's 52 Antigravity runs had already lost their model that
+way. Full numbers and the three pieces of arithmetic that turned out to be load-bearing (log-space
+shrinkage, a geometric rather than pooled-median centre, warmth divided out first) are in
+`docs/cost-model.md` §10 and `transient_docs/agent_cost_scale_2026-08-30.md`.
+
+⛔ **What this does not measure, and cannot yet.** Zero of the 54 tasks with runs has ever run on two
+different (adapter, model) keys. Nothing in the data separates *that agent is expensive* from *that
+agent gets the big tasks*; shrinkage by sample count and publishing the unshrunk ratio beside every
+factor is the honest response, not a fix. ⚠️ Routing was deliberately left alone for the same reason
+— the operator's call, taken 2026-08-30. The factors decide estimates and gates, not who gets the
+work.
+
 ## What M1 measured, and what it cost the design
 
 Three findings changed the code. All are in `docs/cost-model.md`; the short version:

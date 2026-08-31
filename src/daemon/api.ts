@@ -94,7 +94,7 @@ import {
 import { controllerReport, drainConsults, enqueueConsult } from './controller.js'
 import { gateQuestion, riskOf } from './judgment.js'
 import { chatHistory, resetChat, sendChat } from './chat.js'
-import { estimateTask } from './estimator.js'
+import { costFactors, estimateTask } from './estimator.js'
 import { recentClockEvents, remainingTokens, reserveState } from './reserve.js'
 import { decide, medianHumanLatencyMs } from './cacheclock.js'
 import { DEFAULT_OBJECTIVE } from './objective.js'
@@ -644,6 +644,7 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
         decisions: live.map((session) => decide(session, { objective })),
         recent: recentClockEvents(30) as CostReport['recent'],
         medianHumanLatencyMs: medianHumanLatencyMs(),
+        costFactors: costFactors(),
         settings: settings(),
         workers: listWorkers().map((w) => {
           const remaining = remainingTokens(w.id)
@@ -676,8 +677,22 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
         ...(p.prompt ? { prompt: p.prompt } : {})
       }),
     'task.estimate': (p) => {
-      const estimate = estimateTask(requireTask(p.id))
-      return { tokens: estimate.tokens, confidence: estimate.confidence, basis: estimate.basis }
+      // ⚠️ The worker is optional and the answer changes enormously with it. A caller that wants
+      // "what will this cost" without saying where has asked a fleet-neutral question and gets a
+      // fleet-neutral answer; the basis string says which it got.
+      const worker = p.workerId ? getWorker(p.workerId) : null
+      const estimate = estimateTask(
+        requireTask(p.id),
+        worker ? { adapterId: worker.adapterId } : undefined
+      )
+      return {
+        tokens: estimate.tokens,
+        pricedTokens: estimate.pricedTokens,
+        confidence: estimate.confidence,
+        basis: estimate.basis,
+        factor: estimate.factor,
+        assumed: estimate.assumed
+      }
     },
 
     'chat.history': (p) => chatHistory(p?.threadId),

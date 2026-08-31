@@ -8,8 +8,8 @@ started in CI, never run against a real agent CLI.
 if you add a line, find the one it obsoletes and cut it in the same edit. Finished work moves to
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
-**Baseline (2026-08-30, measured):** typecheck · lint · build clean · `npm test` 854/856 (2 POSIX-only
-skipped) · `test:daemon` 141/141 · `test:ui` 149/149 · `test:pack` 18/18 · L4 (opt-in) landed a real
+**Baseline (2026-08-30, measured):** typecheck · lint · build clean · `npm test` 867/869 (2 POSIX-only
+skipped) · `test:daemon` 141/141 · `test:ui` 150/150 · `test:pack` 18/18 · L4 (opt-in) landed a real
 agent commit on origin/main. Electron 44.0.0, electron-builder 26.15.3, 0 npm vulnerabilities.
 CLIs here: claude 2.1.251 · agy 1.1.22 · codex 0.151.0.
 
@@ -40,7 +40,7 @@ gaps are below. Scope: `transient_docs/implementation_plan_2026-08-24.md` §14, 
 src/daemon/            orchestratord. Runs as Electron-with-ELECTRON_RUN_AS_NODE, detached.
   index.ts             entry: lock, db, server, poller, scheduler, tailer wiring, shutdown
   server.ts  api.ts    HTTP+WS on 127.0.0.1:<random>, bearer token, typed RPC
-  db.ts                node:sqlite + numbered migrations (v21)
+  db.ts                node:sqlite + numbered migrations (v22)
   costmodel.ts         the four questions; user dir > bundled > compiled-in
   workers.ts           registry, isolation roots, retire-keeps-credentials, the fleet's display
                        order - ⛔ display only (+ workerorder.test.ts)
@@ -79,7 +79,8 @@ src/daemon/            orchestratord. Runs as Electron-with-ELECTRON_RUN_AS_NODE
                        controllerchoice.test.ts - who may be asked, and who may not)
   judgment.ts          the four events: question, closed answer set, fallback (+ judgment.test.ts)
   chat.ts              the one place the controller gets tools - a person is watching
-  estimator.ts         what a task will cost, from what tasks have cost
+  estimator.ts         what a task will cost **on a named agent**, from what tasks have cost
+                       (+ estimator.test.ts) - one median for six agents was 81x wrong
   stream.ts            stream-json records: the free live rate-limit signal
   projects.ts          .multi_agent_controller/project.json; policy committed, state private
   resources.ts         the broker - if the scheduler owns the claim, the lock is unnecessary
@@ -121,9 +122,17 @@ docs/                  cost-model.md, glossary.md, adapters.md, landing.md, sess
   scheduler balances on quota. ⚠️ **`selectableEffort` is true for `claude-code` only**.
 - ⛔ **Codex could never have completed a task, five bugs deep** (fixed 2026-08-30, `docs/adapters.md`): stdin held open against a CLI reading to EOF, `mcp: true` on an adapter that cannot register one, `turn.completed` without its terminal half — then, on t56, the landing. `landing.finishInstruction` was read with no policy check, so a `commit-and-merge` project sent codex *"Run /commit … Do not push"* — a Claude-only skill whose sixth step **is** the forbidden push; and `stall.test.ts` asserted a **host capability**, the WMI query codex's sandbox denies, so the suite went red in the worker and green on the host and the agent read that as its own regression. ⛔ And in a worktree it could not commit **at all**: `--sandbox workspace-write` forbids the trunk's `.git`, where a worktree keeps its index, objects and ref — three t56 runs, ~1.8M tokens, 30d quota 0%→34%, every commit refused at `index.lock`. `plan()` now passes `--add-dir` for each. ⚠️ **No codex task has completed yet**; t56 is the re-run that settles it, and the `--add-dir` grant is argv-proven and **unproven against a live sandbox**.
 - ⭐ **Antigravity runs, reports its quota, and resumes a conversation by id** (**R9**, measured
-  2026-08-28). ⚠️ **No Antigravity task has ever completed**: with `mcp: false` and no terminal record,
-  `awaiting_human` is honest there and R13 stands. ⛔ It restores context, not cache
-  (`cache_read_tokens: 0`).
+  2026-08-28). ⚠️ It meters differently: one aggregate usage record per run, `cache_write` always 0,
+  and cache reads that dwarf everything else — 12.5M in a median run (2026-08-30).
+- ⭐ **The estimator answers per agent and model, not one number for the fleet** (2026-08-30,
+  `docs/cost-model.md` §10). Over 73 completed runs `antigravity-cli/gemini-3.7-flash-medium` medians
+  **81x** `claude-code/claude-sonnet-5` (93x priced), so the old fleet median described neither —
+  every agy run stood at ~4x its estimate against a 3x runaway watchdog. Now
+  `size(task) × factor(adapter, model)`, priced by `CostModel.priceRun`, keyed off `runs.adapter_id`
+  and `runs.model` (**migration 23**), warmth divided out (×0.92 warm / ×1.21 cold, measured).
+  ⛔ **Routing was left alone deliberately** — zero of 54 tasks has run on two keys, so nothing
+  separates *expensive agent* from *agent that gets the big tasks*. Factors feed estimates and gates
+  only.
 - ⛔ **Nothing is proven off Windows.** CI runners carry no agent CLI, and CI is red (above). ⛔ **Unsigned**: a certificate and an Apple Developer account, not a config line.
 
 ## Next

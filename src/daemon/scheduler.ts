@@ -637,7 +637,14 @@ function chooseTarget(task: Task): WorkerChoice {
   // genuinely failed to separate two candidates AND the task is large enough that ε is worth more
   // than the turn. On a one-worker fleet, on a small task, or on any clear win, nothing is spent.
   if (!second || task.kind === 'plan') return best
-  const estimate = estimateTask(task).tokens
+  // ⚠️ For the *best* candidate, not the fleet. The floor asks "is this task big enough to be worth
+  // a controller turn", and on an agent whose runs cost 12x the fleet median the same work clears a
+  // floor it would not clear elsewhere — which is the honest answer to the question being asked.
+  const estimate = estimateTask(task, {
+    adapterId: best.worker?.adapterId ?? null,
+    ...(best.session?.model ? { model: best.session.model } : {}),
+    warm: !!best.session
+  }).tokens
   const tie = Math.abs(best.score - second.score) <= ROUTE_EPSILON
   if (!tie || estimate < ROUTE_CONSULT_FLOOR_TOKENS) return best
 

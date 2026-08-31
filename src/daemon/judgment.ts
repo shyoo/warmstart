@@ -16,7 +16,7 @@ import { getProject } from './projects.js'
 import { listWorkers } from './workers.js'
 import { costModel } from './costmodel.js'
 import { adapter } from './adapters/index.js'
-import { estimateTask } from './estimator.js'
+import { estimateTask, pessimisticOn } from './estimator.js'
 import { DEFAULT_OBJECTIVE } from './objective.js'
 import { log } from './log.js'
 
@@ -429,7 +429,11 @@ export function riskOf(task: Task): { gate: RiskGate; why: string } {
   }
   const parent = task.parentTaskId ? getTask(task.parentTaskId) : null
   const remaining = parent ? Math.max(0, parent.budget.grantedTokens - parent.budget.spentTokens) : 0
-  const estimate = estimateTask(task).tokens
+  // ⛔ Estimated against the most expensive agent the fleet has measured, not the fleet's middle.
+  // Nothing has chosen a worker at this point, and the two answers differ by 81x on this install's
+  // data (estimator.ts) — a gate fed the middle number admits Antigravity work against a budget it
+  // cannot fit in.
+  const estimate = estimateTask(task, pessimisticOn()).tokens
 
   if (parent && parent.budget.grantedTokens > 0 && estimate > remaining) {
     return {
@@ -470,7 +474,8 @@ export function gateQuestion(task: Task, why: string): string {
     `# Provenance\nlineage depth ${task.lineageDepth}, filed by an agent working on ` +
       (parent ? `t${parent.seq} "${parent.title}"` : 'an unknown task'),
     `# Authority it would run under\n${task.mandate.allowed.join(', ')}`,
-    `# Estimated cost\n${estimateTask(task).tokens} tokens (${estimateTask(task).basis})`,
+    `# Estimated cost\n${estimateTask(task, pessimisticOn()).tokens} tokens ` +
+      `(${estimateTask(task, pessimisticOn()).basis})`,
     '',
     siblings.length ? `# Other open work in this project\n${siblings.join('\n')}` : '',
     '',
@@ -574,7 +579,8 @@ export function routeQuestion(task: Task, candidates: RouteCandidate[]): string 
     '',
     `# Task t${task.seq}`,
     task.title,
-    `estimated ${estimateTask(task).tokens} tokens (${estimateTask(task).basis})`,
+    `estimated ${estimateTask(task, pessimisticOn()).tokens} tokens ` +
+      `(${estimateTask(task, pessimisticOn()).basis})`,
     '',
     '# Candidates',
     // ⚠️ Scores are on one linear, unitless scale and HIGHER WINS. Said once, in a line, because a

@@ -4,6 +4,7 @@ import type { DaemonEvent, Session } from '@shared/protocol.js'
 import { acquireLock, clearEndpoint, publishEndpoint, releaseLock } from './lock.js'
 import { closeDb, openDb } from './db.js'
 import { loadCostModels } from './costmodel.js'
+import { logCostFactors } from './estimator.js'
 import { loadAdapters } from './adapters/index.js'
 import { startServer, type DaemonServer } from './server.js'
 import { QuotaPoller } from './quota.js'
@@ -59,6 +60,11 @@ async function main(): Promise<void> {
   // dispatch that acted on it.
   const external = loadAdapters()
   if (external.loaded) log.info(`${external.loaded} adapter(s) declared in the data directory`)
+
+  // ⚠️ After the adapters, because a factor is priced by the cost model its adapter names. Logged
+  // rather than merely computed: a routing or runaway decision that looks wrong later is checked
+  // against what the fleet believed each agent cost at the time.
+  logCostFactors()
 
   const orphans = reconcileOrphans()
   if (orphans) log.info(`cleared ${orphans} session(s) left behind by a previous run`)
