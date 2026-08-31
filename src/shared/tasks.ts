@@ -679,6 +679,20 @@ export interface Consult {
   subjectTitle?: string | null
   status: ConsultStatus
   question: string
+  /**
+   * The working shown *only to a person*: the score legend and every candidate's term-by-term
+   * derivation, in full.
+   *
+   * ⛔ **Generated exactly as before, and deliberately not in `question`.** The derivation is
+   * debugging evidence - it answers "why did the arithmetic land there" for a human reading the
+   * judgment call afterwards - and putting it in the prompt charged every routing consult for
+   * fifteen lines of legend plus nine lines per candidate that the controller does not need to
+   * pick an id. The prompt now carries the totals and one line of what was weighed; this carries
+   * the rest, and nothing reads it but the UI.
+   *
+   * ⚠️ Null for kinds that have no arithmetic behind them (decompose, triage, gate).
+   */
+  detail: string | null
   workerId: string | null
   workerLabel?: string | null
   sessionId: string | null

@@ -371,6 +371,20 @@ function ConsultDetailPane({ consult: c }: { consult: Consult }): React.JSX.Elem
         </details>
       )}
 
+      {/*
+        The working behind the answer, for a person only.
+        ⛔ Deliberately *not* in the prompt above: the legend and the per-candidate term tables are
+        how a routing decision gets checked rather than believed, and the controller does not need
+        them to pick between two ids. Sending them billed every routing consult for about a hundred
+        lines it could not act on.
+      */}
+      {c.detail && (
+        <details className="consult-accordion">
+          <summary>Score derivation (not sent — debugging only)</summary>
+          <pre className="consult-accordion-body">{c.detail}</pre>
+        </details>
+      )}
+
       {c.answer !== null && c.answer !== undefined && (
         <details className="consult-accordion">
           <summary>Raw JSON answer</summary>

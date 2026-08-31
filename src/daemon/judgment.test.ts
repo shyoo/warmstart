@@ -37,6 +37,7 @@ function consultFor(kind: Consult['kind'], subjectId: string): Consult {
     subjectId,
     status: 'pending',
     question: '(not used here — this exercises applying an answer, not obtaining one)',
+    detail: null,
     workerId: null,
     sessionId: null,
     answer: null,

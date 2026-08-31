@@ -694,6 +694,20 @@ const MIGRATIONS: string[] = [
   // project changes, and one set explicitly to the same value does not.
   `
   alter table tasks add column completion_mode text not null default 'inherit';
+  `,
+
+  // 22 - the arithmetic behind a routing question, kept out of the question itself.
+  //
+  // ⛔ The score legend and each candidate's term-by-term derivation are *debugging evidence*, not
+  // instructions: a person reading a judgment call afterwards needs them to see why the numbers
+  // landed where they did, and the controller needs only the totals to pick an id. They used to be
+  // pasted into `question`, which billed every routing consult for them. Same lines, same
+  // arithmetic, stored beside the question instead of inside it.
+  //
+  // ⚠️ Nullable, and null on every row written before this: consults that have no arithmetic behind
+  // them (decompose, triage, gate) never set it.
+  `
+  alter table consults add column detail text;
   `
 ]
 

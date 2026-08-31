@@ -608,6 +608,95 @@ describe('the routing score shows its own arithmetic', () => {
   })
 })
 
+describe('the derivation is generated for a person, not sent to the controller', () => {
+  /**
+   * ⛔ **Why this exists.** The legend and the per-candidate term tables answer "why did the
+   * arithmetic land there" for somebody debugging a routing call afterwards. They are not what the
+   * controller needs to pick between two ids, and sending them charged every routing consult for
+   * roughly a hundred lines of prompt. The split is the point: same arithmetic, generated once,
+   * totals and one weighed-line in the question, the full table on `consult.detail`.
+   */
+  const term = (name: string, weight: number, value: number, sign: 1 | -1, basis = 'because') => ({
+    name,
+    weight,
+    weightFormula: `${weight} = published formula`,
+    value,
+    basis,
+    sign,
+    contribution: sign * weight * value
+  })
+
+  const breakdown = (): { total: number; terms: ReturnType<typeof term>[] } => {
+    const terms = [
+      term('cold', 1.249, 1, -1, 'no session to reuse'),
+      term('capabilityFit', 1.129, 1, 1, 'the task requires no specific capability'),
+      term('quotaRisk', 0.908, 0, -1, 'reserve verdict unknown — remaining quota % is not an input')
+    ]
+    return { total: terms.reduce((s, t) => s + t.contribution, 0), terms }
+  }
+
+  const candidate = (id: string, label: string): Parameters<
+    typeof import('./judgment.js').routeQuestion
+  >[1][number] => ({
+    worker: { id, label } as Worker,
+    score: breakdown().total,
+    warm: false,
+    note: '',
+    considered: scheduler.briefScore(breakdown()),
+    formula: scheduler.formatScore(breakdown())
+  })
+
+  const task = { id: 't', seq: 41, title: 'a large task', kind: 'work' } as Parameters<
+    typeof import('./judgment.js').routeQuestion
+  >[0]
+
+  it('names the live terms and the unmeasurable ones in a single line', () => {
+    // ⚠️ A zero term is named rather than dropped: on this fleet it is usually one that could not be
+    // read at all, and that is the finding the controller has to be able to see.
+    const brief = scheduler.briefScore(breakdown())
+    expect(brief).toContain('cold -1.249')
+    expect(brief).toContain('capabilityFit +1.129')
+    expect(brief).toContain('unmeasurable here: quotaRisk')
+    expect(brief.split('\n')).toHaveLength(1)
+  })
+
+  it('keeps the weight table and the term-by-term derivation out of the prompt', async () => {
+    const { routeQuestion } = await import('./judgment.js')
+    const q = routeQuestion(task, [candidate('w1', 'ClaudeSecond'), candidate('w2', 'Antigravity')])
+    // The intermediate working — the legend's weight formulas and the per-candidate table headers.
+    expect(q).not.toContain('How a score is built')
+    expect(q).not.toContain('why the value is that')
+    expect(q).not.toContain('= f(objective)')
+    expect(q).not.toContain('0.8 + 2.0×cost')
+  })
+
+  it('still gives the controller the totals, the scale and what was weighed', () => {
+    // ⛔ The cost saving may not cost the fix from t39–t42: two bare equal numbers with nothing to
+    // reason from is what made four consults answer from the worker labels.
+    return import('./judgment.js').then(({ routeQuestion }) => {
+      const q = routeQuestion(task, [candidate('w1', 'ClaudeSecond'), candidate('w2', 'Antigravity')])
+      expect(q).toContain('HIGHER WINS')
+      expect(q).toContain('-0.120')
+      expect(q).toContain('weighed: cold -1.249')
+      expect(q).toContain('unmeasurable here: quotaRisk')
+      expect(q).toContain('w1')
+      expect(q).toContain('w2')
+    })
+  })
+
+  it('puts the full derivation on the detail instead, legend and all', async () => {
+    const { routeDetail } = await import('./judgment.js')
+    const legend = scheduler.scoreLegend({ cost: 0.34, velocity: 0.33, quality: 0.33 })
+    const detail = routeDetail(task, [candidate('w1', 'ClaudeSecond')], legend)
+    expect(detail).toContain('How a score is built')
+    expect(detail).toContain('HIGHER WINS')
+    expect(detail).toContain('why the value is that')
+    expect(detail).toContain('remaining quota % is not an input')
+    // ⚠️ Says outright that it was not sent, so nobody debugging reads it as the prompt.
+    expect(detail).toMatch(/not sent to the controller/i)
+  })
+})
+
 describe('quota as a slope rather than a switch', () => {
   /**
    * ⛔ **The term that had stopped working.** Until 2026-08-30 `quotaRisk` was binary and both of its

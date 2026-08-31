@@ -80,6 +80,7 @@ interface ConsultRow {
   subject_id: string | null
   status: string
   question: string
+  detail: string | null
   worker_id: string | null
   session_id: string | null
   answer_json: string | null
@@ -101,6 +102,7 @@ function toConsult(r: ConsultRow): Consult {
     subjectTitle: task?.title ?? null,
     status: r.status as ConsultStatus,
     question: r.question,
+    detail: r.detail ?? null,
     workerId: r.worker_id,
     workerLabel: worker?.label ?? null,
     sessionId: r.session_id,
@@ -140,6 +142,14 @@ export interface ConsultRequest {
   kind: ConsultKind
   subjectId: string | null
   question: string
+  /**
+   * Working shown to a person and never sent to the controller.
+   *
+   * ⛔ Anything here is *evidence about how the answer was reached*, not part of the question. It is
+   * stored on the row and rendered in the judgment-call UI; nothing in `run()` reads it, which is
+   * what keeps it off the bill.
+   */
+  detail?: string
 }
 
 /**
@@ -168,10 +178,10 @@ export function enqueueConsult(req: ConsultRequest): Consult | null {
   const id = randomUUID()
   db()
     .prepare(
-      `insert into consults (id, kind, subject_id, status, question, created_at)
-       values (?, ?, ?, 'pending', ?, ?)`
+      `insert into consults (id, kind, subject_id, status, question, detail, created_at)
+       values (?, ?, ?, 'pending', ?, ?, ?)`
     )
-    .run(id, req.kind, req.subjectId, req.question, Date.now())
+    .run(id, req.kind, req.subjectId, req.question, req.detail ?? null, Date.now())
   const consult = requireConsult(id)
   log.info(`consult queued: ${req.kind}${req.subjectId ? ` on ${req.subjectId.slice(0, 8)}` : ''}`)
   emit({ type: 'consult.changed', consult })

@@ -454,8 +454,8 @@ fleet whose hard cut and soft preference disagree about that is worse than eithe
 
 ⛔ **A number nobody can check is a number nobody can correct.** The dead `quotaRisk` term survived
 because a rendered `-0.120` looks exactly like a working measurement. Routing decisions now publish
-the arithmetic — in the consult prompt, which the Controller panel renders verbatim, and in the
-daemon log on *every* dispatch, not only the consulted ones:
+the arithmetic — on the consult's `detail`, which the Controller panel renders under *Score
+derivation*, and in the daemon log on *every* dispatch, not only the consulted ones:
 
 - a legend, printed once, stating that **higher wins**, that the scale is **linear and unitless**
   (nothing logarithmic, normalised or capped), and that gaps at or below `ROUTE_EPSILON` mean nothing;
@@ -466,6 +466,15 @@ daemon log on *every* dispatch, not only the consulted ones:
 ⚠️ **Zero rows are printed, not dropped.** A table showing only what contributed reads as *"the rest
 were weighed and found small"*; `quotaRisk` was not small, it was unmeasurable, and only its basis
 line could say so.
+
+⛔ **The derivation is for a person; the controller is shown the totals** (2026-08-30). The legend
+and the term tables are how a decision gets *checked*, and they are not what a controller needs to
+pick between two ids — sending them charged every routing consult for the lot. `routeQuestion` now
+carries each candidate's total, one line saying the scale is linear and higher wins, and one line
+per candidate naming the live terms with their contributions and the dead ones by name
+(`briefScore`); `routeDetail` builds the full legend and tables from **the same breakdown**, and it
+is stored on the consult rather than sent. The t39–t42 fix survives — two equal numbers still come
+with something to reason from — at roughly a third of the prompt.
 
 ⛔ **The published formulas cannot drift from the code.** `WEIGHT_FORMULAS` sits beside `weights()`,
 and `cost.test.ts` parses each string and evaluates it against the real weight across all four

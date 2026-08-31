@@ -534,14 +534,23 @@ export interface RouteCandidate {
   warm: boolean
   note: string
   /**
-   * The score's derivation, printed under it.
+   * One line: what the arithmetic actually weighed for this candidate, and what it could not
+   * measure at all.
    *
    * ⛔ **Two equal numbers and no way to tell them apart is not a tie, it is a missing input.**
    * Measured on t39–t42 (2026-08-30): four consecutive consults offered `-0.120` against `-0.120`,
    * and each answer reasoned from the *labels* — "Claude is the assistant running this controller",
-   * "the candidate named Antigravity" — because the numbers said nothing. Printing the formula lets
-   * the reader see which terms are live and which are dead before weighing them.
+   * "the candidate named Antigravity" — because the numbers said nothing. This line is what fixes
+   * that, and one line is enough to: it names the live terms with their contributions and the dead
+   * ones by name.
+   *
+   * ⚠️ The full derivation — every weight, value and basis — is *not* here. It is generated all the
+   * same and stored on the consult's `detail` for the judgment-call UI, because it is evidence for a
+   * person debugging a decision, not input the controller needs to pick an id, and it cost roughly a
+   * hundred lines a consult to send.
    */
+  considered?: string
+  /** The full term-by-term derivation, for `routeDetail` and the UI. Never sent to the controller. */
   formula?: string[]
 }
 
@@ -552,12 +561,13 @@ export interface RouteCandidate {
  * costing a real turn. It fires only on a task expensive enough that ε is worth more than the turn,
  * and only when the deterministic scorer genuinely cannot separate two candidates. Everywhere else,
  * the arithmetic decides and nothing is spent.
+ *
+ * ⛔ **Totals and one line of reasoning per candidate, and nothing else.** The score legend and the
+ * per-candidate term tables used to be pasted in here; they are debugging evidence for a person and
+ * the controller does not need them to choose between two ids, so they now live on the consult's
+ * `detail` — see `routeDetail`.
  */
-export function routeQuestion(
-  task: Task,
-  candidates: RouteCandidate[],
-  legend: string[] = []
-): string {
+export function routeQuestion(task: Task, candidates: RouteCandidate[]): string {
   return [
     'You are the controller for Multi Agent Controller. Two accounts score within a hair of each other for a large',
     'task, so the arithmetic cannot separate them. Pick one.',
@@ -565,10 +575,48 @@ export function routeQuestion(
     `# Task t${task.seq}`,
     task.title,
     `estimated ${estimateTask(task).tokens} tokens (${estimateTask(task).basis})`,
-    // ⛔ How a score is built, once, before any candidate's numbers. Without it the figures below are
-    // unfalsifiable: a reader cannot tell whether -0.120 is good, whether higher or lower wins, or
-    // what scale it is on. Measured on t39-t42 - four consults answered from the worker *labels*
-    // because two bare equal numbers gave the controller nothing else to reason from.
+    '',
+    '# Candidates',
+    // ⚠️ Scores are on one linear, unitless scale and HIGHER WINS. Said once, in a line, because a
+    // bare `-0.120` is unfalsifiable without it — a reader cannot tell which end is better.
+    'Scores are on one linear scale and HIGHER WINS; these are within ε of each other, which is why',
+    'you are being asked. Each candidate lists what the arithmetic weighed for it.',
+    ...candidates.flatMap((c) => [
+      '',
+      `- ${c.worker.id} — ${c.worker.label}: score ${c.score.toFixed(3)}, ` +
+        `${c.warm ? 'already holds this task’s context' : 'cold start'}${c.note ? `, ${c.note}` : ''}`,
+      ...(c.considered ? [`  weighed: ${c.considered}`] : [])
+    ]),
+    '',
+    '# How to answer',
+    '```json',
+    '{"workerId":"<one of the ids above, verbatim>","why":"..."}',
+    '```',
+    '',
+    'Any id not in that list is discarded and the highest-scoring candidate is used instead.',
+    '',
+    '⚠️ A term listed as unmeasurable is not a small effect — on this fleet it is usually one that',
+    'could not be read at all. Reason from what the candidates actually show, and say plainly when',
+    'nothing separates them rather than inventing a reason from their names.'
+  ].join('\n')
+}
+
+/**
+ * The same arithmetic, in full, for a person — never for the controller.
+ *
+ * ⛔ **Written to `consult.detail`, which nothing in the ask path reads.** This is the legend and the
+ * term-by-term table that `routeQuestion` used to carry: it exists so a routing decision can be
+ * *checked* afterwards in the judgment-call UI rather than believed, and so the derivation shown to
+ * a person is the same arithmetic that ordered the candidates.
+ */
+export function routeDetail(
+  task: Task,
+  candidates: RouteCandidate[],
+  legend: string[] = []
+): string {
+  return [
+    `Routing t${task.seq}: how each score was built.`,
+    'Not sent to the controller — it is shown the totals and one line per candidate.',
     ...(legend.length ? ['', '# How a score is built', ...legend] : []),
     '',
     '# Candidates',
@@ -579,19 +627,7 @@ export function routeQuestion(
       // ⚠️ Indented under its own candidate rather than gathered into one table: a reader comparing
       // two candidates is comparing two of these blocks line for line.
       ...(c.formula ?? [])
-    ]),
-    '',
-    '# How to answer',
-    '```json',
-    '{"workerId":"<one of the ids above, verbatim>","why":"..."}',
-    '```',
-    '',
-    'Any id not in that list is discarded and the highest-scoring candidate is used instead.',
-    '',
-    '⚠️ A term whose contribution is 0.000 is not a small effect — on this fleet it is usually one',
-    'that cannot be measured at all, and its basis says which. Reason from what the table actually',
-    'shows, and say plainly when nothing in it separates the candidates rather than inventing a',
-    'reason from their names.'
+    ])
   ].join('\n')
 }
 

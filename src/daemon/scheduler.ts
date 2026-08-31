@@ -28,7 +28,13 @@ import {
   startRun
 } from './tasks.js'
 import { enqueueConsult, hasPendingConsult, latestAnswer } from './controller.js'
-import { decomposeQuestion, routeQuestion, triageQuestion, type RouteCandidate } from './judgment.js'
+import {
+  decomposeQuestion,
+  routeDetail,
+  routeQuestion,
+  triageQuestion,
+  type RouteCandidate
+} from './judgment.js'
 import { escalateStale, voidApprovalsForSession } from './approvals.js'
 import { parkQuestionsForSession } from './questions.js'
 import {
@@ -657,12 +663,19 @@ function chooseTarget(task: Task): WorkerChoice {
     score: c.score,
     warm: !!c.session,
     note: c.quotaUnverified ? 'quota reading not trustworthy' : '',
-    ...(c.breakdown ? { formula: formatScore(c.breakdown) } : {})
+    // ⛔ Both are built from the *same* breakdown, once. The brief line goes in the question and the
+    // table goes in the detail; a second implementation of either could drift from the ordering.
+    ...(c.breakdown
+      ? { considered: briefScore(c.breakdown), formula: formatScore(c.breakdown) }
+      : {})
   }))
   const queued = enqueueConsult({
     kind: 'route',
     subjectId: task.id,
-    question: routeQuestion(task, shortlist, scoreLegend(objective))
+    question: routeQuestion(task, shortlist),
+    // ⚠️ Generated in full and stored, never sent: this is what a person reads in the judgment-call
+    // UI when they want to check the arithmetic rather than the answer.
+    detail: routeDetail(task, shortlist, scoreLegend(objective))
   })
   if (!queued) return best
   return {
@@ -890,6 +903,30 @@ export function formatScore(b: ScoreBreakdown): string[] {
     `  ${'TOTAL'.padEnd(14)} ${' '.repeat(6)}   ${' '.repeat(6)} = ` +
       `${((b.total >= 0 ? '+' : '-') + Math.abs(b.total).toFixed(3)).padStart(7)}`
   ]
+}
+
+/**
+ * One line of the same breakdown: what actually moved the score, and what could not be read.
+ *
+ * ⛔ **This is what the controller is shown, and it is the whole finding from t39–t42 in a line.**
+ * Two candidates on `-0.120` with no live term between them is a *measurement gap*, and naming the
+ * dead terms says so outright — where a table of zeroes reads as though they had been weighed and
+ * found small. The full table still exists; it is on the consult's `detail`, for a person.
+ *
+ * ⚠️ Terms rounding to zero are named, not dropped, for exactly that reason.
+ */
+export function briefScore(b: ScoreBreakdown): string {
+  const live = b.terms.filter((t) => Math.abs(t.contribution) >= 0.0005)
+  const dead = b.terms.filter((t) => Math.abs(t.contribution) < 0.0005).map((t) => t.name)
+  const parts = live.map(
+    (t) => `${t.name} ${(t.contribution >= 0 ? '+' : '-') + Math.abs(t.contribution).toFixed(3)}`
+  )
+  return [
+    parts.length ? parts.join(', ') : 'nothing measurable',
+    dead.length ? `(unmeasurable here: ${dead.join(', ')})` : ''
+  ]
+    .filter(Boolean)
+    .join(' ')
 }
 
 function scoreCandidate(
