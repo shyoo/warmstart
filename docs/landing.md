@@ -251,8 +251,7 @@ caller was reporting a queue as a failure.
   "schema_version": 1,
   "landing": {
     "target": "main",
-    "finish": "commit-and-merge",
-    "finishInstruction": "Run /commit and follow every one of its six steps."
+    "finish": "commit-and-merge"
   },
   "check": ["npm run typecheck", "npm run lint", "npm test", "npm run build"]
 }
@@ -260,13 +259,18 @@ caller was reporting a queue as a failure.
 
 - `landing.finish` — `await-human` · `commit-only` · `commit-and-verify` · `commit-and-merge` ·
   `commit-and-push` · `pull-request` · `custom` · `inherit`.
-- `landing.finishInstruction` — what `custom` sends the agent. Naming a slash command works on a CLI
-  that has skills and still reads as a plain instruction on one that does not.
+- `landing.finishInstruction` — what `custom` sends the agent, and **read only under `custom`**.
+  Set it beside any other `finish` and it is inert; the example above therefore omits it.
+  ⛔ It is sent verbatim, so it is yours to keep honest. Naming a slash command binds the project
+  to a CLI that has that skill — measured on t56, 2026-08-30, `"Run /commit and follow every one of
+  its six steps. Do not push."` reached codex, which has no `/commit`, and whose sixth step is the
+  push the same sentence forbids. Under every other rung the tool composes the sentence itself and
+  says plainly whether to push.
 - `landing.target` — the branch to land on. Defaults to `main`.
 - `check` — the commands every verifying rung runs. ⛔ An **empty list verifies nothing**, which
   is every project on day one; the tool says so on the task rather than reporting a clean result.
   Edit them in Project → Settings, or file a task to work them out.
-  ⚠️ Keep them fast and deterministic. Keep them fast and deterministic; the heavier
+  ⚠️ Keep them fast and deterministic; the heavier
   suites belong in the finishing instruction, where a human or an agent is watching the result.
 
 ⚠️ **`landing.strategy` is the old spelling** and is still read, so an existing file keeps working:

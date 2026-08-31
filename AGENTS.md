@@ -317,6 +317,16 @@ costmodels/             versioned pricing data
   everywhere else. ⚠️ Both failures are silent: a missed match costs a cold start, and in the
   workspace pool it hands the task a **different worktree** than the one its conversation describes.
 
+- ⛔ **A test may not assert a host capability.** `expect(sampleProcessTree(pid)).not.toBeNull()`
+  reads as a test of this code and is a test of whether *this machine* permits process
+  enumeration. A codex worker runs under `--sandbox workspace-write`, which denies the WMI query
+  behind it, so on t56 (2026-08-30) the suite went red inside the worker and green on the host,
+  and the agent read the difference as a regression it had caused. ⚠️ The fix is never a skip:
+  probe the capability with the platform's own command — not through the function under test —
+  and assert the other contract, which in a denied environment is the load-bearing one.
+  ⭐ The checks themselves are not the agent's job: `runChecks` runs `check` in the daemon,
+  outside any sandbox, and the one-shot prompt now says so.
+
 - ⛔ **A worktree is where an agent *starts*, not a boundary it is held inside.** For
   `antigravity-cli` the workspace must be named with `--add-dir <cwd>` on **every** spawn, resume
   included — cwd alone let t17 edit and commit in the trunk on 2026-08-28. ⚠️ Any new adapter should

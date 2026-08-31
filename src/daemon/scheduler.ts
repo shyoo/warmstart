@@ -1,5 +1,5 @@
 import type { Project, Run, RunQuota, Task, TaskStatus } from '@shared/tasks.js'
-import { resolveCompletionMode, resolveModelChoice } from '@shared/tasks.js'
+import { policyVerifies, resolveCompletionMode, resolveModelChoice } from '@shared/tasks.js'
 import type { QuotaWindow, Session, Worker } from '@shared/protocol.js'
 import { adapter } from './adapters/index.js'
 import { lastQuota, refreshUsage, sessionWindowFor } from './quota.js'
@@ -1875,19 +1875,49 @@ export function promptFor(
   // keeps the existing behaviour rather than being guessed at.
   if (adapter(adapterId).info.capabilities.streamPrompts === 'once') {
     const project = task.projectId ? getProject(task.projectId) : null
-    const custom = project?.config?.landing?.finishInstruction?.trim()
+    // ⛔ Through `resolveFinishPolicy`, never by reading `landing.finishInstruction` directly.
+    // That field is defined as *what a `custom` finish tells the agent*, and the resolver is the
+    // one place that gate lives - it returns an instruction only when the resolved policy really
+    // is `custom`. Read raw, it fired under every policy: measured on t56, 2026-08-30, where a
+    // project on `commit-and-merge` sent codex *"Run /commit and follow every one of its six
+    // steps. Do not push."* - a Claude Code skill codex has not got, whose sixth step **is** the
+    // push the same sentence forbids. Two contradictions and a dead command, in the one turn the
+    // agent had.
+    const { policy, instruction } = resolveFinishPolicy(task, project)
+    // ⛔ The plain fallback says what the *resolved policy* actually wants, rather than "commit"
+    // and nothing else. Silence about pushing is not neutral: the agent has to guess, and t56's
+    // operator had written "Do not push" by hand precisely because the prompt would not say it.
+    // Only the two policies that want a remote ask for one.
+    const pushes = policy === 'commit-and-push' || policy === 'pull-request'
+    const plain =
+      'Commit everything you change' +
+      (task.branch ? ` on \`${task.branch}\`` : '') +
+      ' before your turn ends. ' +
+      (pushes
+        ? 'Then push it — nothing will do that for you afterwards.'
+        : 'Do not push; the tool takes it from there. Nothing will ask you again.')
     parts.push(
-      'You get one turn and no follow-up, so finish the job in it. ' +
-        // ⚠️ Deliberately **not** `finishInstructionFor`. Its default is *"Run /commit and
-        // follow every step of it"* - a Claude Code project skill that does not exist on any other
-        // CLI, so telling codex to run it would burn the single turn hunting for a command it has
-        // not got. A project's *own* instruction is the operator's words and is honoured; the
-        // fallback is plain and CLI-agnostic, and mirrors what `ask-agent` says.
-        (custom ??
-          'Commit everything you change' +
-            (task.branch ? ` on \`${task.branch}\`` : '') +
-            ' before your turn ends. Nothing will ask you to do it afterwards.')
+      'You get one turn and no follow-up, so finish the job in it. ' + (instruction ?? plain)
     )
+
+    // ⛔ Say who runs the checks, because the agent cannot find out and guessing costs it the turn.
+    // `runChecks` executes this list in the **daemon**, outside whatever sandbox the worker is in.
+    // Measured on t56, 2026-08-30: codex ran `npm test` itself under `--sandbox workspace-write`,
+    // was denied the WMI query one test needed, could not tell a denied query from a regression it
+    // had caused, and stopped to ask about a suite that passes unsandboxed on the same machine.
+    //
+    // ⚠️ Only when the policy actually verifies *and* commands are declared. On any other rung, or
+    // an empty list, nothing runs them afterwards and telling the agent otherwise would be a lie
+    // that talks it out of the only checking anybody does.
+    const checks = policyVerifies(policy) ? (project?.config?.check ?? []) : []
+    if (checks.length > 0) {
+      parts.push(
+        'You do not have to run this project’s checks yourself: after you commit, the tool runs ' +
+          `${checks.map((c) => `\`${c}\``).join(', ')} outside your sandbox and reports the ` +
+          'result. Run what you need to be confident in the change, but a command that fails ' +
+          'because your environment forbids it is not a reason to stop — say so and commit.'
+      )
+    }
   }
   return parts.join('\n\n')
 }

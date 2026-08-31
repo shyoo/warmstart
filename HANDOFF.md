@@ -8,7 +8,7 @@ started in CI, never run against a real agent CLI.
 if you add a line, find the one it obsoletes and cut it in the same edit. Finished work moves to
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
-**Baseline (2026-08-30, measured):** typecheck · lint · build clean · `npm test` 826/828 (2 POSIX-only
+**Baseline (2026-08-30, measured):** typecheck · lint · build clean · `npm test` 827/829 (2 POSIX-only
 skipped) · `test:daemon` 141/141 · `test:ui` 149/149 · `test:pack` 18/18 · L4 (opt-in) landed a real
 agent commit on origin/main. Electron 44.0.0, electron-builder 26.15.3, 0 npm vulnerabilities.
 CLIs here: claude 2.1.251 · agy 1.1.22 · codex 0.151.0.
@@ -18,8 +18,11 @@ content-addressed, **92s cold, ~0s warm**. ⛔ **One packaged app — `release\w
 the repo's copy while building blocks the pack step, correctly.
 
 ⚠️ **With no agent CLI the daemon suite skips 5 checks**, each with a stated reason — the CI state;
-simulate it with a PATH of System32, node and git and an empty `HOME`. ⛔ **CI itself has not run since
-2026-08-29T21:54Z**: 28 runs, each dead in 2–5s on GitHub billing — **nothing is verified off Windows.**
+simulate it with a PATH of System32, node and git and an empty `HOME`. ⛔ **CI has not been green since
+2026-08-29T04:41Z**: 61 consecutive non-success runs (measured 2026-08-30), the recent ones dead in 2–5s
+on GitHub billing — **nothing is verified off Windows.** ⚠️ The macOS-only-on-dispatch matrix trim in
+`ci.yml` is therefore **still unproven**: a wrong `fromJSON` ternary yields *no* matrix jobs, which reads
+as passing. One run that actually executes settles it.
 
 ---
 
@@ -37,7 +40,7 @@ gaps are below. Scope: `transient_docs/implementation_plan_2026-08-24.md` §14, 
 src/daemon/            orchestratord. Runs as Electron-with-ELECTRON_RUN_AS_NODE, detached.
   index.ts             entry: lock, db, server, poller, scheduler, tailer wiring, shutdown
   server.ts  api.ts    HTTP+WS on 127.0.0.1:<random>, bearer token, typed RPC
-  db.ts                node:sqlite + numbered migrations (v19)
+  db.ts                node:sqlite + numbered migrations (v21)
   costmodel.ts         the four questions; user dir > bundled > compiled-in
   workers.ts           registry, isolation roots, retire-keeps-credentials, the fleet's display
                        order - ⛔ display only (+ workerorder.test.ts)
@@ -108,31 +111,18 @@ docs/                  cost-model.md, glossary.md, adapters.md, landing.md, sess
 - ⭐ **Every intervention on a live session has an off switch** — Settings > Global: `autoCompact`/`autoPreempt` **on**, `autoRunawayStop` **off**, `probeIntervalMinutes` 5m.
 - ⭐ **A full workspace pool holds a task rather than failing it** (2026-08-29). ⛔ No dependency edge: a hold is re-decided every tick, so priority wins. ⚠️ A fleet wider than its pool is *named*, never silently grown.
 - ⭐ **The stall watchdog tells stuck from slow, and has fired in flight** (2026-08-30): 13m into a hung codex run it posted the process tree and 0.0s of CPU gained in 70s. ⛔ It reports and never kills.
-- ⭐ **Finishing is a ladder, and the default no longer pushes** (2026-08-30, `docs/landing.md`):
-  `await-human` · `commit-only` · `commit-and-verify` · **`commit-and-merge`** · `commit-and-push`, plus
-  `pull-request` and `custom`. The old default pushed on every completed task and every push starts a
-  ten-job CI matrix — 103 runs in five days, allowance exhausted 2026-08-29. ⛔ The tool never writes a
-  commit, never destroys work it will not land, and never merges into a trunk somebody is working in.
-  ⚠️ `commit-and-merge` has **never run in flight**, nor has the conflict ask.
-- ⭐ **An agent can ask a person a real question, and be answered** (2026-08-30, plan in
-  `transient_docs/`). The **Question** object replaces `request_human`, which went through the approval
-  path and could only answer allow/deny — *"OAuth, cookies or magic link?"* came back as *"The
-  operator agreed."* Three ways in: `ask_human`, Claude Code's own `AskUserQuestion` intercepted at
-  `approve` (measured, R14), and `checkpoint` on a `checkpointed` task. Unanswered **parks**: the task
-  rests at `awaiting_human`, the question stays open. A run that stopped to ask is `blocked`, not
-  `failed`. ⚠️ **No agent has used any of it in flight** — L1/L2/L3 only. ⚠️ The thread card has
-  **no rendering test**; seeding one needs a live run. ⚠️ **R15**: can an MCP client hold a tool call
-  for minutes?
+- ⭐ **Finishing is a ladder, and the default no longer pushes** (2026-08-30, `docs/landing.md`): `await-human` · `commit-only` · `commit-and-verify` · **`commit-and-merge`** · `commit-and-push`, plus `pull-request` and `custom`. The old default pushed on every completed task, and every push starts a ten-job CI matrix — 103 runs in five days, allowance exhausted 2026-08-29. ⛔ The tool never writes a commit, never destroys work it will not land, and never merges into a trunk somebody is working in. ⚠️ `commit-and-merge` has **never run in flight**, nor has the conflict ask. ⭐ `runChecks` runs `check` in the **daemon**, outside any worker sandbox — and the one-shot prompt now says so.
+- ⭐ **An agent can ask a person a real question, and be answered** (2026-08-30; `docs/glossary.md`). The **Question** object replaces `request_human`, which went through the approval path and could only answer allow/deny. Three ways in: `ask_human`, Claude Code's own `AskUserQuestion` intercepted at `approve` (measured, R14), and `checkpoint`. Unanswered **parks**; a run that stopped to ask is `blocked`, not `failed`. ⚠️ **No agent has used any of it in flight** — L1/L2/L3 only. ⚠️ The thread card has **no rendering test**; seeding one needs a live run. ⚠️ **R15**: can an MCP client hold a tool call for minutes?
 - ⭐ **The daemon's log is readable from inside the app** (Settings > Logs): live, filterable, ring-buffered so a late window still sees the past; a file per day, kept a fortnight.
 - ⭐ **Model and effort are choosable, inherited and visible** (2026-08-29): **task → worker → the
   CLI's own default**, via `resolveModelChoice`. Multi-pool workers set a default per pool and the
   scheduler balances on quota. ⚠️ **`selectableEffort` is true for `claude-code` only**.
-- ⛔ **Codex could never have completed a task, three bugs deep** (fixed 2026-08-30, `docs/adapters.md`): stdin held open against a CLI reading to EOF, `mcp: true` on an adapter that cannot register one, and `turn.completed` without its terminal half. ⚠️ **No codex task has completed yet.**
+- ⛔ **Codex could never have completed a task, five bugs deep** (fixed 2026-08-30, `docs/adapters.md`): stdin held open against a CLI reading to EOF, `mcp: true` on an adapter that cannot register one, `turn.completed` without its terminal half — then, on t56, the landing. `landing.finishInstruction` was read with no policy check, so a `commit-and-merge` project sent codex *"Run /commit … Do not push"* — a Claude-only skill whose sixth step **is** the forbidden push; and `stall.test.ts` asserted a **host capability**, the WMI query codex's sandbox denies, so the suite went red in the worker and green on the host and the agent read that as its own regression. ⚠️ **No codex task has completed yet**; t56 is the re-run that settles it.
 - ⭐ **Antigravity runs, reports its quota, and resumes a conversation by id** (**R9**, measured
   2026-08-28). ⚠️ **No Antigravity task has ever completed**: with `mcp: false` and no terminal record,
   `awaiting_human` is honest there and R13 stands. ⛔ It restores context, not cache
   (`cache_read_tokens: 0`).
-- ⛔ **Nothing is proven off Windows.** CI runners carry no agent CLI, and CI has not run since 2026-08-29. ⚠️ macOS now runs only on `workflow_dispatch` and tags. ⛔ **Unsigned**: a certificate and an Apple Developer account, not a config line.
+- ⛔ **Nothing is proven off Windows.** CI runners carry no agent CLI, and CI is red (above). ⛔ **Unsigned**: a certificate and an Apple Developer account, not a config line.
 
 ## Next
 

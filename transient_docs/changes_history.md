@@ -2482,3 +2482,84 @@ vars `CLAUDE_CODE_REMOTE`, `CLAUDE_CODE_FORCE_BRIDGE`, and none of them was trie
 the `mcp: true` mistake again: a capability asserted from a flag's existence rather than from watching
 it be true. The measurement is one PTY spawned with the setting and one without, diffed for
 `bridgeSessionId`.
+
+## An instruction meant for one CLI, and a test that measured the machine (2026-08-30)
+
+t56 ran on codex, wrote the change it was asked for, and stopped without committing. Two unrelated
+faults, both visible only from inside a worker.
+
+### A field that fired under every policy
+
+`landing.finishInstruction` is defined as *what a `custom` finish tells the agent*. `decideFinish`
+honours that gate; `resolveFinishPolicy` is where it lives, and it returns an instruction only when
+the resolved policy really is `custom`. The one-shot prompt branch — added the same day so that a
+`streamPrompts: 'once'` CLI would hear about landing at all — read the raw config field instead:
+
+```ts
+const custom = project?.config?.landing?.finishInstruction?.trim()
+```
+
+So it fired on every rung. This repo runs `commit-and-merge`, and its config still carried an
+instruction written for the old default: *"Run /commit and follow every one of its six steps. Do not
+stop until the work is committed. Do not push."* Codex was handed a Claude Code skill it does not
+have, told to follow all six of its steps, and told not to do the sixth — which is the push. Three
+faults in one sentence, in the single turn the agent had.
+
+⚠️ The comment above the bug claimed to prevent exactly this. It said the default was deliberately
+*not* `finishInstructionFor` because `/commit` is Claude-only — and it was right about the fallback
+and silent about the branch that overrides it. The test agreed with the comment rather than with the
+code, because its task had **no project**, so it never reached the override at all. A test that
+cannot reach the bug still goes green next to it.
+
+The fix routes through `resolveFinishPolicy`, which already owns the gate. The composed sentence now
+also states the remote either way — *"Do not push; the tool takes it from there"* — because silence
+is not neutral on a CLI that gets one turn. That silence is why the operator had hand-written *"Do
+not push"* into the config, which is what put the contradiction there in the first place.
+
+### A test that asserted the host, not the code
+
+The second fault was the one that actually stopped the work. Codex ran `npm test` itself and hit:
+
+```
+× finds the process doing the reading, with CPU time on it
+  → expected null not to be null
+```
+
+`sampleProcessTree` reads a process tree with `Get-CimInstance Win32_Process`. `codex exec` runs
+under `--sandbox workspace-write`, which denies that query. The function handles this correctly and
+by design — *"Returns null rather than throwing… **Not being able to measure is not evidence of a
+stall**"* — and the test demanded the sandbox not exist.
+
+⭐ The agent's reasoning was better than the suite's. It ran the failure twice, isolated it to a
+read-only diagnostic path, judged it environmental, declined to touch unrelated code to make it
+green, and asked. Every one of those steps was right. It could not tell a denied query from a
+regression it had caused, because from inside the sandbox those look identical.
+
+The fix is not a skip. A skip when a test fails proves nothing, and this one has a real contract to
+check in a denied environment — the load-bearing one: `sampleProcessTree` must answer **null**, never
+an empty sample, because an empty sample reads as a tree doing nothing, which is the definition of
+the stall it exists to find. So the test probes the capability with the platform's own command —
+deliberately not through the function under test, which would make it agree with whatever that did —
+and asserts the applicable contract. Both branches were exercised: 838ms with the query available,
+10ms with it out of reach, green either way, and the pre-fix test red in the second.
+
+⭐ The architecture was already right and nobody had said so. `runChecks` executes the project's
+`check` list in the **daemon**, outside any worker sandbox. The agent never needed to run the suite;
+it had no way to find that out. The one-shot prompt now names the commands and says who runs them,
+guarded so it can only claim it when the policy actually verifies and commands are declared —
+otherwise it would be talking the agent out of the only checking anybody does.
+
+### Rejected
+
+⛔ Widening codex's sandbox to `danger-full-access`. It would have made the symptom disappear and
+removed the only boundary a CLI with no approval callback has left.
+
+⛔ Dropping `stall.test.ts`'s live sampling. It is the one assertion that proves the platform query
+and the parser agree; everything else in that file is arithmetic on strings somebody typed.
+
+### Not done
+
+⚠️ That codex's sandbox is what denied the WMI query is the agent's report plus a mechanism that
+fits, **not a measurement taken here**. What was measured is that the test fails whenever the query
+is unavailable, for any reason. ⛔ No codex run has been through the corrected prompt: both fixes are
+proven by test and unproven in flight.

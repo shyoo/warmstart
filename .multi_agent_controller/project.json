@@ -7,8 +7,7 @@
 
   "landing": {
     "target": "main",
-    "finish": "commit-and-merge",
-    "finishInstruction": "Run /commit and follow every one of its six steps. Do not stop until the work is committed. Do not push."
+    "finish": "commit-and-merge"
   },
 
   "check": ["npm run typecheck", "npm run lint", "npm test", "npm run build"],

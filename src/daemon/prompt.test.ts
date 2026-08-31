@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -85,6 +85,61 @@ describe('promptFor prompt construction', () => {
     // ⛔ `DEFAULT_FINISH_INSTRUCTION` is "Run /commit", a Claude Code project skill. Sending
     // that to codex would spend its one turn looking for a command it does not have.
     expect(prompt).not.toContain('/commit')
+    // ⛔ And it says what to do about the remote. Silence is not neutral on a one-shot CLI: the
+    // agent has to guess, and `commit-and-merge` wants the commit left exactly where it is.
+    expect(prompt).toContain('Do not push')
+    // ⛔ But it does **not** promise a verification nobody will perform. This task has no project
+    // and so no declared checks; saying the tool runs them would talk the agent out of the only
+    // checking that would happen at all.
+    expect(prompt).not.toContain('outside your sandbox')
+  })
+
+  /**
+   * ⛔ The t56 shape, and the one the test above does not reach.
+   *
+   * `landing.finishInstruction` is defined as *what a `custom` finish tells the agent*, but the
+   * prompt read it straight off the config with no policy check, so it fired under every policy.
+   * A project on `commit-and-merge` therefore sent codex *"Run /commit and follow every one of its
+   * six steps. Do not push."* — a Claude Code skill codex has not got, whose sixth step **is** the
+   * push the same sentence forbids. The earlier test passes through this bug untouched because its
+   * task has no project at all.
+   */
+  it('ignores a custom finish instruction when the policy is not custom', async () => {
+    const projects = await import('./projects.js')
+    const root = mkdtempSync(join(tmpdir(), 'agentyard-prompt-project-'))
+    mkdirSync(join(root, '.multi_agent_controller'), { recursive: true })
+    writeFileSync(
+      join(root, '.multi_agent_controller', 'project.json'),
+      JSON.stringify({
+        schema_version: 1,
+        name: 'merges-locally',
+        vcs: 'git',
+        landing: {
+          finish: 'commit-and-merge',
+          finishInstruction: 'Run /commit and follow every one of its six steps. Do not push.'
+        },
+        check: ['npm test']
+      })
+    )
+    const project = projects.addProject({ root })
+    const task = tasks.createTask({ title: 'Not custom', status: 'ready', projectId: project.id })
+    const prompt = scheduler.promptFor(task, 'openai-compatible', false, { markDelivered: false })
+    expect(prompt).not.toContain('/commit')
+    expect(prompt).toContain('Do not push')
+
+    // ⛔ The other half of t56: codex ran `npm test` under its sandbox, was denied a WMI query one
+    // test needed, and read that as a regression it had caused. `runChecks` runs this list in the
+    // daemon, outside the sandbox — the agent cannot discover that, so the prompt says it.
+    expect(prompt).toContain('the tool runs `npm test` outside your sandbox')
+    expect(prompt).toContain('because your environment forbids it is not a reason to stop')
+
+    // ⚠️ The other half of the same gate: under `custom` the field *is* the operator's own words,
+    // and it is honoured verbatim — slash command and all. Choosing `custom` is choosing to own it.
+    tasks.updateTask(task.id, { finishPolicy: 'custom' })
+    const own = scheduler.promptFor(tasks.requireTask(task.id), 'openai-compatible', false, {
+      markDelivered: false
+    })
+    expect(own).toContain('Run /commit and follow every one of its six steps.')
   })
 
   it('does not say that to a CLI that can be asked again', () => {

@@ -1,3 +1,5 @@
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { describe, expect, it } from 'vitest'
 import {
   describeTree,
@@ -10,6 +12,8 @@ import {
   type ProcessRow,
   type TreeSample
 } from './stall.js'
+
+const run = promisify(execFile)
 
 /**
  * Telling a stuck run from a slow one.
@@ -204,16 +208,55 @@ describe('reading what the platform actually prints', () => {
   })
 })
 
+/**
+ * Can this machine enumerate its own processes at all?
+ *
+ * ⛔ Asked with the platform's own command and **never** through `sampleProcessTree`, because that
+ * is the thing under test: routing the probe through it would make the assertions below agree with
+ * whatever it did. A denied query and a working one have to be told apart from outside.
+ *
+ * ⚠️ Not a hypothetical. `Get-CimInstance Win32_Process` is denied inside a sandbox, and t56 met it
+ * on 2026-08-30: a codex worker running under `--sandbox workspace-write` got WMI access-denied,
+ * read the resulting failure as a regression in the change it was making, and stopped to ask.
+ */
+async function canEnumerateProcesses(): Promise<boolean> {
+  try {
+    const { stdout } =
+      process.platform === 'win32'
+        ? await run(
+            'powershell.exe',
+            ['-NoProfile', '-NonInteractive', '-Command', '(Get-CimInstance Win32_Process).Count'],
+            { timeout: 20_000, windowsHide: true }
+          )
+        : await run('ps', ['-eo', 'pid='], { timeout: 20_000 })
+    return String(stdout).trim().length > 0
+  } catch {
+    return false
+  }
+}
+
 describe('sampling this machine', () => {
-  it('finds the process doing the reading, with CPU time on it', async () => {
+  it('finds the process doing the reading, or says it could not look', async () => {
     // ⭐ The one thing the fixtures above cannot prove: that the platform query and the parser agree.
     //    Everything else here is arithmetic on strings somebody typed. ⚠️ Spawns one PowerShell or
     //    one `ps`, which is the same cost the watchdog pays once a minute for a stalled session and
     //    never otherwise.
+    //
+    // ⛔ **Two contracts, and which one applies is decided by the machine, not by the result.** This
+    //    used to assert only the first, which made it an assertion about the *host* — that process
+    //    enumeration is permitted here — rather than about this code. In a sandbox that denies the
+    //    query it failed, and it failed looking exactly like a regression in whatever change was in
+    //    flight. Neither branch skips: a denied environment still has something true to check, and
+    //    it is the load-bearing one — `sampleProcessTree` must answer **null**, never an empty
+    //    sample, because an empty sample reads as a tree doing nothing, which is a stall.
     const taken = await sampleProcessTree(process.pid)
-    expect(taken).not.toBeNull()
-    expect(taken?.processes.some((p) => p.pid === process.pid)).toBe(true)
-    expect(taken?.cpuSeconds).toBeGreaterThan(0)
+    if (await canEnumerateProcesses()) {
+      expect(taken).not.toBeNull()
+      expect(taken?.processes.some((p) => p.pid === process.pid)).toBe(true)
+      expect(taken?.cpuSeconds).toBeGreaterThan(0)
+    } else {
+      expect(taken, 'a denied query must read as unmeasurable, not as an idle tree').toBeNull()
+    }
   }, 30_000)
 
   it('returns null for a pid that is not there, rather than an empty reading', async () => {
