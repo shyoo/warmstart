@@ -3018,8 +3018,15 @@ export function reconcileTasks(): number {
     // keyed by task. Harmless, but it read as the line that cleaned up after a restart, which is why
     // it survived. Nothing needs to clean the map at startup — it is in memory and starts empty, and
     // `reconcileClaims` releases the rows beside it.
-    addMessage(task.id, 'system', 'orchestratord restarted while this was running; returned to ready.')
-    setStatus(task.id, task.status === 'cancelling' ? 'paused_user' : 'ready')
+    if (task.status === 'cancelling') {
+      const why = 'orchestratord restarted while this was cancelling; paused.'
+      addMessage(task.id, 'system', why)
+      setStatus(task.id, 'paused_user', { assignee: null, holdReason: why })
+    } else {
+      const why = 'orchestratord restarted while this was running; awaiting human input before resuming.'
+      addMessage(task.id, 'system', why)
+      setStatus(task.id, 'awaiting_human', { assignee: 'human', holdReason: why })
+    }
   }
   if (stuck.length) log.warn(`recovered ${stuck.length} task(s) interrupted by a restart`)
   return stuck.length

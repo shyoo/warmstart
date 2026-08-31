@@ -10,7 +10,7 @@ import { emit } from './events.js'
  * memory, for the question "what is it doing *right now*".
  *
  * ⚠️ Held in memory on purpose, not out of laziness. Its correct lifetime is the run: a daemon
- * restart already returns every running task to `ready` (`reconcileTasks`), so a tail that survived
+ * restart already returns every running task to `awaiting_human` (`reconcileTasks`), so a tail that survived
  * the restart would be describing work that no longer exists.
  *
  * ⛔ The text is **agent output** and therefore untrusted. It is carried as text, rendered as text,

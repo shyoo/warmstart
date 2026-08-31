@@ -852,3 +852,39 @@ describe('a dependency edge, once its parent is done', () => {
     expect(tasks.getTask(child.id)?.status).toBe('scheduled')
   })
 })
+
+describe('reconcileTasks', () => {
+  it('moves running and assigned tasks to awaiting_human and terminates open runs', () => {
+    const running = seedRunningTask()
+    const assignedTask = tasks.createTask({ title: 'assigned', createdBy: { kind: 'human' } })
+    tasks.setStatus(assignedTask.id, 'assigned', { assignee: running.worker.id })
+
+    const recovered = scheduler.reconcileTasks()
+    expect(recovered).toBe(2)
+
+    const runningUpdated = tasks.getTask(running.task.id)
+    expect(runningUpdated?.status).toBe('awaiting_human')
+    expect(runningUpdated?.assignee).toBe('human')
+    expect(runningUpdated?.holdReason).toContain('orchestratord restarted while this was running')
+
+    const runs = tasks.runsFor(running.task.id)
+    expect(runs[0]?.outcome).toBe('terminated')
+    expect(runs[0]?.note).toBe('orchestratord restarted')
+
+    const assignedUpdated = tasks.getTask(assignedTask.id)
+    expect(assignedUpdated?.status).toBe('awaiting_human')
+    expect(assignedUpdated?.assignee).toBe('human')
+  })
+
+  it('moves cancelling tasks to paused_user', () => {
+    const task = tasks.createTask({ title: 'cancelling', createdBy: { kind: 'human' } })
+    tasks.setStatus(task.id, 'cancelling')
+
+    const recovered = scheduler.reconcileTasks()
+    expect(recovered).toBe(1)
+
+    const updated = tasks.getTask(task.id)
+    expect(updated?.status).toBe('paused_user')
+  })
+})
+
