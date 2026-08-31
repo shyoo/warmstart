@@ -208,30 +208,48 @@ folder and **swallows every keystroke until answered**. Sessions with no project
 directory alone. `WorkerIdentity.setupComplete` reports the rest, and the Workers panel offers
 **Finish setup**.
 
-`refreshUsage()` in `quota.ts` does this on a **two-hour** floor (`REFRESH_AFTER_MS`, deliberately much
-longer than the 15-minute `STALE_AFTER_MS`) and on the Probe button. It is free of tokens, not of
-everything: it starts a real process for ~30s, so at most one worker is refreshed per sweep. ⛔ Never
-in a scheduler tick.
+`refreshUsage()` in `quota.ts` does this **at the gate that needs the number** — the dispatch gate,
+via `ensureFreshQuota()` — again when a run ends, and on the Probe button. It is free of tokens, not
+of everything: it starts a real process for ~30s. ⛔ Never awaited in a scheduler tick; the task is
+held for one pass with a reason on its row instead.
 
-⛔ **The floor was 30 minutes until 2026-08-30, and it was spending far more than it bought.**
-Measured on this install: **150 probe PTY sessions against 14 that did any work** over four days - ten
-interactive `claude` processes opened to read a number for every one that touched the operator's code.
-Each registers a session with the vendor's bridge, and they accumulate in the desktop app's session
-list until somebody archives them by hand.
+⛔ **There was a clock, and it is gone (2026-08-31).** The background sweep refreshed one worker per
+pass whose reading had aged past a floor — 30 minutes until 2026-08-30, then two hours. The 30-minute
+version spent far more than it bought: **150 probe PTY sessions against 14 that did any work** over
+four days, each registering with the vendor's bridge and accumulating in the desktop app until
+archived by hand. Raising the floor cut the count and fixed nothing else, because a reading is
+*trusted* for fifteen minutes: an idle worker read `stale` for **1h50 of every 2h05** (measured on
+ClaudeSecond, 2026-08-31), while the operator's 5-minute probe setting looked like a promise of a
+5-minute-old number. It never was — the sweep re-reads the vendor's cache, and only the vendor
+rewrites that.
 
-⭐ What makes two hours cheap rather than merely rarer: the vendor's on-disk cache is refreshed by
-**any** use of that account, including this fleet's own work sessions. An account that is running
-tasks keeps its own reading current for free, so the interactive refresh only ever mattered for an
-account sitting idle - whose quota, by construction, is not moving. The command is declared per adapter as `usageRefresh`, never branched on an
-adapter name; only `claude-code` declares one today.
+⭐ **So the question moved from "is this number old?" to "is anything about to use it?"** A worker
+nothing is dispatching to keeps whatever reading it has, at no cost and with no pretence: an idle
+account's window is not moving. A worker about to take a task gets a fresh reading first. And what
+makes the cheap rung still worth running every few minutes: the vendor's on-disk cache is refreshed
+by **any** use of that account, including this fleet's own work sessions, so a busy account keeps
+its own reading current for the price of a file read. The command is declared per adapter as
+`usageRefresh`, never branched on an adapter name; only `claude-code` declares one today.
+
+⛔ **`REFRESH_BACKOFF_MS` is keyed on the attempt, not on the reading's age**, and that is a bug fix
+rather than a detail. A refresh that produces nothing fresher stores the *vendor's* old `sampledAt`
+— correctly, since inventing a timestamp for a number nobody re-read is worse than an old number —
+so anything deriving "try again?" from the age says *yes* forever on exactly the worker that cannot
+answer. Under the old one-refresh-per-sweep rule that worker re-claimed the single slot every five
+minutes and starved every worker behind it in `listWorkers()` order, indefinitely.
+
+⚠️ **`stale` is a gate, not a label.** Nothing the scheduler gates on uses a reading older than
+`STALE_AFTER_MS`, and that is unchanged. The UI stopped *printing* the word: an old reading on an
+idle account is ordinary, so the strip shows `read 2h ago` and reserves the warning colour for the
+case that is a fault — every check since has failed.
 
 ### ⛔ An account that cannot authenticate is not asked again (2026-08-27)
 
 Rung 0 is free in tokens and **not** free in processes: it opens a real interactive session and types
-into it. So the background sweep skips any worker a dispatch has already proved work dies on
-(`health.state === 'suspect'`). Before this, a lapsed subscription meant a CLI spawned on every eligible sweep, forever, to watch it fail to authenticate - and the reading stayed `unknown` either way.
+into it. So `mayRefreshUsage()` skips any worker a dispatch has already proved work dies on
+(`health.state === 'suspect'`), and the cheap sweep skips it too. Before this, a lapsed subscription meant a CLI spawned on every eligible sweep, forever, to watch it fail to authenticate - and the reading stayed `unknown` either way.
 
-⚠️ The *background* sweep only. Pressing Probe still refreshes: it is one of the two things that lift
+⚠️ The *automatic* paths only. Pressing Probe still refreshes: it is one of the two things that lift
 the hold, and a quarantine nobody can attempt to clear by hand is worse than the fault it prevents.
 
 ### A reading either side of a run (2026-08-27)

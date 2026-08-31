@@ -44,10 +44,23 @@ shows `probed ClaudeSecond: Claude 5h 0% · Claude 7d 92%` every 5 minutes witho
    sweep boundary, so from `scheduler.ts:352/385`, not the poller. Worth confirming that path is
    meant to run that often now that the poller's own clock is 2h.
 
-## The decision this needs
+## What was done about it (the operator chose all three)
 
-Freshness for an idle account currently costs a PTY session. Options, in the order they look
-sensible: (a) accept it and stop calling a 2h-old reading `stale` on the strip — show its age;
-(b) refresh on demand at the gates that actually need a trusted number, instead of on a clock;
-(c) lower `REFRESH_AFTER_MS` toward `STALE_AFTER_MS` and pay the sessions back. ⛔ (c) is what was
-just reverted, so it needs a reason beyond the display looking wrong.
+1. **The strip stops saying `stale` and says the age.** `quotaGap` returns `read 2h ago`, the fleet
+   card is faint rather than amber, and the amber is kept for the case that really is a fault —
+   every check since has failed. Old on an idle account is ordinary: the window is not moving.
+   ⛔ Unchanged underneath: `stale` is still a gate, and nothing the scheduler gates on will use a
+   reading past `STALE_AFTER_MS`.
+2. **The refresh clock is gone.** `QuotaPoller.sweep()` now starts no process at all — identity,
+   then the free file read. `ensureFreshQuota()` refreshes where the number is about to be used:
+   the dispatch gate (`needsBaseline`, which also serves the tied-candidate consult gate), the end
+   of a run, and the Probe button. `REFRESH_AFTER_MS` is deleted; `mayRefreshUsage()` carries the
+   account gates that were buried inside `shouldBackgroundRefresh`.
+3. **The starvation is fixed at its root.** `REFRESH_BACKOFF_MS` (10m — the dispatch gate's own
+   retry, now the only such number) is keyed on the **attempt**, recorded in `refreshAttempts`, so
+   a refresh that cannot move the reading no longer re-qualifies itself forever. The single
+   per-sweep slot it used to monopolise no longer exists either.
+
+⚠️ **None of it has run in flight.** The next idle worker on this fleet is the trial: its card
+should read `read Nm ago` and grow, and the refresh should appear in the log only when a task is
+about to be dispatched to it.

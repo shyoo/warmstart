@@ -2,7 +2,7 @@ import type { Project, QuestionOption, Run, RunQuota, Task, TaskStatus } from '@
 import { policyVerifies, resolveCompletionMode, resolveModelChoice } from '@shared/tasks.js'
 import type { QuotaWindow, Session, Worker } from '@shared/protocol.js'
 import { adapter } from './adapters/index.js'
-import { lastQuota, refreshUsage, sessionWindowFor, windowExpired } from './quota.js'
+import { ensureFreshQuota, lastQuota, refreshUsage, sessionWindowFor, windowExpired } from './quota.js'
 import { getWorker, listWorkers, recordDispatchFailure } from './workers.js'
 import { accountUnavailability } from './eligibility.js'
 import { getProject, policyFor, reloadProject } from './projects.js'
@@ -296,23 +296,6 @@ let lastTickNote = ''
 // ---------------------------------------------------------------------------- the baseline
 
 /**
- * When was this worker's window last read, and is it worth waiting a tick to read it again?
- *
- * ⛔ The refresh runs **in the background and the tick never waits for it.** `refreshUsage` opens a
- * terminal for the better part of thirty seconds; awaiting that inside the scheduler would put a
- * half-minute stall in a loop that is supposed to be arithmetic. So the task is held for one tick
- * with a reason on its row, and the next tick finds a reading.
- *
- * ⚠️ And it gives up. A worker that cannot answer `/usage` - one whose first-run screens are
- * unanswered swallows the keystroke - would otherwise hold every task assigned to it forever, which
- * is a worse failure than dispatching blind. After one attempt the run goes ahead and is marked
- * `quotaUnverified`, exactly as it was before any of this existed.
- */
-const BASELINE_RETRY_MS = 10 * 60 * 1000
-
-const baselineAttempts = new Map<string, { at: number; inFlight: boolean }>()
-
-/**
  * Which metered pool a model draws on, or `null` where the provider has only one.
  *
  * ⛔ Read from the cost model, never inferred from the model's name here. `gemini-*` and `claude-*`
@@ -329,29 +312,33 @@ function poolFor(worker: Worker, model: string | null): string | null {
   }
 }
 
+/**
+ * When was this worker's window last read, and is it worth waiting a tick to read it again?
+ *
+ * ⛔ The refresh runs **in the background and the tick never waits for it.** `refreshUsage` opens a
+ * terminal for the better part of thirty seconds; awaiting that inside the scheduler would put a
+ * half-minute stall in a loop that is supposed to be arithmetic. So the task is held for one tick
+ * with a reason on its row, and the next tick finds a reading.
+ *
+ * ⚠️ And it gives up. A worker that cannot answer `/usage` - one whose first-run screens are
+ * unanswered swallows the keystroke - would otherwise hold every task assigned to it forever, which
+ * is a worse failure than dispatching blind. After one attempt the run goes ahead and is marked
+ * `quotaUnverified`, exactly as it was before any of this existed.
+ */
 function needsBaseline(worker: Worker | null): string | null {
   if (!worker) return null
-  // Nothing to drive: most CLIs have no usage command, and holding work for a refresh that cannot
-  // happen would bench the whole adapter.
-  if (!adapter(worker.adapterId).info.usageRefresh) return null
 
   const quota = lastQuota(worker.id)
-  const fresh = quota && !quota.stale && quota.windows.length > 0
-  if (fresh) return null
+  if (quota && !quota.stale && quota.windows.length > 0) return null
 
-  const attempt = baselineAttempts.get(worker.id)
-  if (attempt?.inFlight) {
-    return `reading ${worker.label}'s quota first, so this run has a baseline to be measured against`
-  }
-  if (attempt && Date.now() - attempt.at < BASELINE_RETRY_MS) {
-    // Tried recently and still nothing. Dispatch blind rather than never - the run is marked.
-    return null
-  }
+  // ⭐ **The gate is now the only automatic thing that refreshes a reading** — the poller's clock
+  // was retired on 2026-08-31 because it spent terminals on accounts nobody was routing work to
+  // while still leaving an idle worker reading `stale` for most of every cycle. Here there is a
+  // task about to run on this worker, so the number is about to matter.
+  // ⛔ `false` covers three cases that must not bench the task: nothing to drive, a worker that
+  // may not be probed, and an attempt too recent to repeat. Dispatch blind and mark the run.
+  if (!ensureFreshQuota(worker.id)) return null
 
-  baselineAttempts.set(worker.id, { at: Date.now(), inFlight: true })
-  void refreshUsage(worker.id)
-    .catch((err: unknown) => log.warn(`baseline refresh failed for ${worker.label}:`, err))
-    .finally(() => baselineAttempts.set(worker.id, { at: Date.now(), inFlight: false }))
   return `reading ${worker.label}'s quota first, so this run has a baseline to be measured against`
 }
 

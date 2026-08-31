@@ -388,11 +388,14 @@ export function FleetSettings(): React.JSX.Element {
               <option value={60}>Every 60 minutes</option>
             </select>
           </div>
+          {/* ⛔ It sweeps, it does not refresh. Saying otherwise made this dial read as a
+              freshness setting, which is exactly how a five-minute interval came to be read as a
+              promise of a five-minute-old number while an idle account sat two hours old. */}
           <p className="note">
-            Reading the local CLI usage cache is free. Refreshing a stale cache opens a background
-            interactive session without spending tokens. Lower intervals keep quota readings fresh
-            at the cost of occasional background subprocesses; higher intervals reduce background
-            activity.
+            This sweep only re-reads what each CLI has already written to disk — free, no
+            subprocess, no tokens. It makes a reading newer only when the vendor has refreshed its
+            own cache, which happens when the account does work. A worker about to be given a task
+            has its quota refreshed at that moment instead, and Probe does it on demand.
           </p>
         </div>
       </section>

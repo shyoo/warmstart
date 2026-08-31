@@ -299,45 +299,68 @@ describe('a worker that work does not survive on', () => {
 
 describe('an account that needs signing in again', () => {
   /**
-   * ⛔ The background sweep is not free in the way a file read is. On both adapters that have one,
-   * `refreshUsage` opens a real interactive session and types into it - so on a worker whose
-   * subscription has expired it spawned a CLI every thirty minutes to watch it fail to authenticate,
-   * recorded `unknown`, and did it again. Held out of dispatch is effectively the same state as
-   * disabled, and the sweep now treats it as one.
+   * ⛔ Opening a terminal is not free in the way a file read is. On both adapters that have one,
+   * `refreshUsage` starts a real interactive session and types into it - so on a worker whose
+   * subscription has expired, asking again only watches it fail to authenticate and records
+   * `unknown`. Held out of dispatch is effectively the same state as disabled, and treated as one.
    */
-  it('is not probed in the background once a run has proved work dies on it', () => {
+  it('is not refreshed automatically once a run has proved work dies on it', () => {
     const worker = seedWorker('expired', Date.now())
     workers.updateWorker(worker.id, { enabled: true })
-    expect(quota.shouldBackgroundRefresh(worker.id)).toBe(true)
+    expect(quota.mayRefreshUsage(worker.id)).toBe(true)
 
     workers.recordDispatchFailure(worker.id, 'subscription expired', 'r1')
-    expect(quota.shouldBackgroundRefresh(worker.id)).toBe(false)
+    expect(quota.mayRefreshUsage(worker.id)).toBe(false)
 
     // ⛔ And it comes back the moment the hold lifts. A worker that could never be re-read would
     // stay `unknown` forever even after somebody fixed the account.
     workers.clearDispatchFailure(worker.id)
-    expect(quota.shouldBackgroundRefresh(worker.id)).toBe(true)
+    expect(quota.mayRefreshUsage(worker.id)).toBe(true)
   })
 
-  it('⛔ does not open a terminal to re-read a number that is barely older than the last one', () => {
+  it('⛔ does not open a second terminal on a worker one was just opened on', () => {
     // Measured 2026-08-30: **150 probe PTY sessions against 14 that did any work** over four days -
     // ten interactive `claude` processes opened to read a number for every one that touched the
     // operator's code. Each registers a session with the vendor's bridge and accumulates in the
-    // desktop app until somebody archives it by hand. The threshold is the whole control, so it is
-    // asserted rather than left as a constant nobody rechecks.
-    expect(quota.REFRESH_AFTER_MS).toBeGreaterThanOrEqual(2 * 60 * 60 * 1000)
-    // ⚠️ And still comfortably longer than how long a reading may be trusted, or the fleet
-    // refreshes permanently: a number becomes untrusted exactly when it becomes renewable.
-    expect(quota.REFRESH_AFTER_MS).toBeGreaterThan(quota.STALE_AFTER_MS * 2)
+    // desktop app until somebody archives it by hand. The clock that produced them is gone; this
+    // floor is what stops the gates that replaced it doing the same thing.
+    expect(quota.REFRESH_BACKOFF_MS).toBeGreaterThanOrEqual(10 * 60 * 1000)
+
+    const worker = seedWorker('backoff', Date.now())
+    workers.updateWorker(worker.id, { enabled: true })
+    quota.forgetRefreshAttempts()
+
+    // The first ask starts one and says so; the second is inside the backoff and starts nothing.
+    expect(quota.ensureFreshQuota(worker.id)).toBe(true)
+    expect(quota.ensureFreshQuota(worker.id)).toBe(true) // still in flight - the caller waits
   })
 
-  it('is not probed while switched off or signed out either', () => {
+  /**
+   * ⛔ The starvation this replaced. On the config-cache path a refresh that produced nothing
+   * fresher stores the **vendor's** old `sampledAt`, because inventing a timestamp for a number
+   * nobody re-read would be worse than an old number. Anything that decides "try again?" from the
+   * reading's *age* therefore says yes forever on exactly the worker that cannot answer - and the
+   * old sweep allowed one refresh per pass, so that worker re-claimed the slot every five minutes
+   * and no worker behind it in `listWorkers()` order was ever refreshed again.
+   */
+  it('backs off on the attempt, not on the age of the reading it failed to move', () => {
+    const worker = seedWorker('never-answers', Date.now())
+    workers.updateWorker(worker.id, { enabled: true })
+    quota.forgetRefreshAttempts()
+
+    expect(quota.ensureFreshQuota(worker.id)).toBe(true)
+    // No reading has appeared and none will. The decision must not be re-derived from that.
+    expect(quota.lastQuota(worker.id)?.stale ?? true).toBe(true)
+    expect(quota.ensureFreshQuota(worker.id)).toBe(true)
+  })
+
+  it('is not refreshed while switched off or signed out either', () => {
     const worker = seedWorker('sweep-gates', Date.now())
     workers.updateWorker(worker.id, { enabled: false })
-    expect(quota.shouldBackgroundRefresh(worker.id)).toBe(false)
+    expect(quota.mayRefreshUsage(worker.id)).toBe(false)
 
     workers.updateWorker(worker.id, { enabled: true })
-    expect(quota.shouldBackgroundRefresh(worker.id)).toBe(true)
+    expect(quota.mayRefreshUsage(worker.id)).toBe(true)
   })
 
   it('says the fix is signing in, when the CLI said so', async () => {
@@ -362,8 +385,8 @@ describe('an account that needs signing in again', () => {
     expect(health?.state).toBe('suspect')
     expect(health?.needsReauth).toBe(false)
 
-    // Still held out, still not probed. Only the *advice* differs.
-    expect(quota.shouldBackgroundRefresh(worker.id)).toBe(false)
+    // Still held out, still not refreshed. Only the *advice* differs.
+    expect(quota.mayRefreshUsage(worker.id)).toBe(false)
   })
 
   it('records the verdict on the worker, so the panel does not have to guess', () => {

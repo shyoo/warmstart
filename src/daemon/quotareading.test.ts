@@ -214,6 +214,35 @@ describe('QuotaPoller.sweep', () => {
     expect(heard.some((q) => q.workerId === SUSPECT)).toBe(false)
   })
 
+  /**
+   * ⛔ **The sweep starts no process, however old the reading is.** It used to: one worker per pass
+   * whose reading had aged past a floor got a real interactive session opened on it and `/usage`
+   * typed in. That spent terminals on accounts nobody was about to route work to — 150 probe
+   * sessions against 14 that did any work in four days — and *still* left an idle worker reading
+   * stale for most of every cycle, because a reading is trusted for 15m and the floor was 2h
+   * (measured on ClaudeSecond, 2026-08-31). Freshness belongs at the gate that needs it.
+   */
+  it('opens nothing on a worker whose reading is hours old', async () => {
+    const at = Date.now() - 3 * 3600_000
+    db.db()
+      .prepare(
+        `insert into quota_samples (worker_id, window_id, label, percent, resets_at, source, sampled_at)
+         values (?,?,?,?,?,?,?)`
+      )
+      .run(AGY, 'session', 'session', 25, at + 3600_000, 'cli', at)
+
+    const poller = new quota.QuotaPoller(() => {})
+    await poller.sweep()
+
+    // Untouched: the sweep neither refreshed it nor overwrote it with an empty probe.
+    const after = quota.lastQuota(AGY)
+    expect(after?.sampledAt).toBe(at)
+    expect(after?.windows).toHaveLength(1)
+    // ⚠️ And no session was opened to do it. This is the assertion the old sweep would fail.
+    const sessions = db.row<{ n: number }>(`select count(*) as n from sessions`)
+    expect(sessions?.n ?? 0).toBe(0)
+  })
+
   it('does not wipe out screen-answered adapter reading with probeWorker when not refreshing', async () => {
     sample({ ageMs: 60_000, windows: [['session', 10]] })
     // Seed an existing reading on AGY

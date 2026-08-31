@@ -465,8 +465,16 @@ body {
   opacity: 0.55;
 }
 
+/* ⛔ Faint, not warning-coloured. An old reading on an idle account is ordinary — the account is
+   not being used, so its window is not moving and nothing has had cause to re-read it. Amber said
+   *fault* about the common case, and the rare genuine fault (every check since has failed) needs a
+   colour of its own to still mean something: `.wcard-stale--failing` keeps it. */
 .wcard-stale {
   font-size: var(--text-meta);
+  color: var(--color-text-faint);
+}
+
+.wcard-stale--failing {
   color: var(--state-warn);
 }
 

@@ -238,20 +238,23 @@ function WorkerCard({ entry, now }: { entry: FleetEntry; now: number }): React.J
           </div>
           {stale && (
             <div
-              className="wcard-stale"
+              className={quota?.error ? 'wcard-stale wcard-stale--failing' : 'wcard-stale'}
               title={
-                'Older than 15 minutes, so this is the last reading taken, not the state of the ' +
-                'window now. Nothing the scheduler gates on will use it — Probe takes a fresh one.'
+                quota?.error
+                  ? 'Every check since has failed, so this is the last reading that worked and ' +
+                    `the newest attempt did not: ${quota.error}`
+                  : 'Older than fifteen minutes, so nothing the scheduler gates on will use it — ' +
+                    'but old is not wrong. The CLI rewrites its usage cache when it does work, so ' +
+                    'an idle account keeps its last number and its window is not moving either. A ' +
+                    'fresh one is taken when a task is about to run here, or when you press Probe.'
               }
             >
-              <span className="dot dot--down" />
-              stale
-              {quota?.ageMs !== undefined && (
-                <span className="num wcard-agenote"> · last seen {age(quota.ageMs)}</span>
-              )}
-              {/* ⛔ Not the same thing as old. These numbers being an hour old because nobody has
-                  probed since is ordinary; being an hour old because every probe since has failed is
-                  a fault, and the operator would otherwise read the first and get the second. */}
+              {/* ⛔ Two states, one used to be printed for both. Old because nobody has used this
+                  account is ordinary and reads as a plain age; old because every check since has
+                  failed is a fault and keeps the dot and the colour. Printing `stale` for both sent
+                  the operator to Probe accounts that were fine. */}
+              {quota?.error && <span className="dot dot--down" />}
+              read {age(quota?.ageMs ?? 0)}
               {quota?.error && <span className="wcard-agenote"> · last check failed</span>}
             </div>
           )}

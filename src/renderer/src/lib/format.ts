@@ -176,13 +176,22 @@ export function quotaGap(
     }
   }
   if (quota.stale) {
+    // ⛔ **Old is not the same as wrong, and the word `stale` said the second one.** An idle
+    // account's window is not moving, so a reading taken two hours ago is very likely still true -
+    // it simply has nothing vouching for it. Calling that a fault sent operators to press Probe on
+    // accounts that were fine, and it made the probe interval read as a promise the sweep never
+    // made: the sweep re-reads the vendor's cache, and the vendor rewrites that cache only when the
+    // account does work. So the age is the finding, and the age is what this says.
+    // ⚠️ Unchanged underneath: nothing the scheduler *gates* on will use this reading, and the
+    // dispatch gate refreshes it the moment a task is about to run here.
     return {
-      label: 'stale',
+      label: `read ${age(quota.ageMs ?? 0)}`,
       hint:
-        `The only reading available was taken ${age(quota.ageMs ?? 0)} and is too old to act on. It ` +
-        'is still shown, because knowing what it was is not the same as having no reading at all - ' +
-        'but nothing the scheduler gates on will use it. The CLI refreshes its cache when it next ' +
-        'does real work, so start a session on this worker to get a fresh one.'
+        `This reading was taken ${age(quota.ageMs ?? 0)} and nothing has confirmed it since. That ` +
+        'is normal on an idle account: the CLI rewrites its usage cache when it does work, so a ' +
+        'worker that is not working keeps the last number it had - and its window is not moving ' +
+        'either. Nothing the scheduler gates on will use a reading this old; it takes a fresh one ' +
+        'when a task is about to run here, and Probe takes one now.'
     }
   }
   return null

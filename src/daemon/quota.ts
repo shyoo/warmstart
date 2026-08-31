@@ -33,25 +33,25 @@ import { log } from './log.js'
 export const STALE_AFTER_MS = 15 * 60 * 1000
 
 /**
- * How old a reading has to be before it is worth starting a process to replace it.
+ * The shortest gap between two attempts to refresh one worker's reading.
  *
- * ⚠️ Deliberately much longer than `STALE_AFTER_MS`, and the gap is not an oversight. Fifteen
- * minutes is how long a number may be *trusted*; this is how often it is worth *spending a terminal*
- * to renew one. Setting them equal would mean a fleet permanently refreshing, since a reading becomes
- * untrusted at exactly the moment it becomes renewable.
+ * ⚠️ **A gap between *attempts*, not a function of how old the reading is** — and that distinction
+ * is the whole point. Refreshing is only worth starting when something is about to act on the
+ * number, so the clock that used to drive it is gone (see `QuotaPoller.sweep`); what is left is a
+ * floor, so that a gate asked twice in a minute opens one terminal rather than two.
  *
- * ⛔ **Two hours, raised from thirty minutes on 2026-08-30, because the old number was spending far
- * more than it bought.** Measured on this install: **150 probe PTY sessions against 14 that did any
- * work** over four days - ten interactive `claude` processes opened to read a number for every one
- * that touched the operator's code. Each registers a session with the vendor's bridge, and they
- * accumulate in the desktop app's session list until somebody archives them by hand.
+ * ⛔ **Keyed on the attempt because a failed refresh cannot move the reading.** On the config-cache
+ * path a refresh that produced nothing fresher stores the *vendor's* old `sampledAt` — correctly,
+ * since inventing a timestamp for a number nobody re-read is the one thing worse than an old
+ * number. Anything deriving "try again?" from the reading's age therefore says *yes* forever on
+ * precisely the worker that cannot answer: the old sweep, which allowed one refresh per pass, had
+ * that worker re-claim the single slot every five minutes and starve every worker behind it in
+ * `listWorkers()` order indefinitely. Recording the attempt is what ends that.
  *
- * ⭐ What makes this cheap rather than merely less frequent: the vendor's own on-disk cache is
- * refreshed by **any** use of that account, including this fleet's own work sessions. An account that
- * is running tasks keeps its own reading current for free; the interactive refresh only ever mattered
- * for an account sitting idle - whose quota, by construction, is not moving.
+ * ⭐ Ten minutes, matching the dispatch gate's own retry, which this replaced — there is one number
+ * now instead of two that could drift apart.
  */
-export const REFRESH_AFTER_MS = 2 * 60 * 60 * 1000
+export const REFRESH_BACKOFF_MS = 10 * 60 * 1000
 
 /** How long a stored answer to "who is signed in, and is this root set up?" may go unchecked. */
 export const IDENTITY_STALE_AFTER_MS = 15 * 60 * 1000
@@ -480,17 +480,26 @@ export class QuotaPoller {
   }
 
   /**
+   * Read every worker's cache off disk. **Nothing here starts a process.**
+   *
+   * ⛔ **The sweep no longer refreshes anything, and that is the point.** It used to open one
+   * interactive session per pass on whichever worker's reading had aged past a two-hour gate — a
+   * clock, spending a terminal on accounts nobody was about to route work to. Measured 2026-08-30:
+   * **150 probe PTY sessions against 14 that did any work** over four days, each registering with
+   * the vendor's bridge and accumulating in the desktop app until somebody archived it by hand.
+   * Raising the gate 30m → 2h cut the count and bought nothing else: a reading is *trusted* for
+   * fifteen minutes, so an idle worker still read `stale` for 1h50 of every 2h05 (measured on
+   * ClaudeSecond, 2026-08-31 — `transient_docs/quota_staleness_2026-08-31.md`), and the operator
+   * reasonably read a five-minute probe interval as a promise of a five-minute-old number.
+   *
+   * ⭐ So freshness moved to where it is *used*: `ensureFreshQuota` at the dispatch gate, and again
+   * when a run ends. A worker nothing is about to dispatch to keeps whatever reading it has, which
+   * costs nothing and is honest — and an idle account's window is not moving anyway.
+   *
    * Every failure is swallowed on purpose. A quota probe that throws must never stall the loop that
    * schedules work - the fleet degrades to "unknown, treat conservatively" and keeps running.
    */
   async sweep(): Promise<void> {
-    // ⚠️ **At most one per sweep, and only when the reading is genuinely old.** Reading the cache is
-    // a file read; refreshing it starts a real process for the better part of a minute. Refreshing
-    // every worker every five minutes would turn a free probe into a fleet that spends its day
-    // opening terminals to look at itself — which is the shape of the mistake `-p /usage` already
-    // made once, in tokens rather than in processes.
-    let refreshed = false
-
     for (const w of listWorkers()) {
       if (w.retiredAt || !w.enabled || w.health?.state === 'suspect') continue
       try {
@@ -499,13 +508,6 @@ export class QuotaPoller {
         // was written before somebody signed in and only a button nobody knew about would have
         // corrected it. Free: a local subprocess, and only when the answer is genuinely old.
         await refreshIdentityIfStale(w.id, IDENTITY_STALE_AFTER_MS)
-        if (!refreshed && shouldBackgroundRefresh(w.id)) {
-          refreshed = true
-          await refreshUsage(w.id)
-          const reading = lastQuotaReading(w.id)
-          if (reading) this.listener(reading)
-          continue
-        }
         // ⛔ An adapter whose usage is screen-answered writes no cache to disk: `probeQuota` returns
         // empty windows with an error. Running it here would wipe out the last successful reading and
         // replace it with `quota unknown` every five minutes.
@@ -513,6 +515,9 @@ export class QuotaPoller {
         if (a.info.usageRefresh?.answer === 'screen' || a.info.capabilities.quotaProbe === 'none') {
           continue
         }
+        // ⭐ Free, and not pointless: the vendor rewrites this cache on **any** use of the account,
+        // including this fleet's own work sessions. A worker that is running tasks therefore keeps
+        // its own reading current at the price of a file read.
         await probeWorker(w.id)
         const reading = lastQuotaReading(w.id)
         if (reading) this.listener(reading)
@@ -525,34 +530,70 @@ export class QuotaPoller {
 }
 
 /**
- * Is it worth opening a terminal to find out?
+ * May we open a terminal on this worker to read its usage, at all?
  *
  * ⛔ `loggedIn === false` is excluded rather than merely deprioritised: a TUI on an account nobody
  * is signed in to sits on its login screen for the whole timeout and answers nothing. `null` is
  * allowed through, as everywhere else — unknown is not the same as no.
  *
- * ⚠️ Exported rather than private so these gates can be tested without driving a sweep, which
- * opens real processes on real accounts.
+ * ⛔ An account a run has already proved work dies on is not asked either. The refresh is not free
+ * in the way a file read is: on both adapters it opens a real interactive session and types into
+ * it, so on a worker whose subscription has expired this would spawn a CLI to watch it fail to
+ * authenticate and record `unknown` either way. Effectively the same state as disabled, and
+ * treated as one.
+ *
+ * ⚠️ The *automatic* paths only. `probeWorker` and `refreshUsage` still run when the operator
+ * presses Probe - that is one of the two things that lifts the hold, and a quarantine nobody can
+ * attempt to clear by hand is the fault this whole mechanism was careful to avoid.
  */
-export function shouldBackgroundRefresh(workerId: string): boolean {
+export function mayRefreshUsage(workerId: string): boolean {
   const w = requireWorker(workerId)
   if (w.retiredAt || !w.enabled) return false
   if (w.identity?.loggedIn === false) return false
-  // ⛔ An account a run has already proved work dies on is not asked again in the background. The
-  // refresh is not free in the way a file read is: on both adapters it opens a real interactive
-  // session and types into it, so on a worker whose subscription has expired this loop spawns a
-  // CLI every thirty minutes to watch it fail to authenticate, forever, and records `unknown`
-  // either way. Effectively the same state as disabled, and treated as one.
-  //
-  // ⚠️ The *background* sweep only. `probeWorker` and `refreshUsage` still run when the operator
-  // presses Probe - that is one of the two things that lifts the hold, and a quarantine nobody can
-  // attempt to clear by hand is the fault this whole mechanism was careful to avoid.
   if (w.health?.state === 'suspect') return false
-  if (!adapter(w.adapterId).info.usageRefresh) return false
+  return Boolean(adapter(w.adapterId).info.usageRefresh)
+}
 
-  const last = lastQuota(workerId)
-  // Never read at all, or read so long ago that nothing downstream is allowed to use it.
-  return !last || last.windows.length === 0 || last.ageMs > REFRESH_AFTER_MS
+interface RefreshAttempt {
+  at: number
+  inFlight: boolean
+}
+
+const refreshAttempts = new Map<string, RefreshAttempt>()
+
+/**
+ * Ask for this worker's reading to be made current, because something is about to act on it.
+ *
+ * ⭐ **This is the gate-time replacement for the background clock.** The caller is a decision that
+ * needs a number it may trust — today the dispatch gate, which holds the task for one pass while
+ * the terminal opens. Returns `true` when a refresh is running and the caller should wait, `false`
+ * when there will not be one: the worker cannot host a probe, or one was attempted too recently to
+ * be worth repeating (`REFRESH_BACKOFF_MS`). ⛔ `false` is not a failure and must not bench the
+ * task — a fleet that refuses to dispatch without a fresh percentage is a fleet stopped by its own
+ * instrument. Dispatch blind and mark the run `quotaUnverified`, which is what that flag is for.
+ *
+ * ⚠️ Never awaited. `refreshUsage` opens a PTY for the better part of thirty seconds, and the
+ * scheduler tick that calls this is on a ten-second loop that must not block behind it.
+ */
+export function ensureFreshQuota(workerId: string): boolean {
+  if (!mayRefreshUsage(workerId)) return false
+
+  const prior = refreshAttempts.get(workerId)
+  if (prior?.inFlight) return true
+  if (prior && Date.now() - prior.at < REFRESH_BACKOFF_MS) return false
+
+  refreshAttempts.set(workerId, { at: Date.now(), inFlight: true })
+  void refreshUsage(workerId)
+    .catch((err: unknown) => log.warn(`quota refresh failed for ${workerId}:`, err))
+    // ⚠️ Timed from when it *finished*, not when it started, so a refresh that took half a minute
+    // does not have that half minute counted against its own backoff.
+    .finally(() => refreshAttempts.set(workerId, { at: Date.now(), inFlight: false }))
+  return true
+}
+
+/** Test seam: the attempt ledger is process-local state, and a test that seeds a fleet needs it empty. */
+export function forgetRefreshAttempts(): void {
+  refreshAttempts.clear()
 }
 
 /**

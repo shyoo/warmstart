@@ -24,10 +24,18 @@ describe('quotaGap', () => {
     expect(quotaGap(null)?.label).toBe('never probed')
   })
 
-  it('refuses to show a stale number as current, and says how old it is', () => {
+  /**
+   * ⛔ The label is the **age**, not the word `stale`. An idle account's window is not moving, so a
+   * two-hour-old reading is very probably still true — it simply has nothing vouching for it, and
+   * calling that a fault sent operators to press Probe on accounts that were fine.
+   */
+  it('says how old a reading is rather than calling it broken', () => {
     const gap = quotaGap({ windows: [{}], ageMs: 20 * 60 * 1000, stale: true })
-    expect(gap?.label).toBe('stale')
+    expect(gap?.label).toBe('read 20m ago')
+    expect(gap?.label).not.toContain('stale')
     expect(gap?.hint).toContain('20m ago')
+    // And it still says the number will not be gated on, which is the part that was true.
+    expect(gap?.hint).toContain('gates on')
   })
 
   it('returns null when there is a real number for the caller to render', () => {

@@ -395,9 +395,14 @@ export function Workers({
                         <span className={quota.stale ? 'dim' : undefined}>
                           {quota.windows.map((w) => `${w.label} ${percent(w.percent)}`).join(' · ')}
                         </span>
+                        {/* ⛔ The age, not the word `stale`. An idle account's reading is old
+                            because nothing has used the account, not because anything failed, and
+                            the two need different next moves from the operator. A reading that is
+                            old *because every check failed* is the fault, and it says so. */}
                         {quota.stale && (
-                          <div className="warn tbl-sub" title={gap?.hint}>
-                            stale · {age(quota.ageMs ?? 0)}
+                          <div className={quota.error ? 'warn tbl-sub' : 'dim tbl-sub'} title={gap?.hint}>
+                            read {age(quota.ageMs ?? 0)}
+                            {quota.error ? ' · last check failed' : ''}
                           </div>
                         )}
                       </>
