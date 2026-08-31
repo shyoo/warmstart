@@ -573,8 +573,22 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
       }),
     'question.list': () => openQuestions(),
     'question.forTask': (p) => questionsForTask(p.taskId),
-    'question.answer': (p) =>
-      answerQuestion(p.id, { optionIds: p.optionIds ?? [], text: p.text ?? null }),
+    'question.answer': (p) => {
+      const answered = answerQuestion(p.id, { optionIds: p.optionIds ?? [], text: p.text ?? null })
+      // ⛔ **A parked question's answer needs a run to arrive in.** A live question resolves into the
+      // tool call the agent is holding and the work carries straight on; a parked one only lands on
+      // the thread, and nothing was scheduled to read it — so the operator answered, watched nothing
+      // happen, and had to send a second message to start the work again. For an adapter with no
+      // MCP *every* question is parked (t63, 2026-08-30), which made that the only path there is.
+      //
+      // ⚠️ Only from `awaiting_human`. An operator who paused or stopped the task while the question
+      // was open has put it somewhere deliberate, and an answer is not a request to overrule that.
+      if (answered.parkedAt && answered.taskId) {
+        const task = getTask(answered.taskId)
+        if (task?.status === 'awaiting_human') continueTask(task.id)
+      }
+      return answered
+    },
     'approval.rules': (p) => listRules(p.projectId ?? null),
     'approval.addRule': (p) =>
       addRule({ projectId: p.projectId ?? null, text: p.text, effect: p.effect }),

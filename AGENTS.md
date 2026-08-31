@@ -193,6 +193,9 @@ These are not preferences; breaking one breaks the product.
   *content*, so it can never be a rule and a default of *no* answers nothing. Approvals and questions
   share the Attention bar; both are captured through a structured channel — never by reading the
   screen. ⚠️ An unanswered approval **denies**; an unanswered question **parks** and stays open.
+  ⛔ **However it arrived, a question is a `Question` row.** Every control an operator answers with is
+  rendered from one, so a channel that detects a question and does not file one (the `NEEDS DECISION:`
+  contract an MCP-less adapter is given — t63) produces a question nobody can reply to.
 - ⛔ **A landing that landed nothing must not say it landed.** Measured 2026-08-27: a question-only
   task changed no file and was reported as *"Landed as a166a6a onto main"* — every step had
   succeeded (clean workspace, no-op rebase, passing checks, a push that moved nothing, and

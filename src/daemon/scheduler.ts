@@ -1,4 +1,4 @@
-import type { Project, Run, RunQuota, Task, TaskStatus } from '@shared/tasks.js'
+import type { Project, QuestionOption, Run, RunQuota, Task, TaskStatus } from '@shared/tasks.js'
 import { policyVerifies, resolveCompletionMode, resolveModelChoice } from '@shared/tasks.js'
 import type { QuotaWindow, Session, Worker } from '@shared/protocol.js'
 import { adapter } from './adapters/index.js'
@@ -36,7 +36,7 @@ import {
   type RouteCandidate
 } from './judgment.js'
 import { escalateStale, voidApprovalsForSession } from './approvals.js'
-import { parkQuestionsForSession } from './questions.js'
+import { fileParkedQuestion, parkQuestionsForSession } from './questions.js'
 import {
   Contended,
   availability,
@@ -1965,10 +1965,16 @@ export function promptFor(
         'options you are choosing between, and it waits for a real answer.'
     )
   } else {
+    // ⛔ The options are asked for in the same breath as the question, because the operator's side
+    // of this is a card with buttons on it. A question whose choices are written into the sentence -
+    // *"(Option A) ... (Option B)"*, which is what antigravity did on t63 - arrives answerable only
+    // in prose, and nothing here will guess the choices back out of it.
     parts.push(
       'When the work is finished, commit what you have and end with a one-line summary of what ' +
         'changed. If you need a decision from a person, end your reply with a line beginning ' +
-        '`NEEDS DECISION:` followed by the question, and stop rather than guessing.'
+        '`NEEDS DECISION:` followed by the question, and stop rather than guessing. If you are ' +
+        'choosing between specific options, put each one on its own line directly under it as ' +
+        '`- <the option> — <what choosing it means>`, so they can be offered as buttons.'
     )
   }
 
@@ -2575,10 +2581,24 @@ export async function onStreamResult(
       if (asked) {
         const run = runForSession(session.id)
         if (run) {
+          // ⛔ **Filed as a real question, not only quoted into `hold_reason`.** The card, the
+          // options and the box the answer is typed into are all written against a `Question` row,
+          // and until this existed an MCP-less agent's question produced no row - so the operator
+          // got a sentence on the task and no way to reply to it (t63, 2026-08-30, antigravity).
+          //
+          // ⚠️ Before the run is wound up, so the thread reads in the order it happened: the
+          // question, then what became of the run that asked it.
+          fileParkedQuestion({
+            sessionId: session.id,
+            origin: 'ask_human',
+            kind: asked.options.length > 0 ? 'choice' : 'text',
+            question: asked.question,
+            ...(asked.options.length > 0 ? { options: asked.options } : {})
+          })
           await endUnfinishedRun(
             session,
             run,
-            `The agent stopped to ask you something: "${asked.slice(0, 400)}"`,
+            `The agent stopped to ask you something: "${asked.question.slice(0, 400)}"`,
             'blocked'
           )
           closeSession(session.id)
@@ -2604,17 +2624,49 @@ export async function onStreamResult(
 }
 
 /**
- * The question an MCP-less agent was told to end with, or null.
+ * The question an MCP-less agent was told to end with, and the options it offered.
  *
  * ⛔ Anchored to the start of a line and to the exact words the prompt asked for. A looser
  * match - anywhere in the text, or any sentence that sounds like a question - would be reading intent
  * out of generated prose, and would fire on an agent merely *describing* a decision it had made.
+ *
+ * ⛔ **The options are read from a contract too, and only from directly beneath the question.** The
+ * prompt asks for one `- label — what it means` bullet per choice on the lines that follow, and the
+ * first line that is not such a bullet ends the list. Measured on t63, 2026-08-30, antigravity wrote
+ * its three choices inline — *"(Option A) ... (Option B) ... (Option C)"* — and there is deliberately
+ * no attempt to recover them from that: pulling choices out of a sentence is the inference this
+ * project refuses to make, and a question with no parsed options is still perfectly answerable in
+ * prose, which is why the card always has a text box.
+ *
+ * ⚠️ Capped at eight, and the em-dash separator is required for a detail. `- Use OAuth` is a label
+ * with no detail; splitting on a bare hyphen would cut hyphenated labels in half.
  */
-export function needsDecisionIn(text: string | null): string | null {
+export function needsDecisionIn(
+  text: string | null
+): { question: string; options: QuestionOption[] } | null {
   if (!text) return null
-  const match = /^[ \t>*-]*NEEDS DECISION:[ \t]*(.+)$/im.exec(stripAnsi(text))
-  const asked = match?.[1]?.trim()
-  return asked ? asked : null
+  const lines = stripAnsi(text).split(/\r?\n/)
+  const at = lines.findIndex((line) => /^[ \t>*-]*NEEDS DECISION:/i.test(line))
+  if (at === -1) return null
+  const question = (/^[ \t>*-]*NEEDS DECISION:[ \t]*(.*)$/i.exec(lines[at] ?? '')?.[1] ?? '').trim()
+  if (!question) return null
+
+  const options: QuestionOption[] = []
+  for (const line of lines.slice(at + 1)) {
+    const bullet = /^[ \t]*(?:[-*•]|\d+[.)])[ \t]+(.+)$/.exec(line)
+    if (!bullet) break
+    const body = (bullet[1] ?? '').trim()
+    if (!body) break
+    const [label, ...rest] = body.split(/\s+[—–]\s+/)
+    const detail = rest.join(' — ').trim()
+    options.push({
+      id: `opt${options.length + 1}`,
+      label: (label ?? body).trim().slice(0, 200),
+      ...(detail ? { detail: detail.slice(0, 500) } : {})
+    })
+    if (options.length === 8) break
+  }
+  return { question, options }
 }
 
 /**

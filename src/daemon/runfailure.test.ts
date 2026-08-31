@@ -521,11 +521,63 @@ describe('a result that is not an error', () => {
     expect(tasks.getTask(task.id)?.holdReason).toContain('OAuth or session cookies?')
   })
 
+  it('⭐ files the question as a real question, so the operator can answer it', async () => {
+    // ⛔ The t63 defect, 2026-08-30. Antigravity asked which of three designs to build; the sentence
+    //    was quoted into `hold_reason` and thrown away. The card, the options and the box the answer
+    //    is typed into are all written against a `Question` row — and no row was ever written, so an
+    //    adapter without MCP could ask a question that was structurally unanswerable.
+    const { task, session } = seedRunningTask({ metered: 500 })
+    await scheduler.onStreamResult(session, {
+      isError: false,
+      text:
+        'I compared the three.\nNEEDS DECISION: how should the quota be refreshed?\n' +
+        '- Leave it just-in-time — cheapest, and the routing consult may read a stale number\n' +
+        '- Gate the consult — refresh the candidates first, one extra probe per decision\n' +
+        '- Refresh everything up front',
+      terminalReason: null
+    })
+
+    const [filed] = questions.questionsForTask(task.id)
+    expect(filed, 'the question the agent asked was filed').toBeDefined()
+    expect(filed?.question).toBe('how should the quota be refreshed?')
+    expect(filed?.kind).toBe('choice')
+    expect(filed?.options.map((o) => o.label)).toEqual([
+      'Leave it just-in-time',
+      'Gate the consult',
+      'Refresh everything up front'
+    ])
+    expect(filed?.options[0]?.detail).toContain('stale number')
+    // ⚠️ Born parked, and that is the truth: the turn is over, so there is no waiter and no tool
+    //    result to return into. `openQuestions` still carries it, which is what puts it on the card.
+    expect(filed?.parkedAt).not.toBeNull()
+    expect(filed?.answeredAt).toBeNull()
+    expect(questions.openQuestions().some((q) => q.id === filed?.id)).toBe(true)
+  })
+
+  it('reads the options only from the contract, never out of the sentence', () => {
+    // ⛔ What antigravity actually wrote on t63. There is deliberately no attempt to recover choices
+    //    from prose — a question with no parsed options is still answerable in the text box.
+    const inline = scheduler.needsDecisionIn(
+      'NEEDS DECISION: keep it as is (Option A), gate it (Option B), or refresh everything (Option C)?'
+    )
+    expect(inline?.options).toEqual([])
+    expect(inline?.question).toContain('Option C')
+
+    // The list ends at the first line that is not a bullet, so a closing sentence is not an option.
+    const listed = scheduler.needsDecisionIn(
+      'NEEDS DECISION: which store?\n1. Postgres — we already run one\n2. SQLite\n\nI lean Postgres.'
+    )
+    expect(listed?.options.map((o) => o.label)).toEqual(['Postgres', 'SQLite'])
+    expect(listed?.options[1]?.detail).toBeUndefined()
+  })
+
   it('matches the contract it gave, and not prose that resembles it', () => {
     // ⚠️ The anchor is the point. A looser match would fire on an agent *describing* a
     // decision it had already made, and park a task that was finished.
-    expect(scheduler.needsDecisionIn('NEEDS DECISION: which database?')).toBe('which database?')
-    expect(scheduler.needsDecisionIn('  - NEEDS DECISION:   trimmed  ')).toBe('trimmed')
+    expect(scheduler.needsDecisionIn('NEEDS DECISION: which database?')?.question).toBe(
+      'which database?'
+    )
+    expect(scheduler.needsDecisionIn('  - NEEDS DECISION:   trimmed  ')?.question).toBe('trimmed')
     expect(scheduler.needsDecisionIn('I decided this needs decision: none really')).toBeNull()
     expect(scheduler.needsDecisionIn('there was no decision to make')).toBeNull()
     expect(scheduler.needsDecisionIn(null)).toBeNull()

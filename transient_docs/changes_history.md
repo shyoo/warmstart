@@ -2811,3 +2811,67 @@ sees. Naming the command is reliable where pre-running it is not.
 ⚠️ None of the three has run in flight. The base fix is proven by a test that builds a repository
 whose local `main` is ahead of `origin/main` and asserts both readings, and by the measurement above
 against t59's own workspace — but no landing has yet been *saved* by it.
+
+## A question that reached a person with no way to answer it (2026-08-30)
+
+t63 was dispatched to an antigravity worker and came back asking which of three quota-refresh designs
+to build. The task rested at `awaiting_human` with the question on its row, and there the operator
+stopped: no card, no options, nowhere to type. Claude's questions had been answerable for two days.
+
+### The contract carried the question and lost the interface
+
+An adapter declares `capabilities.mcp`, and only `claude-code` says true. `openai-compatible` and
+`antigravity-cli` both say false for the same reason — `codex mcp add` and `agy mcp add` register
+into a **shared** config, so a session cannot carry the per-session identity those tools need. Neither
+can call `ask_human`, so `promptFor` gives them a prompt contract instead: end with a line beginning
+`NEEDS DECISION:` and stop rather than guessing. `onStreamResult` matches that line, refuses to
+complete the run, ends it `blocked`, and quotes the sentence into `hold_reason`.
+
+⛔ Every part of that worked, and it was still unanswerable. The card, the option buttons, the text
+box and the answer that lands on the thread are **all rendered from a `Question` row**, and no row was
+ever written — the sentence was matched, quoted and thrown away. Two paths existed to ask a question
+and only one of them created the object the interface is built on.
+
+⚠️ Worth stating plainly, because it is the shape of the bug rather than a detail of it: this was not
+a missing feature. It was one missing INSERT between a working detector and a working UI.
+
+### Filed already parked, because that is what it is
+
+`fileParkedQuestion` shares its insert with `askQuestion`, so a question asked through a tool call and
+a question asked in prose are the same object. It is born with `parked_at` set, and that is the truth
+rather than a shortcut: the turn that asked is already over by the time the text can be read, so there
+is no waiter, no tool result to return into, and nothing to hold a process open for. **Parked** is
+precisely the state for a question whose asker has gone — the existing park path reaches it by
+timeout, this one starts there.
+
+### The options come from a contract, never from the sentence
+
+t63 wrote its three choices inline: *"keep the current just-in-time refresh (Option A), add a gate
+(Option B), or hold tasks (Option C)?"* ⛔ Nothing recovers those. Pulling an answer set out of
+generated prose is the inference this project refuses to make, and it would fire on an agent merely
+describing alternatives it had already rejected.
+
+So the prompt now asks for the choices the way the UI needs them — one `- <option> — <what choosing it
+means>` bullet per line directly under the question — and `needsDecisionIn` reads them only from
+there, stopping at the first line that is not such a bullet. ⚠️ The em dash is required for a detail;
+splitting on a bare hyphen would cut hyphenated labels in half. A question with no parsed options is
+still perfectly answerable, because every card has a text box.
+
+### The half that would have made the rest inert
+
+A live question resolves into the tool call the agent is holding, and the work carries straight on. A
+parked answer only lands on the thread — and **nothing was scheduled to read it**. The operator
+answered, watched nothing happen, and had to send a second message to start the work again.
+
+For a Claude question that was a wrinkle, because parking is the exception there. For an MCP-less
+adapter it is the only path there is, so every question would have ended that way. `question.answer`
+now re-queues a parked question's task: same task, same thread, a new run, with the answer left
+**undelivered** so `buildPrompt` carries it — which is the mechanism the park docstring had claimed
+for months without anything implementing it.
+
+⚠️ Guarded on `awaiting_human`. An operator who paused or stopped the task while the question was open
+has put it somewhere deliberate, and an answer is not a request to overrule that.
+
+⚠️ Codex gets all of this for free — it is the same `!mcp` branch, not a second implementation — and
+neither adapter has exercised it in flight. t63 itself predates the fix and has no row; its question
+lives on in its hold reason and is answered as an ordinary note.

@@ -431,3 +431,79 @@ describe('the status while a question is open', () => {
     expect(tasks.requireTask(task.id).holdReason).toBe('something else')
   })
 })
+
+/**
+ * A question nobody could have been waiting for.
+ *
+ * ⛔ An adapter with no MCP has no `ask_human`, so **every** question it asks is parked on arrival:
+ * the turn that asked is already over by the time its text can be read. That makes this path the
+ * only path such an agent has, and both halves of it were missing — the row that the card renders
+ * from, and a run for the answer to arrive in.
+ */
+describe('a question filed with its asker already gone', () => {
+  it('is a question like any other, options and all', () => {
+    const { task, session } = seedAsker()
+    const filed = questions.fileParkedQuestion({
+      sessionId: session.id,
+      origin: 'ask_human',
+      kind: 'choice',
+      question: 'How should the quota be refreshed?',
+      options: [
+        { id: 'jit', label: 'Just in time', detail: 'Cheapest; the consult may read a stale number.' },
+        { id: 'gate', label: 'Gate the consult' }
+      ]
+    })
+
+    // ⭐ It is on the thread, it is in `openQuestions`, and it carries the asker's own prose — which
+    //    is everything the operator's card is built out of.
+    expect(questions.openQuestions().map((q) => q.id)).toContain(filed.id)
+    expect(questions.questionsForTask(task.id)).toHaveLength(1)
+    expect(filed.options[0]?.detail).toContain('stale number')
+    expect(filed.parkedAt).not.toBeNull()
+    expect(filed.answeredAt).toBeNull()
+    expect(tasks.messagesFor(task.id).some((m) => m.text.includes('Just in time'))).toBe(true)
+  })
+
+  it('⭐ starts the work again when it is answered', async () => {
+    // ⛔ A live question resolves into the tool call the agent is holding, and the work carries on. A
+    //    parked answer lands only on the thread, and nothing was scheduled to read it — so the
+    //    operator answered and watched nothing happen. Measured as the whole of t63's experience.
+    const api = await import('./api.js')
+    const handlers = api.buildApi({ version: '1.0.0', startedAt: Date.now(), port: 8080 })
+    const { task, session } = seedAsker()
+    const filed = questions.fileParkedQuestion({
+      sessionId: session.id,
+      origin: 'ask_human',
+      kind: 'text',
+      question: 'Which store?'
+    })
+    tasks.setStatus(task.id, 'awaiting_human', { assignee: 'human', holdReason: 'Which store?' })
+
+    await handlers['question.answer']({ id: filed.id, optionIds: [], text: 'Postgres' })
+
+    // ⛔ `ready`, so the next tick dispatches it — the same task, the same thread, a new run. The
+    //    answer is left **undelivered** on purpose: it has reached nobody, and `buildPrompt` carrying
+    //    it is the entire mechanism by which answering a parked question restarts the work.
+    expect(tasks.requireTask(task.id).status).toBe('ready')
+    const answer = tasks.messagesFor(task.id).find((m) => m.text.includes('Postgres'))
+    expect(answer?.role).toBe('human')
+    expect(answer?.deliveredAt ?? null).toBeNull()
+  })
+
+  it('does not overrule an operator who had already stopped the task', async () => {
+    // ⚠️ Answering is not a request to restart something a person deliberately paused.
+    const api = await import('./api.js')
+    const handlers = api.buildApi({ version: '1.0.0', startedAt: Date.now(), port: 8080 })
+    const { task, session } = seedAsker()
+    const filed = questions.fileParkedQuestion({
+      sessionId: session.id,
+      origin: 'ask_human',
+      kind: 'text',
+      question: 'Which store?'
+    })
+    tasks.setStatus(task.id, 'paused_user', { assignee: 'human' })
+
+    await handlers['question.answer']({ id: filed.id, optionIds: [], text: 'Postgres' })
+    expect(tasks.requireTask(task.id).status).toBe('paused_user')
+  })
+})

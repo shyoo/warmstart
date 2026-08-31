@@ -164,7 +164,11 @@ describe('promptFor prompt construction', () => {
     // ⛔ An anchored contract, not an invitation to say something. It is what
     // `needsDecisionIn` matches on, so the two have to be checked against each other.
     expect(prompt).toContain('`NEEDS DECISION:`')
-    expect(scheduler.needsDecisionIn('NEEDS DECISION: which one?')).toBe('which one?')
+    expect(scheduler.needsDecisionIn('NEEDS DECISION: which one?')?.question).toBe('which one?')
+    // ⭐ And the option contract is in the same prompt, because the operator's side of a question is
+    // a card with buttons on it. An agent that was not told this writes its choices into the
+    // sentence, which arrives answerable only in prose (t63).
+    expect(prompt).toContain('— <what choosing it means>')
     expect(prompt).not.toContain('task_complete')
   })
 

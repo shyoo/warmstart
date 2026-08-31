@@ -154,44 +154,8 @@ export async function askQuestion(request: QuestionRequest): Promise<QuestionRes
     ? costModel(adapter(session.adapterId).info.policy.costModelId).cacheExpiryFor(session)
     : null
 
-  const id = randomUUID()
   const now = Date.now()
-  const options = normaliseOptions(request.kind, request.options ?? [])
-
-  db()
-    .prepare(
-      `insert into questions (id, session_id, run_id, task_id, project_id, origin, kind, question,
-                              header, options_json, asked_at, deadline_at, answered_at, answer_json,
-                              answered_by, parked_at)
-       values (?,?,?,?,?,?,?,?,?,?,?,?,null,null,null,null)`
-    )
-    .run(
-      id,
-      request.sessionId,
-      run?.id ?? null,
-      task?.id ?? null,
-      task?.projectId ?? null,
-      request.origin,
-      request.kind,
-      request.question,
-      request.header ?? null,
-      options.length > 0 ? JSON.stringify(options) : null,
-      now,
-      deadlineAt
-    )
-
-  const question = requireQuestion(id)
-  emit({ type: 'question.opened', question })
-
-  // ⛔ Written to the thread as it is asked, not when it is answered. The thread is the
-  // permanent record of why the work is the way it is, and a question asked and answered inside one
-  // live session would otherwise exist only in that session's scrollback - so a successor after a
-  // preemption pays to rediscover a decision somebody already made.
-  //
-  // ⚠️ Role `agent`, which is both true and load-bearing: `buildPrompt` re-delivers
-  // outstanding *human* messages, and takes an `agent` message only when it is first in the thread.
-  // So this is visible to a person and is never re-sent to an agent.
-  if (task) addMessage(task.id, 'agent', renderAsk(request), run?.id ?? null)
+  const question = insertQuestion(request, { deadlineAt, parkedAt: null })
 
   // ⛔ **And the task says so.** A question is the one moment the work cannot proceed without a
   // person, and the status is where anybody looks to find that out. It read `running` throughout —
@@ -212,9 +176,92 @@ export async function askQuestion(request: QuestionRequest): Promise<QuestionRes
       holdReason: `the agent asked and is waiting on you: ${request.question.slice(0, 300)}`
     })
   }
-  log.info(`question ${id.slice(0, 8)}: ${request.question.slice(0, 120)} — waiting for a person`)
+  log.info(
+    `question ${question.id.slice(0, 8)}: ${request.question.slice(0, 120)} — waiting for a person`
+  )
 
-  return await waitFor(id, waitMsFor(deadlineAt, now))
+  return await waitFor(question.id, waitMsFor(deadlineAt, now))
+}
+
+/**
+ * Write the row, tell everyone, and put the question on the thread.
+ *
+ * ⛔ Shared with `fileParkedQuestion` so that a question asked through a tool call and a question
+ * asked in prose are **the same object**. The operator's side of this — the card, the options, the
+ * text box, the answer that lands on the thread — is written once against `Question`, and an
+ * MCP-less agent's question that skipped this insert got none of it.
+ */
+function insertQuestion(
+  request: QuestionRequest,
+  timing: { deadlineAt: number | null; parkedAt: number | null }
+): Question {
+  const run = runForSession(request.sessionId)
+  const task = run?.taskId ? getTask(run.taskId) : null
+  const id = randomUUID()
+  const options = normaliseOptions(request.kind, request.options ?? [])
+
+  db()
+    .prepare(
+      `insert into questions (id, session_id, run_id, task_id, project_id, origin, kind, question,
+                              header, options_json, asked_at, deadline_at, answered_at, answer_json,
+                              answered_by, parked_at)
+       values (?,?,?,?,?,?,?,?,?,?,?,?,null,null,null,?)`
+    )
+    .run(
+      id,
+      request.sessionId,
+      run?.id ?? null,
+      task?.id ?? null,
+      task?.projectId ?? null,
+      request.origin,
+      request.kind,
+      request.question,
+      request.header ?? null,
+      options.length > 0 ? JSON.stringify(options) : null,
+      Date.now(),
+      timing.deadlineAt,
+      timing.parkedAt
+    )
+
+  const question = requireQuestion(id)
+  emit({ type: 'question.opened', question })
+
+  // ⛔ Written to the thread as it is asked, not when it is answered. The thread is the
+  // permanent record of why the work is the way it is, and a question asked and answered inside one
+  // live session would otherwise exist only in that session's scrollback - so a successor after a
+  // preemption pays to rediscover a decision somebody already made.
+  //
+  // ⚠️ Role `agent`, which is both true and load-bearing: `buildPrompt` re-delivers
+  // outstanding *human* messages, and takes an `agent` message only when it is first in the thread.
+  // So this is visible to a person and is never re-sent to an agent.
+  if (task) addMessage(task.id, 'agent', renderAsk(request), run?.id ?? null)
+  return question
+}
+
+/**
+ * A question that was asked with nobody left to answer it into.
+ *
+ * ⛔ **An adapter with no MCP has no `ask_human`.** Antigravity and codex are told a prompt contract
+ * instead — end with `NEEDS DECISION:` and stop — and that line was read, quoted into `hold_reason`
+ * and thrown away. Measured on t63, 2026-08-30: antigravity asked which of three quota-refresh
+ * designs to build, the task rested at `awaiting_human` with the sentence on its row, and the
+ * operator had **no question card, no options and nowhere to type the answer** — the entire
+ * `Question` interface, which exists and works, was reachable only through a tool call that adapter
+ * cannot make.
+ *
+ * ⚠️ Born parked, and that is the truth rather than a shortcut. The turn is over by the time this
+ * text can be read: there is no waiter, no tool result to return into, and nothing to hold a process
+ * open for. Parked is precisely the state for a question whose asker has gone, and the answer
+ * travels the way every parked answer travels — onto the thread, into the next run's prompt.
+ */
+export function fileParkedQuestion(request: QuestionRequest): Question {
+  const question = insertQuestion(request, { deadlineAt: null, parkedAt: Date.now() })
+  emit({ type: 'question.parked', question })
+  log.info(
+    `question ${question.id.slice(0, 8)} filed already parked (the asker has no way to be answered): ` +
+      request.question.slice(0, 120)
+  )
+  return question
 }
 
 /**

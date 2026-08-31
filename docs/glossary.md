@@ -145,15 +145,20 @@ otherwise. ⛔ Never captured by parsing the terminal — a mis-read approval ca
 **Question** — *the third object.* An interrupt on one live session, like an **Approval** — but with
 an answer set written by **whoever asked**, and an answer that is *content returned into the tool
 result*, not a verdict. ⛔ That is why it is not an approval: you cannot remember "OAuth" as a project
-rule, and a default of *no* answers nothing. Asked with `ask_human`, or intercepted from a CLI's own
-question tool. Answered on the **Attention bar** where the options are few and short, in the task
+rule, and a default of *no* answers nothing. Asked with `ask_human`, intercepted from a CLI's own
+question tool, or — on an adapter with no MCP and therefore no `ask_human` — read off the
+`NEEDS DECISION:` line that adapter's prompt asks it to end with, with one `- option — detail` bullet
+per choice beneath it. ⛔ Those arrive **already parked**: the turn that asked is over, so there is
+no waiter and nothing to return into. That is the only kind antigravity and codex can ask. Answered on the **Attention bar** where the options are few and short, in the task
 thread otherwise — and always with a text box, because an option plus a caveat is a better answer
 than either alone.
 
 **Parked** — *a question that outlived its session.* Nobody answered before the session's cache
 expired, so holding the process stopped paying for itself: the task rests at `awaiting_human` and the
 question **stays open**. ⛔ Not an answer and not a refusal — timing out has never been either.
-Answering a parked question writes it into the thread, where the next run's prompt carries it.
+Answering a parked question writes it into the thread and **re-queues the task**, so the answer has a
+run to arrive in: the same task, the same thread, a new run, with the answer left undelivered so the
+next prompt carries it.
 
 **`blocked`** — *a run that stopped to ask, not one that broke.* A `RunOutcome` beside `completed`
 and `failed`. ⛔ It did the work up to the question and metered its turns, so it does not count
