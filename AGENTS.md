@@ -317,6 +317,15 @@ costmodels/             versioned pricing data
   everywhere else. ⚠️ Both failures are silent: a missed match costs a cold start, and in the
   workspace pool it hands the task a **different worktree** than the one its conversation describes.
 
+- ⛔ **A branch that returns without ending a run owes somebody a re-check.** `decideFinish`'s
+  `ask-agent` hands the agent one more instruction and deliberately leaves the run open,
+  betting it reports again. Nothing collected on that bet for two months: `finish_asked_at` was
+  read only by the second `task_complete`, so a task whose agent obeyed and then fell silent
+  stayed `running` with its workspace held forever (t58, 2026-08-30 — it committed in seventeen
+  seconds and never reported). `runWatchdogs` now decides it from the workspace after
+  `finishReplyOverdue`. ⚠️ The trigger is **silence** — `lastRequestStartedAt` — not elapsed
+  time, so an agent mid-request is never decided out from under.
+
 - ⛔ **A sandboxed worker in a `git worktree` cannot commit unless the trunk's `.git` is writable.**
   `<worktree>/.git` is a file, not a directory: the index lives in `<trunk>/.git/worktrees/<slot>`
   and the objects and branch ref in the common `<trunk>/.git`, so a sandbox scoped to the

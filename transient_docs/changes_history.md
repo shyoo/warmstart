@@ -2627,3 +2627,71 @@ and both reach the command line behind the flag. Whether codex's sandbox then ho
 this — process-command-line inspection, denied network for dependency downloads, and therefore
 unrunnable `test:daemon`/`test:ui`/`test:pack` — are untouched, and are the argument for leaning on
 the daemon-side `check` list rather than expecting a worker to verify.
+
+## A bet nobody ever collected on (2026-08-30)
+
+t58 finished its work, committed it, and sat in `running` for fifty minutes holding a workspace.
+The operator noticed because the session TUI showed an agent that was plainly done.
+
+The daemon's own log has the whole thing:
+
+```
+01:51:58  t58 reported complete: run=44ad4938 workspace=held
+01:52:00  t58 finish: ask-agent (commit-and-merge)
+          -> "You have 9 uncommitted file(s). Commit them ... then report the task complete again."
+01:52:08  (agent authors the commit - the exact 9 files)
+01:52:17  (commit written: b86f5c1)
+02:04:25  WARN  no turn for 12m, 12.3s CPU - working, not stuck
+02:05:35  WARN  looks stuck: no turn for 13m, 0.2s CPU in 70s - reported, not stopped
+```
+
+The agent obeyed in **seventeen seconds** and then never reported again.
+
+### The bet
+
+`decideFinish` returning `ask-agent` means *tell the still-live agent to commit*, and the scheduler
+deliberately returns without ending the run. Its comment says why, and says the assumption out loud:
+
+> ⛔ Returns without ending the run. The agent is still working — it has been handed one more
+> instruction and **will report completion again** — so closing the run here would orphan a live
+> session and release a workspace out from under it.
+
+Every clause of that is correct except the middle one, and there was no code anywhere for the case
+where it is false. `markFinishAsked` writes `finish_asked_at`; a grep for readers finds exactly two,
+both inside `decideFinish` — that is, only the second `task_complete` that may never come. No timer,
+no tick re-check, no fallback. The run stays open, the task stays `running`, the workspace stays
+held, for as long as the daemon lives.
+
+⚠️ The stall watchdog identified it correctly, to the minute, and did nothing — which is right. It
+exists to report, because a run blocked on a slow network call is indistinguishable from a stuck one
+and nothing may be killed on that evidence. It was the wrong tool for this, not a failing one.
+
+### Why this may act where the stall watchdog may not
+
+The new check re-runs the **same `decideFinish`** against a freshly read tree and takes whatever it
+says. That is the difference: it accuses nobody and stops nothing. A clean tree lands. A tree still
+dirty rests the task at `awaiting_human` with the work intact. It cannot loop either, because
+`finish_asked_at` is set by the time it runs, so the second decision is never `ask-agent` again.
+
+⛔ The trigger is **silence, not elapsed time**, and the two are not the same. Time since the ask
+would fire on an agent part-way through a large commit, and deciding a workspace out from under a
+working agent is the one way this could do harm. `lastRequestStartedAt` — the signal `reportStall`
+already uses, and the reason it worked on a session whose `lastTurnAt` was null — says no call is in
+flight. `finishReplyOverdue` requires both clocks past three minutes, generous against the seventeen
+seconds the one measured agent needed, and far short of the twelve a stall is given.
+
+### An unresolved reading
+
+⚠️ The last recorded turn for that session was 01:51:42, *before* the ask, yet the commit landed at
+01:52:08. So the work done in response to the instruction produced no turn record, and `lastTurnAt`
+read null throughout. Either turn-tailing stopped for that session or those turns went somewhere
+unexamined. **Not chased down**, and it is the reason the trigger is `lastRequestStartedAt` rather
+than turn records: a fix must not rest on a signal that was demonstrably absent during the very
+incident it exists to catch.
+
+### Not done
+
+⚠️ The automatic path is **unproven in flight**. t58 itself was landed by hand, because the fix ships
+in a build the running daemon had not loaded, and restarting would have sent `reconcileTasks` through
+it first — `running` becomes `ready`, which would have re-dispatched a fresh run to redo work already
+committed. The next task that goes quiet after being asked is the real test.

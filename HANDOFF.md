@@ -8,7 +8,7 @@ started in CI, never run against a real agent CLI.
 if you add a line, find the one it obsoletes and cut it in the same edit. Finished work moves to
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
-**Baseline (2026-08-30, measured):** typecheck · lint · build clean · `npm test` 827/829 (2 POSIX-only
+**Baseline (2026-08-30, measured):** typecheck · lint · build clean · `npm test` 843/845 (2 POSIX-only
 skipped) · `test:daemon` 141/141 · `test:ui` 149/149 · `test:pack` 18/18 · L4 (opt-in) landed a real
 agent commit on origin/main. Electron 44.0.0, electron-builder 26.15.3, 0 npm vulnerabilities.
 CLIs here: claude 2.1.251 · agy 1.1.22 · codex 0.151.0.
@@ -111,6 +111,7 @@ docs/                  cost-model.md, glossary.md, adapters.md, landing.md, sess
 - ⭐ **Every intervention on a live session has an off switch** — Settings > Global: `autoCompact`/`autoPreempt` **on**, `autoRunawayStop` **off**, `probeIntervalMinutes` 5m.
 - ⭐ **A full workspace pool holds a task rather than failing it** (2026-08-29). ⛔ No dependency edge: a hold is re-decided every tick, so priority wins. ⚠️ A fleet wider than its pool is *named*, never silently grown.
 - ⭐ **The stall watchdog tells stuck from slow, and has fired in flight** (2026-08-30): 13m into a hung codex run it posted the process tree and 0.0s of CPU gained in 70s. ⛔ It reports and never kills.
+- ⭐ **A task asked to finish can no longer hang on an answer that never comes** (2026-08-30). `ask-agent` leaves the run open and bet the agent would report again; nothing checked. t58 obeyed in 17s, never reported, and sat `running` for 50m holding ws3. `runWatchdogs` now re-runs `decideFinish` against the tree once the session has been silent past `finishReplyOverdue`. ⚠️ Fired in flight **once, by hand** on t58; the automatic path is unproven.
 - ⭐ **Finishing is a ladder, and the default no longer pushes** (2026-08-30, `docs/landing.md`): `await-human` · `commit-only` · `commit-and-verify` · **`commit-and-merge`** · `commit-and-push`, plus `pull-request` and `custom`. The old default pushed on every completed task, and every push starts a ten-job CI matrix — 103 runs in five days, allowance exhausted 2026-08-29. ⛔ The tool never writes a commit, never destroys work it will not land, and never merges into a trunk somebody is working in. ⚠️ `commit-and-merge` has **never run in flight**, nor has the conflict ask. ⭐ `runChecks` runs `check` in the **daemon**, outside any worker sandbox — and the one-shot prompt now says so.
 - ⭐ **An agent can ask a person a real question, and be answered** (2026-08-30; `docs/glossary.md`). The **Question** object replaces `request_human`, which went through the approval path and could only answer allow/deny. Three ways in: `ask_human`, Claude Code's own `AskUserQuestion` intercepted at `approve` (measured, R14), and `checkpoint`. Unanswered **parks**; a run that stopped to ask is `blocked`, not `failed`. ⚠️ **No agent has used any of it in flight** — L1/L2/L3 only. ⚠️ The thread card has **no rendering test**; seeding one needs a live run. ⚠️ **R15**: can an MCP client hold a tool call for minutes?
 - ⭐ **The daemon's log is readable from inside the app** (Settings > Logs): live, filterable, ring-buffered so a late window still sees the past; a file per day, kept a fortnight.

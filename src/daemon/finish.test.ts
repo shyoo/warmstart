@@ -29,6 +29,7 @@ let dir: string
 let db: typeof import('./db.js')
 let tasks: typeof import('./tasks.js')
 let finish: typeof import('./finish.js')
+let scheduler: typeof import('./scheduler.js')
 let settings: typeof import('./settings.js')
 
 const clean = (over: Partial<WorkspaceState> = {}): WorkspaceState => ({
@@ -70,6 +71,7 @@ beforeAll(async () => {
   db = await import('./db.js')
   tasks = await import('./tasks.js')
   finish = await import('./finish.js')
+  scheduler = await import('./scheduler.js')
   settings = await import('./settings.js')
   db.openDb(join(dir, 'finish.db'))
 })
@@ -687,5 +689,56 @@ describe('a branch that will not rebase onto its target', () => {
     expect(decision.reason).toContain('rebase')
     expect(decision.reason).toContain('git rebase --abort')
     expect(decision.reason).not.toContain('uncommitted')
+  })
+})
+
+/**
+ * The half of finishing that nobody was watching.
+ *
+ * ⛔ **`ask-agent` ends nothing and waits forever.** The scheduler hands the agent one more
+ * instruction — *commit these, then report complete again* — and returns without closing the run,
+ * on the stated bet that it will report again. `finish_asked_at` is written there and read in
+ * exactly two places, both inside `decideFinish`: that is, only by the second `task_complete`. If
+ * it never comes there is no timer, no re-check and no fallback, and the task stays `running` with
+ * its workspace held for as long as the daemon lives.
+ *
+ * ⭐ Measured on t58, 2026-08-30, from the daemon's own log. Asked to commit 9 files at 01:52:00;
+ * the agent authored the commit at 01:52:08 and wrote it at 01:52:17 — it obeyed in **seventeen
+ * seconds** — and never reported. Fifty minutes later the task was still `running`. The stall
+ * watchdog identified it exactly at 02:05 and, correctly for a watchdog, only said so.
+ */
+describe('an agent that was asked to finish and did not answer', () => {
+  const MIN = 60_000
+  const now = 1_000 * MIN
+
+  it('is overdue once both the ask and the last request are far enough back', () => {
+    // The t58 shape, to scale: asked 13 minutes ago, silent since a minute before that.
+    expect(scheduler.finishReplyOverdue(now - 13 * MIN, now - 14 * MIN, now)).toBe(true)
+  })
+
+  it('is given time to actually do it', () => {
+    // ⚠️ Seventeen seconds is what it took the one agent measured. A minute is still working.
+    expect(scheduler.finishReplyOverdue(now - 1 * MIN, now - 1 * MIN, now)).toBe(false)
+  })
+
+  it('leaves an agent alone while a request is in flight, however long ago it was asked', () => {
+    // ⛔ The reason silence is a separate clock from elapsed time. An agent part-way through a large
+    //    commit has been asked a long time ago and is demonstrably working; deciding its workspace
+    //    out from under it is the one way this could do harm.
+    expect(scheduler.finishReplyOverdue(now - 60 * MIN, now - 10_000, now)).toBe(false)
+  })
+
+  it('does not fire on the ask alone, nor on silence alone', () => {
+    // Asked long ago, answering now.
+    expect(scheduler.finishReplyOverdue(now - 30 * MIN, now, now)).toBe(false)
+    // Quiet for a while, but only just asked — the instruction has not landed yet.
+    expect(scheduler.finishReplyOverdue(now, now - 30 * MIN, now)).toBe(false)
+  })
+
+  it('waits far less than a stall does, because it accuses nobody', () => {
+    // ⛔ `reportStall` waits 12 minutes and then only speaks. This re-reads the tree and asks
+    //    `decideFinish` again, which is safe to do to a healthy run — so it is allowed to be
+    //    quicker, and is allowed to act at all.
+    expect(scheduler.finishReplyOverdue(now - 4 * MIN, now - 4 * MIN, now)).toBe(true)
   })
 })

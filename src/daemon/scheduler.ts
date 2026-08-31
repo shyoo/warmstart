@@ -1510,6 +1510,34 @@ async function dispatchIntoWarmSession(
 
 /** No turn for this long while a run is open is a stall worth surfacing. */
 const STALL_AFTER_MS = 12 * 60 * 1000
+
+/**
+ * How long a task asked to finish may stay silent before the workspace decides it.
+ *
+ * ⚠️ Three minutes of **no request at all**, not three minutes of work. The instruction is *commit
+ * what you already have*, and the one agent measured doing it took seventeen seconds (t58,
+ * 2026-08-30). A generous multiple of that is still far short of the twelve minutes a stall is given,
+ * because unlike a stall this decides nothing on its own — it re-reads the tree and asks
+ * `decideFinish` again.
+ */
+const FINISH_REPLY_AFTER_MS = 3 * 60 * 1000
+
+/**
+ * Has an agent that was asked to finish stopped answering?
+ *
+ * ⛔ **Both clocks, and the second is the one that matters.** Elapsed time since the ask says only
+ * that a while has passed; an agent part-way through a large commit would trip it while working.
+ * `quietSince` — the last request it *started* — says no call is in flight, which is the difference
+ * between an agent that is taking its time and one that is never going to answer.
+ *
+ * ⚠️ Deliberately not a stall check. It does not ask whether the process is burning CPU, because it
+ * is not deciding whether to accuse anybody of being stuck — it is deciding whether to go and read
+ * the workspace, which is safe to do to a healthy run and is the whole reason this may act where
+ * `reportStall` may not.
+ */
+export function finishReplyOverdue(askedAt: number, quietSince: number, now = Date.now()): boolean {
+  return now - askedAt > FINISH_REPLY_AFTER_MS && now - quietSince > FINISH_REPLY_AFTER_MS
+}
 /** Past this multiple of its estimate, a run is not working - it is spending. */
 const RUNAWAY_FACTOR = 3
 
@@ -1554,6 +1582,40 @@ async function runWatchdogs(): Promise<void> {
     if (preempting.has(run.id)) continue
     const session = getSession(run.sessionId)
     if (!session) continue
+
+    // 0. Asked to finish, and never answered.
+    //
+    // ⛔ **`ask-agent` returns without ending the run, on the bet that the agent reports again.**
+    // Nothing ever collected on that bet. `finish_asked_at` is written there and read in exactly two
+    // places, both inside `decideFinish` — that is, only by the second `task_complete` that may
+    // never arrive. No timer, no re-check, no fallback: the run stays open, the task stays
+    // `running`, and its workspace stays held, for as long as the daemon lives.
+    //
+    // ⭐ Measured on t58, 2026-08-30, from this daemon's own log: asked to commit 9 files at
+    // 01:52:00, the agent authored the commit at 01:52:08 and wrote it at 01:52:17 — it obeyed in
+    // seventeen seconds — and then never reported. Fifty minutes later the task was still
+    // `running` and ws3 was still held. The stall watchdog diagnosed it correctly at 02:05 and, by
+    // design, only said so.
+    //
+    // ⚠️ The trigger is silence, not elapsed time alone: `lastRequestStartedAt` is the same signal
+    // check 3 uses, and it means no request is in flight rather than merely that a while has
+    // passed. An agent still working on the commit is mid-request and is not touched.
+    //
+    // ⛔ Safe to be wrong about, which is why it may act where the stall watchdog may not: this
+    // re-runs the *same* `decideFinish` against a freshly read tree and takes whatever it says. A
+    // clean tree lands. A tree still dirty rests the task at `awaiting_human` with the work intact —
+    // never discarded, never swept into a commit nobody wrote. And it cannot loop, because
+    // `finish_asked_at` is set by now, so the second decision is never `ask-agent` again.
+    if (task.finishAskedAt !== null) {
+      if (finishReplyOverdue(task.finishAskedAt, session.lastRequestStartedAt ?? session.startedAt)) {
+        log.warn(
+          `t${task.seq} was asked to finish ${Math.round((Date.now() - task.finishAskedAt) / 60000)}m ` +
+            'ago and has not reported since; deciding it from the workspace instead'
+        )
+        await completeTask(session.id, 'Finished after being asked to commit')
+        continue
+      }
+    }
 
     // 1. The window boundary. This is the case the whole tool was built for.
     const reset = windowResetsAt(run.workerId)
