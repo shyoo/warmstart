@@ -1019,7 +1019,7 @@ try {
     'the control reads back what the daemon returned, never the value that was chosen'
   )
   // ⚠️ Put back, so the rest of the suite runs against the shipped default.
-  await evaluate(`window.agentyard.rpc('settings.set', { finishPolicy: 'agent-lands' })`)
+  await evaluate(`window.agentyard.rpc('settings.set', { finishPolicy: 'commit-and-merge' })`)
 
   section('the conversations page')
   // ⛔ The page exists for one number that is invisible everywhere else - how many tasks have been

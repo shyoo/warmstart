@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { Session } from '@shared/protocol'
 import type { FleetEntry } from '../lib/daemon'
 import { readFleetCollapsed, writeFleetCollapsed } from '../lib/prefs'
+import { AgentIcon } from './AgentIcon'
 import {
   cacheUrgency,
   countdown,
@@ -180,6 +181,7 @@ function WorkerCard({ entry, now }: { entry: FleetEntry; now: number }): React.J
   return (
     <div className={`wcard${worker.enabled ? '' : ' wcard--off'}`}>
       <div className="wcard-head">
+        <AgentIcon adapterId={worker.adapterId} className="wcard-icon" />
         <span className="wcard-name">{worker.label}</span>
         {worker.humanOccupied && <span className="tag tag--human">human</span>}
         {!worker.enabled && <span className="tag">off</span>}

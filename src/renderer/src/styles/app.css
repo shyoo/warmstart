@@ -436,6 +436,14 @@ body {
   margin-bottom: var(--sp-1);
 }
 
+.wcard-icon,
+.agent-icon {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .wcard-name {
   font-size: var(--text-dense);
   font-weight: 600;

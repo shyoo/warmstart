@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, join, resolve } from 'node:path'
 import { adapter, adapters } from './adapters/index.js'
@@ -926,15 +926,22 @@ describe('a worker that has to be able to commit', () => {
     //    the objects and the branch ref in the common `.git`. Asserted by *containment*, because
     //    which of the returned roots covers which path is an implementation detail and the
     //    requirement is only that each one is covered.
+    const norm = (p: string): string => {
+      try {
+        return realpathSync.native(p).toLowerCase()
+      } catch {
+        return resolve(p).toLowerCase()
+      }
+    }
     const covered = (p: string): boolean =>
-      roots.some((r) => resolve(p).toLowerCase().startsWith(resolve(r).toLowerCase()))
+      roots.some((r) => norm(p).startsWith(norm(r)))
     const gitDir = resolve(work, /gitdir:\s*(.+)/.exec(readFileSync(join(work, '.git'), 'utf8'))![1]!.trim())
     expect(covered(join(gitDir, 'index.lock'))).toBe(true)
     expect(covered(join(trunk, '.git', 'objects'))).toBe(true)
     expect(covered(join(trunk, '.git', 'refs', 'heads', 'topic'))).toBe(true)
     // ⚠️ And `cwd` itself is not among them: `workspace-write` already grants it, and passing it
     //    again would say this function had found something it had not.
-    expect(roots.map((r) => resolve(r).toLowerCase())).not.toContain(resolve(work).toLowerCase())
+    expect(roots.map(norm)).not.toContain(norm(work))
   })
 
   it('asks for nothing extra in an ordinary clone, where the metadata is already inside', () => {
