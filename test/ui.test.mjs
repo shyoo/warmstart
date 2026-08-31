@@ -352,6 +352,19 @@ try {
     ),
     'the scheduler already computed the reason; it now reaches the row it is about'
   )
+  // ⛔ In the line under the row, not as small print inside the Status cell. The reason a task has
+  // not moved and what the agent says once it is moving are the same question — what is happening
+  // to this task — and they used to be answered in two different places, so the answer visibly
+  // jumped out of the column and down under the row the instant a run started.
+  check(
+    'and it says so in the same place a running task does',
+    await evaluate(
+      `[...document.querySelectorAll('.tbl tbody .tbl-live-line')].some(
+         el => /not signed in|at capacity|no eligible worker|is held out|not installed/i.test(el.innerText))
+       && !document.querySelector('.tbl tbody .status + .tbl-sub')`
+    ),
+    'a status message that moves as the task progresses reads as a new event, not the same one'
+  )
 
   // ---- the thread ---------------------------------------------------------------------
   // ⛔ Opened, because everything below only exists once a task is open — and "click the row to find

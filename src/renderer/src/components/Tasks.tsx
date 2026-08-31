@@ -352,6 +352,15 @@ export function Tasks({
                   ? activity[task.id]![activity[task.id]!.length - 1]?.text
                   : null
 
+              // ⛔ One line, in one place, for the whole time a task is being worked on. What the
+              // scheduler is doing before dispatch ("reading ClaudeThird's quota first…") and what
+              // the agent says once it runs are the same question — *what is happening to this
+              // task right now* — and answering it in two different spots meant the answer moved:
+              // it appeared as small print inside the Status cell, then jumped below the row the
+              // instant the run started. The reason outlives the wait, so `liveText` wins the
+              // moment there is one.
+              const belowLine = liveText ?? task.holdReason ?? null
+
               const hasPriorActions =
                 CANCELLABLE.has(task.status) ||
                 task.status === 'paused_user' ||
@@ -362,7 +371,7 @@ export function Tasks({
               return (
                 <Fragment key={task.id}>
                   <tr
-                    className={`${selected === task.id ? 'tbl-row--selected' : ''}${liveText ? ' tbl-row--has-live' : ''}`}
+                    className={`${selected === task.id ? 'tbl-row--selected' : ''}${belowLine ? ' tbl-row--has-live' : ''}`}
                     onClick={() => onOpenTask(task.id)}
                   >
                     <td className="num tbl-num">{task.seq}</td>
@@ -395,8 +404,6 @@ export function Tasks({
                         {statusLabel(task)}
                         {IN_FLIGHT.has(task.status) && <Working />}
                       </span>
-                      {/* The scheduler's own reason, refreshed every tick it passes this task over. */}
-                      {task.holdReason && <div className="tbl-sub dim">{task.holdReason}</div>}
                     </td>
                     <td className="tbl-action-cell" onClick={(e) => e.stopPropagation()}>
                       <div
@@ -500,16 +507,23 @@ export function Tasks({
                       </div>
                     </td>
                   </tr>
-                  {liveText && (
+                  {/* ⚠️ The same row, the same prefix, whichever of the two is speaking. Marking
+                      the scheduler's reason differently from the agent's output would be honest
+                      about the source and wrong about the question: an operator scanning the table
+                      is asking what is happening to this task, and a line that changes shape
+                      halfway through the answer is read as a new event rather than the same one
+                      continuing. `belowLine` is null once nothing is in flight, so a finished task
+                      draws no row at all. */}
+                  {belowLine && (
                     <tr
                       className={`tbl-row--live${selected === task.id ? ' tbl-row--selected' : ''}`}
                       onClick={() => onOpenTask(task.id)}
                     >
                       <td colSpan={11} className="tbl-live-cell">
-                        <div className="tbl-live-line" title={liveText}>
+                        <div className="tbl-live-line" title={belowLine}>
                           <span className="tbl-live-prefix" aria-hidden>&gt;</span>
                           <span className="tbl-live-text">
-                            {liveText.length > 100 ? `${liveText.slice(0, 100)}…` : liveText}
+                            {belowLine.length > 100 ? `${belowLine.slice(0, 100)}…` : belowLine}
                           </span>
                         </div>
                       </td>
