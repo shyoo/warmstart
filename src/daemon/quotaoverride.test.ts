@@ -1,0 +1,430 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+
+/**
+ * t71, and the two things that were wrong with the way it waited.
+ *
+ * ⭐ **The measurement.** 2026-09-01T00:31:06Z, t71 was pinned to ClaudeThird — `constraints.workerId`,
+ * a pin somebody set by hand, not a routing decision — and the dispatch gate read that account's
+ * five-hour window at exactly **92%**, the water mark. The task was held with *"ClaudeThird at 92%
+ * of its Claude 5h window"* against a `resets_at` **2h29m** away. Two separate faults followed from
+ * one discarded number:
+ *
+ *  1. **Nothing could be done about it.** The water mark is arithmetic of ours over a reading; the
+ *     vendor had served every turn up to it. A person who can see that 8% of a window is more than
+ *     one commit needs had no way to say so, and a *pinned* task cannot route around it by
+ *     definition. So it waited two and a half hours for a gate nobody agreed with.
+ *  2. **The whole fleet was priced as busy.** The reset time was formatted into a sentence and
+ *     thrown away, so `expectedIdleMs` still saw `status = 'ready'` and answered *"work queued
+ *     now"* — the one answer that suppresses moves 2, 3 and 4 of the cache clock for **every live
+ *     session**, for the entire window. A queue that provably cannot move for 2h29m was the input
+ *     arguing that no session had time to compact.
+ *
+ * ⚠️ These run against a temp database and no CLI: every input here is a row.
+ *
+ * ⛔ **The workers here run on a declared adapter whose command is `node`**, so `isInstalled()` is
+ * true on any machine that can run this suite. A worker on `claude-code` would pass or fail the
+ * installed gate for a reason that has nothing to do with the gate under test — and would answer
+ * differently on CI, which carries none of the agent CLIs, than on the laptop.
+ */
+
+const ADAPTER = 'test-quota'
+
+let dir: string
+let db: typeof import('./db.js')
+let workers: typeof import('./workers.js')
+let tasks: typeof import('./tasks.js')
+let scheduler: typeof import('./scheduler.js')
+let clock: typeof import('./cacheclock.js')
+let api: typeof import('./api.js')
+let quota: typeof import('./quota.js')
+let settings: typeof import('./settings.js')
+
+/** The window t71 actually met: 92% used, resetting 2h29m later. */
+const HELD_PERCENT = 92
+const RESET_IN_MS = 149 * 60 * 1000
+
+function seedWorker(label: string) {
+  return workers.createWorker({ adapterId: ADAPTER, label, enabled: true })
+}
+
+function seedQuota(workerId: string, percent: number, resetsIn = RESET_IN_MS): number {
+  const resetsAt = Date.now() + resetsIn
+  db.db()
+    .prepare(
+      `insert into quota_samples (worker_id, window_id, label, percent, resets_at, source, sampled_at)
+       values (?,?,?,?,?,?,?)`
+    )
+    .run(workerId, 'session', 'Claude 5h', percent, resetsAt, 'config-cache', Date.now())
+  return resetsAt
+}
+
+/** A task pinned to one account, which is what t71 was and why it could not route around anything. */
+function pinnedTask(workerId: string, title = 'the t71 shape') {
+  return tasks.createTask({
+    title,
+    createdBy: { kind: 'human' },
+    constraints: { workerId, adapterId: ADAPTER }
+  })
+}
+
+beforeAll(async () => {
+  dir = mkdtempSync(join(tmpdir(), 'agentyard-quotaoverride-'))
+  process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
+  mkdirSync(join(dir, 'adapters'), { recursive: true })
+  writeFileSync(
+    join(dir, 'adapters', `${ADAPTER}.json`),
+    JSON.stringify({
+      schema_version: 1,
+      id: ADAPTER,
+      label: 'Test Quota CLI',
+      command: 'node',
+      print_args: ['-e', ''],
+      version_args: ['--version'],
+      isolation_env_var: 'TEST_QUOTA_HOME',
+      cost_model_id: 'anthropic.subscription.2026-08',
+      // ⚠️ `manualCompact` declared, because move 4 is the decision under test: an adapter that
+      // cannot be told to compact falls through it for a reason unrelated to the idle estimate.
+      capabilities: { transports: ['stream', 'pty'], manualCompact: true }
+    })
+  )
+  db = await import('./db.js')
+  workers = await import('./workers.js')
+  tasks = await import('./tasks.js')
+  scheduler = await import('./scheduler.js')
+  clock = await import('./cacheclock.js')
+  api = await import('./api.js')
+  quota = await import('./quota.js')
+  settings = await import('./settings.js')
+  const adapters = await import('./adapters/index.js')
+  db.openDb(join(dir, 'quotaoverride.db'))
+  adapters.loadAdapters()
+})
+
+beforeEach(() => {
+  db.db().exec(
+    'delete from runs; delete from sessions; delete from task_messages; delete from tasks;' +
+      ' delete from quota_samples; delete from rate_limit_samples; delete from workers;'
+  )
+  quota.forgetRefreshAttempts()
+})
+
+afterAll(() => {
+  db.closeDb()
+  try {
+    rmSync(dir, { recursive: true, force: true })
+  } catch {
+    // A held file handle on Windows is not a test failure.
+  }
+})
+
+describe('a task held at the water mark says when it could next move', () => {
+  it('holds a pinned task at exactly 92%, which is the boundary t71 met', () => {
+    const worker = seedWorker('ClaudeThird')
+    seedQuota(worker.id, HELD_PERCENT)
+    const task = pinnedTask(worker.id)
+
+    const choice = scheduler.chooseTarget(task)
+    expect(choice.worker).toBeNull()
+    // The sentence names the window, because on a two-pool account "its 5h window" is unverifiable.
+    expect(choice.reason).toContain('ClaudeThird at 92% of its Claude 5h window')
+  })
+
+  it('carries the reset of the window that refused it, rather than discarding it', () => {
+    const worker = seedWorker('ClaudeThird')
+    const resetsAt = seedQuota(worker.id, HELD_PERCENT)
+    const task = pinnedTask(worker.id)
+
+    const choice = scheduler.chooseTarget(task)
+    // ⛔ The very sample that refused the dispatch, not a second lookup that could name another one.
+    expect(choice.holdUntil).toBe(resetsAt)
+  })
+
+  it('writes that clock onto the task, where a person and the cache clock can both read it', async () => {
+    const worker = seedWorker('ClaudeThird')
+    const resetsAt = seedQuota(worker.id, HELD_PERCENT)
+    const task = pinnedTask(worker.id)
+
+    await scheduler.tick()
+
+    const held = tasks.requireTask(task.id)
+    expect(held.status).toBe('ready')
+    expect(held.holdReason).toContain('92% of its Claude 5h window')
+    expect(held.holdUntil).toBe(resetsAt)
+  })
+
+  it('leaves holdUntil null for a hold that ends when something happens rather than at a time', async () => {
+    // ⚠️ Nothing installed and nothing enabled: the account gates refuse, and none of them can name
+    // a moment they stop being true. Inventing a countdown for one would be worse than silence.
+    const worker = seedWorker('ClaudeThird')
+    workers.updateWorker(worker.id, { enabled: false })
+    const task = pinnedTask(worker.id)
+
+    await scheduler.tick()
+
+    const held = tasks.requireTask(task.id)
+    expect(held.holdReason).toContain('disabled')
+    expect(held.holdUntil).toBeNull()
+  })
+
+  it('takes the earliest reset when more than one account is over the mark', () => {
+    const first = seedWorker('ClaudeSecond')
+    const second = seedWorker('ClaudeThird')
+    const soon = seedQuota(first.id, 95, 20 * 60 * 1000)
+    seedQuota(second.id, HELD_PERCENT, RESET_IN_MS)
+    const task = tasks.createTask({ title: 'unpinned', createdBy: { kind: 'human' } })
+
+    const choice = scheduler.chooseTarget(task)
+    expect(choice.worker).toBeNull()
+    // The task needs any one of them, so the first window back is the first moment it could move.
+    expect(choice.holdUntil).toBe(soon)
+  })
+})
+
+describe('a person may overrule the water mark, and only the water mark', () => {
+  it('dispatches to the pinned account at 92% once the override is live', () => {
+    const worker = seedWorker('ClaudeThird')
+    seedQuota(worker.id, HELD_PERCENT)
+    const task = pinnedTask(worker.id)
+    tasks.setQuotaOverride(task.id, Date.now() + RESET_IN_MS)
+
+    const choice = scheduler.chooseTarget(tasks.requireTask(task.id))
+    expect(choice.worker?.id).toBe(worker.id)
+  })
+
+  it('stops applying the moment it expires, without anybody withdrawing it', () => {
+    const worker = seedWorker('ClaudeThird')
+    seedQuota(worker.id, HELD_PERCENT)
+    const task = pinnedTask(worker.id)
+    // ⛔ A deadline in the past is not an override. The permission expires with its own reason.
+    tasks.setQuotaOverride(task.id, Date.now() - 1000)
+
+    const choice = scheduler.chooseTarget(tasks.requireTask(task.id))
+    expect(choice.worker).toBeNull()
+    expect(choice.reason).toContain('92% of its Claude 5h window')
+  })
+
+  it('does not make the overridden account look cheap', () => {
+    // ⚠️ The override lifts the cliff and leaves `windowRisk` alone, which saturates at exactly this
+    // percentage. A fleet with a free account elsewhere must still prefer the free one.
+    const full = seedWorker('ClaudeThird')
+    const free = seedWorker('ClaudeSecond')
+    seedQuota(full.id, HELD_PERCENT)
+    seedQuota(free.id, 5)
+    const task = tasks.createTask({ title: 'unpinned', createdBy: { kind: 'human' } })
+    tasks.setQuotaOverride(task.id, Date.now() + RESET_IN_MS)
+
+    const choice = scheduler.chooseTarget(tasks.requireTask(task.id))
+    expect(choice.worker?.id).toBe(free.id)
+  })
+
+  it('does not lift a gate that rests on anything other than a percentage', () => {
+    const worker = seedWorker('ClaudeThird')
+    workers.updateWorker(worker.id, { enabled: false })
+    seedQuota(worker.id, HELD_PERCENT)
+    const task = pinnedTask(worker.id)
+    tasks.setQuotaOverride(task.id, Date.now() + RESET_IN_MS)
+
+    const choice = scheduler.chooseTarget(tasks.requireTask(task.id))
+    expect(choice.worker).toBeNull()
+    expect(choice.reason).toContain('disabled')
+  })
+
+  it('exempts the run it enabled from being preempted over that same percentage', () => {
+    const worker = seedWorker('ClaudeThird')
+    // ⛔ Past the mid-run water mark, which would ordinarily wrap the run up immediately. Dispatching
+    // under an override and preempting three points later buys a cold start and nothing else.
+    expect(scheduler.overrunVerdict(worker.id, 96)).not.toBeNull()
+    expect(scheduler.overrunVerdict(worker.id, 96, { quotaOverride: true })).toBeNull()
+  })
+
+  it('never talks a vendor refusal down, whatever a person said', () => {
+    const worker = seedWorker('ClaudeThird')
+    db.db()
+      .prepare(
+        `insert into rate_limit_samples (worker_id, session_id, window_id, status, resets_at, sampled_at)
+         values (?,?,?,?,?,?)`
+      )
+      .run(worker.id, null, 'session', 'rejected', Date.now() + RESET_IN_MS, Date.now())
+
+    // The turn did not happen. There is no setting that makes a refused turn into a served one.
+    const verdict = scheduler.overrunVerdict(worker.id, 40, { quotaOverride: true })
+    expect(verdict?.reason).toContain('vendor refused the turn')
+  })
+})
+
+describe('task.overrideQuota', () => {
+  const handlers = () => api.buildApi({ version: '0.0.0', startedAt: Date.now(), port: 0 })
+
+  it('dates the permission from the window the scheduler measured, not from a clock in the caller', async () => {
+    const worker = seedWorker('ClaudeThird')
+    const resetsAt = seedQuota(worker.id, HELD_PERCENT)
+    const task = pinnedTask(worker.id)
+    await scheduler.tick()
+
+    const result = await handlers()['task.overrideQuota']({ id: task.id })
+    expect(result.until).toBe(resetsAt)
+    expect(result.applies).toBe(true)
+    expect(result.task.quotaOverrideUntil).toBe(resetsAt)
+  })
+
+  it('says so plainly when the grant changes nothing right now', async () => {
+    const worker = seedWorker('ClaudeThird')
+    seedQuota(worker.id, 5)
+    const task = pinnedTask(worker.id)
+
+    const result = await handlers()['task.overrideQuota']({ id: task.id })
+    expect(result.applies).toBe(false)
+    expect(result.reason).toContain('nothing is holding this task on quota')
+    // ⚠️ Recorded anyway: it is a standing instruction for the window, not a button that only works
+    // while the task happens to be stuck.
+    expect(result.task.quotaOverrideUntil).not.toBeNull()
+  })
+
+  it('points a preempted task at Resume, which is the control that actually fits it', async () => {
+    const worker = seedWorker('ClaudeThird')
+    seedQuota(worker.id, HELD_PERCENT)
+    const task = pinnedTask(worker.id)
+    tasks.setStatus(task.id, 'paused_quota', { assignee: worker.id })
+
+    const result = await handlers()['task.overrideQuota']({ id: task.id })
+    expect(result.applies).toBe(false)
+    expect(result.reason).toContain('Resume')
+  })
+
+  it('withdraws on an explicit null, and the gate applies again', async () => {
+    const worker = seedWorker('ClaudeThird')
+    seedQuota(worker.id, HELD_PERCENT)
+    const task = pinnedTask(worker.id)
+    await handlers()['task.overrideQuota']({ id: task.id })
+    expect(scheduler.chooseTarget(tasks.requireTask(task.id)).worker?.id).toBe(worker.id)
+
+    const withdrawn = await handlers()['task.overrideQuota']({ id: task.id, until: null })
+    expect(withdrawn.task.quotaOverrideUntil).toBeNull()
+    expect(scheduler.chooseTarget(tasks.requireTask(task.id)).worker).toBeNull()
+  })
+
+  it('writes the decision into the thread, where the run it enables will be read', async () => {
+    const worker = seedWorker('ClaudeThird')
+    seedQuota(worker.id, HELD_PERCENT)
+    const task = pinnedTask(worker.id)
+    await scheduler.tick()
+    await handlers()['task.overrideQuota']({ id: task.id })
+
+    const notes = tasks.messagesFor(task.id).filter((m) => m.role === 'system')
+    expect(notes.some((m) => m.text.includes('overrode the 92% quota gate'))).toBe(true)
+  })
+})
+
+describe('a queue that cannot move is not a queue about to move', () => {
+  const NOW = 1_700_000_000_000
+
+  const liveSession = () =>
+    ({
+      id: 's1',
+      workerId: 'w1',
+      adapterId: ADAPTER,
+      transport: 'stream',
+      projectId: null,
+      cwd: '/tmp',
+      model: null,
+      effort: null,
+      state: 'live',
+      pid: null,
+      purpose: 'work',
+      transcriptPath: null,
+      vendorSessionId: null,
+      currentBranch: null,
+      contextTokens: 180_000,
+      contextWindow: null,
+      lastRequestStartedAt: null,
+      cacheExpiresAt: NOW + 10 * 60 * 1000,
+      tokensSinceCompact: 90_000,
+      clockMove: null,
+      clockMoveAt: null,
+      clockMoveAttempts: 0,
+      clockMoveContext: null,
+      startedAt: NOW - 60 * 60 * 1000,
+      closedAt: null
+    }) as Parameters<typeof clock.expectedIdleMs>[0]
+
+  it('still reads a genuinely dispatchable task as work queued now', () => {
+    tasks.createTask({ title: 'nothing is holding this', createdBy: { kind: 'human' } })
+    const idle = clock.expectedIdleMs(liveSession(), NOW)
+    expect(idle.ms).toBe(0)
+    expect(idle.confident).toBe(true)
+  })
+
+  it('reads a task held behind a window as wanted when that window resets', () => {
+    // ⛔ The t71 shape, at the level the cache clock sees it: status `ready`, and a clock saying it
+    // cannot move for 2h29m. This used to answer 0ms and suppress every move on every session.
+    const task = tasks.createTask({ title: 'held on quota', createdBy: { kind: 'human' } })
+    tasks.setHoldReason(task.id, 'ClaudeThird at 92% of its Claude 5h window', NOW + RESET_IN_MS)
+
+    const idle = clock.expectedIdleMs(liveSession(), NOW)
+    expect(idle.ms).toBe(RESET_IN_MS)
+    expect(idle.confident).toBe(true)
+    expect(idle.because).toContain('149m')
+  })
+
+  it('counts a preempted task, which was invisible here entirely', () => {
+    // A whole queue parked by a closing window used to read as "nothing queued" — the branch that
+    // returns infinity and lets every warm prefix lapse.
+    const task = tasks.createTask({ title: 'parked by preemption', createdBy: { kind: 'human' } })
+    tasks.updateTask(task.id, { notBefore: NOW + RESET_IN_MS })
+    tasks.setStatus(task.id, 'paused_quota', { assignee: null })
+
+    const idle = clock.expectedIdleMs(liveSession(), NOW)
+    expect(idle.ms).toBe(RESET_IN_MS)
+    expect(idle.because).toContain('149m')
+  })
+
+  it('takes the earliest of several waits, not the first one it finds', () => {
+    const far = tasks.createTask({ title: 'far', createdBy: { kind: 'human' } })
+    tasks.setHoldReason(far.id, 'ClaudeThird at 92% of its Claude 5h window', NOW + RESET_IN_MS)
+    const near = tasks.createTask({ title: 'near', createdBy: { kind: 'human' } })
+    tasks.setHoldReason(near.id, 'ClaudeSecond at 94% of its Claude 5h window', NOW + 20 * 60 * 1000)
+
+    expect(clock.expectedIdleMs(liveSession(), NOW).ms).toBe(20 * 60 * 1000)
+  })
+
+  it('ignores a hold with no clock behind it, which can end on the next tick', () => {
+    const task = tasks.createTask({ title: 'at capacity', createdBy: { kind: 'human' } })
+    tasks.setHoldReason(task.id, 'ClaudeThird at capacity')
+
+    const idle = clock.expectedIdleMs(liveSession(), NOW)
+    expect(idle.ms).toBe(0)
+    expect(idle.because).toContain('ready now')
+  })
+
+  it('now reaches the compaction it was talked out of for two and a half hours', () => {
+    // ⭐ The payoff, and the answer to "does /compact still happen while the task is queued?". With
+    // the queue held for 2h29m — past the ~2h break-even — a 180k context is compacted rather than
+    // kept warm for work that provably cannot arrive.
+    const task = tasks.createTask({ title: 'held on quota', createdBy: { kind: 'human' } })
+    tasks.setHoldReason(task.id, 'ClaudeThird at 92% of its Claude 5h window', NOW + RESET_IN_MS)
+
+    const decision = clock.decide(liveSession(), {
+      objective: { cost: 1, velocity: 0, quality: 0 },
+      now: NOW,
+      settings: settings.settings()
+    })
+    expect(decision.move).toBe('compact')
+  })
+
+  it('and still declines it while work really could arrive on the next tick', () => {
+    // ⛔ The contrast that makes the test above mean something. Same session, same context, same
+    // switches — one dispatchable task instead of a held one, and compacting is the wrong move
+    // because the session is about to be wanted. The idle estimate is the only input that differs.
+    tasks.createTask({ title: 'nothing is holding this', createdBy: { kind: 'human' } })
+
+    const decision = clock.decide(liveSession(), {
+      objective: { cost: 1, velocity: 0, quality: 0 },
+      now: NOW,
+      settings: settings.settings()
+    })
+    expect(decision.move).not.toBe('compact')
+  })
+})

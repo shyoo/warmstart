@@ -60,6 +60,29 @@ export function statusLabel(task: Pick<Task, 'status' | 'holdReason'>): string {
 }
 
 /**
+ * The hold, and how long it has left to run.
+ *
+ * ⛔ **Because "at 92% of its 5h window" does not say whether that means five minutes or five
+ * hours**, and those are different situations with different answers — one is worth waiting out and
+ * the other is worth overriding, reassigning or going to bed over. The scheduler has known the reset
+ * time all along; since 2026-09-01 it writes it down as `holdUntil` instead of discarding it, and
+ * this is where a person finally reads it. Measured on t71: held against a window resetting 2h29m
+ * later, shown as a sentence with no clock in it.
+ *
+ * ⚠️ Nothing is appended where there is no clock — "at capacity" ends when a run ends, which is not
+ * a time anybody can name, and inventing a countdown for it would be worse than the silence.
+ */
+export function holdLine(
+  task: Pick<Task, 'holdReason' | 'holdUntil'>,
+  now = Date.now()
+): string | null {
+  if (!task.holdReason) return null
+  const left = task.holdUntil ? task.holdUntil - now : 0
+  if (left <= 0) return task.holdReason
+  return `${task.holdReason} — earliest retry in ${duration(left)}`
+}
+
+/**
  * Statuses where something is happening and the next change arrives on its own.
  *
  * ⚠️ `ready` is in here, and that is the whole point of the list. A freshly filed task sits at

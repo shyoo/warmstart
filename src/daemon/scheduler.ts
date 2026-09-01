@@ -19,6 +19,7 @@ import {
   runForSession,
   requireRun,
   requireTask,
+  quotaOverridden,
   runsFor,
   schedulingOrder,
   setHoldReason,
@@ -128,8 +129,24 @@ import { costModel } from './costmodel.js'
  * *judgment* and never its *progress*. See controller.ts.
  */
 
-/** Above this on the 5h window, stop starting new work. Only applied to a reading we trust. */
-const QUOTA_HIGH_WATER = 92
+/**
+ * Above this on the 5h window, stop starting new work. Only applied to a reading we trust.
+ *
+ * ⚠️ Exported since 2026-09-01 so the control that *overrules* it can name the same number the gate
+ * enforces. A button that said "override the 92% limit" against a constant only this file could see
+ * would be a second copy of the threshold, and the pair would disagree the day one of them moved.
+ */
+export const QUOTA_HIGH_WATER = 92
+
+/**
+ * How long an override lasts when nothing can say when the window it overrules resets.
+ *
+ * ⛔ A duration, and a short one, precisely because it is the branch with no measurement behind it.
+ * The override's whole design is that it expires with its reason; where the reason cannot be dated,
+ * the honest substitute is a permission that lapses soon enough to be re-granted deliberately rather
+ * than one that quietly outlives every window it was ever about.
+ */
+export const QUOTA_OVERRIDE_FALLBACK_MS = 60 * 60 * 1000
 
 /**
  * When 5h quota reaches or exceeds this during an active run, preempt the run before hard exhaustion.
@@ -170,7 +187,19 @@ const BLIND_PARK_MS = 5 * 60 * 60 * 1000
  */
 export function overrunVerdict(
   workerId: string,
-  percent: number | null
+  percent: number | null,
+  opts: {
+    /**
+     * A person has said to spend into this window on this task.
+     *
+     * ⛔ **It reaches exactly the two branches built out of `percent` and nothing else.** A refusal
+     * is the vendor saying the turn did not happen; there is no operator setting that makes a
+     * refused turn into a served one, so the first branch below is unreachable from here by
+     * construction. An override that could suppress it would be a switch labelled "keep asking an
+     * account that is saying no".
+     */
+    quotaOverride?: boolean
+  } = {}
 ): { reason: string; resumeAt: number } | null {
   const park = (sample: LiveRateLimit | null): number =>
     (sample?.resetsAt && sample.resetsAt > Date.now() ? sample.resetsAt : null) ??
@@ -187,6 +216,12 @@ export function overrunVerdict(
   }
 
   if (percent === null) return null
+
+  // ⛔ Below the refusal and above everything else. Dispatching a task under an override and then
+  // preempting it three points later would be the fleet granting a permission and revoking it before
+  // the agent had finished reading its prompt — the override would buy a session and a cold start
+  // and nothing else.
+  if (opts.quotaOverride) return null
 
   if (percent >= QUOTA_MIDRUN_PREEMPT_WATER) {
     return { reason: `${percent}% of 5h window used`, resumeAt: park(sessionRateLimit(workerId)) }
@@ -294,7 +329,9 @@ export async function tick(): Promise<TickResult> {
       // scheduler's word for "eligible", and a person who has just filed a task reads it as "waiting
       // for me to press something". The reason is already computed; the only change is that it now
       // reaches the row it is about.
-      setHoldReason(task.id, choice.reason)
+      // ⚠️ And the clock beside the sentence, where the refusal has one. A quota hold ends at a
+      // known moment; every other hold here ends when something else happens and passes null.
+      setHoldReason(task.id, choice.reason, choice.holdUntil ?? null)
       continue
     }
     // ⛔ A baseline before the spend, not after it. Everything downstream of a run - what it cost
@@ -483,6 +520,17 @@ export interface WorkerChoice {
   breakdown?: ScoreBreakdown
   /** ⚠️ Not "no worker" - "not yet". A routing question is open and the answer is worth the wait. */
   deferred?: boolean
+  /**
+   * The earliest moment this refusal could stop being true, where the refusal has a clock behind it.
+   *
+   * ⛔ **A quota hold is the one refusal that ends by itself**, and the reset time is already in
+   * hand when the sentence is written — it was being thrown away. Everything else here (at capacity,
+   * lacks a capability, signed out) ends when something *else* happens, so it stays null rather than
+   * inventing a deadline. ⚠️ The **earliest** of the candidates' resets when more than one worker
+   * is held on quota: the task needs any one of them, so the first window to reset is the first
+   * moment it could move.
+   */
+  holdUntil?: number | null
 }
 
 /**
@@ -583,7 +631,19 @@ function pastSessionsFor(task: Task): Session[] {
  */
 export function chooseTarget(task: Task): WorkerChoice {
   const reasons: string[] = []
+  /**
+   * When the workers held on quota get their windows back — the earliest of them.
+   *
+   * ⛔ Collected as the gate fires rather than recomputed afterwards, so the number the operator is
+   * shown is read from the very sample that refused the dispatch. A second lookup would be a second
+   * chance to name a different window.
+   */
+  let quotaHoldUntil: number | null = null
   let quotaUnverified = false
+  // ⚠️ Read once, at the top, so every gate below and the message the dispatch posts all agree about
+  // whether a person has overruled the water mark — a tick that changed its mind halfway through
+  // would dispatch under an override and then report that there was none.
+  const override = quotaOverridden(task)
   const project = task.projectId ? getProject(task.projectId) : undefined
   const objective = resolveObjective(project?.config?.objective, task.objective, settings().objective)
   const w = weights(objective)
@@ -670,12 +730,34 @@ export function chooseTarget(task: Task): WorkerChoice {
       const session = expired ? null : reading
       trustedWindow = session ?? null
       if (session && session.percent >= QUOTA_HIGH_WATER) {
-        // Names the window, because "at 91% of its 5h window" on a two-pool account is a sentence
-        // the operator cannot check against what the CLI's own panel shows them.
-        reasons.push(
-          `${worker.label} at ${Math.round(session.percent)}% of its ${session.label ?? '5h'} window`
-        )
-        continue
+        // ⛔ **The one gate a person may overrule**, and only because it is the one built entirely
+        // out of a number of ours. 92% is a caution, not a refusal: the vendor served every turn up
+        // to it and would very likely serve the next. An operator can see what the arithmetic
+        // cannot — that 8% of a window is more than this task needs — and until this existed a task
+        // pinned to one account had no way to say so and simply waited for the reset.
+        // ⚠️ The candidate is **not** exempted from `windowRisk`, which saturates at exactly this
+        // percentage: overruling the cliff must not also make the worker look cheap, or a fleet with
+        // a free account elsewhere would start sending work to the full one.
+        if (override) {
+          log.info(
+            `t${task.seq} dispatching to ${worker.label} at ${Math.round(session.percent)}% of its ` +
+              `${session.label ?? '5h'} window — a person overrode the ${QUOTA_HIGH_WATER}% gate`
+          )
+        } else {
+          // Names the window, because "at 91% of its 5h window" on a two-pool account is a sentence
+          // the operator cannot check against what the CLI's own panel shows them.
+          reasons.push(
+            `${worker.label} at ${Math.round(session.percent)}% of its ${session.label ?? '5h'} window`
+          )
+          // ⛔ The clock behind the sentence, kept rather than discarded. `resetsAt` on the sample
+          // that just refused this dispatch is precisely when this refusal expires, and it is the
+          // number both the operator and `expectedIdleMs` were missing.
+          const resetsAt = session.resetsAt ?? windowResetsAt(worker.id)?.at ?? null
+          if (resetsAt && resetsAt > Date.now()) {
+            quotaHoldUntil = quotaHoldUntil === null ? resetsAt : Math.min(quotaHoldUntil, resetsAt)
+          }
+          continue
+        }
       }
     } else {
       // ⚠️ No trustworthy reading. Dispatching anyway is a deliberate choice: refusing would make the
@@ -710,7 +792,8 @@ export function chooseTarget(task: Task): WorkerChoice {
       // difference between a fleet that is busy and a fleet that is broken.
       reason: reasons.length ? reasons.join('; ') : 'no eligible worker',
       quotaUnverified,
-      score: 0
+      score: 0,
+      holdUntil: quotaHoldUntil
     }
   }
 
@@ -1312,9 +1395,41 @@ function poolIsNarrow(project: Project, capacity: number): string {
 
 // ---------------------------------------------------------------------------- dispatch
 
+/**
+ * Say, on the task, that this dispatch happened only because a person overruled the quota gate.
+ *
+ * ⚠️ Posted **once per run**, not once per tick: it is called from `dispatch`, which runs when a run
+ * starts. ⚠️ Silent unless the override is both live *and* actually load-bearing — a task carrying
+ * one that dispatched to an account at 40% was never held by anything, and announcing an override
+ * that changed no decision would train the reader to ignore the line that matters.
+ */
+function noteQuotaOverrideDispatch(task: Task, worker: Worker): void {
+  if (!quotaOverridden(task)) return
+  const quota = lastQuota(worker.id)
+  if (!quota || quota.stale) return
+  const choice = resolveModelChoice(task.constraints, worker, false, quota)
+  const win = sessionWindowFor(quota.windows, poolFor(worker, choice.model))
+  if (!win || windowExpired(win) || win.percent < QUOTA_HIGH_WATER) return
+  addMessage(
+    task.id,
+    'system',
+    `Starting on ${worker.label} at ${Math.round(win.percent)}% of its ${win.label ?? '5h'} ` +
+      `window. The ${QUOTA_HIGH_WATER}% gate would normally hold this task; it was overridden by ` +
+      'hand, so this run is also exempt from being preempted over that percentage. ⚠️ A turn the ' +
+      'vendor actually refuses still stops it, and the window boundary itself still applies.'
+  )
+}
+
 async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
   const worker = choice.worker as Worker
   const quotaUnverified = choice.quotaUnverified
+
+  // ⛔ **In the thread, not only in the log.** A run that only happened because somebody overruled
+  // the water mark is the run most likely to end mid-thought when the window closes, and the person
+  // reading the transcript afterwards needs the reason to be part of the record rather than
+  // something they have to remember pressing. ⚠️ Written before the spawn, so it survives a dispatch
+  // that then fails.
+  noteQuotaOverrideDispatch(task, worker)
 
   // ⛔ Reusing a warm session skips the workspace claim entirely: the session is already sitting in
   // the workspace this task claimed, on this task's branch. Claiming again would double-book the
@@ -1794,7 +1909,9 @@ async function runWatchdogs(): Promise<void> {
         if (win && !windowExpired(win)) percent = Math.round(win.percent)
       }
 
-      const verdict = overrunVerdict(run.workerId, percent)
+      const verdict = overrunVerdict(run.workerId, percent, {
+        quotaOverride: quotaOverridden(task)
+      })
       if (verdict) {
         log.warn(`t${task.seq} preempted for quota overrun risk (${verdict.reason})`)
         await preempt(task, session, verdict.resumeAt, verdict.reason)

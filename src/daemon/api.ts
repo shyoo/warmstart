@@ -64,6 +64,7 @@ import {
   pageTasks,
   promoteDraft,
   requireTask,
+  setQuotaOverride,
   setStatus,
   runForSession,
   runsFor,
@@ -89,6 +90,8 @@ import {
   deliverToLiveSession,
   promptFor,
   relandTask,
+  QUOTA_HIGH_WATER,
+  QUOTA_OVERRIDE_FALLBACK_MS,
   resolveConflictOnTask,
   resolveTask,
   tick
@@ -538,6 +541,57 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
         requestedBy: 'human'
       }),
     'task.resume': (p) => resumeTask(p.id),
+    /**
+     * A person overruling the 92% water mark on one task.
+     *
+     * ⛔ **The deadline is taken from what the scheduler already measured, not re-derived here.**
+     * `holdUntil` is the reset of the very window that refused this task's dispatch, written by the
+     * gate that refused it; computing a second answer in this handler would be a second chance to
+     * name a different window, and the two would drift the first time the pool logic changed.
+     *
+     * ⚠️ It answers honestly when the grant changes nothing. A task nobody is holding on quota, or
+     * one parked at `paused_quota` — which is a *preempted* run and comes back with **Resume**, not
+     * with this — is told so rather than being left to look unstuck.
+     */
+    'task.overrideQuota': (p) => {
+      const before = requireTask(p.id)
+      if ('until' in p && p.until === null) {
+        return {
+          task: setQuotaOverride(p.id, null),
+          until: null,
+          applies: false,
+          reason: 'the override is withdrawn; the usual quota gate applies again'
+        }
+      }
+      // ⛔ The window the hold was written from, then the worker's own reset, then an hour. Each
+      // fallback is one step further from a measurement, and the last is honest about being a
+      // duration rather than a boundary: with nothing readable, "an hour" at least expires.
+      const pinned = before.constraints.workerId ? getWorker(before.constraints.workerId) : null
+      const until =
+        p.until ??
+        before.holdUntil ??
+        (pinned ? (windowResetsAt(pinned.id)?.at ?? null) : null) ??
+        Date.now() + QUOTA_OVERRIDE_FALLBACK_MS
+      const task = setQuotaOverride(p.id, until)
+      const applies = before.status === 'ready' && before.holdUntil !== null && before.holdUntil > Date.now()
+      const reason = applies
+        ? `${before.holdReason ?? 'the quota gate'} — overridden until ${new Date(until).toISOString()}`
+        : before.status === 'paused_quota'
+          ? 'this task was preempted mid-run, not held at the gate — Resume is what puts it back'
+          : 'nothing is holding this task on quota right now; the override is recorded and will ' +
+            'apply if something does before it expires'
+      log.info(
+        `t${task.seq}: quota water mark overridden by hand until ${new Date(until).toISOString()}` +
+          (applies ? ` (was held: ${before.holdReason})` : ' (not currently held on quota)')
+      )
+      addMessage(
+        p.id,
+        'system',
+        `A person overrode the ${QUOTA_HIGH_WATER}% quota gate for this task until ` +
+          `${new Date(until).toISOString()}. ${reason}`
+      )
+      return { task: requireTask(p.id), until, applies, reason }
+    },
     'task.resolve': (p) => resolveTask(p.id, p.note),
     'task.deleteCheck': (p) => deleteBlockers(p.id),
     // ⛔ Human-only. There is deliberately no worker-tier equivalent: an agent that can delete the

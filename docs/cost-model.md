@@ -83,6 +83,17 @@ Two things keep keepalive honest: it does **not** reduce context, so it does not
 and it **spends quota**, which under a tight window can cost more in scheduling freedom than it saves
 in tokens.
 
+⛔ **The whole three-way decision rests on "expected time until next needed", so what feeds that
+number matters more than the arithmetic above it.** `ready` is the scheduler's word for *eligible*,
+not for *dispatchable*: a task it passes over on every tick keeps that status, and reading the
+status as availability answered the question with **0ms** — the one answer that skips all three
+branches, on every live session at once. Measured on t71 (2026-09-01): a queue held behind a quota
+window for **2h29m** was the input arguing that no session had time to compact, when 2h29m is
+comfortably past the ~2h break-even and is precisely the case compaction exists for. A held `ready`
+task now contributes `hold_until − now`, and a `paused_quota` task contributes its `not_before` —
+that second one was not counted at all, so a fleet whose entire queue had been parked by a closing
+window read as *"nothing queued"* and let every warm prefix lapse.
+
 ## 4. Compaction
 
 Source: 118 real local compactions measured by the author with a private predecessor tool, plus
@@ -493,6 +504,22 @@ fleet whose hard cut and soft preference disagree about that is worse than eithe
 
 ⭐ On the t39–t42 readings this separates the candidates by `(1.00 − 0.33) × 0.908 = 0.61`, six times
 `ROUTE_EPSILON`. **No consult would have been asked at all.**
+
+#### The cliff a person may step over (2026-09-01)
+
+⛔ **The 92% cut is a caution of ours, not the vendor declining anything** — every turn up to it was
+served. It is also a cliff with nothing on the far side, and a task **pinned** to one account cannot
+route around it by definition: t71 waited 2h29m at exactly 92% for a gate its operator did not agree
+with. `task.overrideQuota` lets a person say *"8% is more than this needs"*, dated from the reset of
+the window it overrules so the permission expires with its reason.
+
+| lifted | untouched |
+|---|---|
+| the 92% dispatch cut | a disabled, signed-out, human-occupied or quarantined account |
+| the 95% mid-run preempt — ⛔ dispatching under an override and preempting three points later buys a cold start and nothing else | the worker's concurrency cap |
+| | the **window boundary** preempt, which is a clock and not a percentage |
+| | a turn the vendor **refused**. There is no setting that makes a refused turn a served one |
+| | `windowRisk` itself — ⚠️ an overridden account must still score last, or a fleet with a free account elsewhere would start feeding the full one |
 
 ### Every score shows its own derivation (2026-08-30)
 

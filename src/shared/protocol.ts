@@ -1069,6 +1069,25 @@ export interface RpcMap {
   }
   'task.resume': { params: { id: string }; result: Task }
   /**
+   * Dispatch this task now even though the account it needs is at or past the 92% water mark.
+   *
+   * ⛔ **An override of one number, granted by a person, expiring with the window it overrules.**
+   * The water mark is this fleet's own caution — the vendor served every turn up to it — and on a
+   * task pinned to a single account there was no way to say *"the remaining 8% is more than this
+   * needs"*. It lifts the dispatch gate and the matching mid-run percentage preempt, and it lifts
+   * nothing else: a disabled or signed-out account, a worker at capacity, the window boundary
+   * itself, and a turn the vendor **refused** are all untouched.
+   *
+   * ⚠️ `until` defaults to the reset of the window being overruled, so the permission dies with its
+   * own reason. Pass `until: null` to withdraw one. `applies` is false when the task is not
+   * currently held by quota at all — the grant is still recorded, and saying so stops the button
+   * reading as though it had unstuck something.
+   */
+  'task.overrideQuota': {
+    params: { id: string; until?: number | null }
+    result: { task: Task; until: number | null; applies: boolean; reason: string }
+  }
+  /**
    * A person judging a task finished — the answer `awaiting_human` was asking for and had no way to
    * take. ⚠️ Records a judgement, not a verification: `task_complete` remains the only signal that an
    * *agent* finished.

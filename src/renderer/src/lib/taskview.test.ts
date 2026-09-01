@@ -6,7 +6,7 @@ import {
   resolveFinishPolicy,
   resolveSessionSharing
 } from '@shared/tasks'
-import { projectWorkState, STATUS_TONE, statusLabel, workspacePathFor } from './taskview.js'
+import { holdLine, projectWorkState, STATUS_TONE, statusLabel, workspacePathFor } from './taskview.js'
 import {
   DEFAULT_PAGE_SIZE,
   readFleetCollapsed,
@@ -55,6 +55,46 @@ describe('the word a person reads beside a task', () => {
   it('still calls a dispatching task dispatching', () => {
     // The rename that was already here, which this must not have displaced.
     expect(statusLabel(task({ status: 'assigned' }))).toBe('dispatching')
+  })
+})
+
+/**
+ * ⛔ Reported 2026-09-01, on t71: held with *"ClaudeThird at 92% of its Claude 5h window"* and no
+ * way to tell whether that meant five minutes or the 2h29m it actually meant. Those are different
+ * situations with different answers — one is worth waiting out, the other is worth overriding or
+ * going to bed over — and the sentence read identically for both.
+ */
+describe('the clock beside the hold', () => {
+  const NOW = 1_700_000_000_000
+  const held = (
+    over: Partial<Pick<Task, 'holdReason' | 'holdUntil'>> = {}
+  ): Pick<Task, 'holdReason' | 'holdUntil'> => ({
+    holdReason: 'ClaudeThird at 92% of its Claude 5h window',
+    holdUntil: null,
+    ...over
+  })
+
+  it('says how long the window has left to run', () => {
+    const line = holdLine(held({ holdUntil: NOW + 149 * 60 * 1000 }), NOW)
+    expect(line).toBe('ClaudeThird at 92% of its Claude 5h window — earliest retry in 2h 29m')
+  })
+
+  it('adds nothing where the hold has no clock behind it', () => {
+    // ⚠️ "At capacity" ends when a run ends, which is not a time anybody can name. A countdown
+    // invented for it would be worse than the silence.
+    expect(holdLine(held({ holdReason: 'Antigravity at capacity' }), NOW)).toBe(
+      'Antigravity at capacity'
+    )
+  })
+
+  it('drops a deadline that has already passed rather than counting down from zero', () => {
+    expect(holdLine(held({ holdUntil: NOW - 1000 }), NOW)).toBe(
+      'ClaudeThird at 92% of its Claude 5h window'
+    )
+  })
+
+  it('has nothing to say about a task nobody is holding', () => {
+    expect(holdLine({ holdReason: null, holdUntil: NOW + 60_000 }, NOW)).toBeNull()
   })
 })
 

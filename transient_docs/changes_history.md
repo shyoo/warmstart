@@ -3094,3 +3094,55 @@ silence for ever. The thread posts a system message; the task pane draws before 
 pre-size and no counterpart, so the compacted size is genuinely unknown until something reads it
 back. Inventing it by subtracting an estimate would make it the one number on the row nobody
 measured.
+
+## A gate nobody could overrule, and a queue that priced itself as busy (2026-09-01)
+
+**t71, 00:31:06Z.** Re-run, and immediately held: *"ClaudeThird at 92% of its Claude 5h window"*,
+against a reading whose `resets_at` was **2h29m** away. The operator's question was why the fleet
+had *routed* it to a full account.
+
+**It had not routed it anywhere.** `constraints_json` on that row is
+`{"workerId":"…","adapterId":"claude-code"}` — a **pin**, set by hand in the task thread's worker
+picker. `chooseTarget` skips every other worker on the first line of its loop, so ClaudeThird was
+the only candidate there ever was; the score, the tie-break and the routing consult never entered
+into it. ⚠️ Worth keeping straight, because the fix for "the scheduler chose badly" and the fix for
+"a pin met a full window" are different fixes. The quota term *is* in the score — `windowRisk`
+slopes to the water mark and saturates there — and it discriminates nothing on a candidate set of
+one. The reading itself was fine: 76% at 00:22, 92% at 00:31, refreshed at the dispatch gate exactly
+as intended.
+
+Two things were genuinely wrong, and both come from **one number being formatted into a sentence and
+then discarded**.
+
+**1. There was no way to say "92% is enough for this".** `QUOTA_HIGH_WATER` is a caution of ours
+computed over a reading — the vendor had served every turn up to it — and it is a cliff with nothing
+on the far side. A pinned task cannot route around it by definition, so it waits for the window. A
+person can see what the arithmetic cannot: that 8% of a window is more than one commit needs.
+`task.overrideQuota` is that sentence, and **migration 25**'s `quota_override_until` is where it
+lives — a deadline taken from the reset of the very window being overruled, so the permission
+expires with its own reason whether or not anything ran.
+
+⛔ **It lifts one gate, and the gate it lifts is the only one built purely out of a percentage.** The
+dispatch cliff, and the matching mid-run preempt at 95% — dispatching under an override and
+preempting three points later would buy a cold start and nothing else. It lifts *nothing* about a
+disabled or signed-out account, a worker at capacity, the window boundary itself, or a turn the
+vendor actually **refused**. There is no version of this that says "keep asking an account that is
+saying no". ⚠️ It also does not touch `windowRisk`, so an overridden account still scores last: a
+fleet with a free account elsewhere must keep preferring the free one.
+
+**2. A queue that could not move for 2h29m was the argument that no session had time to compact.**
+`expectedIdleMs` read `status = 'ready'` and answered *"work queued now"* — `ms: 0`, confident —
+which skips moves 2, 3 and 4 for **every live session in the fleet**. But `ready` is the scheduler's
+word for *eligible*, not for *dispatchable*: a task it passes over on every tick keeps that status.
+So the correct reading was the exact opposite of the one taken. 2h29m is comfortably past the ~2h
+compaction break-even, and a large context should be compacted *because* nothing can arrive.
+
+`hold_until` (migration 25) is the machine-readable half of `hold_reason`: written by the gate that
+refused, from the sample that refused it. ⛔ Deliberately **not** `not_before` — `admit()` reads that
+field and would have turned an explanation into a status change. Nothing gates on `hold_until`; the
+hold is still re-decided from the world every tick. ⭐ Beside it, `paused_quota` tasks are counted as
+upcoming work at last: a fleet whose entire queue had been parked by a closing window used to read
+as *"nothing queued"*, the branch that returns infinity and lets every warm prefix lapse.
+
+⭐ And the operator finally gets the clock: the row and the thread read *"… — earliest retry in
+2h 29m"*, which is the difference between a wait worth sitting through and one worth overriding.

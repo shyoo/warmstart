@@ -139,21 +139,47 @@ export function expectedIdleMs(session: Session, now = Date.now()): IdleEstimate
   }
 
   const tasks = listTasks()
-  const ready = tasks.filter((t) => t.status === 'ready')
+  // ⛔ **`ready` is eligibility, not availability, and reading it as availability suppressed the
+  // whole clock.** A task the scheduler passes over every tick — every account at capacity, or over
+  // the quota water mark — keeps the status `ready` and gains a `hold_until` saying when that could
+  // change. Counting it as *work queued now* answers "when is this session wanted?" with zero, and
+  // zero skips moves 2, 3 and 4 for every live session in the fleet.
+  //
+  // ⭐ Measured on t71, 2026-09-01T00:31Z: held at *"ClaudeThird at 92% of its Claude 5h window"*
+  // against a window resetting **2h29m** later, and priced as imminent for the whole of it. The
+  // correct reading is the opposite one — 2h29m is comfortably past the ~2h compaction break-even,
+  // so a large context should be compacted precisely *because* nothing can run.
+  //
+  // ⚠️ `holdUntil` in the future only. A hold with no clock behind it (at capacity, a routing
+  // question open) can end on the next tick and still counts as ready now.
+  const heldUntil = (t: (typeof tasks)[number]): number | null =>
+    t.holdUntil && t.holdUntil > now ? t.holdUntil : null
+
+  const ready = tasks.filter((t) => t.status === 'ready' && heldUntil(t) === null)
   if (ready.length > 0) {
     // Work is queued now; whether it lands on *this* session is the scheduler's call, but the session
     // is plainly wanted soon either way.
     return { ms: 0, because: `${ready.length} task(s) ready now`, confident: true }
   }
 
+  // ⛔ Three ways a task can be waiting on a clock, and all three are real queued work. Only the
+  // first was counted: a task parked at `paused_quota` carries `not_before = resetsAt` and was
+  // invisible here, so a fleet whose entire queue had been preempted by a closing window read as
+  // *"nothing queued"* — the branch that returns infinity and lets every prefix lapse.
   const upcoming = tasks
-    .filter((t) => t.status === 'scheduled' && t.notBefore && t.notBefore > now)
-    .map((t) => (t.notBefore ?? 0) - now)
+    .map((t) => {
+      if (t.status === 'scheduled' || t.status === 'paused_quota') {
+        return t.notBefore && t.notBefore > now ? t.notBefore - now : null
+      }
+      if (t.status === 'ready') return heldUntil(t) === null ? null : (heldUntil(t) as number) - now
+      return null
+    })
+    .filter((ms): ms is number => ms !== null)
     .sort((a, b) => a - b)
   if (upcoming[0] !== undefined) {
     return {
       ms: upcoming[0],
-      because: `next scheduled task in ${Math.round(upcoming[0] / 60000)}m`,
+      because: `next task can start in ${Math.round(upcoming[0] / 60000)}m`,
       confident: true
     }
   }

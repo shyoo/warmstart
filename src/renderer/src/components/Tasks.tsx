@@ -32,6 +32,7 @@ import {
   assigneeLabel,
   CANCELLABLE,
   elapsed,
+  holdLine,
   IN_FLIGHT,
   statusLabel,
   STATUS_TONE,
@@ -359,7 +360,7 @@ export function Tasks({
               // it appeared as small print inside the Status cell, then jumped below the row the
               // instant the run started. The reason outlives the wait, so `liveText` wins the
               // moment there is one.
-              const belowLine = liveText ?? task.holdReason ?? null
+              const belowLine = liveText ?? holdLine(task, now) ?? null
 
               const hasPriorActions =
                 CANCELLABLE.has(task.status) ||

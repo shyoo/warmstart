@@ -1329,6 +1329,21 @@ body {
   background: var(--state-danger);
 }
 
+/* ⚠️ Warn, not danger. Overriding the quota water mark spends into a nearly-full window on purpose;
+   it destroys nothing and is reversible, so it must not wear the colour reserved for the buttons
+   that stop a run. */
+.btn--warn {
+  background: var(--state-warn);
+  border-color: var(--state-warn);
+  color: #0b0f17;
+  font-weight: 600;
+}
+
+.btn--warn:hover:not(:disabled) {
+  filter: brightness(1.08);
+  background: var(--state-warn);
+}
+
 .btn--ghost {
   background: none;
   border-color: transparent;

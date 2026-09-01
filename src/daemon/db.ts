@@ -776,6 +776,32 @@ const MIGRATIONS: string[] = [
   );
   create index compactions_task on compactions(task_id, ts desc);
   create index compactions_session on compactions(session_id, ts desc);
+  `,
+
+  // 25 - the two clocks a held task never had: when it could next move, and until when a person
+  // said to go anyway.
+  //
+  // ⛔ **`hold_until` exists because `hold_reason` is prose.** The scheduler already knew the answer
+  // and threw it away: t71, 2026-09-01T00:31Z, was held with *"ClaudeThird at 92% of its Claude 5h
+  // window"* against a reading whose `resets_at` was 2h29m out. Nothing downstream could read that
+  // sentence, so `expectedIdleMs` counted the task as `ready now` and told every live session in the
+  // fleet that work was imminent - which is exactly the input that suppresses moves 2, 3 and 4 of
+  // the cache clock. A queue that cannot move for two and a half hours was being priced as a queue
+  // about to move. ⚠️ Descriptive only, like `hold_reason` beside it: nothing gates on it, and it is
+  // deliberately **not** `not_before`, because `admit()` reads that field and would flip a held
+  // `ready` task to `scheduled` - a status change nobody asked for as a side effect of an
+  // explanation.
+  //
+  // ⛔ **`quota_override_until` is the operator overruling a percentage, and only a percentage.**
+  // `QUOTA_HIGH_WATER` is a cliff at 92% with nothing on the far side of it: a pinned task whose one
+  // account is at 92% waits for the window with no way to say *"92% is plenty for this"*. A person
+  // can see what the fleet cannot - that the remaining 8% is more than the task needs - and until
+  // now had no way to say so. ⚠️ A wall-clock deadline, not a flag: it is written from the reset of
+  // the very window it overrules, so it expires with that window whether or not anything ran. A
+  // permission that outlives its reason is one nobody remembers granting.
+  `
+  alter table tasks add column hold_until integer;
+  alter table tasks add column quota_override_until integer;
   `
 ]
 

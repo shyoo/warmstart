@@ -73,6 +73,8 @@ interface TaskRow {
   cancel_json: string | null
   handoff_note: string | null
   hold_reason: string | null
+  hold_until: number | null
+  quota_override_until: number | null
   branch: string | null
   deleted_at: number | null
   created_at: number
@@ -136,6 +138,8 @@ function toTask(r: TaskRow): Task {
     cancel: r.cancel_json ? (JSON.parse(r.cancel_json) as Task['cancel']) : null,
     handoffNote: r.handoff_note,
     holdReason: r.hold_reason,
+    holdUntil: r.hold_until,
+    quotaOverrideUntil: r.quota_override_until,
     branch: r.branch,
     firstRunAt: r.first_run_at,
     lastRunEndedAt: r.last_run_ended_at,
@@ -643,7 +647,8 @@ export function setStatus(taskId: string, status: TaskStatus, extra: Partial<Tas
   db()
     .prepare(
       `update tasks set status = ?, assignee = ?, branch = coalesce(?, branch),
-                        handoff_note = coalesce(?, handoff_note), hold_reason = ?, updated_at = ?
+                        handoff_note = coalesce(?, handoff_note), hold_reason = ?, hold_until = ?,
+                        updated_at = ?
         where id = ?`
     )
     .run(
@@ -655,6 +660,9 @@ export function setStatus(taskId: string, status: TaskStatus, extra: Partial<Tas
       // so it moves atomically with the status: a caller that has one passes it, and every caller
       // that does not clears whatever the last state was explaining.
       extra.holdReason ?? null,
+      // ⚠️ And its clock with it. `hold_until` says when the sentence in `hold_reason` stops being
+      // true; carrying one over a transition would leave a deadline explaining a hold that ended.
+      extra.holdUntil ?? null,
       Date.now(),
       taskId
     )
@@ -685,12 +693,39 @@ export function setStatus(taskId: string, status: TaskStatus, extra: Partial<Tas
  * ⚠️ Writes only on a change, and every `setStatus` clears it. A tick that finds the same three
  * workers still at capacity must not emit a task event every ten seconds for as long as they are.
  */
-export function setHoldReason(taskId: string, reason: string | null): void {
+export function setHoldReason(taskId: string, reason: string | null, until: number | null = null): void {
   const current = getTask(taskId)
-  if (!current || current.holdReason === reason) return
-  db().prepare('update tasks set hold_reason = ? where id = ?').run(reason, taskId)
+  // ⚠️ Both halves compared, because they change independently: a hold whose sentence is unchanged
+  // can still have acquired a clock — the second tick after a quota reading arrives says the same
+  // words about a window it can now name the reset of.
+  if (!current || (current.holdReason === reason && current.holdUntil === until)) return
+  db()
+    .prepare('update tasks set hold_reason = ?, hold_until = ? where id = ?')
+    .run(reason, until, taskId)
   const task = getTask(taskId)
   if (task) emit({ type: 'task.changed', task })
+}
+
+/**
+ * Record a person's decision to spend into a nearly-full window on this task.
+ *
+ * ⛔ **Written as a deadline taken from the window it overrules**, so the permission cannot outlive
+ * its own reason. `null` withdraws it. See `Task.quotaOverrideUntil` for what it does and — more
+ * importantly — the four gates it deliberately does not touch.
+ */
+export function setQuotaOverride(taskId: string, until: number | null): Task {
+  requireTask(taskId)
+  db()
+    .prepare('update tasks set quota_override_until = ?, updated_at = ? where id = ?')
+    .run(until, Date.now(), taskId)
+  const task = requireTask(taskId)
+  emit({ type: 'task.changed', task })
+  return task
+}
+
+/** Is a person's quota override on this task still live? ⚠️ One reading of the clock, everywhere. */
+export function quotaOverridden(task: Task, now = Date.now()): boolean {
+  return task.quotaOverrideUntil !== null && task.quotaOverrideUntil > now
 }
 
 export function updateTask(

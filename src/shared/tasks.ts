@@ -321,6 +321,36 @@ export interface Task {
    * stale reason is worse than none, because it is read as current.
    */
   holdReason: string | null
+  /**
+   * The earliest moment the thing named in `holdReason` could stop being true, or null when nothing
+   * can say.
+   *
+   * ⛔ **The machine-readable half of `holdReason`, and it exists because prose was the only half.**
+   * A task held on a quota window is held until that window resets, and the scheduler read that
+   * reset time in order to write the sentence — then discarded it. Two consumers needed the number:
+   * the operator, who was shown *"at 92% of its 5h window"* with no way to know whether that meant
+   * five minutes or five hours, and `expectedIdleMs`, which counted a task that could not move for
+   * 2h29m as *"ready now"* and so told every live session in the fleet to expect work imminently.
+   *
+   * ⚠️ **Descriptive, never a gate.** Nothing refuses to dispatch because of it; the hold is
+   * re-decided from the world on every tick exactly as it was before. It is deliberately not
+   * `notBefore`, which `admit()` reads and would turn into a status change.
+   */
+  holdUntil: number | null
+  /**
+   * Until when a person has said to dispatch this task despite the quota high-water mark.
+   *
+   * ⛔ **It overrules a percentage of ours and nothing else.** The 92% gate is this fleet's own
+   * caution, computed from a reading; it is not the vendor declining anything. So an override lets
+   * the dispatch gate and the mid-run percentage preempt pass, and leaves untouched every gate that
+   * rests on something other than a percentage — a disabled or signed-out account, a worker at
+   * capacity, the window boundary itself, and above all a turn the vendor actually **refused**,
+   * which no operator setting can talk out of having happened.
+   *
+   * ⚠️ A deadline, not a boolean, and it is written from the reset of the window being overruled —
+   * so the permission expires with the reason for it, whether or not anything ran meanwhile.
+   */
+  quotaOverrideUntil: number | null
   branch: string | null
   /**
    * When work first started on this task, and when the last attempt stopped.

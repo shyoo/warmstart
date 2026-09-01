@@ -29,6 +29,7 @@ import { showsLiveOutput } from '../lib/live'
 import { duration, tokens, when } from '../lib/format'
 import {
   elapsed,
+  holdLine,
   IN_FLIGHT,
   statusLabel,
   STATUS_TONE,
@@ -443,9 +444,11 @@ function TaskDetail({
           </Fact>
           {task.holdReason && (
             <Fact label={task.status === 'awaiting_human' ? 'wants' : 'waiting on'}>
-              {task.holdReason}
+              {holdLine(task, now)}
             </Fact>
           )}
+          {/* ⛔ Offered only where the hold is one this fleet invented. See `QuotaOverride`. */}
+          <QuotaOverride task={task} onChanged={refresh} />
           <Fact label="depends on">
             <DependencyList
               tasks={dependencies}
@@ -1080,6 +1083,73 @@ function Decide({
         session that still holds its context.
       </p>
     </div>
+  )
+}
+
+/**
+ * Run this now anyway, at 92% of a window.
+ *
+ * ⛔ **Shown only when the hold is one the fleet invented for itself.** The water mark is a caution
+ * computed from a reading — the vendor served every turn up to it — and on a task pinned to one
+ * account there was no way to say *"8% is more than this needs"*. Every other hold on this row ends
+ * when something else happens (a run finishes, a dependency completes, somebody signs in) and has
+ * nothing here to overrule, so no button appears on one. ⚠️ Matched on the sentence the gate writes,
+ * for the same reason the conflict button is: that sentence is where the scheduler records *which*
+ * gate refused, and re-deriving it in the renderer would be a second opinion on a settled question.
+ *
+ * ⚠️ It says what it does **not** buy, because the honest failure mode is an operator who overrides
+ * at 92%, sees the run stop anyway on a vendor refusal, and concludes the button is broken.
+ */
+function QuotaOverride({
+  task,
+  onChanged
+}: {
+  task: Task
+  onChanged?: () => Promise<void>
+}): React.JSX.Element | null {
+  const [busy, setBusy] = useState(false)
+  // ⚠️ One ticking clock, not `Date.now()` in the render: the countdown below has to move, and a
+  // component that reads the wall clock while rendering only updates when something else makes it.
+  const now = useNow(1000)
+  const held = task.status === 'ready' && /% of its .* window/.test(task.holdReason ?? '')
+  const live = task.quotaOverrideUntil !== null && task.quotaOverrideUntil > now
+  if (!held && !live) return null
+
+  // ⚠️ `withdraw` sends an explicit `null`; granting sends no `until` at all, so the daemon dates
+  // the permission from the window it measured rather than from a clock in the renderer.
+  const set = async (withdraw: boolean): Promise<void> => {
+    setBusy(true)
+    try {
+      await rpc('task.overrideQuota', { id: task.id, ...(withdraw ? { until: null } : {}) })
+      if (onChanged) await onChanged()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Fact label="quota gate">
+      {live ? (
+        <>
+          <span>overridden for {duration((task.quotaOverrideUntil ?? 0) - now)}</span>{' '}
+          <button className="btn" disabled={busy} onClick={() => void set(true)}>
+            Withdraw
+          </button>
+        </>
+      ) : (
+        <>
+          <button
+            className="btn btn--warn"
+            disabled={busy}
+            title="Dispatch this task even though the account is at or past 92% of its window. Expires when that window resets. ⚠️ A turn the vendor actually refuses still stops the run, and so does the window boundary itself."
+            onClick={() => void set(false)}
+          >
+            Run now anyway
+          </button>{' '}
+          <span className="dim">spends into the window this task is waiting on</span>
+        </>
+      )}
+    </Fact>
   )
 }
 
