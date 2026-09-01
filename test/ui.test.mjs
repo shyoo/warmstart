@@ -1985,6 +1985,91 @@ try {
     globalHeadings
   )
 
+  section('saying one task waits for another, in the thread')
+  // ⭐ The half of the DAG a person could not reach. The New Task form's picker is covered above by
+  // the row it adds to the form; this is the *other* control — the one used when the ordering is
+  // learned halfway through, about two tasks that already exist — driven through the real app,
+  // because an edge that is recorded without re-deriving the status looks identical from the daemon
+  // side and is a task the scheduler dispatches while it is supposed to be waiting.
+  await evaluate(`
+    (async () => {
+      const r = window.agentyard.rpc;
+      await r('task.create', { title: 'ui prerequisite task', priority: 'P2' });
+      await r('task.create', { title: 'ui dependent task', priority: 'P2' });
+      return 'filed';
+    })()
+  `)
+  await wait(1200)
+  await evaluate(
+    `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim().startsWith('Unassigned'))?.click()`
+  )
+  await wait(1000)
+  await evaluate(
+    `[...document.querySelectorAll('.tbl tbody tr')].find(r => r.innerText.includes('ui dependent task'))?.click()`
+  )
+  await waitFor(
+    async () =>
+      await evaluate(
+        `(document.querySelector('.detail-side select[aria-label="Add a prerequisite"]')?.options.length ?? 0) > 1`
+      ),
+    'the prerequisite picker in the task ledger'
+  )
+  const offeredPrereqs = await evaluate(
+    `JSON.stringify([...document.querySelector('.detail-side select[aria-label="Add a prerequisite"]').options]
+       .map(o => o.innerText))`
+  )
+  check(
+    'the ledger offers other tasks by number and title',
+    JSON.parse(offeredPrereqs).some((o) => /^t\d+ · ui prerequisite task/.test(o)),
+    offeredPrereqs
+  )
+  check(
+    '⛔ and never the task itself, which would be an edge nothing could ever satisfy',
+    !JSON.parse(offeredPrereqs).some((o) => /ui dependent task/.test(o)),
+    offeredPrereqs
+  )
+  // ⚠️ React owns the value; the native setter plus a bubbling change event is what a choice looks
+  // like from its side.
+  await evaluate(
+    `(() => { const el = document.querySelector('.detail-side select[aria-label="Add a prerequisite"]');` +
+      ` const opt = [...el.options].find(o => /ui prerequisite task/.test(o.innerText));` +
+      ` const set = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set;` +
+      ` set.call(el, opt.value);` +
+      ` el.dispatchEvent(new Event('change', { bubbles: true })); return 'chose'; })()`
+  )
+  await wait(2000)
+  const ledger = `
+    JSON.stringify((() => {
+      const facts = [...document.querySelectorAll('.detail-side .fact')];
+      const at = (re) => facts.find(f => re.test(f.querySelector('.fact-label')?.innerText ?? ''));
+      const deps = at(/depends on/i);
+      return {
+        // ⚠️ The list, not the whole fact. The picker beside it holds every candidate as an
+        // option element and innerText includes them, so an assertion made against the fact passes
+        // whether or not the edge was ever drawn — and would still pass after it was removed.
+        deps: deps?.querySelector('.dep-list')?.innerText.replace(/\\s+/g, ' ') ?? 'none',
+        removable: !!deps?.querySelector('.dep-remove'),
+        status: at(/^status/i)?.innerText.replace(/\\s+/g, ' ') ?? ''
+      };
+    })())
+  `
+  const withDep = JSON.parse(await evaluate(ledger))
+  check('choosing one writes it into the ledger', /ui prerequisite task/.test(withDep.deps), JSON.stringify(withDep))
+  check(
+    '⛔ and the task is blocked on the same click, not at the next tick',
+    /blocked/i.test(withDep.status),
+    JSON.stringify(withDep)
+  )
+  check('and the row it made offers the way back out', withDep.removable === true, JSON.stringify(withDep))
+  await evaluate(`document.querySelector('.detail-side .dep-remove')?.click()`)
+  await wait(2000)
+  const cleared = JSON.parse(await evaluate(ledger))
+  check(
+    'removing it lets the task go again',
+    !/ui prerequisite task/.test(cleared.deps) && !/blocked/i.test(cleared.status),
+    JSON.stringify(cleared)
+  )
+
   const errors = await evaluate('window.__agentyardErrors?.length ?? 0')
   check('no uncaught renderer errors', errors === 0)
 } catch (err) {

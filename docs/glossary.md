@@ -101,6 +101,19 @@ contenders rather than letting them collide.
 thread, priority, deadline, dependencies (a DAG), a schedule (`not_before`), resource requirements,
 constraints, a verification policy, and a status.
 
+**Prerequisite** — *an edge in the DAG somebody drew by hand.* `task_deps`, the cycle check and
+`admit()` have been in the daemon since M2, and the only way to put an edge in was to be an agent
+calling `task_create` with `depends_on`. ⭐ Since 2026-09-01 a person can too: the New Task form takes
+prerequisites at filing — the task is born `blocked`, because `createTask` writes the edges *before*
+it admits — and the task ledger adds or drops one afterwards through `task.addDependency` /
+`task.removeDependency`, which re-run admission on the same call rather than leaving a `ready` row
+the scheduler may dispatch a tick later, and hand back the redrawn list beside the task. ⛔ Refused
+rather than recorded when it would close a cycle: a cycle found at the door is an error message, a
+cycle found by the scheduler is a deadlock. ⚠️ A task already **running** is not clawed back — the
+edge applies to its next dispatch, and the thread says which of the two happened. ⚠️ Only `completed`
+releases a dependent, so the picker never offers a `cancelled` or `failed` task; a `completed` one it
+does, because an edge satisfied the moment it is drawn is an ordinary thing to want to record.
+
 **Thread** — *a task's messages*, human and agent, in the order they were said. ⛔ **Not a
 conversation.** A conversation is the agent's own session — it has a vendor id, you resume it with
 `--resume` or `--conversation`, it can outlive the task that opened it and be borrowed by another.
