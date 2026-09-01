@@ -1288,6 +1288,7 @@ body {
    sit in tables with four columns and all the room they need; this one has ten, and a full-size
    `.btn` in a 19% column is what made them stack one per line. */
 .tbl-workers .tbl-actions {
+  flex-wrap: nowrap;
   gap: var(--sp-1);
 }
 

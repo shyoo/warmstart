@@ -357,7 +357,7 @@ try {
   await evaluate(
     `[...document.querySelectorAll('.chip')].find(c => c.innerText.trim().startsWith('All'))?.click()`
   )
-  await wait(900)
+  await waitFor(async () => (await rowsNow()) === 3, 'All filter to restore 3 rows')
   check('All puts every task back', (await rowsNow()) === 3)
 
   // ⛔ Both dates. "How long has this been sitting here" and "is anything still happening" are
