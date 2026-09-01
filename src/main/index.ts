@@ -47,6 +47,18 @@ let quitting = false
 // take the fleet with it. Give the UI its own subdirectory. Must run before `app.whenReady`.
 app.setPath('userData', join(dataDir(), 'ui'))
 
+// ⛔ Single instance lock: launching the app while an instance is already running (e.g. in tray)
+// must focus the existing window immediately and exit, rather than starting a duplicate process
+// that collides on userData and waits 20s for an existing orchestratord lock.
+const gotSingleInstanceLock = app.requestSingleInstanceLock()
+if (!gotSingleInstanceLock) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    showWindow()
+  })
+}
+
 // This app has no menu-driven features, so the default File/Edit/View/Window bar Electron
 // generates automatically is just noise. Windows/Linux lose the bar entirely; macOS keeps its
 // required minimal app menu (Quit, etc.) since the OS enforces one.

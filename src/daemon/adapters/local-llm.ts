@@ -1,3 +1,5 @@
+import http from 'node:http'
+import https from 'node:https'
 import { existsSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -115,38 +117,46 @@ function setReachable(endpoint: string, reachable: boolean): void {
 async function probeEndpoint(
   endpoint: string
 ): Promise<{ ok: boolean; models: string[]; error?: string }> {
-  const http_ = await import('node:http')
-  const https_ = await import('node:https')
-
   return new Promise((resolve) => {
-    const url = new URL('/v1/models', endpoint)
-    const transport = url.protocol === 'https:' ? https_ : http_
-    const req = transport.get(url, { timeout: 5_000 }, (res) => {
-      let body = ''
-      res.on('data', (d: Buffer) => { body += d.toString() })
-      res.on('end', () => {
-        if (res.statusCode !== 200) {
-          resolve({ ok: false, models: [], error: `HTTP ${res.statusCode}` })
-          return
-        }
-        try {
-          const parsed = JSON.parse(body) as { data?: Array<{ id?: string }> }
-          const models = (parsed.data ?? [])
-            .map((m) => m.id)
-            .filter((id): id is string => typeof id === 'string')
-          resolve({ ok: true, models })
-        } catch {
-          resolve({ ok: true, models: [] })
-        }
+    let resolved = false
+    const done = (result: { ok: boolean; models: string[]; error?: string }) => {
+      if (resolved) return
+      resolved = true
+      resolve(result)
+    }
+
+    try {
+      const url = new URL('/v1/models', endpoint)
+      const transport = url.protocol === 'https:' ? https : http
+      const req = transport.get(url, { timeout: 2_000 }, (res) => {
+        let body = ''
+        res.on('data', (d: Buffer) => { body += d.toString() })
+        res.on('end', () => {
+          if (res.statusCode !== 200) {
+            done({ ok: false, models: [], error: `HTTP ${res.statusCode}` })
+            return
+          }
+          try {
+            const parsed = JSON.parse(body) as { data?: Array<{ id?: string }> }
+            const models = (parsed.data ?? [])
+              .map((m) => m.id)
+              .filter((id): id is string => typeof id === 'string')
+            done({ ok: true, models })
+          } catch {
+            done({ ok: true, models: [] })
+          }
+        })
       })
-    })
-    req.on('error', (err) => {
-      resolve({ ok: false, models: [], error: err.message })
-    })
-    req.on('timeout', () => {
-      req.destroy()
-      resolve({ ok: false, models: [], error: 'timeout (5s)' })
-    })
+      req.on('error', (err) => {
+        done({ ok: false, models: [], error: err.message })
+      })
+      req.on('timeout', () => {
+        req.destroy()
+        done({ ok: false, models: [], error: 'timeout (2s)' })
+      })
+    } catch (err) {
+      done({ ok: false, models: [], error: err instanceof Error ? err.message : String(err) })
+    }
   })
 }
 
