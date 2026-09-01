@@ -1,4 +1,5 @@
 import { mkdtempSync, rmSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
@@ -63,6 +64,7 @@ beforeAll(async () => {
   db.openDb(join(dir, 'poolgate.db'))
 
   const root = mkdtempSync(join(tmpdir(), 'agentyard-poolgate-project-'))
+  execFileSync('git', ['init', root], { stdio: 'ignore' })
   projectId = projects.addProject({ root, name: 'demo' }).id
   poolId = resources.workspacePoolId(projectId)
 })
@@ -74,6 +76,7 @@ beforeEach(() => {
   db.db().exec('delete from workers')
   db.db().exec('delete from task_deps')
   db.db().exec('delete from tasks')
+  projects.setProjectPolicy(projectId, { poolSize: 3 })
   declarePool()
 })
 
@@ -127,6 +130,32 @@ describe('the gate in front of a full workspace pool', () => {
     const said = pressureOn(file('held'))
     expect(said).toContain('demo')
     expect(said).toContain('3')
+  })
+
+  it('lets the first task through after the configured pool grows, so its claim can create ws4', () => {
+    fill()
+    projects.setProjectPolicy(projectId, { poolSize: 4 })
+
+    // `ensurePool` runs inside the following dispatch. Holding it here would make a three-to-four
+    // change self-sealing: the dispatch which could create ws4 would never be attempted.
+    expect(pressureOn(file('the new fourth workspace'))).toBeNull()
+  })
+
+  it('honours a smaller configured pool before its member list is reconciled', () => {
+    // The broker still has four members from before the setting changed, but the new cap means a
+    // third active task fills the pool now. The next claim will replace that stale member list.
+    resources.upsertResource({
+      id: poolId,
+      projectId,
+      kind: 'counted',
+      label: 'demo workspaces',
+      members: [...members, 'ws4'],
+      meta: {}
+    })
+    fill()
+    projects.setProjectPolicy(projectId, { poolSize: 3 })
+
+    expect(pressureOn(file('must wait for the smaller pool'))).toContain('3 workspace')
   })
 
   it('says nothing about a task that belongs to no project', () => {

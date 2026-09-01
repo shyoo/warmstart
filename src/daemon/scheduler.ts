@@ -1686,7 +1686,22 @@ export function poolPressure(task: Task): string | null {
   const project = task.projectId ? getProject(task.projectId) : null
   if (!project) return null
   const state = availability(workspacePoolId(project.id))
-  if (!state || state.free > 0) return null
+  if (!state) return null
+
+  // `setProjectPolicy` changes the durable desired size immediately, but a larger pool's next
+  // member only exists when `ensurePool` runs before its next claim. Do not let the old, full
+  // resource prevent that very dispatch: t89 changed three to four, then this gate kept saying
+  // "all 3 workspaces ... busy", so `ensurePool` could never create ws4. Shrinking is the mirror
+  // case: respect the newly lower cap before the next claim reconciles the broker's member list.
+  const desiredCapacity = policyFor(project).poolSize
+  if (state.resource.capacity !== desiredCapacity) {
+    if (desiredCapacity > state.resource.capacity) return null
+    if (state.inUse < desiredCapacity) return null
+    const capacity = desiredCapacity
+    return `all ${capacity} workspace(s) in ${project.name} are busy` + poolIsNarrow(project, capacity)
+  }
+
+  if (state.free > 0) return null
   if (warmSessionFor(task)) return null
   if (evictableResidents(project.id).length > 0) return null
   const capacity = state.resource.capacity
