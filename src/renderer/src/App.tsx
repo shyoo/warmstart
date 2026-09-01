@@ -9,6 +9,16 @@ import {
   useFleet,
   useNow
 } from './lib/daemon'
+import {
+  clampZoom,
+  readZoomFactor,
+  writeZoomFactor,
+  applyZoomFactor,
+  MIN_ZOOM,
+  MAX_ZOOM,
+  DEFAULT_ZOOM,
+  ZOOM_STEP
+} from './lib/zoom'
 import { FleetStrip } from './components/FleetStrip'
 import { Workers } from './components/Workers'
 import { Conversations } from './components/Conversations'
@@ -152,6 +162,51 @@ export function App(): React.JSX.Element {
     }
   }, [refresh, refreshProjects])
 
+  const [zoom, setZoom] = useState(readZoomFactor)
+
+  const changeZoom = useCallback((delta: number) => {
+    setZoom((prev) => {
+      const next = clampZoom(prev + delta)
+      applyZoomFactor(next)
+      writeZoomFactor(next)
+      return next
+    })
+  }, [])
+
+  const resetZoom = useCallback(() => {
+    setZoom(() => {
+      applyZoomFactor(DEFAULT_ZOOM)
+      writeZoomFactor(DEFAULT_ZOOM)
+      return DEFAULT_ZOOM
+    })
+  }, [])
+
+  const zoomIn = useCallback(() => changeZoom(ZOOM_STEP), [changeZoom])
+  const zoomOut = useCallback(() => changeZoom(-ZOOM_STEP), [changeZoom])
+
+  useEffect(() => {
+    applyZoomFactor(zoom)
+  }, [zoom])
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey) {
+        if (e.key === '=' || e.key === '+') {
+          e.preventDefault()
+          zoomIn()
+        } else if (e.key === '-' || e.key === '_') {
+          e.preventDefault()
+          zoomOut()
+        } else if (e.key === '0') {
+          e.preventDefault()
+          resetZoom()
+        }
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [zoomIn, zoomOut, resetZoom])
+
   const liveSessions = fleet.flatMap((f) =>
     f.sessions.filter((s) => s.state !== 'closed' && s.state !== 'failed')
   )
@@ -160,9 +215,6 @@ export function App(): React.JSX.Element {
     <div className="shell">
       <aside className="sidebar">
         <div className="brand">
-          <h1 title={`Multi Agent Controller v${info?.version ?? '—'}`}>Multi Agent Controller</h1>
-          {/* ⚠️ One row, by request. At 252px there is not room for the version text as well, so it
-              moved into the title above rather than pushing these onto a line of their own. */}
           <div className="brand-nav">
             <IconButton label="Back" disabled={past.length === 0} onClick={goBack}>
               <path d="M10 3 L5 8 L10 13" />
@@ -177,6 +229,36 @@ export function App(): React.JSX.Element {
             >
               <path d="M13 8a5 5 0 1 1-1.6-3.7" />
               <path d="M13 2.5 L13 5.2 L10.3 5.2" />
+            </IconButton>
+          </div>
+          <div className="brand-zoom">
+            <IconButton
+              label="Zoom out (Ctrl -)"
+              disabled={zoom <= MIN_ZOOM}
+              onClick={zoomOut}
+            >
+              <circle cx="6.5" cy="6.5" r="4" />
+              <path d="M9.5 9.5 L13.5 13.5" />
+              <path d="M4.5 6.5 L8.5 6.5" />
+            </IconButton>
+            {zoom !== DEFAULT_ZOOM && (
+              <button
+                className="zoom-badge"
+                title="Reset zoom (Ctrl 0)"
+                onClick={resetZoom}
+              >
+                {Math.round(zoom * 100)}%
+              </button>
+            )}
+            <IconButton
+              label="Zoom in (Ctrl +)"
+              disabled={zoom >= MAX_ZOOM}
+              onClick={zoomIn}
+            >
+              <circle cx="6.5" cy="6.5" r="4" />
+              <path d="M9.5 9.5 L13.5 13.5" />
+              <path d="M4.5 6.5 L8.5 6.5" />
+              <path d="M6.5 4.5 L6.5 8.5" />
             </IconButton>
           </div>
         </div>

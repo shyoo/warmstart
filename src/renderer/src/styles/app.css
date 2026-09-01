@@ -131,40 +131,36 @@ body {
 .brand {
   display: flex;
   align-items: center;
-  gap: var(--sp-2);
+  justify-content: space-between;
   padding: var(--sp-4) var(--sp-3) var(--sp-3) var(--sp-4);
 }
 
-.brand h1 {
-  font-size: var(--text-section);
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  margin: 0;
-  /* ⛔ One line. The controls sit beside the name, and a wrapping title would push them onto a row
-     of their own - which is the thing this layout exists to avoid. */
-  white-space: nowrap;
-  /* ⚠️ …but `nowrap` alone made it un-shrinkable, so where the title renders wider than the sidebar
-     it shoved the controls off the edge instead. Measured on Linux in CI, where the default UI font
-     is wider than Windows': `overflows: true` with the name intact and Back/Forward/Refresh gone.
-     ⛔ The **name** gives way, never the controls - a clipped "Multi Agent Contro…" is still
-     readable, and a button you cannot reach is not a button. */
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.brand .version {
-  font-size: var(--text-meta);
-  color: var(--color-text-faint);
-}
-
-/* Pinned right, and ⛔ never shrunk: these are the last things that may lose room. */
-.brand-nav {
+.brand-nav,
+.brand-zoom {
   display: flex;
   align-items: center;
   gap: 2px;
-  margin-left: auto;
   flex: 0 0 auto;
+}
+
+.zoom-badge {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1;
+  padding: 3px 5px;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-2);
+  color: var(--color-text-dim);
+  border: 1px solid var(--color-border);
+  cursor: pointer;
+  user-select: none;
+}
+
+.zoom-badge:hover {
+  background: var(--color-surface);
+  color: var(--color-text);
+  border-color: var(--color-border-strong);
 }
 
 .icon-btn {

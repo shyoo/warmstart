@@ -50,6 +50,8 @@ export interface AgentyardApi {
   getUiSettings(): Promise<UiSettings>
   /** ⚠️ A partial patch, and the whole object comes back - the same shape as `settings.set`. */
   setUiSettings(patch: Partial<UiSettings>): Promise<UiSettings>
+  setZoomFactor(factor: number): void
+  getZoomFactor(): number
 }
 
 export const IPC = {

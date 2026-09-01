@@ -176,27 +176,26 @@ try {
     nav.join(' | ')
   )
 
-  // ⛔ One row, which is the whole requirement. Measured, not eyeballed: a wrapped title would make
-  // the brand block taller than a single line of its own font and push the controls down.
+  // ⛔ One row, with nav controls and zoom controls.
   const brand = await evaluate(`
     JSON.stringify((() => {
       const b = document.querySelector('.brand');
-      const h = b?.querySelector('h1');
       const nav = b?.querySelector('.brand-nav');
-      if (!b || !h || !nav) return { missing: true };
-      const br = b.getBoundingClientRect(), hr = h.getBoundingClientRect(), nr = nav.getBoundingClientRect();
+      const zoom = b?.querySelector('.brand-zoom');
+      if (!b || !nav || !zoom) return { missing: true };
+      const br = b.getBoundingClientRect(), zr = zoom.getBoundingClientRect();
       return {
-        buttons: nav.querySelectorAll('button').length,
-        titleLines: Math.round(hr.height / parseFloat(getComputedStyle(h).lineHeight || '20')),
-        sameRow: Math.abs((hr.top + hr.height / 2) - (nr.top + nr.height / 2)) < 6,
-        overflows: nav.getBoundingClientRect().right > br.right + 1
+        navButtons: nav.querySelectorAll('button').length,
+        zoomButtons: zoom.querySelectorAll('button').length,
+        hasTitle: !!b.querySelector('h1'),
+        overflows: zr.right > br.right + 1
       };
     })())
   `)
   const b = JSON.parse(brand)
-  check('the title bar carries back, forward and refresh', b.buttons === 3, brand)
-  check('they sit on the same row as the app name', b.sameRow === true, brand)
-  check('the app name still fits on one line', b.titleLines <= 1, brand)
+  check('the navigation bar carries back, forward and refresh', b.navButtons === 3, brand)
+  check('the zoom bar carries zoom in and zoom out controls', b.zoomButtons >= 2, brand)
+  check('the app title is removed from the sidebar toolbar', b.hasTitle === false, brand)
   check('nothing overflows the sidebar', b.overflows === false, brand)
 
   section('zero state')

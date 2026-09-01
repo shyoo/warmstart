@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webFrame } from 'electron'
 import {
   IPC,
   type AgentyardApi,
@@ -32,7 +32,13 @@ const api: AgentyardApi = {
     return () => ipcRenderer.removeListener(IPC.eventPush, listener)
   },
   getUiSettings: () => ipcRenderer.invoke(IPC.uiSettingsGet) as Promise<UiSettings>,
-  setUiSettings: (patch) => ipcRenderer.invoke(IPC.uiSettingsSet, patch) as Promise<UiSettings>
+  setUiSettings: (patch) => ipcRenderer.invoke(IPC.uiSettingsSet, patch) as Promise<UiSettings>,
+  setZoomFactor: (factor: number) => {
+    webFrame.setZoomFactor(factor)
+  },
+  getZoomFactor: () => {
+    return webFrame.getZoomFactor()
+  }
 }
 
 contextBridge.exposeInMainWorld('agentyard', api)
