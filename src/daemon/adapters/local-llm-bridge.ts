@@ -140,11 +140,36 @@ async function chatCompletion(
 
   return new Promise((resolve, reject) => {
     const transport = url.protocol === 'https:' ? https : http
+    let finished = false
+    let fullText = ''
+    const allToolCalls = new Map<number, ToolCall>()
+    let usageReported = false
+    let finishReason = 'stop'
+
+    const finish = () => {
+      if (finished) return
+      finished = true
+      const calls = Array.from(allToolCalls.values())
+      if (calls.length > 0) onToolCall(calls)
+      if (!usageReported) {
+        const inChars = messages.reduce((acc, m) => acc + (m.content?.length ?? 0), 0)
+        onUsage({
+          input_tokens: Math.max(1, Math.round(inChars / 4)),
+          output_tokens: Math.max(1, Math.round(fullText.length / 4))
+        })
+      }
+      resolve({ text: fullText, toolCalls: calls, finishReason })
+    }
+
     const req = transport.request(
       url,
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body),
+          'Connection': 'close'
+        }
       },
       (res) => {
         if (res.statusCode !== 200) {
@@ -155,10 +180,6 @@ async function chatCompletion(
         }
 
         let buffer = ''
-        let fullText = ''
-        let usageReported = false
-        const allToolCalls = new Map<number, ToolCall>()
-        let finishReason = 'stop'
 
         res.on('data', (chunk: Buffer) => {
           buffer += chunk.toString()
@@ -228,24 +249,25 @@ async function chatCompletion(
           }
         })
 
-        res.on('end', () => {
-          const calls = Array.from(allToolCalls.values())
-          if (calls.length > 0) onToolCall(calls)
-          if (!usageReported) {
-            const inChars = messages.reduce((acc, m) => acc + (m.content?.length ?? 0), 0)
-            onUsage({
-              input_tokens: Math.max(1, Math.round(inChars / 4)),
-              output_tokens: Math.max(1, Math.round(fullText.length / 4))
-            })
-          }
-          resolve({ text: fullText, toolCalls: calls, finishReason })
-        })
+        res.on('end', finish)
 
-        res.on('error', reject)
+        res.on('error', (err: NodeJS.ErrnoException) => {
+          if ((err.code === 'ECONNRESET' || err.message?.includes('ECONNRESET')) && (fullText.length > 0 || allToolCalls.size > 0)) {
+            finish()
+            return
+          }
+          if (!finished) reject(err)
+        })
       }
     )
 
-    req.on('error', reject)
+    req.on('error', (err: NodeJS.ErrnoException) => {
+      if ((err.code === 'ECONNRESET' || err.message?.includes('ECONNRESET')) && (fullText.length > 0 || allToolCalls.size > 0)) {
+        finish()
+        return
+      }
+      if (!finished) reject(err)
+    })
     req.write(body)
     req.end()
   })
