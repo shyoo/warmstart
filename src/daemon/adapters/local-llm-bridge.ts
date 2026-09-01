@@ -131,6 +131,7 @@ async function chatCompletion(
     model: MODEL || undefined,
     messages,
     stream: true,
+    stream_options: { include_usage: true },
     tools: TOOLS.length > 0 ? TOOLS : undefined,
     max_tokens: Math.min(CONTEXT_SIZE, 16384),
     temperature: 0.7,
@@ -155,6 +156,7 @@ async function chatCompletion(
 
         let buffer = ''
         let fullText = ''
+        let usageReported = false
         const allToolCalls = new Map<number, ToolCall>()
         let finishReason = 'stop'
 
@@ -177,45 +179,47 @@ async function chatCompletion(
             }
 
             const choices = parsed.choices as Array<Record<string, unknown>> | undefined
-            if (!choices?.[0]) continue
-            const choice = choices[0]
-            const delta = choice.delta as Record<string, unknown> | undefined
+            if (choices?.[0]) {
+              const choice = choices[0]
+              const delta = choice.delta as Record<string, unknown> | undefined
 
-            if (choice.finish_reason && typeof choice.finish_reason === 'string') {
-              finishReason = choice.finish_reason
-            }
+              if (choice.finish_reason && typeof choice.finish_reason === 'string') {
+                finishReason = choice.finish_reason
+              }
 
-            if (delta?.content && typeof delta.content === 'string') {
-              fullText += delta.content
-              onDelta(delta.content)
-            }
+              if (delta?.content && typeof delta.content === 'string') {
+                fullText += delta.content
+                onDelta(delta.content)
+              }
 
-            // Tool calls come as deltas with indexed parts
-            const toolCallDeltas = delta?.tool_calls as
-              | Array<{ index: number; id?: string; function?: { name?: string; arguments?: string } }>
-              | undefined
-            if (toolCallDeltas) {
-              for (const tc of toolCallDeltas) {
-                let existing = allToolCalls.get(tc.index)
-                if (!existing) {
-                  existing = {
-                    id: tc.id ?? `call_${tc.index}`,
-                    type: 'function',
-                    function: { name: '', arguments: '' }
+              // Tool calls come as deltas with indexed parts
+              const toolCallDeltas = delta?.tool_calls as
+                | Array<{ index: number; id?: string; function?: { name?: string; arguments?: string } }>
+                | undefined
+              if (toolCallDeltas) {
+                for (const tc of toolCallDeltas) {
+                  let existing = allToolCalls.get(tc.index)
+                  if (!existing) {
+                    existing = {
+                      id: tc.id ?? `call_${tc.index}`,
+                      type: 'function',
+                      function: { name: '', arguments: '' }
+                    }
+                    allToolCalls.set(tc.index, existing)
                   }
-                  allToolCalls.set(tc.index, existing)
+                  if (tc.id) existing.id = tc.id
+                  if (tc.function?.name) existing.function.name += tc.function.name
+                  if (tc.function?.arguments) existing.function.arguments += tc.function.arguments
                 }
-                if (tc.id) existing.id = tc.id
-                if (tc.function?.name) existing.function.name += tc.function.name
-                if (tc.function?.arguments) existing.function.arguments += tc.function.arguments
               }
             }
 
-            // Usage in the final chunk (llama.cpp reports it here)
+            // Usage in the final chunk (OpenAI with stream_options or llama.cpp)
             const usage = parsed.usage as
               | { prompt_tokens?: number; completion_tokens?: number }
               | undefined
-            if (usage) {
+            if (usage && typeof usage === 'object') {
+              usageReported = true
               onUsage({
                 input_tokens: usage.prompt_tokens ?? 0,
                 output_tokens: usage.completion_tokens ?? 0
@@ -227,6 +231,13 @@ async function chatCompletion(
         res.on('end', () => {
           const calls = Array.from(allToolCalls.values())
           if (calls.length > 0) onToolCall(calls)
+          if (!usageReported) {
+            const inChars = messages.reduce((acc, m) => acc + (m.content?.length ?? 0), 0)
+            onUsage({
+              input_tokens: Math.max(1, Math.round(inChars / 4)),
+              output_tokens: Math.max(1, Math.round(fullText.length / 4))
+            })
+          }
           resolve({ text: fullText, toolCalls: calls, finishReason })
         })
 
