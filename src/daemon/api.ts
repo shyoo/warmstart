@@ -92,6 +92,7 @@ import {
   relandTask,
   QUOTA_HIGH_WATER,
   QUOTA_OVERRIDE_FALLBACK_MS,
+  resolveChecksOnTask,
   resolveConflictOnTask,
   resolveTask,
   tick
@@ -518,6 +519,11 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
 
     'task.resolveConflict': async (p) => {
       const result = await resolveConflictOnTask(p.id)
+      return { task: requireTask(p.id), started: result.ok, ...(result.reason ? { reason: result.reason } : {}) }
+    },
+
+    'task.resolveChecks': async (p) => {
+      const result = await resolveChecksOnTask(p.id)
       return { task: requireTask(p.id), started: result.ok, ...(result.reason ? { reason: result.reason } : {}) }
     },
 

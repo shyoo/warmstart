@@ -2271,6 +2271,10 @@ export function promptFor(
   // tool there is genuinely no signal, and inventing one from a clean exit would be the guess this
   // project refuses to make. What changes is that the operator is told *why* the hand-off is
   // structural rather than being left to read it as the agent having failed.
+  const project = task.projectId ? getProject(task.projectId) : null
+  const { policy } = resolveFinishPolicy(task, project)
+  const checks = policyVerifies(policy) ? (project?.config?.check ?? []) : []
+
   if (adapter(adapterId).info.capabilities.mcp) {
     // ⛔ The completion mode changes what "finished" means, so it belongs in the same sentence
     // as `task_complete` rather than somewhere earlier in the prompt. ⚠️ `ask_human` is offered
@@ -2283,13 +2287,20 @@ export function promptFor(
         task.projectId ? getProject(task.projectId) : null,
         settings().completionMode
       ).mode === 'checkpointed'
+    const checkLead =
+      checks.length > 0
+        ? `Before reporting complete, run this project's checks (${checks.map((c) => `\`${c}\``).join(', ')}) and ensure they pass. `
+        : ''
     parts.push(
       (checkpointed
         ? 'Work in phases. At each phase boundary call the MCP tool `checkpoint` with what you have ' +
           'done and what you propose to do next, and wait for the answer before starting the next ' +
-          'phase. When every phase is done, call `task_complete` with a one-line summary. '
-        : 'Work to the end without stopping between phases. When the work is finished, call the MCP ' +
-          'tool `task_complete` with a one-line summary. ') +
+          'phase. When every phase is done, ' +
+          (checkLead ? checkLead.toLowerCase() : '') +
+          'call `task_complete` with a one-line summary. '
+        : 'Work to the end without stopping between phases. ' +
+          checkLead +
+          'When the work is finished, call the MCP tool `task_complete` with a one-line summary. ') +
         'If you need a decision from a person, call `ask_human` rather than guessing — offer the ' +
         'options you are choosing between, and it waits for a real answer.'
     )
@@ -2298,8 +2309,13 @@ export function promptFor(
     // of this is a card with buttons on it. A question whose choices are written into the sentence -
     // *"(Option A) ... (Option B)"*, which is what antigravity did on t63 - arrives answerable only
     // in prose, and nothing here will guess the choices back out of it.
+    const checkLead =
+      checks.length > 0
+        ? `Before finishing, run this project's checks (${checks.map((c) => `\`${c}\``).join(', ')}) and ensure they pass cleanly. `
+        : ''
     parts.push(
-      'When the work is finished, commit what you have and end with a one-line summary of what ' +
+      checkLead +
+        'When the work is finished, commit what you have and end with a one-line summary of what ' +
         'changed. If you need a decision from a person, end your reply with a line beginning ' +
         '`NEEDS DECISION:` followed by the question, and stop rather than guessing. If you are ' +
         'choosing between specific options, put each one on its own line directly under it as ' +
@@ -3482,6 +3498,38 @@ export async function resolveConflictOnTask(
   addMessage(task.id, 'human', instruction)
   const outcome = continueTask(task.id)
   log.info(`t${task.seq}: asked an agent to rebase onto ${base} and resolve (${outcome})`)
+  return { ok: true }
+}
+
+/**
+ * Hand a failed check verification back to an agent, with the failure output named.
+ */
+export async function resolveChecksOnTask(
+  taskId: string
+): Promise<{ ok: boolean; reason?: string }> {
+  const task = getTask(taskId)
+  if (!task) return { ok: false, reason: 'no such task' }
+  const project = task.projectId ? getProject(task.projectId) : null
+  if (!project || project.vcs !== 'git') return { ok: false, reason: 'not a git project' }
+  const branch = task.branch ?? branchNameFor(task.seq, task.title)
+  if (!branch) return { ok: false, reason: 'this task has no branch' }
+  if (task.status === 'running' || task.status === 'assigned') {
+    return { ok: false, reason: 'this task is already running; it will be asked when it reports' }
+  }
+
+  const msgs = messagesFor(task.id)
+  const lastSystem = [...msgs].reverse().find((m) => m.role === 'system' && /landing failed|checks failed/i.test(m.text))
+  const failureDetail = lastSystem ? lastSystem.text : (task.holdReason ?? 'Project checks failed')
+
+  const instruction =
+    `The landing failed because project verification checks failed on \`${branch}\`:\n\n` +
+    `${failureDetail}\n\n` +
+    'Please inspect and fix the failing checks (e.g. typecheck, lint, or tests), ensure the project checks pass cleanly, ' +
+    `commit your changes on \`${branch}\`, and report the task complete again.`
+
+  addMessage(task.id, 'human', instruction)
+  const outcome = continueTask(task.id)
+  log.info(`t${task.seq}: asked an agent to fix failing checks (${outcome})`)
   return { ok: true }
 }
 

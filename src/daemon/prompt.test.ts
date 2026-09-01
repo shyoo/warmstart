@@ -295,4 +295,61 @@ describe('run prompt persistence and task.get preview', () => {
     expect(detail.dependents?.map((d) => d.id)).toEqual([child.id])
     expect(detail.dependents?.map((d) => d.title)).toEqual(['Downstream task'])
   })
+
+  it('instructs agent to run project checks before committing when project defines checks', async () => {
+    const projects = await import('./projects.js')
+    const root = mkdtempSync(join(tmpdir(), 'agentyard-checks-prompt-'))
+    mkdirSync(join(root, '.multi_agent_controller'), { recursive: true })
+    writeFileSync(
+      join(root, '.multi_agent_controller', 'project.json'),
+      JSON.stringify({
+        schema_version: 1,
+        name: 'checks-project',
+        vcs: 'git',
+        landing: { finish: 'commit-and-merge' },
+        check: ['npm run typecheck', 'npm run lint']
+      })
+    )
+    const project = projects.addProject({ root })
+    const task = tasks.createTask({ title: 'Add feature', status: 'ready', projectId: project.id })
+
+    // Antigravity (non-MCP) prompt
+    const agyPrompt = scheduler.promptFor(task, 'antigravity-cli', false, { markDelivered: false })
+    expect(agyPrompt).toContain("run this project's checks (`npm run typecheck`, `npm run lint`) and ensure they pass cleanly")
+
+    // Claude (MCP) prompt
+    const claudePrompt = scheduler.promptFor(task, 'claude-code', false, { markDelivered: false })
+    expect(claudePrompt).toContain("run this project's checks (`npm run typecheck`, `npm run lint`) and ensure they pass")
+  })
+
+  it('resolveChecksOnTask dispatches a new run with failure details', async () => {
+    const { execFileSync } = await import('node:child_process')
+    const projects = await import('./projects.js')
+    const root = mkdtempSync(join(tmpdir(), 'agentyard-resolve-checks-'))
+    execFileSync('git', ['init', root])
+    const project = projects.addProject({ root })
+    const task = tasks.createTask({
+      title: 'Fix issue',
+      status: 'ready',
+      projectId: project.id
+    })
+    tasks.setStatus(task.id, 'awaiting_human', {
+      holdReason: 'landing failed: the project checks failed after rebase'
+    })
+    tasks.addMessage(
+      task.id,
+      'system',
+      'Landing failed: the project checks failed after rebase.\n\n$ npm run lint\n1 problem (1 error)'
+    )
+
+    const res = await scheduler.resolveChecksOnTask(task.id)
+    expect(res).toEqual({ ok: true })
+
+    const msgs = tasks.messagesFor(task.id)
+    const lastHuman = msgs.filter((m) => m.role === 'human').pop()
+    expect(lastHuman?.text).toContain('The landing failed because project verification checks failed')
+    expect(lastHuman?.text).toContain('1 problem (1 error)')
+    expect(lastHuman?.text).toContain(`multi-agent-controller/t${task.seq}-fix-issue`)
+  })
 })
+

@@ -1259,6 +1259,13 @@ export interface RpcMap {
     params: { id: string }
     result: { task: Task; started: boolean; reason?: string }
   }
+  /**
+   * Hand a failed check verification back to an agent to fix and re-commit.
+   */
+  'task.resolveChecks': {
+    params: { id: string }
+    result: { task: Task; started: boolean; reason?: string }
+  }
   /** Work that exists and is going nowhere: uncommitted files, unlanded branches, rescued stashes. */
   /**
    * Every work conversation and what it served. ⚠️ Read-only and derived; there is deliberately no

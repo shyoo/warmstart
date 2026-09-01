@@ -894,11 +894,37 @@ function Decide({
   // because that is where `landTask`'s failure is actually recorded. A *fix the conflict* button on
   // a task that failed its checks would send an agent to rebase something that rebases fine.
   const conflicted = /conflict/i.test(task.holdReason ?? '')
+  const checksFailed = /checks? failed|verification failed/i.test(task.holdReason ?? '')
+  const canReland =
+    Boolean(task.branch) &&
+    !conflicted &&
+    !checksFailed &&
+    /landing failed|not merged|waited for a turn|uncommitted in trunk|would not fast-forward|trunk/i.test(task.holdReason ?? '')
 
   const handleResolveConflict = async () => {
     setBusy(true)
     try {
       await rpc('task.resolveConflict', { id: task.id })
+      await onRefresh()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleResolveChecks = async () => {
+    setBusy(true)
+    try {
+      await rpc('task.resolveChecks', { id: task.id })
+      await onRefresh()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleReland = async () => {
+    setBusy(true)
+    try {
+      await rpc('task.land', { id: task.id })
       await onRefresh()
     } finally {
       setBusy(false)
@@ -982,6 +1008,41 @@ function Decide({
             to rebase onto the landing target and resolve the conflicts, then report complete again —
             same thread, so it keeps the context it already has. Nothing is discarded and the branch
             is never reset.
+          </span>
+        </div>
+      )}
+
+      {checksFailed && (
+        <div className="decide-option">
+          <button
+            className="btn btn--primary"
+            title="Dispatches a run on this thread asking the agent to fix the failing checks, commit the fix, and report complete again."
+            disabled={busy}
+            onClick={() => void handleResolveChecks()}
+          >
+            Fix &amp; retry
+          </button>
+          <span className="decide-what">
+            <strong>Project checks failed.</strong> Sends the check output back to the agent to fix
+            the lint, type, or test errors, commit the fix on <span className="mono">{task.branch}</span>, and report
+            complete again — same thread, preserving existing context.
+          </span>
+        </div>
+      )}
+
+      {canReland && (
+        <div className="decide-option">
+          <button
+            className="btn btn--primary"
+            title="Attempts to land the branch again without dispatching an agent."
+            disabled={busy}
+            onClick={() => void handleReland()}
+          >
+            Retry landing
+          </button>
+          <span className="decide-what">
+            <strong>Land again.</strong> Attempts to rebase and land <span className="mono">{task.branch}</span> now.
+            Use this if the trunk is now clean or another task has finished landing.
           </span>
         </div>
       )}
