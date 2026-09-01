@@ -2,17 +2,22 @@
   "schema_version": 1,
   "name": "multi_agent_controller",
   "vcs": "git",
-
-  "workspaces": { "poolSize": 3, "root": "C:/Dev/multi_agent_controller_workspaces" },
-
+  "workspaces": {
+    "poolSize": 4,
+    "root": "C:/Dev/multi_agent_controller_workspaces"
+  },
   "landing": {
     "target": "main",
     "finish": "commit-and-merge"
   },
-
-  "check": ["npm run typecheck", "npm run lint", "npm test", "npm run build"],
-
+  "check": [
+    "npm run typecheck",
+    "npm run lint",
+    "npm test",
+    "npm run build"
+  ],
   "prepare": [],
-
-  "permission": { "allow": [] }
+  "permission": {
+    "allow": []
+  }
 }
