@@ -6,7 +6,16 @@ import {
   resolveFinishPolicy,
   resolveSessionSharing
 } from '@shared/tasks'
-import { holdLine, projectWorkState, STATUS_TONE, statusLabel, workspacePathFor } from './taskview.js'
+import {
+  activeTime,
+  activeTimeTitle,
+  elapsed,
+  holdLine,
+  projectWorkState,
+  STATUS_TONE,
+  statusLabel,
+  workspacePathFor
+} from './taskview.js'
 import {
   DEFAULT_PAGE_SIZE,
   readFleetCollapsed,
@@ -307,3 +316,62 @@ describe('project work state for left pane indicators', () => {
 })
 
 
+
+/**
+ * ⛔ **"Took" is agent time now, and the two readings are not close.** The column used to be
+ * `lastRunEnded - firstRun`, which counts every minute a task spent queued, parked on a quota
+ * window, or waiting for a person to answer — so the number an operator used to compare agents and
+ * models was mostly a measure of when they went to bed. These pin the arithmetic at the last step,
+ * where the live stretch is added; the daemon's half is pinned in daemon/activetime.test.ts.
+ */
+const T = 1_700_000_000_000
+const MIN = 60_000
+
+type Timed = Pick<Task, 'firstRunAt' | 'lastRunEndedAt' | 'activeMs' | 'activeSince'>
+
+const timed = (over: Partial<Timed> = {}): Timed => ({
+  firstRunAt: T,
+  lastRunEndedAt: null,
+  activeMs: 0,
+  activeSince: null,
+  ...over
+})
+
+describe('the duration beside a task', () => {
+  it('reports a finished task from its settled total alone', () => {
+    expect(activeTime(timed({ lastRunEndedAt: T + 90 * MIN, activeMs: 7 * MIN }), T + 600 * MIN)).toBe(
+      '7m 0s'
+    )
+  })
+
+  it('adds the live stretch while something is running', () => {
+    expect(activeTime(timed({ activeMs: 2 * MIN, activeSince: T + 10 * MIN }), T + 13 * MIN)).toBe(
+      '5m 0s'
+    )
+  })
+
+  it('stops moving while a person is being waited on', () => {
+    // ⛔ `activeSince: null` on an *open* run is the daemon saying "blocked right now". The reading
+    // must be identical an hour later, which is the whole reason this is not one number.
+    const task = timed({ activeMs: 4 * MIN, activeSince: null })
+    expect(activeTime(task, T + 5 * MIN)).toBe(activeTime(task, T + 400 * MIN))
+  })
+
+  it('says nothing rather than zero for a task that has never run', () => {
+    expect(activeTime(timed({ firstRunAt: null }), T)).toBe('—')
+    expect(elapsed(timed({ firstRunAt: null }), T)).toBe('—')
+  })
+
+  it('keeps the wall-clock span available, and it is the larger of the two', () => {
+    const task = timed({ lastRunEndedAt: T + 480 * MIN, activeMs: 6 * MIN })
+    expect(elapsed(task, T + 600 * MIN)).toBe('8h 0m')
+    expect(activeTime(task, T + 600 * MIN)).toBe('6m 0s')
+  })
+
+  it('names the idle time in the tooltip, so a small number does not read as a bug', () => {
+    const title = activeTimeTitle(timed({ lastRunEndedAt: T + 480 * MIN, activeMs: 6 * MIN }), T)
+    expect(title).toContain('6m 0s')
+    expect(title).toContain('8h 0m')
+    expect(title).toMatch(/7h 54m.*queued/s)
+  })
+})

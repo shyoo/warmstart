@@ -22,6 +22,7 @@ import {
   type TaskStatus,
   type TaskView
 } from '@shared/tasks.js'
+import { timingForRuns, timingForTasks, ZERO_TIMING, type ActiveTiming } from './activetime.js'
 import { db, row, rows } from './db.js'
 import { emit } from './events.js'
 import { log } from './log.js'
@@ -103,7 +104,17 @@ const TASK_SELECT = `
       order by r.started_at desc limit 1) as last_run_worker_id
   from tasks t`
 
-function toTask(r: TaskRow): Task {
+/**
+ * ⛔ **The timing is passed in, never computed here.** Active time needs the task's runs and every
+ * question and approval raised during them; deriving it inside a per-row mapper would be the N+1
+ * that `first_run_at`'s correlated subquery exists to avoid, on the list that re-renders on every
+ * daemon event. `toTasks` batches it into two queries for any number of rows.
+ *
+ * ⚠️ The default is `ZERO_TIMING` — an honest "not measured" for the one caller that maps a row
+ * purely to answer a routing predicate, and which never shows a duration. Anything an operator
+ * reads must go through `toTasks`.
+ */
+function toTask(r: TaskRow, timing: ActiveTiming = ZERO_TIMING): Task {
   return {
     id: r.id,
     seq: r.seq,
@@ -143,11 +154,19 @@ function toTask(r: TaskRow): Task {
     branch: r.branch,
     firstRunAt: r.first_run_at,
     lastRunEndedAt: r.last_run_ended_at,
+    activeMs: timing.activeMs,
+    activeSince: timing.activeSince,
     ranOn: r.last_run_worker_id ?? null,
     deletedAt: r.deleted_at,
     createdAt: r.created_at,
     updatedAt: r.updated_at
   }
+}
+
+/** Rows to tasks, with active timing resolved for the whole set in two queries rather than 2N. */
+function toTasks(list: TaskRow[]): Task[] {
+  const timings = timingForTasks(list.map((r) => r.id))
+  return list.map((r) => toTask(r, timings.get(r.id) ?? ZERO_TIMING))
 }
 
 function dependenciesOf(taskId: string): string[] {
@@ -165,9 +184,9 @@ export function listTasks(opts: { includeDeleted?: boolean; projectId?: string }
     args.push(opts.projectId)
   }
   const where = clauses.length ? `where ${clauses.map((c) => `t.${c}`).join(' and ')}` : ''
-  return rows<TaskRow>(
-    db().prepare(`${TASK_SELECT} ${where} order by t.seq`).all(...args)
-  ).map(toTask)
+  return toTasks(
+    rows<TaskRow>(db().prepare(`${TASK_SELECT} ${where} order by t.seq`).all(...args))
+  )
 }
 
 /**
@@ -244,9 +263,11 @@ export function pageTasks(
   // deleted, so it was removed rather than left standing as coverage nobody had.
   const offset = Math.max(opts.offset ?? 0, 0)
 
-  const tasks = rows<TaskRow>(
-    db().prepare(`${TASK_SELECT} ${where} ${order} limit ? offset ?`).all(...args, limit, offset)
-  ).map(toTask)
+  const tasks = toTasks(
+    rows<TaskRow>(
+      db().prepare(`${TASK_SELECT} ${where} ${order} limit ? offset ?`).all(...args, limit, offset)
+    )
+  )
 
   const counts: Record<TaskView, number> = { active: 0, needs_you: 0, blocked: 0, done: 0, failed: 0 }
   const grouped = rows<{ status: TaskStatus; n: number }>(
@@ -265,7 +286,7 @@ export function pageTasks(
 
 export function getTask(id: string): Task | null {
   const r = row<TaskRow>(db().prepare(`${TASK_SELECT} where t.id = ?`).get(id))
-  return r ? toTask(r) : null
+  return r ? (toTasks([r])[0] ?? null) : null
 }
 
 export function requireTask(id: string): Task {
@@ -467,7 +488,7 @@ function findNearDuplicate(title: string, projectId: string | null): Task | null
   const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
   const target = norm(title)
   const found = candidates.find((c) => norm(c.title) === target)
-  return found ? toTask(found) : null
+  return found ? (toTasks([found])[0] ?? null) : null
 }
 
 // ---------------------------------------------------------------------------- dependencies
@@ -983,7 +1004,13 @@ interface RunRow {
   prompt?: string | null
 }
 
-function toRun(r: RunRow): Run {
+/**
+ * ⛔ `blockedMs` is passed in for the same reason `toTask` takes its timing: it needs the questions
+ * and approvals raised during this run, and a query per row would run once per run of every task in
+ * the ledger. `toRuns` batches it; the default is a measured-nothing rather than a guess, and is
+ * only reached by the single-row readers the scheduler uses, which never render a duration.
+ */
+function toRun(r: RunRow, blockedMs = 0): Run {
   return {
     id: r.id,
     taskId: r.task_id ?? '',
@@ -1008,8 +1035,17 @@ function toRun(r: RunRow): Run {
     startedWarm: r.started_warm === null ? null : r.started_warm === 1,
     adapterId: r.adapter_id ?? null,
     model: r.model ?? null,
-    prompt: r.prompt ?? null
+    prompt: r.prompt ?? null,
+    blockedMs
   }
+}
+
+/** Rows to runs, with the time each spent waiting on a person resolved for the whole set at once. */
+function toRuns(list: RunRow[]): Run[] {
+  const timings = timingForRuns(
+    list.map((r) => ({ id: r.id, startedAt: r.started_at, endedAt: r.ended_at }))
+  )
+  return list.map((r) => toRun(r, timings.get(r.id)?.blockedMs ?? 0))
 }
 
 /**
@@ -1140,9 +1176,11 @@ export function requireRun(id: string): Run {
 }
 
 export function runsFor(taskId: string): Run[] {
-  return rows<RunRow>(
-    db().prepare('select * from runs where task_id = ? order by started_at desc').all(taskId)
-  ).map(toRun)
+  return toRuns(
+    rows<RunRow>(
+      db().prepare('select * from runs where task_id = ? order by started_at desc').all(taskId)
+    )
+  )
 }
 
 export function runForSession(sessionId: string): Run | null {

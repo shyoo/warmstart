@@ -239,6 +239,7 @@ describe('a dispatch that produced nothing', () => {
       quotaBefore: null,
       quotaAfter: null,
       prompt: null,
+      blockedMs: 0,
       ...patch
     })
 

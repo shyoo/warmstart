@@ -30,9 +30,10 @@ import {
   writeViews
 } from '../lib/prefs'
 import {
+  activeTime,
+  activeTimeTitle,
   assigneeLabel,
   CANCELLABLE,
-  elapsed,
   holdLine,
   IN_FLIGHT,
   statusLabel,
@@ -333,8 +334,14 @@ export function Tasks({
               <th>Dep</th>
               {/* ⛔ How long, beside how much. A task showing only a token count answers "what did
                   this cost" and not "is this taking too long", and the second is the question
-                  somebody watching a run actually has. */}
-              <th className="tbl-num">Took</th>
+                  somebody watching a run actually has.
+                  ⛔ **Agent time, not wall-clock.** This column used to be last-stop minus
+                  first-dispatch, which counts queueing, quota parks and every minute a question sat
+                  waiting on a person — so a four-minute task filed before dinner reported nine
+                  hours. The gap is in the tooltip, where it belongs. */}
+              <th className="tbl-num" title="Time an agent was actually working, excluding time queued, held, or waiting on you.">
+                Took
+              </th>
               {/* ⚠️ "Spent" was read as money by everybody who saw it. These are tokens. */}
               <th className="tbl-num">Tokens</th>
               {/* ⛔ Both dates, not one. When a task was filed and when it last moved answer
@@ -393,7 +400,9 @@ export function Tasks({
                     </td>
                     <td className={task.ranOn || task.assignee ? '' : 'dim'}>{assigneeLabel(task, fleet)}</td>
                     <td className="num dim">{task.dependsOn.length ? `←${task.dependsOn.length}` : '—'}</td>
-                    <td className="num tbl-num dim">{elapsed(task, now)}</td>
+                    <td className="num tbl-num dim" title={activeTimeTitle(task, now)}>
+                      {activeTime(task, now)}
+                    </td>
                     <td className="num tbl-num">{tokens(task.budget.spentTokens || null)}</td>
                     <td className="tbl-when dim" title={new Date(task.createdAt).toLocaleString()}>
                       {when(task.createdAt)}

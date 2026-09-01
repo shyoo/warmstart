@@ -176,15 +176,57 @@ export function assigneeLabel(task: Task, fleet: FleetEntry[]): string {
 }
 
 /**
- * How long this task has been worked on, or was worked on.
+ * How long an agent was actually working on this task.
  *
- * ⛔ Measured from the first **run**, not from `createdAt`. When somebody typed a task in is not how
- * long it took; a task filed on Monday and dispatched on Wednesday did not take two days. A task
- * that has never run has no duration, and says so rather than showing zero.
+ * ⛔ **Active time, not wall-clock, and the column that shows it is the one headed "Took".** The
+ * old answer was `lastRunEnded - firstRun`, which measures how long the task *existed inside*: it
+ * counts every minute queued behind a busy pool, parked on a quota window, and — the large one —
+ * waiting for a person to answer a question, which `ask_human` will happily do overnight. The two
+ * numbers do not differ by a correction factor, they differ without limit, and every per-agent and
+ * per-model duration read off the wall-clock was describing the operator rather than the agent.
+ *
+ * ⚠️ Summed in the daemon (`activetime.ts`) and *finished* here: `activeSince` is the moment the
+ * live stretch began, so a running task ticks without the daemon pushing a row every second, and
+ * one that is open but blocked on a person has `activeSince: null` and correctly stops moving.
+ *
+ * A task that has never run has no duration and says so rather than showing zero.
  */
-export function elapsed(task: Task, now: number): string {
+type Timed = Pick<Task, 'firstRunAt' | 'lastRunEndedAt' | 'activeMs' | 'activeSince'>
+
+export function activeTime(task: Timed, now: number): string {
+  if (!task.firstRunAt) return '—'
+  return duration(task.activeMs + (task.activeSince ? Math.max(0, now - task.activeSince) : 0))
+}
+
+/**
+ * The span the task existed inside, first dispatch to last stop.
+ *
+ * ⛔ Kept, but never shown as *how long this took*. It answers a different and much weaker question
+ * — "how long has this been going on" — and it is worth showing beside `activeTime` precisely
+ * because the gap between them is the time nobody was working: queued, held, or waiting on you.
+ */
+export function elapsed(task: Timed, now: number): string {
   if (!task.firstRunAt) return '—'
   return duration((task.lastRunEndedAt ?? now) - task.firstRunAt)
+}
+
+/**
+ * The sentence that explains the difference, for the tooltip on both places the number appears.
+ *
+ * ⛔ Says *why* the two disagree rather than only that they do. An operator reading "4m" against a
+ * task filed eight hours ago will assume the number is broken unless the waiting is named.
+ */
+export function activeTimeTitle(task: Timed, now: number): string {
+  if (!task.firstRunAt) return 'Nothing has run yet, so there is no duration to report.'
+  const wall = (task.lastRunEndedAt ?? now) - task.firstRunAt
+  const active = task.activeMs + (task.activeSince ? Math.max(0, now - task.activeSince) : 0)
+  const idle = Math.max(0, wall - active)
+  return (
+    `Time an agent was actually working: ${duration(active)}. ` +
+    `From first dispatch to last stop is ${duration(wall)}, of which ${duration(idle)} was spent ` +
+    'queued, held on a workspace or a quota window, or waiting for you to answer something — ' +
+    'none of which anybody worked. Dispatch, routing and the CLI starting up all count as work.'
+  )
 }
 
 /**

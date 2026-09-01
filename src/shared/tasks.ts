@@ -367,6 +367,24 @@ export interface Task {
   firstRunAt: number | null
   lastRunEndedAt: number | null
   /**
+   * How long an agent was actually working on this, and whether that number is still moving.
+   *
+   * ⛔ **Not `lastRunEndedAt - firstRunAt`.** That span is how long the task *existed inside*, and
+   * it counts every minute the task spent queued, held on a busy workspace pool, paused on quota,
+   * or waiting for a person to answer a question — none of which anybody worked. The two diverge
+   * without limit, so every per-task, per-agent and per-model duration derived from the wall-clock
+   * is describing the operator's evening rather than the agent's work.
+   *
+   * Read them together: the total is `activeMs + (activeSince ? now - activeSince : 0)`. ⚠️ Split
+   * in two so a running task ticks in the renderer without the daemon pushing a new row every
+   * second; `activeSince` is null whenever the number has stopped moving, which includes *a run
+   * that is open but blocked on a person right now*.
+   *
+   * See daemon/activetime.ts for what this can and cannot see.
+   */
+  activeMs: number
+  activeSince: number | null
+  /**
    * The account the most recent run was on, whoever the task is *with* right now.
    *
    * ⛔ Derived from the runs, and it exists because `assignee` cannot answer this. Nine hand-off
@@ -480,6 +498,18 @@ export interface Run {
   prompt: string | null
   /** The effective optimization objective vector active when this run was dispatched. */
   objective?: Objective | null
+  /**
+   * How long this attempt spent waiting on a person — an open question or an escalated approval.
+   *
+   * ⛔ Derived from the `questions` and `approvals` rows that name this run, never stamped on it, so
+   * a question answered an hour after the fact corrects the number rather than leaving a stale copy.
+   * An approval the project's rules settled contributes nothing: it was answered in the same
+   * millisecond it was asked.
+   *
+   * ⚠️ Subtract it from the run's wall-clock to get the time the agent was working:
+   * `(endedAt ?? now) - startedAt - blockedMs`. That is what `Task.activeMs` sums.
+   */
+  blockedMs: number
 }
 
 /** A quota reading kept beside a run, with enough of its basis to be distrusted properly. */

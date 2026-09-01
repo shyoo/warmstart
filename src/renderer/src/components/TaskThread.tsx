@@ -30,6 +30,8 @@ import { AddDependency, candidatesFor, DependencyList, useTaskCandidates } from 
 import { showsLiveOutput } from '../lib/live'
 import { duration, tokens, when } from '../lib/format'
 import {
+  activeTime,
+  activeTimeTitle,
   elapsed,
   holdLine,
   IN_FLIGHT,
@@ -609,7 +611,31 @@ function TaskDetail({
           </Fact>
           <Fact label="filed">{when(task.createdAt)}</Fact>
           {task.firstRunAt && <Fact label="started">{when(task.firstRunAt)}</Fact>}
-          <Fact label="took">{elapsed(task, now)}</Fact>
+          {/* ⛔ Two numbers, because they answer two questions and only one of them is about the
+              agent. `took` is the time an agent was actually working — dispatch, routing and the
+              CLI's start-up included, queueing and every minute spent waiting on you excluded.
+              `elapsed` is the span the task existed inside, and the gap between them is exactly the
+              time nobody was working. Showing only the second is what this pane used to do, and it
+              is the reading that made per-agent durations useless. */}
+          <Fact label="took">
+            <span className="num" title={activeTimeTitle(task, now)}>
+              {activeTime(task, now)} of agent time
+            </span>
+          </Fact>
+          {task.firstRunAt && (
+            <Fact label="elapsed">
+              <span
+                className="num dim"
+                title={
+                  'First dispatch to last stop, wall-clock. Larger than the agent time above by ' +
+                  'however long this task spent queued, held, parked on a quota window, or waiting ' +
+                  'for a person.'
+                }
+              >
+                {elapsed(task, now)}
+              </span>
+            </Fact>
+          )}
           {/* ⚠️ Named, not left as "spent". A bare number in a column headed Spent is read as money
               by roughly everybody; these are tokens, metered from the agent's own transcript. */}
           <Fact label="tokens">
@@ -1409,7 +1435,24 @@ function RunRow({
         >
           {run.outcome ?? 'running'}
         </span>
-        <span className="num dim">{duration((run.endedAt ?? now) - run.startedAt)}</span>
+        <span
+          className="num dim"
+          title={
+            run.blockedMs > 0
+              ? `${duration((run.endedAt ?? now) - run.startedAt - run.blockedMs)} working, ` +
+                `${duration(run.blockedMs)} of it waiting on a person.`
+              : 'Nothing waited on a person during this attempt, so all of it was work.'
+          }
+        >
+          {duration((run.endedAt ?? now) - run.startedAt - run.blockedMs)}
+        </span>
+        {/* ⛔ Named only when there is something to name. A run that never stopped for anybody
+            should not carry a "blocked 0s" that implies the measurement is interesting. */}
+        {run.blockedMs > 0 && (
+          <span className="dim" title="Time this attempt spent waiting on a question or an approval.">
+            +{duration(run.blockedMs)} waiting
+          </span>
+        )}
       </div>
       {/* ⛔ Per run, not only on the task. A task that ran three times can have run in three
           different conversations — that is the whole point of resuming and sharing — and the ledger

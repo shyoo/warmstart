@@ -856,6 +856,21 @@ const MIGRATIONS: string[] = [
            select 1 from runs r
             where r.session_id = sessions.id and r.outcome = 'failed'
          );
+  `,
+
+  // 28 - the two indexes active time needs, and neither table had one.
+  //
+  // ⛔ **`questions` and `approvals` are now read by run, and were only ever indexed by task and by
+  // openness.** `activetime.ts` asks "what was waiting on a person during these runs" on the path
+  // that renders the task ledger, which re-renders on every daemon event — without these, every one
+  // of those is a full scan of two tables that are append-only and never pruned. The cost is
+  // invisible on this install's 54 tasks and is exactly the kind that is discovered a year later.
+  //
+  // ⚠️ `runs(task_id, started_at desc)` already exists (`runs_task`), so the other half of the same
+  // query was fine. These are the two that were missing.
+  `
+  create index if not exists questions_run on questions(run_id);
+  create index if not exists approvals_run on approvals(run_id);
   `
 ]
 

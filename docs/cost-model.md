@@ -731,6 +731,38 @@ transcript), preemption (the reset time is exact from the live rate-limit record
 (runs are exact). Those are the three that matter most, and none of them depends on a percentage.
 ⚠️ *Exact* is not the same as *meaningful* — see below.
 
+### Duration is agent time, not wall-clock (2026-09-01)
+
+A run's tokens are exact. Its **duration** was not, and until now the only duration anybody could
+read was `lastRunEnded - firstRun` — the span a task *existed inside*. That number counts every
+minute the task spent queued behind a busy workspace pool, parked on a quota window, waiting for a
+worker to come free, and — the large one — waiting for a person to answer a question. `ask_human`
+holds the calling tool open until somebody answers or the prompt cache expires, so a task whose
+agent worked four minutes and whose question was answered the next morning reported **fifteen
+hours**. The two numbers do not differ by a correction factor; they differ without limit, and any
+per-agent or per-model duration read off the wall-clock is a measurement of the operator's evening.
+
+`daemon/activetime.ts` computes **active time**: the union of intervals in which a run was open and
+nothing was waiting on a person. It excludes everything between runs, and the stretches *inside* a
+run covered by an open question or an escalated approval — the half that a plain
+`sum(ended_at - started_at)` silently keeps.
+
+It deliberately **includes** dispatch, routing, spawn, workspace preparation and the CLI's own
+start-up, because `startRun` is written at dispatch. That is time the fleet spent on this task, and
+it is what a cost model wants.
+
+⚠️ **It cannot see a wait that never became a row**: a vendor-side rate limit inside a turn, a
+`run_command` blocked on the network, a controller consult. Those read as active, which is the
+honest answer — the fleet *was* holding the session open — but it means active time is an upper
+bound on work, not an exact one.
+
+⛔ **Nothing routes or estimates on it yet.** `estimateTask` still medians tokens, and this is the
+instrument that has to exist before a duration-aware estimate can be argued for at all. Two facts
+it makes newly available: `Task.activeMs` per task, and `Run.blockedMs` per attempt — both derived
+from `questions` and `approvals` rather than stamped, so a question answered an hour later corrects
+the number instead of leaving a stale copy. ⚠️ Every run that predates this reads correctly, because
+nothing was stored: the rows it derives from were already there.
+
 ### The estimator counts tokens, and tokens are not cost (2026-08-28)
 
 `estimateTask` medians `input + output + cache_read + cache_write` over completed runs, and
