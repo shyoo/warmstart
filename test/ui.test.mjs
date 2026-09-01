@@ -1048,18 +1048,21 @@ try {
   await evaluate(`window.agentyard.rpc('settings.set', { finishPolicy: 'commit-and-merge' })`)
 
   section('the conversations page')
-  // ⛔ The page exists for one number that is invisible everywhere else - how many tasks have been
-  // in one conversation. These checks are that it reaches the daemon and renders; the join itself is
-  // held by conversations.test.ts.
+  // ⛔ The page exists for two things invisible everywhere else — how many *tasks* have been in one
+  // conversation, and in what order the runs inside it happened. These checks are that it reaches
+  // the daemon and renders; the join itself is held by conversations.test.ts.
   await evaluate(
     `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim() === 'Conversations')?.click()`
   )
   await wait(1500)
-  const convHead = await evaluate(`document.querySelector('.page-head')?.innerText ?? ''`)
+  // ⚠️ `.panel-head`, not `.page-head`. This page was rebuilt on the same furniture the task table
+  // uses, which is the whole reason it now looks like the rest of the app.
+  const convHead = await evaluate(`document.querySelector('.content .panel-head')?.innerText ?? ''`)
   check('Conversations is reachable from the sidebar', /Conversations/i.test(convHead))
   check(
-    'and says how many served more than one task, which is what sharing looks like',
-    /served more than one task/i.test(convHead)
+    'and leads with how many runs there are, not just how many sessions',
+    /\bruns?\b/i.test(convHead),
+    convHead.split('\n').join(' / ')
   )
   check(
     'the daemon answers the query behind it',
@@ -1747,6 +1750,128 @@ try {
     'and the page then says the answer came from the project',
     decidedRow.includes('from the project'),
     decidedRow.split('\n')[0]
+  )
+
+  section('project tabs')
+  // ⛔ **Two nouns, two tabs.** The tab that draws a live agent's terminal was called `Sessions`,
+  // which read as "this project's sessions" — a real and different thing that now has its own tab
+  // and is called Conversations. A pane that renders a TTY has to say so in its name, or the two
+  // questions ("what is it doing right now?" and "what has it done?") land on one screen that
+  // answers only the first.
+  const tabs = JSON.parse(
+    await evaluate(
+      `JSON.stringify([...document.querySelectorAll('.tabs .tab')].map(t => t.innerText.trim()))`
+    )
+  )
+  check(
+    'the project offers Conversations and Session TUI as separate destinations',
+    tabs.includes('Conversations') && tabs.includes('Session TUI'),
+    tabs.join(' | ')
+  )
+  check(
+    '⛔ and nothing is called just "Sessions" any more',
+    !tabs.includes('Sessions'),
+    tabs.join(' | ')
+  )
+  check(
+    'Conversations sits before the terminal that shows one of them live',
+    tabs.indexOf('Conversations') < tabs.indexOf('Session TUI'),
+    tabs.join(' | ')
+  )
+
+  await evaluate(
+    `[...document.querySelectorAll('.tab')].find(b => b.innerText.trim() === 'Conversations')?.click()`
+  )
+  // ⚠️ Waits for the *answer*, not for the heading. The heading paints before the first
+  // `conversation.list` returns, so asserting on it catches the loading line and reads as a missing
+  // empty state — the exact race this suite exists to keep out of the checks it reports.
+  await waitFor(
+    async () =>
+      await evaluate(
+        `!/Reading conversations/.test(document.querySelector('.content .empty-inline')?.innerText ?? '')
+         && [...document.querySelectorAll('.content .panel-head h2')].some(h => h.innerText.trim() === 'Conversations')`
+      ),
+    'the project conversations tab to render'
+  )
+  // ⚠️ This project has never dispatched anything, so the honest content is the empty state — and an
+  // empty state that says nothing is how a working screen gets reported as broken.
+  const convEmpty = await evaluate(
+    `document.querySelector('.content .empty-inline')?.innerText ?? ''`
+  )
+  check(
+    'a project with no conversations says what would create one',
+    /No conversations yet/i.test(convEmpty) && /dispatched/i.test(convEmpty),
+    convEmpty.split('\n').join(' / ')
+  )
+  // ⛔ The filters are the same control the task table uses, for the same reason: this list grows
+  // without bound, and `Trouble 0` is the answer somebody is scanning for before they click.
+  const convChips = JSON.parse(
+    await evaluate(
+      `JSON.stringify([...document.querySelectorAll('.content .chip')].map(c => c.innerText.trim()))`
+    )
+  )
+  check(
+    'the conversation list can be narrowed to the ones worth looking at',
+    convChips.length === 4 &&
+      convChips.some((c) => c.startsWith('Shared')) &&
+      convChips.some((c) => c.startsWith('Trouble')),
+    convChips.join(' | ')
+  )
+
+  // ⛔ The same component, at fleet scope. If History rendered a second table the two would drift
+  // about what a conversation is, which is the whole reason there is one of them.
+  await evaluate(
+    `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim().startsWith('Conversations'))?.click()`
+  )
+  await waitFor(
+    async () =>
+      await evaluate(
+        `[...document.querySelectorAll('.content .panel-head h2')].some(h => h.innerText.trim() === 'Conversations')`
+      ),
+    'the global conversations page to render'
+  )
+  const globalChips = JSON.parse(
+    await evaluate(
+      `JSON.stringify([...document.querySelectorAll('.content .chip')].map(c => c.innerText.trim()))`
+    )
+  )
+  check(
+    'History shows the same conversation view, not a second one',
+    globalChips.length === 4,
+    globalChips.join(' | ')
+  )
+  const globalHeads = await evaluate(
+    `[...document.querySelectorAll('.content .tbl thead th')].map(h => h.innerText.trim()).join('|')`
+  )
+  check(
+    '⛔ and it says Worker, which is what every other screen calls that column',
+    globalHeads === '' || (/Worker/.test(globalHeads) && !/Account/i.test(globalHeads)),
+    globalHeads || '(no conversations on this install, so no header to read)'
+  )
+
+  section('global settings')
+  await evaluate(
+    `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim().startsWith('Global')).click()`
+  )
+  await wait(800)
+  // ⛔ Removed 2026-08-31. A read-only roll-up of every pool and lock in the fleet, one screen away
+  // from the project each belongs to, under a heading that says Settings — it read as a page of
+  // things you could change and was not. The free/capacity number survives where it is useful: the
+  // Workspaces column on each project's own row.
+  const globalHeadings = await evaluate(
+    `[...document.querySelectorAll('.content h2, .content h3')].map(h => h.innerText.trim()).join('|')`
+  )
+  check(
+    'Settings > Global no longer carries a fleet-wide Resources table',
+    !/(^|\|)Resources(\||$)/.test(globalHeadings),
+    globalHeadings
+  )
+  check(
+    '⚠️ but each project still says how much of its pool is free',
+    await evaluate(
+      `[...document.querySelectorAll('.content .tbl thead th')].some(h => /Workspaces/i.test(h.innerText))`
+    ),
+    globalHeadings
   )
 
   const errors = await evaluate('window.__agentyardErrors?.length ?? 0')

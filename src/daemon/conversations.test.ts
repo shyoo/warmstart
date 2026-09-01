@@ -43,21 +43,36 @@ function task(id: string, seq: number, title: string): void {
 }
 
 let runSeq = 0
-function run(sessionId: string, taskId: string, patch: { warm?: boolean | null; tokens?: number } = {}): void {
+function run(
+  sessionId: string,
+  taskId: string,
+  patch: {
+    warm?: boolean | null
+    tokens?: number
+    outcome?: string | null
+    endedAt?: number | null
+    model?: string | null
+  } = {}
+): void {
   runSeq += 1
   db.db()
     .prepare(
-      `insert into runs (id, task_id, session_id, worker_id, started_at, quota_unverified,
-                         started_warm, input_tokens, output_tokens, cache_read_tokens,
-                         cache_write_tokens)
-       values (?,?,?,?,?,0,?,?,0,0,0)`
+      `insert into runs (id, task_id, session_id, worker_id, started_at, ended_at, outcome, model,
+                         quota_unverified, started_warm, input_tokens, output_tokens,
+                         cache_read_tokens, cache_write_tokens)
+       values (?,?,?,?,?,?,?,?,0,?,?,0,0,0)`
     )
     .run(
       `run-${runSeq}`,
       taskId,
       sessionId,
       WORKER,
+      // ⚠️ `runSeq` is the clock. The timeline is ordered by `started_at`, so two runs inserted in
+      // the same millisecond would make an assertion about *order* pass or fail by luck.
       Date.now() + runSeq,
+      patch.endedAt === undefined ? null : patch.endedAt,
+      patch.outcome === undefined ? null : patch.outcome,
+      patch.model ?? null,
       patch.warm === undefined || patch.warm === null ? null : patch.warm ? 1 : 0,
       patch.tokens ?? 0
     )
@@ -104,7 +119,65 @@ describe('what a conversation was used for', () => {
     expect(c?.tasks[0]).toMatchObject({ seq: 1, title: 'first task', runs: 1 })
   })
 
-  it('collapses several runs of one task into one row', () => {
+  it('keeps every run of a task in order, under the one task row', () => {
+    // ⭐ **The reason this page was rebuilt.** Collapsing runs into their task hid the only sequence
+    // anybody reviews: measured 2026-08-31, no conversation on the author's install had ever served
+    // two *tasks* — sharing is off at every tier — while one had served nine runs. So `taskCount: 1`
+    // was true and useless, and the turns underneath it are the history.
+    session('s1')
+    task('t1', 1, 'three attempts')
+    run('s1', 't1', { outcome: 'failed', tokens: 10 })
+    run('s1', 't1', { outcome: 'preempted', tokens: 20 })
+    run('s1', 't1', { outcome: 'completed', tokens: 30 })
+    const [c] = conversations.listConversations()
+    expect(c?.taskCount).toBe(1)
+    expect(c?.runCount).toBe(3)
+    expect(c?.tasks[0]?.timeline.map((r) => r.outcome)).toEqual([
+      'failed',
+      'preempted',
+      'completed'
+    ])
+    // ⛔ Chronological, and asserted as such. A timeline out of order is worse than no timeline: it
+    // is read as evidence of what happened first.
+    const at = c?.tasks[0]?.timeline.map((r) => r.startedAt) ?? []
+    expect([...at].sort((a, b) => a - b)).toEqual(at)
+  })
+
+  it('separates the runs of two tasks that shared one conversation', () => {
+    // ⛔ Interleaved on purpose. A conversation that served two tasks alternately is exactly the
+    // case grouping has to survive — the runs must land under their own task and stay in order
+    // within it, not be re-sorted into two contiguous blocks that never happened.
+    session('s1')
+    task('t1', 1, 'first')
+    task('t2', 2, 'second')
+    run('s1', 't1', { tokens: 1 })
+    run('s1', 't2', { tokens: 2 })
+    run('s1', 't1', { tokens: 4 })
+    const [c] = conversations.listConversations()
+    expect(c?.taskCount).toBe(2)
+    expect(c?.runCount).toBe(3)
+    // ⚠️ Tasks come out in the order the conversation first met them, which is the order somebody
+    // reading top to bottom is reconstructing.
+    expect(c?.tasks.map((t) => t.seq)).toEqual([1, 2])
+    expect(c?.tasks[0]?.timeline.map((r) => r.tokens)).toEqual([1, 4])
+    expect(c?.tasks[1]?.timeline.map((r) => r.tokens)).toEqual([2])
+  })
+
+  it('carries what each run cost, ended and ran on', () => {
+    // ⚠️ `endedAt: null` means *still going* and only that. Drawing it as a dash would say the run
+    // has no duration, when what it has is a duration that is not finished.
+    session('s1')
+    task('t1', 1, 'one turn')
+    run('s1', 't1', { tokens: 500, endedAt: 9_999, outcome: 'completed', model: 'opus' })
+    run('s1', 't1', { tokens: 7 })
+    const timeline = conversations.listConversations()[0]?.tasks[0]?.timeline ?? []
+    expect(timeline[0]).toMatchObject({ tokens: 500, endedAt: 9_999, model: 'opus' })
+    expect(timeline[1]?.endedAt).toBeNull()
+    expect(timeline[1]?.outcome).toBeNull()
+    expect(timeline[1]?.model).toBeNull()
+  })
+
+  it('still collapses several runs of one task into one task row', () => {
     // ⚠️ A task retried three times is still *one* task in this conversation. Counting runs here
     // would make an ordinary continuation look exactly like a shared conversation, which is the one
     // distinction this page exists to draw.
@@ -212,6 +285,8 @@ describe('what a conversation was used for', () => {
     run('s1', 't1', { tokens: 100 })
     run('s1', 't1', { tokens: 250 })
     expect(conversations.listConversations()[0]?.tasks[0]?.tokens).toBe(350)
+    // ⚠️ And the conversation's own total, which is what the table column shows.
+    expect(conversations.listConversations()[0]?.tokens).toBe(350)
   })
 
   it('filters to one project when asked', () => {
@@ -238,6 +313,66 @@ describe('what a conversation was used for', () => {
     // ⛔ And zero or negative must not mean "no limit" once it reaches SQL.
     expect(conversations.conversationLimit(0)).toBe(1)
     expect(conversations.conversationLimit(-9)).toBe(1)
+  })
+})
+
+/**
+ * What became of the work, as distinct from what became of the process.
+ *
+ * ⛔ **Two different questions, and the app answered only the wrong one for months.**
+ * `sessions.state` recorded an exit code, and killing a session we ourselves asked to stop always
+ * exits non-zero — so 81 runs with `outcome: 'completed'` sat inside sessions marked `failed`, and
+ * the Conversations page was a wall of red describing work that had succeeded. `conversationOutcome`
+ * is the answer to "did this succeed?", read off the only evidence there is: the runs.
+ */
+describe('what became of the work in a conversation', () => {
+  it('says nothing at all when no run was recorded', () => {
+    // ⛔ Not `unknown`, and not `failed`. A conversation with no run is a specific, diagnosable
+    // thing — opened and never used — and null is what lets the UI say that instead of guessing.
+    expect(conversations.conversationOutcome([])).toBeNull()
+  })
+
+  it('ignores a run that is still in flight rather than counting it as a disagreement', () => {
+    // ⚠️ Otherwise every conversation would read `mixed` the moment it started a second turn.
+    expect(conversations.conversationOutcome([{ outcome: 'completed' }, { outcome: null }])).toBe(
+      'completed'
+    )
+    expect(conversations.conversationOutcome([{ outcome: null }])).toBeNull()
+  })
+
+  it('reports the shared outcome when every run agrees', () => {
+    expect(
+      conversations.conversationOutcome([{ outcome: 'completed' }, { outcome: 'completed' }])
+    ).toBe('completed')
+  })
+
+  it('lets a failure win over everything else', () => {
+    // ⛔ A conversation where one run failed and three succeeded is not a success with an asterisk.
+    // Somebody scanning this column for trouble has to find it.
+    expect(
+      conversations.conversationOutcome([
+        { outcome: 'completed' },
+        { outcome: 'failed' },
+        { outcome: 'completed' }
+      ])
+    ).toBe('failed')
+  })
+
+  it('calls genuinely different endings mixed', () => {
+    expect(
+      conversations.conversationOutcome([{ outcome: 'completed' }, { outcome: 'preempted' }])
+    ).toBe('mixed')
+  })
+
+  it('does not read the outcome off the session state', () => {
+    // ⛔ The regression this whole change exists to prevent. A session the daemon killed is
+    // `failed`-shaped by exit code and its work completed; the row must say `completed`.
+    session('s1', { state: 'failed' })
+    task('t1', 1, 'succeeded inside a session we killed')
+    run('s1', 't1', { outcome: 'completed' })
+    const [c] = conversations.listConversations()
+    expect(c?.state).toBe('failed')
+    expect(c?.outcome).toBe('completed')
   })
 })
 
