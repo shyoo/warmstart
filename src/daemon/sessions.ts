@@ -385,6 +385,37 @@ export function resumableSession(candidates: Session[], workerId: string, cwd: s
   return null
 }
 
+/**
+ * The conversations this account has finished in this project, newest first.
+ *
+ * ⛔ Closed and failed only, and `purpose = 'work'` only. A live one is `warmSessionFor`'s business
+ * and reviving it would put two processes on one conversation; a probe or a consult holds nothing
+ * worth going back to. ⚠️ `context_tokens > 0` is the cheap half of "did anything happen here" —
+ * `resumableSession` still asks the expensive half, which is whether a turn was ever recorded,
+ * because a `--resume` onto an id the CLI never wrote fails the process outright.
+ *
+ * ⚠️ Bounded. This is asked on the dispatch path, and a project a fleet has worked in for months has
+ * thousands of finished conversations; the newest few dozen are the only ones with a prefix worth
+ * anything anyway.
+ */
+export function finishedConversationsIn(
+  projectId: string,
+  workerId: string,
+  limit = 50
+): Session[] {
+  return rows<SessionRow>(
+    db()
+      .prepare(
+        `select * from sessions
+          where project_id = ? and worker_id = ? and purpose = 'work'
+            and state in ('closed','failed') and coalesce(context_tokens, 0) > 0
+          order by coalesce(closed_at, started_at) desc
+          limit ?`
+      )
+      .all(projectId, workerId, limit)
+  ).map(toSession)
+}
+
 export function sessionsForWorker(workerId: string): Session[] {
   return rows<SessionRow>(
     db()

@@ -403,3 +403,74 @@ describe('the probe frequency setting', () => {
     expect(notifications.length).toBe(1)
   })
 })
+
+/**
+ * ⭐ **Move 5b: a conversation somebody is queued behind.**
+ *
+ * ⛔ Written against the hole the queue could see and the clock could not. Every other compaction
+ * this file tests is argued from `expectedIdleMs` — how long until this session is *likely* to be
+ * wanted — and a conversation a ready task has already been refused is not idle in that sense at
+ * all. It is wanted now, it is over the share ceiling, and until this move existed the only thing
+ * that could clear it was an idle estimate that a busy fleet never produces. The task cold-starts
+ * for ~41.5k instead, every time, forever.
+ */
+describe('a conversation the queue is waiting on', () => {
+  const OBJECTIVE = { cost: 0.34, velocity: 0.33, quality: 0.33 }
+
+  /** Big, grown a lot since its last compaction, and hours of TTL left. */
+  const wanted = (patch: Partial<Session> = {}): Session =>
+    session({
+      contextTokens: 150_000,
+      contextWindow: 200_000,
+      tokensSinceCompact: 120_000,
+      cacheExpiresAt: NOW + 50 * 60 * 1000,
+      ...patch
+    })
+
+  it('is left alone when nobody is waiting for it', () => {
+    // ⚠️ The control. 50 minutes of TTL is far outside the decision window, so without the queue's
+    // pressure this session is not the clock's business at all.
+    expect(clock.decide(wanted(), { objective: OBJECTIVE, now: NOW }).move).toBe('none')
+  })
+
+  it('⭐ compacts when a queued task would borrow it, TTL or no TTL', () => {
+    const decision = clock.decide(wanted(), {
+      objective: OBJECTIVE,
+      now: NOW,
+      borrowWanted: new Set([wanted().id])
+    })
+    expect(decision.move).toBe('compact')
+    expect(decision.reason).toContain('too full to lend')
+  })
+
+  it('obeys the switch, like every other compaction', () => {
+    const decision = clock.decide(wanted(), {
+      objective: OBJECTIVE,
+      now: NOW,
+      borrowWanted: new Set([wanted().id]),
+      settings: { ...settings.DEFAULT_SETTINGS, autoCompact: false }
+    })
+    expect(decision.move).not.toBe('compact')
+  })
+
+  it('does not ask twice while the first ask is still in flight', () => {
+    // ⛔ The 2026-08-26 repeat, with a new trigger. A queue stays pressed for minutes and the clock
+    // ticks every ten seconds; the outstanding-move check above every branch is what ends it.
+    const decision = clock.decide(
+      wanted({ clockMove: 'compact', clockMoveAt: NOW - 10_000, clockMoveContext: 120_000 }),
+      { objective: OBJECTIVE, now: NOW, borrowWanted: new Set([wanted().id]) }
+    )
+    expect(decision.move).toBe('none')
+  })
+
+  it('stops asking once a compaction has landed and the context has not grown back', () => {
+    // ⚠️ `worthCompactingNow` is the other half: a landed compaction zeroes tokensSinceCompact, so a
+    // conversation that is still over the ceiling afterwards is asked once, not every four minutes.
+    const decision = clock.decide(wanted({ tokensSinceCompact: 0 }), {
+      objective: OBJECTIVE,
+      now: NOW,
+      borrowWanted: new Set([wanted().id])
+    })
+    expect(decision.move).not.toBe('compact')
+  })
+})

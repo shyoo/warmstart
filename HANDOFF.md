@@ -8,7 +8,7 @@ started in CI, never run against a real agent CLI.
 if you add a line, find the one it obsoletes and cut it in the same edit. Finished work moves to
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
-**Baseline (2026-09-01, measured):** typecheck · lint · build clean · `npm test` 1042/1044 (2 POSIX-only
+**Baseline (2026-09-01, measured):** typecheck · lint · build clean · `npm test` 1065/1067 (2 POSIX-only
 skipped) · `test:daemon` 142/142 · `test:ui` 176/176 · `test:pack` 18/18 · L4 (opt-in) landed a real
 agent commit on origin/main. Electron 44.0.0, electron-builder 26.15.3, 0 npm vulnerabilities.
 CLIs here: claude 2.1.252 · agy 1.1.22 · codex 0.151.0 · local-llm 1.0.0 (qwen3-coder live tested).
@@ -62,8 +62,8 @@ src/daemon/            orchestratord. Runs as Electron-with-ELECTRON_RUN_AS_NODE
                        ⚠️ Rendered *inside* the task thread now, not in a pane below it
   landing.ts           auto-land, serialised by an exclusive land: resource (+ landing.test.ts)
   conversations.ts     which conversation served which tasks - a join, never stored (+ .test.ts)
-  sharing.ts           who may borrow whose conversation: three tiers, mechanical gates, off by
-                       default (+ .test.ts). docs/sessions.md is the spec for both
+  sharing.ts           who may borrow whose conversation: same project, account, model, effort;
+                       three tiers, off by default (+ .test.ts). docs/sessions.md is the spec
   finish.ts            what finishing means: one policy, resolved task > project > fleet, the
                        decision that follows, and the loose-ends scan (+ .test.ts). ⛔ The tool
                        never writes a commit. docs/landing.md is the spec (+ conflict.test.ts)
@@ -142,10 +142,14 @@ M0–M6 are done. What is left is not a milestone but a list, in the order it wo
 1. **Run the suites on macOS or Linux with an agent CLI installed** — the largest unmeasured surface.
 2. **R2 (`tokens_per_percent`)** — now only the reserve's *token* rung needs it; routing and the reserve's high-water rung read percentages directly.
 3. **Signing and notarisation**, without which the installers warn or refuse.
-4. **Resident sessions — built; two things unproven** (`docs/sessions.md`). A live trial put five
-   tasks through one conversation. ⚠️ The **60% share ceiling has never fired**; sharing is off at
-   every tier. ⚠️ The workspace pool uses neither `git worktree lock` nor a provenance marker, which
-   bites only when the daemon dies mid-run — when nobody is watching.
+4. **Reuse across tasks — built end to end, unproven in flight** (2026-09-01, `docs/sessions.md`).
+   Borrowing now also **revives another task's *finished* conversation** by `--resume` — the case
+   that fires on a real fleet, since completing a task closes its session and each new one then
+   rebuilt ~41.5k tokens. Gated on **same project, account, model, effort**: a prompt cannot change
+   the model of the process already serving a conversation. ⛔ The borrower is told in its first
+   prompt whose context it is and gets its own prompt restated; the lender's thread is told by name.
+   ⭐ Clock **move 5b** compacts a conversation past **70%** a queued task was refused. ⚠️ Sharing
+   stays **off at every tier** (operator, 2026-09-01): none of it has run in flight, 60% never fired.
 5. **The trunk tripwire is built and has never fired.** An empty branch under a moved trunk goes to
    `awaiting_human` naming the commits (`decideFinish`'s `trunk-moved`). ⚠️ Provoking it means
    reintroducing the bug `--add-dir` fixed.

@@ -1,4 +1,4 @@
-import type { Project, ResolvedSessionSharing, Task } from '@shared/tasks.js'
+import type { Project, ResolvedModelChoice, ResolvedSessionSharing, Task } from '@shared/tasks.js'
 import type { Session } from '@shared/protocol.js'
 import {
   DEFAULT_FLEET_SHARING,
@@ -36,6 +36,22 @@ import { adapter } from './adapters/index.js'
  */
 export const SHARE_CEILING = 0.6
 
+/**
+ * How full a conversation has to be before being *wanted* is a reason to compact it.
+ *
+ * ⛔ Above `SHARE_CEILING`, deliberately, and the gap between the two is the point rather than an
+ * oversight. Between 60% and 70% a conversation is merely not worth borrowing: it is left alone,
+ * because compacting it costs a full read of a context nobody has asked for and the session's own
+ * task may want every token of what is in there. Past 70% the same conversation is the *only* warm
+ * prefix a queued task in this project can have, it is going to need compacting anyway — the cache
+ * clock's own move 4 is waiting on an idle estimate that may never come — and doing it now converts
+ * a conversation that can serve nobody into one that can serve the queue.
+ *
+ * ⚠️ A fraction of the window for the same reason `SHARE_CEILING` is one: the windows across a fleet
+ * differ by an order of magnitude and one token count would be nonsense at both ends.
+ */
+export const SHARE_COMPACT_FLOOR = 0.7
+
 export { projectSharingChoice }
 
 /**
@@ -55,11 +71,47 @@ export function resolveSessionSharing(
 /** Why a conversation was not offered to a task. Null means it was. */
 export type ShareRefusal =
   | 'not-this-project'
+  | 'not-this-account'
+  | 'wrong-model'
+  | 'wrong-effort'
   | 'no-workspace'
   | 'busy'
   | 'cannot-resume'
   | 'context-too-full'
   | null
+
+/**
+ * What the task would be run *as*, on the worker whose conversation is being considered.
+ *
+ * ⛔ Resolved by the caller rather than here, from the same `resolveModelChoice` the dispatch will
+ * reach, because the answer depends on the worker's defaults and its quota pools — knowledge this
+ * module deliberately does not have. Passing the resolved pair in is what keeps "which model would
+ * this task use?" a question with one implementation.
+ */
+export type ShareIntent = Pick<ResolvedModelChoice, 'model' | 'effort'>
+
+/**
+ * Would joining this conversation silently give the task a different model or effort than it asked
+ * for?
+ *
+ * ⛔ **The gate that makes borrowing honest.** A turn sent into a live conversation is served by the
+ * process that conversation is already running: the model and the reasoning effort were fixed when
+ * it was spawned and there is no argument to change them — `dispatchIntoWarmSession` sends a prompt,
+ * it does not respawn. So a task pinned to Opus, dropped into a Sonnet conversation because that one
+ * happened to be warm, runs on Sonnet and records that it ran on the model it asked for. The saving
+ * is real and the answer is not the one that was ordered.
+ *
+ * ⚠️ **Unknown is not a mismatch**, the same rule `isTooFull` follows. A session whose CLI chose its
+ * own model records `null`, and reading that as "different" would exclude every adapter that does
+ * not report one — refusing a real saving over a fact nobody wrote down. Only two *known* and
+ * *different* values are a refusal.
+ */
+export function mismatch(intent: ShareIntent | undefined, session: Session): ShareRefusal {
+  if (!intent) return null
+  if (intent.model && session.model && intent.model !== session.model) return 'wrong-model'
+  if (intent.effort && session.effort && intent.effort !== session.effort) return 'wrong-effort'
+  return null
+}
 
 /**
  * May `task` be given `session`? One function, so the answer is the same everywhere it is asked and
@@ -72,11 +124,23 @@ export type ShareRefusal =
 export function whyNotShared(
   task: Task,
   session: Session,
-  opts: { hasWorkspace: boolean; leased: boolean }
+  opts: { hasWorkspace: boolean; leased: boolean; intent?: ShareIntent }
 ): ShareRefusal {
   // ⛔ Cross-project sharing is not a tuning question. One client's code in another client's
   // conversation is not something a scheduler gets to decide is acceptable.
   if (!session.projectId || session.projectId !== task.projectId) return 'not-this-project'
+  // ⛔ A conversation lives inside one worker's isolation root, so sharing never crosses an
+  // account — that much is structural. What is *not* structural is a task that was pinned to a
+  // particular account or adapter: honouring the pin everywhere except when a warm conversation is
+  // available would make the constraint mean "unless it is inconvenient".
+  if (task.constraints?.workerId && task.constraints.workerId !== session.workerId) {
+    return 'not-this-account'
+  }
+  if (task.constraints?.adapterId && task.constraints.adapterId !== session.adapterId) {
+    return 'not-this-account'
+  }
+  const wrong = mismatch(opts.intent, session)
+  if (wrong) return wrong
   // A conversation with no worktree has nothing to lend: the borrower would have to claim its own,
   // and at that point it is a cold start wearing somebody else's context.
   if (!opts.hasWorkspace) return 'no-workspace'
@@ -92,8 +156,22 @@ export function whyNotShared(
  * publish — the same trap as treating an unrecorded cache expiry as lapsed.
  */
 export function isTooFull(session: Session): boolean {
+  return fullerThan(session, SHARE_CEILING)
+}
+
+/**
+ * Is this conversation full enough that a task waiting to borrow it is worth a compaction?
+ *
+ * ⚠️ Asked only of a session that was refused *for being full and for nothing else* — the caller
+ * establishes that. On its own this says nothing about whether the conversation is shareable.
+ */
+export function wantsCompactionToShare(session: Session): boolean {
+  return fullerThan(session, SHARE_COMPACT_FLOOR)
+}
+
+function fullerThan(session: Session, fraction: number): boolean {
   if (session.contextWindow === null || session.contextTokens === null) return false
-  return session.contextTokens > session.contextWindow * SHARE_CEILING
+  return session.contextTokens > session.contextWindow * fraction
 }
 
 /**

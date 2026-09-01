@@ -449,3 +449,83 @@ describe('a conversation that is still in use', () => {
     expect(sessions.hasOpenRun('s-x')).toBe(true)
   })
 })
+
+/**
+ * ⭐ **The conversations of *other* tasks, which is where reuse across tasks actually lives.**
+ *
+ * ⛔ Within one task, resuming was already the rule: `pastSessionsFor` hands over the ids and the
+ * CLI reopens them. Across tasks it was unreachable, and not because it was refused — because
+ * nothing ever looked. Completing a task closes its session, so on a fleet that finishes what it
+ * starts nearly every warm prefix in a project sits in a conversation belonging to a task that is
+ * done, and every new task rebuilt the project's instructions, skills and layout from nothing:
+ * measured 2026-08-28 at **41,542 cache-creation tokens** in an *empty* directory.
+ *
+ * ⚠️ This is the candidate list only. Whether a particular one may be lent is `sharing.ts`'s
+ * question and is asked separately, on top of these — same project, same account, same model, same
+ * effort, room to grow — which is why this query is deliberately no more than "finished, in this
+ * project, on this account, with something in it".
+ */
+describe('finished conversations this project could lend', () => {
+  /** Adds project and context_tokens to a seeded session, which `seed` does not carry. */
+  function place(id: string, projectId: string | null, contextTokens: number): void {
+    db.db()
+      .prepare('update sessions set project_id = ?, context_tokens = ? where id = ?')
+      .run(projectId, contextTokens, id)
+  }
+
+  it('offers a finished conversation from the same project and account', () => {
+    seed({ id: 's-done' })
+    place('s-done', 'p1', 50_000)
+    expect(sessions.finishedConversationsIn('p1', WORKER).map((s) => s.id)).toEqual(['s-done'])
+  })
+
+  it('never crosses a project', () => {
+    // ⛔ The one gate that is not a tuning question: one client's code in another client's
+    // conversation is not something a scheduler gets to decide is acceptable.
+    seed({ id: 's-elsewhere' })
+    place('s-elsewhere', 'p2', 50_000)
+    expect(sessions.finishedConversationsIn('p1', WORKER)).toEqual([])
+  })
+
+  it('never crosses an account', () => {
+    // A conversation lives inside one worker's isolation root; the other account cannot open it.
+    seed({ id: 's-theirs', worker: OTHER })
+    place('s-theirs', 'p1', 50_000)
+    expect(sessions.finishedConversationsIn('p1', WORKER)).toEqual([])
+  })
+
+  it('leaves live conversations to warmSessionFor', () => {
+    // ⛔ Reviving one would put a second process on a conversation somebody is still talking in:
+    // two agents in one worktree, turns billed to whichever run was open, and a `task_complete`
+    // that could settle the wrong task.
+    seed({ id: 's-live', state: 'live' })
+    place('s-live', 'p1', 50_000)
+    expect(sessions.finishedConversationsIn('p1', WORKER)).toEqual([])
+  })
+
+  it('ignores one that never accumulated any context', () => {
+    // Nothing to lend. The expensive half of this question — was a turn ever recorded — is asked by
+    // `resumableSession`, because `--resume` onto an id the CLI never wrote fails the process.
+    seed({ id: 's-empty' })
+    place('s-empty', 'p1', 0)
+    expect(sessions.finishedConversationsIn('p1', WORKER)).toEqual([])
+  })
+
+  it('offers the most recently finished first, and stops at the limit', () => {
+    // ⚠️ Asked on the dispatch path. A project a fleet has worked in for months has thousands of
+    // finished conversations and only the newest few have a prefix worth anything.
+    for (const id of ['s-a', 's-b', 's-c']) {
+      seed({ id })
+      place(id, 'p1', 10_000)
+    }
+    db.db().prepare("update sessions set closed_at = ? where id = 's-a'").run(3)
+    db.db().prepare("update sessions set closed_at = ? where id = 's-b'").run(2)
+    db.db().prepare("update sessions set closed_at = ? where id = 's-c'").run(1)
+    expect(sessions.finishedConversationsIn('p1', WORKER).map((s) => s.id)).toEqual([
+      's-a',
+      's-b',
+      's-c'
+    ])
+    expect(sessions.finishedConversationsIn('p1', WORKER, 2).map((s) => s.id)).toEqual(['s-a', 's-b'])
+  })
+})

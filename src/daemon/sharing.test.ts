@@ -32,6 +32,7 @@ const task = (patch: Partial<Task> = {}): Task =>
     seq: 1,
     projectId: PROJECT,
     sessionSharing: 'inherit',
+    constraints: {},
     ...patch
   }) as Task
 
@@ -50,6 +51,8 @@ const session = (patch: Partial<Session> = {}): Session =>
     projectId: PROJECT,
     cwd: 'C:\\ws1',
     state: 'live',
+    model: null,
+    effort: null,
     purpose: 'work',
     contextTokens: 1_000,
     contextWindow: 200_000,
@@ -222,5 +225,121 @@ describe('which of them is offered first', () => {
     const input = [session({ id: 'b', contextTokens: 10 }), session({ id: 'a', contextTokens: 1 })]
     sharing.rank(input)
     expect(input.map((s) => s.id)).toEqual(['b', 'a'])
+  })
+})
+
+/**
+ * ⭐ **Reuse across tasks is only a saving where it is also the same answer.**
+ *
+ * A prompt sent into a live conversation is served by the process already running it. The model and
+ * the reasoning effort were fixed when that process was spawned, and `dispatchIntoWarmSession` sends
+ * a prompt — it cannot respawn. So the account, the model and the effort have to match *before* a
+ * conversation is offered, or the fleet quietly answers a question with a model nobody ordered and
+ * files the run under the model that was asked for.
+ */
+describe('same account, same model, same effort', () => {
+  const pinned = (constraints: Partial<Task['constraints']>): Task => task({ constraints })
+
+  it('refuses a conversation on an account the task was pinned away from', () => {
+    expect(sharing.whyNotShared(pinned({ workerId: 'w2' }), session({ workerId: 'w1' }), open)).toBe(
+      'not-this-account'
+    )
+  })
+
+  it('offers it when the pin names the account the conversation is on', () => {
+    expect(
+      sharing.whyNotShared(pinned({ workerId: 'w1' }), session({ workerId: 'w1' }), open)
+    ).toBeNull()
+  })
+
+  it('refuses a conversation running a different adapter than the task was pinned to', () => {
+    expect(
+      sharing.whyNotShared(pinned({ adapterId: 'antigravity-cli' }), session(), open)
+    ).toBe('not-this-account')
+  })
+
+  it('refuses a conversation running a different model', () => {
+    // ⛔ The whole point. Opus work does not get quietly served by a Sonnet conversation because
+    // that one happened to be warm.
+    expect(
+      sharing.whyNotShared(task(), session({ model: 'claude-sonnet-5' }), {
+        ...open,
+        intent: { model: 'claude-opus-5', effort: null }
+      })
+    ).toBe('wrong-model')
+  })
+
+  it('offers one running the same model', () => {
+    expect(
+      sharing.whyNotShared(task(), session({ model: 'claude-opus-5' }), {
+        ...open,
+        intent: { model: 'claude-opus-5', effort: null }
+      })
+    ).toBeNull()
+  })
+
+  it('refuses a conversation running a different effort', () => {
+    expect(
+      sharing.whyNotShared(task(), session({ model: 'claude-opus-5', effort: 'low' }), {
+        ...open,
+        intent: { model: 'claude-opus-5', effort: 'high' }
+      })
+    ).toBe('wrong-effort')
+  })
+
+  it('treats an unknown model or effort as no evidence, not as a mismatch', () => {
+    // ⚠️ The same rule `isTooFull` follows. A session whose CLI chose its own model records null,
+    // and reading that as "different" would refuse a real saving over a fact nobody wrote down.
+    expect(
+      sharing.whyNotShared(task(), session({ model: null, effort: null }), {
+        ...open,
+        intent: { model: 'claude-opus-5', effort: 'high' }
+      })
+    ).toBeNull()
+    expect(
+      sharing.whyNotShared(task(), session({ model: 'claude-opus-5', effort: 'high' }), {
+        ...open,
+        intent: { model: null, effort: null }
+      })
+    ).toBeNull()
+  })
+
+  it('asks nothing about the model when the caller resolved no intent at all', () => {
+    // Every existing caller that has no worker in hand keeps its old answer rather than getting a
+    // stricter one by accident.
+    expect(sharing.mismatch(undefined, session({ model: 'claude-sonnet-5' }))).toBeNull()
+  })
+})
+
+/**
+ * ⭐ **Too full to lend is a blockage, not a verdict.**
+ *
+ * Above the ceiling a conversation is refused; above the compact floor, being *wanted* becomes a
+ * reason to shrink it. The gap between the two is deliberate — see `SHARE_COMPACT_FLOOR`.
+ */
+describe('when being wanted is worth a compaction', () => {
+  it('wants one past 70% of its window', () => {
+    expect(
+      sharing.wantsCompactionToShare(session({ contextTokens: 150_000, contextWindow: 200_000 }))
+    ).toBe(true)
+  })
+
+  it('leaves the 60-70% band alone: refused, but not worth compacting for', () => {
+    const middling = session({ contextTokens: 130_000, contextWindow: 200_000 })
+    expect(sharing.whyNotShared(task(), middling, open)).toBe('context-too-full')
+    expect(sharing.wantsCompactionToShare(middling)).toBe(false)
+  })
+
+  it('measures the floor as a fraction, like the ceiling', () => {
+    expect(
+      sharing.wantsCompactionToShare(session({ contextTokens: 150_000, contextWindow: 1_000_000 }))
+    ).toBe(false)
+  })
+
+  it('asks for nothing when the window is unknown', () => {
+    // ⚠️ Compacting on a guessed denominator would spend real tokens on arithmetic nobody did.
+    expect(
+      sharing.wantsCompactionToShare(session({ contextTokens: 900_000, contextWindow: null }))
+    ).toBe(false)
   })
 })

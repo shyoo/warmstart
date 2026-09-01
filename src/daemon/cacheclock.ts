@@ -27,6 +27,7 @@ import { log } from './log.js'
  * 3. expected idle in ~1h..2h                      -> KEEPALIVE
  * 4. idle > ~2h, ctx > 60k, since_compact > 25k    -> COMPACT
  * 5. the compaction reserve is at risk             -> COMPACT NOW, regardless
+ * 5b. a queued task wants to borrow it, and it is too full to lend  -> COMPACT NOW
  * 6. otherwise                                     -> let it expire; if it holds work, HANDOFF first
  * ```
  *
@@ -202,6 +203,15 @@ export interface ClockContext {
   objective: Objective
   /** A session the scheduler has already decided to send work to. Move 1, without re-deriving it. */
   dispatchTargets?: Set<string>
+  /**
+   * Sessions a queued task in the same project would borrow, but for how full they are. Move 5b.
+   *
+   * ⛔ Handed in by the scheduler rather than derived here, for the same reason `dispatchTargets`
+   * is: whether a conversation may be lent to a particular task is `sharing.ts`'s question, it
+   * depends on leases and workspaces the clock does not track, and a second implementation of it
+   * living here is a second answer waiting to disagree with the first.
+   */
+  borrowWanted?: Set<string>
   now?: number
   /** Fleet switches. Read once per tick and passed in, so one tick cannot disagree with itself. */
   settings?: Settings
@@ -346,6 +356,35 @@ export function decide(session: Session, ctx: ClockContext): ClockDecision {
         ' Taking a handoff and releasing the session instead.',
       expectedIdleMs: null,
       estimatedCost: model.costOfKeepalive(session) ?? 0
+    }
+  }
+
+  // Move 5b. Somebody is waiting on this conversation, and the only thing in its way is its size.
+  //
+  // ⭐ **Wanted now beats idle later, and no other move can say so.** Moves 2-4 all reason from
+  // `expectedIdleMs` — how long until this session is *likely* to be used — and a conversation a
+  // queued task has already been refused is not idle in that sense at all. Compacting it is not
+  // speculative maintenance: there is a named task that will join it on the next tick and skip a
+  // ~41.5k-token cold start, against a compaction of roughly the same size paid once. ⛔ Placed
+  // above the TTL window on purpose: the queue does not wait for a prefix to be near expiry, and a
+  // conversation with fifty minutes of TTL left is exactly the one worth shrinking, since the
+  // borrower gets the rest of that hour for free.
+  //
+  // ⚠️ `worthSaving` still gates it, and it is what stops the loop. A landed compaction zeroes
+  // `tokensSinceCompact`, so a conversation that stays over the share ceiling even after compacting
+  // is asked once and then left alone rather than asked every four minutes forever.
+  if (ctx.borrowWanted?.has(session.id) && contextTokens > 0 && worthSaving && compactAllowed) {
+    const compactCost = model.costOfCompact(session)
+    if (compactCost !== null) {
+      return {
+        ...base,
+        move: 'compact',
+        reason:
+          'a queued task in this project would borrow this conversation but it is too full to ' +
+          `lend - ${contextTokens} tokens of context is worth ${Math.round(compactCost)} to shrink`,
+        expectedIdleMs: 0,
+        estimatedCost: Math.round(compactCost)
+      }
     }
   }
 

@@ -78,6 +78,7 @@ import {
   backscroll,
   closeAndWait,
   closeSession,
+  finishedConversationsIn,
   getSession,
   hasOpenRun,
   noteCurrentBranch,
@@ -103,7 +104,14 @@ import {
   type TreeSample
 } from './stall.js'
 import { decideFinish, resolveFinishPolicy, type TrunkReading } from './finish.js'
-import { rank, resolveSessionSharing, whyNotShared } from './sharing.js'
+import {
+  mismatch,
+  rank,
+  resolveSessionSharing,
+  wantsCompactionToShare,
+  whyNotShared,
+  type ShareIntent
+} from './sharing.js'
 import { stripAnsi } from './stream.js'
 import { activityFor, clearActivity } from './activity.js'
 import { log } from './log.js'
@@ -324,6 +332,14 @@ export async function tick(): Promise<TickResult> {
 
   let dispatched = 0
   const skipped: string[] = []
+  /**
+   * The tasks this tick found nowhere to run, as tasks rather than as sentences.
+   *
+   * ⚠️ `skipped` is prose for an operator and cannot be asked a second question. These are the rows
+   * the cache clock needs, because "which conversation would have unblocked this task?" is only
+   * answerable from the task itself — see `sessionsWantedForBorrow`.
+   */
+  const held: Task[] = []
   const dispatchTargets = new Set<string>()
   let planned = 0
 
@@ -352,6 +368,7 @@ export async function tick(): Promise<TickResult> {
     const choice = chooseTarget(task)
     if (choice.deferred || !choice.worker) {
       skipped.push(`t${task.seq}: ${choice.reason}`)
+      held.push(task)
       // ⛔ Told to the operator, not only to the log. `ready` on its own is unreadable - it is the
       // scheduler's word for "eligible", and a person who has just filed a task reads it as "waiting
       // for me to press something". The reason is already computed; the only change is that it now
@@ -392,7 +409,15 @@ export async function tick(): Promise<TickResult> {
 
   // The cache clock runs after dispatch, so a session the scheduler just chose is recognised as
   // move 1 - an expiring asset turned into work - rather than being kept alive for its own sake.
-  const clock = await runCacheClock({ objective: settings().objective ?? DEFAULT_OBJECTIVE, dispatchTargets })
+  //
+  // ⭐ And it is told, in the same breath, which conversations the tasks it could *not* dispatch
+  // were waiting on. A conversation too full to lend is the one blockage the clock can clear, and
+  // until this it could not see it: the queue's pressure is not visible from a session row.
+  const clock = await runCacheClock({
+    objective: settings().objective ?? DEFAULT_OBJECTIVE,
+    dispatchTargets,
+    borrowWanted: sessionsWantedForBorrow(held)
+  })
 
   const parts: string[] = []
   if (dispatched) parts.push(`dispatched ${dispatched}`)
@@ -654,9 +679,20 @@ export interface WorkerChoice {
  * borrowed conversation is a real saving and a real disclosure, which is why it is a setting and the
  * task's own session is not.
  */
-function warmSessionFor(task: Task): Session | null {
+function warmSessionFor(task: Task, workerId?: string): Session | null {
   const idle = (session: Session | null): Session | null => {
     if (!session || session.state === 'closed' || session.state === 'failed') return null
+    // ⛔ Asked per worker, because a conversation belongs to exactly one account and the answer
+    // "there is a warm session" is only useful to the candidate that can actually speak in it. This
+    // used to be resolved once for the whole fleet and then matched against each worker in the loop,
+    // which meant one borrowable conversation on the wrong account hid every other candidate's own.
+    // Callers that genuinely mean "on any account" — `poolPressure` — pass nothing.
+    if (workerId && session.workerId !== workerId) return null
+    // ⛔ A model or an effort the task pinned is not a preference the warm path gets to overrule.
+    // A prompt sent into a live conversation is served by the process already running it: the model
+    // was fixed at spawn and `dispatchIntoWarmSession` cannot change it. Continuing here would run
+    // the task on the model it was started with and record the one it now asks for.
+    if (mismatch(pinned(task), session)) return null
     // ⛔ A `streamPrompts: 'once'` session is never warm, whatever its state says. Its CLI reads
     // one prompt from stdin, runs that turn and exits - there is no conversation still sitting there
     // to continue, and handing it a second prompt is a write into a pipe that closed when the first
@@ -671,44 +707,143 @@ function warmSessionFor(task: Task): Session | null {
     const own = idle(getSession(run.sessionId))
     if (own) return own
   }
-  return borrowableSessionFor(task)
+  return borrowCandidates(task, workerId).offerable[0] ?? null
 }
 
 /**
- * A conversation belonging to *another* task that this one may join.
+ * What this task explicitly asked to be run as, and nothing it merely inherited.
  *
- * ⛔ Returns null unless sharing is on for this task, and `off` is the shipped default at every tier.
- * ⚠️ The gates are in `sharing.ts` so the answer is the same wherever it is asked; what lives here is
- * the part that needs the scheduler's own knowledge — which conversations are resident, and whether
- * one is already leased.
+ * ⚠️ `task.constraints` only, never `resolveModelChoice`: a worker's default is what the *next*
+ * spawn would pick, and a session started before that default changed is not thereby wrong. What a
+ * person typed into the model box is a different kind of statement, and it is the only one strong
+ * enough to throw away a warm prefix over.
  */
-function borrowableSessionFor(task: Task): Session | null {
-  if (!task.projectId) return null
-  const project = getProject(task.projectId)
-  if (resolveSessionSharing(task, project).sharing !== 'on') return null
+function pinned(task: Task): ShareIntent {
+  return { model: task.constraints.model ?? null, effort: task.constraints.effort ?? null }
+}
 
-  const candidates: Session[] = []
+/**
+ * The conversations belonging to *other* tasks, split by whether they can be joined now.
+ *
+ * ⛔ Returns nothing unless sharing is on for this task, and `off` is the shipped default at every
+ * tier. ⚠️ The gates are in `sharing.ts` so the answer is the same wherever it is asked; what lives
+ * here is the part that needs the scheduler's own knowledge — which conversations are resident,
+ * which is leased, and what model this task would get on the account each one belongs to.
+ *
+ * ⭐ `full` is the second half of the answer and the reason this returns a pair. A conversation
+ * refused *only* for being over the share ceiling is not a dead end: it may be the one warm prefix in
+ * this project, and compacting it turns it into a conversation the queue can use. Naming those
+ * separately is what lets the tick tell the cache clock about them — see `sessionsWantedForBorrow`.
+ */
+function borrowCandidates(task: Task, workerId?: string): { offerable: Session[]; full: Session[] } {
+  const empty = { offerable: [], full: [] }
+  if (!task.projectId) return empty
+  const project = getProject(task.projectId)
+  if (resolveSessionSharing(task, project).sharing !== 'on') return empty
+
+  const offerable: Session[] = []
+  const full: Session[] = []
   for (const [sessionId, held] of workspaces) {
     if (held.projectId !== task.projectId) continue
     const session = getSession(sessionId)
     if (!session || session.state === 'closed' || session.state === 'failed') continue
+    if (workerId && session.workerId !== workerId) continue
     const refusal = whyNotShared(task, session, {
       hasWorkspace: true,
       // ⚠️ Asked of the runs and of the lease, because they answer different questions: a run says
       // somebody is mid-turn, a lease says somebody has been given the right to speak next.
-      leased: hasOpenRun(sessionId) || leaseHeld(sessionId)
+      leased: hasOpenRun(sessionId) || leaseHeld(sessionId),
+      intent: intentFor(task, session)
     })
-    if (refusal === null) candidates.push(session)
+    if (refusal === null) offerable.push(session)
+    // ⛔ Only `context-too-full`. A conversation held back by any other gate must never be compacted
+    // on this task's behalf: the compaction would be spent on a conversation this task still could
+    // not have, which is the fleet paying for a saving nobody can collect.
+    else if (refusal === 'context-too-full' && wantsCompactionToShare(session)) full.push(session)
   }
 
-  const best = rank(candidates)[0] ?? null
+  const ranked = rank(offerable)
+  const best = ranked[0]
   if (best) {
     log.debug(
       `t${task.seq} may borrow the conversation ${best.id.slice(0, 8)} in ${best.cwd} ` +
-        `(${candidates.length} candidate(s) in this project)`
+        `(${ranked.length} candidate(s) in this project)`
     )
   }
-  return best
+  return { offerable: ranked, full }
+}
+
+/**
+ * What this task would be run as *in this conversation's account*.
+ *
+ * ⛔ The same `resolveModelChoice` the dispatch reaches, against the same worker, so the comparison
+ * that decides whether a conversation may be borrowed is made against the answer a borrow would
+ * actually produce rather than a second guess at it.
+ */
+function intentFor(task: Task, session: Session): ShareIntent {
+  const worker = getWorker(session.workerId)
+  const canSetEffort = adapter(session.adapterId).info.capabilities.selectableEffort
+  const choice = resolveModelChoice(task.constraints, worker, canSetEffort, lastQuota(session.workerId))
+  return { model: choice.model, effort: choice.effort }
+}
+
+/**
+ * The *finished* conversations of other tasks that this one may reopen.
+ *
+ * ⭐ **The other half of reuse across tasks, and the half that is nearly always the available one.**
+ * `borrowCandidates` can only offer a conversation that is still up, and completing a task closes
+ * its session — so on any fleet that finishes what it starts, the warm prefixes are almost all in
+ * conversations nobody is talking in. Reviving one is `--resume` on a closed id: measured
+ * 2026-08-28, that turn read back **41,542** cached tokens and wrote 65, against a cold start that
+ * rebuilds the whole prefix. This is what makes the project's instructions, skills and file layout
+ * something the fleet pays for once instead of once per task.
+ *
+ * ⛔ Every gate `borrowCandidates` applies, applied here too, and for the same reasons — the setting
+ * is the same setting, the account, model and effort must still match, and a conversation past the
+ * share ceiling is still a false economy. ⚠️ `hasWorkspace: true` because the borrower brings its
+ * own: the tree is claimed before this is asked, and `resumableSession` refuses anything whose
+ * `cwd` is not that same directory. `leased` is asked of the runs, because a session row marked
+ * closed while its run is still open is precisely the disagreement that hands one conversation to
+ * two agents.
+ */
+function lendableConversations(task: Task, workerId: string): Session[] {
+  if (!task.projectId) return []
+  const project = getProject(task.projectId)
+  if (resolveSessionSharing(task, project).sharing !== 'on') return []
+
+  const own = new Set(pastSessionsFor(task).map((s) => s.id))
+  const candidates = finishedConversationsIn(task.projectId, workerId).filter((session) => {
+    if (own.has(session.id)) return false
+    return (
+      whyNotShared(task, session, {
+        hasWorkspace: true,
+        leased: hasOpenRun(session.id),
+        intent: intentFor(task, session)
+      }) === null
+    )
+  })
+  return rank(candidates)
+}
+
+/**
+ * The conversations a queued task would borrow if they were not so full.
+ *
+ * ⭐ **The one place the scheduler tells the clock about a saving only the queue can see.** Move 4
+ * compacts a session when it is expected to sit idle past the ~2h break-even; a conversation three
+ * tasks are waiting on is the opposite case — it is wanted *now*, and it is exactly the one a pure
+ * idle estimate will never nominate. ⚠️ Computed from the tasks that were actually held this tick,
+ * so a fleet with nothing queued asks for nothing.
+ */
+export function sessionsWantedForBorrow(tasks: Task[]): Set<string> {
+  const wanted = new Set<string>()
+  for (const task of tasks) {
+    const { offerable, full } = borrowCandidates(task)
+    // ⛔ Only when nothing is already borrowable. A task with a conversation it can join right now
+    // has no reason to spend anybody's tokens shrinking a different one.
+    if (offerable.length > 0) continue
+    for (const session of full) wanted.add(session.id)
+  }
+  return wanted
 }
 
 /** Has somebody already been granted the right to speak next in this conversation? */
@@ -757,7 +892,6 @@ export function chooseTarget(task: Task): WorkerChoice {
   const objective = resolveObjective(project?.config?.objective, task.objective, settings().objective)
   const w = weights(objective)
 
-  const warm = warmSessionFor(task)
   const candidates: WorkerChoice[] = []
 
   for (const worker of listWorkers()) {
@@ -801,7 +935,9 @@ export function chooseTarget(task: Task): WorkerChoice {
     //
     // ⚠️ Safe because `warmSessionFor` only ever returns an **idle** session, and the lease stops two
     // tasks being given the same one. Nothing here can produce two live agents in one conversation.
-    const reuse = warm && warm.workerId === worker.id ? warm : null
+    // ⚠️ Asked of *this* worker rather than of the fleet, so one account's warm conversation cannot
+    // stand in for — or hide — another's. `warmSessionFor` does that filtering; see its comment.
+    const reuse = warmSessionFor(task, worker.id)
     if (atCapacity(sessionsForWorker(worker.id), worker.maxConcurrent, reuse)) {
       reasons.push(`${worker.label} at capacity`)
       continue
@@ -1566,7 +1702,12 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
   // reporting success. Getting the same tree back is what makes resuming possible at all; it is a
   // preference rather than a requirement because a free workspace beats no workspace.
   const past = pastSessionsFor(task)
-  const priorCwd = past.find((s) => s.workerId === worker.id)?.cwd
+  // ⚠️ Asked before the workspace is claimed, because the directory is part of the answer. Claude
+  // Code files its transcripts under an encoding of the cwd, so a conversation can only be resumed
+  // from the tree it was had in — and a lent conversation is therefore also a *preference about
+  // which worktree to claim*. Offered second: this task's own tree always outranks somebody else's.
+  const lent = lendableConversations(task, worker.id)
+  const priorCwd = past.find((s) => s.workerId === worker.id)?.cwd ?? lent[0]?.cwd
 
   if (project) {
     // ⚠️ Claimed under the **task's** name, and moved to the session's below. The session's working
@@ -1620,7 +1761,12 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
   // *not* resuming costs rebuilding the whole prefix and re-discovering the branch, the files and
   // everything the last run worked out - and it produced an agent that answers a follow-up question
   // having never seen the question it follows.
-  const revive = resumableSession(past, worker.id, cwd)
+  const revive = resumableSession([...past, ...lent], worker.id, cwd)
+  // ⛔ Whose conversation this is, and it is never inferred from the prompt later. A revived
+  // conversation that belonged to another task is a disclosure — this task's agent is about to read
+  // everything that was said in it — and the two things that follow from that, telling the agent and
+  // telling the lender, are both wrong if this flag is.
+  const borrowed = revive !== null && !past.some((s) => s.id === revive.id)
   const session = spawnSession({
     workerId: worker.id,
     cwd,
@@ -1641,10 +1787,45 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
       'anything you are going to rely on rather than trusting what is in this conversation.'
     : null
 
-  const promptText = promptFor(task, worker.adapterId, revive !== null, {
-    branchNotice,
+  // ⚠️ Said at the top of the first prompt rather than left to be discovered. An agent that reads a
+  // conversation full of another task's plan, half-finished edits and conclusions, with no notice,
+  // will take all of it for its own memory — the failure mode is not a wrong file, it is an agent
+  // that carries on somebody else's work believing it is its own.
+  const borrowNotice = borrowed
+    ? '⚠️ This conversation was opened for a different task and you are joining it for its context, ' +
+      'not for its instructions. Everything above this message belongs to that other task: treat it ' +
+      'as background, do not continue it, and re-read any file you are going to rely on. Your own ' +
+      'task is stated below and is the only thing you are being asked to do.'
+    : null
+
+  // ⛔ `resumed` means *this task* has spoken in this conversation before, which a borrowed one is
+  // exactly not. The flag suppresses restating the task's own prompt, on the grounds that the
+  // conversation already contains it — true of a revived conversation of one's own, and false in the
+  // most damaging way available of somebody else's: the agent would be handed a context full of
+  // another task's instructions and never told what it was itself being asked to do.
+  const promptText = promptFor(task, worker.adapterId, revive !== null && !borrowed, {
+    branchNotice: [borrowNotice, branchNotice].filter(Boolean).join('\n\n') || null,
     markDelivered: true
   })
+
+  if (borrowed && revive) {
+    // ⛔ Told to the lender as well as to the borrower. "Who else has been in this conversation" is
+    // the one question sharing makes unanswerable from every other screen, and a thread that never
+    // mentions it leaves the answer only in a log nobody reads.
+    const lender = runForSession(revive.id)
+    if (lender?.taskId && lender.taskId !== task.id) {
+      addMessage(
+        lender.taskId,
+        'system',
+        `t${task.seq} reopened this task's conversation (${revive.id.slice(0, 8)}) to reuse its ` +
+          'context. Nothing here was changed, and this task keeps its own branch and its own history.'
+      )
+    }
+    log.info(
+      `t${task.seq} is reviving the conversation ${revive.id.slice(0, 8)} from another task in ` +
+        `${project?.name ?? cwd}`
+    )
+  }
 
   const run = startRun({
     taskId: task.id,

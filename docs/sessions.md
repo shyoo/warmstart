@@ -23,8 +23,15 @@ it — reopens the same conversation rather than starting a new one. `--resume` 
 > ⚠️ On Antigravity the conversation is restored but no cache read is reported and input tokens roughly
 > double, so there it buys *context*, not a discount. See `docs/adapters.md`.
 
-**3. Sharing.** A task joins a conversation **another task** has been having. ⛔ **Off by default**,
-because this one has a cost that is not measured in tokens.
+**3. Sharing.** A task uses a conversation **another task** has been having. ⛔ **Off by default**,
+because this one has a cost that is not measured in tokens. It takes two forms, and the second is the
+one that will fire on most fleets:
+
+- **joining a live one** — the lender is parked (`awaiting_human`, say) and its session is still up;
+- **reviving a finished one** — the lender is done, its session closed, and the borrower reopens that
+  conversation with `--resume` instead of starting cold. Since completing a task closes its session,
+  nearly every warm prefix in a project belongs to a task that has finished, which is why this is the
+  common case rather than the exotic one.
 
 ## What sharing actually costs
 
@@ -70,18 +77,51 @@ the one thing this must not do.
 All of these must hold, and each refusal is named in the log rather than reported as "no suitable
 session":
 
-1. **Same project** and **same account**.
-2. **It holds a workspace.** A conversation with no worktree has nothing to lend.
-3. **Nobody else has it.** Never one with a run in flight, and never one already handed to another
+1. **Same project** and **same account**. A task pinned to a particular worker or adapter is never
+   handed a conversation on another one: a constraint that held everywhere except when a warm
+   conversation was available would mean *unless it is inconvenient*.
+2. **Same model, and same effort.** ⭐ A prompt sent into a conversation is served by the process
+   already running it — the model and the reasoning effort were fixed when that process was spawned,
+   and there is no argument that changes them mid-conversation. So an Opus task is never quietly
+   served by a Sonnet conversation because that one happened to be warm. ⚠️ Compared against what
+   this task *would resolve to on that account* (task → worker → the CLI's own default), which is the
+   same answer the dispatch itself reaches. ⚠️ Unknown is not a mismatch: a session whose CLI chose
+   its own model records none, and reading that as "different" would refuse a real saving over a
+   fact nobody wrote down.
+3. **It holds a workspace** — for a live conversation, since one with no worktree has nothing to
+   lend. A finished one is reopened in the borrower's own tree, and it must be *the same directory*:
+   Claude Code files transcripts under an encoding of the cwd, so `--resume` from anywhere else
+   finds nothing and starts cold while reporting success. A lendable conversation is therefore also
+   a preference about which worktree to claim — the borrower asks the pool for that one, after its
+   own.
+4. **Nobody else has it.** Never one with a run in flight, and never one already handed to another
    task — see *the lease* below.
-4. **Its CLI can resume.** Codex declares it cannot, today, because the flag is unwired here.
-5. **It has room.** Past **60%** of its context window it is not offered: a borrowed conversation
+5. **Its CLI can resume.** Codex declares it cannot, today, because the flag is unwired here.
+6. **It has room.** Past **60%** of its context window it is not offered: a borrowed conversation
    about to need compaction is a false economy, since you pay to read a large prefix and then pay
    again to compact it. ⚠️ A fraction, not a token count — windows across the fleet differ by an order
    of magnitude.
 
 The emptiest qualifying conversation is offered first, since it has the most room for the borrower's
 own work.
+
+## Too full to lend, and what the clock does about it
+
+Past **70%** of its window, a conversation a queued task was refused becomes something the cache
+clock will **compact** — move 5b. ⭐ This is the one compaction argued from the queue rather than
+from a clock: every other one asks *how long until this session is likely to be wanted*, and a
+conversation a ready task has already been turned away from is not idle in that sense at all. It is
+wanted now, and shrinking it converts a conversation that can serve nobody into one the queue can
+use — typically letting the borrower skip a ~41.5k-token cold start on its next tick.
+
+⛔ Only when the borrower has nothing else it could join, only when being full is the *sole* refusal,
+and only with `autoCompact` on — a compaction bought for a conversation the task still could not
+have is the fleet paying for a saving nobody can collect. ⚠️ Asked once, not every tick: a landed
+compaction zeroes `tokensSinceCompact`, and the clock's outstanding-move check holds the request
+open while it lands.
+
+⚠️ The gap between 60% and 70% is deliberate. In that band a conversation is merely not worth
+borrowing; compacting it would spend a full read of a context nobody has asked for.
 
 ## The lease, and what happens to the branch
 
@@ -101,6 +141,18 @@ When a borrower takes over, the worktree moves to **its** branch, and three noti
 Coming back is the same move in the other direction. ⛔ **A worktree holding uncommitted work is never
 moved** — the borrower starts a fresh conversation instead. Stashing to make room would take work that
 is visible under **Loose ends** and hide it inside a stash you would have to know to look for.
+
+## What a borrower is told
+
+An agent reopening another task's conversation is told so **at the top of its first prompt**: that
+everything above belongs to a different task, that it is background rather than instructions, and
+that any file it means to rely on must be re-read. ⛔ And its own prompt is restated in full, which
+a resumed conversation of its *own* would not be — there the conversation already contains it. The
+failure this prevents is not a stale file: it is an agent that carries on somebody else's work
+believing it is its own.
+
+The lender's thread is told too, by name, on the run that borrowed it. ⛔ *Who else has been in this
+conversation* is the one question sharing makes unanswerable from every other screen.
 
 ## Reading what happened
 
