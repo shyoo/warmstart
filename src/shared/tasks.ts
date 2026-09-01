@@ -720,6 +720,30 @@ export interface ClockDecision {
   expiresAt: number | null
 }
 
+/**
+ * One compaction: asked for, or observed, and what it left behind.
+ *
+ * ⚠️ **Three nullable numbers, and each null means something different from zero.** `preTokens` is
+ * null when the CLI did not say how big the context was; `postTokens` is null until a turn measures
+ * the compacted context, and stays null forever if the session never runs another; `landedAt` is
+ * null on a compaction that was **asked for and never happened** - the case worth seeing, and the
+ * one a success-only ledger would hide.
+ */
+export interface Compaction {
+  id: number
+  sessionId: string
+  taskId: string | null
+  /** `clock` - this fleet bought it. `agent` - the agent asked. `auto` - the CLI did it unprompted. */
+  trigger: 'clock' | 'agent' | 'auto'
+  reason: string | null
+  preTokens: number | null
+  postTokens: number | null
+  durationMs: number | null
+  askedAt: number | null
+  landedAt: number | null
+  ts: number
+}
+
 export interface ReserveReport {
   workerId: string
   verdict: 'ok' | 'at_risk' | 'unknown'

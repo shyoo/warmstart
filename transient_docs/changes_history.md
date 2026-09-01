@@ -3007,3 +3007,90 @@ surface that looked like a section which had failed to load.
 textarea computes a visible border and background, and that choosing a finish policy from the control
 lands in the repository's `project.json` and comes back reading *from the project*. No agent has yet
 run under a policy set this way.
+
+## A caution read as a refusal, and a window read as another window (2026-08-31)
+
+t71 was preempted three times in six hours, each within seconds of being dispatched, each throwing
+away a resumed 278k-token session. The daemon's log gave the same reason every time:
+`rate-limit allowed_warning`. Its own probes, minutes either side, read the five-hour window at
+**17%**, **0%** and **19%**.
+
+Three separate confusions produced that, and they are worth keeping apart because each would have
+survived a fix to either of the others.
+
+**A warning was wired to the branch built for a refusal.** `allowed_warning` rides a turn the vendor
+*served*. It says quota is moving; it does not say the next call fails. It was tested with
+`status === 'allowed_warning' || status === 'rejected'`, and those are not the same kind of fact.
+
+**One window's advisory was read as another's.** `rate_limit_event` carries a `rateLimitType`, and a
+Claude account emits `five_hour` and `seven_day` on the same stream. `lastRateLimit` selected
+`order by sampled_at desc limit 1` across all of them. At 22:00:50Z the `five_hour` sample read
+`allowed`; twelve seconds later a `seven_day` advisory arrived and became, as far as every caller was
+concerned, the account's status.
+
+**And then it parked against the wrong clock.** `windowResetsAt` preferred the live sample's
+`resetsAt` — from whichever window that sample happened to describe. So a five-hour concern wrote
+`not_before = 2026-09-07T01:00Z`. ⛔ The task was still sitting there, parked for a week, when this
+was written.
+
+A fourth hole surfaced only under test: because the samples are one stream shared by several windows,
+a `seven_day` advisory landing a second after a `five_hour` **refusal** made the refusal invisible to
+anything reading the newest row. A refusal is the strongest thing a vendor says, so it is now looked
+for on purpose rather than found by luck.
+
+⛔ **The rule that came out of it: a refusal may end a run alone; a caution has to be seconded.**
+`rejected` needs no corroboration — the turn did not happen, and nothing downstream gets to talk that
+down. `allowed_warning` now has to be agreed with by this fleet's own reading of *the same* window
+before it stops anything, at a bar (80%) deliberately lower than the one a reading clears by itself
+(95%): two independent signals are worth more than one, and the warning lowers what the evidence must
+show rather than replacing it.
+
+⚠️ **This also closes R7, and the answer is more interesting than the question.** The live status
+*does* pass through a warning before a refusal — so it is an early warning, not an obituary. But it
+does not track the utilisation this tool measures: warned on `five_hour` at 17%, and on `seven_day`
+while `/usage` read the weekly at 25%. Whatever the vendor is warning about, a per-model sub-limit
+being the likeliest guess, it is not the number on the fleet strip. That is exactly why it may inform
+a routing score and may not, by itself, end a run.
+
+Verified by replaying the real `rate_limit_samples` at all three preemption timestamps: under the new
+rule, none of the three fires.
+
+## The compaction that had never once happened (2026-08-31)
+
+The operator turned `autoCompact` on at 07:48Z and asked, at the end of the day, whether it had done
+anything. It had not. The newest row in `clock_events` was dated **2026-08-27** — the last day the
+fleet had been completely idle.
+
+Two independent causes, and the second is the one worth remembering.
+
+**Preemption closes the session.** The clock only considers sessions in `live` or `idle`, and every
+long break t71 had was a break created by a preemption that had closed the session first. Fixed by
+the section above, not by anything in the clock.
+
+**Move 4 was arithmetically unreachable.** `expectedIdleMs` answers *when will this session be
+wanted*. Four of its five branches derive that from something real — a median over answered
+approvals, a queue that is non-empty now, a `not_before` somebody set, an empty fleet. The fifth,
+"some other task is in flight", derives it from nothing, and returned **exactly the two-hour
+break-even**. `compactThresholdMs` is that same break-even plus an objective adjustment — 2.02h on
+the shipped default, 2.38h under `velocity`. So the placeholder lost every comparison it was ever in,
+and compaction was reachable only when `idle.ms` was infinite.
+
+⛔ **Substituting the break-even for the estimate is a category error, not a conservative default.**
+Answering "when will this be wanted?" with "where the decision flips" hands the entire decision to
+whichever way the comparison happens to be written. The estimate now carries `confident: false`, and
+a guess no longer buys a keepalive on a context past the compaction break-even — holding a 278k
+prefix costs about 28k an hour to sit still, which is the most expensive thing this loop can choose.
+⚠️ A small context still keepalives: there the hourly cost is small and a compaction would buy
+almost nothing.
+
+**And none of it was visible.** The clock sent `/compact` down a session's input and wrote one line
+to a log file. The boundary record zeroed `tokens_since_compact` — a side effect, not a receipt.
+Migration 24 adds `compactions`, which records the **ask** as well as the outcome, because the
+interesting row is the one that never lands: that is HANDOFF R6, whether `/compact` is honoured as a
+user message on the `stream` transport at all, and a success-only ledger would have answered it with
+silence for ever. The thread posts a system message; the task pane draws before → after.
+
+⚠️ `post_tokens` is null until a turn measures it and renders as `--`. The boundary carries a
+pre-size and no counterpart, so the compacted size is genuinely unknown until something reads it
+back. Inventing it by subtracting an estimate would make it the one number on the row nobody
+measured.

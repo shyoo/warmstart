@@ -104,6 +104,14 @@ These are not preferences; breaking one breaks the product.
 - ⛔ **The renderer never holds the daemon token.** It calls the main process over IPC, and main is
   orchestratord's only client. The renderer displays untrusted agent output; it does not get a
   credential to a service that can spawn processes.
+- ⛔ **A vendor signal names a window, and a caution is not a refusal.** `rate_limit_event` carries
+  `rateLimitType`, and one account emits `five_hour` and `seven_day` records minutes apart that
+  disagree — so "the latest sample" is not a status, it is whichever window spoke last. **Say which
+  window you mean**, and park a task only against the reset of the window that stopped it. ⚠️ And
+  `rejected` (the turn did not happen) is not `allowed_warning` (the turn was served): one may end a
+  run alone, the other needs this fleet's own reading of the same window to agree. Measured
+  2026-08-31 — three preemptions at 17%, 0% and 19% of the window being warned about, and a task
+  parked for a week over a weekly advisory. `docs/cost-model.md` §5.
 - ⛔ **A quota reading is never shown without its age, and a stale one is never shown as a current
   number** - a stale percentage makes the compaction reserve look satisfied when it is not. ⚠️ But
   "unknown" is not the whole answer either: never probed, no usage cache yet, stale, and a failed
@@ -126,8 +134,8 @@ These are not preferences; breaking one breaks the product.
   0.45 and an idle worker beat a busy one always. Measured 2026-08-27: a never-signed-in account won
   a dispatch over two working ones on exactly this. Only checked evidence may move a score.
 - ⛔ **But a term stuck at zero for the whole fleet is a missing input, not a safe default.** Fixing
-  the above left `quotaRisk` with no reachable trigger at all — `at_risk` needs R2, and the live
-  status only turns after the vendor has refused — so quota vanished from routing and nobody noticed
+  the above left `quotaRisk` with no reachable trigger at all — `at_risk` needs R2, and nothing then
+  read the live status at all — so quota vanished from routing and nobody noticed
   for three days. Measured 2026-08-30: four consecutive consults spent choosing between `-0.120` and
   `-0.120`, on accounts at 64% and 98% of their windows. ⚠️ Honest-zero is where a term *rests*, never
   where it *lives*; if nothing can move it, it needs a source, and a percentage is one.

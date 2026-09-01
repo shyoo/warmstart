@@ -173,6 +173,70 @@ describe('the automatic-compaction switch', () => {
   })
 })
 
+/**
+ * ⛔ **The reason `autoCompact` did nothing for five days.** Switched on 2026-08-31 at 07:48Z; by
+ * 23:30Z `clock_events` still held nothing newer than 2026-08-27, while a session sat at 278k
+ * context tokens. The switch was fine and `decide()` was fine. The arithmetic underneath was not:
+ * `expectedIdleMs` returns exactly **2h** whenever any task is in flight, and the balanced
+ * objective computes a compaction threshold of **2.02h** - so the keepalive branch always matched
+ * first and move 4 was unreachable on any fleet that was doing anything at all. The one day it did
+ * compact was the day the fleet was completely idle and `idle.ms` was infinite.
+ *
+ * ⚠️ Driven through the real `expectedIdleMs` with a real task row rather than through an injected
+ * number, because the bug was not in either constant. It was in the two of them meeting.
+ */
+describe('the threshold two constants landed exactly on', () => {
+  const OBJECTIVE = { cost: 0.34, velocity: 0.33, quality: 0.33 }
+
+  /** A session that wants to compact: deep in its last-chance window, big context, plenty since. */
+  const ripe = (patch: Partial<Session> = {}): Session =>
+    session({
+      contextTokens: 278_275,
+      tokensSinceCompact: 618_405,
+      cacheExpiresAt: NOW + 8 * 60 * 1000,
+      ...patch
+    })
+
+  beforeAll(async () => {
+    const tasks = await import('./tasks.js')
+    const t = tasks.createTask({ title: 'something in flight', createdBy: { kind: 'human' } })
+    tasks.setStatus(t.id, 'running')
+  })
+
+  it('a fleet with one task in flight expects exactly two hours of idleness', () => {
+    expect(clock.expectedIdleMs(ripe(), NOW).ms).toBe(2 * 60 * 60 * 1000)
+  })
+
+  it('and the balanced objective puts the break-even just past it', async () => {
+    const { policy } = await import('./objective.js')
+    expect(policy(OBJECTIVE).compactThresholdMs).toBeGreaterThan(2 * 60 * 60 * 1000)
+    expect(policy(OBJECTIVE).compactThresholdMs).toBeLessThan(2.1 * 60 * 60 * 1000)
+  })
+
+  it('⭐ compacts a 278k context anyway, which is what it never did before', () => {
+    const decision = clock.decide(ripe(), { objective: OBJECTIVE, now: NOW })
+    expect(decision.move).toBe('compact')
+  })
+
+  it('says out loud that the switch is why, when the switch is why', () => {
+    const decision = clock.decide(ripe(), {
+      objective: OBJECTIVE,
+      now: NOW,
+      settings: { ...settings.DEFAULT_SETTINGS, autoCompact: false }
+    })
+    expect(decision.move).toBe('none')
+    expect(decision.reason).toContain('switched off')
+  })
+
+  it('leaves a small context alone: the break-even is about size, not only about time', () => {
+    const decision = clock.decide(
+      ripe({ contextTokens: 4_000, tokensSinceCompact: 1_000 }),
+      { objective: OBJECTIVE, now: NOW }
+    )
+    expect(decision.move).not.toBe('compact')
+  })
+})
+
 describe('the probe frequency setting', () => {
   it('defaults to 5 minutes', () => {
     expect(settings.DEFAULT_SETTINGS.probeIntervalMinutes).toBe(5)

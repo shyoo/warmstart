@@ -247,8 +247,17 @@ it lapses: send it queued work, keepalive, compact, or let it go. See `cost-mode
 **Compaction reserve** — quota held back so every live session on a worker can still be compacted.
 `/compact` fails at true 100%, which strands the context entirely. See `cost-model.md` §5.
 
+**Refusal vs caution** — what the vendor's live `rate_limit_event` `status` is saying. **`rejected`**
+is a refusal: the turn did not happen, and one is enough to stop a run. **`allowed_warning`** is a
+caution attached to a turn that *was served* — evidence that quota is moving, never proof the next
+call fails. ⛔ Treating them alike preempted three runs at 17%, 0% and 19% of the window being warned
+about (t71, 2026-08-31). A caution now lowers a routing score on its own but must be seconded by this
+fleet's own reading of **the same window** before it ends anything. See `cost-model.md` §5.
+
 **Preemption** — stopping a run before a quota window closes: wrap up, commit what compiles, write a
-handoff, then compact or close. The task rests at `paused_quota` with `not_before = resets_at`, and
+handoff, then compact or close. The task rests at `paused_quota` with `not_before = resets_at` **of
+the window that stopped it** — a worker reports several and a weekly one is not a five-hour one, so a
+reset borrowed from the wrong window parks a task for days. And
 `resumeQuotaPaused()` — a clock tick beside `admitScheduled()` — puts it back to `ready` when that
 time arrives. ⛔ It returns to the **queue**, not to a worker: the dispatch gate reads the quota again
 and may still hold it, which is honest and visible in a way `paused_quota` for ever was not.

@@ -132,6 +132,12 @@ it does not replace the calibration in §5; what it gives is a **status** (`allo
 rejected) and a **real `resetsAt`**, which is most of what a preemption deadline actually needs. The
 `overageStatus` field also says whether spilling past the window is even possible on this account.
 
+⛔ **`rateLimitType` is not one window.** The same account emits `five_hour` and `seven_day` records
+on the same stream, minutes apart and disagreeing - measured 2026-08-31 on ClaudeThird, claude-code
+2.1.251: `allowed` on `five_hour` at 22:00:50Z, `allowed_warning` on `seven_day` at 22:01:02Z. Any
+reader that takes "the latest sample" gets whichever arrived last, which is how a weekly advisory
+came to park a task against a five-hour deadline. **Every consumer must say which window it means.**
+
 ⚠️ It only exists on the `stream` transport. A session hosted in a PTY for a human to watch emits
 nothing of the sort, which is one more reason scheduled work does not run that way.
 
@@ -139,9 +145,19 @@ nothing of the sort, which is one more reason scheduled work does not run that w
 the config cache — which is what makes preemption possible at all, since a reset time from a window
 that has already turned over is worse than none.
 
-**Still owed:** whether `status` passes through an intermediate value before `rejected`. If it does,
-it is an early warning; if it does not, it is an obituary, and preemption can only ever be driven by
-the clock. Watch a window fill to find out.
+⭐ **R7 is closed, and the answer is *yes, but it is not a countdown*** (2026-08-31, claude-code
+2.1.251, from this install's own `rate_limit_samples` and daemon log). `allowed_warning` is real and
+does arrive before `rejected` - so the signal is an early warning rather than an obituary. ⛔ But it
+**does not track the utilisation this tool measures**: t71 was warned on `five_hour` while the probe
+read the same window at **17%**, and warned on `seven_day` while `/usage` read the weekly at **25%**.
+Whatever the vendor is warning about - a per-model sub-limit is the likeliest explanation - it is not
+the number on the fleet strip.
+
+⚠️ **So a warning is evidence, never a verdict.** It is enough to lower a worker's routing score,
+and *not* enough on its own to end a run in flight: three runs were preempted at 17%, 0% and 19% of
+the very window being warned about, each throwing away a resumed 278k-token session. A refusal
+(`rejected`) is the vendor declining and needs no corroboration; a warning now has to be seconded by
+this fleet's own reading of the same window before it can stop anything.
 
 ### What this costs the design
 

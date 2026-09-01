@@ -2748,6 +2748,13 @@ select:focus-visible,
   margin-top: var(--sp-2);
 }
 
+.side-run-why {
+  margin-top: 3px;
+  color: var(--color-text-faint);
+  font-size: var(--text-meta);
+  line-height: 1.4;
+}
+
 .side-run-prompt {
   margin-top: var(--sp-1);
 }

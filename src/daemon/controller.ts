@@ -7,7 +7,7 @@ import { log } from './log.js'
 import { adapter } from './adapters/index.js'
 import { listWorkers, recordDispatchFailure } from './workers.js'
 import { accountUnavailability } from './eligibility.js'
-import { lastQuota, lastRateLimit } from './quota.js'
+import { freshRateLimit, isRefusal, lastQuota } from './quota.js'
 import {
   closeSession,
   onSessionEnd,
@@ -294,8 +294,12 @@ export function controllerUnavailability(worker: Worker): string | null {
     return `${worker.label} is already answering one`
   }
 
-  const rate = lastRateLimit(worker.id)
-  if (rate && rate.status !== 'allowed') {
+  // ⛔ A refusal, not a caution. This gate decides whether a worker may be *asked a question* - one
+  // short turn - and `allowed_warning` is a turn the vendor served. Blocking on it took the whole
+  // fleet's judgment offline over an advisory, which is the failure `eligibility.ts` exists to keep
+  // out of the chooser: held out for a reason nobody could act on.
+  const rate = freshRateLimit(worker.id)
+  if (rate && isRefusal(rate.status)) {
     return `${worker.label} is rate-limited (${rate.status})`
   }
 

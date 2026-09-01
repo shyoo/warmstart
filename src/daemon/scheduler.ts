@@ -93,7 +93,14 @@ import { stripAnsi } from './stream.js'
 import { activityFor, clearActivity } from './activity.js'
 import { log } from './log.js'
 import { db } from './db.js'
-import { windowResetsAt, lastRateLimit } from './quota.js'
+import {
+  freshRateLimit,
+  isSessionRateWindow,
+  refusalRateLimit,
+  sessionRateLimit,
+  windowResetsAt,
+  type LiveRateLimit
+} from './quota.js'
 import { reserveState } from './reserve.js'
 import { settings } from './settings.js'
 import { estimateTask, overrunFactor } from './estimator.js'
@@ -127,7 +134,80 @@ const QUOTA_HIGH_WATER = 92
 /**
  * When 5h quota reaches or exceeds this during an active run, preempt the run before hard exhaustion.
  */
-const QUOTA_MIDRUN_PREEMPT_WATER = 95
+export const QUOTA_MIDRUN_PREEMPT_WATER = 95
+
+/**
+ * The bar a reading has to clear when the **vendor is warning about that same window too**.
+ *
+ * ⚠️ Lower than `QUOTA_MIDRUN_PREEMPT_WATER`, and only reachable with two independent signals
+ * agreeing. A warning does not replace the evidence; it lowers what the evidence has to show.
+ */
+export const QUOTA_WARNED_PREEMPT_WATER = 80
+
+/** How long a task may be parked when nothing will say when the window actually resets. */
+const BLIND_PARK_MS = 5 * 60 * 60 * 1000
+
+/**
+ * Should this run be wrapped up now, and if so, until when?
+ *
+ * ⛔ **Written after a run was preempted three times in six hours at 0%, 17% and 19% of the window
+ * it was being preempted over** (t71, 2026-08-31), then parked until 2026-09-07. Three separate
+ * confusions produced that, and each is answered here by name:
+ *
+ *  1. **A warning is not a refusal.** `allowed_warning` rides a turn the vendor *served*. It is
+ *     evidence that quota is moving, never proof the next call fails - so on its own it no longer
+ *     ends a run. `rejected` is the vendor declining, and one of those is enough.
+ *  2. **A window is not every window.** Claude Code warns on `five_hour` and `seven_day` from the
+ *     same account, and only the first is a pool a single run can drain. A weekly caution now
+ *     changes nothing about a run in flight; there is no version of "pause for six days" that beats
+ *     letting the turn proceed.
+ *  3. **Park against the window that stopped you, never a different one.** `resumeAt` comes from the
+ *     sample that produced the verdict, so a five-hour concern cannot write a seven-day `not_before`.
+ *
+ * ⚠️ `percent` is this fleet's own reading of the pool the run draws from, already checked for
+ * freshness and turnover by the caller, or `null` when there is no reading worth trusting. Null is
+ * *unknown*, so it corroborates nothing - it cannot combine with a warning to end a run.
+ */
+export function overrunVerdict(
+  workerId: string,
+  percent: number | null
+): { reason: string; resumeAt: number } | null {
+  const park = (sample: LiveRateLimit | null): number =>
+    (sample?.resetsAt && sample.resetsAt > Date.now() ? sample.resetsAt : null) ??
+    windowResetsAt(workerId)?.at ??
+    Date.now() + BLIND_PARK_MS
+
+  // A refusal, on any window. The turn did not happen; nothing here gets to talk it down.
+  const refused = refusalRateLimit(workerId)
+  if (refused) {
+    return {
+      reason: `vendor refused the turn (${refused.status} on ${refused.windowId})`,
+      resumeAt: park(refused)
+    }
+  }
+
+  if (percent === null) return null
+
+  if (percent >= QUOTA_MIDRUN_PREEMPT_WATER) {
+    return { reason: `${percent}% of 5h window used`, resumeAt: park(sessionRateLimit(workerId)) }
+  }
+
+  // Two signals about the *same* window. Neither would act alone at this level.
+  const warned = freshRateLimit(workerId)
+  if (
+    warned &&
+    warned.status !== 'allowed' &&
+    isSessionRateWindow(warned.windowId) &&
+    percent >= QUOTA_WARNED_PREEMPT_WATER
+  ) {
+    return {
+      reason: `${percent}% of 5h window used, and the vendor is warning about it (${warned.status})`,
+      resumeAt: park(warned)
+    }
+  }
+
+  return null
+}
 
 /**
  * When two candidates score this close, the arithmetic cannot separate them.
@@ -794,7 +874,13 @@ export function windowRisk(
  */
 export function quotaRiskOf(workerId: string): 0 | 1 {
   const reserve = reserveState(workerId)
-  const rate = lastRateLimit(workerId)
+  // ⛔ `freshRateLimit`: a status is only evidence while it still describes the account. Read from
+  // `lastRateLimit`, one `allowed_warning` saturated this term for as long as nothing else ran on
+  // the worker - and nothing else runs on a worker this term has just pushed to the back of the
+  // queue. Routing *should* still flinch at a weekly warning, so the window is deliberately not
+  // narrowed here the way the preemption gate narrows it: being ranked lower costs a worker a
+  // dispatch, where being preempted costs it a session.
+  const rate = freshRateLimit(workerId)
   return reserve.verdict === 'at_risk' || (rate && rate.status !== 'allowed') ? 1 : 0
 }
 
@@ -1000,7 +1086,7 @@ function scoreCandidate(
   const fromWindow = trustedWindow ? windowRisk(trustedWindow.percent) : 0
   const quotaRisk = Math.max(evidence, fromWindow)
   const reserve = reserveState(worker.id)
-  const rate = lastRateLimit(worker.id)
+  const rate = freshRateLimit(worker.id)
   // The basis names *which* source spoke, because 0.62 from a percentage and 1.0 from a refusal are
   // different facts that a single number cannot distinguish.
   const quotaBasis = trustedWindow
@@ -1697,44 +1783,21 @@ async function runWatchdogs(): Promise<void> {
       continue
     }
 
-    // 2. Active 5h quota exhaustion / in-stream rate-limit warning.
-    // Catches rapid in-flight quota depletion (streamed rate_limit_event with 'allowed_warning' / 'rejected',
-    // or live 5h window percentage >= 95%) before the agent triggers a hard 429 API failure.
+    // 2. Active 5h quota exhaustion, or a vendor refusal mid-stream.
     if (switches.autoOverrunPreempt && task.preemptible) {
-      const liveRate = lastRateLimit(run.workerId)
-      const isRateWarning =
-        liveRate !== null &&
-        (liveRate.status === 'allowed_warning' || liveRate.status === 'rejected') &&
-        Date.now() - liveRate.sampledAt < 10 * 60 * 1000
-
-      let isQuotaExhausted = false
-      let quotaPercent = 0
+      const worker = getWorker(run.workerId)
       const quota = lastQuota(run.workerId)
-      if (quota && !quota.stale) {
-        const worker = getWorker(run.workerId)
-        if (worker) {
-          const choice = resolveModelChoice(task.constraints, worker, false, quota)
-          const pool = poolFor(worker, choice.model)
-          const win = sessionWindowFor(quota.windows, pool)
-          if (win && win.percent >= QUOTA_MIDRUN_PREEMPT_WATER) {
-            isQuotaExhausted = true
-            quotaPercent = Math.round(win.percent)
-          }
-        }
+      let percent: number | null = null
+      if (worker && quota && !quota.stale) {
+        const choice = resolveModelChoice(task.constraints, worker, false, quota)
+        const win = sessionWindowFor(quota.windows, poolFor(worker, choice.model))
+        if (win && !windowExpired(win)) percent = Math.round(win.percent)
       }
 
-      if (isRateWarning || isQuotaExhausted) {
-        const resumeAt =
-          (liveRate?.resetsAt && liveRate.resetsAt > Date.now() ? liveRate.resetsAt : null) ??
-          windowResetsAt(run.workerId)?.at ??
-          Date.now() + 5 * 60 * 60 * 1000
-
-        const reason = isRateWarning
-          ? `rate-limit ${liveRate?.status ?? 'warning'}`
-          : `${quotaPercent}% of 5h window used`
-
-        log.warn(`t${task.seq} preempted for quota overrun risk (${reason})`)
-        await preempt(task, session, resumeAt, reason)
+      const verdict = overrunVerdict(run.workerId, percent)
+      if (verdict) {
+        log.warn(`t${task.seq} preempted for quota overrun risk (${verdict.reason})`)
+        await preempt(task, session, verdict.resumeAt, verdict.reason)
         continue
       }
     }

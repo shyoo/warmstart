@@ -4,6 +4,7 @@ import type {
   CacheMove,
   ChatMessage,
   ClockDecision,
+  Compaction,
   CompletionMode,
   ResolvedCompletionMode,
   CompletionModeChoice,
@@ -1011,6 +1012,14 @@ export interface RpcMap {
        * from a warm prefix at `0.1·C` or a cold one at `2.0·C`.
        */
       sessions: Session[]
+      /**
+       * Every compaction on this task, whether this fleet bought it or merely watched it happen.
+       *
+       * ⛔ Beside `runs` because it belongs to the same question - what did this task cost, and
+       * why - and because a compaction is the one event that makes every turn after it cheaper.
+       * A pane that showed runs and hid compactions was showing the spending and not the saving.
+       */
+      compactions: Compaction[]
       /** The live tail for this task, if anything is running. Same content as `task.activity`. */
       activity: Array<{ text: string; ts: number }>
       /**

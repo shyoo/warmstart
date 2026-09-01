@@ -6,7 +6,8 @@ import { costModel } from './costmodel.js'
 import { adapter } from './adapters/index.js'
 import { clearClockMove, getSession } from './sessions.js'
 import { emit } from './events.js'
-import { creditTurn } from './tasks.js'
+import { addMessage, creditTurn } from './tasks.js'
+import { fillPostTokens, noteCompactionLanded } from './compaction.js'
 import { clearDispatchFailure } from './workers.js'
 import type { StreamUsage } from './stream.js'
 import { log } from './log.js'
@@ -118,7 +119,10 @@ export function contextOf(t: Totals): number {
 
 export interface TailerEvents {
   onTurn(turn: Turn): void
-  onCompact(sessionId: string, meta: { preTokens: number | null; durationMs: number | null }): void
+  onCompact(
+    sessionId: string,
+    meta: { preTokens: number | null; durationMs: number | null; trigger?: string | null }
+  ): void
 }
 
 export class TranscriptTailer {
@@ -214,6 +218,7 @@ export class TranscriptTailer {
 
     if (isCompactBoundary(rec)) {
       this.events.onCompact(this.sessionId, {
+        trigger: rec.compactMetadata?.trigger ?? null,
         preTokens: rec.compactMetadata?.preTokens ?? null,
         durationMs: rec.compactMetadata?.durationMs ?? null
       })
@@ -320,6 +325,12 @@ export function recordTurn(turn: Turn): boolean {
       turn.sessionId
     )
 
+  // ⛔ The first turn after a compaction is the only thing that ever measures what the compaction
+  // left behind. The boundary record carries a `preTokens` and no counterpart, so until this runs
+  // the "after" half of every compaction on this session is genuinely unknown - and is reported as
+  // unknown rather than filled in from an estimate.
+  if (turn.contextTokens !== null) fillPostTokens(turn.sessionId, turn.contextTokens)
+
   // ⛔ Proof, not a guess: this account just produced a real assistant turn, so whatever held it out
   // of dispatch is over. A clean exit would not do - a process can exit 0 having done nothing, which
   // is the exact failure the quarantine exists to catch.
@@ -351,7 +362,7 @@ function announce(sessionId: string): void {
 
 export function recordCompaction(
   sessionId: string,
-  meta: { preTokens: number | null; durationMs: number | null }
+  meta: { preTokens: number | null; durationMs: number | null; trigger?: string | null }
 ): void {
   db().prepare('update sessions set tokens_since_compact = 0 where id = ?').run(sessionId)
   // ⛔ The proof arrived, so the outstanding request is retired here - at the one place that has
@@ -359,6 +370,24 @@ export function recordCompaction(
   // until the settle window ran out and then count it as ignored: a compaction that worked,
   // recorded as one that failed, and two more of them before the clock gave up.
   clearClockMove(sessionId)
+
+  // ⚠️ The boundary is the *only* moment this is knowable, so the ledger is closed here rather than
+  // anywhere more convenient. `postTokens` stays null until a turn measures it - see fillPostTokens.
+  const record = noteCompactionLanded(sessionId, meta)
+  if (record?.taskId) {
+    addMessage(
+      record.taskId,
+      'system',
+      `Compacted${record.preTokens ? ` from ${Math.round(record.preTokens / 1000)}k tokens` : ''}` +
+        `${record.durationMs ? ` in ${Math.round(record.durationMs / 1000)}s` : ''}. ` +
+        (record.trigger === 'clock'
+          ? 'The cache clock asked for this.'
+          : record.trigger === 'agent'
+            ? 'The agent asked for this itself.'
+            : 'The CLI did this on its own when the context filled.')
+    )
+  }
+
   log.info(
     `session ${sessionId.slice(0, 8)} compacted` +
       (meta.preTokens ? ` from ${meta.preTokens} tokens` : '') +

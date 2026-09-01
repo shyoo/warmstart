@@ -8,10 +8,10 @@ started in CI, never run against a real agent CLI.
 if you add a line, find the one it obsoletes and cut it in the same edit. Finished work moves to
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
-**Baseline (2026-08-31, measured):** typecheck · lint · build clean · `npm test` 897/899 (2 POSIX-only
-skipped) · `test:daemon` 141/141 · `test:ui` 171/171 · `test:pack` 18/18 · L4 (opt-in) landed a real
+**Baseline (2026-08-31, measured):** typecheck · lint · build clean · `npm test` 921/923 (2 POSIX-only
+skipped) · `test:daemon` 141/141 · `test:ui` 172/172 · `test:pack` 18/18 · L4 (opt-in) landed a real
 agent commit on origin/main. Electron 44.0.0, electron-builder 26.15.3, 0 npm vulnerabilities.
-CLIs here: claude 2.1.251 · agy 1.1.22 · codex 0.151.0.
+CLIs here: claude 2.1.252 · agy 1.1.22 · codex 0.151.0.
 
 ⭐ **`scripts/build-win.ps1` runs all of the above** (`-Help` for options, `-Restart` for the inner loop);
 content-addressed, **92s cold, ~0s warm**. ⛔ **One packaged app — `release\win-unpacked\`**, so running
@@ -40,7 +40,7 @@ gaps are below. Scope: `transient_docs/implementation_plan_2026-08-24.md` §14, 
 src/daemon/            orchestratord. Runs as Electron-with-ELECTRON_RUN_AS_NODE, detached.
   index.ts             entry: lock, db, server, poller, scheduler, tailer wiring, shutdown
   server.ts  api.ts    HTTP+WS on 127.0.0.1:<random>, bearer token, typed RPC
-  db.ts                node:sqlite + numbered migrations (v22)
+  db.ts                node:sqlite + numbered migrations (v24)
   costmodel.ts         the four questions; user dir > bundled > compiled-in
   workers.ts           registry, isolation roots, retire-keeps-credentials, the fleet's display
                        order - ⛔ display only (+ workerorder.test.ts)
@@ -70,6 +70,7 @@ src/daemon/            orchestratord. Runs as Electron-with-ELECTRON_RUN_AS_NODE
                        broadcast (+ .test.ts)
   cacheclock.ts        the six moves - what the whole cost model exists for. A move is a request;
                        moveOutcome() is what stops it being re-asked (+ .test.ts)
+  compaction.ts        the compaction ledger. ⛔ Records the *ask*, so one that never landed shows
   lifecycle.ts         how the daemon is asked to stop itself. ⛔ Asked, never killed by pid
   settings.ts          the fleet defaults: autoCompact, autoPreempt, autoOverrunPreempt,
                        autoRunawayStop, probeIntervalMinutes, finishPolicy, sessionSharing
@@ -106,9 +107,11 @@ docs/                  cost-model.md, glossary.md, adapters.md, landing.md, sess
 
 ## What is true right now and not yet proven
 
-- ⭐ **All three providers have a free quota probe** (**R3 closed**). ⚠️ Free of tokens, not of *sessions*: each `/usage` refresh opens a PTY that registers with the vendor's bridge — 150 against 14 real work sessions in four days. ⛔ Those already registered are account-side; only the operator can archive them. ⭐ **There is no refresh clock any more** (2026-08-31, `transient_docs/quota_staleness_2026-08-31.md`): the 2h floor that replaced the 30m one cut the PTYs and fixed nothing else, because a reading is trusted for 15m — ClaudeSecond read `stale` for 1h50 of every 2h05 while the 5m probe setting looked like a promise it never made (the sweep re-reads the *vendor's* cache; only the vendor rewrites it). `ensureFreshQuota()` now refreshes **at the dispatch gate and when a run ends**, backing off on the **attempt** — a failed refresh stores the vendor's old `sampledAt`, so age-keyed retry said *yes* forever on the one worker that could not answer and starved every worker behind it in the single per-sweep slot. ⚠️ The UI stopped printing the word `stale`: `read 2h ago`, warning colour reserved for *every check since has failed*. ⚠️ Neither has run in flight.
+- ⭐ **All three providers have a free quota probe** (**R3 closed**). ⚠️ Free of tokens, not of *sessions*: each `/usage` refresh opens a PTY that registers with the vendor's bridge — 150 against 14 real work sessions in four days. ⛔ Those already registered are account-side; only the operator can archive them. ⭐ **There is no refresh clock any more** (2026-08-31, `transient_docs/quota_staleness_2026-08-31.md`): `ensureFreshQuota()` refreshes **at the dispatch gate and when a run ends**, backing off on the **attempt** rather than the reading's age — age-keyed retry said *yes* forever on the one worker that could not answer, starving every worker behind it. ⚠️ The UI prints `read 2h ago`, never the word `stale`; warning colour is reserved for *every check since has failed*. ⚠️ Not yet run in flight.
+- ⭐ **A vendor caution no longer ends a run** (2026-08-31, t71). `lastRateLimit` returned the newest sample of **any** window, so a `seven_day` advisory landing 12s after a healthy `five_hour` reading preempted three runs at 5h **17% · 0% · 19%** and parked the task until **2026-09-07**. Now `rejected` stops a run alone; `allowed_warning` needs this fleet's own reading of *that* window to agree (≥80%); `resumeAt` comes from the sample that decided; an expired or stale sample is forgotten; and a later advisory cannot mask an earlier refusal. ⚠️ Replayed over the real samples all three preemptions vanish; none has been re-run in flight.
+- ⭐ **`/compact` had never once run, and now says so either way** (2026-08-31). `autoCompact` was on from 07:48Z with the newest `clock_events` row dated 2026-08-27, because `expectedIdleMs` returns exactly 2h whenever anything is in flight while the balanced threshold is 2.02h — move 4 was unreachable on any fleet that was doing anything. That placeholder is flagged `confident: false` and no longer buys a keepalive on a large context. ⛔ **Migration 24** `compactions` records the **ask** as well as the outcome, so one that never landed is visible; the thread posts a system message and the task pane draws before → after.
 - ⚠️ **The compaction reserve still reports `unknown`** (**R2**). ⭐ Quota is a routing input again: `windowRisk` slopes to the 92% gate and every score prints its derivation.
-- ⚠️ **Never exercised end to end: the tray *icon*, and keepalive firing** (its arithmetic is unit-tested).
+- ⚠️ **Never exercised end to end: the tray *icon*, keepalive firing, and a compaction landing** (each one's arithmetic is unit-tested).
 - ⭐ **Every intervention on a live session has an off switch** — Settings > Global: `autoCompact`/`autoPreempt` **on**, `autoRunawayStop` **off**, `probeIntervalMinutes` 5m.
 - ⭐ **A full workspace pool holds a task rather than failing it** (2026-08-29). ⛔ No dependency edge: a hold is re-decided every tick, so priority wins. ⚠️ A fleet wider than its pool is *named*, never silently grown.
 - ⭐ **A quota pause now ends on its own clock** (2026-08-31, t60). `preempt` parks a task as `paused_quota` carrying `not_before = resetsAt` and three places said it *"resumes itself"* — `admitScheduled` reads only `scheduled`, `admit` refuses every held status, `resumeTask` took neither, so that field was read by **nothing** and t60 sat 291s past its own resume time with no button either. `resumeQuotaPaused()` runs in `tick()`; `resumeTask` and the menu now accept it. ⛔ Back to `ready`, not to a worker. ⭐ Beside it: `stale` is an **age** test, so a reading two minutes old whose window has since reset was trusted for hours (measured: 88% on a window that reset 6m earlier). `windowExpired()` makes an expired window **unknown, never zero**. ⚠️ Neither has run in flight.
@@ -126,15 +129,7 @@ docs/                  cost-model.md, glossary.md, adapters.md, landing.md, sess
 - ⭐ **Antigravity runs, reports its quota, and resumes a conversation by id** (**R9**, measured
   2026-08-28). ⚠️ It meters differently: one aggregate usage record per run, `cache_write` always 0,
   and cache reads that dwarf everything else — 12.5M in a median run (2026-08-30).
-- ⭐ **The estimator answers per agent and model, not one number for the fleet** (2026-08-30,
-  `docs/cost-model.md` §10). Over 73 completed runs `antigravity-cli/gemini-3.7-flash-medium` medians
-  **81x** `claude-code/claude-sonnet-5` (93x priced), so the old fleet median described neither —
-  every agy run stood at ~4x its estimate against a 3x runaway watchdog. Now
-  `size(task) × factor(adapter, model)`, priced by `CostModel.priceRun`, keyed off `runs.adapter_id`
-  and `runs.model` (**migration 23**), warmth divided out (×0.92 warm / ×1.21 cold, measured).
-  ⛔ **Routing was left alone deliberately** — zero of 54 tasks has run on two keys, so nothing
-  separates *expensive agent* from *agent that gets the big tasks*. Factors feed estimates and gates
-  only.
+- ⭐ **The estimator answers per agent and model, not one number for the fleet** (2026-08-30, `docs/cost-model.md` §10). `size(task) × factor(adapter, model)`, keyed off `runs.adapter_id`/`runs.model` (**migration 23**), warmth divided out. One fleet median was **81x** wrong across two agents. ⛔ **Routing was left alone deliberately**: zero of 54 tasks has run on two keys, so nothing yet separates *expensive agent* from *agent that gets the big tasks*. Factors feed estimates and gates only.
 - ⛔ **Nothing is proven off Windows.** CI runners carry no agent CLI, and CI is red (above). ⛔ **Unsigned**: a certificate and an Apple Developer account, not a config line.
 
 ## Next
@@ -182,11 +177,10 @@ beside it; the difference is what the CLI spent that never reached a transcript.
 | **R1** | Does the auto-mode classifier bill on a subscription? | ⭐ A run now records the window either side of itself, so the task pane shows (quota delta − transcript tokens). Run one shell-heavy task twice on a quiet worker, `auto` then `default` | If it bills, `auto` stops being a free default and the objective vector has to price it. §9 |
 | **R2** | `tokens_per_percent` per (worker, model, tokenizer) | With exactly one session live, sample `/usage` by hand at intervals and diff against transcript tokens over the same span | Turns percent into tokens, which is what every gate actually needs. Plan §8.5 |
 | **R4** | Real compaction cost end to end | Compact a session of known size; diff transcript tokens across the `compact_boundary` and record `durationMs` | Three samples so far (139k · 116k · **161k** ms). The spread matters more than the mean for the T+53m deadline |
-| **R6** | Is `/compact` honoured as a user message on `stream`? | Send it into a live stream session and watch for a `compact_boundary` record | ⚠️ Not urgent — the clock gives up after two ignored attempts. A `no` makes handoff-and-close the only move on that transport |
-| **R7** | Does the live rate-limit `status` warn before it refuses? | Let one window fill while watching `rate_limit_samples` | Decides whether the live signal is an early warning or an obituary |
+| **R6** | Is `/compact` honoured as a user message on `stream`? | ⭐ Now answers itself: the `compactions` ledger records the ask, so a row that stays `never landed` **is** the negative result. Read it in the task pane | A `no` makes handoff-and-close the only move on that transport. The clock already gives up after two attempts |
 | **R8** | Does a real model answer a consult in the shape the validators accept? | Designate a controller, file a `plan` task, run `controller.drain`, read the row: `answered` or `fallback`, and the `fallbackReason` | The one M4 path L1 cannot reach |
 
-R1, R6 change the cache clock. **R10/R11 closed 2026-08-29**, **R12 closed 2026-08-30** (§5). ⚠️ **R5 dropped**: resuming is measured and shipped within an account; its transplant needs a second subscription.
+R1, R6 change the cache clock. **R7 closed 2026-08-31** — it *does* warn first, but not about the number the fleet strip shows (§5). **R10/R11 closed 2026-08-29**, **R12 closed 2026-08-30**. ⚠️ **R5 dropped**: resuming is measured and shipped within an account; its transplant needs a second subscription.
 
 ## Standing decisions worth not relitigating
 

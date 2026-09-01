@@ -25,6 +25,7 @@ let workers: typeof import('./workers.js')
 let tasks: typeof import('./tasks.js')
 let scheduler: typeof import('./scheduler.js')
 let settings: typeof import('./settings.js')
+let quota: typeof import('./quota.js')
 
 /** The estimate the runaway factor is measured against; one completed run is enough to have one. */
 const ESTIMATE = 100_000
@@ -89,6 +90,30 @@ function seedRunawayTask(spend = ESTIMATE * 4) {
   return { task, run, sessionId }
 }
 
+function seedRateLimit(
+  workerId: string,
+  windowId: string,
+  status: string,
+  resetsAt: number | null,
+  sampledAt = Date.now()
+): void {
+  db.db()
+    .prepare(
+      `insert into rate_limit_samples (worker_id, session_id, window_id, status, resets_at, sampled_at)
+       values (?,?,?,?,?,?)`
+    )
+    .run(workerId, null, windowId, status, resetsAt, sampledAt)
+}
+
+function seedQuotaPercent(workerId: string, percent: number, resetsAt = Date.now() + 3_600_000): void {
+  db.db()
+    .prepare(
+      `insert into quota_samples (worker_id, window_id, label, percent, resets_at, source, sampled_at)
+       values (?,?,?,?,?,?,?)`
+    )
+    .run(workerId, '5h', '5-hour', percent, resetsAt, 'probe', Date.now())
+}
+
 const noticesOn = (taskId: string): number =>
   tasks
     .messagesFor(taskId)
@@ -106,6 +131,7 @@ beforeAll(async () => {
   tasks = await import('./tasks.js')
   scheduler = await import('./scheduler.js')
   settings = await import('./settings.js')
+  quota = await import('./quota.js')
   db.openDb(join(dir, 'preempt.db'))
 })
 
@@ -243,16 +269,11 @@ describe('the switches that gate all of this', () => {
     expect(tasks.getTask(task.id)?.status).toBe('running')
   })
 
-  it('preempts a run on rate_limit_warning when autoOverrunPreempt is on', async () => {
+  it('preempts a run when the vendor refuses the turn', async () => {
     expect(settings.DEFAULT_SETTINGS.autoOverrunPreempt).toBe(true)
     const { task, run } = seedRunawayTask(0)
     const workerId = tasks.requireRun(run.id).workerId
-    db.db()
-      .prepare(
-        `insert into rate_limit_samples (worker_id, session_id, window_id, status, resets_at, sampled_at)
-         values (?,?,?,?,?,?)`
-      )
-      .run(workerId, null, '5h', 'allowed_warning', Date.now() + 3_600_000, Date.now())
+    seedRateLimit(workerId, 'five_hour', 'rejected', Date.now() + 3_600_000)
 
     await scheduler.tick()
     await vi.advanceTimersByTimeAsync(130_000)
@@ -261,15 +282,23 @@ describe('the switches that gate all of this', () => {
     expect(tasks.getTask(task.id)?.status).toBe('paused_quota')
   })
 
-  it('leaves a run with rate_limit_warning alone when autoOverrunPreempt is off', async () => {
+  it('leaves a run alone on a bare warning, because the vendor served that turn', async () => {
     const { task, run } = seedRunawayTask(0)
     const workerId = tasks.requireRun(run.id).workerId
-    db.db()
-      .prepare(
-        `insert into rate_limit_samples (worker_id, session_id, window_id, status, resets_at, sampled_at)
-         values (?,?,?,?,?,?)`
-      )
-      .run(workerId, null, '5h', 'allowed_warning', Date.now() + 3_600_000, Date.now())
+    seedRateLimit(workerId, 'five_hour', 'allowed_warning', Date.now() + 3_600_000)
+
+    await scheduler.tick()
+    await vi.advanceTimersByTimeAsync(130_000)
+
+    expect(wrapUpsOn(task.id)).toBe(0)
+    expect(tasks.getTask(task.id)?.status).toBe('running')
+    expect(tasks.requireRun(run.id).endedAt).toBeNull()
+  })
+
+  it('leaves a run with a vendor refusal alone when autoOverrunPreempt is off', async () => {
+    const { task, run } = seedRunawayTask(0)
+    const workerId = tasks.requireRun(run.id).workerId
+    seedRateLimit(workerId, 'five_hour', 'rejected', Date.now() + 3_600_000)
     settings.setSetting('autoOverrunPreempt', false)
 
     await scheduler.tick()
@@ -295,6 +324,93 @@ describe('the switches that gate all of this', () => {
 
     expect(tasks.requireRun(run.id).outcome).toBe('preempted')
     expect(tasks.getTask(task.id)?.status).toBe('paused_quota')
+  })
+
+  /**
+   * ⛔ **Measured, not imagined.** t71 ran on ClaudeThird on 2026-08-31 and was preempted three
+   * times in six hours - 18:10Z, 22:01Z, 23:23Z - each time within seconds of being dispatched,
+   * each time for `rate-limit allowed_warning`, and each time throwing away a resumed 278k-token
+   * session. The daemon's own probes minutes either side read `Claude 5h 17%`, `Claude 5h 0%` and
+   * `Claude 5h 19%` on the very window it was being preempted over. The last one parked the task at
+   * `not_before` **2026-09-07T01:00Z**, a full week, because the sample that produced the verdict
+   * was a `seven_day` one and nothing checked.
+   */
+  describe('the t71 preemptions, which should not have happened', () => {
+    it('ignores a seven_day advisory that lands on top of a healthy five_hour reading', async () => {
+      const { task, run } = seedRunawayTask(0)
+      const workerId = tasks.requireRun(run.id).workerId
+      // The exact sequence from the log: `five_hour` says allowed, then twelve seconds later a
+      // weekly advisory arrives and becomes "the" status.
+      seedRateLimit(workerId, 'five_hour', 'allowed', Date.now() + 3_600_000, Date.now() - 12_000)
+      seedRateLimit(workerId, 'seven_day', 'allowed_warning', Date.parse('2026-09-07T01:00:00Z'))
+      seedQuotaPercent(workerId, 0)
+
+      await scheduler.tick()
+      await vi.advanceTimersByTimeAsync(130_000)
+
+      expect(tasks.getTask(task.id)?.status).toBe('running')
+      expect(tasks.requireRun(run.id).endedAt).toBeNull()
+    })
+
+    it('never parks a task against a window that is not the one it draws from', () => {
+      const workerId = seedWorker()
+      seedRateLimit(workerId, 'seven_day', 'allowed_warning', Date.parse('2026-09-07T01:00:00Z'))
+      seedRateLimit(workerId, 'five_hour', 'rejected', Date.now() + 90 * 60 * 1000)
+
+      const verdict = scheduler.overrunVerdict(workerId, 0)
+
+      expect(verdict).not.toBeNull()
+      // ⛔ 90 minutes, not six days. A five-hour concern may not write a seven-day `not_before`.
+      expect(verdict!.resumeAt).toBeLessThan(Date.now() + 3 * 60 * 60 * 1000)
+    })
+
+    it('does not preempt at 17% just because the vendor is cautious about that window', () => {
+      const workerId = seedWorker()
+      seedRateLimit(workerId, 'five_hour', 'allowed_warning', Date.now() + 3_600_000)
+
+      expect(scheduler.overrunVerdict(workerId, 17)).toBeNull()
+    })
+
+    it('does preempt when a warning and our own reading agree about the same window', () => {
+      const workerId = seedWorker()
+      seedRateLimit(workerId, 'five_hour', 'allowed_warning', Date.now() + 3_600_000)
+
+      expect(scheduler.overrunVerdict(workerId, 17)).toBeNull()
+      expect(scheduler.overrunVerdict(workerId, scheduler.QUOTA_WARNED_PREEMPT_WATER)).not.toBeNull()
+    })
+
+    it('still preempts on a reading alone, with no vendor signal at all', () => {
+      const workerId = seedWorker()
+
+      expect(scheduler.overrunVerdict(workerId, 90)).toBeNull()
+      expect(scheduler.overrunVerdict(workerId, scheduler.QUOTA_MIDRUN_PREEMPT_WATER)).not.toBeNull()
+    })
+
+    it('treats an unknown reading as unknown, so a warning cannot borrow evidence it lacks', () => {
+      const workerId = seedWorker()
+      seedRateLimit(workerId, 'five_hour', 'allowed_warning', Date.now() + 3_600_000)
+
+      expect(scheduler.overrunVerdict(workerId, null)).toBeNull()
+    })
+
+    it('forgets a warning whose window has already turned over', () => {
+      const workerId = seedWorker()
+      // A refusal, but for a window that reset a minute ago: it describes something that no longer
+      // exists. Left in place it was the account's status until the next turn produced a sample -
+      // and on a worker nothing is running on, that is never.
+      seedRateLimit(workerId, 'five_hour', 'rejected', Date.now() - 60_000)
+
+      expect(scheduler.overrunVerdict(workerId, 0)).toBeNull()
+    })
+
+    it('forgets a status that is no longer recent, while keeping its reset time', () => {
+      const workerId = seedWorker()
+      const resetsAt = Date.now() + 3_600_000
+      seedRateLimit(workerId, 'five_hour', 'rejected', resetsAt, Date.now() - 30 * 60 * 1000)
+
+      expect(scheduler.overrunVerdict(workerId, 0)).toBeNull()
+      expect(quota.windowResetsAt(workerId)?.at).toBe(resetsAt)
+    })
   })
 
   it('persists, and a corrupt value falls back rather than taking the fleet down', () => {

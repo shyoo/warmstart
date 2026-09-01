@@ -361,6 +361,52 @@ export interface LiveRateLimit {
 }
 
 /**
+ * How long a rate-limit *status* is worth acting on.
+ *
+ * ⚠️ The reset time on a sample stays true until it passes; the status does not. `allowed_warning`
+ * describes the account as it was during one turn, and a gate reading it an hour later is quoting a
+ * measurement, not taking one. Kept separate from expiry for exactly that reason - see
+ * `freshRateLimit` against `lastRateLimit`.
+ */
+export const RATE_STATUS_FRESH_MS = 10 * 60 * 1000
+
+/**
+ * The vendor window names that mean *the short pool a single run can plausibly exhaust*.
+ *
+ * ⛔ **A worker has more than one rate-limit window and they disagree.** Claude Code emits
+ * `five_hour` and `seven_day` for the same account minutes apart, and `lastRateLimit` used to return
+ * whichever landed last - so a weekly advisory arrived wearing a five-hour one's clothes. Measured
+ * 2026-08-31 on t71: at 22:00:50 the `five_hour` sample read `allowed`; twelve seconds later a
+ * `seven_day` `allowed_warning` arrived, the run was preempted, and the task was parked against the
+ * **seven-day** reset - `not_before` a full week out, on an account whose 5h window read 0% and
+ * whose weekly read 25%.
+ *
+ * ⚠️ An open list, like `status`. A window this does not recognise is treated as *not* the session
+ * pool, which is the conservative direction: it can still stop a run on a refusal, but it cannot
+ * park one against a reset that may be days away.
+ */
+const SESSION_RATE_WINDOWS = new Set(['five_hour', '5h', 'session'])
+
+export function isSessionRateWindow(windowId: string): boolean {
+  return SESSION_RATE_WINDOWS.has(windowId)
+}
+
+/**
+ * Did the vendor actually **refuse**, or merely caution?
+ *
+ * ⛔ The distinction the preemption bug turned on. `rejected` is a refusal: the turn did not
+ * happen, and nothing downstream gets to second-guess it. `allowed_warning` is a turn that *was
+ * served* alongside a caution - evidence that quota is moving, never proof that the next call fails.
+ * Treating the two the same is what threw away a warm 278k-token session three times in six hours at
+ * 0%, 17% and 19% of the very window being warned about.
+ */
+const REFUSAL_STATUS = 'rejected'
+
+export function isRefusal(status: string): boolean {
+  return status === REFUSAL_STATUS
+}
+
+/**
  * Record a `rate_limit_event` from the stream transport.
  *
  * This is the one quota signal that is both **live and free** - it rides a turn already being paid
@@ -385,7 +431,77 @@ export function recordRateLimit(
   }
 }
 
-export function lastRateLimit(workerId: string): LiveRateLimit | null {
+/**
+ * The newest sample **whose window has not already turned over**.
+ *
+ * ⛔ The expiry test is the same rule `windowExpired` applies to a quota reading, and it is here for
+ * the same reason: a sample describing a window that has since reset is not old news, it is news
+ * about something that no longer exists. Without it a single `allowed_warning` lingers as the
+ * account's status until the next turn happens to produce a sample - which, on an account nothing is
+ * running on, is never.
+ *
+ * ⚠️ This returns a sample of **any** window, so it answers "when does something reset" and not
+ * "is this worker in trouble". A gate wants `freshRateLimit`; a five-hour decision wants
+ * `sessionRateLimit`. Reaching for this one to make a judgement is the bug it was split up to stop.
+ */
+export function lastRateLimit(workerId: string, windowId?: string): LiveRateLimit | null {
+  return pickRateLimit(workerId, { windowId })
+}
+
+/**
+ * The newest unexpired sample on the **session** pool - the short window a single run can exhaust,
+ * and the only one whose reset is close enough that parking a task against it is a pause rather
+ * than an abandonment.
+ */
+export function sessionRateLimit(workerId: string): LiveRateLimit | null {
+  return pickRateLimit(workerId, { sessionOnly: true })
+}
+
+/**
+ * The newest sample that is both unexpired **and** recent enough to still describe the account.
+ *
+ * ⛔ The only one a gate may act on. See `RATE_STATUS_FRESH_MS`.
+ */
+export function freshRateLimit(workerId: string, windowId?: string): LiveRateLimit | null {
+  return pickRateLimit(workerId, { windowId, maxAgeMs: RATE_STATUS_FRESH_MS })
+}
+
+/**
+ * A live **refusal** on any window, whatever has arrived since.
+ *
+ * ⛔ Not `freshRateLimit(...)` plus an `isRefusal` test, and the difference is the whole point: the
+ * samples are one stream shared by several windows, so a `seven_day` advisory landing a second after
+ * a `five_hour` refusal makes the refusal invisible to anything that reads only the newest row. A
+ * refusal is the strongest thing a vendor says and it has to be found on purpose.
+ */
+export function refusalRateLimit(workerId: string): LiveRateLimit | null {
+  return pickRateLimit(workerId, { refusalsOnly: true, maxAgeMs: RATE_STATUS_FRESH_MS })
+}
+
+function pickRateLimit(
+  workerId: string,
+  opts: { windowId?: string; sessionOnly?: boolean; maxAgeMs?: number; refusalsOnly?: boolean }
+): LiveRateLimit | null {
+  const now = Date.now()
+  const where = ['worker_id = ?', '(resets_at is null or resets_at > ?)']
+  const args: Array<string | number> = [workerId, now]
+  if (opts.windowId) {
+    where.push('window_id = ?')
+    args.push(opts.windowId)
+  }
+  if (opts.sessionOnly) {
+    const names = [...SESSION_RATE_WINDOWS]
+    where.push(`window_id in (${names.map(() => '?').join(',')})`)
+    args.push(...names)
+  }
+  if (opts.maxAgeMs !== undefined) {
+    where.push('sampled_at >= ?')
+    args.push(now - opts.maxAgeMs)
+  }
+  if (opts.refusalsOnly) {
+    where.push('status = ?')
+    args.push(REFUSAL_STATUS)
+  }
   const r = row<{
     status: string
     window_id: string
@@ -393,8 +509,11 @@ export function lastRateLimit(workerId: string): LiveRateLimit | null {
     sampled_at: number
   }>(
     db()
-      .prepare('select * from rate_limit_samples where worker_id = ? order by sampled_at desc limit 1')
-      .get(workerId)
+      .prepare(
+        `select status, window_id, resets_at, sampled_at from rate_limit_samples
+          where ${where.join(' and ')} order by sampled_at desc limit 1`
+      )
+      .get(...args)
   )
   return r
     ? { status: r.status, windowId: r.window_id, resetsAt: r.resets_at, sampledAt: r.sampled_at }
@@ -428,7 +547,11 @@ export function windowExpired(window: QuotaWindow, now = Date.now()): boolean {
  * so a reset time in the past is discarded rather than treated as "any moment now".
  */
 export function windowResetsAt(workerId: string): { at: number; source: string } | null {
-  const live = lastRateLimit(workerId)
+  // ⛔ `sessionRateLimit`, not `lastRateLimit`. Every caller of this treats the answer as *the*
+  // window boundary - preemption parks a task until it, and `not_before` is written from it - so
+  // handing back a seven-day reset here parks a run for a week over a five-hour concern. That is
+  // not hypothetical: t71 sat at `not_before` 2026-09-07 from a 2026-08-31 advisory.
+  const live = sessionRateLimit(workerId)
   if (live?.resetsAt && live.resetsAt > Date.now()) {
     return { at: live.resetsAt, source: 'live rate-limit record' }
   }

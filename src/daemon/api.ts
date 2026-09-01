@@ -102,6 +102,7 @@ import { decide, medianHumanLatencyMs } from './cacheclock.js'
 import { DEFAULT_OBJECTIVE, parseObjective, resolveObjective } from './objective.js'
 import { setSetting, settings } from './settings.js'
 import { lastRateLimit, windowResetsAt } from './quota.js'
+import { compactionsForTask } from './compaction.js'
 import { listConversations } from './conversations.js'
 import { log, logFiles, recentLog } from './log.js'
 import { dismissLooseEnd, resolveFinishPolicy, scanLooseEnds } from './finish.js'
@@ -410,6 +411,7 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
         messages: messagesFor(p.id),
         runs,
         sessions,
+        compactions: compactionsForTask(p.id),
         activity: activityFor(p.id),
         blocking: blockedDependentsOf(p.id),
         dependencies,

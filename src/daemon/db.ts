@@ -741,6 +741,41 @@ const MIGRATIONS: string[] = [
    where adapter_id is null;
 
   create index runs_key on runs(adapter_id, model, outcome, started_at desc);
+  `,
+
+  // 24 - a compaction, as an event with a before and an after.
+  //
+  // ⛔ **Because "did it compact?" had no answer.** The clock sent `/compact` down a session's input
+  // and wrote one line to a log file; the boundary record reset `tokens_since_compact` to 0, and
+  // that was the entire trace. Nothing the operator can see ever said a compaction was asked for,
+  // landed, or was ignored. Measured 2026-08-31: `autoCompact` was switched on at 07:48Z, and by
+  // 23:30Z `clock_events` still held nothing newer than 2026-08-27 - so the honest answer to "is it
+  // working?" was that nobody could tell, which is the same shape of defect as a number with no
+  // provenance.
+  //
+  // ⚠️ `post_tokens` is null until a turn measures it, and stays null if none ever does. The
+  // boundary record carries `preTokens` and no counterpart, so the compacted size is genuinely
+  // unknown until the next turn reports a context. A "post" computed by subtracting an estimate
+  // would be the one number on this row that nobody measured.
+  //
+  // ⚠️ `task_id` is copied rather than reached through the session: a session outlives the run that
+  // borrowed it, and a shared session serves more than one task.
+  `
+  create table compactions (
+    id          integer primary key autoincrement,
+    session_id  text not null,
+    task_id     text,
+    trigger     text not null,
+    reason      text,
+    pre_tokens  integer,
+    post_tokens integer,
+    duration_ms integer,
+    asked_at    integer,
+    landed_at   integer,
+    ts          integer not null
+  );
+  create index compactions_task on compactions(task_id, ts desc);
+  create index compactions_session on compactions(session_id, ts desc);
   `
 ]
 

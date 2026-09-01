@@ -4,7 +4,8 @@ import { db } from './db.js'
 import { costModel } from './costmodel.js'
 import { adapter } from './adapters/index.js'
 import { clearClockMove, closeSession, listSessions, markClockMove, sendPrompt } from './sessions.js'
-import { getTask, listTasks, runForSession, setTaskHandoff } from './tasks.js'
+import { addMessage, getTask, listTasks, runForSession, setTaskHandoff } from './tasks.js'
+import { noteCompactionAsked } from './compaction.js'
 import { reserveState } from './reserve.js'
 import { policy } from './objective.js'
 import { settings as fleetSettings } from './settings.js'
@@ -100,13 +101,41 @@ export function medianHumanLatencyMs(): number {
  * queue history - so it is deliberately coarse and deliberately *stated*, rather than a confident
  * number nobody can audit. It improves as `runs` and `approvals` accumulate.
  */
-export function expectedIdleMs(session: Session, now = Date.now()): { ms: number; because: string } {
+export interface IdleEstimate {
+  ms: number
+  because: string
+  /**
+   * Whether this is a **measurement** or a placeholder.
+   *
+   * ⛔ **The distinction that made move 4 unreachable.** Four of the five branches below derive
+   * `ms` from something real - a median over answered approvals, a queue that is non-empty right
+   * now, a `not_before` somebody set, an empty fleet. The fifth derives it from nothing: "some other
+   * task is in flight" says this session might be wanted and cannot say when. That branch returned
+   * exactly the two-hour break-even, and `compactThresholdMs` is that same break-even plus an
+   * objective adjustment - so on the shipped default (2.02h) the placeholder lost every comparison
+   * it was ever in, and under `velocity` (2.38h) it lost by more. Compaction was reachable only
+   * when the whole fleet was idle and `ms` was infinite. Measured 2026-08-31: `autoCompact` on
+   * since 07:48Z, a session at 278k context, and the newest row in `clock_events` dated
+   * 2026-08-27 - the last day nothing at all was running.
+   *
+   * ⚠️ Substituting the break-even for the estimate is a category error rather than a cautious
+   * default. This function answers *when will this session be wanted*; answering it with *where the
+   * decision flips* hands the entire decision to whichever way the comparison happens to be written.
+   */
+  confident: boolean
+}
+
+export function expectedIdleMs(session: Session, now = Date.now()): IdleEstimate {
   const run = runForSession(session.id)
   const task = run?.taskId ? getTask(run.taskId) : null
 
   if (task?.status === 'awaiting_human') {
     const median = medianHumanLatencyMs()
-    return { ms: median, because: `waiting on a person (median reply ${Math.round(median / 60000)}m)` }
+    return {
+      ms: median,
+      because: `waiting on a person (median reply ${Math.round(median / 60000)}m)`,
+      confident: true
+    }
   }
 
   const tasks = listTasks()
@@ -114,7 +143,7 @@ export function expectedIdleMs(session: Session, now = Date.now()): { ms: number
   if (ready.length > 0) {
     // Work is queued now; whether it lands on *this* session is the scheduler's call, but the session
     // is plainly wanted soon either way.
-    return { ms: 0, because: `${ready.length} task(s) ready now` }
+    return { ms: 0, because: `${ready.length} task(s) ready now`, confident: true }
   }
 
   const upcoming = tasks
@@ -122,17 +151,25 @@ export function expectedIdleMs(session: Session, now = Date.now()): { ms: number
     .map((t) => (t.notBefore ?? 0) - now)
     .sort((a, b) => a - b)
   if (upcoming[0] !== undefined) {
-    return { ms: upcoming[0], because: `next scheduled task in ${Math.round(upcoming[0] / 60000)}m` }
+    return {
+      ms: upcoming[0],
+      because: `next scheduled task in ${Math.round(upcoming[0] / 60000)}m`,
+      confident: true
+    }
   }
 
   const blocked = tasks.filter((t) => t.status === 'blocked' || t.status === 'running')
   if (blocked.length > 0) {
-    // Something is in flight and may unblock work. Two hours is the measured break-even, so this
-    // deliberately sits on it rather than inventing precision.
-    return { ms: 2 * 60 * 60 * 1000, because: `${blocked.length} task(s) in flight may unblock work` }
+    // ⚠️ The placeholder. Kept at the break-even so the number still reads sensibly wherever it
+    // is displayed, but flagged, because it is not an estimate of anything.
+    return {
+      ms: 2 * 60 * 60 * 1000,
+      because: `${blocked.length} task(s) in flight may unblock work`,
+      confident: false
+    }
   }
 
-  return { ms: Number.POSITIVE_INFINITY, because: 'nothing queued' }
+  return { ms: Number.POSITIVE_INFINITY, because: 'nothing queued', confident: true }
 }
 
 export interface ClockContext {
@@ -171,6 +208,19 @@ export function moveOutcome(session: Session, now: number): MoveOutcome {
 
   const settle = move === 'compact' ? COMPACT_SETTLE_MS : KEEPALIVE_SETTLE_MS
   return now - at < settle ? 'in_flight' : 'ignored'
+}
+
+/**
+ * Is this context big enough, and grown enough since the last one, for a compaction to buy anything?
+ *
+ * ⛔ Both halves, and they catch different mistakes. Size alone would compact a long-lived session
+ * that was compacted a moment ago; growth alone would compact a tiny one that had merely doubled.
+ */
+function worthCompactingNow(session: Session, model: ReturnType<typeof costModel>): boolean {
+  return (
+    (session.contextTokens ?? 0) > model.compaction.breakeven_context_tokens &&
+    session.tokensSinceCompact > model.compaction.min_tokens_since_compact
+  )
 }
 
 export function decide(session: Session, ctx: ClockContext): ClockDecision {
@@ -299,8 +349,25 @@ export function decide(session: Session, ctx: ClockContext): ClockDecision {
   // Whether it is one worth taking is a property of the objective, not a fixed rule.
   const mayKeepalive = reserve.verdict !== 'unknown' || cost.keepaliveWhenQuotaUnknown
 
+  // ⛔ **A guess does not get to buy an expensive keepalive.** Holding a warm prefix costs `0.1·C`
+  // *every hour, for as long as the guess is wrong*, and on a large context that is the most
+  // expensive thing this loop can choose: 278k tokens of context bills about 28k an hour to sit
+  // still. Where the estimate is a real one, paying that is a considered bet. Where it is the
+  // in-flight placeholder it is a bet on a number nobody computed - so a context already past the
+  // compaction break-even skips moves 2 and 3 entirely and is decided by move 4, which costs about
+  // the same once and then stops costing.
+  //
+  // ⚠️ Only for a context worth compacting. A small one still keepalives: there the hourly cost is
+  // small and a compaction would buy almost nothing.
+  //
+  // ⚠️ Deliberately **not** conditioned on `compactAllowed`. With automatic compaction switched off
+  // this falls to the `compactOff` branch below, which says so in words - and "this would have
+  // compacted, and did not, because you turned that off" is the whole reason that branch exists. If
+  // the guard included the switch, the one case that needed the sentence could never produce it.
+  const guessing = !idle.confident && worthCompactingNow(session, model)
+
   // Moves 2 and 3.
-  if (idle.ms >= cost.keepaliveFloorMs && idle.ms <= cost.compactThresholdMs) {
+  if (!guessing && idle.ms >= cost.keepaliveFloorMs && idle.ms < cost.compactThresholdMs) {
     if (mayKeepalive) {
       return {
         ...base,
@@ -317,11 +384,9 @@ export function decide(session: Session, ctx: ClockContext): ClockDecision {
   }
 
   // Move 4.
-  const worthCompacting =
-    compactCost !== null &&
-    contextTokens > model.compaction.breakeven_context_tokens &&
-    session.tokensSinceCompact > model.compaction.min_tokens_since_compact
-  if (idle.ms > cost.compactThresholdMs && worthCompacting && compactAllowed) {
+  const worthCompacting = compactCost !== null && worthCompactingNow(session, model)
+  const pastThreshold = idle.ms >= cost.compactThresholdMs || guessing
+  if (pastThreshold && worthCompacting && compactAllowed) {
     return {
       ...base,
       move: 'compact',
@@ -335,7 +400,7 @@ export function decide(session: Session, ctx: ClockContext): ClockDecision {
   // ⚠️ Said out loud rather than falling through silently. "It would have compacted, and did not,
   // because you turned that off" is the sentence that stops somebody debugging a growing context
   // for an hour - and it is only honest because the switch is the *only* reason.
-  if (idle.ms > cost.compactThresholdMs && worthCompacting && compactOff) {
+  if (pastThreshold && worthCompacting && compactOff) {
     return nothing(
       `would compact (${contextTokens} tokens, ${idle.because}) but automatic compaction is ` +
         'switched off'
@@ -376,9 +441,15 @@ export interface ClockResult {
 /**
  * Evaluate every live session and act.
  *
- * ⛔ Every decision is recorded, including the ones that did nothing. "Why is this session still
- * open?" and "why did that cost 30k?" have to be answerable months later from data rather than from
- * somebody's memory of what the rules were that week.
+ * ⛔ Every decision that *acts* is recorded. "Why is this session still open?" and "why did that
+ * cost 30k?" have to be answerable months later from data rather than from somebody's memory of
+ * what the rules were that week.
+ *
+ * ⚠️ **`move: 'none'` is deliberately not written, and this comment used to claim otherwise.** The
+ * clock ticks every 10s against every live session, so recording the no-ops would add ~8,600 rows
+ * per session per day saying "nothing to decide yet" - a table too big to read is not an audit
+ * trail. What a person actually wants to know is whether a compaction happened, and that is
+ * answered by `compactions`, which records the ask as well as the outcome.
  */
 export async function runCacheClock(ctx: ClockContext): Promise<ClockResult> {
   const decisions: ClockDecision[] = []
@@ -460,16 +531,36 @@ async function executeMove(session: Session, decision: ClockDecision): Promise<v
       )
       break
 
-    case 'compact':
+    case 'compact': {
       // ⚠️ Sent as a user message on the session's own input channel. That `/compact` is honoured
       // this way on the stream transport is **inferred from the CLI's slash-command handling and not
       // yet measured** - see HANDOFF R6. If it turns out not to be, the fallback is handoff + close,
       // which is already implemented below.
       sendPrompt(session.id, '/compact')
+      // ⛔ Written down *before* it is known to have worked, and that is the point: a request that
+      // was never honoured is the finding, and a ledger that only recorded successes could not
+      // report it. `landedAt` stays null until a boundary record arrives.
+      const run = runForSession(session.id)
+      noteCompactionAsked({
+        sessionId: session.id,
+        taskId: run?.taskId ?? null,
+        reason: decision.reason,
+        preTokens: decision.contextTokens
+      })
+      if (run?.taskId) {
+        addMessage(
+          run.taskId,
+          'system',
+          `Compacting this session: ${decision.reason}. ` +
+            `Context is ${fmt(decision.contextTokens)} tokens; this costs about ` +
+            `${fmt(decision.estimatedCost)} and makes every turn after it read a smaller prefix.`
+        )
+      }
       log.info(
         `compacting ${session.id.slice(0, 8)}: ${decision.reason} (~${decision.estimatedCost} tokens)`
       )
       break
+    }
 
     case 'handoff_close': {
       sendPrompt(session.id, WRAP_UP_PROMPT)
@@ -513,4 +604,10 @@ function record(decision: ClockDecision): void {
       decision.estimatedCost,
       Date.now()
     )
+}
+
+/** Tokens, for a sentence rather than a table: `278275` reads as noise, `278k` reads as a size. */
+function fmt(n: number | null): string {
+  if (n === null) return 'an unknown number of'
+  return n >= 1000 ? `${Math.round(n / 1000)}k` : String(n)
 }

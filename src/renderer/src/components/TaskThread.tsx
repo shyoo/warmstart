@@ -7,6 +7,7 @@ import {
   OBJECTIVE_PRESET_ORDER,
   SHARING_LABELS,
   presetOf,
+  type Compaction,
   type CompletionModeChoice,
   type FinishPolicyChoice,
   type Objective,
@@ -40,6 +41,8 @@ export interface TaskDetailData {
   messages: TaskMessage[]
   runs: Run[]
   sessions: Session[]
+  /** Optional so a cached detail from a previous build renders rather than crashing. */
+  compactions?: Compaction[]
   activity: Array<{ text: string; ts: number }>
   /** How many tasks are held at `blocked` waiting on this one. Counted by the daemon. */
   blocking: number
@@ -276,7 +279,15 @@ function TaskDetail({
   back: React.ReactNode
   onOpenTask?: (taskId: string) => void
 }): React.JSX.Element {
-  const { task, messages, runs, sessions, dependencies = [], dependents = [] } = detail
+  const {
+    task,
+    messages,
+    runs,
+    sessions,
+    compactions = [],
+    dependencies = [],
+    dependents = []
+  } = detail
   // ⛔ Served, never compiled in — the renderer holds no cost models, and the capability flags that
   // decide whether an effort control exists at all live with the adapter, not here.
   const [modelOptions, setModelOptions] = useState<ModelOptions[]>([])
@@ -623,6 +634,24 @@ function TaskDetail({
             {task.mandate.allowed.join(', ')} · depth {task.lineageDepth}/
             {task.mandate.maxLineageDepth}
           </Fact>
+
+          {compactions.length > 0 && (
+            <div className="side-runs">
+              {/* ⛔ Its own block rather than a line inside a run, because a compaction is not
+                  scoped to one attempt: the session outlives the run, and the shrink it bought is
+                  still paying out on the next one. The label says what it bought, because a
+                  compaction with no before-and-after is a claim rather than a measurement. */}
+              <div
+                className="side-label"
+                title="Each time this task's context was compacted, and what it left behind. A compaction costs one expensive turn and makes every turn after it read a smaller prefix."
+              >
+                compactions · context before → after
+              </div>
+              {compactions.map((c) => (
+                <CompactionRow key={c.id} compaction={c} now={now} />
+              ))}
+            </div>
+          )}
 
           {runs.length > 0 && (
             <div className="side-runs">
@@ -1257,6 +1286,85 @@ function RunRow({
           <PromptDisclosure prompt={run.prompt} label={`Run ${run.id.slice(0, 8)} prompt`} />
         </div>
       )}
+    </div>
+  )
+}
+
+/**
+ * One compaction, as the operator needs to read it: what it cost, and what it bought.
+ *
+ * ⛔ **A request that never landed is shown, not hidden.** `landedAt === null` past the settle
+ * window means the session was asked to compact and did not - which is the open question in HANDOFF
+ * R6 about whether `/compact` is honoured on the `stream` transport at all. A pane that rendered
+ * only successes would answer that question with an empty list, which reads exactly like "nothing
+ * needed compacting".
+ *
+ * ⚠️ **"after" is genuinely unknown until a turn measures it**, and says so rather than showing a
+ * zero. The boundary record carries the pre-size and no counterpart; the first turn afterwards is
+ * what fills it in, so a session that never runs again keeps its dash forever. That dash is the
+ * honest answer.
+ */
+function CompactionRow({
+  compaction: c,
+  now
+}: {
+  compaction: Compaction
+  now: number
+}): React.JSX.Element {
+  const landed = c.landedAt !== null
+  const pending = !landed && now - (c.askedAt ?? c.ts) < 4 * 60 * 1000
+  const saved =
+    c.preTokens !== null && c.postTokens !== null && c.preTokens > c.postTokens
+      ? c.preTokens - c.postTokens
+      : null
+  return (
+    <div className="side-run">
+      <div className="side-run-head">
+        <span className="mono" title={`Session ${c.sessionId}`}>
+          {c.sessionId.slice(0, 8)}
+        </span>
+        <span
+          className="dim"
+          title={
+            c.trigger === 'clock'
+              ? 'The cache clock bought this: it decided a shrink was worth more than holding the prefix as it was.'
+              : c.trigger === 'agent'
+                ? 'The agent compacted its own context.'
+                : 'The CLI compacted on its own when the context filled. This fleet only watched it happen.'
+          }
+        >
+          {c.trigger}
+        </span>
+        <span
+          className={landed ? 'ok' : pending ? 'dim' : 'warn'}
+          title={
+            landed
+              ? undefined
+              : pending
+                ? 'Asked for, and not yet confirmed by a compaction boundary in the transcript.'
+                : 'Asked for and never confirmed. The session did not honour it, and the clock falls back to a handoff rather than asking a third time.'
+          }
+        >
+          {landed ? 'compacted' : pending ? 'asked' : 'never landed'}
+        </span>
+        {c.durationMs !== null && <span className="num dim">{duration(c.durationMs)}</span>}
+      </div>
+      <div className="side-run-body num">
+        <span
+          title={
+            'Context before the compaction, and after it. The second number is measured by the ' +
+            'first turn that follows - until one does, it is unknown rather than zero.'
+          }
+        >
+          {tokens(c.preTokens)} → {tokens(c.postTokens)}
+        </span>
+        {saved !== null && (
+          <span className="ok" title="Tokens every subsequent turn no longer has to read.">
+            {tokens(saved)} smaller
+          </span>
+        )}
+      </div>
+      {c.reason && <div className="side-run-why">{c.reason}</div>}
     </div>
   )
 }
