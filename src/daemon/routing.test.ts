@@ -46,6 +46,9 @@ function seedWorker(label: string, fetchedAtMs: number): Worker {
   return worker
 }
 
+let origClaudeInstalled: () => boolean
+let origAgyInstalled: () => boolean
+
 beforeAll(async () => {
   // ⛔ A temp data directory, never the real one. This opens a database and writes to it.
   dir = mkdtempSync(join(tmpdir(), 'agentyard-routing-'))
@@ -56,10 +59,24 @@ beforeAll(async () => {
   tasks = await import('./tasks.js')
   scheduler = await import('./scheduler.js')
   controller = await import('./controller.js')
+  const { claudeCode } = await import('./adapters/claude-code.js')
+  const { antigravityCli } = await import('./adapters/antigravity-cli.js')
+  origClaudeInstalled = claudeCode.isInstalled
+  origAgyInstalled = antigravityCli.isInstalled
+  claudeCode.isInstalled = () => true
+  antigravityCli.isInstalled = () => true
   db.openDb(join(dir, 'routing.db'))
 })
 
-afterAll(() => {
+afterAll(async () => {
+  if (origClaudeInstalled) {
+    const { claudeCode } = await import('./adapters/claude-code.js')
+    claudeCode.isInstalled = origClaudeInstalled
+  }
+  if (origAgyInstalled) {
+    const { antigravityCli } = await import('./adapters/antigravity-cli.js')
+    antigravityCli.isInstalled = origAgyInstalled
+  }
   db.closeDb()
   try {
     rmSync(dir, { recursive: true, force: true })

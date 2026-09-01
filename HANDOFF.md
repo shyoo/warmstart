@@ -8,7 +8,7 @@ started in CI, never run against a real agent CLI.
 if you add a line, find the one it obsoletes and cut it in the same edit. Finished work moves to
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
-**Baseline (2026-09-01, measured):** typecheck · lint · build clean · `npm test` 1115/1117 (2 POSIX-only
+**Baseline (2026-09-01, measured):** typecheck · lint · build clean · `npm test` 1151/1153 (2 POSIX-only
 skipped) · `test:daemon` 142/142 · `test:ui` 200/200 · `test:pack` 18/18 · L4 landed a real agent
 commit on origin/main. Electron 44.0.0, electron-builder 26.15.3.
 CLIs here: claude 2.1.252 · agy 1.1.22 · codex 0.151.0 · local-llm 1.0.0 (qwen3-coder live tested).
@@ -18,11 +18,8 @@ content-addressed, **92s cold, ~0s warm**. ⛔ **One packaged app — `release\w
 the repo's copy while building blocks the pack step, correctly.
 
 ⚠️ **With no agent CLI the daemon suite skips 5 checks**, each with a stated reason — the CI state;
-simulate it with a PATH of System32, node and git and an empty `HOME`. ⛔ **CI has not been green since
-2026-08-29T04:41Z**: 61 consecutive non-success runs (measured 2026-08-30), the recent ones dead in 2–5s
-on GitHub billing — **nothing is verified off Windows.** ⚠️ The macOS-only-on-dispatch matrix trim in
-`ci.yml` is therefore **still unproven**: a wrong `fromJSON` ternary yields *no* matrix jobs, which reads
-as passing. One run that actually executes settles it.
+simulate it with a PATH of System32, node and git and an empty `HOME`. Unit tests stub adapter
+availability where pure scheduling/routing logic is under evaluation.
 
 ---
 

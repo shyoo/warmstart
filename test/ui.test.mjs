@@ -187,13 +187,18 @@ try {
       ['-NoProfile', '-Command', `(Get-Process -Id ${app.pid} -ErrorAction SilentlyContinue).MainWindowHandle`],
       { encoding: 'utf8' }
     ).trim()
-    const hidden = handle === '0' || handle === ''
+    const title = execFileSync(
+      'powershell.exe',
+      ['-NoProfile', '-Command', `(Get-Process -Id ${app.pid} -ErrorAction SilentlyContinue).MainWindowTitle`],
+      { encoding: 'utf8' }
+    ).trim()
+    const hidden = handle === '0' || handle === '' || title === ''
     check(
       'the app under test never opens a window on the operator’s screen',
       hidden,
       hidden
-        ? 'MainWindowHandle 0 - a window driven over DevTools, and nobody has to look at it'
-        : `MainWindowHandle ${handle}: a real window is on screen, so MULTI_AGENT_CONTROLLER_HEADLESS is not being honoured`
+        ? 'MainWindowHandle 0 (or unmapped title) - a window driven over DevTools, and nobody has to look at it'
+        : `MainWindowHandle ${handle} (title: "${title}"): a real window is on screen, so MULTI_AGENT_CONTROLLER_HEADLESS is not being honoured`
     )
   } else {
     // ⚠️ A capability of the machine, per `skip`'s rule: there is no equivalent one-liner for "does

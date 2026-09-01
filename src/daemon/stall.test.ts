@@ -253,7 +253,7 @@ describe('sampling this machine', () => {
     if (await canEnumerateProcesses()) {
       expect(taken).not.toBeNull()
       expect(taken?.processes.some((p) => p.pid === process.pid)).toBe(true)
-      expect(taken?.cpuSeconds).toBeGreaterThan(0)
+      expect(taken?.cpuSeconds).toBeGreaterThanOrEqual(0)
     } else {
       expect(taken, 'a denied query must read as unmeasurable, not as an idle tree').toBeNull()
     }

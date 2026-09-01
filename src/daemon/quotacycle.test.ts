@@ -108,6 +108,9 @@ const resumeNotes = (task: Task): string[] =>
     .filter((m) => m.role === 'system' && /Back in the queue|has reset/.test(m.text))
     .map((m) => m.text)
 
+let origClaudeInstalled: () => boolean
+let origAgyInstalled: () => boolean
+
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'agentyard-quotacycle-'))
   process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
@@ -115,6 +118,12 @@ beforeAll(async () => {
   workers = await import('./workers.js')
   tasks = await import('./tasks.js')
   scheduler = await import('./scheduler.js')
+  const { claudeCode } = await import('./adapters/claude-code.js')
+  const { antigravityCli } = await import('./adapters/antigravity-cli.js')
+  origClaudeInstalled = claudeCode.isInstalled
+  origAgyInstalled = antigravityCli.isInstalled
+  claudeCode.isInstalled = () => true
+  antigravityCli.isInstalled = () => true
   db.openDb(join(dir, 'quotacycle.db'))
 })
 
@@ -128,7 +137,15 @@ beforeEach(() => {
   )
 })
 
-afterAll(() => {
+afterAll(async () => {
+  if (origClaudeInstalled) {
+    const { claudeCode } = await import('./adapters/claude-code.js')
+    claudeCode.isInstalled = origClaudeInstalled
+  }
+  if (origAgyInstalled) {
+    const { antigravityCli } = await import('./adapters/antigravity-cli.js')
+    antigravityCli.isInstalled = origAgyInstalled
+  }
   db.closeDb()
   try {
     rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })

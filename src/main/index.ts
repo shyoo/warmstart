@@ -69,13 +69,15 @@ app.setPath('userData', join(dataDir(), 'ui'))
 // ⛔ Single instance lock: launching the app while an instance is already running (e.g. in tray)
 // must focus the existing window immediately and exit, rather than starting a duplicate process
 // that collides on userData and waits 20s for an existing orchestratord lock.
-const gotSingleInstanceLock = app.requestSingleInstanceLock()
-if (!gotSingleInstanceLock) {
-  app.quit()
-} else {
-  app.on('second-instance', () => {
-    showWindow()
-  })
+if (!headless) {
+  const gotSingleInstanceLock = app.requestSingleInstanceLock()
+  if (!gotSingleInstanceLock) {
+    app.quit()
+  } else {
+    app.on('second-instance', () => {
+      showWindow()
+    })
+  }
 }
 
 // This app has no menu-driven features, so the default File/Edit/View/Window bar Electron
@@ -255,10 +257,6 @@ function createWindow(): BrowserWindow {
 
   if (!headless) {
     win.once('ready-to-show', () => win.show())
-    // Fallback: ensure the window is shown if ready-to-show is delayed or missed
-    setTimeout(() => {
-      if (!win.isDestroyed() && !win.isVisible()) win.show()
-    }, 500)
   }
 
   // ⛔ Capture the WebContents now; do not read `win.webContents` from the `closed` handler.
