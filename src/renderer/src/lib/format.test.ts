@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { QUOTA_STALE_AFTER_MS, quotaFreshness } from '@shared/tasks'
 import { cacheRemaining, quotaGap } from './format'
 
 describe('quotaGap', () => {
@@ -128,5 +129,50 @@ describe('cacheRemaining', () => {
 
   it('is unknown rather than dividing by zero on a nonsense pair', () => {
     expect(cacheRemaining({ lastRequestStartedAt: started, cacheExpiresAt: started })).toBeNull()
+  })
+})
+
+/**
+ * The age a card shows has to keep moving after the card stops hearing about it.
+ *
+ * ⛔ **The visible half of t86.** `ageMs` and `stale` are stamped onto a reading by the daemon when
+ * it *sends* one, so anything that read them off the payload was frozen at the moment it arrived:
+ * a card patched by a `quota.changed` event kept saying "read 2m ago" indefinitely, and a reading
+ * that was fresh when it landed never went stale on screen at all. `quotaFreshness` recomputes both
+ * against a clock the component already ticks.
+ */
+describe('quotaFreshness', () => {
+  const at = (ageMs: number): { sampledAt: number; windows: unknown[] } => ({
+    sampledAt: Date.now() - ageMs,
+    windows: [{}]
+  })
+
+  it('ages a reading against the clock rather than trusting what it arrived with', () => {
+    const now = Date.now()
+    // What the daemon said when it sent this: two minutes old and perfectly usable.
+    const sent = { ...at(40 * 60_000), ageMs: 2 * 60_000, stale: false }
+    expect(quotaFreshness(sent, now).ageMs).toBeGreaterThan(39 * 60_000)
+    expect(quotaFreshness(sent, now).stale).toBe(true)
+  })
+
+  it('leaves a genuinely fresh reading alone', () => {
+    const fresh = quotaFreshness(at(60_000), Date.now())
+    expect(fresh.stale).toBe(false)
+    expect(fresh.ageMs).toBeLessThan(QUOTA_STALE_AFTER_MS)
+  })
+
+  /**
+   * ⛔ Staleness is only ever *added*. The flag on the reading carries a second reason the clock
+   * cannot rediscover — `lastQuotaReading` sets it when the newest attempt failed and these are the
+   * last numbers that worked — and recomputing from age alone would quietly clear it, taking the
+   * "last check failed" note off a card that has every reason to carry one.
+   */
+  it('keeps a stale flag that age alone would not explain', () => {
+    expect(quotaFreshness({ ...at(1000), stale: true }, Date.now()).stale).toBe(true)
+  })
+
+  it('treats a reading with no windows as stale, and no reading at all as stale', () => {
+    expect(quotaFreshness({ sampledAt: Date.now(), windows: [] }, Date.now()).stale).toBe(true)
+    expect(quotaFreshness(null, Date.now()).stale).toBe(true)
   })
 })

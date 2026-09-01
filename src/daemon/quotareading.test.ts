@@ -2,7 +2,6 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import type { DatedQuota } from './quota.js'
 
 /**
  * What the operator is shown about an account's window, as opposed to what the scheduler gates on.
@@ -22,6 +21,7 @@ import type { DatedQuota } from './quota.js'
 let dir: string
 let db: typeof import('./db.js')
 let quota: typeof import('./quota.js')
+let events: typeof import('./events.js')
 
 const WORKER = 'cccccccc-0000-4000-8000-000000000001'
 
@@ -56,6 +56,7 @@ beforeAll(async () => {
   process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
   db = await import('./db.js')
   quota = await import('./quota.js')
+  events = await import('./events.js')
   db.openDb(join(dir, 'quotaread.db'))
   db.db()
     .prepare(
@@ -205,13 +206,23 @@ describe('QuotaPoller.sweep', () => {
          values (?,?,?,?,?,?,?)`
       )
       .run(AGY, 'session', 'session', 25, Date.now() + 3600_000, 'cli', Date.now() - 60_000)
-    const heard: DatedQuota[] = []
-    const poller = new quota.QuotaPoller((q) => heard.push(q))
+    // ⚠️ On the event sink, not on a poller callback. The listener this used to watch was retired
+    // (t86): announcing a reading is the store's job now, so the honest place to check that a sweep
+    // said nothing about an account is the stream the UI reads.
+    const heard: string[] = []
+    events.setEventSink((e) => {
+      if (e.type === 'quota.changed') heard.push(e.quota.workerId)
+    })
+    const poller = new quota.QuotaPoller()
 
-    await poller.sweep()
+    try {
+      await poller.sweep()
+    } finally {
+      events.setEventSink(() => {})
+    }
 
-    expect(heard.some((q) => q.workerId === DISABLED)).toBe(false)
-    expect(heard.some((q) => q.workerId === SUSPECT)).toBe(false)
+    expect(heard).not.toContain(DISABLED)
+    expect(heard).not.toContain(SUSPECT)
   })
 
   /**
@@ -231,7 +242,7 @@ describe('QuotaPoller.sweep', () => {
       )
       .run(AGY, 'session', 'session', 25, at + 3600_000, 'cli', at)
 
-    const poller = new quota.QuotaPoller(() => {})
+    const poller = new quota.QuotaPoller()
     await poller.sweep()
 
     // Untouched: the sweep neither refreshed it nor overwrote it with an empty probe.
@@ -253,8 +264,7 @@ describe('QuotaPoller.sweep', () => {
       )
       .run(AGY, 'session', 'session', 25, Date.now() + 3600_000, 'cli', Date.now() - 60_000)
 
-    const heard: DatedQuota[] = []
-    const poller = new quota.QuotaPoller((q) => heard.push(q))
+    const poller = new quota.QuotaPoller()
 
     await poller.sweep()
 

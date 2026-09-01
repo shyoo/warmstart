@@ -12,7 +12,8 @@ import type { ProbeDemand } from './quota.js'
 import {
   ensureFreshQuota,
   lastQuota,
-  refreshUsage,
+  probeWorker,
+  refreshNow,
   requestUrgentProbe,
   sessionWindowFor,
   windowsForPool,
@@ -625,7 +626,20 @@ async function captureQuotaAfter(run: Run): Promise<void> {
   if (metered === 0) return
 
   try {
-    await refreshUsage(run.workerId)
+    // ⛔ Through `refreshNow`, which is the ledger every other forced refresh claims from — not
+    // `refreshUsage` directly, which is what this did and which claimed nothing. A run ending is
+    // precisely when a sweep also sees that account as recently active, so the two could open two
+    // interactive sessions on one account seconds apart: exactly the collision `claimRefresh` was
+    // written to prevent, reached by the one caller that went round it. ⚠️ `0` takes the floor
+    // (`MIN_FORCED_GAP_MS`), because inside a minute a second terminal cannot produce a different
+    // number, and every longer gap is a real closing reading worth taking.
+    if (!(await refreshNow(run.workerId, 0))) {
+      // ⚠️ Declined, not failed — something refreshed this account seconds ago, or it may not be
+      // driven at all. Either way the closing reading must still be *taken*: the free file read is
+      // what the vendor's own cache holds, which is better than recording no `after` and calling
+      // the delta unmeasured.
+      await probeWorker(run.workerId)
+    }
   } catch (err) {
     log.warn(`could not read the closing quota for run ${run.id.slice(0, 8)}:`, err)
   }

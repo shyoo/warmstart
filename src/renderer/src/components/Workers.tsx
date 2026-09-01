@@ -1,7 +1,8 @@
 import { sessionEnded } from '@shared/protocol'
 import { Fragment, useEffect, useState } from 'react'
 import type { AdapterDetection, AdapterInfo, ModelOptions, Session, Worker } from '@shared/protocol'
-import { rpc, useDaemonEvents, type FleetEntry } from '../lib/daemon'
+import { rpc, useDaemonEvents, useNow, type FleetEntry } from '../lib/daemon'
+import { quotaFreshness } from '@shared/tasks'
 import { age, percent, quotaGap } from '../lib/format'
 import { TerminalPane } from './Terminal'
 
@@ -22,6 +23,10 @@ export function Workers({
   fleet: FleetEntry[]
   refresh: () => Promise<void>
 }): React.JSX.Element {
+  // ⚠️ Half a minute, not a second. The only thing on this page that moves with the clock is the
+  // age beside a quota reading, and that is a figure like "read 20m ago" — a per-second re-render
+  // of the whole worker table would buy nothing anybody can see.
+  const now = useNow(30_000)
   const [adapters, setAdapters] = useState<AdapterInfo[]>([])
   /**
    * ⛔ Fetched from the daemon, never compiled in. The renderer holds no cost models, and a second
@@ -295,7 +300,12 @@ export function Workers({
               const signInUnknown = worker.identity?.loggedIn == null
               const needsFirstRun = worker.identity?.setupComplete === false
               const suspect = worker.health?.state === 'suspect' ? worker.health : null
-              const gap = quotaGap(quota, probeKind(worker.id))
+              // ⛔ The age is recomputed here rather than trusted off the payload. `ageMs` and
+              // `stale` are stamped on when the daemon sends a reading, so a row patched by an
+              // event froze at the age it arrived with — "read 2m ago" an hour later, and a fresh
+              // reading that never went stale on screen. See `quotaFreshness` (t86).
+              const reading = quota ? { ...quota, ...quotaFreshness(quota, now) } : null
+              const gap = quotaGap(reading, probeKind(worker.id))
               /**
                * ⛔ Out of the Account cell and onto a row of their own.
                *
@@ -451,19 +461,19 @@ export function Workers({
                         probe and a provider that reports none are four different absences and the
                         hint is what tells them apart. */}
                     <td className="num">
-                      {quota && quota.windows.length > 0 ? (
+                      {reading && reading.windows.length > 0 ? (
                         <>
-                          <span className={quota.stale ? 'dim' : undefined}>
-                            {quota.windows.map((w) => `${w.label} ${percent(w.percent)}`).join(' · ')}
+                          <span className={reading.stale ? 'dim' : undefined}>
+                            {reading.windows.map((w) => `${w.label} ${percent(w.percent)}`).join(' · ')}
                           </span>
                           {/* ⛔ The age, not the word `stale`. An idle account's reading is old
                               because nothing has used the account, not because anything failed, and
                               the two need different next moves from the operator. A reading that is
                               old *because every check failed* is the fault, and it says so. */}
-                          {quota.stale && (
-                            <div className={quota.error ? 'warn tbl-sub' : 'dim tbl-sub'} title={gap?.hint}>
-                              read {age(quota.ageMs ?? 0)}
-                              {quota.error ? ' · last check failed' : ''}
+                          {reading.stale && (
+                            <div className={reading.error ? 'warn tbl-sub' : 'dim tbl-sub'} title={gap?.hint}>
+                              read {age(reading.ageMs)}
+                              {reading.error ? ' · last check failed' : ''}
                             </div>
                           )}
                         </>

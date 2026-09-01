@@ -1,4 +1,5 @@
 import type { Session } from '@shared/protocol'
+import { quotaFreshness } from '@shared/tasks'
 import type { FleetEntry } from './daemon'
 import { age } from './format'
 
@@ -49,6 +50,14 @@ export type CardStatus =
  */
 export function cardStatus(
   entry: FleetEntry,
+  /**
+   * ⛔ The clock, passed in, because the age here has to keep moving after the card stops hearing
+   * about the reading. `ageMs` and `stale` are stamped onto a reading when the daemon *sends* it,
+   * so a corner that read them off the payload froze at the age it arrived with — `29m` for an
+   * hour — and a reading that was fresh when it landed never turned stale on screen at all (t86).
+   * `quotaFreshness` recomputes both against this, sharing one threshold with the daemon.
+   */
+  now: number,
   sessions: Session[] = entry.sessions
 ): CardStatus | null {
   const pending = sessions.find((s) => !measured(s) && s.state !== 'closed' && s.state !== 'idle')
@@ -71,10 +80,11 @@ export function cardStatus(
   }
 
   const quota = entry.quota
-  if (!quota?.stale || quota.windows.length === 0) return null
+  const { ageMs, stale } = quotaFreshness(quota, now)
+  if (!quota || !stale || quota.windows.length === 0) return null
   return {
     kind: 'age',
-    label: age(quota.ageMs ?? 0),
+    label: age(ageMs),
     failing: Boolean(quota.error),
     title: quota.error
       ? 'Every check since has failed, so this is the last reading that worked and the newest ' +

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { Session } from '@shared/protocol'
+import { quotaFreshness } from '@shared/tasks'
 import type { FleetEntry } from '../lib/daemon'
 import { readFleetCollapsed, writeFleetCollapsed } from '../lib/prefs'
 import { cardStatus, gaugedSessions } from '../lib/fleetcard'
@@ -160,7 +161,14 @@ function SessionGauge({ session, now }: { session: Session; now: number }): Reac
 
 function WorkerCard({ entry, now }: { entry: FleetEntry; now: number }): React.JSX.Element {
   const { worker, quota, sessions } = entry
-  const stale = quota?.stale ?? true
+  /**
+   * ⛔ Recomputed against the ticking clock, not read off the payload. `ageMs` and `stale` are
+   * stamped on when the daemon *sends* a reading, so a card patched by a `quota.changed` event kept
+   * saying "read 2m ago" for as long as nothing else arrived — and a reading that was fresh when it
+   * landed never went stale on screen at all. That is the half of t86 the operator can see: the
+   * other half was readings that were never sent (see `storeAndPublish`).
+   */
+  const { stale } = quotaFreshness(quota, now)
   const windows = quota?.windows ?? []
   const suspect = worker.health?.state === 'suspect' ? worker.health : null
 
@@ -168,7 +176,7 @@ function WorkerCard({ entry, now }: { entry: FleetEntry; now: number }): React.J
   const gauged = gaugedSessions(sessions)
   const displayedSessions = gauged.slice(0, maxDisplay)
   const overflowCount = gauged.length - displayedSessions.length
-  const status = cardStatus(entry, sessions)
+  const status = cardStatus(entry, now, sessions)
 
   return (
     <div className={`wcard${worker.enabled ? '' : ' wcard--off'}`}>

@@ -1315,6 +1315,38 @@ export interface ResolvedModelChoice {
 export const WINDOW_HIGH_WATER = 92
 
 /**
+ * Beyond this, a reading is reported but must not be treated as the current state of the window.
+ *
+ * ⛔ **Shared, because the renderer has to answer the same question the daemon does.** The daemon
+ * stamps `ageMs` and `stale` onto a reading when it *sends* it, and a card that reads those fields
+ * off the payload is frozen at the moment it arrived — a reading that was two minutes old when the
+ * event fired still says "read 2m ago" an hour later, and a reading that was fresh never goes stale
+ * on screen at all. `quotaFreshness` recomputes both against a ticking clock; keeping the threshold
+ * here is what stops the two answers drifting apart. `STALE_AFTER_MS` in the daemon is this.
+ */
+export const QUOTA_STALE_AFTER_MS = 15 * 60 * 1000
+
+/**
+ * How old this reading is *now*, and whether anything may still be believed about it.
+ *
+ * ⚠️ **`stale` can only ever be added to, never cleared.** The flag that arrives on the reading
+ * carries more than age: `lastQuotaReading` sets it when the newest attempt *failed* and these are
+ * the last numbers that worked, which is a different reason to distrust them and one no clock can
+ * rediscover. So this ORs with what came in rather than replacing it.
+ */
+export function quotaFreshness(
+  quota: { sampledAt: number; windows: unknown[]; stale?: boolean } | null,
+  now: number
+): { ageMs: number; stale: boolean } {
+  if (!quota) return { ageMs: 0, stale: true }
+  const ageMs = Math.max(0, now - quota.sampledAt)
+  return {
+    ageMs,
+    stale: (quota.stale ?? false) || quota.windows.length === 0 || ageMs > QUOTA_STALE_AFTER_MS
+  }
+}
+
+/**
  * The five-hour window that governs *this* model pool, on a provider that meters more than one pool.
  *
  * ⛔ **The pessimistic fallback is still the default, and has to be.** With no model in hand — the

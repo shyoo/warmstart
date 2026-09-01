@@ -1,5 +1,7 @@
 import type { QuotaSnapshot, QuotaWindow } from '@shared/protocol.js'
+import { QUOTA_STALE_AFTER_MS } from '@shared/tasks.js'
 import { db, row, rows } from './db.js'
+import { emit } from './events.js'
 import { adapter } from './adapters/index.js'
 import { stripAnsi } from './stream.js'
 import { listWorkers, refreshIdentityIfStale, requireWorker } from './workers.js'
@@ -29,8 +31,14 @@ import { log } from './log.js'
  * reserve (cost-model.md §5) look satisfied when it is not, and that failure strands context.
  */
 
-/** Beyond this, a sample is reported but must not be treated as the current state of the window. */
-export const STALE_AFTER_MS = 15 * 60 * 1000
+/**
+ * Beyond this, a sample is reported but must not be treated as the current state of the window.
+ *
+ * ⛔ Re-exported from `@shared/tasks`, not declared here. The fleet strip has to decide the same
+ * thing about the same reading — see `quotaFreshness` — and two fifteens in two files is one edit
+ * away from a card that calls a reading fresh while the gate that reads it refuses to.
+ */
+export const STALE_AFTER_MS = QUOTA_STALE_AFTER_MS
 
 /**
  * The shortest gap between two attempts to refresh one worker's reading.
@@ -70,7 +78,7 @@ export async function probeWorker(workerId: string): Promise<DatedQuota> {
   const w = requireWorker(workerId)
   const probed = await adapter(w.adapterId).probeQuota(w.isolationRoot)
   const snapshot: QuotaSnapshot = { workerId, ...probed }
-  store(snapshot)
+  storeAndPublish(snapshot)
   // ⛔ Logged whether it worked or not. This is the cheap rung — a file read, no process — and it is
   // the one that runs on its own every few minutes, so it is also the one an operator is most likely
   // to be asking about: *when did it last look at that account, and what did it see?* It said
@@ -184,7 +192,7 @@ export async function refreshUsage(workerId: string): Promise<DatedQuota> {
         source: 'unknown',
         error: why
       }
-      store(failed)
+      storeAndPublish(failed)
       return decorate(failed)
     }
     const snapshot: QuotaSnapshot = {
@@ -196,7 +204,7 @@ export async function refreshUsage(workerId: string): Promise<DatedQuota> {
       sampledAt: Date.now(),
       source: 'cli'
     }
-    store(snapshot)
+    storeAndPublish(snapshot)
     log.info(
       `usage on ${w.label}: ${windows.map((x) => `${x.label} ${Math.round(x.percent)}% used`).join(' · ')}`
     )
@@ -234,7 +242,7 @@ export async function refreshUsage(workerId: string): Promise<DatedQuota> {
       source: after.source,
       error: why
     }
-    store(snapshot)
+    storeAndPublish(snapshot)
     return decorate(snapshot)
   }
 
@@ -278,6 +286,33 @@ function store(s: QuotaSnapshot): void {
       w.group ?? null
     )
   }
+}
+
+/**
+ * Write a reading **and say so**.
+ *
+ * ⭐ **The fix for t86, and the reason it is here rather than at each caller.** The strip showed a
+ * three-hour-old percentage across the resume of a task on an account the dispatch gate had just
+ * refreshed. Nothing was wrong with the refresh: the row was written and correct. What was missing
+ * is that announcing it was a *caller's* job, and only two of the four callers did it — the poller's
+ * sweep, through its listener, and the Probe button, by hand. `ensureFreshQuota` at the gate and
+ * `captureQuotaAfter` at the end of a run each wrote a fresh row in silence, which are precisely the
+ * two moments somebody is watching the card.
+ *
+ * ⛔ So the announcement moved to the write. "A mutation is only half done when the row is written"
+ * is the rule the event sink exists for (events.ts), and the only version of it that a fifth caller
+ * cannot quietly opt out of is the one where it is not a caller's decision.
+ *
+ * ⚠️ **`lastQuotaReading`, not the snapshot just stored.** A failed probe writes a row with no
+ * windows that is newer than the last good reading, so broadcasting the raw snapshot would put
+ * `quota unknown` on a card measured successfully a minute earlier — the exact regression
+ * `lastQuotaReading` was written to prevent. Emitting through the same accessor `fleet.list` serves
+ * is also what keeps a patched card and a refetched one from disagreeing.
+ */
+function storeAndPublish(s: QuotaSnapshot): void {
+  store(s)
+  const reading = lastQuotaReading(s.workerId)
+  if (reading) emit({ type: 'quota.changed', quota: reading })
 }
 
 interface SampleRow {
@@ -588,7 +623,12 @@ export function windowResetsAt(workerId: string): { at: number; source: string }
   return null
 }
 
-export type QuotaListener = (q: DatedQuota) => void
+/**
+ * ⛔ **The poller has no listener and must not grow one back.** It used to take a callback that
+ * `index.ts` wired to `emit`, which made announcing a reading the business of whoever happened to
+ * store it — and three of the four callers that store one did not (t86; see `storeAndPublish`). The
+ * sweep now stores through the same door as everything else and the broadcast follows from that.
+ */
 
 /**
  * How long after a parked task's release time the fleet looks at that account.
@@ -694,10 +734,7 @@ export class QuotaPoller {
   /** The last release time already probed for a worker, so a due release is serviced once. */
   private serviced = new Map<string, number>()
 
-  constructor(
-    private readonly listener: QuotaListener,
-    options: QuotaPollerOptions = {}
-  ) {
+  constructor(options: QuotaPollerOptions = {}) {
     this.intervalMs = options.intervalMs ?? null
     this.idleIntervalMs = options.idleIntervalMs ?? null
     this.demand = options.demand ?? (() => NO_DEMAND)
@@ -918,8 +955,6 @@ export class QuotaPoller {
           // caller's: see `refreshNow` and `forcedGapMs`.
           if (await refreshNow(w.id, this.forcedGapMs(forced))) {
             log.info(`refreshed ${w.label}'s quota: ${forced.why}`)
-            const reading = lastQuotaReading(w.id)
-            if (reading) this.listener(reading)
             continue
           }
         }
@@ -934,8 +969,6 @@ export class QuotaPoller {
         // including this fleet's own work sessions. A worker that is running tasks therefore keeps
         // its own reading current at the price of a file read.
         await probeWorker(w.id)
-        const reading = lastQuotaReading(w.id)
-        if (reading) this.listener(reading)
       } catch (err) {
         log.warn(`quota probe failed for ${w.label}:`, err)
       }

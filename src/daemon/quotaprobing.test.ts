@@ -2,7 +2,8 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import type { DatedQuota, ProbeDemand } from './quota.js'
+import type { DaemonEvent } from '@shared/protocol.js'
+import type { ProbeDemand } from './quota.js'
 
 /**
  * **When** the fleet looks at an account, as opposed to what it sees.
@@ -28,6 +29,7 @@ import type { DatedQuota, ProbeDemand } from './quota.js'
 let dir: string
 let db: typeof import('./db.js')
 let quota: typeof import('./quota.js')
+let events: typeof import('./events.js')
 let workers: typeof import('./workers.js')
 let settings: typeof import('./settings.js')
 
@@ -78,6 +80,7 @@ beforeAll(async () => {
   process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
   db = await import('./db.js')
   quota = await import('./quota.js')
+  events = await import('./events.js')
   workers = await import('./workers.js')
   settings = await import('./settings.js')
   db.openDb(join(dir, 'probing.db'))
@@ -103,7 +106,7 @@ describe('how long the poller waits before looking again', () => {
   it('uses the idle cadence when nothing is running', () => {
     settings.setSetting('probeIntervalMinutes', 5)
     settings.setSetting('idleProbeIntervalMinutes', 20)
-    const poller = new quota.QuotaPoller(() => {}, { demand: demandOf({}) })
+    const poller = new quota.QuotaPoller({ demand: demandOf({}) })
 
     expect(poller.nextDelayMs()).toBe(20 * MIN)
   })
@@ -114,7 +117,7 @@ describe('how long the poller waits before looking again', () => {
     settings.setSetting('probeIntervalMinutes', 5)
     settings.setSetting('idleProbeIntervalMinutes', 20)
     const worker = seedWorker('busy')
-    const poller = new quota.QuotaPoller(() => {}, {
+    const poller = new quota.QuotaPoller({
       demand: demandOf({ activeWorkerIds: [worker] })
     })
 
@@ -127,7 +130,7 @@ describe('how long the poller waits before looking again', () => {
     // rather than obeyed.
     settings.setSetting('probeIntervalMinutes', 30)
     settings.setSetting('idleProbeIntervalMinutes', 5)
-    const poller = new quota.QuotaPoller(() => {}, { demand: demandOf({}) })
+    const poller = new quota.QuotaPoller({ demand: demandOf({}) })
 
     expect(poller.nextDelayMs()).toBe(30 * MIN)
   })
@@ -137,7 +140,7 @@ describe('how long the poller waits before looking again', () => {
     // cadence used to be looked at whenever the sweep next came round.
     const worker = seedWorker('parked-on')
     const at = Date.now() + 4 * MIN
-    const poller = new quota.QuotaPoller(() => {}, { demand: demandOf({ releases: [{ workerId: worker, at }] }) })
+    const poller = new quota.QuotaPoller({ demand: demandOf({ releases: [{ workerId: worker, at }] }) })
 
     const delay = poller.nextDelayMs()
     expect(delay).toBeGreaterThan(4 * MIN)
@@ -147,7 +150,7 @@ describe('how long the poller waits before looking again', () => {
   it('takes the soonest of several parked tasks across different accounts', () => {
     const near = seedWorker('near')
     const far = seedWorker('far')
-    const poller = new quota.QuotaPoller(() => {}, {
+    const poller = new quota.QuotaPoller({
       demand: demandOf({
         releases: [
           { workerId: far, at: Date.now() + 40 * MIN },
@@ -162,7 +165,7 @@ describe('how long the poller waits before looking again', () => {
   it('does not let a release push the delay past the cadence it would have used anyway', () => {
     settings.setSetting('idleProbeIntervalMinutes', 20)
     const worker = seedWorker('far-off')
-    const poller = new quota.QuotaPoller(() => {}, {
+    const poller = new quota.QuotaPoller({
       demand: demandOf({ releases: [{ workerId: worker, at: Date.now() + 5 * 3600_000 }] })
     })
 
@@ -172,7 +175,7 @@ describe('how long the poller waits before looking again', () => {
   it('drops to its floor when something urgent is queued', () => {
     settings.setSetting('idleProbeIntervalMinutes', 20)
     const worker = seedWorker('warned')
-    const poller = new quota.QuotaPoller(() => {}, { demand: demandOf({}) })
+    const poller = new quota.QuotaPoller({ demand: demandOf({}) })
 
     quota.requestUrgentProbe(worker, 'the CLI said allowed_warning')
 
@@ -182,7 +185,7 @@ describe('how long the poller waits before looking again', () => {
   it('survives a demand supplier that throws, at the idle cadence', () => {
     // ⚠️ Degrading to the old behaviour is acceptable; a poller that stops is not.
     settings.setSetting('idleProbeIntervalMinutes', 20)
-    const poller = new quota.QuotaPoller(() => {}, {
+    const poller = new quota.QuotaPoller({
       demand: () => {
         throw new Error('the scheduler is mid-migration')
       }
@@ -236,7 +239,7 @@ describe('the free live signal, connected to something', () => {
     const worker = seedWorker('disabled-but-warned')
     quota.requestUrgentProbe(worker, 'a warning about an account we cannot open')
 
-    await new quota.QuotaPoller(() => {}, { demand: demandOf({}) }).sweep()
+    await new quota.QuotaPoller({ demand: demandOf({}) }).sweep()
 
     expect(quota.pendingUrgentProbes().size).toBe(0)
   })
@@ -252,7 +255,7 @@ describe('deciding to refresh rather than merely re-read', () => {
     settings.setSetting('probeIntervalMinutes', 5)
     const worker = seedWorker('busy')
     sample(worker, { ageMs: 6 * MIN, percent: 40 })
-    const poller = new quota.QuotaPoller(() => {}, { demand: demandOf({}) })
+    const poller = new quota.QuotaPoller({ demand: demandOf({}) })
 
     const forced = poller.forcedRefresh(worker, { activeWorkerIds: [worker], releases: [] }, now())
     expect(forced?.why).toMatch(/run is in flight/)
@@ -262,14 +265,14 @@ describe('deciding to refresh rather than merely re-read', () => {
     settings.setSetting('probeIntervalMinutes', 5)
     const worker = seedWorker('busy-and-fresh')
     sample(worker, { ageMs: 30_000, percent: 40 })
-    const poller = new quota.QuotaPoller(() => {}, { demand: demandOf({}) })
+    const poller = new quota.QuotaPoller({ demand: demandOf({}) })
 
     expect(poller.forcedRefresh(worker, { activeWorkerIds: [worker], releases: [] }, now())).toBeNull()
   })
 
   it('refreshes a busy account that has never been read at all', () => {
     const worker = seedWorker('busy-and-unknown')
-    const poller = new quota.QuotaPoller(() => {}, { demand: demandOf({}) })
+    const poller = new quota.QuotaPoller({ demand: demandOf({}) })
 
     expect(
       poller.forcedRefresh(worker, { activeWorkerIds: [worker], releases: [] }, now())?.why
@@ -280,7 +283,7 @@ describe('deciding to refresh rather than merely re-read', () => {
     const worker = seedWorker('parked-on')
     sample(worker, { ageMs: 60_000, percent: 99 })
     const at = Date.now() - quota.RELEASE_PROBE_GRACE_MS - 1000
-    const poller = new quota.QuotaPoller(() => {}, { demand: demandOf({}) })
+    const poller = new quota.QuotaPoller({ demand: demandOf({}) })
 
     const forced = poller.forcedRefresh(worker, { activeWorkerIds: [], releases: [{ workerId: worker, at }] }, now())
     expect(forced?.why).toMatch(/parked on this window/)
@@ -291,7 +294,7 @@ describe('deciding to refresh rather than merely re-read', () => {
     // ⚠️ `resetsAt` is the boundary itself. Probing on the dot reads the old window one last time
     // and parks the task for another whole interval on a number that expired a second later.
     const worker = seedWorker('due-any-second')
-    const poller = new quota.QuotaPoller(() => {}, { demand: demandOf({}) })
+    const poller = new quota.QuotaPoller({ demand: demandOf({}) })
 
     const forced = poller.forcedRefresh(
       worker,
@@ -305,7 +308,7 @@ describe('deciding to refresh rather than merely re-read', () => {
     const worker = seedWorker('warned')
     sample(worker, { ageMs: 10_000, percent: 40 })
     quota.requestUrgentProbe(worker, 'rate-limit rejected')
-    const poller = new quota.QuotaPoller(() => {}, { demand: demandOf({}) })
+    const poller = new quota.QuotaPoller({ demand: demandOf({}) })
 
     expect(poller.forcedRefresh(worker, { activeWorkerIds: [], releases: [] }, now())?.why).toMatch(
       /rejected/
@@ -320,7 +323,7 @@ describe('deciding to refresh rather than merely re-read', () => {
     const worker = seedWorker('quiet')
     enable(worker)
     sample(worker, { ageMs: 3 * 3600_000, percent: 40 })
-    const poller = new quota.QuotaPoller(() => {}, { demand: demandOf({}) })
+    const poller = new quota.QuotaPoller({ demand: demandOf({}) })
 
     expect(poller.forcedRefresh(worker, { activeWorkerIds: [], releases: [] }, now())).toBeNull()
     expect(quota.mayRefreshUsage(worker)).toBe(true)
@@ -365,11 +368,25 @@ describe('the account gates every refresh goes through', () => {
 })
 
 describe('what a sweep reports back', () => {
+  /**
+   * ⚠️ Observed on the **event sink**, which is where the poller's own listener used to be. That
+   * callback was the only thing telling the UI a reading had changed, and three of the four paths
+   * that store one never went through it (t86) — so the announcement moved to the store, and this
+   * assertion moved with it, onto what the renderer actually receives.
+   */
   it('says nothing about disabled or quarantined accounts', async () => {
-    const heard: DatedQuota[] = []
+    const heard: DaemonEvent[] = []
     const disabled = seedWorker('never-touch-me')
-    await new quota.QuotaPoller((q) => heard.push(q), { demand: demandOf({}) }).sweep()
+    events.setEventSink((e) => heard.push(e))
+    try {
+      await new quota.QuotaPoller({ demand: demandOf({}) }).sweep()
+    } finally {
+      events.setEventSink(() => {})
+    }
 
-    expect(heard.some((q) => q.workerId === disabled)).toBe(false)
+    const about = heard
+      .filter((e): e is Extract<DaemonEvent, { type: 'quota.changed' }> => e.type === 'quota.changed')
+      .map((e) => e.quota.workerId)
+    expect(about).not.toContain(disabled)
   })
 })
