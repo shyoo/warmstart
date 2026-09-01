@@ -177,8 +177,13 @@ export const QUOTA_MIDRUN_PREEMPT_WATER = 95
  *
  * ⚠️ Lower than `QUOTA_MIDRUN_PREEMPT_WATER`, and only reachable with two independent signals
  * agreeing. A warning does not replace the evidence; it lowers what the evidence has to show.
+ *
+ * Set to `QUOTA_RISK_FLOOR` (50%): the point where quota usage enters the risk zone and finishing a
+ * large task stops being a safe assumption. A warning on low usage (<50%, measured at 17%, 0%, 19%
+ * on t71) is ignored so healthy runs are not disrupted; an elevated baseline (>=50%, e.g. 76% on t75)
+ * combined with an in-stream session warning preempts cleanly before hard exhaustion.
  */
-export const QUOTA_WARNED_PREEMPT_WATER = 80
+export const QUOTA_WARNED_PREEMPT_WATER = 50
 
 /** How long a task may be parked when nothing will say when the window actually resets. */
 const BLIND_PARK_MS = 5 * 60 * 60 * 1000
@@ -2011,6 +2016,14 @@ async function runWatchdogs(): Promise<void> {
         const choice = resolveModelChoice(task.constraints, worker, false, quota)
         const win = sessionWindowFor(quota.windows, poolFor(worker, choice.model))
         if (win && !windowExpired(win)) percent = Math.round(win.percent)
+      } else if (worker && run.quotaBefore && !run.quotaBefore.stale) {
+        // Fall back to the baseline snapshot taken at dispatch if mid-run staleness elapsed (>15m)
+        const pool = poolFor(worker, run.model)
+        const win =
+          run.quotaBefore.windows.find((w) => isSessionRateWindow(w.id) || (pool && w.id.includes(pool))) ??
+          run.quotaBefore.windows.find((w) => isSessionRateWindow(w.id)) ??
+          run.quotaBefore.windows[0]
+        if (win) percent = Math.round(win.percent)
       }
 
       const verdict = overrunVerdict(run.workerId, percent, {

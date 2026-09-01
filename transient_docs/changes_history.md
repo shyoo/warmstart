@@ -3155,6 +3155,7 @@ pre-size and no counterpart, so the compacted size is genuinely unknown until so
 back. Inventing it by subtracting an estimate would make it the one number on the row nobody
 measured.
 
+<<<<<<< HEAD
 ## A gate nobody could overrule, and a queue that priced itself as busy (2026-09-01)
 
 **t71, 00:31:06Z.** Re-run, and immediately held: *"ClaudeThird at 92% of its Claude 5h window"*,
@@ -3257,3 +3258,29 @@ full; `autoCompact` off still means off.
 trade, "nobody wants this for 2h29m, so shrink it". This one makes **move 5** reachable — the
 untimed one, "this account is full, save what it holds". A session on a full account now has two
 independent reasons to be compacted, and neither had ever produced one.
+
+## Active 5h session limit overrun mid-run (2026-08-31, t75)
+
+Task t75 hit a 5-hour quota hard exhaustion mid-run on Claude Code (ClaudeThird), resulting in an
+unrecoverable 429 `api_error` (exit 1) and wasting the entire in-flight context.
+
+Two interacting root causes produced the overrun:
+
+1. **The 80% watermark threshold on a frozen baseline:**
+   t75 started with a pre-dispatch quota reading of 76%. During the headless stream run, Opus-5 spent
+   heavily and Claude Code emitted in-stream `five_hour` `allowed_warning` records starting 9.5 minutes
+   before the crash. However, `cachedUsageUtilization` in `.claude.json` is not updated on disk during
+   stream runs, so `percent` remained at the baseline (76%). Because 76% < 80%
+   (`QUOTA_WARNED_PREEMPT_WATER`), `overrunVerdict` rejected the preemption ask and returned `null`.
+2. **Mid-run quota staleness (>15m) dropping `percent` to `null`:**
+   After 15 minutes of run time (`STALE_AFTER_MS`), `quota.stale` became `true`, causing `runWatchdogs`
+   to set `percent = null`. In `overrunVerdict`, `percent === null` unconditionally returned `null` for
+   all non-refusal warnings, blinding the scheduler to in-stream `five_hour` warnings for the rest of
+   the run until the hard 429 crash occurred.
+
+Fixes:
+- Set `QUOTA_WARNED_PREEMPT_WATER` to `QUOTA_RISK_FLOOR` (50%): warnings on low usage (<50%, measured
+  at 0%, 17%, 19% on t71) continue to be ignored, while elevated baselines (>=50%, e.g. 76% on t75)
+  paired with an in-stream session warning preempt cleanly before hard exhaustion.
+- `runWatchdogs` falls back to `run.quotaBefore` when `lastQuota` becomes stale mid-run (>15m),
+  preserving the known baseline lower bound.

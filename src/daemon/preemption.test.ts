@@ -411,6 +411,43 @@ describe('the switches that gate all of this', () => {
       expect(scheduler.overrunVerdict(workerId, 0)).toBeNull()
       expect(quota.windowResetsAt(workerId)?.at).toBe(resetsAt)
     })
+
+    it('preempts when 5h warning arrives on an elevated baseline (t75: 76% used)', () => {
+      const workerId = seedWorker()
+      seedRateLimit(workerId, 'five_hour', 'allowed_warning', Date.now() + 3_600_000)
+
+      const verdict = scheduler.overrunVerdict(workerId, 76)
+      expect(verdict).not.toBeNull()
+      expect(verdict?.reason).toContain('76% of 5h window used')
+    })
+
+    it('preempts a live run via run.quotaBefore even after lastQuota aged past STALE_AFTER_MS (>15m)', async () => {
+      const { task, run } = seedRunawayTask(0)
+      const workerId = tasks.requireRun(run.id).workerId
+
+      // Record quota before the run (76% as in t75)
+      tasks.setRunQuota(run.id, 'before', {
+        windows: [{ id: '5h', label: '5-hour', percent: 76 }],
+        sampledAt: Date.now() - 20 * 60 * 1000,
+        stale: false
+      })
+
+      // lastQuota in database is 20m old (>15m stale)
+      db.db()
+        .prepare(
+          `insert into quota_samples (worker_id, window_id, label, percent, resets_at, source, sampled_at)
+           values (?,?,?,?,?,?,?)`
+        )
+        .run(workerId, '5h', '5-hour', 76, Date.now() + 3_600_000, 'probe', Date.now() - 20 * 60 * 1000)
+
+      seedRateLimit(workerId, 'five_hour', 'allowed_warning', Date.now() + 3_600_000)
+
+      await scheduler.tick()
+      await vi.advanceTimersByTimeAsync(130_000)
+
+      expect(tasks.requireRun(run.id).outcome).toBe('preempted')
+      expect(tasks.getTask(task.id)?.status).toBe('paused_quota')
+    })
   })
 
   it('persists, and a corrupt value falls back rather than taking the fleet down', () => {
