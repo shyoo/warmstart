@@ -443,6 +443,12 @@ body {
 .wcard-name {
   font-size: var(--text-dense);
   font-weight: 600;
+  /* ⚠️ The name yields, not the corner. A long worker label used to have the whole head row to
+     itself; now the age or the probe dots share it, and the corner is the part that must not wrap
+     the row onto a second line. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .wcard-unknown {
@@ -461,24 +467,39 @@ body {
   opacity: 0.55;
 }
 
-/* ⛔ Faint, not warning-coloured. An old reading on an idle account is ordinary — the account is
-   not being used, so its window is not moving and nothing has had cause to re-read it. Amber said
-   *fault* about the common case, and the rare genuine fault (every check since has failed) needs a
-   colour of its own to still mean something: `.wcard-stale--failing` keeps it. */
-.wcard-stale {
+/*
+ * The corner of the head row: how old the reading is, or three dots while a fresh one is on its way.
+ *
+ * ⛔ Here rather than under the quota bars, and that is the whole point of it. Both facts are
+ * transient by nature - a reading crosses fifteen minutes on a timer, a probe lasts seconds - and as
+ * rows of their own they grew the card by a line and then took it back, which moved every card
+ * beside them and the strip below. The head row is drawn whatever happens, so nothing it says can
+ * change the height of anything.
+ *
+ * ⚠️ Faint, not warning-coloured. An old reading on an idle account is ordinary - the account is not
+ * being used, so its window is not moving and nothing has had cause to re-read it. Amber said
+ * *fault* about the common case, and the rare genuine fault (every check since has failed) needs a
+ * colour of its own to still mean something: `.wcard-status--failing` keeps it.
+ */
+.wcard-status {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
   font-size: var(--text-meta);
   color: var(--color-text-faint);
+  white-space: nowrap;
 }
 
-.wcard-stale--failing {
+.wcard-status--failing {
   color: var(--state-warn);
 }
 
-/* A session with nothing measured yet: the word, and none of the furniture of a reading. */
-.gauge--waiting {
-  grid-template-columns: 84px 1fr;
-  font-size: var(--text-meta);
-  color: var(--color-text-faint);
+/* The dots bring their own left margin for the status text they usually follow; in the corner they
+   are the whole thing, and that margin only pushes them off the edge. */
+.wcard-status .working {
+  margin-left: 0;
 }
 
 .gauge {

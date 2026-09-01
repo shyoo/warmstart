@@ -2,15 +2,10 @@ import { useState } from 'react'
 import type { Session } from '@shared/protocol'
 import type { FleetEntry } from '../lib/daemon'
 import { readFleetCollapsed, writeFleetCollapsed } from '../lib/prefs'
+import { cardStatus, gaugedSessions } from '../lib/fleetcard'
+import { Working } from '../lib/taskview'
 import { AgentIcon } from './AgentIcon'
-import {
-  cacheUrgency,
-  countdown,
-  age,
-  percent,
-  quotaUrgency,
-  tokens
-} from '../lib/format'
+import { cacheUrgency, countdown, percent, quotaUrgency, tokens } from '../lib/format'
 
 /**
  * Context-fill fraction for sessions with no cache clock.
@@ -42,6 +37,11 @@ function contextFill(session: Pick<Session, 'contextTokens' | 'contextWindow'>):
  * may consume a stale percentage.** `reserveState` refuses one, and a gate satisfied by a stale
  * number is what strands context (`docs/cost-model.md` §5). A person reading a number that says
  * *stale* beside it is not a gate. So the last known reading is shown, labelled, and dimmed.
+ *
+ * ⚠️ Where the label goes is its own constraint, and `fleetcard.ts` holds it: the age lives in the
+ * corner of the head row, never in a row of its own, because a card that grows a line the minute a
+ * reading turns fifteen minutes old and loses it again on the next probe moves the whole strip
+ * while the operator is reading it.
  */
 export function FleetStrip({ fleet, now }: { fleet: FleetEntry[]; now: number }): React.JSX.Element {
   const [collapsed, setCollapsed] = useState(readFleetCollapsed)
@@ -109,6 +109,10 @@ export function FleetStrip({ fleet, now }: { fleet: FleetEntry[]; now: number })
  * column is blank.
  *
  * Active sessions lead; warmed-up idle/closed sessions are displayed with a slight dimming.
+ *
+ * ⛔ Only sessions with a reading reach this - `gaugedSessions` holds back the ones with no turn
+ * yet, and the card's corner says one is starting. A row of the same shape carrying the word
+ * `starting…` instead of a number appeared and vanished on its own and resized the whole strip.
  */
 function SessionGauge({ session, now }: { session: Session; now: number }): React.JSX.Element {
   const ctx = session.contextTokens
@@ -119,20 +123,6 @@ function SessionGauge({ session, now }: { session: Session; now: number }): Reac
   const ctxUrgencyClass = ctx && win ? quotaUrgency((ctx / win) * 100) : 'ok'
   const fillClass = `bar-fill--${ctxUrgencyClass}`
   const isIdle = session.state === 'closed' || session.state === 'idle'
-
-  if (!ctx) {
-    return (
-      <div
-        className={`gauge gauge--session gauge--waiting${isIdle ? ' gauge--idle' : ''}`}
-        title={`session ${session.id}\n${isIdle ? 'idle' : session.purpose} · ${session.transport} transport\n${session.cwd}`}
-      >
-        <span className="gauge-label">{isIdle ? 'idle' : session.purpose}</span>
-        <span className="wcard-agenote">
-          {session.purpose === 'probe' ? 'reading the window…' : isIdle ? 'idle' : 'starting…'}
-        </span>
-      </div>
-    )
-  }
 
   return (
     <div
@@ -175,8 +165,10 @@ function WorkerCard({ entry, now }: { entry: FleetEntry; now: number }): React.J
   const suspect = worker.health?.state === 'suspect' ? worker.health : null
 
   const maxDisplay = 3
-  const displayedSessions = sessions.slice(0, maxDisplay)
-  const overflowCount = sessions.length - displayedSessions.length
+  const gauged = gaugedSessions(sessions)
+  const displayedSessions = gauged.slice(0, maxDisplay)
+  const overflowCount = gauged.length - displayedSessions.length
+  const status = cardStatus(entry, sessions)
 
   return (
     <div className={`wcard${worker.enabled ? '' : ' wcard--off'}`}>
@@ -192,6 +184,27 @@ function WorkerCard({ entry, now }: { entry: FleetEntry; now: number }): React.J
         {suspect && (
           <span className="tag tag--suspect" title={suspect.reason}>
             {suspect.needsReauth ? 'sign in' : 'no work'}
+          </span>
+        )}
+        {/* ⛔ The corner, and the only place on this card where a *transient* fact is allowed to
+            appear. The head row is drawn whatever happens, so the age of a reading and the fact
+            that a probe is in flight cost nothing to say here and cannot resize the card the way
+            they did as rows of their own. ⚠️ Right-aligned by `margin-left: auto`, so it stays in
+            the corner however many tags precede it. */}
+        {status && (
+          <span
+            className={`wcard-status${status.kind === 'age' && status.failing ? ' wcard-status--failing' : ''}`}
+            title={status.title}
+            aria-label={status.label}
+          >
+            {status.kind === 'pending' ? (
+              <Working />
+            ) : (
+              <>
+                {status.failing && <span className="dot dot--down" />}
+                <span className="num">{status.label}</span>
+              </>
+            )}
           </span>
         )}
       </div>
@@ -217,48 +230,26 @@ function WorkerCard({ entry, now }: { entry: FleetEntry; now: number }): React.J
           </div>
         )
       ) : (
-        <>
-          {/* ⚠️ Dimmed as a whole, so the numbers read as *last known* rather than as current. The
-              note carries the age, because "stale" alone does not tell you whether to wait for the
-              next probe or go and press one. */}
-          <div className={stale ? 'wcard-windows wcard-windows--stale' : 'wcard-windows'}>
-            {windows.map((w) => (
-              <div className="gauge" key={w.id}>
-                <span className="gauge-label">{w.label}</span>
-                <span className="bar">
-                  <span
-                    className={`bar-fill bar-fill--${quotaUrgency(w.percent)}`}
-                    style={{ width: `${Math.min(100, Math.max(2, w.percent))}%` }}
-                  />
-                </span>
-                <span className="num gauge-value">{percent(w.percent)}</span>
-                <span className="num gauge-reset">{countdown(w.resetsAt, now)}</span>
-              </div>
-            ))}
-          </div>
-          {stale && (
-            <div
-              className={quota?.error ? 'wcard-stale wcard-stale--failing' : 'wcard-stale'}
-              title={
-                quota?.error
-                  ? 'Every check since has failed, so this is the last reading that worked and ' +
-                    `the newest attempt did not: ${quota.error}`
-                  : 'Older than fifteen minutes, so nothing the scheduler gates on will use it — ' +
-                    'but old is not wrong. The CLI rewrites its usage cache when it does work, so ' +
-                    'an idle account keeps its last number and its window is not moving either. A ' +
-                    'fresh one is taken when a task is about to run here, or when you press Probe.'
-              }
-            >
-              {/* ⛔ Two states, one used to be printed for both. Old because nobody has used this
-                  account is ordinary and reads as a plain age; old because every check since has
-                  failed is a fault and keeps the dot and the colour. Printing `stale` for both sent
-                  the operator to Probe accounts that were fine. */}
-              {quota?.error && <span className="dot dot--down" />}
-              read {age(quota?.ageMs ?? 0)}
-              {quota?.error && <span className="wcard-agenote"> · last check failed</span>}
+        /* ⚠️ Dimmed as a whole, so the numbers read as *last known* rather than as current. The age
+           itself is in the corner of the head row, because "stale" alone does not tell you whether
+           to wait for the next probe or go and press one - and because a line that appears under
+           these bars the minute a reading turns fifteen minutes old resizes every card in the strip
+           on a timer. */
+        <div className={stale ? 'wcard-windows wcard-windows--stale' : 'wcard-windows'}>
+          {windows.map((w) => (
+            <div className="gauge" key={w.id}>
+              <span className="gauge-label">{w.label}</span>
+              <span className="bar">
+                <span
+                  className={`bar-fill bar-fill--${quotaUrgency(w.percent)}`}
+                  style={{ width: `${Math.min(100, Math.max(2, w.percent))}%` }}
+                />
+              </span>
+              <span className="num gauge-value">{percent(w.percent)}</span>
+              <span className="num gauge-reset">{countdown(w.resetsAt, now)}</span>
             </div>
-          )}
-        </>
+          ))}
+        </div>
       )}
 
       {/* ⛔ The rule is load-bearing, not decoration. Everything above it is the **account**: one
@@ -266,7 +257,7 @@ function WorkerCard({ entry, now }: { entry: FleetEntry; now: number }): React.J
           is **one live session**: its own context, its own cache clock, gone when it closes. Four
           gauges of identical shape with nothing between them read as four measurements of one
           thing, and they are not — that is the confusion this line exists to end. */}
-      {sessions.length > 0 && (
+      {displayedSessions.length > 0 && (
         <div className="wcard-sessions">
           <div className="wcard-rule">
             <span>sessions</span>
@@ -277,7 +268,7 @@ function WorkerCard({ entry, now }: { entry: FleetEntry; now: number }): React.J
           {overflowCount > 0 && (
             <div
               className="wcard-more-sessions"
-              title={`${overflowCount} more active/idle conversation(s) on this worker`}
+              title={`${overflowCount} more measured conversation(s) on this worker`}
             >
               +{overflowCount} more
             </div>
