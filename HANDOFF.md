@@ -104,7 +104,7 @@ src/renderer/          fleet strip, approvals bar, tasks, project settings (poli
                        Logs, LooseEnds, Conversations (+ lib/format.test.ts)
 costmodels/            anthropic.* - google.antigravity.* - openai.codex.* - local.llm.*; compiled in, so a
                        packaging slip cannot leave the scheduler unable to price
-docs/                  cost-model.md, glossary.md, adapters.md, landing.md, sessions.md
+docs/                  cost-model.md, glossary.md, adapters.md, landing.md, sessions.md, routing.md
 .claude/skills/commit/ /commit: docs, suites, package, commit, push
 ```
 
