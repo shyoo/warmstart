@@ -21,6 +21,7 @@ import type {
   ReserveReport,
   ResourceAvailability,
   RestingState,
+  RunOutcome,
   Run,
   Task,
   TaskConstraints,
@@ -473,7 +474,33 @@ export interface Session {
 }
 
 export type SessionTransport = 'pty' | 'stream'
-export type SessionState = 'starting' | 'live' | 'idle' | 'closed' | 'failed'
+/**
+ * What became of the session's *process*.
+ *
+ * ⛔ Not a verdict on the work. A session that did its job and was then killed to free its worktree
+ * exits non-zero, and for a long time that was recorded as `failed` — 81 runs with
+ * `outcome: 'completed'` sat inside sessions the UI drew in red. `closed` now means *we asked it to
+ * stop*, whatever exit code the kill produced; `abandoned` means the daemon went away and found the
+ * row still open when it came back, which is a statement about the daemon and not about the agent;
+ * and `failed` is reserved for a process that died on its own without being asked. Migration 27
+ * repaired the rows written under the old rule.
+ */
+export type SessionState = 'starting' | 'live' | 'idle' | 'closed' | 'abandoned' | 'failed'
+
+/**
+ * The states that mean *this session is over*, in one list.
+ *
+ * ⛔ A dozen places asked `state !== 'closed' && state !== 'failed'` by hand, so adding `abandoned`
+ * would otherwise have made every one of them quietly count a dead session as live — and the
+ * scheduler would have routed work into a process that is not there. This is the same argument
+ * `eligibility.ts` settled for the account gates: a membership test copied into a dozen call sites
+ * is a set of copies that will drift, not a test.
+ */
+export const SESSION_ENDED: readonly SessionState[] = ['closed', 'abandoned', 'failed']
+
+export function sessionEnded(state: SessionState): boolean {
+  return SESSION_ENDED.includes(state)
+}
 
 /**
  * What this session is for.
@@ -510,7 +537,31 @@ export interface Turn {
 
 // ---------------------------------------------------------------------------- adapters
 
-/** One task's use of a conversation, collapsed across however many runs it took. */
+/**
+ * One turn of a conversation, as it happened.
+ *
+ * ⛔ **The run, not the task.** Collapsing runs into their task hid the thing this page is for:
+ * measured 2026-08-31, no conversation on this install has ever served two *tasks* — sharing is off
+ * at every tier — but one served **nine runs**, and t56 spanned four conversations. So a row reading
+ * `1 task` was true and useless, and the history worth reviewing is this sequence.
+ */
+export interface ConversationRun {
+  runId: string
+  taskId: string
+  /** The task's number, so a run can be named `t56` the way every other screen names it. */
+  seq: number
+  title: string
+  startedAt: number
+  /** ⚠️ Null while the run is still going. Renders as a clock, never as a dash. */
+  endedAt: number | null
+  outcome: RunOutcome | null
+  /** ⚠️ Null for runs recorded before this was tracked. Renders as nothing, never as `new`. */
+  startedWarm: boolean | null
+  tokens: number
+  model: string | null
+}
+
+/** One task's use of a conversation, with the runs it took underneath it in the order they ran. */
 export interface ConversationTask {
   taskId: string
   seq: number
@@ -521,6 +572,8 @@ export interface ConversationTask {
   /** ⚠️ Null for runs recorded before this was tracked. Renders as nothing, never as `new`. */
   startedWarm: boolean | null
   tokens: number
+  /** ⭐ Chronological. This is the timeline the expanded row draws. */
+  timeline: ConversationRun[]
 }
 
 /**
@@ -540,7 +593,8 @@ export interface Conversation {
   projectId: string | null
   projectName: string | null
   cwd: string
-  state: string
+  /** ⚠️ What became of the *process*. `outcome` below is what became of the work. */
+  state: SessionState
   currentBranch: string | null
   contextTokens: number | null
   startedAt: number
@@ -548,6 +602,23 @@ export interface Conversation {
   tasks: ConversationTask[]
   /** ⭐ More than one means this conversation was shared. Invisible from every other screen. */
   taskCount: number
+  /**
+   * ⭐ How many turns were taken in here. The number that actually varies: `taskCount` has been 1
+   * for every conversation this fleet has ever opened, and `runCount` has been as high as nine.
+   */
+  runCount: number
+  /**
+   * What became of the work, as opposed to what became of the process.
+   *
+   * ⛔ `state` answers "is this conversation still open?" and nothing more — it is a process fact,
+   * and for most of this app's life it was a wrong one (see migration 27). This answers "did the
+   * work in here succeed?", from the outcomes of the runs it served: `failed` if any run failed,
+   * else `mixed` if they disagree, else whatever they all were. ⚠️ `null` when it served no run,
+   * which is a real state — a conversation opened and never used.
+   */
+  outcome: RunOutcome | 'mixed' | null
+  /** Total tokens across every run this conversation served. */
+  tokens: number
 }
 
 export interface AdapterCapabilities {

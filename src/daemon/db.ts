@@ -819,6 +819,43 @@ const MIGRATIONS: string[] = [
   // not acquire one.
   `
   alter table quota_samples add column window_group text;
+  `,
+
+  // 27 - repair the sessions that were blamed for their own shutdown.
+  //
+  // ⛔ **`state` was recording an exit code, not an outcome.** `handleExit` marked a session `failed`
+  // whenever the process exited non-zero, and killing a process *always* does — so winding a task
+  // down, reclaiming its worktree, or the cache clock closing a cold conversation each recorded a
+  // failure. Beside it, `reconcileOrphans` marked every still-open row `failed` at startup, and the
+  // daemon restarts for reasons the agent has no part in. Measured 2026-08-31 on the author's
+  // install: **81 runs with `outcome: 'completed'` sat inside sessions marked `failed`**, against 7
+  // whose run had genuinely failed. The Conversations page was a wall of red describing work that
+  // had succeeded.
+  //
+  // ⛔ The runs are the evidence, so the runs decide, and **only where there is evidence**. A session
+  // every one of whose runs ended `completed`, `blocked`, `cancelled` or `preempted` was not a
+  // process that died on its own; it was one that was asked to stop, which is `closed`. `failed`
+  // stays wherever a run actually failed, and `closed`, `live`, `idle` and `starting` rows are not
+  // touched at all.
+  //
+  // ⛔ A session that served **no** run is left exactly as it is. That is every `consult`, `login`
+  // and `probe` row, and a dispatch that died before its first turn — there is nothing to read a
+  // verdict off, and rewriting those would be inventing one. On the install this was measured
+  // against, all 75 wrong work rows have runs, so the conservative rule loses nothing.
+  //
+  // ⚠️ This rewrites recorded history, which is not a thing to do lightly. It is done because the
+  // old value was not a record of anything — it was a restatement of `kill()`'s exit status under a
+  // column name that claimed to be a verdict, and leaving 75 wrong rows in place would have meant
+  // the repaired UI still looked broken for months.
+  `
+  update sessions
+     set state = 'closed'
+   where state = 'failed'
+     and exists (select 1 from runs r where r.session_id = sessions.id)
+     and not exists (
+           select 1 from runs r
+            where r.session_id = sessions.id and r.outcome = 'failed'
+         );
   `
 ]
 

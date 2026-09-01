@@ -1,11 +1,13 @@
+import { sessionEnded } from '@shared/protocol'
 import type { Project as ProjectRecord, ResourceAvailability } from '@shared/tasks'
 import type { FleetEntry } from '../lib/daemon'
 import { Tasks } from './Tasks'
 import { TaskThread } from './TaskThread'
 import { ProjectSettings } from './ProjectSettings'
+import { Conversations } from './Conversations'
 import { TerminalPane } from './Terminal'
 
-export type ProjectTab = 'tasks' | 'thread' | 'sessions' | 'cost' | 'settings'
+export type ProjectTab = 'tasks' | 'thread' | 'conversations' | 'sessionTui' | 'cost' | 'settings'
 
 /**
  * ⛔ **Thread**, not Conversation. A conversation in this app is the agent session you resume with
@@ -14,10 +16,17 @@ export type ProjectTab = 'tasks' | 'thread' | 'sessions' | 'cost' | 'settings'
  * same name would make "which conversation is this task in?" ambiguous on the one screen that
  * answers it. See docs/glossary.md.
  */
+/**
+ * ⛔ **Session TUI**, not Sessions. That tab shows one thing and only one: the *raw terminal* of a
+ * live agent process, keystrokes and all. Called "Sessions" it read as a list of this project's
+ * sessions — which is a real and different thing, is now called **Conversations**, and is the tab
+ * beside it. Two tabs, two nouns; the pane that draws a TTY says so in its name.
+ */
 export const PROJECT_TABS: Array<{ id: ProjectTab; label: string }> = [
   { id: 'tasks', label: 'Tasks' },
   { id: 'thread', label: 'Thread' },
-  { id: 'sessions', label: 'Sessions' },
+  { id: 'conversations', label: 'Conversations' },
+  { id: 'sessionTui', label: 'Session TUI' },
   { id: 'cost', label: 'Cost' },
   { id: 'settings', label: 'Settings' }
 ]
@@ -114,7 +123,11 @@ export function Project({
             </button>
           </div>
         )
-      ) : tab === 'sessions' ? (
+      ) : tab === 'conversations' ? (
+        // ⛔ The same component History renders, given a project. See Conversations.tsx: the two
+        // views answer the same question at two scopes, and a second table would drift.
+        <Conversations projectId={project.id} projectName={project.name} onOpenTask={openTask} />
+      ) : tab === 'sessionTui' ? (
         <ProjectSessions
           project={project}
           fleet={fleet}
@@ -143,10 +156,16 @@ export function Project({
 }
 
 /**
- * ⚠️ Sessions are not yet stamped with the project they are working for: `spawnSession` takes no
- * project and no insert sets the column, so every session row reads `project_id: null`. Filtering
- * by project would therefore show an empty tab on a fleet that is visibly busy, which reads as a
- * broken screen rather than as a missing field. Say what is actually true instead.
+ * The raw terminal of a live agent process, for this project.
+ *
+ * ⛔ Live only, and that is not a limitation to apologise for: a TTY needs a process on the other
+ * end of it. What a *finished* session did is the Conversations tab, which is why the empty state
+ * points there rather than explaining an absence.
+ *
+ * ⚠️ The note that used to be here said sessions were never stamped with a project and the filter
+ * would always be empty. That stopped being true when dispatch began passing `projectId` to
+ * `spawnSession` (scheduler.ts) — every work session on this install carries one — so the filter is
+ * real and the fallback below is for rows that predate it.
  */
 function ProjectSessions({
   project,
@@ -165,7 +184,7 @@ function ProjectSessions({
 }): React.JSX.Element {
   const all = fleet.flatMap((f) =>
     f.sessions
-      .filter((s) => s.state !== 'closed' && s.state !== 'failed')
+      .filter((s) => !sessionEnded(s.state))
       .map((s) => ({ session: s, worker: f.worker }))
   )
   const mine = all.filter((s) => s.session.projectId === project.id)
@@ -179,10 +198,11 @@ function ProjectSessions({
   if (shown.length === 0) {
     return (
       <div className="empty-inline">
-        <p>No live sessions.</p>
+        <p>No live session to watch.</p>
         <p className="dim">
-          A session is one agent process. Scheduled work runs on a pipe transport and appears here as
-          it streams; a session you open yourself gets a real terminal.
+          This tab is a terminal, so it needs a process on the other end of it. Scheduled work runs
+          on a pipe transport and appears here as it streams; a session you open yourself gets a
+          real TTY. What earlier sessions did is on <strong>Conversations</strong>.
         </p>
       </div>
     )
@@ -192,10 +212,10 @@ function ProjectSessions({
     <div className="panel">
       <header className="panel-head">
         <div>
-          <h2>Sessions</h2>
+          <h2>Session TUI</h2>
           <p className="panel-sub">
-            The real agent TUI. Read-only until you take the keyboard — a stray keystroke into a
-            running agent is a real edit to a real repository.
+            The real agent terminal, exactly as the CLI is drawing it. Read-only until you take the
+            keyboard — a stray keystroke into a running agent is a real edit to a real repository.
           </p>
         </div>
         <label className="check">
@@ -210,9 +230,9 @@ function ProjectSessions({
 
       {mine.length === 0 && (
         <div className="notice">
-          Showing every live session, not just this project&rsquo;s. Sessions do not record which
-          project they are working for yet, so there is nothing to filter on — the field exists and
-          is never written.
+          Showing every live session, not just this project&rsquo;s. Nothing running right now
+          records this project, so filtering would leave the tab empty on a fleet that is visibly
+          busy — which reads as a broken screen rather than as an honest nothing.
         </div>
       )}
 

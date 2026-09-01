@@ -3,11 +3,21 @@ import type { Project, ResourceAvailability } from '@shared/tasks'
 import { rpc } from '../lib/daemon'
 
 /**
- * Projects and their resources.
+ * Every project this install knows about, and the one control that belongs at fleet scope: adding
+ * another.
  *
  * A project is a directory plus policy, and the policy is **committed in the repo** so a collaborator
  * or a fresh clone reproduces the same behaviour. Everything shown here that came from
  * `.multi_agent_controller/project.json` is a fact about the repository, not a setting stored in this app.
+ *
+ * ⛔ **No resources table.** This page used to list every one of the fleet's pools, landing locks
+ * and metered APIs beneath the projects. It was read-only, it duplicated what each project's own
+ * Settings tab already draws next to the policy those numbers exist to serve, and sitting under a
+ * heading that says Settings it read as something an operator could change. Removed 2026-08-31.
+ *
+ * ⚠️ `resources` stays a prop, for the **Workspaces** column below. That is the one number from the
+ * broker anybody scanning this list wants — how much of each project's pool is free — and it is
+ * useful precisely because it sits on the project's own row rather than in a table of its own.
  */
 export function Projects({
   projects,
@@ -144,31 +154,6 @@ export function Projects({
         </table>
       )}
 
-      {resources.length > 0 && (
-        <section className="doc-section">
-          <h3>Resources</h3>
-          <p className="panel-sub">
-            Anything the fleet contends for — a workspace pool, a project&rsquo;s landing lock, a
-            browser profile, a metered API. The scheduler hands them out, so nothing has to lock; a
-            task that cannot get one <strong>waits</strong> and is never failed for want of it. This
-            is the fleet-wide view — one project&rsquo;s own are on its Settings tab.
-          </p>
-          <table className="tbl">
-            <tbody>
-              {resources.map((r) => (
-                <tr key={r.resource.id}>
-                  <td className="tbl-strong">{r.resource.label}</td>
-                  <td className="dim">{r.resource.kind}</td>
-                  <td className="num">
-                    {r.free}/{r.resource.capacity} free
-                  </td>
-                  <td className="mono kv-path">{r.resource.id}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </section>
-      )}
     </div>
   )
 }

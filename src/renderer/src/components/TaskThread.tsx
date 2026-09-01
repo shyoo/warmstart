@@ -1,3 +1,4 @@
+import { sessionEnded } from '@shared/protocol'
 import { useCallback, useEffect, useState } from 'react'
 import {
   FINISH_LABELS,
@@ -307,7 +308,7 @@ function TaskDetail({
     await refresh()
   }
   const liveSession = sessions.find(
-    (s) => s.id === runs[0]?.sessionId && s.state !== 'closed' && s.state !== 'failed'
+    (s) => s.id === runs[0]?.sessionId && !sessionEnded(s.state)
   )
   const workspace = workspacePathFor(runs, sessions)
 

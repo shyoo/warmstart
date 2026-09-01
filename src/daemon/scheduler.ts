@@ -1,3 +1,4 @@
+import { sessionEnded } from '@shared/protocol.js'
 import type { Project, QuestionOption, Run, RunQuota, Task, TaskStatus } from '@shared/tasks.js'
 import {
   WINDOW_HIGH_WATER,
@@ -681,7 +682,7 @@ export interface WorkerChoice {
  */
 function warmSessionFor(task: Task, workerId?: string): Session | null {
   const idle = (session: Session | null): Session | null => {
-    if (!session || session.state === 'closed' || session.state === 'failed') return null
+    if (!session || sessionEnded(session.state)) return null
     // ⛔ Asked per worker, because a conversation belongs to exactly one account and the answer
     // "there is a warm session" is only useful to the candidate that can actually speak in it. This
     // used to be resolved once for the whole fleet and then matched against each worker in the loop,
@@ -746,7 +747,7 @@ function borrowCandidates(task: Task, workerId?: string): { offerable: Session[]
   for (const [sessionId, held] of workspaces) {
     if (held.projectId !== task.projectId) continue
     const session = getSession(sessionId)
-    if (!session || session.state === 'closed' || session.state === 'failed') continue
+    if (!session || sessionEnded(session.state)) continue
     if (workerId && session.workerId !== workerId) continue
     const refusal = whyNotShared(task, session, {
       hasWorkspace: true,

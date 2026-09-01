@@ -1,4 +1,10 @@
-import type { Conversation, ConversationTask } from '@shared/protocol.js'
+import type {
+  Conversation,
+  ConversationRun,
+  ConversationTask,
+  SessionState
+} from '@shared/protocol.js'
+import type { RunOutcome } from '@shared/tasks.js'
 import { db, rows } from './db.js'
 import { getProject } from './projects.js'
 import { listWorkers } from './workers.js'
@@ -24,7 +30,7 @@ interface Row {
   worker_id: string
   project_id: string | null
   cwd: string
-  state: string
+  state: SessionState
   current_branch: string | null
   context_tokens: number | null
   started_at: number
@@ -32,16 +38,26 @@ interface Row {
   purpose: string
 }
 
-interface ServedRow {
+/**
+ * One run, as the row it was written as.
+ *
+ * ⛔ **Per run, not grouped per task.** The old query did `group by session_id, task_id`, which threw
+ * away the only sequence anybody wants to review: one conversation here took nine turns across
+ * several attempts at its task, and the page rendered that as the single line `1 task`. Grouping is
+ * now done in TypeScript, from rows that still remember what order they happened in.
+ */
+interface RunRow {
+  run_id: string
   session_id: string
   task_id: string
   seq: number
   title: string
-  runs: number
-  first_at: number
-  last_at: number
+  started_at: number
+  ended_at: number | null
+  outcome: string | null
   started_warm: number | null
-  tokens: number
+  model: string | null
+  tokens: number | null
 }
 
 /**
@@ -85,49 +101,76 @@ export function listConversations(opts: { projectId?: string; limit?: number } =
   )
   if (sessions.length === 0) return []
 
-  // ⚠️ One query for every session's tasks rather than one per session. A page that issued N+1
+  // ⚠️ One query for every session's runs rather than one per session. A page that issued N+1
   // queries would be fine at twenty conversations and unusable at the five hundred this can return.
   const ids = sessions.map((s) => s.session_id)
-  const served = rows<ServedRow>(
+  const served = rows<RunRow>(
     db()
       .prepare(
-        `select r.session_id, r.task_id, t.seq, t.title,
-                count(*) as runs,
-                min(r.started_at) as first_at,
-                max(r.started_at) as last_at,
-                max(r.started_warm) as started_warm,
-                sum(r.input_tokens + r.output_tokens + r.cache_read_tokens + r.cache_write_tokens)
+        `select r.id as run_id, r.session_id, r.task_id, t.seq, t.title,
+                r.started_at, r.ended_at, r.outcome, r.started_warm, r.model,
+                r.input_tokens + r.output_tokens + r.cache_read_tokens + r.cache_write_tokens
                   as tokens
            from runs r join tasks t on t.id = r.task_id
           where r.session_id in (${ids.map(() => '?').join(',')})
-          group by r.session_id, r.task_id
-          order by first_at`
+          order by r.started_at, r.rowid`
       )
       .all(...ids)
   )
 
-  const bySession = new Map<string, ConversationTask[]>()
+  // ⚠️ Grouped in insertion order, which the `order by` above made chronological. A Map preserves
+  // it, so the tasks come out in the order the conversation first met them and each one's runs come
+  // out in the order they ran — without a second sort that could disagree with the query's.
+  const bySession = new Map<string, Map<string, ConversationTask>>()
   for (const r of served) {
-    const list = bySession.get(r.session_id) ?? []
-    list.push({
+    const run: ConversationRun = {
+      runId: r.run_id,
       taskId: r.task_id,
       seq: r.seq,
       title: r.title,
-      runs: r.runs,
-      firstAt: r.first_at,
-      lastAt: r.last_at,
+      startedAt: r.started_at,
+      // ⚠️ Null means *still going*, and only that. A run whose row has no end is in flight.
+      endedAt: r.ended_at,
+      outcome: (r.outcome as RunOutcome | null) ?? null,
       // ⛔ Null stays null. A run recorded before `started_warm` existed answered nothing, and
       // rendering it as a cold start would put a measurement nobody took beside ones that were taken.
       startedWarm: r.started_warm === null ? null : r.started_warm === 1,
-      tokens: r.tokens ?? 0
-    })
-    bySession.set(r.session_id, list)
+      tokens: r.tokens ?? 0,
+      model: r.model
+    }
+    const tasksHere = bySession.get(r.session_id) ?? new Map<string, ConversationTask>()
+    const existing = tasksHere.get(r.task_id)
+    if (existing) {
+      existing.runs += 1
+      existing.lastAt = run.startedAt
+      existing.tokens += run.tokens
+      // ⚠️ Warm if *any* run of this task in here was warm, which is what `max(started_warm)` said
+      // before and still means "did this task ever continue in here rather than start over".
+      if (run.startedWarm !== null) {
+        existing.startedWarm = existing.startedWarm === true || run.startedWarm
+      }
+      existing.timeline.push(run)
+    } else {
+      tasksHere.set(r.task_id, {
+        taskId: r.task_id,
+        seq: r.seq,
+        title: r.title,
+        runs: 1,
+        firstAt: run.startedAt,
+        lastAt: run.startedAt,
+        startedWarm: run.startedWarm,
+        tokens: run.tokens,
+        timeline: [run]
+      })
+    }
+    bySession.set(r.session_id, tasksHere)
   }
 
   const workers = new Map(listWorkers().map((w) => [w.id, w.label]))
 
   return sessions.map((s) => {
-    const tasks = bySession.get(s.session_id) ?? []
+    const tasks = [...(bySession.get(s.session_id)?.values() ?? [])]
+    const runs = tasks.flatMap((t) => t.timeline)
     return {
       sessionId: s.session_id,
       // ⚠️ The vendor's id where the CLI named its own conversation, ours where it took ours. This
@@ -149,7 +192,38 @@ export function listConversations(opts: { projectId?: string; limit?: number } =
       // ⭐ The number this page exists to make visible. One task is the ordinary case; more than one
       // means a conversation was shared, which is either the saving working or a disclosure nobody
       // intended — and it is invisible from every other screen.
-      taskCount: tasks.length
+      taskCount: tasks.length,
+      // ⭐ Beside it, the number that actually varies. Measured 2026-08-31: `taskCount` is 1 for
+      // every conversation this fleet has ever opened, and `runCount` has been as high as nine.
+      runCount: runs.length,
+      outcome: conversationOutcome(runs),
+      tokens: runs.reduce((sum, r) => sum + r.tokens, 0)
     }
   })
+}
+
+/**
+ * What became of the work in a conversation, from the runs it served.
+ *
+ * ⛔ **Deliberately not `sessions.state`.** That column is a fact about a *process* — and until
+ * migration 27 a wrong one, since killing a session we ourselves asked to stop exits non-zero and was
+ * recorded as `failed`. Even repaired, "the process was closed" says nothing about whether the work
+ * succeeded, and "did this succeed?" is the question somebody opens this page with.
+ *
+ * ⚠️ A run still in flight (`outcome: null`) is not an opinion either way, so it is skipped rather
+ * than counted as a disagreement — otherwise every conversation would read `mixed` the moment it
+ * started a second turn.
+ *
+ * ⛔ `failed` beats everything. A conversation where one run failed and three succeeded is not a
+ * success with an asterisk; it is a conversation with a failure in it, and the whole point of the
+ * column is that somebody scanning for trouble finds it.
+ */
+export function conversationOutcome(
+  runs: Array<Pick<ConversationRun, 'outcome'>>
+): RunOutcome | 'mixed' | null {
+  const settled = runs.map((r) => r.outcome).filter((o): o is RunOutcome => o !== null)
+  if (settled.length === 0) return null
+  if (settled.includes('failed')) return 'failed'
+  const first = settled[0]!
+  return settled.every((o) => o === first) ? first : 'mixed'
 }

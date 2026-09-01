@@ -1,3 +1,4 @@
+import { sessionEnded } from '@shared/protocol.js'
 import type { ChatMessage } from '@shared/tasks.js'
 import { db, row, rows } from './db.js'
 import { emit } from './events.js'
@@ -93,7 +94,7 @@ function append(
 /** The live chat session for a thread, if there is one. */
 export function chatSessionFor(threadId: string): string | null {
   const live = listSessions().find(
-    (s) => s.purpose === 'chat' && s.state !== 'closed' && s.state !== 'failed'
+    (s) => s.purpose === 'chat' && !sessionEnded(s.state)
   )
   void threadId
   return live?.id ?? null

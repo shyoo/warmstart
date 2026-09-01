@@ -10,6 +10,7 @@ import type {
   SessionTransport,
   Worker
 } from '@shared/protocol.js'
+import { sessionEnded } from '@shared/protocol.js'
 import type { CacheMove } from '@shared/tasks.js'
 import { db, row, rows } from './db.js'
 import { costModel } from './costmodel.js'
@@ -146,6 +147,21 @@ type EndListener = (exitCode: number | null) => void
 const streamListeners = new Map<string, Set<StreamListener>>()
 const endListeners = new Map<string, Set<EndListener>>()
 
+/**
+ * Sessions we have asked to stop.
+ *
+ * ⛔ **This is what tells a deliberate close from a crash, and nothing else can.** Killing a process
+ * makes it exit non-zero on every platform, so `handleExit` reading only the exit code recorded every
+ * shutdown we ourselves ordered — winding a task down, reclaiming a worktree, the cache clock closing
+ * a cold conversation — as `failed`. Measured 2026-08-31: 81 runs with `outcome: 'completed'` inside
+ * sessions the whole UI drew as failures, which is most of the reason the Conversations page read as
+ * a wall of red.
+ *
+ * ⚠️ In memory, deliberately. It is a fact about *this* daemon's intent, and a daemon that dies
+ * mid-close genuinely does not know what it meant — `reconcileOrphans` calls that `abandoned`.
+ */
+const closing = new Set<string>()
+
 export function onSessionStream(id: string, cb: StreamListener): () => void {
   const set = streamListeners.get(id) ?? new Set<StreamListener>()
   streamListeners.set(id, set)
@@ -275,7 +291,7 @@ function contextWindowFor(adapterId: string, model: string | null): number | nul
 export function listSessions(includeClosed = false): Session[] {
   const sql = includeClosed
     ? 'select * from sessions order by started_at desc'
-    : "select * from sessions where state not in ('closed','failed') order by started_at desc"
+    : "select * from sessions where state not in ('closed','abandoned','failed') order by started_at desc"
   return rows<SessionRow>(db().prepare(sql).all()).map(toSession)
 }
 
@@ -378,7 +394,7 @@ export function resumableSession(candidates: Session[], workerId: string, cwd: s
     // either would start a second process against one conversation - two agents writing the same
     // worktree, two turns billed to whichever run happened to be open, and a `task_complete` that
     // could settle the wrong task.
-    if (session.state !== 'closed' && session.state !== 'failed') continue
+    if (!sessionEnded(session.state)) continue
     if (hasOpenRun(session.id)) continue
     return session
   }
@@ -419,7 +435,7 @@ export function finishedConversationsIn(
 export function sessionsForWorker(workerId: string): Session[] {
   return rows<SessionRow>(
     db()
-      .prepare("select * from sessions where worker_id = ? and state not in ('closed','failed')")
+      .prepare("select * from sessions where worker_id = ? and state not in ('closed','abandoned','failed')")
       .all(workerId)
   ).map(toSession)
 }
@@ -435,7 +451,7 @@ export function sessionsAndWarmConversationsForWorker(workerId: string): Session
   const liveRows = rows<SessionRow>(
     db()
       .prepare(
-        "select * from sessions where worker_id = ? and state not in ('closed','failed') order by started_at desc"
+        "select * from sessions where worker_id = ? and state not in ('closed','abandoned','failed') order by started_at desc"
       )
       .all(workerId)
   ).map(toSession)
@@ -448,7 +464,7 @@ export function sessionsAndWarmConversationsForWorker(workerId: string): Session
   const closedRows = rows<SessionRow>(
     db()
       .prepare(
-        "select * from sessions where worker_id = ? and state in ('closed','failed') and coalesce(context_tokens, 0) > 0 and purpose = 'work' order by coalesce(closed_at, started_at) desc"
+        "select * from sessions where worker_id = ? and state in ('closed','abandoned','failed') and coalesce(context_tokens, 0) > 0 and purpose = 'work' order by coalesce(closed_at, started_at) desc"
       )
       .all(workerId)
   ).map(toSession)
@@ -656,7 +672,10 @@ export function spawnSession(opts: SpawnOptions): Session {
     for (const listener of endListeners.get(id) ?? []) listener(exitCode)
     streamListeners.delete(id)
     endListeners.delete(id)
-    setState(id, exitCode === 0 ? 'closed' : 'failed')
+    // ⛔ Asked to stop beats the exit code. See `closing`: a kill we ordered is a `closed`
+    // conversation whatever signal ended it, and only a process that died on its own is `failed`.
+    const asked = closing.delete(id)
+    setState(id, exitCode === 0 || asked ? 'closed' : 'failed')
     events.onExit(id, exitCode)
     log.info(`session ${id.slice(0, 8)} exited with ${exitCode}`)
 
@@ -825,7 +844,7 @@ function findTranscriptLater(
 }
 
 function setState(id: string, state: SessionState): void {
-  const closed = state === 'closed' || state === 'failed'
+  const closed = sessionEnded(state)
   db()
     .prepare('update sessions set state = ?, closed_at = ? where id = ?')
     .run(state, closed ? Date.now() : null, id)
@@ -930,10 +949,15 @@ export function closeSession(id: string): void {
     setState(id, 'closed')
     return
   }
+  // ⚠️ Marked *before* the kill, not after. `handleExit` can run inside `kill()` on a process that
+  // is already gone, and it reads this set — recording the intent afterwards would lose the race on
+  // exactly the sessions that shut down fastest.
+  closing.add(id)
   try {
     entry.channel.kill()
   } catch (err) {
     log.warn(`could not kill session ${id}:`, err)
+    closing.delete(id)
     setState(id, 'failed')
   }
 }
@@ -946,10 +970,16 @@ export function closeSession(id: string): void {
  * account's window, with nothing watching it and nowhere for its work to land. So orphaned pids are
  * killed, not just marked. Leaving them alive is the one failure mode a quota-aware tool must not
  * have.
+ *
+ * ⛔ **`abandoned`, not `failed`.** This marks every open row on every restart, and the daemon
+ * restarts for reasons that have nothing to do with the agent — a rebuild, a machine reboot, a
+ * `/commit`. Calling that a failure blamed the conversation for the supervisor's absence, and since
+ * a restart is the ordinary case it is how most of the history came to read `failed`. `abandoned`
+ * says the true thing: nobody was watching when this ended, so what became of the work is unknown.
  */
 export function reconcileOrphans(): number {
   const stale = rows<SessionRow>(
-    db().prepare("select * from sessions where state not in ('closed','failed')").all()
+    db().prepare("select * from sessions where state not in ('closed','abandoned','failed')").all()
   )
   let killed = 0
   let unidentifiable = 0
@@ -970,13 +1000,13 @@ export function reconcileOrphans(): number {
       }
     }
     db()
-      .prepare("update sessions set state = 'failed', closed_at = ? where id = ?")
+      .prepare("update sessions set state = 'abandoned', closed_at = ? where id = ?")
       .run(Date.now(), r.id)
     removeMcpConfig(r.id)
   }
   if (stale.length) {
     log.warn(
-      `marked ${stale.length} orphaned session(s) failed at startup` +
+      `marked ${stale.length} orphaned session(s) abandoned at startup` +
         (killed ? `, stopped ${killed} still-running agent process(es)` : '')
     )
   }

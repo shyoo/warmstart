@@ -3368,3 +3368,161 @@ select:focus-visible,
   color: var(--color-text);
 }
 
+
+/* ---- conversations ------------------------------------------------------ */
+
+/*
+ * The conversation table and the run timeline underneath it.
+ *
+ * ⛔ Built on `.tbl`, not on a layout of its own. This table is rendered at two scopes — a project's
+ * Conversations tab and History > Conversations — and the whole reason it is one component is that
+ * the two must not drift. A second set of table rules would have been the drift arriving by another
+ * route.
+ */
+
+.conv-total {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+.conv-total strong {
+  font-size: 18px;
+}
+
+.conv-total .dim {
+  font-size: var(--text-meta);
+}
+
+.conv-row {
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease);
+}
+
+.conv-row:hover {
+  background: var(--color-surface);
+}
+
+/* ⚠️ A fixed narrow column, so the caret turning does not shift the id beside it. */
+.tbl-col-caret {
+  width: 18px;
+  padding-right: 0 !important;
+}
+
+.caret {
+  display: inline-block;
+  color: var(--color-text-faint);
+  transition: transform var(--motion-fast) var(--ease);
+}
+
+.caret--open {
+  transform: rotate(90deg);
+  color: var(--color-text);
+}
+
+/* ⛔ On its own ground, so an expanded conversation cannot be mistaken for more rows of the table
+   it came out of. */
+.conv-detail td {
+  background: var(--color-surface);
+  padding: var(--sp-3) var(--sp-4);
+}
+
+.conv-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.conv-task {
+  border-left: 2px solid var(--color-border);
+  padding-left: var(--sp-3);
+}
+
+.conv-task-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+}
+
+.conv-task-title {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: var(--color-text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.conv-task-title:hover:not(:disabled) {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* ⚠️ Not greyed out. Without a thread to open, the title is still the title — it just is not a
+   link, and dimming it would say the task itself was inactive. */
+.conv-task-title:disabled {
+  cursor: default;
+  color: var(--color-text);
+}
+
+.conv-task-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--text-meta);
+  white-space: nowrap;
+}
+
+.conv-shared-tag {
+  color: var(--state-human);
+  border-color: var(--state-human);
+}
+
+.conv-runs {
+  list-style: none;
+  margin: var(--sp-2) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/*
+ * One turn, one line.
+ *
+ * ⛔ A grid rather than a flex row: every column has to line up down the list, because the question
+ * these lines answer is "what changed between turn 3 and turn 4", and that is only readable when
+ * the numbers are in the same place on every one of them.
+ */
+.conv-run {
+  display: grid;
+  grid-template-columns: 28px 90px 68px 64px 1fr 44px 84px;
+  align-items: baseline;
+  gap: var(--sp-2);
+  font-size: var(--text-meta);
+  padding: 2px 0;
+}
+
+.conv-run + .conv-run {
+  border-top: 1px solid var(--color-border);
+}
+
+.conv-run-n,
+.conv-run-took,
+.conv-run-tokens {
+  font-variant-numeric: tabular-nums;
+}
+
+.conv-run-model {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

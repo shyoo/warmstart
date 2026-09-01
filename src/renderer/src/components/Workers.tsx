@@ -1,3 +1,4 @@
+import { sessionEnded } from '@shared/protocol'
 import { useEffect, useState } from 'react'
 import type { AdapterDetection, AdapterInfo, ModelOptions, Session, Worker } from '@shared/protocol'
 import { rpc, useDaemonEvents, type FleetEntry } from '../lib/daemon'
@@ -328,7 +329,7 @@ export function Workers({
                         control did not. */}
                     {!worker.enabled && <span className="tag tag--off">disabled</span>}
                     {(() => {
-                      const liveCount = sessions.filter((s) => s.state !== 'closed' && s.state !== 'failed').length
+                      const liveCount = sessions.filter((s) => !sessionEnded(s.state)).length
                       const warmCount = sessions.length - liveCount
                       return (
                         <>

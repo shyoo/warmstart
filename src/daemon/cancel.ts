@@ -1,3 +1,4 @@
+import { sessionEnded } from '@shared/protocol.js'
 import type { CancelRecord, RestingState, Task } from '@shared/tasks.js'
 import { DELETABLE_FROM } from '@shared/tasks.js'
 import { db } from './db.js'
@@ -120,7 +121,7 @@ async function windDown(task: Task, hard: boolean): Promise<void> {
   try {
     if (run?.sessionId) {
       const session = getSession(run.sessionId)
-      if (session && session.state !== 'closed' && session.state !== 'failed') {
+      if (session && !sessionEnded(session.state)) {
         if (hard) {
           closeSession(session.id)
         } else {
@@ -160,7 +161,7 @@ async function askForWrapUp(sessionId: string): Promise<boolean> {
   while (Date.now() < deadline) {
     await delay(2000)
     const session = getSession(sessionId)
-    if (!session || session.state === 'closed' || session.state === 'failed') return true
+    if (!session || sessionEnded(session.state)) return true
     const turn = session.lastRequestStartedAt ?? 0
     if (turn !== lastTurn) {
       lastTurn = turn

@@ -1,3 +1,4 @@
+import { sessionEnded } from '@shared/protocol'
 import { useCallback, useEffect, useState } from 'react'
 import type { Project, ResourceAvailability, Task } from '@shared/tasks'
 import {
@@ -66,7 +67,12 @@ type Route =
    * the last one is given a home, which is what the require-a-project migration does.
    */
   | { kind: 'unassigned'; taskId?: string }
-  | { kind: 'history'; page: 'conversations' | 'logs' }
+  /**
+   * ⚠️ `taskId` so a run in the fleet-wide conversation list has somewhere to go. It cannot route
+   * into a project tab, because the conversation it came from may belong to a different project
+   * than the one that is open — or to none. The thread renders here and Back returns to the list.
+   */
+  | { kind: 'history'; page: 'conversations' | 'logs'; taskId?: string }
   | { kind: 'settings'; page: 'workers' | 'global' }
 
 export function App(): React.JSX.Element {
@@ -208,7 +214,7 @@ export function App(): React.JSX.Element {
   }, [zoomIn, zoomOut, resetZoom])
 
   const liveSessions = fleet.flatMap((f) =>
-    f.sessions.filter((s) => s.state !== 'closed' && s.state !== 'failed')
+    f.sessions.filter((s) => !sessionEnded(s.state))
   )
 
   return (
@@ -395,7 +401,21 @@ export function App(): React.JSX.Element {
               </div>
             )
           ) : route.kind === 'history' && route.page === 'conversations' ? (
-            <Conversations />
+            route.taskId ? (
+              <TaskThread
+                taskId={route.taskId}
+                fleet={fleet}
+                onBack={() => setRoute({ kind: 'history', page: 'conversations' })}
+                backLabel="Conversations"
+                onOpenTask={(taskId) => setRoute({ kind: 'history', page: 'conversations', taskId })}
+              />
+            ) : (
+              // ⛔ The same component the project tab renders, with no project. See
+              // Conversations.tsx: one table, two scopes.
+              <Conversations
+                onOpenTask={(taskId) => setRoute({ kind: 'history', page: 'conversations', taskId })}
+              />
+            )
           ) : route.kind === 'history' && route.page === 'logs' ? (
             <Logs now={now} />
           ) : route.kind === 'settings' && route.page === 'workers' ? (
@@ -417,6 +437,12 @@ export function App(): React.JSX.Element {
                 <FleetSettings />
               </div>
               <AppSettings />
+              {/* ⛔ No fleet-wide Resources table any more. It listed the same pools and locks a
+                  project's own Settings tab already shows, one screen away from the project they
+                  belong to, and under a heading reading Settings it looked like a page of things
+                  you could change when it was purely informational. Removed 2026-08-31 on the
+                  operator's call — the free/capacity number survives as the Workspaces column on
+                  each project's own row. */}
               <Projects projects={projects} resources={resources} refresh={refreshProjects} />
             </>
           ) : route.kind === 'project' ? (

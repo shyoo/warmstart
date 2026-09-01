@@ -1,3 +1,4 @@
+import { sessionEnded } from '@shared/protocol'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { AppInfo, DaemonUiStatus } from '@shared/ipc'
 import type {
@@ -61,7 +62,7 @@ export function fleetCounts(fleet: FleetEntry[]): {
   for (const entry of fleet) {
     if (
       entry.sessions?.some(
-        (s) => s.purpose === 'work' && s.state !== 'closed' && s.state !== 'failed'
+        (s) => s.purpose === 'work' && !sessionEnded(s.state)
       )
     ) {
       running++
