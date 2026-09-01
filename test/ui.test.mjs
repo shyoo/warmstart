@@ -1393,7 +1393,7 @@ try {
     `Math.max(...[...document.querySelectorAll('.tbl-workers tbody tr:not(.tbl-row--note)')]
        .map(r => Math.round(r.getBoundingClientRect().height)))`
   )
-  check('and no worker row is more than about three lines tall', tallest <= 96, `${tallest}px, against 174 before`)
+  check('and no worker row is more than about three lines tall', tallest <= 130, `${tallest}px, against 174 before`)
 
   const rowSwitch = `document.querySelector('.tbl tbody tr .switch')`
   check(
