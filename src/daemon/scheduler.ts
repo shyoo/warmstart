@@ -3811,16 +3811,27 @@ export async function resolveChecksOnTask(
 export async function relandTask(taskId: string): Promise<{ ok: boolean; reason?: string }> {
   const task = getTask(taskId)
   if (!task) return { ok: false, reason: 'no such task' }
-  if (!task.branch) return { ok: false, reason: 'this task has no branch' }
+  // ⛔ A retry is a decision a person just made. Returning a reason only to the RPC caller made the
+  // button appear to bounce back: the renderer refreshes the task immediately, then has nowhere to
+  // render a false `landed` result. Keep the outcome on the task as well as returning it, so it is
+  // visible after that refresh and remains in the thread for somebody who opens it later.
+  const didNotLand = (reason: string): { ok: false; reason: string } => {
+    const detail = `Retry landing failed: ${reason}`
+    setHoldReason(task.id, detail)
+    addMessage(task.id, 'system', detail)
+    return { ok: false, reason }
+  }
+
+  if (!task.branch) return didNotLand('this task has no branch')
   const project = task.projectId ? getProject(task.projectId) : null
-  if (!project || project.vcs !== 'git') return { ok: false, reason: 'not a git project' }
+  if (!project || project.vcs !== 'git') return didNotLand('not a git project')
 
   const workspace = await claimWorkspace(project, `reland:${task.id}`)
-  if (!workspace) return { ok: false, reason: 'every workspace is busy; try again in a moment' }
+  if (!workspace) return didNotLand('every workspace is busy; try again in a moment')
 
   try {
     const prepared = await prepareWorkspace(project, workspace, task.branch)
-    if (!prepared.ok) return { ok: false, reason: prepared.error ?? 'could not prepare a workspace' }
+    if (!prepared.ok) return didNotLand(prepared.error ?? 'could not prepare a workspace')
 
     const policy = policyFor(project)
     const state = await workspaceState(workspace.path, policy.landingTarget)
@@ -3829,8 +3840,7 @@ export async function relandTask(taskId: string): Promise<{ ok: boolean; reason?
     const decision = decideFinish({ task, project, state, hasChecks: policy.check.length > 0 })
     if (decision.kind !== 'land') {
       const reason = 'reason' in decision ? decision.reason : 'nothing to land'
-      addMessage(task.id, 'system', `Asked to land again, and did not: ${reason}`)
-      return { ok: false, reason }
+      return didNotLand(reason)
     }
 
     const result = await landTask({
@@ -3858,7 +3868,8 @@ export async function relandTask(taskId: string): Promise<{ ok: boolean; reason?
         if (open.sessionId) releaseAllFor(open.sessionId)
       }
     }
-    return { ok: result.ok, ...(result.reason ? { reason: result.reason } : {}) }
+    if (!result.ok) return didNotLand(result.reason ?? 'landing did not complete')
+    return { ok: true, ...(result.reason ? { reason: result.reason } : {}) }
   } finally {
     // ⚠️ Parked and released in every path, including the refusals above. A workspace held by a
     // failed button press is one slot fewer for the fleet, permanently.

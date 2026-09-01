@@ -351,5 +351,22 @@ describe('run prompt persistence and task.get preview', () => {
     expect(lastHuman?.text).toContain('1 problem (1 error)')
     expect(lastHuman?.text).toContain(`multi-agent-controller/t${task.seq}-fix-issue`)
   })
-})
 
+  it('keeps a failed retry-landing result visible after the thread refreshes', async () => {
+    // ⛔ `task.land` returns this reason to the renderer, but a thread refresh replaces its local
+    // state immediately. The result must therefore also be written to the task; otherwise the
+    // Retry landing button simply bounces back with no explanation.
+    const task = tasks.createTask({ title: 'Explain a failed retry', status: 'ready' })
+    tasks.setStatus(task.id, 'awaiting_human', {
+      branch: 'multi-agent-controller/t87-retry-landing',
+      holdReason: 'landing failed: the trunk was busy'
+    })
+
+    await expect(scheduler.relandTask(task.id)).resolves.toEqual({ ok: false, reason: 'not a git project' })
+    expect(tasks.requireTask(task.id).holdReason).toBe('Retry landing failed: not a git project')
+    expect(tasks.messagesFor(task.id).at(-1)).toMatchObject({
+      role: 'system',
+      text: 'Retry landing failed: not a git project'
+    })
+  })
+})
