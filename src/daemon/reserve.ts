@@ -4,7 +4,7 @@ import { db, rows } from './db.js'
 import { costModel } from './costmodel.js'
 import { adapter } from './adapters/index.js'
 import { sessionsForWorker } from './sessions.js'
-import { lastQuota, lastRateLimit, sessionWindowFor, windowExpired } from './quota.js'
+import { lastQuota, lastRateLimit, windowsForPool, windowExpired } from './quota.js'
 import { log } from './log.js'
 
 /**
@@ -224,9 +224,11 @@ export function windowPressure(
 
   let worst: QuotaWindow | null = null
   for (const pool of pools) {
-    const window = sessionWindowFor(quota.windows, pool)
-    if (!window || windowExpired(window)) continue
-    if (!worst || window.percent > worst.percent) worst = window
+    const windows = windowsForPool(quota.windows, pool)
+    for (const window of windows) {
+      if (!window || windowExpired(window)) continue
+      if (!worst || window.percent > worst.percent) worst = window
+    }
   }
   return worst
     ? { percent: worst.percent, label: worst.label || worst.id, sampledAt: quota.sampledAt }

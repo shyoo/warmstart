@@ -117,6 +117,22 @@ describe('picking the window that governs a run', () => {
       expect(quota.sessionWindowFor(windows, 'gemini')?.percent, group).toBe(3)
     }
   })
+
+  it('returns all applicable windows (both 5h and 7d) for a pool with windowsForPool', () => {
+    const windows: QuotaWindow[] = [
+      { id: '5h:gemini', label: 'Gemini 5h', percent: 0, resetsAt: null, group: 'gemini' },
+      { id: 'weekly:gemini', label: 'Gemini 7d', percent: 93, resetsAt: null, group: 'gemini' },
+      { id: '5h:claude-and-gpt', label: 'Claude/GPT 5h', percent: 0, resetsAt: null, group: 'claude-and-gpt' },
+      { id: 'weekly:claude-and-gpt', label: 'Claude/GPT 7d', percent: 88, resetsAt: null, group: 'claude-and-gpt' }
+    ]
+    const geminiWins = quota.windowsForPool(windows, 'gemini')
+    expect(geminiWins).toHaveLength(2)
+    expect(geminiWins.map((w) => w.id)).toEqual(['5h:gemini', 'weekly:gemini'])
+
+    const claudeWins = quota.windowsForPool(windows, 'claude')
+    expect(claudeWins).toHaveLength(2)
+    expect(claudeWins.map((w) => w.id)).toEqual(['5h:claude-and-gpt', 'weekly:claude-and-gpt'])
+  })
 })
 
 describe('which pool each model belongs to', () => {

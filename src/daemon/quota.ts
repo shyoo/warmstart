@@ -1074,5 +1074,5 @@ export function forgetRefreshAttempts(): void {
  * of all three. A pool that matches nothing falls back rather than returning no window, because an
  * unrecognised pool is ignorance, not permission.
  */
-export { sessionWindowFor } from '@shared/tasks.js'
+export { sessionWindowFor, windowsForPool } from '@shared/tasks.js'
 

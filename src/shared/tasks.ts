@@ -1335,6 +1335,26 @@ export function sessionWindowFor(
 }
 
 /**
+ * All quota windows that apply to a given pool (e.g. 5h and 7d for 'gemini' or 'claude').
+ *
+ * For a multi-pool provider (e.g. Antigravity), windows have `group` (e.g. 'gemini', 'claude-and-gpt').
+ * For single-pool providers (e.g. Claude Code), windows have no `group` and apply to all pools.
+ */
+export function windowsForPool(
+  windows: QuotaWindow[],
+  pool: string | null
+): QuotaWindow[] {
+  if (!pool) {
+    const ungrouped = windows.filter((w) => !w.group)
+    return ungrouped.length > 0 ? ungrouped : windows
+  }
+  const matched = windows.filter((w) => w.group?.includes(pool))
+  if (matched.length > 0) return matched
+  const ungrouped = windows.filter((w) => !w.group)
+  return ungrouped.length > 0 ? ungrouped : windows
+}
+
+/**
  * Task, then worker (with budget-aware balance across pools when configured), then whatever the CLI does on its own.
  *
  * ⛔ **Two tiers, not the three that finish policy uses.** A model id belongs to one CLI - `opus`
@@ -1381,12 +1401,15 @@ export function resolveModelChoice(
       workerModel = poolEntries[0]![1]
     } else if (poolEntries.length > 1) {
       if (quota && quota.windows && quota.windows.length > 0) {
-        // Budget-aware pool balance: evaluate 5h/session window for each pool.
+        // Budget-aware pool balance: evaluate windows for each pool.
         // Pools below WINDOW_HIGH_WATER are candidates; choose the one with lowest utilization (most headroom).
         let bestCandidate: { pool: string; model: string; percent: number; blocked: boolean } | null = null
         for (const [pool, m] of poolEntries) {
-          const win = sessionWindowFor(quota.windows, pool)
-          const percent = win ? win.percent : 0
+          const wins = windowsForPool(quota.windows, pool)
+          const worstWin = wins.reduce<QuotaWindow | null>((worst, w) => {
+            return !worst || w.percent > worst.percent ? w : worst
+          }, null)
+          const percent = worstWin ? worstWin.percent : 0
           const blocked = percent >= WINDOW_HIGH_WATER
           if (!bestCandidate) {
             bestCandidate = { pool, model: m, percent, blocked }

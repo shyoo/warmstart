@@ -762,13 +762,89 @@ describe('quota as a slope rather than a switch', () => {
     expect(scheduler.windowRisk(-5)).toBe(0)
   })
 
-  it('separates the two accounts that four consults could not', () => {
+    it('separates the two accounts that four consults could not', () => {
     // The real readings from 2026-08-30, and the whole point of the change: these must not tie.
     const claudeSecond = scheduler.windowRisk(64)
     const antigravity = scheduler.windowRisk(98)
     expect(antigravity).toBeGreaterThan(claudeSecond)
     // At weight 0.908 the gap is far wider than ROUTE_EPSILON (0.1), so no consult is spent at all.
     expect((antigravity - claudeSecond) * 0.908).toBeGreaterThan(0.1)
+  })
+
+  it('penalises quota deficit and rewards expiring credits based on reset horizon', () => {
+    const now = Date.now()
+    // Antigravity: 93% on 7d window resetting in 10h (expiring credits, high available rate before reset)
+    const antigravity = scheduler.windowRisk(93, 92, 50, now + 10 * 3600 * 1000, now, 'weekly:gemini')
+    // ClaudeSecond: 97% on 7d window resetting in 33h (1d 9h, low available rate, severe deficit)
+    const claudeSecond = scheduler.windowRisk(97, 92, 50, now + 33 * 3600 * 1000, now, 'weekly')
+
+    expect(antigravity).toBeLessThan(claudeSecond)
+    expect(claudeSecond).toBeGreaterThan(2.0)
+    expect(antigravity).toBeLessThan(1.0)
+  })
+
+  it('favors a worker with sooner reset and expiring credits over a worker with distant reset (t83 scenario)', () => {
+    db.db().prepare('update workers set enabled = 0').run()
+    const now = Date.now()
+    const claude = workers.createWorker({ adapterId: 'claude-code', label: 'ClaudeSecond-t83', enabled: true })
+    const agy = workers.createWorker({ adapterId: 'claude-code', label: 'Antigravity-t83', enabled: true })
+
+    // Seed Claude: 0% 5h, 97% 7d (resets in 33h = 1d 9h)
+    db.db()
+      .prepare(
+        `insert into quota_samples (worker_id, window_id, label, percent, resets_at, source, sampled_at)
+         values (?,?,?,?,?,?,?), (?,?,?,?,?,?,?)`
+      )
+      .run(
+        claude.id, 'session', 'Claude 5h', 0, now + 4 * 3600 * 1000, 'cli', now,
+        claude.id, 'weekly', 'Claude 7d', 97, now + 33 * 3600 * 1000, 'cli', now
+      )
+
+    // Seed Antigravity (represented here with sooner 7d reset): 0% 5h, 93% 7d (resets in 10h)
+    db.db()
+      .prepare(
+        `insert into quota_samples (worker_id, window_id, label, percent, resets_at, source, sampled_at)
+         values (?,?,?,?,?,?,?), (?,?,?,?,?,?,?)`
+      )
+      .run(
+        agy.id, 'session', 'Gemini 5h', 0, now + 4 * 3600 * 1000, 'cli', now,
+        agy.id, 'weekly', 'Gemini 7d', 93, now + 10 * 3600 * 1000, 'cli', now
+      )
+
+    const task = tasks.createTask({
+      title: 't83 dispatch task'
+    })
+    tasks.setQuotaOverride(task.id, now + 48 * 3600 * 1000)
+
+    const choice = scheduler.chooseTarget(tasks.requireTask(task.id))
+    expect(choice.worker?.id).toBe(agy.id)
+  })
+
+  it('refuses dispatch to a worker whose 7d window is >= 92% (t84 scenario)', () => {
+    db.db().prepare('update workers set enabled = 0').run()
+    const now = Date.now()
+    const claude = workers.createWorker({ adapterId: 'claude-code', label: 'ClaudeThird-t84', enabled: true })
+
+    // ClaudeThird has 0% 5h but 99% 7d (resets in 1d 9h)
+    db.db()
+      .prepare(
+        `insert into quota_samples (worker_id, window_id, label, percent, resets_at, source, sampled_at)
+         values (?,?,?,?,?,?,?), (?,?,?,?,?,?,?)`
+      )
+      .run(
+        claude.id, 'session', 'Claude 5h', 0, now + 4 * 3600 * 1000, 'cli', now,
+        claude.id, 'weekly', 'Claude 7d', 99, now + 33 * 3600 * 1000, 'cli', now
+      )
+
+    const task = tasks.createTask({
+      title: 't84 dispatch task',
+      constraints: { workerId: claude.id }
+    })
+
+    const choice = scheduler.chooseTarget(task)
+    expect(choice.worker).toBeNull()
+    expect(choice.reason).toContain('ClaudeThird-t84 at 99% of its Claude 7d window')
+    expect(choice.holdUntil).toBe(now + 33 * 3600 * 1000)
   })
 })
 

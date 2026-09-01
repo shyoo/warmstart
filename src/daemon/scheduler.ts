@@ -15,6 +15,7 @@ import {
   refreshUsage,
   requestUrgentProbe,
   sessionWindowFor,
+  windowsForPool,
   windowExpired
 } from './quota.js'
 import { getWorker, listWorkers, recordDispatchFailure } from './workers.js'
@@ -557,20 +558,23 @@ export function quotaReleaseFor(task: Task): string | null {
   if (!quota || quota.stale || quota.windows.length === 0) return null
 
   const choice = resolveModelChoice(task.constraints, worker, false, quota)
-  const window = sessionWindowFor(quota.windows, poolFor(worker, choice.model))
-  if (!window) return null
+  const windows = windowsForPool(quota.windows, poolFor(worker, choice.model))
+  if (windows.length === 0) return null
+
+  const blocking = windows.find((w) => !windowExpired(w) && w.percent >= QUOTA_HIGH_WATER)
+  if (blocking) return null
 
   const age = Math.round(quota.ageMs / 1000)
-  if (windowExpired(window)) {
-    return `${worker.label}'s ${window.label ?? '5h'} window has rolled over since this was parked.`
+  const expired = windows.find((w) => windowExpired(w))
+  if (expired) {
+    return `${worker.label}'s ${expired.label ?? '5h'} window has rolled over since this was parked.`
   }
-  if (window.percent < QUOTA_HIGH_WATER) {
-    return (
-      `${worker.label} is at ${Math.round(window.percent)}% of its ${window.label ?? '5h'} window ` +
-      `on a reading ${age}s old, which is below the ${QUOTA_HIGH_WATER}% gate.`
-    )
-  }
-  return null
+
+  const highest = windows.reduce((max, w) => (w.percent > max.percent ? w : max), windows[0]!)
+  return (
+    `${worker.label} is at ${Math.round(highest.percent)}% of its ${highest.label ?? '5h'} window ` +
+    `on a reading ${age}s old, which is below the ${QUOTA_HIGH_WATER}% gate.`
+  )
 }
 
 /**
@@ -945,11 +949,11 @@ export function chooseTarget(task: Task): WorkerChoice {
     }
 
     const quota = lastQuota(worker.id)
-    // ⛔ Hoisted out of the gate below so the *score* reads the same window the *gate* read. Two
+    // ⛔ Hoisted out of the gate below so the *score* reads the same windows the *gate* read. Two
     // lookups would be two chances to disagree, and a fleet where the hard cut and the soft
     // preference disagree about which pool a task draws on is worse than either alone.
-    // ⚠️ Stays null on a stale or missing reading, which is what keeps the term at zero there.
-    let trustedWindow: QuotaWindow | null = null
+    // ⚠️ Stays empty on a stale or missing reading, which is what keeps the term at zero there.
+    let trustedWindows: QuotaWindow[] = []
     if (quota && !quota.stale) {
       // ⭐ **The pool this task's model would actually draw on.** Antigravity meters Gemini apart
       // from Claude/GPT, so an account can be spent for one and untouched for the other; holding a
@@ -959,23 +963,25 @@ export function chooseTarget(task: Task): WorkerChoice {
       // ⚠️ `false` for effort: the pool follows the model, and effort has no bearing on it.
       const choice = resolveModelChoice(task.constraints, worker, false, quota)
       const pool = poolFor(worker, choice.model)
-      // ⛔ **A window whose reset has already passed describes a window that no longer exists.**
-      // `stale` is an age test only, so a reading taken two minutes before a reset stays trusted for
-      // hours afterwards and gates a worker on a percentage that expired with the window it counted.
-      // Measured on t60, 2026-08-31: ClaudeThird's 5h window read 88% with `resetsAt` 06:39:59Z, and
-      // was still being offered as 88% at 06:46Z. ⚠️ Untrusted, **not** zero: what the new window
-      // holds is unknown until something reads it, and `quotaUnverified` is how the fleet already
-      // says that. `nextResetAt` has always ignored a reset in the past; this is the same rule
-      // applied to the number beside it.
-      const reading = sessionWindowFor(quota.windows, pool)
-      const expired = reading ? windowExpired(reading) : false
-      // ⚠️ Marked unverified only when a reading was there and had run out. A pool with no window at
-      // all is the pre-existing case and keeps its pre-existing answer; this is about a number that
-      // was believed for longer than it was true.
-      if (expired) quotaUnverified = true
-      const session = expired ? null : reading
-      trustedWindow = session ?? null
-      if (session && session.percent >= QUOTA_HIGH_WATER) {
+      const applicable = windowsForPool(quota.windows, pool)
+      const active: QuotaWindow[] = []
+      let blockingWindow: QuotaWindow | null = null
+
+      for (const win of applicable) {
+        if (windowExpired(win)) {
+          quotaUnverified = true
+        } else {
+          active.push(win)
+          if (win.percent >= QUOTA_HIGH_WATER) {
+            if (!blockingWindow || win.percent > blockingWindow.percent) {
+              blockingWindow = win
+            }
+          }
+        }
+      }
+      trustedWindows = active
+
+      if (blockingWindow) {
         // ⛔ **The one gate a person may overrule**, and only because it is the one built entirely
         // out of a number of ours. 92% is a caution, not a refusal: the vendor served every turn up
         // to it and would very likely serve the next. An operator can see what the arithmetic
@@ -986,19 +992,19 @@ export function chooseTarget(task: Task): WorkerChoice {
         // a free account elsewhere would start sending work to the full one.
         if (override) {
           log.info(
-            `t${task.seq} dispatching to ${worker.label} at ${Math.round(session.percent)}% of its ` +
-              `${session.label ?? '5h'} window — a person overrode the ${QUOTA_HIGH_WATER}% gate`
+            `t${task.seq} dispatching to ${worker.label} at ${Math.round(blockingWindow.percent)}% of its ` +
+              `${blockingWindow.label ?? '5h'} window — a person overrode the ${QUOTA_HIGH_WATER}% gate`
           )
         } else {
           // Names the window, because "at 91% of its 5h window" on a two-pool account is a sentence
           // the operator cannot check against what the CLI's own panel shows them.
           reasons.push(
-            `${worker.label} at ${Math.round(session.percent)}% of its ${session.label ?? '5h'} window`
+            `${worker.label} at ${Math.round(blockingWindow.percent)}% of its ${blockingWindow.label ?? '5h'} window`
           )
           // ⛔ The clock behind the sentence, kept rather than discarded. `resetsAt` on the sample
           // that just refused this dispatch is precisely when this refusal expires, and it is the
           // number both the operator and `expectedIdleMs` were missing.
-          const resetsAt = session.resetsAt ?? windowResetsAt(worker.id)?.at ?? null
+          const resetsAt = blockingWindow.resetsAt ?? windowResetsAt(worker.id)?.at ?? null
           if (resetsAt && resetsAt > Date.now()) {
             quotaHoldUntil = quotaHoldUntil === null ? resetsAt : Math.min(quotaHoldUntil, resetsAt)
           }
@@ -1023,7 +1029,7 @@ export function chooseTarget(task: Task): WorkerChoice {
       quotaUnverified,
       ...(() => {
         // One computation, used for both the ordering and the explanation.
-        const breakdown = scoreCandidate(task, worker, session, w, trustedWindow)
+        const breakdown = scoreCandidate(task, worker, session, w, trustedWindows)
         return { score: breakdown.total, breakdown }
       })()
     })
@@ -1176,11 +1182,51 @@ export const QUOTA_RISK_FLOOR = 50
 export function windowRisk(
   percent: number,
   highWater = QUOTA_HIGH_WATER,
-  floor = QUOTA_RISK_FLOOR
+  floor = QUOTA_RISK_FLOOR,
+  resetsAt?: number | null,
+  now = Date.now(),
+  windowIdOrLabel?: string
 ): number {
   if (!Number.isFinite(percent) || percent <= floor) return 0
-  if (highWater <= floor) return 1
-  return Math.min(1, (percent - floor) / (highWater - floor))
+  const base = highWater <= floor ? 1 : (percent - floor) / (highWater - floor)
+  if (!resetsAt || resetsAt <= now) {
+    return Math.min(1, base)
+  }
+
+  const isWeekly =
+    windowIdOrLabel &&
+    (windowIdOrLabel.includes('weekly') ||
+      windowIdOrLabel.includes('7d') ||
+      windowIdOrLabel.includes('Weekly'))
+  const is5h =
+    windowIdOrLabel &&
+    (windowIdOrLabel.includes('5h') || windowIdOrLabel === 'session')
+  const durationMs = isWeekly
+    ? 7 * 24 * 3600 * 1000
+    : is5h
+      ? 5 * 3600 * 1000
+      : resetsAt - now > 24 * 3600 * 1000
+        ? 7 * 24 * 3600 * 1000
+        : 5 * 3600 * 1000
+
+  const timeRemainingMs = resetsAt - now
+  const fTime = Math.min(1.0, Math.max(0.01, timeRemainingMs / durationMs))
+  const fQuota = Math.max(0.01, (100 - percent) / 100)
+
+  const pressureRatio = fTime / fQuota
+  const factor = Math.min(2.0, Math.max(0.5, pressureRatio))
+  return base * factor
+}
+
+function formatResetDuration(ms: number): string {
+  if (ms <= 0) return '0m'
+  const totalMinutes = Math.round(ms / 60000)
+  if (totalMinutes < 60) return `${totalMinutes}m`
+  const totalHours = Math.round(totalMinutes / 60)
+  if (totalHours < 24) return `${totalHours}h`
+  const days = Math.floor(totalHours / 24)
+  const remainingHours = totalHours % 24
+  return remainingHours > 0 ? `${days}d ${remainingHours}h` : `${days}d`
 }
 
 /**
@@ -1324,7 +1370,7 @@ const VALUE_MEANS: Record<string, string> = {
   affinity: '1 = a session already holds this task',
   contextRot: '1 = the context window is full',
   projectSwitch: '1 = the session is on another project',
-  quotaRisk: `1 = at ${QUOTA_HIGH_WATER}% of its window (0 below ${QUOTA_RISK_FLOOR}%, linear between)`,
+  quotaRisk: `1 = at ${QUOTA_HIGH_WATER}% of its window (adjusted for reset horizon; 0 below ${QUOTA_RISK_FLOOR}%)`,
   cold: '1 = no session to reuse',
   capabilityFit: '1 = every capability the task needs is present',
   unproven: '1.5 max = never probed and never worked'
@@ -1380,8 +1426,8 @@ function scoreCandidate(
   worker: Worker,
   session: Session | null,
   w: ReturnType<typeof weights>,
-  /** The window the gate just read, or null when there was nothing trustworthy to read. */
-  trustedWindow: QuotaWindow | null
+  /** The windows the gate evaluated, or empty when there was nothing trustworthy to read. */
+  trustedWindows: QuotaWindow[]
 ): ScoreBreakdown {
   const now = Date.now()
 
@@ -1408,23 +1454,43 @@ function scoreCandidate(
 
   // ⛔ **Two sources, and the worse one wins.** `quotaRiskOf` is the vendor's own word — an
   // `at_risk` reserve or a live status that is no longer `allowed` — and it saturates the term
-  // outright. `windowRisk` is the slope underneath it, which is what makes a percentage matter at
-  // all. Before 2026-08-30 only the first existed and neither of its triggers was reachable here, so
-  // the term read 0 for the whole fleet and quota stopped being a routing input entirely.
+  // outright. `windowRisk` evaluates across all applicable windows (5h, 7d), modulated by the reset horizon
+  // so expiring credits are favored and quota deficits are penalised.
   const evidence = quotaRiskOf(worker.id)
-  const fromWindow = trustedWindow ? windowRisk(trustedWindow.percent) : 0
-  const quotaRisk = Math.max(evidence, fromWindow)
+  let maxWindowRisk = 0
+  let worstWindow: QuotaWindow | null = null
+  let worstRisk = 0
+  for (const win of trustedWindows) {
+    const r = windowRisk(win.percent, QUOTA_HIGH_WATER, QUOTA_RISK_FLOOR, win.resetsAt, now, win.id)
+    if (r > maxWindowRisk || !worstWindow) {
+      maxWindowRisk = Math.max(maxWindowRisk, r)
+      worstRisk = r
+      worstWindow = win
+    }
+  }
+
+  const quotaRisk = Math.max(evidence, maxWindowRisk)
   const reserve = reserveState(worker.id)
   const rate = freshRateLimit(worker.id)
-  // The basis names *which* source spoke, because 0.62 from a percentage and 1.0 from a refusal are
-  // different facts that a single number cannot distinguish.
-  const quotaBasis = trustedWindow
-    ? `${Math.round(trustedWindow.percent)}% of its ${trustedWindow.label ?? trustedWindow.id} ` +
-      `window; risk climbs from ${QUOTA_RISK_FLOOR}% and hits 1.0 at ${QUOTA_HIGH_WATER}%, where the ` +
-      `hard gate takes over` +
-      (evidence > fromWindow ? `. Overridden to 1.0: vendor status ${rate?.status ?? reserve.verdict}` : '')
-    : `no quota reading this fleet trusts (reserve verdict ${reserve.verdict})` +
+
+  let quotaBasis: string
+  if (worstWindow && maxWindowRisk > 0) {
+    const p = Math.round(worstWindow.percent)
+    const label = worstWindow.label ?? worstWindow.id
+    const resetInfo =
+      worstWindow.resetsAt && worstWindow.resetsAt > now
+        ? `, resets in ${formatResetDuration(worstWindow.resetsAt - now)}`
+        : ''
+    quotaBasis =
+      `${p}% of ${label}${resetInfo}; risk ${worstRisk.toFixed(2)}` +
+      (evidence > maxWindowRisk ? `. Overridden to 1.0: vendor status ${rate?.status ?? reserve.verdict}` : '')
+  } else if (trustedWindows.length > 0) {
+    quotaBasis = `all windows below ${QUOTA_RISK_FLOOR}% (${trustedWindows.map((win) => `${win.label ?? win.id} ${Math.round(win.percent)}%`).join(', ')})`
+  } else {
+    quotaBasis =
+      `no quota reading this fleet trusts (reserve verdict ${reserve.verdict})` +
       `${rate ? `, vendor status ${rate.status}` : ''} — unknown scores 0, never a guess`
+  }
 
   const needs = task.constraints.needs ?? []
   const caps = adapter(worker.adapterId).info.capabilities as unknown as Record<string, unknown>
