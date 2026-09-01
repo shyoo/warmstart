@@ -6,6 +6,7 @@ import type { CostModelSummary } from '@shared/protocol.js'
 import builtinAnthropic from '../../costmodels/anthropic.subscription.2026-08.json' with { type: 'json' }
 import builtinGoogle from '../../costmodels/google.antigravity.2026-08.json' with { type: 'json' }
 import builtinOpenai from '../../costmodels/openai.codex.2026-08.json' with { type: 'json' }
+import builtinLocal from '../../costmodels/local.llm.2026-09.json' with { type: 'json' }
 
 /**
  * Cost models are data, never code.
@@ -337,7 +338,7 @@ export function loadCostModels(extraDirs: string[] = []): Map<string, CostModel>
   // ⛔ Compiled in, not read from disk. A cost model that fails to load is a scheduler that cannot
   // price anything, and "the file was not copied at packaging time" is not a failure worth having.
   // A user file of the same id still wins, because `consider` ran first.
-  for (const file of [builtinAnthropic, builtinGoogle, builtinOpenai]) {
+  for (const file of [builtinAnthropic, builtinGoogle, builtinOpenai, builtinLocal]) {
     const builtin = file as unknown as CostModelFile
     if (!found.has(builtin.id)) found.set(builtin.id, new CostModel(builtin, 'builtin', null))
   }

@@ -115,7 +115,8 @@ export function createWorker(input: {
   }
 
   const id = randomUUID()
-  const root = input.isolationRoot?.trim() || defaultIsolationRoot(label)
+  const defaultRoot = input.adapterId === 'local-llm' ? 'http://127.0.0.1:8080' : defaultIsolationRoot(label)
+  const root = input.isolationRoot?.trim() || defaultRoot
   ensureDir(root)
 
   const now = Date.now()

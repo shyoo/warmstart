@@ -1,0 +1,56 @@
+{
+  "$comment": [
+    "Local LLM served by llama.cpp or any OpenAI-compatible server.",
+    "",
+    "There is no subscription, no quota window and no cache TTL to manage. The server runs on",
+    "the operator's own hardware; the only cost is electricity and VRAM, neither of which this",
+    "tool can meter. So every token price is null, every cache field is inert, and the scheduler",
+    "treats this worker as always-eligible from a quota perspective.",
+    "",
+    "The models array is a default for Qwen3-Coder-30B-A3B via llama.cpp. At commissioning the",
+    "adapter queries /v1/models and the user picks from whatever the server reports; models not",
+    "listed here get the fallback context window (32768)."
+  ],
+  "id": "local.llm.2026-09",
+  "provider": "local",
+  "channel": "self-hosted",
+  "schema_version": 1,
+  "effective_from": "2026-09-01",
+  "cache": {
+    "kind": "unpriced",
+    "$comment": "llama.cpp's --cache-reuse is server-side and automatic; no client lever exists.",
+    "read_multiplier": null,
+    "read_refreshes_ttl": false,
+    "ttl_measured_from": "request_start",
+    "ttls": [],
+    "default_ttl": null,
+    "scope": "unknown"
+  },
+  "compaction": {
+    "$comment": "No compaction mechanism. The bridge starts a fresh conversation each dispatch.",
+    "available": false,
+    "summary_output_tokens": 0,
+    "post_context_tokens": 0,
+    "duration_ms": 0,
+    "breakeven_context_tokens": 0,
+    "min_tokens_since_compact": 0
+  },
+  "models": [
+    {
+      "id": "qwen3-coder-30b-a3b",
+      "context_window": 32768,
+      "input_per_mtok": null,
+      "output_per_mtok": null,
+      "tokenizer": "unknown",
+      "context_awareness": false,
+      "effort_levels": []
+    }
+  ],
+  "quota": {
+    "kind": "unlimited",
+    "probe": "none",
+    "windows": [],
+    "reports": "none",
+    "$comment": "Local inference has no subscription quota. The worker is always eligible."
+  }
+}

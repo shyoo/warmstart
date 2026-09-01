@@ -12,23 +12,23 @@ first spawn.** That is the whole reason `AdapterInfo.verification` exists.
 
 ## The fleet, at a glance
 
-| | `claude-code` | `antigravity-cli` | `openai-compatible` |
-|---|---|---|---|
-| Command | `claude` | `agy` | `codex` |
-| Measured against | 2.1.223 | 1.1.20 | 0.151.0 |
-| **Accounts per machine** | **unlimited** (`CLAUDE_CONFIG_DIR`) | ⛔ **1** (OS keyring) | **unlimited** (`CODEX_HOME`) |
-| Credential lives in | a directory | ⛔ the OS keyring | a directory |
-| Metered from | ⛔ transcript, **by choice** (exact, survives a restart; its stream carries usage too) | **its live stream** | **its live stream** |
-| Can compact | ✔ | ⛔ | ⛔ *(conservative)* |
-| Classifier reviews actions | ✔ `auto` | ⛔ | ⛔ |
-| Approvals | `permission_prompt_tool` | settings rules | settings rules |
-| Raises its own questions | ✔ **`AskUserQuestion`, and it reaches our hook** — see below | not measured | not measured |
-| Says why a turn stopped | ✔ **`post_turn_summary`** carries `status_category` + `needs_action` | ⛔ none seen | ⛔ none seen |
-| Multi Agent Controller MCP tools | ✔ | ⛔ global registration only | ⛔ global registration only |
-| Prompt arrives on stdin as | a conversation, pipe stays open | a conversation, pipe stays open | ⛔ **one prompt, then EOF** — `codex exec` is one-shot |
-| Accepts our session id | ✔ | ⛔ | ⛔ |
-| Free quota probe | ✔ the `.claude.json` cache; `/usage` refreshes it | ⛔ **measured — see below** | ✔ **`account/rateLimits/read`**, rollout as fallback |
-| Reports cache reads | via transcript | ⛔ no | ✔ reads **and** writes |
+| | `claude-code` | `antigravity-cli` | `openai-compatible` | `local-llm` |
+|---|---|---|---|---|
+| Command | `claude` | `agy` | `codex` | `local-llm-bridge` (node) |
+| Measured against | 2.1.223 | 1.1.20 | 0.151.0 | llama.cpp / Qwen3-Coder |
+| **Accounts per machine** | **unlimited** (`CLAUDE_CONFIG_DIR`) | ⛔ **1** (OS keyring) | **unlimited** (`CODEX_HOME`) | **unlimited** (by endpoint URL) |
+| Credential lives in | a directory | ⛔ the OS keyring | a directory | ⛔ none (local HTTP) |
+| Metered from | ⛔ transcript, **by choice** (exact, survives a restart; its stream carries usage too) | **its live stream** | **its live stream** | **its live stream** |
+| Can compact | ✔ | ⛔ | ⛔ *(conservative)* | ⛔ |
+| Classifier reviews actions | ✔ `auto` | ⛔ | ⛔ | ⛔ |
+| Approvals | `permission_prompt_tool` | settings rules | settings rules | ⛔ none |
+| Raises its own questions | ✔ **`AskUserQuestion`, and it reaches our hook** — see below | not measured | not measured | ✔ via `ask_human` tool |
+| Says why a turn stopped | ✔ **`post_turn_summary`** carries `status_category` + `needs_action` | ⛔ none seen | ⛔ none seen | ⛔ none seen |
+| Multi Agent Controller MCP tools | ✔ | ⛔ global registration only | ⛔ global registration only | ⛔ function calling in bridge |
+| Prompt arrives on stdin as | a conversation, pipe stays open | a conversation, pipe stays open | ⛔ **one prompt, then EOF** — `codex exec` is one-shot | a conversation, pipe stays open |
+| Accepts our session id | ✔ | ⛔ | ⛔ | ⛔ |
+| Free quota probe | ✔ the `.claude.json` cache; `/usage` refreshes it | ⛔ **measured — see below** | ✔ **`account/rateLimits/read`**, rollout as fallback | ⛔ none (unlimited) |
+| Reports cache reads | via transcript | ⛔ no | ✔ reads **and** writes | ⛔ server-side |
 
 **Read the ⛔ column-by-column, not row-by-row.** Two of these three CLIs have no classifier and no
 approval callback, and yet only one of them can hold a fleet. That difference is invisible in a

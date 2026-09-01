@@ -63,10 +63,11 @@ afterAll(() => {
 })
 
 describe('the registry', () => {
-  it('carries three adapters, and each declares a distinct cost model', () => {
+  it('carries four adapters, and each declares a distinct cost model', () => {
     expect(ALL.map((a) => a.info.id).sort()).toEqual([
       'antigravity-cli',
       'claude-code',
+      'local-llm',
       'openai-compatible'
     ])
     const models = ALL.map((a) => a.info.policy.costModelId)
@@ -137,7 +138,9 @@ describe('capability consequences, not capability fields', () => {
     // ⛔ The discovery that made maxAccounts a capability. Two workers on a keyring-backed CLI are
     // not two accounts; they are two rows sharing one window, each believing it has its own.
     for (const a of ALL) {
-      if (a.info.isolationEnvVar === null) {
+      if (a.info.id === 'local-llm') {
+        expect(a.info.capabilities.maxAccounts).toBeNull()
+      } else if (a.info.isolationEnvVar === null) {
         expect(a.info.capabilities.maxAccounts, a.info.id).toBe(1)
       } else {
         expect(a.info.capabilities.maxAccounts, a.info.id).toBeNull()
@@ -850,11 +853,11 @@ describe('the environment a worker inherits', () => {
   it('every adapter that spawns a CLI goes through it', () => {
     // ⚠️ The drift guard. Each adapter built its own environment by hand, and all three had the same
     // hole; a fourth written from the pattern of the first would have had it too.
-    for (const id of ['claude-code', 'antigravity-cli', 'openai-compatible']) {
+    for (const id of ['claude-code', 'antigravity-cli', 'openai-compatible', 'local-llm']) {
       const plan = withHostEnv(() =>
         adapter(id).plan({
           sessionId: '00000000-0000-4000-8000-000000000000',
-          isolationRoot: 'C:/isolation/root',
+          isolationRoot: 'http://127.0.0.1:8080',
           transport: 'stream',
           cwd: 'C:/anywhere'
         } as never)
@@ -863,12 +866,105 @@ describe('the environment a worker inherits', () => {
         // ⚠️ Except the one each adapter sets for itself, which must be the *worker's* root and never
         // the inherited value.
         if (key === 'CLAUDE_CONFIG_DIR' && id === 'claude-code') {
-          expect(plan.env?.CLAUDE_CONFIG_DIR).toBe('C:/isolation/root')
+          expect(plan.env?.CLAUDE_CONFIG_DIR).toBe('http://127.0.0.1:8080')
           continue
         }
         expect(plan.env?.[key], `${id} leaks ${key}`).toBeUndefined()
       }
     }
+  })
+})
+
+describe('local-llm adapter', () => {
+  const ad = adapter('local-llm')
+
+  it('declares conservative capabilities appropriate for local inference', () => {
+    const c = ad.info.capabilities
+    expect(c.transports).toEqual(['stream'])
+    expect(c.permissionModes).toEqual([])
+    expect(c.classifierBackedAuto).toBe(false)
+    expect(c.approvalChannel).toBe('none')
+    expect(c.manualCompact).toBe(false)
+    expect(c.resumeSession).toBe(false)
+    expect(c.mcp).toBe(false)
+    expect(c.quotaProbe).toBe('none')
+    expect(c.streamPrompts).toBe('conversation')
+    expect(c.metering).toBe('stream')
+    expect(c.maxAccounts).toBeNull()
+  })
+
+  it('encodes stream prompts as Antigravity-style JSON', () => {
+    const encoded = ad.encodeStreamPrompt?.('hello local model')
+    expect(encoded).toBeDefined()
+    const parsed = JSON.parse(encoded!) as { event: string; message: { content: Array<{ text: string }> } }
+    expect(parsed.event).toBe('user')
+    expect(parsed.message.content[0]?.text).toBe('hello local model')
+  })
+
+  it('decodes stream records from the bridge correctly', () => {
+    const decode = ad.decodeStream!
+    expect(decode).toBeTypeOf('function')
+
+    // init record
+    expect(decode({ type: 'init', model: 'qwen3-coder', session_id: 's1' })).toEqual({
+      kind: 'init',
+      sessionId: 's1',
+      model: 'qwen3-coder',
+      permissionMode: null
+    })
+
+    // assistant text
+    expect(decode({ type: 'assistant_text', text: 'working on it...' })).toEqual({
+      kind: 'assistant_text',
+      text: 'working on it...'
+    })
+
+    // usage record
+    expect(
+      decode({
+        type: 'usage',
+        usage: { input_tokens: 150, output_tokens: 42, cache_read_tokens: 0, cache_write_tokens: 0 },
+        final: true
+      })
+    ).toEqual({
+      kind: 'usage',
+      usage: { input: 150, output: 42, thinking: 0, cacheRead: 0, cacheWrite: 0 },
+      final: true
+    })
+
+    // result record
+    expect(decode({ type: 'result', text: 'All done', status: 'SUCCESS' })).toEqual({
+      kind: 'result',
+      text: 'All done',
+      costUsd: null,
+      isError: false,
+      terminalReason: 'SUCCESS'
+    })
+
+    // task_complete tool result
+    expect(
+      decode({ type: 'tool_result', tool: 'task_complete', summary: 'Implemented feature X' })
+    ).toEqual({
+      kind: 'result',
+      text: 'Implemented feature X',
+      costUsd: null,
+      isError: false,
+      terminalReason: 'task_complete'
+    })
+  })
+
+  it('plan configures endpoint URL and model in environment', () => {
+    const plan = ad.plan({
+      sessionId: 'sess-123',
+      isolationRoot: 'http://127.0.0.1:9090',
+      cwd: 'C:/test',
+      transport: 'stream',
+      model: 'qwen3-coder-30b-a3b'
+    })
+
+    expect(plan.env.LOCAL_LLM_ENDPOINT).toBe('http://127.0.0.1:9090')
+    expect(plan.env.LOCAL_LLM_MODEL).toBe('qwen3-coder-30b-a3b')
+    expect(plan.env.LOCAL_LLM_SESSION_ID).toBe('sess-123')
   })
 })
 

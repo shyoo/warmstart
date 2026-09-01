@@ -2,6 +2,7 @@ import type { AgentAdapter } from './types.js'
 import { claudeCode } from './claude-code.js'
 import { antigravityCli } from './antigravity-cli.js'
 import { openaiCompatible } from './openai-compatible.js'
+import { localLlm } from './local-llm.js'
 import { loadExternalAdapters } from './external.js'
 
 /**
@@ -17,7 +18,7 @@ import { loadExternalAdapters } from './external.js'
  * written from documentation and say so in `info.verification`, which Doctor and the Workers panel
  * both surface. A capability table is easy to write and expensive to be wrong about.
  */
-const BUILT_IN: AgentAdapter[] = [claudeCode, antigravityCli, openaiCompatible]
+const BUILT_IN: AgentAdapter[] = [claudeCode, antigravityCli, openaiCompatible, localLlm]
 
 let ADAPTERS: AgentAdapter[] = [...BUILT_IN]
 let externalProblems: string[] = []

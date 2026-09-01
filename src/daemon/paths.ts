@@ -84,6 +84,7 @@ export function dataDir(): string {
 }
 
 export function ensureDir(path: string): string {
+  if (/^https?:\/\//i.test(path)) return path
   mkdirSync(path, { recursive: true })
   return path
 }

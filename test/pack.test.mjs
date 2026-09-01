@@ -312,7 +312,7 @@ try {
     const models = await rpc('costmodel.list')
     check(
       'every cost model survived packaging',
-      (models.result ?? []).length >= 3,
+      (models.result ?? []).length >= 4,
       // ⛔ The reason they are compiled in rather than copied beside the binary: a `files` glob that
       // missed them would leave a scheduler that cannot price anything, and nothing would say so.
       (models.result ?? []).map((m) => m.id).join(', ')
@@ -320,12 +320,12 @@ try {
 
     const adapters = await rpc('adapter.list')
     const ids = (adapters.result ?? []).map((a) => a.id)
-    // ⛔ By name, not by count. The claim is that the three compiled-in adapters survived being put
-    // inside an asar; a length check also silently asserted that nobody ever declares a fourth, and
-    // the probe adapter below is a fourth.
+    // ⛔ By name, not by count. The claim is that the four compiled-in adapters survived being put
+    // inside an asar; a length check also silently asserted that nobody ever declares a fifth, and
+    // the probe adapter below is a fifth.
     check(
       'every built-in adapter survived packaging',
-      ['claude-code', 'antigravity-cli', 'openai-compatible'].every((id) => ids.includes(id)),
+      ['claude-code', 'antigravity-cli', 'openai-compatible', 'local-llm'].every((id) => ids.includes(id)),
       ids.join(', ')
     )
 

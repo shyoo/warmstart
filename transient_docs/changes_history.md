@@ -3284,3 +3284,28 @@ Fixes:
   paired with an in-stream session warning preempt cleanly before hard exhaustion.
 - `runWatchdogs` falls back to `run.quotaBefore` when `lastQuota` becomes stale mid-run (>15m),
   preserving the known baseline lower bound.
+
+## Local LLM (OpenAI-compatible / llama.cpp) as a commissioned worker (2026-09-01)
+
+Added built-in support for self-hosted / local LLM workers running OpenAI-compatible servers (such
+as Qwen3-Coder-30B-A3B via llama.cpp).
+
+Key architectural decisions:
+1. **Bridge script (`local-llm-bridge.ts`) as a spawned child process**:
+   Maintains the architectural invariant that a session is a child process with stdin/stdout,
+   avoiding any bifurcation in `sessions.ts`. The bridge reads NDJSON prompts from stdin and
+   streams requests to `/v1/chat/completions` (SSE), translating between the local server and
+   Multi Agent Controller's stream event protocol.
+2. **OpenAI tool-calling integration in the bridge**:
+   Registers `task_complete` and `ask_human` tools in OpenAI function format. When called by the
+   model, the bridge executes the tools inline and emits corresponding Multi Agent Controller
+   stream records (`result`, `tool_result`).
+3. **Endpoint URL as isolationRoot**:
+   No credential directory exists for local LLMs; workers are identified by endpoint URL
+   (e.g., `http://127.0.0.1:8080`), permitting unlimited parallel workers pointing to distinct
+   or shared local endpoints (`maxAccounts: null`).
+4. **Compiled-in cost model (`local.llm.2026-09.json`)**:
+   Token pricing is `null` (local compute/electricity), context window defaults to 32,768, and quota
+   is unconstrained.
+5. **Commissioning UI**:
+   The Add Worker dialog in Settings switches to an Endpoint URL input when Local LLM is selected.

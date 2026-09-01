@@ -8,10 +8,10 @@ started in CI, never run against a real agent CLI.
 if you add a line, find the one it obsoletes and cut it in the same edit. Finished work moves to
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
-**Baseline (2026-09-01, measured):** typecheck · lint · build clean · `npm test` 1000/1002 (2 POSIX-only
-skipped) · `test:daemon` 141/141 · `test:ui` 176/176 · `test:pack` 18/18 · L4 (opt-in) landed a real
+**Baseline (2026-09-01, measured):** typecheck · lint · build clean · `npm test` 1022/1024 (2 POSIX-only
+skipped) · `test:daemon` 142/142 · `test:ui` 176/176 · `test:pack` 18/18 · L4 (opt-in) landed a real
 agent commit on origin/main. Electron 44.0.0, electron-builder 26.15.3, 0 npm vulnerabilities.
-CLIs here: claude 2.1.252 · agy 1.1.22 · codex 0.151.0.
+CLIs here: claude 2.1.252 · agy 1.1.22 · codex 0.151.0 · local-llm 1.0.0.
 
 ⭐ **`scripts/build-win.ps1` runs all of the above** (`-Help` for options, `-Restart` for the inner loop);
 content-addressed, **92s cold, ~0s warm**. ⛔ **One packaged app — `release\win-unpacked\`**, so running
@@ -89,7 +89,7 @@ src/daemon/            orchestratord. Runs as Electron-with-ELECTRON_RUN_AS_NODE
   worktrees.ts         pooled worktrees, task-named branches, prepare hook. ⛔ A slot does not
                        arrive clean; rescueDirt stashes what the last run left (+ .test.ts)
   which.ts             PATH resolution - node-pty does not do it
-  adapters/            claude-code - antigravity-cli - openai-compatible; capabilities as data
+  adapters/            claude-code - antigravity-cli - openai-compatible - local-llm; capabilities as data
                        (+ adapters.test.ts). Read docs/adapters.md before changing one
     external.ts        declarative adapters from <dataDir>/adapters/*.json  (+ external.test.ts)
     generic.ts         the driver behind one. ⛔ JSON only, never JavaScript
@@ -100,7 +100,7 @@ src/main/              window host + the daemon's only client (holds the token);
                        `uisettings.ts` - preferences main must read when the daemon is not answering
 src/renderer/          fleet strip, approvals bar, tasks, project settings (policy tier), workers,
                        Logs, LooseEnds, Conversations (who shared what) (+ lib/format.test.ts)
-costmodels/            anthropic.* - google.antigravity.* - openai.codex.*; compiled in, so a
+costmodels/            anthropic.* - google.antigravity.* - openai.codex.* - local.llm.*; compiled in, so a
                        packaging slip cannot leave the scheduler unable to price
 docs/                  cost-model.md, glossary.md, adapters.md, landing.md, sessions.md
 .claude/skills/commit/ /commit: docs, suites, package, commit, push

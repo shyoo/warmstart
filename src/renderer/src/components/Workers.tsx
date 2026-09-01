@@ -823,13 +823,17 @@ function AddWorker({
   const detection = detections.find((d) => d.adapterId === adapterId)
   const selected = adapters.find((a) => a.id === adapterId)
 
-  const submit = async () => {
+      const submit = async () => {
     setSaving(true)
     try {
       const worker = await rpc('worker.create', {
         adapterId,
-        label: label.trim() || 'worker',
-        ...(adopt && root.trim() ? { isolationRoot: root.trim() } : {})
+        label: label.trim() || (adapterId === 'local-llm' ? 'local-llm' : 'worker'),
+        ...(adapterId === 'local-llm'
+          ? { isolationRoot: root.trim() || 'http://127.0.0.1:8080' }
+          : adopt && root.trim()
+            ? { isolationRoot: root.trim() }
+            : {})
       })
       await onDone(worker.id, worker.adapterId)
     } catch (err) {
@@ -870,42 +874,57 @@ function AddWorker({
         <label>Label</label>
         <input
           value={label}
-          placeholder="e.g. personal, work, second seat"
+          placeholder={adapterId === 'local-llm' ? 'e.g. qwen3-coder, llama-local' : 'e.g. personal, work, second seat'}
           onChange={(e) => setLabel(e.target.value)}
         />
         <span className="form-hint">Whatever you will recognise in a quota bar at a glance.</span>
       </div>
 
-      <div className="form-row">
-        <label>Credentials</label>
-        <div>
-          <label className="check">
-            <input type="radio" checked={!adopt} onChange={() => setAdopt(false)} />
-            Create a new isolation directory
-          </label>
-          <label className="check">
-            <input type="radio" checked={adopt} onChange={() => setAdopt(true)} />
-            Adopt an existing one
-          </label>
-          {adopt && (
-            <input
-              className="form-wide mono"
-              value={root}
-              placeholder="path to an existing config directory"
-              onChange={(e) => setRoot(e.target.value)}
-            />
-          )}
+      {adapterId === 'local-llm' ? (
+        <div className="form-row">
+          <label>Endpoint</label>
+          <input
+            className="form-wide mono"
+            value={root}
+            placeholder="http://127.0.0.1:8080"
+            onChange={(e) => setRoot(e.target.value)}
+          />
+          <span className="form-hint">
+            The base URL of your llama.cpp or OpenAI-compatible server (default: http://127.0.0.1:8080).
+          </span>
         </div>
-        <span className="form-hint">
-          A new directory keeps this account&rsquo;s login entirely separate, which is what lets
-          several subscriptions run side by side. Adopt an existing one if you are already signed in
-          there and would rather not log in again.
-        </span>
-      </div>
+      ) : (
+        <div className="form-row">
+          <label>Credentials</label>
+          <div>
+            <label className="check">
+              <input type="radio" checked={!adopt} onChange={() => setAdopt(false)} />
+              Create a new isolation directory
+            </label>
+            <label className="check">
+              <input type="radio" checked={adopt} onChange={() => setAdopt(true)} />
+              Adopt an existing one
+            </label>
+            {adopt && (
+              <input
+                className="form-wide mono"
+                value={root}
+                placeholder="path to an existing config directory"
+                onChange={(e) => setRoot(e.target.value)}
+              />
+            )}
+          </div>
+          <span className="form-hint">
+            A new directory keeps this account&rsquo;s login entirely separate, which is what lets
+            several subscriptions run side by side. Adopt an existing one if you are already signed in
+            there and would rather not log in again.
+          </span>
+        </div>
+      )}
 
       <div className="form-actions">
         <button className="btn btn--primary" disabled={saving} onClick={() => void submit()}>
-          {saving ? 'Creating…' : 'Create and sign in'}
+          {saving ? 'Creating…' : selected?.login.kind === 'external' ? 'Commission worker' : 'Create and sign in'}
         </button>
       </div>
     </div>
