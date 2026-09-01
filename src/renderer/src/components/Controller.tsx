@@ -367,7 +367,7 @@ function ConsultDetailPane({ consult: c }: { consult: Consult }): React.JSX.Elem
       {c.question && (
         <details className="consult-accordion">
           <summary>Prompt sent to controller</summary>
-          <pre className="consult-accordion-body">{c.question}</pre>
+          <pre className="consult-accordion-body consult-accordion-body--prompt">{c.question}</pre>
         </details>
       )}
 

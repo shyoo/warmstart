@@ -2285,10 +2285,6 @@ select:focus-visible,
   width: 100%;
 }
 
-.dep-item {
-  min-width: 0;
-}
-
 .dep-link {
   display: inline-flex;
   align-items: baseline;
@@ -2328,6 +2324,51 @@ select:focus-visible,
 
 .dep-link--done .dep-title {
   color: var(--color-text-dim);
+}
+
+/* ⚠️ The row is a flex line so the × sits at its end; `.dep-link` already takes the width it is
+   given, so the button is what shrinks the link rather than wrapping under it. */
+.dep-item {
+  display: flex;
+  align-items: baseline;
+  gap: 2px;
+  min-width: 0;
+}
+
+.dep-remove {
+  flex: 0 0 auto;
+  padding: 0 var(--sp-1);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-dim);
+  font-family: inherit;
+  font-size: var(--text-dense);
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.dep-remove:hover:not(:disabled) {
+  background: var(--color-surface-2);
+  color: var(--state-warn);
+}
+
+.dep-remove:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.dep-add {
+  width: 100%;
+  margin-top: 3px;
+  font-size: var(--text-dense);
+}
+
+.dep-error {
+  display: block;
+  margin-top: var(--sp-1);
+  color: var(--state-warn);
+  font-size: var(--text-dense);
 }
 
 /* ---- blocked task banner ------------------------------------------------ */
@@ -3610,4 +3651,12 @@ select:focus-visible,
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* ⛔ Unfolding the prompt is an explicit request to read all of it. The 240px clamp on
+   `.consult-accordion-body` is right for a JSON blob you glance at; on the prompt it puts a
+   second scroller inside a page that already scrolls, which is what t56 was reporting. */
+.consult-accordion-body--prompt {
+  max-height: none;
+  overflow-y: visible;
 }

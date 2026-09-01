@@ -9,7 +9,7 @@ import type {
   Settings,
   Worker
 } from '@shared/protocol.js'
-import type { TaskConstraints } from '@shared/tasks.js'
+import type { Task, TaskConstraints } from '@shared/tasks.js'
 import { resolveCompletionMode } from '@shared/tasks.js'
 import { existsSync } from 'node:fs'
 import { adapter, adapters } from './adapters/index.js'
@@ -54,9 +54,11 @@ import {
 } from './projects.js'
 import {
   addMessage,
+  attachDependency,
   blockedDependentsOf,
   createTask,
   dependentsOf,
+  detachDependency,
   getTask,
   lastMessageId,
   listTasks,
@@ -113,6 +115,20 @@ import { dismissLooseEnd, resolveFinishPolicy, scanLooseEnds } from './finish.js
 import { resolveSessionSharing } from './sharing.js'
 
 type Handler<M extends RpcMethod> = (params: RpcParams<M>) => RpcResult<M> | Promise<RpcResult<M>>
+
+/**
+ * The prerequisites of a task, as rows rather than ids, with deleted ones dropped.
+ *
+ * ⚠️ Shared by `task.get` and the two edge methods so the pane redraws from exactly what the detail
+ * fetch would have given it. A list assembled twice is a list that disagrees with itself.
+ */
+function dependenciesFor(taskId: string): Task[] {
+  const task = getTask(taskId)
+  if (!task) return []
+  return (task.dependsOn || [])
+    .map((id) => getTask(id))
+    .filter((t): t is Task => !!t && t.deletedAt === null)
+}
 
 /** "26825 minutes" is technically true and useless. Say it the way a person would. */
 function describeAge(ms: number): string {
@@ -404,9 +420,7 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
           : (listWorkers().find((w) => w.retiredAt === null) ?? null)
       const adapterId = assignedWorker?.adapterId ?? 'claude-code'
       const previewPrompt = promptFor(task, adapterId, false, { markDelivered: false })
-      const dependencies = (task.dependsOn || [])
-        .map((id) => getTask(id))
-        .filter((t): t is typeof task => !!t && t.deletedAt === null)
+      const dependencies = dependenciesFor(p.id)
       const dependents = dependentsOf(p.id)
         .map((id) => getTask(id))
         .filter((t): t is typeof task => !!t && t.deletedAt === null)
@@ -605,6 +619,20 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
     'task.delete': (p) => deleteTask(p.id, { ...(p.hard ? { hard: true } : {}), ...(p.force ? { force: true } : {}) }),
     'task.restore': (p) => restoreTask(p.id),
     'task.promote': (p) => promoteDraft(p.id),
+
+    // ---- dependency edges, added and dropped by hand ---------------------------------------
+    //
+    // ⛔ `requireTask` on both ends and the cycle check live in `tasks.ts`, so the error a person
+    // sees here is the same one an agent filing a task with `depends_on` sees. There is one rule
+    // about what a legal edge is, and it is not written twice.
+    'task.addDependency': (p) => ({
+      task: attachDependency(p.id, p.dependsOn),
+      dependencies: dependenciesFor(p.id)
+    }),
+    'task.removeDependency': (p) => ({
+      task: detachDependency(p.id, p.dependsOn),
+      dependencies: dependenciesFor(p.id)
+    }),
 
     // ---- approvals ---------------------------------------------------------------------
     'project.proposeChecks': (p) => ({ checks: proposeChecks(requireProject(p.id).root) }),

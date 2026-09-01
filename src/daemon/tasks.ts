@@ -493,6 +493,61 @@ export function removeDependency(taskId: string, dependsOn: string): void {
   db().prepare('delete from task_deps where task_id = ? and depends_on = ?').run(taskId, dependsOn)
 }
 
+/**
+ * Add an edge **by hand**, and let admission act on it at once.
+ *
+ * ⛔ `addDependency` is the edge write and nothing else - it runs inside `createTask`, before the
+ * row has a derived status to recompute. A person adding a prerequisite to a task that already
+ * exists is asking for two things: the edge, and the consequence. Without the `admit()` here a
+ * `ready` task handed a fresh unmet prerequisite would sit in the queue and be dispatched, which is
+ * the exact failure `admitDependents` was written to fix at the other end of the same edge.
+ *
+ * ⚠️ `admit()` refuses every status in `TERMINAL_OR_HELD`, so this does **not** claw back a run
+ * already in flight - deliberately. The edge is recorded and takes effect on the next dispatch; the
+ * system message says so, because a control that silently did nothing would be worse than one that
+ * refused.
+ */
+export function attachDependency(taskId: string, dependsOn: string): Task {
+  const before = requireTask(taskId)
+  const dep = requireTask(dependsOn)
+  addDependency(taskId, dependsOn)
+  const task = admit(taskId)
+  addMessage(
+    taskId,
+    'system',
+    task.status === 'blocked' && before.status !== 'blocked'
+      ? `Now waits on t${dep.seq}: ${dep.title}. Admitted automatically when it completes.`
+      : `Now waits on t${dep.seq}: ${dep.title}.` +
+        (TERMINAL_OR_HELD.includes(before.status) && before.status !== 'draft'
+          ? ' This task is past admission, so the prerequisite applies to its next dispatch.'
+          : '')
+  )
+  // ⚠️ Emitted even when the status did not move. `setStatus` emits on a transition; an edge added
+  // to a running task is a change to the task nothing else would broadcast, and the pane showing it
+  // is the one the person is looking at.
+  const latest = requireTask(taskId)
+  emit({ type: 'task.changed', task: latest })
+  log.info(`t${latest.seq} now depends on t${dep.seq}`)
+  return latest
+}
+
+/** Drop an edge by hand, re-admitting in case it was the last thing holding the task. */
+export function detachDependency(taskId: string, dependsOn: string): Task {
+  requireTask(taskId)
+  const dep = getTask(dependsOn)
+  removeDependency(taskId, dependsOn)
+  admit(taskId)
+  const task = requireTask(taskId)
+  addMessage(
+    taskId,
+    'system',
+    dep ? `No longer waits on t${dep.seq}: ${dep.title}.` : 'A prerequisite was removed.'
+  )
+  emit({ type: 'task.changed', task })
+  log.info(`t${task.seq} no longer depends on ${dep ? `t${dep.seq}` : dependsOn}`)
+  return task
+}
+
 /** Is `to` reachable from `from` by following dependency edges? */
 function reaches(from: string, to: string): boolean {
   const seen = new Set<string>()

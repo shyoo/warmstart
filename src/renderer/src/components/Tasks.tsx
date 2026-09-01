@@ -19,6 +19,7 @@ import {
 } from '@shared/tasks'
 import type { ModelOptions, Settings } from '@shared/protocol'
 import { rpc, useActivity, useDaemonEvents, useNow, type FleetEntry } from '../lib/daemon'
+import { DependencyChooser, useTaskCandidates } from './Dependencies'
 import { showsLiveOutput } from '../lib/live'
 import { tokens, when } from '../lib/format'
 import {
@@ -627,6 +628,7 @@ function NewTask({
   const [finishPolicy, setFinishPolicy] = useState<FinishPolicyChoice>('inherit')
   const [sessionSharing, setSessionSharing] = useState<SessionSharingChoice>('inherit')
   const [plan, setPlan] = useState(false)
+  const [dependsOn, setDependsOn] = useState<string[]>([])
   const [workerId, setWorkerId] = useState('')
   const [model, setModel] = useState('')
   const [effort, setEffort] = useState('')
@@ -648,6 +650,11 @@ function NewTask({
    */
   const [options, setOptions] = useState<ModelOptions[]>([])
   const [settings, setSettings] = useState<Settings | null>(null)
+  // ⚠️ Every task in the fleet, not the page behind this form. A prerequisite is often the task you
+  // filed a minute ago, and whether it happens to match the bucket the table is filtered to says
+  // nothing about whether this one should wait for it.
+  const { tasks: candidateTasks } = useTaskCandidates()
+  const projectNames = new Map(projects.map((p) => [p.id, p.name]))
 
   useEffect(() => {
     void rpc('model.options')
@@ -709,6 +716,9 @@ function NewTask({
           finishPolicy,
           sessionSharing,
           status: targetStatus,
+          // ⚠️ Absent, not empty here too - `dependsOn: []` is an empty list of edges, which is what
+          // the daemon would do anyway, but sending one says a choice was made where none was.
+          ...(dependsOn.length > 0 ? { dependsOn } : {}),
           // ⚠️ Absent, not empty. The daemon reads a *present* `constraints` as an instruction to
           // validate one, and an object of empty strings would be three constraints that name
           // nothing rather than three questions left to the scheduler.
@@ -724,6 +734,7 @@ function NewTask({
         })
       }
       setTitle('')
+      setDependsOn([])
       await onDone()
     } catch (err) {
       onError(err instanceof Error ? err.message : String(err))
@@ -819,6 +830,26 @@ function NewTask({
           account and a model chosen here would apply to no run that will ever exist. */}
       {!plan && (
         <>
+          {/* ⛔ Above Worker, below Policy: an order of work is a fact about *when* this task may
+              start, like priority, and not about which account runs it. A prerequisite chosen here
+              files the task straight into `blocked`, and the scheduler releases it the moment the
+              task it names completes — the same edge an agent gets from `task_create`, made by
+              hand. */}
+          <div className="form-row">
+            <label>Waits for</label>
+            <DependencyChooser
+              all={candidateTasks}
+              chosen={dependsOn}
+              onChange={setDependsOn}
+              projectNames={projectNames}
+            />
+            <span className="form-hint">
+              This task is held at <strong>blocked</strong> until every task named here has
+              completed. Nothing dispatches it in the meantime, and finishing the last one admits it
+              automatically — you can add or drop a prerequisite later from the task&apos;s thread.
+            </span>
+          </div>
+
           <div className="form-row">
             <label>Worker</label>
             <select

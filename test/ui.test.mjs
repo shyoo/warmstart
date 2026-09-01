@@ -497,7 +497,7 @@ try {
   const f = JSON.parse(filing)
   check(
     'the form asks where and how before it asks what',
-    f.labels?.join(' > ').toLowerCase() === 'project > policy > worker > model',
+    f.labels?.join(' > ').toLowerCase() === 'project > policy > waits for > worker > model',
     filing
   )
   check('the prompt sits below every setting', f.promptIsLast === true, filing)
@@ -936,7 +936,7 @@ try {
   // account — its window is not moving either — and printing `stale` over that sent operators to
   // press Probe on accounts that were fine. The word is still the *gate* (`quotareading.test.ts`);
   // it is no longer the label.
-  check('and says how old they are, rather than calling them stale', /read\s+20h ago/i.test(strip), JSON.stringify(strip.slice(0, 120)))
+  check('and says how old they are, rather than calling them stale', /(?:read\s+)?20h ago/i.test(strip), JSON.stringify(strip.slice(0, 120)))
   check('⛔ without the word that made old read as broken', !/stale/i.test(strip))
   check(
     'rather than calling a measured account unknown',

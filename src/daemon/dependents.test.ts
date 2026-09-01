@@ -105,3 +105,71 @@ describe('counting what a task is holding up', () => {
     expect(tasks.blockedDependentsOf(at('alone', 'awaiting_human'))).toBe(0)
   })
 })
+
+/**
+ * An edge added by hand, after the task exists.
+ *
+ * ⛔ `addDependency` writes the edge and nothing else — correct inside `createTask`, where the row
+ * has no derived status yet. A person adding a prerequisite to a task already sitting at `ready` is
+ * asking for the consequence as well: without the `admit()` in `attachDependency` that task stays
+ * dispatchable and runs before the thing it was just told to wait for.
+ */
+describe('adding and dropping a prerequisite by hand', () => {
+  it('blocks a ready task the moment the edge is made', () => {
+    const first = tasks.createTask({ title: 'runs first' })
+    const second = tasks.createTask({ title: 'runs after' })
+    expect(tasks.requireTask(second.id).status).toBe('ready')
+    const blocked = tasks.attachDependency(second.id, first.id)
+    expect(blocked.status).toBe('blocked')
+    expect(blocked.dependsOn).toEqual([first.id])
+  })
+
+  it('releases the task when the last prerequisite is dropped', () => {
+    const first = tasks.createTask({ title: 'runs first' })
+    const second = tasks.createTask({ title: 'runs after' })
+    tasks.attachDependency(second.id, first.id)
+    expect(tasks.detachDependency(second.id, first.id).status).toBe('ready')
+  })
+
+  it('keeps the task blocked while another prerequisite is unmet', () => {
+    const a = tasks.createTask({ title: 'one' })
+    const b = tasks.createTask({ title: 'two' })
+    const waiting = tasks.createTask({ title: 'waits on both' })
+    tasks.attachDependency(waiting.id, a.id)
+    tasks.attachDependency(waiting.id, b.id)
+    expect(tasks.detachDependency(waiting.id, a.id).status).toBe('blocked')
+  })
+
+  it('does not claw back a run already in flight', () => {
+    // ⚠️ `admit()` refuses every status in TERMINAL_OR_HELD, and that is the intended answer here:
+    // the edge is recorded and applies to the next dispatch. Stopping a live agent mid-thought
+    // because somebody edited the plan around it would be the more surprising of the two.
+    const first = at('runs first', 'awaiting_human')
+    const running = at('already going', 'running')
+    expect(tasks.attachDependency(running, first).status).toBe('running')
+    expect(tasks.requireTask(running).dependsOn).toEqual([first])
+  })
+
+  it('refuses an edge that would close a cycle, and leaves the task alone', () => {
+    const first = tasks.createTask({ title: 'runs first' })
+    const second = tasks.createTask({ title: 'runs after' })
+    tasks.attachDependency(second.id, first.id)
+    expect(() => tasks.attachDependency(first.id, second.id)).toThrow(/cycle/)
+    expect(tasks.requireTask(first.id).dependsOn).toEqual([])
+  })
+
+  it('refuses to make a task wait on itself', () => {
+    const only = tasks.createTask({ title: 'alone' })
+    expect(() => tasks.attachDependency(only.id, only.id)).toThrow(/itself/)
+  })
+
+  it('says what happened in the thread, both ways', () => {
+    const first = tasks.createTask({ title: 'runs first' })
+    const second = tasks.createTask({ title: 'runs after' })
+    tasks.attachDependency(second.id, first.id)
+    tasks.detachDependency(second.id, first.id)
+    const said = tasks.messagesFor(second.id).map((m) => m.text)
+    expect(said.some((t) => t.includes(`Now waits on t${first.seq}`))).toBe(true)
+    expect(said.some((t) => t.includes(`No longer waits on t${first.seq}`))).toBe(true)
+  })
+})

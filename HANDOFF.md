@@ -8,10 +8,9 @@ started in CI, never run against a real agent CLI.
 if you add a line, find the one it obsoletes and cut it in the same edit. Finished work moves to
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
-**Baseline (2026-09-01, measured):** typecheck · lint · build clean · `npm test` 1096/1098 (2 POSIX-only
-skipped) · `test:daemon` 142/142 · `test:ui` **184/185** · `test:pack` 18/18 · L4 landed a real agent
-commit on origin/main. ⛔ The one red check is nobody's branch: `94a0d44` dropped the word `read` from
-the quota age and `ui.test.mjs` still asserts it. Electron 44.0.0, electron-builder 26.15.3.
+**Baseline (2026-09-01, measured):** typecheck · lint · build clean · `npm test` 1103/1105 (2 POSIX-only
+skipped) · `test:daemon` 142/142 · `test:ui` 193/193 · `test:pack` 18/18 · L4 landed a real agent
+commit on origin/main. Electron 44.0.0, electron-builder 26.15.3.
 CLIs here: claude 2.1.252 · agy 1.1.22 · codex 0.151.0 · local-llm 1.0.0 (qwen3-coder live tested).
 
 ⭐ **`scripts/build-win.ps1` runs all of the above** (`-Help` for options, `-Restart` for the inner loop);

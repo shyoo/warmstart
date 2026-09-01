@@ -26,6 +26,7 @@ import { rpc, useActivity, useDaemonEvents, useNow, type FleetEntry } from '../l
 import { conversationIdFor } from '../lib/conversation'
 import { SettingButtonSelect, type SettingOption } from './SettingButtonSelect'
 import { TaskQuestions } from './Questions'
+import { AddDependency, candidatesFor, DependencyList, useTaskCandidates } from './Dependencies'
 import { showsLiveOutput } from '../lib/live'
 import { duration, tokens, when } from '../lib/format'
 import {
@@ -451,10 +452,11 @@ function TaskDetail({
           {/* ⛔ Offered only where the hold is one this fleet invented. See `QuotaOverride`. */}
           <QuotaOverride task={task} onChanged={refresh} />
           <Fact label="depends on">
-            <DependencyList
-              tasks={dependencies}
-              fallbackIds={task.dependsOn}
+            <DependencyEditor
+              task={task}
+              dependencies={dependencies}
               onOpenTask={onOpenTask}
+              onChanged={refresh}
             />
           </Fact>
           {(dependents.length > 0 || blocking > 0) && (
@@ -1224,58 +1226,72 @@ function Fact({ label, children }: { label: string; children: React.ReactNode })
   )
 }
 
-function DependencyList({
-  tasks,
-  fallbackIds,
-  fallbackCount,
-  onOpenTask
+/** Statuses where a prerequisite would change nothing, so the control that adds one is not drawn. */
+const FINISHED_FOR_GOOD = new Set<Task['status']>(['completed', 'cancelled', 'failed'])
+
+/**
+ * The prerequisites of *this* task, and the two ways to change them.
+ *
+ * ⛔ In the ledger beside `blocks`, not in the composer. An edge is a fact about the task in the same
+ * sense its worker and its model are, and all three are now editable in the place they are read —
+ * the pattern `WorkerPicker` established. What the composer is for is saying something to the agent.
+ *
+ * ⚠️ Every change is a round trip that can be refused: a cycle, a task somebody deleted between this
+ * pane loading and the click. The refusal is shown here rather than swallowed, because the list not
+ * changing is not, by itself, an explanation.
+ */
+function DependencyEditor({
+  task,
+  dependencies,
+  onOpenTask,
+  onChanged
 }: {
-  tasks: Task[]
-  fallbackIds?: string[]
-  fallbackCount?: number
+  task: Task
+  dependencies: Task[]
   onOpenTask?: (taskId: string) => void
+  onChanged: () => Promise<void>
 }): React.JSX.Element {
-  if (tasks.length === 0) {
-    if (fallbackIds && fallbackIds.length > 0) {
-      return (
-        <span className="dim">
-          {fallbackIds.length} {fallbackIds.length === 1 ? 'task' : 'tasks'}
-        </span>
-      )
+  const { tasks: all, reload } = useTaskCandidates()
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const change = async (method: 'task.addDependency' | 'task.removeDependency', dependsOn: string) => {
+    setBusy(true)
+    setError(null)
+    try {
+      await rpc(method, { id: task.id, dependsOn })
+      await onChanged()
+      // ⚠️ The candidate list too. Adding an edge makes every task that now reaches this one through
+      // it an illegal next choice, and a stale list would keep offering them.
+      await reload()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
     }
-    if (fallbackCount && fallbackCount > 0) {
-      return (
-        <span className="dim">
-          {fallbackCount} {fallbackCount === 1 ? 'task' : 'tasks'}
-        </span>
-      )
-    }
-    return <span className="dim">none</span>
   }
 
+  const candidates = candidatesFor(all, task.id, task.dependsOn)
+
   return (
-    <div className="dep-list">
-      {tasks.map((dep) => {
-        const isDone = dep.status === 'completed'
-        return (
-          <div key={dep.id} className="dep-item">
-            <button
-              type="button"
-              className={`dep-link ${isDone ? 'dep-link--done' : ''}`}
-              onClick={() => onOpenTask?.(dep.id)}
-              title={`Open t${dep.seq}: ${dep.title} (${statusLabel(dep)})`}
-            >
-              <span className="dep-seq">t{dep.seq}</span>
-              <span className="dep-title">{dep.title}</span>
-              <span className={`status ${STATUS_TONE[dep.status] ?? ''}`}>
-                {statusLabel(dep)}
-                {IN_FLIGHT.has(dep.status) && <Working />}
-              </span>
-            </button>
-          </div>
-        )
-      })}
-    </div>
+    <>
+      <DependencyList
+        tasks={dependencies}
+        fallbackIds={task.dependsOn}
+        onOpenTask={onOpenTask}
+        onRemove={(id) => void change('task.removeDependency', id)}
+        busy={busy}
+      />
+      {!FINISHED_FOR_GOOD.has(task.status) && (
+        <AddDependency
+          candidates={candidates}
+          onAdd={(id) => void change('task.addDependency', id)}
+          busy={busy}
+          placeholder={dependencies.length > 0 ? 'wait on another task…' : 'wait on a task…'}
+        />
+      )}
+      {error && <span className="dep-error">{error}</span>}
+    </>
   )
 }
 

@@ -1183,6 +1183,28 @@ export interface RpcMap {
   'task.restore': { params: { id: string }; result: Task }
   'task.promote': { params: { id: string }; result: Task }
 
+  /**
+   * Say by hand that this task waits on another one - and unsay it.
+   *
+   * ⛔ Two methods rather than a `dependsOn` field on `task.update`. An edge is rejected for reasons
+   * a whole-array write cannot report usefully (a cycle, a task that does not exist, itself), and a
+   * patch that replaced the set would silently drop an edge the controller had added between the
+   * pane loading and the person clicking.
+   *
+   * ⚠️ Adding one re-runs admission at once, so a `ready` task becomes `blocked`; a task already
+   * running is **not** clawed back - the prerequisite applies to its next dispatch, and the thread
+   * gets a system message saying which of the two happened. `dependencies` comes back with the task
+   * so the pane that asked does not need a second round trip to redraw the list it just changed.
+   */
+  'task.addDependency': {
+    params: { id: string; dependsOn: string }
+    result: { task: Task; dependencies: Task[] }
+  }
+  'task.removeDependency': {
+    params: { id: string; dependsOn: string }
+    result: { task: Task; dependencies: Task[] }
+  }
+
   // ---- project checks -------------------------------------------------------------------
   //
   // ⛔ The check list is what the verifying finish policies trust when they say work is
