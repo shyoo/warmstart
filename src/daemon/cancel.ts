@@ -18,6 +18,8 @@ import { closeSession, getSession, interruptSession, writeSession } from './sess
 import { releaseAllFor } from './resources.js'
 import { adapter } from './adapters/index.js'
 import { costModel } from './costmodel.js'
+import { voidQuestionsForTask } from './questions.js'
+import { voidApprovalsForTask } from './approvals.js'
 
 /**
  * Cancel is not delete.
@@ -265,6 +267,11 @@ export function deleteTask(taskId: string, opts: { hard?: boolean; force?: boole
   if (!blockers.ok && !opts.force) {
     throw new Error(`cannot delete t${task.seq}:\n- ${blockers.reasons.join('\n- ')}`)
   }
+
+  // ⛔ Clear any open questions and approvals so they do not outlive the deleted task
+  // or linger on the Attention bar / project dashboard.
+  voidQuestionsForTask(taskId)
+  voidApprovalsForTask(taskId)
 
   if (opts.hard) {
     // Detach the runs, then remove the task. `on delete set null` on runs.task_id does the detaching;

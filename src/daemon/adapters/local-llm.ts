@@ -97,21 +97,6 @@ const info: AdapterInfo = {
 }
 
 // ---------------------------------------------------------------------------- reachability cache
-// ⛔ `isInstalled()` is called on every tick (every 10s) and must be synchronous. HTTP is inherently
-// async, so we cache the result of the last `detect()` probe and report that. The cache expires
-// after 60s so a server that goes down is noticed within a minute.
-
-interface ReachabilityEntry {
-  reachable: boolean
-  at: number
-}
-const reachabilityCache = new Map<string, ReachabilityEntry>()
-const REACHABILITY_TTL_MS = 60_000
-
-function setReachable(endpoint: string, reachable: boolean): void {
-  reachabilityCache.set(endpoint, { reachable, at: Date.now() })
-}
-
 // ---------------------------------------------------------------------------- HTTP probe
 
 async function probeEndpoint(
@@ -315,7 +300,6 @@ export const localLlm: AgentAdapter = {
   async probeIdentity(isolationRoot: string): Promise<IdentityProbe> {
     const endpoint = isolationRoot
     const probe = await probeEndpoint(endpoint)
-    setReachable(endpoint, probe.ok)
 
     if (!probe.ok) {
       return {

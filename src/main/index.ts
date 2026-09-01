@@ -232,6 +232,10 @@ function createWindow(): BrowserWindow {
   })
 
   win.once('ready-to-show', () => win.show())
+  // Fallback: ensure the window is shown if ready-to-show is delayed or missed
+  setTimeout(() => {
+    if (!win.isDestroyed() && !win.isVisible()) win.show()
+  }, 500)
 
   // ⛔ Capture the WebContents now; do not read `win.webContents` from the `closed` handler.
   //

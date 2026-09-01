@@ -1,13 +1,15 @@
 import { createServer, type Server } from 'node:http'
 import { spawn } from 'node:child_process'
 import { createInterface } from 'node:readline'
-import { join } from 'node:path'
+import { existsSync } from 'node:fs'
+import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { adapter } from './index.js'
-import type { AgentAdapter } from './types.js'
+
+const REPO = resolve(__dirname, '../../..')
 
 describe('local-llm adapter unit tests', () => {
-  const ad = adapter('local-llm') as AgentAdapter
+  const ad = adapter('local-llm')
 
   it('declares expected capabilities and policy', () => {
     expect(ad.info.id).toBe('local-llm')
@@ -179,7 +181,7 @@ describe('local-llm adapter unit tests', () => {
 })
 
 describe('local-llm probeIdentity against mock HTTP server', () => {
-  const ad = adapter('local-llm') as AgentAdapter
+  const ad = adapter('local-llm')
   let server: Server
   let port: number
   let serverHandler: (url: string, res: import('node:http').ServerResponse) => void
@@ -279,10 +281,12 @@ describe('local-llm-bridge process integration with mock OpenAI SSE endpoint', (
   })
 
   function runBridge(envOverrides: Record<string, string> = {}) {
-    const bridgeScript = join(__dirname, 'local-llm-bridge.ts')
+    const compiled = join(REPO, 'out/main/local-llm-bridge.js')
+    const bridgeScript = existsSync(compiled) ? compiled : join(__dirname, 'local-llm-bridge.ts')
+    const args = bridgeScript.endsWith('.ts') ? ['--experimental-strip-types', bridgeScript] : [bridgeScript]
     const child = spawn(
       process.execPath,
-      ['--experimental-strip-types', bridgeScript],
+      args,
       {
         env: {
           ...process.env,
@@ -296,6 +300,9 @@ describe('local-llm-bridge process integration with mock OpenAI SSE endpoint', (
     )
 
     const lines: Array<Record<string, unknown>> = []
+    child.stderr.on('data', (d: Buffer) => {
+      process.stderr.write(`[BRIDGE STDERR] ${d.toString()}`)
+    })
     const rl = createInterface({ input: child.stdout })
     rl.on('line', (line) => {
       try {

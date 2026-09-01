@@ -354,7 +354,13 @@ export function requireApproval(id: string): Approval {
 
 export function openApprovals(): Approval[] {
   return rows<ApprovalRow>(
-    db().prepare('select * from approvals where answered_at is null order by asked_at').all()
+    db().prepare(`
+      select a.* from approvals a
+      left join tasks t on a.task_id = t.id
+      where a.answered_at is null
+        and (a.task_id is null or t.deleted_at is null)
+      order by a.asked_at
+    `).all()
   ).map(toApproval)
 }
 
@@ -402,6 +408,15 @@ export function escalateStale(now = Date.now()): number {
 export function voidApprovalsForSession(sessionId: string): void {
   for (const approval of openApprovals()) {
     if (approval.sessionId !== sessionId) continue
+    recordAnswer(approval.id, 'deny', 'timeout')
+    waiters.get(approval.id)?.('deny')
+  }
+}
+
+/** A task that was deleted means its open approvals are void. */
+export function voidApprovalsForTask(taskId: string): void {
+  for (const approval of openApprovals()) {
+    if (approval.taskId !== taskId) continue
     recordAnswer(approval.id, 'deny', 'timeout')
     waiters.get(approval.id)?.('deny')
   }

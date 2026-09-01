@@ -453,6 +453,22 @@ export function parkQuestionsForSession(sessionId: string): number {
   return parked
 }
 
+/** A task that was deleted means its open questions are void. */
+export function voidQuestionsForTask(taskId: string): void {
+  for (const q of openQuestions()) {
+    if (q.taskId !== taskId) continue
+    const resolution = park(q.id, 'task was deleted')
+    waiters.get(q.id)?.(resolution)
+    const timer = timers.get(q.id)
+    if (timer) clearTimeout(timer)
+    timers.delete(q.id)
+    waiters.delete(q.id)
+    db().prepare('update questions set answered_at = ?, answer_json = ?, answered_by = ? where id = ?')
+      .run(Date.now(), JSON.stringify({ optionIds: [], text: 'task deleted' }), 'human', q.id)
+    emit({ type: 'question.answered', question: requireQuestion(q.id) })
+  }
+}
+
 // ---------------------------------------------------------------------------- reading
 
 export function requireQuestion(id: string): Question {
@@ -464,7 +480,13 @@ export function requireQuestion(id: string): Question {
 /** Everything still waiting on a person, parked or not. Both belong in the same place to answer. */
 export function openQuestions(): Question[] {
   return rows<QuestionRow>(
-    db().prepare('select * from questions where answered_at is null order by asked_at').all()
+    db().prepare(`
+      select q.* from questions q
+      left join tasks t on q.task_id = t.id
+      where q.answered_at is null
+        and (q.task_id is null or t.deleted_at is null)
+      order by q.asked_at
+    `).all()
   ).map(toQuestion)
 }
 

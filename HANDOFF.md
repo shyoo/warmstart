@@ -11,7 +11,7 @@ if you add a line, find the one it obsoletes and cut it in the same edit. Finish
 **Baseline (2026-09-01, measured):** typecheck · lint · build clean · `npm test` 1042/1044 (2 POSIX-only
 skipped) · `test:daemon` 142/142 · `test:ui` 176/176 · `test:pack` 18/18 · L4 (opt-in) landed a real
 agent commit on origin/main. Electron 44.0.0, electron-builder 26.15.3, 0 npm vulnerabilities.
-CLIs here: claude 2.1.252 · agy 1.1.22 · codex 0.151.0 · local-llm 1.0.0.
+CLIs here: claude 2.1.252 · agy 1.1.22 · codex 0.151.0 · local-llm 1.0.0 (qwen3-coder live tested).
 
 ⭐ **`scripts/build-win.ps1` runs all of the above** (`-Help` for options, `-Restart` for the inner loop);
 content-addressed, **92s cold, ~0s warm**. ⛔ **One packaged app — `release\win-unpacked\`**, so running

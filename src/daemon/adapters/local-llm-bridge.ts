@@ -118,6 +118,10 @@ function log(msg: string): void {
   process.stderr.write(`[local-llm-bridge] ${msg}\n`)
 }
 
+function stripToolTags(text: string): string {
+  return text.replace(/<\/?(?:tool_call|function|parameter)(?:=[^>]+)?>\n?/gi, '')
+}
+
 // ---------------------------------------------------------------------------- HTTP client
 
 async function chatCompletion(
@@ -142,6 +146,7 @@ async function chatCompletion(
     const transport = url.protocol === 'https:' ? https : http
     let finished = false
     let fullText = ''
+    let deltaBuffer = ''
     const allToolCalls = new Map<number, ToolCall>()
     let usageReported = false
     let finishReason = 'stop'
@@ -149,6 +154,11 @@ async function chatCompletion(
     const finish = () => {
       if (finished) return
       finished = true
+      if (deltaBuffer) {
+        const clean = stripToolTags(deltaBuffer)
+        if (clean.trim()) onDelta(clean)
+        deltaBuffer = ''
+      }
       const calls = Array.from(allToolCalls.values())
       if (calls.length > 0) onToolCall(calls)
       if (!usageReported) {
@@ -210,7 +220,16 @@ async function chatCompletion(
 
               if (delta?.content && typeof delta.content === 'string') {
                 fullText += delta.content
-                onDelta(delta.content)
+                deltaBuffer += delta.content
+                if (
+                  deltaBuffer.includes('\n') ||
+                  /[.?!:;]\s$/.test(deltaBuffer) ||
+                  deltaBuffer.length >= 60
+                ) {
+                  const clean = stripToolTags(deltaBuffer)
+                  if (clean.trim()) onDelta(clean)
+                  deltaBuffer = ''
+                }
               }
 
               // Tool calls come as deltas with indexed parts
@@ -271,6 +290,48 @@ async function chatCompletion(
     req.write(body)
     req.end()
   })
+}
+
+// ---------------------------------------------------------------------------- in-text tool parsing
+// Qwen models sometimes emit tool calls directly in generated text using XML-like syntax:
+// <tool_call>
+// <function=name>
+// <parameter=param1>value1</parameter>
+// </function>
+// </tool_call>
+
+function parseInTextToolCalls(text: string): ToolCall[] {
+  const calls: ToolCall[] = []
+  const functionRegex = /<function=([a-zA-Z0-9_]+)>([\s\S]*?)(?:<\/function>|$)/g
+  let match: RegExpExecArray | null
+  while ((match = functionRegex.exec(text)) !== null) {
+    const name = match[1]
+    const body = match[2]
+    if (!name || !body) continue
+
+    const paramRegex = /<parameter=([a-zA-Z0-9_]+)>([\s\S]*?)(?:<\/parameter>|$)/g
+    const args: Record<string, unknown> = {}
+    let pMatch: RegExpExecArray | null
+    while ((pMatch = paramRegex.exec(body)) !== null) {
+      const pName = pMatch[1]
+      const pVal = pMatch[2]?.trim() ?? ''
+      if (!pName) continue
+      try {
+        args[pName] = JSON.parse(pVal)
+      } catch {
+        args[pName] = pVal
+      }
+    }
+    calls.push({
+      id: `call_${calls.length + 1}`,
+      type: 'function',
+      function: {
+        name,
+        arguments: JSON.stringify(args)
+      }
+    })
+  }
+  return calls
 }
 
 // ---------------------------------------------------------------------------- tool execution
@@ -343,19 +404,24 @@ async function runConversation(prompt: string, messages: ChatMessage[]): Promise
         }
       )
 
-      if (result.toolCalls.length > 0) {
+      let toolCalls = result.toolCalls
+      if (toolCalls.length === 0 && result.text) {
+        toolCalls = parseInTextToolCalls(result.text)
+      }
+
+      if (toolCalls.length > 0) {
         // Add the assistant message with tool calls
         messages.push({
           role: 'assistant',
           content: result.text || null,
-          tool_calls: result.toolCalls
+          tool_calls: toolCalls
         })
 
-        // Check if task_complete was called — if so, we are done
-        const completed = result.toolCalls.some((c) => c.function.name === 'task_complete')
+        const askHumanCall = toolCalls.find((c) => c.function.name === 'ask_human')
+        const completed = toolCalls.some((c) => c.function.name === 'task_complete')
 
         // Execute each tool call and add results
-        for (const call of result.toolCalls) {
+        for (const call of toolCalls) {
           const toolResult = executeToolCall(call)
           messages.push({
             role: 'tool',
@@ -365,11 +431,40 @@ async function runConversation(prompt: string, messages: ChatMessage[]): Promise
           })
         }
 
-        if (completed) {
+        if (askHumanCall) {
+          let question = ''
+          let options: string[] = []
+          try {
+            const parsedArgs = JSON.parse(askHumanCall.function.arguments || '{}') as {
+              question?: string
+              options?: string[]
+            }
+            question = typeof parsedArgs.question === 'string' ? parsedArgs.question.trim() : ''
+            options = Array.isArray(parsedArgs.options) ? parsedArgs.options.map(String) : []
+          } catch {
+            // ignore JSON parse error
+          }
+
+          const optionLines = options.length > 0 ? '\n' + options.map((o) => `- ${o}`).join('\n') : ''
+          emit({
+            type: 'result',
+            text: `NEEDS DECISION: ${question}${optionLines}`,
+            status: 'SUCCESS'
+          })
+        } else if (completed) {
+          const completeCall = toolCalls.find((c) => c.function.name === 'task_complete')
+          let summary = result.text
+          try {
+            const parsedArgs = JSON.parse(completeCall?.function.arguments || '{}') as { summary?: string }
+            if (parsedArgs.summary) summary = parsedArgs.summary
+          } catch {
+            // ignore JSON parse error
+          }
+
           // Emit the terminal result
           emit({
             type: 'result',
-            text: result.text,
+            text: summary,
             status: 'SUCCESS'
           })
         } else {
