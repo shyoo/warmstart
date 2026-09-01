@@ -859,6 +859,16 @@ const MIGRATIONS: string[] = [
   `
 ]
 
+/**
+ * How many migrations this build carries, which is the `user_version` a current database is at.
+ *
+ * ⛔ Exported so a test can rewind to "just before the last one" without hard-coding its number.
+ * `sessionstate.test.ts` drives the repair migration by rewinding and reopening — the only way to
+ * exercise the SQL that actually ships rather than a copy of it — and a literal there would quietly
+ * become a test of whichever migration somebody adds next.
+ */
+export const MIGRATION_COUNT = MIGRATIONS.length
+
 let handle: DatabaseSync | null = null
 
 export function openDb(path = paths.db): DatabaseSync {

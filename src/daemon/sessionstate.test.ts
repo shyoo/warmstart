@@ -158,8 +158,11 @@ describe('an ended session is one that is over, in every list', () => {
  * worth knowing here.
  */
 describe('repairing the sessions that were blamed for their own shutdown', () => {
+  // ⚠️ Rewound to `MIGRATIONS.length - 1`, read from the module rather than typed as a number. The
+  // repair is the *last* migration, and hard-coding its index means the next person to add one
+  // silently turns this suite into a test of theirs.
   function remigrate(): void {
-    db.db().exec('pragma user_version = 24')
+    db.db().exec(`pragma user_version = ${db.MIGRATION_COUNT - 1}`)
     db.closeDb()
     db.openDb(dbPath)
   }
