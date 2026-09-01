@@ -1234,6 +1234,117 @@ try {
     `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim().startsWith('Workers')).click()`
   )
   await wait(1200)
+
+  // ---- the shape of the table itself --------------------------------------------------
+  //
+  // ⛔ Measured, not eyeballed. All three of the faults this covers typecheck perfectly and pass
+  // every unit test: a <col> missing from a `table-layout: fixed` colgroup, an unbreakable account
+  // name painted across the column beside it, and a sentence from a vendor set in a 13% cell. They
+  // are only visible in a laid-out document, which is what this level is for.
+  {
+    // Seeded, because the states that break the layout are the ones a healthy fleet never reaches:
+    // a long sign-in address, an account that never finished onboarding, and one held out of
+    // dispatch carrying the vendor's own explanation.
+    const store = new DatabaseSync(join(dataDir, 'multi_agent_controller.db'))
+    store
+      .prepare('update workers set identity_json = ? where id = ?')
+      .run(
+        JSON.stringify({
+          loggedIn: true,
+          account: 'a.very.long.sign-in.address@some-organisation.example.com',
+          subscriptionType: 'max20',
+          setupComplete: true
+        }),
+        staleWorker
+      )
+    store
+      .prepare('update workers set identity_json = ? where id = ?')
+      .run(
+        JSON.stringify({ loggedIn: true, account: 'held@example.com', setupComplete: false }),
+        suspectWorkerId
+      )
+    store.close()
+  }
+  await evaluate(
+    `window.agentyard.rpc('worker.update', { id: ${JSON.stringify(staleWorker)}, maxConcurrent: 1 })`
+  )
+  await wait(1500)
+
+  // ⛔ Ten headers, ten <col>s. Nine of them summed to 100%, so the actions column was allotted no
+  // width at all and its buttons stacked one per line inside a cell as wide as one button.
+  const colCount = await evaluate(
+    `JSON.stringify([
+       document.querySelectorAll('.tbl-workers colgroup col').length,
+       document.querySelectorAll('.tbl-workers thead th').length
+     ])`
+  )
+  check('the workers colgroup describes every column the header declares', colCount === '[10,10]', colCount)
+
+  // ⚠️ The cell's own width, not the button's. A 19% column on a narrow window is still narrow;
+  // what this asserts is that the three ordinary actions end up on one line, which is the thing
+  // that was wrong.
+  const actionRows = await evaluate(
+    `JSON.stringify([...document.querySelectorAll('.tbl-workers .tbl-actions')].map(cell => {
+       const tops = new Set([...cell.querySelectorAll('.btn')].map(b => Math.round(b.getBoundingClientRect().top)))
+       return [cell.querySelectorAll('.btn').length, tops.size]
+     }))`
+  )
+  check(
+    'every row of actions fits on one line instead of stacking',
+    JSON.parse(actionRows).every(([, lines]) => lines === 1),
+    `[buttons, lines] per row: ${actionRows} — measured at [[3,3],[4,4]] before the colgroup was fixed`
+  )
+
+  // ⛔ Overflow, which under a fixed layout is not clipped and not wrapped — it is painted over the
+  // next column. An account name is an email; an email has no space to break at.
+  const accountOverflow = await evaluate(
+    `JSON.stringify([...document.querySelectorAll('.tbl-workers .tbl-account')]
+       .map(el => [el.scrollWidth, el.clientWidth]))`
+  )
+  check(
+    'no account name is painted past its column into the quota beside it',
+    JSON.parse(accountOverflow).length >= (await evaluate(
+      `document.querySelectorAll('.tbl-workers tbody tr:not(.tbl-row--note)').length`
+    )) && JSON.parse(accountOverflow).length > 0 && JSON.parse(accountOverflow).every(([scroll, client]) => scroll <= client + 1),
+    `[scrollWidth, clientWidth]: ${accountOverflow}`
+  )
+
+  // ⛔ The vendor's sentence belongs on a row, not in a cell. In the cell it wrapped to five lines
+  // and made every other cell on that row five lines tall.
+  const noteCell = await evaluate(
+    `JSON.stringify({
+       rows: document.querySelectorAll('.tbl-workers .tbl-row--note').length,
+       note: document.querySelector('.tbl-workers .tbl-row--note')?.innerText ?? '',
+       span: document.querySelector('.tbl-workers .tbl-row--note td')?.colSpan ?? 0,
+       inAccountColumn: [...document.querySelectorAll('.tbl-workers tbody tr:not(.tbl-row--note) td:nth-child(4)')]
+         .some(td => td.innerText.includes('subscription expired'))
+     })`
+  )
+  {
+    const seen = JSON.parse(noteCell)
+    check('an account with something wrong gets a note row of its own', seen.rows >= 1, noteCell)
+    check('which spans the table rather than sitting in one column', seen.span === 10, String(seen.span))
+    check(
+      'and carries the reason the run failed, plus what to do about it',
+      /subscription expired/.test(seen.note) && /Recheck/.test(seen.note),
+      JSON.stringify(seen.note.slice(0, 160))
+    )
+    check(
+      'while the Account column keeps the label and gives the sentence up',
+      seen.inAccountColumn === false,
+      'the prose was still being set in a 13% cell'
+    )
+  }
+
+  // ⚠️ The point of all of the above: rows a person can scan. With the sentence set in the Account
+  // cell and the buttons stacked in a column of no width, the tallest row on this seed measured
+  // 174px — six lines, for one account. It is 72px now, and this holds that.
+  const tallest = await evaluate(
+    `Math.max(...[...document.querySelectorAll('.tbl-workers tbody tr:not(.tbl-row--note)')]
+       .map(r => Math.round(r.getBoundingClientRect().height)))`
+  )
+  check('and no worker row is more than about three lines tall', tallest <= 96, `${tallest}px, against 174 before`)
+
   const rowSwitch = `document.querySelector('.tbl tbody tr .switch')`
   check(
     'a commissioned worker can be switched off from its own row',

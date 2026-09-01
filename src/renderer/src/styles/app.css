@@ -1265,6 +1265,91 @@ body {
   width: 100%;
 }
 
+/* ⛔ Breaks anywhere, because an account name has nowhere to break. Under `table-layout: fixed` a
+   column is exactly as wide as its <col> says and an unbreakable word does not widen it — the
+   browser simply paints the overflow, which put a long sign-in address straight through the quota
+   reading in the next column. `anywhere` is right rather than `break-word`: this is an identifier,
+   not prose, so there is no word shape to preserve. */
+.tbl-workers .tbl-account {
+  overflow-wrap: anywhere;
+  min-width: 0;
+  /* ⚠️ Two lines, then an ellipsis, with the whole value on the title. Breaking anywhere stops the
+     overflow; on its own it trades a row that overlapped its neighbour for a row four lines tall,
+     which is the other half of the same complaint. Two lines of this column is around forty
+     characters — enough to tell two accounts on the same domain apart, which is the only reason
+     this string is on screen. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ⚠️ Compact only here, and only in this column. The same three buttons in Projects and Loose ends
+   sit in tables with four columns and all the room they need; this one has ten, and a full-size
+   `.btn` in a 19% column is what made them stack one per line. */
+.tbl-workers .tbl-actions {
+  gap: var(--sp-1);
+}
+
+.tbl-workers .tbl-actions .btn {
+  margin-left: 0;
+  padding: 2px var(--sp-2);
+  font-size: var(--text-meta);
+  white-space: nowrap;
+}
+
+/* ---- a worker's note row ------------------------------------------------ */
+
+/*
+ * ⛔ Prose gets a row, not a column. `re-sign-in required — <the vendor's own sentence>` was being
+ * set in the Account cell, where it wrapped to five lines and made every other cell on that row
+ * five lines tall. The same shape the task table uses for its live line: full width, joined to the
+ * row above by taking its border away.
+ */
+.tbl-row--has-note > td {
+  border-bottom: none;
+  padding-bottom: 2px;
+}
+
+.tbl-row--note > td {
+  padding-top: 0;
+  padding-bottom: var(--sp-2);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.tbl-note {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  font-size: var(--text-meta);
+  line-height: var(--leading-body);
+  margin-top: 2px;
+}
+
+/* The label is the instruction — what to do — so it keeps its colour and its own line-end. */
+.tbl-note-label {
+  flex: 0 0 auto;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+
+.tbl-note-text {
+  color: var(--color-text-dim);
+  min-width: 0;
+  max-width: 110ch;
+}
+
+/* The one control that lives on a note. Compact, because it sits inside a line of prose. */
+.tbl-note .btn {
+  flex: 0 0 auto;
+  margin-left: 0;
+  padding: 2px var(--sp-2);
+  font-size: var(--text-meta);
+  white-space: nowrap;
+}
+
 .kv {
   display: grid;
   grid-template-columns: 90px 1fr;
