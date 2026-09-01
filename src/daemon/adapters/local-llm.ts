@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url'
 import type { AdapterDetection, AdapterInfo, QuotaSnapshot } from '@shared/protocol.js'
 import type { AgentAdapter, IdentityProbe, SpawnPlan, SpawnRequest } from './types.js'
 import { asRecord, num, type StreamEvent } from '../stream.js'
-import { spawnEnv, which } from '../which.js'
+import { spawnEnv } from '../which.js'
 
 /**
  * Local LLM adapter — any OpenAI-compatible server, designed for llama.cpp + Qwen3-Coder.
@@ -342,7 +342,6 @@ export const localLlm: AgentAdapter = {
   },
 
   plan(req: SpawnRequest): SpawnPlan {
-    const nodeExe = which('node') ?? process.execPath
     const bridge = bridgePath()
 
     if (!existsSync(bridge)) {
@@ -351,22 +350,24 @@ export const localLlm: AgentAdapter = {
       )
     }
 
-    // If the caller provides custom argv (e.g. for a login/doctor session), use that.
-    if (req.argv) {
-      return { command: nodeExe, args: req.argv, env: spawnEnv() }
-    }
-
     const env = spawnEnv()
+    // ELECTRON_RUN_AS_NODE turns the Electron binary into a plain Node process that can read inside app.asar
+    env.ELECTRON_RUN_AS_NODE = '1'
     // The endpoint URL is stored as the worker's isolationRoot.
     env.LOCAL_LLM_ENDPOINT = req.isolationRoot
     if (req.model) env.LOCAL_LLM_MODEL = req.model
     env.LOCAL_LLM_SESSION_ID = req.sessionId
 
+    // If the caller provides custom argv (e.g. for a login/doctor session), use that.
+    if (req.argv) {
+      return { command: process.execPath, args: req.argv, env }
+    }
+
     const isTs = bridge.endsWith('.ts')
     const args = isTs ? ['--experimental-strip-types', bridge] : [bridge]
 
     return {
-      command: nodeExe,
+      command: process.execPath,
       args,
       env
     }
