@@ -3251,3 +3251,9 @@ minutes until the window reset, which is the 2026-08-26 thirteen-sends loop with
 Measured against the real rows: at 92% the reserve is `at_risk` and a 401k context compacts; at 76%
 nothing happens; a reading 20 minutes old or a window that reset a minute ago is `unknown`, never
 full; `autoCompact` off still means off.
+
+⚠️ **This and the section above it meet on the same tick and are not the same fix.** That one taught
+`expectedIdleMs` that a held task is not imminent work, which makes **move 4** reachable — the timed
+trade, "nobody wants this for 2h29m, so shrink it". This one makes **move 5** reachable — the
+untimed one, "this account is full, save what it holds". A session on a full account now has two
+independent reasons to be compacted, and neither had ever produced one.
