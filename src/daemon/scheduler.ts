@@ -1,5 +1,10 @@
 import type { Project, QuestionOption, Run, RunQuota, Task, TaskStatus } from '@shared/tasks.js'
-import { policyVerifies, resolveCompletionMode, resolveModelChoice } from '@shared/tasks.js'
+import {
+  WINDOW_HIGH_WATER,
+  policyVerifies,
+  resolveCompletionMode,
+  resolveModelChoice
+} from '@shared/tasks.js'
 import type { QuotaWindow, Session, Worker } from '@shared/protocol.js'
 import { adapter } from './adapters/index.js'
 import type { ProbeDemand } from './quota.js'
@@ -144,8 +149,13 @@ import { costModel } from './costmodel.js'
  * ⚠️ Exported since 2026-09-01 so the control that *overrules* it can name the same number the gate
  * enforces. A button that said "override the 92% limit" against a constant only this file could see
  * would be a second copy of the threshold, and the pair would disagree the day one of them moved.
+ *
+ * ⚠️ And the value comes from `WINDOW_HIGH_WATER` rather than being written here, for the same
+ * reason one rung up: `reserveState` reads it to decide that an account's live sessions need saving,
+ * and the whole point of that pairing is that the tick which refuses a dispatch is the tick which
+ * asks for the compaction.
  */
-export const QUOTA_HIGH_WATER = 92
+export const QUOTA_HIGH_WATER = WINDOW_HIGH_WATER
 
 /**
  * How long an override lasts when nothing can say when the window it overrules resets.

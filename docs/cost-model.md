@@ -507,8 +507,9 @@ is R9, on Antigravity, in the section before it.
 
 ### ⛔ The reserve is a gate, not a routing input
 
-Until R2 lands, `remainingTokens` is null on every Claude account, so `reserveState` can only answer
-`ok` (this worker holds no live sessions) or `unknown` (it holds some). Feeding that into scheduler
+Until R2 lands, `remainingTokens` is null on every Claude account, so the reserve's token rung can
+only answer `ok` (this worker holds no live sessions) or `unknown` (it holds some) — the `at_risk`
+verdicts a real fleet sees today all come from the percentage rung above. Feeding that into scheduler
 scoring at 0.5 therefore did not express caution — it expressed **"penalise any worker that has a
 session"**, at a weight several times larger than every term that actually compares candidates.
 Measured 2026-08-27: an account nobody had ever signed in to won a dispatch over two working ones on
@@ -616,6 +617,25 @@ worker.remaining  >=  Σ over live sessions on that worker of (0.1·C + 5·S)
 
 Running out of room to *finish* a task is recoverable. Running out of room to *save* one is not.
 
+⭐ **Two rungs, because the first one has never been able to answer** (2026-08-31, t73). The formula
+above needs `remaining` in tokens, which needs the `tokens_per_percent` conversion of R2 — and on
+this install the `calibration` table is empty, so `reserveState` answered `unknown` for every worker
+holding a session and the clock's move 5 had never once fired. The second rung is the percentage
+itself: at or above `WINDOW_HIGH_WATER` (92%, the same number the dispatch gate refuses on) the
+worker's live sessions are `at_risk`, per metered pool, on a reading that is neither stale nor from a
+window that has already reset.
+
+⚠️ **The percentage is not converted into tokens anywhere.** It cannot say whether what is left
+covers what saving costs; `remainingTokens` stays null and says which rung it is on. It says the one
+thing a percentage can: this account is at the mark where the fleet has already stopped sending it
+work, so what it still holds should be saved while there is window left to pay for saving it. R2 is
+still owed for the arithmetic above.
+
+⚠️ **A full window stays full for hours**, unlike a token breach that one compaction resolves — so
+move 5 also requires the context to be past the break-even *and* to have grown since the last
+compaction. Without that second half the clock would re-send `/compact` every four minutes until the
+window reset, which is the 2026-08-26 repeat with a new trigger.
+
 ### Percent → tokens
 
 `/usage` reports percent; every gate needs tokens, and no vendor publishes the conversion. Learn it:
@@ -699,11 +719,12 @@ Implemented: the cache clock's six moves, the compaction reserve as a standing g
 vector in its two consumers, an estimator over completed runs, preemption at a window boundary, and
 watchdogs for stalls and runaways.
 
-⚠️ **But be precise about what is live.** The reserve gate needs `remaining` in *tokens*, which needs
-a fresh percentage **and** a learned `tokens_per_percent`. There is no free fresh percentage (§5), so
-on a real worker today `reserveState()` returns **`unknown`**, not `ok`. That is the honest answer and
-the code says so everywhere it surfaces — but it means the reserve is a *reporting* gate right now,
-not a load-bearing one. It becomes load-bearing the moment R2 or R3 lands.
+⚠️ **But be precise about what is live.** The reserve's *token* gate needs `remaining` in tokens,
+which needs a fresh percentage **and** a learned `tokens_per_percent`; that conversion is still R2, so
+that rung still answers **`unknown`** on a real worker and the code says so everywhere it surfaces.
+⭐ Since 2026-08-31 the reserve is load-bearing anyway, on the percentage rung: at the 92% high-water
+mark a worker's live sessions are `at_risk` and the clock compacts them. That was the difference
+between a *reporting* gate and one that acts, and it is why `/compact` now runs at all.
 
 What does work without any of that: the cache clock (context size and the TTL are both exact from the
 transcript), preemption (the reset time is exact from the live rate-limit record), and the estimator

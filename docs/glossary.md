@@ -245,7 +245,10 @@ it lapses: send it queued work, keepalive, compact, or let it go. See `cost-mode
 `0.1·C`, buys another hour, does not reduce context.
 
 **Compaction reserve** — quota held back so every live session on a worker can still be compacted.
-`/compact` fails at true 100%, which strands the context entirely. See `cost-model.md` §5.
+`/compact` fails at true 100%, which strands the context entirely. Two rungs: a token comparison
+(needs R2, still unanswerable here) and the **percentage** — at the 92% `WINDOW_HIGH_WATER`, the same
+reading that stops the fleet dispatching to an account says to save what it is holding. See
+`cost-model.md` §5.
 
 **Refusal vs caution** — what the vendor's live `rate_limit_event` `status` is saying. **`rejected`**
 is a refusal: the turn did not happen, and one is enough to stop a run. **`allowed_warning`** is a

@@ -1302,6 +1302,19 @@ export interface ResolvedModelChoice {
 }
 
 /**
+ * The share of a five-hour window past which this fleet stops starting new work on an account.
+ *
+ * ⛔ **One number, three readers, and until 2026-08-31 three copies of it.** The routing gate
+ * (`chooseTarget`), the pool balance below, and — since t73 — the compaction reserve all turn on
+ * exactly this percentage, and a fleet where the gate that stops dispatching and the gate that
+ * saves the context disagree by a point is a fleet that strands a session for a rounding error.
+ *
+ * ⚠️ Lower than the mid-run preemption water (95%), deliberately: refusing *new* work is cheap and
+ * reversible, stopping work already in flight is neither.
+ */
+export const WINDOW_HIGH_WATER = 92
+
+/**
  * The five-hour window that governs *this* model pool, on a provider that meters more than one pool.
  *
  * ⛔ **The pessimistic fallback is still the default, and has to be.** With no model in hand — the
@@ -1369,12 +1382,12 @@ export function resolveModelChoice(
     } else if (poolEntries.length > 1) {
       if (quota && quota.windows && quota.windows.length > 0) {
         // Budget-aware pool balance: evaluate 5h/session window for each pool.
-        // Pools below QUOTA_HIGH_WATER (92%) are candidates; choose the one with lowest utilization (most headroom).
+        // Pools below WINDOW_HIGH_WATER are candidates; choose the one with lowest utilization (most headroom).
         let bestCandidate: { pool: string; model: string; percent: number; blocked: boolean } | null = null
         for (const [pool, m] of poolEntries) {
           const win = sessionWindowFor(quota.windows, pool)
           const percent = win ? win.percent : 0
-          const blocked = percent >= 92
+          const blocked = percent >= WINDOW_HIGH_WATER
           if (!bestCandidate) {
             bestCandidate = { pool, model: m, percent, blocked }
           } else if (bestCandidate.blocked && !blocked) {

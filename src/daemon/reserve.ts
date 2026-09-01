@@ -1,8 +1,10 @@
+import type { QuotaWindow } from '@shared/protocol.js'
+import { WINDOW_HIGH_WATER } from '@shared/tasks.js'
 import { db, rows } from './db.js'
 import { costModel } from './costmodel.js'
 import { adapter } from './adapters/index.js'
 import { sessionsForWorker } from './sessions.js'
-import { lastRateLimit } from './quota.js'
+import { lastQuota, lastRateLimit, sessionWindowFor, windowExpired } from './quota.js'
 import { log } from './log.js'
 
 /**
@@ -186,6 +188,67 @@ export function remainingTokens(workerId: string): { tokens: number | null; basi
   }
 }
 
+/**
+ * How full is the window the sessions on this worker are actually drawing on?
+ *
+ * ⛔ **The rung that made the reserve reachable at all.** `remainingTokens` needs a learned
+ * percent→token conversion (R2), the `calibration` table on this install is *empty*, and so every
+ * worker holding a session has reported `unknown` since the reserve was written — which meant move 5
+ * of the cache clock, "the reserve is at risk, compact now regardless", had never once fired.
+ * Measured 2026-08-31 (t73): at 17:31 ClaudeThird read **92%** of its five-hour window, the routing
+ * gate held t71 rather than dispatching it, and session `ef5e90dc` sat idle on that same account
+ * holding **401,341** tokens of context which had never been compacted in nine and a half hours.
+ * The `compactions` table was empty; `clock_events` had not gained a row in five days.
+ *
+ * ⚠️ **A percentage is not a token count, and this does not pretend otherwise.** It cannot say
+ * whether what is left covers what saving costs - `remainingTokens` stays null and `requiredTokens`
+ * keeps its own meaning. It says the one thing a percentage *can* say: this account is at the point
+ * where the fleet has already stopped giving it new work, so whatever it is still holding should be
+ * saved while there is window left to pay for saving it.
+ *
+ * ⚠️ **Per pool, via the sessions themselves.** Antigravity meters Gemini apart from Claude/GPT, so
+ * a full Claude window says nothing about a live Gemini session; the worst window any live session
+ * on this worker draws from is the one that decides. A stale sample and a window whose reset has
+ * already passed are both refused, exactly as the dispatch gate refuses them - a number nobody
+ * re-read may not move a decision.
+ */
+export function windowPressure(
+  workerId: string
+): { percent: number; label: string; sampledAt: number } | null {
+  const quota = lastQuota(workerId)
+  if (!quota || quota.stale || quota.windows.length === 0) return null
+
+  const pools = new Set<string | null>()
+  for (const session of sessionsForWorker(workerId)) pools.add(poolOf(session))
+  if (pools.size === 0) return null
+
+  let worst: QuotaWindow | null = null
+  for (const pool of pools) {
+    const window = sessionWindowFor(quota.windows, pool)
+    if (!window || windowExpired(window)) continue
+    if (!worst || window.percent > worst.percent) worst = window
+  }
+  return worst
+    ? { percent: worst.percent, label: worst.label || worst.id, sampledAt: quota.sampledAt }
+    : null
+}
+
+/**
+ * Which metered pool a session's model draws on, or `null` where the provider meters only one.
+ *
+ * ⚠️ Read from the cost model rather than inferred from the model's name, for the reason `poolFor`
+ * in the scheduler gives: `claude-*` and `gemini-*` look like a rule until a vendor breaks it.
+ */
+function poolOf(session: { adapterId: string; model: string | null }): string | null {
+  if (!session.model) return null
+  try {
+    return costModel(adapter(session.adapterId).info.policy.costModelId).modelSpec(session.model)
+      ?.pool ?? null
+  } catch {
+    return null
+  }
+}
+
 export function reserveState(workerId: string): ReserveState {
   const { tokens: required, sessions } = requiredReserve(workerId)
   const { tokens: remaining, basis } = remainingTokens(workerId)
@@ -198,6 +261,27 @@ export function reserveState(workerId: string): ReserveState {
       remainingTokens: remaining,
       liveSessions: 0,
       reason: 'nothing to save'
+    }
+  }
+
+  // ⛔ Before the token rungs, and it may overrule a satisfied one. `remaining` is derived from a
+  // learned conversion that half this fleet has no samples for, and where it *is* known it answers
+  // "does the window cover one compaction" - not "is this account still being given work". At the
+  // high-water mark the answer to the second question is no, and a session left uncompacted there is
+  // one the fleet has decided not to touch again until the window resets.
+  const pressure = windowPressure(workerId)
+  if (pressure && pressure.percent >= WINDOW_HIGH_WATER) {
+    return {
+      workerId,
+      verdict: 'at_risk',
+      requiredTokens: required,
+      remainingTokens: remaining,
+      liveSessions: sessions,
+      reason:
+        `${Math.round(pressure.percent)}% of its ${pressure.label} window used - at or past the ` +
+        `${WINDOW_HIGH_WATER}% mark where this fleet stops sending it work, so the ` +
+        `${sessions} session(s) it still holds should be saved now` +
+        (remaining === null ? ` (${basis}, so this is the percentage rung)` : '')
     }
   }
 

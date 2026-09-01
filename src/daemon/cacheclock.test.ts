@@ -24,6 +24,8 @@ let dir: string
 let clock: typeof import('./cacheclock.js')
 let db: typeof import('./db.js')
 let settings: typeof import('./settings.js')
+let reserve: typeof import('./reserve.js')
+let workers: typeof import('./workers.js')
 
 beforeAll(async () => {
   // ⛔ A temp data directory, never the real one. This opens a database and writes to it.
@@ -32,6 +34,8 @@ beforeAll(async () => {
   db = await import('./db.js')
   clock = await import('./cacheclock.js')
   settings = await import('./settings.js')
+  reserve = await import('./reserve.js')
+  workers = await import('./workers.js')
   db.openDb(join(dir, 'clock.db'))
 })
 
@@ -233,6 +237,149 @@ describe('the threshold two constants landed exactly on', () => {
       ripe({ contextTokens: 4_000, tokensSinceCompact: 1_000 }),
       { objective: OBJECTIVE, now: NOW }
     )
+    expect(decision.move).not.toBe('compact')
+  })
+})
+
+/**
+ * ⛔ **The reserve that had never once been at risk, on a fleet where the window was full.**
+ *
+ * Measured 2026-08-31 (t73) from this install's own database. At 17:31 a run was routed to
+ * ClaudeThird and immediately held: its five-hour window read **92%**, which is the dispatch gate.
+ * On that same account session `ef5e90dc` had been open since 10:38, holding **401,341** tokens of
+ * context and **1,401,019** tokens since its last compaction - and no `/compact` was ever sent. The
+ * `compactions` table was empty and `clock_events` had not gained a row since 2026-08-26.
+ *
+ * The reason is one join that never returns: `remainingTokens` needs a `tokens_per_percent`
+ * calibration, the `calibration` table on this install has **zero rows**, so `reserveState` answered
+ * `unknown` for every worker holding a session and move 5 - *the reserve is at risk, compact now
+ * regardless* - was unreachable by construction. Move 4 could not cover for it either: it is gated
+ * behind the TTL window, and this session's prefix had hours left.
+ *
+ * ⚠️ The percentage is not promoted to a token count anywhere. It answers a different question,
+ * which is the only one it can answer: this account is at the mark where the fleet has *already
+ * stopped giving it work*, so what it still holds should be saved while there is window left to pay
+ * for saving it.
+ */
+describe('the compaction the full window never asked for', () => {
+  const OBJECTIVE = { cost: 0.34, velocity: 0.33, quality: 0.33 }
+  let workerId: string
+
+  /** The real session, at the sizes it really held. */
+  const stranded = (patch: Partial<Session> = {}): Session =>
+    session({
+      workerId,
+      contextTokens: 401_341,
+      tokensSinceCompact: 1_401_019,
+      // ⚠️ Nowhere near expiry: this must fire on the reserve alone, never on the TTL clock.
+      cacheExpiresAt: NOW + 55 * 60 * 1000,
+      ...patch
+    })
+
+  function seedWindow(percent: number, opts: { resetsAt?: number; sampledAt?: number } = {}): void {
+    db.db().prepare('delete from quota_samples where worker_id = ?').run(workerId)
+    db.db()
+      .prepare(
+        `insert into quota_samples (worker_id, window_id, label, percent, resets_at, source, sampled_at)
+         values (?,?,?,?,?,?,?)`
+      )
+      .run(
+        workerId,
+        '5h',
+        '5h',
+        percent,
+        opts.resetsAt ?? Date.now() + 2 * 60 * 60 * 1000,
+        'probe',
+        opts.sampledAt ?? Date.now()
+      )
+  }
+
+  beforeAll(() => {
+    workerId = workers.createWorker({
+      adapterId: 'claude-code',
+      label: 'ClaudeThird',
+      enabled: false
+    }).id
+    // The live row the reserve reads: nothing here spawns a CLI, and nothing needs to.
+    db.db()
+      .prepare(
+        `insert into sessions (id, worker_id, adapter_id, transport, cwd, state, purpose,
+                               context_tokens, tokens_since_compact, started_at)
+         values (?,?,?,?,?,?,?,?,?,?)`
+      )
+      .run(
+        'ef5e90dc-0000-4000-8000-000000000001',
+        workerId,
+        'claude-code',
+        'stream',
+        dir,
+        'live',
+        'work',
+        401_341,
+        1_401_019,
+        Date.now()
+      )
+  })
+
+  it('has no calibration to answer with, which is what made this unreachable', () => {
+    // ⛔ The precondition, asserted rather than assumed: if a conversion ever *is* learned this test
+    // is measuring a different code path and should say so.
+    expect(reserve.remainingTokens(workerId).tokens).toBeNull()
+  })
+
+  it('⭐ calls the reserve at risk at the same percentage that stops dispatch', () => {
+    seedWindow(92)
+    const state = reserve.reserveState(workerId)
+    expect(state.verdict).toBe('at_risk')
+    expect(state.reason).toContain('92%')
+    // Still honest about the rung: no token count was invented to get here.
+    expect(state.remainingTokens).toBeNull()
+  })
+
+  it('⭐ and sends /compact for a 401k context that nothing else would have touched', () => {
+    seedWindow(92)
+    const decision = clock.decide(stranded(), { objective: OBJECTIVE, now: NOW })
+    expect(decision.move).toBe('compact')
+    expect(decision.reason).toContain('reserve at risk')
+  })
+
+  it('does not ask twice for a session that has just been compacted', () => {
+    // ⛔ The 2026-08-26 repeat with a new trigger. A full window stays full for hours, so a move-5
+    // condition that ignored `tokensSinceCompact` would send `/compact` every four minutes until
+    // the window reset. A landed compaction zeroes it, and this is what reads that.
+    seedWindow(92)
+    const decision = clock.decide(stranded({ tokensSinceCompact: 0 }), {
+      objective: OBJECTIVE,
+      now: NOW
+    })
+    expect(decision.move).not.toBe('compact')
+  })
+
+  it('leaves a comfortable window alone', () => {
+    seedWindow(76)
+    expect(reserve.reserveState(workerId).verdict).toBe('unknown')
+    expect(clock.decide(stranded(), { objective: OBJECTIVE, now: NOW }).move).not.toBe('compact')
+  })
+
+  it('refuses a reading old enough that the gate would refuse it too', () => {
+    seedWindow(92, { sampledAt: Date.now() - 20 * 60 * 1000 })
+    expect(reserve.reserveState(workerId).verdict).toBe('unknown')
+  })
+
+  it('refuses a window whose reset has already passed - expired is unknown, never full', () => {
+    // ⛔ The t60 mistake, which `stale` cannot catch: a reading taken two minutes before a reset is
+    // as fresh as a reading gets and describes a window that no longer exists.
+    seedWindow(92, { resetsAt: Date.now() - 60 * 1000 })
+    expect(reserve.reserveState(workerId).verdict).toBe('unknown')
+  })
+
+  it('obeys the switch here as well: off means off, even at 92%', () => {
+    seedWindow(92)
+    const decision = clock.decide(stranded(), {
+      objective: OBJECTIVE,
+      now: NOW,
+      settings: { ...settings.DEFAULT_SETTINGS, autoCompact: false }
+    })
     expect(decision.move).not.toBe('compact')
   })
 })

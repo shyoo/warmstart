@@ -310,8 +310,19 @@ export function decide(session: Session, ctx: ClockContext): ClockDecision {
   const compactOff = caps.manualCompact && !(ctx.settings?.autoCompact ?? true)
 
   // Move 5 first: a reserve breach is not a preference, and it does not wait for the clock.
+  //
+  // ⛔ **`worthCompactingNow`, and the reserve alone is not enough without it.** Until t73 the
+  // verdict could only come from a token comparison nothing on this fleet could compute, so this
+  // branch had never run and "at risk with any context at all" was safe by never happening. The
+  // percentage rung makes it reachable, and reachable it stays true for *hours* - a whole window,
+  // not an instant - so a condition that ignored what the last compaction did would send `/compact`
+  // every four minutes until the window reset. That is the 2026-08-26 repeat with a new trigger.
+  // The growth half of `worthCompactingNow` is what ends it: a landed compaction zeroes
+  // `tokensSinceCompact`, and this stops asking until the session has grown enough to be worth
+  // asking about again.
   const reserve = reserveState(session.workerId)
-  if (reserve.verdict === 'at_risk' && contextTokens > 0) {
+  const worthSaving = worthCompactingNow(session, model)
+  if (reserve.verdict === 'at_risk' && contextTokens > 0 && worthSaving) {
     const compactCost = compactAllowed ? model.costOfCompact(session) : null
     if (compactCost !== null) {
       return {
@@ -373,7 +384,12 @@ export function decide(session: Session, ctx: ClockContext): ClockDecision {
 
   // ⚠️ Spending to hold a cache open on an account whose remaining budget is unknown is a gamble.
   // Whether it is one worth taking is a property of the objective, not a fixed rule.
-  const mayKeepalive = reserve.verdict !== 'unknown' || cost.keepaliveWhenQuotaUnknown
+  //
+  // ⛔ `=== 'ok'`, not `!== 'unknown'`. Written when `at_risk` could never occur, the old test read
+  // as "anything but unknown is fine" and would now let a *breached* reserve buy the most expensive
+  // move here - paying by the hour to hold a prefix open on the one account that cannot afford it.
+  // A session gets here at all only when move 5 found nothing worth compacting.
+  const mayKeepalive = reserve.verdict === 'ok' || cost.keepaliveWhenQuotaUnknown
 
   // ⛔ **A guess does not get to buy an expensive keepalive.** Holding a warm prefix costs `0.1·C`
   // *every hour, for as long as the guess is wrong*, and on a large context that is the most
@@ -390,7 +406,7 @@ export function decide(session: Session, ctx: ClockContext): ClockDecision {
   // this falls to the `compactOff` branch below, which says so in words - and "this would have
   // compacted, and did not, because you turned that off" is the whole reason that branch exists. If
   // the guard included the switch, the one case that needed the sentence could never produce it.
-  const guessing = !idle.confident && worthCompactingNow(session, model)
+  const guessing = !idle.confident && worthSaving
 
   // Moves 2 and 3.
   if (!guessing && idle.ms >= cost.keepaliveFloorMs && idle.ms < cost.compactThresholdMs) {
@@ -410,7 +426,7 @@ export function decide(session: Session, ctx: ClockContext): ClockDecision {
   }
 
   // Move 4.
-  const worthCompacting = compactCost !== null && worthCompactingNow(session, model)
+  const worthCompacting = compactCost !== null && worthSaving
   const pastThreshold = idle.ms >= cost.compactThresholdMs || guessing
   if (pastThreshold && worthCompacting && compactAllowed) {
     return {

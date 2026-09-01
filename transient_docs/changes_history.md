@@ -3206,3 +3206,48 @@ as *"nothing queued"*, the branch that returns infinity and lets every warm pref
 
 ⭐ And the operator finally gets the clock: the row and the thread read *"… — earliest retry in
 2h 29m"*, which is the difference between a wait worth sitting through and one worth overriding.
+
+## The reserve that could never be at risk (2026-08-31, t73)
+
+The compaction above still did not run. On the 17:31 tick a run was routed to ClaudeThird and
+immediately held — its five-hour window read **92%**, which is `QUOTA_HIGH_WATER`, and the gate
+refuses a dispatch there. Meanwhile session `ef5e90dc` had been open on that same account since
+10:38 holding **401,341** tokens of context and **1,401,019** since its last compaction. No
+`/compact` was sent. The `compactions` table was empty.
+
+The clock has a move for exactly this — move 5, *the compaction reserve is at risk, compact now
+regardless* — and it is checked before every TTL condition, so a prefix with an hour left is no
+excuse. It had never fired, and could not:
+
+```
+reserveState -> remainingTokens -> tokensPerPercent -> select from calibration  -- zero rows
+```
+
+`remainingTokens` returns null without a learned `tokens_per_percent` (R2), a null `remaining`
+returns `unknown`, and `unknown` is not `at_risk`. Every worker holding a session had reported
+`unknown` since the reserve was written, so the branch was dead code with a test suite around its
+arithmetic. Move 4 could not cover for it either: it is gated behind `DECIDE_BEFORE_EXPIRY_MS`, and
+this session's cache had hours to run.
+
+⭐ **The reading that refuses the dispatch is the reading that asks for the compaction.** The gate
+already had a trustworthy percentage in hand at that tick — fresh, and for the pool the session
+actually draws on. `windowPressure()` reads the same one and calls the reserve `at_risk` at the same
+`WINDOW_HIGH_WATER`, now a single shared constant rather than three copies of `92` in three files. A
+stale sample and a window whose reset has already passed are both refused, exactly as the gate
+refuses them.
+
+⚠️ **No percentage is promoted to a token count.** `remainingTokens` stays null and the reason names
+the rung. The formula in cost-model.md §5 asks whether what is left covers what saving costs, and a
+percentage cannot answer that; it answers the other question, which is the one that matters here —
+this account is at the mark where the fleet has already stopped giving it work, so what it is still
+holding should be saved while there is window left to pay for saving it. R2 is still owed.
+
+⛔ **And the trigger now has a stopping condition, because a full window is not an instant.** A token
+breach is resolved by the compaction that answers it; 92% stays 92% for hours. The old move-5
+condition — `at_risk` and any context at all — would therefore have sent `/compact` every four
+minutes until the window reset, which is the 2026-08-26 thirteen-sends loop with a new trigger. Move
+5 now requires `worthCompactingNow`, whose growth half a landed compaction zeroes.
+
+Measured against the real rows: at 92% the reserve is `at_risk` and a 401k context compacts; at 76%
+nothing happens; a reading 20 minutes old or a window that reset a minute ago is `unknown`, never
+full; `autoCompact` off still means off.
