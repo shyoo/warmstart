@@ -151,7 +151,11 @@ describe('an ended session is one that is over, in every list', () => {
 })
 
 /**
- * Migration 25, run against the shape it was written for.
+ * The repair migration, run against the shape it was written for.
+ *
+ * ⚠️ Deliberately not named by number here. It was 25 when it was written, became 27 on the rebase
+ * that picked up two migrations landed in parallel, and the body below rewinds relative to
+ * `MIGRATION_COUNT` for exactly that reason — a number in the prose is one more copy to go stale.
  *
  * ⚠️ Driven by rewinding `user_version` and reopening, rather than by a hand-copied `update`. A test
  * that asserted its own SQL would pass whatever the migration actually said, which is the one thing

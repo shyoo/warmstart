@@ -8,9 +8,10 @@ started in CI, never run against a real agent CLI.
 if you add a line, find the one it obsoletes and cut it in the same edit. Finished work moves to
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
-**Baseline (2026-09-01, measured):** typecheck · lint · build clean · `npm test` 1065/1067 (2 POSIX-only
-skipped) · `test:daemon` 142/142 · `test:ui` 176/176 · `test:pack` 18/18 · L4 (opt-in) landed a real
-agent commit on origin/main. Electron 44.0.0, electron-builder 26.15.3, 0 npm vulnerabilities.
+**Baseline (2026-09-01, measured):** typecheck · lint · build clean · `npm test` 1100/1102 (2 POSIX-only
+skipped) · `test:daemon` 142/142 · `test:ui` **184/185** · `test:pack` 18/18 · L4 landed a real agent
+commit on origin/main. ⛔ The one red check is nobody's branch: `94a0d44` dropped the word `read` from
+the quota age and `ui.test.mjs` still asserts it. Electron 44.0.0, electron-builder 26.15.3.
 CLIs here: claude 2.1.252 · agy 1.1.22 · codex 0.151.0 · local-llm 1.0.0 (qwen3-coder live tested).
 
 ⭐ **`scripts/build-win.ps1` runs all of the above** (`-Help` for options, `-Restart` for the inner loop);
@@ -46,8 +47,9 @@ src/daemon/            orchestratord. Runs as Electron-with-ELECTRON_RUN_AS_NODE
                        (+ workerorder.test.ts)
   quota.ts             the staleness ladder + the self-pacing poller: active/idle cadence, a parked
                        task's own release time, the urgent queue (+ quotaprobing/quotacycle tests)
-  sessions.ts          two transports: pty (node-pty) and stream (real pipes); orphan reaping;
-                       resuming a conversation a closed session left behind  (+ resume.test.ts)
+  sessions.ts          pty and stream; reaping; resuming a closed conversation (+ resume.test.ts).
+                       ⛔ `state` is the *process*: `closed` asked · `abandoned` unwatched · `failed`
+                       alone (+ sessionstate.test.ts)
   transcript.ts        metering: iterations[], TTL split, cache clock  (+ .test.ts)
   tasks.ts             DAG, admission, mandates, budgets, runs           (+ tasks.test.ts)
   cancel.ts            wind-down into a resting state; delete is separate and human-only
@@ -61,7 +63,8 @@ src/daemon/            orchestratord. Runs as Electron-with-ELECTRON_RUN_AS_NODE
   activity.ts          the live peephole: a bounded in-memory tail of what a run is saying.
                        ⚠️ Rendered *inside* the task thread now, not in a pane below it
   landing.ts           auto-land, serialised by an exclusive land: resource (+ landing.test.ts)
-  conversations.ts     which conversation served which tasks - a join, never stored (+ .test.ts)
+  conversations.ts     which **runs** a conversation served, in order, under their task; never
+                       stored. `conversationOutcome` is the *work*, not `state` (+ .test.ts)
   sharing.ts           who may borrow whose conversation: same project, account, model, effort;
                        three tiers, off by default (+ .test.ts). docs/sessions.md is the spec
   finish.ts            what finishing means: one policy, resolved task > project > fleet, the
@@ -99,7 +102,7 @@ src/mcp/               the MCP server the agent CLI spawns. Two tiers chosen by 
 src/main/              window host + the daemon's only client (holds the token); the tray, and
                        `uisettings.ts` - preferences main must read when the daemon is not answering
 src/renderer/          fleet strip, approvals bar, tasks, project settings (policy tier), workers,
-                       Logs, LooseEnds, Conversations (who shared what) (+ lib/format.test.ts)
+                       Logs, LooseEnds, Conversations (+ lib/format.test.ts)
 costmodels/            anthropic.* - google.antigravity.* - openai.codex.* - local.llm.*; compiled in, so a
                        packaging slip cannot leave the scheduler unable to price
 docs/                  cost-model.md, glossary.md, adapters.md, landing.md, sessions.md
@@ -144,27 +147,25 @@ M0–M6 are done. What is left is not a milestone but a list, in the order it wo
 3. **Signing and notarisation**, without which the installers warn or refuse.
 4. **Reuse across tasks — built end to end, unproven in flight** (2026-09-01, `docs/sessions.md`).
    Borrowing now also **revives another task's *finished* conversation** by `--resume` — the case
-   that fires on a real fleet, since completing a task closes its session and each new one then
-   rebuilt ~41.5k tokens. Gated on **same project, account, model, effort**: a prompt cannot change
-   the model of the process already serving a conversation. ⛔ The borrower is told in its first
-   prompt whose context it is and gets its own prompt restated; the lender's thread is told by name.
+   that fires on a real fleet: completing a task closes its session and each new one rebuilt ~41.5k
+   tokens. Gated on **same project, account, model, effort**. ⛔ The borrower is told whose context
+   it is; the lender's thread is told by name.
    ⭐ Clock **move 5b** compacts a conversation past **70%** a queued task was refused. ⚠️ Sharing
-   stays **off at every tier** (operator, 2026-09-01): none of it has run in flight, 60% never fired.
+   stays **off at every tier** (operator, 2026-09-01): nothing has run in flight, 60% never fired,
+   and **no conversation has served two tasks** — Conversations' `Shared` chip is empty by
+   construction, and runs-per-conversation (nine) is what varies today.
 5. **The trunk tripwire is built and has never fired.** An empty branch under a moved trunk goes to
    `awaiting_human` naming the commits (`decideFinish`'s `trunk-moved`). ⚠️ Provoking it means
    reintroducing the bug `--add-dir` fixed.
 6. **`antigravity-cli` still has no real isolation root.** `envFor()` sets no `HOME`, so all four
    workers share the operator's `~/.gemini`. Per-worker `HOME` is the fix; the credential is in the
    OS keyring so sign-in *should* survive, and "should" is doing the work there.
-7. **The project Thread tab still has no automated coverage.** `test/ui.test.mjs` seeds a real git project since 2026-08-31 and drives its **Settings** tab; Thread, Sessions and Cost are checked by hand.
-8. **Put human-in-the-loop and `commit-and-merge` in front of a real agent.** Both are built and
-   neither has been used by one. Dispatch a design task to a Claude worker, answer what it asks, and
-   watch it merge locally — the one thing L1–L3 cannot prove. Costs tokens.
-9. **Meter codex off its rollout** — R10 is answered (§5), but `metering` stays `'stream'`, so a PTY-hosted codex run is unmetered.
+7. **Thread and Cost have no automated coverage.** `ui.test.mjs` drives a project's **Settings**, **Conversations** and **Session TUI**; those two are by hand.
+8. **Put human-in-the-loop and `commit-and-merge` in front of a real agent.** Both built, neither
+   used by one: dispatch a design task, answer what it asks, watch it merge — what L1–L3 cannot prove.
+9. **Meter codex off its rollout** — R10 is answered (§5), but `metering` stays `'stream'`, so a PTY-hosted codex run is unmetered, and the estimator never sees it.
 10. **Compute `overrunFactor` in cost, not raw tokens**, and let preempted runs feed `estimateTask`.
-   ⚠️ It measures the wrong thing today — 92–98% of a run's tokens are cache reads, so it fires on
-   long work, which is why `autoRunawayStop` ships off. The cost model already prices cache reads
-   separately, so nothing needs measuring first.
+   ⚠️ 92–98% of a run's tokens are cache reads, so it fires on long work — why `autoRunawayStop` ships off.
 
 ## Open questions
 
@@ -184,10 +185,9 @@ beside it; the difference is what the CLI spent that never reached a transcript.
 | **R1** | Does the auto-mode classifier bill on a subscription? | ⭐ A run now records the window either side of itself, so the task pane shows (quota delta − transcript tokens). Run one shell-heavy task twice on a quiet worker, `auto` then `default` | If it bills, `auto` stops being a free default and the objective vector has to price it. §9 |
 | **R2** | `tokens_per_percent` per (worker, model, tokenizer) | With exactly one session live, sample `/usage` by hand at intervals and diff against transcript tokens over the same span | Turns percent into tokens, which is what every gate actually needs. Plan §8.5 |
 | **R4** | Real compaction cost end to end | Compact a session of known size; diff transcript tokens across the `compact_boundary` and record `durationMs` | Three samples so far (139k · 116k · **161k** ms). The spread matters more than the mean for the T+53m deadline |
-| **R6** | Is `/compact` honoured as a user message on `stream`? | ⭐ Now answers itself: the `compactions` ledger records the ask, so a row that stays `never landed` **is** the negative result. Read it in the task pane | A `no` makes handoff-and-close the only move on that transport. The clock already gives up after two attempts |
 | **R8** | Does a real model answer a consult in the shape the validators accept? | Designate a controller, file a `plan` task, run `controller.drain`, read the row: `answered` or `fallback`, and the `fallbackReason` | The one M4 path L1 cannot reach |
 
-R1, R6 change the cache clock. **R7 closed 2026-08-31** — it *does* warn first, but not about the number the fleet strip shows (§5). **R10/R11 closed 2026-08-29**, **R12 closed 2026-08-30**. ⚠️ **R5 dropped**: resuming is measured and shipped within an account; its transplant needs a second subscription.
+R1 changes the cache clock. **Closed:** R7 (2026-08-31 — it *does* warn first, but not about the number the fleet strip shows, §5) · R10/R11 (08-29) · R12 (08-30) · **R6** (08-31 — the `compactions` ledger records the ask, so a row that stays `never landed` **is** the negative result). ⚠️ **R5 dropped**: resuming is measured and shipped within an account; its transplant needs a second subscription.
 
 ## Standing decisions worth not relitigating
 
