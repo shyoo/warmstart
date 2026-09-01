@@ -153,20 +153,23 @@ describe('an ended session is one that is over, in every list', () => {
 /**
  * The repair migration, run against the shape it was written for.
  *
- * ⚠️ Deliberately not named by number here. It was 25 when it was written, became 27 on the rebase
- * that picked up two migrations landed in parallel, and the body below rewinds relative to
- * `MIGRATION_COUNT` for exactly that reason — a number in the prose is one more copy to go stale.
+ * ⚠️ Deliberately not named by number here. It was 25 when it was written and became 27 on the
+ * rebase that picked up two migrations landed in parallel — a number in the prose is one more copy
+ * to go stale, and the body below finds it by its own text instead.
  *
  * ⚠️ Driven by rewinding `user_version` and reopening, rather than by a hand-copied `update`. A test
  * that asserted its own SQL would pass whatever the migration actually said, which is the one thing
  * worth knowing here.
  */
 describe('repairing the sessions that were blamed for their own shutdown', () => {
-  // ⚠️ Rewound to `MIGRATIONS.length - 1`, read from the module rather than typed as a number. The
-  // repair is the *last* migration, and hard-coding its index means the next person to add one
-  // silently turns this suite into a test of theirs.
+  // ⛔ Found by its own SQL, not by counting from either end. This rewound to `MIGRATION_COUNT - 1`
+  // on the reasoning that hard-coding an index would turn the suite into a test of whichever
+  // migration somebody later *inserted* — which is true, and has an exact mirror image: "the last
+  // one" turns it into a test of whichever migration somebody later **appends**. Measured
+  // 2026-09-01, one migration later: this began re-running a pair of `create index` statements and
+  // asserting the repair's outcome, and failed for a reason nothing in this file was about.
   function remigrate(): void {
-    db.db().exec(`pragma user_version = ${db.MIGRATION_COUNT - 1}`)
+    db.db().exec(`pragma user_version = ${db.versionBefore("set state = 'closed'")}`)
     db.closeDb()
     db.openDb(dbPath)
   }

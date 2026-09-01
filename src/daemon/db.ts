@@ -884,6 +884,28 @@ const MIGRATIONS: string[] = [
  */
 export const MIGRATION_COUNT = MIGRATIONS.length
 
+/**
+ * The `user_version` to rewind to in order to run a particular migration again.
+ *
+ * ⛔ **Found by its own text, not by counting from either end.** A test that re-runs a data repair
+ * has to name *which* migration it means, and both obvious ways of doing that go stale: an index
+ * typed in as a number turns into a test of somebody else's migration the moment one is inserted,
+ * and `MIGRATION_COUNT - 1` — "the last one" — turns into a test of somebody else's migration the
+ * moment one is appended. Measured on 2026-09-01: two branches added a migration 27 in parallel,
+ * the rebase made the repair 27 and an index migration 28, and `MIGRATION_COUNT - 1` quietly began
+ * re-running the indexes and asserting the repair's outcome.
+ *
+ * Returns the index *before* the matching migration, which is exactly the `user_version` that makes
+ * `migrate()` run it and nothing earlier. Throws rather than returning -1: a fragment that matches
+ * nothing means the test is pinning a migration that no longer exists, and silently rewinding to 0
+ * would try to re-create every table.
+ */
+export function versionBefore(fragment: string): number {
+  const index = MIGRATIONS.findIndex((sql) => sql.includes(fragment))
+  if (index < 0) throw new Error(`no migration contains ${JSON.stringify(fragment)}`)
+  return index
+}
+
 let handle: DatabaseSync | null = null
 
 export function openDb(path = paths.db): DatabaseSync {
