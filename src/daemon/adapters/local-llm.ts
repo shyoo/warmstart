@@ -179,7 +179,8 @@ function bridgePath(): string {
  * {"type":"result","text":"Done","status":"SUCCESS"}
  * ```
  */
-function decodeStream(record: Record<string, unknown>): StreamEvent | StreamEvent[] | null {
+function decodeStream(record: Record<string, unknown>): StreamEvent | null {
+  if (!record || typeof record !== 'object') return null
   const type = typeof record.type === 'string' ? record.type : ''
 
   if (type === 'init') {
@@ -237,6 +238,17 @@ function decodeStream(record: Record<string, unknown>): StreamEvent | StreamEven
     }
   }
 
+  // tool_result with ask_human pauses the run and files a question for the operator
+  if (type === 'tool_result' && record.tool === 'ask_human') {
+    const question = typeof record.question === 'string' ? record.question : ''
+    return {
+      kind: 'turn_status',
+      category: 'blocked',
+      detail: question,
+      needsAction: question
+    }
+  }
+
   return type ? { kind: 'other', type } : null
 }
 
@@ -259,14 +271,6 @@ export const localLlm: AgentAdapter = {
    * which is the conservative direction: a worker that nobody has checked is not dispatched to.
    */
   isInstalled(): boolean {
-    // ⚠️ We do not know the endpoint URL here — `isInstalled()` takes no parameters. This is a
-    // structural gap: every other adapter checks whether a CLI is on PATH, which is machine-global.
-    // A local LLM is per-endpoint. We check whether *any* local-llm endpoint has been reachable
-    // recently, which is imprecise but safe: the scheduler also checks `probeIdentity` per worker.
-    for (const entry of reachabilityCache.values()) {
-      if (entry.reachable && Date.now() - entry.at < REACHABILITY_TTL_MS) return true
-    }
-    // Fallback: check whether the bridge script exists (it is compiled into the app).
     return existsSync(bridgePath())
   },
 
@@ -306,6 +310,7 @@ export const localLlm: AgentAdapter = {
     if (!probe.ok) {
       return {
         loggedIn: false,
+        organization: probe.error ?? 'could not connect',
         raw: JSON.stringify({
           loggedIn: false,
           reason: `local LLM server not reachable at ${endpoint}: ${probe.error ?? 'unknown'}`,
@@ -316,6 +321,9 @@ export const localLlm: AgentAdapter = {
 
     return {
       loggedIn: true,
+      cliVersion: '1.0.0',
+      account: 'local',
+      organization: probe.models.length > 0 ? `models: ${probe.models.join(', ')}` : 'connected',
       raw: JSON.stringify({
         loggedIn: true,
         endpoint,
