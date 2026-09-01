@@ -83,6 +83,17 @@ export interface Settings {
    */
   autoRunawayStop: boolean
   /**
+   * May the controller be asked to write a one-line label for a task whose prompt is a paragraph?
+   * Default **false**.
+   *
+   * ⛔ Off because this is the only judgment call that spends a turn without changing what runs — it
+   * writes `titleSummary`, which nothing but the UI reads. The four questions the scheduler asks
+   * anyway (decompose, triage, gate, route) carry the label for free and are unaffected by this
+   * switch; it gates only the dedicated question, asked at most once per long task. An operator who
+   * wants a readable board more than they want the turns says so here.
+   */
+  summariseTitles: boolean
+  /**
    * What finishing a task means, fleet-wide, for every project that has not said otherwise.
    *
    * ⚠️ The odd one out in this interface, and deliberately so. The three switches above gate an

@@ -157,8 +157,8 @@ describe('an ended session is one that is over, in every list', () => {
  * rebase that picked up two migrations landed in parallel — a number in the prose is one more copy
  * to go stale, and the body below finds it by its own text instead.
  *
- * ⚠️ Driven by rewinding `user_version` and reopening, rather than by a hand-copied `update`. A test
- * that asserted its own SQL would pass whatever the migration actually said, which is the one thing
+ * ⚠️ Driven by the SQL the migration actually ships, rather than by a hand-copied `update`. A test
+ * that asserted its own SQL would pass whatever the migration really said, which is the one thing
  * worth knowing here.
  */
 describe('repairing the sessions that were blamed for their own shutdown', () => {
@@ -168,6 +168,10 @@ describe('repairing the sessions that were blamed for their own shutdown', () =>
   // one" turns it into a test of whichever migration somebody later **appends**. Measured
   // 2026-09-01, one migration later: this began re-running a pair of `create index` statements and
   // asserting the repair's outcome, and failed for a reason nothing in this file was about.
+  //
+  // ⚠️ The other half of the bargain lives in `db.ts`: because this replays every migration after the
+  // repair, each of those has to survive being applied twice. `create index if not exists` says so
+  // for itself; `title_summary` cannot, so it is a function that checks first.
   function remigrate(): void {
     db.db().exec(`pragma user_version = ${db.versionBefore("set state = 'closed'")}`)
     db.closeDb()

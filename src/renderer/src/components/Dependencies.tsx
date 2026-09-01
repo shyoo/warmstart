@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { Task } from '@shared/tasks'
 import { rpc } from '../lib/daemon'
-import { IN_FLIGHT, statusLabel, STATUS_TONE, Working } from '../lib/taskview'
+import { IN_FLIGHT, statusLabel, STATUS_TONE, taskLabel, Working } from '../lib/taskview'
 
 /**
  * Prerequisites, drawn and edited in one place.
@@ -81,7 +81,7 @@ export function candidatesFor(all: Task[], taskId: string | null, chosen: string
 /** `t12 · title` — how a task reads in a list of one-line options. */
 function optionLabel(task: Task, projectName?: string): string {
   const suffix = projectName ? ` — ${projectName}` : ''
-  return `t${task.seq} · ${task.title}${suffix}`
+  return `t${task.seq} · ${taskLabel(task)}${suffix}`
 }
 
 /**
@@ -137,7 +137,7 @@ export function DependencyList({
               title={`Open t${dep.seq}: ${dep.title} (${statusLabel(dep)})`}
             >
               <span className="dep-seq">t{dep.seq}</span>
-              <span className="dep-title">{dep.title}</span>
+              <span className="dep-title">{taskLabel(dep)}</span>
               <span className={`status ${STATUS_TONE[dep.status] ?? ''}`}>
                 {statusLabel(dep)}
                 {IN_FLIGHT.has(dep.status) && <Working />}

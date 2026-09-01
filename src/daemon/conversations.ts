@@ -107,7 +107,11 @@ export function listConversations(opts: { projectId?: string; limit?: number } =
   const served = rows<RunRow>(
     db()
       .prepare(
-        `select r.id as run_id, r.session_id, r.task_id, t.seq, t.title,
+        // ⚠️ `title` is coalesced to the controller's one-line label where there is one, because
+        // `t.title` is the *prompt* and this page draws it in a single-line button. The task's own
+        // screens are where the full text belongs; here it would fill the row and say nothing.
+        `select r.id as run_id, r.session_id, r.task_id, t.seq,
+                coalesce(t.title_summary, t.title) as title,
                 r.started_at, r.ended_at, r.outcome, r.started_warm, r.model,
                 r.input_tokens + r.output_tokens + r.cache_read_tokens + r.cache_write_tokens
                   as tokens

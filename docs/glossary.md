@@ -101,6 +101,20 @@ contenders rather than letting them collide.
 thread, priority, deadline, dependencies (a DAG), a schedule (`not_before`), resource requirements,
 constraints, a verification policy, and a status.
 
+**Title, and title summary** — ⛔ **A task's title *is* its prompt.** `promptFor()` sends it to the
+agent verbatim and the New Task form files the whole textarea into it, so a title is routinely a
+paragraph and nothing may shorten it for the sake of a table — a truncated title is a truncated
+instruction. ⭐ Since 2026-09-01 a separate `titleSummary` (**migration 29**) carries a one-line label the controller
+writes, and every list, header and chip renders `titleSummary ?? title`. Most tasks have none, and
+that is not a broken row: showing the prompt is the correct answer for them. The task thread's first
+entry is always the full text, whatever the header says. Written for free by the four judgment calls
+the scheduler already makes (each answer may carry a `summary`), and by a dedicated **`title`**
+consult for everything else — the one judgment call that spends a turn without changing what runs, so
+it is off by default behind the **Ask the controller to name long tasks** fleet setting, files one
+question per tick, and never asks twice about the same task. ⚠️ Editing a title drops its summary: a
+label for text nobody asked for any more is worse than no label, because the board still looks
+authoritative.
+
 **Prerequisite** — *an edge in the DAG somebody drew by hand.* `task_deps`, the cycle check and
 `admit()` have been in the daemon since M2, and the only way to put an edge in was to be an agent
 calling `task_create` with `depends_on`. ⭐ Since 2026-09-01 a person can too: the New Task form takes
@@ -341,7 +355,7 @@ terminal to guess is what this design refuses to do; a session that ends without
 `awaiting_human`.
 
 **Controller** — the LLM agent that makes judgment calls: decomposition, ambiguous routing, failure
-triage, risk-gating agent-created work. It is itself a worker in the fleet with its own quota, so when
+triage, risk-gating agent-created work, and naming a task whose prompt is a paragraph. It is itself a worker in the fleet with its own quota, so when
 its window runs low its next decision routes elsewhere. ⛔ It is **not** in the scheduling loop —
 that loop is deterministic and costs nothing.
 

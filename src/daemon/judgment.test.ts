@@ -4,8 +4,15 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Consult } from '@shared/tasks.js'
 import { closeDb, openDb } from './db.js'
-import { applyConsult, fallbackFor } from './judgment.js'
-import { createTask, getTask, listTasks, messagesFor } from './tasks.js'
+import {
+  applyConsult,
+  fallbackFor,
+  MAX_TITLE_SUMMARY,
+  TITLE_SUMMARY_THRESHOLD,
+  titleQuestion,
+  validateTitleSummary
+} from './judgment.js'
+import { createTask, getTask, listTasks, messagesFor, updateTask } from './tasks.js'
 
 /**
  * What actually happens to the board when the controller answers — and when it does not.
@@ -240,3 +247,169 @@ describe('initial task prompt message recording', () => {
   })
 })
 
+/**
+ * The one-line label, and the thing it must never do.
+ *
+ * ⛔ **`title` is the prompt.** `promptFor()` sends it to the agent verbatim and the task form files
+ * an entire textarea into it, so the whole design rests on the summary living somewhere else and the
+ * prompt surviving untouched. Every assertion here that looks redundant is checking exactly that: a
+ * label was written, *and* the instruction is still the instruction.
+ */
+describe('the summarised title', () => {
+  /** A prompt of the shape that made this feature necessary: an instruction, not a name. */
+  const LONG =
+    'I wonder if we can use an AI-summarized title for each task, because each task description ' +
+    'is lengthy and the board is unreadable. One way is to use the judgment call to produce it in ' +
+    'JSON, not just the routing decision.'
+
+  const AGENT = { kind: 'agent', workerId: 'w1', sessionId: 's1', runId: 'r1' } as const
+
+  it('takes a one-line answer and leaves the prompt exactly as it was', () => {
+    const task = createTask({ title: LONG })
+    const result = applyConsult(consultFor('title', task.id), {
+      summary: 'Use AI-summarised titles on the task board'
+    })
+
+    expect(result.ok).toBe(true)
+    const after = getTask(task.id)
+    expect(after?.titleSummary).toBe('Use AI-summarised titles on the task board')
+    // ⛔ The point of the whole exercise. A summary that shortened this would have shortened what
+    // the agent is told to do.
+    expect(after?.title).toBe(LONG)
+  })
+
+  it('refuses a summary longer than a summary, rather than cutting it off', () => {
+    // ⛔ Rejected, not truncated: a label cut mid-word is indistinguishable from a bug in the table,
+    // where falling back to the prompt is at least honest about what it is showing.
+    expect(validateTitleSummary({ summary: 'x'.repeat(MAX_TITLE_SUMMARY + 1) })).toBeNull()
+    expect(validateTitleSummary({ summary: 'x'.repeat(MAX_TITLE_SUMMARY) })).toHaveLength(
+      MAX_TITLE_SUMMARY
+    )
+  })
+
+  it('refuses a paragraph, because keeping its first line would keep half an answer', () => {
+    expect(validateTitleSummary({ summary: 'A label\n\nand some reasoning about it' })).toBeNull()
+  })
+
+  it('refuses an empty, blank, or non-string one', () => {
+    expect(validateTitleSummary({})).toBeNull()
+    expect(validateTitleSummary({ summary: '   ' })).toBeNull()
+    expect(validateTitleSummary({ summary: 42 })).toBeNull()
+  })
+
+  it('fails the dedicated consult when nothing usable came back, since it has no other content', () => {
+    const task = createTask({ title: LONG })
+    const result = applyConsult(consultFor('title', task.id), { summary: '' })
+    expect(result.ok).toBe(false)
+    expect(getTask(task.id)?.titleSummary).toBeNull()
+  })
+
+  it('changes nothing and says nothing when no controller answers', () => {
+    const task = createTask({ title: LONG })
+    const before = messagesFor(task.id).length
+    const outcome = fallbackFor(consultFor('title', task.id))
+
+    expect(outcome).toContain('prompt')
+    expect(getTask(task.id)?.titleSummary).toBeNull()
+    // ⛔ Silent on purpose, and the only fallback in this file that is. Every other one has something
+    // a person needs to know; this would put a note on every long task about a question the operator
+    // never saw the point of having asked.
+    expect(messagesFor(task.id)).toHaveLength(before)
+  })
+
+  /**
+   * The label riding along on the four questions that were being asked anyway.
+   *
+   * ⛔ **It must never be able to fail one of them.** Those four decide where work goes; a controller
+   * that writes a forty-word "summary" beside a valid verdict has to lose the summary, not the
+   * verdict.
+   */
+  it('is stored beside a gate verdict', () => {
+    const task = createTask({
+      title: 'Investigate whether the quota poller can read a 7-day window without spending a turn',
+      createdBy: AGENT
+    })
+    const result = applyConsult(consultFor('gate', task.id), {
+      verdict: 'accept',
+      why: 'cheap and read-only',
+      summary: 'Read the 7-day quota window for free'
+    })
+
+    expect(result.ok).toBe(true)
+    expect(getTask(task.id)?.titleSummary).toBe('Read the 7-day quota window for free')
+    expect(getTask(task.id)?.status).toBe('ready')
+  })
+
+  it('goes with the new title on a rescope rather than being dropped by it', () => {
+    // ⛔ `updateTask` clears a summary whenever the title changes under it. A rescope changes the
+    // title *and* supplies the label for it, so the two have to land in one write or the label is
+    // lost the instant it is stored.
+    const task = createTask({
+      title: 'Rewrite the entire scheduler so that it never has to make a routing decision at all',
+      createdBy: AGENT
+    })
+    const result = applyConsult(consultFor('gate', task.id), {
+      verdict: 'rescope',
+      title: 'Add a tie-break term to the router',
+      why: 'the filed version is a rewrite',
+      summary: 'Add a router tie-break'
+    })
+
+    expect(result.ok).toBe(true)
+    const after = getTask(task.id)
+    expect(after?.title).toBe('Add a tie-break term to the router')
+    expect(after?.titleSummary).toBe('Add a router tie-break')
+  })
+
+  it('is discarded without taking the decision down with it', () => {
+    const task = createTask({
+      title: 'Work out why the estimator reads every Antigravity run as a runaway at four times',
+      createdBy: AGENT
+    })
+    const result = applyConsult(consultFor('gate', task.id), {
+      verdict: 'accept',
+      why: 'worth doing',
+      summary: 'x'.repeat(MAX_TITLE_SUMMARY + 1)
+    })
+
+    // ⛔ The verdict landed; only the label was lost.
+    expect(result.ok).toBe(true)
+    expect(getTask(task.id)?.status).toBe('ready')
+    expect(getTask(task.id)?.titleSummary).toBeNull()
+  })
+})
+
+describe('a label and the text it describes', () => {
+  it('is dropped when the prompt is rewritten under it', () => {
+    // ⛔ A label is a claim about a particular piece of text. Once an operator edits that text, the
+    // old one-line description describes work nobody asked for any more — and the board would go on
+    // presenting it as though somebody had.
+    const task = createTask({ title: 'Something long enough to be worth labelling at all, honestly' })
+    updateTask(task.id, { titleSummary: 'The old label' })
+    expect(getTask(task.id)?.titleSummary).toBe('The old label')
+
+    updateTask(task.id, { title: 'Something else entirely' })
+    expect(getTask(task.id)?.titleSummary).toBeNull()
+  })
+
+  it('survives an edit that does not touch the title', () => {
+    const task = createTask({ title: 'Something long enough to be worth labelling at all, honestly' })
+    updateTask(task.id, { titleSummary: 'The label' })
+    updateTask(task.id, { priority: 'P1' })
+    expect(getTask(task.id)?.titleSummary).toBe('The label')
+  })
+})
+
+describe('the dedicated question', () => {
+  it('carries the prompt, and says that nothing it returns can change the work', () => {
+    const task = createTask({ title: 'A'.repeat(TITLE_SUMMARY_THRESHOLD + 10) })
+    const question = titleQuestion(task)
+
+    expect(question).toContain('A'.repeat(TITLE_SUMMARY_THRESHOLD + 10))
+    expect(question).toContain(String(MAX_TITLE_SUMMARY))
+    // ⚠️ Asserted because it is true of the code as well as the prose: `applyTitle` writes
+    // `titleSummary` and touches nothing else. A controller that believed otherwise would set about
+    // improving the task instead of naming it.
+    expect(question).toContain('changes a label and nothing else')
+  })
+})

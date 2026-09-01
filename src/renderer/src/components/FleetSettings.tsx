@@ -150,6 +150,7 @@ export function FleetSettings(): React.JSX.Element {
   const autoPreempt = settings?.autoPreempt ?? true
   const autoOverrunPreempt = settings?.autoOverrunPreempt ?? true
   const autoRunawayStop = settings?.autoRunawayStop ?? false
+  const summariseTitles = settings?.summariseTitles ?? false
   const finishPolicy = settings?.finishPolicy ?? DEFAULT_FLEET_FINISH
   const sessionSharing = settings?.sessionSharing ?? 'off'
   const probeIntervalMinutes = settings?.probeIntervalMinutes ?? 5
@@ -377,6 +378,27 @@ export function FleetSettings(): React.JSX.Element {
           t5 (2026-08-28): 6,271,722 tokens against an estimate of 1,557,974 was called a runaway at
           4.0×, of which 6,155,066 were cache reads and 27,338 were output. Turn this on once the
           factor is measured in cost rather than tokens.
+        </SwitchRow>
+        <SwitchRow
+          label="Ask the controller to name long tasks"
+          on={summariseTitles}
+          busy={busy || settings === null}
+          onToggle={() => void setSwitch('summariseTitles', !summariseTitles)}
+          state={
+            summariseTitles
+              ? 'a task whose prompt runs long is given a one-line label, one task per tick.'
+              : 'the board shows the first line of each prompt. Nothing is spent on labels.'
+          }
+        >
+          <strong>Off by default.</strong> A task&rsquo;s title <em>is</em> its prompt — it is sent to
+          the agent verbatim — so a board of hand-written tasks is a board of paragraphs. This is the
+          one judgment call that spends a turn without changing what the fleet does: it writes a label
+          the UI reads and nothing else. The prompt is never altered, and the task thread still opens
+          with the full text.
+          <br />
+          Leave it off and you still get labels for free from the questions the scheduler already
+          asks — routing a near-tie, gating an agent-filed task, triaging a failure — which is a
+          minority of tasks. Turn it on to label the rest, one short turn each, once per task.
         </SwitchRow>
       </section>
 

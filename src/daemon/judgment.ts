@@ -39,6 +39,24 @@ import { log } from './log.js'
 /** A decomposition cannot exceed this however much the goal seems to want. Plan §7.2. */
 export const MAX_DECOMPOSE_CHILDREN = 8
 
+/**
+ * How long a one-line label may be before it stops being one.
+ *
+ * ⛔ Enforced by rejection, not by truncation. A summary cut off mid-word reads as a bug in the table
+ * and is indistinguishable from a title that was genuinely that long; discarding it leaves the
+ * honest fallback — the prompt itself — in place.
+ */
+export const MAX_TITLE_SUMMARY = 80
+
+/**
+ * Below this, a title is already the one line the board wants.
+ *
+ * ⚠️ Above `MAX_TITLE_SUMMARY` on purpose, and by enough to matter. A 90-character title summarised
+ * to 80 buys ten characters for a controller turn; the gap is what stops the two constants meeting
+ * in the middle and making every slightly-long title worth asking about.
+ */
+export const TITLE_SUMMARY_THRESHOLD = 120
+
 export interface ApplyResult {
   ok: boolean
   outcome: string
@@ -103,6 +121,65 @@ export function validateDecomposition(answer: Record<string, unknown>): Validate
     })
   }
   return { ok: true, value: children }
+}
+
+/**
+ * The one-line label, if the answer carried a usable one.
+ *
+ * ⛔ **This never fails a consult.** It rides along on four questions whose real answers decide where
+ * work goes; a controller that writes a forty-word "summary" must not thereby throw away a routing
+ * decision. So it returns null and the caller carries on — the fallback for no summary is the title,
+ * which is always there.
+ *
+ * ⚠️ Read from `summary`, never from `title`, because `gate` already uses `title` for a rescope and
+ * the two mean opposite things: one replaces what the task *is*, the other only labels it.
+ */
+export function validateTitleSummary(answer: Record<string, unknown>): string | null {
+  const raw = typeof answer.summary === 'string' ? answer.summary.trim() : ''
+  if (!raw) return null
+  // One line. A model that replies with a paragraph has answered a different question, and taking
+  // its first line would silently keep half an answer.
+  if (raw.includes('\n')) return null
+  return raw.length > MAX_TITLE_SUMMARY ? null : raw
+}
+
+/**
+ * Store a summary if the answer had one, and say nothing at all if it did not.
+ *
+ * ⚠️ Called for its effect only, from inside the four `apply*` functions and *after* each has
+ * validated its own decision. It cannot change what any of them return, and a failure to write a
+ * label must never fail the judgment call it rode in on.
+ */
+function noteTitleSummary(task: Task, answer: Record<string, unknown>): void {
+  const summary = validateTitleSummary(answer)
+  if (!summary || summary === task.titleSummary) return
+  try {
+    updateTask(task.id, { titleSummary: summary })
+  } catch (err) {
+    log.warn('could not store a summarised title:', err)
+  }
+}
+
+/**
+ * The lines that ask for the label, appended to a question that was being asked anyway.
+ *
+ * ⛔ **Free by construction.** Each of these four questions already carries the full task title —
+ * which *is* the prompt, and is the reason the board is unreadable — so the controller has read the
+ * thing being summarised before it gets here. The whole cost is one extra output line.
+ *
+ * ⚠️ Returns nothing for a task whose title is already short. Asking for a one-line summary of one
+ * line invites a rewrite of a title the operator chose.
+ */
+function summaryAsk(task: Task): string[] {
+  if (task.title.length <= TITLE_SUMMARY_THRESHOLD) return []
+  return [
+    '',
+    `Also set \`summary\`: one line of at most ${MAX_TITLE_SUMMARY} characters naming what this task`,
+    'is, for a board where the full text does not fit. Name the work as it stands — this only ever',
+    'changes a label in the UI, never the instruction the agent is given, and the full text is still',
+    'shown in the task thread. An over-long or multi-line summary is dropped and the rest of your',
+    'answer is used as normal.'
+  ]
 }
 
 export type TriageAction =
@@ -248,7 +325,8 @@ export function decomposeQuestion(task: Task): string {
     'Reply with a single JSON object and nothing else that matters:',
     '',
     '```json',
-    '{"children":[{"title":"...","acceptance":"...","dependsOn":[0],"estTokens":250000}],"note":"..."}',
+    '{"children":[{"title":"...","acceptance":"...","dependsOn":[0],"estTokens":250000}],' +
+      '"note":"...","summary":"..."}',
     '```',
     '',
     'Rules, all of which are enforced — an answer that breaks one is discarded entirely:',
@@ -263,7 +341,8 @@ export function decomposeQuestion(task: Task): string {
     '⛔ Do NOT write prompts, instructions, or implementation notes for these children.',
     'They are created as drafts and the prompt for each is written later, at the moment it is promoted,',
     'from what the preceding work actually learned. A prompt written now would be a guess, and a stale',
-    'prompt is worse than no prompt because somebody follows it.'
+    'prompt is worse than no prompt because somebody follows it.',
+    ...summaryAsk(task)
   ]
     .filter((line) => line !== '')
     .join('\n')
@@ -274,6 +353,7 @@ function applyDecompose(task: Task, answer: Record<string, unknown>): ApplyResul
   // a task list that is neither the old plan nor the new one, which is worse than either.
   const checked = validateDecomposition(answer)
   if (!checked.ok) return bad(checked.reason)
+  noteTitleSummary(task, answer)
 
   const created: Task[] = []
   for (const child of checked.value) {
@@ -341,7 +421,8 @@ export function triageQuestion(task: Task): string {
     'Reply with a single JSON object:',
     '',
     '```json',
-    '{"action":"retry"|"rewrite"|"escalate"|"human","prompt":"...","model":"...","why":"..."}',
+    '{"action":"retry"|"rewrite"|"escalate"|"human","prompt":"...","model":"...","why":"...",' +
+      '"summary":"..."}',
     '```',
     '',
     '- `retry` — nothing was wrong with the instruction; the failure looks transient.',
@@ -352,7 +433,8 @@ export function triageQuestion(task: Task): string {
     '- `human` — a person has to decide something. Choose this freely; it is the safe answer and it',
     '  is what happens anyway if you do not reply.',
     '',
-    '`why` is one line, for the person reading the task later.'
+    '`why` is one line, for the person reading the task later.',
+    ...summaryAsk(task)
   ].join('\n')
 }
 
@@ -376,6 +458,7 @@ function knownModels(task: Task): string[] {
 function applyTriage(task: Task, answer: Record<string, unknown>): ApplyResult {
   const checked = validateTriage(answer, knownModels(task))
   if (!checked.ok) return bad(checked.reason)
+  noteTitleSummary(task, answer)
   const decision = checked.value
   const why = decision.why ? ` ${decision.why}` : ''
 
@@ -484,7 +567,7 @@ export function gateQuestion(task: Task, why: string): string {
     '',
     '# How to answer',
     '```json',
-    '{"verdict":"accept"|"rescope"|"reject"|"human","title":"...","why":"..."}',
+    '{"verdict":"accept"|"rescope"|"reject"|"human","title":"...","why":"...","summary":"..."}',
     '```',
     '',
     '- `accept` — worth doing as filed. It joins the queue.',
@@ -493,7 +576,10 @@ export function gateQuestion(task: Task, why: string): string {
     '  deleted: it stays on the board with your reason on it.',
     '- `human` — the call is not yours to make.',
     '',
-    '`why` is one line and will be shown on the task.'
+    '`why` is one line and will be shown on the task.',
+    // ⚠️ `title` and `summary` are not the same field, and this is the one question where both are
+    // offered: `title` *replaces* what the task is on a rescope, `summary` only labels it.
+    ...summaryAsk(task)
   ]
     .filter((line) => line !== '')
     .join('\n')
@@ -507,17 +593,28 @@ function applyGate(task: Task, answer: Record<string, unknown>): ApplyResult {
 
   switch (decision.verdict) {
     case 'accept':
+      noteTitleSummary(task, answer)
       addMessage(task.id, 'system', `Controller admitted this.${why}`)
       setStatus(task.id, 'ready')
       return good(`t${task.seq} admitted`)
 
     case 'rescope':
-      updateTask(task.id, { title: decision.title })
+      // ⛔ Both in one write, because `updateTask` drops a summary whenever the title changes under
+      // it — rightly, since a label for text nobody asked for any more is worse than none. Here the
+      // controller has just read the new title and written the label for it, so they go together or
+      // the label is lost the moment it is stored.
+      updateTask(task.id, {
+        title: decision.title,
+        titleSummary: validateTitleSummary(answer)
+      })
       addMessage(task.id, 'system', `Controller rescoped this.${why}`)
       setStatus(task.id, 'ready')
       return good(`t${task.seq} rescoped and admitted`)
 
     case 'reject':
+      // ⚠️ Labelled even though it is being cancelled: a rejected task stays on the board as evidence
+      // (below), and evidence nobody can read at a glance is evidence nobody reads.
+      noteTitleSummary(task, answer)
       // ⛔ Cancelled, never deleted. Plan §7.4 - an agent's rejected idea is evidence about how the
       // fleet behaves, and the only tier that can delete anything is a person.
       addMessage(task.id, 'system', `Controller rejected this.${why}`)
@@ -525,6 +622,7 @@ function applyGate(task: Task, answer: Record<string, unknown>): ApplyResult {
       return good(`t${task.seq} rejected`)
 
     case 'human':
+      noteTitleSummary(task, answer)
       addMessage(task.id, 'system', `Controller passed this to you.${why}`)
       setStatus(task.id, 'awaiting_human', {
         assignee: 'human',
@@ -599,14 +697,15 @@ export function routeQuestion(task: Task, candidates: RouteCandidate[]): string 
     '',
     '# How to answer',
     '```json',
-    '{"workerId":"<one of the ids above, verbatim>","why":"..."}',
+    '{"workerId":"<one of the ids above, verbatim>","why":"...","summary":"..."}',
     '```',
     '',
     'Any id not in that list is discarded and the highest-scoring candidate is used instead.',
     '',
     '⚠️ A term listed as unmeasurable is not a small effect — on this fleet it is usually one that',
     'could not be read at all. Reason from what the candidates actually show, and say plainly when',
-    'nothing separates them rather than inventing a reason from their names.'
+    'nothing separates them rather than inventing a reason from their names.',
+    ...summaryAsk(task)
   ].join('\n')
 }
 
@@ -646,10 +745,63 @@ function applyRoute(task: Task, answer: Record<string, unknown>): ApplyResult {
   // an account can be disabled, fill its window, or lose its sign-in between this and the next tick.
   const checked = validateRoute(answer, listWorkers().map((w) => w.id))
   if (!checked.ok) return bad(checked.reason)
+  noteTitleSummary(task, answer)
   const { workerId, why } = checked.value
   const label = listWorkers().find((w) => w.id === workerId)?.label ?? workerId.slice(0, 8)
   addMessage(task.id, 'system', `Controller routed this to ${label}.${why ? ` ${why}` : ''}`)
   return good(`t${task.seq} routed to ${label}`)
+}
+
+// ---------------------------------------------------------------------------- 5. title
+
+/**
+ * What is this task, in one line?
+ *
+ * ⚠️ **The one kind that decides nothing.** Every other consult moves work, spends a budget or picks
+ * an account; this writes `titleSummary`, which only the UI reads. It exists because `title` *is* the
+ * prompt — the task form files an entire textarea into it — so a board of operator-written tasks is a
+ * board of paragraphs, while the four questions that could summarise for free fire on a minority of
+ * tasks: `route` only on a near-tie for an expensive task, `gate` only on agent-filed work.
+ *
+ * ⛔ **Opt-in, off by default** (`summariseTitles`). It is the only consult that costs a turn without
+ * changing what runs, so an operator who would rather not spend turns on labels pays nothing and
+ * loses nothing — the board goes on showing prompts, which is what it does today.
+ *
+ * ⛔ Deliberately the cheapest question in the file: the title, and nothing else. No thread, no
+ * siblings, no attempts, no cost model — none of which help name a paragraph, and all of which would
+ * turn the cheap kind into an expensive one.
+ */
+export function titleQuestion(task: Task): string {
+  return [
+    'Name this task in one line, for a board where the full text does not fit.',
+    '',
+    `# Task t${task.seq}`,
+    task.title,
+    '',
+    '# How to answer',
+    'Reply with a single JSON object and nothing else that matters:',
+    '',
+    '```json',
+    '{"summary":"..."}',
+    '```',
+    '',
+    `- At most ${MAX_TITLE_SUMMARY} characters, on one line, as you would say it to a colleague.`,
+    '- Name the work; do not restate the instructions. "Fix the quota reset horizon in routing", not',
+    '  "The user wants the assistant to look at the routing code and consider whether ...".',
+    '',
+    '⛔ This changes a label and nothing else. The text above stays exactly as it is and is still what',
+    'the agent is given, so nothing you write here can alter, narrow or improve the work itself.'
+  ].join('\n')
+}
+
+function applyTitle(task: Task, answer: Record<string, unknown>): ApplyResult {
+  const summary = validateTitleSummary(answer)
+  // ⛔ Failing is right here, and only here. On the other four kinds a bad summary is discarded and
+  // the real decision still lands; this consult has no other content, so an unusable answer is no
+  // answer — and saying so puts the fallback on the record instead of a silent success.
+  if (!summary) return bad(`no usable one-line summary (at most ${MAX_TITLE_SUMMARY} characters)`)
+  updateTask(task.id, { titleSummary: summary })
+  return good(`t${task.seq} labelled “${summary}”`)
 }
 
 // ---------------------------------------------------------------------------- apply and fall back
@@ -667,6 +819,8 @@ export function applyConsult(consult: Consult, answer: Record<string, unknown>):
         return applyGate(task, answer)
       case 'route':
         return applyRoute(task, answer)
+      case 'title':
+        return applyTitle(task, answer)
     }
   } catch (err) {
     return bad(`applying the answer failed: ${err instanceof Error ? err.message : String(err)}`)
@@ -728,6 +882,13 @@ export function fallbackFor(consult: Consult): string {
       case 'route':
         // The arithmetic already had an answer; that is the whole reason this consult is optional.
         return 'the highest-scoring worker is used'
+
+      case 'title':
+        // ⛔ Nothing is said on the task and nothing is changed. An unlabelled task is not in a worse
+        // state than it was before it was asked about — the board goes on showing its prompt, which
+        // is the true thing to show. A system message here would be noise on every long task, about
+        // a question the operator never sees the point of having asked.
+        return 'the task keeps showing its prompt'
     }
   } catch (err) {
     log.warn('a consult fallback failed:', err)
@@ -747,5 +908,7 @@ export function questionFor(kind: Consult['kind'], taskId: string, extra?: strin
       return gateQuestion(task, extra ?? 'project policy')
     case 'route':
       return extra ?? routeQuestion(task, [])
+    case 'title':
+      return titleQuestion(task)
   }
 }

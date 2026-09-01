@@ -37,6 +37,7 @@ import {
   IN_FLIGHT,
   statusLabel,
   STATUS_TONE,
+  taskLabel,
   Working,
   workspacePathFor
 } from '../lib/taskview'
@@ -351,8 +352,11 @@ function TaskDetail({
           where the eye starts, not below a thread that can be a hundred messages long. */}
       <header className="detail-head">
         {back}
-        <h3>
-          t{task.seq} · {task.title}
+        {/* ⚠️ The label, not the prompt. The prompt is a paragraph and this is a page heading —
+            and it is not lost by being summarised here: the first entry in the thread below is
+            the full text, verbatim, which is what the agent was actually given. */}
+        <h3 title={task.title}>
+          t{task.seq} · {taskLabel(task)}
         </h3>
       </header>
 
@@ -393,7 +397,7 @@ function TaskDetail({
                       title={`Open t${dep.seq}: ${dep.title} (${statusLabel(dep)})`}
                     >
                       <span className="dep-seq">t{dep.seq}</span>
-                      <span className="dep-title">{dep.title}</span>
+                      <span className="dep-title">{taskLabel(dep)}</span>
                       <span className={`status ${STATUS_TONE[dep.status] ?? ''}`}>
                         {statusLabel(dep)}
                         {IN_FLIGHT.has(dep.status) && <Working />}

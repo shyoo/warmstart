@@ -13,11 +13,30 @@ import { log } from './log.js'
  */
 
 /**
+ * One migration: SQL, or a function where the statement cannot express itself.
+ *
+ * ⛔ **A function is for making a migration *replay-safe*, and nothing else.** `sessionstate.test.ts`
+ * rewinds `user_version` and reopens to drive the repair against real data, which re-runs every
+ * migration after it — so each one has to survive being applied twice. SQL says that for itself with
+ * `if not exists`; `alter table ... add column` has no such spelling in SQLite, and a duplicate
+ * column then fails a suite that is not about columns at all. ⚠️ Not an escape hatch for logic: a
+ * migration that needs to *decide* something is a migration that will decide it differently next
+ * year, against data nobody has any more.
+ */
+type Migration = string | ((conn: DatabaseSync) => void)
+
+/** Does this table already have this column? The guard an additive migration needs to be re-runnable. */
+function hasColumn(conn: DatabaseSync, table: string, column: string): boolean {
+  const cols = conn.prepare(`pragma table_info(${table})`).all() as { name: string }[]
+  return cols.some((c) => c.name === column)
+}
+
+/**
  * Migrations are numbered and append-only. Never edit one that has shipped - add the next.
- * Kept as strings rather than .sql files so the bundler has nothing to copy and the daemon has
+ * Kept in code rather than in .sql files so the bundler has nothing to copy and the daemon has
  * nothing to find at runtime.
  */
-const MIGRATIONS: string[] = [
+const MIGRATIONS: Migration[] = [
   // 1 - the fleet substrate. Workers hold quota; sessions hold context; turns hold the metering.
   `
   create table workers (
@@ -871,7 +890,24 @@ const MIGRATIONS: string[] = [
   `
   create index if not exists questions_run on questions(run_id);
   create index if not exists approvals_run on approvals(run_id);
-  `
+  `,
+
+  // 29 - a one-line label for a task whose title is a paragraph.
+  //
+  // ⛔ **A new column rather than a rewrite of `title`, and that is the whole design.** `title` is
+  // what `promptFor()` sends to the agent, verbatim, and the task form files an entire textarea into
+  // it - so summarising in place would silently shorten the instruction the fleet is working from.
+  // This column is written by the controller and read by nothing but the UI, which renders
+  // `title_summary` where there is one and `title` where there is not.
+  //
+  // ⚠️ Nullable, with no default and no backfill. A task that has never been summarised is not a
+  // broken row, it is an unsummarised one, and the renderer already has the right thing to show for
+  // it - the prompt itself.
+  (conn) => {
+    if (!hasColumn(conn, 'tasks', 'title_summary')) {
+      conn.exec('alter table tasks add column title_summary text;')
+    }
+  }
 ]
 
 /**
@@ -901,7 +937,7 @@ export const MIGRATION_COUNT = MIGRATIONS.length
  * would try to re-create every table.
  */
 export function versionBefore(fragment: string): number {
-  const index = MIGRATIONS.findIndex((sql) => sql.includes(fragment))
+  const index = MIGRATIONS.findIndex((m) => typeof m === 'string' && m.includes(fragment))
   if (index < 0) throw new Error(`no migration contains ${JSON.stringify(fragment)}`)
   return index
 }
@@ -968,11 +1004,12 @@ function migrate(conn: DatabaseSync): void {
     )
   }
   for (let v = current; v < MIGRATIONS.length; v++) {
-    const sql = MIGRATIONS[v]
-    if (!sql) continue
+    const migration = MIGRATIONS[v]
+    if (!migration) continue
     conn.exec('begin')
     try {
-      conn.exec(sql)
+      if (typeof migration === 'string') conn.exec(migration)
+      else migration(conn)
       conn.exec(`pragma user_version = ${v + 1}`)
       conn.exec('commit')
       log.info(`migrated database to v${v + 1}`)

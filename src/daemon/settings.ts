@@ -63,6 +63,20 @@ export const DEFAULT_SETTINGS: Settings = {
   autoRunawayStop: false,
 
   /**
+   * Whether the controller may be asked to write a one-line label for a long task title.
+   *
+   * ⛔ Default **off**, on the same principle as `autoRunawayStop` and for a sharper reason: it is
+   * the only consult that spends a turn and changes nothing about what the fleet does. `title` *is*
+   * the prompt, so a summary is a display convenience, and a display convenience should not quietly
+   * put a controller turn on every task an operator files.
+   *
+   * ⚠️ On or off, the four questions the scheduler already asks carry a `summary` field and store one
+   * when the answer has it. This gates only the dedicated question. Turning it on trades one short
+   * turn per long task for a board that can be read at a glance.
+   */
+  summariseTitles: false,
+
+  /**
    * What finishing a task means when nothing more specific says otherwise.
    *
    * ⚠️ `agent-lands` matches what the project default has always effectively been, so this is not a

@@ -47,6 +47,7 @@ interface TaskRow {
   seq: number
   project_id: string | null
   title: string
+  title_summary: string | null
   kind: string
   status: string
   priority: string
@@ -120,6 +121,9 @@ function toTask(r: TaskRow, timing: ActiveTiming = ZERO_TIMING): Task {
     seq: r.seq,
     projectId: r.project_id,
     title: r.title,
+    // ⚠️ Null on every row written before migration 29, and on every task the controller has never
+    // been asked about. The renderer reads that as "show the title", not as missing data.
+    titleSummary: r.title_summary ?? null,
     kind: (r.kind as TaskKind) ?? 'work',
     status: r.status as TaskStatus,
     priority: r.priority as Priority,
@@ -840,6 +844,7 @@ export function updateTask(
     Pick<
       Task,
       | 'title'
+      | 'titleSummary'
       | 'priority'
       | 'projectId'
       | 'notBefore'
@@ -857,16 +862,35 @@ export function updateTask(
   > & { prompt?: string }
 ): Task {
   const current = requireTask(id)
+  const nextTitle = patch.title !== undefined ? patch.title.trim() || current.title : current.title
+  /**
+   * ⛔ **Rewriting the title drops the summary.** A label is a claim about a particular piece of
+   * text; once an operator edits that text the old one-line description is a statement about work
+   * nobody asked for any more, and a stale label is worse than none because the board still looks
+   * authoritative. Cleared rather than re-derived, because re-deriving costs a controller turn and
+   * the honest fallback - showing the new title - is already right.
+   *
+   * ⚠️ An explicit `titleSummary` in the same patch wins: that is the controller writing a label for
+   * a title it has just read, which is the one case where the two are in step.
+   */
+  const nextSummary =
+    patch.titleSummary !== undefined
+      ? patch.titleSummary?.trim() || null
+      : nextTitle === current.title
+        ? current.titleSummary
+        : null
   db()
     .prepare(
-      `update tasks set title = ?, priority = ?, project_id = ?, not_before = ?, deadline = ?,
+      `update tasks set title = ?, title_summary = ?, priority = ?, project_id = ?,
+                        not_before = ?, deadline = ?,
                         assignee_hint = ?, verification = ?, finish_policy = ?,
                         session_sharing = ?, completion_mode = ?, objective_json = ?, preemptible = ?,
                         est_tokens = ?, constraints_json = ?, updated_at = ?
         where id = ?`
     )
     .run(
-      patch.title !== undefined ? (patch.title.trim() || current.title) : current.title,
+      nextTitle,
+      nextSummary,
       patch.priority ?? current.priority,
       patch.projectId !== undefined ? patch.projectId : current.projectId,
       patch.notBefore !== undefined ? patch.notBefore : current.notBefore,

@@ -38,6 +38,7 @@ import {
   IN_FLIGHT,
   statusLabel,
   STATUS_TONE,
+  taskLabelShort,
   Working
 } from '../lib/taskview'
 
@@ -387,7 +388,7 @@ export function Tasks({
                     <td>
                       <span className="tbl-strong">
                         {task.lineageDepth > 0 && <span className="dim">{'└ '}</span>}
-                        {task.title.length > 70 ? `${task.title.slice(0, 70)}…` : task.title}
+                        {taskLabelShort(task)}
                       </span>
                       {task.branch && <div className="tbl-path mono">{task.branch}</div>}
                     </td>

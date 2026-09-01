@@ -435,6 +435,12 @@ function ConsultAnswerBody({
 
   const why = typeof answer.why === 'string' ? answer.why.trim() : null
   const note = typeof answer.note === 'string' ? answer.note.trim() : null
+  /**
+   * ⚠️ Shown for every kind, because every kind may carry one. Four of the five questions ask for a
+   * label alongside their real answer, and a person auditing a routing decision should be able to see
+   * that it also renamed a row — a change to the board that no other part of this panel would report.
+   */
+  const summary = typeof answer.summary === 'string' ? answer.summary.trim() : null
 
   switch (kind) {
     case 'decompose': {
@@ -445,6 +451,12 @@ function ConsultAnswerBody({
             <div className="consult-why-box" style={{ marginBottom: 'var(--sp-2)' }}>
               <div className="consult-why-title">Controller Planning Note</div>
               <div>{note}</div>
+            </div>
+          )}
+          {summary && (
+            <div className="consult-why-box" style={{ marginBottom: 'var(--sp-2)' }}>
+              <div className="consult-why-title">Task Label</div>
+              <div>&ldquo;{summary}&rdquo;</div>
             </div>
           )}
           <div className="side-label">
@@ -496,6 +508,11 @@ function ConsultAnswerBody({
             <div className="consult-why-title">Triage Action: {action.toUpperCase()}</div>
             {why && <div><strong>Rationale:</strong> {why}</div>}
             {model && <div style={{ marginTop: '4px' }}><strong>Target Model:</strong> <span className="mono">{model}</span></div>}
+          {summary && (
+            <div className="dim" style={{ marginTop: '4px' }}>
+              <strong>Task label:</strong> &ldquo;{summary}&rdquo;
+            </div>
+          )}
           </div>
           {prompt && (
             <div>
@@ -515,6 +532,11 @@ function ConsultAnswerBody({
           <div className="consult-why-title">Gate Verdict: {verdict.toUpperCase()}</div>
           {why && <div><strong>Rationale:</strong> {why}</div>}
           {title && <div style={{ marginTop: '4px' }}><strong>Rescoped Title:</strong> &ldquo;{title}&rdquo;</div>}
+        {summary && (
+          <div className="dim" style={{ marginTop: '4px' }}>
+            <strong>Task label:</strong> &ldquo;{summary}&rdquo;
+          </div>
+        )}
         </div>
       )
     }
@@ -526,6 +548,24 @@ function ConsultAnswerBody({
           <div className="consult-why-title">Routing Decision</div>
           {workerId && <div><strong>Selected Worker:</strong> <span className="mono">{workerId}</span></div>}
           {why && <div style={{ marginTop: '4px' }}><strong>Rationale:</strong> {why}</div>}
+        {summary && (
+          <div className="dim" style={{ marginTop: '4px' }}>
+            <strong>Task label:</strong> &ldquo;{summary}&rdquo;
+          </div>
+        )}
+        </div>
+      )
+    }
+
+    case 'title': {
+      return (
+        <div className="consult-why-box">
+          <div className="consult-why-title">Task Label</div>
+          {summary ? (
+            <div>&ldquo;{summary}&rdquo;</div>
+          ) : (
+            <div className="dim">No usable one-line label came back; the task still shows its prompt.</div>
+          )}
         </div>
       )
     }
@@ -536,7 +576,8 @@ const KIND_LABEL: Record<string, string> = {
   decompose: 'Break up',
   triage: 'Triage',
   gate: 'Gate',
-  route: 'Route'
+  route: 'Route',
+  title: 'Label'
 }
 
 const STATUS_TONE: Record<string, string> = {

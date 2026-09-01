@@ -49,7 +49,11 @@ const CONSULT_TTL_MS: Record<ConsultKind, number> = {
   gate: 10 * 60 * 1000,
   // ⚠️ Short on purpose: a task is sitting undispatched while this is open, and the deterministic
   // answer to a near-tie is already good.
-  route: 90 * 1000
+  route: 90 * 1000,
+  // ⚠️ Long, because nothing waits on it: the task dispatches, runs and finishes whether or not it is
+  // ever labelled. This is the one question that can afford to sit behind every question that is
+  // actually holding work up.
+  title: 30 * 60 * 1000
 }
 
 /** Do not re-ask the same question about the same subject inside this. */
@@ -57,7 +61,12 @@ const COOLDOWN_MS: Record<ConsultKind, number> = {
   decompose: 30 * 60 * 1000,
   triage: 30 * 60 * 1000,
   gate: 30 * 60 * 1000,
-  route: 5 * 60 * 1000
+  route: 5 * 60 * 1000,
+  // ⛔ A day, and the longest here by two orders of magnitude. The text being summarised does not
+  // change on its own, so re-asking buys a differently-worded label for the same turn — and this is
+  // the one kind where the sweep that files it would otherwise come back to the same task every tick
+  // forever, because a task the controller declined to label still looks unlabelled.
+  title: 24 * 60 * 60 * 1000
 }
 
 /** Fleet-wide. A controller that has answered twenty questions in an hour is in a loop, not working. */
@@ -99,7 +108,9 @@ function toConsult(r: ConsultRow): Consult {
     kind: r.kind as ConsultKind,
     subjectId: r.subject_id,
     subjectSeq: task?.seq ?? null,
-    subjectTitle: task?.title ?? null,
+    // ⚠️ The label where there is one. A list of judgment calls is exactly the place a paragraph of
+    // prompt is unreadable, and the full text is one click away on the task itself.
+    subjectTitle: task?.titleSummary ?? task?.title ?? null,
     status: r.status as ConsultStatus,
     question: r.question,
     detail: r.detail ?? null,

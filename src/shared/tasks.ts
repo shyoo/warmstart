@@ -247,7 +247,22 @@ export interface Task {
   /** Short human-facing number, stable and far easier to say out loud than a uuid. */
   seq: number
   projectId: string | null
+  /**
+   * ⛔ **This is the prompt.** `promptFor()` pushes it verbatim as the first part of what the agent
+   * is told, and the task-creation form files the whole textarea into it. So it is routinely a
+   * paragraph rather than a label, and nothing may overwrite it with something shorter for the sake
+   * of a table — a truncated title is a truncated instruction.
+   */
   title: string
+  /**
+   * A one-line label for `title`, written by the controller. Null until one exists.
+   *
+   * ⚠️ **Display only, and additive by construction.** Nothing in the prompt path reads it: the UI
+   * renders `titleSummary ?? title` wherever a task needs a name in a row, a header or a chip, and
+   * the thread still shows the full prompt as its first entry. That split is the whole feature — a
+   * readable board without losing a word of what the agent was actually asked.
+   */
+  titleSummary: string | null
   kind: TaskKind
   status: TaskStatus
   priority: Priority
@@ -829,8 +844,11 @@ export interface ReserveReport {
  *  - `gate`      — an agent filed a task at a controller gate: accept, rescope, reject, escalate. §7.2.
  *  - `route`     — two workers score within ε on an expensive task. The weakest of the four, and
  *                  gated hardest, because a tie means the alternatives are by definition close.
+ *  - `title`     — a task whose prompt is a paragraph gets a one-line label for the board. The only
+ *                  kind that changes nothing about what runs: it writes `titleSummary`, which
+ *                  nothing but the UI reads, so its fallback is to go on showing the prompt.
  */
-export type ConsultKind = 'decompose' | 'triage' | 'gate' | 'route'
+export type ConsultKind = 'decompose' | 'triage' | 'gate' | 'route' | 'title'
 
 export type ConsultStatus = 'pending' | 'answered' | 'fallback' | 'failed'
 

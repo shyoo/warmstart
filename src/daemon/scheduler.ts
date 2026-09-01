@@ -51,7 +51,9 @@ import {
   decomposeQuestion,
   routeDetail,
   routeQuestion,
+  titleQuestion,
   triageQuestion,
+  TITLE_SUMMARY_THRESHOLD,
   type RouteCandidate
 } from './judgment.js'
 import { escalateStale, voidApprovalsForSession } from './approvals.js'
@@ -325,6 +327,9 @@ export async function tick(): Promise<TickResult> {
   // reading beat the estimate the park was made on — see it for the failure that made it necessary.
   resumeQuotaPaused(quotaReleaseFor)
   escalateStale()
+  // ⛔ Free: writes at most one consult row and returns. Nothing below waits on it, and nothing it
+  // does changes what this tick dispatches.
+  askForTitle()
   // ⛔ Before dispatching anything: a window about to close, or a run past its estimate, is a cost
   // event that outranks starting new work.
   await runWatchdogs()
@@ -1144,6 +1149,32 @@ export function chooseTarget(task: Task): WorkerChoice {
     deferred: true,
     reason: 'asked the controller which worker; the top score is used if no answer arrives'
   }
+}
+
+/**
+ * Ask the controller to name one long task, where the operator has asked for that.
+ *
+ * ⛔ **One per tick, and only behind `summariseTitles`.** This is the only consult that spends a turn
+ * without changing what the fleet does, so it is opted into (settings.ts) and rationed: an install
+ * that switches it on with two hundred unlabelled tasks on the board queues them a tick at a time
+ * rather than commissioning two hundred questions at once. The 24-hour cooldown in `COOLDOWN_MS`
+ * stops any one task being asked about twice — including a task the controller declined to label,
+ * which would otherwise be picked up again on the very next tick, forever.
+ *
+ * ⚠️ Swept rather than fired at task creation, so turning the setting on labels the board an operator
+ * already has, not only what they file next. Finished work is skipped: a label is for a board still
+ * being read, and buying one for a task nobody will look at again is the purest waste available.
+ */
+function askForTitle(): void {
+  if (!settings().summariseTitles) return
+  const next = listTasks().find(
+    (t) =>
+      !t.titleSummary &&
+      t.title.length > TITLE_SUMMARY_THRESHOLD &&
+      !['completed', 'cancelled', 'failed'].includes(t.status)
+  )
+  if (!next) return
+  enqueueConsult({ kind: 'title', subjectId: next.id, question: titleQuestion(next) })
 }
 
 /**

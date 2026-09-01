@@ -250,3 +250,34 @@ export function workspacePathFor(
   }
   return sessions[0]?.cwd ?? null
 }
+
+/**
+ * What to call this task, wherever a task needs a name in a row, a header or a chip.
+ *
+ * ⛔ **`titleSummary ?? title`, in one place, because the fallback is the whole feature.** `title` is
+ * the prompt — `promptFor()` sends it to the agent verbatim, and the task form files an entire
+ * textarea into it — so a board of operator-written tasks is a board of paragraphs. The controller
+ * writes a one-line label into `titleSummary` when it has been asked something about the task
+ * anyway; most tasks never get one, and those are not broken rows, they are unlabelled ones. Showing
+ * the prompt is the right answer for them and always has been.
+ *
+ * ⚠️ **Never used where the prompt itself is the subject.** The task thread's first entry, the draft
+ * editor, and the prompt preview all show `title` in full and must go on doing so: this is a label
+ * for a table, and a label that quietly replaced the instruction being edited would lose a word of
+ * what the agent was actually asked.
+ */
+export function taskLabel(task: Pick<Task, 'title' | 'titleSummary'>): string {
+  return task.titleSummary ?? task.title
+}
+
+/**
+ * The same label, cut to fit a table cell.
+ *
+ * ⚠️ Truncation is the *second* line of defence and is expected to do nothing on a labelled task —
+ * `MAX_TITLE_SUMMARY` is 80, so a summary always fits. It still exists because an unlabelled task
+ * falls back to a prompt of any length at all, and a table has to hold its shape either way.
+ */
+export function taskLabelShort(task: Pick<Task, 'title' | 'titleSummary'>, max = 70): string {
+  const label = taskLabel(task)
+  return label.length > max ? `${label.slice(0, max)}…` : label
+}

@@ -14,6 +14,8 @@ import {
   projectWorkState,
   STATUS_TONE,
   statusLabel,
+  taskLabel,
+  taskLabelShort,
   workspacePathFor
 } from './taskview.js'
 import {
@@ -315,7 +317,40 @@ describe('project work state for left pane indicators', () => {
   })
 })
 
+/**
+ * What a task is called on screen.
+ *
+ * ⛔ **The fallback is the feature, not a safety net.** `title` is the prompt — the scheduler sends it
+ * to the agent verbatim — so most tasks have no label and never will, and drawing the prompt for them
+ * is the correct answer rather than a degraded one. These check that the summary wins where there is
+ * one, that the prompt wins where there is not, and that neither is ever rewritten on the way.
+ */
+describe('what a task is called on screen', () => {
+  it('prefers the label, and falls back to the prompt', () => {
+    expect(taskLabel({ title: 'a long prompt', titleSummary: 'a short label' })).toBe('a short label')
+    expect(taskLabel({ title: 'a long prompt', titleSummary: null })).toBe('a long prompt')
+  })
 
+  it('leaves a short prompt exactly as typed', () => {
+    // ⚠️ An unlabelled task under the truncation limit must come through untouched — no ellipsis, no
+    // trimming. This is the common case on every board that has never asked the controller anything.
+    expect(taskLabelShort({ title: 'Fix the router', titleSummary: null })).toBe('Fix the router')
+  })
+
+  it('cuts an unlabelled prompt to fit the row, and marks that it did', () => {
+    const long = 'x'.repeat(200)
+    const short = taskLabelShort({ title: long, titleSummary: null })
+    expect(short).toHaveLength(71)
+    expect(short.endsWith('…')).toBe(true)
+  })
+
+  it('does not truncate a label, because a label already fits', () => {
+    // ⚠️ `MAX_TITLE_SUMMARY` is 80 and the cell allows 70, so this is the one case where truncation
+    // could still bite. It bites the *label*, not the prompt, which is the right thing to shorten.
+    const label = 'y'.repeat(40)
+    expect(taskLabelShort({ title: 'x'.repeat(500), titleSummary: label })).toBe(label)
+  })
+})
 
 /**
  * ⛔ **"Took" is agent time now, and the two readings are not close.** The column used to be
