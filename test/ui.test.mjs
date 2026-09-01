@@ -11,6 +11,7 @@ import {
   electronBinary,
   freePort,
   killTree,
+  skip,
   startDeadline,
   section,
   summary,
@@ -45,7 +46,14 @@ const budget = startDeadline(10 * 60 * 1000, 'ui', () => killTree(app?.pid, 'ele
 let socket = null
 
 try {
-  const env = { ...process.env, MULTI_AGENT_CONTROLLER_DATA_DIR: dataDir }
+  // ⛔ **Driven, not displayed.** The window is created and the renderer runs in full — that is what
+  // this suite reads back — but it is never shown, so a suite that takes two minutes does not throw
+  // a window over the operator's work and steal the focus on the machine it is running on.
+  const env = {
+    ...process.env,
+    MULTI_AGENT_CONTROLLER_DATA_DIR: dataDir,
+    MULTI_AGENT_CONTROLLER_HEADLESS: '1'
+  }
   delete env.ELECTRON_RUN_AS_NODE
   app = spawn(electronBinary(), [REPO, `--remote-debugging-port=${PORT}`], {
     env,
@@ -151,6 +159,7 @@ try {
   // ⛔ Before anything else: this suite drives `out/` and does not build it.
   section('shell')
   checkBuildIsCurrent()
+
   await waitFor(() => evaluate('!!document.querySelector(".statusbar")'), 'the shell to render')
   // ⚠️ Polled, not read once. The shell renders before the daemon has finished starting, so a bare
   // read here asserts "the daemon connected *within the time this machine took to paint*" - true on
@@ -159,6 +168,42 @@ try {
   // a second failure reading `orchestratord is not connected`.
   const connected = await until(() => evaluate('!!document.querySelector(".dot--ok")'))
   check('the daemon connected', connected, connected ? '' : 'no .dot--ok within 30s')
+
+  /*
+   * ⛔ **Driven, never displayed.** Asked of the OS, and asked *here* — after the shell has rendered
+   * and the daemon has connected, which is long past both of `createWindow`'s show paths, so a
+   * window that was going to appear has appeared by now.
+   *
+   * ⚠️ **Not `document.visibilityState`.** Measured 2026-09-01: a window created `show: false` and
+   * never shown still reports `visible` to its own renderer — Chromium was never told it was
+   * hidden, because no hide ever happened. The page cannot see this property; only the window
+   * manager can. `MainWindowHandle` is the first *visible* top-level window of a process, so it is
+   * `0` for a window that exists, is being driven, and has never been put on a screen: measured 0
+   * headless against a real handle without the flag, on this machine, the same day.
+   */
+  if (process.platform === 'win32') {
+    const handle = execFileSync(
+      'powershell.exe',
+      ['-NoProfile', '-Command', `(Get-Process -Id ${app.pid} -ErrorAction SilentlyContinue).MainWindowHandle`],
+      { encoding: 'utf8' }
+    ).trim()
+    const hidden = handle === '0' || handle === ''
+    check(
+      'the app under test never opens a window on the operator’s screen',
+      hidden,
+      hidden
+        ? 'MainWindowHandle 0 - a window driven over DevTools, and nobody has to look at it'
+        : `MainWindowHandle ${handle}: a real window is on screen, so MULTI_AGENT_CONTROLLER_HEADLESS is not being honoured`
+    )
+  } else {
+    // ⚠️ A capability of the machine, per `skip`'s rule: there is no equivalent one-liner for "does
+    // this process own a mapped window" on macOS or on a Linux runner, and CI has no display for one
+    // to be mapped to in the first place. The flag is set identically on every platform.
+    skip(
+      'the app under test never opens a window on the operator’s screen',
+      `no window-manager query on ${process.platform}`
+    )
+  }
   const nav = await evaluate('[...document.querySelectorAll(".nav-item")].map(b => b.innerText.trim())')
   // ⛔ Named, not counted. The sidebar is now Overview (Dashboard, Controller) / one item per project / History (Conversations, Logs) / Settings (Workers, Global), so a count
   // says nothing: it moves whenever a project is added, and it passed all the way through the

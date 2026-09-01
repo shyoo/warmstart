@@ -42,6 +42,25 @@ let tray: Tray | null = null
  */
 let quitting = false
 
+/**
+ * ⛔ **A window the test suite drives but nobody looks at.**
+ *
+ * L3 runs the real app over the DevTools protocol, which is the whole point of it — a hidden window
+ * still loads the renderer, still runs React, and still computes layout, so `innerText` and
+ * `getBoundingClientRect` answer exactly as they do on screen. What it must *not* do is open a
+ * 1440x900 window on the operator's desktop and take the focus off whatever they were typing into,
+ * several times per suite, on a machine that is also running agents.
+ *
+ * ⚠️ **Read once, at the show sites only.** Nothing else about the app changes: the daemon starts,
+ * the IPC is wired, the tray setting is honoured. A headless mode that also skipped work would be
+ * testing a different application from the one that ships.
+ *
+ * ⛔ Never `app.isPackaged`-derived or NODE_ENV-derived. `npm run dev` must open a window, and the
+ * packaging suite launches the *packaged* binary, so the only thing that can distinguish a test run
+ * is the test saying so.
+ */
+const headless = process.env.MULTI_AGENT_CONTROLLER_HEADLESS === '1'
+
 // Electron's default userData is `<appdata>/multi_agent_controller`, which is exactly where the fleet database
 // lives - so Chromium's caches would sit next to it, and anyone clearing a cache directory could
 // take the fleet with it. Give the UI its own subdirectory. Must run before `app.whenReady`.
@@ -120,6 +139,9 @@ function showWindow(): void {
     createWindow()
     return
   }
+  // ⚠️ Headless: the window exists and is driven, so "show it" is honoured as far as it can be —
+  // everything except putting it on the screen and taking the focus.
+  if (headless) return
   if (win.isMinimized()) win.restore()
   win.show()
   win.focus()
@@ -231,11 +253,13 @@ function createWindow(): BrowserWindow {
     }
   })
 
-  win.once('ready-to-show', () => win.show())
-  // Fallback: ensure the window is shown if ready-to-show is delayed or missed
-  setTimeout(() => {
-    if (!win.isDestroyed() && !win.isVisible()) win.show()
-  }, 500)
+  if (!headless) {
+    win.once('ready-to-show', () => win.show())
+    // Fallback: ensure the window is shown if ready-to-show is delayed or missed
+    setTimeout(() => {
+      if (!win.isDestroyed() && !win.isVisible()) win.show()
+    }, 500)
+  }
 
   // ⛔ Capture the WebContents now; do not read `win.webContents` from the `closed` handler.
   //

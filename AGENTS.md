@@ -416,6 +416,17 @@ costmodels/             versioned pricing data
   fresh build silently tests code that is no longer in the tree **and reports a confident pass for
   it** — three times on 2026-08-27. `checkBuildIsCurrent()` and the pack suite's asar check refuse
   instead. ⚠️ When you add a guard like that, watch it go red before you trust it green.
+- ⛔ **A suite may drive a window; it may not put one on the operator's screen.** `test:ui` and
+  `test:pack` set `MULTI_AGENT_CONTROLLER_HEADLESS=1`, and `createWindow` honours it by skipping
+  both of its `show()` paths — the window is created, the renderer loads, React runs, Blink lays
+  out, and every `innerText` and `getBoundingClientRect` this suite reads answers exactly as it does
+  on screen. What stops is a 1440x900 window taking the focus off whatever the operator was typing
+  into, several times a run, on a machine that is also running agents. ⚠️ **Do not assert this with
+  `document.visibilityState`**: a window created `show: false` and never shown reports `visible` to
+  its own renderer, because nothing ever hid it (measured 2026-09-01). Only the window manager can
+  answer, which is why the check asks the OS for `MainWindowHandle` and skips where there is no
+  equivalent one-liner. ⚠️ The flag is set by the suites, never derived from `app.isPackaged` or
+  `NODE_ENV` — `npm run dev` and `build-win.ps1 -Restart` must still open a window.
 - ⛔ **Two agents run these suites at once, so a suite that cannot run twice at once is a bug in the
   suite.** `test/ui.test.mjs` held a hard-coded debugging port until 2026-08-29: four runs started
   inside three and a half minutes, and because the suite asked *the port* for a page rather than

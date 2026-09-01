@@ -266,7 +266,13 @@ try {
   // did not launch orchestratord", with the reason - printed by the app to stderr - thrown away.
   // A check that cannot say why it failed costs a CI round trip every time it goes red.
   const appOutput = []
-  const env = { ...process.env, MULTI_AGENT_CONTROLLER_DATA_DIR: dataDir }
+  // ⛔ Headless here too. This suite only asks whether the packaged app boots its daemon; it never
+  // reads the window, so there is nothing a visible one would prove.
+  const env = {
+    ...process.env,
+    MULTI_AGENT_CONTROLLER_DATA_DIR: dataDir,
+    MULTI_AGENT_CONTROLLER_HEADLESS: '1'
+  }
   delete env.ELECTRON_RUN_AS_NODE
   app = spawn(binary, [], {
     env,
