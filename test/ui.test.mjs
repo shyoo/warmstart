@@ -379,14 +379,22 @@ try {
     'a routing mistake is invisible until this column exists'
   )
   // ⚠️ `ready` reads as a resting state beside `completed` and `failed` — as though the person who
-  // filed the task were the one being waited on. They are not: it is queued, and this says so.
+  // filed the task were the one being waited on. It is in the queue, and its status says so.
   check(
     'a queued task shows that it is queued, not that it is finished',
     await evaluate(
       `[...document.querySelectorAll('.tbl tbody tr')].some(
-         r => /ready|dispatching|running/i.test(r.innerText) && r.querySelector('.working'))`
+         r => /ready|dispatching|queued/i.test(r.innerText))`
     ),
-    'the dots are the only thing separating "waiting for the fleet" from "waiting for you"'
+    'the task is in the queue rather than completed or failed'
+  )
+  check(
+    'a queued task does not show animated working dots when not running',
+    await evaluate(
+      `![...document.querySelectorAll('.tbl tbody tr')].some(
+         r => /ready|queued/i.test(r.innerText) && r.querySelector('.working'))`
+    ),
+    'the animated dots only appear when an agent is actively running'
   )
 
   // A tick with nothing dispatchable, driven rather than waited for. The one worker this suite

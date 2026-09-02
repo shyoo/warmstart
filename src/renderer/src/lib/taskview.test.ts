@@ -16,6 +16,7 @@ import {
   chronologicalRuns,
   elapsed,
   holdLine,
+  isWorking,
   modelLine,
   projectWorkState,
   STATUS_TONE,
@@ -24,6 +25,7 @@ import {
   CANCELLABLE,
   taskLabel,
   taskLabelShort,
+  WORKING_STATUSES,
   workspacePathFor,
   type Routed
 } from './taskview.js'
@@ -188,6 +190,34 @@ describe('task status tone mapping', () => {
       .filter(([, tone]) => tone === 'state-ok')
       .map(([status]) => status)
     expect(okStatuses).toEqual(['completed'])
+  })
+})
+
+describe('isWorking', () => {
+  it('returns true only for running tasks', () => {
+    expect(isWorking({ status: 'running' })).toBe(true)
+    expect(WORKING_STATUSES.has('running')).toBe(true)
+  })
+
+  it('returns false for queued, ready, scheduled, and resting tasks', () => {
+    const nonWorking: TaskStatus[] = [
+      'ready',
+      'scheduled',
+      'assigned',
+      'cancelling',
+      'blocked',
+      'draft',
+      'awaiting_human',
+      'paused_user',
+      'paused_quota',
+      'completed',
+      'failed',
+      'cancelled'
+    ]
+    for (const status of nonWorking) {
+      expect(isWorking({ status }), status).toBe(false)
+      expect(WORKING_STATUSES.has(status), status).toBe(false)
+    }
   })
 })
 

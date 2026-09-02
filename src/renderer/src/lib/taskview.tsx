@@ -83,13 +83,16 @@ export function holdLine(
   return `${task.holdReason} — earliest retry in ${duration(left)}`
 }
 
+/** Statuses where an agent is actively executing work. */
+export const WORKING_STATUSES = new Set(['running'])
+
+export function isWorking(task: Pick<Task, 'status'>): boolean {
+  return task.status === 'running'
+}
+
 /**
  * Statuses where something is happening and the next change arrives on its own.
- *
- * ⚠️ `ready` is in here, and that is the whole point of the list. A freshly filed task sits at
- * `ready` for up to one scheduler tick before anything moves, and rendered as a flat word beside
- * `completed` and `failed` it reads as a resting state — as though the operator were the one being
- * waited on. They are not: it is queued, and the dots say so.
+ * Used for project work state tracking.
  */
 export const IN_FLIGHT = new Set(['ready', 'scheduled', 'assigned', 'running', 'cancelling'])
 
@@ -166,7 +169,7 @@ export function ProjectDot({ state }: { state: ProjectWorkState }): React.JSX.El
   return <span className={`project-dot project-dot--${state}`} title={title} aria-label={title} />
 }
 
-/** Three dots that say the fleet is doing something, for a row whose next event arrives by itself. */
+/** Three dots that indicate an agent is actively working on a task. */
 export function Working(): React.JSX.Element {
   return (
     <span className="working" aria-hidden>

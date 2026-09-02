@@ -39,7 +39,7 @@ import {
   CANCELLABLE,
   dependencyTooltip,
   holdLine,
-  IN_FLIGHT,
+  isWorking,
   modelLine,
   statusLabel,
   STATUS_TONE,
@@ -463,7 +463,7 @@ export function Tasks({
                     <td>
                       <span className={`status ${STATUS_TONE[task.status] ?? ''}`}>
                         {statusLabel(task)}
-                        {IN_FLIGHT.has(task.status) && <Working />}
+                        {isWorking(task) && <Working />}
                       </span>
                     </td>
                     <td className="tbl-action-cell" onClick={(e) => e.stopPropagation()}>

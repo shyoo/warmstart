@@ -43,7 +43,7 @@ import {
   chronologicalRuns,
   elapsed,
   holdLine,
-  IN_FLIGHT,
+  isWorking,
   statusLabel,
   STATUS_TONE,
   STOPPABLE,
@@ -419,7 +419,7 @@ function TaskDetail({
                       <span className="dep-title">{taskLabel(dep)}</span>
                       <span className={`status ${STATUS_TONE[dep.status] ?? ''}`}>
                         {statusLabel(dep)}
-                        {IN_FLIGHT.has(dep.status) && <Working />}
+                        {isWorking(dep) && <Working />}
                       </span>
                     </button>
                   ))}
@@ -531,7 +531,7 @@ function TaskDetail({
             <Fact label="status">
               <span className={`status ${STATUS_TONE[task.status] ?? ''}`}>
                 {statusLabel(task)}
-                {IN_FLIGHT.has(task.status) && <Working />}
+                {isWorking(task) && <Working />}
               </span>
               {/* ⛔ `awaiting_human` excluded — that status already offers Stop via `Decide`,
                   alongside the other resolutions a human can make, so this would be a second

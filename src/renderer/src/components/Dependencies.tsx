@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { Task } from '@shared/tasks'
 import { rpc } from '../lib/daemon'
-import { IN_FLIGHT, statusLabel, STATUS_TONE, taskLabel, Working } from '../lib/taskview'
+import { isWorking, statusLabel, STATUS_TONE, taskLabel, Working } from '../lib/taskview'
 import { SettingButtonSelect, type SettingOption } from './SettingButtonSelect'
 
 /**
@@ -141,7 +141,7 @@ export function DependencyList({
               <span className="dep-title">{taskLabel(dep)}</span>
               <span className={`status ${STATUS_TONE[dep.status] ?? ''}`}>
                 {statusLabel(dep)}
-                {IN_FLIGHT.has(dep.status) && <Working />}
+                {isWorking(dep) && <Working />}
               </span>
             </button>
             {onRemove && (
