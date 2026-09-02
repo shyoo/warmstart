@@ -18,6 +18,7 @@ import {
   resolveSessionSharing
 } from '@shared/tasks'
 import type { ModelOptions, Settings } from '@shared/protocol'
+import { ImageChips, usePastedImages } from '../lib/pasteimages.js'
 import { rpc, useActivity, useDaemonEvents, useNow, type FleetEntry } from '../lib/daemon'
 import { isSubmitKey, useUiSettings } from '../lib/uisettings'
 import { DependencyChooser, useTaskCandidates } from './Dependencies'
@@ -645,6 +646,9 @@ function NewTask({
   const [effort, setEffort] = useState('')
   const [saving, setSaving] = useState<'draft' | 'ready' | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  // ⚠️ Uploaded the moment they are pasted, so what the form carries is a list of ids. See
+  // `usePastedImages`.
+  const paste = usePastedImages()
 
   /**
    * Auto-size the prompt textarea dynamically to fit its contents as text is entered or removed.
@@ -724,6 +728,8 @@ function NewTask({
         await rpc('task.create', {
           title: title.trim(),
           projectId: projectId || null,
+          // ⚠️ Absent, not empty, like every other optional field on this call.
+          ...(paste.ids.length > 0 ? { attachmentIds: paste.ids } : {}),
           priority,
           finishPolicy,
           sessionSharing,
@@ -747,6 +753,7 @@ function NewTask({
       }
       setTitle('')
       setDependsOn([])
+      paste.clear()
       await onDone()
     } catch (err) {
       onError(err instanceof Error ? err.message : String(err))
@@ -959,6 +966,9 @@ function NewTask({
               : 'Describe the work as you would to a colleague'
           }
           onChange={(e) => setTitle(e.target.value)}
+          onPaste={paste.onPaste}
+          onDrop={paste.onDrop}
+          onDragOver={paste.onDragOver}
           onKeyDown={(e) => {
             if (isSubmitKey(e, uiSettings.enterBehavior) && title.trim() && !saving) {
               e.preventDefault()
@@ -966,6 +976,7 @@ function NewTask({
             }
           }}
         />
+        <ImageChips paste={paste} />
         <div className="ask-foot">
           <span className="ask-hint">
             {plan

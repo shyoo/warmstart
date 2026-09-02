@@ -99,7 +99,8 @@ contenders rather than letting them collide.
 
 **Task** — *a thread of work with an assignee*, not just a prompt. Carries a multimodal message
 thread, priority, deadline, dependencies (a DAG), a schedule (`not_before`), resource requirements,
-constraints, a verification policy, and a status.
+constraints, a verification policy, and a status. ⭐ *Multimodal* stopped being aspirational on
+2026-09-01 — see **Attachment**.
 
 **Title, and title summary** — ⛔ **A task's title *is* its prompt.** `promptFor()` sends it to the
 agent verbatim and the New Task form files the whole textarea into it, so a title is routinely a
@@ -127,6 +128,30 @@ cycle found by the scheduler is a deadlock. ⚠️ A task already **running** is
 edge applies to its next dispatch, and the thread says which of the two happened. ⚠️ Only `completed`
 releases a dependent, so the picker never offers a `cancelled` or `failed` task; a `completed` one it
 does, because an edge satisfied the moment it is drawn is an ordinary thing to want to record.
+
+**Attachment** — *an image on a message*, with its bytes on disk and its row in sqlite
+(**migration 31**). Pasted or dropped into the New Task form or a thread note, downscaled by the
+renderer to **1568px** on the longest edge before a byte leaves it, and stored under
+`<dataDir>/attachments/<taskId>/`. ⛔ **Belongs to a message, not to a task**, which is what decides
+when it travels: `promptFor` already computes which messages are outstanding, and the attachments of
+those same messages are what rides with that prompt. Any other rule either replays a screenshot on
+every run of a long task or drops it on the fresh session a preemption starts. ⛔ **Never trusted on
+its label** — the magic number of the bytes decides what it is, because the file written is one an
+agent is separately told by name to open. An upload whose form was abandoned is collected by
+`prunePending`; see **Image input** for how the bytes actually reach each CLI.
+
+**Image input** — *how a CLI can be handed an image, if at all*, declared per adapter as
+`imageInput: 'inline' | 'spawn-flag' | 'none'`. ⛔ **Not a boolean, because the answer is not
+yes/no.** Claude Code takes a base64 block in the stream envelope it is already sent (`inline`);
+codex has no stdin channel at all and takes `-i <file>` on the process that runs the turn
+(`spawn-flag`, so **initial prompt only**); Antigravity takes none — and does not ignore an image
+block but **fails the entire turn** on one, `num_turns: 0`, measured 2026-08-31. That last fact is
+why this is a gate in `sendPrompt` rather than a courtesy each adapter keeps for itself: a run that
+died that way would read as the agent having failed the task. ⚠️ It replaced `multimodalInput`,
+which was `true` on all three built-ins, read by nothing, and wrong about one of them. ⛔ **The
+absolute path goes into the prompt text on every adapter regardless** — ~20 tokens, all three read a
+PNG off disk with their own view tool, and on Antigravity it is not a fallback but the only channel
+there is.
 
 **Thread** — *a task's messages*, human and agent, in the order they were said. ⛔ **Not a
 conversation.** A conversation is the agent's own session — it has a vendor id, you resume it with

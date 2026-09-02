@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto'
 import { createRequire } from 'node:module'
 import type { DaemonEvent, Session } from '@shared/protocol.js'
 import { acquireLock, clearEndpoint, publishEndpoint, releaseLock } from './lock.js'
+import { prunePending } from './attachments.js'
 import { closeDb, openDb } from './db.js'
 import { loadCostModels } from './costmodel.js'
 import { logCostFactors } from './estimator.js'
@@ -74,6 +75,11 @@ async function main(): Promise<void> {
   reconcileClaims()
   reconcileTasks()
   reconcileConsults()
+  // ⛔ An image pasted into a form that was never submitted is a file nobody will ever delete, and
+  // these are megabytes each. Once at startup and once a day thereafter; only ever unbound rows.
+  prunePending()
+  const attachmentSweep = setInterval(() => prunePending(), 24 * 60 * 60 * 1000)
+  attachmentSweep.unref()
 
   const token = randomBytes(32).toString('hex')
   const server: DaemonServer = await startServer(token, { version: VERSION, startedAt })

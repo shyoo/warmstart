@@ -49,7 +49,7 @@ const info: AdapterInfo = {
     forkSession: false,
     nativeWorktree: false,
     // Text only through the API. Multimodal would require vision model + base64 encoding.
-    multimodalInput: false,
+    imageInput: 'none',
     // ⛔ Tools are handled by the bridge script's OpenAI function-calling integration, not by MCP.
     // The bridge registers `task_complete` and `ask_human` as OpenAI-format tool definitions and
     // translates the calls to stream events. The daemon handles them from there.

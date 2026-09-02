@@ -66,7 +66,9 @@ function capabilitiesFrom(file: ExternalAdapterFile): AdapterInfo['capabilities'
     resumeSession: declared.resumeSession ?? false,
     forkSession: declared.forkSession ?? false,
     nativeWorktree: declared.nativeWorktree ?? false,
-    multimodalInput: declared.multimodalInput ?? false,
+    // ⛔ `none` by default. A declarative adapter that has not said otherwise must not be sent
+    // bytes that could kill its turn — see antigravity, which is what that failure looks like.
+    imageInput: declared.imageInput ?? 'none',
     // ⛔ Not negotiable from a config file. agentyard's MCP server carries a per-session identity, and
     // a declarative adapter has no way to pass one - a session that believed it could call
     // `task_complete` and could not would finish and report nothing, which looks like a hang.

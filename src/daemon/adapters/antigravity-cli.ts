@@ -159,7 +159,17 @@ const info: AdapterInfo = {
     resumeSession: true,
     forkSession: false,
     nativeWorktree: false,
-    multimodalInput: true,
+    /**
+     * ⛔ `none`, and this is a measurement rather than caution. Sent the same base64 image block
+     * Claude Code accepts, agy 1.1.22 answered `"status":"ERROR","num_turns":0,"error":"stream
+     * input content block type \"image\" is not supported (only \"text\")"` — 2026-08-31. It does
+     * not drop the image, it **fails the whole turn**, and a run that died that way would read as
+     * this agent having failed the task.
+     *
+     * ⚠️ It reads a PNG off disk perfectly well with its own `view_file` tool, measured the same
+     * day on the same image. That is why the file path travels in the prompt text regardless.
+     */
+    imageInput: 'none',
     // `agy mcp add|remove|list|enable|disable`. ⚠️ Registered globally rather than per session, so
     // agentyard does not use it: one shared registration cannot carry a per-session identity, and
     // MULTI_AGENT_CONTROLLER_SESSION_ID is how the MCP server knows who it is speaking for.

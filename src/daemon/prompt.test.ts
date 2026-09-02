@@ -36,6 +36,16 @@ afterAll(() => {
   }
 })
 
+/**
+ * The prompt *text*, which is what every assertion below is about.
+ *
+ * ⚠️ `promptFor` returns text and attachments together, because the bytes of an image travel by
+ * a route the sentence cannot express. The one test that cares about that half calls the real
+ * function; everything else is about words.
+ */
+const promptText = (...args: Parameters<typeof scheduler.promptFor>): string =>
+  scheduler.promptFor(...args).text
+
 describe('promptFor prompt construction', () => {
   it('builds prompt for an MCP adapter with task_complete instruction', () => {
     const task = tasks.createTask({
@@ -44,7 +54,7 @@ describe('promptFor prompt construction', () => {
       status: 'ready'
     })
 
-    const prompt = scheduler.promptFor(task, 'claude-code', false, { markDelivered: false })
+    const prompt = promptText(task, 'claude-code', false, { markDelivered: false })
     expect(prompt).toContain('Fix issue with login')
     expect(prompt).toContain('Please inspect auth.ts and fix the login redirect.')
     expect(prompt).toContain('call the MCP tool `task_complete` with a one-line summary')
@@ -53,7 +63,7 @@ describe('promptFor prompt construction', () => {
 
   it('tells an autonomous agent to run to the end', () => {
     const task = tasks.createTask({ title: 'Autonomous by default', status: 'ready' })
-    const prompt = scheduler.promptFor(task, 'claude-code', false, { markDelivered: false })
+    const prompt = promptText(task, 'claude-code', false, { markDelivered: false })
     // ⛔ The fleet default, and the premise of the tool: unattended progress across quota
     // windows hours long. A default of `checkpointed` would need a person present for every task.
     expect(prompt).toContain('Work to the end without stopping between phases')
@@ -63,7 +73,7 @@ describe('promptFor prompt construction', () => {
   it('tells a checkpointed agent to stop at each phase, and still to ask when it must', () => {
     const task = tasks.createTask({ title: 'Steer this one', status: 'ready' })
     tasks.updateTask(task.id, { completionMode: 'checkpointed' })
-    const prompt = scheduler.promptFor(tasks.requireTask(task.id), 'claude-code', false, {
+    const prompt = promptText(tasks.requireTask(task.id), 'claude-code', false, {
       markDelivered: false
     })
     expect(prompt).toContain('call the MCP tool `checkpoint`')
@@ -79,7 +89,7 @@ describe('promptFor prompt construction', () => {
     // The instruction was composed and could not be sent. For a `streamPrompts: 'once'` adapter the
     // prompt is the only place it can arrive.
     const task = tasks.createTask({ title: 'One-shot landing', status: 'ready' })
-    const prompt = scheduler.promptFor(task, 'openai-compatible', false, { markDelivered: false })
+    const prompt = promptText(task, 'openai-compatible', false, { markDelivered: false })
     expect(prompt).toContain('You get one turn and no follow-up')
     expect(prompt).toContain('Commit everything you change')
     // ⛔ `DEFAULT_FINISH_INSTRUCTION` is "Run /commit", a Claude Code project skill. Sending
@@ -123,7 +133,7 @@ describe('promptFor prompt construction', () => {
     )
     const project = projects.addProject({ root })
     const task = tasks.createTask({ title: 'Not custom', status: 'ready', projectId: project.id })
-    const prompt = scheduler.promptFor(task, 'openai-compatible', false, { markDelivered: false })
+    const prompt = promptText(task, 'openai-compatible', false, { markDelivered: false })
     expect(prompt).not.toContain('/commit')
     expect(prompt).toContain('Do not push')
 
@@ -136,7 +146,7 @@ describe('promptFor prompt construction', () => {
     // ⚠️ The other half of the same gate: under `custom` the field *is* the operator's own words,
     // and it is honoured verbatim — slash command and all. Choosing `custom` is choosing to own it.
     tasks.updateTask(task.id, { finishPolicy: 'custom' })
-    const own = scheduler.promptFor(tasks.requireTask(task.id), 'openai-compatible', false, {
+    const own = promptText(tasks.requireTask(task.id), 'openai-compatible', false, {
       markDelivered: false
     })
     expect(own).toContain('Run /commit and follow every one of its six steps.')
@@ -146,7 +156,7 @@ describe('promptFor prompt construction', () => {
     // ⚠️ Narrow on purpose: a `conversation` adapter may still be reachable after its turn,
     // and whether Antigravity's print-mode process outlives one has not been measured.
     const task = tasks.createTask({ title: 'Conversational', status: 'ready' })
-    const prompt = scheduler.promptFor(task, 'antigravity-cli', false, { markDelivered: false })
+    const prompt = promptText(task, 'antigravity-cli', false, { markDelivered: false })
     expect(prompt).not.toContain('You get one turn and no follow-up')
   })
 
@@ -157,7 +167,7 @@ describe('promptFor prompt construction', () => {
       status: 'ready'
     })
 
-    const prompt = scheduler.promptFor(task, 'antigravity-cli', false, { markDelivered: false })
+    const prompt = promptText(task, 'antigravity-cli', false, { markDelivered: false })
     expect(prompt).toContain('Update readme')
     expect(prompt).toContain('Add install instructions to README.md')
     expect(prompt).toContain('commit what you have and end with a one-line summary of what changed')
@@ -181,7 +191,7 @@ describe('promptFor prompt construction', () => {
     tasks.setTaskHandoff(task.id, 'Stashed partial work in stash@{0}. Completed table schema.')
 
     const refreshed = tasks.requireTask(task.id)
-    const prompt = scheduler.promptFor(refreshed, 'claude-code', false, { markDelivered: false })
+    const prompt = promptText(refreshed, 'claude-code', false, { markDelivered: false })
     expect(prompt).toContain('Continuing earlier work. Handoff from the previous session:')
     expect(prompt).toContain('Stashed partial work in stash@{0}. Completed table schema.')
     expect(prompt).toContain('Migrate to v18')
@@ -196,7 +206,7 @@ describe('promptFor prompt construction', () => {
     })
 
     const notice = '⚠️ This workspace has moved since your last turn: it was on `feat-old` and is now on `feat-new`.'
-    const prompt = scheduler.promptFor(task, 'claude-code', false, {
+    const prompt = promptText(task, 'claude-code', false, {
       branchNotice: notice,
       markDelivered: false
     })
@@ -216,7 +226,7 @@ describe('promptFor prompt construction', () => {
     tasks.markDelivered(msgs.map((m) => m.id))
 
     // Resumed conversation with no new undelivered notes
-    const resumedPrompt = scheduler.promptFor(task, 'claude-code', true, { markDelivered: false })
+    const resumedPrompt = promptText(task, 'claude-code', true, { markDelivered: false })
     expect(resumedPrompt).not.toContain('Do something long and involved')
     expect(resumedPrompt).toContain('call the MCP tool `task_complete`')
   })
@@ -230,7 +240,7 @@ describe('run prompt persistence and task.get preview', () => {
       status: 'ready'
     })
 
-    const expectedPrompt = scheduler.promptFor(task, 'claude-code', false, { markDelivered: true })
+    const expectedPrompt = promptText(task, 'claude-code', false, { markDelivered: true })
     const run = tasks.startRun({
       taskId: task.id,
       workerId: claude.id,
@@ -314,11 +324,11 @@ describe('run prompt persistence and task.get preview', () => {
     const task = tasks.createTask({ title: 'Add feature', status: 'ready', projectId: project.id })
 
     // Antigravity (non-MCP) prompt
-    const agyPrompt = scheduler.promptFor(task, 'antigravity-cli', false, { markDelivered: false })
+    const agyPrompt = promptText(task, 'antigravity-cli', false, { markDelivered: false })
     expect(agyPrompt).toContain("run this project's checks (`npm run typecheck`, `npm run lint`) and ensure they pass cleanly")
 
     // Claude (MCP) prompt
-    const claudePrompt = scheduler.promptFor(task, 'claude-code', false, { markDelivered: false })
+    const claudePrompt = promptText(task, 'claude-code', false, { markDelivered: false })
     expect(claudePrompt).toContain("run this project's checks (`npm run typecheck`, `npm run lint`) and ensure they pass")
   })
 
@@ -368,5 +378,101 @@ describe('run prompt persistence and task.get preview', () => {
       role: 'system',
       text: 'Retry landing failed: not a git project'
     })
+  })
+})
+
+/**
+ * An image travels with the message it was pasted onto, and travels exactly when that message does.
+ *
+ * ⛔ Any other rule is wrong in one of two expensive directions: replay it on every run of a long
+ * task and it is paid for each time; drop it on the fresh session a preemption starts and the agent
+ * is handed the original prompt with the picture missing from it.
+ */
+describe('an attachment and the message it belongs to', () => {
+  let attachments: typeof import('./attachments.js')
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    'base64'
+  )
+
+  beforeAll(async () => {
+    attachments = await import('./attachments.js')
+  })
+
+  const withImage = (title: string) => {
+    const image = attachments.createAttachment(png, 'image/png', { width: 1, height: 1 })
+    const task = tasks.createTask({ title, status: 'ready', attachmentIds: [image.id] })
+    return { task, image: attachments.requireAttachment(image.id) }
+  }
+
+  it('goes out with the first prompt, and names its absolute path in the text', () => {
+    const { task, image } = withImage('Make the header match this')
+    const built = scheduler.promptFor(task, 'claude-code', false, { markDelivered: false })
+    expect(built.attachments.map((a) => a.id)).toEqual([image.id])
+    // ⛔ On every adapter, including the one that also gets the bytes. All three read a PNG off
+    // disk with their own view tool, and this is what rescues a run whose inline block a vendor
+    // update quietly stopped accepting.
+    expect(built.text).toContain(image.file)
+    expect(built.text).toContain('Attached image:')
+  })
+
+  it('names the path to antigravity too, which is the only channel it has', () => {
+    const { task, image } = withImage('Match this on agy')
+    const built = scheduler.promptFor(task, 'antigravity-cli', false, { markDelivered: false })
+    expect(built.text).toContain(image.file)
+    expect(built.attachments).toHaveLength(1)
+  })
+
+  /**
+   * ⛔ Into a conversation that already has the picture in its own history. `resumed` is the flag
+   * that says so, and it is the same flag that stops the task's prompt being restated — an agent
+   * asked to look at an image it is already holding is being charged twice for one screenshot.
+   */
+  it('does not travel again into the conversation that already has it', () => {
+    const { task } = withImage('Only once')
+    const first = scheduler.promptFor(task, 'claude-code', false, { markDelivered: true })
+    expect(first.attachments).toHaveLength(1)
+
+    // A later note on the same task carries its own attachments and none of the earlier ones.
+    tasks.addMessage(task.id, 'human', 'and one more thing')
+    const second = scheduler.promptFor(tasks.requireTask(task.id), 'claude-code', true, {
+      markDelivered: true
+    })
+    expect(second.text).toContain('and one more thing')
+    expect(second.attachments).toEqual([])
+    expect(second.text).not.toContain('Attached image')
+  })
+
+  it('travels again when a preemption re-sends the first prompt', () => {
+    const { task, image } = withImage('Preempted with a screenshot')
+    scheduler.promptFor(task, 'claude-code', false, { markDelivered: true })
+    // ⛔ `resumed: false` is what a fresh session after a preemption gets: the task's own prompt is
+    // restated because that session has never seen it — and the image has to come with it, or the
+    // agent is reading a sentence about a picture it was not given.
+    const again = scheduler.promptFor(tasks.requireTask(task.id), 'claude-code', false, {
+      markDelivered: false
+    })
+    expect(again.attachments.map((a) => a.id)).toEqual([image.id])
+    expect(again.text).toContain(image.file)
+  })
+
+  it('carries an image pasted into a note, on the run that delivers the note', () => {
+    const task = tasks.createTask({ title: 'A note with a picture', status: 'ready' })
+    scheduler.promptFor(task, 'claude-code', false, { markDelivered: true })
+    const image = attachments.createAttachment(png, 'image/png')
+    tasks.addMessage(task.id, 'human', 'this is what it looks like now', null, [image.id])
+
+    const built = scheduler.promptFor(tasks.requireTask(task.id), 'claude-code', false, {
+      markDelivered: true
+    })
+    expect(built.attachments.map((a) => a.id)).toEqual([image.id])
+    expect(built.text).toContain('this is what it looks like now')
+  })
+
+  it('says nothing about attachments on a task that has none', () => {
+    const task = tasks.createTask({ title: 'No pictures here', status: 'ready' })
+    const built = scheduler.promptFor(task, 'claude-code', false, { markDelivered: false })
+    expect(built.attachments).toEqual([])
+    expect(built.text).not.toContain('Attached image')
   })
 })

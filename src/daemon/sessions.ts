@@ -11,7 +11,7 @@ import type {
   Worker
 } from '@shared/protocol.js'
 import { sessionEnded } from '@shared/protocol.js'
-import type { CacheMove } from '@shared/tasks.js'
+import type { Attachment, CacheMove } from '@shared/tasks.js'
 import { db, row, rows } from './db.js'
 import { costModel } from './costmodel.js'
 import { adapter } from './adapters/index.js'
@@ -541,6 +541,14 @@ export interface SpawnOptions {
    * `resumableSession` rather than testing that themselves.
    */
   resume?: Session | undefined
+  /**
+   * Images the first prompt on this session will carry.
+   *
+   * ⛔ Needed **at spawn**, not at prompt time, for a `spawn-flag` adapter: codex takes `-i <file>`
+   * on the process that runs the turn and has no stdin channel to send one down afterwards. This is
+   * why `promptFor` is called before `spawnSession` rather than after it.
+   */
+  attachments?: Attachment[] | undefined
 }
 
 /**
@@ -645,6 +653,7 @@ export function spawnSession(opts: SpawnOptions): Session {
     permissionMode: opts.permissionMode,
     mcpConfig,
     argv: opts.argv,
+    attachments: opts.attachments,
     // ⛔ The vendor's handle where it gave us one, ours where it took ours. `mintsSessionId` is
     // exactly the question of which, and getting it backwards means handing a CLI an id it has never
     // heard of - which resumes nothing and says nothing about it.
@@ -883,6 +892,25 @@ function setState(id: string, state: SessionState): void {
 }
 
 /**
+ * Which of a prompt's images may be put in **this** adapter's envelope.
+ *
+ * ⛔ **The gate that keeps a turn alive.** On `none` the answer is none: antigravity does not ignore
+ * an image block, it fails the whole turn on one — `num_turns: 0`, `status: ERROR`, measured
+ * 2026-08-31 — and the operator would read that as the agent having failed the task. On
+ * `spawn-flag` the answer is also none, for the opposite reason: the bytes went into the argv when
+ * the process started, and a second copy would be paid for twice.
+ *
+ * ⚠️ Nothing is lost in either case. The absolute path of every attachment is already in the prompt
+ * text, put there by `promptFor`, and all three CLIs read a PNG off disk with their own view tool.
+ *
+ * Exported because this is the one decision in the image path that must never regress, and driving
+ * it through a live session would mean spawning three CLIs to assert one branch.
+ */
+export function inlineImagesFor(adapterId: string, attachments: Attachment[]): Attachment[] {
+  return adapter(adapterId).info.capabilities.imageInput === 'inline' ? attachments : []
+}
+
+/**
  * Send a user message, in whatever shape this session's transport expects.
  *
  * ⚠️ This is why unattended work runs on `stream`, not `pty`. Two independent reasons, both measured:
@@ -896,7 +924,7 @@ function setState(id: string, state: SessionState): void {
  * meant its prompt began with the literal characters `{"type":"user"` — and the envelope was the
  * lesser half of the bug. See `AdapterCapabilities.streamPrompts`.
  */
-export function sendPrompt(id: string, text: string): void {
+export function sendPrompt(id: string, text: string, attachments: Attachment[] = []): void {
   const entry = live.get(id)
   if (!entry) throw new Error(`session '${id}' is not live`)
   if (entry.session.transport === 'stream') {
@@ -912,8 +940,16 @@ export function sendPrompt(id: string, text: string): void {
           'a second prompt needs a new session'
       )
     }
+    const inline = inlineImagesFor(entry.session.adapterId, attachments)
+    if (attachments.length > 0 && inline.length === 0) {
+      log.info(
+        `${ad.info.label} takes no inline image (imageInput: ` +
+          `${ad.info.capabilities.imageInput}); ${attachments.length} attachment(s) travel as a ` +
+          'file path in the prompt instead'
+      )
+    }
     const payload = ad.encodeStreamPrompt
-      ? ad.encodeStreamPrompt(text)
+      ? ad.encodeStreamPrompt(text, inline)
       : JSON.stringify({
           type: 'user',
           message: { role: 'user', content: [{ type: 'text', text }] }

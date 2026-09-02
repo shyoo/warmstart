@@ -3392,3 +3392,102 @@ declines — which is why the sweep above was built first, and is the net.
 
 ⭐ The two live branches were deleted by hand after the same proof: `rev-list --count origin/main..` was
 zero for both, and neither was checked out anywhere.
+## A survey that was mistaken for a feature (2026-09-01)
+
+The report was that pasting an image into New Task or a thread note did nothing, "still, after t65
+landed". t65 did land. It is `445ac52`, *"Survey image input across the three CLIs, and plan a paste
+path"* — one file, `transient_docs/image_attachments_2026-08-31.md`, 220 lines, and its own commit
+body says **"Plan only; no behaviour changes."** There was no `onPaste` anywhere in `src/`. The paste
+was doing exactly what the code told it to, which was nothing.
+
+Worth recording because the failure was not in the code and would not have been found by reading it:
+a plan written in the same voice as the codebase, filed under the task number that would have
+implemented it, reads like an implementation to anybody who remembers the task and not the diff.
+
+⭐ The survey itself was good, and none of it needed re-deriving. What follows was built against its
+measurements.
+
+### `multimodalInput` was an aspiration with no mechanism
+
+`true` on all three built-in adapters since M5, and read by **nothing** — five grep hits, three of
+them the declarations. It was also wrong. Sent the same base64 image block Claude Code answers
+correctly, agy 1.1.22 returns `"status":"ERROR","num_turns":0,"error":"stream input content block
+type \"image\" is not supported (only \"text\")"`. ⛔ It does not drop the image; the whole turn
+fails, zero turns run, and an operator reading that run would blame the agent.
+
+So the capability was replaced with the question the code actually has — not *can it*, but **how**:
+
+- `inline` — a content block in the stream envelope. Claude Code, whose `{"type":"user",…}` envelope
+  took an image block with no change to its shape.
+- `spawn-flag` — argv on the process that runs the turn, so **initial prompt only**. Codex has no
+  stdin conversation at all (`streamPrompts: 'once'`), so `-i <file>` is the only channel it has.
+- `none` — Antigravity, and `external.ts`'s default. A declarative adapter that has not said
+  otherwise must not be sent bytes that could kill its turn.
+
+⛔ The gate lives in `sendPrompt` (`inlineImagesFor`), not in each adapter's encoder. An encoder that
+merely ignores what it is handed is a promise every future adapter has to remember to keep; a
+capability read one layer up is a rule.
+
+### The absolute path travels on every adapter, including the two that get the bytes
+
+~20 tokens, and all three CLIs read a PNG off disk with their own view tool — agy via `view_file`,
+measured on the same image the same day. On Antigravity it is not a fallback, it is the whole
+channel. On the other two it is what rescues a run whose inline block a vendor update quietly stopped
+accepting, which is a failure with no symptom.
+
+### Which prompts an image rides on
+
+`promptFor` now returns `{ text, attachments }` rather than a string, and the attachments that travel
+are the attachments of the messages that travel. That is not a new rule — the delivery bookkeeping
+already decides exactly which messages are outstanding, and the images simply follow it.
+
+⚠️ **The plan and the code disagreed here, and the code was right.** §5.5 said an image should not
+travel twice. True of a *warm* continuation, and false of a cold one: a cold prompt restates the
+task's own first message by design, because a fresh session after a preemption has never seen it —
+and an agent handed that prompt without the picture is being asked to look at something it was not
+given. Suppression is keyed on `resumed`, which is the flag that already means *this conversation
+has the prompt in its own history*. The first version of the test asserted the plan's rule and
+failed; the test was wrong.
+
+### The spawn moved below the prompt
+
+`spawnSession` used to run ~50 lines above `promptFor`. A `spawn-flag` adapter needs the file list
+before the process exists, so the call moved down. Everything between the two was workspace and
+conversation bookkeeping that the session plays no part in, which is what made it a move rather than
+a restructure.
+
+### Bytes on disk, and a migration that has to survive being run twice
+
+`attachments` (**migration 31**) holds metadata; the bytes live under `<dataDir>/attachments/`. A
+pasted screenshot is 1-3 MB and this database is opened by the daemon on every tick, so a blob column
+would bloat the WAL for data only ever read whole, by path, and mostly by a CLI rather than by us.
+
+⛔ The row is nullable on `message_id` and `task_id` because an attachment exists *before* the message
+that carries it — it is uploaded while somebody is still typing. `prunePending` collects the ones
+whose form was abandoned, at startup and daily.
+
+⚠️ The migration needed `create table if not exists`, and finding out cost seven test failures in
+`sessionstate.test.ts` — a file about a repair three migrations earlier. `versionBefore` lets a test
+rewind `user_version` and reopen to replay one migration, which replays **every** migration after it
+too. Migration 28 already carried `if not exists` for the same reason and did not say why; migration
+31 now says why.
+
+### One image per upload, so a limit keeps meaning something
+
+`MAX_BODY_BYTES` stays at 4 MB. `attachment.create` takes one image per call, so eight pasted
+screenshots are eight requests of ~2 MB rather than one of 16. The renderer downscales to **1568px**
+on the longest edge before uploading — the vendor's own recommendation, and for a full-screen grab
+the difference between roughly 1.1k and 4k input tokens on every run that carries it.
+
+⛔ The declared media type is never trusted. `createAttachment` sniffs the magic number, because the
+file it writes is one an agent is separately instructed by name to open, and a `.exe` renamed `.png`
+is the payload that check exists for. A mismatch between two real image types is not an error — the
+clipboard mislabels routinely — and the sniffed type wins, since that is what the CLI will be told.
+
+### Still owed
+
+⚠️ **No image has reached a real dispatched run.** The survey measured the three CLIs directly, not
+the daemon driving them; one Claude task filed with a screenshot settles it cheaply (R16). ⚠️ Whether
+an MCP tool result carries an image back to the model is still unmeasured (R16b), which is why
+question answers remain out of scope — a parked question's answer is an ordinary thread message and
+got images for free.

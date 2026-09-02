@@ -11,6 +11,7 @@ import {
   type Compaction,
   type CompletionModeChoice,
   type FinishPolicyChoice,
+  type Attachment,
   type Objective,
   type ObjectiveChoice,
   type ResolvedCompletionMode,
@@ -24,6 +25,7 @@ import {
 import type { ModelOptions, Session } from '@shared/protocol'
 import { rpc, useActivity, useDaemonEvents, useNow, type FleetEntry } from '../lib/daemon'
 import { isSubmitKey, useUiSettings } from '../lib/uisettings'
+import { ImageChips, usePastedImages } from '../lib/pasteimages'
 import { conversationIdFor } from '../lib/conversation'
 import { SettingButtonSelect, type SettingOption } from './SettingButtonSelect'
 import { TaskQuestions } from './Questions'
@@ -777,6 +779,44 @@ function PromptDisclosure({
   )
 }
 
+/**
+ * One image that is already on a message.
+ *
+ * ⛔ Fetched through `attachment.read` rather than pointed at by a `file://` URL. The renderer runs
+ * with no filesystem access to the daemon's data directory — deliberately, and it is a different
+ * machine's directory the moment anything is remote — so a path here would render as a broken image
+ * with nothing to say about why.
+ *
+ * ⚠️ The bytes are stored on disk and the row is not. A thumbnail that will not load is a fact
+ * worth showing: the prompt the agent received still names that path, and if the file has gone the
+ * agent could not open it either.
+ */
+function MessageImage({ attachment }: { attachment: Attachment }): React.JSX.Element {
+  const [src, setSrc] = useState<string | null>(null)
+  const [failed, setFailed] = useState(false)
+  useEffect(() => {
+    let live = true
+    void rpc('attachment.read', { id: attachment.id })
+      .then((r) => {
+        if (live) setSrc(`data:${r.attachment.mediaType};base64,${r.dataBase64}`)
+      })
+      .catch(() => {
+        if (live) setFailed(true)
+      })
+    return () => {
+      live = false
+    }
+  }, [attachment.id])
+  if (failed) {
+    return <span className="dim">an image that is no longer on disk ({attachment.file})</span>
+  }
+  return src ? (
+    <img className="msg-image" src={src} alt="" title={attachment.file} />
+  ) : (
+    <span className="dim">loading an image…</span>
+  )
+}
+
 function Thread({
   messages,
   runs,
@@ -822,6 +862,13 @@ function Thread({
             </span>
             <span className="msg-text">
               {m.text}
+              {m.attachments.length > 0 && (
+                <span className="msg-images">
+                  {m.attachments.map((a) => (
+                    <MessageImage key={a.id} attachment={a} />
+                  ))}
+                </span>
+              )}
               {runForMsg?.prompt && (
                 <div className="msg-prompt-box">
                   <PromptDisclosure
@@ -1686,6 +1733,7 @@ function Compose({
   const [sending, setSending] = useState(false)
   const [outcome, setOutcome] = useState<string | null>(null)
   const { settings } = useUiSettings()
+  const paste = usePastedImages()
   const running = task.status === 'running' || task.status === 'assigned'
 
   const send = async () => {
@@ -1693,8 +1741,13 @@ function Compose({
     if (!body) return
     setSending(true)
     try {
-      const result = await rpc('task.message', { id: task.id, text: body })
+      const result = await rpc('task.message', {
+        id: task.id,
+        text: body,
+        ...(paste.ids.length > 0 ? { attachmentIds: paste.ids } : {})
+      })
       setText('')
+      paste.clear()
       setOutcome(result.outcome)
       await refresh()
     } finally {
@@ -1715,6 +1768,9 @@ function Compose({
               : 'Ask for the next thing — this continues the task, it does not file a new one'
           }
           onChange={(e) => setText(e.target.value)}
+          onPaste={paste.onPaste}
+          onDrop={paste.onDrop}
+          onDragOver={paste.onDragOver}
           onKeyDown={(e) => {
             if (isSubmitKey(e, settings.enterBehavior) && text.trim() && !sending) {
               e.preventDefault()
@@ -1726,6 +1782,7 @@ function Compose({
           {sending ? 'Sending…' : running ? 'Send' : 'Send and continue'}
         </button>
       </div>
+      <ImageChips paste={paste} />
       {/*
         ⛔ This used to say "Nothing is running, so this waits… prepended to the prompt the next run
         starts with" — which was true of the code and false of the world, because a finished task has

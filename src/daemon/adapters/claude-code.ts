@@ -1,3 +1,5 @@
+import type { Attachment } from '@shared/tasks.js'
+import { attachmentBytes } from '../attachments.js'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
@@ -26,7 +28,7 @@ const info: AdapterInfo = {
     resumeSession: true,
     forkSession: true,
     nativeWorktree: true,
-    multimodalInput: true,
+    imageInput: 'inline',
     mcp: true,
     // ⭐ **A flag exists as of claude 2.1.250**, which the note here promised to watch for: `--effort
     // <level>` taking `low, medium, high, xhigh, max` — the same five this cost model lists for
@@ -254,11 +256,30 @@ function decodeStream(record: Record<string, unknown>): StreamEvent | StreamEven
 export const claudeCode: AgentAdapter = {
   info,
   decodeStream,
-  encodeStreamPrompt: (text: string) =>
-    JSON.stringify({
+  /**
+   * ⭐ The envelope agentyard already sent takes an image block today with no change to its shape —
+   * measured 2026-08-31 against claude 2.1.251, with a 64×64 four-quadrant PNG whose colours came
+   * back named correctly and in order.
+   *
+   * ⛔ Images **before** the text, which is the order the measurement used and the order the vendor
+   * documents. A question asked before the picture arrives is a question about nothing.
+   */
+  encodeStreamPrompt: (text: string, attachments: Attachment[] = []) => {
+    const images = attachments.flatMap((a) => {
+      const bytes = attachmentBytes(a)
+      if (!bytes) return []
+      return [
+        {
+          type: 'image',
+          source: { type: 'base64', media_type: a.mediaType, data: bytes.toString('base64') }
+        }
+      ]
+    })
+    return JSON.stringify({
       type: 'user',
-      message: { role: 'user', content: [{ type: 'text', text }] }
-    }),
+      message: { role: 'user', content: [...images, { type: 'text', text }] }
+    })
+  },
 
   /**
    * ⚠️ Measured, not imagined: the first sentence is verbatim what this CLI answered on 2026-08-27

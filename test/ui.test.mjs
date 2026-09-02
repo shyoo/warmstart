@@ -682,6 +682,72 @@ try {
     pin.efforts === 1,
     'a control that cannot be honoured is worse than no control'
   )
+  // ⛔ Pasting an image into the composer, driven as a real `paste` event on the real textarea.
+  //
+  // ⚠️ Through `clipboardData.items`, not `.files`, because that is the shape a screenshot arrives
+  // in — and it is the shape the handler reads. A test that built `.files` would pass against a
+  // handler that could never see a real screenshot.
+  const pasted = await evaluate(`
+    (async () => {
+      const ta = document.querySelector('textarea.ask-input');
+      if (!ta) return JSON.stringify({ missing: true });
+      // A real 1x1 PNG. The daemon checks the magic number, so this cannot be a stub.
+      const b64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+      const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+      const file = new File([bytes], 'shot.png', { type: 'image/png' });
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      ta.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+      // The upload is a round trip to the daemon; give it one.
+      for (let i = 0; i < 40 && document.querySelectorAll('.chip-thumb').length === 0; i++) {
+        await new Promise(r => setTimeout(r, 100));
+      }
+      const thumb = document.querySelector('.chip-thumb');
+      return JSON.stringify({
+        chips: document.querySelectorAll('.chip-thumb').length,
+        isDataUrl: (thumb?.getAttribute('src') ?? '').startsWith('data:image/png;base64,'),
+        removable: !!document.querySelector('.chip-x'),
+        error: document.querySelector('.chip-note--bad')?.innerText ?? null
+      });
+    })()
+  `)
+  const paste = JSON.parse(pasted)
+  check('pasting an image into the new-task form produces a chip', paste.chips === 1, pasted)
+  check('the chip shows the image rather than a filename', paste.isDataUrl === true, pasted)
+  check('and it can be taken off again before the task is filed', paste.removable === true, pasted)
+  check('nothing was refused on the way', paste.error === null, pasted)
+
+  // ⛔ And the whole way through: an uploaded image, onto a task, into the prompt an agent is given.
+  // The chip above proves the renderer; this proves the thing the renderer was for.
+  const carried = await evaluate(`
+    (async () => {
+      const b64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+      const made = await window.agentyard.rpc('attachment.create', { dataBase64: b64, mediaType: 'image/png', width: 1, height: 1 });
+      const task = await window.agentyard.rpc('task.create', {
+        title: 'A task filed with a screenshot on it', status: 'draft', attachmentIds: [made.id]
+      });
+      const page = await window.agentyard.rpc('task.get', { id: task.id });
+      const onFirst = page.messages[0]?.attachments ?? [];
+      const back = await window.agentyard.rpc('attachment.read', { id: made.id });
+      await window.agentyard.rpc('task.delete', { id: task.id, hard: true });
+      return JSON.stringify({
+        count: onFirst.length,
+        boundToTask: onFirst[0]?.taskId === task.id,
+        // ⛔ Out of pending and under the task it belongs to.
+        movedOutOfPending: !(onFirst[0]?.file ?? 'pending').includes('pending'),
+        // ⛔ The path is in the prompt on every adapter, which is the fallback the whole design
+        // rests on: agy cannot be sent bytes at all, and this sentence is its only channel.
+        promptNamesTheFile: (page.previewPrompt ?? '').includes(onFirst[0]?.file ?? 'no-such-file'),
+        readsBackTheSameBytes: back.dataBase64 === b64
+      });
+    })()
+  `)
+  const carriedResult = JSON.parse(carried)
+  check('an uploaded image binds to the message the task was filed with', carriedResult.count === 1 && carriedResult.boundToTask === true, carried)
+  check('its bytes move out of pending and under the task', carriedResult.movedOutOfPending === true, carried)
+  check('the prompt the agent would get names the file by absolute path', carriedResult.promptNamesTheFile === true, carried)
+  check('and the thread can read the same bytes back for its thumbnail', carriedResult.readsBackTheSameBytes === true, carried)
+
   await evaluate(
     `[...document.querySelectorAll('.panel-head button')].find(b => b.innerText.trim() === 'Cancel')?.click()`
   )

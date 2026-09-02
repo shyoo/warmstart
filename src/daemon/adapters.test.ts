@@ -1,8 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import type { Attachment } from '@shared/tasks.js'
 import { execFileSync } from 'node:child_process'
 import { chmodSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { delimiter, join, resolve } from 'node:path'
+import { delimiter, dirname, join, resolve } from 'node:path'
 import { adapter, adapters } from './adapters/index.js'
 import { gitWritableRoots } from './adapters/openai-compatible.js'
 import { costModel, loadCostModels } from './costmodel.js'
@@ -1073,5 +1074,132 @@ describe('a worker that has to be able to commit', () => {
     //    is the thing this must never quietly become.
     expect(plan.args).toContain('workspace-write')
     expect(plan.args).not.toContain('--dangerously-bypass-approvals-and-sandbox')
+  })
+})
+
+/**
+ * How an image reaches an agent, and how it must not.
+ *
+ * ⛔ These are the reason `imageInput` is data rather than a boolean. Three CLIs give three answers
+ * — measured 2026-08-31 against claude 2.1.251, agy 1.1.22 and codex 0.151.0 — and one of them is
+ * not "ignores it".
+ */
+describe('an image, and the three channels it can travel down', () => {
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    'base64'
+  )
+  let store: string | null = null
+  let image: Attachment
+
+  beforeAll(async () => {
+    store = mkdtempSync(join(tmpdir(), 'agentyard-adapter-image-'))
+    process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = store
+    const db = await import('./db.js')
+    const attachments = await import('./attachments.js')
+    db.openDb(join(store, 'images.db'))
+    image = attachments.createAttachment(png, 'image/png', { width: 1, height: 1 })
+  })
+
+  afterAll(async () => {
+    const db = await import('./db.js')
+    db.closeDb()
+    delete process.env.MULTI_AGENT_CONTROLLER_DATA_DIR
+    if (store) rmSync(store, { recursive: true, force: true })
+  })
+
+  it('every adapter says how it takes one, and the answer is one of three', () => {
+    for (const a of ALL) {
+      expect(['inline', 'spawn-flag', 'none'], a.info.id).toContain(a.info.capabilities.imageInput)
+    }
+  })
+
+  it('claude puts the bytes in its envelope, before the text', () => {
+    const encode = adapter('claude-code').encodeStreamPrompt
+    expect(encode).toBeTruthy()
+    const payload = JSON.parse(encode!('look at this', [image])) as {
+      type: string
+      message: { content: { type: string; source?: { media_type: string; data: string } }[] }
+    }
+    expect(payload.type).toBe('user')
+    const content = payload.message.content
+    // ⛔ Order, not merely presence. A question asked before the picture arrives is a question
+    // about nothing, and this is the order the 2026-08-31 measurement used.
+    expect(content[0]?.type).toBe('image')
+    expect(content[0]?.source?.media_type).toBe('image/png')
+    expect(content[0]?.source?.data).toBe(png.toString('base64'))
+    expect(content[1]?.type).toBe('text')
+  })
+
+  it('claude still sends a plain envelope when there is no image', () => {
+    const encode = adapter('claude-code').encodeStreamPrompt
+    const payload = JSON.parse(encode!('just words')) as {
+      message: { content: { type: string }[] }
+    }
+    expect(payload.message.content.map((c) => c.type)).toEqual(['text'])
+  })
+
+  /**
+   * ⛔ **The regression that matters.** agy does not drop an image block, it fails the whole turn on
+   * one: `"status":"ERROR","num_turns":0,"error":"stream input content block type \"image\" is not
+   * supported (only \"text\")"`, measured 2026-08-31. A run that died that way would be read as
+   * the agent having failed the task.
+   */
+  it('antigravity is never handed an image block, even when one is offered', () => {
+    const encode = adapter('antigravity-cli').encodeStreamPrompt
+    const payload = encode!('look at this', [image])
+    expect(payload).not.toContain('"image"')
+    expect(payload).not.toContain('base64')
+    expect(JSON.parse(payload)).toMatchObject({
+      event: 'user',
+      message: { role: 'user', content: [{ type: 'text', text: 'look at this' }] }
+    })
+  })
+
+  it('and it says so as a capability, so nothing has to know its name', () => {
+    expect(adapter('antigravity-cli').info.capabilities.imageInput).toBe('none')
+  })
+
+  it('codex takes its images at spawn, and is allowed to read them', () => {
+    expect(adapter('openai-compatible').info.capabilities.imageInput).toBe('spawn-flag')
+    const plan = adapter('openai-compatible').plan({
+      sessionId: 'ignored',
+      isolationRoot: 'C:/tmp/root',
+      cwd: process.cwd(),
+      transport: 'stream',
+      attachments: [image]
+    })
+    expect(plan.args[plan.args.indexOf(image.file) - 1]).toBe('-i')
+    // ⛔ And the sandbox is told about the directory. `workspace-write` does not reach the
+    // attachment store, so without this codex is handed a path it is forbidden to open — which is
+    // the one failure the file-path fallback exists to prevent.
+    const dir = dirname(image.file)
+    expect(plan.args[plan.args.indexOf(dir) - 1]).toBe('--add-dir')
+  })
+
+  /**
+   * ⛔ The gate one layer above the encoder, and the one that decides whether a turn survives. The
+   * encoder tests above prove antigravity's envelope is clean if it is called; this proves it is
+   * never offered the bytes in the first place, which is what keeps the rule a capability rather
+   * than a promise each adapter has to keep on its own.
+   */
+  it('offers the bytes only to the adapter that says it can take them', async () => {
+    const { inlineImagesFor } = await import('./sessions.js')
+    expect(inlineImagesFor('claude-code', [image])).toHaveLength(1)
+    expect(inlineImagesFor('antigravity-cli', [image])).toEqual([])
+    // ⚠️ Also none for codex, for the opposite reason: they went into its argv at spawn, and a
+    // second copy down a channel it does not have would be paid for twice if it worked at all.
+    expect(inlineImagesFor('openai-compatible', [image])).toEqual([])
+    expect(inlineImagesFor('local-llm', [image])).toEqual([])
+  })
+
+  it('and adds neither flag on a run that carries nothing', () => {
+    const plan = adapter('openai-compatible').plan({
+      sessionId: 'ignored',
+      isolationRoot: 'C:/tmp/root',
+      cwd: process.cwd(),
+      transport: 'stream'
+    })
+    expect(plan.args).not.toContain('-i')
   })
 })

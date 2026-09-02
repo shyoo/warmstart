@@ -220,6 +220,31 @@ export interface Budget {
 
 export type MessageRole = 'human' | 'agent' | 'controller' | 'system'
 
+/**
+ * An image a person put on a message, stored as bytes on disk with its metadata in sqlite.
+ *
+ * ⛔ **Bytes on disk, never in the row.** A pasted screenshot is 1-3 MB and this database is
+ * opened by the daemon on every tick; a blob column would bloat the WAL for data that is only ever
+ * read whole, by path, and mostly by a CLI rather than by us.
+ *
+ * ⚠️ `kind` is a column rather than an assumption so that audio, when it arrives, is a value and
+ * not a migration.
+ */
+export interface Attachment {
+  id: string
+  /** Null until the attachment is bound to the message it was pasted into. */
+  messageId: number | null
+  taskId: string | null
+  kind: 'image'
+  mediaType: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'
+  /** Absolute path. This is what travels in the prompt text on every adapter. */
+  file: string
+  bytes: number
+  width: number | null
+  height: number | null
+  createdAt: number
+}
+
 export interface TaskMessage {
   id: number
   taskId: string
@@ -233,6 +258,11 @@ export interface TaskMessage {
    */
   deliveredAt: number | null
   ts: number
+  /**
+   * Images pasted onto this message. Empty on almost every row, which is why they live in their own
+   * table rather than as nullable columns here.
+   */
+  attachments: Attachment[]
 }
 
 export interface CancelRecord {

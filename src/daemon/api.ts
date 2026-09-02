@@ -13,6 +13,7 @@ import type { Task, TaskConstraints } from '@shared/tasks.js'
 import { resolveCompletionMode } from '@shared/tasks.js'
 import { existsSync } from 'node:fs'
 import { adapter, adapters } from './adapters/index.js'
+import { attachmentBytes, createAttachment, requireAttachment } from './attachments.js'
 import {
   createWorker,
   getWorker,
@@ -62,7 +63,6 @@ import {
   dependentsOf,
   detachDependency,
   getTask,
-  lastMessageId,
   listTasks,
   messagesFor,
   pageTasks,
@@ -421,7 +421,10 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
           ? getWorker(task.assignee)
           : (listWorkers().find((w) => w.retiredAt === null) ?? null)
       const adapterId = assignedWorker?.adapterId ?? 'claude-code'
-      const previewPrompt = promptFor(task, adapterId, false, { markDelivered: false })
+      // ⚠️ `.text` — and the preview therefore still contains the attachment path lines, which
+      // is the point: what this pane shows has to be what the agent is sent, or it is a
+      // different prompt with a reassuring resemblance to the real one.
+      const previewPrompt = promptFor(task, adapterId, false, { markDelivered: false }).text
       const dependencies = dependenciesFor(p.id)
       const dependents = dependentsOf(p.id)
         .map((id) => getTask(id))
@@ -446,7 +449,35 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
         previewPrompt
       }
     },
-    'task.create': (p) => createTask({ ...p, ...(p.constraints ? { constraints: checkConstraints(p.constraints) } : {}) }),
+    'task.create': (p) =>
+      createTask({
+        ...p,
+        ...(p.constraints ? { constraints: checkConstraints(p.constraints) } : {})
+      }),
+
+    /**
+     * One pasted image, onto disk.
+     *
+     * ⛔ One per call, so that `MAX_BODY_BYTES` can stay at 4 MB. Eight screenshots are eight
+     * requests of ~2 MB rather than one of 16; raising a limit to fit a payload that can be
+     * split is how a limit stops meaning anything.
+     *
+     * ⛔ The bytes decide what this is, not `mediaType` — see `createAttachment`. The row
+     * comes back unbound, and becomes part of a thread only when a message carrying its id is
+     * filed.
+     */
+    'attachment.create': (p) =>
+      createAttachment(Buffer.from(p.dataBase64, 'base64'), p.mediaType, {
+        width: p.width ?? null,
+        height: p.height ?? null
+      }),
+
+    'attachment.read': (p) => {
+      const attachment = requireAttachment(p.id)
+      const bytes = attachmentBytes(attachment)
+      if (!bytes) throw new Error(`the bytes of attachment '${p.id}' are no longer on disk`)
+      return { attachment, dataBase64: bytes.toString('base64') }
+    },
     'task.update': (p) => {
       const { id, ...patch } = p
       if (patch.constraints) {
@@ -544,12 +575,15 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
     },
 
     'task.message': (p) => {
-      addMessage(p.id, 'human', p.text)
+      const id = addMessage(p.id, 'human', p.text, null, p.attachmentIds ?? [])
       // ⛔ Delivered into the live session if there is one. That is `0.1·C` and it refreshes the TTL;
       // the same note delivered by restarting the task is `2.0·C` plus everything the successor has
       // to rediscover about the branch. Plan §18.4.
-      const id = lastMessageId(p.id)
-      if (id !== null) deliverToLiveSession(p.id, id, p.text)
+      //
+      // ⚠️ The id comes back from `addMessage` rather than from `lastMessageId`. This row now
+      // binds attachments, and a second insert landing between the two calls would hand this
+      // note's delivery — and its images — to somebody else's message.
+      deliverToLiveSession(p.id, id, p.text)
       // ⛔ And a task that had stopped is started again — same task, same thread, a new run. Without
       // this the note reached a live process and produced nothing anybody could see: no run, no
       // metering, no status, no landing. See `continueTask`.

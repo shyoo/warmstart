@@ -917,6 +917,41 @@ const MIGRATIONS: Migration[] = [
      set default_models_json = '{"gemini":"gemini-3.7-flash-medium","claude":"claude-sonnet-4-6"}'
    where adapter_id = 'antigravity-cli'
      and (default_models_json is null or default_models_json = '{}');
+  `,
+
+  // 31 - an image pasted onto a message, as a row of its own.
+  //
+  // ⛔ **Metadata here, bytes on disk.** A pasted screenshot is 1-3 MB and this database is opened
+  // by the daemon on every tick; a blob column would bloat the WAL for data that is only ever read
+  // whole, by path, and mostly by a CLI rather than by us. `file` is absolute, under
+  // `<dataDir>/attachments/`, and is the same path that travels in the prompt text.
+  //
+  // ⚠️ `message_id` and `task_id` are nullable because an attachment exists *before* the message
+  // that carries it does - it is uploaded while somebody is still typing. An unbound row whose
+  // form was abandoned is what `prunePending` collects; without the nullable columns the upload
+  // would have to invent a message to hang off.
+  //
+  // ⚠️ `kind` is a column rather than an assumption, so that audio is a value and not a migration.
+  //
+  // ⛔ `if not exists`, like migration 28 and for the same reason: `versionBefore` lets a test
+  // rewind `user_version` and reopen, which replays every migration after the one it wanted — so
+  // any migration added later has to survive being run twice. Without it, adding this one broke
+  // seven assertions in `sessionstate.test.ts` about a repair three migrations earlier.
+  `
+  create table if not exists attachments (
+    id         text primary key,
+    message_id integer references task_messages(id) on delete cascade,
+    task_id    text    references tasks(id) on delete cascade,
+    kind       text not null,
+    media_type text not null,
+    file       text not null,
+    bytes      integer not null,
+    width      integer,
+    height     integer,
+    created_at integer not null
+  );
+  create index if not exists attachments_message on attachments(message_id);
+  create index if not exists attachments_task on attachments(task_id);
   `
 ]
 

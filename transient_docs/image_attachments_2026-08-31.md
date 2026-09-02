@@ -3,6 +3,14 @@
 **Filed 2026-08-31 (t65).** Survey is measured against the CLIs installed here: claude 2.1.251 ·
 agy 1.1.22 · codex 0.151.0. Two design decisions were put to the operator and are recorded in §3.
 
+⭐ **Built 2026-09-01.** §4-§7 are shipped: `imageInput` replaced `multimodalInput`, migration 31
+carries the `attachments` table, `promptFor` returns `{ text, attachments }`, and both composers
+take a paste. ⚠️ The one deviation from §5.5 is which prompts an image rides on — the plan said
+"the messages that travel", which is right, but a *cold* prompt restates the task's own first
+message by design, so an image filed with the task goes out on every cold start and is suppressed
+only into a conversation that already holds it (`resumed`). §8's R16 and R16b are still owed: no
+image has yet reached a real dispatched run, and question answers remain out of scope.
+
 ---
 
 ## 1. What is true today

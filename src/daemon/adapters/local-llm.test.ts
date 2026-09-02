@@ -27,7 +27,7 @@ describe('local-llm adapter unit tests', () => {
       metering: 'stream',
       maxAccounts: null,
       mintsSessionId: false,
-      multimodalInput: false,
+      imageInput: 'none',
       nativeWorktree: false,
       forkSession: false,
       selectableEffort: false

@@ -1,5 +1,14 @@
 import { sessionEnded } from '@shared/protocol.js'
-import type { Project, QuestionOption, Run, RunQuota, Task, TaskStatus } from '@shared/tasks.js'
+import type {
+  Attachment,
+  Project,
+  QuestionOption,
+  Run,
+  RunQuota,
+  Task,
+  TaskStatus
+} from '@shared/tasks.js'
+import { describeAttachment } from './attachments.js'
 import {
   WINDOW_HIGH_WATER,
   policyVerifies,
@@ -1904,16 +1913,6 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
   // everything that was said in it — and the two things that follow from that, telling the agent and
   // telling the lender, are both wrong if this flag is.
   const borrowed = revive !== null && !past.some((s) => s.id === revive.id)
-  const session = spawnSession({
-    workerId: worker.id,
-    cwd,
-    transport: 'stream',
-    projectId: project?.id ?? null,
-    ...(revive ? { resume: revive } : {}),
-    ...(picked.model ? { model: picked.model } : {}),
-    ...(picked.effort ? { effort: picked.effort } : {})
-  })
-
   // ⚠️ A revived conversation remembers a tree that has since moved. `prepareWorkspace` switched the
   // worktree while the agent was not running, so nothing warned it — and its context is full of file
   // contents from the branch it was last on.
@@ -1964,9 +1963,26 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
   // conversation already contains it — true of a revived conversation of one's own, and false in the
   // most damaging way available of somebody else's: the agent would be handed a context full of
   // another task's instructions and never told what it was itself being asked to do.
-  const promptText = promptFor(task, worker.adapterId, revive !== null && !borrowed, {
+  const prompt = promptFor(task, worker.adapterId, revive !== null && !borrowed, {
     branchNotice: [borrowNotice, branchNotice, rescueNotice].filter(Boolean).join('\n\n') || null,
     markDelivered: true
+  })
+  const promptText = prompt.text
+
+  // ⛔ **The spawn happens here, below `promptFor`, and that order is load-bearing.** A
+  // `spawn-flag` adapter takes its images as argv on the process that runs the turn — codex has
+  // no stdin channel to send one down afterwards — so the file list has to exist before the
+  // process does. Everything above is workspace and conversation bookkeeping that the session
+  // plays no part in, which is what makes this a move rather than a restructure.
+  const session = spawnSession({
+    workerId: worker.id,
+    cwd,
+    transport: 'stream',
+    projectId: project?.id ?? null,
+    attachments: prompt.attachments,
+    ...(revive ? { resume: revive } : {}),
+    ...(picked.model ? { model: picked.model } : {}),
+    ...(picked.effort ? { effort: picked.effort } : {})
   })
 
   if (borrowed && revive) {
@@ -2042,7 +2058,13 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
   // ⛔ And a revived conversation may need shrinking before it is spoken to at all — see
   // `openConversation`. The delay is the same either way; what changes is what goes in first.
   setTimeout(() => {
-    openConversation(session, task, promptText, revive ? compactOnResume(revive, settings()) : null)
+    openConversation(
+      session,
+      task,
+      promptText,
+      revive ? compactOnResume(revive, settings()) : null,
+      prompt.attachments
+    )
   }, PROMPT_DELAY_MS)
 
   // ⚠️ The *reason* travels with it. "dispatched t5 to ClaudeSecond" says what happened; it does not
@@ -2173,10 +2195,11 @@ async function dispatchIntoWarmSession(
 
   applyPermissionRules(worker, project)
 
-  const promptText = promptFor(task, worker.adapterId, true, {
+  const continuing = promptFor(task, worker.adapterId, true, {
     branchNotice: notice,
     markDelivered: true
   })
+  const promptText = continuing.text
 
   const run = startRun({
     taskId: task.id,
@@ -2220,7 +2243,10 @@ async function dispatchIntoWarmSession(
   // ⚠️ The branch notice goes **first**, before the task's own words. An agent that reads the work
   // before it reads "the files you remember are from another branch" has already started planning
   // against a tree that is not there.
-  sendPrompt(session.id, promptText)
+  // ⚠️ An image pasted into a note reaches a warm session only where the adapter takes one inline;
+  // `sendPrompt` is the gate. On codex there is no second channel at all — its `-i` went with a
+  // process that has already run — and the path in the text is what the agent gets instead.
+  sendPrompt(session.id, promptText, continuing.attachments)
   log.info(
     `t${task.seq} continued warm on ${worker.label} (run ${run.id.slice(0, 8)}, ` +
       `saved ${saved === null ? 'unknown' : `~${saved}`})`
@@ -2249,11 +2275,12 @@ function openConversation(
   session: Session,
   task: Task,
   promptText: string,
-  plan: ResumeCompaction | null
+  plan: ResumeCompaction | null,
+  attachments: Attachment[] = []
 ): void {
   const send = (why: string): void => {
     try {
-      sendPrompt(session.id, promptText)
+      sendPrompt(session.id, promptText, attachments)
       if (why) log.info(`t${task.seq}: sent the prompt after ${why}`)
     } catch (err) {
       log.warn(`could not send the prompt for t${task.seq}:`, err)
@@ -2663,18 +2690,35 @@ async function preempt(
 }
 
 /**
- * What the agent is actually told.
+ * A prompt and the images that go with it.
+ *
+ * ⚠️ The paths of these attachments are already written into `text`; the list is here because
+ * the *bytes* travel by a route the sentence cannot express, and each adapter takes a different
+ * one. See `AdapterCapabilities.imageInput`.
+ */
+export interface BuiltPrompt {
+  text: string
+  attachments: Attachment[]
+}
+
+/**
+ * What the agent is actually told, and what it is being handed along with it.
  *
  * The handoff from a previous run is prepended, because a successor that has to rediscover the state
  * of the branch pays for it twice - once in tokens and once in the mistakes it makes meanwhile.
+ *
+ * ⛔ Returns the attachments as well as the text, rather than only the text with the paths written
+ * into it. The caller needs the list itself: a `spawn-flag` adapter puts the files in its argv, an
+ * `inline` one puts the bytes in the envelope, and neither can be recovered from a sentence.
  */
 export function promptFor(
   task: Task,
   adapterId: string,
   resumed = false,
   opts: { markDelivered?: boolean; branchNotice?: string | null } = { markDelivered: true }
-): string {
+): BuiltPrompt {
   const parts: string[] = []
+  const attachments: Attachment[] = []
   if (opts.branchNotice) {
     parts.push(opts.branchNotice)
   }
@@ -2708,8 +2752,27 @@ export function promptFor(
       parts.push(message.text)
     }
   }
+  // ⛔ **The attachments that travel are the attachments of the messages that travel**, and this is
+  // the only rule that is right in every case. Anything else either replays a screenshot on every
+  // run of a long task — paying for it each time — or drops it on the fresh session a preemption
+  // starts, where the agent is being handed the original prompt and needs the picture that came
+  // with it. The delivery bookkeeping already decides this; the images just follow it.
+  for (const message of outstanding) attachments.push(...message.attachments)
   if (opts.markDelivered && outstanding.length > 0) {
     markDelivered(outstanding.map((m) => m.id))
+  }
+
+  // ⛔ **The absolute path goes in the text on every adapter, including the ones that also get the
+  // bytes.** It costs ~20 tokens, all three CLIs read a PNG off disk with their own view tool
+  // (measured 2026-08-31, agy included), and it is what rescues a run whose inline block a vendor
+  // update quietly stopped accepting. On antigravity, which cannot be sent bytes at all, it is not
+  // a fallback — it is the whole channel.
+  if (attachments.length > 0) {
+    parts.push(
+      (attachments.length === 1 ? 'Attached image: ' : 'Attached images: ') +
+        attachments.map(describeAttachment).join('; ') +
+        '. Open the file if you need to see it.'
+    )
   }
 
   // ⛔ Only name tools this adapter actually gets. `mcp: false` means the daemon spawns it with no
@@ -2834,7 +2897,7 @@ export function promptFor(
       )
     }
   }
-  return parts.join('\n\n')
+  return { text: parts.join('\n\n'), attachments }
 }
 
 /**

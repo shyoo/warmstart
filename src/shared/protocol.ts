@@ -1,6 +1,7 @@
 import type {
   Approval,
   ApprovalRule,
+  Attachment,
   CacheMove,
   ChatMessage,
   ClockDecision,
@@ -650,7 +651,31 @@ export interface AdapterCapabilities {
   resumeSession: boolean
   forkSession: boolean
   nativeWorktree: boolean
-  multimodalInput: boolean
+  /**
+   * How this CLI can be handed an image, if at all.
+   *
+   *  - `inline`     — a content block in the stream envelope. Claude Code, measured 2026-08-31: a
+   *                   64×64 four-quadrant PNG sent as a base64 `image` block inside the
+   *                   `{"type":"user",…}` envelope sessions.ts already sends came back named
+   *                   correctly and in order.
+   *  - `spawn-flag` — an argv flag on the process that runs the turn, so **initial prompt only**.
+   *                   Codex's `-i/--image`; it has no stdin channel to send a second one down.
+   *  - `none`       — no channel at all.
+   *
+   * ⛔ `none` is a hard gate, not a tidiness. Antigravity does not ignore an image block, it
+   * **fails the whole turn on one** — measured 2026-08-31: `num_turns: 0`, `status: ERROR`,
+   * `stream input content block type "image" is not supported`. A run that died that way would
+   * read as the agent having failed the task.
+   *
+   * ⚠️ The absolute path is written into the prompt text regardless of this value. It costs ~20
+   * tokens, all three CLIs read a PNG off disk with their own view tool (agy included, measured),
+   * and it is what rescues a run whose inline block a CLI update quietly stopped accepting.
+   *
+   * ⛔ Replaced `multimodalInput: boolean`, which was `true` on all three built-ins, read by
+   * nothing, and — on antigravity — measurably wrong. This says how the bytes are *delivered*,
+   * which is the question the code actually has.
+   */
+  imageInput: 'inline' | 'spawn-flag' | 'none'
   mcp: boolean
   /**
    * Can this CLI be told an effort level when the process starts?
@@ -1149,9 +1174,28 @@ export interface RpcMap {
     } | null
   }
   'task.create': { params: TaskCreateParams; result: Task }
+  /**
+   * Take one image off the operator's clipboard and put it on disk.
+   *
+   * ⛔ **One image per call, and `MAX_BODY_BYTES` stays 4 MB.** Eight pasted screenshots are eight
+   * requests of ~2 MB rather than one of 16 MB. Raising a limit to fit a payload that can be split
+   * is how a limit stops meaning anything.
+   *
+   * ⛔ `mediaType` is checked against the file's own magic number, never trusted. The renderer's
+   * `File.type` comes from the clipboard and is whatever the source said it was.
+   *
+   * The row comes back unbound; it becomes part of the thread when the message carrying its id is
+   * filed. One never filed is deleted by `prunePending`.
+   */
+  'attachment.create': {
+    params: { dataBase64: string; mediaType: string; width?: number; height?: number }
+    result: Attachment
+  }
+  /** The bytes back, for the renderer's own thumbnails. */
+  'attachment.read': { params: { id: string }; result: { attachment: Attachment; dataBase64: string } }
   'task.update': { params: TaskUpdateParams; result: Task }
   'task.message': {
-    params: { id: string; text: string }
+    params: { id: string; text: string; attachmentIds?: string[] }
     /**
      * `outcome` says what the message *did*, so the UI can stop guessing.
      *
@@ -1479,6 +1523,8 @@ export interface TaskCreateParams {
   status?: 'draft' | 'ready'
   kind?: TaskKind
   estTokens?: number | null
+  /** Attachments already uploaded through `attachment.create`, bound to the task's first message. */
+  attachmentIds?: string[]
 }
 
 export interface TaskUpdateParams {

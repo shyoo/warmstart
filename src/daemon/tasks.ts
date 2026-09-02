@@ -23,6 +23,7 @@ import {
   type TaskView
 } from '@shared/tasks.js'
 import { timingForRuns, timingForTasks, ZERO_TIMING, type ActiveTiming } from './activetime.js'
+import { attachmentsFor, bindAttachments } from './attachments.js'
 import { db, row, rows } from './db.js'
 import { emit } from './events.js'
 import { log } from './log.js'
@@ -360,6 +361,8 @@ export interface CreateTaskInput {
   status?: 'draft' | 'ready'
   kind?: TaskKind
   prompt?: string
+  /** Images already uploaded through `attachment.create`, bound to this task's first message. */
+  attachmentIds?: string[]
 }
 
 export function createTask(input: CreateTaskInput): Task {
@@ -457,7 +460,7 @@ export function createTask(input: CreateTaskInput): Task {
         : createdBy.kind === 'controller'
           ? 'controller'
           : 'agent'
-    addMessage(id, role, initialText)
+    addMessage(id, role, initialText, null, input.attachmentIds ?? [])
   }
 
   const task = admit(id)
@@ -949,19 +952,31 @@ export function promoteDraft(id: string): Task {
 
 // ---------------------------------------------------------------------------- thread
 
+/**
+ * Put a message on a task's thread.
+ *
+ * ⛔ `attachmentIds` are bound in the same call that writes the row, never afterwards. An
+ * attachment belongs to *a message*: bound later it would be an image sitting in the thread with no
+ * position in it, and `promptFor` — which decides what travels by asking which messages are
+ * outstanding — would have nothing to hang it on.
+ */
 export function addMessage(
   taskId: string,
   role: TaskMessage['role'],
   text: string,
-  runId: string | null = null
-): void {
-  db()
+  runId: string | null = null,
+  attachmentIds: string[] = []
+): number {
+  const info = db()
     .prepare('insert into task_messages (task_id, role, text, run_id, ts) values (?,?,?,?,?)')
     .run(taskId, role, text, runId, Date.now())
+  const id = Number(info.lastInsertRowid)
+  if (attachmentIds.length > 0) bindAttachments(attachmentIds, taskId, id)
+  return id
 }
 
 export function messagesFor(taskId: string): TaskMessage[] {
-  return rows<{
+  const messages = rows<{
     id: number
     task_id: string
     role: string
@@ -969,17 +984,20 @@ export function messagesFor(taskId: string): TaskMessage[] {
     run_id: string | null
     delivered_at: number | null
     ts: number
-  }>(db().prepare('select * from task_messages where task_id = ? order by ts, id').all(taskId)).map(
-    (r) => ({
-      id: r.id,
-      taskId: r.task_id,
-      role: r.role as TaskMessage['role'],
-      text: r.text,
-      runId: r.run_id,
-      deliveredAt: r.delivered_at,
-      ts: r.ts
-    })
-  )
+  }>(db().prepare('select * from task_messages where task_id = ? order by ts, id').all(taskId))
+  // ⚠️ One query for every attachment on the thread, not one per message. This runs on the path
+  // that renders a task page, which re-renders on every daemon event.
+  const attachments = attachmentsFor(messages.map((r) => r.id))
+  return messages.map((r) => ({
+    id: r.id,
+    taskId: r.task_id,
+    role: r.role as TaskMessage['role'],
+    text: r.text,
+    runId: r.run_id,
+    deliveredAt: r.delivered_at,
+    ts: r.ts,
+    attachments: attachments.get(r.id) ?? []
+  }))
 }
 
 /**

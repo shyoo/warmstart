@@ -1,3 +1,4 @@
+import type { Attachment } from '@shared/tasks.js'
 import type {
   AdapterDetection,
   AdapterInfo,
@@ -69,6 +70,16 @@ export interface SpawnRequest {
    * exactly why this is separate: agentyard's handle is not something the vendor would recognise.
    */
   resumeFrom?: string | undefined
+  /**
+   * Images this run is carrying.
+   *
+   * ⛔ Read only by a `spawn-flag` adapter, which is the whole reason this is on the *spawn* rather
+   * than on the prompt: codex has no stdin channel to send an image down, so `-i <file>` on the
+   * process that runs the turn is the only channel there is. Every adapter may also use it to grant
+   * its sandbox the directory the files are in, because the absolute path goes into the prompt text
+   * on all of them and a path an agent may not open is worse than no path at all.
+   */
+  attachments?: Attachment[] | undefined
 }
 
 export interface SpawnPlan {
@@ -211,6 +222,11 @@ export interface AgentAdapter {
    *
    * ⛔ There is no shared stream-json format for input any more than for output: Claude Code expects
    * `{"type":"user",...}` while Antigravity expects `{"event":"user",...}`.
+   *
+   * ⛔ `attachments` is offered only where `capabilities.imageInput === 'inline'`; `sendPrompt`
+   * gates on that before calling. An adapter that receives them anyway must still be safe to hand
+   * an empty list, and one that declares `none` must ignore them — antigravity **fails the entire
+   * turn** on an image block rather than dropping it, measured 2026-08-31.
    */
-  encodeStreamPrompt?: (text: string) => string
+  encodeStreamPrompt?: (text: string, attachments?: Attachment[]) => string
 }

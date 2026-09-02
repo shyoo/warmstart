@@ -1,3 +1,4 @@
+import { attachmentDirs } from '../attachments.js'
 import { execFile, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
@@ -131,7 +132,17 @@ const info: AdapterInfo = {
     resumeSession: false,
     forkSession: true,
     nativeWorktree: false,
-    multimodalInput: true,
+    /**
+     * ⛔ `spawn-flag`, and therefore **initial prompt only**. `codex exec` reads stdin to EOF and
+     * has no conversation channel at all (`streamPrompts: 'once'`), so `-i/--image` on the process
+     * that runs the turn is the only way in. An image pasted into a note mid-task cannot reach a
+     * codex run; the path in the prompt text is what it gets instead.
+     *
+     * ⚠️ The channel is measured (2026-08-31, codex 0.151.0) and works. What it answered about a
+     * small synthetic image was wrong until it shelled out to sample the pixels — an agent-quality
+     * fact, not a plumbing one, and one more reason the path travels alongside the bytes.
+     */
+    imageInput: 'spawn-flag',
     // ⛔ `false`, and it is a claim about **this adapter**, not about codex. Codex has MCP; what it
     // has no way to do is take a *per-session* registration - `codex mcp add` writes into the shared
     // config, so a session cannot be given the identity `task_complete` needs. `plan()` has warned
@@ -839,6 +850,12 @@ export const openaiCompatible: AgentAdapter = {
       // ⛔ Deliberately absent: `--ask-for-approval` is interactive-only and would be an argument
       // error here, and `--dangerously-bypass-approvals-and-sandbox` removes the only boundary left.
     }
+    // ⛔ `-i` per image, plus `--add-dir` for the directory holding them: the sandbox is
+    // `workspace-write` and the attachment store is outside the worktree, so without the grant
+    // codex can be handed a path it is then forbidden to read — which is the one failure the path
+    // fallback exists to prevent.
+    for (const attachment of req.attachments ?? []) args.push('-i', attachment.file)
+    for (const dir of attachmentDirs(req.attachments ?? [])) args.push('--add-dir', dir)
     if (req.model) args.push('--model', req.model)
     if (req.mcpConfig) {
       // Codex registers MCP servers with `codex mcp add` into its own config rather than by path, so
