@@ -639,3 +639,11 @@ describe('resuming a task whose branch was retired', () => {
     expect(git(ws!.path, 'rev-list', '--count', `origin/main..${branch}`)).toBe('1')
   })
 })
+
+describe('workspace ACL hygiene', () => {
+  it('cleanWorkspaceAcls runs without error on workspace and non-existent paths', () => {
+    expect(() => worktrees.cleanWorkspaceAcls('non-existent-path')).not.toThrow()
+    const project = makeProjectWithRemote()
+    expect(() => worktrees.cleanWorkspaceAcls(project.root)).not.toThrow()
+  })
+})

@@ -1,5 +1,5 @@
 import { attachmentDirs } from '../attachments.js'
-import { execFile, spawn } from 'node:child_process'
+import { execFile, execFileSync, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
@@ -980,7 +980,18 @@ export const openaiCompatible: AgentAdapter = {
       // — outside it. Measured on t56, 2026-08-30: three runs, ~1.8M tokens, every commit refused
       // at `.git/worktrees/ws1/index.lock`. See `gitWritableRoots` for what this grants and why
       // there is no narrower grant.
-      for (const root of gitWritableRoots(req.cwd)) args.push('--add-dir', root)
+      for (const root of gitWritableRoots(req.cwd)) {
+        if (process.platform === 'win32') {
+          try {
+            execFileSync('icacls', [root, '/reset', '/t', '/c'], {
+              stdio: 'ignore',
+              windowsHide: true,
+              timeout: 5000
+            })
+          } catch {}
+        }
+        args.push('--add-dir', root)
+      }
       // `exec` refuses to start outside a git repository. agentyard's pooled worktrees are git, but a
       // project declared `vcs: none` is not, and refusing to start is a worse failure than running.
       args.push('--skip-git-repo-check')

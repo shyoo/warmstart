@@ -1,7 +1,7 @@
-import { execFile } from 'node:child_process'
+import { execFile, execFileSync } from 'node:child_process'
 import { promisify } from 'node:util'
-import { existsSync, mkdirSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs'
+import { join, resolve } from 'node:path'
 import type { Project } from '@shared/tasks.js'
 import { policyFor } from './projects.js'
 import { claim, release, upsertResource, workspacePoolId } from './resources.js'
@@ -265,11 +265,49 @@ export interface PrepareResult {
  * package installed inside a workspace vanishes on the next sync. So preparation is *declared* by the
  * project and re-run on claim, rather than patched.
  */
+/**
+ * On Windows, sandboxed agent runs (e.g. Codex with `--sandbox workspace-write`) apply NTFS ACLs
+ * and temporary sandbox user permissions. An interrupted run or sandbox cleanup glitch can leave
+ * explicit `(DENY)` ACLs on the workspace or its `.git/worktrees/<slot>` metadata directory, which
+ * subsequently causes git locks (`index.lock`, `HEAD.lock`) to fail with Permission Denied.
+ * Resetting ACLs on preparation ensures clean inherited permissions.
+ */
+export function cleanWorkspaceAcls(workspacePath: string): void {
+  if (process.platform !== 'win32') return
+  try {
+    if (existsSync(workspacePath)) {
+      execFileSync('icacls', [workspacePath, '/reset', '/t', '/c'], {
+        stdio: 'ignore',
+        windowsHide: true,
+        timeout: 5000
+      })
+    }
+    const dotGit = join(workspacePath, '.git')
+    if (existsSync(dotGit) && !statSync(dotGit).isDirectory()) {
+      const pointer = readFileSync(dotGit, 'utf8').trim()
+      const match = /^gitdir:\s*(.+)$/m.exec(pointer)
+      if (match?.[1]) {
+        const gitDir = resolve(workspacePath, match[1].trim())
+        if (existsSync(gitDir)) {
+          execFileSync('icacls', [gitDir, '/reset', '/t', '/c'], {
+            stdio: 'ignore',
+            windowsHide: true,
+            timeout: 5000
+          })
+        }
+      }
+    }
+  } catch {
+    // Best-effort ACL hygiene
+  }
+}
+
 export async function prepareWorkspace(
   project: Project,
   workspace: Workspace,
   branch: string | null
 ): Promise<PrepareResult> {
+  cleanWorkspaceAcls(workspace.path)
   const policy = policyFor(project)
   const steps: PrepareResult['steps'] = []
 
