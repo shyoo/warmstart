@@ -1,5 +1,5 @@
-import type { Run, Task } from '@shared/tasks'
-import type { Session } from '@shared/protocol'
+import { resolveModelChoice, type Run, type Task } from '@shared/tasks'
+import type { ModelOptions, Session, Worker } from '@shared/protocol'
 import type { FleetEntry } from './daemon'
 import { duration } from './format'
 
@@ -291,4 +291,71 @@ export function taskLabelShort(task: Pick<Task, 'title' | 'titleSummary'>, max =
  */
 export function chronologicalRuns<T extends Pick<Run, 'startedAt'>>(runs: T[]): T[] {
   return [...runs].sort((a, b) => a.startedAt - b.startedAt)
+}
+
+/**
+ * What the "←N" dependency badge means, spelled out for a hover.
+ *
+ * ⚠️ Resolved against `page`, the same page of tasks already loaded for the table — not a fresh
+ * fetch. A dependency filed on an earlier page falls back to its bare id rather than blocking the
+ * tooltip on a round trip.
+ */
+export function dependencyTooltip(
+  task: Pick<Task, 'dependsOn'>,
+  page: Array<Pick<Task, 'id' | 'seq' | 'title' | 'titleSummary' | 'status' | 'holdReason'>>
+): string {
+  if (task.dependsOn.length === 0) return ''
+  const byId = new Map(page.map((t) => [t.id, t]))
+  const lines = task.dependsOn.map((id) => {
+    const dep = byId.get(id)
+    return dep ? `t${dep.seq} · ${taskLabelShort(dep, 40)} (${statusLabel(dep)})` : id
+  })
+  return `Depends on:\n${lines.join('\n')}`
+}
+
+/**
+ * A model id, cut to what an operator scanning a column needs: the name and the version, not the
+ * vendor prefix or a build date.
+ *
+ * ⚠️ Not a lookup table. New models land in adapters and quota configs, never in this file, so a
+ * table here would silently show raw ids for anything shipped after it was written. Consecutive
+ * digit groups collapse into a dotted version (`haiku-4-5-20251001` → `Haiku 4.5`, the date dropped
+ * as noise) and everything else is title-cased in place.
+ */
+export function formatModelName(model: string): string {
+  const noPrefix = model.replace(/^(claude|gemini|gpt)-/, '')
+  const noDate = noPrefix.replace(/-\d{8}$/, '')
+  const parts = noDate.split('-')
+  const merged: string[] = []
+  for (const part of parts) {
+    const prevIsDigits = merged.length > 0 && /^\d/.test(merged[merged.length - 1]!)
+    if (/^\d+$/.test(part) && prevIsDigits) {
+      merged[merged.length - 1] = `${merged[merged.length - 1]}.${part}`
+    } else {
+      merged.push(part)
+    }
+  }
+  return merged
+    .map((p) => (/^\d/.test(p) ? p : p.charAt(0).toUpperCase() + p.slice(1)))
+    .join(' ')
+}
+
+/**
+ * The model/effort column: what would actually be sent on the next dispatch, resolved the same way
+ * the scheduler resolves it (task pin, else worker default, else the CLI's own choice).
+ */
+export function modelColumnLabel(
+  task: Pick<Task, 'constraints' | 'assignee'>,
+  fleet: FleetEntry[],
+  modelOptions: ModelOptions[]
+): string {
+  const worker: Worker | undefined =
+    fleet.find((e) => e.worker.id === (task.constraints.workerId || task.assignee))?.worker ??
+    undefined
+  const canSetEffort =
+    modelOptions.find((o) => o.adapterId === worker?.adapterId)?.selectableEffort ?? false
+  const resolved = resolveModelChoice(task.constraints, worker, canSetEffort)
+  if (!resolved.model) return '—'
+  const effort = resolved.effort ? ` ${resolved.effort.charAt(0).toUpperCase()}${resolved.effort.slice(1)}` : ''
+  return `${formatModelName(resolved.model)}${effort}`
 }

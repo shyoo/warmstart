@@ -16,6 +16,7 @@ import type { DaemonEvent, RpcMethod } from '@shared/protocol.js'
 import { DaemonClient, daemonScriptPath, type DaemonStatus } from './daemon.js'
 import { DEFAULT_UI_SETTINGS, readUiSettings, writeUiSettings } from './uisettings.js'
 import { showWhenItCan } from './showwindow.js'
+import { readWindowBounds, trackWindowBounds } from './windowstate.js'
 import { dataDir } from '../daemon/paths.js'
 
 const dirname = join(fileURLToPath(import.meta.url), '..')
@@ -238,9 +239,11 @@ function applyTraySetting(): void {
 
 function createWindow(): BrowserWindow {
   const icon = windowIcon()
+  const savedBounds = readWindowBounds()
   const win = new BrowserWindow({
     width: 1440,
     height: 900,
+    ...(savedBounds ?? {}),
     ...(icon ? { icon } : {}),
     minWidth: 960,
     minHeight: 600,
@@ -281,6 +284,7 @@ function createWindow(): BrowserWindow {
   const wc = win.webContents
   windows.add(wc)
   win.on('closed', () => windows.delete(wc))
+  trackWindowBounds(win)
 
   // ⛔ Only with a tray, and only when this is not the quit itself. Without the `quitting`
   // guard, Quit would hide the window and leave an app nobody can reach or exit.

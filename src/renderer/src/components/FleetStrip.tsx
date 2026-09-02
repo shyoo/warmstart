@@ -124,12 +124,15 @@ function SessionGauge({ session, now }: { session: Session; now: number }): Reac
   const ctxUrgencyClass = ctx && win ? quotaUrgency((ctx / win) * 100) : 'ok'
   const fillClass = `bar-fill--${ctxUrgencyClass}`
   const isIdle = session.state === 'closed' || session.state === 'idle'
+  // ⚠️ Display only — `session.purpose` stays `'work'` on the wire. "Work" read as a chore label
+  // beside "idle"; the state this session is actually in is that it's doing something.
+  const purposeLabel = session.purpose === 'work' ? 'active' : session.purpose
 
   return (
     <div
       className={`gauge gauge--session${isIdle ? ' gauge--idle' : ''}`}
       title={
-        `session ${session.id}\n${isIdle ? 'idle (warmed up)' : session.purpose} · ${session.transport} transport\n${session.cwd}\n` +
+        `session ${session.id}\n${isIdle ? 'idle (warmed up)' : purposeLabel} · ${session.transport} transport\n${session.cwd}\n` +
         (hasCacheClock
           ? 'the bar shows how much of the context window is used (ctx/win)\n' +
             'the clock is what is left of this session\u2019s prompt cache TTL\n' +
@@ -138,7 +141,7 @@ function SessionGauge({ session, now }: { session: Session; now: number }): Reac
             'ctx is how full the window is now \u2014 a level, not a total, and not a task\u2019s token count')
       }
     >
-      <span className="gauge-label">{isIdle ? 'idle' : session.purpose}</span>
+      <span className="gauge-label">{isIdle ? 'idle' : purposeLabel}</span>
       <span className="bar">
         {fill !== null && (
           <span

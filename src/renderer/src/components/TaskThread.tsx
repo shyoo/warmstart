@@ -35,6 +35,7 @@ import { duration, tokens, when } from '../lib/format'
 import {
   activeTime,
   activeTimeTitle,
+  CANCELLABLE,
   chronologicalRuns,
   elapsed,
   holdLine,
@@ -454,6 +455,19 @@ function TaskDetail({
                 {statusLabel(task)}
                 {IN_FLIGHT.has(task.status) && <Working />}
               </span>
+              {/* ⛔ `awaiting_human` excluded — that status already offers Stop via `Decide`,
+                  alongside the other resolutions a human can make, so this would be a second
+                  button doing the same thing. */}
+              {CANCELLABLE.has(task.status) && task.status !== 'awaiting_human' && (
+                <button
+                  type="button"
+                  className="btn btn--danger btn--ghost"
+                  title="Stop the work and return this task to a resting state. Destroys nothing."
+                  onClick={() => void cancel()}
+                >
+                  Stop
+                </button>
+              )}
             </Fact>
             {task.holdReason && (
               <Fact label={task.status === 'awaiting_human' ? 'wants' : 'waiting on'}>

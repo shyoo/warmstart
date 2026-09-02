@@ -36,8 +36,10 @@ import {
   activeTimeTitle,
   assigneeLabel,
   CANCELLABLE,
+  dependencyTooltip,
   holdLine,
   IN_FLIGHT,
+  modelColumnLabel,
   statusLabel,
   STATUS_TONE,
   taskLabelShort,
@@ -137,6 +139,14 @@ export function Tasks({
   // The latest live line per running row. The thread keeps its own copy of the same broadcast.
   const { activity } = useActivity()
   const now = useNow(1000)
+  // ⛔ Fetched, not compiled in — same reasoning as the pin picker in `NewTask` below: the renderer
+  // holds no model catalogue of its own.
+  const [modelOptions, setModelOptions] = useState<ModelOptions[]>([])
+  useEffect(() => {
+    void rpc('model.options')
+      .then(setModelOptions)
+      .catch(() => setModelOptions([]))
+  }, [])
 
   useEffect(() => {
     if (!menuTaskId) return
@@ -334,6 +344,7 @@ export function Tasks({
                   the first thing an operator checks and the last thing that should need a click —
                   and a routing mistake is invisible until it is shown here. */}
               <th>Worker</th>
+              <th>Model</th>
               <th>Dep</th>
               {/* ⛔ How long, beside how much. A task showing only a token count answers "what did
                   this cost" and not "is this taking too long", and the second is the question
@@ -402,7 +413,10 @@ export function Tasks({
                           : 'agent'}
                     </td>
                     <td className={task.ranOn || task.assignee ? '' : 'dim'}>{assigneeLabel(task, fleet)}</td>
-                    <td className="num dim">{task.dependsOn.length ? `←${task.dependsOn.length}` : '—'}</td>
+                    <td className="dim">{modelColumnLabel(task, fleet, modelOptions)}</td>
+                    <td className="num dim" title={dependencyTooltip(task, tasks)}>
+                      {task.dependsOn.length ? `←${task.dependsOn.length}` : '—'}
+                    </td>
                     <td className="num tbl-num dim" title={activeTimeTitle(task, now)}>
                       {activeTime(task, now)}
                     </td>
@@ -455,7 +469,7 @@ export function Tasks({
                                   void act(() => rpc('task.cancel', { id: task.id }))
                                 }}
                               >
-                                Cancel
+                                Stop
                               </button>
                             )}
                             {/* ⛔ `paused_quota` included. It resumes itself on the reset now, but an
@@ -533,7 +547,7 @@ export function Tasks({
                       className={`tbl-row--live${selected === task.id ? ' tbl-row--selected' : ''}`}
                       onClick={() => onOpenTask(task.id)}
                     >
-                      <td colSpan={11} className="tbl-live-cell">
+                      <td colSpan={12} className="tbl-live-cell">
                         <div className="tbl-live-line" title={belowLine}>
                           <span className="tbl-live-prefix" aria-hidden>&gt;</span>
                           <span className="tbl-live-text">
