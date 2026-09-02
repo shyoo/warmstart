@@ -115,7 +115,7 @@ wanted now, and shrinking it converts a conversation that can serve nobody into 
 use — typically letting the borrower skip a ~41.5k-token cold start on its next tick.
 
 ⛔ Only when the borrower has nothing else it could join, only when being full is the *sole* refusal,
-and only with `autoCompact` on — a compaction bought for a conversation the task still could not
+and only with compaction permitted — a compaction bought for a conversation the task still could not
 have is the fleet paying for a saving nobody can collect. ⚠️ Asked once, not every tick: a landed
 compaction zeroes `tokensSinceCompact`, and the clock's outstanding-move check holds the request
 open while it lands.

@@ -65,10 +65,16 @@ These are not preferences; breaking one breaks the product.
   `tokensSinceCompact` falling; a keepalive by the TTL moving. And the clock **stops asking** after
   `MAX_MOVE_ATTEMPTS`: whether `/compact` is honoured on `stream` has never been measured (R6), so an
   unbounded retry is an unbounded spend on an unverified assumption.
-- ⛔ **A global switch is off everywhere or it is a lie.** `settings.autoCompact` gates the
-  reserve-at-risk compaction as well as the ordinary one — a switch that quietly kept compacting "for
-  safety" would be false on the one screen whose whole claim is that it shows what the scheduler
-  really does. Told-not-to-compact and cannot-compact land in the same place: handoff and close.
+- ⛔ **A global switch is off everywhere or it is a lie, and an override of one is the same rule
+  mirrored.** `autoCompact` gates the reserve-at-risk compaction as well as the ordinary one — a
+  switch that quietly kept compacting "for safety" would be false on the one screen whose whole claim
+  is that it shows what the scheduler really does. Told-not-to-compact and cannot-compact land in the
+  same place: handoff and close. ⛔ The per-task override reaches **all five** call sites through the
+  single `mayCompact()`, because a control honoured by four of them appears to be on and mostly is
+  not. ⚠️ A preference is not a capability: an override may not talk an adapter that declares
+  `manualCompact: false` into having a `/compact`, and a refusal must name *which* switch said no —
+  "automatic compaction is switched off" sent to somebody whose fleet switch is on is a wild goose
+  chase.
 - ⛔ **A decision that triggers an action, and is re-evaluated before the action lands, is a loop.**
   Three components learned this separately: the cache clock re-issued `/compact` thirteen times
   (2026-08-26), the runaway watchdog re-preempted one run thirteen times (2026-08-28), and the finish

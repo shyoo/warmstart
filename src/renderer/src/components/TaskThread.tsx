@@ -4,16 +4,19 @@ import {
   FINISH_LABELS,
   FINISH_ORDER,
   resolveModelChoice,
+  AUTO_COMPACT_LABELS,
   COMPLETION_LABELS,
   OBJECTIVE_PRESET_ORDER,
   SHARING_LABELS,
   presetOf,
+  type AutoCompactChoice,
   type Compaction,
   type CompletionModeChoice,
   type FinishPolicyChoice,
   type Attachment,
   type Objective,
   type ObjectiveChoice,
+  type ResolvedAutoCompact,
   type ResolvedCompletionMode,
   type ResolvedFinishPolicy,
   type ResolvedSessionSharing,
@@ -66,6 +69,9 @@ export interface TaskDetailData {
   inheritedFinish?: ResolvedFinishPolicy
   inheritedSharing?: ResolvedSessionSharing
   inheritedCompletion?: ResolvedCompletionMode
+  inheritedAutoCompact?: ResolvedAutoCompact
+  /** Whether the adapter this task would run on can be asked to compact. A capability, not a choice. */
+  compactionCapable?: boolean
   inheritedObjective?: Objective
   resolvedObjective?: Objective
   previewPrompt?: string
@@ -629,6 +635,20 @@ function TaskDetail({
               <CompletionPicker
                 task={task}
                 inheritedCompletion={detail.inheritedCompletion}
+                onChanged={refresh}
+              />
+            </Fact>
+            {/* ⛔ Beside the other three because it is the same shape of decision and the same
+                promise: `inherit` is a real value, and the control records a preference rather than
+                doing anything. ⚠️ Unlike the three above it does **not** wait for the next run —
+                the cache clock re-reads it on its next tick, so switching a long-running task on
+                can schedule a compaction into the conversation it is already having, within 10s,
+                if the clock works out that one is worth its tokens. */}
+            <Fact label="compaction">
+              <CompactionPicker
+                task={task}
+                inheritedAutoCompact={detail.inheritedAutoCompact}
+                capable={detail.compactionCapable}
                 onChanged={refresh}
               />
             </Fact>
@@ -2077,6 +2097,93 @@ function CompletionPicker({
           'report at each phase boundary and wait. Takes effect on the next run.'
         }
         onChange={(val) => void choose(val as CompletionModeChoice)}
+      />
+      {note && <div className="note">{note}</div>}
+    </>
+  )
+}
+
+/**
+ * Whether the cache clock may spend a `/compact` on this task's conversation.
+ *
+ * ⛔ **A permission, and the control says so rather than reading as a button.** `on` does not compact
+ * anything; it lets the clock reach the moves that can, and the clock still has to agree that this
+ * particular compaction buys something — context past the break-even, enough growth since the last
+ * one, a prefix worth reading while it is still warm. An operator who reads this as *compact now*
+ * and watches nothing happen for an hour has been misled by the label, not by the feature.
+ *
+ * ⚠️ **The one picker on this pane that is not "takes effect on the next run".** Sharing, completion
+ * and finish all change a *prompt*, and a prompt is sent once, so a run in flight was already given
+ * its instructions. This changes what a loop decides on its next tick, and that loop runs every ten
+ * seconds against the session this task is talking in right now.
+ *
+ * ⛔ **`capable === false` is shown, not hidden.** Codex takes one prompt per session and has no
+ * `/compact`; Antigravity implements none. A control quietly missing on those workers is
+ * indistinguishable from a bug, and a control present but silently inert is worse — so the options
+ * are disabled and the tooltip says which agent cannot do it. ⚠️ Nothing here branches on an adapter
+ * name; the daemon read `capabilities.manualCompact` and sent the answer.
+ */
+function CompactionPicker({
+  task,
+  inheritedAutoCompact,
+  capable,
+  onChanged
+}: {
+  task: Task
+  inheritedAutoCompact?: ResolvedAutoCompact
+  capable?: boolean
+  onChanged?: () => Promise<void>
+}): React.JSX.Element {
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState<string | null>(null)
+
+  const choose = async (autoCompact: AutoCompactChoice): Promise<void> => {
+    setBusy(true)
+    setNote(null)
+    try {
+      await rpc('task.setAutoCompact', { id: task.id, autoCompact })
+      if (onChanged) await onChanged()
+    } catch (err) {
+      setNote(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const inheritedLabel = inheritedAutoCompact?.autoCompact
+    ? AUTO_COMPACT_LABELS[inheritedAutoCompact.autoCompact] ?? inheritedAutoCompact.autoCompact
+    : AUTO_COMPACT_LABELS.on
+
+  const options: SettingOption[] = [
+    { value: 'inherit', label: `inherit (${inheritedLabel})` },
+    { value: 'on', label: AUTO_COMPACT_LABELS.on },
+    { value: 'off', label: AUTO_COMPACT_LABELS.off }
+  ]
+
+  // ⚠️ `capable === false`, not `!capable`. Undefined means a detail payload from an older daemon
+  // that does not send the field, and disabling a working control because the answer is missing
+  // would be the worse of the two mistakes.
+  const cannot = capable === false
+
+  return (
+    <>
+      <SettingButtonSelect
+        value={task.autoCompact}
+        options={options}
+        disabled={busy || cannot}
+        ariaLabel="Automatic compaction"
+        title={
+          cannot
+            ? 'This task’s agent cannot be asked to compact — the capability is declared by the ' +
+              'adapter, and only Claude Code declares it today. The setting is recorded either way ' +
+              'and takes effect if this task moves to a worker that can.'
+            : 'Whether the cache clock may compact this conversation, overriding Settings > Global. ' +
+              'It is permission, not an instruction: the clock still decides on its own terms — ' +
+              'context past the ~2h break-even, enough growth since the last compaction, and a ' +
+              'prefix worth reading while it is still warm. Unlike the settings above it applies to ' +
+              'the conversation this task is in now, from the next tick.'
+        }
+        onChange={(val) => void choose(val as AutoCompactChoice)}
       />
       {note && <div className="note">{note}</div>}
     </>

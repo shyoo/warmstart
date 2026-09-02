@@ -952,7 +952,23 @@ const MIGRATIONS: Migration[] = [
   );
   create index if not exists attachments_message on attachments(message_id);
   create index if not exists attachments_task on attachments(task_id);
-  `
+  `,
+
+  // 32 - per-task override of the fleet's automatic-compaction switch.
+  //
+  // ⛔ **`'inherit'` is the default and is a real value, not a blank.** A task on it follows
+  // Settings > Global as that switch changes; a task set explicitly to the same value does not.
+  // Backfilling every existing row to `on` or `off` would have frozen the whole board against
+  // whatever the switch happened to say on the day of the upgrade.
+  //
+  // ⚠️ Guarded by `hasColumn` rather than written as a bare `alter table`, like migrations 28 and
+  // 31: `versionBefore` lets a test rewind `user_version` and reopen, which replays every migration
+  // after the one it wanted, so anything added later has to survive being run twice.
+  (conn) => {
+    if (!hasColumn(conn, 'tasks', 'auto_compact')) {
+      conn.exec("alter table tasks add column auto_compact text not null default 'inherit';")
+    }
+  }
 ]
 
 /**

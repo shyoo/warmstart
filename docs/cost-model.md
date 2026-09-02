@@ -159,6 +159,42 @@ the large one it just stopped being, and gets compacted again.
 ⚠️ The ~2-minute duration puts a hard floor under any deadline ending in a compaction. The
 last-chance-to-compact moment is **T+53m**, not T+58m.
 
+### Who may be compacted: a fleet switch with a per-task override (2026-09-02)
+
+Compaction spends tokens, so it has an off switch — `settings.autoCompact`, Settings > Global — and
+since 2026-09-02 a task may override that switch for its own conversation, from the `compaction`
+control in the task thread.
+
+| | |
+|---|---|
+| Values | `inherit` · `on` · `off`, resolved **task → fleet** by `resolveAutoCompact()` |
+| Default | `inherit`, on every task, including every row written before migration 32 |
+| Read through | `mayCompact()` in `cacheclock.ts` — the *only* reader of `settings.autoCompact` |
+| Reaches | move 4, move 5 (reserve at risk), move 5b (too full to lend), move 7 `revive_compact`, and `compactOnResume` |
+| Whose opinion | the **most recent run** on the session (`lastRunForSession`), so a borrowed conversation follows whoever is talking in it now |
+
+⛔ **A permission, not an instruction.** `on` means *you may*, and every gate downstream is
+untouched: `worthCompactingNow` (context past the 60k break-even **and** grown past
+`min_tokens_since_compact` since the last one), the TTL decision window, the reserve, and a cost
+model that can price the compaction. A task switched on gets its compaction scheduled at exactly the
+moment, and on exactly the terms, the fleet switch would have scheduled it. It is not a *compact now*
+button and the control says so.
+
+⛔ **A preference is not a capability.** `capabilities.manualCompact` is the adapter's declaration
+that `/compact` exists — Codex takes one prompt per session and has none, Antigravity implements
+none — and no operator setting can talk either into having one. The task detail sends
+`compactionCapable` so the thread can say which agent cannot, rather than showing a live control that
+silently does nothing.
+
+⚠️ **Two tiers, where sharing, completion and objective use three.** Those answer questions a project
+plausibly owns; this is spending policy on one account's window, which has no natural middle. Adding
+the project tier later is an additive `session.autoCompact` key plus one branch in
+`resolveAutoCompact`.
+
+⚠️ A refusal names the control that made it. "Automatic compaction is switched off" handed to
+somebody whose fleet switch is *on* is a wild goose chase, so the task's own refusal reads *this task
+is set never to compact*.
+
 ### ⛔ A conversation between runs is one the clock cannot see (2026-09-01, t92)
 
 `runCacheClock` iterates sessions in `live` or `idle`, and it has to: **every move it owns is a

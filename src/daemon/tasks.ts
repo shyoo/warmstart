@@ -69,6 +69,7 @@ interface TaskRow {
   finish_policy: string
   session_sharing: string
   completion_mode: string
+  auto_compact: string
   objective_json: string | null
   finish_asked_at: number | null
   conflict_asked_at: number | null
@@ -149,6 +150,9 @@ function toTask(r: TaskRow, timing: ActiveTiming = ZERO_TIMING): Task {
     finishPolicy: (r.finish_policy || 'inherit') as Task['finishPolicy'],
     sessionSharing: (r.session_sharing || 'inherit') as Task['sessionSharing'],
     completionMode: (r.completion_mode || 'inherit') as Task['completionMode'],
+    // ⚠️ Coalesced for the same reason as the three above: a row written before migration 32
+    // carries no value, and `inherit` is the honest reading of a task that never expressed one.
+    autoCompact: (r.auto_compact || 'inherit') as Task['autoCompact'],
     objective: r.objective_json ? (JSON.parse(r.objective_json) as Task['objective']) : 'inherit',
     finishAskedAt: r.finish_asked_at,
     conflictAskedAt: r.conflict_asked_at,
@@ -358,6 +362,7 @@ export interface CreateTaskInput {
   sessionSharing?: Task['sessionSharing']
   completionMode?: Task['completionMode']
   objective?: Task['objective']
+  autoCompact?: Task['autoCompact']
   preemptible?: boolean
   estTokens?: number | null
   mandate?: Partial<Mandate>
@@ -420,9 +425,9 @@ export function createTask(input: CreateTaskInput): Task {
       `insert into tasks (id, seq, project_id, title, kind, status, priority, created_by_json,
                           parent_task_id, lineage_depth, assignee_hint, mandate_json, budget_json,
                           not_before, deadline, requires_json, constraints_json, verification,
-                          finish_policy, session_sharing, completion_mode, objective_json, preemptible, est_tokens,
-                          created_at, updated_at)
-       values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+                          finish_policy, session_sharing, completion_mode, objective_json, auto_compact,
+                          preemptible, est_tokens, created_at, updated_at)
+       values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
     )
     .run(
       id,
@@ -449,6 +454,7 @@ export function createTask(input: CreateTaskInput): Task {
       input.sessionSharing ?? 'inherit',
       input.completionMode ?? 'inherit',
       input.objective && input.objective !== 'inherit' ? JSON.stringify(input.objective) : null,
+      input.autoCompact ?? 'inherit',
       input.preemptible === false ? 0 : 1,
       input.estTokens ?? null,
       now,
@@ -862,6 +868,7 @@ export function updateTask(
       | 'sessionSharing'
       | 'completionMode'
       | 'objective'
+      | 'autoCompact'
       | 'preemptible'
       | 'estTokens'
       | 'constraints'
@@ -891,7 +898,8 @@ export function updateTask(
       `update tasks set title = ?, title_summary = ?, priority = ?, project_id = ?,
                         not_before = ?, deadline = ?,
                         assignee_hint = ?, verification = ?, finish_policy = ?,
-                        session_sharing = ?, completion_mode = ?, objective_json = ?, preemptible = ?,
+                        session_sharing = ?, completion_mode = ?, objective_json = ?,
+                        auto_compact = ?, preemptible = ?,
                         est_tokens = ?, constraints_json = ?, updated_at = ?
         where id = ?`
     )
@@ -914,6 +922,7 @@ export function updateTask(
         : current.objective === 'inherit' || !current.objective
           ? null
           : JSON.stringify(current.objective),
+      patch.autoCompact ?? current.autoCompact,
       (patch.preemptible ?? current.preemptible) ? 1 : 0,
       patch.estTokens !== undefined ? patch.estTokens : current.estTokens,
       JSON.stringify(patch.constraints ?? current.constraints),

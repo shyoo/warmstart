@@ -329,6 +329,15 @@ export interface Task {
   /** What this task is optimising for, or `inherit` to follow project/fleet. */
   objective: ObjectiveChoice
   /**
+   * May the cache clock compact this task's conversation? `inherit` follows the fleet switch.
+   *
+   * ⛔ Resolved by `resolveAutoCompact`, task → fleet, and read by every place the fleet switch was
+   * read before — the four clock moves that can issue a `/compact` and the resume path. A control
+   * that reached only some of them would be a switch that appears to be on and mostly is not, which
+   * is the mirror of the rule `settings.autoCompact` already carries.
+   */
+  autoCompact: AutoCompactChoice
+  /**
    * When the finish instruction was sent to the agent, if it has been.
    *
    * ⛔ The guard against re-asking. The instruction is sent, the agent works, and it calls
@@ -1175,6 +1184,69 @@ export const DEFAULT_FLEET_SHARING: SessionSharing = 'off'
 export const SHARING_LABELS: Record<SessionSharing, string> = {
   on: 'reuse one if possible',
   off: 'always start a new one'
+}
+
+/**
+ * May the cache clock spend a `/compact` on the conversation this task is holding?
+ *
+ * ⛔ **A preference, and never a capability.** Whether an agent *can* be asked to compact is
+ * `capabilities.manualCompact`, declared by the adapter — Codex takes one prompt per session and
+ * has no `/compact` at all, Antigravity does not implement one. This answers the second question
+ * only, *should we*, and it is asked after the capability question has already said yes. A task set
+ * to `on` against an adapter that cannot compact stays exactly as inert as the fleet switch is
+ * there, which is the whole reason the two are separate values rather than one tri-state.
+ *
+ * ⚠️ **It changes the answer to "may I compact?" and nothing downstream of it.** Context size, growth
+ * since the last compaction, the cache TTL, the reserve and the cost model all still decide *whether
+ * this particular compaction buys anything* — so turning it on schedules a compaction on exactly the
+ * terms the fleet switch would have, at exactly the moment the clock would have chosen. It is a
+ * permission, not an instruction, and it is emphatically not a "compact now" button.
+ */
+export type AutoCompact =
+  /** Compact when the clock works out that a compaction is worth its tokens. */
+  | 'on'
+  /** Never spend a compaction on this task's conversation, whatever the fleet is set to. */
+  | 'off'
+
+export type AutoCompactChoice = AutoCompact | 'inherit'
+
+export interface ResolvedAutoCompact {
+  autoCompact: AutoCompact
+  /**
+   * ⚠️ Travels with the answer for the same reason it does on sharing and completion: a value whose
+   * origin is invisible is one nobody trusts. The picker says *inherit (compact when it is worth
+   * it)* rather than showing a bare `inherit` the operator has to go and look up.
+   */
+  source: 'task' | 'fleet'
+}
+
+export const AUTO_COMPACT_LABELS: Record<AutoCompact, string> = {
+  on: 'compact when it is worth it',
+  off: 'never compact'
+}
+
+/**
+ * Task, then fleet — the first that is not `inherit`.
+ *
+ * ⛔ **Two tiers, not the three that sharing, completion and objective use, and the omission is a
+ * decision rather than an oversight.** Those three answer questions a *project* plausibly owns —
+ * who may read whose conversation, how a repository is landed. This one is spending policy on one
+ * account's window, which is a fleet-wide concern with per-task exceptions and has no natural
+ * middle. Adding the tier later is an additive `session.autoCompact` key in project.json and one
+ * more branch here; adding it now would be surface nobody asked for.
+ *
+ * ⚠️ `inherit` is a real value. A task left on it follows the Settings > Global switch as that
+ * switch changes; a task set explicitly to the same value does not — which is precisely what an
+ * operator wants when they pin one long-running task's behaviour and then go and change the fleet.
+ */
+export function resolveAutoCompact(
+  task: Pick<Task, 'autoCompact'> | null | undefined,
+  fleetAutoCompact: boolean
+): ResolvedAutoCompact {
+  if (task && task.autoCompact !== 'inherit') {
+    return { autoCompact: task.autoCompact, source: 'task' }
+  }
+  return { autoCompact: fleetAutoCompact ? 'on' : 'off', source: 'fleet' }
 }
 
 /**

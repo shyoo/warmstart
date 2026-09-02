@@ -1,4 +1,4 @@
-import type { ClockDecision, Objective } from '@shared/tasks.js'
+import { resolveAutoCompact, type ClockDecision, type Objective } from '@shared/tasks.js'
 import type { Session, Settings } from '@shared/protocol.js'
 import { db } from './db.js'
 import { costModel } from './costmodel.js'
@@ -321,6 +321,50 @@ function worthCompactingNow(session: Session, model: ReturnType<typeof costModel
 }
 
 /**
+ * May this conversation be compacted at all — the fleet switch, and the task's override of it.
+ *
+ * ⛔ **One function, because five call sites is five chances to disagree.** `settings.autoCompact` is
+ * consulted by move 4, move 5 (reserve at risk), move 5b (too full to lend), move 7 (`decideRevive`)
+ * and `compactOnResume`, and AGENTS.md already carries the rule those five exist to satisfy: *a
+ * global switch is off everywhere or it is a lie*. A per-task override that reached only some of
+ * them would be the same lie told the other way round — a control that appears to be on and mostly
+ * is not. So the fleet switch is no longer read directly anywhere; every one of the five asks this.
+ *
+ * ⛔ **A permission, never an instruction.** `on` does not mean *compact*, it means *you may*. Every
+ * other gate is untouched and still has to agree: `worthCompactingNow` (context past the break-even
+ * and grown enough since the last one), the cache TTL window, the reserve, and a cost model that can
+ * price the compaction. A task switched on gets its compaction scheduled at exactly the moment, and
+ * on exactly the terms, the fleet switch would have scheduled it.
+ *
+ * ⛔ **Which task, when a conversation has held several.** The most recent run on the session, open
+ * or ended — `lastRunForSession`. A borrowed conversation is being *used* by whoever is talking in
+ * it now, and their preference is the live one; a conversation between runs belongs to the task that
+ * will come back to it, which is that same last run. The alternative — the union or intersection of
+ * every task that ever touched it — would make a task's own control depend on strangers, and
+ * `sharing.ts` is already the place that decides who may be in a conversation together.
+ *
+ * ⚠️ The `source` comes back so the refusal can say *which* switch said no. "Automatic compaction is
+ * switched off" sends somebody to Settings > Global; when it was this task's own override that
+ * decided, that sentence is a wild goose chase.
+ */
+export function mayCompact(
+  session: Session,
+  fleetAutoCompact: boolean
+): { allowed: boolean; source: 'task' | 'fleet' } {
+  const run = lastRunForSession(session.id)
+  const task = run?.taskId ? getTask(run.taskId) : null
+  const { autoCompact, source } = resolveAutoCompact(task, fleetAutoCompact)
+  return { allowed: autoCompact === 'on', source }
+}
+
+/** The sentence a refusal uses, so the operator is sent to the control that actually said no. */
+function compactionOffBecause(source: 'task' | 'fleet'): string {
+  return source === 'task'
+    ? 'this task is set never to compact'
+    : 'automatic compaction is switched off'
+}
+
+/**
  * How long a resumed conversation waits for its compaction before the prompt goes in regardless.
  *
  * ⚠️ The same window a clock-issued compaction gets to settle in, for the same reason: measured
@@ -373,8 +417,11 @@ export function compactOnResume(session: Session, settings: Settings): ResumeCom
   if (info.capabilities.streamPrompts === 'once') {
     return no(`${info.label} takes one prompt per session, so a compaction would eat it`)
   }
-  // ⛔ Off means off here too. See the note on `compactAllowed` in `decide()`.
-  if (!settings.autoCompact) return no('automatic compaction is switched off')
+  // ⛔ Off means off here too, and the task's own override is read alongside the fleet switch — see
+  // `mayCompact`. This is the last-resort compaction, so a task told never to compact must not
+  // acquire one simply by being resumed.
+  const permission = mayCompact(session, settings.autoCompact)
+  if (!permission.allowed) return no(compactionOffBecause(permission.source))
 
   const model = costModel(info.policy.costModelId)
   if (!worthCompactingNow(session, model)) {
@@ -495,8 +542,9 @@ export function decideRevive(session: Session, ctx: ClockContext): ClockDecision
   if (info.capabilities.streamPrompts === 'once') {
     return nothing(`${info.label} takes one prompt per session`)
   }
-  // ⛔ Off means off, here as everywhere else the clock spends.
-  if (!(ctx.settings?.autoCompact ?? true)) return nothing('automatic compaction is switched off')
+  // ⛔ Off means off, here as everywhere else the clock spends — fleet switch or task override.
+  const permission = mayCompact(session, ctx.settings?.autoCompact ?? true)
+  if (!permission.allowed) return nothing(compactionOffBecause(permission.source))
 
   const model = costModel(info.policy.costModelId)
   if (!worthCompactingNow(session, model)) {
@@ -615,13 +663,19 @@ export function decide(session: Session, ctx: ClockContext): ClockDecision {
     }
   }
 
-  // ⚠️ Off means off, including here. A global switch that quietly kept compacting "just for
-  // safety" would be a lie told by the one screen whose whole claim is that it shows what the
-  // scheduler really does. `compactAllowed` therefore gates move 5 as well as move 4 - and a
-  // provider that *cannot* compact and a fleet that has been *told not to* end in the same place,
-  // which is the fallback that already existed for the first case.
-  const compactAllowed = caps.manualCompact && (ctx.settings?.autoCompact ?? true)
-  const compactOff = caps.manualCompact && !(ctx.settings?.autoCompact ?? true)
+  // ⚠️ Off means off, including here. A switch that quietly kept compacting "just for safety" would
+  // be a lie told by the one screen whose whole claim is that it shows what the scheduler really
+  // does. `compactAllowed` therefore gates move 5 and move 5b as well as move 4 - and a provider
+  // that *cannot* compact and a fleet that has been *told not to* end in the same place, which is
+  // the fallback that already existed for the first case.
+  //
+  // ⛔ **The switch is no longer only the fleet's.** `mayCompact` resolves task → fleet, so a task
+  // can be told to compact on a fleet that is not, or told not to on a fleet that is. It answers
+  // *may we*, and nothing below it changes: `worthSaving`, the TTL window, the reserve and the cost
+  // model still decide whether this particular compaction buys anything.
+  const permission = mayCompact(session, ctx.settings?.autoCompact ?? true)
+  const compactAllowed = caps.manualCompact && permission.allowed
+  const compactOff = caps.manualCompact && !permission.allowed
 
   // Move 5 first: a reserve breach is not a preference, and it does not wait for the clock.
   //
@@ -655,7 +709,7 @@ export function decide(session: Session, ctx: ClockContext): ClockDecision {
       move: 'handoff_close',
       reason:
         (compactOff
-          ? `compaction reserve at risk and automatic compaction is switched off - ${reserve.reason}.`
+          ? `compaction reserve at risk and ${compactionOffBecause(permission.source)} - ${reserve.reason}.`
           : `compaction reserve at risk and this provider cannot compact - ${reserve.reason}.`) +
         ' Taking a handoff and releasing the session instead.',
       expectedIdleMs: null,
@@ -788,8 +842,8 @@ export function decide(session: Session, ctx: ClockContext): ClockDecision {
   // for an hour - and it is only honest because the switch is the *only* reason.
   if (pastThreshold && worthCompacting && compactOff) {
     return nothing(
-      `would compact (${contextTokens} tokens, ${idle.because}) but automatic compaction is ` +
-        'switched off'
+      `would compact (${contextTokens} tokens, ${idle.because}) but ` +
+        compactionOffBecause(permission.source)
     )
   }
 

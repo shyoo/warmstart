@@ -35,6 +35,8 @@ import type {
   FinishPolicyChoice,
   ResolvedFinishPolicy,
   SessionSharing,
+  AutoCompactChoice,
+  ResolvedAutoCompact,
   SessionSharingChoice,
   ResolvedSessionSharing,
   LooseEnd
@@ -1168,6 +1170,9 @@ export interface RpcMap {
       inheritedFinish?: ResolvedFinishPolicy
       inheritedSharing?: ResolvedSessionSharing
       inheritedCompletion?: ResolvedCompletionMode
+      inheritedAutoCompact?: ResolvedAutoCompact
+      /** Whether the adapter this task would run on declares `manualCompact`. See the daemon note. */
+      compactionCapable?: boolean
       inheritedObjective?: Objective
       resolvedObjective?: Objective
       previewPrompt?: string
@@ -1386,6 +1391,19 @@ export interface RpcMap {
     result: Task
   }
   'task.setSessionSharing': { params: { id: string; sessionSharing: SessionSharingChoice }; result: Task }
+  /**
+   * Whether the cache clock may compact this task's conversation, overriding the fleet switch.
+   *
+   * ⚠️ **Records a permission; it does not compact anything.** Switching a task to `on` does not send
+   * a `/compact` — it lets the clock reach the moves that can, and the clock still decides on its own
+   * terms (context past the break-even, enough growth since the last compaction, a prefix worth
+   * reading while it is warm). The next tick is where an eligible session acts on it, within 10s.
+   *
+   * ⛔ It cannot conjure a capability. Against an adapter declaring `manualCompact: false` this is as
+   * inert as the fleet switch is there, and the thread says so rather than showing a control that
+   * silently does nothing.
+   */
+  'task.setAutoCompact': { params: { id: string; autoCompact: AutoCompactChoice }; result: Task }
   /** ⚠️ Takes effect on the task's **next** run: it changes the prompt, and a prompt is sent once. */
   'task.setCompletionMode': {
     params: { id: string; completionMode: CompletionModeChoice }
@@ -1520,6 +1538,7 @@ export interface TaskCreateParams {
   sessionSharing?: SessionSharingChoice
   completionMode?: CompletionModeChoice
   objective?: ObjectiveChoice
+  autoCompact?: AutoCompactChoice
   status?: 'draft' | 'ready'
   kind?: TaskKind
   estTokens?: number | null
@@ -1540,6 +1559,7 @@ export interface TaskUpdateParams {
   sessionSharing?: SessionSharingChoice
   completionMode?: CompletionModeChoice
   objective?: ObjectiveChoice
+  autoCompact?: AutoCompactChoice
   preemptible?: boolean
   estTokens?: number | null
   constraints?: TaskConstraints

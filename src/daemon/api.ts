@@ -10,7 +10,7 @@ import type {
   Worker
 } from '@shared/protocol.js'
 import type { Task, TaskConstraints } from '@shared/tasks.js'
-import { resolveCompletionMode } from '@shared/tasks.js'
+import { resolveAutoCompact, resolveCompletionMode } from '@shared/tasks.js'
 import { existsSync } from 'node:fs'
 import { adapter, adapters } from './adapters/index.js'
 import { attachmentBytes, createAttachment, requireAttachment } from './attachments.js'
@@ -444,6 +444,21 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
         inheritedFinish: resolveFinishPolicy(null, project),
         inheritedSharing: resolveSessionSharing(null, project),
         inheritedCompletion: resolveCompletionMode(null, project, settings().completionMode),
+        inheritedAutoCompact: resolveAutoCompact(null, settings().autoCompact),
+        /**
+         * ⛔ **Whether compaction is a thing this task's agent can be asked for at all**, which is a
+         * capability and not a preference. Answered here rather than in the renderer because the
+         * renderer would have to branch on an adapter id to work it out, and that is the one thing
+         * AGENTS.md forbids outright. A `false` turns the picker into a statement of fact instead of
+         * a control that silently does nothing.
+         *
+         * ⚠️ Read off the same `adapterId` the prompt preview above is built from — the worker this
+         * task is pinned to, its assignee, or the first live one. A task with no pin can therefore be
+         * shown a capability it will not have if the scheduler routes it elsewhere; the picker says
+         * `on` regardless in that case, and the clock's own `manualCompact` gate is what actually
+         * decides at dispatch. Guessing wrong here costs a sentence, never a compaction.
+         */
+        compactionCapable: adapter(adapterId).info.capabilities.manualCompact,
         inheritedObjective: resolveObjective(project?.config?.objective, null, settings().objective),
         resolvedObjective: resolveObjective(project?.config?.objective, task.objective, settings().objective),
         previewPrompt
@@ -515,6 +530,11 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
      */
     'task.setSessionSharing': (p) => updateTask(p.id, { sessionSharing: p.sessionSharing }),
     'task.setCompletionMode': (p) => updateTask(p.id, { completionMode: p.completionMode }),
+    /**
+     * ⚠️ Records a permission and sends nothing. The cache clock reads it on its next tick and
+     * decides on its own terms; see the note on the protocol type.
+     */
+    'task.setAutoCompact': (p) => updateTask(p.id, { autoCompact: p.autoCompact }),
     'task.setObjective': (p) => updateTask(p.id, { objective: p.objective }),
     /**
      * ⚠️ Next run only. Nothing is sent into a session that is already talking — see the note on the
