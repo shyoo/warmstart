@@ -907,7 +907,17 @@ const MIGRATIONS: Migration[] = [
     if (!hasColumn(conn, 'tasks', 'title_summary')) {
       conn.exec('alter table tasks add column title_summary text;')
     }
-  }
+  },
+
+  // 30 - default models per pool for Antigravity workers (Gemini: gemini-3.7-flash-medium, Claude/GPT: claude-sonnet-4-6).
+  //
+  // Automatically enables budget-aware pool balancing across Gemini and Claude/GPT out of the box.
+  `
+  update workers
+     set default_models_json = '{"gemini":"gemini-3.7-flash-medium","claude":"claude-sonnet-4-6"}'
+   where adapter_id = 'antigravity-cli'
+     and (default_models_json is null or default_models_json = '{}');
+  `
 ]
 
 /**

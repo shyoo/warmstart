@@ -752,6 +752,8 @@ export interface AdapterPolicy {
   wrapUpProtocol: 'handoff' | 'compact' | 'none'
   /** Models with no injected token budget must be told their remaining budget explicitly. */
   needsExplicitBudget: boolean
+  defaultModel?: string | null
+  defaultModels?: Record<string, string | null> | null
 }
 
 export interface AdapterInfo {
