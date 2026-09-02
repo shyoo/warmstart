@@ -118,6 +118,7 @@ import {
 import {
   describeTree,
   looksStuck,
+  quietSince,
   sampleProcessTree,
   MIN_SAMPLE_GAP_MS,
   type TreeSample
@@ -161,7 +162,12 @@ import {
   runCacheClock,
   type ResumeCompaction
 } from './cacheclock.js'
-import { noteCompactionAsked, onCompactionLanded } from './compaction.js'
+import {
+  compactionInFlight,
+  lastCompactionLandedAt,
+  noteCompactionAsked,
+  onCompactionLanded
+} from './compaction.js'
 import { costModel } from './costmodel.js'
 
 /**
@@ -2445,6 +2451,16 @@ async function runWatchdogs(): Promise<void> {
     const session = getSession(run.sessionId)
     if (!session) continue
 
+    // ⛔ **A compaction in flight is the one silence that means the session is obeying.** `/compact`
+    // is answered with a turn that reports nothing until the boundary lands, so for the minute or
+    // two it takes, the run has no turn and a process tree that CPU barely registers - which is
+    // indistinguishable from the deadlock the checks below exist to catch. Measured on t105,
+    // 2026-09-02: issued 06:51:03, landed 06:53:11, and at 06:52:15 the operator was told the task
+    // *"looks stuck rather than slow"*. ⚠️ Only the two checks that judge *silence* stand down. A
+    // window boundary or a quota overrun is still a reason to preempt, compaction or not - those
+    // read the clock and the account, not the agent.
+    const compacting = compactionInFlight(session.id)
+
     // 0. Asked to finish, and never answered.
     //
     // ⛔ **`ask-agent` returns without ending the run, on the bet that the agent reports again.**
@@ -2468,7 +2484,7 @@ async function runWatchdogs(): Promise<void> {
     // clean tree lands. A tree still dirty rests the task at `awaiting_human` with the work intact —
     // never discarded, never swept into a commit nobody wrote. And it cannot loop, because
     // `finish_asked_at` is set by now, so the second decision is never `ask-agent` again.
-    if (task.finishAskedAt !== null) {
+    if (task.finishAskedAt !== null && !compacting) {
       if (finishReplyOverdue(task.finishAskedAt, session.lastRequestStartedAt ?? session.startedAt)) {
         log.warn(
           `t${task.seq} was asked to finish ${Math.round((Date.now() - task.finishAskedAt) / 60000)}m ` +
@@ -2534,8 +2550,18 @@ async function runWatchdogs(): Promise<void> {
     }
 
     // 3. A stall. ⛔ Reported, never killed - and since 2026-08-29 it can say *why* it thinks so.
-    const lastTurn = session.lastRequestStartedAt ?? session.startedAt
-    if (Date.now() - lastTurn > STALL_AFTER_MS) await reportStall(task, session, lastTurn)
+    // ⚠️ `quietSince`, not the request clock alone: on a resumed conversation that clock belongs to
+    // the previous run and is hours old, which is how t105 was accused of 947 minutes of silence
+    // ninety seconds after it was dispatched.
+    const lastTurn = quietSince({
+      lastRequestStartedAt: session.lastRequestStartedAt,
+      sessionStartedAt: session.startedAt,
+      runStartedAt: run.startedAt,
+      compactionLandedAt: lastCompactionLandedAt(session.id)
+    })
+    if (!compacting && Date.now() - lastTurn > STALL_AFTER_MS) {
+      await reportStall(task, session, lastTurn)
+    }
   }
 }
 

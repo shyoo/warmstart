@@ -209,3 +209,63 @@ describe('telling somebody the compaction landed', () => {
     expect(woken).toBe(1)
   })
 })
+
+/**
+ * The compaction the stall watchdog has to know about.
+ *
+ * ⛔ Measured on t105, 2026-09-02. The resume path issued `/compact` at 06:51:03 and the boundary
+ * arrived at 06:53:11 — two minutes and eight seconds, which is what a compaction costs. At 06:52:15,
+ * squarely inside that, the watchdog told the operator the task *"looks stuck rather than slow"*: no
+ * turn, and a process tree that had used 0.7 CPU-seconds in seventy seconds. Every one of those
+ * observations was true, and the conclusion was wrong, because a session answering `/compact` looks
+ * exactly like a session waiting on something that will never come.
+ */
+describe('knowing a session is mid-compaction', () => {
+  const asked = (): void => {
+    compaction.noteCompactionAsked({
+      sessionId: SESSION,
+      taskId: 't105',
+      reason: 'compacting the resumed conversation before prompting',
+      preTokens: 41_048
+    })
+  }
+
+  it('is in flight from the ask until the boundary', () => {
+    asked()
+    expect(compaction.compactionInFlight(SESSION)).toBe(true)
+  })
+
+  it('is not in flight once the boundary lands', () => {
+    asked()
+    compaction.noteCompactionLanded(SESSION, { preTokens: 41_048, durationMs: 128_000 })
+    expect(compaction.compactionInFlight(SESSION)).toBe(false)
+  })
+
+  it('⛔ stops excusing silence after the grace window, so an unhonoured /compact cannot mute the watchdog', () => {
+    asked()
+    const later = Date.now() + compaction.COMPACTION_GRACE_MS + 1
+    expect(compaction.compactionInFlight(SESSION, later)).toBe(false)
+  })
+
+  it('covers a compaction that takes the two minutes t105 took', () => {
+    asked()
+    expect(compaction.compactionInFlight(SESSION, Date.now() + 128_000)).toBe(true)
+  })
+
+  it('says nothing about a session that has never compacted', () => {
+    expect(compaction.compactionInFlight('00000000-0000-0000-0000-000000000000')).toBe(false)
+    expect(compaction.lastCompactionLandedAt('00000000-0000-0000-0000-000000000000')).toBeNull()
+  })
+
+  it('reports the most recent boundary, which the watchdog counts as a turn', () => {
+    compaction.noteCompactionLanded(SESSION, { preTokens: 90_000, durationMs: null })
+    const landed = compaction.lastCompactionLandedAt(SESSION)
+    expect(landed).not.toBeNull()
+    expect(Date.now() - (landed ?? 0)).toBeLessThan(60_000)
+  })
+
+  it('does not treat an ask on another session as this one compacting', () => {
+    asked()
+    expect(compaction.compactionInFlight('11111111-1111-1111-1111-111111111111')).toBe(false)
+  })
+})

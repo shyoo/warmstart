@@ -159,6 +159,69 @@ export function fillPostTokens(sessionId: string, contextTokens: number): void {
     .run(contextTokens, sessionId)
 }
 
+/**
+ * How long a `/compact` this fleet asked for may excuse a session's silence.
+ *
+ * ⛔ Bounded on purpose, and bounded well above how long a compaction takes. A compaction is one
+ * expensive turn - measured at 1-2 minutes on `claude-code`, t105 on 2026-09-02 took 2m08s - and
+ * five minutes is long enough that a healthy one is never cut off, short enough that a `/compact`
+ * which is never honoured cannot silence the stall watchdog for the rest of the run. The unlanded
+ * row stays on the record either way; what expires is only its excuse.
+ */
+export const COMPACTION_GRACE_MS = 5 * 60 * 1000
+
+/**
+ * Is this session in the middle of a compaction we asked for?
+ *
+ * ⛔ **The one silence that is a session working as instructed.** `/compact` goes down the session's
+ * own input channel and the CLI answers it with a turn that reports nothing until the boundary
+ * arrives - so for a minute or two the run looks exactly like the thing the stall watchdog exists to
+ * catch: no turn, and a process tree doing very little that CPU can see. Measured on t105,
+ * 2026-09-02: the compaction was issued at 06:51:03 and the boundary arrived at 06:53:11, and at
+ * 06:52:15 the watchdog told the operator the task *"looks stuck rather than slow"* about a session
+ * that was doing precisely what it had been told to do.
+ *
+ * ⚠️ Asked-and-unlanded only, and only inside the grace window. A landed compaction is not in
+ * flight, and one asked for half an hour ago is evidence of nothing.
+ */
+export function compactionInFlight(
+  sessionId: string,
+  now = Date.now(),
+  graceMs = COMPACTION_GRACE_MS
+): boolean {
+  const open = row<{ asked_at: number | null }>(
+    db()
+      .prepare(
+        `select asked_at from compactions
+          where session_id = ? and landed_at is null and asked_at is not null
+          order by asked_at desc limit 1`
+      )
+      .get(sessionId)
+  )
+  if (!open?.asked_at) return false
+  return now - open.asked_at <= graceMs
+}
+
+/**
+ * When this session last finished compacting, if it ever has.
+ *
+ * ⚠️ Read by the stall watchdog as proof of work: a boundary is a turn the session demonstrably
+ * completed, so the silence that matters starts there rather than at whatever request preceded it -
+ * which on a resumed conversation can be hours old and belong to another run entirely.
+ */
+export function lastCompactionLandedAt(sessionId: string): number | null {
+  const last = row<{ landed_at: number | null }>(
+    db()
+      .prepare(
+        `select landed_at from compactions
+          where session_id = ? and landed_at is not null
+          order by landed_at desc limit 1`
+      )
+      .get(sessionId)
+  )
+  return last?.landed_at ?? null
+}
+
 export function getCompaction(id: number): Compaction | null {
   return toCompaction(
     row<CompactionRow>(db().prepare('select * from compactions where id = ?').get(id))

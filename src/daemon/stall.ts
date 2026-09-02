@@ -69,6 +69,38 @@ export function looksStuck(
   return current.cpuSeconds - previous.cpuSeconds < minCpuSeconds
 }
 
+/**
+ * When the silence being judged actually began.
+ *
+ * ⛔ **`lastRequestStartedAt` alone is a property of the conversation, not of this run**, and on a
+ * resumed one it can predate the run by most of a day. Measured on t105, 2026-09-02: a conversation
+ * idle since the previous evening was resumed at 06:51, and seventy seconds later the watchdog
+ * announced *"no turn for 947m"* about a run that was barely a minute old. Every later number in
+ * that report was drawn from the same false premise.
+ *
+ * ⭐ A landed compaction counts as a turn, because it is one: the boundary is proof the session did
+ * the expensive work it was asked to do, whatever the request clock says.
+ *
+ * ⚠️ The floors only ever move the start of the silence *forward*, so this cannot hide a genuine
+ * stall - a run that has been open and quiet for twenty minutes still reads as twenty minutes.
+ */
+export function quietSince(inputs: {
+  /** The last request this session started, or null if it has never started one. */
+  lastRequestStartedAt: number | null
+  /** When the session process opened. */
+  sessionStartedAt: number
+  /** When the run being judged was dispatched. A run cannot have been silent longer than it exists. */
+  runStartedAt?: number | null
+  /** When this session last finished compacting, if ever. */
+  compactionLandedAt?: number | null
+}): number {
+  return Math.max(
+    inputs.lastRequestStartedAt ?? inputs.sessionStartedAt,
+    inputs.runStartedAt ?? 0,
+    inputs.compactionLandedAt ?? 0
+  )
+}
+
 /** Every process descended from `rootPid`, the root included. */
 export function descendantsOf(all: ProcessRow[], rootPid: number): ProcessRow[] {
   const children = new Map<number, ProcessRow[]>()

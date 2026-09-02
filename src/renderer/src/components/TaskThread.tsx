@@ -707,40 +707,49 @@ function TaskDetail({
               {task.mandate.allowed.join(', ')} · depth {task.lineageDepth}/
               {task.mandate.maxLineageDepth}
             </Fact>
-
-            {compactions.length > 0 && (
-              <div className="side-runs">
-                {/* ⛔ Its own block rather than a line inside a run, because a compaction is not
-                    scoped to one attempt: the session outlives the run, and the shrink it bought is
-                    still paying out on the next one. The label says what it bought, because a
-                    compaction with no before-and-after is a claim rather than a measurement. */}
-                <div
-                  className="side-label"
-                  title="Each time this task's context was compacted, and what it left behind. A compaction costs one expensive turn and makes every turn after it read a smaller prefix."
-                >
-                  compactions · context before → after
-                </div>
-                {compactions.map((c) => (
-                  <CompactionRow key={c.id} compaction={c} now={now} />
-                ))}
-              </div>
-            )}
           </div>
 
-          {runs.length > 0 && (
+          {/* ⛔ The history box, and compactions belong in it rather than under the facts above.
+              A compaction and a run are the same kind of thing to the operator - something that
+              *happened to this task*, at a time, with a cost - and the box above is what the task
+              *is*: its status, its settings, its totals. Filed there, the compaction ledger grew the
+              settings box downward until the runs it should be read against were off the screen. */}
+          {(runs.length > 0 || compactions.length > 0) && (
             <div className="detail-side-box">
-              {/* ⚠️ The label carries the distinction, because "completed" here beside
-                  "awaiting_human" above is the thing that reads as a contradiction. A run is one
-                  attempt; whether the *task* is done is a separate question. */}
-              <div
-                className="side-label"
-                title="One attempt each. A run finishing says the agent stopped cleanly — not that the task is done, which is what the status above answers."
-              >
-                runs · attempts, not outcomes
-              </div>
-              {chronologicalRuns(runs).map((run) => (
-                <RunRow key={run.id} run={run} sessions={sessions} fleet={fleet} now={now} />
-              ))}
+              {runs.length > 0 && (
+                <>
+                  {/* ⚠️ The label carries the distinction, because "completed" here beside
+                      "awaiting_human" above is the thing that reads as a contradiction. A run is one
+                      attempt; whether the *task* is done is a separate question. */}
+                  <div
+                    className="side-label"
+                    title="One attempt each. A run finishing says the agent stopped cleanly — not that the task is done, which is what the status above answers."
+                  >
+                    runs · attempts, not outcomes
+                  </div>
+                  {chronologicalRuns(runs).map((run) => (
+                    <RunRow key={run.id} run={run} sessions={sessions} fleet={fleet} now={now} />
+                  ))}
+                </>
+              )}
+              {compactions.length > 0 && (
+                /* ⛔ Its own block rather than a line inside a run, because a compaction is not
+                   scoped to one attempt: the session outlives the run, and the shrink it bought is
+                   still paying out on the next one. The label says what it bought, because a
+                   compaction with no before-and-after is a claim rather than a measurement.
+                   ⚠️ The rule above it is only drawn when there are runs to be separated from. */
+                <div className={runs.length > 0 ? 'side-runs' : undefined}>
+                  <div
+                    className="side-label"
+                    title="Each time this task's context was compacted, and what it left behind. A compaction costs one expensive turn and makes every turn after it read a smaller prefix."
+                  >
+                    compactions · context before → after
+                  </div>
+                  {compactions.map((c) => (
+                    <CompactionRow key={c.id} compaction={c} now={now} />
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </aside>

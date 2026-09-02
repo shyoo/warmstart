@@ -5,6 +5,7 @@ import {
   describeTree,
   descendantsOf,
   looksStuck,
+  quietSince,
   parsePosixCpuTime,
   parsePosixProcesses,
   parseWindowsProcesses,
@@ -297,5 +298,62 @@ describe('what the operator is shown', () => {
     })
     expect(text).toContain('agy.exe')
     expect(text).not.toContain('undefined')
+  })
+})
+
+/**
+ * When the silence started.
+ *
+ * ⛔ Measured on t105, 2026-09-02: a conversation last used the previous evening was resumed at
+ * 06:51:03, and at 06:52:15 the watchdog reported *"no turn for 947m"* about a run seventy seconds
+ * old. The count was arithmetic on the right field and the wrong premise - `lastRequestStartedAt`
+ * belongs to the conversation, which outlives the run being judged.
+ */
+describe('where the stall clock starts', () => {
+  const now = 1_000_000_000
+
+  it('uses the last request when nothing later has happened', () => {
+    const lastRequest = now - 20 * 60_000
+    expect(
+      quietSince({ lastRequestStartedAt: lastRequest, sessionStartedAt: now - 60 * 60_000 })
+    ).toBe(lastRequest)
+  })
+
+  it('falls back to the session start when no request has ever been made', () => {
+    expect(quietSince({ lastRequestStartedAt: null, sessionStartedAt: now - 5000 })).toBe(now - 5000)
+  })
+
+  it('⭐ never counts silence older than the run being judged - the t105 reading', () => {
+    // The conversation was quiet for 946 minutes. The run had existed for one.
+    const quiet = quietSince({
+      lastRequestStartedAt: now - 946 * 60_000,
+      sessionStartedAt: now - 946 * 60_000,
+      runStartedAt: now - 72_000
+    })
+    expect(Math.round((now - quiet) / 1000)).toBe(72)
+  })
+
+  it('counts a landed compaction as a turn, because it is one', () => {
+    const landed = now - 30_000
+    expect(
+      quietSince({
+        lastRequestStartedAt: now - 40 * 60_000,
+        sessionStartedAt: now - 60 * 60_000,
+        runStartedAt: now - 50 * 60_000,
+        compactionLandedAt: landed
+      })
+    ).toBe(landed)
+  })
+
+  it('⛔ still reports a genuine stall: the floors only ever move the start forward', () => {
+    const lastRequest = now - 20 * 60_000
+    const quiet = quietSince({
+      lastRequestStartedAt: lastRequest,
+      sessionStartedAt: now - 60 * 60_000,
+      runStartedAt: now - 55 * 60_000,
+      compactionLandedAt: now - 45 * 60_000
+    })
+    expect(quiet).toBe(lastRequest)
+    expect(now - quiet).toBeGreaterThan(12 * 60_000)
   })
 })
