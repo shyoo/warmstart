@@ -3453,30 +3453,94 @@ select:focus-visible,
   font-size: var(--text-meta);
 }
 
-/* ---- setting row whose control is a picker rather than a switch -------- */
+/* ---- settings list ------------------------------------------------------ */
 /*
- * ⛔ A picker cannot be 40px wide like the switch, so it cannot lead the row the way the switch
- * does. While it did, it took `width: 100%` as its flex basis - over half the panel - and pushed
- * every title and note in these sections into the right-hand half, wrapping "Background poller ·
- * Every 5 minutes" onto two lines and leaving the prose out of line with the switch rows above it.
- * So the control sits at the end of the *title* line instead, in a column that never grows, and the
- * note runs the full width underneath - the same width, and the same left edge, as a switch row's.
+ * One shape for every setting on a settings page: title, one line of consequence under it, and the
+ * control at the right edge on a column that never grows. Switches and pickers differ only in what
+ * sits in that column.
+ *
+ * ⛔ The control does not lead the row. It used to, and a `<select>` cannot be 40px wide the way a
+ * switch is - it took `width: 100%` as its flex basis, over half the panel, and pushed every title
+ * and note into the right-hand half while the switch rows above it stayed left. Two controls of
+ * different widths cannot both lead a row and stay aligned; a fixed right-hand column is what makes
+ * a mixed list read as one list.
+ *
+ * ⚠️ The description is one line about *this state*, not a paragraph. The reasoning behind a
+ * setting belongs in `docs/`, which does not have to be re-read every time somebody flips a switch.
  */
-.picker-row {
-  padding-left: calc(40px + var(--sp-3)); /* the switch (40px) plus a `.switch-row` gap */
-}
-
-.picker-row-head {
+.setting-list {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--sp-4);
+  flex-direction: column;
 }
 
-/* ⚠️ Wide enough for the longest label it offers ("commit, verify, merge and push") and no wider. */
-.finish-picker.picker-row-control {
+.setting-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--sp-2) var(--sp-5);
+  padding: var(--sp-3) 0;
+  border-top: 1px solid var(--color-border);
+}
+
+/* The panel header already draws the line above the first row. */
+.setting-row:first-child {
+  border-top: none;
+  padding-top: var(--sp-1);
+}
+
+.setting-row-title {
+  margin: 0;
+  font-size: var(--text-body);
+  font-weight: 600;
+}
+
+/* ⚠️ The cap is for a maximised window, not for this column — the grid already stops the text short
+   of the control, and a 72ch cap on top of that left a hand's width of dead space mid-row. */
+.setting-row-desc {
+  margin: var(--sp-1) 0 0;
+  max-width: 92ch;
+  color: var(--color-text-dim);
+  font-size: var(--text-dense);
+  line-height: 1.5;
+}
+
+.setting-row-control {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+/* ⚠️ Wide enough for the longest label offered ("commit, verify, merge and push") and no wider, so
+   a column of mixed pickers has one right edge. */
+.finish-picker.setting-row-control-select {
   flex: none;
   width: 260px;
+}
+
+/* Sliders and the like, under a row whose control alone cannot express the value. */
+.setting-row-extra {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  max-width: 360px;
+}
+
+.setting-row-slider {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--text-dense);
+}
+
+.setting-row-slider label {
+  width: 56px;
+  color: var(--color-text-dim);
+}
+
+.setting-row-slider input {
+  flex: 1;
+  min-width: 0;
 }
 
 /* ---- Setting button selector (value + ✒️ in rounded dark button) ---- */

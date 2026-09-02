@@ -433,9 +433,7 @@ export function App(): React.JSX.Element {
                 <header className="panel-head">
                   <div>
                     <h2>Fleet settings</h2>
-                    <p className="panel-sub">
-                      Fleet-wide defaults and automation policies that govern running sessions.
-                    </p>
+                    <p className="panel-sub">Defaults every project and session inherits.</p>
                   </div>
                 </header>
                 <FleetSettings />
