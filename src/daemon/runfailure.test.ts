@@ -940,3 +940,13 @@ describe('reconcileTasks', () => {
   })
 })
 
+describe('completeTask with one-shot stream adapter', () => {
+  it('finishes open run when one-shot CLI finishes', async () => {
+    const running = seedRunningTask({ adapterId: 'openai-compatible', metered: 1 })
+    await scheduler.completeTask(running.session.id, 'done')
+    const runs = tasks.runsFor(running.task.id)
+    expect(runs[0]?.outcome).toBe('completed')
+    expect(runs[0]?.endedAt).not.toBeNull()
+  })
+})
+

@@ -3116,7 +3116,11 @@ async function landCompletion(
     }
   }
 
-  addMessage(task.id, 'agent', effectiveSummary, run.id)
+  const existing = messagesFor(task.id).filter((m) => m.runId === run.id && m.role === 'agent')
+  const alreadyAdded = existing.some((m) => m.text.trim() === effectiveSummary.trim())
+  if (!alreadyAdded) {
+    addMessage(task.id, 'agent', effectiveSummary, run.id)
+  }
 
   // ⚠️ Keyed by the session, which is what holds the workspace. Keyed by the run this read `MISSING`
   // for every completion the moment ownership moved, and the finish path is gated on it — a missing
@@ -3192,6 +3196,8 @@ async function landCompletion(
         log.warn(`could not send the finish instruction for t${task.seq}:`, err)
         addMessage(task.id, 'system', 'Could not reach the session to ask. Over to you.')
         setStatus(task.id, 'awaiting_human', { assignee: 'human', holdReason: decision.reason })
+        finishRun(run.id, 'completed', summary)
+        await releaseFor(run.id, task.id, project.id)
       }
       return
     }
@@ -3202,6 +3208,28 @@ async function landCompletion(
     let landNow = decision.kind === 'land'
 
     if (decision.kind === 'resolve-conflict') {
+      const finishing = getSession(sessionId)
+      const oneShot =
+        finishing !== null &&
+        adapter(finishing.adapterId).info.capabilities.streamPrompts === 'once'
+      if (oneShot) {
+        addMessage(
+          task.id,
+          'system',
+          `Your branch no longer rebases cleanly onto \`${decision.base}\`. ` +
+            `${adapter(finishing.adapterId).info.label} runs one turn and exits, ` +
+            'so it cannot be asked to resolve the conflict mid-session — this one is over to you. ' +
+            `Conflicts with \`${decision.base}\` in ${decision.paths.join(', ') || 'unknown files'}.`
+        )
+        setStatus(task.id, 'awaiting_human', {
+          assignee: 'human',
+          holdReason: `${decision.reason}, and this CLI cannot be asked after its turn ends`
+        })
+        finishRun(run.id, 'completed', summary)
+        await releaseFor(run.id, task.id, project.id)
+        return
+      }
+
       // ⛔ Returns without ending the run, exactly like `ask-agent` above: the agent is still working
       //    and will report completion again, so closing the run here would orphan a live session and
       //    release the workspace holding the half-finished rebase.
@@ -3242,6 +3270,8 @@ async function landCompletion(
               `${paths.join(', ') || 'unknown files'}.`
           )
           setStatus(task.id, 'awaiting_human', { assignee: 'human', holdReason: decision.reason })
+          finishRun(run.id, 'completed', summary)
+          await releaseFor(run.id, task.id, project.id)
         }
         return
       }
