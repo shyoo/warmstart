@@ -161,6 +161,12 @@ These are not preferences; breaking one breaks the product.
   machine and was cleared by nothing — `admit()` refuses it as held, `admitScheduled()` reads only
   `scheduled` — so `not_before` on such a row was read by no code at all while three places promised
   it resumed itself (t60). `resumeQuotaPaused()` is that clock; a new held status owes one too.
+  ⛔ **And every way *into* a quota hold has to use it.** A window that closes with no warning arrives
+  as an ordinary `api_error` at the end of a turn — *"You've hit your session limit · resets 4am"* —
+  and that path parked nothing: the task went to `awaiting_human` and waited three hours past its own
+  reset for a person to type "resume" (t108, 2026-09-02). Recognising the vendor's sentence belongs to
+  the adapter (`outOfQuota`, beside `needsReauth`); deciding it is a park and not a failure belongs to
+  the scheduler.
 - ⛔ **A contended resource is a hold, never a failure.** `claim()` returning null means *not yet*,
   and a caller that reads it as *no* throws away work for being unlucky. Measured 2026-08-29: the
   enabled fleet could run five sessions against a pool of three, so `dispatch` threw

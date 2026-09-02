@@ -92,11 +92,28 @@ function reading(
   }
 }
 
-/** A task parked on a window, exactly as `preempt` leaves one. */
-function park(title: string, workerId: string, notBefore: number | null): Task {
+/**
+ * A task parked on a window, exactly as `preempt` leaves one — ten minutes ago by default.
+ *
+ * ⛔ **The park is backdated, and that is not a detail.** A release on a *reading* answers "has the
+ * window come back since this was parked", so `quotaReleaseFor` requires the reading to have been
+ * taken after the park. Parking at `Date.now()` against readings seeded seconds earlier would model
+ * an order that cannot occur — a park asks for an urgent probe, and the reading that frees it is the
+ * answer to that probe. Measured on t108, 2026-09-02: a run preempted at 07:22:06 was released 120
+ * seconds later on a cached reading from ~07:16, redispatched into the account that had just warned
+ * about that very window, and was preempted again within ten seconds.
+ */
+function park(
+  title: string,
+  workerId: string,
+  notBefore: number | null,
+  parkedAgoMs = 10 * MIN
+): Task {
   const task = tasks.createTask({ title, createdBy: { kind: 'human' } })
-  db.db().prepare('update tasks set not_before = ? where id = ?').run(notBefore, task.id)
   tasks.setStatus(task.id, 'paused_quota', { assignee: workerId })
+  db.db()
+    .prepare('update tasks set not_before = ?, updated_at = ? where id = ?')
+    .run(notBefore, Date.now() - parkedAgoMs, task.id)
   return tasks.requireTask(task.id)
 }
 
@@ -317,6 +334,22 @@ describe('a park that ends because the window actually came back', () => {
     const worker = seedWorker('stale-good-news')
     const task = park('parked', worker, Date.now() + 3 * HOUR)
     reading(worker, [{ id: 'session', label: '5h', percent: 0, resetsIn: 4 * HOUR }], 20 * MIN)
+
+    await scheduler.tick()
+
+    expect(statusOf(task)).toBe('paused_quota')
+  })
+
+  it('⭐ stays parked on a reading taken before it was parked', async () => {
+    // ⛔ **t108, 2026-09-02.** A run was preempted at 07:22:06 on a vendor warning about the 5h
+    //    window; 120 seconds later this released it on a cached reading from ~07:16 — 83%, under the
+    //    gate, fresh by every age test, and *older than the event that stopped the run*. The task
+    //    redispatched into the account that had just warned about it, was preempted again within ten
+    //    seconds, and the third turn walked into the hard session limit. "Has the window come back"
+    //    cannot be answered by a reading taken before it was known to be full.
+    const worker = seedWorker('read-before-parking')
+    const task = park('parked seconds ago', worker, Date.now() + 3 * HOUR, 30_000)
+    reading(worker, [{ id: 'session', label: '5h', percent: 83, resetsIn: 3 * HOUR }], 2 * MIN)
 
     await scheduler.tick()
 

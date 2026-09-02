@@ -323,6 +323,12 @@ reset borrowed from the wrong window parks a task for days. And
 `resumeQuotaPaused()` — a clock tick beside `admitScheduled()` — puts it back to `ready` when that
 time arrives. ⛔ It returns to the **queue**, not to a worker: the dispatch gate reads the quota again
 and may still hold it, which is honest and visible in a way `paused_quota` for ever was not.
+⛔ A window can also close **without warning**, and then it arrives as an error at the end of a turn
+rather than as a signal before one: `api_error` carrying *"You've hit your session limit · resets
+4am"*. That is the same event and it now has the same consequence — the adapter recognises its own
+CLI's wording (`outOfQuota`), the run ends `preempted`, and the task parks on the window's reset. It
+used to take the ordinary failure path to `awaiting_human`, a hold only a person can end, and on t108
+(2026-09-02) a task sat there for three hours after its window had reopened.
 ⚠️ The same protocol also serves a **runaway stop** (`settings.autoRunawayStop`, default off), which
 ends differently: no window is closing, so there is nothing to resume after and the task rests at
 `awaiting_human` with no `not_before`. Preemption pauses; a runaway stop hands back.

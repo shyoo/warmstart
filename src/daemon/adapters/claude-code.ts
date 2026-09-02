@@ -304,6 +304,31 @@ export const claudeCode: AgentAdapter = {
     )
   },
 
+  /**
+   * ⚠️ Measured, not imagined: the first phrase is verbatim what this CLI answered on ClaudeSecond
+   * on 2026-09-02 (t108) — `api_error: You've hit your session limit · resets 4am
+   * (America/Los_Angeles)` — on an account whose five-hour window had run out mid-run. The others
+   * are the same event in this vendor's other wordings.
+   *
+   * ⛔ Anchored on "limit" beside a pool this vendor actually meters, never on the word alone: a
+   * tool that reports "line limit exceeded" is an agent having a bad turn, and parking the task
+   * against a quota window would hide a real failure behind a five-hour clock.
+   *
+   * ⛔ And never on `api_error` alone, for the reason `needsReauth` gives above.
+   */
+  outOfQuota: (reason: string): boolean => {
+    const said = reason.toLowerCase()
+    return (
+      said.includes('session limit') ||
+      said.includes('usage limit') ||
+      said.includes('rate limit exceeded') ||
+      said.includes('5-hour limit') ||
+      said.includes('five-hour limit') ||
+      said.includes('weekly limit') ||
+      said.includes('rate_limit_error')
+    )
+  },
+
   isInstalled(): boolean {
     return which(info.command) !== null
   },

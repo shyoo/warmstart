@@ -423,6 +423,14 @@ exist, be fresh (`stale` is an age test), describe a window that has not since r
 below `QUOTA_HIGH_WATER`. ⛔ An **expired** window releases on its own terms — that is the thing the
 task was waiting for. Anything looser would release a task the next tick would immediately hold again.
 
+⛔ **And be newer than the park itself** (t108, 2026-09-02). The question this test asks is *has the
+window come back since*, and a reading taken before the run was stopped cannot answer it however
+fresh it is. A run preempted at 07:22:06 on a vendor warning about its 5h window was released 120
+seconds later on a cached reading from ~07:16 — 83%, under the gate, inside the staleness window —
+redispatched into the account that had just warned about it, was preempted again ten seconds later,
+and the third turn hit the hard session limit. The urgent probe a park asks for is what supplies a
+reading that *can* answer the question; until it lands, the clock is the only evidence there is.
+
 ### ⛔ A window's pool survives being stored (2026-08-31)
 
 `QuotaWindow.group` is what `sessionWindowFor` finds a task's own pool by, and it was parsed, carried

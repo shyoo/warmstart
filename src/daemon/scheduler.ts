@@ -590,6 +590,15 @@ export function quotaReleaseFor(task: Task): string | null {
   const quota = lastQuota(workerId)
   if (!quota || quota.stale || quota.windows.length === 0) return null
 
+  // ⛔ **The reading has to be newer than the park, not merely fresh.** Measured on t108,
+  // 2026-09-02: a run was preempted at 07:22:06 on a vendor warning about the 5h window, and 120
+  // seconds later this released it again on a cached reading taken at ~07:16 — 83%, under the gate,
+  // and *older than the event that stopped the run*. The task redispatched, was preempted again
+  // within ten seconds, and the third turn walked into the hard session limit. A reading from
+  // before the park cannot answer "has the window come back since", which is the only question
+  // being asked here; the urgent probe requested at park time is what supplies one that can.
+  if (quota.sampledAt <= task.updatedAt) return null
+
   const choice = resolveModelChoice(task.constraints, worker, false, quota)
   const windows = windowsForPool(quota.windows, poolFor(worker, choice.model))
   if (windows.length === 0) return null
@@ -3630,7 +3639,13 @@ async function endUnfinishedRun(
   outcome: 'failed' | 'blocked'
 ): Promise<void> {
   const task = run.taskId ? getTask(run.taskId) : null
-  finishRun(run.id, outcome, why)
+
+  // ⛔ **Asked before the run is wound up, because it changes what the run *was*.** A turn the
+  // vendor refused for want of quota is not a failure of the work; it is the same event the mid-run
+  // watchdog handles by parking the task, arriving by a different door. See `quotaFailurePark`.
+  const parkAt = task && outcome === 'failed' ? quotaFailurePark(session, run, why) : null
+
+  finishRun(run.id, parkAt === null ? outcome : 'preempted', why)
 
   // ⛔ A blocked run is never dead on arrival, and the check is skipped rather than merely failing:
   // `deadOnArrival` reports on a dispatch that produced nothing, and this one produced a question.
@@ -3638,7 +3653,30 @@ async function endUnfinishedRun(
   const dead = outcome === 'blocked' ? null : deadOnArrival(session, run)
 
   if (task && (task.status === 'running' || task.status === 'assigned')) {
-    if (dead) {
+    if (parkAt !== null) {
+      // ⛔ Ahead of the dead-on-arrival branch as well as the ordinary one. A run refused at the
+      // first turn produces no metered turn and looks exactly like a lapsed account from here, and
+      // benching a healthy worker over a window that will reopen on its own is the wrong answer to
+      // both halves: the account is not broken, and the task has a time it can run again.
+      addMessage(
+        task.id,
+        'system',
+        `${why} That is this account's quota window, not a fault in the work — parked until it ` +
+          `resets, expected ${new Date(parkAt).toISOString()}, and the fleet puts this back in the ` +
+          'queue by itself then (sooner, if a reading shows the window has already come back).'
+      )
+      // ⛔ `not_before` before the status, and both before anything else can see the row: a task at
+      // `paused_quota` with no reset time is one `resumeQuotaPaused` releases immediately, straight
+      // back into the account that just refused it.
+      db()
+        .prepare('update tasks set not_before = ?, updated_at = ? where id = ?')
+        .run(parkAt, Date.now(), task.id)
+      setStatus(task.id, 'paused_quota', { assignee: null })
+      // ⭐ The same nudge preemption sends. The poller schedules its next look from
+      // `quotaParkedTasks`, and a reading taken now is what lets this come back early if the vendor
+      // was quoting a limit that has since rolled over.
+      requestUrgentProbe(run.workerId, `a run here was refused for quota (t${task.seq})`)
+    } else if (dead) {
       // ⚠️ The vendor's own words, where the stream gave any. `why` is a sentence a person can act
       // on — "your organization has disabled…" — while `deadOnArrival` can only report silence.
       const reason = session.lastRequestStartedAt === null && why.length > dead.length ? why : dead
@@ -3668,6 +3706,32 @@ async function endUnfinishedRun(
 
   await releaseFor(run.id, task?.id ?? null, task?.projectId ?? null)
   void captureQuotaAfter(requireRun(run.id))
+}
+
+/**
+ * Did this run fail because the account ran out of window — and if so, when may it try again?
+ *
+ * ⛔ **The gap t108 fell through** (2026-09-02). This fleet meets an exhausted window three ways.
+ * The watchdog sees it coming and preempts; a `rejected` rate-limit record on the stream ends the
+ * turn; and — the one nothing handled — the CLI simply answers the turn with an error whose text is
+ * the refusal: `api_error: You've hit your session limit · resets 4am (America/Los_Angeles)`. The
+ * first two park the task at `paused_quota` carrying `not_before`, which `resumeQuotaPaused` gives
+ * back on the tick after the window reopens. The third took the ordinary failure path to
+ * `awaiting_human`, which is a hold that ends only when a person types something. Measured on t108:
+ * failed 07:25:41Z, window back at 11:00Z, still sitting there at 14:17Z when a human typed
+ * "resume". Nothing was wrong with the work, and nothing was going to happen.
+ *
+ * ⚠️ The wording is the adapter's to recognise (`outOfQuota`), for the same reason `needsReauth` is:
+ * it is one vendor's sentence, and an adapter that does not implement it gets exactly the behaviour
+ * that existed before. What is decided here is the *consequence*, which is this scheduler's.
+ *
+ * ⚠️ `BLIND_PARK_MS` when nothing will say when the window resets — the same fallback
+ * `overrunVerdict` parks on. A wrong guess costs a wait that `quotaReleaseFor` can cut short the
+ * moment a probe reads the account; no guess at all costs a task that never moves.
+ */
+function quotaFailurePark(session: Session, run: Run, why: string): number | null {
+  if (!adapter(session.adapterId).outOfQuota?.(why)) return null
+  return windowResetsAt(run.workerId)?.at ?? Date.now() + BLIND_PARK_MS
 }
 
 /**

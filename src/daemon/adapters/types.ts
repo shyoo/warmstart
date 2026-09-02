@@ -186,6 +186,25 @@ export interface AgentAdapter {
   needsReauth?: (reason: string) => boolean
 
   /**
+   * Does this failure mean *the account is out of quota for now*, rather than broken?
+   *
+   * ⛔ **The distinction t108 turned on** (2026-09-02). A run whose CLI answered
+   * `api_error: You've hit your session limit · resets 4am` was wound up like any other failure: the
+   * task went to `awaiting_human` and sat there. The window reopened at 11:00 and nothing moved it —
+   * `awaiting_human` ends when a person types something, and seven hours later one did. Every other
+   * way this fleet meets an exhausted window (the mid-run watchdog, a vendor refusal on the stream)
+   * parks the task at `paused_quota` with `not_before`, which resumes itself; this one path did not
+   * recognise the same event when it arrived as prose at the end of a turn.
+   *
+   * ⚠️ Same rules as `needsReauth`: anchored on measured phrases, never on `api_error` alone, and
+   * `false` is always the safe answer — it only means the failure is handled the way it was before.
+   * A wrong `true` parks a task on a clock instead of showing it to a person, which is recoverable
+   * (the thread says so, and Resume is on the row) but still worse than not guessing.
+   */
+  // ⚠️ A function property, not a method, for the same reason as `parseUsage` below.
+  outOfQuota?: (reason: string) => boolean
+
+  /**
    * Read a quota reading out of what the `/usage` panel rendered.
    *
    * ⛔ Required by, and only by, an adapter declaring `usageRefresh.answer === 'screen'`. This is
