@@ -32,6 +32,7 @@ import { TaskQuestions } from './Questions'
 import { AddDependency, candidatesFor, DependencyList, useTaskCandidates } from './Dependencies'
 import { showsLiveOutput } from '../lib/live'
 import { duration, tokens, when } from '../lib/format'
+import { effortLabel, modelLabel } from '../lib/modelname'
 import {
   activeTime,
   activeTimeTitle,
@@ -197,21 +198,27 @@ function ModelFact({
   const observedEffort = session?.effort ?? null
 
   // ⚠️ The CLI's own default is a real answer and reads as one. "—" would look like a broken field.
-  const asked = requested.model ?? 'CLI default'
+  const asked = modelLabel(requested.model, requested.effort) ?? 'CLI default'
   const differs = observed !== null && requested.model !== null && observed !== requested.model
   const effortDiffers =
     observedEffort !== null && requested.effort !== null && observedEffort !== requested.effort
 
   return (
     <>
-      <span title={`asked for at launch — ${requested.source}`}>
+      {/* ⛔ The id is in the tooltip on both lines. This field is the one an operator reads when a
+          run went somewhere unexpected, so the exact string has to stay recoverable — a name written
+          for reading may not be the thing that was sent. */}
+      <span
+        title={`${requested.model ?? 'no model chosen'} — asked for at launch, ${requested.source}`}
+      >
         {asked}
-        {requested.effort ? ` · ${requested.effort}` : ''}
       </span>
       {(observed || observedEffort) && (differs || effortDiffers) && (
-        <div className="tbl-sub warn" title="what the transcript says actually answered each turn">
-          running {observed ?? asked}
-          {observedEffort ? ` · ${observedEffort}` : ''}
+        <div
+          className="tbl-sub warn"
+          title={`${observed ?? requested.model ?? ''} — what the transcript says actually answered each turn`}
+        >
+          running {modelLabel(observed, observedEffort) ?? asked}
         </div>
       )}
       {(observed || observedEffort) && !differs && !effortDiffers && (
@@ -522,10 +529,10 @@ function TaskDetail({
                         assigned?.defaultModels && Object.values(assigned.defaultModels).filter(Boolean).length > 1
                           ? 'account default (Auto-balance across pools)'
                           : assigned?.defaultModel
-                            ? `account default (${assigned.defaultModel})`
+                            ? `account default (${modelLabel(assigned.defaultModel)})`
                             : 'CLI default'
                     },
-                    ...offered.map((m) => ({ value: m.id, label: m.id }))
+                    ...offered.map((m) => ({ value: m.id, label: modelLabel(m.id) ?? m.id }))
                   ]}
                   ariaLabel="Model"
                   title={
@@ -551,9 +558,11 @@ function TaskDetail({
                   options={[
                     {
                       value: '',
-                      label: assigned?.defaultEffort ? `account default (${assigned.defaultEffort})` : 'CLI default'
+                      label: assigned?.defaultEffort
+                        ? `account default (${effortLabel(assigned.defaultEffort)})`
+                        : 'CLI default'
                     },
-                    ...taskEfforts.map((level) => ({ value: level, label: level }))
+                    ...taskEfforts.map((level) => ({ value: level, label: effortLabel(level) ?? level }))
                   ]}
                   ariaLabel="Effort"
                   title="How hard the model thinks on the next run."
@@ -1208,10 +1217,12 @@ function Decide({
                   {
                     value: '',
                     label: selectedWorker?.defaultModel
-                      ? `account default (${selectedWorker.defaultModel})`
+                      ? `account default (${modelLabel(selectedWorker.defaultModel)})`
                       : 'CLI default model'
                   },
-                  ...offeredModels.map((m) => ({ value: m.id, label: m.id }))
+                  // ⚠️ The label is written for a person; the value stays the id, which is what is
+                  // sent to the CLI and what the cost model is keyed by.
+                  ...offeredModels.map((m) => ({ value: m.id, label: modelLabel(m.id) ?? m.id }))
                 ]}
                 onChange={(val) => {
                   setSelectedModel(val)
@@ -1230,10 +1241,13 @@ function Decide({
                   {
                     value: '',
                     label: selectedWorker?.defaultEffort
-                      ? `account default (${selectedWorker.defaultEffort})`
+                      ? `account default (${effortLabel(selectedWorker.defaultEffort)})`
                       : 'CLI default effort'
                   },
-                  ...offeredEfforts.map((level) => ({ value: level, label: level }))
+                  ...offeredEfforts.map((level) => ({
+                    value: level,
+                    label: effortLabel(level) ?? level
+                  }))
                 ]}
                 onChange={(val) => setSelectedEffort(val)}
               />

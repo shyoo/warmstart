@@ -24,6 +24,7 @@ import { isSubmitKey, useUiSettings } from '../lib/uisettings'
 import { DependencyChooser, useTaskCandidates } from './Dependencies'
 import { showsLiveOutput } from '../lib/live'
 import { tokens, when } from '../lib/format'
+import { effortLabel, modelLabel } from '../lib/modelname'
 import {
   PAGE_SIZE_OPTIONS,
   readTaskPageSize,
@@ -39,7 +40,7 @@ import {
   dependencyTooltip,
   holdLine,
   IN_FLIGHT,
-  modelColumnLabel,
+  modelLine,
   statusLabel,
   STATUS_TONE,
   taskLabelShort,
@@ -135,13 +136,20 @@ export function Tasks({
   const [asc, setAsc] = useState(false)
   const [page, setPage] = useState(0)
   const [menuTaskId, setMenuTaskId] = useState<string | null>(null)
+  /**
+   * The models each CLI offers. ⛔ Fetched, not compiled in — same reasoning as the pin picker in
+   * `NewTask` below: the renderer holds no model catalogue of its own.
+   *
+   * ⚠️ Once for the table, not per row: all the Worker column needs from it is whether the adapter
+   * takes an effort flag at all, and one that does not must never be shown a level it would not be
+   * sent. An empty answer costs the column nothing — the model still renders, without an effort.
+   */
+  const [modelOptions, setModelOptions] = useState<ModelOptions[]>([])
   const menuRef = useRef<HTMLDivElement | null>(null)
   // The latest live line per running row. The thread keeps its own copy of the same broadcast.
   const { activity } = useActivity()
   const now = useNow(1000)
-  // ⛔ Fetched, not compiled in — same reasoning as the pin picker in `NewTask` below: the renderer
-  // holds no model catalogue of its own.
-  const [modelOptions, setModelOptions] = useState<ModelOptions[]>([])
+
   useEffect(() => {
     void rpc('model.options')
       .then(setModelOptions)
@@ -342,9 +350,14 @@ export function Tasks({
               <th>From</th>
               {/* ⛔ On the table, not only in the detail pane. Which account is spending on a task is
                   the first thing an operator checks and the last thing that should need a click —
-                  and a routing mistake is invisible until it is shown here. */}
+                  and a routing mistake is invisible until it is shown here.
+                  ⛔ **The model is stacked in this same cell, not given a column of its own.** A
+                  model id belongs to exactly one CLI, so the account and the model are one fact read
+                  together — `Sonnet 5` under *Antigravity* is a misroute and under *ClaudeSecond* is
+                  ordinary. Two columns apart, that pairing is a join the reader has to do by eye on
+                  every row; stacked, the wrong one stands out — and the row stays one line of text
+                  wide, which a table of a hundred tasks needs more than it needs a header. */}
               <th>Worker</th>
-              <th>Model</th>
               <th>Dep</th>
               {/* ⛔ How long, beside how much. A task showing only a token count answers "what did
                   this cost" and not "is this taking too long", and the second is the question
@@ -384,6 +397,10 @@ export function Tasks({
               // moment there is one.
               const belowLine = liveText ?? holdLine(task, now) ?? null
 
+              // ⚠️ Once per row, not once per read: the resolution walks the fleet and the adapter's
+              // model options, and the cell reads it more than once.
+              const model = modelLine(task, fleet, modelOptions)
+
               const hasPriorActions =
                 CANCELLABLE.has(task.status) ||
                 task.status === 'paused_user' ||
@@ -412,8 +429,24 @@ export function Tasks({
                           ? 'ctrl'
                           : 'agent'}
                     </td>
-                    <td className={task.ranOn || task.assignee ? '' : 'dim'}>{assigneeLabel(task, fleet)}</td>
-                    <td className="dim">{modelColumnLabel(task, fleet, modelOptions)}</td>
+                    <td className={task.ranOn || task.assignee ? '' : 'dim'}>
+                      {assigneeLabel(task, fleet)}
+                      {/* ⚠️ The id in the tooltip, always. The label is written for reading at a
+                          glance; the operator chasing a routing mistake needs the exact string that
+                          was dispatched, and it must never be more than a hover away. */}
+                      {model && (
+                        <div
+                          className="tbl-model"
+                          title={
+                            model.ran
+                              ? `${model.id} — the model the last run was dispatched with`
+                              : `${model.id} — what the next dispatch would ask for`
+                          }
+                        >
+                          {model.label}
+                        </div>
+                      )}
+                    </td>
                     <td className="num dim" title={dependencyTooltip(task, tasks)}>
                       {task.dependsOn.length ? `←${task.dependsOn.length}` : '—'}
                     </td>
@@ -726,8 +759,8 @@ function NewTask({
     pinned?.defaultModels && Object.values(pinned.defaultModels).filter(Boolean).length > 1
   const inheritedModelLabel = hasMultiPoolDefaults
     ? 'Auto-balance across pools'
-    : (pinned?.defaultModel ?? 'CLI default')
-  const inheritedEffortLabel = pinned?.defaultEffort ?? 'CLI default'
+    : (modelLabel(pinned?.defaultModel) ?? 'CLI default')
+  const inheritedEffortLabel = effortLabel(pinned?.defaultEffort) ?? 'CLI default'
   // Effort appears only where the CLI can be told one *and* the model in effect has levels to offer.
   const effectiveModel = forAdapter?.models.find((m) => m.id === (resolved.model ?? '')) ?? null
   const efforts = canSetEffort ? (effectiveModel?.effortLevels ?? []) : []
@@ -985,9 +1018,11 @@ function NewTask({
                   }}
                 >
                   <option value="">inherit ({inheritedModelLabel})</option>
+                  {/* ⚠️ Named for reading, valued by id — the option's value is still the exact
+                      string the CLI is handed. */}
                   {forAdapter.models.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.id}
+                    <option key={m.id} value={m.id} title={m.id}>
+                      {modelLabel(m.id) ?? m.id}
                     </option>
                   ))}
                 </select>
@@ -996,7 +1031,7 @@ function NewTask({
                     <option value="">inherit ({inheritedEffortLabel})</option>
                     {efforts.map((level) => (
                       <option key={level} value={level}>
-                        {level}
+                        {effortLabel(level) ?? level}
                       </option>
                     ))}
                   </select>

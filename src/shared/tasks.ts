@@ -442,6 +442,18 @@ export interface Task {
    * an `assignee` and no runs, which is a different state and reads as one.
    */
   ranOn: string | null
+  /**
+   * The model the most recent run was dispatched with, from the same run `ranOn` names.
+   *
+   * ⛔ Read off the run, never re-resolved. What a task *would* be given next is a different
+   * question with a different answer - `resolveModelChoice` answers that one - and the two diverge
+   * the moment an account's default changes under a task that has already finished. A column that
+   * silently re-labels last week's work with this week's default is the failure `ranOn` exists to
+   * avoid, one field over.
+   *
+   * ⚠️ Null until something has run, and null on a run whose session never learned a model.
+   */
+  ranModel: string | null
   deletedAt: number | null
   createdAt: number
   updatedAt: number

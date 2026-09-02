@@ -1,7 +1,8 @@
 import { resolveModelChoice, type Run, type Task } from '@shared/tasks'
-import type { ModelOptions, Session, Worker } from '@shared/protocol'
+import type { ModelOptions, Session } from '@shared/protocol'
 import type { FleetEntry } from './daemon'
 import { duration } from './format'
+import { modelLabel } from './modelname'
 
 /**
  * How a task is drawn, shared by the list and the thread.
@@ -176,6 +177,50 @@ export function assigneeLabel(task: Task, fleet: FleetEntry[]): string {
 }
 
 /**
+ * Which **model** that account used, or would use, under the account's own name.
+ *
+ * ⛔ **One column, two facts, in that order.** The account and the model are not independent — a
+ * model id belongs to one CLI, so `Sonnet 5 Med` under *Antigravity* would be a routing bug and
+ * under *ClaudeSecond* is a Tuesday. Read as two separate columns an operator has to join by eye,
+ * that pairing is exactly what goes unnoticed; stacked, the wrong one is obvious.
+ *
+ * ⚠️ **What ran beats what would run.** A task that has run reports its last run's model, so the
+ * cell keeps saying what actually spent the tokens after somebody changes the account default. A
+ * task that has not run yet has no such fact, and reports what the next dispatch would ask for -
+ * resolved by `resolveModelChoice`, the same function the scheduler calls, so this cannot promise
+ * an inheritance the dispatch would not perform.
+ *
+ * ⚠️ Effort comes from the resolution either way: a run records the model it was given and not the
+ * level, and on the adapters where the level matters it is part of the model id anyway.
+ *
+ * Returns null where there is nothing true to say - no account, or an account that has never been
+ * told a model and never run one. ⛔ The cell then shows the worker alone rather than a placeholder:
+ * "the CLI picks" is the honest reading, and it is already what the detail pane says at length.
+ */
+export type Routed = Pick<Task, 'ranOn' | 'ranModel' | 'assignee' | 'constraints'>
+
+export function modelLine(
+  task: Routed,
+  fleet: FleetEntry[],
+  modelOptions: ModelOptions[]
+): { label: string; id: string; ran: boolean } | null {
+  const account = task.ranOn ?? task.constraints.workerId ?? task.assignee
+  const entry = fleet.find((f) => f.worker.id === account) ?? null
+  const options = modelOptions.find((o) => o.adapterId === entry?.worker.adapterId) ?? null
+  const resolved = resolveModelChoice(
+    task.constraints,
+    entry?.worker,
+    options?.selectableEffort ?? false,
+    entry?.quota
+  )
+  const id = task.ranModel ?? resolved.model
+  if (!id) return null
+  const label = modelLabel(id, resolved.effort)
+  if (!label) return null
+  return { label, id, ran: task.ranModel !== null }
+}
+
+/**
  * How long an agent was actually working on this task.
  *
  * ⛔ **Active time, not wall-clock, and the column that shows it is the one headed "Took".** The
@@ -313,49 +358,3 @@ export function dependencyTooltip(
   return `Depends on:\n${lines.join('\n')}`
 }
 
-/**
- * A model id, cut to what an operator scanning a column needs: the name and the version, not the
- * vendor prefix or a build date.
- *
- * ⚠️ Not a lookup table. New models land in adapters and quota configs, never in this file, so a
- * table here would silently show raw ids for anything shipped after it was written. Consecutive
- * digit groups collapse into a dotted version (`haiku-4-5-20251001` → `Haiku 4.5`, the date dropped
- * as noise) and everything else is title-cased in place.
- */
-export function formatModelName(model: string): string {
-  const noPrefix = model.replace(/^(claude|gemini|gpt)-/, '')
-  const noDate = noPrefix.replace(/-\d{8}$/, '')
-  const parts = noDate.split('-')
-  const merged: string[] = []
-  for (const part of parts) {
-    const prevIsDigits = merged.length > 0 && /^\d/.test(merged[merged.length - 1]!)
-    if (/^\d+$/.test(part) && prevIsDigits) {
-      merged[merged.length - 1] = `${merged[merged.length - 1]}.${part}`
-    } else {
-      merged.push(part)
-    }
-  }
-  return merged
-    .map((p) => (/^\d/.test(p) ? p : p.charAt(0).toUpperCase() + p.slice(1)))
-    .join(' ')
-}
-
-/**
- * The model/effort column: what would actually be sent on the next dispatch, resolved the same way
- * the scheduler resolves it (task pin, else worker default, else the CLI's own choice).
- */
-export function modelColumnLabel(
-  task: Pick<Task, 'constraints' | 'assignee'>,
-  fleet: FleetEntry[],
-  modelOptions: ModelOptions[]
-): string {
-  const worker: Worker | undefined =
-    fleet.find((e) => e.worker.id === (task.constraints.workerId || task.assignee))?.worker ??
-    undefined
-  const canSetEffort =
-    modelOptions.find((o) => o.adapterId === worker?.adapterId)?.selectableEffort ?? false
-  const resolved = resolveModelChoice(task.constraints, worker, canSetEffort)
-  if (!resolved.model) return '—'
-  const effort = resolved.effort ? ` ${resolved.effort.charAt(0).toUpperCase()}${resolved.effort.slice(1)}` : ''
-  return `${formatModelName(resolved.model)}${effort}`
-}

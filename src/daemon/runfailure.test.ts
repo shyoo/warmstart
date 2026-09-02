@@ -751,6 +751,31 @@ describe('answering a task that is waiting on a person', () => {
     expect(tasks.getTask(task.id)?.ranOn).toBe(worker.id)
   })
 
+  it('carries the model off the same run it names the account from', () => {
+    // ⛔ Both come from *one* run - the latest - so the Worker column can stack them in one cell.
+    // Read from two independent `order by` clauses they could disagree, and a model shown under an
+    // account that never ran it is the exact misroute the column exists to make visible.
+    // ⚠️ A run's model is snapshotted from its session at dispatch, and is legitimately null where
+    // the session has not learned one yet; the UI falls back to what the next dispatch would ask
+    // for and says which it is showing.
+    const { task, worker } = seedRunningTask()
+    db.db().prepare('update runs set model = ? where task_id = ?').run('claude-sonnet-5', task.id)
+    expect(tasks.getTask(task.id)?.ranModel).toBe('claude-sonnet-5')
+    expect(tasks.getTask(task.id)?.ranOn).toBe(worker.id)
+
+    // A second, newer run wins - the same rule `ranOn` follows.
+    const later = tasks.startRun({
+      taskId: task.id,
+      workerId: worker.id,
+      sessionId: null,
+      projectId: null,
+      quotaUnverified: true,
+      costModelId: null
+    })
+    db.db().prepare('update runs set model = ? where id = ?').run('claude-opus-5', later.id)
+    expect(tasks.getTask(task.id)?.ranModel).toBe('claude-opus-5')
+  })
+
   it('is idempotent, so a double click is not a second decision', () => {
     const { task } = seedRunningTask()
     tasks.setStatus(task.id, 'awaiting_human', { assignee: 'human' })

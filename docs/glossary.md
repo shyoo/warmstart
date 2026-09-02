@@ -188,6 +188,13 @@ Worker column reads `ranOn` instead.
 on the task. The one field that survives a hand-off, and therefore the only honest answer to which
 account is spending on a task.
 
+**`ranModel`** — *the model that same run was dispatched with*, derived from the same run `ranOn`
+names, so the Worker column can stack the two in one cell. ⛔ Never re-resolved: what a task *would*
+be given next is a different question (`resolveModelChoice`), and the two diverge the moment an
+account's default changes under work that has already finished. ⚠️ Null until something has run, and
+null on a run whose session had not learned a model yet — the UI then falls back to what the next
+dispatch would ask for, and says which of the two it is showing.
+
 **Approval** — *an interrupt on a session*, not a task: a permission or tool gate that blocks one
 live session, with a closed answer set supplied by the adapter and a deadline equal to that session's
 cache expiry. Answered by project policy where possible, by one keystroke on the **Attention bar**

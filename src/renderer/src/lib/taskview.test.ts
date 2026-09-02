@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { Project, Task, TaskStatus } from '@shared/tasks'
+import type { ModelOptions, Worker } from '@shared/protocol'
+import type { FleetEntry } from './daemon'
 import {
   FINISH_LABELS,
   SHARING_LABELS,
@@ -12,12 +14,14 @@ import {
   chronologicalRuns,
   elapsed,
   holdLine,
+  modelLine,
   projectWorkState,
   STATUS_TONE,
   statusLabel,
   taskLabel,
   taskLabelShort,
-  workspacePathFor
+  workspacePathFor,
+  type Routed
 } from './taskview.js'
 import {
   DEFAULT_PAGE_SIZE,
@@ -429,3 +433,90 @@ describe('runs ordering for thread display', () => {
   })
 })
 
+
+/**
+ * ⛔ The Worker column carries two facts in one cell, and the second one is only ever *this*
+ * account's model. The pairing is the point: a model id belongs to one CLI, so an operator reads
+ * the two together or reads neither usefully.
+ */
+describe('the model under the account, in the Worker column', () => {
+  const worker = (over: Partial<Worker> = {}): Worker =>
+    ({
+      id: 'w1',
+      label: 'ClaudeSecond',
+      adapterId: 'claude-code',
+      defaultModel: 'claude-sonnet-5',
+      defaultEffort: 'medium',
+      defaultModels: null,
+      enabled: true,
+      ...over
+    }) as Worker
+
+  const fleet = (w: Worker = worker()): FleetEntry[] => [{ worker: w, quota: null, sessions: [] }]
+
+  const options: ModelOptions[] = [
+    {
+      adapterId: 'claude-code',
+      costModelId: 'anthropic.subscription.2026-08',
+      selectableEffort: true,
+      models: []
+    },
+    {
+      adapterId: 'antigravity-cli',
+      costModelId: 'google.antigravity.2026-08',
+      selectableEffort: false,
+      models: []
+    }
+  ]
+
+  const routed = (over: Partial<Routed> = {}): Routed => ({
+    ranOn: null,
+    ranModel: null,
+    assignee: 'w1',
+    constraints: {},
+    ...over
+  })
+
+  it('names the model the account would be asked for, before anything has run', () => {
+    expect(modelLine(routed(), fleet(), options)).toMatchObject({
+      label: 'Sonnet 5 Med',
+      id: 'claude-sonnet-5',
+      ran: false
+    })
+  })
+
+  it('⛔ reports what actually ran once something has, not what would run now', () => {
+    // The account default has since been changed. A finished task must keep saying what spent its
+    // tokens — re-resolving here would relabel last week's work with this week's default.
+    const line = modelLine(
+      routed({ ranOn: 'w1', ranModel: 'claude-opus-5' }),
+      fleet(worker({ defaultModel: 'claude-haiku-4-5' })),
+      options
+    )
+    expect(line).toMatchObject({ label: 'Opus 5 Med', id: 'claude-opus-5', ran: true })
+  })
+
+  it('prefers a pin on the task over the account default', () => {
+    expect(modelLine(routed({ constraints: { model: 'claude-opus-5' } }), fleet(), options)?.label).toBe(
+      'Opus 5 Med'
+    )
+  })
+
+  it('shows no effort where the CLI has no flag to be told one', () => {
+    // ⛔ Antigravity refuses the flag, so the scheduler drops it. A level rendered here would
+    // describe something that is never sent.
+    const agy = worker({ adapterId: 'antigravity-cli', defaultModel: 'gemini-3.7-flash-medium' })
+    expect(modelLine(routed(), fleet(agy), options)?.label).toBe('Gemini 3.7 Flash Med')
+  })
+
+  it('says nothing where no model has been chosen and none has run', () => {
+    // ⚠️ Not a placeholder. "The CLI picks" is the true answer, and the cell shows the account alone.
+    expect(modelLine(routed(), fleet(worker({ defaultModel: null })), options)).toBeNull()
+    expect(modelLine(routed({ assignee: null }), fleet(), options)).toBeNull()
+  })
+
+  it('still names a model when the adapter options have not arrived yet', () => {
+    // A fleet whose cost models failed to load still runs work, and the column still says what on.
+    expect(modelLine(routed(), fleet(), [])?.label).toBe('Sonnet 5')
+  })
+})

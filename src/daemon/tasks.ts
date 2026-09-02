@@ -58,6 +58,7 @@ interface TaskRow {
   assignee: string | null
   assignee_hint: string | null
   last_run_worker_id?: string | null
+  last_run_model?: string | null
   mandate_json: string
   budget_json: string
   not_before: number | null
@@ -103,7 +104,9 @@ const TASK_SELECT = `
     (select r.ended_at from runs r where r.task_id = t.id
       order by r.started_at desc limit 1) as last_run_ended_at,
     (select r.worker_id from runs r where r.task_id = t.id
-      order by r.started_at desc limit 1) as last_run_worker_id
+      order by r.started_at desc limit 1) as last_run_worker_id,
+    (select r.model from runs r where r.task_id = t.id
+      order by r.started_at desc limit 1) as last_run_model
   from tasks t`
 
 /**
@@ -162,6 +165,7 @@ function toTask(r: TaskRow, timing: ActiveTiming = ZERO_TIMING): Task {
     activeMs: timing.activeMs,
     activeSince: timing.activeSince,
     ranOn: r.last_run_worker_id ?? null,
+    ranModel: r.last_run_model ?? null,
     deletedAt: r.deleted_at,
     createdAt: r.created_at,
     updatedAt: r.updated_at
