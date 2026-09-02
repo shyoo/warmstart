@@ -245,17 +245,16 @@ describe('landing work that is committed', () => {
     ).toBe('await-human')
   })
 
-  it('says nothing was produced rather than claiming a landing', () => {
-    // ⚠️ Measured 2026-08-27: a question-only task was reported as "Landed as a166a6a onto main"
-    // when every step had succeeded and no commit existed.
-    expect(
-      finish.decideFinish({
-        task: makeTask(),
-        project: null,
-        state: clean({ unlandedCommits: 0 }),
-        hasChecks: true
-      }).kind
-    ).toBe('nothing-to-land')
+  it('asks human how to proceed when nothing was produced', () => {
+    // ⚠️ Empty commit guard: if no commits were produced, ask human rather than silently closing
+    const decision = finish.decideFinish({
+      task: makeTask(),
+      project: null,
+      state: clean({ unlandedCommits: 0 }),
+      hasChecks: true
+    })
+    expect(decision.kind).toBe('await-human')
+    expect('reason' in decision && decision.reason).toContain('No work landed')
   })
 })
 
@@ -439,8 +438,8 @@ describe('a run whose branch is empty while the trunk moved', () => {
     expect(decision.kind).toBe('await-human')
   })
 
-  it('stays quiet when the branch is empty and the trunk did not move', () => {
-    // The ordinary honest outcome: a question was answered and nothing needed committing.
+  it('triggers empty commit guard when the branch is empty and the trunk did not move', () => {
+    // With empty commit guard, an empty branch with no landed work goes to await-human
     const decision = finish.decideFinish({
       task: makeTask(),
       project: projectWith({ target: 'main' }),
@@ -448,23 +447,24 @@ describe('a run whose branch is empty while the trunk moved', () => {
       hasChecks: false,
       trunk: null
     })
-    expect(decision.kind).toBe('nothing-to-land')
+    expect(decision.kind).toBe('await-human')
+    expect('reason' in decision && decision.reason).toContain('No work landed')
   })
 
   it('declines on a run that took no reading, rather than assuming it is innocent', () => {
     // ⚠️ Absent is not the same as unmoved. A run dispatched before this column existed, or on a
-    // project with no git, has nothing to compare — and a tripwire that treats "cannot say" as
-    // "nothing happened" is one that quietly stops covering the oldest runs in the database.
+    // project with no git, has nothing to compare — and triggers the empty commit guard when empty.
     const decision = finish.decideFinish({
       task: makeTask(),
       project: projectWith({ target: 'main' }),
       state: clean({ unlandedCommits: 0 }),
       hasChecks: false
     })
-    expect(decision.kind).toBe('nothing-to-land')
+    expect(decision.kind).toBe('await-human')
+    expect('reason' in decision && decision.reason).toContain('No work landed')
   })
 
-  it('does not fire on two readings that are the same', () => {
+  it('does not fire trunk-moved on two readings that are the same, falling back to empty commit guard', () => {
     const decision = finish.decideFinish({
       task: makeTask(),
       project: projectWith({ target: 'main' }),
@@ -472,7 +472,8 @@ describe('a run whose branch is empty while the trunk moved', () => {
       hasChecks: false,
       trunk: moved({ after: 'aaaaaaaa1111' })
     })
-    expect(decision.kind).toBe('nothing-to-land')
+    expect(decision.kind).toBe('await-human')
+    expect('reason' in decision && decision.reason).toContain('No work landed')
   })
 
   it('takes precedence over uncommitted work being asked about first', () => {

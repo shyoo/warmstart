@@ -243,11 +243,12 @@ describe('a task that produced no commits', () => {
       workspacePath: root,
       branch: 'multi-agent-controller/t1-question'
     })
-    expect(result.nothingToLand).toBe(true)
+    expect(result.ok).toBe(false)
     expect(result.commit).toBeUndefined()
+    expect(tasks.getTask(taskId)?.status).toBe('awaiting_human')
   })
 
-  it('says the trunk was not touched, in those words', async () => {
+  it('says no work landed and asks human how to proceed', async () => {
     const { project, taskId, root } = seedTask('multi-agent-controller/t2-question')
     await landing.landTask({
       project,
@@ -256,15 +257,15 @@ describe('a task that produced no commits', () => {
       branch: 'multi-agent-controller/t2-question'
     })
     const said = tasks.messagesFor(taskId).map((m) => m.text).join('\n')
-    expect(said).toContain('Nothing to land')
-    expect(said).toContain('trunk was not touched')
+    expect(said).toContain('Not landed')
+    expect(said).toContain('no work landed')
     // ⛔ And never the sentence that started this. "Landed as <sha>" is what somebody skims.
     expect(said).not.toContain('Landed as')
   })
 
-  it('is a success, so a question that was answered is finished', async () => {
-    // ⚠️ Not `awaiting_human`. Falling through to `leave-branch` would have parked every
-    // question-only task on a person's desk to be closed by hand.
+  it('guards against empty commits by going to awaiting_human so a person can review or close', async () => {
+    // ⚠️ Empty commit guard: a task with 0 commits and no landed work enters awaiting_human
+    // so a human can ask further questions or mark it completed.
     const { project, taskId, root } = seedTask('multi-agent-controller/t3-question')
     const result = await landing.landTask({
       project,
@@ -272,8 +273,9 @@ describe('a task that produced no commits', () => {
       workspacePath: root,
       branch: 'multi-agent-controller/t3-question'
     })
-    expect(result.ok).toBe(true)
-    expect(tasks.getTask(taskId)?.status).not.toBe('awaiting_human')
+    expect(result.ok).toBe(false)
+    expect(tasks.getTask(taskId)?.status).toBe('awaiting_human')
+    expect(tasks.getTask(taskId)?.holdReason).toBe('no commits were produced on this branch')
   })
 
   it('still defers to a task that asked to be checked', async () => {
@@ -481,7 +483,7 @@ describe('retiring the branch of a finish that landed nothing', () => {
 })
 
 describe('landTask on a branch with nothing left to land', () => {
-  it('retires the branch on its way out', async () => {
+  it('keeps the branch and asks human when no commits exist', async () => {
     const branch = 'multi-agent-controller/t36-question'
     const { project, taskId, root } = seedTask(branch)
 
@@ -492,9 +494,9 @@ describe('landTask on a branch with nothing left to land', () => {
       branch
     })
 
-    expect(result.nothingToLand).toBe(true)
-    expect(result.branchDeleted).toBe(true)
-    expect(() => git(root, 'rev-parse', '--verify', branch)).toThrow()
+    expect(result.ok).toBe(false)
+    expect(tasks.getTask(taskId)?.status).toBe('awaiting_human')
+    expect(git(root, 'branch', '--list', branch)).toContain(branch)
   })
 
   it('does the same when the agent landed the work itself, which is the t22 shape', async () => {

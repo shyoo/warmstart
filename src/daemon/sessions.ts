@@ -1069,7 +1069,7 @@ export function reconcileOrphans(): number {
 
   // ⛔ Also reap detached agent processes on Windows whose parent process has died and whose
   // command line contains a session ID uuid minted by agentyard.
-  if (process.platform === 'win32') {
+  if (process.platform === 'win32' && !process.env.VITEST) {
     try {
       const raw = execFileSync(
         'powershell.exe',
@@ -1082,9 +1082,11 @@ export function reconcileOrphans(): number {
         { encoding: 'utf8', timeout: 10_000, windowsHide: true }
       ).trim()
       if (raw) {
-        const parsed = JSON.parse(raw)
+        const parsed: unknown = JSON.parse(raw)
         const procs: Array<{ ProcessId?: number; ParentProcessId?: number; CommandLine?: string }> =
-          Array.isArray(parsed) ? parsed : [parsed]
+          Array.isArray(parsed)
+            ? (parsed as Array<{ ProcessId?: number; ParentProcessId?: number; CommandLine?: string }>)
+            : [parsed as { ProcessId?: number; ParentProcessId?: number; CommandLine?: string }]
         for (const p of procs) {
           if (p.ProcessId && p.ParentProcessId && !isAlive(p.ParentProcessId)) {
             const match = p.CommandLine?.match(/--session-id\s+([0-9a-fA-F-]+)/)
@@ -1093,7 +1095,9 @@ export function reconcileOrphans(): number {
               try {
                 killProcessTree(p.ProcessId)
                 killed++
-              } catch {}
+              } catch {
+                // Best-effort process tree kill
+              }
             }
           }
         }

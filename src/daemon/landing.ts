@@ -1074,34 +1074,44 @@ export async function landTask(ctx: LandingContext): Promise<LandingResult> {
       // the operator was told the branch carried nothing `main` did not have while their `main` was
       // two commits short of it. A message that names the wrong ref is worse than no message,
       // because it is checkable and it checks out false.
-      // ⚠️ `?? 0` because a base git cannot resolve is not evidence the trunk is behind.
       const behind = (await commitsAhead(ctx.workspacePath, base, target)) ?? 0
-      // ⭐ **And the branch goes, exactly as it does when landing succeeds.** The count above is the
-      // licence: zero commits that `base` does not have means deleting the ref loses a name and
-      // nothing else. Leaving it stranded was measured on 2026-08-29 — every task whose agent pushes
-      // its own work left a dead branch, and this repo's own /commit skill makes that the *normal*
-      // outcome, so the pool accumulated one per task until somebody swept them by hand.
-      // ⚠️ Deliberately not conditional on `behind > 0`. A question-only task's branch is equally
-      // contained and equally dead, and two rules here would be one more than the evidence supports.
-      const retired = await finishWithoutLanding(ctx.workspacePath, ctx.branch, base)
+      if (behind > 0) {
+        const retired = await finishWithoutLanding(ctx.workspacePath, ctx.branch, base)
+        addMessage(
+          ctx.task.id,
+          'system',
+          `Nothing to land: \`${ctx.branch}\` carries no commits that \`${base}\` does not already ` +
+            'have, and the workspace is clean.' +
+            ` The work reached \`${base}\` without passing through here — your \`${target}\` is ` +
+            `${behind} commit(s) behind it, so run \`git pull\` in the trunk to see it.` +
+            retired.note
+        )
+        return {
+          strategy: strategy.id,
+          ok: true,
+          branch: ctx.branch,
+          nothingToLand: true,
+          branchDeleted: retired.deleted
+        }
+      }
+      // ⭐ Empty commit guard: if no commits were produced and no work landed, ask a person.
+      const reason =
+        `\`${ctx.branch}\` carries no commits that \`${base}\` does not already have and no work landed. ` +
+        'Check if the agent answered as a question instead of making changes.'
       addMessage(
         ctx.task.id,
         'system',
-        `Nothing to land: \`${ctx.branch}\` carries no commits that \`${base}\` does not already ` +
-          'have, and the workspace is clean.' +
-          (behind > 0
-            ? ` The work reached \`${base}\` without passing through here — your \`${target}\` is ` +
-              `${behind} commit(s) behind it, so run \`git pull\` in the trunk to see it.`
-            : ' Work that answers a question rather than changing a file is finished here — the ' +
-              'trunk was not touched.') +
-          retired.note
+        `Not landed: ${reason} ⛔ The branch has been kept.`
       )
+      setStatus(ctx.task.id, 'awaiting_human', {
+        assignee: 'human',
+        holdReason: 'no commits were produced on this branch'
+      })
       return {
         strategy: strategy.id,
-        ok: true,
+        ok: false,
         branch: ctx.branch,
-        nothingToLand: true,
-        branchDeleted: retired.deleted
+        reason
       }
     }
   }
