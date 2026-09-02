@@ -3309,3 +3309,86 @@ Key architectural decisions:
    is unconstrained.
 5. **Commissioning UI**:
    The Add Worker dialog in Settings switches to an Endpoint URL input when Local LLM is selected.
+
+## Four places that never looked past the workspace (2026-09-01)
+
+The operator asked whether t91 had landed. The task pane said it had; the trunk had a `git stash list`
+with `t91` in it. Both were true, and neither meant what it looked like.
+
+**t91 and t92 had both landed, and neither stash was the landed work.** `9278841` and `df7fb0c` are on
+`main`; the stashes were what two *earlier* runs of the same tasks had lost. The `runs` table lines up
+to the second: t91's first run was preempted at 21:27:49Z and `stash@{1}` is dated 21:27:49; t92's
+second run was preempted at 21:35:59Z and `stash@{0}` is dated 21:35:59. Both stashes were based at
+`4a64708`, which is to say **both branches had no commits of their own** — the entire output of both
+runs was uncommitted when the workspace was taken away.
+
+⛔ **A stash is not a handoff, and that is the whole defect.** `rescueDirt` was written to be careful:
+it stashes rather than `reset --hard`, on the reasoning that a dirty slot usually means the last run
+failed and its edits are worth the most. All true. But a stash is a **local ref** — it belongs to a
+repository, not to a branch — so it does not travel to whichever pool member the next run claims, it
+is not in `promptFor`, and nothing in the app ever mentioned it. The resumed runs checked out empty
+branches and started again. t92 spent **13.3M tokens** re-deriving work that was in `stash@{0}` the
+whole time; t91 shipped a narrower fix than the one it had already written.
+
+⚠️ **It was not the agent, and it was not one vendor.** The two runs that lost work were both
+`claude-code`/Opus 5; the `openai-compatible` run is the one that recovered t91. Landing never learns
+which CLI produced a branch. What differs between adapters is only the repository state they leave.
+
+**The fix is that the branch is the carrier.** `rescueDirt` reads `HEAD`: on a branch it commits, with
+a `Multi-Agent-Controller-Rescue` trailer; detached — which is what a parked pool member is — it
+stashes as before. The next run inherits the work by doing nothing but checking the branch out, and is
+told in its first prompt what the commit is and that the tool wrote it.
+
+⛔ That immediately created its own hazard, which is the more interesting half: **a rescue leaves a
+perfectly clean workspace.** `isClean` would have waved it through, `rev-list` would have counted it as
+a commit to land, and every step after that would have succeeded — a half-written afternoon pushed to
+the trunk by a pipeline in which nothing went wrong. So a rescue at the *tip* is now condition 6 of the
+landing bar. Only the tip: work finished on top of a rescue is ordinary history, and the project checks
+are what judge it.
+
+## A clean workspace is not evidence, and a branch at rest is invisible (2026-09-01)
+
+The same question asked a second way — *does the tool double-check the stash list and the branches after
+an agent claims it landed?* — found two more holes of the same shape.
+
+**"Nothing to land" was unfalsifiable.** A task that answered a question and changed no file leaves a
+clean tree on a branch level with the trunk. So does a task whose whole afternoon was stashed out from
+under it. The verdict read the first, was equally true of the second, and returned `ok` — *"the trunk
+was not touched — work that answers a question rather than changing a file is finished here"*. It now
+asks `git stash list` first.
+
+⚠️ Attributed **by branch**, not counted globally, and the distinction is not fussiness. Stashes live in
+the repository's shared object store and every pool member reports the same list, so a global count
+would let one unrelated leftover hold every future task in the project at `awaiting_human`. Git's own
+`On <branch>:` prefix is what ties an entry to the run that made it.
+
+**And the loose-ends scan could not see a branch.** Every row it produced came from reading a *pooled
+workspace* and reporting the branch that workspace had checked out. A branch at rest is checked out
+nowhere — and a branch at rest is exactly what a finished task leaves. So the one leftover this tool
+creates on every single task was the one leftover it could not see.
+
+Two were sitting in this repository when it was looked at:
+
+  - **t23**, finished 2026-08-29, agent-pushed to `origin/main`. `finishWithoutLanding` had landed at
+    08:50 that morning and the task finished at 16:05, so the delete *was* attempted and returned
+    false. ⛔ Why is unknowable from the record, and that is the finding: `retireBranch` catches
+    everything, `finishWithoutLanding` deliberately stays quiet when it fails, nothing retries, and the
+    only trace t23 left was an **absent sentence** in a finish message.
+  - **t79**, cancelled 2026-08-31 after asking two questions and writing nothing. Branch retirement
+    lives only on the **finish** path, and a cancel goes nowhere near it.
+
+Both carried zero commits. `taskBranches()` now enumerates `refs/heads/multi-agent-controller/` per
+project, counts each against `landedRef` and reads which worktree holds it; contained ones appear as a
+**branch left behind** with a **Retire it** button. ⛔ `retireStrandedBranch` re-derives its own licence
+rather than trusting the panel — unlike `retireBranch`, whose callers have just produced the proof in
+the same breath, this one is reached from a click on a scan that is minutes old, and a branch that
+gained a commit in between must not be deleted because a stale row said it was empty.
+
+⚠️ Cancel now gives an empty branch back too, and the narrowness is deliberate: only from `cancelled`
+— *not at all* — never from `paused_user` or `draft`, which resume into their branch, and never when
+the branch carries a commit. The rule at the top of `cancel.ts` still holds; what is given back is a
+name. ⚠️ Best-effort, because a task cancelled while *running* still holds its workspace and git
+declines — which is why the sweep above was built first, and is the net.
+
+⭐ The two live branches were deleted by hand after the same proof: `rev-list --count origin/main..` was
+zero for both, and neither was checked out anywhere.

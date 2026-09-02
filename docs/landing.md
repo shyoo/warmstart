@@ -92,8 +92,25 @@ so they are the ones with a bar. All of these must hold:
    them.
 5. **The rebase onto the target applies.** If it does not, the task is not stopped — the agent is
    asked to resolve it, once. See [below](#when-the-branch-will-not-rebase).
+6. **The branch tip is not a rescue** — not a `wip:` commit the tool itself made of work an
+   interrupted run left uncommitted. ⚠️ Only the tip: a rescue the resumed run built on top of is
+   ordinary history, and 4 is what judges the result.
 
 Any failure sends the task to `awaiting_human` naming the condition — never a bare "could not land".
+
+### 1 and 2 together are not evidence that the work was done
+
+⛔ A task that answered a question and changed no file leaves a clean tree on a branch level with the
+trunk. **So does a task whose whole afternoon was stashed out from under it by a preemption.** The
+*nothing to land* verdict read the first and was equally true of the second: the task completed, the
+branch was retired, and the work was never mentioned again (t91, t92, 2026-09-01).
+
+⭐ So before declaring nothing to land, the tool asks `git stash list` whether this repository holds
+anything taken **off this branch**. If it does, the task rests at `awaiting_human`, the branch is
+kept, and the message says how to get the work back. ⚠️ Attributed by branch, never counted globally:
+stashes live in the repository's shared object store, so every pooled workspace reports the same list
+and a global count would let one unrelated leftover hold every future task in the project. Git's own
+`On <branch>:` prefix is the tie.
 
 ## When the branch will not rebase
 
@@ -150,9 +167,29 @@ If the work is still loose after that ask — the agent ran out of window, was p
 comply — the task rests at `awaiting_human`, the files stay exactly where they are, and the workspace
 appears under **Loose ends**.
 
+### When the workspace has to be taken away first
+
+A preemption or a cancel ends with the workspace being parked, and a parked workspace is detached
+from the branch. Whatever the run had not committed has to go somewhere first.
+
+⭐ **It is committed onto the task's branch**, with a `wip:` subject and a
+`Multi-Agent-Controller-Rescue` trailer, so the next run of that task inherits it by doing nothing
+more than checking the branch out — in whichever workspace it is later dispatched into. The run that
+picks it up is told, in its first prompt, what the commit is and that the tool wrote it.
+
+⛔ **Such a commit will not land** — condition 6 of the bar above, because nothing in it has been
+compiled and a rescue leaves a *clean* workspace that the rest of the bar would wave through.
+
+⚠️ **Only if there is a branch to commit to.** A pool member at rest has a detached HEAD; there the
+work is stashed as it always was, which is what condition 1's note is about.
+
+⛔ Measured 2026-09-01 (t91, t92): both runs were preempted with everything uncommitted, both had it
+stashed, both branches were left at the base commit. The resumed runs saw empty branches and started
+over — one spent 13.3M tokens re-deriving work that was in `git stash list` the whole time.
+
 ## Loose ends
 
-Three kinds of work that exists and is going nowhere, listed on **Overview**:
+Four kinds of work that exists and is going nowhere, listed on **Overview**:
 
 - **uncommitted** — files in a pooled workspace that no commit holds.
 - **not landed** — a branch carrying commits `origin/<target>` does not have, whose task has
@@ -160,11 +197,23 @@ Three kinds of work that exists and is going nowhere, listed on **Overview**:
   work is simply never mentioned again.
 - **stashed** — work the tool moved out of the way to free a workspace for the next task. Recover it
   with `git stash list` and `git stash show -p` in the workspace.
+- **branch left behind** — a task branch carrying nothing `origin/<target>` does not already have.
+  No work is at risk; the name is all that is left of a task that finished, or was cancelled before
+  it wrote anything.
 
-Each offers **Land it** (branches with commits only), **Make a task** — which files a normal task to
-go and deal with it — and **Dismiss**, which only hides the row.
+Each offers **Land it** (branches with commits only), **Retire it** (branches left behind only),
+**Make a task** — which files a normal task to go and deal with it — and **Dismiss**, which only
+hides the row.
 
-⛔ None of the three deletes anything.
+⛔ Nothing here deletes work. **Retire it** deletes a *name*, and the daemon re-derives the proof
+that the branch carries nothing before it does — the panel may be minutes old, and a branch that has
+gained a commit since it was scanned comes back refused, with the reason.
+
+⛔ **The branch scan is repository-wide, and until 2026-09-01 it was not.** Every other row here
+comes from reading a *pooled workspace* and reporting the branch that workspace has checked out — so
+a branch at rest, which is exactly what a finished task leaves, was invisible to all of it.
+Measured: `t23` (finished 2026-08-29) and `t79` (cancelled 2026-08-31) were both still in this
+repository days later, both carrying zero commits, neither reported anywhere.
 
 ## Merging locally, and the trunk you are standing in
 
@@ -209,7 +258,16 @@ indistinguishable from work that had vanished.
 ⭐ **The branch is deleted, exactly as it is when landing succeeds.** Nothing is lost — every commit
 on it is already on `origin/<target>`, which is what the count above establishes — and a branch kept
 past that point is a dead name the pool accumulates one of per task. ⚠️ If another worktree still
-holds the branch, it is left alone and the finish is still a success.
+holds the branch, it is left alone and the finish is still a success — but it is now **reported**, as
+a *branch left behind*. ⛔ Before that it was reported nowhere at all: the delete is best-effort and
+swallows every failure, nothing retried, and the only trace a stranded branch left was an absent
+sentence in a finish message.
+
+⭐ **A cancelled task gives its name back too**, under exactly the same licence: only when the
+resting state is `cancelled` — *not at all*, as opposed to `paused_user`, which resumes into its
+branch — and only when the branch carries no commit the trunk does not have. ⚠️ Best-effort: a task
+cancelled while running still has its workspace, so the branch is still checked out and git declines;
+it shows up as a *branch left behind* instead.
 
 ⚠️ **Continuing the task afterwards re-creates it under the same name**, cut from `origin/<target>`,
 so a resumed task opens on top of the work that landed rather than behind it. The branch *is* the

@@ -13,7 +13,7 @@ import type {
 import { policyFor } from './projects.js'
 import { claim, landResourceId, openClaims, release, upsertResource } from './resources.js'
 import { addDependency, addMessage, getTask, mandateAllows, setStatus } from './tasks.js'
-import { landedRef } from './worktrees.js'
+import { landedRef, rescueAtTip } from './worktrees.js'
 import { launchArgs, which } from './which.js'
 import { log } from './log.js'
 
@@ -73,6 +73,54 @@ export async function hasRemote(cwd: string): Promise<boolean> {
 async function isClean(cwd: string): Promise<boolean> {
   return (await git(cwd, ['status', '--porcelain'])).length === 0
 }
+
+/**
+ * Whether the branch tip is a commit **this tool** made, not one the agent wrote.
+ *
+ * ⛔ `rescueDirt` commits an interrupted run's uncommitted work onto its branch so the next run
+ * inherits it (t91/t92, 2026-09-01). That is a rescue, not a result: nothing in it has been compiled,
+ * and a clean working tree is exactly what it leaves behind — so `isClean` alone would wave it
+ * through, and `auto-land` would push somebody's half-written afternoon onto the trunk.
+ *
+ * ⚠️ **Only the tip.** A rescue the agent then built on is ordinary history, and the checks that run
+ * after the rebase are what judge the result. A tip that is *still* the rescue means the resumed run
+ * added nothing of its own, and there is nothing here worth landing yet.
+ */
+async function tipIsRescue(cwd: string): Promise<boolean> {
+  return (await rescueAtTip(cwd)) !== null
+}
+
+/**
+ * Stashes this repository is holding that were taken off **this** branch.
+ *
+ * ⛔ **A clean workspace is not evidence the work was done.** `rescueDirt` moves an interrupted run's
+ * uncommitted work out of the way, and when HEAD is detached it can only stash it — which leaves
+ * behind precisely the state the "nothing to land" verdict reads as *the task answered a question and
+ * changed no file*: a clean tree and a branch with no commits. t91 and t92 (2026-09-01) were that
+ * shape, and the whole afternoon's work was in `git stash list` while the pipeline called it done.
+ *
+ * ⚠️ Attributed by branch, not counted globally. `WorkspaceState.stashes` is a repository-wide number
+ * — every pool member reports the same list — and blocking a finish on a stash some other task left
+ * behind would make the count of unrelated leftovers decide whether this task can complete. Git's own
+ * `On <branch>:` prefix is what ties an entry to the run that made it.
+ *
+ * ⚠️ Never throws: a repository that cannot answer reports nothing rather than blocking a finish.
+ */
+async function stashesFrom(cwd: string, branch: string): Promise<number> {
+  try {
+    return (await git(cwd, ['stash', 'list', '--format=%gs']))
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith(`On ${branch}:`) || line.startsWith(`WIP on ${branch}:`))
+      .length
+  } catch {
+    return 0
+  }
+}
+
+/** Said the same way by every strategy that would put this branch somewhere it cannot be taken back. */
+const RESCUE_TIP_REASON =
+  'the branch tip is uncommitted work rescued from an interrupted run, and nothing has been ' +
+  'finished on top of it'
 
 // ---------------------------------------------------------------------------- will it rebase?
 
@@ -484,6 +532,7 @@ export const mergeLocal: LandingStrategy = {
     if (!(await isClean(ctx.workspacePath))) {
       return { ok: false, reason: 'the workspace has uncommitted changes' }
     }
+    if (await tipIsRescue(ctx.workspacePath)) return { ok: false, reason: RESCUE_TIP_REASON }
     return { ok: true }
   },
 
@@ -738,6 +787,7 @@ export const autoLand: LandingStrategy = {
     if (!(await isClean(ctx.workspacePath))) {
       return { ok: false, reason: 'the workspace has uncommitted changes' }
     }
+    if (await tipIsRescue(ctx.workspacePath)) return { ok: false, reason: RESCUE_TIP_REASON }
     return { ok: true }
   },
 
@@ -862,6 +912,7 @@ export const pullRequest: LandingStrategy = {
     if (!(await isClean(ctx.workspacePath))) {
       return { ok: false, reason: 'the workspace has uncommitted changes' }
     }
+    if (await tipIsRescue(ctx.workspacePath)) return { ok: false, reason: RESCUE_TIP_REASON }
     if (!(await hasRemote(ctx.workspacePath))) {
       return { ok: false, reason: 'no origin remote, so there is nowhere to open a pull request' }
     }
@@ -996,6 +1047,28 @@ export async function landTask(ctx: LandingContext): Promise<LandingResult> {
     const target = policyFor(ctx.project).landingTarget
     const base = await landedRef(ctx.workspacePath, target)
     if ((await commitsAhead(ctx.workspacePath, ctx.branch, base)) === 0) {
+      // ⛔ **Asked before the verdict, because the verdict is otherwise unfalsifiable.** Everything
+      // this branch reads — a clean tree, a branch level with the trunk — is equally true of a task
+      // that answered a question and of a task whose entire output was stashed out from under it.
+      // The stash list is the one place those two differ, and nothing used to look at it.
+      const stashed = await stashesFrom(ctx.workspacePath, ctx.branch)
+      if (stashed > 0) {
+        const reason =
+          `\`${ctx.branch}\` has no commits and the workspace is clean, but this repository is ` +
+          `holding ${stashed} stash(es) taken off that branch — the work an interrupted run left ` +
+          'behind. That is not nothing to land.'
+        addMessage(
+          ctx.task.id,
+          'system',
+          `Not landed automatically: ${reason} ⚠️ Recover it with \`git stash list\` and ` +
+            `\`git stash apply\` in ${ctx.workspacePath}. ⛔ The branch has been kept.`
+        )
+        setStatus(ctx.task.id, 'awaiting_human', {
+          assignee: 'human',
+          holdReason: `the work is in a stash, not on \`${ctx.branch}\``
+        })
+        return { strategy: strategy.id, ok: false, branch: ctx.branch, reason }
+      }
       // ⛔ **Names the ref it compared.** This said `main` while comparing `origin/main`, which is
       // not a wording quibble: on 2026-08-29 t22's agent pushed its own commit to `origin/main`, and
       // the operator was told the branch carried nothing `main` did not have while their `main` was

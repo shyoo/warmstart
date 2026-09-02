@@ -115,6 +115,28 @@ export function LooseEnds(): React.JSX.Element | null {
                       Land it
                     </button>
                   )}
+                  {/* ⛔ Only for a branch with nothing on it. The daemon checks that again before
+                      it deletes anything — this panel may be minutes old, and a branch that gained a
+                      commit in between must not be removed because a stale row said it was empty. */}
+                  {end.kind === 'stranded' && end.branch !== null && (
+                    <button
+                      type="button"
+                      className="btn"
+                      disabled={busy !== null}
+                      onClick={() =>
+                        void act(async () => {
+                          setBusy(end.id)
+                          const r = await rpc('looseend.retire', {
+                            projectId: end.projectId,
+                            branch: end.branch as string
+                          })
+                          return r.deleted ? `retired ${end.branch}` : `kept it — ${r.reason}`
+                        })
+                      }
+                    >
+                      Retire it
+                    </button>
+                  )}
                   <button
                     type="button"
                     className="btn"
@@ -156,12 +178,17 @@ export function LooseEnds(): React.JSX.Element | null {
 const LABEL: Record<LooseEnd['kind'], string> = {
   uncommitted: 'uncommitted',
   unlanded: 'not landed',
-  stash: 'stashed'
+  stash: 'stashed',
+  stranded: 'branch left behind'
 }
 
 /** ⚠️ Uncommitted is the loudest: it is the only one where a pooled slot is still being held. */
 const TONE: Record<LooseEnd['kind'], string> = {
   uncommitted: 'state-warn',
   unlanded: 'state-human',
-  stash: 'state-idle'
+  stash: 'state-idle',
+  // ⚠️ The quietest of the four, deliberately. Nothing is at risk — every commit on it is already in
+  // the trunk — so it is a tidy-up, and colouring it like lost work would train the operator to
+  // ignore the list.
+  stranded: 'state-idle'
 }

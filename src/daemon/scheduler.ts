@@ -73,10 +73,12 @@ import {
   parkWorkspace,
   prepareWorkspace,
   releaseWorkspace,
+  rescueAtTip,
   switchResidentBranch,
   trunkCommitsSince,
   trunkTargetSha,
   workspaceState,
+  type Rescue,
   type Workspace
 } from './worktrees.js'
 import {
@@ -1907,6 +1909,30 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
   // ⚠️ A revived conversation remembers a tree that has since moved. `prepareWorkspace` switched the
   // worktree while the agent was not running, so nothing warned it — and its context is full of file
   // contents from the branch it was last on.
+  // ⛔ **Said, or it may as well have been thrown away.** When a run is interrupted with work still
+  // uncommitted, `rescueDirt` now commits it onto the task's branch so the next run inherits it. That
+  // only helps if the next run is told: an agent that finds a `wip:` commit it has no memory of
+  // writing will either ignore it or, worse, treat the branch as somebody else's and start again —
+  // which is precisely what t91 and t92 did on 2026-09-01, at 13.3M tokens for one of them, back when
+  // the work went to a stash instead and nothing mentioned that either.
+  const rescued = branch ? await rescueAtTip(cwd) : null
+  if (rescued) {
+    addMessage(
+      task.id,
+      'system',
+      `The last run here was interrupted with ${rescued.files} file(s) uncommitted. They were ` +
+        `committed onto \`${branch}\` as ${rescued.sha.slice(0, 8)} so this run inherits them, and ` +
+        'that commit cannot land until something is finished on top of it.'
+    )
+  }
+  const rescueNotice = rescued
+    ? `⚠️ The tip of \`${branch}\` is commit ${rescued.sha.slice(0, 8)}, holding ${rescued.files} ` +
+      'file(s) an interrupted earlier run left uncommitted. This tool made that commit, not you: ' +
+      'nothing in it has been compiled or checked. **Read it first** (`git show HEAD`) — it is very ' +
+      'likely most of the work you are about to be asked for. Amend it or build on top of it; it ' +
+      'will not be allowed to land as it stands.'
+    : null
+
   const movedSince = revive && revive.currentBranch && branch && revive.currentBranch !== branch
   const branchNotice = movedSince
     ? `⚠️ This workspace has moved since your last turn: it was on \`${revive.currentBranch}\` and ` +
@@ -1931,7 +1957,7 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
   // most damaging way available of somebody else's: the agent would be handed a context full of
   // another task's instructions and never told what it was itself being asked to do.
   const promptText = promptFor(task, worker.adapterId, revive !== null && !borrowed, {
-    branchNotice: [borrowNotice, branchNotice].filter(Boolean).join('\n\n') || null,
+    branchNotice: [borrowNotice, branchNotice, rescueNotice].filter(Boolean).join('\n\n') || null,
     markDelivered: true
   })
 
@@ -3485,9 +3511,36 @@ async function releaseWorkspaceOf(sessionId: string): Promise<void> {
   if (!held) return
   workspaces.delete(sessionId)
   const project = held.projectId ? getProject(held.projectId) : null
-  if (project) await parkWorkspace(project, held.workspace.path)
+  if (project) announceRescue(await parkWorkspace(project, held.workspace.path))
   releaseWorkspace(held.workspace.claimId)
   releaseAllFor(sessionId)
+}
+
+/**
+ * Put what an interrupted run left behind on its own task thread.
+ *
+ * ⚠️ At the moment it happens, rather than only when the task is next dispatched — a task preempted
+ * over a five-hour window is not dispatched again for five hours, and "where did my afternoon go" is
+ * a question the operator has in the meantime.
+ *
+ * ⚠️ Found by branch, because the branch is the only thing a park knows about. A rescue on a branch
+ * no task claims is still logged by `rescueDirt`; there is simply no thread to put it on.
+ */
+function announceRescue(rescue: Rescue | null): void {
+  if (!rescue?.branch) return
+  const task = listTasks().find((t) => t.branch === rescue.branch)
+  if (!task) return
+  addMessage(
+    task.id,
+    'system',
+    rescue.kind === 'commit'
+      ? `This run stopped with ${rescue.files} file(s) uncommitted. They were committed onto ` +
+        `\`${rescue.branch}\` as ${rescue.sha.slice(0, 8)}, so the next run picks up where this one ` +
+        'stopped. It cannot land until something is finished on top of it.'
+      : `This run stopped with ${rescue.files} file(s) uncommitted, and they could not be committed ` +
+        'onto the branch — they are in a git stash in this workspace instead. ⚠️ A stash does not ' +
+        'travel to the next run: recover it by hand with `git stash list`.'
+  )
 }
 
 // ------------------------------------------------------------------- borrowing a conversation

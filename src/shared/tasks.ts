@@ -1286,12 +1286,12 @@ export function resolveSessionSharing(
 export interface LooseEnd {
   /** Stable across scans, so a dismissal sticks to the thing dismissed. */
   id: string
-  kind: 'uncommitted' | 'unlanded' | 'stash'
+  kind: 'uncommitted' | 'unlanded' | 'stash' | 'stranded'
   projectId: string
   projectName: string
   workspacePath: string
   branch: string | null
-  /** Files for `uncommitted`, commits for `unlanded`, entries for `stash`. */
+  /** Files for `uncommitted`, commits for `unlanded`, entries for `stash`, 0 for `stranded`. */
   count: number
   /** The task this branch belongs to, when the name still parses to one. */
   taskSeq: number | null

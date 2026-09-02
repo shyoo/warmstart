@@ -15,7 +15,7 @@ import { log } from './log.js'
 import { listProjects, policyFor } from './projects.js'
 import { mandateAllows } from './tasks.js'
 import type { MergeReading } from './landing.js'
-import { ensurePool, workspaceState } from './worktrees.js'
+import { ensurePool, taskBranches, workspaceState } from './worktrees.js'
 import type { WorkspaceState } from './worktrees.js'
 import { settings } from './settings.js'
 export { projectFinishChoice, finishInstructionFor }
@@ -393,6 +393,42 @@ export async function scanLooseEnds(): Promise<LooseEnd[]> {
         seen.add(end.id)
         found.push(end)
       }
+    }
+
+    // ⛔ **The branches, which no pool member can see.** Everything above reads a workspace and
+    // reports the branch that workspace has checked out — so a branch at rest, which is what a
+    // finished task leaves, is invisible to all of it. Measured 2026-09-01: t23 and t79 had been
+    // sitting in this repository for days, both fully contained in the trunk, neither reported
+    // anywhere. `retireBranch` swallows every failure and returns `false`, and nothing retried; the
+    // only trace either of them left was an *absent* sentence in a finish message.
+    for (const branch of await taskBranches(project, policy.landingTarget)) {
+      // ⚠️ `-1` is "git could not measure it", not "nothing on it". Neither reported nor retired.
+      if (branch.ahead < 0) continue
+      const end: LooseEnd = {
+        projectId: project.id,
+        projectName: project.name,
+        workspacePath: branch.heldBy ?? project.root,
+        branch: branch.branch,
+        taskSeq: branch.taskSeq,
+        ...(branch.ahead > 0
+          ? {
+              id: `unlanded:${branch.branch}`,
+              kind: 'unlanded' as const,
+              count: branch.ahead,
+              summary: `${branch.ahead} commit(s) on \`${branch.branch}\` that the trunk does not have`
+            }
+          : {
+              id: `stranded:${branch.branch}`,
+              kind: 'stranded' as const,
+              count: 0,
+              summary:
+                `\`${branch.branch}\` carries nothing the trunk does not already have` +
+                (branch.heldBy ? ` and is checked out in ${branch.heldBy}` : ' — only the name is left')
+            })
+      }
+      if (seen.has(end.id) || dismissed.has(end.id)) continue
+      seen.add(end.id)
+      found.push(end)
     }
   }
   return found

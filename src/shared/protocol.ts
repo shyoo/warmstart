@@ -1384,6 +1384,16 @@ export interface RpcMap {
   'looseend.dismiss': { params: { id: string }; result: { ok: true } }
   /** File a task to go and deal with one. ⚠️ Creates work; it does not do the work. */
   'looseend.reclaim': { params: LooseEnd; result: Task }
+  /**
+   * Delete a task branch that carries nothing the trunk does not already have.
+   *
+   * ⛔ The daemon re-derives that proof itself; this is a request, not an instruction. A branch that
+   * has gained a commit since the panel was scanned comes back `deleted: false` with the reason.
+   */
+  'looseend.retire': {
+    params: { projectId: string; branch: string }
+    result: { deleted: boolean; reason?: string }
+  }
   'log.tail': { params: { limit?: number; level?: LogLevel }; result: LogEntry[] }
   /** What is on disk, for the offline half. ⛔ Lists files; never returns their contents. */
   'log.files': { params: void; result: { directory: string; files: LogFile[] } }

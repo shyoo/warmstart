@@ -555,6 +555,43 @@ try {
     resources.map((r) => `${r.resource.id}:${r.inUse}/${r.resource.capacity}`).join(' ')
   )
 
+  // ⭐ Widening the pool takes effect when the operator asks, not on some later dispatch.
+  // ⛔ Measured on t89 (2026-09-01): `poolSize` was only a number in project.json until `ensurePool`
+  // turned it into worktrees and a capacity, and nothing did that when the setting changed. With the
+  // old pool full, the gate in front of dispatch read the stale capacity and held the task — and the
+  // hold blocked the only path that would have corrected it. It came right later, when a running
+  // task freed one of the *old* members or an Overview load ran the loose-ends scan.
+  // ⚠️ The hold itself is `poolPressure`'s to fix and was cut separately (9278841, `poolgate.test.ts`);
+  // what is under test here is the narrower claim that the setting is true the moment it is made.
+  // ⚠️ There is no pool row here at all, and that is the harder starting state rather than a gap in
+  // the fixture: nothing in this suite can dispatch — no agent CLI is installed on a CI runner — so
+  // `claimWorkspace` has never run and `ensurePool` has never been reached. If the setting only
+  // becomes true on a dispatch, this project has no pool and never will.
+  const poolBefore = (await daemon.rpc('resource.list')).find(
+    (r) => r.resource.id === `workspace:${added.id}`
+  )
+  check(
+    'a project nothing has dispatched into has no pool yet',
+    poolBefore === undefined,
+    poolBefore ? String(poolBefore.resource.capacity) : 'no pool declared'
+  )
+  await daemon.rpc('project.setPolicy', { id: added.id, poolSize: 3 })
+  const poolAfter = (await daemon.rpc('resource.list')).find(
+    (r) => r.resource.id === `workspace:${added.id}`
+  )
+  check(
+    'setting poolSize builds the pool there and then, with no dispatch in between',
+    poolAfter?.resource.capacity === 3,
+    poolAfter ? `none -> ${poolAfter.resource.capacity}` : 'no pool was built'
+  )
+  // ⛔ The capacity is only true if the worktree is really there. A number that outran the disk would
+  // hand a task a workspace that does not exist, which is the same defect wearing the other face.
+  check(
+    'and the worktree it counts is on disk',
+    existsSync(join(`${project}_workspaces`, 'ws3', '.git')),
+    join(`${project}_workspaces`, 'ws3')
+  )
+
   // ---------------------------------------------------------------- cost intelligence
   section('cost')
   const cost = await daemon.rpc('cost.report')

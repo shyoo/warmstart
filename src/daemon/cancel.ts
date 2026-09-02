@@ -18,6 +18,8 @@ import {
 import { closeSession, getSession, interruptSession, writeSession } from './sessions.js'
 import { releaseAllFor } from './resources.js'
 import { adapter } from './adapters/index.js'
+import { getProject, policyFor } from './projects.js'
+import { retireStrandedBranch } from './worktrees.js'
 import { costModel } from './costmodel.js'
 import { voidQuestionsForTask } from './questions.js'
 import { voidApprovalsForTask } from './approvals.js'
@@ -26,8 +28,14 @@ import { voidApprovalsForTask } from './approvals.js'
  * Cancel is not delete.
  *
  * **Cancel** stops execution and returns the task to a *resting state*. It destroys nothing - not the
- * thread, not the runs, not the artifacts, not the branch. **Delete** is a separate, explicit,
- * human-only act.
+ * thread, not the runs, not the artifacts, and not one commit of work. **Delete** is a separate,
+ * explicit, human-only act.
+ *
+ * ⚠️ **One exception, added 2026-09-01 and deliberately narrow: the *name* of an empty branch on a
+ * task going to `cancelled`.** See `retireCancelledBranch`. A branch carrying no commit the trunk
+ * does not already have is not an artifact; it is a label, and leaving it is how t79 came to sit in
+ * this repository for a day. Every other resting state keeps its branch, because every other resting
+ * state is expected to resume into it.
  *
  * `cancelling` is a real state rather than a formality, because a running session has to be stopped
  * *well*: interrupt, ask for a wrap-up, ⛔ release every claim whether or not the wrap-up succeeded,
@@ -99,9 +107,42 @@ export async function cancelTask(taskId: string, options: CancelOptions = {}): P
   await windDown(task, options.hard === true)
 
   const settled = setStatus(taskId, restingState)
+  await retireCancelledBranch(settled)
   admitDependents(taskId)
   log.info(`task t${settled.seq} cancelled to ${restingState}`)
   return settled
+}
+
+/**
+ * Give back the name of a branch a cancelled task never wrote anything to.
+ *
+ * ⛔ **Only for `cancelled`.** `paused_user` and `draft` both mean *not like this, for now* — they
+ * resume into their branch, and `resumeTask` documents keeping it. `cancelled` means *not at all*,
+ * and that is the only resting state where the name has no future.
+ *
+ * ⛔ **Only when it carries nothing.** `retireStrandedBranch` re-derives that itself and refuses
+ * otherwise, so a cancel can never delete a commit — which is the promise at the top of this file and
+ * the reason this is allowed to exist beside it.
+ *
+ * ⚠️ **Best-effort, and it will often decline.** The workspace is parked when the *session* exits,
+ * which for a task cancelled while running has not happened yet — so the branch is still checked out
+ * and git would refuse. That is not a failure and is not retried here: a branch left behind is now a
+ * `stranded` loose end, which is the net this deliberately leans on rather than duplicating.
+ * Measured 2026-09-01: t79 was cancelled on 2026-08-31 and its empty branch was still here, with
+ * nothing in the app able to see it.
+ */
+async function retireCancelledBranch(task: Task): Promise<void> {
+  if (task.status !== 'cancelled' || !task.branch || !task.projectId) return
+  const project = getProject(task.projectId)
+  if (!project || project.vcs !== 'git') return
+  try {
+    const verdict = await retireStrandedBranch(project, task.branch, policyFor(project).landingTarget)
+    if (!verdict.deleted) {
+      log.info(`kept \`${task.branch}\` after cancelling t${task.seq}: ${verdict.reason}`)
+    }
+  } catch (err) {
+    log.warn(`could not tidy the branch of t${task.seq}:`, err)
+  }
 }
 
 function childrenOf(taskId: string): Task[] {

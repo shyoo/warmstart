@@ -139,6 +139,100 @@ describe('claiming a workspace somebody left dirty', () => {
 })
 
 /**
+ * Work an interrupted run never committed.
+ *
+ * ⛔ Measured on t91 and t92, 2026-09-01. Both were preempted mid-run with everything they had done
+ * still uncommitted. Parking stashed it — correctly, by the rules as they then stood — and left both
+ * branches sitting at the base commit with no commits of their own. The next run checked the branch
+ * out, saw nothing, and started again: t92 spent 13.3M tokens re-deriving work that was in
+ * `stash@{0}` the whole time. A stash belongs to a *repository*; a branch is the only thing the next
+ * run of a task is guaranteed to be handed.
+ *
+ * ⚠️ Real git, for the same reason as everything else in this file: the whole behaviour is what git
+ * does with a dirty tree, a detached HEAD and a commit trailer.
+ */
+describe('an interrupted run that never committed', () => {
+  it('puts the work on the branch, where the next run of the task will find it', async () => {
+    const project = makeProject()
+    const ws = await worktrees.claimWorkspace(project, 'run-1')
+    const branch = worktrees.branchNameFor(91, 'dynamically adjust workspaces')
+    await worktrees.prepareWorkspace(project, ws!, branch)
+
+    // The state a preemption leaves: on the task's branch, edits made, nothing committed.
+    writeFileSync(join(ws!.path, 'kept.txt'), 'the only copy of this sentence\n')
+    writeFileSync(join(ws!.path, 'brand-new.txt'), 'and an untracked file too\n')
+
+    const rescue = await worktrees.parkWorkspace(project, ws!.path)
+
+    expect(rescue?.kind).toBe('commit')
+    expect(rescue?.files).toBe(2)
+    expect(rescue?.branch).toBe(branch)
+    // ⛔ On the branch — not in a stash, which is what makes it travel.
+    expect(git(ws!.path, 'stash', 'list')).toBe('')
+    expect(git(ws!.path, 'show', `${branch}:brand-new.txt`)).toBe('and an untracked file too')
+    expect(git(ws!.path, 'log', '--format=%s', '-1', branch)).toMatch(/^wip: 2 file\(s\)/)
+
+    // And the next run gets it by doing nothing more than checking the branch out. ⚠️ The pool
+    // here holds one member, so this is the same slot — which is the harder case, not the easier
+    // one: it comes back detached at the base with none of the work in it.
+    worktrees.releaseWorkspace(ws!.claimId)
+    const next = await worktrees.claimWorkspace(project, 'run-2')
+    await worktrees.prepareWorkspace(project, next!, branch)
+    expect(text(join(next!.path, 'kept.txt'))).toBe('the only copy of this sentence\n')
+    worktrees.releaseWorkspace(next!.claimId)
+  })
+
+  it('says at the tip that this is a rescue, so landing can refuse it', async () => {
+    const project = makeProject()
+    const ws = await worktrees.claimWorkspace(project, 'run-1')
+    const branch = worktrees.branchNameFor(92, 'ai summarized titles')
+    await worktrees.prepareWorkspace(project, ws!, branch)
+    writeFileSync(join(ws!.path, 'kept.txt'), 'half an afternoon\n')
+    await worktrees.parkWorkspace(project, ws!.path)
+
+    git(ws!.path, 'switch', branch)
+    expect(await worktrees.rescueAtTip(ws!.path)).toMatchObject({ files: 1 })
+
+    // ⚠️ Only the tip. Work finished on top of a rescue is ordinary history, and the checks that run
+    // at landing are what judge it.
+    writeFileSync(join(ws!.path, 'kept.txt'), 'and then somebody finished it\n')
+    git(ws!.path, 'commit', '-am', 'finish the job')
+    expect(await worktrees.rescueAtTip(ws!.path)).toBeNull()
+    worktrees.releaseWorkspace(ws!.claimId)
+  })
+
+  it('still stashes when HEAD is detached, because there is no branch to commit to', async () => {
+    // ⚠️ A parked pool member is exactly this, and it is where the dirt in `prepareWorkspace` comes
+    // from. Nothing to attach the work to, so the old behaviour is still the right one.
+    const project = makeProject()
+    const ws = await worktrees.claimWorkspace(project, 'run-1')
+    expect(git(ws!.path, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('HEAD')
+    writeFileSync(join(ws!.path, 'kept.txt'), 'left in a slot nobody owns\n')
+
+    const rescue = await worktrees.parkWorkspace(project, ws!.path)
+    expect(rescue?.kind).toBe('stash')
+    expect(git(ws!.path, 'stash', 'list')).toMatch(/multi-agent-controller: 1 file\(s\)/)
+    worktrees.releaseWorkspace(ws!.claimId)
+  })
+
+  it('rescues nothing at all when the run committed everything it did', async () => {
+    // ⚠️ Otherwise every park would leave a `wip:` commit, and `rescueAtTip` would block the landing
+    // of every task that ever paused.
+    const project = makeProject()
+    const ws = await worktrees.claimWorkspace(project, 'run-1')
+    const branch = worktrees.branchNameFor(93, 'a tidy run')
+    await worktrees.prepareWorkspace(project, ws!, branch)
+    writeFileSync(join(ws!.path, 'kept.txt'), 'committed like a grown-up\n')
+    git(ws!.path, 'commit', '-am', 'the work')
+
+    expect(await worktrees.parkWorkspace(project, ws!.path)).toBeNull()
+    expect(git(ws!.path, 'stash', 'list')).toBe('')
+    expect(git(ws!.path, 'log', '--format=%s', '-1', branch)).toBe('the work')
+    worktrees.releaseWorkspace(ws!.claimId)
+  })
+})
+
+/**
  * Lending a resident conversation's worktree to another task.
  *
  * ⛔ Phase 2 of resident sessions. A session now keeps its worktree for as long as it lives, so the

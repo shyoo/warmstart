@@ -393,37 +393,135 @@ async function parkOtherHolders(
 }
 
 /**
- * Get uncommitted work out of the way of a branch switch.
+ * What `rescueDirt` did with the work it found, so a caller can say so.
  *
- * ⛔ **Stashed, never discarded.** `reset --hard` would be one line and would silently destroy the
- * only copy of whatever the last run left behind — and the reason a slot is dirty is very often that
- * the last run *failed*, which is exactly when its half-finished edits are worth the most. A stash
- * lives in the shared object store, so `git stash list` from the trunk shows it and `git stash show
- * -p` reads it back.
- *
- * ⚠️ `--include-untracked`, not `--all`: a new file an agent wrote counts, and `node_modules` and
- * `out/` are ignored rather than untracked, so they stay where a prepare step put them.
- *
- * ⚠️ Best-effort. A slot that cannot be stashed is left alone and the switch below fails loudly, as
- * it did before this existed — silently deleting somebody's work to keep the scheduler moving is the
- * one outcome worse than a task that will not start.
+ * ⚠️ `kind` is the whole point. A **commit** is on the task's branch, so the next run of that task
+ * inherits it wherever it is dispatched; a **stash** is a local ref in one repository's object store
+ * that nothing but a person reads. See `rescueDirt`.
  */
-async function rescueDirt(path: string, destination: string): Promise<void> {
+export interface Rescue {
+  kind: 'commit' | 'stash'
+  /** The commit, or the stash entry. Either way, the object that holds the work. */
+  sha: string
+  files: number
+  /** The branch it was committed to, or `null` when HEAD was detached and it had to be stashed. */
+  branch: string | null
+}
+
+/**
+ * The trailer that marks a commit **this tool** wrote on an agent's behalf.
+ *
+ * ⛔ Load-bearing, not decorative: `landing.ts` refuses to land a branch whose tip still carries it,
+ * because such a tip is unfinished work nobody compiled, let alone reviewed.
+ */
+export const RESCUE_TRAILER = 'Multi-Agent-Controller-Rescue'
+
+/**
+ * The rescue sitting at a branch tip, if that is what the tip is.
+ *
+ * ⛔ **One definition of "this is a rescue, not a result", read by everyone who needs it.** Landing
+ * refuses such a tip and the dispatcher warns the agent about it; two independent readings of the
+ * same trailer would eventually disagree, and the direction they would disagree in is a half-written
+ * afternoon on the trunk.
+ *
+ * ⚠️ Only the tip. A rescue the next run built on top of is ordinary history.
+ */
+export async function rescueAtTip(path: string): Promise<{ sha: string; files: number } | null> {
+  try {
+    const body = await git(path, ['log', '-1', '--format=%B', 'HEAD'])
+    const found = new RegExp(`^${RESCUE_TRAILER}: ([0-9]+)$`, 'm').exec(body)
+    if (!found) return null
+    return { sha: await git(path, ['rev-parse', 'HEAD']), files: Number(found[1]) }
+  } catch {
+    return null
+  }
+}
+
+/** The branch HEAD is on, or `null` when it is detached. */
+async function headBranch(path: string): Promise<string | null> {
+  try {
+    return (await git(path, ['symbolic-ref', '--quiet', '--short', 'HEAD'])) || null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Get uncommitted work out of the way of a branch switch — **onto the branch when there is one.**
+ *
+ * ⛔ **Committed if possible, stashed if not, discarded never.** `reset --hard` would be one line and
+ * would silently destroy the only copy of whatever the last run left behind — and the reason a slot is
+ * dirty is very often that the last run *failed*, which is exactly when its half-finished edits are
+ * worth the most.
+ *
+ * ⛔ **A stash is not a handoff, and that is the bug this exists for.** Measured on t91 and t92
+ * (2026-09-01). Both were preempted mid-run with the whole of their work uncommitted; `parkWorkspace`
+ * stashed it, exactly as designed, and both branches were left at the base commit with no commits of
+ * their own. The resumed run then checked out that branch, saw nothing, and rebuilt everything from
+ * scratch — t92 spent 13.3M tokens re-deriving work that was sitting in `stash@{0}` the whole time,
+ * and t91 shipped a narrower fix than the one it had already written. A stash is a **local ref**: it
+ * belongs to a repository, not to a branch, so it does not travel to the workspace the next run
+ * claims, it is not in `promptFor`, and nothing in the app ever mentions it. The branch is the only
+ * thing every later run of a task is guaranteed to see, so the work goes there.
+ *
+ * ⚠️ **`--no-verify`, deliberately.** This is a rescue, not a contribution. A pre-commit hook that
+ * reformats or refuses would turn "your work is safe on the branch" back into "your work is gone",
+ * and the hooks still run when the agent commits properly on top and again at landing, where
+ * `runChecks` is the gate that actually decides.
+ *
+ * ⚠️ **The stash is still there for a detached HEAD**, which is what a parked pool member is, and
+ * for the case where the commit itself fails — a repository with no `user.email` configured, most
+ * likely. `--include-untracked`, not `--all`: a new file an agent wrote counts, and `node_modules`
+ * and `out/` are ignored rather than untracked, so they stay where a prepare step put them.
+ *
+ * ⚠️ Best-effort throughout. A slot that can be neither committed nor stashed is left alone and the
+ * switch below fails loudly, as it did before this existed — silently deleting somebody's work to
+ * keep the scheduler moving is the one outcome worse than a task that will not start.
+ */
+async function rescueDirt(path: string, destination: string): Promise<Rescue | null> {
   let dirty: string
   try {
     dirty = await git(path, ['status', '--porcelain'])
   } catch {
-    return
+    return null
   }
-  if (!dirty) return
+  if (!dirty) return null
 
   const files = dirty.split(/\r?\n/).filter(Boolean).length
   const label = `multi-agent-controller: ${files} file(s) left in ${path} before ${destination}`
+
+  const branch = await headBranch(path)
+  if (branch) {
+    try {
+      await git(path, ['add', '-A'])
+      await git(path, [
+        'commit',
+        '--no-verify',
+        '-m',
+        `wip: ${files} file(s) an interrupted run left behind\n\n` +
+          'Multi Agent Controller committed this so the work would travel with the branch rather ' +
+          'than sit in a stash the next run cannot see. Nothing here has been compiled, checked ' +
+          'or reviewed. Amend it or build on it; it must not land as it stands.\n\n' +
+          `${RESCUE_TRAILER}: ${files}`
+      ])
+      const sha = await git(path, ['rev-parse', 'HEAD'])
+      log.warn(`${label} — committed to ${branch} as ${sha.slice(0, 8)}`)
+      return { kind: 'commit', sha, files, branch }
+    } catch (err) {
+      // ⚠️ Falls through to the stash rather than giving up. `git add -A` may have staged some of it
+      // by now, which `stash push` handles perfectly well.
+      log.warn(`could not commit the work left in ${path}, stashing it instead:`, err)
+    }
+  }
+
   try {
     await git(path, ['stash', 'push', '--include-untracked', '-m', label])
+    const sha = await git(path, ['rev-parse', 'refs/stash'])
     log.warn(`${label} — recover with: git stash list`)
+    return { kind: 'stash', sha, files, branch: null }
   } catch (err) {
     log.error(`could not stash the uncommitted work in ${path}:`, err)
+    return null
   }
 }
 
@@ -436,8 +534,8 @@ function normalise(p: string): string {
  * later run of the same task in a different workspace. Best-effort by design; a workspace that
  * cannot be parked is still released, and the next claim re-prepares it.
  */
-export async function parkWorkspace(project: Project, path: string): Promise<void> {
-  if (project.vcs !== 'git') return
+export async function parkWorkspace(project: Project, path: string): Promise<Rescue | null> {
+  if (project.vcs !== 'git') return null
   try {
     const base = await baseRef(project)
     // ⛔ Blind, and deliberately first. `git switch` **refuses** while a rebase is in progress, so a
@@ -447,10 +545,12 @@ export async function parkWorkspace(project: Project, path: string): Promise<voi
     // crash between starting the rebase and sending the prompt.
     // ⚠️ Aborting discards no work: the branch goes back to where the rebase started.
     await gitOk(path, ['rebase', '--abort'])
-    await rescueDirt(path, base)
+    const rescued = await rescueDirt(path, base)
     await git(path, ['switch', '--detach', base])
+    return rescued
   } catch (err) {
     log.warn(`could not park workspace ${path}:`, err)
+    return null
   }
 }
 
@@ -522,6 +622,142 @@ export async function landedRef(path: string, target: string): Promise<string> {
   return (await gitOk(path, ['rev-parse', '--verify', `origin/${target}`]))
     ? `origin/${target}`
     : target
+}
+
+/**
+ * A task branch this repository still has a name for.
+ *
+ * ⛔ **Repository-wide, which is the whole point.** Everything else in the loose-ends scan reads a
+ * *pool member* and reports the branch that member happens to have checked out. A branch nobody has
+ * checked out is therefore invisible to all of it — and that is the normal resting state of a branch
+ * whose task has finished, because the finish detaches the workspace. So the one leftover the tool
+ * creates on every task was the one leftover it could not see.
+ *
+ * ⚠️ Measured 2026-09-01: `t23` and `t79` had been sitting in this repo since 2026-08-29 and
+ * 2026-08-31, both carrying **zero** commits of their own, neither visible anywhere in the app.
+ */
+export interface TaskBranch {
+  branch: string
+  taskSeq: number | null
+  /**
+   * Commits on it that the landed ref does not have. ⭐ Zero means the name is all that is left, and
+   * deleting it loses nothing — that is the same licence `retireBranch` runs on.
+   */
+  ahead: number
+  /** The worktree holding it, if any. ⚠️ This is why `git branch -D` refuses, so it is read, not guessed. */
+  heldBy: string | null
+}
+
+/** Which worktree, if any, has each branch checked out. */
+async function branchHolders(root: string): Promise<Map<string, string>> {
+  const held = new Map<string, string>()
+  let listing: string
+  try {
+    listing = await git(root, ['worktree', 'list', '--porcelain'])
+  } catch {
+    return held
+  }
+  let path: string | null = null
+  for (const line of listing.split(/\r?\n/)) {
+    if (line.startsWith('worktree ')) path = line.slice('worktree '.length).trim()
+    else if (line.startsWith('branch ') && path) {
+      held.set(line.slice('branch refs/heads/'.length).trim(), path)
+    }
+  }
+  return held
+}
+
+/**
+ * Every `multi-agent-controller/t<n>-…` branch in the repository, and what is on it.
+ *
+ * ⚠️ Never throws, for the same reason `workspaceState` does not: this is read on a timer and to
+ * render a panel, and a repository git cannot answer for must come back empty rather than take the
+ * panel down with it.
+ */
+export async function taskBranches(project: Project, target: string): Promise<TaskBranch[]> {
+  if (project.vcs !== 'git') return []
+  let names: string[]
+  try {
+    names = (
+      await git(project.root, [
+        'for-each-ref',
+        '--format=%(refname:short)',
+        'refs/heads/multi-agent-controller/'
+      ])
+    )
+      .split(/\r?\n/)
+      .filter(Boolean)
+  } catch {
+    return []
+  }
+  if (names.length === 0) return []
+
+  const base = await landedRef(project.root, target).catch(() => target)
+  const holders = await branchHolders(project.root)
+  const found: TaskBranch[] = []
+  for (const branch of names) {
+    // ⚠️ `null` ahead-count is not zero. A branch git cannot measure is left alone by everything
+    // downstream rather than being reported as safe to delete, so the failure is a `-1` nothing acts on.
+    let ahead: number
+    try {
+      ahead = Number.parseInt(await git(project.root, ['rev-list', '--count', `${base}..${branch}`]), 10)
+    } catch {
+      ahead = -1
+    }
+    found.push({
+      branch,
+      taskSeq: seqFromBranch(branch),
+      ahead: Number.isFinite(ahead) ? ahead : -1,
+      heldBy: holders.get(branch) ?? null
+    })
+  }
+  return found
+}
+
+/** The task a branch was named after, or `null` when the name no longer parses to one. */
+function seqFromBranch(branch: string): number | null {
+  const match = /\/t(\d+)-/.exec(branch)
+  return match?.[1] ? Number.parseInt(match[1], 10) : null
+}
+
+/**
+ * Delete a task branch that carries nothing.
+ *
+ * ⛔ **Re-derives its own licence rather than trusting the caller.** `retireBranch` documents that
+ * the caller owes the proof, and its callers have just produced one in the same breath. This one is
+ * reached from an operator's click on a panel that was scanned some minutes ago, and a branch that
+ * has gained a commit since — an agent pushed to it, a resumed task committed — must not be deleted
+ * because a stale row said it was empty.
+ *
+ * ⚠️ Refuses a branch a worktree still holds. `git branch -D` would refuse too; refusing here means
+ * the reason reaches the operator instead of a git error message.
+ */
+export async function retireStrandedBranch(
+  project: Project,
+  branch: string,
+  target: string
+): Promise<{ deleted: boolean; reason?: string }> {
+  const state = (await taskBranches(project, target)).find((b) => b.branch === branch)
+  if (!state) return { deleted: false, reason: `there is no branch called \`${branch}\`` }
+  if (state.heldBy) {
+    return { deleted: false, reason: `\`${branch}\` is checked out in ${state.heldBy}` }
+  }
+  if (state.ahead !== 0) {
+    return {
+      deleted: false,
+      reason:
+        state.ahead < 0
+          ? `git could not measure what is on \`${branch}\``
+          : `\`${branch}\` carries ${state.ahead} commit(s) the trunk does not have`
+    }
+  }
+  try {
+    await git(project.root, ['branch', '-D', branch])
+    log.info(`retired ${branch}: every commit on it was already landed`)
+    return { deleted: true }
+  } catch (err) {
+    return { deleted: false, reason: err instanceof Error ? err.message : String(err) }
+  }
 }
 
 /** Is there anything here worth a person's attention? */

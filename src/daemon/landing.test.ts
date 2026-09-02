@@ -329,6 +329,56 @@ describe('a task that did commit something', () => {
     expect(result.ok).toBe(false)
     expect(tasks.messagesFor(taskId).map((m) => m.text).join('\n')).toContain('uncommitted')
   })
+
+  it('⛔ refuses a tip that is only the rescue of an interrupted run', async () => {
+    // ⛔ t91/t92, 2026-09-01. A preempted run's uncommitted work is now committed onto its branch so
+    // the next run inherits it — which leaves a **clean** workspace holding a commit nobody compiled.
+    // `isClean` waves that through, `rev-list --count` counts it as a commit to land, and every step
+    // after it succeeds. Landing has to know the difference between work and a rescue of work.
+    const { project, taskId, root } = seedTask('multi-agent-controller/t7-rescued')
+    writeFileSync(join(root, 'half-done.txt'), 'as far as it got\n')
+    git(root, 'add', '-A')
+    git(
+      root,
+      'commit',
+      '-m',
+      'wip: 1 file(s) an interrupted run left behind\n\nMulti-Agent-Controller-Rescue: 1'
+    )
+
+    const result = await landing.landTask({
+      project,
+      task: tasks.requireTask(taskId),
+      workspacePath: root,
+      branch: 'multi-agent-controller/t7-rescued'
+    })
+    expect(result.ok).toBe(false)
+    expect(result.reason).toContain('rescued')
+    expect(git(root, 'rev-parse', 'main')).not.toBe(git(root, 'rev-parse', 'HEAD'))
+  })
+
+  it('lands once the run has finished something on top of the rescue', async () => {
+    // ⚠️ The mirror case, and the reason the check reads only the tip: a rescue somebody built on is
+    // ordinary history, and the project checks are what judge the result.
+    const { project, taskId, root } = seedTask('multi-agent-controller/t8-rescued-then-finished')
+    writeFileSync(join(root, 'half-done.txt'), 'as far as it got\n')
+    git(root, 'add', '-A')
+    git(
+      root,
+      'commit',
+      '-m',
+      'wip: 1 file(s) an interrupted run left behind\n\nMulti-Agent-Controller-Rescue: 1'
+    )
+    writeFileSync(join(root, 'half-done.txt'), 'and then it was finished\n')
+    git(root, 'commit', '-am', 'finish it')
+
+    const result = await landing.landTask({
+      project,
+      task: tasks.requireTask(taskId),
+      workspacePath: root,
+      branch: 'multi-agent-controller/t8-rescued-then-finished'
+    })
+    expect(result.reason ?? '').not.toContain('rescued')
+  })
 })
 
 /**

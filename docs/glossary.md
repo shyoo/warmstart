@@ -314,9 +314,20 @@ tool says so rather than reporting a clean result. Proposed from `package.json` 
 added, edited in Project → Settings, or worked out by an agent as an ordinary task with a diff you
 review.
 
+**Rescue** — what becomes of work an interrupted run never committed, when its workspace has to be
+taken away. ⭐ **Committed onto the task's branch** with a `Multi-Agent-Controller-Rescue` trailer, so
+the next run inherits it wherever it is dispatched; stashed only when HEAD is detached and there is no
+branch to commit to. ⛔ A rescue is not a result: while the branch tip still *is* one, nothing will
+land it, and the run that picks it up is told what the commit is and that the tool wrote it. ⚠️ The
+distinction earns its name — a stash belongs to a *repository*, a commit belongs to a *branch*, and
+only one of the two travels (t91/t92, 2026-09-01). `landing.md`.
+
 **Loose end** — work that exists and is going nowhere: uncommitted files in a pooled workspace, a
-branch carrying commits nobody landed, or a stash taken to free a slot. ⚠️ Derived from git on
-demand, never stored — only dismissals are. Listed on Overview.
+branch carrying commits nobody landed, a stash taken to free a slot, or a **branch left behind** —
+a task branch carrying nothing the trunk does not already have, where only the name is at stake.
+⚠️ Derived from git on demand, never stored — only dismissals are. ⛔ The branch rows are read
+repository-wide rather than off a pooled workspace, because a branch at rest is what a finished task
+leaves and no workspace has it checked out. Listed on Overview.
 
 ---
 

@@ -213,9 +213,16 @@ These are not preferences; breaking one breaks the product.
   succeeded (clean workspace, no-op rebase, passing checks, a push that moved nothing, and
   `rev-parse HEAD` returning the commit already there) and the sentence was still false. Count
   `rev-list --count $(landedRef)..<branch>` **before** choosing a strategy. ⚠️ Zero commits with a
-  clean workspace is a *success* that touched no trunk; zero commits with a dirty one is work about
-  to be destroyed by the next dispatch into a pooled worktree, and collapsing the two replaces an
-  urgent warning with a shrug.
+  clean workspace with **nothing stashed off that branch** is a success that touched no trunk; zero
+  commits with a dirty one is work about to be destroyed by the next dispatch into a pooled worktree,
+  and collapsing the two replaces an urgent warning with a shrug.
+- ⛔ **A clean workspace is not evidence the work was done, and no verdict may rest on it alone.** The
+  state a question-only task leaves — clean tree, branch level with the trunk — is byte-for-byte the
+  state a *preempted* one leaves once its work has been rescued out of the way. Measured 2026-09-01
+  (t91, t92): both were reported finished with the whole afternoon in `git stash list`, one after
+  spending 13.3M tokens re-deriving it. ⚠️ Ask git something the two states differ on — the stash
+  list, filtered by git's own `On <branch>:` prefix — and never a repository-wide count, which would
+  let one unrelated leftover hold every future task in the project.
 - ⛔ **"Landed" is measured against `origin/<target>`, and `landedRef()` in `worktrees.ts` is the only
   place that decides.** Landing is a push; the tool never moves a local ref, so the operator's trunk
   is behind until they pull. Measured 2026-08-29: `workspaceState` counted against local `main` while
@@ -228,7 +235,9 @@ These are not preferences; breaking one breaks the product.
   Measured 2026-08-29: the fix that only touched the early return changed nothing, because correcting
   `landedRef` is exactly what routed every agent-pushed task down the other path.
 - ⛔ **Cancel is not delete.** Cancel winds a run down through the preemption protocol into a resting
-  state (`paused_user` / `draft` / `cancelled`) and destroys nothing. Delete is separate, human-only,
+  state (`paused_user` / `draft` / `cancelled`) and destroys no work. ⚠️ One exception, and it is a
+  *name*: a task going to `cancelled` gives back an empty branch — never one carrying a commit, and
+  never from `paused_user` or `draft`, which resume into theirs. Delete is separate, human-only,
   soft by default, and **never removes runs** — they are the estimator's training data and the record
   of real spend.
 - ⛔ **The controller is never in the critical path.** The scheduler *enqueues* a judgment question and
@@ -284,9 +293,17 @@ These are not preferences; breaking one breaks the product.
 - **Agents work in a pooled worktree, never the trunk.** The branch is named after the *task*
   (`multi-agent-controller/t123-…`), never after the workspace it happened to land in. ⛔ **A slot
   does not arrive clean.** `switch --detach` carries uncommitted changes with it, so parking frees a
-  member's *branch* and leaves its *edits* for whoever claims it next; `prepareWorkspace` stashes
-  them first — **stashed, never `reset --hard`**, because a dirty slot usually means the last run
-  failed. Recover with `git stash list` inside the workspace.
+  member's *branch* and leaves its *edits* for whoever claims it next. ⛔ **Committed if there is a
+  branch, stashed if there is not, `reset --hard` never** — a dirty slot usually means the last run
+  failed, which is when its edits are worth the most. ⭐ **The branch, not the stash, is the carrier**:
+  a stash belongs to a *repository*, so it does not reach the workspace the next run claims and
+  nothing in the app mentions it (t91/t92, 2026-09-01 — 13.3M tokens spent re-deriving a stashed
+  afternoon). A rescue commit carries a `Multi-Agent-Controller-Rescue` trailer and ⛔ may not land
+  while it is still the tip.
+- ⛔ **A task branch at rest is invisible to anything that reads a workspace**, which is every scan
+  this tool had until 2026-09-01. A finished task's branch is checked out nowhere, so `t23` and `t79`
+  sat in this repository for days carrying zero commits with nothing able to report them. Enumerate
+  `refs/heads/` when the question is about branches; read a workspace only for what is *in* one.
 
 ### Doc hygiene — these files shrink as often as they grow
 
