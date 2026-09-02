@@ -49,32 +49,6 @@ const add = (label?: string) => {
 
 const labels = () => workers.listWorkers().map((w) => w.label)
 
-describe('making a worker less parallel', () => {
-  it('keeps its already live work sessions and applies the lower limit only to new work', () => {
-    const worker = workers.createWorker({ adapterId: 'claude-code', label: 'three jobs', maxConcurrent: 3 })
-    const now = Date.now()
-    for (const id of ['running-1', 'running-2', 'running-3']) {
-      db.db()
-        .prepare(
-          `insert into sessions (id, worker_id, adapter_id, transport, state, purpose, started_at)
-           values (?, ?, 'claude-code', 'stream', 'live', 'work', ?)`
-        )
-        .run(id, worker.id, now)
-    }
-
-    const reduced = workers.updateWorker(worker.id, { maxConcurrent: 1 })
-
-    expect(reduced.maxConcurrent).toBe(1)
-    expect(sessions.sessionsForWorker(worker.id).map((session) => session.id).sort()).toEqual([
-      'running-1',
-      'running-2',
-      'running-3'
-    ])
-    // A new task is held at the newly lowered ceiling, while the existing three finish normally.
-    expect(scheduler.atCapacity(sessions.sessionsForWorker(worker.id), reduced.maxConcurrent, null)).toBe(true)
-  })
-})
-
 describe('putting the fleet in an order', () => {
   it('commissions each worker at the end, so an arranged strip does not rearrange itself', () => {
     add('alpha')
@@ -126,5 +100,31 @@ describe('putting the fleet in an order', () => {
 
     const all = workers.listWorkers(true).map((w) => w.label)
     expect(all[all.length - 1]).toBe(retired.label)
+  })
+})
+
+describe('making a worker less parallel', () => {
+  it('keeps its already live work sessions and applies the lower limit only to new work', () => {
+    const worker = workers.createWorker({ adapterId: 'claude-code', label: 'three jobs', maxConcurrent: 3 })
+    const now = Date.now()
+    for (const id of ['running-1', 'running-2', 'running-3']) {
+      db.db()
+        .prepare(
+          `insert into sessions (id, worker_id, adapter_id, transport, cwd, state, purpose, started_at)
+           values (?, ?, 'claude-code', 'stream', ?, 'live', 'work', ?)`
+        )
+        .run(id, worker.id, dir, now)
+    }
+
+    const reduced = workers.updateWorker(worker.id, { maxConcurrent: 1 })
+
+    expect(reduced.maxConcurrent).toBe(1)
+    expect(sessions.sessionsForWorker(worker.id).map((session) => session.id).sort()).toEqual([
+      'running-1',
+      'running-2',
+      'running-3'
+    ])
+    // A new task is held at the newly lowered ceiling, while the existing three finish normally.
+    expect(scheduler.atCapacity(sessions.sessionsForWorker(worker.id), reduced.maxConcurrent, null)).toBe(true)
   })
 })

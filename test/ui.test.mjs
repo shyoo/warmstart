@@ -2285,23 +2285,43 @@ try {
       return 'filed';
     })()
   `)
-  await wait(1200)
+  await waitFor(
+    async () =>
+      await evaluate(
+        `[...document.querySelectorAll('.nav-item')].some(b => b.innerText.trim().startsWith('Unassigned'))`
+      ),
+    'Unassigned nav item'
+  )
   await evaluate(
     `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim().startsWith('Unassigned'))?.click()`
   )
-  await wait(1000)
+  await waitFor(
+    async () =>
+      await evaluate(
+        `[...document.querySelectorAll('.tbl tbody tr')].some(r => r.innerText.includes('ui dependent task'))`
+      ),
+    'ui dependent task row'
+  )
   await evaluate(
     `[...document.querySelectorAll('.tbl tbody tr')].find(r => r.innerText.includes('ui dependent task'))?.click()`
   )
   await waitFor(
     async () =>
       await evaluate(
-        `(document.querySelector('.detail-side select[aria-label="Add a prerequisite"]')?.options.length ?? 0) > 1`
+        `!!document.querySelector('.detail-side button[aria-label="Add a prerequisite"]')`
       ),
     'the prerequisite picker in the task ledger'
   )
+  await evaluate(`document.querySelector('.detail-side button[aria-label="Add a prerequisite"]')?.click()`)
+  await waitFor(
+    async () =>
+      await evaluate(
+        `document.querySelectorAll('.detail-side .setting-btn-select-option').length > 1`
+      ),
+    'the prerequisite options menu in the task ledger'
+  )
   const offeredPrereqs = await evaluate(
-    `JSON.stringify([...document.querySelector('.detail-side select[aria-label="Add a prerequisite"]').options]
+    `JSON.stringify([...document.querySelectorAll('.detail-side .setting-btn-select-option')]
        .map(o => o.innerText))`
   )
   check(
@@ -2314,14 +2334,8 @@ try {
     !JSON.parse(offeredPrereqs).some((o) => /ui dependent task/.test(o)),
     offeredPrereqs
   )
-  // ⚠️ React owns the value; the native setter plus a bubbling change event is what a choice looks
-  // like from its side.
   await evaluate(
-    `(() => { const el = document.querySelector('.detail-side select[aria-label="Add a prerequisite"]');` +
-      ` const opt = [...el.options].find(o => /ui prerequisite task/.test(o.innerText));` +
-      ` const set = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set;` +
-      ` set.call(el, opt.value);` +
-      ` el.dispatchEvent(new Event('change', { bubbles: true })); return 'chose'; })()`
+    `[...document.querySelectorAll('.detail-side .setting-btn-select-option')].find(o => /ui prerequisite task/.test(o.innerText))?.click()`
   )
   await wait(2000)
   const ledger = `

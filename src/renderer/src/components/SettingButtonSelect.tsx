@@ -12,6 +12,7 @@ export interface SettingButtonSelectProps {
   disabled?: boolean
   title?: string
   ariaLabel?: string
+  'aria-label'?: string
   className?: string
   style?: React.CSSProperties
   editIcon?: React.ReactNode
@@ -22,17 +23,19 @@ export interface SettingButtonSelectProps {
  * Shows the current value and an edit icon (✒️) in a rounded, darker button.
  * Clicking the button reveals the dropdown options menu for the user to choose an option.
  */
-export function SettingButtonSelect({
-  value,
-  options,
-  onChange,
-  disabled = false,
-  title,
-  ariaLabel,
-  className,
-  style,
-  editIcon = '✒️'
-}: SettingButtonSelectProps): React.JSX.Element {
+export function SettingButtonSelect(props: SettingButtonSelectProps): React.JSX.Element {
+  const {
+    value,
+    options,
+    onChange,
+    disabled = false,
+    title,
+    ariaLabel,
+    className,
+    style,
+    editIcon = '✒️'
+  } = props
+  const resolvedAriaLabel = ariaLabel ?? props['aria-label']
   const [open, setOpen] = useState(false)
   const wrapRef = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -74,7 +77,7 @@ export function SettingButtonSelect({
         className={`setting-btn-select ${open ? 'setting-btn-select--open' : ''}`}
         disabled={disabled}
         title={title}
-        aria-label={ariaLabel}
+        aria-label={resolvedAriaLabel}
         aria-haspopup="listbox"
         aria-expanded={open}
         onClick={() => {
@@ -94,7 +97,7 @@ export function SettingButtonSelect({
           ref={menuRef}
           className="setting-btn-select-menu"
           role="listbox"
-          aria-label={ariaLabel}
+          aria-label={resolvedAriaLabel}
         >
           {options.map((opt) => {
             const isSelected = opt.value === value
