@@ -1,5 +1,7 @@
 # Private working notes — prompt history, personal scratch. Never committed.
 internal_docs/
+# Machine-local Codex probe databases and temporary plugin clones.
+transient_docs/codexprobe/
 
 # Dependencies
 node_modules/
@@ -64,4 +66,3 @@ coverage/
 # Local dev/deploy scripts
 deploy-local.ps1
 scripts/deploy-local.ps1
-
