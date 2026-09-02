@@ -85,40 +85,42 @@ export function FleetStrip({
   return (
     <div className={`fleet-wrap${collapsed ? ' fleet-wrap--collapsed' : ''}`}>
       <div className="fleet">
-        <span className="fleet-label">Fleet</span>
-        {/* ⚠️ Labelled with what pressing it does, not with where the strip currently is — the same
-            way the Hide button below reads. The two controls sit on one strip and would otherwise
-            disagree about what their own words mean. */}
-        <button
-          type="button"
-          className="fleet-density-btn"
-          onClick={toggleDensity}
-          aria-pressed={narrow}
-          title={
-            narrow
-              ? 'Show each gauge with its name again'
-              : 'Condense every card to bars and numbers, so more of the fleet fits on the strip'
-          }
-        >
-          {narrow ? 'Wide' : 'Narrow'}
-        </button>
-        {activeFleet.length === 0 ? (
-          <span className="fleet-empty">
-            {fleet.length === 0 ? 'no workers configured' : 'no active workers'}
-          </span>
-        ) : (
-          <div className="fleet-cards">
-            {activeFleet.map((entry) => (
-              <WorkerCard
-                key={entry.worker.id}
-                entry={entry}
-                now={now}
-                narrow={narrow}
-                onProbe={onProbe}
-              />
-            ))}
-          </div>
-        )}
+        <div className="fleet-rail">
+          <span className="fleet-label">Fleet</span>
+          {/* This changes the density of the cards; Hide remains the control below the strip. */}
+          <button
+            type="button"
+            className="fleet-density-btn"
+            onClick={toggleDensity}
+            aria-pressed={narrow}
+            title={
+              narrow
+                ? 'Show each gauge with its name again'
+                : 'Condense every card to bars and numbers, so more of the fleet fits on the strip'
+            }
+          >
+            {narrow ? 'Wide' : 'Narrow'}
+          </button>
+        </div>
+        <div className="fleet-content">
+          {activeFleet.length === 0 ? (
+            <span className="fleet-empty">
+              {fleet.length === 0 ? 'no workers configured' : 'no active workers'}
+            </span>
+          ) : (
+            <div className="fleet-cards">
+              {activeFleet.map((entry) => (
+                <WorkerCard
+                  key={entry.worker.id}
+                  entry={entry}
+                  now={now}
+                  narrow={narrow}
+                  onProbe={onProbe}
+                />
+              ))}
+            </div>
+          )}
+        </div>
       </div>
       <div className="fleet-toggle-bar">
         <button

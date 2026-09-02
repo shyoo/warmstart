@@ -241,9 +241,17 @@ body {
 .fleet {
   padding: var(--sp-3) var(--sp-4);
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--sp-3);
   min-height: 52px;
+}
+
+.fleet-rail {
+  display: flex;
+  flex: 0 0 64px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--sp-1);
 }
 
 .fleet-toggle-bar {
@@ -278,6 +286,13 @@ body {
   user-select: none;
 }
 
+.fleet-content {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+}
+
 .fleet-toggle-btn:hover {
   color: var(--color-text);
   background: var(--color-surface-2);
@@ -305,7 +320,7 @@ body {
  * control that looks like the ones that dispatch work invites being read as one.
  */
 .fleet-density-btn {
-  align-self: center;
+  align-self: flex-start;
   padding: 1px var(--sp-2);
   font-family: var(--font-ui);
   font-size: 10px;

@@ -1197,6 +1197,42 @@ try {
   check('a suspect worker without quota shows the error banner', /error · see Settings/i.test(suspectCard))
   check('and suppresses quota unknown when suspect', !/quota unknown/i.test(suspectCard))
 
+  // ---- fleet density and hide / show controls -----------------------------------------
+  const densityBtn = `document.querySelector('.fleet-density-btn')`
+  check('fleet strip has a narrow/wide density button', (await evaluate(`!!(${densityBtn})`)) === true)
+  const fleetControls = JSON.parse(
+    await evaluate(`
+      JSON.stringify((() => {
+        const label = document.querySelector('.fleet-label');
+        const density = document.querySelector('.fleet-density-btn');
+        const card = document.querySelector('.wcard');
+        if (!label || !density || !card) return { missing: true };
+        const l = label.getBoundingClientRect(), d = density.getBoundingClientRect(), c = card.getBoundingClientRect();
+        return { below: d.top >= l.bottom - 1, leftOfCards: d.right <= c.left + 1, sameRail: Math.abs(l.left - d.left) <= 1 };
+      })())
+    `)
+  )
+  check(
+    'Narrow sits below Fleet in the rail beside the worker cards',
+    fleetControls.below === true && fleetControls.leftOfCards === true && fleetControls.sameRail === true,
+    JSON.stringify(fleetControls)
+  )
+  check(
+    'the density button starts wide',
+    (await evaluate(`${densityBtn}?.getAttribute('aria-pressed')`)) === 'false' &&
+      /narrow/i.test(await evaluate(`${densityBtn}?.innerText ?? ''`))
+  )
+  await evaluate(`${densityBtn}?.click()`)
+  await wait(300)
+  check(
+    'clicking Narrow condenses the cards',
+    (await evaluate(`${densityBtn}?.getAttribute('aria-pressed')`)) === 'true' &&
+      /wide/i.test(await evaluate(`${densityBtn}?.innerText ?? ''`)) &&
+      (await evaluate(`!!document.querySelector('.wcard--narrow')`)) === true
+  )
+  await evaluate(`${densityBtn}?.click()`)
+  await wait(300)
+
   // ---- hide / show fleet strip toggle -------------------------------------------------
   const toggleBtn = `document.querySelector('.fleet-toggle-btn')`
   check('fleet strip has a hide/show toggle button', (await evaluate(`!!(${toggleBtn})`)) === true)
