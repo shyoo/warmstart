@@ -56,7 +56,7 @@ function seedWorker(label: string, adapterId = 'claude-code'): string {
 let agyWorker: string | null = null
 function theAntigravityAccount(model: string): string {
   if (!agyWorker) agyWorker = seedWorker('agy', 'antigravity-cli')
-  workers.updateWorker(agyWorker, { defaultModel: model })
+  workers.updateWorker(agyWorker, { defaultModel: model, defaultModels: null })
   return agyWorker
 }
 

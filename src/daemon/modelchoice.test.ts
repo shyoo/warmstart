@@ -182,6 +182,10 @@ describe('what an account is allowed to default to', () => {
 
   it('stores and validates default models per pool on multi-pool workers', () => {
     const w = workers.createWorker({ adapterId: 'antigravity-cli', label: 'antigravity-pools' })
+    expect(w.defaultModels).toEqual({
+      gemini: 'gemini-3.7-flash-medium',
+      claude: 'claude-sonnet-4-6'
+    })
     const saved = workers.updateWorker(w.id, {
       defaultModels: {
         gemini: 'gemini-3.7-flash-high',

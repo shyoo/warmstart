@@ -34,7 +34,7 @@ gaps are below. Scope: `transient_docs/implementation_plan_2026-08-24.md` §14, 
 src/daemon/            orchestratord. Runs as Electron-with-ELECTRON_RUN_AS_NODE, detached.
   index.ts             entry: lock, db, server, poller, scheduler, tailer wiring, shutdown
   server.ts  api.ts    HTTP+WS on 127.0.0.1:<random>, bearer token, typed RPC
-  db.ts                node:sqlite + numbered migrations (v29)
+  db.ts                node:sqlite + numbered migrations (v30)
   costmodel.ts         the four questions; user dir > bundled > compiled-in
   workers.ts           registry, isolation roots, retire-keeps-credentials, display order only
                        (+ workerorder.test.ts)
@@ -176,7 +176,6 @@ M0–M6 are done. What is left is not a milestone but a list, in the order it wo
 - **`expected idle` estimator** (plan §8.6). Not designable without real queue data.
 
 ## Measurement runs owed
-
 Each is cheap and needs a **quiet worker** - one session, nothing else on that account. Record the result in `docs/cost-model.md` with the
 date and CLI version, then delete the row. **The instrument:** a run records a quota reading either side of itself and transcript metering
 beside it; the difference is what the CLI spent that never reached a transcript.

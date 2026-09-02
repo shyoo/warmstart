@@ -120,17 +120,23 @@ export function createWorker(input: {
   ensureDir(root)
 
   const now = Date.now()
-  // ⚠️ Last, not first. A new account is the one nobody has placed yet, and dropping it at the head
-  // of the strip would move every card a person had already arranged.
   const tail =
     (row<{ next: number }>(
       db().prepare('select coalesce(max(sort_order), -1) + 1 as next from workers').get()
     )?.next ?? 0)
+
+  const policy = adapter(input.adapterId).info.policy
+  const defaultModel = policy.defaultModel ?? null
+  const defaultEffort = null
+  const defaultModels = policy.defaultModels ?? null
+  const defaultModelsJson = defaultModels ? JSON.stringify(defaultModels) : null
+
   db()
     .prepare(
       `insert into workers (id, adapter_id, label, isolation_root, enabled, human_occupied,
-                            max_concurrent, sort_order, created_at)
-       values (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                            max_concurrent, default_model, default_effort, default_models_json,
+                            sort_order, created_at)
+       values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       id,
@@ -142,6 +148,9 @@ export function createWorker(input: {
       // Default 1: concurrent requests against one cached prefix each pay a write, so a second
       // session on the same worker is a cost decision, not a free speedup. cost-model.md §1.
       boundedConcurrency(input.maxConcurrent, 1),
+      defaultModel,
+      defaultEffort,
+      defaultModelsJson,
       tail,
       now
     )

@@ -200,7 +200,11 @@ const info: AdapterInfo = {
     costModelId: 'google.antigravity.2026-08',
     // ⛔ Falls out of manualCompact: false. Preemption writes a handoff instead of compacting.
     wrapUpProtocol: 'handoff',
-    needsExplicitBudget: true
+    needsExplicitBudget: true,
+    defaultModels: {
+      gemini: 'gemini-3.7-flash-medium',
+      claude: 'claude-sonnet-4-6'
+    }
   },
   // ⭐ Measured 2026-08-27: `/usage` in the TUI costs nothing and renders both groups' windows.
   // `answer: 'screen'` because the panel is written to no file - see parseUsageScreen.
