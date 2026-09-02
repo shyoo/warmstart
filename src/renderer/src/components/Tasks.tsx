@@ -1038,7 +1038,7 @@ function NewTask({
           placeholder={
             plan
               ? 'Describe the outcome — the controller breaks it into drafts'
-              : 'Describe the work as you would to a colleague'
+              : 'Describe the work as you would to a colleague. You can paste an image in here as well.'
           }
           onChange={(e) => setTitle(e.target.value)}
           onPaste={paste.onPaste}
@@ -1096,4 +1096,3 @@ function NewTask({
     </div>
   )
 }
-

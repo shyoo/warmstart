@@ -2072,24 +2072,22 @@ function ObjectivePicker({
         ? presetOf(task.objective) ?? 'custom'
         : 'inherit'
 
+  const options: SettingOption[] = [
+    { value: 'inherit', label: `inherit (${inheritedLabel})` },
+    ...OBJECTIVE_PRESET_ORDER.map((preset) => ({ value: preset, label: preset })),
+    ...(currentChoice === 'custom' ? [{ value: 'custom', label: 'custom' }] : [])
+  ]
+
   return (
     <>
-      <select
-        className="finish-picker"
+      <SettingButtonSelect
         value={currentChoice}
+        options={options}
         disabled={busy}
         aria-label="Optimization objective"
         title="Optimization objective (cost, velocity, quality) for this task's next run."
-        onChange={(e) => void choose(e.target.value as ObjectiveChoice)}
-      >
-        <option value="inherit">inherit ({inheritedLabel})</option>
-        {OBJECTIVE_PRESET_ORDER.map((p) => (
-          <option key={p} value={p}>
-            {p}
-          </option>
-        ))}
-        {currentChoice === 'custom' && <option value="custom">custom</option>}
-      </select>
+        onChange={(value) => void choose(value as ObjectiveChoice)}
+      />
       {note && <div className="note">{note}</div>}
     </>
   )
@@ -2246,7 +2244,7 @@ function DraftControls({
             rows={4}
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
-            placeholder="Describe the work as you would to a colleague"
+            placeholder="Describe the work as you would to a colleague. You can paste an image in here as well."
           />
         </div>
         <div className="draft-card-foot">
@@ -2299,4 +2297,3 @@ function DraftControls({
     </div>
   )
 }
-

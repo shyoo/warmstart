@@ -3283,7 +3283,7 @@ select:focus-visible,
   width: 260px;
 }
 
-/* ---- Setting button selector (value + ✏️ in rounded dark button) ---- */
+/* ---- Setting button selector (value + ✒️ in rounded dark button) ---- */
 .setting-btn-select-wrap {
   position: relative;
   display: inline-block;

@@ -229,8 +229,8 @@ async function canEnumerateProcesses(): Promise<boolean> {
             { timeout: 20_000, windowsHide: true }
           )
         : await run('ps', ['-eo', 'pid='], { timeout: 20_000 })
-    // PowerShell reports a non-terminating WMI access error with exit code zero; `.Count` then
-    // renders `0`. A non-empty string is not evidence that enumeration worked.
+    // PowerShell may exit successfully after a denied CIM query while printing `0`. That is not
+    // permission to enumerate processes; only a positive count proves the query was allowed.
     return Number(String(stdout).trim()) > 0
   } catch {
     return false

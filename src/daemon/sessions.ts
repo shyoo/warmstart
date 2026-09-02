@@ -1083,18 +1083,7 @@ export function reconcileOrphans(): number {
       ).trim()
       if (raw) {
         const parsed: unknown = JSON.parse(raw)
-        const records = Array.isArray(parsed) ? parsed : [parsed]
-        const procs = records.flatMap((record) => {
-          if (!record || typeof record !== 'object') return []
-          const value = record as Record<string, unknown>
-          return [
-            {
-              ProcessId: typeof value.ProcessId === 'number' ? value.ProcessId : undefined,
-              ParentProcessId: typeof value.ParentProcessId === 'number' ? value.ParentProcessId : undefined,
-              CommandLine: typeof value.CommandLine === 'string' ? value.CommandLine : undefined
-            }
-          ]
-        })
+        const procs = (Array.isArray(parsed) ? parsed : [parsed]).filter(isCimProcess)
         for (const p of procs) {
           if (p.ProcessId && p.ParentProcessId && !isAlive(p.ParentProcessId)) {
             const match = p.CommandLine?.match(/--session-id\s+([0-9a-fA-F-]+)/)
@@ -1103,8 +1092,8 @@ export function reconcileOrphans(): number {
               try {
                 killProcessTree(p.ProcessId)
                 killed++
-              } catch {
-                // A detached process may exit after the inspection above.
+               } catch (err) {
+                 log.debug(`could not stop detached orphaned agent pid ${p.ProcessId}:`, err)
               }
             }
           }
@@ -1128,6 +1117,21 @@ export function reconcileOrphans(): number {
     )
   }
   return stale.length
+}
+
+/** The only fields the detached-process reaper reads from PowerShell's CIM JSON. */
+function isCimProcess(value: unknown): value is {
+  ProcessId?: number
+  ParentProcessId?: number
+  CommandLine?: string
+} {
+  if (!value || typeof value !== 'object') return false
+  const record = value as Record<string, unknown>
+  return (
+    (record.ProcessId === undefined || typeof record.ProcessId === 'number') &&
+    (record.ParentProcessId === undefined || typeof record.ParentProcessId === 'number') &&
+    (record.CommandLine === undefined || typeof record.CommandLine === 'string')
+  )
 }
 
 /** Does this adapter let agentyard name the session? Unknown adapters are treated as "no". */

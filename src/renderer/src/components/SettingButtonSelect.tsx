@@ -19,7 +19,7 @@ export interface SettingButtonSelectProps {
 
 /**
  * Encapsulated setting selector:
- * Shows the current value and an edit icon (✏️) in a rounded, darker button.
+ * Shows the current value and an edit icon (✒️) in a rounded, darker button.
  * Clicking the button reveals the dropdown options menu for the user to choose an option.
  */
 export function SettingButtonSelect({
@@ -31,7 +31,7 @@ export function SettingButtonSelect({
   ariaLabel,
   className,
   style,
-  editIcon = '✏️'
+  editIcon = '✒️'
 }: SettingButtonSelectProps): React.JSX.Element {
   const [open, setOpen] = useState(false)
   const wrapRef = useRef<HTMLDivElement>(null)

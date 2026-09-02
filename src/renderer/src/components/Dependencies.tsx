@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { Task } from '@shared/tasks'
 import { rpc } from '../lib/daemon'
 import { IN_FLIGHT, statusLabel, STATUS_TONE, taskLabel, Working } from '../lib/taskview'
+import { SettingButtonSelect, type SettingOption } from './SettingButtonSelect'
 
 /**
  * Prerequisites, drawn and edited in one place.
@@ -166,8 +167,8 @@ export function DependencyList({
 /**
  * The one control that adds an edge: pick a task, and it is added.
  *
- * ⛔ No second "Add" button. The select has exactly one effect and confirming it separately would be
- * a click that can only ever be yes — the way back out is the × on the row it just made.
+ * ⛔ No second "Add" button. Choosing an option has exactly one effect and confirming it separately
+ * would be a click that can only ever be yes — the way back out is the × on the row it just made.
  */
 export function AddDependency({
   candidates,
@@ -183,28 +184,26 @@ export function AddDependency({
   placeholder?: string
 }): React.JSX.Element | null {
   if (candidates.length === 0) return null
+  const options: SettingOption[] = [
+    { value: '', label: placeholder },
+    ...candidates.map((task) => ({
+      value: task.id,
+      label: optionLabel(task, task.projectId ? projectNames?.get(task.projectId) : undefined)
+    }))
+  ]
+
   return (
-    <select
-      className="dep-add"
+    <SettingButtonSelect
       value=""
       disabled={busy}
       aria-label="Add a prerequisite"
-      onChange={(e) => {
-        const id = e.target.value
-        // ⚠️ Reset before the handler, not after. The select is uncontrolled between renders while a
-        // request is in flight, and leaving the chosen row showing would read as "this is the value"
-        // rather than "this was just added to the list above".
-        e.target.value = ''
+      title="Choose a task this one must wait for."
+      className="dep-add"
+      options={options}
+      onChange={(id) => {
         if (id) onAdd(id)
       }}
-    >
-      <option value="">{placeholder}</option>
-      {candidates.map((t) => (
-        <option key={t.id} value={t.id}>
-          {optionLabel(t, t.projectId ? projectNames?.get(t.projectId) : undefined)}
-        </option>
-      ))}
-    </select>
+    />
   )
 }
 
