@@ -2415,31 +2415,37 @@ select:focus-visible,
   color: var(--color-text-dim);
 }
 
-/* ⚠️ The row is a flex line so the × sits at its end; `.dep-link` already takes the width it is
-   given, so the button is what shrinks the link rather than wrapping under it. */
+/* ⚠️ The link needs its own bounded column. A full-width flex child plus an adjacent remove button
+   overflows at narrow form widths, placing the × on top of the task text. */
 .dep-item {
-  display: flex;
-  align-items: baseline;
-  gap: 2px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--sp-1);
   min-width: 0;
 }
 
 .dep-remove {
-  flex: 0 0 auto;
-  padding: 0 var(--sp-1);
-  border: none;
+  display: grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--state-warn) 55%, transparent);
   border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--color-text-dim);
+  background: color-mix(in srgb, var(--state-warn) 10%, transparent);
+  color: var(--state-warn);
   font-family: inherit;
-  font-size: var(--text-dense);
-  line-height: 1.4;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1;
   cursor: pointer;
+  transition: background var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease);
 }
 
 .dep-remove:hover:not(:disabled) {
-  background: var(--color-surface-2);
-  color: var(--state-warn);
+  border-color: var(--state-warn);
+  background: color-mix(in srgb, var(--state-warn) 18%, transparent);
 }
 
 .dep-remove:disabled {

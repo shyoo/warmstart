@@ -1083,10 +1083,18 @@ export function reconcileOrphans(): number {
       ).trim()
       if (raw) {
         const parsed: unknown = JSON.parse(raw)
-        const procs: Array<{ ProcessId?: number; ParentProcessId?: number; CommandLine?: string }> =
-          Array.isArray(parsed)
-            ? (parsed as Array<{ ProcessId?: number; ParentProcessId?: number; CommandLine?: string }>)
-            : [parsed as { ProcessId?: number; ParentProcessId?: number; CommandLine?: string }]
+        const records = Array.isArray(parsed) ? parsed : [parsed]
+        const procs = records.flatMap((record) => {
+          if (!record || typeof record !== 'object') return []
+          const value = record as Record<string, unknown>
+          return [
+            {
+              ProcessId: typeof value.ProcessId === 'number' ? value.ProcessId : undefined,
+              ParentProcessId: typeof value.ParentProcessId === 'number' ? value.ParentProcessId : undefined,
+              CommandLine: typeof value.CommandLine === 'string' ? value.CommandLine : undefined
+            }
+          ]
+        })
         for (const p of procs) {
           if (p.ProcessId && p.ParentProcessId && !isAlive(p.ParentProcessId)) {
             const match = p.CommandLine?.match(/--session-id\s+([0-9a-fA-F-]+)/)
@@ -1096,7 +1104,7 @@ export function reconcileOrphans(): number {
                 killProcessTree(p.ProcessId)
                 killed++
               } catch {
-                // Best-effort process tree kill
+                // A detached process may exit after the inspection above.
               }
             }
           }
