@@ -152,7 +152,8 @@ export function DependencyList({
                 title={`Stop waiting on t${dep.seq}: ${dep.title}`}
                 onClick={() => onRemove(dep.id)}
               >
-                ×
+                <span aria-hidden="true">×</span>
+                <span>Remove</span>
               </button>
             )}
           </div>

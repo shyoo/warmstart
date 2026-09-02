@@ -2426,19 +2426,23 @@ select:focus-visible,
 }
 
 .dep-remove {
-  display: grid;
-  width: 26px;
-  height: 26px;
-  place-items: center;
-  padding: 0;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 76px;
+  min-height: 30px;
+  padding: 4px 8px;
   border: 1px solid color-mix(in srgb, var(--state-warn) 55%, transparent);
   border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--state-warn) 10%, transparent);
   color: var(--state-warn);
   font-family: inherit;
-  font-size: 18px;
+  font-size: var(--text-dense);
   font-weight: 600;
   line-height: 1;
+  white-space: nowrap;
   cursor: pointer;
   transition: background var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease);
 }

@@ -988,7 +988,9 @@ export const openaiCompatible: AgentAdapter = {
               windowsHide: true,
               timeout: 5000
             })
-          } catch {}
+          } catch {
+            // Resetting inherited ACLs is a best-effort workaround for sandbox-created worktrees.
+          }
         }
         args.push('--add-dir', root)
       }
