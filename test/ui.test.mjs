@@ -500,6 +500,49 @@ try {
   check('the Send button does not sit on top of the message box', c.overlap <= 0, compose)
   check('and the message box gets the room', c.inputWidth > 200, compose)
 
+  // ⛔ Stopping used to mean leaving the thread. The only Stop outside `awaiting_human` lived in the
+  // action menu on the task table, so an operator reading a run go wrong had to go back to the list,
+  // find the row again and open a menu — three navigations away from the words that made them want
+  // to stop. It belongs beside the box they would otherwise type into, because "say something to it"
+  // and "stop it" are the same decision.
+  const stopBtn = await evaluate(`
+    JSON.stringify((() => {
+      const row = document.querySelector('.compose-row');
+      const status = (document.querySelector('.detail-side .status')?.innerText ?? '').trim();
+      const buttons = [...(row?.querySelectorAll('button') ?? [])];
+      const stop = buttons.find(b => /^stop/i.test(b.innerText.trim()));
+      const send = buttons.find(b => /^send/i.test(b.innerText.trim()));
+      const input = row?.querySelector('textarea');
+      return {
+        status,
+        hasStop: !!stop,
+        // The order of the row, left to right: what you type in, then Stop, then Send.
+        ordered: !!(stop && send && input)
+          && input.getBoundingClientRect().right <= stop.getBoundingClientRect().left + 1
+          && stop.getBoundingClientRect().right <= send.getBoundingClientRect().left + 1,
+        // ⚠️ Never disabled by the composer being empty. Stopping a run has nothing to do with
+        // whether there is a draft reply sitting in the box.
+        enabled: !!stop && !stop.disabled
+      };
+    })())
+  `)
+  const sb = JSON.parse(stopBtn)
+  // ⚠️ Keyed off the status the pane itself is showing, not off a fixture we assume is running. The
+  // set of statuses that draw the button is asserted exhaustively in `taskview.test.ts`; what this
+  // has to prove is that the two agree once React, the daemon and the stylesheet are all involved.
+  const working = /^(running|dispatching|queued|ready|blocked|scheduled)$/i.test(sb.status)
+  check(
+    working
+      ? 'a task that is being worked on offers Stop beside the composer'
+      : 'a task at rest offers no Stop beside the composer',
+    sb.hasStop === working,
+    stopBtn
+  )
+  if (working) {
+    check('and it sits between the message box and Send, without overlapping either', sb.ordered, stopBtn)
+    check('and an empty message box does not disable it', sb.enabled, stopBtn)
+  }
+
   // ⛔ Back before anything else is checked. Everything below files a task, and the form lives on
   // the list — so a Back button that did not actually return would fail here as a missing button
   // rather than as the navigation bug it is. Assert the return itself.

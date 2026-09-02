@@ -103,6 +103,28 @@ export const CANCELLABLE = new Set([
   'paused_quota'
 ])
 
+/**
+ * Statuses where a Stop button belongs beside the composer, next to Send.
+ *
+ * ⛔ **A strict subset of `CANCELLABLE`, and it has to stay one.** A Stop offered on a status the
+ * daemon will not cancel is not a button, it is a lie: `cancelTask` returns the task untouched for
+ * anything outside its own set, so the press would refresh the pane and change nothing, and the
+ * operator would press it again. The subset test in `taskview.test.ts` is what keeps the two
+ * honest if either list moves.
+ *
+ * ⚠️ The two statuses left out are the two where nothing is being done to the task. `awaiting_human`
+ * is waiting on *you*, and it already renders `Decide` directly above the composer with a "Stop
+ * here" in it — a second Stop an inch below the first, wired to the same call, reads as a different
+ * and more final action than the one above it. `paused_quota` is already stopped; the work is not
+ * happening and there is nothing there to interrupt. Both remain cancellable from the row menu on
+ * the list, which is where "park this differently" belongs.
+ *
+ * ⭐ `blocked` is in, and it is the least obvious one. A blocked task is not idle — it is admitted
+ * the moment its prerequisites land, with no further say from anybody — so the only moment to take
+ * it off that track is before the prerequisites finish, which is exactly while it reads `blocked`.
+ */
+export const STOPPABLE = new Set(['ready', 'blocked', 'scheduled', 'assigned', 'running'])
+
 export type ProjectWorkState = 'working' | 'needs_attention' | 'paused' | 'idle'
 
 /**

@@ -8,6 +8,8 @@ import {
   resolveFinishPolicy,
   resolveSessionSharing
 } from '@shared/tasks'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import {
   activeTime,
   activeTimeTitle,
@@ -18,6 +20,8 @@ import {
   projectWorkState,
   STATUS_TONE,
   statusLabel,
+  STOPPABLE,
+  CANCELLABLE,
   taskLabel,
   taskLabelShort,
   workspacePathFor,
@@ -80,6 +84,64 @@ describe('the word a person reads beside a task', () => {
  * situations with different answers — one is worth waiting out, the other is worth overriding or
  * going to bed over — and the sentence read identically for both.
  */
+/**
+ * ⛔ The Stop button beside the composer is only as good as this set. Everything below is about one
+ * failure: a button that is drawn where the daemon will not act. `cancelTask` returns the task
+ * untouched for any status outside its own list, so an over-wide `STOPPABLE` produces a control
+ * that refreshes the pane, changes nothing, and gives no reason — the worst outcome available,
+ * because the operator concludes the stop went through.
+ */
+describe('where the composer offers to stop the work', () => {
+  it('never offers a stop the daemon would refuse', () => {
+    for (const status of STOPPABLE) {
+      expect(CANCELLABLE.has(status), status).toBe(true)
+    }
+  })
+
+  it('agrees with the daemon about what may be cancelled at all', () => {
+    // ⚠️ Read out of `cancel.ts` rather than imported from it: importing reaches the database on the
+    // way in. The list is duplicated in two files and always has been; until now nothing noticed if
+    // one of them moved, and the renderer silently offering — or withholding — a stop is exactly
+    // what that drift looks like from the outside.
+    const source = readFileSync(
+      fileURLToPath(new URL('../../../daemon/cancel.ts', import.meta.url)),
+      'utf8'
+    )
+    const literal = /const CANCELLABLE = new Set\(\[([^\]]*)\]\)/.exec(source)
+    expect(literal, 'the CANCELLABLE set could not be found in cancel.ts').toBeTruthy()
+    const daemon = [...literal![1]!.matchAll(/'([a-z_]+)'/g)].map((m) => m[1]!)
+    expect(daemon.length).toBeGreaterThan(0)
+    expect([...CANCELLABLE].sort()).toEqual([...daemon].sort())
+  })
+
+  it('offers it on every status where something is being done to the task', () => {
+    // The list the button was asked for: running, dispatching, queued, ready, blocked.
+    for (const status of ['running', 'assigned', 'ready', 'blocked', 'scheduled']) {
+      expect(STOPPABLE.has(status), status).toBe(true)
+    }
+  })
+
+  it('withholds it where nothing is happening to stop', () => {
+    // ⛔ `awaiting_human` is waiting on the operator and already draws `Decide` with its own "Stop
+    // here" directly above the composer; a second one an inch below reads as a more final action
+    // than the first. `paused_quota` is already stopped. `cancelling` is stopping. The rest are
+    // over, and a draft has never started.
+    const at_rest = [
+      'awaiting_human',
+      'paused_quota',
+      'paused_user',
+      'cancelling',
+      'cancelled',
+      'completed',
+      'failed',
+      'draft'
+    ]
+    for (const status of at_rest) {
+      expect(STOPPABLE.has(status), status).toBe(false)
+    }
+  })
+})
+
 describe('the clock beside the hold', () => {
   const NOW = 1_700_000_000_000
   const held = (

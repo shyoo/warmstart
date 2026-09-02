@@ -43,6 +43,7 @@ import {
   IN_FLIGHT,
   statusLabel,
   STATUS_TONE,
+  STOPPABLE,
   taskLabel,
   Working,
   workspacePathFor
@@ -452,7 +453,7 @@ function TaskDetail({
               onRefresh={refresh}
             />
           )}
-          {task.status !== 'draft' && <Compose task={task} refresh={refresh} />}
+          {task.status !== 'draft' && <Compose task={task} refresh={refresh} onStop={cancel} />}
         </div>
 
         <aside className="detail-side">
@@ -1770,17 +1771,21 @@ function pct(q: NonNullable<Run['quotaBefore']>): string {
  */
 function Compose({
   task,
-  refresh
+  refresh,
+  onStop
 }: {
   task: Task
   refresh: () => Promise<void>
+  onStop: () => Promise<void>
 }): React.JSX.Element {
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
+  const [stopping, setStopping] = useState(false)
   const [outcome, setOutcome] = useState<string | null>(null)
   const { settings } = useUiSettings()
   const paste = usePastedImages()
   const running = task.status === 'running' || task.status === 'assigned'
+  const stoppable = STOPPABLE.has(task.status)
 
   const send = async () => {
     const body = text.trim()
@@ -1798,6 +1803,15 @@ function Compose({
       await refresh()
     } finally {
       setSending(false)
+    }
+  }
+
+  const stop = async () => {
+    setStopping(true)
+    try {
+      await onStop()
+    } finally {
+      setStopping(false)
     }
   }
 
@@ -1824,6 +1838,24 @@ function Compose({
             }
           }}
         />
+        {/* ⛔ Beside the box you would otherwise type into, because the two are the same decision.
+            An operator watching a run go the wrong way has exactly two moves — say something to it,
+            or stop it — and until now only one of them was here: stopping meant leaving the thread,
+            finding the row again in the table and opening its action menu, which is three
+            navigations away from the words that made you want to stop.
+            ⚠️ Not disabled while sending, and not the primary. Stopping a run that is mid-reply is
+            a legitimate thing to want, and this is the destructive-looking half of a pair where the
+            other half is the ordinary action. */}
+        {stoppable && (
+          <button
+            className="btn btn--danger"
+            disabled={stopping}
+            title="Stop the work and park this task. Destroys nothing — the branch and the workspace are kept, and Resume picks it back up."
+            onClick={() => void stop()}
+          >
+            {stopping ? 'Stopping…' : 'Stop'}
+          </button>
+        )}
         <button className="btn btn--primary" disabled={sending || !text.trim()} onClick={() => void send()}>
           {sending ? 'Sending…' : running ? 'Send' : 'Send and continue'}
         </button>
