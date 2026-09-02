@@ -328,7 +328,14 @@ These are not preferences; breaking one breaks the product.
   commit — and `/commit` stops there, writing nothing to origin, while `/push` pushes and watches
   CI. ⛔ Both **fetch and integrate `origin/main` first** (step 0.5): a commit on a base that moved
   is a conflict deferred, not avoided. ⚠️ On a dirty tree they commit and *then* rebase, because
-  `git stash` on the trunk sweeps up whatever another agent left there.
+  `git stash` on the trunk sweeps up whatever another agent left there. ⛔ **Both are Claude Code
+  slash commands, not a general instruction.** A non-Claude worker dispatched onto a task in this
+  project (codex, agy) has no way to invoke either and must not try to reproduce their steps from
+  memory — follow the finishing instruction the task actually gives you instead. Measured
+  2026-09-01, t102: codex read this file, narrated *"I'm using the project's `/commit` workflow,"*
+  and improvised its own version of the six steps (including editing unrelated lint failures in
+  `sessions.ts` to make a "required" check suite pass) that the task's own landing policy never
+  asked it to run.
 
 ## Layout
 

@@ -298,7 +298,13 @@ function landOrResolve(
     kind: 'resolve-conflict',
     base: merge.base,
     paths,
-    reason: `\`${state.branch}\` does not rebase onto \`${merge.base}\``,
+    // ⛔ Says "conflict" on purpose, not just "does not rebase" — this reason becomes `holdReason`
+    // on more than one path below (a one-shot CLI's immediate hand-off, and a live session's send
+    // failing), and the "Resolve & retry" button on the task pane is offered by testing `holdReason`
+    // against /conflict/i. A reason that only said "does not rebase onto main" left a rebase conflict
+    // resting at `awaiting_human` with no way back into the button that fixes exactly this. t102,
+    // 2026-09-01.
+    reason: `\`${state.branch}\` has a conflict and does not rebase onto \`${merge.base}\``,
     instruction:
       `Your branch no longer rebases onto \`${merge.base}\` — it moved while you were working.\n\n` +
       'I have started the rebase for you and left it stopped at the conflict. These files are ' +

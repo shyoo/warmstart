@@ -3208,6 +3208,13 @@ async function landCompletion(
     let landNow = decision.kind === 'land'
 
     if (decision.kind === 'resolve-conflict') {
+      // ⛔ Not attempted at all on a one-shot CLI, exactly like `ask-agent` above and for the same
+      // reason: the ask needs a live session, and such a process is already gone by definition. Left
+      // unchecked here, `sendPrompt` below throws, the rebase this function had just started gets
+      // aborted to hand the workspace back, and the operator is told only that the send failed — not
+      // that the CLI could never have answered. Measured on t102, 2026-09-01: CodexFirst (`codex`,
+      // `streamPrompts: 'once'`) reported complete, hit `resolve-conflict`, and the task landed at
+      // `awaiting_human` with the rebase never started for it to resume from.
       const finishing = getSession(sessionId)
       const oneShot =
         finishing !== null &&
@@ -3216,8 +3223,11 @@ async function landCompletion(
         addMessage(
           task.id,
           'system',
-          `Your branch no longer rebases cleanly onto \`${decision.base}\`. ` +
-            `${adapter(finishing.adapterId).info.label} runs one turn and exits, ` +
+          // ⛔ `decision.reason`, not a message composed fresh here: finish.ts's `landOrResolve`
+          // names the branch and says "has a conflict" on purpose, and this is also exactly the
+          // sentence `holdReason` gets two lines down — the message in the thread and the reason on
+          // the task must read as the same fact, not two summaries of it that could drift apart.
+          `${decision.reason}. ${adapter(finishing.adapterId).info.label} runs one turn and exits, ` +
             'so it cannot be asked to resolve the conflict mid-session — this one is over to you. ' +
             `Conflicts with \`${decision.base}\` in ${decision.paths.join(', ') || 'unknown files'}.`
         )
@@ -3229,7 +3239,6 @@ async function landCompletion(
         await releaseFor(run.id, task.id, project.id)
         return
       }
-
       // ⛔ Returns without ending the run, exactly like `ask-agent` above: the agent is still working
       //    and will report completion again, so closing the run here would orphan a live session and
       //    release the workspace holding the half-finished rebase.
