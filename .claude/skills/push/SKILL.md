@@ -1,26 +1,17 @@
 ---
-name: commit
-description: Commit this session's work locally and stop there — refresh HANDOFF.md (under 200 lines) and any docs/ page the change made wrong, catch up with origin/main, run the suites, build and drive the packaged app, and commit. Does NOT push. Use when the user runs "/commit" or asks to "commit this", "save a checkpoint", or "commit but don't push". To publish to origin, use /push instead.
+name: push
+description: Ship this session's work all the way to origin — refresh HANDOFF.md (under 200 lines) and any docs/ page the change made wrong, run the suites, build and drive the packaged app, commit, push, and watch CI. Use when the user runs "/push" or asks to "commit and push", "ship this", "get this on main", or "wrap up and push". For a local commit with no push, use /commit instead.
 ---
 
-# /commit — docs, suites, package, **local commit only**
+# /push — docs, suites, package, commit, **push**
 
 Six steps, in order. **Only run this when asked** — `AGENTS.md` § Git: commit on `main` directly,
 and only on request.
 
-## ⛔ This skill does not push. Ever.
-
-It ends with a commit in the local repository and **nothing sent to origin**. No `git push`, no
-`git push origin HEAD:main`, no PR, no CI run to watch. Do not offer to push "while you're here",
-and do not push because the work looks finished — a local commit *is* the finished state here.
-
-⚠️ Publishing is a **separate, explicitly requested act**. `/push` runs this same pipeline and then
-sends it. If the user asked to "commit and push", "ship it", or "get this on main", stop and use
-`/push` rather than doing half of each.
-
-⚠️ Not pushing is not the same as not *fetching*. Step 0.5 reads origin and integrates it, because a
-commit written on a base that moved hours ago is a conflict deferred, not avoided. Reading from
-origin is always allowed; writing to it is not.
+⛔ **This skill reaches origin, and `/commit` does not.** They are the same pipeline; `/commit` stops
+after step 5 with the work committed locally and nothing published. If the user asked for a *local*
+commit — "commit this", "save a checkpoint", "don't push yet" — you are in the wrong skill. Nothing
+is lost by running `/commit` first and pushing afterwards: steps 1-5 are identical.
 
 ⏱ Budget ~15 minutes end to end. Step 3 is ~3 min, step 4 is ~10. Say so up front if the user is
 waiting.
@@ -39,8 +30,8 @@ Say which one you are in.
 |---|---|---|
 | `HANDOFF.md` | edit at step 2 | ⚠️ edit at step 5, **after** the rebase |
 | Commit | on `main` | on the task branch |
-| Push | ⛔ none — see the banner above | ⛔ none — see the banner above |
-| After | — | say the branch is committed and **unpushed**, and that `/push` is what publishes it |
+| Push | `git push` | `git push origin HEAD:main` — the trunk holds `main` checked out, so you cannot check it out here |
+| After | — | tell the user the trunk is now behind and needs `git pull` |
 
 ⛔ **The branch is named after the task, never after the worktree slot** (`AGENTS.md`). If you are on
 a branch named after a directory, fix the name before pushing.
@@ -76,8 +67,11 @@ this project has already lost an afternoon's work that way. Instead commit first
    cleanly: your change and theirs each pass alone and fail together.
 4. Report that the commit was rebased onto `origin/main`, and onto which SHA.
 
-⚠️ Either way you end **ahead of `origin/main` and merged with it, and still unpushed.** A rebase
-moves local commits only; it writes nothing to origin.
+⚠️ Either way you end **ahead of `origin/main` and merged with it.** A rebase moves local commits
+only; the push in step 6 is still the first thing that writes to origin.
+
+⚠️ Doing this now rather than discovering it at step 6 is the point: a push rejected after ten
+minutes of packaging costs you step 3 and step 4 all over again.
 
 ⛔ If the rebase conflicts, **stop and show the conflict.** Do not resolve somebody else's change on
 their behalf and do not `--skip` a hunk to make it apply — `git rebase --abort` leaves the session's
@@ -143,7 +137,7 @@ the sibling repo and no next agent could read it.
 - ⛔ **`internal_docs/` is the owner's private notes.** Gitignored. Do not commit it, do not cite it,
   do not edit it.
 
-## 3. Run the suites — do not commit broken code
+## 3. Run the suites — do not push broken code
 
 ```bash
 node scripts/ensure-electron.mjs
@@ -239,35 +233,34 @@ Then **read that output**.
   (`git log -3 --format=%B | grep -i co-authored` shows what the repo has been using.)
 - Never `--no-verify` or skip hooks unless the user explicitly asks.
 
-## 6. Report, and stop
-
-⛔ **There is no push in this skill.** This step is where `/push` would send it; here it is where you
-stop and tell the user what is sitting in the repository.
+## 6. Push, then watch CI
 
 ```bash
-git status -sb
-git log --oneline origin/main..HEAD
+git push                    # trunk
+git push origin HEAD:main   # worktree
 ```
 
-Report:
-
-- The commit SHA and title, and **how many commits are now ahead of `origin/main`** — including any
-  that were already there before this session.
-- The suite counts from step 3 and the packaged-app result from step 4, as numbers.
-- Whether step 0.5 found you behind, and if so what was integrated and onto which SHA.
-- ⚠️ Plainly, in one line: **nothing has been pushed**, and `/push` is what publishes it.
-
-⭐ Say what is *unfinished* as readily as what is done. A commit that was rebased, or a doc page you
-judged still correct and skipped, is exactly what the next session needs and cannot recover from the
-log.
+- If the push is rejected, somebody pushed in the gap: `git fetch && git rebase origin/main`, re-run
+  step 3, push again. ⛔ **Never force-push without asking.**
+- Confirm it landed and report the range:
+  ```bash
+  git status -sb && git log --oneline origin/main -1
+  ```
+- **CI runs on every push to `main`** — seven jobs across Windows and Linux, ~2-3 minutes:
+  `typecheck · lint · build · unit`, then `daemon`, `ui` and `packaged app` on each of
+  `windows-latest` and `ubuntu-latest`. ⚠️ There is **no macOS runner** (counted 2026-09-01, run
+  33578997956) — a macOS-only regression is not something a green tick here rules out.
+  ```bash
+  gh run list --limit 3
+  ```
+  Report the run number and offer to watch it. ⛔ Do not call a push green before the run finishes:
+  the local suites do not cover Linux, and the `packaged app` jobs run only on push, never on a
+  pull request.
+- **From a worktree:** say that the trunk is now behind `origin/main` and needs a `git pull`.
 
 ## Guardrails
 
 - ⛔ **No step here may spend a token** except `test:e2e`, which this skill never runs.
-- ⛔ **Nothing here writes to origin.** `git fetch` and `git pull --rebase` are the only remote
-  commands in this skill; `git push` in any form belongs to `/push`. If the user wants it published,
-  they will say so — and then the skill to run is `/push`, not a bare `git push` bolted onto this
-  one, because the CI watch at the end of `/push` is part of what publishing means here.
 - ⛔ **Never kill a process by image name, and never kill a bare pid.** If a suite leaves something
   running, read its command line and confirm it is yours first. `taskkill /IM` has taken out the
   user's own Claude Code window.

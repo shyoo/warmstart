@@ -3491,3 +3491,73 @@ the daemon driving them; one Claude task filed with a screenshot settles it chea
 an MCP tool result carries an image back to the model is still unmeasured (R16b), which is why
 question answers remain out of scope — a parked question's answer is an ordinary thread message and
 got images for free.
+
+## The app that was already running, and the frame that never came (2026-09-01)
+
+The operator reported that clicking Multi Agent Controller did nothing, and that a *second* click
+opened it. That reads like a first-run initialisation, and it is not one: **the first click had
+already started the app.** It simply had no window.
+
+⛔ **`ready-to-show` is not a guarantee.** Chromium emits it after the renderer's first *frame*, and
+a window created with `show: false` has never been composited — so on a GPU path that declines to
+paint an unshown window, the event never arrives and a `win.once('ready-to-show', () => win.show())`
+is the app's only way onto the screen. Measured against an isolated data directory so the operator's
+own instance was never involved, first on the packaged app and then on an instrumented build:
+
+| | GPU on (this machine's default) | `--disable-gpu` |
+|---|---|---|
+| `dom-ready` | 69ms | 63ms |
+| `did-finish-load` | 72ms | 65ms |
+| `ready-to-show` | **never** — not at 8s, not at 20s | 66ms |
+| window on screen | **never** | 90ms |
+
+⚠️ **The second click is the tell, and it explains itself.** The process was alive and healthy the
+whole time — the renderer had loaded, the event loop was fine, a `t+8000` timer fired on schedule —
+and it was holding the **single-instance lock**. So the second launch failed to take that lock,
+which fires `second-instance` on the first instance, whose handler calls `showWindow()` — and
+`showWindow()` calls `win.show()` unconditionally, because it was written for the tray's *Open*
+item. The recovery path was doing the job the launch path could not.
+
+**The fix is that no single event is load-bearing.** `showwindow.ts` keeps `ready-to-show` as the
+preferred trigger — it means the frame exists, which is the ideal — and backstops it with
+`did-finish-load` (loaded but unpainted), a **main-frame** `did-fail-load` (an error somebody can
+see beats a process they cannot; a subframe is not a reason to show a half-built window), and a 5s
+timer for a load that neither finishes nor fails. First one wins, and it disarms the rest.
+
+⚠️ Showing before the first paint is safe here rather than ugly only because `backgroundColor`
+already matches `--color-bg`: the window is the app's own dark ground for a frame or two before
+React lands, not a white flash. That property was already in `createWindow` for a different reason,
+and it is what makes the backstop acceptable.
+
+⛔ **No suite covers this, and none can.** `test:ui` and `test:pack` both set
+`MULTI_AGENT_CONTROLLER_HEADLESS=1`, which skips the show entirely — and must, or every run would
+open a 1440x900 window on the operator's desktop and take their focus. So the module deliberately
+imports nothing from Electron and takes the window's four events as injected callbacks: 8 unit
+checks assert that each of the four paths reveals, exactly once, and that a window closed before
+anything painted is never touched. ⭐ The compositor itself was proven the only way it can be — by
+launching the thing: **217ms** to a window on one launch of the freshly packaged app, against never.
+
+## Two skills, because one of them was reaching origin (2026-09-01)
+
+`/commit` did the docs, the suites, the package, the commit **and the push**, and agents were
+reading a request to commit as a request to publish. Splitting it was the operator's call; what the
+split had to preserve was that neither half is a lesser version of the other.
+
+So `/push` is the pipeline as it was, and `/commit` is the same six steps stopping after the commit,
+with a ⛔ banner under the title and `⛔ none` in both columns of the trunk/worktree table. ⚠️ The
+banner points at `/push` by name rather than forbidding the idea, because an agent that has just
+finished a green run and been told *no* needs somewhere to put the impulse.
+
+⭐ **A new step 0.5 in both: catch up with origin before writing anything.** Not pushing is not the
+same as not fetching — reading from origin is always allowed — and a commit written on a base that
+moved hours ago is a conflict deferred, not avoided.
+
+⛔ **It refuses to stash, and the ordering follows from that.** `git pull --rebase` needs a clean
+tree; the usual answer is `git stash`, and on the trunk that sweeps up whatever any other tool or
+agent left in the working tree — which is precisely how t91 and t92 lost an afternoon a day
+earlier. So the dirty path commits first, rebases second, and **re-runs the suites third**, which is
+also what catches a semantic conflict git merged cleanly. A clean tree pulls first, as expected.
+
+⚠️ And one claim in the file was false and is now measured: CI is **seven** jobs across Windows and
+Linux, not *ten across Windows, macOS and Linux*. There is no macOS runner at all (counted against
+run 33578997956), so a green tick has never ruled out a macOS-only regression.

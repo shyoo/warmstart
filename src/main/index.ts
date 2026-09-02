@@ -15,6 +15,7 @@ import { IPC, type AppInfo, type DaemonUiStatus, type UiSettings } from '@shared
 import type { DaemonEvent, RpcMethod } from '@shared/protocol.js'
 import { DaemonClient, daemonScriptPath, type DaemonStatus } from './daemon.js'
 import { DEFAULT_UI_SETTINGS, readUiSettings, writeUiSettings } from './uisettings.js'
+import { showWhenItCan } from './showwindow.js'
 import { dataDir } from '../daemon/paths.js'
 
 const dirname = join(fileURLToPath(import.meta.url), '..')
@@ -255,8 +256,20 @@ function createWindow(): BrowserWindow {
     }
   })
 
+  // ⛔ Not `win.once('ready-to-show', ...)`. That event never arrives on some GPU paths and the app
+  // is then a process with no window — see showwindow.ts, which measured it.
   if (!headless) {
-    win.once('ready-to-show', () => win.show())
+    showWhenItCan({
+      show: () => win.show(),
+      isDestroyed: () => win.isDestroyed(),
+      onReadyToShow: (fn) => void win.once('ready-to-show', fn),
+      onDidFinishLoad: (fn) => void win.webContents.once('did-finish-load', fn),
+      onDidFailLoad: (fn) =>
+        void win.webContents.on('did-fail-load', (_event, _code, _desc, _url, isMainFrame) =>
+          fn(isMainFrame)
+        ),
+      onClosed: (fn) => void win.once('closed', fn)
+    })
   }
 
   // ⛔ Capture the WebContents now; do not read `win.webContents` from the `closed` handler.

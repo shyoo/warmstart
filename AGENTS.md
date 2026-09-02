@@ -324,8 +324,11 @@ These are not preferences; breaking one breaks the product.
 - Private repo, single developer, no PR review. Commit on `main` directly, and **only when asked**.
 - Never commit `internal_docs/`, `node_modules/`, `out/`, `release/`, or anything matching
   `.gitignore`.
-- **`/commit` is the shipping path** (`.claude/skills/commit/SKILL.md`): docs, suites, packaged
-  build, commit, push. It knows the trunk/worktree difference and which suites must run.
+- **`/commit` commits locally; `/push` publishes.** Same six steps — docs, suites, packaged build,
+  commit — and `/commit` stops there, writing nothing to origin, while `/push` pushes and watches
+  CI. ⛔ Both **fetch and integrate `origin/main` first** (step 0.5): a commit on a base that moved
+  is a conflict deferred, not avoided. ⚠️ On a dirty tree they commit and *then* rebase, because
+  `git stash` on the trunk sweeps up whatever another agent left there.
 
 ## Layout
 
@@ -335,7 +338,7 @@ src/renderer            React UI. Tokens in src/renderer/src/styles/tokens.css.
 src/daemon              orchestratord: scheduler, PTYs, store, MCP server
 src/shared              types crossing a process boundary
 costmodels/             versioned pricing data
-.claude/skills/         project skills. /commit is the shipping path
+.claude/skills/         project skills. /commit commits locally, /push publishes
 ```
 
 ## Things that will bite
@@ -382,13 +385,11 @@ costmodels/             versioned pricing data
   be asked the same question before it is trusted with `--dangerously-skip-permissions`: *what,
   other than the cwd, tells this CLI where it may work?* If the answer is nothing, the flag is
   bounded by nothing.
-- ⛔ **The history of that, kept because the failure was silent:** t17 ran with `cwd` set to its pooled worktree and
-  edited and committed in `C:\Dev\multi_agent_controller` instead: 45 distinct trunk paths in its
-  conversation store, zero workspace paths, three commits straight onto `main`. Its branch never
-  moved, so the finish logged `nothing-to-land` and every gate that runs *before a branch merges* was
-  simply skipped — the work was already on the trunk. Nothing in the daemon detects this. If a task
-  finishes with `nothing-to-land` and the work plainly happened, check `git reflog` in the trunk
-  before assuming the agent did nothing.
+- ⛔ **Kept because the failure was silent:** t17 committed straight onto `main` — 45 trunk paths in
+  its conversation store, zero workspace paths — so its branch never moved, the finish logged
+  `nothing-to-land`, and every gate that runs *before a branch merges* was skipped. Nothing detects
+  this. If a task finishes `nothing-to-land` and the work plainly happened, read `git reflog` in the
+  trunk before believing the agent did nothing.
 - ⛔ **A spawned CLI gets `spawnEnv()`, never a copy of `process.env`.** It denies the whole
   `CLAUDE*` / `ANTHROPIC_*` namespace by prefix, because a Claude Code session's environment carries
   ~20 such variables - `CLAUDE_CODE_HOST_SESSION_ID`, `CLAUDE_CODE_MESSAGING_SOCKET`,
@@ -406,6 +407,18 @@ costmodels/             versioned pricing data
   from previous sessions, which is how an agent arrives already pointed somewhere other than its
   workspace. ⚠️ Anything reasoning about *"one account per isolation root"* or *"a conversation lives
   inside one isolation root"* is false for this adapter.
+
+- ⛔ **`ready-to-show` is not a guarantee, and a window shown only from it may never appear.** It
+  fires on the renderer's first *frame*, and a window created `show: false` has never been
+  composited — so on a GPU path that declines to paint one it never arrives. Measured 2026-09-01
+  (Windows 11, Electron 44, packaged and dev builds alike): `did-finish-load` at **72ms**,
+  `ready-to-show` **never**, at 8s or 20s; the same build with `--disable-gpu` fired it at 66ms.
+  The app was a live process holding the single-instance lock with nothing on screen, which read as
+  *needing a second click* — the second launch loses the lock and `second-instance` calls
+  `showWindow()`, which shows unconditionally. `showwindow.ts` keeps it as the preferred trigger and
+  backstops it with `did-finish-load`, a main-frame `did-fail-load` and a timer. ⚠️ **No suite can
+  catch a regression here**: `test:ui` and `test:pack` both set `MULTI_AGENT_CONTROLLER_HEADLESS=1`,
+  which skips the show entirely — and must, or every run would steal the operator's focus.
 
 - ⛔ **`test/ui.test.mjs` never opens a project.** Every task it files has `projectId: null`, so it
   drives the **Unassigned** route and nothing under `components/Project.tsx`. A mutation to a project

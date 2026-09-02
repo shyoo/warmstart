@@ -324,9 +324,12 @@ caller was reporting a queue as a failure.
   Set it beside any other `finish` and it is inert; the example above therefore omits it.
   ⛔ It is sent verbatim, so it is yours to keep honest. Naming a slash command binds the project
   to a CLI that has that skill — measured on t56, 2026-08-30, `"Run /commit and follow every one of
-  its six steps. Do not push."` reached codex, which has no `/commit`, and whose sixth step is the
-  push the same sentence forbids. Under every other rung the tool composes the sentence itself and
-  says plainly whether to push.
+  its six steps. Do not push."` reached codex, which has no `/commit`, and whose sixth step was then
+  the push the same sentence forbids. ⚠️ This repo's `/commit` has since been split — it commits
+  locally and `/push` publishes — which fixes that one sentence and not the hazard: the instruction
+  still names a skill the receiving CLI may not have, and a skill's steps can be renumbered under a
+  project that quoted them. Under every other rung the tool composes the sentence itself and says
+  plainly whether to push.
 - `landing.target` — the branch to land on. Defaults to `main`.
 - `check` — the commands every verifying rung runs. ⛔ An **empty list verifies nothing**, which
   is every project on day one; the tool says so on the task rather than reporting a clean result.
