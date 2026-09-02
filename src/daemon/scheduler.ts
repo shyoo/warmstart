@@ -4334,6 +4334,41 @@ export async function resolveChecksOnTask(
   return { ok: true }
 }
 
+/**
+ * Hand uncommitted work or a failed commit back to an agent to commit and report complete again.
+ */
+export async function resolveCommitOnTask(
+  taskId: string
+): Promise<{ ok: boolean; reason?: string }> {
+  const task = getTask(taskId)
+  if (!task) return { ok: false, reason: 'no such task' }
+  const project = task.projectId ? getProject(task.projectId) : null
+  if (!project || project.vcs !== 'git') return { ok: false, reason: 'not a git project' }
+  const branch = task.branch ?? branchNameFor(task.seq, task.title)
+  if (!branch) return { ok: false, reason: 'this task has no branch' }
+  if (task.status === 'running' || task.status === 'assigned') {
+    return { ok: false, reason: 'this task is already running; it will be asked when it reports' }
+  }
+
+  // ⛔ Clear finish_asked_at so that when the new run reports complete and needs finish processing,
+  // it is not immediately treated as already-asked and rejected.
+  db().prepare('update tasks set finish_asked_at = null where id = ?').run(task.id)
+
+  const msgs = messagesFor(task.id)
+  const lastSystem = [...msgs].reverse().find((m) => m.role === 'system' && /uncommitted|cannot be asked after its turn ends|rescue|stash/i.test(m.text))
+  const failureDetail = lastSystem ? lastSystem.text : (task.holdReason ?? 'Uncommitted changes remain')
+
+  const instruction =
+    `The landing could not proceed because changes on \`${branch}\` are uncommitted:\n\n` +
+    `${failureDetail}\n\n` +
+    `Please review your work, commit all intended changes on \`${branch}\`, and report the task complete again.`
+
+  addMessage(task.id, 'human', instruction)
+  const outcome = continueTask(task.id)
+  log.info(`t${task.seq}: asked an agent to commit uncommitted work (${outcome})`)
+  return { ok: true }
+}
+
 export async function relandTask(taskId: string): Promise<{ ok: boolean; reason?: string }> {
   const task = getTask(taskId)
   if (!task) return { ok: false, reason: 'no such task' }

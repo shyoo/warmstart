@@ -1434,6 +1434,13 @@ export interface RpcMap {
     params: { id: string }
     result: { task: Task; started: boolean; reason?: string }
   }
+  /**
+   * Hand uncommitted changes or a failed commit back to an agent to commit and re-report complete.
+   */
+  'task.resolveCommit': {
+    params: { id: string }
+    result: { task: Task; started: boolean; reason?: string }
+  }
   /** Work that exists and is going nowhere: uncommitted files, unlanded branches, rescued stashes. */
   /**
    * Every work conversation and what it served. ⚠️ Read-only and derived; there is deliberately no

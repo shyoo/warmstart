@@ -1095,11 +1095,13 @@ function Decide({
   // a task that failed its checks would send an agent to rebase something that rebases fine.
   const conflicted = /conflict/i.test(task.holdReason ?? '')
   const checksFailed = /checks? failed|verification failed/i.test(task.holdReason ?? '')
+  const uncommitted = /uncommitted|cannot be asked after its turn ends|rescue|stash/i.test(task.holdReason ?? '')
   const canReland =
     Boolean(task.branch) &&
     !conflicted &&
     !checksFailed &&
-    /landing failed|not merged|waited for a turn|uncommitted in trunk|would not fast-forward|trunk/i.test(task.holdReason ?? '')
+    !uncommitted &&
+    /landing failed|not merged|waited for a turn|would not fast-forward|trunk/i.test(task.holdReason ?? '')
 
   const handleResolveConflict = async () => {
     setBusy(true)
@@ -1115,6 +1117,16 @@ function Decide({
     setBusy(true)
     try {
       await rpc('task.resolveChecks', { id: task.id })
+      await onRefresh()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleResolveCommit = async () => {
+    setBusy(true)
+    try {
+      await rpc('task.resolveCommit', { id: task.id })
       await onRefresh()
     } finally {
       setBusy(false)
@@ -1226,6 +1238,24 @@ function Decide({
             <strong>Project checks failed.</strong> Sends the check output back to the agent to fix
             the lint, type, or test errors, commit the fix on <span className="mono">{task.branch}</span>, and report
             complete again — same thread, preserving existing context.
+          </span>
+        </div>
+      )}
+
+      {uncommitted && (
+        <div className="decide-option">
+          <button
+            className="btn btn--primary"
+            title="Dispatches a run on this thread asking the agent to review, commit uncommitted work, and report complete again."
+            disabled={busy}
+            onClick={() => void handleResolveCommit()}
+          >
+            Retry &amp; commit
+          </button>
+          <span className="decide-what">
+            <strong>Uncommitted work.</strong> Sends the branch back to an agent to commit the
+            changes on <span className="mono">{task.branch}</span> and report complete again — same
+            thread, preserving existing context.
           </span>
         </div>
       )}

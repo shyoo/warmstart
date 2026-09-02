@@ -362,6 +362,42 @@ describe('run prompt persistence and task.get preview', () => {
     expect(lastHuman?.text).toContain(`multi-agent-controller/t${task.seq}-fix-issue`)
   })
 
+  it('resolveCommitOnTask dispatches a new run asking the agent to commit and clears finish_asked_at', async () => {
+    const { execFileSync } = await import('node:child_process')
+    const projects = await import('./projects.js')
+    const root = mkdtempSync(join(tmpdir(), 'agentyard-resolve-commit-'))
+    execFileSync('git', ['init', root])
+    const project = projects.addProject({ root })
+    const task = tasks.createTask({
+      title: 'Commit my change',
+      status: 'ready',
+      projectId: project.id
+    })
+    tasks.markFinishAsked(task.id)
+    expect(tasks.requireTask(task.id).finishAskedAt).not.toBeNull()
+
+    tasks.setStatus(task.id, 'awaiting_human', {
+      holdReason: '1 file(s) are uncommitted, and this CLI cannot be asked after its turn ends'
+    })
+    tasks.addMessage(
+      task.id,
+      'system',
+      '1 file(s) are uncommitted. OpenAI Codex runs one turn and exits, so it cannot be asked to finish the job afterwards — this one is over to you.'
+    )
+
+    const res = await scheduler.resolveCommitOnTask(task.id)
+    expect(res).toEqual({ ok: true })
+
+    const updatedTask = tasks.requireTask(task.id)
+    expect(updatedTask.finishAskedAt).toBeNull()
+
+    const msgs = tasks.messagesFor(task.id)
+    const lastHuman = msgs.filter((m) => m.role === 'human').pop()
+    expect(lastHuman?.text).toContain('The landing could not proceed because changes on')
+    expect(lastHuman?.text).toContain('1 file(s) are uncommitted')
+    expect(lastHuman?.text).toContain(`multi-agent-controller/t${task.seq}-commit-my-change`)
+  })
+
   it('keeps a failed retry-landing result visible after the thread refreshes', async () => {
     // ⛔ `task.land` returns this reason to the renderer, but a thread refresh replaces its local
     // state immediately. The result must therefore also be written to the task; otherwise the
