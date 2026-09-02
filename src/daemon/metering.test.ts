@@ -20,8 +20,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 let dir: string
 let db: typeof import('./db.js')
 let transcript: typeof import('./transcript.js')
-let events: typeof import('./events.js')
 let sessions: typeof import('./sessions.js')
+let events: typeof import('./events.js')
 let costmodel: typeof import('./costmodel.js')
 
 const SESSION = 'aaaaaaaa-0000-4000-8000-000000000001'
@@ -54,6 +54,7 @@ beforeAll(async () => {
   process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
   db = await import('./db.js')
   transcript = await import('./transcript.js')
+  sessions = await import('./sessions.js')
   events = await import('./events.js')
   sessions = await import('./sessions.js')
   costmodel = await import('./costmodel.js')
@@ -115,6 +116,59 @@ const tokensSinceCompact = (): number =>
       t: number
     }
   ).t
+
+/**
+ * The cache clock on an adapter that has no transcript to read.
+ *
+ * ⛔ Measured as a hole rather than as a failure: `creditStreamTurn` wrote `request_started_at` as
+ * null and never touched `last_request_started_at` or `cache_expires_at`, on the grounds that no
+ * stream-metered provider prices a *steerable* cache. That confused pricing a cache with having
+ * one. Codex reports `cached_input_tokens` on every `turn.completed` and its prefix lapses on a
+ * clock; with no clock recorded, the fleet strip drew `--:--` over every codex session for its whole
+ * life and routing scored each one as holding nothing.
+ */
+describe('creditStreamTurn and the cache clock', () => {
+  const CODEX = 'aaaaaaaa-0000-4000-8000-0000000000c1'
+
+  beforeAll(() => {
+    db.db()
+      .prepare(
+        `insert into sessions (id, worker_id, adapter_id, transport, cwd, state, started_at,
+                               tokens_since_compact, purpose)
+         values (?,?,?,?,?,?,?,?,?)`
+      )
+      .run(CODEX, WORKER, 'openai-compatible', 'stream', dir, 'live', Date.now(), 0, 'work')
+  })
+
+  const clock = (id: string) =>
+    db.db().prepare('select last_request_started_at s, cache_expires_at e from sessions where id = ?')
+      .get(id) as { s: number | null; e: number | null }
+
+  it('sets an expiry a codex session can be counted down from', () => {
+    const before = Date.now()
+    const session = sessions.getSession(CODEX)
+    expect(session).not.toBeNull()
+    transcript.creditStreamTurn(session as NonNullable<typeof session>, {
+      input: 41_000,
+      output: 120,
+      thinking: 0,
+      cacheRead: 38_000,
+      cacheWrite: 0
+    })
+    const { s, e } = clock(CODEX)
+    expect(s).not.toBeNull()
+    expect(s as number).toBeGreaterThanOrEqual(before)
+    // ⛔ 30 minutes, from the cost model's declared window - not from a constant written in here.
+    expect((e as number) - (s as number)).toBe(30 * 60 * 1000)
+  })
+
+  it('records the same request start on the turn row, so the two agree', () => {
+    const row = db.db()
+      .prepare('select request_started_at r from turns where session_id = ? order by id desc limit 1')
+      .get(CODEX) as { r: number | null }
+    expect(row.r).toBe(clock(CODEX).s)
+  })
+})
 
 describe('recordTurn', () => {
   it('reports a turn it has never seen as new', () => {

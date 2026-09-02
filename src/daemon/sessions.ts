@@ -87,6 +87,16 @@ interface Live {
   parser: StreamParser | null
   /** Set once a `streamPrompts: 'once'` session has had its one prompt and its stdin closed. */
   promptedOnce: boolean
+  /**
+   * When the turn now in flight was handed to the CLI.
+   *
+   * ⭐ **The request start a `metering: 'stream'` session has no other way to know.** The transcript
+   * path reads it off the record before the assistant's, and a stream has no such record - so the
+   * cache clock was simply never set for codex or Antigravity, and their sessions drew a blank
+   * countdown for as long as they existed. This is the moment the prompt went down the pipe, which
+   * is what `ttl_measured_from: request_start` means. See `creditStreamTurn`.
+   */
+  promptedAt: number | null
 }
 
 const live = new Map<string, Live>()
@@ -293,6 +303,17 @@ export function listSessions(includeClosed = false): Session[] {
     ? 'select * from sessions order by started_at desc'
     : "select * from sessions where state not in ('closed','abandoned','failed') order by started_at desc"
   return rows<SessionRow>(db().prepare(sql).all()).map(toSession)
+}
+
+/**
+ * When the prompt now in flight went into this session, or null if it is not live or has had none.
+ *
+ * ⛔ Read by `creditStreamTurn`, which is the only thing able to set a cache clock for an adapter
+ * metered from its stream. Deliberately not persisted: it describes a turn in flight, and a turn
+ * that finished has already written the durable `last_request_started_at` this stood in for.
+ */
+export function promptSentAt(id: string): number | null {
+  return live.get(id)?.promptedAt ?? null
 }
 
 export function getSession(id: string): Session | null {
@@ -842,7 +863,8 @@ export function spawnSession(opts: SpawnOptions): Session {
     // rather than an error. An adapter that offers `stream` and no decoder gets nothing, loudly.
     parser:
       transport === 'stream' && ad.decodeStream ? new StreamParser(ad.decodeStream) : null,
-    promptedOnce: false
+    promptedOnce: false,
+    promptedAt: null
   })
 
   log.info(
@@ -1011,6 +1033,10 @@ export function sendPrompt(id: string, text: string, attachments: Attachment[] =
   } else {
     entry.channel.write(`${text}\r`)
   }
+  // ⛔ Last, and only once the prompt is actually out. Every path above can refuse - a one-shot
+  // session asked for a second prompt throws - and a refused prompt started no turn, so stamping it
+  // would roll a cache clock forward over a request that never happened.
+  entry.promptedAt = Date.now()
 }
 export function writeSession(id: string, data: string): void {
   const entry = live.get(id)

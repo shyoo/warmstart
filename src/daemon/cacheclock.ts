@@ -634,6 +634,22 @@ export function decide(session: Session, ctx: ClockContext): ClockDecision {
 
   if (!expiry) return nothing('no cached prefix yet - nothing to preserve')
 
+  /**
+   * Can this session be spoken to at all?
+   *
+   * ⛔ **`handoff_close` is a prompt**, and a `streamPrompts: 'once'` CLI has already read its stdin
+   * to EOF and will exit at the end of the turn it is on. `sendPrompt` throws for exactly this, so
+   * every fallback below that reaches for a handoff would raise, be caught by `runCacheClock`, and
+   * be tried again on the next tick - a warning every ten seconds and a handoff that never lands.
+   *
+   * ⚠️ It became reachable when codex gained a cache clock: with no `cache_expires_at` these
+   * sessions returned at the top of this function and no branch below had ever seen one. Saying
+   * "there is nothing to take a handoff through" is the honest answer, and it costs nothing: such a
+   * session closes itself when its single turn ends, which is the release the move was after.
+   */
+  const canBePrompted = caps.streamPrompts !== 'once'
+  const noChannel = `${adapter(session.adapterId).info.label} reads one prompt and exits, so there is no channel to take a handoff through`
+
   // ⛔ Before anything else: has the clock already asked this session to do something, and is that
   // request still outstanding? Every move below spends tokens, and `decide()` has no memory of its
   // own - so this is the only thing standing between a 10s tick and a move re-issued twelve times
@@ -652,6 +668,7 @@ export function decide(session: Session, ctx: ClockContext): ClockDecision {
     // session, and the honest move is the one that always works: get the context out and let the
     // prefix go. Saying so in words matters - "compaction is not reaching this session" is what
     // closes HANDOFF R6 the day somebody reads it.
+    if (!canBePrompted) return nothing(noChannel)
     return {
       ...base,
       move: 'handoff_close',
@@ -704,6 +721,7 @@ export function decide(session: Session, ctx: ClockContext): ClockDecision {
     // ⛔ M5 found this hole. A provider with no compaction used to fall straight through here and do
     // *nothing* while its reserve was breached - the one situation the reserve exists to catch. The
     // move that is always available is to get the work out before the context is stranded.
+    if (!canBePrompted) return nothing(`compaction reserve at risk - ${reserve.reason} - but ${noChannel}`)
     return {
       ...base,
       move: 'handoff_close',
@@ -850,7 +868,7 @@ export function decide(session: Session, ctx: ClockContext): ClockDecision {
   // Move 6.
   if (untilExpiry <= lastChanceMs(ttlMs)) {
     const run = runForSession(session.id)
-    if (run?.taskId) {
+    if (run?.taskId && canBePrompted) {
       return {
         ...base,
         move: 'handoff_close',

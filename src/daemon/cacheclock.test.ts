@@ -579,3 +579,63 @@ describe('the clock windows scale with the TTL the provider actually grants', ()
     expect(policy(OBJECTIVE, HALF).keepaliveFloorMs).toBeLessThan(HALF)
   })
 })
+
+/**
+ * A session that reads one prompt and exits.
+ *
+ * ⛔ Every fallback in `decide()` that is not a compaction is `handoff_close`, and `handoff_close` is
+ * a prompt. `codex exec` reads stdin to EOF and runs one turn, so `sendPrompt` throws for it by
+ * design - the clock would catch that, warn, and try again on the very next tick, forever, and no
+ * handoff would ever be written.
+ *
+ * ⚠️ Unreachable until codex was given a cache clock: with `cache_expires_at` null, `decide()`
+ * returned at its first line and no branch below had ever been handed such a session.
+ */
+describe('a conversation with no channel to speak into', () => {
+  const OBJECTIVE = { cost: 0.34, velocity: 0.33, quality: 0.33 }
+
+  const oneShot = (patch: Partial<Session> = {}): Session =>
+    session({
+      adapterId: 'openai-compatible',
+      workerId: 'w-oneshot',
+      contextTokens: 41_000,
+      tokensSinceCompact: 41_000,
+      ...patch
+    })
+
+  it('declines a handoff it has no way to ask for, rather than throwing every tick', () => {
+    const decision = clock.decide(
+      oneShot({
+        // Past the last-chance window, which is where move 6 reaches for a handoff.
+        cacheExpiresAt: NOW + 60_000,
+        // ⚠️ Asked for twice and never landed: `tokensSinceCompact` has not fallen below what it
+        // was when the clock asked, and the settle window is long past. That is `ignored`.
+        clockMove: 'compact',
+        clockMoveAt: NOW - 10 * 60 * 1000,
+        clockMoveContext: 41_000,
+        clockMoveAttempts: 2
+      }),
+      { objective: OBJECTIVE, now: NOW }
+    )
+    expect(decision.move).toBe('none')
+    expect(decision.reason).toContain('one prompt and exits')
+  })
+
+  it('still gives a session that can be spoken to the handoff, so the guard is not a blanket', () => {
+    const decision = clock.decide(
+      session({
+        contextTokens: 41_000,
+        tokensSinceCompact: 41_000,
+        cacheExpiresAt: NOW + 60_000,
+        // ⚠️ Asked for twice and never landed: `tokensSinceCompact` has not fallen below what it
+        // was when the clock asked, and the settle window is long past. That is `ignored`.
+        clockMove: 'compact',
+        clockMoveAt: NOW - 10 * 60 * 1000,
+        clockMoveContext: 41_000,
+        clockMoveAttempts: 2
+      }),
+      { objective: OBJECTIVE, now: NOW }
+    )
+    expect(decision.move).toBe('handoff_close')
+  })
+})

@@ -249,6 +249,31 @@ describe('a cost model may say it does not know', () => {
     expect(google.cacheExpiryFor({ contextTokens: 1000, lastRequestStartedAt: Date.now() })).toBeNull()
   })
 
+  /**
+   * ⛔ A **retention window is not a price**, and that is why `ttls[].write_multiplier` is nullable.
+   * Codex was declared `ttls: []` to express "no lever a client can pull", which also erased the
+   * clock — so every codex session drew a blank countdown and routing scored each one as holding no
+   * cache at all. The window came back first, priced at nothing; `openai.codex.2026-08` has since
+   * been given real multipliers, so the *nullable* half of the contract now lives in `costmodel.ts`
+   * rather than in any bundled model. What is asserted here is the half that made routing wrong.
+   */
+  describe('the window a prefix is counted down against', () => {
+    it('gives codex an expiry to count down, measured from the request start', () => {
+      const codex = costModel('openai.codex.2026-08')
+      const started = 1_800_000_000_000
+      expect(codex.cacheTtlMs()).toBe(30 * 60 * 1000)
+      expect(codex.cacheExpiryFor({ contextTokens: 40_000, lastRequestStartedAt: started })).toBe(
+        started + 30 * 60 * 1000
+      )
+    })
+
+    it('leaves a provider that declares no window at all with no clock', () => {
+      // ⚠️ Null, never zero: zero reads as "already lapsed" and would have the clock act on it.
+      expect(costModel('google.antigravity.2026-08').cacheTtlMs()).toBeNull()
+      expect(costModel('anthropic.subscription.2026-08').cacheTtlMs()).toBe(60 * 60 * 1000)
+    })
+  })
+
   it('anthropic still prices everything it did before', () => {
     const anthropic = costModel('anthropic.subscription.2026-08')
     const session = { contextTokens: 100_000, model: 'claude-opus-5' }

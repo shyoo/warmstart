@@ -4,7 +4,7 @@ import type { Session, Turn } from '@shared/protocol.js'
 import { db } from './db.js'
 import { costModel } from './costmodel.js'
 import { adapter } from './adapters/index.js'
-import { clearClockMove, getSession } from './sessions.js'
+import { clearClockMove, getSession, promptSentAt } from './sessions.js'
 import { emit } from './events.js'
 import { addMessage, creditTurn } from './tasks.js'
 import { compactionLanded, fillPostTokens, noteCompactionLanded } from './compaction.js'
@@ -453,20 +453,40 @@ function costModelFor(adapterId: string) {
  * the retry scored CodexFirst at `warm 0 · affinity 0 · cold 1` and went to a Claude account that had
  * never seen the task. See `openai.codex.2026-08.json` § cache.
  *
- * ⚠️ **The stamp is a response end, and every cost model with a TTL today counts from the request.**
- * A stream reports usage when the *turn* finishes and never says when its last request began — unlike
- * a transcript, which carries `requestStartedAt` per turn. So this overstates the remaining TTL by
- * roughly one response length, and the error is in the unsafe direction. ⛔ It is the same trap
- * cost-model.md §1 records for Anthropic arriving by a different road: there the fix was to read the
- * right field, and here there is no right field to read. Narrowing it means metering codex from its
- * rollout, which does carry per-request timing (HANDOFF R10), or emitting a non-final `usage` event
- * at request start. Recorded rather than quietly accepted — see cost-model.md §1c.
+ * ⚠️ **Every cost model with a TTL counts from the request, and a stream reports usage when the
+ * *turn* ends** — it never says when the last request inside it began, unlike a transcript, which
+ * carries `requestStartedAt` per turn. Stamping the moment the usage record arrives would overstate
+ * the remaining TTL by roughly one response length, in the unsafe direction, and it is the same trap
+ * cost-model.md §1 records for Anthropic arriving by a different road. There the fix was to read the
+ * right field; here there is no right field on the wire, so the time is taken from **our own side of
+ * the pipe** instead — `promptSentAt`, stamped when this session was last handed a prompt. ⛔ Still
+ * not exact: on a multi-request turn it is the *first* request, so a long turn's later requests are
+ * counted as older than they are — again the safe direction. Narrowing it means metering codex from
+ * its rollout, which carries per-request timing (HANDOFF R10). See cost-model.md §1c.
  *
  * ⚠️ Where no TTL is declared at all, `cacheExpiryFor` returns null and nothing below changes.
  */
 export function creditStreamTurn(session: Session, usage: StreamUsage): void {
   const model = costModelFor(session.adapterId)
   const ts = Date.now()
+  /**
+   * ⭐ **When this request began, which is what the cache TTL is measured from.**
+   *
+   * ⛔ This used to be `null`, and the justification written here was that no provider metered from
+   * its stream prices a steerable cache, so nothing would read it. That confused *pricing* a cache
+   * with *having* one. Codex caches - its own `turn.completed` reports `cached_input_tokens` - and
+   * the prefix lapses on a clock like any other; what it lacks is a lever to extend it. With no
+   * `last_request_started_at` the row's `cache_expires_at` stayed null forever, so the fleet strip
+   * drew an empty countdown for every codex session and routing scored each one as holding no cache
+   * at all. Nothing here spends a token; it records a fact that was being thrown away.
+   *
+   * ⚠️ The prompt going down the pipe, not the moment the result came back. A four-minute turn has
+   * already spent four minutes of its window, exactly as `cacheExpiryFor` says. `ts` is the fallback
+   * for a turn credited against a session that is no longer live - a late record, where treating the
+   * prefix as fresher than it is would be the wrong way to be wrong, but is the only number left.
+   */
+  const startedAt = promptSentAt(session.id) ?? ts
+  const expiry = model.cacheExpiryFor({ contextTokens: usage.input, lastRequestStartedAt: startedAt })
 
   const inserted = db()
     .prepare(
@@ -482,7 +502,7 @@ export function creditStreamTurn(session: Session, usage: StreamUsage): void {
       // to stop the same record being counted twice if a chunk is replayed.
       `stream-${ts}`,
       ts,
-      null,
+      startedAt,
       session.model,
       session.effort,
       null,
@@ -502,7 +522,6 @@ export function creditStreamTurn(session: Session, usage: StreamUsage): void {
 
   // ⚠️ `coalesce(?, cache_expires_at)` rather than a bare write: a provider with no declared TTL
   // must be left exactly as it was, not have a null stamped over a value some other path set.
-  const expiry = model.cacheExpiryFor({ contextTokens: usage.input, lastRequestStartedAt: ts })
   db()
     .prepare(
       `update sessions
@@ -513,7 +532,10 @@ export function creditStreamTurn(session: Session, usage: StreamUsage): void {
     .run(
       usage.input,
       usage.input + usage.output + usage.cacheWrite,
-      ts,
+      // ⛔ `startedAt`, not `ts`: the request start is what a TTL is measured from, and it is the
+      // same number the row above was inserted with. Writing the response end here would have made
+      // the session row disagree with its own newest turn.
+      startedAt,
       expiry,
       session.id
     )

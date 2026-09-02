@@ -1094,3 +1094,26 @@ describe('routing a retry back to the account that already has the context', () 
     expect(terms.cold?.value).toBe(1)
   })
 })
+
+describe('warmth as a fraction of what the provider granted', () => {
+  it('scores a full prefix as 1 whatever window it was granted', async () => {
+    const { costModel } = await import('./costmodel.js')
+    const anthropic = costModel('anthropic.subscription.2026-08')
+    const codex = costModel('openai.codex.2026-08')
+
+    const now = Date.now()
+    // Both sessions made a request one minute ago, so both hold an almost untouched prefix.
+    const started = now - 60_000
+    const warmthOf = (model: ReturnType<typeof costModel>): number => {
+      const expiry = model.cacheExpiryFor({ contextTokens: 40_000, lastRequestStartedAt: started })
+      const ttl = model.cacheTtlMs()
+      expect(expiry).not.toBeNull()
+      expect(ttl).not.toBeNull()
+      return Math.max(0, Math.min(1, ((expiry as number) - now) / (ttl as number)))
+    }
+
+    expect(warmthOf(anthropic)).toBeGreaterThan(0.95)
+    // ⛔ The assertion that was false: against a fixed hour this was 0.48.
+    expect(warmthOf(codex)).toBeGreaterThan(0.95)
+  })
+})
