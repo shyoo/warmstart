@@ -419,7 +419,8 @@ function PolicyPanel({
           </span>
           . ⭐ A full pool <em>holds</em> a task rather than failing it, so this is a cap on disk and
           on concurrency, never a source of lost work. ⚠️ New members are created on the next
-          dispatch; lowering it leaves existing worktrees on disk, unused.
+          dispatch; lowering it never interrupts a task already using a worktree, and leaves surplus
+          worktrees on disk unused after their current task finishes.
         </PolicyRow>
       </section>
     </div>

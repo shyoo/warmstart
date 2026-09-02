@@ -1126,6 +1126,8 @@ export function reconcileOrphans(): number {
                 killed++
               } catch (err) {
                 // ⚠️ One orphan that would not die is not a reason to abandon the rest of the sweep.
+                // The commonest cause is benign: the process exited between the ownership check and
+                // the kill, so it is already no longer an orphan.
                 log.debug(`could not stop detached orphaned agent pid ${p.ProcessId}:`, err)
               }
             }

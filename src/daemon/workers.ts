@@ -205,6 +205,7 @@ export function updateWorker(
   // ⛔ `maxConcurrent` is an admission limit, never a preemption request. A worker can briefly be
   // above its newly lowered cap while its existing work finishes; terminating those sessions would
   // turn a harmless settings edit into lost work.
+  const maxConcurrent = boundedConcurrency(patch.maxConcurrent, current.maxConcurrent)
   const defaultModelsJson =
     patch.defaultModels === undefined
       ? current.defaultModels ? JSON.stringify(current.defaultModels) : null
@@ -220,7 +221,7 @@ export function updateWorker(
       patch.label?.trim() || current.label,
       (patch.enabled ?? current.enabled) ? 1 : 0,
       (patch.humanOccupied ?? current.humanOccupied) ? 1 : 0,
-      boundedConcurrency(patch.maxConcurrent, current.maxConcurrent),
+      maxConcurrent,
       patch.role ?? current.role,
       // ⛔ `undefined` means "not mentioned", `null` means "clear it". Collapsing the two with `??`
       // would make the default unclearable: every attempt to go back to the CLI's own choice would
@@ -230,6 +231,14 @@ export function updateWorker(
       defaultModelsJson,
       id
     )
+  // A lower limit is an admission gate, not a preemption order. Sessions already using the account
+  // keep working; only the next dispatch waits until the number of live work sessions falls below it.
+  if (maxConcurrent < current.maxConcurrent) {
+    log.info(
+      `${current.label}: concurrency reduced from ${current.maxConcurrent} to ${maxConcurrent}; ` +
+        'active sessions continue and new work waits for capacity'
+    )
+  }
   return announce(requireWorker(id))
 }
 

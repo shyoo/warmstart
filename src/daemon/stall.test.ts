@@ -226,7 +226,18 @@ async function canEnumerateProcesses(): Promise<boolean> {
       process.platform === 'win32'
         ? await run(
             'powershell.exe',
-            ['-NoProfile', '-NonInteractive', '-Command', '(Get-CimInstance Win32_Process).Count'],
+            [
+              '-NoProfile',
+              '-NonInteractive',
+              '-Command',
+              // ⚠️ Selects the same properties the watchdog reads before counting: WMI may permit a
+              // bare count while denying `CommandLine`, which would otherwise make this a test of
+              // two different host capabilities. It still has to *print a count* — the caller reads
+              // this as a number, so listing the objects themselves would parse as `NaN` and report
+              // every host as denied.
+              '@(Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,' +
+                'KernelModeTime,UserModeTime,CommandLine).Count'
+            ],
             { timeout: 20_000, windowsHide: true }
           )
         : await run('ps', ['-eo', 'pid='], { timeout: 20_000 })

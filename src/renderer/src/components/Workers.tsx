@@ -504,7 +504,8 @@ export function Workers({
                           'worker do parallel work — a second task on a busy account waits as ' +
                           '`queued` until a slot frees. ⚠️ Not free: parallel requests against one ' +
                           'cached prefix each pay a cache write, and both sessions spend the same ' +
-                          'quota window.'
+                          'quota window. Lowering it never interrupts work already running; it only ' +
+                          'holds later tasks until capacity frees.'
                         }
                         onChange={(e) => {
                           const next = Number.parseInt(e.target.value, 10)
