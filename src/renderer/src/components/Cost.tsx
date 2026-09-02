@@ -237,6 +237,7 @@ const MOVE_LABEL: Record<string, string> = {
   dispatch: 'send it work',
   keepalive: 'keep alive',
   compact: 'compact',
+  revive_compact: 'wake it to compact',
   let_expire: 'let it expire',
   handoff_close: 'hand off and close',
   none: 'nothing yet'
@@ -246,6 +247,7 @@ const MOVE_TONE: Record<string, string> = {
   dispatch: 'state-ok',
   keepalive: 'state-running',
   compact: 'state-warn',
+  revive_compact: 'state-warn',
   let_expire: 'state-idle',
   handoff_close: 'state-human',
   none: 'state-idle'

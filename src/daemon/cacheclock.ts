@@ -3,9 +3,27 @@ import type { Session, Settings } from '@shared/protocol.js'
 import { db } from './db.js'
 import { costModel } from './costmodel.js'
 import { adapter } from './adapters/index.js'
-import { clearClockMove, closeSession, listSessions, markClockMove, sendPrompt } from './sessions.js'
-import { addMessage, getTask, listTasks, runForSession, setTaskHandoff } from './tasks.js'
-import { noteCompactionAsked } from './compaction.js'
+import {
+  clearClockMove,
+  closeSession,
+  hasOpenRun,
+  listSessions,
+  markClockMove,
+  sendPrompt,
+  spawnSession,
+  warmClosedConversations,
+  whyNoSession
+} from './sessions.js'
+import {
+  addMessage,
+  getTask,
+  lastRunForSession,
+  listTasks,
+  runForSession,
+  setTaskHandoff
+} from './tasks.js'
+import { noteCompactionAsked, onCompactionLanded } from './compaction.js'
+import { getWorker } from './workers.js'
 import { reserveState } from './reserve.js'
 import { policy } from './objective.js'
 import { settings as fleetSettings } from './settings.js'
@@ -34,6 +52,18 @@ import { log } from './log.js'
  * Moves 2 and 3 exist only because reads refresh the TTL; move 1 exists only because there is a queue
  * to pull from. Between them they are the largest saving this tool offers over running a
  * pre-compaction watchdog next to manually driven windows.
+ *
+ * And one move that acts on a session with **no process at all**, in a second pass:
+ *
+ * ```
+ * 7. closed, prefix still warm, a task parked on a clock -> REVIVE, COMPACT, close it again
+ * ```
+ *
+ * ⛔ Every move above needs a process to send a prompt to, so a conversation *between* two runs of a
+ * task is one the loop can never reach - and it is precisely the conversation that sits still while
+ * its hour of TTL runs out. Move 7 is that gap, and the reason it is worth a spawn is that a
+ * compaction bought while the prefix is warm reads it at `0.1·C`, where the same compaction after it
+ * lapses pays `~1.25·C` to rebuild it first. See `decideRevive`.
  */
 
 /**
@@ -236,13 +266,16 @@ export function moveOutcome(session: Session, now: number): MoveOutcome {
   const { clockMove: move, clockMoveAt: at } = session
   if (!move || !at) return 'none'
 
-  const landed =
-    move === 'compact'
-      ? session.tokensSinceCompact < (session.clockMoveContext ?? Number.POSITIVE_INFINITY)
-      : (session.lastRequestStartedAt ?? 0) > at
+  // ⚠️ `revive_compact` is a compaction with a process start in front of it, so it is judged by the
+  // same evidence and given the same settle window plus the spawn — never by "a turn happened",
+  // which a revived session produces just by opening.
+  const compacting = move === 'compact' || move === 'revive_compact'
+  const landed = compacting
+    ? session.tokensSinceCompact < (session.clockMoveContext ?? Number.POSITIVE_INFINITY)
+    : (session.lastRequestStartedAt ?? 0) > at
   if (landed) return 'landed'
 
-  const settle = move === 'compact' ? COMPACT_SETTLE_MS : KEEPALIVE_SETTLE_MS
+  const settle = compacting ? COMPACT_SETTLE_MS : KEEPALIVE_SETTLE_MS
   return now - at < settle ? 'in_flight' : 'ignored'
 }
 
@@ -332,6 +365,166 @@ export function compactOnResume(session: Session, settings: Settings): ResumeCom
       `${session.tokensSinceCompact} of it since the last compaction - every turn of this run ` +
       'would read that prefix',
     estimatedCost: Math.round(cost)
+  }
+}
+
+// ---------------------------------------------------------------------------- before it lapses
+
+/**
+ * How long before the prefix lapses the clock starts trying to revive-and-compact.
+ *
+ * ⚠️ The same 15 minutes a live session gets, and for a stronger reason: this move has a **process
+ * start** in front of the compaction. ~30s to spawn and reach stdin, plus a compaction measured at
+ * 110s · 115s · 139s · 161s, is four minutes at the slow end — so the decision is taken at about
+ * **T+45m** of a one-hour TTL, which leaves the headroom the operator asked for and still lands well
+ * inside the window.
+ */
+export const REVIVE_COMPACT_BEFORE_MS = DECIDE_BEFORE_EXPIRY_MS
+
+/**
+ * And the point past which it is no longer worth starting.
+ *
+ * ⛔ A compaction that finishes *after* the prefix has lapsed bought nothing: the cached read it was
+ * trying to be paid for is gone, and the work becomes the same work the resume path would do later
+ * for the same price. Below this the clock declines rather than starting what it cannot finish.
+ */
+export const REVIVE_COMPACT_FLOOR_MS = 5 * 60 * 1000
+
+/**
+ * Should this conversation be woken up, compacted, and put back down — before its prefix lapses?
+ *
+ * ⭐ **Compacting early and compacting late are not the same purchase.** A compaction has to read the
+ * whole conversation, and what that read costs depends entirely on whether the vendor still holds the
+ * prefix:
+ *
+ * ```
+ * at T+45m, prefix still warm : the compaction reads a cached prefix        0.1·C
+ * at T+2h,  prefix has lapsed : the same compaction rebuilds it first      ~1.25·C, then reads
+ * ```
+ *
+ * ⛔ **This is the correction that made the move necessary.** `compactOnResume` compacts a
+ * conversation at the moment it is revived for work, which for a task parked on a five-hour window is
+ * *hours* after the one-hour TTL ran out — precisely when the compaction is at its most expensive and
+ * every chance to be cheap has expired. Measured on t92 (2026-09-01): preempted 21:35, resumed 23:40,
+ * prefix lapsed at ~22:35 in the middle of a gap where nothing looked at the conversation at all. The
+ * moment worth acting on was ~22:20, while the cache this fleet had already paid for was still there.
+ *
+ * ⚠️ **`compactOnResume` is not replaced, and the two cannot both fire.** A landed compaction zeroes
+ * `tokensSinceCompact`, so a conversation compacted here fails `worthCompactingNow` at resume and is
+ * left alone. The resume path stays the last resort for what this cannot cover: a daemon that was not
+ * running, a prefix that had already lapsed, a task with no clock on it.
+ *
+ * ⛔ **Only a conversation somebody is provably coming back to, and provably not yet.** Reviving costs
+ * a real spawn on a real account, so the bar is a task parked on a clock — `paused_quota` or
+ * `scheduled` with a `not_before` far enough out that `admit()` cannot make it dispatchable while the
+ * compaction is in flight. That one test does three jobs: it proves the conversation has a future, it
+ * proves the spend is not speculative, and it removes the race where the scheduler dispatches into the
+ * session mid-compaction and the agent reads its instructions out of a summary.
+ */
+export function decideRevive(session: Session, ctx: ClockContext): ClockDecision {
+  const now = ctx.now ?? Date.now()
+  const info = adapter(session.adapterId).info
+  const expiry = session.cacheExpiresAt
+  const base = {
+    sessionId: session.id,
+    contextTokens: session.contextTokens,
+    expiresAt: expiry
+  }
+  const nothing = (reason: string): ClockDecision => ({
+    ...base,
+    move: 'none',
+    reason,
+    expectedIdleMs: null,
+    estimatedCost: null
+  })
+
+  if (!expiry) return nothing('no cached prefix to save')
+
+  // ⛔ Ahead of everything else, exactly as in `decide()`: this move spawns a process, and a 10s tick
+  // against a four-minute compaction would otherwise start twenty-four of them.
+  const outcome = moveOutcome(session, now)
+  if (outcome === 'in_flight') {
+    const waited = Math.round((now - (session.clockMoveAt ?? now)) / 1000)
+    return nothing(`${session.clockMove} was requested ${waited}s ago and has not landed yet`)
+  }
+  if (outcome === 'ignored' && session.clockMoveAttempts >= MAX_MOVE_ATTEMPTS) {
+    // ⛔ The clock stops insisting here too, and there is nothing to fall back to: a conversation with
+    // no process has no session to take a handoff from. It is left to lapse, and the resume path deals
+    // with whatever is left of it.
+    return nothing(
+      `${session.clockMove} was asked for ${session.clockMoveAttempts} times and never landed - ` +
+        'leaving this conversation alone'
+    )
+  }
+
+  if (!info.capabilities.resumeSession) return nothing(`${info.label} cannot resume a conversation`)
+  if (!info.capabilities.manualCompact) return nothing(`${info.label} cannot be asked to compact`)
+  if (info.capabilities.streamPrompts === 'once') {
+    return nothing(`${info.label} takes one prompt per session`)
+  }
+  // ⛔ Off means off, here as everywhere else the clock spends.
+  if (!(ctx.settings?.autoCompact ?? true)) return nothing('automatic compaction is switched off')
+
+  const model = costModel(info.policy.costModelId)
+  if (!worthCompactingNow(session, model)) {
+    return nothing(
+      `${session.contextTokens ?? 0} tokens of context, ${session.tokensSinceCompact} of it since ` +
+        'the last compaction - not enough to be worth a process'
+    )
+  }
+  const compactCost = model.costOfCompact(session)
+  if (compactCost === null) return nothing('this cost model cannot price a compaction')
+
+  // ⛔ **Never two processes on one conversation.** The row says closed; a run that has not ended says
+  // somebody is mid-turn in it regardless, and the two disagree exactly when it matters.
+  if (hasOpenRun(session.id)) return nothing('a run is still open against this conversation')
+
+  const worker = getWorker(session.workerId)
+  if (!worker) return nothing('the account that holds this conversation is gone')
+  const unavailable = whyNoSession(worker, 'work')
+  if (unavailable) return nothing(unavailable)
+
+  // Who is coming back to it, and when.
+  const lastRun = lastRunForSession(session.id)
+  const task = lastRun?.taskId ? getTask(lastRun.taskId) : null
+  if (!task || task.deletedAt) return nothing('no task is waiting on this conversation')
+  if (task.status !== 'paused_quota' && task.status !== 'scheduled') {
+    // ⚠️ Includes `ready`. A ready task is one the scheduler may dispatch on its very next tick, and
+    // the dispatch path compacts what it revives — so the honest answer is to let it, rather than to
+    // race it with a process of our own.
+    return nothing(`t${task.seq} is ${task.status}, not parked on a clock`)
+  }
+  const releaseIn = (task.notBefore ?? 0) - now
+  if (releaseIn <= RESUME_COMPACT_WAIT_MS) {
+    return nothing(
+      `t${task.seq} can start again in ${Math.max(0, Math.round(releaseIn / 1000))}s - too soon to ` +
+        'hold a compaction in front of it'
+    )
+  }
+
+  const untilExpiry = expiry - now
+  if (untilExpiry > REVIVE_COMPACT_BEFORE_MS) {
+    return nothing(`${Math.round(untilExpiry / 60000)}m of TTL left - nothing to decide yet`)
+  }
+  if (untilExpiry < REVIVE_COMPACT_FLOOR_MS) {
+    // ⚠️ Not a failure, and not silence either: the conversation now belongs to `compactOnResume`,
+    // which compacts it when the task comes back, at the higher price.
+    return nothing(
+      `only ${Math.round(untilExpiry / 60000)}m of TTL left - a spawn and a compaction do not fit, ` +
+        'so this is left for the resume to compact'
+    )
+  }
+
+  return {
+    ...base,
+    move: 'revive_compact',
+    reason:
+      `t${task.seq} comes back in ${Math.round(releaseIn / 60000)}m, and this prefix lapses in ` +
+      `${Math.round(untilExpiry / 60000)}m - compacting ${session.contextTokens ?? 0} tokens now ` +
+      'reads a cache that is still warm, where the same compaction after it lapses pays to rebuild ' +
+      'the prefix first',
+    expectedIdleMs: releaseIn,
+    estimatedCost: Math.round(compactCost)
   }
 }
 
@@ -662,7 +855,130 @@ export async function runCacheClock(ctx: ClockContext): Promise<ClockResult> {
     }
   }
 
+  // The second pass: conversations with no process at all, whose prefix has not lapsed yet.
+  //
+  // ⛔ Separate from the loop above and deliberately so. Every move in that loop is a prompt to a
+  // running process; the only move available here is to *start* one, which is a different decision
+  // with a different bar — see `decideRevive`. Folding the two together would mean one `decide()`
+  // whose branches disagreed about whether a session even exists.
+  for (const session of warmClosedConversations(withSettings.now ?? Date.now())) {
+    const decision = decideRevive(session, withSettings)
+    decisions.push(decision)
+    if (decision.move === 'none') continue
+
+    record(decision)
+    try {
+      await reviveAndCompact(session, decision)
+      acted++
+    } catch (err) {
+      // ⛔ Nothing is marked. A spawn that threw never happened, and remembering it as an outstanding
+      // move would keep the clock waiting four minutes for a compaction nobody asked for.
+      log.warn(`cache clock could not revive ${session.id.slice(0, 8)} to compact it:`, err)
+    }
+  }
+
   return { decisions, acted }
+}
+
+/** A revived CLI needs the same moment before it reads stdin that a fresh one does. */
+const SPAWN_TO_PROMPT_MS = 2500
+
+/**
+ * Wake a conversation, compact it, and put it back down.
+ *
+ * ⛔ **Put back down, always.** The session is closed on the boundary and closed again on the timeout,
+ * because a live work session with no run and no workspace claim is a state nothing else in this
+ * daemon expects: the claim was released when the conversation ended, so leaving the process up would
+ * offer the scheduler a warm session in a worktree that may since have been claimed by another task
+ * and checked out onto another branch. Reviving costs one spawn; that is the whole price paid here.
+ *
+ * ⚠️ **`post_tokens` stays null for this move.** The size a compaction left behind is only knowable
+ * from a *later* turn (see `fillPostTokens`), and this conversation is closed before it can take one.
+ * Buying that measurement would mean paying for an extra turn to learn a number nothing acts on.
+ *
+ * ⚠️ The compaction is metered on the session, and on no run: there is no open run to attribute it to,
+ * and inventing one would put tokens in a run's ledger that the run did not spend.
+ */
+async function reviveAndCompact(session: Session, decision: ClockDecision): Promise<void> {
+  const info = adapter(session.adapterId).info
+  const revived = spawnSession({
+    workerId: session.workerId,
+    cwd: session.cwd,
+    transport: session.transport,
+    purpose: 'work',
+    projectId: session.projectId,
+    ...(session.model ? { model: session.model } : {}),
+    // ⛔ Only where the CLI can be told one — the same rule `SpawnOptions.effort` states.
+    ...(info.capabilities.selectableEffort && session.effort ? { effort: session.effort } : {}),
+    // ⛔ The same row, the same conversation. `--resume` reuses the id, which is why everything below
+    // can go on addressing this session by the id it already had.
+    resume: session
+  })
+
+  // ⛔ After the spawn, never before: the resume path clears `clock_move` on the way in, so a mark
+  // written first would be wiped by the very thing it exists to guard.
+  markClockMove(revived.id, 'revive_compact', session.tokensSinceCompact)
+
+  const run = lastRunForSession(session.id)
+  noteCompactionAsked({
+    sessionId: session.id,
+    taskId: run?.taskId ?? null,
+    reason: decision.reason,
+    preTokens: decision.contextTokens
+  })
+  if (run?.taskId) {
+    addMessage(
+      run.taskId,
+      'system',
+      `Woke this conversation up to compact it: ${decision.reason}. It costs about ` +
+        `${decision.estimatedCost} tokens now, against a rebuild of the whole prefix if it is left ` +
+        'until this task starts again. The session is closed again as soon as it lands.'
+    )
+  }
+  log.info(
+    `reviving ${session.id.slice(0, 8)} to compact it: ${decision.reason} ` +
+      `(~${decision.estimatedCost} tokens)`
+  )
+
+  // ⚠️ One ending, whichever arrives first. The boundary is the good one; the timeout is the honest
+  // one, because whether `/compact` is honoured on the stream transport is still unmeasured (R6).
+  let settled = false
+  let stopWaiting = (): void => {}
+  const done = (why: string, landed: boolean): void => {
+    if (settled) return
+    settled = true
+    stopWaiting()
+    clearTimeout(timer)
+    if (!landed) {
+      // ⛔ Released rather than left to expire. A mark nobody clears is read two attempts later as a
+      // session that refuses to compact — and the answer to that is `handoff_close`, aimed at a
+      // process this function has already closed.
+      clearClockMove(session.id)
+    }
+    try {
+      closeSession(session.id)
+    } catch (err) {
+      log.warn(`could not close ${session.id.slice(0, 8)} after compacting it:`, err)
+    }
+    log.info(`${session.id.slice(0, 8)}: ${why}`)
+  }
+
+  const timer = setTimeout(
+    () => done('the compaction never landed - closing the conversation again', false),
+    RESUME_COMPACT_WAIT_MS
+  )
+  stopWaiting = onCompactionLanded(session.id, () =>
+    done('compacted while its prefix was still warm - closing the conversation again', true)
+  )
+
+  setTimeout(() => {
+    try {
+      sendPrompt(session.id, '/compact')
+    } catch (err) {
+      log.warn(`could not send /compact to the revived ${session.id.slice(0, 8)}:`, err)
+      done('the /compact could not be sent - closing the conversation again', false)
+    }
+  }, SPAWN_TO_PROMPT_MS)
 }
 
 async function execute(session: Session, decision: ClockDecision): Promise<void> {

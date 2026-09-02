@@ -128,20 +128,55 @@ since its last compaction — over both halves of the break-even — and read **
 across the next twenty minutes. Nothing was broken. The session was simply not one the clock was
 allowed to look at.
 
-⭐ **The fix is a moment, not a policy.** `compactOnResume()` applies the *same* `worthCompactingNow`
-test at the one point where the conversation has a process again and the spending is no longer
-speculative: the scheduler has dispatched a task, the account has passed the dispatch gate, the
-conversation is being revived regardless, and every turn of the run about to start will read this
-prefix. `/compact` goes in first and the task's own prompt waits for the `compact_boundary`.
+⭐ **The moment matters more than the policy, because a compaction is not one price.** It has to read
+the whole conversation, and what that read costs depends entirely on whether the vendor still holds
+the prefix:
 
-⛔ **Not by resuming a closed conversation on spec.** That would mean spawning a process and paying a
-full context read on the chance somebody wants it later — on an account that may have been preempted
-for being out of quota in the first place.
+| When it is compacted | What the read costs |
+|---|---|
+| **T+45m**, prefix still warm | a cache read — **0.1·C** |
+| T+2h, prefix has lapsed | rebuild the prefix first (~**1.25·C**), then read it |
+
+So a task parked on a five-hour window is the worst case there is: the TTL runs out at T+1h and the
+task does not come back until T+2h, and every chance to compact cheaply has expired before anything
+looks at the conversation.
+
+⭐ **Move 7 — `revive_compact`.** A second pass in `runCacheClock` over
+`warmClosedConversations()`: conversations with no process whose prefix has **not** lapsed. Inside the
+same 15-minute window a live session gets, the clock starts a process on the conversation, sends
+`/compact`, and closes it again on the boundary. On a one-hour TTL that decision is taken at about
+**T+45m**, which leaves room for a ~30s spawn and a compaction measured at 110 · 115 · 139 · 161s.
+Below **5 minutes** of TTL it declines: a compaction that lands after the prefix has lapsed bought
+nothing.
+
+⛔ **Only a conversation somebody is provably coming back to, and provably not yet** — a task in
+`paused_quota` or `scheduled` whose `not_before` is further out than the compaction window. That one
+test does three jobs: it proves the conversation has a future, it proves the spend is not speculative,
+and it removes the race where the scheduler dispatches into the session mid-compaction and the agent
+reads its instructions out of a summary. A `ready` task is deliberately excluded — the dispatch path
+compacts what it revives, so the honest answer is to let it.
+
+⛔ **Put back down, always.** The session is closed again on the boundary and on the timeout. A live
+work session with no run and no workspace claim is a state nothing else expects: the claim was
+released when the conversation ended, so leaving the process up would offer the scheduler a warm
+session in a worktree another task may since have claimed. ⚠️ `post_tokens` is therefore null for
+this move — the size a compaction leaves behind is only knowable from a *later* turn, and buying one
+would mean paying for a turn to learn a number nothing acts on.
+
+⚠️ **`compactOnResume()` remains, as the last resort.** It applies the same `worthCompactingNow` test
+at the moment a conversation is revived for work — for the cases the early move cannot reach: a
+daemon that was not running, a prefix that had already lapsed, a task with no clock on it. `/compact`
+goes in first and the task's own prompt waits for the `compact_boundary`. Late is more expensive than
+early; it is not more expensive than reading 84k tokens on every turn of a twenty-minute run.
+
+⛔ **The two cannot both fire.** A landed compaction zeroes `tokens_since_compact`, which is the growth
+half of `worthCompactingNow`, so a conversation shrunk before its prefix lapsed is left alone at resume.
 
 ⚠️ **The prompt is sent exactly once, boundary or no boundary.** Whether `/compact` is honoured on
-the `stream` transport is still unmeasured (R6), so the wait is bounded by `RESUME_COMPACT_WAIT_MS`
-(= `COMPACT_SETTLE_MS`, 4 min) and the run starts on the full context if nothing arrives. The
-unlanded ask stays on the record, which is the finding.
+the `stream` transport is still unmeasured (R6), so both paths bound the wait with
+`RESUME_COMPACT_WAIT_MS` (= `COMPACT_SETTLE_MS`, 4 min): the resume starts the run on the full context
+and the revive closes the conversation again. The unlanded ask stays on the record, which is the
+finding.
 
 ## 5. Quota
 

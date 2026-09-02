@@ -432,6 +432,32 @@ export function finishedConversationsIn(
   ).map(toSession)
 }
 
+/**
+ * Conversations with no process, whose prompt cache has **not** lapsed yet.
+ *
+ * ⛔ The set the cache clock could not see. `listSessions()` returns live and idle rows because every
+ * move it owns is a prompt and a prompt needs a process — but a vendor-side prefix outlives the
+ * process that built it by up to an hour, and a conversation between two runs of the same task is
+ * *exactly* the one that sits still while that hour runs out. See `decideRevive`.
+ *
+ * ⚠️ `cache_expires_at` in the future is the whole filter. A conversation whose prefix has already
+ * lapsed holds nothing worth spending on: reviving it would pay a cold rebuild for the privilege,
+ * which is the resume-time compaction's job to weigh, not this one's.
+ */
+export function warmClosedConversations(now = Date.now()): Session[] {
+  return rows<SessionRow>(
+    db()
+      .prepare(
+        `select * from sessions
+          where purpose = 'work' and state in ('closed','failed','abandoned')
+            and coalesce(context_tokens, 0) > 0
+            and cache_expires_at is not null and cache_expires_at > ?
+          order by cache_expires_at asc`
+      )
+      .all(now)
+  ).map(toSession)
+}
+
 export function sessionsForWorker(workerId: string): Session[] {
   return rows<SessionRow>(
     db()

@@ -1207,6 +1207,24 @@ export function runsFor(taskId: string): Run[] {
   )
 }
 
+/**
+ * The most recent run this conversation served, open or closed.
+ *
+ * ⛔ Deliberately not `runForSession`, which returns **open** runs only and is the right question
+ * when asking whether somebody is talking in a session right now. This asks the other question —
+ * *whose work is this conversation about* — and the answer has to survive the run ending, because
+ * the interesting things that happen to a conversation between runs (it is compacted, it is revived,
+ * it lapses) all happen when there is no open run at all.
+ */
+export function lastRunForSession(sessionId: string): Run | null {
+  const r = row<RunRow>(
+    db()
+      .prepare('select * from runs where session_id = ? order by started_at desc limit 1')
+      .get(sessionId)
+  )
+  return r ? toRun(r) : null
+}
+
 export function runForSession(sessionId: string): Run | null {
   const r = row<RunRow>(
     db()

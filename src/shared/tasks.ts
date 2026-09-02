@@ -781,8 +781,21 @@ export function presetOf(objective: Objective): ObjectivePreset | null {
   return null
 }
 
-/** What the cache clock decided to do with a session, and why. */
-export type CacheMove = 'dispatch' | 'keepalive' | 'compact' | 'let_expire' | 'handoff_close' | 'none'
+/**
+ * What the cache clock decided to do with a session, and why.
+ *
+ * ⚠️ `revive_compact` is the one move that acts on a session with **no process**: it starts one, for
+ * the sole purpose of compacting a conversation before its prompt cache lapses, and closes it again.
+ * Every other move is a prompt sent to something already running.
+ */
+export type CacheMove =
+  | 'dispatch'
+  | 'keepalive'
+  | 'compact'
+  | 'revive_compact'
+  | 'let_expire'
+  | 'handoff_close'
+  | 'none'
 
 export interface ClockDecision {
   sessionId: string
