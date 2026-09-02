@@ -641,6 +641,8 @@ function NewTask({
   const [sessionSharing, setSessionSharing] = useState<SessionSharingChoice>('inherit')
   const [plan, setPlan] = useState(false)
   const [dependsOn, setDependsOn] = useState<string[]>([])
+  const [scheduleOption, setScheduleOption] = useState<'now' | '30m' | '1h' | '2h' | '4h' | 'custom'>('now')
+  const [customTime, setCustomTime] = useState('')
   const [workerId, setWorkerId] = useState('')
   const [model, setModel] = useState('')
   const [effort, setEffort] = useState('')
@@ -725,6 +727,30 @@ function NewTask({
         // model: nothing here runs, and each draft answers those questions for itself.
         await rpc('task.plan', { title: title.trim(), projectId: projectId || null })
       } else {
+        let notBefore: number | null = null
+        if (scheduleOption === '30m') {
+          notBefore = Date.now() + 30 * 60 * 1000
+        } else if (scheduleOption === '1h') {
+          notBefore = Date.now() + 60 * 60 * 1000
+        } else if (scheduleOption === '2h') {
+          notBefore = Date.now() + 2 * 60 * 60 * 1000
+        } else if (scheduleOption === '4h') {
+          notBefore = Date.now() + 4 * 60 * 60 * 1000
+        } else if (scheduleOption === 'custom') {
+          if (!customTime) {
+            onError('Please choose a date and time for the scheduled task')
+            setSaving(null)
+            return
+          }
+          const parsed = new Date(customTime).getTime()
+          if (isNaN(parsed)) {
+            onError('Invalid date and time for scheduled task')
+            setSaving(null)
+            return
+          }
+          notBefore = parsed
+        }
+
         await rpc('task.create', {
           title: title.trim(),
           projectId: projectId || null,
@@ -734,6 +760,7 @@ function NewTask({
           finishPolicy,
           sessionSharing,
           status: targetStatus,
+          ...(notBefore ? { notBefore } : {}),
           // ⚠️ Absent, not empty here too - `dependsOn: []` is an empty list of edges, which is what
           // the daemon would do anyway, but sending one says a choice was made where none was.
           ...(dependsOn.length > 0 ? { dependsOn } : {}),
@@ -753,6 +780,8 @@ function NewTask({
       }
       setTitle('')
       setDependsOn([])
+      setScheduleOption('now')
+      setCustomTime('')
       paste.clear()
       await onDone()
     } catch (err) {
@@ -866,6 +895,38 @@ function NewTask({
               This task is held at <strong>blocked</strong> until every task named here has
               completed. Nothing dispatches it in the meantime, and finishing the last one admits it
               automatically — you can add or drop a prerequisite later from the task&apos;s thread.
+            </span>
+          </div>
+
+          <div className="form-row">
+            <label>Schedule</label>
+            <div className="pickers">
+              <select
+                value={scheduleOption}
+                aria-label="Schedule start"
+                onChange={(e) => {
+                  setScheduleOption(e.target.value as 'now' | '30m' | '1h' | '2h' | '4h' | 'custom')
+                }}
+              >
+                <option value="now">Immediately</option>
+                <option value="30m">30m later</option>
+                <option value="1h">1h later</option>
+                <option value="2h">2h later</option>
+                <option value="4h">4h later</option>
+                <option value="custom">Custom time/date…</option>
+              </select>
+              {scheduleOption === 'custom' && (
+                <input
+                  type="datetime-local"
+                  aria-label="Custom schedule time"
+                  value={customTime}
+                  onChange={(e) => setCustomTime(e.target.value)}
+                />
+              )}
+            </div>
+            <span className="form-hint">
+              Scheduled tasks stay at <strong>scheduled</strong> until their time arrives. They are routed
+              and dispatched when fired, not when filed.
             </span>
           </div>
 
@@ -1006,7 +1067,13 @@ function NewTask({
                 disabled={!!saving || !title.trim()}
                 onClick={() => void submit('ready')}
               >
-                {saving === 'ready' ? 'Filing…' : 'File task'}
+                {saving === 'ready'
+                  ? scheduleOption !== 'now'
+                    ? 'Scheduling…'
+                    : 'Filing…'
+                  : scheduleOption !== 'now'
+                    ? 'Schedule task'
+                    : 'File task'}
               </button>
             </div>
           )}

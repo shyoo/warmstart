@@ -329,6 +329,14 @@ try {
     notBefore: Date.now() + 3_600_000
   })
   check('a future not_before schedules rather than queues', later.status === 'scheduled')
+  check('a scheduled task is not routed at filing time', later.assignee === null, later.assignee)
+
+  const t30m = await daemon.rpc('task.create', {
+    title: 'in 30m',
+    projectId: added.id,
+    notBefore: Date.now() + 1_800_000
+  })
+  check('30m preset creates scheduled task', t30m.status === 'scheduled' && typeof t30m.notBefore === 'number')
 
   // ---------------------------------------------------------------- constraints at the door
   //

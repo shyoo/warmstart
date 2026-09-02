@@ -619,6 +619,15 @@ function TaskDetail({
               <PriorityPicker task={task} onChanged={refresh} />
             </Fact>
             <Fact label="filed">{when(task.createdAt)}</Fact>
+            {task.status === 'scheduled' && task.notBefore && (
+              <Fact label="scheduled">
+                <span title={new Date(task.notBefore).toLocaleString()}>
+                  {task.notBefore > now
+                    ? `in ${duration(task.notBefore - now)} (${when(task.notBefore)})`
+                    : when(task.notBefore)}
+                </span>
+              </Fact>
+            )}
             {task.firstRunAt && <Fact label="started">{when(task.firstRunAt)}</Fact>}
             {/* ⛔ Two numbers, because they answer two questions and only one of them is about the
                 agent. `took` is the time an agent was actually working — dispatch, routing and the

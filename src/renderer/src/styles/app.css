@@ -1497,6 +1497,7 @@ body {
 }
 
 input[type="text"],
+input[type="datetime-local"],
 input:not([type]),
 select {
   font: inherit;

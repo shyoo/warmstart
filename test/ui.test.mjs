@@ -540,17 +540,25 @@ try {
         finishInheritText: form.querySelector('select[aria-label="Finish policy"] option[value="inherit"]')?.innerText ?? '',
         sharingOptions: [...(form.querySelector('select[aria-label="Conversation policy"]')?.options ?? [])]
           .map(o => o.value),
-        sharingInheritText: form.querySelector('select[aria-label="Conversation policy"] option[value="inherit"]')?.innerText ?? ''
+        sharingInheritText: form.querySelector('select[aria-label="Conversation policy"] option[value="inherit"]')?.innerText ?? '',
+        scheduleOptions: [...(form.querySelector('select[aria-label="Schedule start"]')?.options ?? [])]
+          .map(o => o.value)
       };
     })())
   `)
   const f = JSON.parse(filing)
   check(
     'the form asks where and how before it asks what',
-    f.labels?.join(' > ').toLowerCase() === 'project > policy > waits for > worker > model',
+    f.labels?.join(' > ').toLowerCase() === 'project > policy > waits for > schedule > worker > model',
     filing
   )
   check('the prompt sits below every setting', f.promptIsLast === true, filing)
+  check(
+    'the new-task form offers schedule presets including custom',
+    Array.isArray(f.scheduleOptions) &&
+      ['now', '30m', '1h', '2h', '4h', 'custom'].every((opt) => f.scheduleOptions.includes(opt)),
+    filing
+  )
   // ⛔ The finish policy is chosen on the way in, where a checkbox used to ask "I want to check this
   // before it lands". That checkbox could say await-human or nothing; the dropdown reaches all four
   // policies and `inherit`, which is the value that keeps following the project as it changes.
@@ -747,6 +755,28 @@ try {
   check('its bytes move out of pending and under the task', carriedResult.movedOutOfPending === true, carried)
   check('the prompt the agent would get names the file by absolute path', carriedResult.promptNamesTheFile === true, carried)
   check('and the thread can read the same bytes back for its thumbnail', carriedResult.readsBackTheSameBytes === true, carried)
+
+  // Schedule picker interaction: selecting custom shows the datetime-local input, and button label updates.
+  const scheduleInteraction = await evaluate(`
+    JSON.stringify((() => {
+      const form = document.querySelector('.form');
+      const sel = form?.querySelector('select[aria-label="Schedule start"]');
+      if (!sel) return { missing: true };
+      const hadDateBefore = !!form.querySelector('input[type="datetime-local"]');
+      sel.value = 'custom';
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+      const hasDateAfter = !!form.querySelector('input[type="datetime-local"]');
+      const btn = [...form.querySelectorAll('.ask-actions button')].find(b => b.classList.contains('btn--primary'));
+      const btnText = btn?.innerText.trim() ?? '';
+      sel.value = 'now';
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+      const hasDateReset = !!form.querySelector('input[type="datetime-local"]');
+      return { hadDateBefore, hasDateAfter, hasDateReset, btnText };
+    })())
+  `)
+  const sInt = JSON.parse(scheduleInteraction)
+  check('custom schedule option reveals datetime-local input', sInt.hadDateBefore === false && sInt.hasDateAfter === true && sInt.hasDateReset === false, scheduleInteraction)
+  check('schedule option updates file button label to Schedule task', sInt.btnText === 'Schedule task', scheduleInteraction)
 
   await evaluate(
     `[...document.querySelectorAll('.panel-head button')].find(b => b.innerText.trim() === 'Cancel')?.click()`

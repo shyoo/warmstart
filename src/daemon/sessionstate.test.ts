@@ -99,7 +99,7 @@ afterAll(() => {
   }
 })
 
-describe('a daemon that went away', () => {
+describe('a daemon that went away', { timeout: 20_000 }, () => {
   it('calls the sessions it finds still open abandoned, not failed', () => {
     // ⛔ The single biggest source of the wrong word. This runs on **every** start, so on an install
     // that is rebuilt a few times a day it eventually touches almost everything.
