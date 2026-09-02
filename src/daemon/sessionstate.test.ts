@@ -159,6 +159,36 @@ describe('an ended session is one that is over, in every list', () => {
   })
 })
 
+describe('clearing Claude Code transcript bookkeeping from existing sessions', () => {
+  it('removes a synthetic model and its companion effort from the data the Tasks UI reads', () => {
+    seedSession('s-synthetic', 'closed')
+    db.db()
+      .prepare("update sessions set model = '<synthetic>', effort = 'medium' where id = ?")
+      .run('s-synthetic')
+    db.db()
+      .prepare(
+        `insert into turns (session_id, request_id, ts, model, effort)
+         values (?, 'synthetic-turn', ?, '<synthetic>', 'medium')`
+      )
+      .run('s-synthetic', Date.now())
+
+    // Run the shipped migration rather than copying its SQL: existing installations need this half
+    // as much as future transcript entries need the parser guard.
+    db.db().exec(`pragma user_version = ${db.versionBefore("set model = null,")}`)
+    db.closeDb()
+    db.openDb(dbPath)
+
+    expect(db.db().prepare('select model, effort from sessions where id = ?').get('s-synthetic')).toEqual({
+      model: null,
+      effort: null
+    })
+    expect(db.db().prepare("select model, effort from turns where request_id = 'synthetic-turn'").get()).toEqual({
+      model: null,
+      effort: null
+    })
+  })
+})
+
 /**
  * The repair migration, run against the shape it was written for.
  *

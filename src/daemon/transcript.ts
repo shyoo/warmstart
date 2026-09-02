@@ -76,6 +76,15 @@ function isCompactBoundary(r: TranscriptRecord): r is CompactRecord {
   return r.type === 'system' && (r as CompactRecord).subtype === 'compact_boundary'
 }
 
+/**
+ * Claude Code inserts zero-token assistant placeholders to keep its JSONL conversation alternating.
+ * They are transcript structure, not a model response, so they must never become a session's
+ * observed model or effort.
+ */
+function isSyntheticAssistant(r: AssistantRecord): boolean {
+  return r.message?.model === '<synthetic>'
+}
+
 interface Totals {
   input: number
   output: number
@@ -228,7 +237,7 @@ export class TranscriptTailer {
       return
     }
 
-    if (!isAssistant(rec) || !rec.message?.usage) {
+    if (!isAssistant(rec) || !rec.message?.usage || isSyntheticAssistant(rec)) {
       if (stamp) this.previousTs = ts
       return
     }
@@ -271,6 +280,9 @@ export class TranscriptTailer {
 export function recordTurn(turn: Turn): boolean {
   const session = getSession(turn.sessionId)
   if (!session) return false
+  // Defense in depth for callers other than TranscriptTailer. Claude Code's synthetic entries carry
+  // a zero-valued `usage` object, so truthiness alone does not distinguish them from real turns.
+  if (turn.model === '<synthetic>') return false
   const model = costModelFor(session.adapterId)
 
   const inserted = db()

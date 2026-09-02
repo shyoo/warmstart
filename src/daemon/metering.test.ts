@@ -113,6 +113,17 @@ describe('recordTurn', () => {
     }
     expect(n).toBe(1)
   })
+
+  it('refuses Claude Code bookkeeping entries as non-turns', () => {
+    const before = tokensSinceCompact()
+    expect(transcript.recordTurn({ ...turn('req_synthetic'), model: '<synthetic>', effort: 'medium' })).toBe(false)
+    expect(tokensSinceCompact()).toBe(before)
+    const session = db.db().prepare('select model, effort from sessions where id = ?').get(SESSION) as {
+      model: string | null
+      effort: string | null
+    }
+    expect(session).toEqual({ model: 'claude-sonnet-5', effort: 'high' })
+  })
 })
 
 /**

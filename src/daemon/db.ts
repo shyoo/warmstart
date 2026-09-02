@@ -985,6 +985,25 @@ const MIGRATIONS: Migration[] = [
       group by session_id, landed_at, coalesce(duration_ms, -1), coalesce(pre_tokens, -1)
    )
    and landed_at is not null;
+  `,
+
+  // 34 - Claude Code's `<synthetic>` entries are JSONL bookkeeping, not assistant turns.
+  //
+  // They carry zero-token `usage` objects, which made older builds store the marker as a session's
+  // observed model (and sometimes its effort). Clear that false observation so the Tasks UI falls
+  // back to the requested model until a real transcript turn arrives. Safe to replay: updating an
+  // already-null value changes nothing.
+  `
+  update sessions
+     set model = null,
+         effort = null
+   where model = '<synthetic>';
+
+  update turns
+     set model = null,
+         effort = null,
+         tokenizer = null
+   where model = '<synthetic>';
   `
 ]
 
