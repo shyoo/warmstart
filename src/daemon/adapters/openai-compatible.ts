@@ -124,12 +124,32 @@ const info: AdapterInfo = {
     // costs a stalled session at a window boundary, while omitting one that is present costs only a
     // missed optimisation. Conservative is the cheap direction of the error.
     manualCompact: false,
-    // ⛔ False because **this adapter does not honour `resumeFrom`**, not because Codex cannot
-    // resume - `codex exec resume` exists and has not been run here. The flag is read by the
-    // scheduler to skip a cold start, so claiming it before `plan` implements it would drop the
-    // prompt's context on the floor and report a warm continuation. Promote it the day it is wired
-    // and measured.
-    resumeSession: false,
+    /**
+     * ⭐ Promoted 2026-09-02, having been `false` since M5 with the note *"`codex exec resume`
+     * exists and has not been run here"*. It has now been run here. Measured against codex-cli
+     * 0.151.0 on Windows:
+     *
+     * ```
+     * codex exec -s workspace-write -C <dir> --add-dir <dir> --skip-git-repo-check --json \
+     *            resume -m <model> <THREAD_ID> -        (prompt on stdin)
+     * -> Error: thread/resume: thread/resume failed: no rollout found for thread id <THREAD_ID>
+     * ```
+     *
+     * Three facts fall out of that one line, and `plan` depends on all of them. The sandbox, `--cd`
+     * and `--add-dir` flags exist **only on `exec`**, never on `resume`, and clap accepts them
+     * ahead of the subcommand. A literal `-` as the PROMPT argument makes resume read stdin, which
+     * is the same channel `streamPrompts: 'once'` already uses. And resume is keyed on the rollout
+     * file under `$CODEX_HOME` — this fleet's per-worker isolation unit — so a thread is resumable
+     * exactly where it was written and nowhere else.
+     *
+     * ⚠️ **What is still unmeasured is the far side of a successful resume**, because reaching it
+     * needs a signed-in account: whether the resumed run re-emits `thread.started` carrying the
+     * *same* `thread_id`. `onStreamEvent` writes whatever it is given, so if codex mints a fresh id
+     * per resume this fleet would accumulate one session row per turn and stop finding the
+     * conversation on the next dispatch. That degrades to today's behaviour — a cold start — rather
+     * than to a wrong answer, which is why this ships ahead of the measurement. See HANDOFF.md.
+     */
+    resumeSession: true,
     forkSession: true,
     nativeWorktree: false,
     /**
@@ -969,6 +989,10 @@ export const openaiCompatible: AgentAdapter = {
     if (req.argv) return { command, args: [...prefixArgs, ...req.argv], env }
 
     const args: string[] = []
+    // ⛔ Stream only. `resumeFrom` on a `pty` session would be handed to the interactive TUI, which
+    // takes its conversation back a different way entirely; a headless resume is what the scheduler
+    // is asking for, and `exec resume` is the only thing that provides one.
+    const resumeId = req.transport === 'stream' ? req.resumeFrom : undefined
     if (req.transport === 'stream') {
       // `codex exec` is the headless entry point; the interactive TUI has no subcommand.
       // ⛔ `--json`, not `--output-format`: measured, `exec` has no `--output-format` flag.
@@ -994,19 +1018,34 @@ export const openaiCompatible: AgentAdapter = {
         }
         args.push('--add-dir', root)
       }
+      // ⛔ Here, ahead of any `resume`, rather than beside the `-i` flags they belong to.
+      // `--add-dir` is declared on `exec` and **not on the `resume` subcommand** (measured against
+      // `codex exec resume --help`, codex-cli 0.151.0), so a grant written after the subcommand
+      // name is an argument error instead of a grant. Every directory this run may read has to be
+      // named before it.
+      // ⚠️ No `icacls` reset for these, and the asymmetry is deliberate: the grant above is for
+      // worktrees this fleet created, which can inherit ACLs the sandbox cannot read past. The
+      // attachment store is ours and was never made by a sandboxed process.
+      for (const dir of attachmentDirs(req.attachments ?? [])) args.push('--add-dir', dir)
       // `exec` refuses to start outside a git repository. agentyard's pooled worktrees are git, but a
       // project declared `vcs: none` is not, and refusing to start is a worse failure than running.
       args.push('--skip-git-repo-check')
       // ⛔ Deliberately absent: `--ask-for-approval` is interactive-only and would be an argument
       // error here, and `--dangerously-bypass-approvals-and-sandbox` removes the only boundary left.
     }
-    // ⛔ `-i` per image, plus `--add-dir` for the directory holding them: the sandbox is
+    // ⭐ The subcommand, after everything `exec` owns and before everything `resume` owns.
+    if (resumeId) args.push('resume')
+    // ⛔ `-i` per image. The matching `--add-dir` grants went in above: the sandbox is
     // `workspace-write` and the attachment store is outside the worktree, so without the grant
     // codex can be handed a path it is then forbidden to read — which is the one failure the path
     // fallback exists to prevent.
     for (const attachment of req.attachments ?? []) args.push('-i', attachment.file)
-    for (const dir of attachmentDirs(req.attachments ?? [])) args.push('--add-dir', dir)
     if (req.model) args.push('--model', req.model)
+    // ⛔ Last, and in this order: `exec resume [OPTIONS] [SESSION_ID] [PROMPT]`. The `-` is the
+    // PROMPT and it means *read the prompt from stdin* — the same one-shot channel a fresh `exec`
+    // uses, so `sendPrompt` needs no branch for this. Without it, resume prints `No prompt provided
+    // via stdin` and exits **0** having done nothing, which is the quietest possible failure.
+    if (resumeId) args.push(resumeId, '-')
     if (req.mcpConfig) {
       // Codex registers MCP servers with `codex mcp add` into its own config rather than by path, so
       // there is no way to give one a per-session identity. Recorded rather than faked.

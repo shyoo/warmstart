@@ -34,6 +34,52 @@ that is *used* never pays a rebuild, and it creates the keepalive move in §3.
 minutes of the hour. Measuring idle from the last assistant turn record is optimistic by roughly one
 response length, and the error is in the unsafe direction.
 
+## 1b. Prompt caching (OpenAI / Codex)
+
+Source: OpenAI *Prompt caching* guide, read **2026-09-02**. ⛔ This section replaces the claim this
+document and `costmodels/openai.codex.2026-08.json` both carried until that date — that OpenAI
+caching is *"automatic and server-side"* with *"no TTL a scheduler can extend"*, and therefore
+`unpriced`. The first half is true. The second half is not, and the difference is a scheduling lever
+that was switched off for a whole provider.
+
+| Fact | Value |
+|---|---|
+| Cache **read** | **0.1×** base input |
+| Cache **write**, GPT-5.6+ | **1.25×** base input |
+| Cache **write**, older than GPT-5.6 | **no additional charge** |
+| **Prefix lifetime, GPT-5.6+** | **30 minutes**, *"after its most recent write or reuse"* |
+| **A reuse refreshes the lifetime, free** | *"reusing the prefix refreshes its lifetime without another cache-write charge"* |
+| TTL is counted from | the **request** that writes or reuses it — same as Anthropic, same trap |
+| Minimum cacheable prefix | **1,024** tok (GPT-5.6+) · **2,048** (older) |
+| Invalidation | the *entire rendered prefix* must match. Model, tool definitions and ordering, output format, reasoning effort, verbosity and compaction all break it |
+| Cache scope | not shared across organizations, and not across regional processing boundaries |
+| Steering | `prompt_cache_options.ttl`, whose **only** supported value is `"30m"` |
+
+**This is the same lever Anthropic sells, at half the length.** Read it against §1: 0.1× reads, a
+write multiplier, and a TTL that reuse extends for free. So `cache.kind` is `ttl_multiplier` in both
+files and the arithmetic in §3 applies unchanged — only `n` is smaller.
+
+**Older models are a different mechanism that lands in the same place.** GPT-5.5 and GPT-5.4-mini
+predate `prompt_cache_options` and use `prompt_cache_retention`. The non-ZDR default is `"24h"`,
+which *"typically keeps entries available for around 30 minutes and can retain them for up to 24
+hours"*. So 30 minutes is exact for the newer pair and typical for the older pair, and the cost model
+carries one TTL for all four. ⛔ **It is not a floor.** An organization with Zero Data Retention
+enabled defaults to `"in_memory"` instead — *"around 5 to 10 minutes of inactivity"* — and against
+that the file is optimistic. A ZDR fleet should measure its own reuse rate before trusting it.
+
+**Codex cannot compact, so its clock is a two-move clock.** `codex exec` is one-shot and there is no
+documented way to drive compaction from a headless run (`manualCompact: false`,
+`compaction.available: false`), so `costOfCompact` returns null and every compaction move is skipped.
+What remains is the pair in §3 that needs no compaction: **reuse the prefix inside the 30 minutes**,
+or **let it lapse and start cold**. Half an hour measured from the request start lapses between
+ordinary dispatches, so the second happens often and is not a failure.
+
+**Consequence for every window derived from a TTL.** `keepaliveFloorMs` was 55 minutes on the
+reasoning *"below this, the TTL covers it anyway"* — a sentence that is only true relative to a
+particular TTL, and which against 30 minutes sets a floor above the entire window. Likewise a
+15-minute decision window is a quarter of Anthropic's prefix and *half* of OpenAI's. Both are now
+fractions of `CostModel.cacheTtlMs()`, anchored so an hour reproduces the old constants exactly.
+
 ## 2. Context
 
 | Fact | Value |
@@ -953,3 +999,14 @@ says nothing about cache cost on that provider rather than guessing.
 **Owed:** Vertex and Antigravity cache pricing numbers. The pricing page truncated on two fetch
 attempts on 2026-08-24 and the numbers were deliberately **not guessed**. The schema has the slot;
 fill it when the adapter is built.
+
+**Owed:** the far side of a codex resume. `codex exec resume <thread_id>` is measured as far as an
+unauthenticated machine can take it (§1b, and `openai-compatible.ts`): the argv parses, `-` reads the
+prompt from stdin, and a bad id is refused with `no rollout found for thread id`. What needs a
+signed-in account is whether a *successful* resume re-emits `thread.started` carrying the **same**
+`thread_id`. If codex mints a fresh id per resume, this fleet accumulates one session row per turn
+and stops finding the conversation on the next dispatch — degrading to the cold starts it did before,
+not to a wrong answer, which is why it shipped ahead of the measurement.
+
+**Owed:** a measured reuse rate for a Zero Data Retention org, whose codex prefixes live *"5 to 10
+minutes of inactivity"* rather than 30 (§1b). The cost model would be optimistic for such a fleet.

@@ -69,9 +69,37 @@ import { log } from './log.js'
 /**
  * The decision window. Compaction takes ~2 minutes and has been measured at 2.7 - so the last
  * moment a compaction still fits inside the hour is around T+53m, not T+58m.
+ *
+ * ⚠️ These two are the **one-hour** values, kept as constants because that is what every existing
+ * caller and test means by them. A provider with a shorter TTL gets them scaled: see
+ * `decideBeforeExpiryMs`.
  */
 export const DECIDE_BEFORE_EXPIRY_MS = 15 * 60 * 1000
 export const LAST_CHANCE_MS = 7 * 60 * 1000
+
+/**
+ * The same two windows, as a fraction of whatever TTL the provider actually declares.
+ *
+ * ⛔ **A quarter of the TTL, not fifteen minutes.** Against OpenAI's 30-minute prefix a flat 15
+ * minutes is *half the window*, so the clock would spend half of every codex conversation's life in
+ * its decision phase — and `LAST_CHANCE_MS` at 7 minutes would sit almost on top of it, leaving
+ * about thirty seconds between "start deciding" and "last chance". The ratios below are anchored so
+ * that a 3,600,000ms TTL reproduces 15m and 7m exactly: Anthropic sees no change at all, and a
+ * shorter provider gets windows in proportion to what it has.
+ *
+ * ⚠️ Scaling down is safe in a way scaling up would not be. These windows exist to leave room for a
+ * move to *finish* before the prefix lapses, and the moves have real durations that do not shrink
+ * with the TTL — a compaction still takes ~2 minutes. `REVIVE_COMPACT_FLOOR_MS` is the guard that
+ * matters there and it stays absolute, so a window too small to fit a compaction declines to start
+ * one rather than starting one it cannot finish.
+ */
+export function decideBeforeExpiryMs(ttlMs: number | null): number {
+  return ttlMs === null ? DECIDE_BEFORE_EXPIRY_MS : ttlMs / 4
+}
+
+export function lastChanceMs(ttlMs: number | null): number {
+  return ttlMs === null ? LAST_CHANCE_MS : (ttlMs * 7) / 60
+}
 
 /**
  * How long a move is given to land before the clock will consider it again.
@@ -378,6 +406,11 @@ export function compactOnResume(session: Session, settings: Settings): ResumeCom
  * 110s · 115s · 139s · 161s, is four minutes at the slow end — so the decision is taken at about
  * **T+45m** of a one-hour TTL, which leaves the headroom the operator asked for and still lands well
  * inside the window.
+ *
+ * ⚠️ **The one-hour value, and no longer the thing `decideRevive` compares against.** It reads
+ * `decideBeforeExpiryMs(model.cacheTtlMs())` instead, so a provider with a shorter prefix gets a
+ * proportionally shorter run-up. This constant remains what that function returns for a 60-minute
+ * TTL, which is what the tests and the prose above mean by it.
  */
 export const REVIVE_COMPACT_BEFORE_MS = DECIDE_BEFORE_EXPIRY_MS
 
@@ -503,7 +536,7 @@ export function decideRevive(session: Session, ctx: ClockContext): ClockDecision
   }
 
   const untilExpiry = expiry - now
-  if (untilExpiry > REVIVE_COMPACT_BEFORE_MS) {
+  if (untilExpiry > decideBeforeExpiryMs(model.cacheTtlMs())) {
     return nothing(`${Math.round(untilExpiry / 60000)}m of TTL left - nothing to decide yet`)
   }
   if (untilExpiry < REVIVE_COMPACT_FLOOR_MS) {
@@ -532,7 +565,9 @@ export function decide(session: Session, ctx: ClockContext): ClockDecision {
   const now = ctx.now ?? Date.now()
   const model = costModel(adapter(session.adapterId).info.policy.costModelId)
   const caps = adapter(session.adapterId).info.capabilities
-  const cost = policy(ctx.objective)
+  // ⚠️ The provider's own TTL, so `keepaliveFloorMs` means "the TTL covers it" on every provider
+  // rather than only on the one whose TTL happens to be an hour.
+  const cost = policy(ctx.objective, model.cacheTtlMs() ?? undefined)
   const expiry = session.cacheExpiresAt
   const contextTokens = session.contextTokens ?? 0
 
@@ -667,8 +702,9 @@ export function decide(session: Session, ctx: ClockContext): ClockDecision {
     )
   }
 
+  const ttlMs = model.cacheTtlMs()
   const untilExpiry = expiry - now
-  if (untilExpiry > DECIDE_BEFORE_EXPIRY_MS) {
+  if (untilExpiry > decideBeforeExpiryMs(ttlMs)) {
     return nothing(`${Math.round(untilExpiry / 60000)}m of TTL left - nothing to decide yet`)
   }
   if (untilExpiry <= 0) return nothing('the prefix has already lapsed')
@@ -758,7 +794,7 @@ export function decide(session: Session, ctx: ClockContext): ClockDecision {
   }
 
   // Move 6.
-  if (untilExpiry <= LAST_CHANCE_MS) {
+  if (untilExpiry <= lastChanceMs(ttlMs)) {
     const run = runForSession(session.id)
     if (run?.taskId) {
       return {

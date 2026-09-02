@@ -229,6 +229,31 @@ describe('which conversation is worth going back to', () => {
     expect(sessions.resumableSession([load('s-new')], WORKER, WS)?.id).toBe('s-new')
   })
 
+  it('refuses one whose CLI named the conversation and never told us the name', () => {
+    // ⛔ `spawn` resolves `resumeFrom` as `vendorSessionId ?? id`, and that fallback is only correct
+    // where `mintsSessionId` is true — there the id this fleet generated *is* the one the CLI was
+    // started with. Codex and Antigravity name their own: codex writes a `thread_id` into
+    // `thread.started`, and until that arrives there is no handle to go back to.
+    //
+    // ⚠️ Measured against codex-cli 0.151.0, handing it our UUID is **not** a quiet no-op that
+    // degrades to a cold start — it exits with `no rollout found for thread id <uuid>`, killing the
+    // run. Refusing the candidate here is what turns that into the cold start it should have been.
+    seed({ id: 's-noname', adapter: 'openai-compatible', vendor: null })
+    expect(sessions.resumableSession([load('s-noname')], WORKER, WS)).toBeNull()
+  })
+
+  it('takes one whose CLI named the conversation and did tell us the name', () => {
+    seed({ id: 's-named', adapter: 'openai-compatible', vendor: '0199e5b1-6d2e-7a51-9c3f-1b2c3d4e5f60' })
+    expect(sessions.resumableSession([load('s-named')], WORKER, WS)?.id).toBe('s-named')
+  })
+
+  it('still takes one from a CLI that was handed our own id to begin with', () => {
+    // ⚠️ The other side of the same guard: `claude-code` mints nothing, so a null vendor id is not a
+    // missing handle — our row id is the handle, and refusing it would break every Claude resume.
+    seed({ id: 's-ours', adapter: 'claude-code', vendor: null })
+    expect(sessions.resumableSession([load('s-ours')], WORKER, WS)?.id).toBe('s-ours')
+  })
+
   it('refuses one belonging to another account', () => {
     // A conversation lives inside one isolation root and one quota bucket. The other account
     // cannot see it, and would start cold while reporting that it resumed.

@@ -176,9 +176,36 @@ describe('which conversations may be offered', () => {
   })
 
   it('refuses an adapter that cannot resume a conversation at all', () => {
-    expect(sharing.whyNotShared(task(), session({ adapterId: 'openai-compatible' }), open)).toBe(
+    // ⚠️ `local-llm`, not `openai-compatible`. Codex declared `resumeSession: false` until
+    // 2026-09-02 and was the fixture here; it now resumes, and the bridge is the remaining adapter
+    // that genuinely cannot — it starts a fresh conversation on every dispatch by design.
+    expect(sharing.whyNotShared(task(), session({ adapterId: 'local-llm' }), open)).toBe(
       'cannot-resume'
     )
+  })
+
+  it('refuses one whose prompt cache has already lapsed', () => {
+    // ⛔ **A borrow buys a warm prefix and nothing else.** The borrower did not have this
+    // conversation, so there is no continuity to recover — only a cache somebody else paid for. Once
+    // that has lapsed the trade inverts: a full rebuild (1.25x on codex, 2.0x on Anthropic) to load
+    // context this task never needed, plus the disclosure of everything said in it.
+    //
+    // ⚠️ Deliberately not symmetrical with a task resuming its **own** conversation, which
+    // `resumableSession` still allows cold. See the comment on this gate in sharing.ts.
+    const lapsed = session({ cacheExpiresAt: Date.now() - 60_000 })
+    expect(sharing.whyNotShared(task(), lapsed, open)).toBe('cache-lapsed')
+  })
+
+  it('lends one whose prompt cache is still warm', () => {
+    const warm = session({ cacheExpiresAt: Date.now() + 10 * 60_000 })
+    expect(sharing.whyNotShared(task(), warm, open)).toBeNull()
+  })
+
+  it('does not read an unknown expiry as a lapsed one', () => {
+    // ⚠️ The same rule `isTooFull` follows for context. A session on a provider whose cache this
+    // fleet cannot price records `null`, and refusing every such conversation would write off a
+    // whole provider over a number nobody published.
+    expect(sharing.whyNotShared(task(), session({ cacheExpiresAt: null }), open)).toBeNull()
   })
 
   it('refuses one whose context is already past the ceiling', () => {

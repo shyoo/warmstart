@@ -217,6 +217,20 @@ export class CostModel {
     return session.lastRequestStartedAt + ttl.seconds * 1000
   }
 
+  /**
+   * How long a cached prefix lives, in ms, or null where the provider declares no TTL.
+   *
+   * ⛔ **The denominator every "how warm is this?" question needs, and the one several callers used
+   * to hardcode as an hour.** Anthropic's default TTL is 3600s and OpenAI's is 1800s, so a divisor
+   * of one hour reports a *completely fresh* codex prefix as 50% warm and can never score it above
+   * that — which quietly ranks every codex conversation below every Claude one no matter how
+   * recently it was used.
+   */
+  cacheTtlMs(): number | null {
+    const ttl = this.defaultTtl()
+    return ttl ? ttl.seconds * 1000 : null
+  }
+
   /** Below this, the provider caches nothing and reports no error - so nothing is saved. */
   minCacheableTokens(model: string | null | undefined): number {
     const table = this.data.cache.min_cacheable_tokens

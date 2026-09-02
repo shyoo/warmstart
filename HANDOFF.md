@@ -8,7 +8,7 @@ started in CI, never run against a real agent CLI.
 if you add a line, find the one it obsoletes and cut it in the same edit. Finished work moves to
 `transient_docs/changes_history.md`; a *rule* to `AGENTS.md`; a durable *fact* to `docs/`.
 
-**Baseline (2026-09-01, measured):** typecheck · lint · build clean · `npm test` 1302/1304 (2 POSIX-only
+**Baseline (2026-09-02, measured):** typecheck · lint · build clean · `npm test` 1333/1335 (2 POSIX-only
 skipped) · `test:daemon` 147/147 · `test:ui` 216/216 · `test:pack` 18/18 · L4 landed a real agent
 commit on origin/main. Electron 44.0.0, electron-builder 26.15.3, 0 npm vulnerabilities.
 CLIs here: claude 2.1.252 · agy 1.1.22 · codex 0.151.0 · local-llm 1.0.0 (qwen3-coder live tested).
@@ -168,6 +168,15 @@ M0–M6 are done. What is left is not a milestone but a list, in the order it wo
    ⚠️ 92–98% of a run's tokens are cache reads, so it fires on long work — why `autoRunawayStop` ships off.
 
 ## Open questions
+
+- **Does a successful `codex exec resume` re-emit the same `thread_id`?** ⛔ The one unmeasured link in
+  the codex reuse path shipped 2026-09-02. Everything reachable without an account is measured (see
+  `docs/adapters.md`): the argv parses, `-` takes the prompt from stdin, a bad id is refused with
+  `no rollout found`. What needs a signed-in codex worker is the far side — `onStreamEvent` writes
+  whatever `thread.started` carries, so if codex mints a **fresh** id per resume this fleet gets one
+  session row per turn and stops finding the conversation on the next dispatch. ⚠️ That degrades to
+  the cold starts codex did before, not to a wrong answer. **To check:** dispatch two turns of one
+  task to a codex worker inside 30 minutes and see whether `sessions` grew by one row or two.
 
 - **Auto-mode classifier cost on a subscription** (`docs/cost-model.md` §9). Billable on Enterprise and
   API-billed accounts, unstated for Pro/Max/Team, and Claude workers default to `auto`. ⛔ Do not assume it is free — **R1** measures it.

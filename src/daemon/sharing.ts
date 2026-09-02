@@ -7,6 +7,7 @@ import {
 } from '@shared/tasks.js'
 import { settings } from './settings.js'
 import { adapter } from './adapters/index.js'
+import { cacheHasLapsed } from './sessions.js'
 
 /**
  * Who may borrow whose conversation.
@@ -77,6 +78,7 @@ export type ShareRefusal =
   | 'no-workspace'
   | 'busy'
   | 'cannot-resume'
+  | 'cache-lapsed'
   | 'context-too-full'
   | null
 
@@ -146,6 +148,21 @@ export function whyNotShared(
   if (!opts.hasWorkspace) return 'no-workspace'
   if (opts.leased) return 'busy'
   if (!adapter(session.adapterId).info.capabilities.resumeSession) return 'cannot-resume'
+  // ⛔ **A borrow buys a warm cache and nothing else, so a lapsed one buys nothing.**
+  //
+  // ⚠️ This gate belongs *here* and deliberately not in `resumableSession`, and the difference is
+  // the whole reason it is narrow. A task resuming its **own** conversation gets back the branch,
+  // the files and the question it was answering, and `dispatch` resumes that one cold on purpose —
+  // losing it has been measured as the more expensive mistake (t91/t92, 2026-09-01, 13.3M tokens on
+  // one of them re-deriving work it had already done). A **borrower** has none of that continuity:
+  // it did not have this conversation, it is being handed somebody else's context to read, and the
+  // only thing it gains is a prefix somebody already paid for. Once that prefix has lapsed the
+  // trade inverts — the borrower pays a full rebuild (1.25x here, 2.0x on Anthropic) to load
+  // context it never needed, and takes the disclosure for free.
+  //
+  // ⭐ Codex is where this bites: a 30-minute TTL measured from the request start lapses between
+  // ordinary dispatches, so most codex conversations are cold by the time a second task wants one.
+  if (cacheHasLapsed(session)) return 'cache-lapsed'
   if (isTooFull(session)) return 'context-too-full'
   return null
 }

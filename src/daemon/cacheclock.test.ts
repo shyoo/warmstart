@@ -530,3 +530,52 @@ describe('a conversation carried across runs is compacted before the next one sp
     expect(clock.RESUME_COMPACT_WAIT_MS).toBe(clock.COMPACT_SETTLE_MS)
   })
 })
+
+/**
+ * Every window this clock reasons in was written when there was one provider, and one TTL of one
+ * hour. OpenAI's is thirty minutes, so each of these numbers had to become a fraction of something
+ * rather than a constant.
+ *
+ * ⛔ The ratios are anchored so that an hour reproduces the old constants **exactly**. That is the
+ * property under test: Anthropic must not move by a millisecond, or this is a rewrite of the cost
+ * model wearing a bug fix's clothes.
+ */
+describe('the clock windows scale with the TTL the provider actually grants', () => {
+  const HOUR = 60 * 60 * 1000
+  const HALF = 30 * 60 * 1000
+
+  it('an hour reproduces the constants this clock was written with', () => {
+    expect(clock.decideBeforeExpiryMs(HOUR)).toBe(clock.DECIDE_BEFORE_EXPIRY_MS)
+    expect(clock.lastChanceMs(HOUR)).toBe(clock.LAST_CHANCE_MS)
+  })
+
+  it('half an hour gets half the windows, not the same ones', () => {
+    // ⛔ The failure this prevents: a flat 15-minute decision window against a 30-minute prefix
+    // spends *half* the conversation's life in the decision phase, and a flat 7-minute last-chance
+    // window then sits about thirty seconds behind it — two windows that were fifteen minutes apart
+    // on Anthropic, collapsed onto each other.
+    expect(clock.decideBeforeExpiryMs(HALF)).toBe(7.5 * 60 * 1000)
+    expect(clock.lastChanceMs(HALF)).toBe(3.5 * 60 * 1000)
+    expect(clock.decideBeforeExpiryMs(HALF) - clock.lastChanceMs(HALF)).toBeGreaterThan(3 * 60 * 1000)
+  })
+
+  it('a provider that declares no TTL falls back to the constants rather than to zero', () => {
+    // ⚠️ Zero would read as "the window has already closed" and silence the clock, which is a
+    // different answer from "this provider publishes no TTL".
+    expect(clock.decideBeforeExpiryMs(null)).toBe(clock.DECIDE_BEFORE_EXPIRY_MS)
+    expect(clock.lastChanceMs(null)).toBe(clock.LAST_CHANCE_MS)
+  })
+
+  const OBJECTIVE = { cost: 0.34, velocity: 0.33, quality: 0.33 }
+
+  it('the keepalive floor means "the TTL covers it" on every provider, not only on the hour one', async () => {
+    const { policy } = await import('./objective.js')
+    // ⛔ Hardcoded at 55m, this told a 30-minute provider to do nothing below 55 minutes of expected
+    // idleness — a floor *above its entire window*, so no codex session could ever reach the
+    // keepalive branch. It would fall through to a compaction its adapter cannot perform.
+    expect(policy(OBJECTIVE).keepaliveFloorMs).toBe(55 * 60 * 1000)
+    expect(policy(OBJECTIVE, HOUR).keepaliveFloorMs).toBe(55 * 60 * 1000)
+    expect(policy(OBJECTIVE, HALF).keepaliveFloorMs).toBe(25 * 60 * 1000)
+    expect(policy(OBJECTIVE, HALF).keepaliveFloorMs).toBeLessThan(HALF)
+  })
+})

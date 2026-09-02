@@ -380,6 +380,17 @@ export function resumableSession(candidates: Session[], workerId: string, cwd: s
     if (session.workerId !== workerId || !samePath(session.cwd, cwd)) continue
     if (session.purpose !== 'work') continue
     if (!adapter(session.adapterId).info.capabilities.resumeSession) continue
+    // ⛔ **The vendor's own handle, where the vendor is the one that names conversations.** `spawn`
+    // resolves `resumeFrom` as `vendorSessionId ?? id`, and that fallback is right only for an
+    // adapter with `mintsSessionId: true`, where the id we generated *is* the one the CLI was
+    // started with. On an adapter that names its own — codex writes a `thread_id` into
+    // `thread.started`, and this fleet records whatever it is given — the fallback hands the CLI a
+    // UUID it has never seen. Measured against codex-cli 0.151.0: that is not a quiet no-op but a
+    // hard exit, `no rollout found for thread id <uuid>`, which fails the run rather than starting
+    // it cold. A session that ended before it announced itself has no handle to go back to, so it
+    // is not a resume candidate at all.
+    const caps = adapter(session.adapterId).info.capabilities
+    if (!caps.mintsSessionId && !session.vendorSessionId) continue
     // ⛔ A recorded turn, and nothing weaker. A session that exited before it said anything has no
     // conversation to go back to, and asking a CLI to resume one is not a quiet no-op: measured and
     // written up in cost-model.md §7, `claude --resume` on an unknown id fails the process outright
@@ -444,6 +455,22 @@ export function finishedConversationsIn(
  * lapsed holds nothing worth spending on: reviving it would pay a cold rebuild for the privilege,
  * which is the resume-time compaction's job to weigh, not this one's.
  */
+/**
+ * Is this session's prompt cache already gone, making its context no cheaper than a cold start?
+ *
+ * ⚠️ **Null is not lapsed**, and the asymmetry is deliberate. A session that never recorded a
+ * request, or one on a provider whose cache this fleet cannot price, has `cacheExpiresAt === null`
+ * — an absence of knowledge, not a reading of zero. Treating it as lapsed would let a provider be
+ * written off for a number nobody published, which is the same trap `isTooFull` avoids for context.
+ *
+ * ⛔ Lives here rather than in `scheduler.ts`, where it was written, because `sharing.ts` needs it
+ * and the scheduler already imports sharing — asking it there would close an import cycle. The
+ * scheduler re-exports it so its own callers and tests are unaffected.
+ */
+export function cacheHasLapsed(session: Session, now = Date.now()): boolean {
+  return session.cacheExpiresAt !== null && session.cacheExpiresAt <= now
+}
+
 export function warmClosedConversations(now = Date.now()): Session[] {
   return rows<SessionRow>(
     db()
@@ -1082,6 +1109,11 @@ export function reconcileOrphans(): number {
         { encoding: 'utf8', timeout: 10_000, windowsHide: true }
       ).trim()
       if (raw) {
+        // ⛔ `JSON.parse` is `any`, and this is a process list being turned into kill targets — the
+        // one place a shape assumed rather than checked would have this reaping a PID it misread,
+        // which is why `isCimProcess` is a guard rather than a cast.
+        // ⚠️ `ConvertTo-Json` collapses a single match to a bare object rather than a one-element
+        // array, so both shapes are real and neither may be assumed.
         const parsed: unknown = JSON.parse(raw)
         const procs = (Array.isArray(parsed) ? parsed : [parsed]).filter(isCimProcess)
         for (const p of procs) {
@@ -1092,8 +1124,9 @@ export function reconcileOrphans(): number {
               try {
                 killProcessTree(p.ProcessId)
                 killed++
-               } catch (err) {
-                 log.debug(`could not stop detached orphaned agent pid ${p.ProcessId}:`, err)
+              } catch (err) {
+                // ⚠️ One orphan that would not die is not a reason to abandon the rest of the sweep.
+                log.debug(`could not stop detached orphaned agent pid ${p.ProcessId}:`, err)
               }
             }
           }

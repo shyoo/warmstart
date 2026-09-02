@@ -90,7 +90,16 @@ export function weights(objective: Objective): Weights {
 // ---------------------------------------------------------------------------- consumer 2
 
 export interface CostPolicy {
-  /** Below this much expected idleness, do nothing: the TTL covers it anyway. */
+  /**
+   * Below this much expected idleness, do nothing: the TTL covers it anyway.
+   *
+   * ⛔ **Derived from the provider's TTL, not fixed.** The sentence above is the whole definition,
+   * and it is only true relative to a particular TTL — "the TTL covers it" cannot be a constant
+   * when the TTL is 60 minutes on Anthropic and 30 on OpenAI. Hardcoded at 55m, this said *do
+   * nothing below 55 minutes of idleness* to a provider whose prefix is gone at 30, which is a
+   * floor above the whole window: every codex session would skip the keepalive branch and fall
+   * through to a compaction it cannot perform. See `policy`.
+   */
   keepaliveFloorMs: number
   /** Above this, compaction beats keepalive. ~2h at the measured constants; the vector moves it. */
   compactThresholdMs: number
@@ -103,10 +112,21 @@ export interface CostPolicy {
   keepaliveWhenQuotaUnknown: boolean
 }
 
-export function policy(objective: Objective): CostPolicy {
+/** What `policy` assumes when the caller has no cost model to hand. Anthropic's, and unchanged. */
+export const DEFAULT_CACHE_TTL_MS = 60 * 60 * 1000
+
+/**
+ * ⚠️ `cacheTtlMs` defaults to Anthropic's hour, so every existing caller gets exactly the numbers it
+ * got before. Only a caller that passes a provider's real TTL sees different ones.
+ */
+export function policy(objective: Objective, cacheTtlMs = DEFAULT_CACHE_TTL_MS): CostPolicy {
   const { cost, velocity, quality } = objective
   return {
-    keepaliveFloorMs: 55 * 60 * 1000,
+    // ⛔ Five minutes short of the TTL, which is the 55m this used to hardcode when the TTL was
+    // assumed to be an hour — so Anthropic's behaviour is unchanged to the millisecond. The margin
+    // is what stops a session being left to lapse inside the last few minutes on the grounds that
+    // the TTL "covers" an idleness it only just covers.
+    keepaliveFloorMs: Math.max(0, cacheTtlMs - 5 * 60 * 1000),
     // The measured break-even is ~2h (docs/cost-model.md §3). Cost-weighted compacts earlier because
     // it would rather pay 58k once than 30k an hour; velocity-weighted keeps context hot for longer.
     compactThresholdMs: (2 * 60 - 35 * cost + 40 * velocity) * 60 * 1000,

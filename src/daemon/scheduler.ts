@@ -92,6 +92,7 @@ import {
 } from './worktrees.js'
 import {
   backscroll,
+  cacheHasLapsed,
   clearClockMove,
   closeAndWait,
   closeSession,
@@ -147,6 +148,7 @@ import { settings } from './settings.js'
 import { estimateTask, overrunFactor } from './estimator.js'
 import type { Objective } from '@shared/tasks.js'
 import {
+  DEFAULT_CACHE_TTL_MS,
   DEFAULT_OBJECTIVE,
   policy,
   resolveObjective,
@@ -1495,8 +1497,17 @@ function scoreCandidate(
 ): ScoreBreakdown {
   const now = Date.now()
 
+  // ⛔ Divided by the TTL this session's provider actually grants, never by a fixed hour. A codex
+  // prefix lives 30 minutes, so an hour-shaped denominator caps a *brand new* one at 0.5 and makes
+  // "warm" mean something different per provider — which is exactly what this weight must not do.
+  // ⚠️ The `?? 1` is unreachable in practice (a row only has `cacheExpiresAt` because a cost model
+  // computed it from a declared TTL) and is a divisor, so it degrades to the old shape rather than
+  // to a division by zero.
+  const sessionTtlMs = session
+    ? costModel(adapter(session.adapterId).info.policy.costModelId).cacheTtlMs()
+    : null
   const warmth = session?.cacheExpiresAt
-    ? Math.max(0, Math.min(1, (session.cacheExpiresAt - now) / (60 * 60 * 1000)))
+    ? Math.max(0, Math.min(1, (session.cacheExpiresAt - now) / (sessionTtlMs ?? DEFAULT_CACHE_TTL_MS)))
     : 0
   const affinity = session ? 1 : 0
   const cold = session ? 0 : 1
@@ -1574,7 +1585,8 @@ function scoreCandidate(
       warmth,
       1,
       session?.cacheExpiresAt
-        ? `${Math.round(Math.max(0, session.cacheExpiresAt - now) / 60000)}m left of a 60m cache TTL`
+        ? `${Math.round(Math.max(0, session.cacheExpiresAt - now) / 60000)}m left of a ` +
+          `${Math.round((sessionTtlMs ?? DEFAULT_CACHE_TTL_MS) / 60000)}m cache TTL`
         : 'no session, so no live prompt cache'
     ],
     [
@@ -3892,10 +3904,10 @@ export function atCapacity(
   return busy >= maxConcurrent
 }
 
-/** Is this session's prompt cache already gone, making its context no cheaper than a cold start? */
-export function cacheHasLapsed(session: Session, now = Date.now()): boolean {
-  return session.cacheExpiresAt !== null && session.cacheExpiresAt <= now
-}
+// ⛔ Re-exported, not redefined. It moved to `sessions.ts` so `sharing.ts` could ask it without
+// closing an import cycle back through this module; every caller and test that named it here still
+// finds it here.
+export { cacheHasLapsed }
 
 /**
  * Of the conversations sitting on a workspace, which one costs least to lose?

@@ -191,10 +191,46 @@ describe('capability consequences, not capability fields', () => {
 })
 
 describe('a cost model may say it does not know', () => {
-  it('anthropic prices a steerable cache; the other two do not', () => {
+  it('anthropic and openai price a steerable cache; google does not', () => {
+    // ⭐ Codex moved from `unpriced` to priced on 2026-09-02, and the two remaining `false`s are not
+    // the same kind of gap. Google bills context caching as storage per token-hour, which is a
+    // different formula this repo has no number for. OpenAI turned out to sell the *same* lever
+    // Anthropic does — 0.1x reads, 1.25x writes, a TTL that reuse refreshes — only at 30 minutes
+    // instead of 60. The old `false` here rested on "no client-controlled TTL", which the vendor's
+    // own prompt-caching guide contradicts.
     expect(costModel('anthropic.subscription.2026-08').canPriceCache()).toBe(true)
+    expect(costModel('openai.codex.2026-08').canPriceCache()).toBe(true)
     expect(costModel('google.antigravity.2026-08').canPriceCache()).toBe(false)
-    expect(costModel('openai.codex.2026-08').canPriceCache()).toBe(false)
+  })
+
+  it('codex prices a thirty-minute prefix, and prices it from the request', () => {
+    // ⛔ Half of Anthropic's hour, and the halving is the point: every window derived from a TTL has
+    // to come out of the file rather than out of a constant somebody wrote when there was one
+    // provider. Source: OpenAI *Prompt caching*, read 2026-09-02 — "remains eligible for reuse for
+    // 30 minutes after its most recent write or reuse".
+    const codex = costModel('openai.codex.2026-08')
+    expect(codex.cacheTtlMs()).toBe(30 * 60 * 1000)
+    expect(costModel('anthropic.subscription.2026-08').cacheTtlMs()).toBe(60 * 60 * 1000)
+
+    // ⚠️ From the request that wrote it, not from the response that ended it. A four-minute turn has
+    // already spent four of the thirty; measuring from the response would report a prefix as warm
+    // for four minutes after it had gone.
+    const startedAt = 1_000_000
+    expect(codex.cacheExpiryFor({ contextTokens: 50_000, lastRequestStartedAt: startedAt })).toBe(
+      startedAt + 30 * 60 * 1000
+    )
+  })
+
+  it('codex can be priced for a keepalive and still never compacted', () => {
+    // ⛔ The two questions are independent and codex answers them differently. Its cache is now
+    // priceable, so a read costs 0.1·C and can be reasoned about; but `codex exec` is one-shot with
+    // no way to drive compaction from a headless run, so `costOfCompact` must stay null. A cost
+    // model that priced a compaction here would have the clock offer a move the adapter refuses.
+    const codex = costModel('openai.codex.2026-08')
+    const session = { contextTokens: 100_000, model: 'gpt-5.6-luna' }
+    expect(codex.costOfKeepalive(session)).toBeCloseTo(10_000, 0)
+    expect(codex.costOfColdStart(100_000)).toBeCloseTo(125_000, 0)
+    expect(codex.costOfCompact(session)).toBeNull()
   })
 
   it('an unpriced cache returns null rather than zero', () => {
@@ -494,18 +530,85 @@ describe('a stream transport has two halves, and only one of them was wired', ()
     expect(adapter('openai-compatible').info.capabilities.mcp).toBe(false)
   })
 
-  it('a one-shot CLI is never offered as a warm session to continue', () => {
-    // ⛔ A consequence, not a field. `codex exec` exits after its turn, so there is no conversation
-    // left to reuse - and reuse would have reported a cache saving that does not exist while
-    // delivering the prompt into a pipe that closed when the first one went out.
+  it('a one-shot CLI resumes by respawning, and never by a second prompt', () => {
+    // ⛔ **This assertion was `resumeSession === false` until 2026-09-02, and it conflated two
+    // different things.** Its stated reason was that `codex exec` exits after its turn, "so there is
+    // no conversation left to reuse". The *process* is gone; the *conversation* is not. Codex writes
+    // a rollout file under `$CODEX_HOME` and `codex exec resume <thread_id>` reads it back —
+    // measured against codex-cli 0.151.0, which answers a bad id with `no rollout found for thread
+    // id <uuid>` rather than with "resume is not a thing".
+    //
+    // The half of that reasoning which is real — a prompt delivered into a pipe that closed when the
+    // first one went out, the 50-minute hang measured on t52 — is about continuing a **live**
+    // session, and it is enforced where it belongs: `warmSessionFor` returns null for any
+    // `streamPrompts: 'once'` adapter whatever its state says. `resumeSession` governs a *respawn*
+    // carrying prior context, which is one prompt into one fresh process: exactly what one-shot
+    // means.
     const once = ALL.filter((a) => a.info.capabilities.streamPrompts === 'once')
     expect(once.length).toBeGreaterThan(0)
     for (const ad of once) {
-      expect(
-        ad.info.capabilities.resumeSession,
-        `${ad.info.id} cannot both be one-shot and resume a session on this adapter`
-      ).toBe(false)
+      // A one-shot adapter that resumes must take its prompt at spawn, since there is no second
+      // chance to send one. Both halves of that are declared, and either alone would be a trap.
+      if (ad.info.capabilities.resumeSession) {
+        expect(
+          ad.info.capabilities.streamPrompts,
+          `${ad.info.id} resumes by respawning, so its prompt must go in at spawn`
+        ).toBe('once')
+      }
     }
+  })
+
+  it('codex resume is the argv that was actually measured, in the order that parses', () => {
+    // ⛔ Every flag here is positional in the clap sense, and the order is not cosmetic. Measured
+    // 2026-09-02 against codex-cli 0.151.0: `--sandbox`, `--cd` and `--add-dir` are declared on
+    // `exec` and **not** on the `resume` subcommand, so they must precede the word `resume` or the
+    // process dies on an argument error. The trailing `-` is the PROMPT argument and means "read it
+    // from stdin"; without it resume prints `No prompt provided via stdin` and exits **0** having
+    // done nothing at all, which no caller would notice.
+    const thread = '0199e5b1-6d2e-7a51-9c3f-1b2c3d4e5f60'
+    const plan = adapter('openai-compatible').plan({
+      sessionId: 'ours-not-codexs',
+      isolationRoot: 'C:/tmp/root',
+      cwd: 'C:/tmp/work',
+      transport: 'stream',
+      resumeFrom: thread
+    })
+    const at = (flag: string) => plan.args.indexOf(flag)
+    expect(at('resume')).toBeGreaterThan(-1)
+    expect(at('--sandbox')).toBeLessThan(at('resume'))
+    expect(at('--cd')).toBeLessThan(at('resume'))
+    expect(at('--skip-git-repo-check')).toBeLessThan(at('resume'))
+    // The thread id, then the stdin marker, and nothing after them.
+    expect(plan.args.slice(-2)).toEqual([thread, '-'])
+    // ⛔ Codex's id, never ours. `sessionId` is this fleet's row key and codex has never heard of it.
+    expect(plan.args).not.toContain('ours-not-codexs')
+  })
+
+  it('a codex spawn with nothing to resume is exactly the argv it always was', () => {
+    // ⚠️ The regression guard on the common path: adding resume must not put a stray subcommand or a
+    // stdin marker on an ordinary cold start.
+    const plan = adapter('openai-compatible').plan({
+      sessionId: 'ignored',
+      isolationRoot: 'C:/tmp/root',
+      cwd: 'C:/tmp/work',
+      transport: 'stream'
+    })
+    expect(plan.args).not.toContain('resume')
+    expect(plan.args).not.toContain('-')
+  })
+
+  it('a pty codex session ignores resumeFrom rather than mangling the TUI argv', () => {
+    // ⛔ `exec resume` is the headless path. The interactive TUI takes its conversation back a
+    // different way, and handing it `exec` would replace the terminal the operator asked for.
+    const plan = adapter('openai-compatible').plan({
+      sessionId: 'ignored',
+      isolationRoot: 'C:/tmp/root',
+      cwd: 'C:/tmp/work',
+      transport: 'pty',
+      resumeFrom: '0199e5b1-6d2e-7a51-9c3f-1b2c3d4e5f60'
+    })
+    expect(plan.args).not.toContain('resume')
+    expect(plan.args).not.toContain('exec')
   })
 })
 

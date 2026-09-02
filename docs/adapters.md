@@ -27,6 +27,8 @@ first spawn.** That is the whole reason `AdapterInfo.verification` exists.
 | Multi Agent Controller MCP tools | ✔ | ⛔ global registration only | ⛔ global registration only | ⛔ function calling in bridge |
 | Prompt arrives on stdin as | a conversation, pipe stays open | a conversation, pipe stays open | ⛔ **one prompt, then EOF** — `codex exec` is one-shot | a conversation, pipe stays open |
 | Accepts our session id | ✔ | ⛔ | ⛔ | ⛔ |
+| Resumes a past conversation | ✔ `--resume <id>` | ✔ `--conversation <id>` | ✔ **`exec resume <thread_id>`** — measured 2026-09-02 | ⛔ fresh conversation per dispatch |
+| Prompt cache TTL | **60m** (`1h`, 2.0× write) | ⛔ unpriced (storage per token-hour) | **30m** (1.25× write) | ⛔ none |
 | Free quota probe | ✔ the `.claude.json` cache; `/usage` refreshes it | ⛔ **measured — see below** | ✔ **`account/rateLimits/read`**, rollout as fallback | ⛔ none (unlimited) |
 | Reports cache reads | via transcript | ⛔ no | ✔ reads **and** writes | ⛔ server-side |
 
@@ -87,6 +89,48 @@ Written from documentation, then run. Each of these was wrong:
 The `cmd /s` one was latent since M1 and had never fired, because `claude` resolves to a `.EXE` on
 this machine; `codex` installs as `codex.cmd`, which exposed it. The last two came from running the
 CLIs against real accounts — see the quota section below.
+
+---
+
+## `codex exec resume`, and the reasoning it corrected
+
+`openai-compatible` declared `resumeSession: false` from M5 until **2026-09-02**, with the note that
+`codex exec resume` *"exists and has not been run here"*. It has now been run here. Measured against
+**codex-cli 0.151.0 on Windows**:
+
+```
+codex exec -s workspace-write -C <dir> --add-dir <dir> --skip-git-repo-check --json \
+           resume -m <model> <THREAD_ID> -          (prompt on stdin)
+-> Error: thread/resume: thread/resume failed: no rollout found for thread id <THREAD_ID> (code -32600)
+```
+
+Four facts, and `plan()` depends on all of them:
+
+| | |
+|---|---|
+| **Flag placement** | `--sandbox`, `--cd` and `--add-dir` are declared on `exec` and **not** on the `resume` subcommand. They must precede the word `resume`, and clap accepts them there |
+| **Prompt channel** | a literal `-` as the PROMPT argument means *read stdin* — the same one-shot channel a fresh `exec` uses, so `sendPrompt` needs no branch |
+| **⛔ Omitting the `-`** | resume prints `No prompt provided via stdin` and **exits 0** having done nothing. The quietest possible failure, and the reason the argv order is asserted in tests |
+| **Keying** | resume reads the rollout under `$CODEX_HOME`, which is this fleet's per-worker isolation unit. A thread resumes where it was written and nowhere else |
+
+**⛔ One-shot and resumable are not in conflict, and treating them as such is what kept this off.**
+`adapters.test.ts` asserted `streamPrompts === 'once'` ⇒ `resumeSession === false`, reasoning that
+`codex exec` exits after its turn *"so there is no conversation left to reuse"*. The **process** is
+gone; the **conversation** is a rollout file on disk. The real hazard in that sentence — a prompt
+delivered into a pipe that closed, the 50-minute hang measured on t52 — is about continuing a *live*
+session, and it is guarded where it belongs: `warmSessionFor` returns null for any one-shot adapter
+whatever its state says. `resumeSession` governs a **respawn** carrying prior context, which is one
+prompt into one fresh process — exactly what one-shot means.
+
+**⚠️ Still unmeasured:** whether a successful resume re-emits `thread.started` with the *same*
+`thread_id`. Reaching that needs a signed-in account. If it mints a new one, the fleet gets a session
+row per turn and falls back to cold starts rather than to a wrong answer.
+
+**⛔ A conversation whose CLI names it is not resumable until it has told us the name.** `spawn`
+resolves `resumeFrom` as `vendorSessionId ?? id`, which is right only where `mintsSessionId` is true.
+Codex and Antigravity name their own, and handing codex our UUID is not a quiet no-op — it exits with
+`no rollout found`, killing the run. `resumableSession` now refuses such a candidate, turning that
+into the cold start it should always have been.
 
 ---
 
