@@ -59,6 +59,7 @@ export function effortLabel(effort: string | null | undefined): string | null {
  */
 export function modelLabel(model: string | null | undefined, effort?: string | null): string | null {
   if (!model) return null
+  if (model.trim() === '<synthetic>') return null
   // ⚠️ `org/model` is how an openai-compatible endpoint names one. The org is where the model is
   // being reached, not part of what it is called. ⛔ Split on `/` only — a dot is *inside* a version
   // (`gpt-5.6-terra`), so treating it as a separator would render that model as `6 Terra`.

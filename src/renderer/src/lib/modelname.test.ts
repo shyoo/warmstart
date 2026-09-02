@@ -64,6 +64,8 @@ describe('modelLabel', () => {
     expect(modelLabel(undefined)).toBeNull()
     expect(modelLabel('   ')).toBeNull()
     expect(modelLabel(null, 'high')).toBeNull()
+    expect(modelLabel('<synthetic>')).toBeNull()
+    expect(modelLabel('<synthetic>', 'medium')).toBeNull()
   })
 })
 
