@@ -297,6 +297,43 @@ body {
   color: var(--color-text-faint);
 }
 
+/*
+ * Narrow / wide, beside the word Fleet.
+ *
+ * ⚠️ Sized and coloured like the Hide button under the strip rather than like an app button. Neither
+ * of these changes anything about the fleet — they change what this display shows of it — and a
+ * control that looks like the ones that dispatch work invites being read as one.
+ */
+.fleet-density-btn {
+  align-self: center;
+  padding: 1px var(--sp-2);
+  font-family: var(--font-ui);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-faint);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  line-height: 1.4;
+  transition: color var(--motion-fast) var(--ease), background var(--motion-fast) var(--ease),
+    border-color var(--motion-fast) var(--ease);
+  user-select: none;
+}
+
+.fleet-density-btn:hover {
+  color: var(--color-text);
+  background: var(--color-surface-2);
+  border-color: var(--color-border-strong);
+}
+
+.fleet-density-btn:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
 /* ---- content ----------------------------------------------------------- */
 
 .content {
@@ -679,6 +716,70 @@ body {
   flex: 1;
   height: 1px;
   background: var(--color-border);
+}
+
+/*
+ * ---- the condensed card -------------------------------------------------
+ *
+ * ⭐ Everything narrow mode does, it does here: the component draws one identical card in both
+ * densities and adds a class. What goes is the *naming* of each gauge — `Claude 5h`, `work` — and
+ * with the widest column of the grid gone the card fits in roughly half the strip it did, which is
+ * the point: a six-account fleet that scrolled sideways now fits in one look.
+ *
+ * ⛔ What does not go is any measurement. Bar, value and countdown are all still drawn, at full
+ * size, because the question a glance is asking is whether anything is about to run out — and an
+ * unnamed bar at 96% still answers it, where a missing bar does not.
+ */
+.wcard--narrow {
+  min-width: 170px;
+  max-width: 240px;
+}
+
+/* ⛔ The label column dropped, not narrowed. The remaining three tracks are the same widths as the
+   wide card's, so the numbers stay put and only the naming leaves. */
+.wcard--narrow .gauge {
+  position: relative;
+  grid-template-columns: 1fr 34px 44px;
+}
+
+.wcard--narrow .gauge--session {
+  grid-template-columns: 1fr 58px 44px;
+}
+
+/*
+ * ⚠️ Hidden from the eye, kept for the screen reader — not `display: none`. Sighted operators lose
+ * the naming knowingly, having pressed a button that says so; a reader announcing a bare `53%` with
+ * nothing saying which window it belongs to has no such button and no way back. Absolute takes it
+ * out of the grid so the three columns above hold.
+ */
+.wcard--narrow .gauge-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/*
+ * ⛔ The line between account and session survives; only its word goes. The distinction it draws is
+ * the one thing on this card a reader cannot recover from the numbers — a quota shared by the
+ * account above it, one session's own context below — and it costs a hairline to keep.
+ */
+.wcard--narrow .wcard-rule {
+  position: relative;
+  margin: var(--sp-1) 0;
+}
+
+/* ⚠️ Hidden the same way the gauge labels above are, and for the same reason: the word is what a
+   reader has instead of the line. */
+.wcard--narrow .wcard-rule > span {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .tag--suspect {

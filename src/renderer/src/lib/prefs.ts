@@ -14,6 +14,7 @@ import { TASK_VIEWS, type TaskView } from '@shared/tasks'
 
 const VIEWS_KEY = 'multi_agent_controller.taskViews'
 const FLEET_COLLAPSED_KEY = 'multi_agent_controller.fleetCollapsed'
+const FLEET_DENSITY_KEY = 'multi_agent_controller.fleetDensity'
 
 /**
  * Which buckets were showing last time.
@@ -66,6 +67,41 @@ export function writeFleetCollapsed(collapsed: boolean): void {
   try {
     if (typeof window === 'undefined' || !window.localStorage) return
     window.localStorage.setItem(FLEET_COLLAPSED_KEY, String(collapsed))
+  } catch {
+    // A preference that cannot be saved is not an error worth showing anybody.
+  }
+}
+
+/**
+ * How much of each worker card the fleet strip draws.
+ *
+ * ⭐ `narrow` is for a fleet that outgrew the strip. The cards are sized by their content, so six
+ * accounts scroll horizontally and the operator can no longer see the whole fleet at once — which is
+ * the one thing the strip is for. Condensing drops the naming of each gauge (`Claude 5h`, `work`)
+ * and keeps the measurement: bar, value, countdown. What is lost is which window a bar is; what is
+ * kept is whether anything is close to running out, which is what a glance is asking.
+ *
+ * ⚠️ Not a fleet setting. Like the collapsed state above it, this is a property of the person and
+ * the display in front of them — a laptop wants narrow where a wide monitor does not — so it stays
+ * in `localStorage` rather than syncing one operator's strip onto another's window.
+ */
+export type FleetDensity = 'wide' | 'narrow'
+
+export function readFleetDensity(): FleetDensity {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return 'wide'
+    // ⛔ Only the one value opts in. Anything else — absent, empty, a density that has since been
+    // renamed — reads as `wide`, because the default has to be the mode that shows everything.
+    return window.localStorage.getItem(FLEET_DENSITY_KEY) === 'narrow' ? 'narrow' : 'wide'
+  } catch {
+    return 'wide'
+  }
+}
+
+export function writeFleetDensity(density: FleetDensity): void {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return
+    window.localStorage.setItem(FLEET_DENSITY_KEY, density)
   } catch {
     // A preference that cannot be saved is not an error worth showing anybody.
   }

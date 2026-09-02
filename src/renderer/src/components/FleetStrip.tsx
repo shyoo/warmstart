@@ -2,7 +2,13 @@ import { useState } from 'react'
 import type { Session } from '@shared/protocol'
 import { quotaFreshness } from '@shared/tasks'
 import type { FleetEntry } from '../lib/daemon'
-import { readFleetCollapsed, writeFleetCollapsed } from '../lib/prefs'
+import {
+  readFleetCollapsed,
+  readFleetDensity,
+  writeFleetCollapsed,
+  writeFleetDensity,
+  type FleetDensity
+} from '../lib/prefs'
 import { cardStatus, gaugedSessions } from '../lib/fleetcard'
 import { Working } from '../lib/taskview'
 import { AgentIcon } from './AgentIcon'
@@ -55,6 +61,16 @@ export function FleetStrip({
   onProbe: (workerId: string) => Promise<unknown>
 }): React.JSX.Element {
   const [collapsed, setCollapsed] = useState(readFleetCollapsed)
+  const [density, setDensity] = useState(readFleetDensity)
+  const narrow = density === 'narrow'
+
+  const toggleDensity = () => {
+    setDensity((d) => {
+      const next: FleetDensity = d === 'narrow' ? 'wide' : 'narrow'
+      writeFleetDensity(next)
+      return next
+    })
+  }
 
   const toggle = () => {
     setCollapsed((c) => {
@@ -70,6 +86,22 @@ export function FleetStrip({
     <div className={`fleet-wrap${collapsed ? ' fleet-wrap--collapsed' : ''}`}>
       <div className="fleet">
         <span className="fleet-label">Fleet</span>
+        {/* ⚠️ Labelled with what pressing it does, not with where the strip currently is — the same
+            way the Hide button below reads. The two controls sit on one strip and would otherwise
+            disagree about what their own words mean. */}
+        <button
+          type="button"
+          className="fleet-density-btn"
+          onClick={toggleDensity}
+          aria-pressed={narrow}
+          title={
+            narrow
+              ? 'Show each gauge with its name again'
+              : 'Condense every card to bars and numbers, so more of the fleet fits on the strip'
+          }
+        >
+          {narrow ? 'Wide' : 'Narrow'}
+        </button>
         {activeFleet.length === 0 ? (
           <span className="fleet-empty">
             {fleet.length === 0 ? 'no workers configured' : 'no active workers'}
@@ -77,7 +109,13 @@ export function FleetStrip({
         ) : (
           <div className="fleet-cards">
             {activeFleet.map((entry) => (
-              <WorkerCard key={entry.worker.id} entry={entry} now={now} onProbe={onProbe} />
+              <WorkerCard
+                key={entry.worker.id}
+                entry={entry}
+                now={now}
+                narrow={narrow}
+                onProbe={onProbe}
+              />
             ))}
           </div>
         )}
@@ -199,13 +237,25 @@ function RefreshIcon(): React.JSX.Element {
   )
 }
 
+/**
+ * ⭐ `narrow` is a single class and nothing else — every difference it makes is in the stylesheet.
+ * That is deliberate: condensing removes *naming*, never measurement, so there is no second set of
+ * rows to render and no second layout to keep in step with this one. Both densities draw the same
+ * DOM, which is also what keeps the card-height rule below true in both.
+ *
+ * ⚠️ Which is why the probe button below stays in both densities. It is not naming — it is the one
+ * control on this card, and a condensed strip is exactly where an operator is most likely to spot a
+ * reading that has gone stale and want a fresh one.
+ */
 function WorkerCard({
   entry,
   now,
+  narrow,
   onProbe
 }: {
   entry: FleetEntry
   now: number
+  narrow: boolean
   onProbe: (workerId: string) => Promise<unknown>
 }): React.JSX.Element {
   const { worker, quota, sessions } = entry
@@ -242,7 +292,7 @@ function WorkerCard({
   }
 
   return (
-    <div className={`wcard${worker.enabled ? '' : ' wcard--off'}`}>
+    <div className={`wcard${worker.enabled ? '' : ' wcard--off'}${narrow ? ' wcard--narrow' : ''}`}>
       <div className="wcard-head">
         <AgentIcon adapterId={worker.adapterId} className="wcard-icon" />
         <span className="wcard-name">{worker.label}</span>
