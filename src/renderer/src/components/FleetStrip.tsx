@@ -44,7 +44,16 @@ function contextFill(session: Pick<Session, 'contextTokens' | 'contextWindow'>):
  * reading turns fifteen minutes old and loses it again on the next probe moves the whole strip
  * while the operator is reading it.
  */
-export function FleetStrip({ fleet, now }: { fleet: FleetEntry[]; now: number }): React.JSX.Element {
+export function FleetStrip({
+  fleet,
+  now,
+  onProbe
+}: {
+  fleet: FleetEntry[]
+  now: number
+  /** Re-read one account’s usage window. Resolves when the reading has landed. */
+  onProbe: (workerId: string) => Promise<unknown>
+}): React.JSX.Element {
   const [collapsed, setCollapsed] = useState(readFleetCollapsed)
 
   const toggle = () => {
@@ -68,7 +77,7 @@ export function FleetStrip({ fleet, now }: { fleet: FleetEntry[]; now: number })
         ) : (
           <div className="fleet-cards">
             {activeFleet.map((entry) => (
-              <WorkerCard key={entry.worker.id} entry={entry} now={now} />
+              <WorkerCard key={entry.worker.id} entry={entry} now={now} onProbe={onProbe} />
             ))}
           </div>
         )}
@@ -162,7 +171,43 @@ function SessionGauge({ session, now }: { session: Session; now: number }): Reac
   )
 }
 
-function WorkerCard({ entry, now }: { entry: FleetEntry; now: number }): React.JSX.Element {
+/**
+ * The manual probe, drawn rather than typed.
+ *
+ * ⛔ An SVG in the same idiom as the collapse chevron above — `stroke="currentColor"`, no fill,
+ * round caps — so it inherits the corner’s faint colour and dims with the card. The emoji this
+ * replaces (🔃) carries its own colour, which no theme can turn down: on the dark surface it was the
+ * brightest thing on a strip whose entire job is to make *numbers* the brightest thing on it.
+ */
+function RefreshIcon(): React.JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      width="10"
+      height="10"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      {/* An open circle, so the arrowhead has somewhere to sit. */}
+      <path d="M13 8a5 5 0 1 1-1.6-3.7" />
+      <path d="M13 2v3h-3" />
+    </svg>
+  )
+}
+
+function WorkerCard({
+  entry,
+  now,
+  onProbe
+}: {
+  entry: FleetEntry
+  now: number
+  onProbe: (workerId: string) => Promise<unknown>
+}): React.JSX.Element {
   const { worker, quota, sessions } = entry
   /**
    * ⛔ Recomputed against the ticking clock, not read off the payload. `ageMs` and `stale` are
@@ -180,6 +225,21 @@ function WorkerCard({ entry, now }: { entry: FleetEntry; now: number }): React.J
   const displayedSessions = gauged.slice(0, maxDisplay)
   const overflowCount = gauged.length - displayedSessions.length
   const status = cardStatus(entry, now, sessions)
+
+  /**
+   * ⚠️ In-flight, held here rather than read off the corner. The corner turns to `probing` from a
+   * *session*, which the daemon only publishes once the probe has actually started — a second and a
+   * third click fit comfortably in that gap, and each one spends a real CLI invocation.
+   */
+  const [probing, setProbing] = useState(false)
+  const probe = (): void => {
+    if (probing) return
+    setProbing(true)
+    // ⛔ The reading arrives as a `quota.changed` event, so there is nothing to do with the result
+    // here, and nothing to catch: `worker.probe` resolves with a failure *inside* its payload, and
+    // the corner is what says so once the daemon has recorded it.
+    void onProbe(worker.id).finally(() => setProbing(false))
+  }
 
   return (
     <div className={`wcard${worker.enabled ? '' : ' wcard--off'}`}>
@@ -218,6 +278,20 @@ function WorkerCard({ entry, now }: { entry: FleetEntry; now: number }): React.J
             )}
           </span>
         )}
+        {/* ⛔ Drawn whether or not there is a status beside it, and never conditionally mounted: a
+            button that appeared only once a card went stale would add and remove itself from the
+            head row on a fifteen-minute timer, which is the strip-moving bug the corner exists to
+            avoid. */}
+        <button
+          type="button"
+          className="wcard-refresh"
+          onClick={probe}
+          disabled={probing}
+          aria-label={`Refresh usage for ${worker.label}`}
+          title="Read this account’s usage window now"
+        >
+          <RefreshIcon />
+        </button>
       </div>
 
       {/* ⛔ The *fact* outranks the quota gauges and still leads — burying it is how this fleet spent

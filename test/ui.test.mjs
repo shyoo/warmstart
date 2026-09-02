@@ -1579,6 +1579,66 @@ try {
   )
   check('and turning it back on restores it to the fleet strip', stripWithOn.includes(firstLabel))
 
+  // ⭐ The manual probe. The strip's readings are refreshed by the scheduler when a task is about
+  // to run somewhere, which for an idle fleet can be a long time — and until 2026-09-02 the only
+  // way to ask for a number now was Settings > Workers, two clicks from the strip that shows it.
+  const cards = await evaluate(`document.querySelectorAll('.wcard').length`)
+  const buttons = await evaluate(
+    `document.querySelectorAll('.wcard .wcard-head button.wcard-refresh').length`
+  )
+  check(
+    'every card carries its own probe button, in the head row',
+    cards > 0 && buttons === cards,
+    `${buttons} button(s) across ${cards} card(s)`
+  )
+
+  // ⛔ The user asked for this specifically: the emoji it replaces (🔃) brings its own colour, and on
+  // the dark surface it outshone the numbers the strip exists to show. A stroke icon takes the
+  // corner's faint colour like the chevron below the strip does.
+  const drawn = await evaluate(`
+    (() => {
+      const b = document.querySelector('.wcard-refresh')
+      const svg = b?.querySelector('svg')
+      return JSON.stringify({
+        svg: !!svg,
+        stroke: svg?.getAttribute('stroke') ?? '',
+        text: (b?.innerText ?? '').trim()
+      })
+    })()
+  `)
+  const icon = JSON.parse(drawn)
+  check(
+    'and it is drawn, not typed — an SVG that inherits the corner colour, with no glyph in it',
+    icon.svg && icon.stroke === 'currentColor' && icon.text === '',
+    drawn
+  )
+
+  // ⛔ The load-bearing one. The card's height may not change on its own or the whole strip moves
+  // under the operator's eyes; a button drawn on every card at all times cannot cause that, and
+  // pressing it must not either — not while the probe is in flight, and not when it comes back.
+  //
+  // ⚠️ Pressed on the card that is *already* suspect, deliberately. This suite's accounts have no
+  // credentials, so a probe here always fails and marks its worker suspect — which grows a note row
+  // in the Workers table and shifts every row index below it. Probing the healthy account left the
+  // reorder checks further down reading a note row as a worker row. Re-probing an account that has
+  // already failed asks the same question of the same button and changes nothing else.
+  const sameHeight = await evaluate(`
+    (async () => {
+      const card = [...document.querySelectorAll('.wcard')].find((c) => c.querySelector('.tag--suspect'))
+      if (!card) return JSON.stringify(['no suspect card in the strip', ''])
+      const before = card.getBoundingClientRect().height
+      card.querySelector('.wcard-refresh')?.click()
+      await new Promise((r) => setTimeout(r, 1500))
+      return JSON.stringify([before, card.getBoundingClientRect().height])
+    })()
+  `)
+  const [tallBefore, tallAfter] = JSON.parse(sameHeight)
+  check(
+    'and pressing it leaves the card exactly the height it was',
+    tallBefore > 0 && tallBefore === tallAfter,
+    `${tallBefore}px -> ${tallAfter}px`
+  )
+
   // ⭐ How many tasks one account may run at once. The daemon has gated on this since M1 —
   // `atCapacity` before dispatch, `spawnSession` at the door — and until 2026-08-29 the Workers
   // table printed it as text and nothing in the app could change it. So a single-account fleet ran

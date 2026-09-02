@@ -99,6 +99,14 @@ afterAll(() => {
   }
 })
 
+/**
+ * ⚠️ Not the default five seconds, and the margin is not decoration. `reconcileOrphans` reaps
+ * detached agents on Windows by running `Get-CimInstance Win32_Process` — one synchronous
+ * PowerShell start plus a full process enumeration. It is well under a second on an idle machine
+ * and nowhere near under five when this file is one of sixty-four running in parallel: measured
+ * 2026-09-02, 430ms alone against a timeout at 5s in a full `npm test`. `reapStale` now skips that
+ * query under `VITEST` outright, so this is what catches the next thing here that shells out.
+ */
 describe('a daemon that went away', { timeout: 20_000 }, () => {
   it('calls the sessions it finds still open abandoned, not failed', () => {
     // ⛔ The single biggest source of the wrong word. This runs on **every** start, so on an install

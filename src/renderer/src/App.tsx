@@ -368,7 +368,11 @@ export function App(): React.JSX.Element {
       <SidebarResizer />
 
       <main className="main">
-        <FleetStrip fleet={fleet} now={now} />
+        {/* ⛔ The strip stays presentation-only — it is drawn from `fleet` and a clock and nothing
+            else — so the one call it can make is passed in rather than reached for. The reading
+            comes back as a `quota.changed` event the fleet subscription already handles, which is
+            why nothing here is done with the result. */}
+        <FleetStrip fleet={fleet} now={now} onProbe={(id) => rpc('worker.probe', { id })} />
         {connected && <Attention now={now} onOpenTask={(taskId) => setRoute({ kind: 'unassigned', taskId })} />}
 
         <div className="content">

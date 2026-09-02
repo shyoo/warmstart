@@ -502,6 +502,56 @@ body {
   margin-left: 0;
 }
 
+/**
+ * The manual probe, in the corner beside the age.
+ *
+ * ⛔ `margin-left: auto` so it reaches the corner on a card with no status beside it — a fresh
+ * reading says nothing there — and none when it follows one, so the pair sits together rather than
+ * splitting the free space between them.
+ *
+ * ⚠️ Faint by default and only lit on hover. It is drawn on every card at all times (the card's
+ * height may not change on its own), so at rest it has to weigh less than the numbers it sits above.
+ */
+.wcard-refresh {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  padding: 2px;
+  color: var(--color-text-faint);
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  opacity: 0.55;
+  cursor: pointer;
+  transition:
+    opacity 120ms ease,
+    color 120ms ease;
+}
+
+.wcard-status + .wcard-refresh {
+  margin-left: 4px;
+}
+
+.wcard-refresh:hover:not(:disabled) {
+  color: var(--color-text);
+  opacity: 1;
+}
+
+.wcard-refresh:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+  opacity: 1;
+}
+
+/* A probe is a CLI invocation and takes seconds. The corner says `probing` while it runs; this just
+   stops being a thing to press. */
+.wcard-refresh:disabled {
+  opacity: 0.25;
+  cursor: default;
+}
+
 .gauge {
   display: grid;
   grid-template-columns: 84px 1fr 34px 44px;
