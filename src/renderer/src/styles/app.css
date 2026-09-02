@@ -2925,6 +2925,48 @@ select:focus-visible,
   align-items: baseline;
 }
 
+.side-run-seq {
+  font-weight: 600;
+  color: var(--color-text);
+  font-size: var(--text-dense);
+}
+
+.side-run-facts {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: var(--sp-1);
+}
+
+.side-run-fact {
+  display: grid;
+  grid-template-columns: 84px minmax(0, 1fr);
+  gap: var(--sp-2);
+  align-items: baseline;
+  font-size: var(--text-meta);
+}
+
+.side-run-key {
+  color: var(--color-text-faint);
+  font-size: 10px;
+  text-transform: lowercase;
+  letter-spacing: 0.02em;
+}
+
+.side-run-val {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--color-text);
+}
+
+.side-run-fact--usage {
+  align-items: flex-start;
+}
+
+.side-run-fact--usage .side-run-quota {
+  margin-top: 0;
+}
+
 .side-run-body {
   color: var(--color-text-dim);
   margin-top: 2px;

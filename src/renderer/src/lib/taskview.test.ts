@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import type { Project, Task, TaskStatus } from '@shared/tasks'
+import type { Compaction, Project, Run, Task, TaskStatus } from '@shared/tasks'
 import type { ModelOptions, Worker } from '@shared/protocol'
 import type { FleetEntry } from './daemon'
 import {
@@ -14,6 +14,7 @@ import {
   activeTime,
   activeTimeTitle,
   chronologicalRuns,
+  chronologicalTimeline,
   elapsed,
   holdLine,
   isWorking,
@@ -525,7 +526,6 @@ describe('runs ordering for thread display', () => {
   })
 })
 
-
 /**
  * ⛔ The Worker column carries two facts in one cell, and the second one is only ever *this*
  * account's model. The pairing is the point: a model id belongs to one CLI, so an operator reads
@@ -610,5 +610,26 @@ describe('the model under the account, in the Worker column', () => {
   it('still names a model when the adapter options have not arrived yet', () => {
     // A fleet whose cost models failed to load still runs work, and the column still says what on.
     expect(modelLine(routed(), fleet(), [])?.label).toBe('Sonnet 5')
+  })
+})
+
+describe('timeline ordering for runs and compactions', () => {
+  it('merges and sorts runs and compactions chronologically by timestamp', () => {
+    const run1 = { id: 'r1', startedAt: 1000 } as unknown as Run
+    const run2 = { id: 'r2', startedAt: 3000 } as unknown as Run
+    const c1 = { id: 'c1', ts: 2000, askedAt: 2000 } as unknown as Compaction
+    const c2 = { id: 'c2', ts: 4000, askedAt: 4000 } as unknown as Compaction
+
+    const timeline = chronologicalTimeline([run2, run1], [c2, c1])
+    expect(timeline).toEqual([
+      { kind: 'run', run: run1, ts: 1000 },
+      { kind: 'compaction', compaction: c1, ts: 2000 },
+      { kind: 'run', run: run2, ts: 3000 },
+      { kind: 'compaction', compaction: c2, ts: 4000 }
+    ])
+  })
+
+  it('handles empty runs and compactions', () => {
+    expect(chronologicalTimeline([], [])).toEqual([])
   })
 })

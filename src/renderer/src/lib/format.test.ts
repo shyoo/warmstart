@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { QUOTA_STALE_AFTER_MS, quotaFreshness } from '@shared/tasks'
-import { cacheRemaining, quotaGap } from './format'
+import { cacheRemaining, quotaGap, timeRange, when } from './format'
 
 describe('quotaGap', () => {
   it('says what would produce a reading when the account has never been used', () => {
@@ -174,5 +174,27 @@ describe('quotaFreshness', () => {
   it('treats a reading with no windows as stale, and no reading at all as stale', () => {
     expect(quotaFreshness({ sampledAt: Date.now(), windows: [] }, Date.now()).stale).toBe(true)
     expect(quotaFreshness(null, Date.now()).stale).toBe(true)
+  })
+})
+
+describe('timeRange', () => {
+  const start = new Date(2026, 7, 24, 13, 43, 0).getTime()
+  const end = new Date(2026, 7, 24, 13, 50, 0).getTime()
+
+  it('formats start and end timestamps', () => {
+    expect(timeRange(start, end)).toBe(`${when(start)} – ${when(end)}`)
+  })
+
+  it('formats open/ongoing time range with now', () => {
+    expect(timeRange(start, null)).toBe(`${when(start)} – now`)
+  })
+
+  it('formats single start timestamp when endTs is undefined', () => {
+    expect(timeRange(start, undefined)).toBe(when(start))
+  })
+
+  it('returns dash when start is null or undefined', () => {
+    expect(timeRange(null, end)).toBe('—')
+    expect(timeRange(undefined, undefined)).toBe('—')
   })
 })

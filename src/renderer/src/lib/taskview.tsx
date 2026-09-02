@@ -1,4 +1,4 @@
-import { resolveModelChoice, type Run, type Task } from '@shared/tasks'
+import { resolveModelChoice, type Compaction, type Run, type Task } from '@shared/tasks'
 import type { ModelOptions, Session } from '@shared/protocol'
 import type { FleetEntry } from './daemon'
 import { duration } from './format'
@@ -383,3 +383,24 @@ export function dependencyTooltip(
   return `Depends on:\n${lines.join('\n')}`
 }
 
+export type TimelineItem =
+  | { kind: 'run'; run: Run; ts: number }
+  | { kind: 'compaction'; compaction: Compaction; ts: number }
+
+/**
+ * Merges runs and compactions into a single chronological timeline (oldest first, newest last).
+ */
+export function chronologicalTimeline(
+  runs: Run[] = [],
+  compactions: Compaction[] = []
+): TimelineItem[] {
+  const items: TimelineItem[] = [
+    ...runs.map((r) => ({ kind: 'run' as const, run: r, ts: r.startedAt })),
+    ...compactions.map((c) => ({
+      kind: 'compaction' as const,
+      compaction: c,
+      ts: c.askedAt ?? c.ts
+    }))
+  ]
+  return items.sort((a, b) => a.ts - b.ts)
+}

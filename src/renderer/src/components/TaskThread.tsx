@@ -34,13 +34,13 @@ import { SettingButtonSelect, type SettingOption } from './SettingButtonSelect'
 import { TaskQuestions } from './Questions'
 import { AddDependency, candidatesFor, DependencyList, useTaskCandidates } from './Dependencies'
 import { showsLiveOutput } from '../lib/live'
-import { duration, tokens, when } from '../lib/format'
+import { duration, timeRange, tokens, when } from '../lib/format'
 import { effortLabel, modelLabel } from '../lib/modelname'
 import {
   activeTime,
   activeTimeTitle,
   CANCELLABLE,
-  chronologicalRuns,
+  chronologicalTimeline,
   elapsed,
   holdLine,
   isWorking,
@@ -313,6 +313,7 @@ function TaskDetail({
     dependencies = [],
     dependents = []
   } = detail
+  const timeline = chronologicalTimeline(runs, compactions)
   // ⛔ Served, never compiled in — the renderer holds no cost models, and the capability flags that
   // decide whether an effort control exists at all live with the adapter, not here.
   const [modelOptions, setModelOptions] = useState<ModelOptions[]>([])
@@ -794,46 +795,35 @@ function TaskDetail({
             </Fact>
           </div>
 
-          {/* ⛔ The history box, and compactions belong in it rather than under the facts above.
-              A compaction and a run are the same kind of thing to the operator - something that
-              *happened to this task*, at a time, with a cost - and the box above is what the task
-              *is*: its status, its settings, its totals. Filed there, the compaction ledger grew the
-              settings box downward until the runs it should be read against were off the screen. */}
-          {(runs.length > 0 || compactions.length > 0) && (
+          {timeline.length > 0 && (
             <div className="detail-side-box">
-              {runs.length > 0 && (
-                <>
-                  {/* ⚠️ The label carries the distinction, because "completed" here beside
-                      "awaiting_human" above is the thing that reads as a contradiction. A run is one
-                      attempt; whether the *task* is done is a separate question. */}
-                  <div
-                    className="side-label"
-                    title="One attempt each. A run finishing says the agent stopped cleanly — not that the task is done, which is what the status above answers."
-                  >
-                    runs · attempts, not outcomes
-                  </div>
-                  {chronologicalRuns(runs).map((run) => (
-                    <RunRow key={run.id} run={run} sessions={sessions} fleet={fleet} now={now} />
-                  ))}
-                </>
-              )}
-              {compactions.length > 0 && (
-                /* ⛔ Its own block rather than a line inside a run, because a compaction is not
-                   scoped to one attempt: the session outlives the run, and the shrink it bought is
-                   still paying out on the next one. The label says what it bought, because a
-                   compaction with no before-and-after is a claim rather than a measurement.
-                   ⚠️ The rule above it is only drawn when there are runs to be separated from. */
-                <div className={runs.length > 0 ? 'side-runs' : undefined}>
-                  <div
-                    className="side-label"
-                    title="Each time this task's context was compacted, and what it left behind. A compaction costs one expensive turn and makes every turn after it read a smaller prefix."
-                  >
-                    compactions · context before → after
-                  </div>
-                  {compactions.map((c) => (
-                    <CompactionRow key={c.id} compaction={c} now={now} />
-                  ))}
-                </div>
+              {/* ⚠️ The label carries the distinction: attempts and context compactions in chronological order. */}
+              <div
+                className="side-label"
+                title="Chronological timeline of task attempts and context compactions."
+              >
+                timeline · runs & compactions
+              </div>
+              {timeline.map((item, idx) =>
+                item.kind === 'run' ? (
+                  <RunRow
+                    key={item.run.id}
+                    index={idx + 1}
+                    run={item.run}
+                    sessions={sessions}
+                    fleet={fleet}
+                    now={now}
+                  />
+                ) : (
+                  <CompactionRow
+                    key={`compact-${item.compaction.id}`}
+                    index={idx + 1}
+                    compaction={item.compaction}
+                    sessions={sessions}
+                    fleet={fleet}
+                    now={now}
+                  />
+                )
               )}
             </div>
           )}
@@ -1585,11 +1575,13 @@ function outcomeClass(outcome: Run['outcome']): string {
  * calls that gap the instrument. Merging them would destroy it.
  */
 function RunRow({
+  index,
   run,
   sessions,
   fleet,
   now
 }: {
+  index: number
   run: Run
   /** Every session any run of this task used, so this run's can be named rather than guessed at. */
   sessions: Session[]
@@ -1598,81 +1590,120 @@ function RunRow({
 }): React.JSX.Element {
   const worker = fleet.find((f) => f.worker.id === run.workerId)?.worker.label
   const spent = run.inputTokens + run.outputTokens + run.cacheReadTokens + run.cacheWriteTokens
+  const session = sessions.find((s) => s.id === run.sessionId)
+  const modelName = run.model ?? session?.model ?? 'CLI default'
+  const effort = session?.effort ?? null
+  const agentWorkingMs = (run.endedAt ?? now) - run.startedAt - run.blockedMs
+  const totalDurationMs = (run.endedAt ?? now) - run.startedAt
+
   return (
     <div className="side-run">
       <div className="side-run-head">
-        <span className="mono" title={`Run ${run.id}`}>
-          {run.id.slice(0, 8)}
-        </span>
-        {/* ⛔ Nothing at all when `startedWarm` is null. Runs that predate the column recorded no
-            answer, and drawing `new` for those would put a measurement nobody took next to one
-            that was taken. */}
+        <span className="side-run-seq">#{index} Run</span>
+        <span className="num dim">{timeRange(run.startedAt, run.endedAt, now)}</span>
+      </div>
+      <div className="side-run-facts">
+        <div className="side-run-fact">
+          <span className="side-run-key">run_id:</span>
+          <span className="side-run-val mono" title={`Run ${run.id}`}>
+            {run.id.slice(0, 8)}
+          </span>
+        </div>
+        <div className="side-run-fact">
+          <span className="side-run-key">session:</span>
+          <span className="side-run-val">
+            <ConversationId run={run} sessions={sessions} workerLabel={worker} />
+          </span>
+        </div>
+        <div className="side-run-fact">
+          <span className="side-run-key">model:</span>
+          <span className="side-run-val" title={modelName}>
+            {modelName}
+            {effort ? ` · ${effort}` : ''}
+          </span>
+        </div>
+        {run.prompt && (
+          <div className="side-run-fact">
+            <span className="side-run-key">prompt:</span>
+            <span className="side-run-val">
+              <PromptDisclosure prompt={run.prompt} label="link" />
+            </span>
+          </div>
+        )}
         {run.startedWarm !== null && (
+          <div className="side-run-fact">
+            <span className="side-run-key">fresh:</span>
+            <span className="side-run-val">
+              <span
+                className={run.startedWarm ? 'ok' : 'dim'}
+                title={
+                  run.startedWarm
+                    ? 'This run inherited a conversation that already existed — continued in a live session, or resumed one that had closed.'
+                    : 'This run opened a new conversation and built its context from nothing.'
+                }
+              >
+                {run.startedWarm ? 'reused' : 'new'}
+              </span>
+            </span>
+          </div>
+        )}
+        <div className="side-run-fact">
+          <span className="side-run-key">status:</span>
+          <span className="side-run-val">
+            <span
+              className={outcomeClass(run.outcome)}
+              title={
+                run.outcome === 'blocked'
+                  ? 'The agent stopped to ask something rather than because anything went wrong. Answer it and the task carries on.'
+                  : undefined
+              }
+            >
+              {run.outcome ?? 'running'}
+            </span>
+          </span>
+        </div>
+        <div className="side-run-fact">
+          <span className="side-run-key">token spent:</span>
           <span
-            className={run.startedWarm ? 'ok' : 'dim'}
+            className="side-run-val num"
             title={
-              run.startedWarm
-                ? 'This run inherited a conversation that already existed — continued in a live ' +
-                  'session, or resumed one that had closed. It did not rebuild the context first.'
-                : 'This run opened a new conversation and built its context from nothing.'
+              'What this run spent: input + output + cache read + cache write, summed from the ' +
+              'transcript. ⛔ Not the size of the context — a single long conversation re-reads its ' +
+              'whole window every turn, so the total runs far ahead of it.'
             }
           >
-            {run.startedWarm ? 'warm' : 'new'}
+            {tokens(spent || null)}
           </span>
-        )}
-        <span
-          className={outcomeClass(run.outcome)}
-          title={
-            run.outcome === 'blocked'
-              ? 'The agent stopped to ask something rather than because anything went wrong. ' +
-                'Answer it and the task carries on.'
-              : undefined
-          }
-        >
-          {run.outcome ?? 'running'}
-        </span>
-        <span
-          className="num dim"
-          title={
-            run.blockedMs > 0
-              ? `${duration((run.endedAt ?? now) - run.startedAt - run.blockedMs)} working, ` +
-                `${duration(run.blockedMs)} of it waiting on a person.`
-              : 'Nothing waited on a person during this attempt, so all of it was work.'
-          }
-        >
-          {duration((run.endedAt ?? now) - run.startedAt - run.blockedMs)}
-        </span>
-        {/* ⛔ Named only when there is something to name. A run that never stopped for anybody
-            should not carry a "blocked 0s" that implies the measurement is interesting. */}
-        {run.blockedMs > 0 && (
-          <span className="dim" title="Time this attempt spent waiting on a question or an approval.">
-            +{duration(run.blockedMs)} waiting
-          </span>
-        )}
-      </div>
-      {/* ⛔ Per run, not only on the task. A task that ran three times can have run in three
-          different conversations — that is the whole point of resuming and sharing — and the ledger
-          above shows only the latest. Which conversation *this* attempt was served by is the fact
-          that explains why it cost what it cost. */}
-      <ConversationId run={run} sessions={sessions} />
-      <div className="side-run-body num">
-        <span>{worker ?? run.workerId.slice(0, 8)}</span>
-        <span
-          title={
-            'What this run spent: input + output + cache read + cache write, summed from the ' +
-            'transcript. ⛔ Not the size of the context — a single long conversation re-reads its ' +
-            'whole window every turn, so the total runs far ahead of it.'
-          }
-        >
-          {tokens(spent || null)} spent
-        </span>
-      </div>
-      <QuotaDelta run={run} />
-      {run.prompt && (
-        <div className="side-run-prompt">
-          <PromptDisclosure prompt={run.prompt} label={`Run ${run.id.slice(0, 8)} prompt`} />
         </div>
-      )}
+        <div className="side-run-fact">
+          <span className="side-run-key">agent time:</span>
+          <span
+            className="side-run-val num dim"
+            title={
+              run.blockedMs > 0
+                ? `${duration(agentWorkingMs)} working, ${duration(run.blockedMs)} of it waiting on a person.`
+                : 'Nothing waited on a person during this attempt, so all of it was work.'
+            }
+          >
+            {duration(agentWorkingMs)}
+            {run.blockedMs > 0 && <span className="dim"> (+{duration(run.blockedMs)} waiting)</span>}
+          </span>
+        </div>
+        <div className="side-run-fact">
+          <span className="side-run-key">total duration:</span>
+          <span className="side-run-val num dim" title="Total wall-clock duration from dispatch to end.">
+            {duration(totalDurationMs)}
+          </span>
+        </div>
+        {(run.quotaBefore || run.quotaAfter) && (
+          <div className="side-run-fact side-run-fact--usage">
+            <span className="side-run-key">usage:</span>
+            <span className="side-run-val">
+              <QuotaDelta run={run} />
+            </span>
+          </div>
+        )}
+      </div>
     </div>
   )
 }
@@ -1692,10 +1723,16 @@ function RunRow({
  * honest answer.
  */
 function CompactionRow({
+  index,
   compaction: c,
+  sessions,
+  fleet,
   now
 }: {
+  index: number
   compaction: Compaction
+  sessions: Session[]
+  fleet: FleetEntry[]
   now: number
 }): React.JSX.Element {
   const landed = c.landedAt !== null
@@ -1704,54 +1741,84 @@ function CompactionRow({
     c.preTokens !== null && c.postTokens !== null && c.preTokens > c.postTokens
       ? c.preTokens - c.postTokens
       : null
+  const startTs = c.askedAt ?? c.ts
+  const endTs = c.landedAt ?? (c.durationMs ? startTs + c.durationMs : null)
+
+  const session = sessions.find((s) => s.id === c.sessionId)
+  const worker = session ? fleet.find((f) => f.worker.id === session.workerId)?.worker.label : null
+
   return (
     <div className="side-run">
       <div className="side-run-head">
-        <span className="mono" title={`Session ${c.sessionId}`}>
-          {c.sessionId.slice(0, 8)}
+        <span className="side-run-seq">#{index} Compact</span>
+        <span className="num dim">
+          {timeRange(startTs, landed ? endTs : pending ? null : endTs, now)}
         </span>
-        <span
-          className="dim"
-          title={
-            c.trigger === 'clock'
-              ? 'The cache clock bought this: it decided a shrink was worth more than holding the prefix as it was.'
-              : c.trigger === 'agent'
-                ? 'The agent compacted its own context.'
-                : 'The CLI compacted on its own when the context filled. This fleet only watched it happen.'
-          }
-        >
-          {c.trigger}
-        </span>
-        <span
-          className={landed ? 'ok' : pending ? 'dim' : 'warn'}
-          title={
-            landed
-              ? undefined
-              : pending
-                ? 'Asked for, and not yet confirmed by a compaction boundary in the transcript.'
-                : 'Asked for and never confirmed. The session did not honour it, and the clock falls back to a handoff rather than asking a third time.'
-          }
-        >
-          {landed ? 'compacted' : pending ? 'asked' : 'never landed'}
-        </span>
-        {c.durationMs !== null && <span className="num dim">{duration(c.durationMs)}</span>}
       </div>
-      <div className="side-run-body num">
-        <span
-          title={
-            'Context before the compaction, and after it. The second number is measured by the ' +
-            'first turn that follows - until one does, it is unknown rather than zero.'
-          }
-        >
-          {tokens(c.preTokens)} → {tokens(c.postTokens)}
-        </span>
-        {saved !== null && (
-          <span className="ok" title="Tokens every subsequent turn no longer has to read.">
-            {tokens(saved)} smaller
+      <div className="side-run-facts">
+        <div className="side-run-fact">
+          <span className="side-run-key">run_id:</span>
+          <span className="side-run-val mono" title={`Session ${c.sessionId}`}>
+            {worker ? `${worker}/` : ''}{c.sessionId.slice(0, 8)}
           </span>
+        </div>
+        <div className="side-run-fact">
+          <span className="side-run-key">trigger:</span>
+          <span
+            className="side-run-val dim"
+            title={
+              c.trigger === 'clock'
+                ? 'The cache clock bought this: it decided a shrink was worth more than holding the prefix as it was.'
+                : c.trigger === 'agent'
+                  ? 'The agent compacted its own context.'
+                  : 'The CLI compacted on its own when the context filled. This fleet only watched it happen.'
+            }
+          >
+            {c.trigger}
+          </span>
+        </div>
+        <div className="side-run-fact">
+          <span className="side-run-key">result:</span>
+          <span className="side-run-val">
+            <span
+              className={landed ? 'ok' : pending ? 'dim' : 'warn'}
+              title={
+                landed
+                  ? undefined
+                  : pending
+                    ? 'Asked for, and not yet confirmed by a compaction boundary in the transcript.'
+                    : 'Asked for and never confirmed. The session did not honour it, and the clock falls back to a handoff rather than asking a third time.'
+              }
+            >
+              {landed ? 'compacted' : pending ? 'asked' : 'failed'}
+            </span>
+            {c.durationMs !== null && <span className="num dim"> · {duration(c.durationMs)}</span>}
+          </span>
+        </div>
+        <div className="side-run-fact">
+          <span className="side-run-key">context:</span>
+          <span
+            className="side-run-val num"
+            title={
+              'Context before the compaction, and after it. The second number is measured by the ' +
+              'first turn that follows - until one does, it is unknown rather than zero.'
+            }
+          >
+            <span>{tokens(c.preTokens)} → {tokens(c.postTokens)}</span>
+            {saved !== null && (
+              <span className="ok" title="Tokens every subsequent turn no longer has to read.">
+                {' '}({tokens(saved)} smaller)
+              </span>
+            )}
+          </span>
+        </div>
+        {c.reason && (
+          <div className="side-run-fact">
+            <span className="side-run-key">reason:</span>
+            <span className="side-run-val dim">{c.reason}</span>
+          </div>
         )}
       </div>
-      {c.reason && <div className="side-run-why">{c.reason}</div>}
     </div>
   )
 }
@@ -1767,14 +1834,24 @@ function CompactionRow({
  * anything is spawned, and that run genuinely was not served by a conversation. A session row that
  * has since gone falls back to the session id, which is what `--session-id` was given.
  */
-function ConversationId({ run, sessions }: { run: Run; sessions: Session[] }): React.JSX.Element | null {
+function ConversationId({
+  run,
+  sessions,
+  workerLabel
+}: {
+  run: Run
+  sessions: Session[]
+  workerLabel?: string
+}): React.JSX.Element {
   const [copied, setCopied] = useState(false)
   const id = conversationIdFor(run, sessions)
-  if (!id) return null
+  const displayId = id ? id.slice(0, 12) : run.sessionId ? run.sessionId.slice(0, 8) : null
+  const textToCopy = id ?? run.sessionId ?? ''
 
   const copy = (): void => {
+    if (!textToCopy) return
     void navigator.clipboard
-      .writeText(id)
+      .writeText(textToCopy)
       .then(() => {
         setCopied(true)
         setTimeout(() => setCopied(false), 1200)
@@ -1784,16 +1861,26 @@ function ConversationId({ run, sessions }: { run: Run; sessions: Session[] }): R
       .catch(() => undefined)
   }
 
+  if (!displayId) {
+    return (
+      <span className="mono">
+        {workerLabel ? `${workerLabel} / ` : ''}
+        <span className="dim">none</span>
+      </span>
+    )
+  }
+
   return (
-    <div className="side-run-conv">
+    <span className="mono">
+      {workerLabel ? `${workerLabel} / ` : ''}
       <button
         className="conv-id mono"
         onClick={copy}
-        title={`Conversation ${id} — click to copy. This is the id to pass after --resume or --conversation.`}
+        title={`Conversation ${textToCopy} — click to copy. This is the id to pass after --resume or --conversation.`}
       >
-        {copied ? 'copied' : id.slice(0, 12)}
+        {copied ? 'copied' : displayId}
       </button>
-    </div>
+    </span>
   )
 }
 

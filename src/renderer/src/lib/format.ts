@@ -62,6 +62,19 @@ export function when(ts: number | null | undefined): string {
   return sameDay ? time : `${date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} ${time}`
 }
 
+/** A formatted time range (e.g. 01:43 PM – 01:50 PM or 01:43 PM – now). */
+export function timeRange(
+  startTs: number | null | undefined,
+  endTs: number | null | undefined,
+  _now = Date.now()
+): string {
+  if (!startTs) return '—'
+  const startStr = when(startTs)
+  if (endTs === undefined) return startStr
+  if (endTs === null) return `${startStr} – now`
+  return `${startStr} – ${when(endTs)}`
+}
+
 export function tokens(n: number | null | undefined): string {
   if (n === null || n === undefined) return '--'
   if (n < 1000) return String(n)
