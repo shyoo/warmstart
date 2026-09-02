@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { contextOf, sumUsage } from './transcript.js'
 import { encodeProjectDir } from './adapters/claude-code.js'
 
@@ -91,3 +91,116 @@ describe('encodeProjectDir', () => {
     expect(encodeProjectDir('/home/x/proj.v2')).toBe('-home-x-proj-v2')
   })
 })
+
+describe('TranscriptTailer compact_boundary handling and recordCompaction', () => {
+  let dir: string
+  let db: typeof import('./db.js')
+  let transcriptModule: typeof import('./transcript.js')
+  let compactionModule: typeof import('./compaction.js')
+
+  beforeAll(async () => {
+    const { mkdtempSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    dir = mkdtempSync(join(tmpdir(), 'agentyard-transcript-test-'))
+    process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
+    db = await import('./db.js')
+    transcriptModule = await import('./transcript.js')
+    compactionModule = await import('./compaction.js')
+    db.openDb(join(dir, 'transcript_test.db'))
+    db.db().prepare(`
+      insert into workers (id, label, adapter_id, isolation_root, enabled, human_occupied, max_concurrent, role, created_at)
+      values ('w1', 'Claude 1', 'claude-code', ?, 1, 0, 1, 'worker', ?)
+    `).run(join(dir, 'iso'), Date.now())
+  })
+
+  afterAll(async () => {
+    const { rmSync } = await import('node:fs')
+    db.closeDb?.()
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  beforeEach(() => {
+    db.db().prepare('delete from compactions').run()
+    db.db().prepare('delete from turns').run()
+    db.db().prepare('delete from sessions').run()
+  })
+
+  it('TranscriptTailer parses compact_boundary and passes timestamp to onCompact', async () => {
+    const { writeFileSync } = await import('node:fs')
+    const { join } = await import('node:path')
+    const transcriptFile = join(dir, 'session-tailer.jsonl')
+    const sessionId = 'session-tailer-1'
+
+    const line = JSON.stringify({
+      type: 'system',
+      subtype: 'compact_boundary',
+      timestamp: '2026-09-01T22:20:15.000Z',
+      compactMetadata: {
+        trigger: 'manual',
+        preTokens: 84254,
+        durationMs: 115000
+      }
+    })
+    writeFileSync(transcriptFile, line + '\n', 'utf8')
+
+    let recordedMeta: { preTokens: number | null; durationMs: number | null; trigger?: string | null; ts?: number } | null = null
+    const tailer = new transcriptModule.TranscriptTailer(sessionId, transcriptFile, {
+      onTurn() {},
+      onCompact(_sid, meta) {
+        recordedMeta = meta
+      }
+    })
+
+    tailer.start()
+    await new Promise((r) => setTimeout(r, 200))
+    tailer.stop()
+
+    expect(recordedMeta).not.toBeNull()
+    const m = recordedMeta!
+    expect(m.preTokens).toBe(84254)
+    expect(m.durationMs).toBe(115000)
+    expect(m.trigger).toBe('manual')
+    expect(m.ts).toBe(Date.parse('2026-09-01T22:20:15.000Z'))
+  })
+
+  it('⭐ recordCompaction deduplicates a replayed compact_boundary when session is resumed', async () => {
+    const sessionId = 'session-replay-1'
+    const T1 = Date.parse('2026-09-01T22:20:15.000Z')
+
+    // Seed session in DB
+    db.db().prepare(`
+      insert into sessions (id, worker_id, adapter_id, transport, cwd, state, purpose, tokens_since_compact, started_at)
+      values (?, 'w1', 'claude-code', 'stream', 'C:\\ws', 'live', 'work', 50000, ?)
+    `).run(sessionId, T1 - 10000)
+
+    compactionModule.noteCompactionAsked({
+      sessionId,
+      taskId: 't113',
+      reason: 'warm prefix compaction',
+      preTokens: 84254
+    })
+
+    // First time the boundary is processed (run 1):
+    const firstResult = transcriptModule.recordCompaction(sessionId, {
+      preTokens: 84254,
+      durationMs: 115000,
+      trigger: 'manual',
+      ts: T1
+    })
+    expect(firstResult).toBe(true)
+    expect(compactionModule.compactionsForTask('t113')).toHaveLength(1)
+
+    // Second time the boundary is processed (replayed on resume from offset 0 in run 2):
+    const secondResult = transcriptModule.recordCompaction(sessionId, {
+      preTokens: 84254,
+      durationMs: 115000,
+      trigger: 'manual',
+      ts: T1
+    })
+    expect(secondResult).toBe(false)
+    // Must still have exactly 1 compaction for t113, not 2!
+    expect(compactionModule.compactionsForTask('t113')).toHaveLength(1)
+  })
+})
+

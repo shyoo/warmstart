@@ -44,26 +44,43 @@ export function noteCompactionAsked(args: {
  */
 export function noteCompactionLanded(
   sessionId: string,
-  meta: { preTokens: number | null; durationMs: number | null; trigger?: string | null }
+  meta: { preTokens: number | null; durationMs: number | null; trigger?: string | null; ts?: number }
 ): Compaction | null {
-  const now = Date.now()
-  const open = row<{ id: number; pre_tokens: number | null }>(
+  const ts = meta.ts ?? Date.now()
+
+  // ⛔ Deduplicate replayed compact_boundary records from the transcript.
+  // When a session is resumed, TranscriptTailer reads the transcript from offset 0. Any
+  // compact_boundary records from prior runs are already recorded in `compactions`.
+  if (meta.ts !== undefined) {
+    const existing = row<{ id: number }>(
+      db()
+        .prepare(
+          `select id from compactions
+            where session_id = ? and (landed_at = ? or (asked_at is null and ts = ?))`
+        )
+        .get(sessionId, meta.ts, meta.ts)
+    )
+    if (existing) return null
+  }
+
+  const open = row<{ id: number; pre_tokens: number | null; asked_at: number }>(
     db()
       .prepare(
-        `select id, pre_tokens from compactions
+        `select id, pre_tokens, asked_at from compactions
           where session_id = ? and landed_at is null and asked_at is not null
           order by asked_at desc limit 1`
       )
       .get(sessionId)
   )
 
-  if (open) {
+  // ⚠️ Only match an open request if the boundary did not occur in the past before the ask.
+  if (open && (meta.ts === undefined || meta.ts >= open.asked_at - 5000)) {
     db()
       .prepare(
-        `update compactions set landed_at = ?, duration_ms = ?, pre_tokens = coalesce(pre_tokens, ?)
+        `update compactions set landed_at = ?, ts = ?, duration_ms = ?, pre_tokens = coalesce(pre_tokens, ?)
           where id = ?`
       )
-      .run(now, meta.durationMs, meta.preTokens, open.id)
+      .run(ts, ts, meta.durationMs, meta.preTokens, open.id)
     return getCompaction(open.id)
   }
 
@@ -82,8 +99,8 @@ export function noteCompactionLanded(
         : 'the CLI compacted on its own when the context filled',
       meta.preTokens,
       meta.durationMs,
-      now,
-      now
+      ts,
+      ts
     )
   return getCompaction(Number(info.lastInsertRowid))
 }

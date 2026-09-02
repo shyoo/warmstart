@@ -115,6 +115,99 @@ describe('a compaction that landed', () => {
     })
     expect(landed?.trigger).toBe('agent')
   })
+
+  it('⭐ deduplicates a replayed boundary from an earlier run on the same session', () => {
+    // ⛔ When a session is resumed, TranscriptTailer reads from offset 0.
+    // The previous run's compact_boundary is encountered again with its original timestamp.
+    const T1 = 1_700_000_000_000
+    compaction.noteCompactionAsked({
+      sessionId: SESSION,
+      taskId: 't113',
+      reason: 'past the break-even',
+      preTokens: 84_254
+    })
+    const first = compaction.noteCompactionLanded(SESSION, {
+      preTokens: 84_254,
+      durationMs: 115_000,
+      trigger: 'manual',
+      ts: T1
+    })
+    expect(first).not.toBeNull()
+    expect(compaction.compactionsForTask('t113')).toHaveLength(1)
+
+    // Replay when resumed:
+    const replay = compaction.noteCompactionLanded(SESSION, {
+      preTokens: 84_254,
+      durationMs: 115_000,
+      trigger: 'manual',
+      ts: T1
+    })
+    expect(replay).toBeNull()
+    expect(compaction.compactionsForTask('t113')).toHaveLength(1)
+  })
+
+  it('deduplicates a replayed auto-compaction boundary', () => {
+    const T1 = 1_700_000_000_000
+    const first = compaction.noteCompactionLanded(SESSION, {
+      preTokens: 90_000,
+      durationMs: 100_000,
+      trigger: null,
+      ts: T1
+    })
+    expect(first).not.toBeNull()
+
+    const replay = compaction.noteCompactionLanded(SESSION, {
+      preTokens: 90_000,
+      durationMs: 100_000,
+      trigger: null,
+      ts: T1
+    })
+    expect(replay).toBeNull()
+  })
+
+  it('does not allow an old replayed boundary to steal a newly opened compaction ask', () => {
+    // Run 1: compacted at T1
+    const T1 = 1_700_000_000_000
+    compaction.noteCompactionLanded(SESSION, {
+      preTokens: 60_000,
+      durationMs: 110_000,
+      trigger: 'manual',
+      ts: T1
+    })
+
+    // Run 2: starts hours later, asks for a new compaction
+    compaction.noteCompactionAsked({
+      sessionId: SESSION,
+      taskId: 't113',
+      reason: 'resumed large context',
+      preTokens: 80_000
+    })
+
+    // Replay of T1 boundary during tailing from offset 0 must be ignored and not close T2's ask
+    const replay = compaction.noteCompactionLanded(SESSION, {
+      preTokens: 60_000,
+      durationMs: 110_000,
+      trigger: 'manual',
+      ts: T1
+    })
+    expect(replay).toBeNull()
+
+    // The open ask for t113 is still standing open
+    const [row] = compaction.compactionsForTask('t113')
+    expect(row?.landedAt).toBeNull()
+    expect(row?.preTokens).toBe(80_000)
+
+    // When the real new compaction lands at T2_land, it closes the ask
+    const T2_land = 1_700_010_120_000
+    const second = compaction.noteCompactionLanded(SESSION, {
+      preTokens: 80_000,
+      durationMs: 120_000,
+      trigger: 'manual',
+      ts: T2_land
+    })
+    expect(second?.landedAt).toBe(T2_land)
+    expect(compaction.compactionsForTask('t113')).toHaveLength(1)
+  })
 })
 
 describe('what the compaction actually left behind', () => {

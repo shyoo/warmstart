@@ -116,7 +116,7 @@ describe('a daemon that went away', { timeout: 20_000 }, () => {
     sessions.reconcileOrphans()
     expect(stateOf('s-live')).toBe('abandoned')
     expect(stateOf('s-starting')).toBe('abandoned')
-  })
+  }, 15_000)
 
   it('stamps them with a closing time, so the row is not left open forever', () => {
     seedSession('s-live', 'live')
@@ -125,7 +125,7 @@ describe('a daemon that went away', { timeout: 20_000 }, () => {
       | { closed_at: number | null }
       | undefined
     expect(row?.closed_at).toBeTypeOf('number')
-  })
+  }, 15_000)
 
   it('leaves rows that already ended exactly as they are', () => {
     // ⚠️ Including `failed`. A session that really did die on its own is not re-labelled by a later
@@ -138,7 +138,7 @@ describe('a daemon that went away', { timeout: 20_000 }, () => {
     expect(stateOf('s-closed')).toBe('closed')
     expect(stateOf('s-failed')).toBe('failed')
     expect(stateOf('s-abandoned')).toBe('abandoned')
-  })
+  }, 15_000)
 })
 
 describe('an ended session is one that is over, in every list', () => {

@@ -968,7 +968,24 @@ const MIGRATIONS: Migration[] = [
     if (!hasColumn(conn, 'tasks', 'auto_compact')) {
       conn.exec("alter table tasks add column auto_compact text not null default 'inherit';")
     }
-  }
+  },
+
+  // 33 - deduplicate replayed compactions in recorded history.
+  //
+  // ⛔ **A resumed session re-tailed its transcript from offset 0**, and every `compact_boundary`
+  // line written by earlier runs was re-emitted to `noteCompactionLanded`. Without deduplication,
+  // each resume created a duplicate row in `compactions` with trigger='auto' and posted a duplicate
+  // system message ("Compacted from ... The CLI did this on its own...").
+  //
+  // This cleans up duplicate landed compaction records for the same session at the same timestamp.
+  `
+  delete from compactions
+   where id not in (
+     select min(id) from compactions
+      group by session_id, landed_at, coalesce(duration_ms, -1), coalesce(pre_tokens, -1)
+   )
+   and landed_at is not null;
+  `
 ]
 
 /**

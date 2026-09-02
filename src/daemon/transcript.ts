@@ -121,7 +121,7 @@ export interface TailerEvents {
   onTurn(turn: Turn): void
   onCompact(
     sessionId: string,
-    meta: { preTokens: number | null; durationMs: number | null; trigger?: string | null }
+    meta: { preTokens: number | null; durationMs: number | null; trigger?: string | null; ts?: number }
   ): void
 }
 
@@ -214,13 +214,15 @@ export class TranscriptTailer {
   private handle(record: unknown): void {
     const rec = record as TranscriptRecord
     const stamp = rec.timestamp
-    const ts = stamp ? Date.parse(stamp) : Date.now()
+    const parsedTs = stamp ? Date.parse(stamp) : NaN
+    const ts = !Number.isNaN(parsedTs) ? parsedTs : Date.now()
 
     if (isCompactBoundary(rec)) {
       this.events.onCompact(this.sessionId, {
         trigger: rec.compactMetadata?.trigger ?? null,
         preTokens: rec.compactMetadata?.preTokens ?? null,
-        durationMs: rec.compactMetadata?.durationMs ?? null
+        durationMs: rec.compactMetadata?.durationMs ?? null,
+        ts
       })
       this.previousTs = ts
       return
@@ -362,8 +364,18 @@ function announce(sessionId: string): void {
 
 export function recordCompaction(
   sessionId: string,
-  meta: { preTokens: number | null; durationMs: number | null; trigger?: string | null }
-): void {
+  meta: { preTokens: number | null; durationMs: number | null; trigger?: string | null; ts?: number }
+): boolean {
+  // ⛔ The boundary is the *only* moment this is knowable, so the ledger is closed here rather than
+  // anywhere more convenient. `postTokens` stays null until a turn measures it - see fillPostTokens.
+  //
+  // ⛔ Closed or inserted FIRST: if this boundary is a replayed duplicate from an earlier run (e.g.
+  // when a resumed session tails its transcript from offset 0), noteCompactionLanded returns null
+  // and we must NOT reset tokens_since_compact, clear clock move, post duplicate messages, or fire
+  // compactionLanded listeners.
+  const record = noteCompactionLanded(sessionId, meta)
+  if (!record) return false
+
   db().prepare('update sessions set tokens_since_compact = 0 where id = ?').run(sessionId)
   // ⛔ The proof arrived, so the outstanding request is retired here - at the one place that has
   // seen a real `compact_boundary` record. Leaving it set would hold the session in `in_flight`
@@ -371,10 +383,7 @@ export function recordCompaction(
   // recorded as one that failed, and two more of them before the clock gave up.
   clearClockMove(sessionId)
 
-  // ⚠️ The boundary is the *only* moment this is knowable, so the ledger is closed here rather than
-  // anywhere more convenient. `postTokens` stays null until a turn measures it - see fillPostTokens.
-  const record = noteCompactionLanded(sessionId, meta)
-  if (record?.taskId) {
+  if (record.taskId) {
     addMessage(
       record.taskId,
       'system',
@@ -399,6 +408,7 @@ export function recordCompaction(
   // smaller — so it must not be woken into a half-recorded state where the row it would read still
   // says the compaction is outstanding.
   compactionLanded(sessionId)
+  return true
 }
 
 function costModelFor(adapterId: string) {
