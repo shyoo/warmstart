@@ -113,6 +113,36 @@ the large one it just stopped being, and gets compacted again.
 ⚠️ The ~2-minute duration puts a hard floor under any deadline ending in a compaction. The
 last-chance-to-compact moment is **T+53m**, not T+58m.
 
+### ⛔ A conversation between runs is one the clock cannot see (2026-09-01, t92)
+
+`runCacheClock` iterates sessions in `live` or `idle`, and it has to: **every move it owns is a
+prompt, and a prompt needs a process to receive it.** A conversation whose process has exited —
+preempted, closed, crashed — is invisible to it. That is also exactly the conversation that sits
+still for hours and is then resumed.
+
+Measured on t92 from this install's database. Run 2 was preempted at **21:35** on a vendor quota
+warning and the process exited. The conversation sat `closed` until **23:40**, when run 3 revived it:
+two hours in which `clock_events` gained **not one row** for session `59eda2c6` and `compactions`
+gained nothing either. Run 3 resumed into **84,254** tokens of context carrying **345,708** tokens
+since its last compaction — over both halves of the break-even — and read **15.7M** cache tokens
+across the next twenty minutes. Nothing was broken. The session was simply not one the clock was
+allowed to look at.
+
+⭐ **The fix is a moment, not a policy.** `compactOnResume()` applies the *same* `worthCompactingNow`
+test at the one point where the conversation has a process again and the spending is no longer
+speculative: the scheduler has dispatched a task, the account has passed the dispatch gate, the
+conversation is being revived regardless, and every turn of the run about to start will read this
+prefix. `/compact` goes in first and the task's own prompt waits for the `compact_boundary`.
+
+⛔ **Not by resuming a closed conversation on spec.** That would mean spawning a process and paying a
+full context read on the chance somebody wants it later — on an account that may have been preempted
+for being out of quota in the first place.
+
+⚠️ **The prompt is sent exactly once, boundary or no boundary.** Whether `/compact` is honoured on
+the `stream` transport is still unmeasured (R6), so the wait is bounded by `RESUME_COMPACT_WAIT_MS`
+(= `COMPACT_SETTLE_MS`, 4 min) and the run starts on the full context if nothing arrives. The
+unlanded ask stays on the record, which is the finding.
+
 ## 5. Quota
 
 | Fact | Value | Source |

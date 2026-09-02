@@ -1,4 +1,5 @@
 import { db, row, rows } from './db.js'
+import { log } from './log.js'
 import type { Compaction } from '@shared/tasks.js'
 
 /**
@@ -85,6 +86,55 @@ export function noteCompactionLanded(
       now
     )
   return getCompaction(Number(info.lastInsertRowid))
+}
+
+/**
+ * Who is waiting for the *next* compaction on a session to land.
+ *
+ * ⛔ **In memory, one-shot, and never a substitute for the ledger.** The `compactions` table records
+ * that a compaction was asked for and whether it landed; this answers a different question, and only
+ * for as long as the daemon runs: *something is holding a prompt back until this session is smaller*.
+ * The one caller is the resume path in `scheduler.ts`, which sends `/compact` into a conversation it
+ * has just revived and must not send the task's own prompt until the boundary has arrived — a prompt
+ * delivered mid-compaction is a prompt the agent reads out of the summary rather than out of the
+ * message.
+ *
+ * ⚠️ Every waiter carries its own timeout and unsubscribes itself. Whether `/compact` is honoured on
+ * the `stream` transport is still unmeasured (HANDOFF R6), so a waiter that only ever fired on
+ * success would strand the run that registered it forever.
+ */
+const waitingForCompaction = new Map<string, Set<() => void>>()
+
+/** Register a one-shot listener. Returns the unsubscribe, which is safe to call twice. */
+export function onCompactionLanded(sessionId: string, listener: () => void): () => void {
+  const listeners = waitingForCompaction.get(sessionId) ?? new Set<() => void>()
+  listeners.add(listener)
+  waitingForCompaction.set(sessionId, listeners)
+  return () => {
+    const current = waitingForCompaction.get(sessionId)
+    if (!current) return
+    current.delete(listener)
+    if (current.size === 0) waitingForCompaction.delete(sessionId)
+  }
+}
+
+/**
+ * A boundary arrived on this session. Wake everyone waiting, once.
+ *
+ * ⛔ The map entry is dropped *before* the listeners run: one of them re-registering, or throwing,
+ * must not leave a stale set behind that a later boundary would fire a second time.
+ */
+export function compactionLanded(sessionId: string): void {
+  const listeners = waitingForCompaction.get(sessionId)
+  if (!listeners) return
+  waitingForCompaction.delete(sessionId)
+  for (const listener of listeners) {
+    try {
+      listener()
+    } catch (err) {
+      log.warn(`a compaction listener on ${sessionId.slice(0, 8)} threw:`, err)
+    }
+  }
 }
 
 /**

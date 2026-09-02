@@ -474,3 +474,59 @@ describe('a conversation the queue is waiting on', () => {
     expect(decision.move).not.toBe('compact')
   })
 })
+
+/**
+ * ⛔ **The two hours t92 spent closed, holding a context nothing was allowed to look at.**
+ *
+ * Measured from this install's own database, 2026-09-01. Run 2 of t92 was preempted at 21:35 on a
+ * vendor quota warning and its process exited; run 3 resumed the same conversation at 23:40. In
+ * between: **not one `clock_events` row** for session 59eda2c6, and no compaction — because
+ * `runCacheClock` iterates live and idle sessions and that one was `closed`. Every move the clock
+ * has is a prompt, and a prompt needs a process, so a conversation between runs is not something it
+ * can act on at all. Run 3 then resumed into an **84,254**-token context that had never been
+ * compacted and read **15.7M** cache tokens over the next twenty minutes.
+ *
+ * ⚠️ These are that session's real numbers, against the real cost model, so the check is not that
+ * some threshold works — it is that *this* conversation would have been compacted before *that* run.
+ */
+describe('a conversation carried across runs is compacted before the next one speaks', () => {
+  /** Session 59eda2c6 as it stood at 23:40:47, the moment the scheduler revived it. */
+  const t92 = (patch: Partial<Session> = {}): Session =>
+    session({ contextTokens: 84_254, tokensSinceCompact: 345_708, state: 'closed', ...patch })
+
+  it('⭐ compacts the conversation t92 resumed, which nothing did', () => {
+    const plan = clock.compactOnResume(t92(), settings.DEFAULT_SETTINGS)
+    expect(plan.compact).toBe(true)
+    expect(plan.estimatedCost).toBeGreaterThan(0)
+    expect(plan.reason).toContain('84254')
+  })
+
+  it('leaves a small carried-over context alone: the same two-part test the clock uses', () => {
+    // ⚠️ Both halves, exactly as `worthCompactingNow` applies them mid-flight. A resume is a new
+    // moment for the policy, never a second policy.
+    expect(clock.compactOnResume(t92({ contextTokens: 4_000 }), settings.DEFAULT_SETTINGS).compact)
+      .toBe(false)
+    expect(clock.compactOnResume(t92({ tokensSinceCompact: 1_000 }), settings.DEFAULT_SETTINGS).compact)
+      .toBe(false)
+  })
+
+  it('off means off here too, and says so', () => {
+    const plan = clock.compactOnResume(t92(), { ...settings.DEFAULT_SETTINGS, autoCompact: false })
+    expect(plan.compact).toBe(false)
+    expect(plan.reason).toContain('switched off')
+  })
+
+  it('does not ask a provider that cannot compact', () => {
+    // ⛔ Antigravity declares `manualCompact: false`. Asking anyway would spend a prompt on a
+    // conversation that cannot shrink and then wait four minutes for a boundary that never comes.
+    const plan = clock.compactOnResume(t92({ adapterId: 'antigravity-cli' }), settings.DEFAULT_SETTINGS)
+    expect(plan.compact).toBe(false)
+    expect(plan.reason).toContain('compact')
+  })
+
+  it('the wait for the boundary is bounded by the same window a clock compaction settles in', () => {
+    // ⚠️ Whether `/compact` is honoured on the stream transport is still unmeasured (R6), so the
+    // prompt must have a way out that does not depend on it arriving.
+    expect(clock.RESUME_COMPACT_WAIT_MS).toBe(clock.COMPACT_SETTLE_MS)
+  })
+})

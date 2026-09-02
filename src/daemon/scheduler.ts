@@ -83,11 +83,13 @@ import {
 } from './worktrees.js'
 import {
   backscroll,
+  clearClockMove,
   closeAndWait,
   closeSession,
   finishedConversationsIn,
   getSession,
   hasOpenRun,
+  markClockMove,
   noteCurrentBranch,
   resumableSession,
   sendPrompt,
@@ -142,7 +144,13 @@ import {
   WEIGHT_FORMULAS,
   weights
 } from './objective.js'
-import { runCacheClock } from './cacheclock.js'
+import {
+  compactOnResume,
+  RESUME_COMPACT_WAIT_MS,
+  runCacheClock,
+  type ResumeCompaction
+} from './cacheclock.js'
+import { noteCompactionAsked, onCompactionLanded } from './compaction.js'
 import { costModel } from './costmodel.js'
 
 /**
@@ -2030,13 +2038,12 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
   )
 
   // The CLI needs a moment before it starts reading stdin; a message sent too early is dropped.
+  //
+  // ⛔ And a revived conversation may need shrinking before it is spoken to at all — see
+  // `openConversation`. The delay is the same either way; what changes is what goes in first.
   setTimeout(() => {
-    try {
-      sendPrompt(session.id, promptText)
-    } catch (err) {
-      log.warn(`could not send the prompt for t${task.seq}:`, err)
-    }
-  }, 2500)
+    openConversation(session, task, promptText, revive ? compactOnResume(revive, settings()) : null)
+  }, PROMPT_DELAY_MS)
 
   // ⚠️ The *reason* travels with it. "dispatched t5 to ClaudeSecond" says what happened; it does not
   // say why that account rather than the other three, which is the question asked afterwards — and
@@ -2218,6 +2225,108 @@ async function dispatchIntoWarmSession(
     `t${task.seq} continued warm on ${worker.label} (run ${run.id.slice(0, 8)}, ` +
       `saved ${saved === null ? 'unknown' : `~${saved}`})`
   )
+}
+
+/** The CLI needs a moment before it reads stdin; a prompt sent too early is dropped. */
+const PROMPT_DELAY_MS = 2500
+
+/**
+ * Put the first prompt into a session — after compacting it, where the conversation is one that was
+ * carried over from an earlier run and is big enough to be worth it.
+ *
+ * ⛔ **`/compact` first, the task's prompt only once the boundary has arrived.** The two cannot be
+ * sent together: a prompt delivered mid-compaction is read out of the summary rather than out of the
+ * message, and an agent that is handed its instructions while its own history is being rewritten is
+ * the one failure this must not introduce in exchange for the tokens it saves.
+ *
+ * ⚠️ **The prompt is sent exactly once, whatever happens.** Compaction on the `stream` transport is
+ * still unmeasured (HANDOFF R6), so the boundary may never come — and a run whose instructions were
+ * lost waiting for it would be far more expensive than the prefix it was trying to shrink. The
+ * boundary wakes it, `RESUME_COMPACT_WAIT_MS` wakes it, and `sent` makes sure only the first of those
+ * is acted on.
+ */
+function openConversation(
+  session: Session,
+  task: Task,
+  promptText: string,
+  plan: ResumeCompaction | null
+): void {
+  const send = (why: string): void => {
+    try {
+      sendPrompt(session.id, promptText)
+      if (why) log.info(`t${task.seq}: sent the prompt after ${why}`)
+    } catch (err) {
+      log.warn(`could not send the prompt for t${task.seq}:`, err)
+    }
+  }
+
+  if (!plan?.compact) {
+    send('')
+    return
+  }
+
+  try {
+    // ⚠️ Sent on the session's own input channel, exactly as the cache clock sends it, because it is
+    // the same request arriving at a different moment.
+    sendPrompt(session.id, '/compact')
+  } catch (err) {
+    // ⛔ The compaction was never issued, so nothing is recorded and nothing is waited for. The run
+    // proceeds on the large prefix, which is what it would have done before any of this existed.
+    log.warn(`could not compact the resumed conversation for t${task.seq}:`, err)
+    send('')
+    return
+  }
+
+  noteCompactionAsked({
+    sessionId: session.id,
+    taskId: task.id,
+    reason: plan.reason,
+    preTokens: session.contextTokens
+  })
+  // ⛔ The clock's own bookkeeping, written by hand because the clock did not make this move. Without
+  // it a `/compact` this path issued would be invisible to `moveOutcome`, and the next tick that
+  // found the session near expiry would happily send a second one.
+  markClockMove(session.id, 'compact', session.tokensSinceCompact)
+  addMessage(
+    task.id,
+    'system',
+    `Compacting before starting: ${plan.reason}. This costs about ${plan.estimatedCost} tokens ` +
+      'once, and the prompt goes in as soon as it lands.'
+  )
+  log.info(
+    `t${task.seq}: compacting the resumed conversation ${session.id.slice(0, 8)} before prompting ` +
+      `(~${plan.estimatedCost} tokens)`
+  )
+
+  let sent = false
+  let stopWaiting = (): void => {}
+  const once = (why: string, timedOut: boolean): void => {
+    if (sent) return
+    sent = true
+    stopWaiting()
+    clearTimeout(timer)
+    if (timedOut) {
+      // ⛔ The clock's mark is released here rather than left to expire. Left set, it would be read
+      // two attempts later as a session that refuses to compact and answered with `handoff_close` —
+      // closing a conversation that is at that moment doing the work.
+      clearClockMove(session.id)
+      addMessage(
+        task.id,
+        'system',
+        'The compaction did not land within ' +
+          `${Math.round(RESUME_COMPACT_WAIT_MS / 60000)} minutes, so the work is starting on the ` +
+          'full context. The request stays on the record, unlanded.'
+      )
+    }
+    send(why)
+  }
+  const timer = setTimeout(
+    () => once('the compaction did not land in time', true),
+    RESUME_COMPACT_WAIT_MS
+  )
+  // ⚠️ Registered after the send, not before: the boundary cannot arrive until `/compact` has been
+  // issued, and a listener left behind by a send that threw would fire on somebody else's compaction.
+  stopWaiting = onCompactionLanded(session.id, () => once('the compaction landed', false))
 }
 
 // ---------------------------------------------------------------------------- watchdogs

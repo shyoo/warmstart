@@ -259,6 +259,82 @@ function worthCompactingNow(session: Session, model: ReturnType<typeof costModel
   )
 }
 
+/**
+ * How long a resumed conversation waits for its compaction before the prompt goes in regardless.
+ *
+ * ⚠️ The same window a clock-issued compaction gets to settle in, for the same reason: measured
+ * compactions on this machine took 110s, 115s, 139s, 116s and 161s, and the spread matters more than
+ * the mean. ⛔ It is a *bound*, not a delay — the boundary record wakes the prompt the instant it
+ * arrives, and this only decides how long the run is willing to be held up by a `/compact` that may
+ * never be honoured at all (HANDOFF R6).
+ */
+export const RESUME_COMPACT_WAIT_MS = COMPACT_SETTLE_MS
+
+export interface ResumeCompaction {
+  compact: boolean
+  /** Why, in one line — for the ledger, the thread and the log alike. */
+  reason: string
+  estimatedCost: number | null
+}
+
+/**
+ * Should this conversation be compacted *before* the next run's prompt is put into it?
+ *
+ * ⛔ **The gap the cache clock structurally cannot see.** `runCacheClock` iterates live and idle
+ * sessions, because every move it has is a prompt and a prompt needs a process to receive it. A
+ * conversation whose process has exited — preempted, closed, crashed — is therefore invisible to it,
+ * and *that is exactly the conversation that sits still for hours and then gets resumed*. Measured on
+ * t92, 2026-09-01: run 2 was preempted at 21:35 on a quota warning, the process exited, and the
+ * conversation sat closed for two hours with **no `clock_events` row of any kind**; run 3 resumed it
+ * at 23:40 into an 84k context that had never been compacted and read **15.7M** cache tokens over the
+ * next twenty minutes. Nothing was broken in the clock. The session simply was not one it was
+ * allowed to look at.
+ *
+ * ⭐ **Resume time is the honest moment to pay for it, and the only one.** Compacting a closed
+ * conversation on spec would mean spawning a process, paying a full context read, and hoping somebody
+ * wants the conversation later — speculative spending on an account that may well have been preempted
+ * for being out of quota in the first place. Here there is no speculation left: a task has been
+ * dispatched, the account has already passed the dispatch gate, the conversation is being revived
+ * whatever happens, and every turn of the run about to start reads this prefix.
+ *
+ * ⚠️ The same two-part `worthCompactingNow` test the clock uses, deliberately: a conversation is
+ * compacted before a resume on exactly the terms it would have been compacted on while idle. This
+ * adds a moment to the policy, never a second policy.
+ */
+export function compactOnResume(session: Session, settings: Settings): ResumeCompaction {
+  const info = adapter(session.adapterId).info
+  const no = (reason: string): ResumeCompaction => ({ compact: false, reason, estimatedCost: null })
+
+  if (!info.capabilities.manualCompact) return no(`${info.label} cannot be asked to compact`)
+  // ⛔ Two independent declarations, and getting this one wrong costs the run its instructions: on a
+  // one-shot session `/compact` would consume the single prompt stdin has room for and the task's
+  // own prompt would never arrive. No adapter declares both today; that is not a reason to rely on it.
+  if (info.capabilities.streamPrompts === 'once') {
+    return no(`${info.label} takes one prompt per session, so a compaction would eat it`)
+  }
+  // ⛔ Off means off here too. See the note on `compactAllowed` in `decide()`.
+  if (!settings.autoCompact) return no('automatic compaction is switched off')
+
+  const model = costModel(info.policy.costModelId)
+  if (!worthCompactingNow(session, model)) {
+    return no(
+      `${session.contextTokens ?? 0} tokens of context, ${session.tokensSinceCompact} of it since ` +
+        'the last compaction - not enough to be worth one'
+    )
+  }
+  const cost = model.costOfCompact(session)
+  if (cost === null) return no('this cost model cannot price a compaction')
+
+  return {
+    compact: true,
+    reason:
+      `resuming a conversation carrying ${session.contextTokens ?? 0} tokens of context, ` +
+      `${session.tokensSinceCompact} of it since the last compaction - every turn of this run ` +
+      'would read that prefix',
+    estimatedCost: Math.round(cost)
+  }
+}
+
 export function decide(session: Session, ctx: ClockContext): ClockDecision {
   const now = ctx.now ?? Date.now()
   const model = costModel(adapter(session.adapterId).info.policy.costModelId)

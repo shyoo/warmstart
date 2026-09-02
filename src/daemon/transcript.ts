@@ -7,7 +7,7 @@ import { adapter } from './adapters/index.js'
 import { clearClockMove, getSession } from './sessions.js'
 import { emit } from './events.js'
 import { addMessage, creditTurn } from './tasks.js'
-import { fillPostTokens, noteCompactionLanded } from './compaction.js'
+import { compactionLanded, fillPostTokens, noteCompactionLanded } from './compaction.js'
 import { clearDispatchFailure } from './workers.js'
 import type { StreamUsage } from './stream.js'
 import { log } from './log.js'
@@ -393,6 +393,12 @@ export function recordCompaction(
       (meta.preTokens ? ` from ${meta.preTokens} tokens` : '') +
       (meta.durationMs ? ` in ${Math.round(meta.durationMs / 1000)}s` : '')
   )
+
+  // ⛔ Last, and only once everything above has been written. A listener is something that was
+  // *waiting* for this — the resume path holds a task's prompt back until the conversation is
+  // smaller — so it must not be woken into a half-recorded state where the row it would read still
+  // says the compaction is outstanding.
+  compactionLanded(sessionId)
 }
 
 function costModelFor(adapterId: string) {

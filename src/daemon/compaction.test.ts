@@ -160,3 +160,52 @@ describe('what the compaction actually left behind', () => {
     expect(compaction.compactionsForTask('t71')[0]?.postTokens).toBeNull()
   })
 })
+
+/**
+ * Waiting for a boundary.
+ *
+ * ⛔ The resume path holds a task's own prompt back until the conversation it revived has shrunk, so
+ * "the compaction landed" has to be something a caller can *wait on* rather than something it
+ * discovers by polling a row. ⚠️ One-shot, per session, and unsubscribable — a waiter that fired
+ * twice would send the same prompt twice, and one that never unsubscribed would fire on the next
+ * task's compaction months later.
+ */
+describe('telling somebody the compaction landed', () => {
+  it('wakes a waiter once, and not again on the next compaction', () => {
+    let woken = 0
+    compaction.onCompactionLanded(SESSION, () => woken++)
+
+    compaction.compactionLanded(SESSION)
+    compaction.compactionLanded(SESSION)
+
+    expect(woken).toBe(1)
+  })
+
+  it('wakes nobody on a session that is not the one being waited for', () => {
+    let woken = 0
+    compaction.onCompactionLanded(SESSION, () => woken++)
+    compaction.compactionLanded('00000000-0000-0000-0000-000000000000')
+    expect(woken).toBe(0)
+  })
+
+  it('a waiter that gave up is not woken - it has already sent the prompt', () => {
+    // ⛔ The timeout path. A `/compact` that is never honoured must not leave a listener behind that
+    // a much later boundary would fire into a run that finished hours ago.
+    let woken = 0
+    const stop = compaction.onCompactionLanded(SESSION, () => woken++)
+    stop()
+    stop()
+    compaction.compactionLanded(SESSION)
+    expect(woken).toBe(0)
+  })
+
+  it('one waiter throwing does not rob the others', () => {
+    let woken = 0
+    compaction.onCompactionLanded(SESSION, () => {
+      throw new Error('a listener that fails is still a listener')
+    })
+    compaction.onCompactionLanded(SESSION, () => woken++)
+    expect(() => compaction.compactionLanded(SESSION)).not.toThrow()
+    expect(woken).toBe(1)
+  })
+})
