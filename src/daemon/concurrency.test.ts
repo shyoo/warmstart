@@ -21,6 +21,7 @@ let dir: string
 let db: typeof import('./db.js')
 let workers: typeof import('./workers.js')
 let scheduler: typeof import('./scheduler.js')
+let tasks: typeof import('./tasks.js')
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'agentyard-concurrency-'))
@@ -28,6 +29,7 @@ beforeAll(async () => {
   db = await import('./db.js')
   workers = await import('./workers.js')
   scheduler = await import('./scheduler.js')
+  tasks = await import('./tasks.js')
   db.openDb(join(dir, 'concurrency.db'))
 })
 
@@ -111,5 +113,47 @@ describe('the capacity gate above one slot', () => {
     //    when judgment is worth the most.
     const busy = [session('a'), session('c1', 'consult'), session('c2', 'consult')]
     expect(scheduler.atCapacity(busy, 2, null)).toBe(false)
+  })
+
+  it('keeps a slot for a task whose question closed its session', () => {
+    // t117's session had ended, so it was absent from `sessionsForWorker`; without this separate
+    // reservation t118 immediately started on the same one-slot worker while t117 still owned its
+    // workspace and awaited a person.
+    const worker = add(1)
+    const parked = tasks.createTask({ title: 'needs a decision' })
+    const run = tasks.startRun({
+      taskId: parked.id,
+      workerId: worker.id,
+      sessionId: 'closed-after-question',
+      projectId: null,
+      quotaUnverified: false,
+      costModelId: null
+    })
+    tasks.finishRun(run.id, 'blocked')
+    tasks.setStatus(parked.id, 'awaiting_human', { assignee: 'human' })
+
+    const retained = scheduler.awaitingHumanReservations(worker.id, [])
+    expect(retained).toBe(1)
+    expect(scheduler.atCapacity([], worker.maxConcurrent, null, retained)).toBe(true)
+    expect(scheduler.awaitingHumanReservations('another-worker', [])).toBe(0)
+  })
+
+  it('does not double-count a parked task whose session is still warm', () => {
+    const worker = add(1)
+    const parked = tasks.createTask({ title: 'waiting with a warm conversation' })
+    const run = tasks.startRun({
+      taskId: parked.id,
+      workerId: worker.id,
+      sessionId: 'still-warm',
+      projectId: null,
+      quotaUnverified: false,
+      costModelId: null
+    })
+    tasks.finishRun(run.id, 'blocked')
+    tasks.setStatus(parked.id, 'awaiting_human', { assignee: 'human' })
+
+    const warm = session('still-warm')
+    expect(scheduler.awaitingHumanReservations(worker.id, [warm])).toBe(0)
+    expect(scheduler.atCapacity([warm], worker.maxConcurrent, warm, 0)).toBe(false)
   })
 })

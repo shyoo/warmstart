@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import type { Project } from '@shared/tasks.js'
 import { policyFor } from './projects.js'
-import { claim, release, upsertResource, workspacePoolId } from './resources.js'
+import { claim, openClaims, release, upsertResource, workspacePoolId } from './resources.js'
 import { log } from './log.js'
 
 const run = promisify(execFile)
@@ -132,6 +132,21 @@ export async function claimWorkspace(
   }
   const index = Number.parseInt(taken.member.replace(/^.*ws/, ''), 10)
   return { claimId: taken.id, path: taken.member, index: Number.isFinite(index) ? index : 1 }
+}
+
+/**
+ * The workspace a resting task deliberately kept for its next turn.
+ *
+ * An `awaiting_human` task can outlive the process that was working in its tree. Its claim moves
+ * back from that session to the task, rather than going back into the pool for another task to take
+ * while the operator decides. The next dispatch must find that same claim and hand it to its new
+ * session; claiming a second member would both exceed the pool and lose the branch the task owns.
+ */
+export function workspaceHeldBy(project: Project, holder: string): Workspace | null {
+  const held = openClaims(workspacePoolId(project.id)).find((claim) => claim.holder === holder)
+  if (!held?.member) return null
+  const index = Number.parseInt(held.member.replace(/^.*ws/, ''), 10)
+  return { claimId: held.id, path: held.member, index: Number.isFinite(index) ? index : 1 }
 }
 
 export function releaseWorkspace(claimId: string): void {

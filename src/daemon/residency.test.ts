@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { Session } from '@shared/protocol.js'
+import type { Project } from '@shared/tasks.js'
 import { atCapacity, cacheHasLapsed, leastValuableResident } from './scheduler.js'
 
 /**
@@ -26,6 +27,7 @@ import { atCapacity, cacheHasLapsed, leastValuableResident } from './scheduler.j
 let dir: string
 let db: typeof import('./db.js')
 let resources: typeof import('./resources.js')
+let worktrees: typeof import('./worktrees.js')
 
 const POOL = 'ws-pool'
 const TASK = 'task-1'
@@ -36,6 +38,7 @@ beforeAll(async () => {
   process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
   db = await import('./db.js')
   resources = await import('./resources.js')
+  worktrees = await import('./worktrees.js')
   db.openDb(join(dir, 'residency.db'))
 })
 
@@ -48,6 +51,15 @@ beforeEach(() => {
     kind: 'counted',
     label: 'workspaces',
     members: ['ws1', 'ws2'],
+    meta: {}
+  })
+  resources.upsertResource({
+    id: resources.workspacePoolId('retained-project'),
+    // The broker only needs the pool id here. This fixture deliberately has no projects row.
+    projectId: null,
+    kind: 'counted',
+    label: 'retained workspaces',
+    members: ['retained-ws1'],
     meta: {}
   })
 })
@@ -93,6 +105,20 @@ describe('handing a workspace from the task that claimed it to the session that 
     resources.reassignClaim(claim!.id, SESSION)
     expect(resources.releaseAllFor(SESSION)).toBe(1)
     expect(free()).toBe(2)
+  })
+
+  it('moves a parked task’s tree back to the task until its next session starts', () => {
+    // A question can end the CLI process. The task, not that now-closed session, must retain this
+    // exact member so another task cannot take its branch while the person decides.
+    const project = { id: 'retained-project' } as Project
+    const claim = resources.claim(resources.workspacePoolId(project.id), SESSION, 1, 'retained-ws1')
+    resources.reassignClaim(claim!.id, TASK)
+
+    expect(worktrees.workspaceHeldBy(project, TASK)).toMatchObject({
+      claimId: claim!.id,
+      path: 'retained-ws1'
+    })
+    expect(resources.availability(resources.workspacePoolId(project.id))?.free).toBe(0)
   })
 
   it('leaves a claim taken before there was a session answering to the task', () => {

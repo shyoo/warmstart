@@ -86,6 +86,7 @@ import {
   switchResidentBranch,
   trunkCommitsSince,
   trunkTargetSha,
+  workspaceHeldBy,
   workspaceState,
   type Rescue,
   type Workspace
@@ -998,7 +999,9 @@ export function chooseTarget(task: Task): WorkerChoice {
     // ⚠️ Asked of *this* worker rather than of the fleet, so one account's warm conversation cannot
     // stand in for — or hide — another's. `warmSessionFor` does that filtering; see its comment.
     const reuse = warmSessionFor(task, worker.id)
-    if (atCapacity(sessionsForWorker(worker.id), worker.maxConcurrent, reuse)) {
+    const sessions = sessionsForWorker(worker.id)
+    const retained = awaitingHumanReservations(worker.id, sessions)
+    if (atCapacity(sessions, worker.maxConcurrent, reuse, retained)) {
       reasons.push(`${worker.label} at capacity`)
       continue
     }
@@ -1778,6 +1781,10 @@ export function poolPressure(task: Task): string | null {
     return `all ${capacity} workspace(s) in ${project.name} are busy` + poolIsNarrow(project, capacity)
   }
 
+  // A task returning from `awaiting_human` already holds its own member. Its reservation fills the
+  // pool by design, but it is not contention: dispatch will transfer that exact claim to the new
+  // session without asking the pool for another one.
+  if (workspaceHeldBy(project, task.id)) return null
   if (state.free > 0) return null
   if (warmSessionFor(task)) return null
   if (evictableResidents(project.id).length > 0) return null
@@ -1866,7 +1873,10 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
   // knows who is taking it and that it has started taking it; saying so costs one row update.
   setStatus(task.id, 'assigned', { assignee: worker.id })
 
-  let workspace: Workspace | null = null
+  // A question can outlive the process that asked it. In that case the task, rather than a dead
+  // session, owns its original workspace until the person answers; reclaiming it here is a transfer
+  // to the next session, not a second pool claim.
+  let workspace: Workspace | null = project ? workspaceHeldBy(project, task.id) : null
   let branch: string | null = null
 
   // ⛔ The directory a resumable conversation was in, offered to the pool as a preference.
@@ -1886,7 +1896,7 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
     // ⚠️ Claimed under the **task's** name, and moved to the session's below. The session's working
     // directory is the workspace, so there is no session to claim on behalf of until there is a
     // workspace to put it in. See `reassignClaim`.
-    workspace = await claimWorkspace(project, task.id, priorCwd)
+    workspace ??= await claimWorkspace(project, task.id, priorCwd)
     // ⛔ A pool with nothing free is not necessarily a pool that is busy. Now that a session keeps
     // its workspace for as long as it lives, an idle conversation can sit on a worktree with no run
     // against it — and the cache clock's `let_expire` move leaves such a session alone indefinitely.
@@ -3495,7 +3505,8 @@ export async function onSessionExit(session: Session, exitCode: number | null): 
   // ⚠️ The early return this replaced (`if (!run) return`) is exactly the path a session that
   // finished its task and was then closed takes — the common case, and the one that would have
   // leaked every worktree the fleet ever used.
-  await releaseWorkspaceOf(session.id)
+  const task = run?.taskId ? getTask(run.taskId) : null
+  await releaseWorkspaceOf(session.id, task?.status === 'awaiting_human' ? task.id : null)
 }
 
 /**
@@ -3819,10 +3830,17 @@ async function releaseFor(
  * over it — so this must not run until the process is actually gone. Every caller waits for the exit
  * rather than for `closeSession` to return; see `closeAndWait`.
  */
-async function releaseWorkspaceOf(sessionId: string): Promise<void> {
+async function releaseWorkspaceOf(sessionId: string, retainForTaskId: string | null = null): Promise<void> {
   const held = workspaces.get(sessionId)
   if (!held) return
   workspaces.delete(sessionId)
+  if (retainForTaskId) {
+    // The task is waiting on a person, not finished. Holding the exact tree prevents both another
+    // task taking its branch and a one-slot worker starting unrelated work before the reply arrives.
+    reassignClaim(held.workspace.claimId, retainForTaskId)
+    releaseAllFor(sessionId)
+    return
+  }
   const project = held.projectId ? getProject(held.projectId) : null
   if (project) announceRescue(await parkWorkspace(project, held.workspace.path))
   releaseWorkspace(held.workspace.claimId)
@@ -3988,10 +4006,24 @@ function taskOnBranch(branch: string): Task | null {
 export function atCapacity(
   sessions: Session[],
   maxConcurrent: number,
-  reuse: Session | null
+  reuse: Session | null,
+  retainedAwaitingHuman = 0
 ): boolean {
   const busy = sessions.filter((s) => s.purpose === 'work' && s.id !== reuse?.id).length
-  return busy >= maxConcurrent
+  return busy + retainedAwaitingHuman >= maxConcurrent
+}
+
+/**
+ * Closed sessions are absent from `sessionsForWorker`, but a task they parked at `awaiting_human`
+ * still owns one worker slot. Do not count one whose session is live: that session is already in the
+ * ordinary concurrency total.
+ */
+export function awaitingHumanReservations(workerId: string, sessions: Session[]): number {
+  const liveSessionIds = new Set(sessions.map((session) => session.id))
+  return listTasks().filter((task) => {
+    if (task.status !== 'awaiting_human' || task.ranOn !== workerId) return false
+    return !runsFor(task.id).some((run) => run.sessionId && liveSessionIds.has(run.sessionId))
+  }).length
 }
 
 // ⛔ Re-exported, not redefined. It moved to `sessions.ts` so `sharing.ts` could ask it without
@@ -4238,7 +4270,11 @@ export async function relandTask(taskId: string): Promise<{ ok: boolean; reason?
   const project = task.projectId ? getProject(task.projectId) : null
   if (!project || project.vcs !== 'git') return didNotLand('not a git project')
 
-  const workspace = await claimWorkspace(project, `reland:${task.id}`)
+  // A task that stopped for a person may already be holding its own worktree. Reuse it for landing:
+  // asking the pool for another member would either fail at capacity or try to check out the branch
+  // in two worktrees at once.
+  const retained = workspaceHeldBy(project, task.id)
+  const workspace = retained ?? (await claimWorkspace(project, `reland:${task.id}`))
   if (!workspace) return didNotLand('every workspace is busy; try again in a moment')
 
   try {

@@ -185,6 +185,16 @@ describe('the gate in front of a full workspace pool', () => {
 })
 
 describe('the ways past a full pool that are not a free member', () => {
+  it('lets a task return to the workspace it kept while awaiting a person', () => {
+    // Its retained member makes the pool look full, but this task is not competing for one: dispatch
+    // transfers that claim to its next session. Holding it here would make a closed-question task
+    // impossible to resume without first giving its workspace away.
+    fill(2)
+    const parked = file('kept its workspace for a reply')
+    expect(resources.claim(poolId, parked, 1, 'ws3')).not.toBeNull()
+    expect(pressureOn(parked)).toBeNull()
+  })
+
   it('lets a task with a warm session through, because reusing one claims nothing', () => {
     // ⛔ **The gate would otherwise refuse the cheapest move the cost model has.** A task continued
     //    in a conversation that never closed does not ask the pool for anything — the session is
