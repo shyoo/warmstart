@@ -1617,7 +1617,15 @@ try {
     const store = new DatabaseSync(join(dataDir, 'multi_agent_controller.db'))
     // Everything else at rest, so the one status under test is the one the dot is answering.
     store.prepare('update tasks set status = ?').run('completed')
-    store.prepare('update tasks set status = ? where id = ?').run('paused_quota', heldId)
+    // ⛔ **With a `not_before` in the future, or this is a race the suite loses on a slow runner.**
+    // `resumeQuotaPaused` treats a null `not_before` as *the window has already reset* and puts the
+    // task straight back to `ready` on the next 10s tick — so the dot read `working`, and the
+    // `.project-dot--paused` lookup below then threw on a null element and took the rest of the
+    // suite with it (CI, ui · windows-latest, 2026-09-02, 167 of 200 checks reached). The seeded
+    // state has to be one the scheduler agrees is still parked.
+    store
+      .prepare('update tasks set status = ?, not_before = ? where id = ?')
+      .run('paused_quota', Date.now() + 60 * 60 * 1000, heldId)
     store.close()
   }
   // A task event is what makes the sidebar re-read; the edit itself changes nothing.
