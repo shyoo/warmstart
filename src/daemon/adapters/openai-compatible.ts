@@ -502,7 +502,137 @@ export function windowsFromRateLimits(limits: CodexRateLimits): QuotaSnapshot['w
  * ⚠️ The response is **camelCase** (`usedPercent`, `windowDurationMins`) where the rollout record is
  * snake_case (`used_percent`, `window_minutes`). Same data, two spellings, one normaliser.
  */
+
+export function parseJwtPayload(token: string): Record<string, unknown> | null {
+  try {
+    const parts = token.split('.')
+    const payload = parts[1]
+    if (parts.length !== 3 || !payload) return null
+    return JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as Record<string, unknown>
+  } catch {
+    return null
+  }
+}
+
+export function formatPlan(plan?: string | null): string | null {
+  if (!plan) return null
+  const lower = plan.toLowerCase().trim()
+  if (lower === 'plus') return 'Plus'
+  if (lower === 'pro') return 'Pro'
+  if (lower === 'free') return 'Free'
+  if (lower === 'team') return 'Team'
+  if (lower === 'enterprise') return 'Enterprise'
+  if (lower === 'business') return 'Business'
+  return plan.charAt(0).toUpperCase() + plan.slice(1)
+}
+
+export interface CodexAuthFile {
+  auth_mode?: string
+  OPENAI_API_KEY?: string
+  tokens?: {
+    id_token?: string
+    access_token?: string
+    refresh_token?: string
+    account_id?: string
+  }
+  last_refresh?: string
+}
+
+export async function refreshTokensIfExpired(isolationRoot: string): Promise<boolean> {
+  const authPath = join(isolationRoot, 'auth.json')
+  if (!existsSync(authPath)) return false
+  try {
+    const raw = readFileSync(authPath, 'utf8')
+    const auth = JSON.parse(raw) as CodexAuthFile
+    const rt = auth.tokens?.refresh_token
+    if (!rt) return false
+
+    const accessPayload = auth.tokens?.access_token ? parseJwtPayload(auth.tokens.access_token) : null
+    const exp = typeof accessPayload?.exp === 'number' ? accessPayload.exp * 1000 : 0
+    if (exp > Date.now() + 60_000) {
+      return true
+    }
+
+    const res = await fetch('https://auth.openai.com/oauth/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        grant_type: 'refresh_token',
+        client_id: 'app_EMoamEEZ73f0CkXaXp7hrann',
+        refresh_token: rt
+      }),
+      signal: AbortSignal.timeout(10_000)
+    })
+    if (!res.ok) {
+      log.debug(`codex token refresh failed: HTTP ${res.status}`)
+      return false
+    }
+    const data = (await res.json()) as {
+      access_token?: string
+      id_token?: string
+      refresh_token?: string
+    }
+    if (data.access_token) {
+      auth.tokens = {
+        ...auth.tokens,
+        access_token: data.access_token,
+        ...(data.id_token ? { id_token: data.id_token } : {}),
+        ...(data.refresh_token ? { refresh_token: data.refresh_token } : {})
+      }
+      auth.last_refresh = new Date().toISOString()
+      writeFileSync(authPath, JSON.stringify(auth, null, 2), 'utf8')
+      log.debug('codex access token refreshed successfully')
+      return true
+    }
+  } catch (err) {
+    log.debug('codex token refresh error:', err)
+  }
+  return false
+}
+
+export function readCodexAuthIdentity(isolationRoot: string): {
+  account?: string
+  subscriptionType?: string
+  loggedIn: boolean
+} | null {
+  const authPath = join(isolationRoot, 'auth.json')
+  if (!existsSync(authPath)) return null
+  try {
+    const auth = JSON.parse(readFileSync(authPath, 'utf8')) as CodexAuthFile
+    if (auth.OPENAI_API_KEY) {
+      return { loggedIn: true, subscriptionType: 'API Key' }
+    }
+    const idPayload = auth.tokens?.id_token ? parseJwtPayload(auth.tokens.id_token) : null
+    const accessPayload = auth.tokens?.access_token ? parseJwtPayload(auth.tokens.access_token) : null
+    const profile = asRecord(accessPayload?.['https://api.openai.com/profile'])
+    const authClaim =
+      asRecord(idPayload?.['https://api.openai.com/auth']) ??
+      asRecord(accessPayload?.['https://api.openai.com/auth'])
+
+    const email =
+      (typeof idPayload?.email === 'string' && idPayload.email) ||
+      (typeof profile?.email === 'string' && profile.email) ||
+      undefined
+
+    const rawPlan =
+      (typeof authClaim?.chatgpt_plan_type === 'string' && authClaim.chatgpt_plan_type) ||
+      undefined
+
+    const subscriptionType = formatPlan(rawPlan) ?? undefined
+
+    return {
+      loggedIn: true,
+      ...(email ? { account: email } : {}),
+      ...(subscriptionType ? { subscriptionType } : {})
+    }
+  } catch (err) {
+    log.debug('codex auth.json identity parse error:', err)
+    return null
+  }
+}
+
 async function readAccountRateLimits(isolationRoot: string): Promise<CodexRateLimits | null> {
+  await refreshTokensIfExpired(isolationRoot)
   const resolved = which(info.command)
   if (!resolved) return null
   const { command, prefixArgs } = launchable(resolved)
@@ -694,10 +824,11 @@ export const openaiCompatible: AgentAdapter = {
    * credential; it looks at whether the vendor put one there and reports the filename.
    */
   async probeIdentity(isolationRoot: string): Promise<IdentityProbe> {
-    // ⛔ `codex doctor --json` describes itself as a *redacted* machine-readable report, and it is
-    // free and local. Using the vendor's own answer beats agentyard inferring one from the presence
-    // of a file - and it means agentyard never opens `auth.json`, which holds a real token.
+    await refreshTokensIfExpired(isolationRoot)
+    const authIdent = readCodexAuthIdentity(isolationRoot)
+
     const resolved = which(info.command)
+    let cliVersion: string | undefined
     if (resolved) {
       try {
         const probe = launchArgs(resolved, ['doctor', '--json'])
@@ -709,30 +840,36 @@ export const openaiCompatible: AgentAdapter = {
           codexVersion?: string
           checks?: Record<string, { status?: string; details?: Record<string, string> }>
         }
-        const auth = report.checks?.['auth.credentials']
-        if (auth) {
-          const mode = auth.details?.['stored auth mode'] ?? 'unknown'
-          return {
-            loggedIn: auth.status === 'ok',
-            ...(report.codexVersion ? { cliVersion: report.codexVersion } : {}),
-            raw: JSON.stringify({
-              loggedIn: auth.status === 'ok',
-              authMode: mode,
-              source: 'codex doctor --json'
-            })
-          }
+        if (report.codexVersion) {
+          cliVersion = report.codexVersion
         }
       } catch (err) {
-        // Doctor is a diagnostic and may fail for reasons that have nothing to do with sign-in.
-        // Falling back beats reporting "probe failed" for an account that is perfectly fine.
         log.debug('codex doctor --json unavailable, falling back to a file check:', err)
       }
     }
 
-    // ⛔ Presence, never contents. agentyard does not read, copy or proxy a credential.
+    if (authIdent) {
+      return {
+        loggedIn: authIdent.loggedIn,
+        ...(authIdent.account ? { account: authIdent.account } : {}),
+        ...(authIdent.subscriptionType ? { subscriptionType: authIdent.subscriptionType } : {}),
+        ...(cliVersion ? { cliVersion } : {}),
+        raw: JSON.stringify({
+          loggedIn: authIdent.loggedIn,
+          account: authIdent.account ?? null,
+          subscriptionType: authIdent.subscriptionType ?? null,
+          source: 'auth.json'
+        })
+      }
+    }
+
     const auth = join(isolationRoot, 'auth.json')
     return existsSync(auth)
-      ? { loggedIn: true, raw: JSON.stringify({ loggedIn: true, source: 'auth.json exists' }) }
+      ? {
+          loggedIn: true,
+          ...(cliVersion ? { cliVersion } : {}),
+          raw: JSON.stringify({ loggedIn: true, source: 'auth.json exists' })
+        }
       : {
           loggedIn: false,
           raw: JSON.stringify({ loggedIn: false, reason: `no auth.json in ${isolationRoot}` })

@@ -2,7 +2,14 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { lastRateLimits, rolloutQuota, windowsFromRateLimits } from './openai-compatible.js'
+import {
+  formatPlan,
+  lastRateLimits,
+  parseJwtPayload,
+  readCodexAuthIdentity,
+  rolloutQuota,
+  windowsFromRateLimits
+} from './openai-compatible.js'
 
 /**
  * Codex's quota reading comes out of a rollout file, and the fixture is a real one.
@@ -168,4 +175,82 @@ describe('the two rungs, and why they are not interchangeable', () => {
     // it. A window with no id would be a window no gate can find.
     expect(windowsFromRateLimits({ primary: { usedPercent: 12, windowDurationMins: null } })).toEqual([])
   })
+
+  it('reads a paid Pro/Plus app-server response with 5h primary and 7d secondary windows', () => {
+    const windows = windowsFromRateLimits({
+      planType: 'plus',
+      primary: { usedPercent: 15, windowDurationMins: 300, resetsAt: 1788338185 },
+      secondary: { usedPercent: 42, windowDurationMins: 10080, resetsAt: 1788924985 },
+      credits: { hasCredits: false, unlimited: false, balance: '0' }
+    })
+    expect(windows).toEqual([
+      { id: '5h', label: '5h', percent: 15, resetsAt: 1788338185 * 1000 },
+      { id: '7d', label: '7d', percent: 42, resetsAt: 1788924985 * 1000 }
+    ])
+  })
 })
+
+describe('codex identity and JWT payload parsing', () => {
+  it('formats plan names nicely', () => {
+    expect(formatPlan('plus')).toBe('Plus')
+    expect(formatPlan('pro')).toBe('Pro')
+    expect(formatPlan('free')).toBe('Free')
+    expect(formatPlan('team')).toBe('Team')
+    expect(formatPlan('enterprise')).toBe('Enterprise')
+    expect(formatPlan(null)).toBeNull()
+  })
+
+  it('decodes base64url JWT payload claims', () => {
+    const payload = { email: 'user@example.com', sub: '123' }
+    const b64 = Buffer.from(JSON.stringify(payload)).toString('base64url')
+    const jwt = `header.${b64}.signature`
+    expect(parseJwtPayload(jwt)).toEqual(payload)
+    expect(parseJwtPayload('invalid')).toBeNull()
+  })
+
+  it('extracts account email and subscriptionType from auth.json tokens', () => {
+    const idClaims = {
+      email: 'shyoo@sunghwanyoo.com',
+      'https://api.openai.com/auth': { chatgpt_plan_type: 'plus' }
+    }
+    const accessClaims = {
+      'https://api.openai.com/profile': { email: 'shyoo@sunghwanyoo.com' },
+      'https://api.openai.com/auth': { chatgpt_plan_type: 'plus' }
+    }
+    const idToken = `h.${Buffer.from(JSON.stringify(idClaims)).toString('base64url')}.s`
+    const accessToken = `h.${Buffer.from(JSON.stringify(accessClaims)).toString('base64url')}.s`
+
+    const dir = join(root, 'authident')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(
+      join(dir, 'auth.json'),
+      JSON.stringify({
+        tokens: {
+          id_token: idToken,
+          access_token: accessToken,
+          refresh_token: 'rt_dummy'
+        }
+      })
+    )
+
+    const ident = readCodexAuthIdentity(dir)
+    expect(ident).toEqual({
+      loggedIn: true,
+      account: 'shyoo@sunghwanyoo.com',
+      subscriptionType: 'Plus'
+    })
+  })
+
+  it('handles API key auth mode in auth.json', () => {
+    const dir = join(root, 'apikeyident')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, 'auth.json'), JSON.stringify({ OPENAI_API_KEY: 'sk-test' }))
+
+    const ident = readCodexAuthIdentity(dir)
+    expect(ident).toEqual({
+      loggedIn: true,
+      subscriptionType: 'API Key'
+    })
+  })
+})
+
