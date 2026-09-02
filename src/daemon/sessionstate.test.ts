@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { spawn } from 'node:child_process'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 /**
@@ -227,5 +228,33 @@ describe('repairing the sessions that were blamed for their own shutdown', () =>
     remigrate()
     expect(stateOf('s-closed')).toBe('closed')
     expect(stateOf('s-live')).toBe('live')
+  })
+})
+
+describe('killProcessTree and process termination', () => {
+  it('gracefully handles 0 or nonexistent pid without throwing', () => {
+    expect(() => sessions.killProcessTree(0)).not.toThrow()
+    expect(() => sessions.killProcessTree(99999999)).not.toThrow()
+  })
+
+  it('terminates a running process and its process tree', async () => {
+    const child =
+      process.platform === 'win32'
+        ? spawn('cmd.exe', ['/c', 'timeout', '/t', '30'], { stdio: 'ignore', windowsHide: true })
+        : spawn('sleep', ['30'], { stdio: 'ignore' })
+    const pid = child.pid
+    expect(pid).toBeDefined()
+    if (!pid) return
+
+    sessions.killProcessTree(pid)
+    await new Promise((resolve) => setTimeout(resolve, 500))
+
+    let alive = true
+    try {
+      process.kill(pid, 0)
+    } catch {
+      alive = false
+    }
+    expect(alive).toBe(false)
   })
 })

@@ -1019,7 +1019,7 @@ export function reconcileOrphans(): number {
       unidentifiable++
     } else if (r.pid && isAlive(r.pid) && ownsProcess(r.pid, r.id)) {
       try {
-        process.kill(r.pid)
+        killProcessTree(r.pid)
         killed++
       } catch (err) {
         log.warn(`could not stop orphaned agent pid ${r.pid}:`, err)
@@ -1029,6 +1029,42 @@ export function reconcileOrphans(): number {
       .prepare("update sessions set state = 'abandoned', closed_at = ? where id = ?")
       .run(Date.now(), r.id)
     removeMcpConfig(r.id)
+  }
+
+  // ⛔ Also reap detached agent processes on Windows whose parent process has died and whose
+  // command line contains a session ID uuid minted by agentyard.
+  if (process.platform === 'win32') {
+    try {
+      const raw = execFileSync(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          'Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like "*--session-id*" } | Select-Object ProcessId, ParentProcessId, CommandLine | ConvertTo-Json -Compress'
+        ],
+        { encoding: 'utf8', timeout: 10_000, windowsHide: true }
+      ).trim()
+      if (raw) {
+        const parsed = JSON.parse(raw)
+        const procs: Array<{ ProcessId?: number; ParentProcessId?: number; CommandLine?: string }> =
+          Array.isArray(parsed) ? parsed : [parsed]
+        for (const p of procs) {
+          if (p.ProcessId && p.ParentProcessId && !isAlive(p.ParentProcessId)) {
+            const match = p.CommandLine?.match(/--session-id\s+([0-9a-fA-F-]+)/)
+            const sId = match ? match[1] : null
+            if (sId && !live.has(sId)) {
+              try {
+                killProcessTree(p.ProcessId)
+                killed++
+              } catch {}
+            }
+          }
+        }
+      }
+    } catch {
+      // Best-effort detached process reap
+    }
   }
   if (stale.length) {
     log.warn(
@@ -1111,6 +1147,33 @@ export function shutdownAll(): void {
   live.clear()
 }
 
+/**
+ * Terminate a process and all of its descendants.
+ *
+ * On Windows, child processes spawned by CLI wrappers (e.g. node-pty conpty or cmd.exe wrappers around
+ * claude.exe) do not receive SIGTERM/SIGKILL when the parent is killed with plain process.kill().
+ * `taskkill /PID <pid> /T /F` forces termination of the entire process tree.
+ */
+export function killProcessTree(pid: number): void {
+  if (!pid) return
+  try {
+    if (process.platform === 'win32') {
+      execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'], {
+        stdio: 'ignore',
+        windowsHide: true
+      })
+    } else {
+      try {
+        process.kill(-pid, 'SIGKILL')
+      } catch {
+        process.kill(pid, 'SIGKILL')
+      }
+    }
+  } catch {
+    // Process or process tree already exited.
+  }
+}
+
 // ---------------------------------------------------------------------------- channels
 
 /** A terminal a human can watch and type into. What "take the keyboard" needs. */
@@ -1138,7 +1201,14 @@ function openPty(
     // the terminal. Nothing that needs EOF uses a PTY.
     end: () => undefined,
     resize: (c, r) => proc.resize(c, r),
-    kill: () => proc.kill()
+    kill: () => {
+      try {
+        proc.kill()
+      } catch {
+        // Ignored
+      }
+      if (proc.pid) killProcessTree(proc.pid)
+    }
   }
 }
 
@@ -1182,7 +1252,12 @@ function openPipes(
     // A pipe has no geometry. Silently doing nothing is the correct behaviour, not a failure.
     resize: () => undefined,
     kill: () => {
-      child.kill()
+      try {
+        child.kill()
+      } catch {
+        // Ignored
+      }
+      if (child.pid) killProcessTree(child.pid)
     }
   }
 }
