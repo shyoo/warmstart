@@ -25,7 +25,7 @@ import {
   updateWorker
 } from './workers.js'
 import { accountUnavailability } from './eligibility.js'
-import { lastQuota, lastQuotaReading, refreshUsage } from './quota.js'
+import { lastQuota, lastQuotaReading, refreshNow } from './quota.js'
 import { emit } from './events.js'
 import {
   backscroll,
@@ -221,7 +221,7 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
     'worker.reorder': (p) => reorderWorkers(p.ids),
     'worker.retire': (p) => retireWorker(p.id),
     // ⭐ A person pressing Probe wants a number, not a re-read of a cache that may be weeks old.
-    // `refreshUsage` drives the adapter's own usage command into a TUI and then reads the result;
+    // `refreshNow` drives the adapter's own usage command into a TUI and then reads the result;
     // for an adapter that declares none it falls straight through to the file read, so this is
     // never worse than what it replaced.
     'worker.probe': async (p) => {
@@ -229,7 +229,11 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
       // The background sweep re-reads identity too and deliberately does not, because an expired
       // subscription answers `auth status` exactly as a live one does.
       await refreshIdentity(p.id, true)
-      await refreshUsage(p.id)
+      // ⛔ Claim the same refresh ledger as the dispatch gate and poller. Calling `refreshUsage`
+      // directly left this manual TUI invisible: the next scheduler tick started a second probe,
+      // and `spawnSession` correctly rejected it as already refreshing. The resulting failed
+      // attempt overwrote the fresh baseline the operator had just requested.
+      await refreshNow(p.id, 0)
       const reading =
         lastQuotaReading(p.id) ??
         lastQuota(p.id) ?? {

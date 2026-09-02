@@ -336,7 +336,7 @@ describe('an account that needs signing in again', () => {
     expect(quota.mayRefreshUsage(worker.id)).toBe(true)
   })
 
-  it('⛔ does not open a second terminal on a worker one was just opened on', () => {
+  it('⛔ does not open a second terminal on a worker one was just opened on', async () => {
     // Measured 2026-08-30: **150 probe PTY sessions against 14 that did any work** over four days -
     // ten interactive `claude` processes opened to read a number for every one that touched the
     // operator's code. Each registers a session with the vendor's bridge and accumulates in the
@@ -351,6 +351,9 @@ describe('an account that needs signing in again', () => {
     // The first ask starts one and says so; the second is inside the backoff and starts nothing.
     expect(quota.ensureFreshQuota(worker.id)).toBe(true)
     expect(quota.ensureFreshQuota(worker.id)).toBe(true) // still in flight - the caller waits
+    // The explicit Probe action takes this same path. It must see the pending gate refresh rather
+    // than trying to open a second TUI and hitting sessions.ts's one-probe-per-worker guard.
+    expect(await quota.refreshNow(worker.id, 0)).toBe(false)
   })
 
   /**
@@ -885,4 +888,3 @@ describe('gating controller consults on fresh quota', () => {
     expect(controller.hasPendingConsult('route', task.id)).toBe(false)
   })
 })
-
