@@ -9,6 +9,7 @@ import {
 import {
   activeTime,
   activeTimeTitle,
+  chronologicalRuns,
   elapsed,
   holdLine,
   projectWorkState,
@@ -410,3 +411,21 @@ describe('the duration beside a task', () => {
     expect(title).toMatch(/7h 54m.*queued/s)
   })
 })
+
+describe('runs ordering for thread display', () => {
+  it('orders runs from oldest to newest (old top, new bottom)', () => {
+    const run1 = { id: 'run-1', startedAt: 1000 }
+    const run2 = { id: 'run-2', startedAt: 2000 }
+    const run3 = { id: 'run-3', startedAt: 3000 }
+    // Backend returns newest first
+    const newestFirst = [run3, run2, run1]
+    expect(chronologicalRuns(newestFirst)).toEqual([run1, run2, run3])
+  })
+
+  it('handles empty or single-run arrays', () => {
+    expect(chronologicalRuns([])).toEqual([])
+    const single = [{ id: 'r1', startedAt: 1000 }]
+    expect(chronologicalRuns(single)).toEqual(single)
+  })
+})
+

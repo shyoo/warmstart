@@ -281,3 +281,14 @@ export function taskLabelShort(task: Pick<Task, 'title' | 'titleSummary'>, max =
   const label = taskLabel(task)
   return label.length > max ? `${label.slice(0, max)}…` : label
 }
+
+/**
+ * Sorts runs into chronological order (oldest first, newest last) for display in the thread.
+ *
+ * ⛔ **Old top, new bottom.** The backend stores and returns runs newest-first (`order by started_at desc`)
+ * so that `runs[0]` is the latest attempt for session resolution. The UI thread reads top-to-bottom
+ * in time order — attempt 1 first, attempt 2 next — matching how a person reads a timeline.
+ */
+export function chronologicalRuns<T extends Pick<Run, 'startedAt'>>(runs: T[]): T[] {
+  return [...runs].sort((a, b) => a.startedAt - b.startedAt)
+}

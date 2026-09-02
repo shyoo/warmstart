@@ -32,6 +32,7 @@ import { duration, tokens, when } from '../lib/format'
 import {
   activeTime,
   activeTimeTitle,
+  chronologicalRuns,
   elapsed,
   holdLine,
   IN_FLIGHT,
@@ -444,253 +445,255 @@ function TaskDetail({
         </div>
 
         <aside className="detail-side">
-          <Fact label="status">
-            <span className={`status ${STATUS_TONE[task.status] ?? ''}`}>
-              {statusLabel(task)}
-              {IN_FLIGHT.has(task.status) && <Working />}
-            </span>
-          </Fact>
-          {task.holdReason && (
-            <Fact label={task.status === 'awaiting_human' ? 'wants' : 'waiting on'}>
-              {holdLine(task, now)}
+          <div className="detail-side-box">
+            <Fact label="status">
+              <span className={`status ${STATUS_TONE[task.status] ?? ''}`}>
+                {statusLabel(task)}
+                {IN_FLIGHT.has(task.status) && <Working />}
+              </span>
             </Fact>
-          )}
-          {/* ⛔ Offered only where the hold is one this fleet invented. See `QuotaOverride`. */}
-          <QuotaOverride task={task} onChanged={refresh} />
-          <Fact label="depends on">
-            <DependencyEditor
-              task={task}
-              dependencies={dependencies}
-              onOpenTask={onOpenTask}
-              onChanged={refresh}
-            />
-          </Fact>
-          {(dependents.length > 0 || blocking > 0) && (
-            <Fact label="blocks">
-              <DependencyList
-                tasks={dependents}
-                fallbackCount={blocking}
+            {task.holdReason && (
+              <Fact label={task.status === 'awaiting_human' ? 'wants' : 'waiting on'}>
+                {holdLine(task, now)}
+              </Fact>
+            )}
+            {/* ⛔ Offered only where the hold is one this fleet invented. See `QuotaOverride`. */}
+            <QuotaOverride task={task} onChanged={refresh} />
+            <Fact label="depends on">
+              <DependencyEditor
+                task={task}
+                dependencies={dependencies}
                 onOpenTask={onOpenTask}
+                onChanged={refresh}
               />
             </Fact>
-          )}
-          <Fact label="worker">
-            <WorkerPicker task={task} fleet={fleet} onChanged={refresh} />
-          </Fact>
-
-          {/* ⭐ The question this whole cost model exists to answer, and the one the UI could not.
-              A worker id says which account paid; only the session says whether the run continued
-              from a warm prefix at 0.1·C or rebuilt one at 2.0·C. */}
-          <Fact label="session">
-            <SessionFact runs={runs} sessions={sessions} />
-          </Fact>
-
-          {/* ⭐ Which model answered, and how hard it was told to think. Both were chosen, stored and
-              metered since M3 and shown nowhere at all — the transcript knew and the operator did
-              not. */}
-          <Fact label="model">
-            <ModelFact session={liveSession ?? null} requested={requestedModel} />
-            {/* ⚠️ Only where the account's CLI has models to offer. A fleet whose cost models failed
-                to load still runs work; it just cannot be re-pointed from here. */}
-            {offered.length > 0 && (
-              <SettingButtonSelect
-                style={{ marginTop: 'var(--sp-1)' }}
-                value={task.constraints.model ?? ''}
-                options={[
-                  {
-                    value: '',
-                    label:
-                      assigned?.defaultModels && Object.values(assigned.defaultModels).filter(Boolean).length > 1
-                        ? 'account default (Auto-balance across pools)'
-                        : assigned?.defaultModel
-                          ? `account default (${assigned.defaultModel})`
-                          : 'CLI default'
-                  },
-                  ...offered.map((m) => ({ value: m.id, label: m.id }))
-                ]}
-                ariaLabel="Model"
-                title={
-                  'Which model the next run uses. A conversation already open keeps the model it ' +
-                  'started with — caches belong to one model, so switching mid-conversation throws ' +
-                  'the cached context away.'
-                }
-                onChange={(val) => {
-                  void rpc('task.setModel', {
-                    id: task.id,
-                    model: val || null,
-                    // ⛔ Cleared with the model. A level legal for the old model need not be legal
-                    // for the new one, and the daemon refuses the pair rather than storing it.
-                    effort: null
-                  }).then(refresh)
-                }}
-              />
+            {(dependents.length > 0 || blocking > 0) && (
+              <Fact label="blocks">
+                <DependencyList
+                  tasks={dependents}
+                  fallbackCount={blocking}
+                  onOpenTask={onOpenTask}
+                />
+              </Fact>
             )}
-            {taskEfforts.length > 0 && (
-              <SettingButtonSelect
-                style={{ marginTop: 'var(--sp-1)' }}
-                value={task.constraints.effort ?? ''}
-                options={[
-                  {
-                    value: '',
-                    label: assigned?.defaultEffort ? `account default (${assigned.defaultEffort})` : 'CLI default'
-                  },
-                  ...taskEfforts.map((level) => ({ value: level, label: level }))
-                ]}
-                ariaLabel="Effort"
-                title="How hard the model thinks on the next run."
-                onChange={(val) => {
-                  void rpc('task.setModel', {
-                    id: task.id,
-                    model: task.constraints.model ?? null,
-                    effort: val || null
-                  }).then(refresh)
-                }}
-              />
-            )}
-            <CacheCost session={liveSession ?? null} changing="model" />
-          </Fact>
+            <Fact label="worker">
+              <WorkerPicker task={task} fleet={fleet} onChanged={refresh} />
+            </Fact>
 
-          {/*
-            ⛔ Context and tokens are different *kinds* of number and were shown side by side with
-            nothing saying so — "52k ctx" beside "1.2M tokens" reads as a contradiction until you
-            know one is a level and the other a total. Context is how full the window is *right now*
-            and goes down when a session compacts; tokens are everything this task has ever spent and
-            only ever go up.
-          */}
-          {/* ⚠️ Only when there is a number. `0 in the window now` is a measurement of nothing — the
-              same reason the session chip draws an empty context as an absence. */}
-          {liveSession?.contextTokens ? (
-            <Fact label="context">
+            {/* ⭐ The question this whole cost model exists to answer, and the one the UI could not.
+                A worker id says which account paid; only the session says whether the run continued
+                from a warm prefix at 0.1·C or rebuilt one at 2.0·C. */}
+            <Fact label="session">
+              <SessionFact runs={runs} sessions={sessions} />
+            </Fact>
+
+            {/* ⭐ Which model answered, and how hard it was told to think. Both were chosen, stored and
+                metered since M3 and shown nowhere at all — the transcript knew and the operator did
+                not. */}
+            <Fact label="model">
+              <ModelFact session={liveSession ?? null} requested={requestedModel} />
+              {/* ⚠️ Only where the account's CLI has models to offer. A fleet whose cost models failed
+                  to load still runs work; it just cannot be re-pointed from here. */}
+              {offered.length > 0 && (
+                <SettingButtonSelect
+                  style={{ marginTop: 'var(--sp-1)' }}
+                  value={task.constraints.model ?? ''}
+                  options={[
+                    {
+                      value: '',
+                      label:
+                        assigned?.defaultModels && Object.values(assigned.defaultModels).filter(Boolean).length > 1
+                          ? 'account default (Auto-balance across pools)'
+                          : assigned?.defaultModel
+                            ? `account default (${assigned.defaultModel})`
+                            : 'CLI default'
+                    },
+                    ...offered.map((m) => ({ value: m.id, label: m.id }))
+                  ]}
+                  ariaLabel="Model"
+                  title={
+                    'Which model the next run uses. A conversation already open keeps the model it ' +
+                    'started with — caches belong to one model, so switching mid-conversation throws ' +
+                    'the cached context away.'
+                  }
+                  onChange={(val) => {
+                    void rpc('task.setModel', {
+                      id: task.id,
+                      model: val || null,
+                      // ⛔ Cleared with the model. A level legal for the old model need not be legal
+                      // for the new one, and the daemon refuses the pair rather than storing it.
+                      effort: null
+                    }).then(refresh)
+                  }}
+                />
+              )}
+              {taskEfforts.length > 0 && (
+                <SettingButtonSelect
+                  style={{ marginTop: 'var(--sp-1)' }}
+                  value={task.constraints.effort ?? ''}
+                  options={[
+                    {
+                      value: '',
+                      label: assigned?.defaultEffort ? `account default (${assigned.defaultEffort})` : 'CLI default'
+                    },
+                    ...taskEfforts.map((level) => ({ value: level, label: level }))
+                  ]}
+                  ariaLabel="Effort"
+                  title="How hard the model thinks on the next run."
+                  onChange={(val) => {
+                    void rpc('task.setModel', {
+                      id: task.id,
+                      model: task.constraints.model ?? null,
+                      effort: val || null
+                    }).then(refresh)
+                  }}
+                />
+              )}
+              <CacheCost session={liveSession ?? null} changing="model" />
+            </Fact>
+
+            {/*
+              ⛔ Context and tokens are different *kinds* of number and were shown side by side with
+              nothing saying so — "52k ctx" beside "1.2M tokens" reads as a contradiction until you
+              know one is a level and the other a total. Context is how full the window is *right now*
+              and goes down when a session compacts; tokens are everything this task has ever spent and
+              only ever go up.
+            */}
+            {/* ⚠️ Only when there is a number. `0 in the window now` is a measurement of nothing — the
+                same reason the session chip draws an empty context as an absence. */}
+            {liveSession?.contextTokens ? (
+              <Fact label="context">
+                <span
+                  className="num"
+                  title={
+                    'How full this session’s context window is at the moment — a level, not a total. ' +
+                    'It falls when the session compacts. It is not the number below it.'
+                  }
+                >
+                  {tokens(liveSession.contextTokens)} in the window now
+                </span>
+              </Fact>
+            ) : null}
+            {/* ⛔ Settable while the task is running, and settable after it has finished — which is
+                the point. Switching a task resting in `awaiting_human` to a landing policy *is* the
+                decision to land it, and the same bar a first completion faced is applied again. */}
+            <Fact label="finish">
+              <FinishPicker
+                task={task}
+                inheritedFinish={detail.inheritedFinish}
+                onChanged={refresh}
+              />
+            </Fact>
+            {/* ⚠️ Next to `finish` because they are the same shape of decision — three tiers, `inherit`
+                a real value, changeable at any time — and an operator who has learnt one has learnt
+                the other. ⛔ Unlike `finish`, this one only records: a task already talking in a
+                conversation is never moved out of it. */}
+            <Fact label="conversation">
+              <SharingPicker
+                task={task}
+                inheritedSharing={detail.inheritedSharing}
+                onChanged={refresh}
+              />
+            </Fact>
+            {/* ⛔ Third of the same shape, and it belongs beside the other two: three tiers,
+                `inherit` a real value, effective on the next run. ⚠️ It is not a care setting -
+                an autonomous agent still stops to ask when a decision changes what it builds. */}
+            <Fact label="completion">
+              <CompletionPicker
+                task={task}
+                inheritedCompletion={detail.inheritedCompletion}
+                onChanged={refresh}
+              />
+            </Fact>
+            <Fact label="objective">
+              <ObjectivePicker
+                task={task}
+                inheritedObjective={detail.inheritedObjective}
+                onChanged={refresh}
+              />
+            </Fact>
+            <Fact label="priority">
+              <PriorityPicker task={task} onChanged={refresh} />
+            </Fact>
+            <Fact label="filed">{when(task.createdAt)}</Fact>
+            {task.firstRunAt && <Fact label="started">{when(task.firstRunAt)}</Fact>}
+            {/* ⛔ Two numbers, because they answer two questions and only one of them is about the
+                agent. `took` is the time an agent was actually working — dispatch, routing and the
+                CLI's start-up included, queueing and every minute spent waiting on you excluded.
+                `elapsed` is the span the task existed inside, and the gap between them is exactly the
+                time nobody was working. Showing only the second is what this pane used to do, and it
+                is the reading that made per-agent durations useless. */}
+            <Fact label="took">
+              <span className="num" title={activeTimeTitle(task, now)}>
+                {activeTime(task, now)} of agent time
+              </span>
+            </Fact>
+            {task.firstRunAt && (
+              <Fact label="elapsed">
+                <span
+                  className="num dim"
+                  title={
+                    'First dispatch to last stop, wall-clock. Larger than the agent time above by ' +
+                    'however long this task spent queued, held, parked on a quota window, or waiting ' +
+                    'for a person.'
+                  }
+                >
+                  {elapsed(task, now)}
+                </span>
+              </Fact>
+            )}
+            {/* ⚠️ Named, not left as "spent". A bare number in a column headed Spent is read as money
+                by roughly everybody; these are tokens, metered from the agent's own transcript. */}
+            <Fact label="tokens">
               <span
                 className="num"
                 title={
-                  'How full this session’s context window is at the moment — a level, not a total. ' +
-                  'It falls when the session compacts. It is not the number below it.'
+                  'Everything every run of this task has spent — input, output and cache, summed from ' +
+                  'the agent’s own transcript. A total, so it only ever grows, and much larger than ' +
+                  'the context above because every turn re-reads the whole window.'
                 }
               >
-                {tokens(liveSession.contextTokens)} in the window now
+                {tokens(task.budget.spentTokens || null)} spent in total
               </span>
             </Fact>
-          ) : null}
-          {/* ⛔ Settable while the task is running, and settable after it has finished — which is
-              the point. Switching a task resting in `awaiting_human` to a landing policy *is* the
-              decision to land it, and the same bar a first completion faced is applied again. */}
-          <Fact label="finish">
-            <FinishPicker
-              task={task}
-              inheritedFinish={detail.inheritedFinish}
-              onChanged={refresh}
-            />
-          </Fact>
-          {/* ⚠️ Next to `finish` because they are the same shape of decision — three tiers, `inherit`
-              a real value, changeable at any time — and an operator who has learnt one has learnt
-              the other. ⛔ Unlike `finish`, this one only records: a task already talking in a
-              conversation is never moved out of it. */}
-          <Fact label="conversation">
-            <SharingPicker
-              task={task}
-              inheritedSharing={detail.inheritedSharing}
-              onChanged={refresh}
-            />
-          </Fact>
-          {/* ⛔ Third of the same shape, and it belongs beside the other two: three tiers,
-              `inherit` a real value, effective on the next run. ⚠️ It is not a care setting -
-              an autonomous agent still stops to ask when a decision changes what it builds. */}
-          <Fact label="completion">
-            <CompletionPicker
-              task={task}
-              inheritedCompletion={detail.inheritedCompletion}
-              onChanged={refresh}
-            />
-          </Fact>
-          <Fact label="objective">
-            <ObjectivePicker
-              task={task}
-              inheritedObjective={detail.inheritedObjective}
-              onChanged={refresh}
-            />
-          </Fact>
-          <Fact label="priority">
-            <PriorityPicker task={task} onChanged={refresh} />
-          </Fact>
-          <Fact label="filed">{when(task.createdAt)}</Fact>
-          {task.firstRunAt && <Fact label="started">{when(task.firstRunAt)}</Fact>}
-          {/* ⛔ Two numbers, because they answer two questions and only one of them is about the
-              agent. `took` is the time an agent was actually working — dispatch, routing and the
-              CLI's start-up included, queueing and every minute spent waiting on you excluded.
-              `elapsed` is the span the task existed inside, and the gap between them is exactly the
-              time nobody was working. Showing only the second is what this pane used to do, and it
-              is the reading that made per-agent durations useless. */}
-          <Fact label="took">
-            <span className="num" title={activeTimeTitle(task, now)}>
-              {activeTime(task, now)} of agent time
-            </span>
-          </Fact>
-          {task.firstRunAt && (
-            <Fact label="elapsed">
-              <span
-                className="num dim"
-                title={
-                  'First dispatch to last stop, wall-clock. Larger than the agent time above by ' +
-                  'however long this task spent queued, held, parked on a quota window, or waiting ' +
-                  'for a person.'
-                }
-              >
-                {elapsed(task, now)}
-              </span>
+            {workspace && (
+              <Fact label="workspace">
+                <span className="mono" title={workspace}>
+                  {workspace}
+                </span>
+              </Fact>
+            )}
+            {task.branch && (
+              <Fact label="branch">
+                <span className="mono">{task.branch}</span>
+              </Fact>
+            )}
+            <Fact label="mandate">
+              {task.mandate.allowed.join(', ')} · depth {task.lineageDepth}/
+              {task.mandate.maxLineageDepth}
             </Fact>
-          )}
-          {/* ⚠️ Named, not left as "spent". A bare number in a column headed Spent is read as money
-              by roughly everybody; these are tokens, metered from the agent's own transcript. */}
-          <Fact label="tokens">
-            <span
-              className="num"
-              title={
-                'Everything every run of this task has spent — input, output and cache, summed from ' +
-                'the agent’s own transcript. A total, so it only ever grows, and much larger than ' +
-                'the context above because every turn re-reads the whole window.'
-              }
-            >
-              {tokens(task.budget.spentTokens || null)} spent in total
-            </span>
-          </Fact>
-          {workspace && (
-            <Fact label="workspace">
-              <span className="mono" title={workspace}>
-                {workspace}
-              </span>
-            </Fact>
-          )}
-          {task.branch && (
-            <Fact label="branch">
-              <span className="mono">{task.branch}</span>
-            </Fact>
-          )}
-          <Fact label="mandate">
-            {task.mandate.allowed.join(', ')} · depth {task.lineageDepth}/
-            {task.mandate.maxLineageDepth}
-          </Fact>
 
-          {compactions.length > 0 && (
-            <div className="side-runs">
-              {/* ⛔ Its own block rather than a line inside a run, because a compaction is not
-                  scoped to one attempt: the session outlives the run, and the shrink it bought is
-                  still paying out on the next one. The label says what it bought, because a
-                  compaction with no before-and-after is a claim rather than a measurement. */}
-              <div
-                className="side-label"
-                title="Each time this task's context was compacted, and what it left behind. A compaction costs one expensive turn and makes every turn after it read a smaller prefix."
-              >
-                compactions · context before → after
+            {compactions.length > 0 && (
+              <div className="side-runs">
+                {/* ⛔ Its own block rather than a line inside a run, because a compaction is not
+                    scoped to one attempt: the session outlives the run, and the shrink it bought is
+                    still paying out on the next one. The label says what it bought, because a
+                    compaction with no before-and-after is a claim rather than a measurement. */}
+                <div
+                  className="side-label"
+                  title="Each time this task's context was compacted, and what it left behind. A compaction costs one expensive turn and makes every turn after it read a smaller prefix."
+                >
+                  compactions · context before → after
+                </div>
+                {compactions.map((c) => (
+                  <CompactionRow key={c.id} compaction={c} now={now} />
+                ))}
               </div>
-              {compactions.map((c) => (
-                <CompactionRow key={c.id} compaction={c} now={now} />
-              ))}
-            </div>
-          )}
+            )}
+          </div>
 
           {runs.length > 0 && (
-            <div className="side-runs">
+            <div className="detail-side-box">
               {/* ⚠️ The label carries the distinction, because "completed" here beside
                   "awaiting_human" above is the thing that reads as a contradiction. A run is one
                   attempt; whether the *task* is done is a separate question. */}
@@ -700,7 +703,7 @@ function TaskDetail({
               >
                 runs · attempts, not outcomes
               </div>
-              {runs.map((run) => (
+              {chronologicalRuns(runs).map((run) => (
                 <RunRow key={run.id} run={run} sessions={sessions} fleet={fleet} now={now} />
               ))}
             </div>
