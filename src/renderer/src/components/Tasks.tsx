@@ -19,6 +19,7 @@ import {
 } from '@shared/tasks'
 import type { ModelOptions, Settings } from '@shared/protocol'
 import { rpc, useActivity, useDaemonEvents, useNow, type FleetEntry } from '../lib/daemon'
+import { isSubmitKey, useUiSettings } from '../lib/uisettings'
 import { DependencyChooser, useTaskCandidates } from './Dependencies'
 import { showsLiveOutput } from '../lib/live'
 import { tokens, when } from '../lib/format'
@@ -660,6 +661,7 @@ function NewTask({
    */
   const [options, setOptions] = useState<ModelOptions[]>([])
   const [settings, setSettings] = useState<Settings | null>(null)
+  const { settings: uiSettings } = useUiSettings()
   // ⚠️ Every task in the fleet, not the page behind this form. A prerequisite is often the task you
   // filed a minute ago, and whether it happens to match the bucket the table is filtered to says
   // nothing about whether this one should wait for it.
@@ -958,8 +960,9 @@ function NewTask({
           }
           onChange={(e) => setTitle(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && title.trim() && !saving) {
-              void submit('ready')
+            if (isSubmitKey(e, uiSettings.enterBehavior) && title.trim() && !saving) {
+              e.preventDefault()
+              void submit(plan ? 'ready' : 'ready')
             }
           }}
         />

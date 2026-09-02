@@ -1,7 +1,9 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { app } from 'electron'
-import type { UiSettings } from '@shared/ipc.js'
+import { DEFAULT_UI_SETTINGS, type UiSettings } from '@shared/ipc.js'
+
+export { DEFAULT_UI_SETTINGS }
 
 /**
  * The preferences the **app** owns, as opposed to the ones the fleet owns.
@@ -14,16 +16,6 @@ import type { UiSettings } from '@shared/ipc.js'
  * ⚠️ It is also per-install rather than per-fleet: two machines pointed at the same account can
  * reasonably disagree about whether closing a window should leave a scheduler running.
  */
-
-export const DEFAULT_UI_SETTINGS: UiSettings = {
-  /**
-   * ⛔ Off by default, and this is the conservative direction rather than the convenient one. On
-   * means closing the window leaves a scheduler running with no window to see it in - which is the
-   * whole point when it is chosen, and an unpleasant surprise when it is not. A newcomer gets the
-   * behaviour that matches what closing a window looks like it does.
-   */
-  tray: false
-}
 
 function file(): string {
   return join(app.getPath('userData'), 'ui-settings.json')
@@ -38,7 +30,13 @@ export function readUiSettings(): UiSettings {
     // ⛔ Field by field, with the default as the fallback: a file written by a newer build, or by
     // somebody's text editor, must not be able to put a non-boolean into a branch that decides
     // whether a fleet keeps running.
-    return { tray: typeof parsed.tray === 'boolean' ? parsed.tray : DEFAULT_UI_SETTINGS.tray }
+    return {
+      tray: typeof parsed.tray === 'boolean' ? parsed.tray : DEFAULT_UI_SETTINGS.tray,
+      enterBehavior:
+        parsed.enterBehavior === 'send' || parsed.enterBehavior === 'newline'
+          ? parsed.enterBehavior
+          : DEFAULT_UI_SETTINGS.enterBehavior
+    }
   } catch {
     return { ...DEFAULT_UI_SETTINGS }
   }

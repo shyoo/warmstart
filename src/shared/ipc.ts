@@ -14,6 +14,8 @@ export interface AppInfo {
   platform: NodeJS.Platform
 }
 
+export type EnterBehavior = 'send' | 'newline'
+
 /**
  * Preferences the app owns rather than the fleet.
  *
@@ -31,6 +33,18 @@ export interface UiSettings {
    * and the tray is how you get the window back. Quit from the tray menu always stops everything.
    */
   tray: boolean
+
+  /**
+   * How the Enter key behaves in prompt and message inputs across the app.
+   * - `'send'`: Pressing Enter sends the prompt immediately; Shift+Enter adds a new line.
+   * - `'newline'`: Pressing Enter adds a new line; ⌘/Ctrl+Enter sends the prompt.
+   */
+  enterBehavior: EnterBehavior
+}
+
+export const DEFAULT_UI_SETTINGS: UiSettings = {
+  tray: false,
+  enterBehavior: 'send'
 }
 
 export type DaemonUiStatus =

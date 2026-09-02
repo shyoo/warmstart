@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Question } from '@shared/tasks'
 import { rpc, useDaemonEvents } from '../lib/daemon'
+import { isSubmitKey, useUiSettings } from '../lib/uisettings'
 
 /**
  * Answering a question an agent asked.
@@ -26,6 +27,7 @@ export function QuestionCard({
   /** The strip above the work, where there is room for the options and nothing else. */
   compact?: boolean
 }): React.JSX.Element {
+  const { settings } = useUiSettings()
   const [chosen, setChosen] = useState<string[]>([])
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
@@ -168,6 +170,12 @@ export function QuestionCard({
             : 'Anything to add? A choice plus a caveat is a better answer than either alone.'
         }
         onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          if (isSubmitKey(e, settings.enterBehavior) && !busy && !empty) {
+            e.preventDefault()
+            void answer()
+          }
+        }}
       />
 
       <div className="question-actions">

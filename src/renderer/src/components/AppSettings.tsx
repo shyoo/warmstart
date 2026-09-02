@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react'
-import type { UiSettings } from '@shared/ipc'
+import { useState } from 'react'
+import type { EnterBehavior } from '@shared/ipc'
+import { useUiSettings } from '../lib/uisettings'
 
 /**
  * The preferences that belong to this window rather than to the fleet.
@@ -11,16 +12,9 @@ import type { UiSettings } from '@shared/ipc'
  * kind of thing.
  */
 export function AppSettings(): React.JSX.Element {
-  const [settings, setSettings] = useState<UiSettings | null>(null)
+  const { settings, updateUiSettings } = useUiSettings()
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    window.agentyard
-      .getUiSettings()
-      .then(setSettings)
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
-  }, [])
 
   const setTray = async (tray: boolean): Promise<void> => {
     setSaving(true)
@@ -28,7 +22,7 @@ export function AppSettings(): React.JSX.Element {
     try {
       // ⛔ The answer comes back from main, never the value that was clicked. A switch that paints
       // itself and persists nothing is the failure this kind of control is used to rule out.
-      setSettings(await window.agentyard.setUiSettings({ tray }))
+      await updateUiSettings({ tray })
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -36,7 +30,20 @@ export function AppSettings(): React.JSX.Element {
     }
   }
 
-  const tray = settings?.tray ?? false
+  const setEnterBehavior = async (enterBehavior: EnterBehavior): Promise<void> => {
+    setSaving(true)
+    setError(null)
+    try {
+      await updateUiSettings({ enterBehavior })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const tray = settings.tray
+  const enterBehavior = settings.enterBehavior
 
   return (
     <div className="panel">
@@ -51,6 +58,36 @@ export function AppSettings(): React.JSX.Element {
       </header>
 
       <section className="doc-section">
+        <h3>Enter key behavior</h3>
+        <div className="picker-row">
+          <div className="picker-row-head">
+            <p className="switch-state">
+              <strong>Send messages with</strong> · {enterBehavior === 'send' ? 'Enter' : '⌘ / Ctrl + Enter'}
+              <span className="dim">
+                {enterBehavior === 'send'
+                  ? ' — Enter sends immediately; Shift+Enter adds a new line.'
+                  : ' — Enter adds a new line; ⌘ / Ctrl+Enter sends.'}
+              </span>
+            </p>
+            <select
+              className="finish-picker picker-row-control"
+              aria-label="Enter key behavior"
+              value={enterBehavior}
+              disabled={saving}
+              onChange={(e) => void setEnterBehavior(e.target.value as EnterBehavior)}
+            >
+              <option value="send">Enter sends immediately (Shift+Enter for new line)</option>
+              <option value="newline">Enter adds a new line (⌘/Ctrl+Enter to send)</option>
+            </select>
+          </div>
+          <p className="note">
+            Applies to prompt and message inputs across the app: the thread composer, question answers,
+            and the new task composer.
+          </p>
+        </div>
+      </section>
+
+      <section className="doc-section">
         <h3>Keep running in the tray</h3>
         <div className="switch-row">
           <button
@@ -58,7 +95,7 @@ export function AppSettings(): React.JSX.Element {
             role="switch"
             aria-checked={tray}
             aria-label="Keep running in the tray"
-            disabled={saving || settings === null}
+            disabled={saving}
             className={`switch ${tray ? 'switch--on' : ''}`}
             onClick={() => void setTray(!tray)}
           >

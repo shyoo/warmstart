@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ControllerReport } from '@shared/protocol'
 import type { ChatMessage, Consult, ConsultKind } from '@shared/tasks'
 import { rpc, useDaemonEvents } from '../lib/daemon'
+import { isSubmitKey, useUiSettings } from '../lib/uisettings'
 import { age, duration, tokens, when } from '../lib/format'
 import { Working } from '../lib/taskview'
 
@@ -17,6 +18,7 @@ import { Working } from '../lib/taskview'
  * falls back still makes progress — it just makes it with less judgment.
  */
 export function Controller({ now }: { now: number }): React.JSX.Element {
+  const { settings } = useUiSettings()
   const [report, setReport] = useState<ControllerReport | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [draft, setDraft] = useState('')
@@ -147,7 +149,9 @@ export function Controller({ now }: { now: number }): React.JSX.Element {
         */}
         <div className="compose">
           <div className="compose-row">
-            <input
+            <textarea
+              className="compose-input"
+              rows={1}
               value={draft}
               disabled={!available}
               placeholder={
@@ -155,7 +159,10 @@ export function Controller({ now }: { now: number }): React.JSX.Element {
               }
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) void send()
+                if (isSubmitKey(e, settings.enterBehavior) && draft.trim() && !busy && available) {
+                  e.preventDefault()
+                  void send()
+                }
               }}
             />
             <button

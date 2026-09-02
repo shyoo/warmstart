@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url'
 import { IPC, type AppInfo, type DaemonUiStatus, type UiSettings } from '@shared/ipc.js'
 import type { DaemonEvent, RpcMethod } from '@shared/protocol.js'
 import { DaemonClient, daemonScriptPath, type DaemonStatus } from './daemon.js'
-import { readUiSettings, writeUiSettings } from './uisettings.js'
+import { DEFAULT_UI_SETTINGS, readUiSettings, writeUiSettings } from './uisettings.js'
 import { dataDir } from '../daemon/paths.js'
 
 const dirname = join(fileURLToPath(import.meta.url), '..')
@@ -30,7 +30,7 @@ const dirname = join(fileURLToPath(import.meta.url), '..')
 const daemon = new DaemonClient()
 const windows = new Set<WebContents>()
 
-let uiSettings: UiSettings = { tray: false }
+let uiSettings: UiSettings = { ...DEFAULT_UI_SETTINGS }
 let tray: Tray | null = null
 
 /**

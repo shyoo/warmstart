@@ -2709,12 +2709,43 @@ select:focus-visible,
 .compose-row {
   display: flex;
   gap: var(--sp-2);
-  align-items: center;
+  align-items: flex-end;
 }
 
-.compose-row input {
+.compose-row input,
+.compose-row textarea {
   flex: 1 1 auto;
   min-width: 0;
+}
+
+.compose-input {
+  font: inherit;
+  font-size: var(--text-dense);
+  line-height: var(--leading-body);
+  background: var(--color-bg);
+  color: var(--color-text);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  padding: var(--sp-1) var(--sp-2);
+  min-height: 30px;
+  max-height: 160px;
+  field-sizing: content;
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.compose-input:focus-visible {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 1px var(--color-accent-dim);
+}
+
+.compose-input::placeholder {
+  color: var(--color-text-faint);
+}
+
+.compose-input:disabled {
+  opacity: 0.6;
 }
 
 .compose-row .btn {

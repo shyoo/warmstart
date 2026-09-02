@@ -489,7 +489,7 @@ try {
   const compose = await evaluate(`
     JSON.stringify((() => {
       const row = document.querySelector('.compose-row');
-      const input = row?.querySelector('input');
+      const input = row?.querySelector('input, textarea');
       const button = row?.querySelector('button');
       if (!row || !input || !button) return { missing: true };
       const i = input.getBoundingClientRect(), b = button.getBoundingClientRect();
@@ -892,6 +892,35 @@ try {
   check(
     'and it goes back off',
     (await evaluate(`${traySwitch}?.getAttribute('aria-checked')`)) === 'false'
+  )
+
+  check(
+    'the Global page offers enter key behavior setting',
+    /enter key behavior/i.test(globalPanel)
+  )
+  check(
+    'enter key behavior defaults to send',
+    (await evaluate(
+      `window.agentyard.getUiSettings().then(s => s.enterBehavior)`
+    )) === 'send'
+  )
+  const enterPicker = `[...document.querySelectorAll('select')].find(
+     s => s.getAttribute('aria-label') === 'Enter key behavior')`
+  check(
+    'the enter key behavior control is present',
+    (await evaluate(`Boolean(${enterPicker})`)) === true
+  )
+  await evaluate(`${enterPicker}.value = 'newline'; ${enterPicker}.dispatchEvent(new Event('change', { bubbles: true }))`)
+  await wait(800)
+  check(
+    'changing enter behavior to newline is persisted',
+    (await evaluate(`window.agentyard.getUiSettings().then(s => s.enterBehavior)`)) === 'newline'
+  )
+  await evaluate(`${enterPicker}.value = 'send'; ${enterPicker}.dispatchEvent(new Event('change', { bubbles: true }))`)
+  await wait(800)
+  check(
+    'changing enter behavior back to send is persisted',
+    (await evaluate(`window.agentyard.getUiSettings().then(s => s.enterBehavior)`)) === 'send'
   )
 
   section('chrome')

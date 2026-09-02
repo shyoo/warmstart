@@ -23,6 +23,7 @@ import {
 } from '@shared/tasks'
 import type { ModelOptions, Session } from '@shared/protocol'
 import { rpc, useActivity, useDaemonEvents, useNow, type FleetEntry } from '../lib/daemon'
+import { isSubmitKey, useUiSettings } from '../lib/uisettings'
 import { conversationIdFor } from '../lib/conversation'
 import { SettingButtonSelect, type SettingOption } from './SettingButtonSelect'
 import { TaskQuestions } from './Questions'
@@ -1684,6 +1685,7 @@ function Compose({
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
   const [outcome, setOutcome] = useState<string | null>(null)
+  const { settings } = useUiSettings()
   const running = task.status === 'running' || task.status === 'assigned'
 
   const send = async () => {
@@ -1703,7 +1705,9 @@ function Compose({
   return (
     <div className="compose">
       <div className="compose-row">
-        <input
+        <textarea
+          className="compose-input"
+          rows={1}
           value={text}
           placeholder={
             running
@@ -1712,7 +1716,10 @@ function Compose({
           }
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) void send()
+            if (isSubmitKey(e, settings.enterBehavior) && text.trim() && !sending) {
+              e.preventDefault()
+              void send()
+            }
           }}
         />
         <button className="btn btn--primary" disabled={sending || !text.trim()} onClick={() => void send()}>
