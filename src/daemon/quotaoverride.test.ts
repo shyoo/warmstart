@@ -283,15 +283,30 @@ describe('task.overrideQuota', () => {
     expect(result.task.quotaOverrideUntil).not.toBeNull()
   })
 
-  it('points a preempted task at Resume, which is the control that actually fits it', async () => {
+  it('overrides preemption and resumes a paused_quota task immediately to continue to completion', async () => {
     const worker = seedWorker('ClaudeThird')
-    seedQuota(worker.id, HELD_PERCENT)
+    const resetsAt = seedQuota(worker.id, HELD_PERCENT)
     const task = pinnedTask(worker.id)
     tasks.setStatus(task.id, 'paused_quota', { assignee: worker.id })
+    db.db().prepare('update tasks set not_before = ? where id = ?').run(resetsAt, task.id)
 
     const result = await handlers()['task.overrideQuota']({ id: task.id })
-    expect(result.applies).toBe(false)
-    expect(result.reason).toContain('Resume')
+    expect(result.applies).toBe(true)
+    expect(result.until).toBe(resetsAt)
+    expect(result.task.status).toBe('ready')
+    expect(result.task.notBefore).toBeNull()
+    expect(result.task.quotaOverrideUntil).toBe(resetsAt)
+
+    // The resumed task can now be chosen by the scheduler despite the 92% watermark
+    const choice = scheduler.chooseTarget(tasks.requireTask(task.id))
+    expect(choice.worker?.id).toBe(worker.id)
+
+    // And is exempt from mid-run preemption at 96%
+    expect(
+      scheduler.overrunVerdict(worker.id, 96, {
+        quotaOverride: tasks.quotaOverridden(tasks.requireTask(task.id))
+      })
+    ).toBeNull()
   })
 
   it('withdraws on an explicit null, and the gate applies again', async () => {

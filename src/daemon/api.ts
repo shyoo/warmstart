@@ -646,25 +646,32 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
       const until =
         p.until ??
         before.holdUntil ??
+        before.notBefore ??
         (pinned ? (windowResetsAt(pinned.id)?.at ?? null) : null) ??
+        (before.assignee ? (windowResetsAt(before.assignee)?.at ?? null) : null) ??
         Date.now() + QUOTA_OVERRIDE_FALLBACK_MS
       const task = setQuotaOverride(p.id, until)
-      const applies = before.status === 'ready' && before.holdUntil !== null && before.holdUntil > Date.now()
+      let resumed = false
+      if (before.status === 'paused_quota') {
+        resumeTask(p.id)
+        resumed = true
+      }
+      const applies =
+        (before.status === 'ready' && before.holdUntil !== null && before.holdUntil > Date.now()) ||
+        resumed
       const reason = applies
-        ? `${before.holdReason ?? 'the quota gate'} — overridden until ${new Date(until).toISOString()}`
-        : before.status === 'paused_quota'
-          ? 'this task was preempted mid-run, not held at the gate — Resume is what puts it back'
-          : 'nothing is holding this task on quota right now; the override is recorded and will ' +
-            'apply if something does before it expires'
+        ? `${before.holdReason ?? (resumed ? 'preemption paused_quota' : 'the quota gate')} — overridden until ${new Date(until).toISOString()}`
+        : 'nothing is holding this task on quota right now; the override is recorded and will ' +
+          'apply if something does before it expires'
       log.info(
         `t${task.seq}: quota water mark overridden by hand until ${new Date(until).toISOString()}` +
-          (applies ? ` (was held: ${before.holdReason})` : ' (not currently held on quota)')
+          (applies ? ` (was ${before.status}: ${before.holdReason ?? 'paused on quota'})` : ' (not currently held on quota)')
       )
       addMessage(
         p.id,
         'system',
         `A person overrode the ${QUOTA_HIGH_WATER}% quota gate for this task until ` +
-          `${new Date(until).toISOString()}. ${reason}`
+          `${new Date(until).toISOString()}.${resumed ? ' Resumed to continue to completion.' : ''} ${reason}`
       )
       return { task: requireTask(p.id), until, applies, reason }
     },

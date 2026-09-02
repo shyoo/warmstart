@@ -444,6 +444,70 @@ function TaskDetail({
             </div>
           )}
 
+          {task.status === 'paused_quota' && (
+            <div className="paused-banner">
+              <div className="paused-banner-header">
+                <span className="paused-banner-title">
+                  Preempted due to quota {task.holdReason ? `(${holdLine(task, now)})` : ''}
+                </span>
+                <span className="dim">
+                  Resumes automatically after the window reset, or you can override to continue now.
+                </span>
+              </div>
+              <div className="paused-banner-actions">
+                <button
+                  type="button"
+                  className="btn btn--warn"
+                  onClick={() => {
+                    void (async () => {
+                      await rpc('task.overrideQuota', { id: task.id })
+                      await refresh()
+                    })()
+                  }}
+                >
+                  Override &amp; continue
+                </button>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => {
+                    void (async () => {
+                      await rpc('task.resume', { id: task.id })
+                      await refresh()
+                    })()
+                  }}
+                >
+                  Resume
+                </button>
+              </div>
+            </div>
+          )}
+
+          {task.status === 'paused_user' && (
+            <div className="paused-banner">
+              <div className="paused-banner-header">
+                <span className="paused-banner-title">Paused by operator</span>
+                <span className="dim">
+                  Work and context are preserved. Click Resume to put this task back in the queue.
+                </span>
+              </div>
+              <div className="paused-banner-actions">
+                <button
+                  type="button"
+                  className="btn btn--primary"
+                  onClick={() => {
+                    void (async () => {
+                      await rpc('task.resume', { id: task.id })
+                      await refresh()
+                    })()
+                  }}
+                >
+                  Resume
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* ⛔ Here, with the composer, and not in the ledger on the right. All three answers to
               "a decision is wanted from you" are the same kind of thing — finish it, park it, or say
               what you want next — and two of them living in a column of read-only facts made the
@@ -1323,7 +1387,9 @@ function QuotaOverride({
   // ⚠️ One ticking clock, not `Date.now()` in the render: the countdown below has to move, and a
   // component that reads the wall clock while rendering only updates when something else makes it.
   const now = useNow(1000)
-  const held = task.status === 'ready' && /% of its .* window/.test(task.holdReason ?? '')
+  const held =
+    (task.status === 'ready' && /% of its .* window/.test(task.holdReason ?? '')) ||
+    task.status === 'paused_quota'
   const live = task.quotaOverrideUntil !== null && task.quotaOverrideUntil > now
   if (!held && !live) return null
 
@@ -1353,12 +1419,20 @@ function QuotaOverride({
           <button
             className="btn btn--warn"
             disabled={busy}
-            title="Dispatch this task even though the account is at or past 92% of its window. Expires when that window resets. ⚠️ A turn the vendor actually refuses still stops the run, and so does the window boundary itself."
+            title={
+              task.status === 'paused_quota'
+                ? 'Override preemption and resume this task immediately even though the account is at or past 92% of its window.'
+                : 'Dispatch this task even though the account is at or past 92% of its window. Expires when that window resets. ⚠️ A turn the vendor actually refuses still stops the run, and so does the window boundary itself.'
+            }
             onClick={() => void set(false)}
           >
-            Run now anyway
+            {task.status === 'paused_quota' ? 'Override & continue' : 'Run now anyway'}
           </button>{' '}
-          <span className="dim">spends into the window this task is waiting on</span>
+          <span className="dim">
+            {task.status === 'paused_quota'
+              ? 'resumes immediately and overrides the quota gate'
+              : 'spends into the window this task is waiting on'}
+          </span>
         </>
       )}
     </Fact>

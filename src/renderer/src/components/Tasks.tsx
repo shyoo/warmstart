@@ -523,6 +523,34 @@ export function Tasks({
                                 Resume
                               </button>
                             )}
+                            {task.status === 'paused_quota' && (
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className="action-menu-item"
+                                title="Override the quota gate and resume immediately to continue"
+                                onClick={() => {
+                                  setMenuTaskId(null)
+                                  void act(() => rpc('task.overrideQuota', { id: task.id }))
+                                }}
+                              >
+                                Override &amp; continue
+                              </button>
+                            )}
+                            {task.status === 'ready' && /% of its .* window/.test(task.holdReason ?? '') && (
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className="action-menu-item"
+                                title="Dispatch this task even though the account is at or past 92% of its window."
+                                onClick={() => {
+                                  setMenuTaskId(null)
+                                  void act(() => rpc('task.overrideQuota', { id: task.id }))
+                                }}
+                              >
+                                Run now anyway
+                              </button>
+                            )}
                             {task.status === 'awaiting_human' && (
                               <button
                                 type="button"

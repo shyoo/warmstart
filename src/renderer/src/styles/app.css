@@ -2535,6 +2535,36 @@ select:focus-visible,
   font-size: var(--text-dense);
 }
 
+/* ---- paused task banner ------------------------------------------------- */
+
+.paused-banner {
+  padding: var(--sp-2) var(--sp-3);
+  margin-bottom: var(--sp-3);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+}
+
+.paused-banner-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-2);
+}
+
+.paused-banner-title {
+  font-size: var(--text-dense);
+  font-weight: 600;
+  color: var(--state-warn);
+}
+
+.paused-banner-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
 /* ---- blocked task banner ------------------------------------------------ */
 
 .blocked-banner {
