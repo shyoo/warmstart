@@ -99,12 +99,12 @@ Weights derive from the objective vector `(cost, velocity, quality)` configured 
 
 | Term | Direction | Weight Formula (`objective.ts`) | Balanced (`0.34, 0.33, 0.33`) | Value Range | Meaning of Value = 1 |
 |---|:---:|---|:---:|:---:|---|
-| **`warm`** | Bonus (+1) | `1.0 + 2.2×cost − 0.6×velocity` | `+1.550` | 0 .. 1 | Full 60m prompt cache TTL remaining |
-| **`affinity`** | Bonus (+1) | `0.8 + 1.0×cost + 0.4×quality` | `+1.272` | 0 or 1 | Session already holds this task's context |
+| **`warm`** | Bonus (+1) | `1.0 + 2.2×cost − 0.6×velocity` | `+1.550` | 0 .. 1 | A full TTL of prompt cache remaining — **the provider's own TTL**, 60m on Anthropic, 30m on Codex |
+| **`affinity`** | Bonus (+1) | `0.8 + 1.0×cost + 0.4×quality` | `+1.272` | 0 or 1 | A conversation already holds this task's context — **live or reopenable** |
 | **`contextRot`** | Penalty (−1) | `0.6 + 1.6×quality` | `−1.128` | 0 .. 1 | Context window is 100% full (starts at >50%) |
 | **`projectSwitch`** | Penalty (−1) | `0.3 + 0.6×cost` | `−0.504` | 0 or 1 | Reusable session belongs to another project |
 | **`quotaRisk`** | Penalty (−1) | `0.5 + 1.2×cost` | `−0.908` | 0 .. 1 | At 92% of window or vendor rate-limit warning |
-| **`cold`** | Penalty (−1) | `0.8 + 2.0×cost − 0.7×velocity` | `−1.249` | 0 or 1 | No session to reuse (pays full cache write) |
+| **`cold`** | Penalty (−1) | `0.8 + 2.0×cost − 0.7×velocity` | `−1.249` | 0 or 1 | No conversation to reuse, live or reopenable (pays full cache write) |
 | **`capabilityFit`** | Bonus (+1) | `0.7 + 1.3×quality` | `+1.129` | 0 .. 1 | All required task capabilities are present |
 | **`unproven`** | Penalty (−1) | Fixed `0.35` | `−0.350` | 0 .. 1.5 | Account has never completed a metered turn |
 
@@ -112,17 +112,39 @@ Total score:
 $$\text{Score} = \sum (\text{sign} \times \text{weight} \times \text{value})$$
 
 ### 3.2 Deep Dive: Warm Cache Preference & Session Affinity
-Prompt cache creation costs up to **2.0×** base input tokens, while a cache read costs only **0.1×** and refreshes the 1-hour TTL for free.
+Prompt cache creation costs up to **2.0×** base input tokens, while a cache read costs only **0.1×** and refreshes the TTL for free.
 
-- `warmSessionFor(task)` searches:
-  1. The task's own idle session from earlier runs.
-  2. If none, a borrowable resident session within the same project (when session sharing is enabled).
-- If a warm session is found:
-  - `warm` value = $\max(0, \min(1, \frac{\text{cacheExpiresAt} - \text{now}}{60\text{ min}}))$
-  - `affinity` value = `1.0` (task's own session)
-  - `cold` value = `0.0` (avoids the cold penalty)
-- If starting cold:
-  - `warm` = `0.0`, `affinity` = `0.0`, `cold` = `1.0` (pays the cold start penalty).
+A candidate is scored against **the conversation it would actually work in**, which is one of two
+things and used to be only the first:
+
+1. `warmSessionFor(task)` — a conversation with a **live process**, idle and ready for another prompt:
+   1. The task's own idle session from earlier runs.
+   2. If none, a borrowable resident session within the same project (when session sharing is enabled).
+2. `reopenableFor(task, worker)` — the task's own **closed** conversation on this account, which the
+   dispatch would reopen with `resumableSession`. Asked only when there is no live one, and gated by
+   the same `reopenable()` predicate the dispatch uses, so the score cannot promise a continuation the
+   dispatch would decline to make. ⚠️ Deliberately **not** exempt from `maxConcurrent`: reopening starts
+   a process, where sending a prompt into a live session does not.
+
+Whichever is found:
+  - `warm` value = $\max(0, \min(1, \frac{\text{cacheExpiresAt} - \text{now}}{\text{TTL}}))$, where
+    **TTL is the provider's own** (`CostModel.cacheTtlMs()`) — 60 min on Anthropic, 30 min on Codex.
+  - `affinity` value = `1.0`
+  - `cold` value = `0.0`
+- If starting cold: `warm` = `0.0`, `affinity` = `0.0`, `cold` = `1.0` (pays the cold start penalty).
+
+⛔ **Why (2) exists — t123, 2026-09-02.** `codex exec` reads one prompt, runs one turn and exits, so a
+codex conversation is *never* a live idle session. With only (1), every codex candidate scored
+`affinity 0 · warm 0 · cold 1` — identical to an account that had never heard of the task. t123 ran on
+CodexFirst leaving 175,626 tokens of context in a closed conversation; the retry twenty minutes later
+scored a cold ClaudeThird above it. Three separate things had to change: the adapter had to declare
+`resumeSession`, the conversation had to carry a cache clock at all (`creditStreamTurn` wrote none —
+see `docs/cost-model.md` §1c), and the score had to look past the live slot.
+
+⚠️ **`warm` is not filtered out of (2), and neither is `affinity` filtered by it.** A lapsed
+conversation still remembers the task, which is most of why reopening beats starting over — so
+`affinity` holds while `warm` falls to 0. Scoring a cold prefix as warm would claim a discount that
+is not there.
 - Under cost-heavy objectives (`cost: 0.7`), the preference for warm cache rises steeply (`warm` weight: `+2.48`, `cold` penalty: `−2.13`), strongly serializing tasks onto existing warm sessions. Under velocity-heavy objectives (`velocity: 0.7`), cold penalty drops to `−0.51`, encouraging parallel dispatch.
 
 ### 3.3 Deep Dive: 5-Hour and 7-Day Quota Window Scoring

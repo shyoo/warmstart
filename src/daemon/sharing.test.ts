@@ -23,6 +23,7 @@ let dir: string
 let db: typeof import('./db.js')
 let sharing: typeof import('./sharing.js')
 let settingsModule: typeof import('./settings.js')
+let adapters: typeof import('./adapters/index.js')
 
 const PROJECT = 'project-1'
 
@@ -67,6 +68,7 @@ beforeAll(async () => {
   db = await import('./db.js')
   sharing = await import('./sharing.js')
   settingsModule = await import('./settings.js')
+  adapters = await import('./adapters/index.js')
   db.openDb(join(dir, 'sharing.db'))
 })
 
@@ -179,6 +181,9 @@ describe('which conversations may be offered', () => {
     // ⚠️ `local-llm`, not `openai-compatible`. Codex declared `resumeSession: false` until
     // 2026-09-02 and was the fixture here; it now resumes, and the bridge is the remaining adapter
     // that genuinely cannot — it starts a fresh conversation on every dispatch by design.
+    // ⛔ Asserted, not assumed. The stand-in changing under this test is precisely how it became a
+    // test of nothing the first time; this line fails the day local-llm learns to resume too.
+    expect(adapters.adapter('local-llm').info.capabilities.resumeSession).toBe(false)
     expect(sharing.whyNotShared(task(), session({ adapterId: 'local-llm' }), open)).toBe(
       'cannot-resume'
     )

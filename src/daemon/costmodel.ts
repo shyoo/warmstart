@@ -30,7 +30,13 @@ export interface CostModelFile {
     read_multiplier: number | null
     read_refreshes_ttl: boolean
     ttl_measured_from: 'request_start' | 'response_end'
-    ttls: Array<{ id: string; seconds: number; write_multiplier: number }>
+    /**
+     * ⚠️ `write_multiplier` is nullable, and null is a different statement from a small number: the
+     * prefix has a **lifetime** here, but nobody has published what rebuilding it costs. A provider
+     * can have one without the other — OpenAI caches server-side and prices nothing a client can
+     * steer — and `costOfColdStart` returns null rather than inventing the multiplier.
+     */
+    ttls: Array<{ id: string; seconds: number; write_multiplier: number | null }>
     default_ttl: string | null
     max_breakpoints?: number
     scope?: string
@@ -201,7 +207,8 @@ export class CostModel {
   /** Rebuilding a lapsed prefix from nothing: a full cache write at the default TTL's multiplier. */
   costOfColdStart(tokens: number): number | null {
     const ttl = this.defaultTtl()
-    return ttl ? ttl.write_multiplier * tokens : null
+    // ⛔ A declared TTL is not a declared price. See the note on `ttls`.
+    return ttl && ttl.write_multiplier !== null ? ttl.write_multiplier * tokens : null
   }
 
   /**
@@ -224,7 +231,14 @@ export class CostModel {
    * to hardcode as an hour.** Anthropic's default TTL is 3600s and OpenAI's is 1800s, so a divisor
    * of one hour reports a *completely fresh* codex prefix as 50% warm and can never score it above
    * that — which quietly ranks every codex conversation below every Claude one no matter how
-   * recently it was used.
+   * recently it was used. Two callers arrived at this independently and for different reasons: the
+   * cache clock, whose decision windows are a fraction of the TTL rather than a fixed fifteen
+   * minutes (`decideBeforeExpiryMs`), and the routing score's `warm` term, which divided by a
+   * hard-coded 60m and so penalised the shorter-TTL provider for being fresh.
+   *
+   * ⚠️ The renderer does **not** ask: it holds both stored timestamps and derives the span from
+   * `expiry - started`, which is right for every provider without a round trip.
+
    */
   cacheTtlMs(): number | null {
     const ttl = this.defaultTtl()

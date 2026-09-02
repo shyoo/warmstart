@@ -371,42 +371,61 @@ export function hasOpenRun(sessionId: string): boolean {
   )
 }
 
+/**
+ * Every gate on reopening a conversation **except** the one about which directory it was had in.
+ *
+ * ⛔ Split out of `resumableSession` so the routing score and the dispatch cannot disagree about what
+ * "resumable" means. They ask at different moments and can only ask different questions: the
+ * dispatch has claimed a worktree and can require it back, while the score runs *before* any
+ * workspace is claimed and has only a preference (`priorCwd`) to offer the pool. Two hand-written
+ * copies of this list would drift, and the direction they would drift is a score that promises a
+ * warm continuation the dispatch then declines to make.
+ *
+ * ⚠️ Everything here is a property of the conversation and the account. The cwd is not, which is
+ * exactly why it is the caller's half.
+ */
+export function reopenable(session: Session, workerId: string): boolean {
+  if (session.workerId !== workerId) return false
+  if (session.purpose !== 'work') return false
+  const caps = adapter(session.adapterId).info.capabilities
+  if (!caps.resumeSession) return false
+  // ⛔ **The vendor's own handle, where the vendor is the one that names conversations.** `spawn`
+  // resolves `resumeFrom` as `vendorSessionId ?? id`, and that fallback is right only for an
+  // adapter with `mintsSessionId: true`, where the id we generated *is* the one the CLI was
+  // started with. On an adapter that names its own — codex writes a `thread_id` into
+  // `thread.started`, and this fleet records whatever it is given — the fallback hands the CLI a
+  // UUID it has never seen. Measured against codex-cli 0.151.0: that is not a quiet no-op but a
+  // hard exit, `no rollout found for thread id <uuid>`, which fails the run rather than starting
+  // it cold. A session that ended before it announced itself has no handle to go back to, so it
+  // is not a resume candidate at all.
+  if (!caps.mintsSessionId && !session.vendorSessionId) return false
+  // ⛔ A recorded turn, and nothing weaker. A session that exited before it said anything has no
+  // conversation to go back to, and asking a CLI to resume one is not a quiet no-op: measured and
+  // written up in cost-model.md §7, `claude --resume` on an unknown id fails the process outright
+  // with *No conversation found with session ID*. Every empty session in this install's history -
+  // the 0-second Antigravity exits, the two Claude sessions that failed on start - has zero turns,
+  // and every real one has at least one.
+  if (!hasRecordedTurn(session.id)) return false
+  // ⛔ **Never take a conversation somebody is still talking in.** Two independent checks,
+  // because they fail independently: a session that has not ended belongs to `warmSessionFor`,
+  // which routes work into it as a live continuation rather than restarting the process; and a
+  // run still open against it means a task is mid-turn there whatever the row says. Resuming
+  // either would start a second process against one conversation - two agents writing the same
+  // worktree, two turns billed to whichever run happened to be open, and a `task_complete` that
+  // could settle the wrong task.
+  if (!sessionEnded(session.state)) return false
+  if (hasOpenRun(session.id)) return false
+  return true
+}
+
 export function resumableSession(candidates: Session[], workerId: string, cwd: string): Session | null {
   for (const session of candidates) {
     // ⛔ `samePath`, not `!==`. On Windows the same worktree reaches this under more than one
     // spelling — this install held it as both `c:\Dev\…` and `C:\Dev\…` — and a string compare
     // decides the directory is not itself, resumes nothing, and pays a full cold start reporting
     // `warm=false` as though that were the answer. See fspath.ts.
-    if (session.workerId !== workerId || !samePath(session.cwd, cwd)) continue
-    if (session.purpose !== 'work') continue
-    if (!adapter(session.adapterId).info.capabilities.resumeSession) continue
-    // ⛔ **The vendor's own handle, where the vendor is the one that names conversations.** `spawn`
-    // resolves `resumeFrom` as `vendorSessionId ?? id`, and that fallback is right only for an
-    // adapter with `mintsSessionId: true`, where the id we generated *is* the one the CLI was
-    // started with. On an adapter that names its own — codex writes a `thread_id` into
-    // `thread.started`, and this fleet records whatever it is given — the fallback hands the CLI a
-    // UUID it has never seen. Measured against codex-cli 0.151.0: that is not a quiet no-op but a
-    // hard exit, `no rollout found for thread id <uuid>`, which fails the run rather than starting
-    // it cold. A session that ended before it announced itself has no handle to go back to, so it
-    // is not a resume candidate at all.
-    const caps = adapter(session.adapterId).info.capabilities
-    if (!caps.mintsSessionId && !session.vendorSessionId) continue
-    // ⛔ A recorded turn, and nothing weaker. A session that exited before it said anything has no
-    // conversation to go back to, and asking a CLI to resume one is not a quiet no-op: measured and
-    // written up in cost-model.md §7, `claude --resume` on an unknown id fails the process outright
-    // with *No conversation found with session ID*. Every empty session in this install's history -
-    // the 0-second Antigravity exits, the two Claude sessions that failed on start - has zero turns,
-    // and every real one has at least one.
-    if (!hasRecordedTurn(session.id)) continue
-    // ⛔ **Never take a conversation somebody is still talking in.** Two independent checks,
-    // because they fail independently: a session that has not ended belongs to `warmSessionFor`,
-    // which routes work into it as a live continuation rather than restarting the process; and a
-    // run still open against it means a task is mid-turn there whatever the row says. Resuming
-    // either would start a second process against one conversation - two agents writing the same
-    // worktree, two turns billed to whichever run happened to be open, and a `task_complete` that
-    // could settle the wrong task.
-    if (!sessionEnded(session.state)) continue
-    if (hasOpenRun(session.id)) continue
+    if (!samePath(session.cwd, cwd)) continue
+    if (!reopenable(session, workerId)) continue
     return session
   }
   return null
@@ -1134,8 +1153,10 @@ export function reconcileOrphans(): number {
           }
         }
       }
-    } catch {
-      // Best-effort detached process reap
+    } catch (err) {
+      // ⚠️ Best-effort. This whole block is a sweep for processes nothing is tracking, so a
+      // PowerShell that is missing, slow or refused must not take the reaper down with it.
+      log.debug('the detached-process sweep did not run:', err)
     }
   }
   if (stale.length) {

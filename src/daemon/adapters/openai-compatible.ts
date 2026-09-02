@@ -148,6 +148,15 @@ const info: AdapterInfo = {
      * per resume this fleet would accumulate one session row per turn and stop finding the
      * conversation on the next dispatch. That degrades to today's behaviour — a cold start — rather
      * than to a wrong answer, which is why this ships ahead of the measurement. See HANDOFF.md.
+     *
+     * ⛔ **And what `false` cost, which is why t124 came looking.** `codex exec` is
+     * `streamPrompts: 'once'` — one prompt, one turn, exit — so a codex conversation is *never* a
+     * live idle session. With resume refused as well there was no route by which the scheduler could
+     * reuse one at all, and every codex candidate scored `affinity 0 · warm 0 · cold 1` however
+     * recently it had done the very task being routed. Measured 2026-09-02: t123 ran on CodexFirst
+     * 18:34–18:42 leaving **175,626** tokens of context in session `bffdc5d2`; the 19:02 retry
+     * scored a cold ClaudeThird above it and rebuilt everything from nothing. The routing half of
+     * that fix is `reopenableFor` in `scheduler.ts`, and it is dead code without this flag.
      */
     resumeSession: true,
     forkSession: true,

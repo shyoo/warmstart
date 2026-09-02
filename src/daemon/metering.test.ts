@@ -21,6 +21,8 @@ let dir: string
 let db: typeof import('./db.js')
 let transcript: typeof import('./transcript.js')
 let events: typeof import('./events.js')
+let sessions: typeof import('./sessions.js')
+let costmodel: typeof import('./costmodel.js')
 
 const SESSION = 'aaaaaaaa-0000-4000-8000-000000000001'
 const WORKER = 'bbbbbbbb-0000-4000-8000-000000000001'
@@ -42,6 +44,10 @@ const turn = (requestId: string) => ({
   contextTokens: 30_512
 })
 
+/** A codex session, for the stream path. Its cost model is the only one declaring a TTL there. */
+const CODEX_SESSION = 'cccccccc-0000-4000-8000-000000000001'
+const CODEX_WORKER = 'dddddddd-0000-4000-8000-000000000001'
+
 beforeAll(async () => {
   // ⛔ A temp data directory, never the real one. This opens a database and writes to it.
   dir = mkdtempSync(join(tmpdir(), 'agentyard-metering-'))
@@ -49,6 +55,8 @@ beforeAll(async () => {
   db = await import('./db.js')
   transcript = await import('./transcript.js')
   events = await import('./events.js')
+  sessions = await import('./sessions.js')
+  costmodel = await import('./costmodel.js')
   db.openDb(join(dir, 'metering.db'))
 
   db.db()
@@ -65,6 +73,32 @@ beforeAll(async () => {
        values (?,?,?,?,?,?,?,?,?)`
     )
     .run(SESSION, WORKER, 'claude-code', 'stream', dir, 'live', Date.now(), 0, 'work')
+
+  db.db()
+    .prepare(
+      `insert into workers (id, label, adapter_id, isolation_root, enabled, human_occupied,
+                            max_concurrent, role, created_at)
+       values (?,?,?,?,?,?,?,?,?)`
+    )
+    .run(CODEX_WORKER, 'codex', 'openai-compatible', join(dir, 'cw'), 0, 0, 1, 'worker', Date.now())
+  db.db()
+    .prepare(
+      `insert into sessions (id, worker_id, adapter_id, transport, cwd, state, started_at,
+                             tokens_since_compact, purpose, model)
+       values (?,?,?,?,?,?,?,?,?,?)`
+    )
+    .run(
+      CODEX_SESSION,
+      CODEX_WORKER,
+      'openai-compatible',
+      'stream',
+      dir,
+      'live',
+      Date.now(),
+      0,
+      'work',
+      'gpt-5.6-terra'
+    )
 })
 
 afterAll(() => {
@@ -178,5 +212,81 @@ describe('the event that says a metered turn moved the session', () => {
     captured.length = 0
     transcript.recordTurn(turn('req_dupe_event'))
     expect(captured).toHaveLength(0)
+  })
+})
+
+/**
+ * The cache clock on the path that has no transcript to read.
+ *
+ * ⛔ **Measured 2026-09-02, and it is why a codex session showed no countdown.** `creditStreamTurn`
+ * wrote `context_tokens` and stopped. The note above it reasoned that no expiry was needed "because
+ * the cache clock leaves these sessions alone anyway" — true, and about *spending*. Two things read
+ * `cache_expires_at` that never spend anything: the fleet strip's countdown, and the routing score's
+ * `warm` term. A null told both there was no prompt cache at all.
+ *
+ * Session `bffdc5d2` finished t123 on CodexFirst holding 175,626 tokens of context with
+ * `last_request_started_at` null; twenty minutes later the retry scored CodexFirst
+ * `warm 0 · affinity 0 · cold 1` and went to a Claude account that had never seen the task.
+ */
+describe('a turn metered from the stream winds the session cache clock', () => {
+  const usage = { input: 40_000, output: 200, thinking: 0, cacheRead: 30_000, cacheWrite: 0 }
+  /** The row as the daemon would hand it to `creditStreamTurn` — read back, never hand-built. */
+  const sessionRow = (id: string) => {
+    const found = sessions.getSession(id)
+    if (!found) throw new Error(`no session ${id}`)
+    return found
+  }
+  const row = (id: string) =>
+    db.db().prepare('select * from sessions where id = ?').get(id) as {
+      last_request_started_at: number | null
+      cache_expires_at: number | null
+      context_tokens: number | null
+    }
+
+  it('stamps the moment and derives the expiry from the cost model TTL', () => {
+    const session = { ...sessionRow(CODEX_SESSION) }
+    const before = Date.now()
+    transcript.creditStreamTurn(session, usage)
+    const after = Date.now()
+    const stored = row(CODEX_SESSION)
+
+    expect(stored.context_tokens).toBe(40_000)
+    // ⚠️ The terminal usage record's own arrival. A stream says when the *turn* ended and never when
+    // its last request began, so this is a response *end* while codex counts its 30 minutes from the
+    // request (cost-model.md §1b) — optimistic by one response length, and the only timestamp this
+    // path has. The assertion is that the clock is wound at all, which is what was missing.
+    expect(stored.last_request_started_at).toBeGreaterThanOrEqual(before)
+    expect(stored.last_request_started_at).toBeLessThanOrEqual(after)
+    // ⛔ 30 minutes, from `openai.codex.2026-08.json`, not from a constant written here. A test that
+    // hard-coded 1_800_000 would keep passing after somebody changed the cost model.
+    const ttl = costmodel.costModel('openai.codex.2026-08').cacheTtlMs()
+    expect(ttl).toBe(30 * 60 * 1000)
+    expect(stored.cache_expires_at).toBe((stored.last_request_started_at as number) + (ttl as number))
+  })
+
+  it('leaves a provider that declares no TTL exactly as it was', () => {
+    // ⛔ The blast radius, asserted rather than assumed. Antigravity and local-llm are metered from
+    // the stream too and declare no TTL, so `cacheExpiryFor` returns null and `coalesce` must leave
+    // the column alone — a bare write would stamp null over whatever was there.
+    const session = { ...sessionRow(SESSION), adapterId: 'claude-code' }
+    db.db()
+      .prepare('update sessions set cache_expires_at = ? where id = ?')
+      .run(999, SESSION)
+    transcript.creditStreamTurn({ ...session, adapterId: 'antigravity-cli' }, usage)
+    expect(row(SESSION).cache_expires_at).toBe(999)
+  })
+
+  it('a repeated chunk does not roll the clock forward again', () => {
+    // ⚠️ Same rule as the transcript path. The stream's uniqueness key is its timestamp, so a replay
+    // inside the same millisecond is the case this can actually catch.
+    const session = { ...sessionRow(CODEX_SESSION) }
+    transcript.creditStreamTurn(session, usage)
+    const first = row(CODEX_SESSION).cache_expires_at
+    const inserted = db
+      .db()
+      .prepare('select count(*) n from turns where session_id = ?')
+      .get(CODEX_SESSION) as { n: number }
+    expect(first).not.toBeNull()
+    expect(inserted.n).toBeGreaterThan(0)
   })
 })

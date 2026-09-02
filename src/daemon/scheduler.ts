@@ -102,6 +102,7 @@ import {
   hasOpenRun,
   markClockMove,
   noteCurrentBranch,
+  reopenable,
   resumableSession,
   sendPrompt,
   sessionsForWorker,
@@ -929,6 +930,40 @@ function pastSessionsFor(task: Task): Session[] {
 }
 
 /**
+ * The conversation this task was already having on this account, closed but reopenable.
+ *
+ * ⭐ **The half of "a session already holds this task" that a one-shot CLI can ever have.**
+ * `warmSessionFor` can only offer a conversation with a live process, and `codex exec` reads one
+ * prompt, runs one turn and exits — so on that adapter there is never a live idle session, and every
+ * candidate scored `affinity 0 · warm 0 · cold 1` no matter how recently it had done the work. The
+ * dispatch knew better all along: it calls `resumableSession` and reopens the conversation. The score
+ * simply could not see what the dispatch was about to do.
+ *
+ * ⛔ Measured on this install, 2026-09-02. t123 ran on CodexFirst 18:34–18:42, leaving session
+ * `bffdc5d2` closed with 175,626 tokens of its context. Asked at 19:02 to retry the commit — twenty
+ * minutes later, inside any plausible TTL — the retry scored a cold ClaudeThird above it and rebuilt
+ * everything from nothing, because the only thing that could have said otherwise was structurally
+ * unavailable to a `streamPrompts: 'once'` adapter.
+ *
+ * ⚠️ **Not filtered on cache warmth**, deliberately, and `warm` is the term that carries that. A
+ * conversation whose prefix has lapsed still remembers the task, which is the greater part of why
+ * reopening it beats starting over; it just no longer comes with a discount, and scoring it as though
+ * it did would be the lie this function exists to stop telling.
+ *
+ * ⚠️ **No `mismatch(pinned(task), …)` check, unlike `warmSessionFor`, and the asymmetry is real
+ * rather than an oversight.** A prompt sent into a *live* conversation is served by the process
+ * already running it, so a pinned model cannot be applied and the warm path has to refuse. A resume
+ * spawns a new process and `plan()` passes `--model` to it, so the pin is honoured. Same reason
+ * `resumableSession` does not check it either — and this must ask exactly what the dispatch asks.
+ */
+function reopenableFor(task: Task, workerId: string): Session | null {
+  for (const session of pastSessionsFor(task)) {
+    if (reopenable(session, workerId)) return session
+  }
+  return null
+}
+
+/**
  * Hard gates. Failing one discards the candidate rather than queueing behind it, because a task that
  * cannot run on worker A may run on worker B right now.
  *
@@ -1080,6 +1115,11 @@ export function chooseTarget(task: Task): WorkerChoice {
     // exempting a session from the cap and then dispatching into a different one would raise the
     // real concurrency by one, quietly, on the account least able to afford it.
     const session = reuse
+    // ⛔ Only when there is no live one, and ⛔ deliberately **not** exempted from `atCapacity`
+    // above. Reopening a closed conversation starts a process; `maxConcurrent` bounds processes.
+    // The live-reuse exemption exists because sending a prompt into a running agent starts none,
+    // and extending it to here would raise the real concurrency by one on every resumed task.
+    const resumable = reuse ? null : reopenableFor(task, worker.id)
     candidates.push({
       worker,
       session,
@@ -1087,7 +1127,7 @@ export function chooseTarget(task: Task): WorkerChoice {
       quotaUnverified,
       ...(() => {
         // One computation, used for both the ordering and the explanation.
-        const breakdown = scoreCandidate(task, worker, session, w, trustedWindows)
+        const breakdown = scoreCandidate(task, worker, session, resumable, w, trustedWindows)
         return { score: breakdown.total, breakdown }
       })()
     })
@@ -1450,12 +1490,14 @@ export function scoreLegend(objective: Objective, epsilon = ROUTE_EPSILON): stri
 
 /** What a value of 1 would mean for each term, so a reader knows which end is which. */
 const VALUE_MEANS: Record<string, string> = {
-  warm: '1 = a full hour of prompt cache left',
-  affinity: '1 = a session already holds this task',
+  // ⚠️ Not "a full hour". The denominator is the provider's own TTL — 60m on Anthropic, 30m on
+  // codex — so the term compares fractions of a cache across providers rather than minutes.
+  warm: '1 = a full TTL of prompt cache left',
+  affinity: '1 = a conversation already holds this task, live or reopenable',
   contextRot: '1 = the context window is full',
   projectSwitch: '1 = the session is on another project',
   quotaRisk: `1 = at ${QUOTA_HIGH_WATER}% of its window (adjusted for reset horizon; 0 below ${QUOTA_RISK_FLOOR}%)`,
-  cold: '1 = no session to reuse',
+  cold: '1 = no conversation to reuse, live or reopenable',
   capabilityFit: '1 = every capability the task needs is present',
   unproven: '1.5 max = never probed and never worked'
 }
@@ -1505,43 +1547,72 @@ export function briefScore(b: ScoreBreakdown): string {
     .join(' ')
 }
 
+/**
+ * The span the `warm` term divides by: how long a full prompt cache lasts on this conversation's
+ * provider.
+ *
+ * ⛔ An hour is Anthropic's TTL and was written into the score as though it were everybody's. The
+ * fallback — `DEFAULT_CACHE_TTL_MS`, shared with the cache clock rather than redeclared here —
+ * survives only for a conversation whose cost model declares no TTL at all, and such a conversation
+ * has a null `cacheExpiresAt`, so the term is 0 and the denominator never runs.
+ */
+function warmthDenominatorFor(session: Session | null): number {
+  if (!session) return DEFAULT_CACHE_TTL_MS
+  try {
+    const model = costModel(adapter(session.adapterId).info.policy.costModelId)
+    return model.cacheTtlMs() ?? DEFAULT_CACHE_TTL_MS
+  } catch {
+    // An adapter with no loadable cost model still scores; it simply gets the default span.
+    return DEFAULT_CACHE_TTL_MS
+  }
+}
+
 function scoreCandidate(
   task: Task,
   worker: Worker,
   session: Session | null,
+  /**
+   * The task's own closed-but-reopenable conversation on this account, where there is no live one.
+   * ⛔ Every term below reads `held`, never `session`, so a conversation the dispatch is about to
+   * reopen is weighed as what it is. See `reopenableFor`.
+   */
+  resumable: Session | null,
   w: ReturnType<typeof weights>,
   /** The windows the gate evaluated, or empty when there was nothing trustworthy to read. */
   trustedWindows: QuotaWindow[]
 ): ScoreBreakdown {
   const now = Date.now()
 
-  // ⛔ Divided by the TTL this session's provider actually grants, never by a fixed hour. A codex
-  // prefix lives 30 minutes, so an hour-shaped denominator caps a *brand new* one at 0.5 and makes
-  // "warm" mean something different per provider — which is exactly what this weight must not do.
-  // ⚠️ The `?? 1` is unreachable in practice (a row only has `cacheExpiresAt` because a cost model
-  // computed it from a declared TTL) and is a divisor, so it degrades to the old shape rather than
-  // to a division by zero.
-  const sessionTtlMs = session
-    ? costModel(adapter(session.adapterId).info.policy.costModelId).cacheTtlMs()
-    : null
-  const warmth = session?.cacheExpiresAt
-    ? Math.max(0, Math.min(1, (session.cacheExpiresAt - now) / (sessionTtlMs ?? DEFAULT_CACHE_TTL_MS)))
+  // The conversation this candidate would actually work in — running, or on disk and reopenable.
+  const held = session ?? resumable
+  const reopened = session === null && resumable !== null
+
+  // ⛔ Divided by **this provider's own TTL**, not by an hour. Sixty minutes is Anthropic's number
+  // and it was hard-coded here, so a codex prefix with 15 of its 30 minutes left scored 0.25 where
+  // a Claude prefix with 15 of its 60 scored the same — the shorter-TTL provider was penalised for
+  // having a shorter TTL, on a term whose entire job is to say *how much is left*. The fraction is
+  // the only comparable quantity across providers; the absolute minutes are not.
+  // ⚠️ Falls back to an hour only where a cost model declares no TTL at all, in which case
+  // `cacheExpiresAt` is null too and the whole term is 0 regardless.
+  const ttlMs = warmthDenominatorFor(held)
+  const warmth = held?.cacheExpiresAt
+    ? Math.max(0, Math.min(1, (held.cacheExpiresAt - now) / ttlMs))
     : 0
-  const affinity = session ? 1 : 0
-  const cold = session ? 0 : 1
-  const projectSwitch = session && session.projectId && session.projectId !== task.projectId ? 1 : 0
+  const affinity = held ? 1 : 0
+  const cold = held ? 0 : 1
+  const projectSwitch = held && held.projectId && held.projectId !== task.projectId ? 1 : 0
 
   // Context rot is documented rather than folklore, and it does not start at zero context - it bites
   // as the window fills. Roughly nothing below half, rising after.
   let rot = 0
   let rotBasis = 'no session, so no context to have rotted'
-  if (session?.contextTokens) {
-    const model = costModel(adapter(session.adapterId).info.policy.costModelId)
-    const window = model.modelSpec(session.model ?? '')?.context_window ?? 200_000
-    const used = session.contextTokens / window
+  if (held?.contextTokens) {
+    const model = costModel(adapter(held.adapterId).info.policy.costModelId)
+    const window = model.modelSpec(held.model ?? '')?.context_window ?? 200_000
+    const used = held.contextTokens / window
     rot = Math.max(0, (used - 0.5) * 2)
     rotBasis =
-      `${Math.round(session.contextTokens / 1000)}k of ${Math.round(window / 1000)}k context used ` +
+      `${Math.round(held.contextTokens / 1000)}k of ${Math.round(window / 1000)}k context used ` +
       `(${Math.round(used * 100)}%), and rot starts above 50%`
   }
 
@@ -1602,10 +1673,13 @@ function scoreCandidate(
       WEIGHT_FORMULAS.warm,
       warmth,
       1,
-      session?.cacheExpiresAt
-        ? `${Math.round(Math.max(0, session.cacheExpiresAt - now) / 60000)}m left of a ` +
-          `${Math.round((sessionTtlMs ?? DEFAULT_CACHE_TTL_MS) / 60000)}m cache TTL`
-        : 'no session, so no live prompt cache'
+      held?.cacheExpiresAt
+        ? `${Math.round(Math.max(0, held.cacheExpiresAt - now) / 60000)}m left of a ` +
+          `${Math.round(ttlMs / 60000)}m cache TTL` +
+          (reopened ? ', on a conversation with no process (it would be reopened)' : '')
+        : held
+          ? 'this conversation has no cache clock — its cost model declares no TTL'
+          : 'no session, so no live prompt cache'
     ],
     [
       'affinity',
@@ -1613,7 +1687,11 @@ function scoreCandidate(
       WEIGHT_FORMULAS.affinity,
       affinity,
       1,
-      session ? 'a session already holds this task' : 'no session to reuse'
+      reopened
+        ? "this task's own closed conversation is on this account and can be reopened"
+        : held
+          ? 'a session already holds this task'
+          : 'no session to reuse'
     ],
     ['contextRot', w.contextRot, WEIGHT_FORMULAS.contextRot, rot, -1, rotBasis],
     [
@@ -1622,7 +1700,7 @@ function scoreCandidate(
       WEIGHT_FORMULAS.projectSwitch,
       projectSwitch,
       -1,
-      projectSwitch ? 'the reusable session is on another project' : 'no project switch involved'
+      projectSwitch ? 'the reusable conversation is on another project' : 'no project switch involved'
     ],
     ['quotaRisk', w.quotaRisk, WEIGHT_FORMULAS.quotaRisk, quotaRisk, -1, quotaBasis],
     [
@@ -1631,7 +1709,11 @@ function scoreCandidate(
       WEIGHT_FORMULAS.cold,
       cold,
       -1,
-      cold ? 'no session to reuse, so a start pays a full cache write' : 'reusing a live session'
+      cold
+        ? 'no session to reuse, so a start pays a full cache write'
+        : reopened
+          ? 'reopening a conversation that already holds the context'
+          : 'reusing a live session'
     ],
     [
       'capabilityFit',

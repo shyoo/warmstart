@@ -437,11 +437,32 @@ function costModelFor(adapterId: string) {
  *
  * ⚠️ Deliberately less than the transcript path gives:
  *
- *  - No `requestStartedAt`, so no cache expiry is derived. The cache clock leaves these sessions
- *    alone anyway, because neither provider prices a steerable cache (D24) — so nothing is lost that
- *    was going to be used.
+ *  - **No per-request start time.** A stream reports usage when the *turn* ends and never says when
+ *    the last request inside it began, so `turns.request_started_at` stays null here — that column
+ *    means one thing and this path cannot answer it.
  *  - Only what was seen. A daemon that restarted mid-run misses the turns nobody was attached for,
  *    which is why `metering: 'stream'` is reported as a caveat in Doctor rather than as equivalent.
+ *
+ * ⛔ **But it does now wind the session's cache clock, and for three years it did not.** The old note
+ * here reasoned that no expiry was needed because "the cache clock leaves these sessions alone
+ * anyway, since neither provider prices a steerable cache" — which is true and answers a different
+ * question. `cache_expires_at` is read by two things that have nothing to do with spending: the fleet
+ * strip's countdown, and the routing score's `warm` term. Leaving it null told both of them that a
+ * codex conversation has no prompt cache at all. Measured 2026-09-02: session `bffdc5d2` finished
+ * t123 holding 175,626 tokens of context with `last_request_started_at` null, so twenty minutes later
+ * the retry scored CodexFirst at `warm 0 · affinity 0 · cold 1` and went to a Claude account that had
+ * never seen the task. See `openai.codex.2026-08.json` § cache.
+ *
+ * ⚠️ **The stamp is a response end, and every cost model with a TTL today counts from the request.**
+ * A stream reports usage when the *turn* finishes and never says when its last request began — unlike
+ * a transcript, which carries `requestStartedAt` per turn. So this overstates the remaining TTL by
+ * roughly one response length, and the error is in the unsafe direction. ⛔ It is the same trap
+ * cost-model.md §1 records for Anthropic arriving by a different road: there the fix was to read the
+ * right field, and here there is no right field to read. Narrowing it means metering codex from its
+ * rollout, which does carry per-request timing (HANDOFF R10), or emitting a non-final `usage` event
+ * at request start. Recorded rather than quietly accepted — see cost-model.md §1c.
+ *
+ * ⚠️ Where no TTL is declared at all, `cacheExpiryFor` returns null and nothing below changes.
  */
 export function creditStreamTurn(session: Session, usage: StreamUsage): void {
   const model = costModelFor(session.adapterId)
@@ -479,11 +500,23 @@ export function creditStreamTurn(session: Session, usage: StreamUsage): void {
   // Same rule as the transcript path: a replayed chunk reaches the row and stops there.
   if (inserted === 0) return
 
+  // ⚠️ `coalesce(?, cache_expires_at)` rather than a bare write: a provider with no declared TTL
+  // must be left exactly as it was, not have a null stamped over a value some other path set.
+  const expiry = model.cacheExpiryFor({ contextTokens: usage.input, lastRequestStartedAt: ts })
   db()
     .prepare(
-      'update sessions set context_tokens = ?, tokens_since_compact = tokens_since_compact + ? where id = ?'
+      `update sessions
+          set context_tokens = ?, tokens_since_compact = tokens_since_compact + ?,
+              last_request_started_at = ?, cache_expires_at = coalesce(?, cache_expires_at)
+        where id = ?`
     )
-    .run(usage.input, usage.input + usage.output + usage.cacheWrite, session.id)
+    .run(
+      usage.input,
+      usage.input + usage.output + usage.cacheWrite,
+      ts,
+      expiry,
+      session.id
+    )
 
   creditTurn(session.id, {
     input: usage.input,

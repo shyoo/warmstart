@@ -547,14 +547,16 @@ describe('a stream transport has two halves, and only one of them was wired', ()
     const once = ALL.filter((a) => a.info.capabilities.streamPrompts === 'once')
     expect(once.length).toBeGreaterThan(0)
     for (const ad of once) {
-      // A one-shot adapter that resumes must take its prompt at spawn, since there is no second
-      // chance to send one. Both halves of that are declared, and either alone would be a trap.
-      if (ad.info.capabilities.resumeSession) {
-        expect(
-          ad.info.capabilities.streamPrompts,
-          `${ad.info.id} resumes by respawning, so its prompt must go in at spawn`
-        ).toBe('once')
-      }
+      // ⛔ The pairing that can actually fail. A one-shot adapter must not claim `manualCompact`:
+      // a `/compact` would consume the one prompt stdin has room for and the task's own
+      // instructions would never arrive. `compactOnResume` says exactly this in as many words and
+      // relies on nobody declaring both; this is what keeps that true.
+      // ⚠️ Deliberately not `expect(streamPrompts).toBe('once')` inside a list already filtered to
+      // `'once'` — an assertion that cannot fail reads as cover and provides none.
+      expect(
+        ad.info.capabilities.manualCompact,
+        `${ad.info.id} takes one prompt per session, so a compaction would eat the task's own`
+      ).toBe(false)
     }
   })
 

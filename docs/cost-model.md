@@ -80,6 +80,48 @@ particular TTL, and which against 30 minutes sets a floor above the entire windo
 15-minute decision window is a quarter of Anthropic's prefix and *half* of OpenAI's. Both are now
 fractions of `CostModel.cacheTtlMs()`, anchored so an hour reproduces the old constants exactly.
 
+## 1c. …and a TTL nothing wrote down is still no countdown (2026-09-02)
+
+⛔ **Declaring the TTL in §1b was only half of it.** `creditStreamTurn` — the metering path for every
+adapter whose `metering` is `'stream'` — wrote `context_tokens` and stopped. Its own note said no
+expiry was needed *"because the cache clock leaves these sessions alone anyway"*, which was true and
+answers a question about **spending**. Two things read `cache_expires_at` and spend nothing: the
+fleet strip's countdown and the routing score's `warm` term. So a codex session stored
+`cache_expires_at = null` however well the cost model was written.
+
+Measured: session `bffdc5d2` finished t123 holding **175,626** tokens of context with
+`last_request_started_at` null, and the retry twenty minutes later scored CodexFirst
+`warm 0 · affinity 0 · cold 1` and went to an account that had never seen the task. See
+`docs/routing.md` §3.2 for the routing half, which was a third independent fault.
+
+⚠️ **The stamp is the arrival of the terminal usage record, which is a response *end*.** A stream
+reports usage when the turn finishes and never says when its last request began — unlike a
+transcript, which carries `requestStartedAt` per turn. Since §1b establishes that OpenAI counts the
+30 minutes from the **request**, this stamp is optimistic by roughly one response length, and the
+error is in the unsafe direction. ⛔ It is the same trap §1 records for Anthropic, arriving by a
+different road: there the fix was to read the right field, and here there is no right field to read.
+A long codex turn will show slightly more TTL remaining than it has. Narrowing that means either
+metering codex from its rollout (HANDOFF R10, which does carry per-request timing) or emitting a
+non-final `usage` event at request start.
+
+⭐ **And this fleet's own rollouts corroborate the 30 minutes from §1b**, which is worth having
+because §1b is read from a vendor page and this is measured on the machine. 2026-09-02, 331
+consecutive request pairs across 18 rollout JSONLs, comparing `last_token_usage.cached_input_tokens`
+against the gap since the previous request:
+
+| Gap between requests | n | Median share of input served from cache |
+|---|---|---|
+| under 1 minute | 325 | **96.3%** |
+| 1–5 minutes | 1 | 95.3% |
+| over 10 hours | 5 | **28%** — and all five were exactly **11,008** cached tokens |
+
+Single reads as large as **130,816 tokens** appear in that set, so the prefix is real and it is large.
+The five long-gap pairs all falling back to the *same* 11,008 tokens is the signature of a partial
+hit: the static system/tool prefix survives, the conversation body does not. ⚠️ There is no sample
+between 5 minutes and 10 hours, so this brackets the TTL only as **(5m, 10h]** — it agrees with the
+documented 30m and does not independently measure it.
+
+
 ## 2. Context
 
 | Fact | Value |
@@ -1050,7 +1092,10 @@ prompt from stdin, and a bad id is refused with `no rollout found for thread id`
 signed-in account is whether a *successful* resume re-emits `thread.started` carrying the **same**
 `thread_id`. If codex mints a fresh id per resume, this fleet accumulates one session row per turn
 and stops finding the conversation on the next dispatch — degrading to the cold starts it did before,
-not to a wrong answer, which is why it shipped ahead of the measurement.
+not to a wrong answer, which is why it shipped ahead of the measurement. ⚠️ Also unrun: whether the
+resumed turn reads the prefix back at all, i.e. non-zero `cached_input_tokens` on it. The rollout for
+`bffdc5d2` is 3.1 MB and holds 148 `response_item` records under the id `thread/resume` looks up, so
+the conversation is demonstrably on disk; what is unproven is the read, not the storage.
 
 **Owed:** a measured reuse rate for a Zero Data Retention org, whose codex prefixes live *"5 to 10
 minutes of inactivity"* rather than 30 (§1b). The cost model would be optimistic for such a fleet.

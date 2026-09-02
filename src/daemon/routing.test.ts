@@ -604,7 +604,10 @@ describe('the routing score shows its own arithmetic', () => {
     const legend = scheduler.scoreLegend({ cost: 0.34, velocity: 0.33, quality: 0.33 }).join('\n')
     expect(legend).toMatch(/cold\s+penalty/)
     expect(legend).toMatch(/warm\s+bonus/)
-    expect(legend).toContain('1 = no session to reuse')
+    // ⚠️ "conversation", not "session", and it is the whole 2026-09-02 finding in four words: a
+    // closed conversation this task can reopen is one to reuse, and calling only a live process a
+    // session is what made a one-shot adapter uniformly cold. See `reopenableFor`.
+    expect(legend).toContain('1 = no conversation to reuse, live or reopenable')
     // The one term that is not derived from the objective has to say so rather than look like one.
     expect(legend).toContain('fixed, not from the objective')
   })
@@ -886,5 +889,208 @@ describe('gating controller consults on fresh quota', () => {
     expect(choice.reason).toContain('reading quota for tied candidates')
     expect(choice.worker).toBeNull()
     expect(controller.hasPendingConsult('route', task.id)).toBe(false)
+  })
+})
+
+/**
+ * The conversation a one-shot CLI leaves behind, and the twenty minutes it was invisible for.
+ *
+ * ⛔ **t123, measured on this install 2026-09-02.** The task ran on CodexFirst 18:34–18:42, ending
+ * with session `bffdc5d2` closed and holding 175,626 tokens of its context. At 19:02 the operator
+ * asked it to retry the commit. The retry went to ClaudeThird — a different account, a cold start,
+ * nothing about the task in its context — and rebuilt everything from scratch.
+ *
+ * Nothing was misweighted. `warm`, `affinity` and `cold` all read the live-session slot, and
+ * `codex exec` is `streamPrompts: 'once'`: it takes one prompt, runs one turn and exits, so a codex
+ * conversation is **never** a live idle session. The one candidate that had actually done the work
+ * could not be described by the vocabulary the score had. It scored `affinity 0 · warm 0 · cold 1`,
+ * which is exactly what a worker that has never heard of the task scores.
+ *
+ * ⛔ Three things had to be true together, and each was separately false: the adapter had to be able
+ * to reopen a conversation (`resumeSession` was false), the conversation had to carry a cache clock
+ * (`creditStreamTurn` wrote none), and the score had to look past the live slot (`reopenableFor`
+ * did not exist). Fixing any one alone would have changed nothing.
+ */
+describe('routing a retry back to the account that already has the context', () => {
+  let codexInstalled: (() => boolean) | undefined
+
+  const seedConversation = (opts: {
+    sessionId: string
+    workerId: string
+    adapterId: string
+    taskId: string | null
+    cwd: string
+    contextTokens: number
+    /** ms from now; negative means the prefix has already lapsed. */
+    cacheLeftMs: number | null
+  }): void => {
+    const now = Date.now()
+    const lastRequest = now - 60_000
+    db.db()
+      .prepare(
+        `insert into sessions (id, worker_id, adapter_id, transport, cwd, state, started_at,
+                               closed_at, tokens_since_compact, purpose, context_tokens,
+                               last_request_started_at, cache_expires_at, vendor_session_id)
+         values (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+      )
+      .run(
+        opts.sessionId,
+        opts.workerId,
+        opts.adapterId,
+        'stream',
+        opts.cwd,
+        'closed',
+        now - 600_000,
+        now - 300_000,
+        0,
+        'work',
+        opts.contextTokens,
+        lastRequest,
+        opts.cacheLeftMs === null ? null : now + opts.cacheLeftMs,
+        'vendor-' + opts.sessionId
+      )
+    // ⛔ A recorded turn, because `reopenable` requires one — a resume onto an id the CLI never
+    // wrote fails the process outright rather than starting fresh (cost-model.md §7).
+    db.db()
+      .prepare('insert into turns (session_id, request_id, ts, input_tokens) values (?,?,?,?)')
+      .run(opts.sessionId, 'req-' + opts.sessionId, lastRequest, 10)
+    if (opts.taskId) {
+      db.db()
+        .prepare(
+          `insert into runs (id, task_id, session_id, worker_id, started_at, ended_at, outcome)
+           values (?,?,?,?,?,?,?)`
+        )
+        .run(
+          'run-' + opts.sessionId,
+          opts.taskId,
+          opts.sessionId,
+          opts.workerId,
+          now - 600_000,
+          now - 300_000,
+          'success'
+        )
+    }
+  }
+
+  const termsOf = (choice: ReturnType<typeof scheduler.chooseTarget>) =>
+    Object.fromEntries((choice.breakdown?.terms ?? []).map((t) => [t.name, t]))
+
+  beforeAll(async () => {
+    const { openaiCompatible } = await import('./adapters/openai-compatible.js')
+    codexInstalled = openaiCompatible.isInstalled
+    openaiCompatible.isInstalled = () => true
+  })
+
+  afterAll(async () => {
+    if (codexInstalled) {
+      const { openaiCompatible } = await import('./adapters/openai-compatible.js')
+      openaiCompatible.isInstalled = codexInstalled
+    }
+  })
+
+  it('picks the account holding this task closed conversation over a cold one', () => {
+    db.db().prepare('update workers set enabled = 0').run()
+    const codex = workers.createWorker({
+      adapterId: 'openai-compatible',
+      label: 'CodexFirst-t123',
+      enabled: true
+    })
+    const claude = workers.createWorker({
+      adapterId: 'claude-code',
+      label: 'ClaudeThird-t123',
+      enabled: true
+    })
+
+    const task = tasks.createTask({ title: 't123 retry the commit' })
+
+    // The conversation that did the work, closed because `codex exec` exits after its turn.
+    seedConversation({
+      sessionId: 'codex-t123',
+      workerId: codex.id,
+      adapterId: 'openai-compatible',
+      taskId: task.id,
+      cwd: dir,
+      contextTokens: 175_626,
+      cacheLeftMs: 10 * 60 * 1000
+    })
+    // ⚠️ ClaudeThird gets a conversation too, on **another** task. Without it this would prove only
+    // that a proven account beats an unproven one — `unproven` is a 0.35 penalty and would carry the
+    // result by itself. Both accounts have now demonstrably produced a turn, so the term under test
+    // is the one left between them.
+    seedConversation({
+      sessionId: 'claude-other',
+      workerId: claude.id,
+      adapterId: 'claude-code',
+      taskId: null,
+      cwd: dir,
+      contextTokens: 40_000,
+      cacheLeftMs: 30 * 60 * 1000
+    })
+
+    const choice = scheduler.chooseTarget(tasks.requireTask(task.id))
+    expect(choice.worker?.id).toBe(codex.id)
+
+    const terms = termsOf(choice)
+    expect(terms.affinity?.value).toBe(1)
+    expect(terms.cold?.value).toBe(0)
+    // ⛔ 10 of 30 minutes on codex is a third of its cache, not a sixth of an hour. Dividing by a
+    // hard-coded 60m — which is what the score did — penalised the shorter-TTL provider for having
+    // a shorter TTL, on the one term whose whole job is to say how much is left.
+    expect(terms.warm?.value).toBeCloseTo(1 / 3, 2)
+    expect(terms.warm?.basis).toContain('30m cache TTL')
+    expect(terms.affinity?.basis).toContain('can be reopened')
+  })
+
+  it('still prefers it once the prefix has lapsed, and says the cache is gone', () => {
+    // ⚠️ Two separate claims. A lapsed conversation still *remembers the task*, which is the greater
+    // part of why reopening beats starting over — so `affinity` holds. What it no longer comes with
+    // is a discount, and `warm` is the term that has to say so. Scoring a cold prefix as warm would
+    // be the lie this whole change exists to stop telling.
+    db.db().prepare('update workers set enabled = 0').run()
+    const codex = workers.createWorker({
+      adapterId: 'openai-compatible',
+      label: 'CodexFirst-lapsed',
+      enabled: true
+    })
+    const task = tasks.createTask({ title: 'retry after the TTL ran out' })
+    seedConversation({
+      sessionId: 'codex-lapsed',
+      workerId: codex.id,
+      adapterId: 'openai-compatible',
+      taskId: task.id,
+      cwd: dir,
+      contextTokens: 120_000,
+      cacheLeftMs: -60_000
+    })
+
+    const terms = termsOf(scheduler.chooseTarget(tasks.requireTask(task.id)))
+    expect(terms.affinity?.value).toBe(1)
+    expect(terms.warm?.value).toBe(0)
+  })
+
+  it('will not reopen a conversation on an adapter that cannot resume', () => {
+    // ⛔ The gate that keeps the promise honest. `reopenableFor` asks `reopenable`, which is the same
+    // list `resumableSession` asks — so the score can never promise a warm continuation that the
+    // dispatch would then decline to make.
+    db.db().prepare('update workers set enabled = 0').run()
+    const local = workers.createWorker({
+      adapterId: 'local-llm',
+      label: 'qwen-no-resume',
+      enabled: true
+    })
+    const task = tasks.createTask({ title: 'no resume here' })
+    seedConversation({
+      sessionId: 'local-1',
+      workerId: local.id,
+      adapterId: 'local-llm',
+      taskId: task.id,
+      cwd: dir,
+      contextTokens: 90_000,
+      cacheLeftMs: 20 * 60 * 1000
+    })
+
+    const terms = termsOf(scheduler.chooseTarget(tasks.requireTask(task.id)))
+    expect(terms.affinity?.value).toBe(0)
+    expect(terms.cold?.value).toBe(1)
   })
 })
