@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -24,6 +24,7 @@ let dir: string
 let db: typeof import('./db.js')
 let projects: typeof import('./projects.js')
 let worktrees: typeof import('./worktrees.js')
+let resources: typeof import('./resources.js')
 
 /** ⚠️ core.autocrlf rewrites what git checks out on Windows; the bytes are not the point here. */
 const text = (path: string): string => readFileSync(path, 'utf8').split('\r\n').join('\n')
@@ -34,7 +35,7 @@ const git = (cwd: string, ...args: string[]): string =>
 let seq = 0
 
 /** A one-slot pool, so the test claims the same workspace it dirtied. */
-function makeProject(): Project {
+function makeProject(poolSize = 1): Project {
   seq += 1
   const root = join(dir, `repo${seq}`)
   mkdirSync(join(root, '.multi_agent_controller'), { recursive: true })
@@ -48,7 +49,7 @@ function makeProject(): Project {
       name: `repo${seq}`,
       vcs: 'git',
       check: [],
-      workspaces: { poolSize: 1 },
+      workspaces: { poolSize },
       landing: { strategy: 'auto-land', target: 'main' }
     })
   )
@@ -64,7 +65,50 @@ beforeAll(async () => {
   db = await import('./db.js')
   projects = await import('./projects.js')
   worktrees = await import('./worktrees.js')
+  resources = await import('./resources.js')
   db.openDb(join(dir, 'worktrees.db'))
+})
+
+describe('making a workspace pool smaller', () => {
+  it('keeps every live workspace claim and its worktree until its run releases it', async () => {
+    // ⛔ A smaller pool is a limit on the *next* dispatch, not permission to tear down work that is
+    // already running. In particular ws2/ws3 may be carrying branches which no other worktree has
+    // checked out, so removing either one to make the setting literal would lose the task's work.
+    const project = makeProject(3)
+    const first = await worktrees.claimWorkspace(project, 'run-1')
+    const second = await worktrees.claimWorkspace(project, 'run-2')
+    const third = await worktrees.claimWorkspace(project, 'run-3')
+
+    expect([first?.path, second?.path, third?.path]).toHaveLength(3)
+    expect(first?.path).not.toBe(second?.path)
+    expect(second?.path).not.toBe(third?.path)
+
+    const smaller = projects.setProjectPolicy(project.id, { poolSize: 1 })
+    const members = await worktrees.ensurePool(smaller)
+    const state = resources.availability(resources.workspacePoolId(project.id))
+
+    expect(members).toEqual([first!.path])
+    expect(state?.resource.capacity).toBe(1)
+    // The two claims outside the newly selectable member list are still real until their runs end.
+    expect(state?.claims.map((claim) => claim.id).sort()).toEqual(
+      [first, second, third].map((workspace) => workspace!.claimId).sort()
+    )
+    expect(state?.inUse).toBe(3)
+    expect(existsSync(second!.path)).toBe(true)
+    expect(existsSync(third!.path)).toBe(true)
+
+    // The lower cap only holds future dispatches; it never steals a running task's slot.
+    expect(await worktrees.claimWorkspace(smaller, 'run-4')).toBeNull()
+
+    worktrees.releaseWorkspace(first!.claimId)
+    worktrees.releaseWorkspace(second!.claimId)
+    expect(await worktrees.claimWorkspace(smaller, 'run-5')).toBeNull()
+
+    worktrees.releaseWorkspace(third!.claimId)
+    const next = await worktrees.claimWorkspace(smaller, 'run-6')
+    expect(next?.path).toBe(first!.path)
+    worktrees.releaseWorkspace(next!.claimId)
+  })
 })
 
 afterAll(() => {

@@ -19,12 +19,16 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 let dir: string
 let db: typeof import('./db.js')
 let workers: typeof import('./workers.js')
+let sessions: typeof import('./sessions.js')
+let scheduler: typeof import('./scheduler.js')
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'agentyard-workerorder-'))
   process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
   db = await import('./db.js')
   workers = await import('./workers.js')
+  sessions = await import('./sessions.js')
+  scheduler = await import('./scheduler.js')
   db.openDb(join(dir, 'workerorder.db'))
 })
 
@@ -44,6 +48,32 @@ const add = (label?: string) => {
 }
 
 const labels = () => workers.listWorkers().map((w) => w.label)
+
+describe('making a worker less parallel', () => {
+  it('keeps its already live work sessions and applies the lower limit only to new work', () => {
+    const worker = workers.createWorker({ adapterId: 'claude-code', label: 'three jobs', maxConcurrent: 3 })
+    const now = Date.now()
+    for (const id of ['running-1', 'running-2', 'running-3']) {
+      db.db()
+        .prepare(
+          `insert into sessions (id, worker_id, adapter_id, transport, state, purpose, started_at)
+           values (?, ?, 'claude-code', 'stream', 'live', 'work', ?)`
+        )
+        .run(id, worker.id, now)
+    }
+
+    const reduced = workers.updateWorker(worker.id, { maxConcurrent: 1 })
+
+    expect(reduced.maxConcurrent).toBe(1)
+    expect(sessions.sessionsForWorker(worker.id).map((session) => session.id).sort()).toEqual([
+      'running-1',
+      'running-2',
+      'running-3'
+    ])
+    // A new task is held at the newly lowered ceiling, while the existing three finish normally.
+    expect(scheduler.atCapacity(sessions.sessionsForWorker(worker.id), reduced.maxConcurrent, null)).toBe(true)
+  })
+})
 
 describe('putting the fleet in an order', () => {
   it('commissions each worker at the end, so an arranged strip does not rearrange itself', () => {

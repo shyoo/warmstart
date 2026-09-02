@@ -202,6 +202,9 @@ export function updateWorker(
   >
 ): Worker {
   const current = requireWorker(id)
+  // ⛔ `maxConcurrent` is an admission limit, never a preemption request. A worker can briefly be
+  // above its newly lowered cap while its existing work finishes; terminating those sessions would
+  // turn a harmless settings edit into lost work.
   const defaultModelsJson =
     patch.defaultModels === undefined
       ? current.defaultModels ? JSON.stringify(current.defaultModels) : null
