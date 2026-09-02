@@ -198,7 +198,7 @@ export function listTasks(opts: { includeDeleted?: boolean; projectId?: string }
   }
   const where = clauses.length ? `where ${clauses.map((c) => `t.${c}`).join(' and ')}` : ''
   return toTasks(
-    rows<TaskRow>(db().prepare(`${TASK_SELECT} ${where} order by t.seq`).all(...args))
+    rows<TaskRow>(db().prepare(`${TASK_SELECT} ${where} order by t.created_at asc, t.seq asc`).all(...args))
   )
 }
 
@@ -701,7 +701,7 @@ export function admitDependents(taskId: string): void {
  */
 export function resumeQuotaPaused(released?: (task: Task) => string | null): number {
   const parked = rows<TaskRow>(
-    db().prepare("select * from tasks where status = 'paused_quota'").all()
+    db().prepare("select * from tasks where status = 'paused_quota' order by created_at asc, seq asc").all()
   )
   const now = Date.now()
   let resumed = 0
@@ -754,7 +754,9 @@ export function quotaParkedTasks(): Array<{ task: Task; workerId: string | null;
 export function admitScheduled(): number {
   const due = rows<TaskRow>(
     db()
-      .prepare("select * from tasks where status = 'scheduled' and (not_before is null or not_before <= ?)")
+      .prepare(
+        "select * from tasks where status = 'scheduled' and (not_before is null or not_before <= ?) order by created_at asc, seq asc"
+      )
       .all(Date.now())
   )
   for (const r of due) admit(r.id)
@@ -1297,13 +1299,14 @@ export function creditTurn(
 
 // ---------------------------------------------------------------------------- ordering
 
-/** Highest priority first, then the nearest deadline, then oldest. Deterministic and cheap. */
+/** Highest priority first, then the nearest deadline, then FIFO by creation time. Deterministic and cheap. */
 export function schedulingOrder(a: Task, b: Task): number {
   const byPriority = PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority]
   if (byPriority !== 0) return byPriority
   const aDue = a.deadline ?? Number.POSITIVE_INFINITY
   const bDue = b.deadline ?? Number.POSITIVE_INFINITY
   if (aDue !== bDue) return aDue - bDue
+  if (a.createdAt !== b.createdAt) return a.createdAt - b.createdAt
   return a.seq - b.seq
 }
 
