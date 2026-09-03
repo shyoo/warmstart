@@ -427,10 +427,17 @@ function decodeStream(record: Record<string, unknown>): StreamEvent | StreamEven
       text = result.content
     } else if (typeof result?.output === 'string' && result.output.trim()) {
       text = result.output
+    } else if (typeof result?.error === 'string' && result.error.trim()) {
+      // ⛔ `agy` puts its explanation here when a terminal result has `status: "ERROR"`.
+      // Dropping it leaves `onStreamResult` only the status, so a failed rebase, timeout or
+      // argument error becomes "said nothing about it" even though the CLI did explain itself.
+      text = result.error
     } else if (typeof record.response === 'string' && record.response.trim()) {
       text = record.response
     } else if (typeof record.result === 'string' && record.result.trim()) {
       text = record.result
+    } else if (typeof record.error === 'string' && record.error.trim()) {
+      text = record.error
     }
 
     const finished: StreamEvent = {

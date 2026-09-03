@@ -88,7 +88,7 @@ src/daemon/            orchestratord. Runs as Electron-with-ELECTRON_RUN_AS_NODE
                        taskBranches reads the ones nothing has checked out (+ .test.ts)
   which.ts             PATH resolution - node-pty does not do it
   adapters/            claude-code - antigravity-cli - openai-compatible - local-llm; capabilities as data
-                       (+ adapters.test.ts). Read docs/adapters.md before changing one
+                       (+ adapters.test.ts); terminal errors retain their CLI explanation. Read docs/adapters.md before changing one
     external.ts        declarative adapters from <dataDir>/adapters/*.json  (+ external.test.ts)
     generic.ts         the driver behind one. ⛔ JSON only, never JavaScript
 src/mcp/               the MCP server the agent CLI spawns. Two tiers chosen by the daemon: worker

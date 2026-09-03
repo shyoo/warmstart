@@ -161,6 +161,17 @@ describe('antigravity-cli', () => {
     })
   })
 
+  it('preserves agy terminal error text instead of reporting a silent ERROR', () => {
+    const failed =
+      '{"event":"result","result":{"conversation_id":"379cc136","status":"ERROR",' +
+      '"error":"rebase stopped with a conflict in HANDOFF.md"}}'
+    expect(parse('antigravity-cli', [failed]).find((e) => e.kind === 'result')).toMatchObject({
+      isError: true,
+      terminalReason: 'ERROR',
+      text: 'rebase stopped with a conflict in HANDOFF.md'
+    })
+  })
+
   it('reports an unknown cost as null, never as zero', () => {
     // ⛔ Zero would read as "this turn was free" everywhere downstream.
     expect(parse('antigravity-cli', [result]).find((e) => e.kind === 'result')).toMatchObject({
