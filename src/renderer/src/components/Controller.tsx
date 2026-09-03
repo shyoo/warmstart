@@ -17,7 +17,7 @@ import { Working } from '../lib/taskview'
  * the deterministic answer fired because nothing better was available. A fleet whose every consult
  * falls back still makes progress — it just makes it with less judgment.
  */
-export function Controller({ now }: { now: number }): React.JSX.Element {
+export function Controller(_props: { now: number }): React.JSX.Element {
   const { settings } = useUiSettings()
   const [report, setReport] = useState<ControllerReport | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
