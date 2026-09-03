@@ -1202,6 +1202,13 @@ look like spend. The honest repair is no reading, so the affected run prices as 
 named a fixture-only worker UUID and therefore matched **zero live rows**; migration 38 repeats the
 exact repair against the worker id measured in the database, `f6ba9f23-5a03-4d47-a197-4e12ae9963c3`.
 
+⛔ **Every metered run ending path records the closing reading, including watchdog preemption.**
+The urgent probe requested by a quota preemption updates the account's current sample but cannot
+stand in for `runs.quota_after_json`: the run owns its before/after pair. Measured on t170
+(2026-09-03), Run #1 was preempted for quota and permanently showed no final reading because that
+timer path alone omitted `captureQuotaAfter`; completion and session-exit paths already called it.
+The closing probe runs after workspace and resource release, so its terminal cannot hold the pool.
+
 ### Splitting a window between parallel runs
 
 Two agents on one account share the window they both drew from. `price.ts` cuts the timeline at

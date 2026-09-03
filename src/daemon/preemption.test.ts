@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -280,6 +280,57 @@ describe('the switches that gate all of this', () => {
 
     expect(tasks.requireRun(run.id).outcome).toBe('preempted')
     expect(tasks.getTask(task.id)?.status).toBe('paused_quota')
+  })
+
+  it('attaches the final quota reading to a run stopped by preemption', async () => {
+    // ⛔ An urgent probe only updates quota_samples. Run #1 needs its own closing snapshot or its
+    // before/after delta remains unmeasured forever — the hole observed on t170.
+    const isolationRoot = join(dir, `quota-worker-${seq + 1}`)
+    const workerId = workers.createWorker({
+      adapterId: 'claude-code',
+      label: `quota-w${seq + 1}`,
+      isolationRoot,
+      enabled: false
+    }).id
+    writeFileSync(
+      join(isolationRoot, '.claude.json'),
+      JSON.stringify({
+        cachedUsageUtilization: {
+          fetchedAtMs: Date.now(),
+          utilization: {
+            limits: [
+              {
+                kind: 'session',
+                percent: 97,
+                resets_at: new Date(Date.now() + 3_600_000).toISOString()
+              }
+            ]
+          }
+        }
+      })
+    )
+    const sessionId = seedSession(workerId)
+    const task = tasks.createTask({ title: 'a metered run to preempt', createdBy: { kind: 'human' } })
+    const run = tasks.startRun({
+      taskId: task.id,
+      workerId,
+      sessionId,
+      projectId: null,
+      quotaUnverified: false,
+      costModelId: null
+    })
+    tasks.creditTurn(sessionId, { input: 1_000, output: 100, cacheRead: 0, cacheWrite: 0 })
+    tasks.setStatus(task.id, 'running', { assignee: workerId })
+    seedRateLimit(workerId, 'five_hour', 'rejected', Date.now() + 3_600_000)
+
+    await scheduler.tick()
+    await vi.advanceTimersByTimeAsync(130_000)
+
+    const stopped = tasks.requireRun(run.id)
+    expect(stopped.outcome).toBe('preempted')
+    expect(stopped.quotaAfter?.windows).toEqual([
+      expect.objectContaining({ id: 'session', percent: 97 })
+    ])
   })
 
   it('leaves a run alone on a bare warning, because the vendor served that turn', async () => {

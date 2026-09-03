@@ -2828,7 +2828,15 @@ async function preempt(
           .run(because === 'runaway' ? null : resumeAt, Date.now(), task.id)
         setStatus(task.id, because === 'runaway' ? 'awaiting_human' : 'paused_quota')
         closeSession(session.id)
-        if (run) await releaseFor(run.id, task.id, task.projectId)
+        if (run) {
+          await releaseFor(run.id, task.id, task.projectId)
+          // ⛔ Preemption is a run ending just as completion or a failed turn is. The urgent probe
+          // above refreshes the account card, but it does not attach a closing reading to this run;
+          // without this call every watchdog-preempted run permanently had `quotaAfter: null`.
+          // Keep it after release, matching the other endings: the slow probe must hold neither the
+          // workspace nor the run's resource claims.
+          await captureQuotaAfter(requireRun(run.id))
+        }
       } finally {
         if (run) preempting.delete(run.id)
       }
