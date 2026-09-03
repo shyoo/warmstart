@@ -118,6 +118,25 @@ stashes live in the repository's shared object store, so every pooled workspace 
 and a global count would let one unrelated leftover hold every future task in the project. Git's own
 `On <branch>:` prefix is the tie.
 
+### When the trunk moved while the branch stayed empty
+
+⭐ **The trunk tripwire.** A branch with no commits is ordinary when a task only answered a question, and
+the trunk moving is ordinary when an operator is working. But together — an empty task branch and a trunk
+that gained commits during that run — they are the signature of an agent that committed directly to the
+trunk instead of its assigned branch.
+
+Because commits on the trunk bypass checks, rebases and landing policies, the task is handed to human
+review at `awaiting_human`.
+
+In the UI, you can:
+- **Mark done** — if you inspected the commits in trunk and accept them as the finished work.
+- **Resolve & retry** — sends the branch back to an agent to rebase onto the moved trunk, ensure all
+  intended changes are committed and verified on the task branch, and report complete.
+- **Stop here** or reply directly in the thread.
+
+⛔ **"Retry landing" is never offered for an empty branch.** `relandTask` requires unlanded commits on
+the branch and fails if there is nothing to land.
+
 ## When the branch will not rebase
 
 The commonest reason a finished task does not land is that the target moved underneath it. Two tasks

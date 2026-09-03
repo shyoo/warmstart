@@ -439,6 +439,40 @@ describe('run prompt persistence and task.get preview', () => {
       text: 'Retry landing failed: not a git project'
     })
   })
+
+  it('refuses relandTask when the trunk tripwire fired, directing to Mark done or Resolve & retry', async () => {
+    const task = tasks.createTask({ title: 'Trunk moved landing', status: 'ready' })
+    tasks.setStatus(task.id, 'awaiting_human', {
+      branch: 'multi-agent-controller/t157-trunk-moved',
+      holdReason: 'the trunk moved during this run and this branch is empty — check where the work went'
+    })
+
+    await expect(scheduler.relandTask(task.id)).resolves.toEqual({
+      ok: false,
+      reason: 'the branch carries no commits; use Mark done if the work in trunk is finished, or Resolve & retry to rebase'
+    })
+    expect(tasks.requireTask(task.id).holdReason).toContain('use Mark done if the work in trunk is finished')
+  })
+
+  it('resolveRetryOnTask dispatches a run asking the agent to rebase onto the moved trunk when trunk moved and branch is empty', async () => {
+    const { execFileSync } = await import('node:child_process')
+    const projects = await import('./projects.js')
+    const root = mkdtempSync(join(tmpdir(), 'agentyard-resolve-trunk-moved-'))
+    execFileSync('git', ['init', root])
+    const project = projects.addProject({ root })
+    const task = tasks.createTask({ title: 'Resolve trunk moved', status: 'ready', projectId: project.id })
+    tasks.setStatus(task.id, 'awaiting_human', {
+      branch: `multi-agent-controller/t${task.seq}-resolve-trunk-moved`,
+      holdReason: 'the trunk moved during this run and this branch is empty — check where the work went'
+    })
+
+    await expect(scheduler.resolveRetryOnTask(task.id)).resolves.toEqual({ ok: true })
+
+    const retry = tasks.messagesFor(task.id).filter((m) => m.role === 'human').at(-1)?.text
+    expect(retry).toContain(`rebase \`multi-agent-controller/t${task.seq}-resolve-trunk-moved\` onto \`main\``)
+    expect(retry).toContain('ensure all intended changes are committed')
+    expect(retry).toContain('squash them into one coherent commit')
+  })
 })
 
 /**

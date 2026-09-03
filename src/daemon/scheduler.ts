@@ -4520,6 +4520,51 @@ export async function resolveCommitOnTask(
   return { ok: true }
 }
 
+export async function resolveTrunkMovedOnTask(
+  taskId: string
+): Promise<{ ok: boolean; reason?: string }> {
+  const task = getTask(taskId)
+  if (!task) return { ok: false, reason: 'no such task' }
+  const branch = task.branch
+  if (!branch) return { ok: false, reason: 'task has no branch' }
+  const project = task.projectId ? getProject(task.projectId) : null
+  if (!project || project.vcs !== 'git') return { ok: false, reason: 'not a git project' }
+  if (task.status === 'running') {
+    return { ok: false, reason: 'this task is already running; it will be asked when it reports' }
+  }
+
+  // ⛔ Clear finish_asked_at so that when the new run reports complete and needs finish processing,
+  // it is not immediately treated as already-asked and rejected.
+  db().prepare('update tasks set finish_asked_at = null where id = ?').run(task.id)
+
+  const msgs = messagesFor(task.id)
+  const lastSystem = [...msgs].reverse().find((m) => m.role === 'system' && /trunk moved|trunk tripwire|branch is empty/i.test(m.text))
+  const failureDetail = lastSystem ? lastSystem.text : (task.holdReason ?? 'The trunk moved during this run and this branch is empty')
+
+  const base = landingBaseFor(project, resolveFinishPolicy(task, project).policy, await hasRemote(project.root))
+  const checks = policyVerifies(resolveFinishPolicy(task, project).policy) ? (project.config.check ?? []) : []
+  const checkStep =
+    checks.length > 0
+      ? `Run every project check (${checks.map((check) => `\`${check}\``).join(', ')}) after the final commit state is ready, and fix any failure before reporting complete. `
+      : 'Run the relevant project checks after the final commit state is ready, and fix any failure before reporting complete. '
+
+  const instruction =
+    `The landing could not proceed because \`${base}\` moved while your run was in flight and \`${branch}\` carries no commits:\n\n` +
+    `${failureDetail}\n\n` +
+    `If you made commits directly to \`${base}\`, or if changes need to be rebased onto \`${base}\`, ` +
+    `rebase \`${branch}\` onto \`${base}\`, ensure all intended changes are committed on \`${branch}\`. ` +
+    'If two or more commits ahead of this task branch’s landing target all belong to this task, squash ' +
+    'them into one coherent commit where safe; do not rewrite commits already on the landing target, ' +
+    'force-push, or use a destructive reset. ' +
+    checkStep +
+    'Confirm the tree is clean, then report the task complete again.'
+
+  addMessage(task.id, 'human', instruction)
+  const outcome = continueTask(task.id)
+  log.info(`t${task.seq}: asked an agent to resolve trunk-moved changes on ${branch} (${outcome})`)
+  return { ok: true }
+}
+
 /**
  * The one recovery action behind every failed-landing button.
  *
@@ -4545,7 +4590,9 @@ export async function resolveRetryOnTask(
         ? resolveChecksOnTask
         : /uncommitted|cannot be asked after its turn ends|rescue|stash/i.test(reason)
           ? resolveCommitOnTask
-          : null
+          : /trunk moved.*branch is empty/i.test(reason)
+            ? resolveTrunkMovedOnTask
+            : null
   if (!resolver) return { ok: false, reason: 'this landing failure needs human review' }
 
   if (automatic) {
@@ -4571,6 +4618,9 @@ export async function relandTask(taskId: string): Promise<{ ok: boolean; reason?
   }
 
   if (!task.branch) return didNotLand('this task has no branch')
+  if (/trunk moved.*branch is empty/i.test(task.holdReason ?? '')) {
+    return didNotLand('the branch carries no commits; use Mark done if the work in trunk is finished, or Resolve & retry to rebase')
+  }
   const project = task.projectId ? getProject(task.projectId) : null
   if (!project || project.vcs !== 'git') return didNotLand('not a git project')
 

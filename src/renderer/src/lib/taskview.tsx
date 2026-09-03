@@ -404,3 +404,58 @@ export function chronologicalTimeline(
   ]
   return items.sort((a, b) => a.ts - b.ts)
 }
+
+/** Whether the task stopped because of a merge or rebase conflict. */
+export function isConflictedTask(task: Pick<Task, 'holdReason'>): boolean {
+  return /conflict/i.test(task.holdReason ?? '')
+}
+
+/** Whether the task stopped because project verification checks failed. */
+export function isChecksFailedTask(task: Pick<Task, 'holdReason'>): boolean {
+  return /checks? failed|verification failed/i.test(task.holdReason ?? '')
+}
+
+/**
+ * Whether the task stopped with uncommitted work on its workspace or branch.
+ *
+ * ⛔ Deliberately excludes "the trunk has uncommitted changes": that is a trunk blockage (the operator's
+ * working tree is dirty), not uncommitted work by the agent, and dispatching an agent to commit on the
+ * task branch would send it to fix something that is not broken.
+ */
+export function isUncommittedTask(task: Pick<Task, 'holdReason'>): boolean {
+  const reason = task.holdReason ?? ''
+  if (/the trunk has uncommitted/i.test(reason)) return false
+  return /workspace has uncommitted|file\(s\) are uncommitted|changes on .* are uncommitted|cannot be asked after its turn ends|rescue|stash/i.test(
+    reason
+  )
+}
+
+/** Whether the task tripped the trunk tripwire (the trunk moved during this run and this branch is empty). */
+export function isTrunkMovedTask(task: Pick<Task, 'holdReason'>): boolean {
+  return /trunk moved.*branch is empty/i.test(task.holdReason ?? '')
+}
+
+/**
+ * Whether a human in awaiting_human should be offered "Retry landing".
+ *
+ * ⛔ A branch carrying no commits must never offer "Retry landing": `relandTask` requires real commits
+ * (`decision.kind === 'land'`) and fails immediately if `unlandedCommits === 0`.
+ *
+ * ⚠️ Bare `/trunk/i` was a trap (measured on t157, 2026-09-03): it matched "the trunk moved during this
+ * run and this branch is empty", offering a button that was guaranteed to fail with "Retry landing
+ * failed: carries no commits".
+ */
+export function canRelandTask(task: Pick<Task, 'branch' | 'holdReason'>): boolean {
+  if (!task.branch) return false
+  const reason = task.holdReason ?? ''
+  if (isConflictedTask(task)) return false
+  if (isChecksFailedTask(task)) return false
+  if (isUncommittedTask(task)) return false
+  if (isTrunkMovedTask(task)) return false
+  if (/no commits|nothing to land|branch is empty/i.test(reason)) return false
+  if (/Retry landing failed/i.test(reason)) return false
+  return /landing failed|not merged|wait(ed|ing) for a turn|would not fast-forward|trunk was busy|clean trunk|the trunk is busy|the trunk has uncommitted/i.test(
+    reason
+  )
+}
+

@@ -41,9 +41,14 @@ import {
   activeTime,
   activeTimeTitle,
   CANCELLABLE,
+  canRelandTask,
   chronologicalTimeline,
   elapsed,
   holdLine,
+  isChecksFailedTask,
+  isConflictedTask,
+  isTrunkMovedTask,
+  isUncommittedTask,
   isWorking,
   statusLabel,
   STATUS_TONE,
@@ -1297,15 +1302,11 @@ function Decide({
   // ⛔ Offered only when the thing that stopped it is a conflict, and read from `holdReason`
   // because that is where `landTask`'s failure is actually recorded. A *fix the conflict* button on
   // a task that failed its checks would send an agent to rebase something that rebases fine.
-  const conflicted = /conflict/i.test(task.holdReason ?? '')
-  const checksFailed = /checks? failed|verification failed/i.test(task.holdReason ?? '')
-  const uncommitted = /uncommitted|cannot be asked after its turn ends|rescue|stash/i.test(task.holdReason ?? '')
-  const canReland =
-    Boolean(task.branch) &&
-    !conflicted &&
-    !checksFailed &&
-    !uncommitted &&
-    /landing failed|not merged|waited for a turn|would not fast-forward|trunk/i.test(task.holdReason ?? '')
+  const conflicted = isConflictedTask(task)
+  const checksFailed = isChecksFailedTask(task)
+  const uncommitted = isUncommittedTask(task)
+  const trunkMoved = isTrunkMovedTask(task)
+  const canReland = canRelandTask(task)
 
   const handleResolveRetry = async () => {
     setBusy(true)
@@ -1440,6 +1441,25 @@ function Decide({
             <strong>Uncommitted work.</strong> Sends the branch back to an agent to commit the
             changes on <span className="mono">{task.branch}</span> and report complete again — same
             thread, preserving existing context.
+          </span>
+        </div>
+      )}
+
+      {trunkMoved && (
+        <div className="decide-option">
+          <button
+            className="btn btn--primary"
+            title="Dispatches a run on this thread asking the agent to rebase onto the moved trunk, verify project checks, and commit on this branch."
+            disabled={busy}
+            onClick={() => void handleResolveRetry()}
+          >
+            Resolve &amp; retry
+          </button>
+          <span className="decide-what">
+            <strong>The trunk moved and the branch is empty.</strong> Sends the branch back to an
+            agent to rebase onto the landing target, ensure all intended changes are committed on{' '}
+            <span className="mono">{task.branch}</span>, run project checks, and report complete
+            again — same thread, preserving existing context.
           </span>
         </div>
       )}

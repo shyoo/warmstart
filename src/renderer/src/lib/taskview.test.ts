@@ -13,10 +13,15 @@ import { fileURLToPath } from 'node:url'
 import {
   activeTime,
   activeTimeTitle,
+  canRelandTask,
   chronologicalRuns,
   chronologicalTimeline,
   elapsed,
   holdLine,
+  isChecksFailedTask,
+  isConflictedTask,
+  isTrunkMovedTask,
+  isUncommittedTask,
   isWorking,
   modelLine,
   projectWorkState,
@@ -633,3 +638,60 @@ describe('timeline ordering for runs and compactions', () => {
     expect(chronologicalTimeline([], [])).toEqual([])
   })
 })
+
+describe('landing recovery actions and canRelandTask', () => {
+  it('does not offer canReland when the trunk tripwire fired and the branch is empty', () => {
+    // ⛔ Measured on t157 (2026-09-03): the agent committed directly to the trunk, leaving the task
+    // branch empty. Offering "Retry landing" ran relandTask, which failed immediately with "carries
+    // no commits... No work landed".
+    const t = {
+      branch: 'multi-agent-controller/t157-debug',
+      holdReason: 'the trunk moved during this run and this branch is empty — check where the work went'
+    }
+    expect(canRelandTask(t)).toBe(false)
+    expect(isTrunkMovedTask(t)).toBe(true)
+  })
+
+  it('does not offer canReland when Retry landing previously failed due to no commits', () => {
+    const t = {
+      branch: 'multi-agent-controller/t157-debug',
+      holdReason:
+        'Retry landing failed: multi-agent-controller/t157-debug carries no commits that origin/main does not already have. No work landed — check if the agent answered as a question instead of making changes.'
+    }
+    expect(canRelandTask(t)).toBe(false)
+  })
+
+  it('does not offer canReland when there is no branch', () => {
+    expect(canRelandTask({ branch: null, holdReason: 'landing failed: the trunk was busy' })).toBe(false)
+  })
+
+  it('does not offer canReland for conflicts, failing checks, or workspace uncommitted files', () => {
+    expect(canRelandTask({ branch: 'b', holdReason: 'landing failed: conflict' })).toBe(false)
+    expect(isConflictedTask({ holdReason: 'landing failed: conflict' })).toBe(true)
+
+    expect(canRelandTask({ branch: 'b', holdReason: 'landing failed: the project checks failed after rebase' })).toBe(false)
+    expect(isChecksFailedTask({ holdReason: 'landing failed: the project checks failed after rebase' })).toBe(true)
+
+    expect(canRelandTask({ branch: 'b', holdReason: 'landing failed: the workspace has uncommitted changes' })).toBe(false)
+    expect(isUncommittedTask({ holdReason: 'landing failed: the workspace has uncommitted changes' })).toBe(true)
+  })
+
+  it('distinguishes trunk uncommitted changes from workspace uncommitted files', () => {
+    // A dirty operator trunk is a trunk blockage, so the branch is committed and can be relanded once trunk is clean.
+    const trunkBlocked = {
+      branch: 'multi-agent-controller/t80',
+      holdReason:
+        'landing failed: committed and verified on `multi-agent-controller/t80`, but not merged: the trunk has uncommitted changes. The branch is intact — merge it when the trunk is free.'
+    }
+    expect(isUncommittedTask(trunkBlocked)).toBe(false)
+    expect(canRelandTask(trunkBlocked)).toBe(true)
+  })
+
+  it('offers canReland when landing was blocked by a busy trunk or queue timeout', () => {
+    expect(canRelandTask({ branch: 'b', holdReason: 'landing failed: the trunk was busy' })).toBe(true)
+    expect(canRelandTask({ branch: 'b', holdReason: 'another task is still landing after 60s of waiting for a turn' })).toBe(true)
+    expect(canRelandTask({ branch: 'b', holdReason: 'committed and verified, waiting for a clean trunk' })).toBe(true)
+    expect(canRelandTask({ branch: 'b', holdReason: 'committed and verified on `b`, but the trunk would not fast-forward: rejected' })).toBe(true)
+  })
+})
+

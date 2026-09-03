@@ -7,7 +7,7 @@ started in CI, never run against a real agent CLI.
 **Current state + what to do next, not a changelog.** **Under 200 lines** — adding one means cutting
 the line it obsoletes. Where every other fact goes: [`docs/README.md`](docs/README.md).
 
-**Baseline (2026-09-03, measured):** typecheck · lint · build clean · `npm test` **1598/1600** (2
+**Baseline (2026-09-03, measured):** typecheck · lint · build clean · `npm test` **1610/1612** (2
 POSIX-only skipped). ⚠️ `test:daemon` 147/147 · `test:ui` 232/232 · `test:pack` 18/18 · L4-landed are
 carried forward. CLIs here: claude 2.1.252 · agy 1.1.22 · codex 0.151.0 · local-llm 1.0.0 (qwen3-coder live tested).
 ⚠️ With none installed — the CI state — the daemon suite skips 5 checks, each with a stated reason.
@@ -156,9 +156,9 @@ M0–M6 are done. What is left is not a milestone but a list, in the order it wo
    stays **off at every tier** (operator, 2026-09-01): nothing has run in flight, 60% never fired,
    and **no conversation has served two tasks** — Conversations' `Shared` chip is empty by
    construction, and runs-per-conversation (nine) is what varies today.
-5. **The trunk tripwire is built and has never fired.** An empty branch under a moved trunk goes to
-   `awaiting_human` naming the commits (`decideFinish`'s `trunk-moved`). ⚠️ Provoking it means
-   reintroducing the bug `--add-dir` fixed.
+5. ⭐ **The trunk tripwire fired in flight (t157, 2026-09-03)**: an agent committed to `main` leaving
+   an empty branch; `canReland` erroneously offered "Retry landing" on bare `trunk` regex and failed.
+   `canRelandTask` now requires real commits and `trunkMoved` offers Resolve & retry.
 6. **`antigravity-cli` still has no real isolation root.** `envFor()` sets no `HOME`, so all four
    workers share the operator's `~/.gemini`. Per-worker `HOME` is the fix; the credential is in the
    OS keyring so sign-in *should* survive, and "should" is doing the work there.
