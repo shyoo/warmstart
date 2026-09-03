@@ -204,6 +204,27 @@ npm run dist         # installers for the current platform
 clear it by hand. That is the honest state of a pre-alpha rather than something worked around —
 signing is a certificate and a release process, not a config line.
 
+[`docs/development.md`](docs/development.md) has the full script list, the `scripts/build-win.ps1`
+pipeline and the platform failures that look like something else;
+[`docs/testing.md`](docs/testing.md) explains what each test tier can and cannot prove.
+
+## Documentation
+
+[`docs/README.md`](docs/README.md) is the index, and it opens with a table mapping what you are about
+to do to the page that governs it. The ones most people want first:
+
+| Page | What it is the authority on |
+|---|---|
+| [`docs/architecture.md`](docs/architecture.md) | The four processes, the three loops, and the invariants |
+| [`docs/glossary.md`](docs/glossary.md) | The domain words — worker vs session vs workspace |
+| [`docs/cost-model.md`](docs/cost-model.md) | Caching, context, compaction, quota — each number with its source and date |
+| [`docs/routing.md`](docs/routing.md) | How a task is scored and where it is sent |
+| [`docs/adapters.md`](docs/adapters.md) | What each CLI can actually do, measured against a running binary |
+| [`docs/development.md`](docs/development.md) | Setup, build, packaging, and the commit workflow |
+
+Reference under `docs/` is kept current: a test in `npm test` fails the build on a page nobody
+indexed, a link that resolves to nothing, or a source path a doc cites that has since moved.
+
 ## Repository layout
 
 | Path | What it holds |
@@ -215,7 +236,7 @@ signing is a certificate and a release process, not a config line.
 | `src/shared` | Types crossing a process boundary. |
 | `costmodels/` | Versioned pricing data. Never inline arithmetic. |
 | `electron-builder.yml` | Packaging. Two lines in it are load-bearing and say why. |
-| `docs/` | Current, maintained reference. |
+| `docs/` | Current, maintained reference. Twelve pages; [`docs/README.md`](docs/README.md) is the index. |
 | `transient_docs/` | Design and implementation plans, dated. Kept for reasoning, not status. |
 | `AGENTS.md` | Conventions for AI agents working on this repo. |
 | `HANDOFF.md` | Current state and what to do next. |

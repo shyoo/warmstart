@@ -8,6 +8,12 @@ and expensive to be wrong about. M5 wrote two adapters from vendor docs and then
 CLIs — and **several documented claims turned out to be wrong in ways that would have failed on the
 first spawn.** That is the whole reason `AdapterInfo.verification` exists.
 
+> **Audience:** anyone writing or changing an adapter, or trusting one's capability block.
+> **Authority for:** per-CLI capabilities as measured against a running binary, the flags each
+> takes, and what is still unverified.
+> The capability *type* is `AdapterCapabilities` in `src/shared/protocol.ts`; how a capability is
+> consumed is [`routing.md`](routing.md) and [`architecture.md`](architecture.md) §4.
+
 ---
 
 ## The fleet, at a glance

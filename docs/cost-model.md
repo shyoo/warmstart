@@ -7,6 +7,12 @@ person would assume, so ⛔ **do not re-derive any of this from memory.**
 Every row says where it came from and when. If you change a number, change its provenance in the same
 edit. If a fact can no longer be verified, delete it rather than leaving it unsourced.
 
+> **Audience:** anyone touching the cache clock, the reserve, quota, metering or the estimator.
+> **Authority for:** every measured number about caching, context, compaction, quota and spend —
+> each with its source and date.
+> Where the numbers are *used* is [`routing.md`](routing.md); the pricing data itself is
+> `../costmodels/`, which is data and never code.
+
 ---
 
 ## 1. Prompt caching (Anthropic)
@@ -991,8 +997,8 @@ quadratically — while output, the thing the agent actually produced, stays in 
 A run is therefore called a runaway for being *long*, not for being *wasteful*, and cache reads are
 billed at a fraction of input (§1).
 
-⚠️ **And the estimate cannot correct itself.** `completedRunTotals` filters `outcome = 'completed'`,
-so a preempted run contributes nothing. The median above stayed at **1,557,974** — the middle of the
+⚠️ **And the estimate cannot correct itself.** `loadSamples()` in `src/daemon/estimator.ts` filters
+`outcome = 'completed'`, so a preempted run contributes nothing. The median above stayed at **1,557,974** — the middle of the
 four completed runs — while the two runs that were actually stopped were 3–4× it. Stop enough long
 runs and the estimator's picture of "work like this" gets *shorter*, not more accurate.
 

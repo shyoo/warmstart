@@ -7,6 +7,11 @@ every task was paying it.
 
 This page is what the tool does about that, and what it costs you to let it.
 
+> **Audience:** anyone touching continuation, resume, conversation reuse or sharing.
+> **Authority for:** when a task reuses a conversation, the lease, and what a borrower is told.
+> What a reuse *saves* is [`cost-model.md`](cost-model.md); how the scheduler scores warmth is
+> [`routing.md`](routing.md); session state as a union is [`data-model.md`](data-model.md) §4.
+
 ---
 
 ## Three things, in order of how much they save

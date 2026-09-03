@@ -11,6 +11,12 @@ applying a heuristic at the one moment nobody is watching is a worse copy of tha
 context. Every orchestrator we surveyed lands in the same place: the agent commits, the tool decides
 what happens next.
 
+> **Audience:** anyone changing finishing, landing, rescue or the loose-ends scan.
+> **Authority for:** the finish policies and how they resolve, the landing bar, rescue commits,
+> and what happens to work the tool declines to land.
+> Branch and worktree mechanics are [`architecture.md`](architecture.md) §4; the commit workflow
+> a *human or agent* follows in this repo is [`development.md`](development.md) §7.
+
 ⛔ **And it never destroys work.** Not a dirty workspace, not a branch, not a stash. Anything the tool
 declines to land stays exactly where it is and appears under **Loose ends** on the Overview page.
 

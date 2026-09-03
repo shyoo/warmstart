@@ -3,6 +3,11 @@
 These words mean specific things in Multi Agent Controller. Using them loosely makes the scheduler incoherent, so
 they are worth pinning down.
 
+> **Audience:** everyone, before using a domain word in code, a commit message or a doc.
+> **Authority for:** what each term means. ⛔ If another page uses one of these words differently,
+> that page is wrong.
+> The one distinction everything rests on: **a worker is not a session.**
+
 ---
 
 **Fleet** — every worker Multi Agent Controller knows about, across all providers and accounts.
@@ -371,8 +376,9 @@ leaves and no workspace has it checked out. Listed on Overview.
 ---
 
 **Adapter** — the integration for one agent CLI (`claude-code`, `antigravity-cli`,
-`openai-compatible`). Declares **capabilities** (what it can do — `manualCompact`, `resumeSession`,
-`streamJson`, `classifierBackedAuto`, …) and **policy** (how it behaves — context management, quota
+`openai-compatible`, `local-llm`). Declares **capabilities** (what it can do — `manualCompact`, `resumeSession`,
+`imageInput`, `quotaProbe`, `classifierBackedAuto`, … the full list is `AdapterCapabilities` in
+`src/shared/protocol.ts`) and **policy** (how it behaves — context management, quota
 windows, preemption protocol, default permission mode, which cost model applies).
 
 > ⛔ The scheduler asks `capabilities` and `policy`. It never asks *which* adapter. Antigravity having

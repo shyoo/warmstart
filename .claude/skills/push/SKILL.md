@@ -117,18 +117,37 @@ the sibling repo and no next agent could read it.
   - ⚠️ **From a worktree, do this at step 5 instead.** Your base is stale right now, and two sessions
     rewriting one hand-curated file from different bases conflict in the one place a conflict costs
     somebody their next-steps.
-- **`docs/`** — permanent and maintained. **Kept current, not appended to.** Update the page the
-  change made wrong:
+- **`docs/`** — permanent and maintained. **Kept current, not appended to.** ⛔ Go through this
+  table and update the page your change made wrong. `docs/development.md` §7 is the same table with
+  the reasoning; [`docs/README.md`](../../../docs/README.md) is the index.
+  - `docs/architecture.md` — a process, a loop or its cadence, an RPC method, the data directory,
+    an environment variable, or an **invariant**. ⛔ A new invariant goes here in full and is
+    *pointed at* from `AGENTS.md`, never written out twice.
+  - `docs/data-model.md` — a migration, a column, or a change to a load-bearing union. ⛔ A new
+    migration also bumps the `MIGRATION_COUNT` figure in §2 of that page.
   - `docs/cost-model.md` — any measured number, cache or compaction behaviour, quota rung, or a
     measurement run that landed. ⛔ Every number carries where it came from and when.
+  - `docs/routing.md` — an eligibility gate, a weight, a tie-break, or the controller consult.
   - `docs/adapters.md` — anything learned about what a CLI can actually do. ⛔ Never promote a
     capability to `measured` without having watched it be true.
+  - `docs/sessions.md` — continuation, resume, or cross-task sharing. `docs/landing.md` — finish
+    policies, the landing bar, rescue commits, loose ends.
+  - `docs/mcp.md` — a tool added, removed or moved between tiers. `docs/ui.md` — a route, a
+    component, or a renderer convention.
+  - `docs/testing.md` — a new tier, or **a new way a suite here can lie**. ⭐ A suite that reported
+    a confident false pass earns an entry even after it is fixed.
+  - `docs/development.md` — a script, a build flag, a packaging rule, or a platform failure.
   - `docs/glossary.md` — only if a domain word changed meaning or a new load-bearing one appeared.
   - If a page is still correct, say so and skip it. Do not touch a file to prove you read it.
-- **`AGENTS.md`** — durable rules, layout, pitfalls. Edit only if a durable fact changed. It loads
-  into every session's context, so **also delete any pitfall this session made impossible** — the
+- **`AGENTS.md`** — the map: durable rules, layout, and one-line pointers into `docs/`. Edit only if
+  a durable fact changed. ⛔ **Under 200 lines, and the detail belongs on the page, not here** — it
+  loads into every session's context. **Also delete any pitfall this session made impossible** — the
   code path is gone, or a guard now catches it. The rule stays; the story of the bug goes to
   `changes_history.md`.
+- ⭐ **`npm test` (step 3) carries the guard**, `src/daemon/docs.test.ts`: it fails on a page missing
+  from the index, a relative link resolving to nothing, a `src/…` path a doc cites that has moved,
+  and `AGENTS.md` / `HANDOFF.md` past 200 lines. ⚠️ It checks the mechanical half only — it cannot
+  tell whether a sentence is still *true*, which is what this step is for.
 - **`README.md`** — only if user-facing setup, commands, or install/build instructions changed.
 - **`transient_docs/changes_history.md`** — the archive, and the only place a narrative belongs.
   A decision and its reasoning, a rejected alternative, a subtle bug and its fix. ⚠️ It runs

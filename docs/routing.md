@@ -7,6 +7,12 @@ deterministic arithmetic over measured costs, cache lifetimes, and quota windows
 controller is consulted only on discrete judgment events when the arithmetic cannot separate two
 close candidates on a large task.
 
+> **Audience:** anyone changing how a task is scored, gated or dispatched.
+> **Authority for:** the eligibility gates, every scoring weight and its formula, tie-breaking,
+> and the controller consult.
+> The numbers the weights are made of are [`cost-model.md`](cost-model.md); the loop that calls all
+> of this is [`architecture.md`](architecture.md) §2.
+
 ---
 
 ## 1. Architectural Invariants & Decision Phases
