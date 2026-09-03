@@ -1,4 +1,5 @@
 import type { Session } from '@shared/protocol'
+import type { RunQuota } from '@shared/tasks'
 /**
  * Formatting for numbers that update in place.
  *
@@ -121,6 +122,24 @@ export function quotaUrgency(percentUsed: number): 'ok' | 'warn' | 'danger' {
   if (percentUsed >= 90) return 'danger'
   if (percentUsed >= 70) return 'warn'
   return 'ok'
+}
+
+/**
+ * Pair the account's opening quota windows with the matching closing reading for a run.
+ *
+ * ⛔ The opening reading is a baseline, not a cost on its own. Keeping its rows when the closing
+ * reading is pending makes that explicit — `48% → n/a` cannot be mistaken for the amount the run
+ * spent, while it gives the operator a stable place to watch the eventual reading arrive.
+ */
+export function quotaWindowDeltas(
+  before: RunQuota,
+  after: RunQuota | null
+): Array<{ label: string; from: number; to: number | null }> {
+  return before.windows.map((opening) => ({
+    label: opening.label,
+    from: opening.percent,
+    to: after?.windows.find((closing) => closing.id === opening.id)?.percent ?? null
+  }))
 }
 
 /**

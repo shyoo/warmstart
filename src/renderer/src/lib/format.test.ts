@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { QUOTA_STALE_AFTER_MS, quotaFreshness } from '@shared/tasks'
-import { cacheRemaining, countdown, quotaGap, timeRange, when } from './format'
+import { cacheRemaining, countdown, quotaGap, quotaWindowDeltas, timeRange, when } from './format'
 
 describe('countdown', () => {
   const NOW = Date.UTC(2026, 8, 2, 12, 0, 0)
@@ -15,6 +15,62 @@ describe('countdown', () => {
 
   it('does not make an unknown reset look like a time', () => {
     expect(countdown(null, NOW)).toBe('--')
+  })
+})
+
+describe('run quota window pairs', () => {
+  const before = {
+    sampledAt: 1,
+    stale: false,
+    windows: [
+      { id: 'gemini-5h', label: 'Gemini 5h', percent: 48 },
+      { id: 'gemini-7d', label: 'Gemini 7d', percent: 36 },
+      { id: 'claude-gpt-5h', label: 'Claude/GPT 5h', percent: 0 },
+      { id: 'claude-gpt-7d', label: 'Claude/GPT 7d', percent: 57 }
+    ]
+  }
+
+  it('keeps each opening window on its own n/a row while the closing reading is pending', () => {
+    expect(quotaWindowDeltas(before, null)).toEqual([
+      { label: 'Gemini 5h', from: 48, to: null },
+      { label: 'Gemini 7d', from: 36, to: null },
+      { label: 'Claude/GPT 5h', from: 0, to: null },
+      { label: 'Claude/GPT 7d', from: 57, to: null }
+    ])
+  })
+
+  it('replaces each matching n/a with the final reading, matching windows by id rather than label', () => {
+    const after = {
+      sampledAt: 2,
+      stale: false,
+      windows: [
+        { id: 'claude-gpt-7d', label: 'renamed label does not matter', percent: 60 },
+        { id: 'gemini-5h', label: 'Gemini 5h', percent: 52 },
+        { id: 'claude-gpt-5h', label: 'Claude/GPT 5h', percent: 4 },
+        { id: 'gemini-7d', label: 'Gemini 7d', percent: 39 }
+      ]
+    }
+    expect(quotaWindowDeltas(before, after)).toEqual([
+      { label: 'Gemini 5h', from: 48, to: 52 },
+      { label: 'Gemini 7d', from: 36, to: 39 },
+      { label: 'Claude/GPT 5h', from: 0, to: 4 },
+      { label: 'Claude/GPT 7d', from: 57, to: 60 }
+    ])
+  })
+
+  it('leaves only the missing final window as n/a when the closing sample is partial', () => {
+    expect(
+      quotaWindowDeltas(before, {
+        sampledAt: 2,
+        stale: false,
+        windows: [{ id: 'gemini-5h', label: 'Gemini 5h', percent: 51 }]
+      })
+    ).toEqual([
+      { label: 'Gemini 5h', from: 48, to: 51 },
+      { label: 'Gemini 7d', from: 36, to: null },
+      { label: 'Claude/GPT 5h', from: 0, to: null },
+      { label: 'Claude/GPT 7d', from: 57, to: null }
+    ])
   })
 })
 

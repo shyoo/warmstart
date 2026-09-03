@@ -34,7 +34,7 @@ import { SettingButtonSelect, type SettingOption } from './SettingButtonSelect'
 import { TaskQuestions } from './Questions'
 import { AddDependency, candidatesFor, DependencyList, useTaskCandidates } from './Dependencies'
 import { showsLiveOutput } from '../lib/live'
-import { duration, timeRange, tokens, when } from '../lib/format'
+import { duration, quotaWindowDeltas, timeRange, tokens, when } from '../lib/format'
 import { effortLabel, modelLabel } from '../lib/modelname'
 import {
   activeTime,
@@ -2087,55 +2087,40 @@ function ConversationId({
 /**
  * What this run cost the account's window.
  *
- * ⛔ Shown only when there are **two** readings. One reading is a state, not a cost, and rendering
- * "41%" beside a run invites it to be read as the run's price. When the closing reading has not
- * arrived yet — it is taken in the background once the run ends and takes about half a minute — this
- * says so rather than showing half a subtraction.
+ * ⛔ Each opening window always keeps its own row. One reading is a state, not a cost, and rendering
+ * "41%" beside a run invites it to be read as the run's price. Until the background closing reading
+ * arrives, `41% → n/a` makes the missing half explicit and leaves a stable row for the result.
  */
 function QuotaDelta({ run }: { run: Run }): React.JSX.Element | null {
   const before = run.quotaBefore
   const after = run.quotaAfter
   if (!before) return null
-  if (!after) {
-    return (
-      <div className="side-run-quota dim">
-        window at {pct(before)} before · closing reading not taken yet
-      </div>
-    )
-  }
-  const rows = before.windows
-    .map((b) => {
-      const a = after.windows.find((w) => w.id === b.id)
-      return a ? { label: b.label, from: b.percent, to: a.percent } : null
-    })
-    .filter((r): r is { label: string; from: number; to: number } => !!r)
+  const rows = quotaWindowDeltas(before, after)
 
   if (rows.length === 0) return null
   return (
-    <div className="side-run-quota num">
+    <div className="side-run-quota side-run-quota--windows num">
       {rows.map((r) => (
         <span key={r.label} title="the account's own window, read before the run and after it">
-          {r.label} {Math.round(r.from)}% → {Math.round(r.to)}%
-          <span className={r.to > r.from ? 'warn' : 'dim'}>
-            {' '}
-            ({r.to > r.from ? '+' : ''}
-            {Math.round(r.to - r.from)})
-          </span>
+          {r.label} {Math.round(r.from)}% → {r.to === null ? 'n/a' : `${Math.round(r.to)}%`}
+          {r.to !== null && (
+            <span className={r.to > r.from ? 'warn' : 'dim'}>
+              {' '}
+              ({r.to > r.from ? '+' : ''}
+              {Math.round(r.to - r.from)})
+            </span>
+          )}
         </span>
       ))}
       {/* ⚠️ A stale reading either side makes the difference meaningless, and it is the difference
           being shown. Say so on the number rather than beside it. */}
-      {(before.stale || after.stale) && (
+      {(before.stale || after?.stale) && (
         <span className="warn" title="One of the two readings was already too old to act on.">
           reading not fresh
         </span>
       )}
     </div>
   )
-}
-
-function pct(q: NonNullable<Run['quotaBefore']>): string {
-  return q.windows.map((w) => `${w.label} ${Math.round(w.percent)}%`).join(' · ')
 }
 
 /**

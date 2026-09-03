@@ -3089,6 +3089,13 @@ select:focus-visible,
   color: var(--color-text-faint);
 }
 
+/* One account window per line: a before → after pair is a comparison, not a sentence to scan. */
+.side-run-quota--windows {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
 /* ---- the live peephole -------------------------------------------------- */
 
 /* ⛔ Visibly not the thread. It is a window onto a process, it is not kept, and it must not be
