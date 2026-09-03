@@ -4,9 +4,9 @@ import type { Task, TaskStatus } from '@shared/tasks'
 import { rpc, useDaemonEvents, useNow, type FleetEntry } from '../lib/daemon'
 import { duration } from '../lib/format'
 
-type FlowLane = 'ready' | 'queued' | 'dispatching' | 'running' | 'awaiting' | 'held' | 'finished'
+export type FlowLane = 'ready' | 'queued' | 'dispatching' | 'running' | 'awaiting' | 'held' | 'finished'
 
-const LANES: Array<{ id: FlowLane; label: string; statuses: readonly TaskStatus[] }> = [
+export const LANES: Array<{ id: FlowLane; label: string; statuses: readonly TaskStatus[] }> = [
   { id: 'ready', label: 'ready', statuses: ['ready'] },
   { id: 'queued', label: 'queued', statuses: ['scheduled'] },
   { id: 'dispatching', label: 'dispatching', statuses: ['assigned'] },
@@ -16,7 +16,40 @@ const LANES: Array<{ id: FlowLane; label: string; statuses: readonly TaskStatus[
   { id: 'finished', label: 'finished', statuses: ['completed', 'failed', 'cancelled'] }
 ]
 
-function laneFor(task: Task): FlowLane {
+export const MAX_LANE_CARDS = 100
+export const MAX_COMPLETED_CARDS = 5
+
+export function completionTime(task: Task): number {
+  return task.lastRunEndedAt ?? task.updatedAt ?? task.createdAt
+}
+
+/**
+ * Filter the tasks shown as tickets in a lane.
+ *
+ * ⛔ In a long-lived project, completed tasks accumulate without bound while the live work on the
+ * left sits in single digits. Showing every completed ticket fills the rightmost lane with dozens of
+ * buttons that obscure recent progress. The finished lane therefore shows only the last 5 completed
+ * tasks, preserving any failed or cancelled tasks that still warrant attention.
+ */
+export function visibleTasksForLane(laneId: FlowLane, laneTasks: Task[]): Task[] {
+  if (laneId === 'finished') {
+    const completed = laneTasks.filter((t) => t.status === 'completed')
+    if (completed.length <= MAX_COMPLETED_CARDS) {
+      return laneTasks.slice(0, MAX_LANE_CARDS)
+    }
+    const recent = [...completed]
+      .sort((a, b) => {
+        const diff = completionTime(a) - completionTime(b)
+        return diff !== 0 ? diff : a.seq - b.seq
+      })
+      .slice(-MAX_COMPLETED_CARDS)
+    const recentIds = new Set(recent.map((t) => t.id))
+    return laneTasks.filter((t) => t.status !== 'completed' || recentIds.has(t.id)).slice(0, MAX_LANE_CARDS)
+  }
+  return laneTasks.slice(0, MAX_LANE_CARDS)
+}
+
+export function laneFor(task: Task): FlowLane {
   // Ready with a daemon-supplied hold reason is eligible work that cannot currently move. It is
   // shown beside scheduled work, not as a second invented domain status.
   if (task.status === 'ready' && task.holdReason) return 'queued'
@@ -81,16 +114,18 @@ export function Flow({ projectId, fleet, onOpenTask }: {
           <div className="flow-board" aria-label="Task flow">
             {LANES.map((lane) => {
               const laneTasks = tasks.filter((task) => laneFor(task) === lane.id)
+              const visibleTasks = visibleTasksForLane(lane.id, laneTasks)
+              const hiddenCount = laneTasks.length - visibleTasks.length
               return <div className={`flow-lane flow-lane--${lane.id}`} key={lane.id}>
                 <div className="flow-cards">
-                  {laneTasks.slice(0, 100).map((task) => <button
+                  {visibleTasks.map((task) => <button
                     className={`flow-ticket flow-ticket--${task.status}`}
                     key={`${task.id}:${task.status}`}
                     onClick={() => onOpenTask(task.id)}
                     title={`t${task.seq} — ${task.titleSummary ?? task.title}\n${taskTime(task, now)}`}
                     aria-label={`Open t${task.seq}: ${task.titleSummary ?? task.title}. ${taskTime(task, now)}`}
                   >t{task.seq}</button>)}
-                  {laneTasks.length > 100 && <span className="flow-more">+{laneTasks.length - 100} more</span>}
+                  {hiddenCount > 0 && <span className="flow-more">+{hiddenCount} more</span>}
                 </div>
                 <div className="flow-lane-label"><span>{lane.label}</span><b>{laneTasks.length}</b></div>
               </div>

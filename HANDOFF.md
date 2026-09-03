@@ -7,7 +7,7 @@ started in CI, never run against a real agent CLI.
 **Current state + what to do next, not a changelog.** **Under 200 lines** — adding one means cutting
 the line it obsoletes. Where every other fact goes: [`docs/README.md`](docs/README.md).
 
-**Baseline (2026-09-03, measured):** typecheck · lint · build clean · `npm test` **1581/1583** (2
+**Baseline (2026-09-03, measured):** typecheck · lint · build clean · `npm test` **1598/1600** (2
 POSIX-only skipped). ⚠️ `test:daemon` 147/147 · `test:ui` 232/232 · `test:pack` 18/18 · L4-landed are
 carried forward. CLIs here: claude 2.1.252 · agy 1.1.22 · codex 0.151.0 · local-llm 1.0.0 (qwen3-coder live tested).
 ⚠️ With none installed — the CI state — the daemon suite skips 5 checks, each with a stated reason.
