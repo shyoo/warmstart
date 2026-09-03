@@ -5,11 +5,13 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import {
   formatPlan,
   lastRateLimits,
+  openaiCompatible,
   parseJwtPayload,
   readCodexAuthIdentity,
   rolloutQuota,
   windowsFromRateLimits
 } from './openai-compatible.js'
+import { parseQuotaResetTime } from '../quota.js'
 
 /**
  * Codex's quota reading comes out of a rollout file, and the fixture is a real one.
@@ -254,3 +256,132 @@ describe('codex identity and JWT payload parsing', () => {
     })
   })
 })
+
+describe('Codex outOfQuota recognition (t168)', () => {
+  const EXACT_T168_PROSE =
+    "You've hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 12:03 PM."
+
+  it('recognizes the exact usage limit prose reported in t168', () => {
+    expect(openaiCompatible.outOfQuota?.(EXACT_T168_PROSE)).toBe(true)
+  })
+
+  it('recognizes standard OpenAI / Codex error phrases', () => {
+    expect(openaiCompatible.outOfQuota?.('usage_limit_exceeded')).toBe(true)
+    expect(openaiCompatible.outOfQuota?.('rate limit exceeded')).toBe(true)
+    expect(openaiCompatible.outOfQuota?.('rate_limit_exceeded')).toBe(true)
+    expect(openaiCompatible.outOfQuota?.('rate limit reached')).toBe(true)
+    expect(openaiCompatible.outOfQuota?.('hit your usage limit')).toBe(true)
+    expect(openaiCompatible.outOfQuota?.('exceeded your current quota')).toBe(true)
+    expect(openaiCompatible.outOfQuota?.('insufficient_quota')).toBe(true)
+    expect(
+      openaiCompatible.outOfQuota?.(
+        'Please try again at 3:45 PM. You have reached your quota limit.'
+      )
+    ).toBe(true)
+    expect(
+      openaiCompatible.outOfQuota?.(
+        'Visit https://chatgpt.com/codex/settings/usage to purchase more credits or upgrade to Pro.'
+      )
+    ).toBe(true)
+  })
+
+  it('does not recognize non-quota errors as quota exhaustion', () => {
+    expect(openaiCompatible.outOfQuota?.('Tool use failed: the file could not be written')).toBe(false)
+    expect(openaiCompatible.outOfQuota?.('API Error: 529 Overloaded')).toBe(false)
+    expect(openaiCompatible.outOfQuota?.('Command exited with code 1')).toBe(false)
+    expect(openaiCompatible.outOfQuota?.('SyntaxError: Unexpected identifier in index.ts')).toBe(false)
+    expect(openaiCompatible.outOfQuota?.('')).toBe(false)
+  })
+})
+
+describe('parseQuotaResetTime fallback parser', () => {
+  it('parses absolute times like "try again at 12:03 PM"', () => {
+    // 2026-09-03 10:00:00 local time
+    const base = new Date(2026, 8, 3, 10, 0, 0, 0).getTime()
+    const parsed = parseQuotaResetTime('try again at 12:03 PM', base)
+    expect(parsed).not.toBeNull()
+    const target = new Date(parsed!)
+    expect(target.getHours()).toBe(12)
+    expect(target.getMinutes()).toBe(3)
+    expect(target.getDate()).toBe(3)
+  })
+
+  it('handles near-past truncated seconds (e.g. 12:03:27 PM with reset at 12:03 PM)', () => {
+    // 2026-09-03 12:03:27 local time
+    const base = new Date(2026, 8, 3, 12, 3, 27, 0).getTime()
+    const parsed = parseQuotaResetTime('try again at 12:03 PM', base)
+    // Should park for 60s in future rather than failing
+    expect(parsed).toBe(base + 60_000)
+  })
+
+  it('handles midnight rollover for times within 6 hours', () => {
+    // 2026-09-03 23:45:00 local time
+    const base = new Date(2026, 8, 3, 23, 45, 0, 0).getTime()
+    const parsed = parseQuotaResetTime('try again at 12:15 AM', base)
+    expect(parsed).not.toBeNull()
+    const target = new Date(parsed!)
+    expect(target.getHours()).toBe(0)
+    expect(target.getMinutes()).toBe(15)
+    expect(target.getDate()).toBe(4) // next day
+  })
+
+  it('parses relative durations', () => {
+    const base = Date.now()
+    expect(parseQuotaResetTime('try again in 25m', base)).toBe(base + 25 * 60 * 1000)
+    expect(parseQuotaResetTime('retry after 300s', base)).toBe(base + 300 * 1000)
+    expect(parseQuotaResetTime('resets in 2 hours', base)).toBe(base + 2 * 3600 * 1000)
+  })
+
+  it('returns null for unrelated text or empty string', () => {
+    expect(parseQuotaResetTime('')).toBeNull()
+    expect(parseQuotaResetTime('A normal failure occurred.')).toBeNull()
+    // More than 6 hours in the future
+    const base = new Date(2026, 8, 3, 10, 0, 0, 0).getTime()
+    expect(parseQuotaResetTime('try again at 8:00 PM', base)).toBeNull() // 10h away
+  })
+})
+
+describe('Codex decodeStream error handling', () => {
+  it('extracts error text from turn.failed with codex_error_info', () => {
+    const event = openaiCompatible.decodeStream!({
+      type: 'turn.failed',
+      codex_error_info: 'usage_limit_exceeded'
+    })
+    expect(event).toMatchObject({
+      kind: 'result',
+      isError: true,
+      text: 'usage_limit_exceeded',
+      terminalReason: 'turn.failed'
+    })
+  })
+
+  it('extracts message from nested error object on turn.failed', () => {
+    const event = openaiCompatible.decodeStream!({
+      type: 'turn.failed',
+      error: {
+        message: "You've hit your usage limit.",
+        codex_error_info: 'usage_limit_exceeded'
+      }
+    })
+    expect(event).toMatchObject({
+      kind: 'result',
+      isError: true,
+      text: "You've hit your usage limit.",
+      terminalReason: 'turn.failed'
+    })
+  })
+
+  it('extracts error from error event with error string', () => {
+    const event = openaiCompatible.decodeStream!({
+      type: 'error',
+      error: "You've hit your usage limit. Try again at 12:03 PM."
+    })
+    expect(event).toMatchObject({
+      kind: 'result',
+      isError: true,
+      text: "You've hit your usage limit. Try again at 12:03 PM.",
+      terminalReason: 'error'
+    })
+  })
+})
+

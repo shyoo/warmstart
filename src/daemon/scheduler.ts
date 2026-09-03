@@ -143,6 +143,7 @@ import { db } from './db.js'
 import {
   freshRateLimit,
   isSessionRateWindow,
+  parseQuotaResetTime,
   refusalRateLimit,
   sessionRateLimit,
   windowResetsAt,
@@ -3936,8 +3937,10 @@ async function endUnfinishedRun(
  * moment a probe reads the account; no guess at all costs a task that never moves.
  */
 function quotaFailurePark(session: Session, run: Run, why: string): number | null {
-  if (!adapter(session.adapterId).outOfQuota?.(why)) return null
-  return windowResetsAt(run.workerId)?.at ?? Date.now() + BLIND_PARK_MS
+  const ad = adapter(session.adapterId)
+  const said = why + (session.id ? ` ${stripAnsi(backscroll(session.id))}` : '')
+  if (!ad.outOfQuota?.(why) && !ad.outOfQuota?.(said)) return null
+  return windowResetsAt(run.workerId)?.at ?? parseQuotaResetTime(said) ?? Date.now() + BLIND_PARK_MS
 }
 
 export const OVERLOAD_RETRY_MS = 60_000

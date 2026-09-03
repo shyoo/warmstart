@@ -299,12 +299,20 @@ function decodeStream(record: Record<string, unknown>): StreamEvent | StreamEven
     const usage = asRecord(record.usage)
     const failed = type === 'turn.failed'
     const errorRecord = asRecord(record.error)
+    const errorInfo =
+      typeof record.codex_error_info === 'string'
+        ? record.codex_error_info
+        : typeof errorRecord?.codex_error_info === 'string'
+          ? errorRecord.codex_error_info
+          : null
     const errorText =
       typeof record.message === 'string'
         ? record.message
-        : typeof errorRecord?.message === 'string'
-          ? errorRecord.message
-          : null
+        : typeof record.error === 'string'
+          ? record.error
+          : typeof errorRecord?.message === 'string'
+            ? errorRecord.message
+            : errorInfo
     const result: StreamEvent = {
       kind: 'result',
       text: errorText,
@@ -325,12 +333,20 @@ function decodeStream(record: Record<string, unknown>): StreamEvent | StreamEven
 
   if (type === 'error') {
     const errorRecord = asRecord(record.error)
+    const errorInfo =
+      typeof record.codex_error_info === 'string'
+        ? record.codex_error_info
+        : typeof errorRecord?.codex_error_info === 'string'
+          ? errorRecord.codex_error_info
+          : null
     const errorText =
       typeof record.message === 'string'
         ? record.message
-        : typeof errorRecord?.message === 'string'
-          ? errorRecord.message
-          : null
+        : typeof record.error === 'string'
+          ? record.error
+          : typeof errorRecord?.message === 'string'
+            ? errorRecord.message
+            : errorInfo
     return {
       kind: 'result',
       text: errorText,
@@ -867,6 +883,35 @@ export const openaiCompatible: AgentAdapter = {
       said.includes('503 service unavailable') ||
       said.includes('502 bad gateway') ||
       said.includes('504 gateway timeout')
+    )
+  },
+
+  /**
+   * Does this failure mean the account is out of quota for now, rather than broken?
+   *
+   * ⚠️ Measured, not imagined: verbatim what this CLI answered on CodexFirst on 2026-09-03 (t168) —
+   * `You've hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit
+   * https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 12:03 PM.`
+   * and the rollout event payload `codex_error_info: "usage_limit_exceeded"`.
+   *
+   * ⛔ Anchored on specific quota/usage limits, never on "error" alone: an ordinary tool error or
+   * command failure must not be mistaken for a quota exhaustion.
+   */
+  outOfQuota: (reason: string): boolean => {
+    const said = reason.toLowerCase()
+    return (
+      said.includes('usage limit') ||
+      said.includes('usage_limit_exceeded') ||
+      said.includes('rate limit exceeded') ||
+      said.includes('rate_limit_exceeded') ||
+      said.includes('rate limit reached') ||
+      said.includes('hit your usage limit') ||
+      said.includes('exceeded your current quota') ||
+      said.includes('insufficient_quota') ||
+      (said.includes('try again at') &&
+        (said.includes('limit') || said.includes('quota') || said.includes('credits'))) ||
+      (said.includes('purchase more credits') &&
+        (said.includes('limit') || said.includes('usage') || said.includes('upgrade to pro')))
     )
   },
 

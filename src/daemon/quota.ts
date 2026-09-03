@@ -681,6 +681,76 @@ export function windowResetsAt(workerId: string): { at: number; source: string }
 }
 
 /**
+ * Attempt to read a reset time from an agent CLI's quota or usage limit refusal prose.
+ *
+ * ⚠️ Used as a fallback when `windowResetsAt` has no cached or live rate-limit sample.
+ * Supports:
+ * - Codex / ChatGPT format: `try again at 12:03 PM`
+ * - Claude Code format: `resets 4am (America/Los_Angeles)` or `resets at 4:30 PM`
+ * - Relative durations: `try again in 25m`, `resets in 2 hours`, `retry after 300s`
+ */
+export function parseQuotaResetTime(text: string, now = Date.now()): number | null {
+  if (!text) return null
+  const MAX_FUTURE_MS = 6 * 60 * 60 * 1000
+
+  // 1. Relative duration: "try again in 25m", "resets in 2 hours", "retry after 300s"
+  const rel =
+    /(?:try again in|resets?\s+in|retry\s+after)\s+(\d+)\s*(s(?:ec(?:ond)?)?|m(?:in(?:ute)?)?|h(?:our)?|d(?:ay)?)s?\b/i.exec(
+      text
+    )
+  if (rel && rel[1] && rel[2]) {
+    const val = parseInt(rel[1], 10)
+    const unit = rel[2].toLowerCase()[0]
+    const ms =
+      unit === 's'
+        ? val * 1000
+        : unit === 'm'
+          ? val * 60_000
+          : unit === 'h'
+            ? val * 3_600_000
+            : val * 86_400_000
+    return ms <= MAX_FUTURE_MS ? now + ms : null
+  }
+
+  // 2. Absolute time: "try again at 12:03 PM", "resets 4am", "resets at 4:30 PM"
+  const abs =
+    /(?:try again at|resets?(?:\s+at)?)\s+(\d{1,2})(?::(\d{2}))?(?::(\d{2}))?\s*(am|pm)?/i.exec(
+      text
+    )
+  if (!abs || !abs[1]) return null
+
+  let hours = parseInt(abs[1], 10)
+  const minutes = abs[2] ? parseInt(abs[2], 10) : 0
+  const seconds = abs[3] ? parseInt(abs[3], 10) : 0
+  const meridiem = abs[4]?.toLowerCase()
+
+  if (meridiem === 'pm' && hours < 12) hours += 12
+  else if (meridiem === 'am' && hours === 12) hours = 0
+
+  const d = new Date(now)
+  d.setHours(hours, minutes, seconds, 0)
+
+  if (d.getTime() > now && d.getTime() - now <= MAX_FUTURE_MS) {
+    return d.getTime()
+  }
+
+  // If the stated time is within the last 2 minutes, truncated seconds or vendor clock skew
+  // placed it just barely in the past (e.g. "try again at 12:03 PM" when now is 12:03:27 PM).
+  // Park for 60 seconds rather than blindly falling back to 5 hours.
+  if (d.getTime() <= now && now - d.getTime() <= 2 * 60 * 1000) {
+    return now + 60_000
+  }
+
+  const tomorrow = d.getTime() + 24 * 60 * 60 * 1000
+  if (tomorrow > now && tomorrow - now <= MAX_FUTURE_MS) {
+    return tomorrow
+  }
+
+  return null
+}
+
+
+/**
  * ⛔ **The poller has no listener and must not grow one back.** It used to take a callback that
  * `index.ts` wired to `emit`, which made announcing a reading the business of whoever happened to
  * store it — and three of the four callers that store one did not (t86; see `storeAndPublish`). The

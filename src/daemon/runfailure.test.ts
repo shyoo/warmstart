@@ -1102,9 +1102,9 @@ describe('a turn refused because the account is out of window', () => {
     expect(tasks.requireRun(run.id).outcome).toBe('failed')
   })
 
-  it('⛔ does not read a quota refusal into an adapter that has never been measured', async () => {
-    // ⚠️ `outOfQuota` is optional and openai-compatible does not implement it. Guessing another
-    //    vendor's wording from this one's is how a real failure gets hidden behind a five-hour clock.
+  it('⛔ does not mistake another vendor’s refusal wording for its own', async () => {
+    // ⚠️ `outOfQuota` checks measured wording per adapter: Claude Code's session limit phrasing is
+    //    not recognized as a Codex quota error on openai-compatible.
     const seeded = seedRunningTask({ metered: 900 })
     await scheduler.onStreamResult(seeded.session, {
       isError: true,
@@ -1112,6 +1112,87 @@ describe('a turn refused because the account is out of window', () => {
       terminalReason: 'api_error'
     })
     expect(tasks.requireTask(seeded.task.id).status).toBe('awaiting_human')
+  })
+})
+
+/**
+ * ⛔ **t168, 2026-09-03.** Codex answered `The agent reported a failure (error): You've hit your usage
+ * limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit
+ * https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 12:03 PM.`
+ * openai-compatible previously lacked `outOfQuota`, so the refusal fell through to `awaiting_human`
+ * rather than parking at `paused_quota` with `notBefore` and resuming automatically.
+ */
+describe('a Codex turn refused because the account is out of quota', () => {
+  const CODEX_USAGE_LIMIT =
+    "You've hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 12:03 PM."
+
+  const refuse = async (text = CODEX_USAGE_LIMIT, options: { metered?: number } = {}) => {
+    const seeded = seedRunningTask({ adapterId: 'openai-compatible', ...options })
+    await scheduler.onStreamResult(seeded.session, {
+      isError: true,
+      text,
+      terminalReason: 'error'
+    })
+    return seeded
+  }
+
+  it('⭐ parks the task at paused_quota instead of handing it to a person', async () => {
+    const { task } = await refuse()
+    const after = tasks.requireTask(task.id)
+    expect(after.status).toBe('paused_quota')
+    expect(after.notBefore).toBeGreaterThan(Date.now())
+    expect(after.assignee).toBeNull()
+  })
+
+  it('comes back by itself once that time has passed', async () => {
+    const { task } = await refuse()
+    db.db()
+      .prepare('update tasks set not_before = ? where id = ?')
+      .run(Date.now() - 1000, task.id)
+    expect(tasks.resumeQuotaPaused()).toBe(1)
+    expect(tasks.requireTask(task.id).status).toBe('ready')
+  })
+
+  it('parks against the rate_limits reset time when one was recorded', async () => {
+    const seeded = seedRunningTask({ adapterId: 'openai-compatible' })
+    const resetsAt = Date.now() + 45 * 60 * 1000
+    db.db()
+      .prepare(
+        `insert into rate_limit_samples (worker_id, session_id, window_id, status, resets_at, sampled_at)
+         values (?,?,?,?,?,?)`
+      )
+      .run(seeded.worker.id, seeded.session.id, '5h', 'rejected', resetsAt, Date.now())
+    await scheduler.onStreamResult(seeded.session, {
+      isError: true,
+      text: CODEX_USAGE_LIMIT,
+      terminalReason: 'error'
+    })
+    expect(tasks.requireTask(seeded.task.id).notBefore).toBe(resetsAt)
+  })
+
+  it('does not charge the run as failed', async () => {
+    const { run } = await refuse()
+    expect(tasks.requireRun(run.id).outcome).toBe('preempted')
+  })
+
+  it('says so on the thread, with the time it expects to be back', async () => {
+    const { task } = await refuse()
+    const said = tasks.messagesFor(task.id).map((m) => m.text)
+    expect(said.some((t) => /quota window, not a fault in the work/.test(t))).toBe(true)
+    expect(said.some((t) => /parked until it resets/.test(t))).toBe(true)
+  })
+
+  it('auto-resumes when quota recovers early via quotaReleaseFor', async () => {
+    const { task, worker } = await refuse()
+    expect(tasks.requireTask(task.id).status).toBe('paused_quota')
+    const released = tasks.resumeQuotaPaused((t) => {
+      if (t.id === task.id) {
+        return `${worker.label}'s 5h window has reset.`
+      }
+      return null
+    })
+    expect(released).toBe(1)
+    expect(tasks.requireTask(task.id).status).toBe('ready')
   })
 })
 
