@@ -261,6 +261,30 @@
       "pool": "gpt"
     }
   ],
+  "$plans_comment": [
+    "⚠️ TWO POOLS, ONE SUBSCRIPTION, AND THE SPLIT BETWEEN THEM IS A HEURISTIC.",
+    "",
+    "Antigravity meters Gemini apart from Claude/GPT but bills one $20. `pool_shares` says how the",
+    "one subscription is charged across the two, and the numbers are the operator's judgement call",
+    "on 2026-09-02, not a published figure: Claude/GPT draws its window far faster than Gemini does,",
+    "so 80% of the money is attributed to the Gemini pool and 20% to Claude/GPT. The shares sum to",
+    "1, which is what keeps a week that fills BOTH pools reporting one week's subscription rather",
+    "than two.",
+    "",
+    "`claude` and `gpt` both name the same window (the panel heading slugifies to `claude-and-gpt`)",
+    "and so carry the same share; a window is only ever counted once, at the largest share that",
+    "names it."
+  ],
+  "plans": {
+    "billing_window": { "days": 7, "match": ["weekly"], "pooled": true },
+    "pool_shares": { "gemini": 0.8, "claude": 0.2, "gpt": 0.2 },
+    "default_plan": "pro",
+    "catalog": [
+      { "id": "ultra", "label": "Google AI Ultra", "monthly_usd": 250, "match": ["ultra"] },
+      { "id": "pro", "label": "Google AI Pro", "monthly_usd": 20, "match": ["ai pro", "pro"] },
+      { "id": "free", "label": "Google AI Free", "monthly_usd": 0, "priced": false, "match": ["free"] }
+    ]
+  },
   "quota": {
     "kind": "rolling_windows",
     "probe": "cli",

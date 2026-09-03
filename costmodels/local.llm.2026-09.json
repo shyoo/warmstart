@@ -46,6 +46,19 @@
       "effort_levels": []
     }
   ],
+  "$plans_comment": [
+    "No subscription, so no money to divide. `priced: false` is the whole answer and every run on",
+    "this cost model renders `n/a` rather than $0.00 - electricity is a real cost this tool cannot",
+    "meter, and $0.00 would claim otherwise."
+  ],
+  "plans": {
+    "priced": false,
+    "billing_window": null,
+    "default_plan": "self_hosted",
+    "catalog": [
+      { "id": "self_hosted", "label": "Self-hosted", "monthly_usd": 0, "priced": false, "match": [] }
+    ]
+  },
   "quota": {
     "kind": "unlimited",
     "probe": "none",

@@ -216,6 +216,21 @@ export const ROOT_MANDATE: Mandate = {
 export interface Budget {
   grantedTokens: number
   spentTokens: number
+  /**
+   * What every run of this task has cost in money, summed.
+   *
+   * ⛔ **Derived on read, never written to `budget_json`.** A task's total moves when a *later* run
+   * is found to have overlapped one of its own — see daemon/price.ts. Persisting it would freeze an
+   * estimate the moment a parallel run ended. `creditTurn` writes the two token fields explicitly
+   * for exactly this reason.
+   *
+   * `null` means nothing could be priced at all, and is `n/a` in the UI rather than $0.00.
+   */
+  spentUsd?: number | null
+  /** At least one contributing run's number was a split, a stale reading, or still in flight. */
+  spentUsdEstimated?: boolean
+  /** ⚠️ At least one run could not be priced, so the total above is a **lower bound**. */
+  spentUsdPartial?: boolean
 }
 
 export type MessageRole = 'human' | 'agent' | 'controller' | 'system'
@@ -567,6 +582,12 @@ export interface Run {
   /** The effective optimization objective vector active when this run was dispatched. */
   objective?: Objective | null
   /**
+   * What this run cost in money, or why it cannot be said.
+   *
+   * ⛔ Derived from the account's own window readings, never stored — see `RunPrice`.
+   */
+  price?: RunPrice | null
+  /**
    * How long this attempt spent waiting on a person — an open question or an escalated approval.
    *
    * ⛔ Derived from the `questions` and `approvals` rows that name this run, never stamped on it, so
@@ -578,6 +599,50 @@ export interface Run {
    * `(endedAt ?? now) - startedAt - blockedMs`. That is what `Task.activeMs` sums.
    */
   blockedMs: number
+}
+
+/**
+ * Why a run costs what it costs — or why it costs nothing that can be said.
+ *
+ * ⛔ **Five of these seven are `n/a`, and they are deliberately not one value.** "the account is
+ * free", "nobody read the window either side of this run" and "the window rolled over mid-run" are
+ * three different facts about the same missing number, and a reader who is shown one dash for all
+ * three has no way to tell a run that cost nothing from a run nobody measured.
+ */
+export type PriceReason =
+  /** One run held the window for its whole life. The number is a measurement. */
+  | 'measured'
+  /** Parallel runs shared the window; the split is duration-weighted, and shown with a `*`. */
+  | 'shared_window'
+  /** No complete pair of readings around the run. */
+  | 'no_reading'
+  /** The window rolled over mid-run, so the difference either side of it is not a cost. */
+  | 'window_reset'
+  /** The provider reports no window the subscription can be divided over. */
+  | 'no_window'
+  /** A free or self-hosted plan: known, and with no price to divide. */
+  | 'unpriced_plan'
+  /** No plan could be resolved at all. */
+  | 'no_plan'
+
+/** A run's cost in money, with the basis every cost belief in this repo has to carry. */
+export interface RunPrice {
+  /** ⛔ `null` is `n/a`, and `reason` says which `n/a`. Never rendered as $0.00. */
+  usd: number | null
+  /** The share of the billing window attributed to this run. */
+  percent: number | null
+  /** The `*`: a split, a stale reading, or a run still in flight. */
+  estimated: boolean
+  reason: PriceReason
+  /** One sentence, straight into the tooltip. */
+  basis: string
+  planId: string | null
+  planLabel: string | null
+  /** How the plan was decided: from the run's own window shape, the vendor string, or a default. */
+  planSource: 'window_shape' | 'identity' | 'neighbour' | 'default' | 'stored' | null
+  windowId: string | null
+  /** Runs that held the same window at the same time. */
+  parallelRunIds: string[]
 }
 
 /** A quota reading kept beside a run, with enough of its basis to be distrusted properly. */

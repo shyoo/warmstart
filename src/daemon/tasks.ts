@@ -25,6 +25,8 @@ import {
 import { timingForRuns, timingForTasks, ZERO_TIMING, type ActiveTiming } from './activetime.js'
 import { attachmentsFor, bindAttachments } from './attachments.js'
 import { db, row, rows } from './db.js'
+import { costModel } from './costmodel.js'
+import { bumpPricingEpoch, priceForRun, priceForTask, subscriptionOf } from './price.js'
 import { emit } from './events.js'
 import { log } from './log.js'
 
@@ -121,6 +123,27 @@ const TASK_SELECT = `
  * purely to answer a routing predicate, and which never shows a duration. Anything an operator
  * reads must go through `toTasks`.
  */
+/**
+ * The money half of a budget, folded over the task's runs.
+ *
+ * ⛔ Attached on read and never written back. `creditTurn` writes the two token fields by name for
+ * exactly this reason — round-tripping a derived total through `budget_json` would freeze an
+ * estimate that is supposed to move when a parallel run is discovered.
+ *
+ * ⚠️ `spentUsdPartial` is the difference between "this task cost $0.10" and "this task cost at
+ * least $0.10": true whenever any of its runs could not be priced at all.
+ */
+function withPrice(budget: Budget, taskId: string): Budget {
+  const price = priceForTask(taskId)
+  if (!price) return { ...budget, spentUsd: null, spentUsdEstimated: false, spentUsdPartial: false }
+  return {
+    ...budget,
+    spentUsd: price.usd,
+    spentUsdEstimated: price.estimated,
+    spentUsdPartial: price.partial
+  }
+}
+
 function toTask(r: TaskRow, timing: ActiveTiming = ZERO_TIMING): Task {
   return {
     id: r.id,
@@ -139,7 +162,7 @@ function toTask(r: TaskRow, timing: ActiveTiming = ZERO_TIMING): Task {
     assignee: r.assignee,
     assigneeHint: r.assignee_hint,
     mandate: JSON.parse(r.mandate_json) as Mandate,
-    budget: JSON.parse(r.budget_json) as Budget,
+    budget: withPrice(JSON.parse(r.budget_json) as Budget, r.id),
     dependsOn: dependenciesOf(r.id),
     notBefore: r.not_before,
     deadline: r.deadline,
@@ -1061,6 +1084,9 @@ interface RunRow {
   model?: string | null
   trunk_sha_before?: string | null
   prompt?: string | null
+  plan_id?: string | null
+  plan_raw?: string | null
+  plan_source?: string | null
 }
 
 /**
@@ -1095,6 +1121,10 @@ function toRun(r: RunRow, blockedMs = 0): Run {
     adapterId: r.adapter_id ?? null,
     model: r.model ?? null,
     prompt: r.prompt ?? null,
+    // ⛔ Derived on read, never a column. A run's dollars change the moment a *later* overlapping
+    // run is discovered — see daemon/price.ts. The whole pass is memoised against an epoch, so this
+    // is a map lookup on every row after the first.
+    price: priceForRun(r.id),
     blockedMs
   }
 }
@@ -1120,8 +1150,44 @@ export function setRunQuota(runId: string, which: 'before' | 'after', quota: Run
   db()
     .prepare(`update runs set ${column} = ? where id = ?`)
     .run(quota ? JSON.stringify(quota) : null, runId)
+  // ⭐ The first moment the window *shape* is known, which is stronger evidence than the vendor's
+  // identity string: the shape came from this run, the string is a belief about now. Only ever
+  // upgrades — a plan already resolved from a shape is left alone.
+  if (quota) stampPlan(runId, quota.windows.map((w) => w.id))
+  bumpPricingEpoch()
   const run = row<RunRow>(db().prepare('select * from runs where id = ?').get(runId))
   if (run) emit({ type: 'run.changed', run: toRun(run) })
+}
+
+/**
+ * Record which subscription a run is billed against.
+ *
+ * ⛔ Never overwrites a `window_shape` verdict with a weaker one. The order of evidence is the same
+ * one migration 35 backfills with, and it is in costmodel.ts `resolvePlan` rather than here.
+ */
+function stampPlan(runId: string, windowIds: string[]): void {
+  const r = row<RunRow>(
+    db()
+      .prepare('select id, worker_id, cost_model_id, plan_source from runs where id = ?')
+      .get(runId)
+  )
+  if (!r || !r.cost_model_id) return
+  if (r.plan_source === 'window_shape') return
+  let cm
+  try {
+    cm = costModel(r.cost_model_id)
+  } catch {
+    return
+  }
+  const identity = row<{ identity_json: string | null }>(
+    db().prepare('select identity_json from workers where id = ?').get(r.worker_id)
+  )
+  const raw = subscriptionOf(identity?.identity_json ?? null)
+  const plan = cm.resolvePlan({ subscriptionType: raw, windowIds })
+  if (!plan) return
+  db()
+    .prepare('update runs set plan_id = ?, plan_raw = ?, plan_source = ? where id = ?')
+    .run(plan.id, raw, plan.source, runId)
 }
 
 export function startRun(input: {
@@ -1178,6 +1244,8 @@ export function startRun(input: {
       input.prompt ?? null,
       input.objective ? JSON.stringify(input.objective) : null
     )
+  stampPlan(id, [])
+  bumpPricingEpoch()
   const run = requireRun(id)
   emit({ type: 'run.changed', run })
   return run
@@ -1223,6 +1291,9 @@ export function finishRun(id: string, outcome: RunOutcome, note?: string): Run {
         where id = ?`
     )
     .run(id)
+  // ⚠️ The run's own end moves the boundary every *other* run on that account is split against, so
+  // the memo has to go — not just this run's entry.
+  bumpPricingEpoch()
   const run = requireRun(id)
   emit({ type: 'run.changed', run })
   return run
@@ -1294,7 +1365,10 @@ export function creditTurn(
         task.budget.spentTokens + tokens.input + tokens.output + tokens.cacheRead + tokens.cacheWrite
       db()
         .prepare('update tasks set budget_json = ? where id = ?')
-        .run(JSON.stringify({ ...task.budget, spentTokens: spent }), task.id)
+        // ⛔ The two token fields by name, not a spread. `task.budget` now also carries the derived
+        // `spentUsd*` fields, and spreading them back into the column would persist an estimate
+        // that is meant to be recomputed whenever a parallel run changes it.
+        .run(JSON.stringify({ grantedTokens: task.budget.grantedTokens, spentTokens: spent }), task.id)
     }
   }
 }

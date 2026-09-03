@@ -152,6 +152,31 @@
       ]
     }
   ],
+  "$plans_comment": [
+    "⭐ THE FREE→PAID SWITCH IS READ FROM THE WINDOW SHAPE, NOT FROM THE IDENTITY STRING.",
+    "",
+    "`auth.json` reports whatever the account is TODAY, which is a belief about now and says nothing",
+    "about a run from last week. The shape of the reading a run carried is evidence from the run",
+    "itself: measured 2026-09-02 over this install's own rows, every codex run up to 2026-09-01",
+    "21:28Z reports a single `30d` window (the free plan_type shape openai-compatible.ts documents)",
+    "and every run from 2026-09-02 03:46Z reports `5h` + `7d`. Eight runs on one side, sixteen on",
+    "the other, no overlap. So `detect` beats `match` wherever a run has its own reading.",
+    "",
+    "⚠️ `default_plan` is `plus`, a PAID plan, deliberately. Defaulting to free would print `n/a`",
+    "over real money; defaulting to paid prints a number that is at worst too confident, and the",
+    "run's plan_source column says which it is."
+  ],
+  "plans": {
+    "billing_window": { "days": 7, "match": ["7d", "weekly"], "pooled": false },
+    "default_plan": "plus",
+    "catalog": [
+      { "id": "free", "label": "Codex Free", "monthly_usd": 0, "priced": false, "match": ["free"],
+        "detect": { "windows_all_of": ["30d"], "windows_none_of": ["7d"] } },
+      { "id": "pro", "label": "ChatGPT Pro", "monthly_usd": 200, "match": ["pro"] },
+      { "id": "plus", "label": "ChatGPT Plus", "monthly_usd": 20, "match": ["plus"],
+        "detect": { "windows_all_of": ["7d"] } }
+    ]
+  },
   "quota": {
     "kind": "unknown",
     "probe": "none",

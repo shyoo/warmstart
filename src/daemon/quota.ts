@@ -7,6 +7,7 @@ import { stripAnsi } from './stream.js'
 import { listWorkers, refreshIdentityIfStale, requireWorker } from './workers.js'
 import { settings } from './settings.js'
 import { log } from './log.js'
+import { bumpPricingEpoch } from './price.js'
 
 /**
  * The quota poller.
@@ -261,6 +262,9 @@ const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(
  * minutes after that. Re-reading the same reading is not a new sample.
  */
 function store(s: QuotaSnapshot): void {
+  // ⛔ A new reading moves a segment boundary, which changes what every run open across it is
+  // answerable for — not just the run that happens to be running now. The whole memo goes.
+  bumpPricingEpoch()
   const stmt = db().prepare(
     `insert or replace into quota_samples
        (worker_id, window_id, label, percent, resets_at, source, error, sampled_at, window_group)

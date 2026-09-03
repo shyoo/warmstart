@@ -423,6 +423,38 @@ try {
     'a status message that moves as the task progresses reads as a new event, not the same one'
   )
 
+  // ⛔ Money over tokens, in the column that used to be headed "Tokens". Both lines, because the
+  // price is derived from the account's own window and the token count from the agent's transcript
+  // — different measurements of the same work, and docs/cost-model.md §5 is explicit that they are
+  // never reconciled. A build that renders only one of them has dropped a fact, not tidied one.
+  check(
+    'the task table prices work in money, not only in tokens',
+    await evaluate(
+      `[...document.querySelectorAll('.tbl thead th')].some(
+         el => el.innerText.trim().toLowerCase() === 'price')`
+    ),
+    'the header should read Price'
+  )
+  check(
+    'and keeps the token count beneath it, quietly',
+    await evaluate(`(() => {
+      const cell = document.querySelector('.tbl tbody td .price')?.closest('td');
+      if (!cell) return false;
+      return !!cell.querySelector('.tbl-model');
+    })()`),
+    'the price cell should stack a faint token line under the money'
+  )
+  // ⛔ `n/a`, never `$0.00`. This suite commissions a worker with no credentials, so nothing has
+  // ever run and no window has ever been read — and a confident zero over an unmeasured run is the
+  // one rendering of this feature that would be actively misleading.
+  check(
+    'an unmeasurable price reads n/a rather than a confident zero',
+    await evaluate(
+      `[...document.querySelectorAll('.tbl tbody td .price')].every(el => el.innerText.trim() === 'n/a')`
+    ),
+    'nothing in this suite has run, so nothing can be priced'
+  )
+
   // ---- the thread ---------------------------------------------------------------------
   // ⛔ Opened, because everything below only exists once a task is open — and "click the row to find
   // out which session it is on" is exactly the gap this pane was reworked to close.
@@ -458,6 +490,13 @@ try {
     'the token count is called tokens',
     /tokens/i.test(detail),
     '"spent" was read as money by everybody who saw it'
+  )
+  // ⛔ The same two lines as the table, in the thread's own ledger — and in the per-run facts below
+  // it. A price shown in one surface and not the other is a number a reader cannot check.
+  check(
+    'and the money is shown beside it, as a price',
+    /price/i.test(detail) && /n\/a|\$/.test(detail),
+    'the thread should name what the task cost, or say plainly that it cannot be said'
   )
 
   // ⛔ One scroll container, not two. The live output used to sit in its own bordered pane below the

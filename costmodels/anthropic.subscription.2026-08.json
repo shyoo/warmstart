@@ -76,6 +76,28 @@
     }
   ],
 
+  "$plans_comment": [
+    "What a run COST IN MONEY, as data. See docs/cost-model.md §13.",
+    "",
+    "`billing_window.match` is matched against the window ids the ADAPTER actually emits, never",
+    "against the ids in this file's own `quota.windows` block - measured 2026-09-02, claude-code",
+    "emits `session` and `weekly_all` while `quota.windows` above declares `5h` and `7d`. Matched by",
+    "equality first, then by containment, in the order written.",
+    "",
+    "`priced: false` is the n/a state and is NOT `monthly_usd: 0`. A free plan has no subscription",
+    "to divide, so its runs render `n/a` rather than a confident $0.00."
+  ],
+  "plans": {
+    "billing_window": { "days": 7, "match": ["weekly_all", "7d", "weekly"], "pooled": false },
+    "default_plan": "pro",
+    "catalog": [
+      { "id": "max_20x", "label": "Claude Max 20x", "monthly_usd": 200, "match": ["max_20x", "max 20"] },
+      { "id": "max_5x", "label": "Claude Max 5x", "monthly_usd": 100, "match": ["max_5x", "max 5", "max"] },
+      { "id": "pro", "label": "Claude Pro", "monthly_usd": 20, "match": ["pro"] },
+      { "id": "free", "label": "Claude Free", "monthly_usd": 0, "priced": false, "match": ["free"] }
+    ]
+  },
+
   "quota": {
     "kind": "rolling_windows",
     "probe": "cli",

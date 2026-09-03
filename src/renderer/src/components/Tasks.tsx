@@ -6,6 +6,7 @@ import { rpc, useActivity, useDaemonEvents, useNow, type FleetEntry } from '../l
 import { NewTask } from './NewTask'
 import { showsLiveOutput } from '../lib/live'
 import { tokens, when } from '../lib/format'
+import { Money, taskPriceTitle } from './Price'
 import {
   PAGE_SIZE_OPTIONS,
   readTaskPageSize,
@@ -350,8 +351,12 @@ export function Tasks({
               <th className="tbl-num" title="Time an agent was actually working, excluding time queued, held, or waiting on you.">
                 Took
               </th>
-              {/* ⚠️ "Spent" was read as money by everybody who saw it. These are tokens. */}
-              <th className="tbl-num">Tokens</th>
+              {/* ⛔ Money over tokens, stacked, because they answer the same question at two
+                  different altitudes: what this task cost, and how much conversation it took to get
+                  there. The header used to read "Tokens" only because a column headed "Spent" was
+                  read as money by everybody who saw it — now it *is* money, with the tokens kept
+                  underneath in the same quiet treatment the model line uses. */}
+              <th className="tbl-num">Price</th>
               {/* ⛔ Both dates, not one. When a task was filed and when it last moved answer
                   different questions — "how long has this been sitting here" and "is anything still
                   happening" — and a task filed weeks ago that ran an hour ago looks identical to a
@@ -434,7 +439,20 @@ export function Tasks({
                     <td className="num tbl-num dim" title={activeTimeTitle(task, now)}>
                       {activeTime(task, now)}
                     </td>
-                    <td className="num tbl-num">{tokens(task.budget.spentTokens || null)}</td>
+                    <td className="num tbl-num">
+                      <Money
+                        usd={task.budget.spentUsd}
+                        estimated={task.budget.spentUsdEstimated}
+                        partial={task.budget.spentUsdPartial}
+                        title={taskPriceTitle(task.budget)}
+                      />
+                      <div
+                        className="tbl-model"
+                        title="Input, output and cache, summed from every run's own transcript. A different measurement from the price above, and deliberately shown beside it."
+                      >
+                        {tokens(task.budget.spentTokens || null)}
+                      </div>
+                    </td>
                     <td className="tbl-when dim" title={new Date(task.createdAt).toLocaleString()}>
                       {when(task.createdAt)}
                     </td>

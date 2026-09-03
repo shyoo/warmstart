@@ -1088,6 +1088,134 @@ Claude Code only. agy reports `cache_read_tokens: 0` on every turn measured to d
 there may be no cache there to lose — the honest position is that nobody has checked, and the pane
 says nothing about cache cost on that provider rather than guessing.
 
+## 13. What a run cost in money (2026-09-02)
+
+Everything above this section is priced in *tokens* or in *quota percent*. This section is the one
+that says **dollars**, and it exists because those two units answer neither of the two questions an
+operator actually asks: *what did that task cost me*, and *which of these tasks is expensive*.
+
+### The formula
+
+There is exactly one, it lives in `CostModel.priceOfWindowUsage`, and nothing else is allowed to do
+this arithmetic (AGENTS.md: *"No pricing arithmetic inline. Ask the cost-model object."*):
+
+```
+usd = monthly_usd × pool_share × (billing_window.days / 30.4375) × (percent / 100)
+```
+
+30.4375 is 365.25/12 — days in an average month. So $20/month over a 7-day window is **$4.5996 per
+full window**, and 5% of a week is **$0.230**. That is the operator's own "$5 a week, or slightly
+less if we have 29+ days per month", made exact.
+
+⛔ **`percent` is the account's own window movement, not a token count.** §5 of this document is
+explicit that the window delta and the metered transcript total are never reconciled — the window
+measures *everything* the account spent, including the auto-mode classifier and title generation,
+while metering measures assistant turns only. The price is derived from the first; the token count
+is shown beside it, and neither is derived from the other. Both are on screen for exactly that
+reason: the percentages are the reader's only check on the money.
+
+### Plans are data
+
+A `plans` block in each `costmodels/*.json` names the catalogue, the window the money is divided
+over, and — where a vendor meters more than one pool against one subscription — how the money splits
+across them.
+
+| provider | window it divides over | plans | pools |
+|---|---|---|---|
+| `anthropic.subscription` | `weekly_all` | Pro $20 · Max 5× $100 · Max 20× $200 · Free (unpriced) | one |
+| `openai.codex` | `7d` | Plus $20 · Pro $200 · Free (unpriced) | one |
+| `google.antigravity` | `weekly:*` | AI Pro $20 · AI Ultra $250 · Free (unpriced) | Gemini 0.8 · Claude/GPT 0.2 |
+| `local.llm` | none | self-hosted, `priced: false` | — |
+
+⛔ **`billing_window.match` is matched against the ids the *adapter emits*, never against the ids in
+the same file's own `quota.windows` block.** Measured 2026-09-02: claude-code declares `5h`/`7d` and
+emits `session`/`weekly_all`; antigravity declares `weekly:claude-gpt` and emits
+`weekly:claude-and-gpt`. Matching declared ids would have priced no run on either provider, silently
+— every figure would simply have read `n/a` and nothing would have thrown.
+
+⚠️ **The 80:20 antigravity split is a judgement call, not a published figure.** Claude/GPT draws its
+window far faster than Gemini does, so the operator chose to attribute 80% of the one $20 to the
+Gemini pool and 20% to Claude/GPT ($16 and $4). The shares sum to 1, which is what keeps a week that
+filled *both* pools reporting one week of subscription rather than two.
+
+⛔ **`priced: false` is the `n/a` state, and it is not `monthly_usd: 0`.** A free account reading 5%
+of its window spent 5% of nothing; `$0.00` would claim it spent nothing at all.
+
+### Which plan a run was on (migration 35)
+
+`runs.plan_id` / `plan_raw` / `plan_source`, stamped at dispatch, upgraded when the closing reading
+lands, and backfilled by migration 35 in this order:
+
+1. **`window_shape`** — the run's own reading satisfies a catalogue entry's `detect` clause.
+2. **`neighbour`** — the nearest shape-resolved run on the same worker.
+3. **`identity`** — the worker's `identity_json.subscriptionType`, matched case-folded.
+4. **`default`** — the provider's `default_plan`. ⚠️ **Always a paid plan.** Guessing *free* would
+   print `n/a` over real money.
+
+⭐ **The Codex free→paid switch is recoverable exactly, from the window shape.** Measured 2026-09-02
+over this install's own rows: every codex run up to 2026-09-01 21:28Z reports a single `30d` window
+(the free `plan_type` shape `openai-compatible.ts` documents) and every run from 2026-09-02 03:46Z
+reports `5h` + `7d`. Eight runs on the free side, sixteen on the paid, no overlap. This is strictly
+better than deducing the plan from the model name — the eight free-era runs recorded no model at all.
+
+⛔ **The plan is stored; the price is not.** A run's dollars change the moment a *later* overlapping
+run is discovered, so money is computed on read in `daemon/price.ts` and memoised against an epoch
+that `startRun`, `finishRun`, `setRunQuota` and the quota store all bump. What a run was *billed
+against* does not change, and is the only part worth freezing in a column.
+
+### Splitting a window between parallel runs
+
+Two agents on one account share the window they both drew from. `price.ts` cuts the timeline at
+every reading — `quota_samples` rows **plus** the before/after snapshots each run carries — and
+divides each segment's delta among the runs open across it, weighted by how much of the segment each
+one covered.
+
+The operator's worked example, asserted to the number in `price.test.ts`: task1 over t1–t3, task2
+over t2–t4, weekly readings 0 / 5 / 15 / 17% →
+
+| segment | delta | active | task1 | task2 |
+|---|---|---|---|---|
+| t1→t2 | 5 | task1 | +5 | |
+| t2→t3 | 10 | both | +5 | +5 |
+| t3→t4 | 2 | task2 | | +2 |
+| | | | **10%** | **7%** |
+
+⚠️ Duration weighting is a strict generalisation of an equal split: identical where both runs span
+the whole segment, and different only where a run's edge falls *inside* one — which is exactly the
+case an equal split gets wrong.
+
+⛔ **A segment with no run open is dropped, never redistributed.** That movement is the operator's
+own interactive use of the account, and charging it to whichever task ran next is a lie that grows
+with how long the fleet idles.
+
+### The five ways a price is `n/a`
+
+They are five different facts and they render five different tooltips. A single dash for all of them
+would leave a reader unable to tell a run that cost nothing from a run nobody measured.
+
+| reason | what it means |
+|---|---|
+| `no_reading` | no complete pair of readings around the run — one before, one after |
+| `window_reset` | the window rolled over mid-run (98% → 2%): the baseline moved, so the difference is not a cost |
+| `unpriced_plan` | a free or self-hosted plan: known, and with no subscription to divide |
+| `no_window` | the provider reports no window the money can be divided over |
+| `no_plan` | nothing says which subscription this run was billed against |
+
+⚠️ **A window that did not move is `$0.00`, not `n/a`.** The run *was* measured; the measurement was
+zero.
+
+⚠️ **`resets_at` is not a rollover detector.** Measured 2026-09-02 over 1,263 consecutive weekly
+samples: it moved forward **384** times while the percentage fell **6** times — a rolling window
+re-reports its horizon constantly. The percentage falling is the honest signal.
+
+### On screen
+
+`Price` replaced `Tokens` in the Tasks table and in the task thread, stacked — money over the token
+count in the same quiet treatment the model line gets under an account. A `*` marks every figure
+that is a split, a stale anchor or a run still in flight, and it always carries a title saying which.
+A task total missing any of its runs renders `≥`, because a lower bound presented as a complete
+figure is the one rendering of this feature that would actively mislead.
+
 ## 12. Owed
 
 **Owed:** Vertex and Antigravity cache pricing numbers. The pricing page truncated on two fetch

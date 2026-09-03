@@ -35,6 +35,7 @@ import { TaskQuestions } from './Questions'
 import { AddDependency, candidatesFor, DependencyList, useTaskCandidates } from './Dependencies'
 import { showsLiveOutput } from '../lib/live'
 import { duration, quotaWindowDeltas, timeRange, tokens, when } from '../lib/format'
+import { Money, runPriceTitle, taskPriceTitle } from './Price'
 import { effortLabel, modelLabel } from '../lib/modelname'
 import {
   activeTime,
@@ -750,18 +751,29 @@ function TaskDetail({
                 </span>
               </Fact>
             )}
-            {/* ⚠️ Named, not left as "spent". A bare number in a column headed Spent is read as money
-                by roughly everybody; these are tokens, metered from the agent's own transcript. */}
-            <Fact label="tokens">
-              <span
-                className="num"
-                title={
-                  'Everything every run of this task has spent — input, output and cache, summed from ' +
-                  'the agent’s own transcript. A total, so it only ever grows, and much larger than ' +
-                  'the context above because every turn re-reads the whole window.'
-                }
-              >
-                {tokens(task.budget.spentTokens || null)} spent in total
+            {/* ⛔ Money over tokens, and the money first. The two are different measurements of
+                the same work — the price is this task's share of the account's own window, the
+                token count is metered from the agent's transcript — and docs/cost-model.md §5 is
+                explicit that they are never reconciled. Both are shown; neither is derived from the
+                other; the tooltip on each says which it is. */}
+            <Fact label="price">
+              <span className="price-stack">
+                <Money
+                  usd={task.budget.spentUsd}
+                  estimated={task.budget.spentUsdEstimated}
+                  partial={task.budget.spentUsdPartial}
+                  title={taskPriceTitle(task.budget)}
+                />
+                <span
+                  className="price-sub num"
+                  title={
+                    'Everything every run of this task has spent — input, output and cache, summed from ' +
+                    'the agent’s own transcript. A total, so it only ever grows, and much larger than ' +
+                    'the context above because every turn re-reads the whole window.'
+                  }
+                >
+                  {tokens(task.budget.spentTokens || null)} tokens
+                </span>
               </span>
             </Fact>
             {workspace && (
@@ -1879,16 +1891,25 @@ function RunRow({
           </span>
         </div>
         <div className="side-run-fact">
-          <span className="side-run-key">token spent:</span>
-          <span
-            className="side-run-val num"
-            title={
-              'What this run spent: input + output + cache read + cache write, summed from the ' +
-              'transcript. ⛔ Not the size of the context — a single long conversation re-reads its ' +
-              'whole window every turn, so the total runs far ahead of it.'
-            }
-          >
-            {tokens(spent || null)}
+          <span className="side-run-key">price:</span>
+          <span className="side-run-val">
+            <span className="price-stack">
+              <Money
+                usd={run.price?.usd ?? null}
+                estimated={run.price?.estimated ?? false}
+                title={runPriceTitle(run.price)}
+              />
+              <span
+                className="price-sub num"
+                title={
+                  'What this run spent: input + output + cache read + cache write, summed from the ' +
+                  'transcript. ⛔ Not the size of the context — a single long conversation re-reads its ' +
+                  'whole window every turn, so the total runs far ahead of it.'
+                }
+              >
+                {tokens(spent || null)} tokens
+              </span>
+            </span>
           </span>
         </div>
         <div className="side-run-fact">

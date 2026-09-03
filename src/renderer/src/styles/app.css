@@ -982,6 +982,41 @@ body {
   white-space: nowrap;
 }
 
+/**
+ * A price, and the small quiet token count under it.
+ *
+ * ⛔ The `*` is dimmer than the number but not invisible: it is the difference between a
+ * measurement and a split across parallel runs, and a reader who cannot see it has been told
+ * something false. `n/a` takes the faint colour because it is the absence of a number rather than
+ * a small one, and should not scan as a value in a column of values.
+ */
+.price {
+  white-space: nowrap;
+}
+
+.price--na {
+  color: var(--color-text-faint);
+}
+
+.price-est {
+  color: var(--color-text-faint);
+  margin-left: 1px;
+}
+
+/* The same treatment `.tbl-model` gives a model beneath an account: a qualifier, not a peer. */
+.price-sub {
+  display: block;
+  font-size: 10px;
+  color: var(--color-text-faint);
+  margin-top: 1px;
+  white-space: nowrap;
+}
+
+.price-stack {
+  display: inline-block;
+  min-width: 0;
+}
+
 .nav-item--ghost {
   color: var(--color-text-faint);
   font-style: italic;

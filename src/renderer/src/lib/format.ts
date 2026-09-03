@@ -83,6 +83,23 @@ export function tokens(n: number | null | undefined): string {
   return `${(n / 1_000_000).toFixed(1)}M`
 }
 
+/**
+ * A price, or the honest absence of one.
+ *
+ * ⛔ **`null` is `n/a`, never `$0.00`.** They are opposite claims: `$0.00` says this run spent
+ * nothing, `n/a` says nobody can say what it spent. A free account and a run whose window was never
+ * read both land on the second, and the tooltip beside this says which.
+ *
+ * ⚠️ `<$0.01` rather than `$0.00` for a real but tiny amount, for the same reason: a two-decimal
+ * round of $0.004 asserts a zero that was not measured.
+ */
+export function money(usd: number | null | undefined): string {
+  if (usd === null || usd === undefined) return 'n/a'
+  if (usd === 0) return '$0.00'
+  if (usd > 0 && usd < 0.01) return '<$0.01'
+  return `$${usd.toFixed(2)}`
+}
+
 export function percent(n: number): string {
   return `${Math.round(n)}%`
 }

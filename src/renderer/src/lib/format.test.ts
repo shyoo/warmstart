@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Worker } from '@shared/protocol'
 import { QUOTA_STALE_AFTER_MS, quotaFreshness } from '@shared/tasks'
-import { cacheRemaining, countdown, quotaGap, quotaWindowDeltas, timeRange, when } from './format'
+import { cacheRemaining, countdown, money, quotaGap, quotaWindowDeltas, timeRange, when } from './format'
 
 describe('countdown', () => {
   const NOW = Date.UTC(2026, 8, 2, 12, 0, 0)
@@ -306,5 +306,35 @@ describe('timeRange', () => {
   it('returns dash when start is null or undefined', () => {
     expect(timeRange(null, end)).toBe('—')
     expect(timeRange(undefined, undefined)).toBe('—')
+  })
+})
+
+describe('money', () => {
+  /**
+   * ⛔ **`n/a` and `$0.00` are opposite claims, and this is the only place that distinction is
+   * spelled.** `$0.00` says the run spent nothing. `n/a` says nobody can say what it spent — a free
+   * account, a window nobody read, a rollover mid-run. Collapsing the two would present the
+   * unmeasured as the free.
+   */
+  it('says n/a for a price that cannot be given, never $0.00', () => {
+    expect(money(null)).toBe('n/a')
+    expect(money(undefined)).toBe('n/a')
+  })
+
+  it('says $0.00 for a run that measurably moved the window by nothing', () => {
+    expect(money(0)).toBe('$0.00')
+  })
+
+  /** ⚠️ A two-decimal round of $0.004 would assert a zero that was not measured. */
+  it('refuses to round a real amount down to zero', () => {
+    expect(money(0.004)).toBe('<$0.01')
+    expect(money(0.0001)).toBe('<$0.01')
+    expect(money(0.01)).toBe('$0.01')
+  })
+
+  it('formats an ordinary amount to two decimals', () => {
+    expect(money(0.23)).toBe('$0.23')
+    expect(money(12.5)).toBe('$12.50')
+    expect(money(4.5996)).toBe('$4.60')
   })
 })

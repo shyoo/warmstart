@@ -2,6 +2,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { dataDir, ensureDir, legacyDataDir, paths } from './paths.js'
 import { dirname, join, sep } from 'node:path'
 import { log } from './log.js'
+import { costModel } from './costmodel.js'
 
 /**
  * Storage.
@@ -29,6 +30,134 @@ type Migration = string | ((conn: DatabaseSync) => void)
 function hasColumn(conn: DatabaseSync, table: string, column: string): boolean {
   const cols = conn.prepare(`pragma table_info(${table})`).all() as { name: string }[]
   return cols.some((c) => c.name === column)
+}
+
+/**
+ * Decide which subscription every unstamped run was billed against.
+ *
+ * ⛔ Self-contained on purpose: `runs`, `workers` and the compiled-in cost models, and nothing else.
+ * Verified 2026-09-02 that every one of this install's 238 runs carries a `cost_model_id`, so no
+ * adapter registry has to be reached for — which is what keeps this out of an import cycle.
+ *
+ * ⚠️ A function rather than SQL only because the decision needs the cost models' own `detect` and
+ * `match` lists, which are data in `costmodels/*.json`. It decides nothing this file invents.
+ */
+function backfillRunPlans(conn: DatabaseSync, what: string): void {
+  /** ⚠️ Read verbatim, never parsed. `WorkerIdentity.subscriptionType` is the vendor's own word. */
+  const subscriptionOf = (identityJson: string | null): string | null => {
+    if (!identityJson) return null
+    try {
+      return (JSON.parse(identityJson) as { subscriptionType?: string | null })?.subscriptionType ?? null
+    } catch {
+      return null
+    }
+  }
+
+  interface Row {
+    id: string
+    worker_id: string
+    started_at: number
+    cost_model_id: string | null
+    quota_before_json: string | null
+    quota_after_json: string | null
+  }
+  const pending = conn
+    .prepare(
+      `select id, worker_id, started_at, cost_model_id, quota_before_json, quota_after_json
+         from runs where plan_id is null order by started_at asc`
+    )
+    .all() as unknown as Row[]
+  if (pending.length === 0) return
+
+  const identities = new Map<string, string | null>()
+  for (const w of conn.prepare('select id, identity_json from workers').all() as unknown as Array<{
+    id: string
+    identity_json: string | null
+  }>) {
+    identities.set(w.id, subscriptionOf(w.identity_json))
+  }
+
+  const windowsOf = (r: Row): string[] => {
+    const ids = new Set<string>()
+    for (const json of [r.quota_before_json, r.quota_after_json]) {
+      if (!json) continue
+      try {
+        const q = JSON.parse(json) as { windows?: Array<{ id: string }> }
+        for (const w of q.windows ?? []) if (w?.id) ids.add(w.id)
+      } catch {
+        // A snapshot that will not parse is a snapshot that says nothing. Not an error worth having.
+      }
+    }
+    return [...ids]
+  }
+
+  interface Decision {
+    planId: string
+    source: string
+  }
+  const decided = new Map<string, Decision>()
+
+  // 1 - the run's own window shape.
+  for (const r of pending) {
+    if (!r.cost_model_id) continue
+    let cm
+    try {
+      cm = costModel(r.cost_model_id)
+    } catch {
+      continue
+    }
+    const ids = windowsOf(r)
+    if (ids.length === 0) continue
+    const plan = cm.resolvePlan({ windowIds: ids })
+    if (plan && plan.source === 'window_shape') decided.set(r.id, { planId: plan.id, source: 'window_shape' })
+  }
+
+  // 2 - the nearest shape-resolved run on the same worker. ⭐ This is what carries the codex
+  // free/paid split onto the runs either side of it that happened to take no reading of their own.
+  const byWorker = new Map<string, Row[]>()
+  for (const r of pending) {
+    const list = byWorker.get(r.worker_id)
+    if (list) list.push(r)
+    else byWorker.set(r.worker_id, [r])
+  }
+  for (const [, list] of byWorker) {
+    const anchors = list.filter((r) => decided.get(r.id)?.source === 'window_shape')
+    if (anchors.length === 0) continue
+    for (const r of list) {
+      if (decided.has(r.id)) continue
+      let best: Row | null = null
+      let bestGap = Infinity
+      for (const a of anchors) {
+        const gap = Math.abs(a.started_at - r.started_at)
+        if (gap < bestGap) {
+          bestGap = gap
+          best = a
+        }
+      }
+      if (best) decided.set(r.id, { planId: decided.get(best.id)!.planId, source: 'neighbour' })
+    }
+  }
+
+  // 3 and 4 - the vendor's own string, then the provider's paid default.
+  for (const r of pending) {
+    if (decided.has(r.id) || !r.cost_model_id) continue
+    let cm
+    try {
+      cm = costModel(r.cost_model_id)
+    } catch {
+      continue
+    }
+    const plan = cm.resolvePlan({ subscriptionType: identities.get(r.worker_id) ?? null })
+    if (plan) decided.set(r.id, { planId: plan.id, source: plan.source })
+  }
+
+  const stmt = conn.prepare('update runs set plan_id = ?, plan_raw = ?, plan_source = ? where id = ?')
+  for (const r of pending) {
+    const d = decided.get(r.id)
+    if (!d) continue
+    stmt.run(d.planId, identities.get(r.worker_id) ?? null, d.source, r.id)
+  }
+  log.info(`${what}: stamped a plan onto ${decided.size} of ${pending.length} run(s)`)
 }
 
 /**
@@ -1014,6 +1143,47 @@ const MIGRATIONS: Migration[] = [
     if (!hasColumn(conn, 'tasks', 'resolve_retry_asked_at')) {
       conn.exec('alter table tasks add column resolve_retry_asked_at integer;')
     }
+  },
+
+  // 36 - which subscription each run was billed against, so a run can be priced in money.
+  //
+  // ⛔ **Three columns rather than one JSON blob.** `plan_id` is grouped by, `plan_raw` keeps the
+  // vendor's own string unparsed so a future catalogue entry can be matched against history that
+  // was written before it existed, and `plan_source` is the *basis* every cost belief in this repo
+  // has to carry (AGENTS.md).
+  //
+  // ⛔ **The plan is stamped, the price is not.** A run's dollars change the moment a *later*
+  // overlapping run is discovered, so money is derived on read (daemon/price.ts). What a run was
+  // *billed against* does not change, and is the one part worth freezing.
+  //
+  // The backfill, in priority order — see costmodel.ts `resolvePlan`:
+  //
+  //   1. the run's own window **shape**, through a catalogue entry's `detect`. ⭐ This is what
+  //      splits Codex's free era from its paid one exactly: measured 2026-09-02, every codex run up
+  //      to 2026-09-01 21:28Z carried a single `30d` window and every one after carried `5h` + `7d`.
+  //   2. the nearest shape-resolved run on the same worker (`neighbour`), which carries that split
+  //      across the runs either side that happened to take no reading.
+  //   3. the worker's own `identity_json.subscriptionType` (`identity`).
+  //   4. the provider's `default_plan` (`default`). ⚠️ Always a paid plan. Guessing *free* would
+  //      silently print `n/a` over real money, and this fleet's operator asked for the opposite.
+  //
+  // ⚠️ Guarded by `hasColumn` and scoped to `plan_id is null`, like migrations 28/31/32: a test can
+  // rewind `user_version` and reopen, which replays this, and a second pass must change nothing.
+  (conn) => {
+    // ⚠️ A string rather than a comment, and one that is actually used. `versionBefore` finds a
+    // migration by its own source text, and the bundler strips comments out of a function body —
+    // so a function migration that names itself in a comment is a migration no test can rewind to.
+    const what = 'which subscription each run was billed against'
+    if (!hasColumn(conn, 'runs', 'plan_id')) {
+      conn.exec('alter table runs add column plan_id text;')
+    }
+    if (!hasColumn(conn, 'runs', 'plan_raw')) {
+      conn.exec('alter table runs add column plan_raw text;')
+    }
+    if (!hasColumn(conn, 'runs', 'plan_source')) {
+      conn.exec('alter table runs add column plan_source text;')
+    }
+    backfillRunPlans(conn, what)
   }
 ]
 
@@ -1044,7 +1214,12 @@ export const MIGRATION_COUNT = MIGRATIONS.length
  * would try to re-create every table.
  */
 export function versionBefore(fragment: string): number {
-  const index = MIGRATIONS.findIndex((m) => typeof m === 'string' && m.includes(fragment))
+  // ⚠️ A function migration is searched by its own source. `Function.prototype.toString` returns
+  // the body verbatim, comments included, so a migration that has to be a function to be
+  // replay-safe is still nameable by a test — which the string-only version quietly was not.
+  const index = MIGRATIONS.findIndex((m) =>
+    (typeof m === 'string' ? m : m.toString()).includes(fragment)
+  )
   if (index < 0) throw new Error(`no migration contains ${JSON.stringify(fragment)}`)
   return index
 }

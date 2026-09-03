@@ -79,6 +79,75 @@ export interface CostModelFile {
     pool?: string
   }>
   quota?: unknown
+  /**
+   * What a subscription costs, and which of its windows the money is divided over.
+   *
+   * ⛔ **Absent is a real state.** A cost model with no `plans` block prices no run in money at all,
+   * and every run on it renders `n/a`. That is different from `priced: false`, which says the plan
+   * is known and has no price to divide (free, self-hosted) — both render `n/a`, but only the second
+   * one can name the plan while doing it.
+   */
+  plans?: PlansBlock
+}
+
+/** The subscription catalogue for one provider. See docs/cost-model.md §13. */
+export interface PlansBlock {
+  /** Whole-provider off switch — `local.llm` has no subscription of any kind. */
+  priced?: boolean
+  /**
+   * The window the subscription's money is divided over, and how to find it.
+   *
+   * ⛔ `match` is matched against the window ids the **adapter emits**, never against this file's
+   * own `quota.windows`. Measured 2026-09-02: claude-code emits `session`/`weekly_all` while its
+   * `quota.windows` declares `5h`/`7d`. Equality first, then containment, in the order written.
+   */
+  billing_window: { days: number; match: string[]; pooled?: boolean } | null
+  /**
+   * How one subscription is charged across separately metered pools, keyed by the pool a *model*
+   * declares. ⚠️ Shares sum to 1, which is what stops a week that fills every pool from reporting
+   * more than one week of subscription.
+   */
+  pool_shares?: Record<string, number>
+  /** Where a run with no other evidence lands. ⚠️ Never a free plan — see the codex file. */
+  default_plan: string
+  catalog: PlanEntry[]
+}
+
+export interface PlanEntry {
+  id: string
+  label: string
+  monthly_usd: number
+  /** Absent means true. `false` is the n/a state, and is not `monthly_usd: 0`. */
+  priced?: boolean
+  /** Matched, case-folded, against the vendor's own `WorkerIdentity.subscriptionType`. */
+  match: string[]
+  /**
+   * Matched against the window ids a run actually carried.
+   *
+   * ⭐ Beats `match` wherever a run has its own reading: the shape is evidence from the run, and the
+   * identity string is a belief about *now*. This is what splits Codex's free era from its paid one.
+   */
+  detect?: { windows_all_of?: string[]; windows_none_of?: string[] }
+}
+
+/** A plan, resolved, carrying how it was resolved. AGENTS.md: every cost belief carries its basis. */
+export interface PlanRef {
+  id: string
+  label: string
+  monthlyUsd: number
+  priced: boolean
+  source: PlanSource
+}
+
+export type PlanSource = 'window_shape' | 'identity' | 'neighbour' | 'default' | 'stored'
+
+/** One billing window selected for a run, and the share of the subscription it carries. */
+export interface BillingWindowRef {
+  id: string
+  days: number
+  pool: string | null
+  /** 1 on a single-pool provider; the pool's slice of the subscription on a pooled one. */
+  share: number
 }
 
 /** What a caller has to know about a session to have it priced. */
@@ -100,6 +169,15 @@ const OUTPUT_MULTIPLE = 5
  */
 const ASSUMED_CACHE_READ = 0.1
 const ASSUMED_CACHE_WRITE = 1.25
+
+/**
+ * Days in an average month: 365.25 / 12.
+ *
+ * ⛔ Not 30, and not 4 weeks. The ask said "$20 a month is $5 a week, or slightly less if we have
+ * 29+ days per month" — this is that "slightly less", made exact. $20/month over a 7-day window is
+ * $4.5996 per full window, so 5% of a week is $0.230.
+ */
+const DAYS_PER_MONTH = 365.25 / 12
 
 /** The four counters a run (or a turn) records. */
 export interface RunUsage {
@@ -315,6 +393,166 @@ export class CostModel {
     }))
   }
 
+  // -------------------------------------------------------------------------- money
+
+  /**
+   * Does this provider have a subscription price to divide at all?
+   *
+   * ⛔ False is the honest answer for a local server: electricity is a real cost this tool cannot
+   * meter, and $0.00 would claim otherwise. Callers render `n/a`, never a zero.
+   */
+  canPriceMoney(): boolean {
+    const plans = this.data.plans
+    return !!plans && plans.priced !== false && !!plans.billing_window
+  }
+
+  /** A plan by its catalogue id, or null. `source` is `stored` — the caller already decided. */
+  planById(id: string | null | undefined): PlanRef | null {
+    const entry = this.data.plans?.catalog.find((p) => p.id === id)
+    return entry ? this.toPlanRef(entry, 'stored') : null
+  }
+
+  /** Every plan this provider sells, in catalogue order. */
+  planIds(): string[] {
+    return this.data.plans?.catalog.map((p) => p.id) ?? []
+  }
+
+  /**
+   * Which subscription a run was on.
+   *
+   * Priority, and the order is the whole point:
+   *
+   * 1. **`detect`, the shape of the reading the run itself carried.** Evidence from the run.
+   * 2. **`match` against the vendor's own `subscriptionType` string.** A belief about *now*, which
+   *    is right for a live run and wrong for one that predates a plan change.
+   * 3. **`default_plan`.** ⚠️ Always a paid plan — see the codex file's note on why free is never
+   *    the default.
+   *
+   * Returns null only where the provider declares no plans at all.
+   */
+  resolvePlan(input: { subscriptionType?: string | null; windowIds?: string[] }): PlanRef | null {
+    const plans = this.data.plans
+    if (!plans) return null
+
+    const ids = input.windowIds ?? []
+    if (ids.length > 0) {
+      for (const entry of plans.catalog) {
+        if (entry.detect && matchesShape(entry.detect, ids)) return this.toPlanRef(entry, 'window_shape')
+      }
+    }
+
+    const raw = (input.subscriptionType ?? '').trim().toLowerCase()
+    if (raw) {
+      for (const entry of plans.catalog) {
+        if (entry.match.some((m) => matchesToken(m, raw))) return this.toPlanRef(entry, 'identity')
+      }
+    }
+
+    const fallback = plans.catalog.find((p) => p.id === plans.default_plan)
+    return fallback ? this.toPlanRef(fallback, 'default') : null
+  }
+
+  /**
+   * Which of the windows a run actually saw the subscription is divided over, and at what share.
+   *
+   * ⚠️ Returns a **list**, because a pooled provider with an unknown model has to be charged across
+   * every pool it might have drawn on. 26 antigravity runs on this install recorded no model at all
+   * (the CLI names its model on the transcript's first usage record, and those never got one), and
+   * charging them to whichever pool happened to be listed first would be a coin toss wearing a
+   * measurement's clothes.
+   *
+   * ⛔ Each window appears **once**, at the largest share that names it: `claude` and `gpt` are two
+   * pool keys over one window, and counting it twice would bill 40% of the subscription for a pool
+   * that is worth 20% of it.
+   */
+  billingWindowsFor(windowIds: string[], pool?: string | null): BillingWindowRef[] {
+    const plans = this.data.plans
+    const bw = plans?.billing_window
+    if (!plans || plans.priced === false || !bw) return []
+
+    if (!bw.pooled) {
+      const id = pickWindow(bw.match, windowIds)
+      return id ? [{ id, days: bw.days, pool: null, share: 1 }] : []
+    }
+
+    const shares = plans.pool_shares ?? {}
+    const keys = pool && pool in shares ? [pool] : Object.keys(shares)
+    const best = new Map<string, { pool: string; share: number }>()
+    for (const key of keys) {
+      const scoped = windowIds.filter((w) => w.toLowerCase().includes(key.toLowerCase()))
+      const id = pickWindow(bw.match, scoped)
+      if (!id) continue
+      const share = shares[key] ?? 0
+      const seen = best.get(id)
+      if (!seen || share > seen.share) best.set(id, { pool: key, share })
+    }
+    return [...best.entries()].map(([id, v]) => ({ id, days: bw.days, pool: v.pool, share: v.share }))
+  }
+
+  /**
+   * What a slice of one billing window is worth, in dollars.
+   *
+   * ⛔ **The whole formula, in one place**, per AGENTS.md's "no pricing arithmetic inline":
+   *
+   *     usd = monthly_usd x pool_share x (window_days / 30.4375) x (percent / 100)
+   *
+   * Returns null — never 0 — where the plan has no price to divide. A free plan reading 5% of its
+   * window spent 5% of nothing, and `$0.00` would say it spent nothing at all.
+   */
+  priceOfWindowPercent(
+    planId: string,
+    percent: number,
+    pool?: string | null
+  ): { usd: number; basis: string } | null {
+    const bw = this.data.plans?.billing_window
+    if (!bw) return null
+    const share = pool ? (this.data.plans?.pool_shares?.[pool] ?? 1) : 1
+    return this.priceOfWindowUsage(planId, [
+      { window: { id: bw.match[0] ?? 'weekly', days: bw.days, pool: pool ?? null, share }, percent }
+    ])
+  }
+
+  /**
+   * The same sum over several windows at once — the pooled case, where each window carries its own
+   * slice of the one subscription. ⚠️ Summed here rather than by the caller so that no consumer ever
+   * has to know a share is a multiplier rather than an addend.
+   */
+  priceOfWindowUsage(
+    planId: string,
+    usage: Array<{ window: BillingWindowRef; percent: number }>
+  ): { usd: number; basis: string } | null {
+    const entry = this.data.plans?.catalog.find((p) => p.id === planId)
+    if (!entry || entry.priced === false || !this.canPriceMoney() || usage.length === 0) return null
+    let usd = 0
+    const parts: string[] = []
+    for (const u of usage) {
+      const perWindow = entry.monthly_usd * (u.window.days / DAYS_PER_MONTH)
+      usd += perWindow * u.window.share * (u.percent / 100)
+      parts.push(
+        `${u.percent.toFixed(2)}% of ${u.window.id}` +
+          (u.window.share === 1 ? '' : ` (${Math.round(u.window.share * 100)}% of the subscription)`)
+      )
+    }
+    const days = usage[0]!.window.days
+    return {
+      usd,
+      basis:
+        `${entry.label}, $${entry.monthly_usd}/month over a ${days}-day window ` +
+        `($${(entry.monthly_usd * (days / DAYS_PER_MONTH)).toFixed(3)} per full window): ` +
+        parts.join(' + ')
+    }
+  }
+
+  private toPlanRef(entry: PlanEntry, source: PlanSource): PlanRef {
+    return {
+      id: entry.id,
+      label: entry.label,
+      monthlyUsd: entry.monthly_usd,
+      priced: entry.priced !== false && this.canPriceMoney(),
+      source
+    }
+  }
+
   summary(): CostModelSummary {
     return {
       id: this.id,
@@ -330,6 +568,46 @@ export class CostModel {
     const wanted = this.data.cache.default_ttl
     return this.data.cache.ttls.find((t) => t.id === wanted) ?? this.data.cache.ttls[0] ?? null
   }
+}
+
+/**
+ * Equality first, then containment — and never the other way round.
+ *
+ * ⚠️ Containment alone would let `weekly` claim `weekly_all` before `weekly_all` itself was tried,
+ * which is harmless here and would not be on a provider that emits both. Equality across the whole
+ * candidate list is attempted before any containment is.
+ */
+function pickWindow(match: string[], windowIds: string[]): string | null {
+  const lower = windowIds.map((w) => w.toLowerCase())
+  for (const want of match) {
+    const exact = lower.indexOf(want.toLowerCase())
+    if (exact >= 0) return windowIds[exact]!
+  }
+  for (const want of match) {
+    const w = want.toLowerCase()
+    const partial = lower.findIndex((id) => id.includes(w))
+    if (partial >= 0) return windowIds[partial]!
+  }
+  return null
+}
+
+/** `match` entries hit a vendor string by equality or containment, case-folded. */
+function matchesToken(token: string, haystack: string): boolean {
+  const t = token.trim().toLowerCase()
+  return t.length > 0 && (haystack === t || haystack.includes(t))
+}
+
+/** Does the shape of the windows a run carried satisfy this plan's `detect` clause? */
+function matchesShape(
+  detect: { windows_all_of?: string[]; windows_none_of?: string[] },
+  windowIds: string[]
+): boolean {
+  const has = (want: string): boolean =>
+    windowIds.some((id) => id.toLowerCase() === want.toLowerCase())
+  const all = detect.windows_all_of ?? []
+  if (all.length === 0) return false
+  if (!all.every(has)) return false
+  return !(detect.windows_none_of ?? []).some(has)
 }
 
 let registry: Map<string, CostModel> | null = null
