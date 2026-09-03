@@ -446,42 +446,13 @@ function TaskDetail({
           )}
 
           {task.status === 'paused_quota' && (
-            <div className="paused-banner">
-              <div className="paused-banner-header">
-                <span className="paused-banner-title">
-                  Preempted due to quota {task.holdReason ? `(${holdLine(task, now)})` : ''}
-                </span>
-                <span className="dim">
-                  Resumes automatically after the window reset, or you can override to continue now.
-                </span>
-              </div>
-              <div className="paused-banner-actions">
-                <button
-                  type="button"
-                  className="btn btn--warn"
-                  onClick={() => {
-                    void (async () => {
-                      await rpc('task.overrideQuota', { id: task.id })
-                      await refresh()
-                    })()
-                  }}
-                >
-                  Override &amp; continue
-                </button>
-                <button
-                  type="button"
-                  className="btn"
-                  onClick={() => {
-                    void (async () => {
-                      await rpc('task.resume', { id: task.id })
-                      await refresh()
-                    })()
-                  }}
-                >
-                  Resume
-                </button>
-              </div>
-            </div>
+            <PausedQuotaBanner
+              task={task}
+              fleet={fleet}
+              modelOptions={modelOptions}
+              now={now}
+              onRefresh={refresh}
+            />
           )}
 
           {task.status === 'paused_user' && (
@@ -1022,6 +993,205 @@ function Thread({
           </span>
         </div>
       )}
+    </div>
+  )
+}
+
+/**
+ * Preempted due to quota banner with Override, Resume, and Reassign controls.
+ *
+ * ⛔ The wait for window reset is automatic, but the operator can:
+ * - Override: bypasses the 92% watermark and resumes immediately.
+ * - Resume: resumes into the queue right now without waiting for the reset timer.
+ * - Reassign: switches the worker/model and resumes immediately on the new target.
+ */
+function PausedQuotaBanner({
+  task,
+  fleet,
+  modelOptions,
+  now,
+  onRefresh
+}: {
+  task: Task
+  fleet: FleetEntry[]
+  modelOptions: ModelOptions[]
+  now: number
+  onRefresh: () => Promise<void>
+}): React.JSX.Element {
+  const [selectedWorkerId, setSelectedWorkerId] = useState<string>(task.constraints.workerId ?? '')
+  const [selectedModel, setSelectedModel] = useState<string>(task.constraints.model ?? '')
+  const [selectedEffort, setSelectedEffort] = useState<string>(task.constraints.effort ?? '')
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    setSelectedWorkerId(task.constraints.workerId ?? '')
+    setSelectedModel(task.constraints.model ?? '')
+    setSelectedEffort(task.constraints.effort ?? '')
+  }, [task.constraints.workerId, task.constraints.model, task.constraints.effort])
+
+  const selectedWorker = fleet.find((e) => e.worker.id === selectedWorkerId)?.worker ?? null
+  const adapterOptions = modelOptions.find((o) => o.adapterId === selectedWorker?.adapterId)
+  const offeredModels = adapterOptions?.models ?? []
+  const canSetEffort = adapterOptions?.selectableEffort ?? false
+  const offeredEfforts = canSetEffort
+    ? (offeredModels.find((m) => m.id === selectedModel)?.effortLevels ?? [])
+    : []
+
+  const handleOverride = async () => {
+    setBusy(true)
+    try {
+      await rpc('task.overrideQuota', { id: task.id })
+      await onRefresh()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleResume = async () => {
+    setBusy(true)
+    try {
+      await rpc('task.resume', { id: task.id })
+      await onRefresh()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleReassign = async () => {
+    setBusy(true)
+    try {
+      await rpc('task.setWorker', { id: task.id, workerId: selectedWorkerId || null })
+      if (selectedWorkerId) {
+        await rpc('task.setModel', {
+          id: task.id,
+          model: selectedModel || null,
+          effort: selectedEffort || null
+        })
+      }
+      await rpc('task.resume', { id: task.id })
+      await onRefresh()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="paused-banner">
+      <div className="paused-banner-header">
+        <span className="paused-banner-title">
+          Preempted due to quota {task.holdReason ? `(${holdLine(task, now)})` : ''}
+        </span>
+        <span className="dim">
+          Resumes automatically when quota is available (after window reset), or you can override to continue now, resume immediately, or reassign to another agent.
+        </span>
+      </div>
+      <div className="paused-banner-actions">
+        <button
+          type="button"
+          className="btn btn--warn"
+          disabled={busy}
+          title="Override preemption and resume this task immediately even though the account is at or past 92% of its window."
+          onClick={() => void handleOverride()}
+        >
+          Override &amp; continue
+        </button>
+        <button
+          type="button"
+          className="btn"
+          disabled={busy}
+          title="Puts the task back in the queue right now without waiting for the reset timer (dispatches if quota is available)."
+          onClick={() => void handleResume()}
+        >
+          Resume
+        </button>
+      </div>
+
+      <div className="paused-banner-reassign">
+        <button
+          type="button"
+          className="btn btn--primary"
+          title="Reassigns this task to another worker or Auto and resumes it immediately."
+          disabled={busy}
+          onClick={() => void handleReassign()}
+        >
+          Reassign
+        </button>
+        <div className="reassign-row" style={{ flex: 1, margin: 0 }}>
+          <SettingButtonSelect
+            className="reassign-select"
+            value={selectedWorkerId}
+            disabled={busy}
+            ariaLabel="Reassign worker"
+            options={[
+              { value: '', label: 'Auto (scheduler decides)' },
+              ...fleet
+                .filter((e) => e.worker.enabled)
+                .map((e) => ({
+                  value: e.worker.id,
+                  label: `${e.worker.label} (${e.worker.adapterId})`
+                }))
+            ]}
+            onChange={(nextWorkerId) => {
+              setSelectedWorkerId(nextWorkerId)
+              if (!nextWorkerId) {
+                setSelectedModel('')
+                setSelectedEffort('')
+              } else {
+                const w = fleet.find((entry) => entry.worker.id === nextWorkerId)?.worker
+                const offered = modelOptions.find((o) => o.adapterId === w?.adapterId)?.models ?? []
+                if (selectedModel && !offered.some((m) => m.id === selectedModel)) {
+                  setSelectedModel(w?.defaultModel ?? '')
+                  setSelectedEffort('')
+                }
+              }
+            }}
+          />
+
+          {offeredModels.length > 0 && (
+            <SettingButtonSelect
+              className="reassign-select"
+              value={selectedModel}
+              disabled={busy}
+              ariaLabel="Reassign model"
+              options={[
+                {
+                  value: '',
+                  label: selectedWorker?.defaultModel
+                    ? `account default (${modelLabel(selectedWorker.defaultModel)})`
+                    : 'CLI default model'
+                },
+                ...offeredModels.map((m) => ({ value: m.id, label: modelLabel(m.id) ?? m.id }))
+              ]}
+              onChange={(val) => {
+                setSelectedModel(val)
+                setSelectedEffort('')
+              }}
+            />
+          )}
+
+          {offeredEfforts.length > 0 && (
+            <SettingButtonSelect
+              className="reassign-select"
+              value={selectedEffort}
+              disabled={busy}
+              ariaLabel="Reassign effort"
+              options={[
+                {
+                  value: '',
+                  label: selectedWorker?.defaultEffort
+                    ? `account default (${effortLabel(selectedWorker.defaultEffort)})`
+                    : 'CLI default effort'
+                },
+                ...offeredEfforts.map((level) => ({
+                  value: level,
+                  label: effortLabel(level) ?? level
+                }))
+              ]}
+              onChange={(val) => setSelectedEffort(val)}
+            />
+          )}
+        </div>
+      </div>
     </div>
   )
 }
