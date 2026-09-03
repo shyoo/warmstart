@@ -18,7 +18,9 @@ let price: typeof import('./price.js')
 
 const CLAUDE = 'aaaaaaaa-0000-4000-8000-00000000c1a0'
 const CODEX = 'aaaaaaaa-0000-4000-8000-00000000c0de'
-const T163_WORKER = 'f6ba9f23-3cb1-4c14-a439-5c84ba987be9'
+// The literal observed in the live database. ⛔ Do not substitute a fixture-shaped UUID: migration
+// 37 did exactly that, so its regression test proved internally consistent SQL that matched no row.
+const T163_WORKER = 'f6ba9f23-5a03-4d47-a197-4e12ae9963c3'
 const T163_RUN = 'cf22425a-d555-4756-9993-2cd0e5954420'
 const T163_SAMPLE_AT = 1_788_459_715_254
 
@@ -113,7 +115,7 @@ beforeEach(() => {
 })
 
 describe('repairing t163\'s malformed Antigravity quota reading', () => {
-  it('clears both the false sample and the matching run snapshot, without touching a neighbour', () => {
+  it('repairs a database already at v37 using t163\'s observed worker id', () => {
     seedRun({
       id: T163_RUN,
       worker: T163_WORKER,
@@ -132,7 +134,8 @@ describe('repairing t163\'s malformed Antigravity quota reading', () => {
     sample.run(T163_WORKER, 'weekly:claude-and-gpt', 'Claude/GPT 7d', 100, null, 'cli', T163_SAMPLE_AT)
     sample.run(T163_WORKER, 'unrelated', 'Unrelated', 42, null, 'cli', T163_SAMPLE_AT)
 
-    db.db().exec(`pragma user_version = ${db.versionBefore('remove t163 malformed Antigravity quota reading')}`)
+    // Reproduce the deployed failure: migration 37 has already run and left these rows behind.
+    db.db().exec(`pragma user_version = ${db.versionBefore('finish t163 malformed Antigravity quota repair')}`)
     db.closeDb()
     db.openDb(join(dir, 'runprice.db'))
 

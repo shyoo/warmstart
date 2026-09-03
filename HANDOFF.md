@@ -7,8 +7,8 @@ started in CI, never run against a real agent CLI.
 **Current state + what to do next, not a changelog.** **Under 200 lines** — adding one means cutting
 the line it obsoletes. Where every other fact goes: [`docs/README.md`](docs/README.md).
 
-**Baseline (2026-09-03, measured):** typecheck · lint · build clean · `npm test` **1618/1620** (2 POSIX-only skipped).
-⚠️ `test:daemon` 147/147 · `test:ui` 232/232 · `test:pack` 18/18 · L4-landed carried forward — change since is flow binding visualization + tests.
+**Baseline (2026-09-03, measured):** typecheck · lint · build clean · `npm test` **1630/1632** (2 POSIX-only skipped).
+⚠️ `test:daemon` 147/147 · `test:ui` 232/232 · `test:pack` 18/18 · L4-landed carried forward — changes since are covered at L1.
 CLIs here: claude 2.1.252 · agy 1.1.22 · codex 0.151.0 · local-llm 1.0.0 (qwen3-coder live tested).
 ⚠️ With none installed — the CI state — the daemon suite skips 5 checks, each with a stated reason.
 
@@ -32,7 +32,7 @@ gaps are below. Scope: `transient_docs/implementation_plan_2026-08-24.md` §14, 
 src/daemon/            orchestratord. Runs as Electron-with-ELECTRON_RUN_AS_NODE, detached.
   index.ts             entry: lock, db, server, poller, scheduler, tailer wiring, shutdown
   server.ts  api.ts    HTTP+WS on 127.0.0.1:<random>, bearer token, typed RPC
-  db.ts                node:sqlite + numbered migrations (v37), each of which must survive a replay
+  db.ts                node:sqlite + numbered migrations (v38), each of which must survive a replay
   costmodel.ts         the four questions + the plan catalogue; price.ts turns a window delta into $
   workers.ts           registry, isolation roots, retire-keeps-credentials, display order only
                        (+ workerorder.test.ts)

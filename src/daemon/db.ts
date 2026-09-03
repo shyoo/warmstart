@@ -1218,6 +1218,36 @@ const MIGRATIONS: Migration[] = [
     // Keep the marker in a value that executes: `versionBefore` finds function migrations by their
     // source, and a comment-only name can disappear from a bundled build.
     void what
+  },
+
+  // 38 - finish t163's repair after migration 37 named the wrong worker.
+  //
+  // Migration 37 used an invented UUID in both its SQL and its fixture, so it passed while changing
+  // no row in the live database. Keep that migration immutable and repair the observed worker here
+  // with the same exact predicates. Databases already at v37 finally lose both inputs that
+  // manufactured the price jump; databases without the observed bad reading remain unchanged.
+  (conn) => {
+    const what = 'finish t163 malformed Antigravity quota repair'
+    const runId = 'cf22425a-d555-4756-9993-2cd0e5954420'
+    const workerId = 'f6ba9f23-5a03-4d47-a197-4e12ae9963c3'
+    const sampledAt = 1_788_459_715_254
+    conn
+      .prepare(
+        `update runs set quota_before_json = null
+          where id = ? and worker_id = ? and quota_before_json like ?`
+      )
+      .run(runId, workerId, `%${sampledAt}%`)
+    conn
+      .prepare(
+        `delete from quota_samples
+          where worker_id = ? and sampled_at = ?
+            and (window_id = '5h:gemini' and label = 'Gemini 5h' and percent = 0
+              or window_id = 'weekly:gemini' and label = 'Gemini 7d' and percent = 0
+              or window_id = '5h' and label = 'Claude/GPT 5h' and percent = 68.53
+              or window_id = 'weekly:claude-and-gpt' and label = 'Claude/GPT 7d' and percent = 100)`
+      )
+      .run(workerId, sampledAt)
+    void what
   }
 ]
 

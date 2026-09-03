@@ -1172,7 +1172,9 @@ against* does not change, and is the only part worth freezing in a column.
 ⛔ **A malformed quota rendering is removed from both inputs to that timeline.** t163's 2026-09-03
 Antigravity probe misread clipped `Quota ava…` text as 0% Gemini utilisation; its false sample and
 the run's before snapshot must be cleared together. Leaving either would make the next valid reading
-look like spend. The honest repair is no reading, so the affected run prices as `n/a`.
+look like spend. The honest repair is no reading, so the affected run prices as `n/a`. Migration 37
+named a fixture-only worker UUID and therefore matched **zero live rows**; migration 38 repeats the
+exact repair against the worker id measured in the database, `f6ba9f23-5a03-4d47-a197-4e12ae9963c3`.
 
 ### Splitting a window between parallel runs
 
