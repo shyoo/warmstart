@@ -444,3 +444,10 @@ describe('the two gate lists that drifted apart', () => {
     workers.retireWorker(worker.id)
   })
 })
+
+describe('consult sessions', () => {
+  it('are projectless and run in scratch, never homedir', () => {
+    const src = readFileSync(new URL('sessions.ts', import.meta.url), 'utf8')
+    expect(src).toMatch(/const projectless =.*purpose === 'consult'/)
+  })
+})

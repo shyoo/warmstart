@@ -21,6 +21,7 @@ import { log } from './log.js'
 import { ensureDir, paths } from './paths.js'
 import { removeMcpConfig, writeMcpConfig } from './mcpconfig.js'
 import { StreamParser, renderForHuman, type StreamEvent } from './stream.js'
+import { formatCmdInvocation, unwrapForPty } from './which.js'
 
 /**
  * Live agent processes.
@@ -680,7 +681,7 @@ export function spawnSession(opts: SpawnOptions): Session {
   // typing `/usage` into that dialog and pressing Enter on "Yes, I trust this folder", every time,
   // reporting no fresher reading and blaming onboarding. An empty directory makes the question
   // trivial to answer and keeps the answer reusable.
-  const projectless = purpose === 'login' || purpose === 'probe'
+  const projectless = purpose === 'login' || purpose === 'probe' || purpose === 'consult'
   const cwd =
     opts.cwd && opts.cwd !== '.' ? opts.cwd : projectless ? ensureDir(paths.scratch) : homedir()
 
@@ -1321,7 +1322,8 @@ function openPty(
   onData: (data: string) => void,
   onExit: (code: number | null) => void
 ): Channel {
-  const proc = pty.spawn(plan.command, plan.args, {
+  const unwrapped = unwrapForPty(plan.command, plan.args)
+  const proc = pty.spawn(unwrapped.command, unwrapped.args, {
     name: 'xterm-256color',
     cols,
     rows: rows_,
@@ -1360,11 +1362,13 @@ function openPipes(
   onData: (data: string) => void,
   onExit: (code: number | null) => void
 ): Channel {
-  const child = spawnChild(plan.command, plan.args, {
+  const invocation = formatCmdInvocation(plan.command, plan.args)
+  const child = spawnChild(invocation.command, invocation.args, {
     cwd,
     env: plan.env,
     stdio: ['pipe', 'pipe', 'pipe'],
-    windowsHide: true
+    windowsHide: true,
+    ...(invocation.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {})
   })
   child.stdout?.setEncoding('utf8')
   child.stderr?.setEncoding('utf8')

@@ -80,6 +80,93 @@ export function launchArgs(resolved: string, args: string[]): { command: string;
 }
 
 /**
+ * Quote an argument for Windows command line processing (CommandLineToArgvW algorithm).
+ */
+export function quoteCmdArg(arg: string): string {
+  if (!arg) return '""'
+  if (!/[\s"\\]/.test(arg)) return arg
+  let s = '"'
+  for (let i = 0; i < arg.length; i++) {
+    let bs = 0
+    while (i < arg.length && arg[i] === '\\') {
+      bs++
+      i++
+    }
+    if (i === arg.length) {
+      s += '\\'.repeat(bs * 2)
+      break
+    } else if (arg[i] === '"') {
+      s += '\\'.repeat(bs * 2 + 1) + '"'
+    } else {
+      s += '\\'.repeat(bs) + arg[i]
+    }
+  }
+  return s + '"'
+}
+
+/**
+ * Format command and arguments when invoking Windows cmd.exe /c to prevent cmd.exe from
+ * stripping quotes when arguments contain spaces.
+ *
+ * ⛔ cmd.exe /c strips the leading and trailing quote character if there are multiple quoted
+ * arguments unless the entire remainder after /c is wrapped in an outer pair of quotes and /s is passed.
+ * Node's child_process requires windowsVerbatimArguments: true to avoid re-escaping those outer quotes.
+ */
+export function formatCmdInvocation(
+  command: string,
+  args: string[]
+): { command: string; args: string[]; windowsVerbatimArguments?: boolean } {
+  if (process.platform !== 'win32') return { command, args }
+  const lower = command.toLowerCase()
+  if (!lower.endsWith('cmd.exe') && !lower.endsWith('cmd')) return { command, args }
+
+  const cIdx = args.findIndex((a) => {
+    const s = a.toLowerCase()
+    return s === '/c' || s === '/k'
+  })
+  if (cIdx === -1) return { command, args }
+
+  const before = args.slice(0, cIdx)
+  const cmdSwitch = args[cIdx]!
+  const cmdAndArgs = args.slice(cIdx + 1)
+  if (cmdAndArgs.length === 0) return { command, args }
+
+  const fullCommandLine = cmdAndArgs.map(quoteCmdArg).join(' ')
+  return {
+    command,
+    args: [...before.filter((a) => a.toLowerCase() !== '/s'), '/s', cmdSwitch, `"${fullCommandLine}"`],
+    windowsVerbatimArguments: true
+  }
+}
+
+/**
+ * For node-pty on Windows, node-pty uses CreateProcessW directly which natively supports
+ * batch files (.cmd, .bat). Passing cmd.exe to node-pty with quoted arguments causes cmd.exe
+ * quote stripping issues, so unwrapping to the direct batch file target is safer and cleaner.
+ */
+export function unwrapForPty(
+  command: string,
+  args: string[]
+): { command: string; args: string[] } {
+  if (process.platform !== 'win32') return { command, args }
+  const lower = command.toLowerCase()
+  if (!lower.endsWith('cmd.exe') && !lower.endsWith('cmd')) return { command, args }
+
+  const cIdx = args.findIndex((a) => {
+    const s = a.toLowerCase()
+    return s === '/c' || s === '/k'
+  })
+  if (cIdx === -1) return { command, args }
+
+  const cmdAndArgs = args.slice(cIdx + 1)
+  if (cmdAndArgs.length === 0) return { command, args }
+  return {
+    command: cmdAndArgs[0]!,
+    args: cmdAndArgs.slice(1)
+  }
+}
+
+/**
  * Variables a spawned agent CLI must never inherit from whatever launched the daemon.
  *
  * ⛔ **An isolation root that inherits the host's session identity is not isolated.** Measured

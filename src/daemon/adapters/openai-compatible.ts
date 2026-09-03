@@ -14,7 +14,7 @@ import type {
 } from './types.js'
 import { asRecord, num, type StreamEvent, type StreamUsage } from '../stream.js'
 import { log } from '../log.js'
-import { launchArgs, launchable, spawnEnv, which } from '../which.js'
+import { formatCmdInvocation, launchArgs, launchable, spawnEnv, which } from '../which.js'
 
 /**
  * The directories a `git commit` in `cwd` has to write to, other than `cwd` itself.
@@ -673,12 +673,14 @@ async function readAccountRateLimits(isolationRoot: string): Promise<CodexRateLi
   const { command, prefixArgs } = launchable(resolved)
 
   return await new Promise<CodexRateLimits | null>((resolve) => {
-    const child = spawn(command, [...prefixArgs, 'app-server'], {
+    const invocation = formatCmdInvocation(command, [...prefixArgs, 'app-server'])
+    const child = spawn(invocation.command, invocation.args, {
       env: envFor(isolationRoot),
       stdio: ['pipe', 'pipe', 'pipe'],
       // ⛔ `windowsHide`, because this runs on the poller's five-minute tick and a console flashing
       // on the operator's desktop twice a minute across a fleet is not acceptable.
-      windowsHide: true
+      windowsHide: true,
+      ...(invocation.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {})
     })
     let settled = false
     /** ⛔ One exit path, and it always kills the child. An app-server left running is an orphan. */
