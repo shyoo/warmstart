@@ -562,98 +562,182 @@ try {
   )
 
   // ---- filing a task ------------------------------------------------------------------
-  // ⛔ Order is the assertion. The prompt is the one field a person came here to fill in, and it used
-  // to be first — met before anything had been decided, with three settings rows underneath it that
-  // read as an afterthought bolted to a message already written. Settings narrow what the task is;
-  // the prompt says what it is for, and it goes last.
+  // ⛔ Order is the assertion, and since 2026-09-02 it is the reverse of what it was. The prompt used
+  // to sit *under* five labelled setting rows, on the reasoning that settings narrow what a task is
+  // and the prompt says what it is for. The reasoning held and the shape did not: every one of those
+  // rows is answered the same way on almost every task, so the first thing anybody met was five
+  // controls they were about to leave alone. The settings are all still here, one click deep, on a
+  // row of pills under the box.
   await evaluate(
     `[...document.querySelectorAll('.panel-head button')].find(b => b.innerText.trim() === 'New task')?.click()`
   )
   await wait(800)
   const filing = await evaluate(`
     JSON.stringify((() => {
-      const form = document.querySelector('.form');
-      if (!form) return { missing: true };
-      const labels = [...form.querySelectorAll('.form-row > label')].map(l => l.innerText.trim());
-      const ask = form.querySelector('.ask');
-      const rows = [...form.querySelectorAll('.form-row')];
-      const lastRow = rows.at(-1)?.getBoundingClientRect().bottom ?? 0;
+      const composer = document.querySelector('.composer');
+      if (!composer) return { missing: true };
+      const ask = composer.querySelector('.ask');
+      const bar = composer.querySelector('.composer-bar');
+      const pills = [...(bar?.querySelectorAll('button.pill') ?? [])].map(p => ({
+        name: p.getAttribute('aria-label'),
+        label: p.innerText.trim(),
+        muted: p.classList.contains('pill--muted'),
+        disabled: p.disabled
+      }));
       return {
-        labels,
-        textarea: !!form.querySelector('textarea.ask-input'),
-        promptIsLast: !!ask && ask.getBoundingClientRect().top >= lastRow - 1,
-        modelText: rows.find(r => /^model/i.test(r.querySelector('label')?.innerText ?? ''))?.innerText ?? '',
-        modelPickers: rows
-          .find(r => /^model/i.test(r.querySelector('label')?.innerText ?? ''))
-          ?.querySelectorAll('select').length ?? 0,
-        finishOptions: [...(form.querySelector('select[aria-label="Finish policy"]')?.options ?? [])]
-          .map(o => o.value),
-        finishInheritText: form.querySelector('select[aria-label="Finish policy"] option[value="inherit"]')?.innerText ?? '',
-        sharingOptions: [...(form.querySelector('select[aria-label="Conversation policy"]')?.options ?? [])]
-          .map(o => o.value),
-        sharingInheritText: form.querySelector('select[aria-label="Conversation policy"] option[value="inherit"]')?.innerText ?? '',
-        scheduleOptions: [...(form.querySelector('select[aria-label="Schedule start"]')?.options ?? [])]
-          .map(o => o.value)
+        pills,
+        textarea: !!composer.querySelector('textarea.ask-input'),
+        promptIsFirst:
+          !!ask && !!bar && ask.getBoundingClientRect().bottom <= bar.getBoundingClientRect().top + 1,
+        // The three things the old form did that this one must not: labelled rows, native pickers,
+        // and the word "inherited" written out on every control that has a default.
+        legacyRows: composer.querySelectorAll('.form-row').length,
+        selects: composer.querySelectorAll('select').length,
+        saysInherited: (bar?.innerText ?? '').toLowerCase().includes('inherit'),
+        sendsInsideTheBox: !!ask?.querySelector('.composer-send'),
+        clock: !!ask?.querySelector('.pill--clock button'),
+        buttons: [...(ask?.querySelectorAll('.composer-send button') ?? [])].map(b => b.innerText.trim())
       };
     })())
   `)
   const f = JSON.parse(filing)
+  const pillNames = (f.pills ?? []).map((p) => p.name)
+  check('the prompt is the first thing in the composer', f.promptIsFirst === true, filing)
   check(
-    'the form asks where and how before it asks what',
-    f.labels?.join(' > ').toLowerCase() === 'project > policy > waits for > schedule > worker > model',
-    filing
-  )
-  check('the prompt sits below every setting', f.promptIsLast === true, filing)
-  check(
-    'the new-task form offers schedule presets including custom',
-    Array.isArray(f.scheduleOptions) &&
-      ['now', '30m', '1h', '2h', '4h', 'custom'].every((opt) => f.scheduleOptions.includes(opt)),
-    filing
-  )
-  // ⛔ The finish policy is chosen on the way in, where a checkbox used to ask "I want to check this
-  // before it lands". That checkbox could say await-human or nothing; the dropdown reaches all four
-  // policies and `inherit`, which is the value that keeps following the project as it changes.
-  // ⚠️ This control arrived with no coverage — the suite asserted the form's *order* and never its
-  // contents, so swapping the checkbox out broke no test and would have broken none had it rendered
-  // nothing at all.
-  check(
-    'the new-task form offers every rung of the ladder, inherit included',
-    Array.isArray(f.finishOptions) &&
-      f.finishOptions.includes('inherit') &&
-      ['commit-only', 'commit-and-verify', 'commit-and-merge', 'commit-and-push'].every((p) =>
-        f.finishOptions.includes(p)
-      ),
+    'and every setting is a pill under it rather than a labelled row',
+    f.legacyRows === 0 && f.selects === 0 && f.pills?.length >= 6,
     filing
   )
   check(
-    'and the list comes from FINISH_ORDER rather than a hand-written copy',
-    // ⛔ Three dropdowns each carried their own copy of these options, and all three still
-    // offered `agent-lands` after it was renamed. Drift here is silent: a stale option looks fine
-    // and sets a value the daemon no longer understands.
-    !f.finishOptions.includes('agent-lands'),
+    'the settings row carries priority, kind, dependencies, both policies and the account',
+    [
+      'Priority',
+      'What this files',
+      'Wait for other tasks',
+      'Conversation policy',
+      'Finish policy',
+      'Worker',
+      'Model'
+    ].every((name) => pillNames.includes(name)),
+    filing
+  )
+  // ⛔ A colour, not eleven characters of the word. Eight pills each spelling out "(inherited)" is
+  // the clutter this replaced; the dim ones are the answers nobody has chosen, and the tooltip still
+  // names the tier for anyone who wants the answer rather than the glance.
+  check(
+    'an inherited answer is shown dimmed rather than labelled',
+    f.saysInherited === false && (f.pills ?? []).some((p) => p.muted),
     filing
   )
   check(
-    'and says which finish policy is inherited',
-    typeof f.finishInheritText === 'string' && f.finishInheritText.startsWith('inherit (') && f.finishInheritText.endsWith(')'),
-    filing
-  )
-  check(
-    'the new-task form offers a conversation policy, inherit included',
-    Array.isArray(f.sharingOptions) &&
-      f.sharingOptions.includes('inherit') &&
-      f.sharingOptions.includes('on') &&
-      f.sharingOptions.includes('off'),
-    filing
-  )
-  check(
-    'and says which conversation policy is inherited',
-    typeof f.sharingInheritText === 'string' && f.sharingInheritText.startsWith('inherit (') && f.sharingInheritText.endsWith(')'),
+    'draft, send and the scheduled send sit together inside the box',
+    f.sendsInsideTheBox === true && f.clock === true && f.buttons?.includes('Send'),
     filing
   )
   // ⚠️ A textarea because what goes in it is sent to an agent verbatim, and a prompt worth writing
   // has a second sentence. A single-line box that ate Enter was a lie about what it would accept.
   check('the prompt takes more than one line', f.textarea === true, filing)
+
+  // A pill's menu is elements this app draws, so it is opened and read the way a person would.
+  //
+  // ⛔ Every read is scoped to *its own* pill's wrapper, and every menu is dismissed with a real
+  // `pointerdown`. Both matter: `.click()` fires no pointer event, so the first version of this
+  // block left every menu it opened standing, and a query across the document then answered the
+  // Worker pill's question with the schedule presets still on screen — which picked `now` as a
+  // worker id and reported green all the way to the check that finally could not parse it.
+  const closeMenus = async () => {
+    await evaluate(
+      `document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))`
+    )
+    await wait(200)
+  }
+  const openPill = async (name) => {
+    await closeMenus()
+    await evaluate(
+      `[...document.querySelectorAll('button.pill')].find(p => p.getAttribute('aria-label') === ${JSON.stringify(
+        name
+      )})?.click()`
+    )
+    await wait(300)
+  }
+  const menuOf = (name) => `
+    (() => {
+      const pill = [...document.querySelectorAll('button.pill')]
+        .find(p => p.getAttribute('aria-label') === ${JSON.stringify(name)});
+      return pill?.parentElement?.querySelector('.pill-menu') ?? null;
+    })()
+  `
+  const menuValues = async (name) =>
+    JSON.parse(
+      await evaluate(`
+        JSON.stringify((() => {
+          const menu = ${menuOf(name)};
+          return [...(menu?.querySelectorAll('[role="option"]') ?? [])].map(o => o.dataset.value);
+        })())
+      `)
+    )
+  const pickInMenu = async (name, value) => {
+    await evaluate(`
+      (() => {
+        const v = ${JSON.stringify(value)};
+        const menu = ${menuOf(name)};
+        const row = [...(menu?.querySelectorAll('[role="option"]') ?? [])].find(o => o.dataset.value === v);
+        row?.click();
+        return !!row;
+      })()
+    `)
+    await wait(400)
+  }
+  const pillLabel = async (name) =>
+    (
+      await evaluate(
+        `([...document.querySelectorAll('button.pill')].find(p => p.getAttribute('aria-label') === ${JSON.stringify(
+          name
+        )})?.innerText ?? '')`
+      )
+    ).trim()
+
+  // ⛔ The finish policy reaches every rung of the ladder plus `inherit`, which is the value that
+  // keeps following the project as it changes.
+  // ⚠️ And the list comes from FINISH_ORDER rather than a hand-written copy: three dropdowns each
+  // carried their own and all three still offered `agent-lands` after it was renamed. Drift here is
+  // silent — a stale option looks fine and sets a value the daemon no longer understands.
+  await openPill('Finish policy')
+  const finishOptions = await menuValues('Finish policy')
+  check(
+    'the finish pill offers every rung of the ladder, inherit included',
+    finishOptions.includes('inherit') &&
+      ['commit-only', 'commit-and-verify', 'commit-and-merge', 'commit-and-push'].every((p) =>
+        finishOptions.includes(p)
+      ),
+    JSON.stringify(finishOptions)
+  )
+  check(
+    'and the list comes from FINISH_ORDER rather than a hand-written copy',
+    !finishOptions.includes('agent-lands'),
+    JSON.stringify(finishOptions)
+  )
+  await closeMenus()
+
+  await openPill('Conversation policy')
+  const sharingOptions = await menuValues('Conversation policy')
+  check(
+    'the conversation policy offers inherit, reuse and fresh',
+    ['inherit', 'on', 'off'].every((v) => sharingOptions.includes(v)),
+    JSON.stringify(sharingOptions)
+  )
+  await closeMenus()
+
+  // ⚠️ The scheduled send is on the clock beside Send now, not in a row of its own. `now` is in the
+  // same list so that disarming a schedule is one click where it was armed.
+  await openPill('When to send')
+  const scheduleOptions = await menuValues('When to send')
+  check(
+    'the clock beside Send offers presets and a time of your own',
+    ['now', '30m', '1h', '2h', '4h', 'custom'].every((v) => scheduleOptions.includes(v)),
+    JSON.stringify(scheduleOptions)
+  )
+  await closeMenus()
 
   // Dynamic prompt textarea sizing: expands with multiline/wrapping text, shrinks when cleared.
   const sizing = await evaluate(`
@@ -680,50 +764,38 @@ try {
   `)
   const s = JSON.parse(sizing)
   check('the prompt textarea dynamically resizes with content and wrap', s.grew && s.wrapped && s.shrunk, sizing)
-  // ⛔ Not a greyed-out select. A model list belongs to one CLI, so until an account is pinned there
-  // is genuinely nothing to draw — and a dead control would read as a choice being withheld.
+
+  // ⛔ Disabled, not absent. A model list belongs to one CLI, so until an account is pinned there is
+  // genuinely nothing to draw — and a pill that vanished would take the row's shape with it every
+  // time somebody moved back to Auto.
   check(
-    'no model is offered until an account is pinned',
-    f.modelPickers === 0 && /default/i.test(f.modelText),
+    'no model can be chosen until an account is pinned',
+    (f.pills ?? []).find((p) => p.name === 'Model')?.disabled === true,
     filing
   )
 
   // Pin the account this suite commissioned, and the models its cost model can price appear.
-  await evaluate(`
-    (() => {
-      const rows = [...document.querySelectorAll('.form-row')];
-      const row = rows.find(r => /^worker$/i.test(r.querySelector('label')?.innerText.trim() ?? ''));
-      const sel = row?.querySelector('select');
-      if (!sel) return 'no worker picker';
-      sel.value = [...sel.options].find(o => o.value)?.value ?? '';
-      sel.dispatchEvent(new Event('change', { bubbles: true }));
-      return sel.value;
-    })()
-  `)
-  await wait(800)
-  const pinned = await evaluate(`
-    JSON.stringify((() => {
-      const rows = [...document.querySelectorAll('.form-row')];
-      const row = rows.find(r => /^model/i.test(r.querySelector('label')?.innerText ?? ''));
-      const sel = row?.querySelector('select');
-      const worker = rows.find(r => /^worker$/i.test(r.querySelector('label')?.innerText.trim() ?? ''));
-      return {
-        models: sel ? [...sel.options].map(o => o.value).filter(Boolean) : [],
-        // ⚠️ "Preferred" would be a lie: the scheduler skips every other candidate outright.
-        saysItPins: /pins/i.test(worker?.innerText ?? ''),
-        // No built-in CLI takes an effort flag today, so a second picker here would be offering a
-        // setting nothing could apply. This is the check that keeps it honest.
-        efforts: row?.querySelectorAll('select').length ?? 0
-      };
-    })())
-  `)
-  const pin = JSON.parse(pinned)
-  check('pinning an account offers the models its cost model can price', pin.models?.length > 0, pinned)
+  await openPill('Worker')
+  const workerValues = await menuValues('Worker')
+  const firstWorker = workerValues.find((v) => v)
+  check(
+    'the worker pill offers Auto and every enabled account',
+    !!firstWorker,
+    JSON.stringify(workerValues)
+  )
+  await pickInMenu('Worker', firstWorker ?? '')
+  await openPill('Model')
+  const modelValues = (await menuValues('Model')).filter(Boolean)
+  check(
+    'pinning an account offers the models its cost model can price',
+    modelValues.length > 0,
+    JSON.stringify(modelValues)
+  )
   check(
     'every offered model is one the daemon will accept',
     await evaluate(`
       (async () => {
-        const ids = ${JSON.stringify(JSON.parse(pinned).models ?? [])};
+        const ids = ${JSON.stringify(modelValues)};
         const opts = await window.agentyard.rpc('model.options');
         const priced = new Set(opts.flatMap(o => o.models.map(m => m.id)));
         // ⛔ Non-empty first. every() on an empty array is true, so an empty picker would have
@@ -735,12 +807,59 @@ try {
     `),
     'a model the cost model cannot price is one that cannot be gated or estimated for'
   )
-  check('the worker control says it pins rather than prefers', pin.saysItPins === true, pinned)
+  await closeMenus()
+  check(
+    'the worker pill says it pins rather than prefers',
+    // ⚠️ "Preferred" would be a lie: the scheduler skips every other candidate outright.
+    /pins/i.test(
+      await evaluate(
+        `[...document.querySelectorAll('button.pill')].find(p => p.getAttribute('aria-label') === 'Worker')?.title ?? ''`
+      )
+    ),
+    'the tooltip is where the consequence of pinning is stated'
+  )
   check(
     'no effort is offered where no CLI can be told one',
-    pin.efforts === 1,
+    await evaluate(
+      `![...document.querySelectorAll('button.pill')].some(p => p.getAttribute('aria-label') === 'Effort')`
+    ),
     'a control that cannot be honoured is worse than no control'
   )
+
+  // ⭐ The pills remember. Inheritance supplies the first value a control ever shows and nothing
+  // after that — somebody who files every task at P0 against one account should not have to choose
+  // both again on the next one, which is what recomputing from the project on each open made them do.
+  await openPill('Priority')
+  await pickInMenu('Priority', 'P0')
+  check('a chosen priority shows on the pill', (await pillLabel('Priority')) === 'P0')
+  await evaluate(
+    `[...document.querySelectorAll('.panel-head button')].find(b => b.innerText.trim() === 'Cancel')?.click()`
+  )
+  await wait(400)
+  await evaluate(
+    `[...document.querySelectorAll('.panel-head button')].find(b => b.innerText.trim() === 'New task')?.click()`
+  )
+  await wait(800)
+  const remembered = await evaluate(`
+    JSON.stringify((() => {
+      const at = (name) => [...document.querySelectorAll('button.pill')]
+        .find(p => p.getAttribute('aria-label') === name);
+      return {
+        priority: at('Priority')?.innerText.trim() ?? null,
+        worker: at('Worker')?.innerText.trim() ?? null,
+        workerMuted: at('Worker')?.classList.contains('pill--muted') ?? null,
+        modelEnabled: at('Model') ? !at('Model').disabled : null
+      };
+    })())
+  `)
+  const r = JSON.parse(remembered)
+  check('a reopened composer comes back on what it was last set to', r.priority === 'P0', remembered)
+  check(
+    'including the pinned account, which is what makes the model list survive with it',
+    r.worker !== 'Auto' && r.workerMuted === false && r.modelEnabled === true,
+    remembered
+  )
+
   // ⛔ Pasting an image into the composer, driven as a real `paste` event on the real textarea.
   //
   // ⚠️ Through `clipboardData.items`, not `.files`, because that is the shape a screenshot arrives
@@ -807,27 +926,37 @@ try {
   check('the prompt the agent would get names the file by absolute path', carriedResult.promptNamesTheFile === true, carried)
   check('and the thread can read the same bytes back for its thumbnail', carriedResult.readsBackTheSameBytes === true, carried)
 
-  // Schedule picker interaction: selecting custom shows the datetime-local input, and button label updates.
-  const scheduleInteraction = await evaluate(`
-    JSON.stringify((() => {
-      const form = document.querySelector('.form');
-      const sel = form?.querySelector('select[aria-label="Schedule start"]');
-      if (!sel) return { missing: true };
-      const hadDateBefore = !!form.querySelector('input[type="datetime-local"]');
-      sel.value = 'custom';
-      sel.dispatchEvent(new Event('change', { bubbles: true }));
-      const hasDateAfter = !!form.querySelector('input[type="datetime-local"]');
-      const btn = [...form.querySelectorAll('.ask-actions button')].find(b => b.classList.contains('btn--primary'));
-      const btnText = btn?.innerText.trim() ?? '';
-      sel.value = 'now';
-      sel.dispatchEvent(new Event('change', { bubbles: true }));
-      const hasDateReset = !!form.querySelector('input[type="datetime-local"]');
-      return { hadDateBefore, hasDateAfter, hasDateReset, btnText };
-    })())
-  `)
-  const sInt = JSON.parse(scheduleInteraction)
-  check('custom schedule option reveals datetime-local input', sInt.hadDateBefore === false && sInt.hasDateAfter === true && sInt.hasDateReset === false, scheduleInteraction)
-  check('schedule option updates file button label to Schedule task', sInt.btnText === 'Schedule task', scheduleInteraction)
+  // ⚠️ The scheduled send is armed on the clock beside Send, so the two things worth checking are
+  // that a time of your own can be typed *in the menu that armed it*, and that the button somebody
+  // is about to press stops saying Send once it will not.
+  const readSend = async () =>
+    await evaluate(
+      `([...document.querySelectorAll('.composer-send button')].find(b => b.classList.contains('btn--primary'))?.innerText ?? '').trim()`
+    )
+  const hasCustomField = async () =>
+    await evaluate(`!!document.querySelector('.pill-menu input[type="datetime-local"]')`)
+
+  await openPill('When to send')
+  const dateBefore = await hasCustomField()
+  await pickInMenu('When to send', 'custom')
+  const dateAfter = await hasCustomField()
+  const sendWhenArmed = await readSend()
+  await pickInMenu('When to send', 'now')
+  const dateReset = await hasCustomField()
+  const sendWhenNot = await readSend()
+  await closeMenus()
+  check(
+    'choosing a time of your own reveals a field to type it in',
+    dateBefore === false && dateAfter === true && dateReset === false,
+    JSON.stringify({ dateBefore, dateAfter, dateReset })
+  )
+  // ⛔ The menu stays open on `custom` rather than arming a schedule with no time on it, which is
+  // the one option here whose answer is not the click that chose it.
+  check(
+    'and the send button says which of the two it is about to do',
+    sendWhenArmed === 'Schedule' && sendWhenNot === 'Send',
+    JSON.stringify({ sendWhenArmed, sendWhenNot })
+  )
 
   await evaluate(
     `[...document.querySelectorAll('.panel-head button')].find(b => b.innerText.trim() === 'Cancel')?.click()`

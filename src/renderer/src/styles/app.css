@@ -4192,3 +4192,275 @@ select:focus-visible,
   max-height: none;
   overflow-y: visible;
 }
+
+/* ---- the new-task composer, and the pills under it ---------------------- */
+
+/*
+ * ⛔ The row of settings is *under* the prompt, and each one shows an answer rather than a label.
+ * Above it, as five labelled `.form-row`s, the first thing somebody met was five controls they were
+ * about to leave alone. The pills carry the same choices in a strip you read in one pass and click
+ * only when the answer is wrong.
+ */
+.composer {
+  margin-bottom: var(--sp-4);
+}
+
+.composer-ask {
+  margin-top: 0;
+}
+
+.composer-send {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+  padding: var(--sp-1) var(--sp-1) 0;
+}
+
+.composer-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-1) 0;
+}
+
+/* ⚠️ A gap, not a separator. The three groups — what this task is, how it lands, who runs it — are
+   worth spacing apart and not worth drawing a line between; a rule here read as a disabled control
+   at small sizes. It collapses to nothing once the row wraps, which is when the grouping is gone
+   anyway. */
+.composer-gap {
+  flex: 0 1 var(--sp-4);
+  min-width: 0;
+}
+
+.composer-hint {
+  margin: var(--sp-2) 0 0;
+  padding: 0 var(--sp-1);
+  font-size: var(--text-meta);
+  color: var(--color-text-faint);
+  line-height: var(--leading-body);
+  max-width: 80ch;
+}
+
+/* ---- pill ---- */
+
+.pill-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  max-width: 22ch;
+  padding: 2px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-surface-2);
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--text-meta);
+  line-height: var(--leading-tight);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease),
+              border-color var(--motion-fast) var(--ease),
+              color var(--motion-fast) var(--ease);
+}
+
+/*
+ * ⛔ The whole of "(inherited)", in a colour. A pill showing a value nobody chose — the project's
+ * finish policy, the account's own model, the scheduler's pick of worker — is dimmed; one showing a
+ * choice is not. Eight pills each carrying eleven characters of the word *inherited* is the clutter
+ * this replaced, and the tooltip still names the tier for anyone who wants the answer rather than
+ * the glance.
+ */
+.pill--muted {
+  color: var(--color-text-dim);
+  background: transparent;
+}
+
+.pill:hover:not(:disabled) {
+  background: var(--color-surface);
+  border-color: var(--color-border-strong);
+  color: var(--color-text);
+}
+
+.pill--open,
+.pill:focus-visible {
+  outline: none;
+  border-color: var(--color-accent);
+  color: var(--color-text);
+  box-shadow: 0 0 0 1px var(--color-accent-dim);
+}
+
+.pill:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* The clock sits with the send buttons rather than in the settings row, so it takes their height. */
+.pill--clock .pill {
+  padding: var(--sp-1) var(--sp-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-dense);
+}
+
+.pill-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 120;
+  min-width: 200px;
+  max-width: 380px;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* ⚠️ Right-aligned for the pills near the right edge — worker, model, effort and the clock. Opening
+   left from there puts half the menu outside the window. */
+.pill-menu--right {
+  left: auto;
+  right: 0;
+}
+
+.pill-options {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.pill-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  width: 100%;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--text-dense);
+  line-height: var(--leading-tight);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease);
+}
+
+.pill-option:hover,
+.pill-option:focus-visible {
+  outline: none;
+  background: var(--color-surface);
+}
+
+.pill-option--on {
+  color: var(--color-accent);
+  background: rgba(122, 162, 247, 0.12);
+}
+
+.pill-option--on:hover {
+  background: rgba(122, 162, 247, 0.2);
+}
+
+.pill-option-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.pill-option-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pill-option-hint {
+  font-size: var(--text-meta);
+  color: var(--color-text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pill-option-check {
+  color: var(--color-accent);
+  font-size: 11px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.pill-option:not(.pill-option--on) .pill-option-check {
+  color: var(--color-text-faint);
+}
+
+.pill-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 300px;
+}
+
+.pill-filter {
+  font: inherit;
+  font-size: var(--text-dense);
+  padding: var(--sp-1) var(--sp-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+.pill-empty {
+  margin: 0;
+  padding: var(--sp-2);
+  font-size: var(--text-meta);
+  color: var(--color-text-faint);
+}
+
+.pill-menu-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  border-top: 1px solid var(--color-border);
+  padding-top: 4px;
+}
+
+.pill-menu-foot input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: var(--text-dense);
+  padding: var(--sp-1) var(--sp-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+/* ⚠️ Quieter than `.btn`, because Draft sits beside Send and only one of the two is the thing
+   somebody came here to press. */
+.btn--quiet {
+  background: transparent;
+  border-color: var(--color-border);
+  color: var(--color-text-dim);
+}
+
+.btn--quiet:hover:not(:disabled) {
+  background: var(--color-surface-2);
+  color: var(--color-text);
+}

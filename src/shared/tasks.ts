@@ -1120,6 +1120,24 @@ export const FINISH_LABELS: Record<FinishPolicy, string> = {
 }
 
 /**
+ * The same ladder, short enough to sit on a pill beside five other controls.
+ *
+ * ⛔ A second map of the same keys, so it is a second chance to drift — `tasks.test.ts` asserts it
+ * covers `FINISH_ORDER` exactly and adds nothing to it, which is the only reason a short form is
+ * allowed to exist at all. The **long** label is what the menu shows; this is what is left on the
+ * button once the menu closes, and the two must name the same policy.
+ */
+export const FINISH_SHORT: Record<FinishPolicy, string> = {
+  'await-human': 'Await human',
+  'commit-only': 'Commit',
+  'commit-and-verify': 'Commit·Verify',
+  'commit-and-merge': 'Commit·Verify·Merge',
+  'commit-and-push': 'Commit·Verify·Merge·Push',
+  'pull-request': 'Pull request',
+  'custom': 'Project policy'
+}
+
+/**
  * Does this policy ask the daemon to run the project's checks?
  *
  * ⛔ `commit-only` deliberately does not. Each rung does strictly more than the one below, and
@@ -1184,6 +1202,12 @@ export const DEFAULT_FLEET_SHARING: SessionSharing = 'off'
 export const SHARING_LABELS: Record<SessionSharing, string> = {
   on: 'reuse one if possible',
   off: 'always start a new one'
+}
+
+/** The pill form of the above. Same rule as `FINISH_SHORT`: pinned by a test, never hand-synced. */
+export const SHARING_SHORT: Record<SessionSharing, string> = {
+  on: 'Reuse',
+  off: 'Fresh'
 }
 
 /**

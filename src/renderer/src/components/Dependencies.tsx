@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import type { Task } from '@shared/tasks'
 import { rpc } from '../lib/daemon'
 import { isWorking, statusLabel, STATUS_TONE, taskLabel, Working } from '../lib/taskview'
@@ -13,9 +13,9 @@ import { SettingButtonSelect, type SettingOption } from './SettingButtonSelect'
  * edge, chosen by hand, at filing time and afterwards in the thread.
  *
  * ⚠️ The candidate list and the cycle filter live here rather than in either caller, because the two
- * callers differ only in where the answer goes — the new-task form holds ids until the task exists,
- * the thread posts each edge as it is chosen — and a second copy of "which tasks may I depend on"
- * would be a second chance to offer a cycle.
+ * callers differ only in where the answer goes — the new-task composer holds ids until the task
+ * exists and draws its own picker inside a pill menu, the thread posts each edge as it is chosen —
+ * and a second copy of "which tasks may I depend on" would be a second chance to offer a cycle.
  */
 
 /** Statuses that can never reach `completed`, so an edge to one would block its dependent for ever. */
@@ -204,43 +204,5 @@ export function AddDependency({
         if (id) onAdd(id)
       }}
     />
-  )
-}
-
-/**
- * Prerequisites of a task that does not exist yet — the new-task form's half.
- *
- * ⛔ Ids held in the form, not edges written as they are chosen. Nothing is created until the task
- * is filed, so a form abandoned half-filled leaves the DAG exactly as it found it.
- */
-export function DependencyChooser({
-  all,
-  chosen,
-  onChange,
-  projectNames
-}: {
-  all: Task[]
-  chosen: string[]
-  onChange: (next: string[]) => void
-  projectNames?: Map<string, string>
-}): React.JSX.Element {
-  const byId = useMemo(() => new Map(all.map((t) => [t.id, t])), [all])
-  const picked = chosen.map((id) => byId.get(id)).filter((t): t is Task => !!t)
-  const candidates = useMemo(() => candidatesFor(all, null, chosen), [all, chosen])
-  return (
-    <div>
-      {picked.length > 0 && (
-        <DependencyList
-          tasks={picked}
-          onRemove={(id) => onChange(chosen.filter((c) => c !== id))}
-        />
-      )}
-      <AddDependency
-        candidates={candidates}
-        projectNames={projectNames}
-        onAdd={(id) => onChange([...chosen, id])}
-        placeholder={picked.length > 0 ? 'wait on another task…' : 'wait on a task…'}
-      />
-    </div>
   )
 }

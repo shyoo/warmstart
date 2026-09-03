@@ -3561,3 +3561,76 @@ also what catches a semantic conflict git merged cleanly. A clean tree pulls fir
 ⚠️ And one claim in the file was false and is now measured: CI is **seven** jobs across Windows and
 Linux, not *ten across Windows, macOS and Linux*. There is no macOS runner at all (counted against
 run 33578997956), so a green tick has never ruled out a macOS-only regression.
+
+## Five rows of questions in front of one field (2026-09-02, t128)
+
+The New Task form was ordered on a claim that reads well and turned out to be wrong. Settings narrow
+what a task *is*; the prompt says what it is *for*; so the prompt went last, under **Project**,
+**Policy**, **Waits for**, **Schedule**, **Worker** and **Model** — six labelled rows, three of them
+carrying a `<select>` whose first option read `inherit (commit, verify and merge locally)`.
+
+The claim's flaw is the frequency. Almost every task answers all six the same way, so what somebody
+met on the way to the one field they came here to fill in was six controls they were about to leave
+alone — and the two rows that were not decorative (Worker, Model) sat below four that were.
+
+⛔ **And the defaults were computed from the wrong place.** Every `inherit` option resolved
+task → project → fleet *on each open*, which is right for a value the project owns and wrong for a
+person who has just answered the same question. Overriding the finish policy on one task bought you
+nothing on the next one; the fleet's answer to *what do you usually want* was "whatever the project
+says", which is the one answer that is never about the operator.
+
+**What replaced it.** The prompt is first and largest, the way every chat composer has converged on
+and the way this app's own task-thread composer already worked one screen away. Draft, Send and a
+clock live inside the box. The settings are a row of pills underneath, each showing an **answer**
+rather than a label:
+
+```
+[No project] [P1] [Task] [Dep]   [Reuse] [Commit·Verify·Merge]   [Auto] [Model] [Effort]
+```
+
+⛔ **Not `<select>`.** Eight native pickers are sized by their widest option, draw their own chrome
+and open an OS menu wherever the platform decides — which is the clutter being removed, not a
+smaller version of it. `Pill.tsx` owns the button, the dismiss behaviour and the arrow keys, and
+takes its menu as a render prop: two of these controls are not one-of-many (prerequisites are a
+multi-select with a filter over every task in the fleet, and the clock has a `datetime-local` in it).
+
+⭐ **Last-selected, with inheritance as the seed.** `composerprefs.ts` keeps priority, kind, both
+policies and the pinned account in `localStorage`, on the precedent every other per-display
+preference here sets. Inheritance supplies the first value a control ever shows and nothing after
+that. ⛔ What is inherited is drawn **dimmed** rather than labelled: `(inherited)` is eleven
+characters, it was on three controls at once, and the distinction is worth showing on every pill
+while the word is worth the width on none of them. The tooltip still names the tier.
+
+⛔ **Model and effort are remembered per account, not once.** A model id belongs to exactly one CLI,
+which is why the old form cleared the field on every worker change — correct, and it threw away a
+choice somebody had made every time they looked at another account. `byWorker` keyed on the worker id
+keeps both properties. ⚠️ A remembered id is re-checked against `model.options` before it is used and
+falls back to inherit if the cost model no longer offers it; it is left in storage rather than
+cleared, because a picker that has not loaded yet is not evidence that a choice was wrong.
+
+⚠️ **Two things are deliberately not remembered.** A prerequisite is a fact about one piece of work,
+and a schedule is a moment that has usually passed by the next time the form opens — a composer that
+quietly re-armed *in 4 hours* would file a task that goes nowhere and say nothing about it.
+
+⚠️ **The kind pill lists `Task` and `Plan` only.** Multi-task and Conversation are coming and are not
+stubbed: an option that files nothing is worse than a missing one, because somebody picks it. `Plan`
+is the existing `task.plan` decomposition path under its own name, and choosing it hides the pills a
+plan does not carry rather than showing them and ignoring them, which is what the old Policy row did.
+
+⚠️ **`FINISH_SHORT` and `SHARING_SHORT` are second copies of a closed set**, which is exactly the
+shape that let `agent-lands` survive a rename in three dropdowns at once. They are allowed to exist
+only because `src/shared/tasks.test.ts` asserts they cover `FINISH_ORDER` exactly, in both directions.
+
+⛔ **Two React rules bit on the way through**, both real. `Date.now()` in a function defined during
+render is flagged by `react-hooks/purity` — a re-render would quietly re-answer *when was this
+filed* — so the clock is read through a `useCallback` and the schedule arithmetic is a pure
+module-level function taking `now`. And returning focus to the pill inside the closing call reads a
+ref during render; it happens in an effect once the menu has gone, which is also the only way the
+next Tab starts from the pill you were on rather than from the top of the page.
+
+⚠️ **And the first version of the UI test was green for the wrong reason.** `element.click()` fires
+no pointer event, so the menus it opened were never dismissed, and a document-wide query for
+`[role="option"]` then answered the Worker pill's question with the schedule presets still on screen
+— picking `now` as a worker id. Every read is scoped to its own pill's wrapper and every dismissal
+is a real `pointerdown`. 15 checks in `ui.test.mjs`, 17 unit checks across `composerprefs.test.ts`
+and `tasks.test.ts`.

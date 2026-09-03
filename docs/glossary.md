@@ -118,8 +118,8 @@ authoritative.
 
 **Prerequisite** — *an edge in the DAG somebody drew by hand.* `task_deps`, the cycle check and
 `admit()` have been in the daemon since M2, and the only way to put an edge in was to be an agent
-calling `task_create` with `depends_on`. ⭐ Since 2026-09-01 a person can too: the New Task form takes
-prerequisites at filing — the task is born `blocked`, because `createTask` writes the edges *before*
+calling `task_create` with `depends_on`. ⭐ Since 2026-09-01 a person can too: the **Dep** pill under the New
+Task prompt takes prerequisites at filing — the task is born `blocked`, because `createTask` writes the edges *before*
 it admits — and the task ledger adds or drops one afterwards through `task.addDependency` /
 `task.removeDependency`, which re-run admission on the same call rather than leaving a `ready` row
 the scheduler may dispatch a tick later, and hand back the redrawn list beside the task. ⛔ Refused
