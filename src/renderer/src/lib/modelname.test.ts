@@ -19,6 +19,7 @@ describe('modelLabel', () => {
     // A version split across segments is one number, not two words.
     expect(modelLabel('claude-haiku-4-5')).toBe('Haiku 4.5')
     // google.antigravity.2026-08
+    expect(modelLabel('gemini-3.8-flash-high')).toBe('Gemini 3.8 Flash High')
     expect(modelLabel('gemini-3.1-pro-high')).toBe('Gemini 3.1 Pro High')
     expect(modelLabel('gemini-3.7-flash-medium')).toBe('Gemini 3.7 Flash Med')
     expect(modelLabel('gemini-3.5-flash-low')).toBe('Gemini 3.5 Flash Low')

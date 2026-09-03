@@ -55,6 +55,42 @@
   },
   "models": [
     {
+      "id": "gemini-3.8-flash-high",
+      "context_window": 1000000,
+      "input_per_mtok": null,
+      "output_per_mtok": null,
+      "tokenizer": "gemini-v3",
+      "context_awareness": false,
+      "effort_levels": [
+        "high"
+      ],
+      "pool": "gemini"
+    },
+    {
+      "id": "gemini-3.8-flash-medium",
+      "context_window": 1000000,
+      "input_per_mtok": null,
+      "output_per_mtok": null,
+      "tokenizer": "gemini-v3",
+      "context_awareness": false,
+      "effort_levels": [
+        "medium"
+      ],
+      "pool": "gemini"
+    },
+    {
+      "id": "gemini-3.8-flash-low",
+      "context_window": 1000000,
+      "input_per_mtok": null,
+      "output_per_mtok": null,
+      "tokenizer": "gemini-v3",
+      "context_awareness": false,
+      "effort_levels": [
+        "low"
+      ],
+      "pool": "gemini"
+    },
+    {
       "id": "gemini-3.1-pro-high",
       "context_window": 1000000,
       "input_per_mtok": null,
