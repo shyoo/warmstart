@@ -219,16 +219,17 @@ const info: AdapterInfo = {
   },
   // ⭐ Measured 2026-08-27: `/usage` in the TUI costs nothing and renders both groups' windows.
   // `answer: 'screen'` because the panel is written to no file - see parseUsageScreen.
-  // ⚠️ Startup duration varies while this CLI signs in, refreshes experiments and reloads its slash
-  // commands. The driver retries the free slash command during settleMs because an early keystroke
-  // is swallowed; readyMs merely avoids hammering the process during its normal startup interval.
-  // 60 rows, not the default 30. Measured 2026-08-27: at 30 the panel scrolled and the last
+  // ⚠️ Startup duration measured 2026-09-03 at 1.5s–2.5s. The previous 20s readyMs caused every
+  // probe to unconditionally wait 20.5s (and 50s on missed panels) before completing. readyMs is now
+  // 5s, ensuring the CLI is fully ready for input before driving `/usage`, while settleMs is 15s to
+  // bound retry attempts if an initial keystroke is swallowed.
+  // 100 rows, not the default 30. Measured 2026-08-27: at 30 the panel scrolled and the last
   // group's five-hour window was below the fold, so the probe read three windows of four.
   // The panel's own footer said "(1-27 of 30 lines)".
   usageRefresh: {
     command: '/usage',
-    readyMs: 20_000,
-    settleMs: 30_000,
+    readyMs: 5_000,
+    settleMs: 15_000,
     answer: 'screen',
     cols: 120,
     rows: 100

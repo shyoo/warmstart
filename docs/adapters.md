@@ -292,11 +292,11 @@ Live reading, 2026-08-27, agy 1.1.22, Google AI Pro: Gemini weekly 5.48% used ·
 - The panel is **taller than a default terminal and scrolls**. At 30 rows one group's five-hour
   window fell below the fold and three of four windows came back looking complete. The probe
   session now runs at 110x60 and the parser refuses any group showing one of its two windows.
-- ⚠️ **Inferred from the measured swallowed-input behaviour and the one-shot driver:** sign-in,
-  experiment refresh and slash-command reload can outlast the old fixed 20-second delay, after which
-  there was no recovery. The probe now retries the free `/usage` command every five seconds until a
-  complete panel parses or its bounded 30-second settle window expires; the retry is unit-proven but
-  has not been re-run against a live CLI.
+- ⚠️ **Measured 2026-09-03 (startup 1.5s–2.5s, probe 5.2s–5.5s):** The old fixed 20-second `readyMs`
+  wait caused every probe to unconditionally wait 20.5s before reading (and 50s on missed panels).
+  `readyMs` is now 5s and `settleMs` is 15s; the driver sends `/usage` immediately after startup and
+  retries every 5 seconds until a complete panel parses or the 15s settle deadline expires, reducing
+  normal probe duration to ~5.2s–5.5s while bounding any retry stall at 20s total.
 - **An exhausted weekly pool has no five-hour bar.** Live-debugged 2026-09-03 on agy 1.1.25:
   Claude/GPT weekly showed 0.00% remaining, then its five-hour row said `Disabled` because the weekly
   limit had been hit. The old completeness guard discarded all four otherwise valid windows, so
