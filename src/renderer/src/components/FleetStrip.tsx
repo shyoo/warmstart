@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { Session } from '@shared/protocol'
-import { quotaFreshness } from '@shared/tasks'
+import { isWorkerSubscriptionExpired, quotaFreshness } from '@shared/tasks'
 import type { FleetEntry } from '../lib/daemon'
 import {
   readFleetCollapsed,
@@ -293,6 +293,8 @@ function WorkerCard({
     void onProbe(worker.id).finally(() => setProbing(false))
   }
 
+  const isSubscriptionExpired = isWorkerSubscriptionExpired(worker)
+
   return (
     <div className={`wcard${worker.enabled ? '' : ' wcard--off'}${narrow ? ' wcard--narrow' : ''}`}>
       <div className="wcard-head">
@@ -306,7 +308,7 @@ function WorkerCard({
             ⚠️ The adapter decided which - never a substring match out here. */}
         {suspect && (
           <span className="tag tag--suspect" title={suspect.reason}>
-            {suspect.needsReauth ? 'sign in' : 'no work'}
+            {isSubscriptionExpired ? 'expired' : suspect.needsReauth ? 'sign in' : 'no work'}
           </span>
         )}
         {/* ⛔ The corner, and the only place on this card where a *transient* fact is allowed to
@@ -361,9 +363,15 @@ function WorkerCard({
 
       {windows.length === 0 ? (
         !suspect && (
-          <div className="wcard-unknown">
-            <span className="dot dot--down" />
-            quota unknown
+          <div
+            className={`wcard-unknown${isSubscriptionExpired || /subscription.*expired|disabled claude subscription access/i.test(quota?.error ?? '') ? ' wcard-unknown--expired' : ''}`}
+          >
+            <span
+              className={`dot ${isSubscriptionExpired || /subscription.*expired|disabled claude subscription access/i.test(quota?.error ?? '') ? 'dot--bad' : 'dot--down'}`}
+            />
+            {isSubscriptionExpired || /subscription.*expired|disabled claude subscription access/i.test(quota?.error ?? '')
+              ? 'Subscription expired'
+              : 'quota unknown'}
           </div>
         )
       ) : (

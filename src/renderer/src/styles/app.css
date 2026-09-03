@@ -508,6 +508,10 @@ body {
   color: var(--state-warn);
 }
 
+.wcard-unknown--expired {
+  color: var(--state-danger);
+}
+
 .wcard-agenote {
   color: var(--color-text-faint);
 }

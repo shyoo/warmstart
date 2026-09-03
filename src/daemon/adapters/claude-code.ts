@@ -137,6 +137,13 @@ function firstRunComplete(isolationRoot: string): boolean | null {
     const parsed = JSON.parse(readFileSafe(file)) as {
       hasCompletedOnboarding?: unknown
       projects?: Record<string, { hasTrustDialogAccepted?: unknown }>
+      oauthAccount?: { billingType?: string | null }
+    }
+    // An account whose subscription has lapsed/expired cannot complete onboarding;
+    // reporting it as setupComplete: false triggers "setup unfinished" and "Finish setup" buttons
+    // that immediately fail.
+    if (parsed.oauthAccount && parsed.oauthAccount.billingType === 'none') {
+      return null
     }
     if (parsed.hasCompletedOnboarding !== true) return false
 
@@ -282,6 +289,21 @@ export const claudeCode: AgentAdapter = {
   },
 
   /**
+   * ⚠️ Measured: When Claude Code's Pro/Team subscription expires or access is revoked, it outputs:
+   * "Your organization has disabled Claude subscription access for Claude Code · Use an Anthropic API key instead, or ask your admin to enable access"
+   * or "subscription has expired".
+   */
+  subscriptionExpired: (reason: string): boolean => {
+    const said = reason.toLowerCase()
+    return (
+      said.includes('disabled claude subscription access') ||
+      said.includes('subscription has expired') ||
+      said.includes('subscription expired') ||
+      said.includes('subscription access for claude code')
+    )
+  },
+
+  /**
    * ⚠️ Measured, not imagined: the first sentence is verbatim what this CLI answered on 2026-08-27
    * on an account whose subscription had lapsed, and it is the case that started all of this.
    * The others are the same class of failure with different wording, and every one of them means
@@ -418,6 +440,20 @@ export const claudeCode: AgentAdapter = {
         return { loggedIn: null, raw: err instanceof Error ? err.message : String(err) }
       }
     }
+    const file = join(isolationRoot, '.claude.json')
+    let isExpired = false
+    if (existsSync(file)) {
+      try {
+        const cj = JSON.parse(readFileSafe(file)) as {
+          oauthAccount?: { billingType?: string | null }
+        }
+        if (cj.oauthAccount && cj.oauthAccount.billingType === 'none') {
+          isExpired = true
+        }
+      } catch {
+        // .claude.json unreadable or malformed
+      }
+    }
     try {
       const parsed = JSON.parse(stdout) as {
         loggedIn?: boolean
@@ -429,19 +465,16 @@ export const claudeCode: AgentAdapter = {
         loggedIn: parsed.loggedIn ?? null,
         ...(parsed.email ? { account: parsed.email } : {}),
         ...(parsed.orgName ? { organization: parsed.orgName } : {}),
-        setupComplete: firstRunComplete(isolationRoot),
-        // ⚠️ Read since 2.1.223 and, until now, parsed and thrown away - the field was in the type
-        // annotation above and in nothing else. It is the only thing the CLI says for free about
-        // *which plan* a worker is spending, and an account whose plan has lapsed had nowhere at all
-        // to say so. ⛔ Recorded verbatim and gated on nowhere: what an expired plan puts here has
-        // not been measured here, and a gate on a guessed string refuses healthy accounts.
-        subscriptionType: parsed.subscriptionType ?? null,
+        setupComplete: isExpired ? null : firstRunComplete(isolationRoot),
+        subscriptionType: isExpired ? 'expired' : (parsed.subscriptionType ?? null),
+        subscriptionExpired: isExpired,
         raw: stdout.trim()
       }
     } catch {
       return {
         loggedIn: null,
-        setupComplete: firstRunComplete(isolationRoot),
+        setupComplete: isExpired ? null : firstRunComplete(isolationRoot),
+        subscriptionExpired: isExpired,
         raw: stdout.slice(0, 400)
       }
     }
@@ -477,6 +510,17 @@ export const claudeCode: AgentAdapter = {
               is_active?: boolean
             }>
           }
+        }
+        oauthAccount?: {
+          billingType?: string | null
+        }
+      }
+      if (parsed.oauthAccount && parsed.oauthAccount.billingType === 'none') {
+        return {
+          windows: [],
+          sampledAt: Date.now(),
+          source: 'config-cache',
+          error: 'Subscription expired'
         }
       }
       const cached = parsed.cachedUsageUtilization

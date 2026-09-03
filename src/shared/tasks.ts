@@ -15,7 +15,7 @@
  * plan §7.3 and §7.4.
  */
 
-import type { QuotaSnapshot, QuotaWindow } from './protocol.js'
+import type { QuotaSnapshot, QuotaWindow, Worker } from './protocol.js'
 
 // ---------------------------------------------------------------------------- project
 
@@ -1547,6 +1547,28 @@ export function quotaFreshness(
     ageMs,
     stale: (quota.stale ?? false) || quota.windows.length === 0 || ageMs > QUOTA_STALE_AFTER_MS
   }
+}
+
+/**
+ * Does this account have an expired or disabled subscription?
+ *
+ * ⛔ Distinct from a general re-auth requirement or setup failure: re-authenticating or running
+ * first-run setup cannot fix a subscription that has expired.
+ */
+export function isWorkerSubscriptionExpired(worker: Worker): boolean {
+  if (worker.identity?.subscriptionExpired === true) return true
+  if (worker.health?.subscriptionExpired === true) return true
+  if (worker.identity?.subscriptionType === 'expired') return true
+  const reason = (worker.health?.reason ?? '').toLowerCase()
+  if (
+    reason.includes('disabled claude subscription access') ||
+    reason.includes('subscription has expired') ||
+    reason.includes('subscription expired') ||
+    reason.includes('subscription access for claude code')
+  ) {
+    return true
+  }
+  return false
 }
 
 /**

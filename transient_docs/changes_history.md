@@ -4,6 +4,26 @@ What earlier milestones **measured**, and what each measurement cost the design.
 `HANDOFF.md`, which is current state rather than a changelog. ⛔ Durable facts live in
 `docs/cost-model.md`; this file keeps the reasoning and the dates.
 
+## Detecting expired subscriptions and distinguishing them from setup and auth failures (2026-09-02)
+
+When an agent's paid subscription lapses (such as Claude Code subscription access being revoked or expired),
+the account previously showed up in Workers as "Setup Unfinished" (with an unhelpful "Finish Setup" button)
+and "Held out of Dispatch", and its quota badge displayed "quota unknown".
+
+Investigating `.claude.json` and the process failures revealed:
+1. When a subscription lapses, `oauthAccount.billingType` is set to `'none'` (versus `'stripe_subscription'`).
+   Because onboarding cannot complete without active access, `hasCompletedOnboarding` is missing and previously caused `firstRunComplete` to return `false`.
+2. When a turn is attempted, Claude Code exits immediately with `"Your organization has disabled Claude subscription access for Claude Code..."`.
+3. An expired subscription is not an authentication failure (re-authenticating will not fix it) and not a first-run setup failure (onboarding screens cannot be completed).
+
+Fixes:
+- Added `subscriptionExpired` capability method to `AgentAdapter` and fields to `WorkerHealth` and `WorkerIdentity`.
+- `claude-code` adapter detects `billingType === 'none'` in `.claude.json` during `probeIdentity`, `probeQuota`, and `firstRunComplete` (returning `null` instead of `false` so "setup unfinished" is suppressed).
+- `recordDispatchFailure` stamps `subscriptionExpired: true` on suspect health when an adapter identifies an expired subscription failure.
+- `eligibility.ts` directly gates accounts with expired subscriptions from dispatch.
+- `quotaGap` and `FleetStrip` render "Subscription expired" with a warning/danger indicator instead of "quota unknown" or "no usage data yet".
+- `Workers.tsx` displays "Subscription Expired" under Account and Quota with clear guidance to renew and Recheck.
+
 ## Two numbers about one account, and nothing to reconcile them (2026-08-31, t70)
 
 t70 was wrapped up at the top of its five-hour window while the fleet card over that account read

@@ -40,8 +40,28 @@ function toWorker(r: WorkerRow): Worker {
     defaultModel: r.default_model,
     defaultEffort: r.default_effort,
     defaultModels: r.default_models_json ? (JSON.parse(r.default_models_json) as Record<string, string | null>) : null,
-    identity: r.identity_json ? (JSON.parse(r.identity_json) as WorkerIdentity) : null,
-    health: r.health_json ? (JSON.parse(r.health_json) as WorkerHealth) : null,
+    identity: (() => {
+      const ident = r.identity_json ? (JSON.parse(r.identity_json) as WorkerIdentity) : null
+      const hlth = r.health_json ? (JSON.parse(r.health_json) as WorkerHealth) : null
+      const isExpired =
+        ident?.subscriptionExpired === true ||
+        hlth?.subscriptionExpired === true ||
+        (hlth?.reason ? adapter(r.adapter_id).subscriptionExpired?.(hlth.reason) === true : false)
+      if (ident && isExpired) {
+        ident.subscriptionExpired = true
+        if (ident.setupComplete === false) ident.setupComplete = null
+      }
+      return ident
+    })(),
+    health: (() => {
+      const hlth = r.health_json ? (JSON.parse(r.health_json) as WorkerHealth) : null
+      if (hlth && hlth.subscriptionExpired === undefined) {
+        if (adapter(r.adapter_id).subscriptionExpired?.(hlth.reason)) {
+          hlth.subscriptionExpired = true
+        }
+      }
+      return hlth
+    })(),
     sortOrder: r.sort_order,
     createdAt: r.created_at,
     retiredAt: r.retired_at
@@ -302,7 +322,11 @@ function announce(worker: Worker): Worker {
  * ⛔ The gate is `accountUnavailability` in eligibility.ts. There is one, and both schedulers use it.
  */
 function isSignedInAndSetUp(worker: Worker): boolean {
-  return worker.identity?.loggedIn === true && worker.identity?.setupComplete !== false
+  return (
+    worker.identity?.loggedIn === true &&
+    worker.identity?.setupComplete !== false &&
+    worker.identity?.subscriptionExpired !== true
+  )
 }
 
 /**
@@ -415,6 +439,8 @@ export function recordDispatchFailure(id: string, reason: string, runId: string 
   const w = getWorker(id)
   if (!w) return requireWorker(id)
   const strikes = (w.health?.strikes ?? 0) + 1
+  const ad = adapter(w.adapterId)
+  const isExpired = ad.subscriptionExpired?.(reason) ?? false
   const health: WorkerHealth = {
     state: strikes >= STRIKES_TO_QUARANTINE ? 'suspect' : 'ok',
     reason,
@@ -424,7 +450,8 @@ export function recordDispatchFailure(id: string, reason: string, runId: string 
     // ⛔ Asked of the adapter, whose CLI wrote the sentence. An adapter that does not classify
     // its failures says `false`, which is the safe answer: the worker is still held out, the
     // operator is still shown the reason, and nobody is sent to re-authenticate on a guess.
-    needsReauth: adapter(w.adapterId).needsReauth?.(reason) ?? false
+    needsReauth: ad.needsReauth?.(reason) ?? false,
+    subscriptionExpired: isExpired
   }
   db().prepare('update workers set health_json = ? where id = ?').run(JSON.stringify(health), id)
   if (health.state === 'suspect') {
@@ -473,14 +500,19 @@ export async function refreshIdentity(id: string, lift = false): Promise<Worker>
     setupComplete: probe.setupComplete ?? null,
     // Recorded, never gated on. See WorkerIdentity.subscriptionType.
     subscriptionType: probe.subscriptionType ?? null,
+    subscriptionExpired: probe.subscriptionExpired ?? null,
     raw: probe.raw,
     checkedAt: Date.now()
   }
   db().prepare('update workers set identity_json = ? where id = ?').run(JSON.stringify(identity), id)
 
   if (lift && getWorker(id)?.health) {
-    db().prepare('update workers set health_json = null where id = ?').run(id)
-    log.info(`${w.label} was re-probed by hand; it is offered work again`)
+    if (probe.subscriptionExpired) {
+      log.info(`${w.label} was re-probed by hand; subscription is still expired`)
+    } else {
+      db().prepare('update workers set health_json = null where id = ?').run(id)
+      log.info(`${w.label} was re-probed by hand; it is offered work again`)
+    }
   }
   return announce(requireWorker(id))
 }

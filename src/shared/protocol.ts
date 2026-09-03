@@ -311,6 +311,13 @@ export interface WorkerHealth {
    * CLI's words — see `needsReauth` in adapters/types.ts.
    */
   needsReauth?: boolean
+  /**
+   * Is the account unusable specifically because its vendor subscription has expired?
+   *
+   * ⛔ Distinct from `needsReauth`: re-authenticating does not resolve an expired subscription,
+   * and presenting it as `re-sign-in required` sends an operator on a loop.
+   */
+  subscriptionExpired?: boolean
 }
 
 export type WorkerRole = 'worker' | 'controller' | 'both'
@@ -359,6 +366,8 @@ export interface WorkerIdentity {
    * `health`, which rests on a run that actually failed.
    */
   subscriptionType?: string | null
+  /** Has the CLI's config or probe identified that the subscription is expired / inactive? */
+  subscriptionExpired?: boolean | null
   /** Whatever the probe could read back, verbatim, for the Doctor panel. */
   raw?: string
   /**

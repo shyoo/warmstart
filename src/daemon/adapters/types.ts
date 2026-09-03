@@ -186,6 +186,16 @@ export interface AgentAdapter {
   needsReauth?: (reason: string) => boolean
 
   /**
+   * Does this failure mean *the account's subscription has expired or is inactive*?
+   *
+   * ⛔ The adapter answers, because the error sentence is its CLI's. An expired subscription is not
+   * a re-auth requirement (signing in again will fail identically) and not an unfinished first-run
+   * setup. What this changes is presenting the worker clearly as "Subscription Expired" and
+   * withholding misleading "Finish setup" buttons.
+   */
+  subscriptionExpired?: (reason: string) => boolean
+
+  /**
    * Does this failure mean *the account is out of quota for now*, rather than broken?
    *
    * ⛔ **The distinction t108 turned on** (2026-09-02). A run whose CLI answered

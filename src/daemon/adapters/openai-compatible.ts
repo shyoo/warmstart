@@ -819,6 +819,11 @@ export const openaiCompatible: AgentAdapter = {
    */
   encodeStreamPrompt: (text: string) => text,
 
+  subscriptionExpired: (reason: string): boolean => {
+    const said = reason.toLowerCase()
+    return said.includes('subscription expired') || said.includes('subscription has expired')
+  },
+
   isInstalled(): boolean {
     return which(info.command) !== null
   },

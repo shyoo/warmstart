@@ -38,6 +38,10 @@ export function accountUnavailability(worker: Worker): string | null {
   // unknown would make it unusable for both work and judgment.
   if (worker.identity?.loggedIn === false) return `${worker.label} is not signed in`
 
+  if (worker.identity?.subscriptionExpired === true) {
+    return `${worker.label} subscription expired`
+  }
+
   // ⛔ The last turn given to this account died without producing anything. A *measured* verdict,
   // not a guess from identity: an expired subscription answers `auth status` exactly as a live one
   // does, so nothing free can tell them apart and only a turn can. Held out until somebody re-probes

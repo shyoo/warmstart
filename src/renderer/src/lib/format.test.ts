@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import type { Worker } from '@shared/protocol'
 import { QUOTA_STALE_AFTER_MS, quotaFreshness } from '@shared/tasks'
 import { cacheRemaining, countdown, quotaGap, quotaWindowDeltas, timeRange, when } from './format'
 
@@ -158,6 +159,43 @@ describe('a provider that has no usage probe at all', () => {
   it('is unchanged when the caller does not know the adapter', () => {
     // The parameter is optional; every existing caller keeps its behaviour.
     expect(quotaGap({ windows: [], error: 'EACCES' })?.label).toBe('unknown')
+  })
+})
+
+describe('an account whose subscription has expired', () => {
+  it('says Subscription expired when quota error indicates expired subscription', () => {
+    const gap = quotaGap({ windows: [], error: 'Subscription expired' })
+    expect(gap?.label).toBe('Subscription expired')
+    expect(gap?.hint).toMatch(/subscription.*expired/i)
+  })
+
+  it('says Subscription expired when worker indicates expired subscription', () => {
+    const worker: Worker = {
+      id: 'w1',
+      label: 'ClaudeFirst',
+      adapterId: 'claude-code',
+      isolationRoot: '',
+      enabled: true,
+      humanOccupied: false,
+      role: 'both',
+      maxConcurrent: 1,
+      defaultModel: null,
+      defaultEffort: null,
+      defaultModels: null,
+      identity: null,
+      health: {
+        state: 'suspect',
+        reason: 'Your organization has disabled Claude subscription access for Claude Code',
+        strikes: 1,
+        since: Date.now(),
+        runId: null
+      },
+      sortOrder: 0,
+      createdAt: Date.now(),
+      retiredAt: null
+    }
+    const gap = quotaGap({ windows: [], error: 'no cachedUsageUtilization' }, 'cli', worker)
+    expect(gap?.label).toBe('Subscription expired')
   })
 })
 

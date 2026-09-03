@@ -2,7 +2,7 @@ import { sessionEnded } from '@shared/protocol'
 import { Fragment, useEffect, useRef, useState } from 'react'
 import type { AdapterDetection, AdapterInfo, ModelOptions, Session, Worker } from '@shared/protocol'
 import { rpc, useDaemonEvents, useNow, type FleetEntry } from '../lib/daemon'
-import { QUOTA_STALE_AFTER_MS, quotaFreshness } from '@shared/tasks'
+import { isWorkerSubscriptionExpired, QUOTA_STALE_AFTER_MS, quotaFreshness } from '@shared/tasks'
 import { age, percent, quotaGap } from '../lib/format'
 import { SettingButtonSelect, type SettingOption } from './SettingButtonSelect'
 import { TerminalPane } from './Terminal'
@@ -223,7 +223,8 @@ export function Workers({
   const probe = (workerId: string, label: string) =>
     guard(`probe:${workerId}`, async () => {
       const quota = await rpc('worker.probe', { id: workerId })
-      const gap = quotaGap(quota, probeKind(workerId))
+      const worker = fleet.find((f) => f.worker.id === workerId)?.worker
+      const gap = quotaGap(quota, probeKind(workerId), worker)
       setNotice(
         gap
           ? `${label}: ${gap.label}. ${gap.hint}`
@@ -388,7 +389,8 @@ export function Workers({
               // drawn as a confident "not signed in".
               const loggedIn = worker.identity?.loggedIn === true
               const signInUnknown = worker.identity?.loggedIn == null
-              const needsFirstRun = worker.identity?.setupComplete === false
+              const isSubscriptionExpired = isWorkerSubscriptionExpired(worker)
+              const needsFirstRun = !isSubscriptionExpired && worker.identity?.setupComplete === false
               const suspect = worker.health?.state === 'suspect' ? worker.health : null
               // ⛔ The age is recomputed here rather than trusted off the payload. `ageMs` and
               // `stale` are stamped on when the daemon sends a reading, so a row patched by an
@@ -399,7 +401,7 @@ export function Workers({
               // account table follows the same display rule as the fleet card: a few-minute-old
               // last good reading does not need an age label or an amber warning.
               const readingIsOld = Boolean(reading && reading.ageMs > QUOTA_STALE_AFTER_MS)
-              const gap = quotaGap(reading, probeKind(worker.id))
+              const gap = quotaGap(reading, probeKind(worker.id), worker)
               /**
                * ⛔ Out of the Account cell and onto a row of their own.
                *
@@ -444,16 +446,36 @@ export function Workers({
                 })
               }
               if (suspect) {
+                if (isSubscriptionExpired) {
+                  notes.push({
+                    key: 'suspect',
+                    tone: 'danger',
+                    label: 'Subscription Expired',
+                    text:
+                      `${suspect.reason} — not probed in the background while it is held out. ` +
+                      'Renew the subscription to restore access; Recheck reads the account again once renewed.'
+                  })
+                } else {
+                  notes.push({
+                    key: 'suspect',
+                    tone: 'danger',
+                    // ⛔ The instruction first, the evidence after. `held out of dispatch` describes
+                    // what this app did; `re-sign-in required` is the only part that tells the
+                    // operator what to do about it.
+                    label: suspect.needsReauth ? 're-sign-in required' : 'held out of dispatch',
+                    text:
+                      `${suspect.reason} — not probed in the background while it is held out. ` +
+                      'Recheck reads the account again and offers it work.'
+                  })
+                }
+              } else if (isSubscriptionExpired) {
                 notes.push({
-                  key: 'suspect',
+                  key: 'subscription',
                   tone: 'danger',
-                  // ⛔ The instruction first, the evidence after. `held out of dispatch` describes
-                  // what this app did; `re-sign-in required` is the only part that tells the
-                  // operator what to do about it.
-                  label: suspect.needsReauth ? 're-sign-in required' : 'held out of dispatch',
+                  label: 'Subscription Expired',
                   text:
-                    `${suspect.reason} — not probed in the background while it is held out. ` +
-                    'Recheck reads the account again and offers it work.'
+                    'The subscription for this account has expired. ' +
+                    'Renew the subscription to restore access.'
                 })
               }
               return (
@@ -589,7 +611,7 @@ export function Workers({
                           )}
                         </>
                       ) : gap ? (
-                        <span className="warn" title={gap.hint}>
+                        <span className={gap.label.toLowerCase().includes('expired') ? 'danger' : 'warn'} title={gap.hint}>
                           {gap.label}
                         </span>
                       ) : null}

@@ -414,6 +414,7 @@ describe('an account that needs signing in again', () => {
     const worker = seedWorker('expired-verdict', Date.now())
     workers.recordDispatchFailure(worker.id, 'Your subscription has expired', 'r3')
     expect(workers.requireWorker(worker.id).health?.needsReauth).toBe(true)
+    expect(workers.requireWorker(worker.id).health?.subscriptionExpired).toBe(true)
   })
 })
 

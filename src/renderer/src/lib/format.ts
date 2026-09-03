@@ -1,5 +1,5 @@
-import type { Session } from '@shared/protocol'
-import type { RunQuota } from '@shared/tasks'
+import type { Session, Worker } from '@shared/protocol'
+import { isWorkerSubscriptionExpired, type RunQuota } from '@shared/tasks'
 /**
  * Formatting for numbers that update in place.
  *
@@ -165,7 +165,8 @@ export function quotaGap(
    * spend is accrued from metered turns instead. A permanent property of the provider has to read
    * as one, not as a number that has gone missing.
    */
-  quotaProbe?: 'cli' | 'api' | 'none'
+  quotaProbe?: 'cli' | 'api' | 'none',
+  worker?: Worker | null
 ): { label: string; hint: string } | null {
   if (quotaProbe === 'none') {
     return {
@@ -174,6 +175,17 @@ export function quotaGap(
         'This provider does not expose usage to anything outside an interactive session, so there ' +
         'is no reading to take and nothing to retry. Spend is accrued from the turns this app ' +
         'metered itself, which is a floor rather than a percentage of the window.'
+    }
+  }
+  const isExpired =
+    Boolean(worker && isWorkerSubscriptionExpired(worker)) ||
+    /subscription.*expired|disabled claude subscription access/i.test(quota?.error ?? '')
+  if (isExpired) {
+    return {
+      label: 'Subscription expired',
+      hint:
+        'The subscription for this account has expired or access is disabled. ' +
+        'Renew the subscription to restore access and quota.'
     }
   }
   if (!quota) {
