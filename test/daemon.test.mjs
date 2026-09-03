@@ -1204,6 +1204,55 @@ async function runApprovalChecks(d) {
       JSON.stringify(nativeReply)
     )
 
+    // Multi-question AskUserQuestion payload: asks each question sequentially and aggregates answers
+    const multiNative = mcp('tools/call', {
+      name: 'approve',
+      arguments: {
+        tool_name: 'AskUserQuestion',
+        tool_use_id: 'toolu_01MultiQuestionTest',
+        input: {
+          questions: [
+            {
+              question: 'First multi question?',
+              header: 'Q1',
+              multiSelect: false,
+              options: [
+                { label: 'Q1 Opt 1', description: 'desc 1' },
+                { label: 'Q1 Opt 2', description: 'desc 2' }
+              ]
+            },
+            {
+              question: 'Second multi question?',
+              header: 'Q2',
+              multiSelect: false,
+              options: [
+                { label: 'Q2 Opt 1', description: 'desc 1' },
+                { label: 'Q2 Opt 2', description: 'desc 2' }
+              ]
+            }
+          ]
+        }
+      }
+    })
+    await wait(1500)
+    const q1 = (await d.rpc('question.list')).find((q) => q.question === 'First multi question?')
+    check('first question of multi-question AskUserQuestion opens', Boolean(q1))
+    if (q1) await d.rpc('question.answer', { id: q1.id, optionIds: [q1.options[0].id] })
+
+    await wait(1500)
+    const q2 = (await d.rpc('question.list')).find((q) => q.question === 'Second multi question?')
+    check('second question of multi-question AskUserQuestion opens after first is answered', Boolean(q2))
+    if (q2) await d.rpc('question.answer', { id: q2.id, optionIds: [q2.options[1].id] })
+
+    const multiReply = body(await multiNative)
+    check(
+      'multi-question AskUserQuestion aggregates all answers into one tool result',
+      multiReply.behavior === 'deny' &&
+        String(multiReply.message).includes('Q1 Opt 1') &&
+        String(multiReply.message).includes('Q2 Opt 2'),
+      JSON.stringify(multiReply)
+    )
+
     // ⚠️ A payload that is not a question still has to work as a permission prompt.
     await d.rpc('approval.addRule', { text: 'AskUserQuestion(*)', effect: 'allow' })
     const notAQuestion = body(

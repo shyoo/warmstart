@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
 import { readFileSync } from 'node:fs'
+import http from 'node:http'
 import type { DaemonEndpoint, RpcMethod, RpcParams, RpcResponse, RpcResult } from '@shared/protocol.js'
 import { paths } from '../daemon/paths.js'
 
@@ -63,16 +64,49 @@ function endpoint(): DaemonEndpoint {
   }
 }
 
-async function rpc<M extends RpcMethod>(method: M, params?: RpcParams<M>): Promise<RpcResult<M>> {
+function rpc<M extends RpcMethod>(method: M, params?: RpcParams<M>): Promise<RpcResult<M>> {
   const ep = endpoint()
-  const res = await fetch(`http://127.0.0.1:${ep.port}/rpc`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: `Bearer ${ep.token}` },
-    body: JSON.stringify({ id: Date.now(), method, params })
+  return new Promise((resolve, reject) => {
+    const data = JSON.stringify({ id: Date.now(), method, params })
+    const req = http.request(
+      {
+        hostname: '127.0.0.1',
+        port: ep.port,
+        path: '/rpc',
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'content-length': Buffer.byteLength(data),
+          authorization: `Bearer ${ep.token}`
+        },
+        timeout: 0
+      },
+      (res) => {
+        let body = ''
+        res.setEncoding('utf8')
+        res.on('data', (chunk) => {
+          body += chunk
+        })
+        res.on('end', () => {
+          try {
+            const parsed = JSON.parse(body) as RpcResponse
+            if (!parsed.ok) {
+              reject(new Error(parsed.error.message))
+            } else {
+              resolve(parsed.result as RpcResult<M>)
+            }
+          } catch (err) {
+            reject(
+              new Error(`Failed to parse RPC response: ${err instanceof Error ? err.message : String(err)}`)
+            )
+          }
+        })
+      }
+    )
+    req.on('error', reject)
+    req.write(data)
+    req.end()
   })
-  const body = (await res.json()) as RpcResponse
-  if (!body.ok) throw new Error(body.error.message)
-  return body.result as RpcResult<M>
 }
 
 // ⛔ Must match MCP_SERVER_NAME in mcpconfig.ts - the daemon registers this server under that
@@ -111,9 +145,9 @@ server.registerTool(
     // Measured 2026-08-30 on claude-code 2.1.251 (R14.a): the CLI's own `AskUserQuestion` arrives
     // here carrying the whole question - labels, per-option prose, `multiSelect` - and was being
     // flattened into three buttons. It is routed to the Question object instead.
-    const asked = questionFrom(args.input)
-    if (toolName === 'AskUserQuestion' && asked) {
-      return await answerNativeQuestion(sessionId, asked)
+    const askedList = questionsFrom(args.input)
+    if (toolName === 'AskUserQuestion' && askedList.length > 0) {
+      return await answerNativeQuestions(sessionId, askedList)
     }
 
     let decision: 'allow' | 'deny' = 'deny'
@@ -598,49 +632,56 @@ if (TIER === 'controller') {
 } // end controller tier
 
 /**
- * The vendor's own question, if this is one.
+ * The vendor's own question(s), if this is one.
  *
  * ⚠️ Shape measured, not documented: `{questions: [{question, header?, options: [{label,
- * description?}], multiSelect?}]}`. Returns null on anything that does not match, so a future change
+ * description?}], multiSelect?}]}`. Returns an empty array on anything that does not match, so a future change
  * to the payload degrades to the ordinary approval path rather than throwing inside a permission
  * hook - where the failure mode is an agent that cannot act at all.
  */
-function questionFrom(input: unknown): {
+interface NativeQuestion {
   question: string
   header?: string
   multiSelect: boolean
   options: Array<{ id: string; label: string; detail?: string }>
-} | null {
-  if (!input || typeof input !== 'object') return null
+}
+
+function questionsFrom(input: unknown): NativeQuestion[] {
+  if (!input || typeof input !== 'object') return []
   const list = (input as { questions?: unknown }).questions
-  if (!Array.isArray(list) || list.length === 0) return null
-  const first = list[0] as Record<string, unknown>
-  const question = typeof first.question === 'string' ? first.question : null
-  if (!question) return null
-  const rawOptions = Array.isArray(first.options) ? first.options : []
-  return {
-    question,
-    ...(typeof first.header === 'string' && first.header ? { header: first.header } : {}),
-    multiSelect: first.multiSelect === true,
-    options: rawOptions
-      .map((o, index) => {
-        const option = o as Record<string, unknown>
-        const label = typeof option.label === 'string' ? option.label : null
-        if (!label) return null
-        return {
-          id: `opt${index + 1}`,
-          label,
-          ...(typeof option.description === 'string' && option.description
-            ? { detail: option.description }
-            : {})
-        }
-      })
-      .filter((o): o is { id: string; label: string; detail?: string } => o !== null)
+  if (!Array.isArray(list) || list.length === 0) return []
+  const result: NativeQuestion[] = []
+  for (const item of list) {
+    if (!item || typeof item !== 'object') continue
+    const record = item as Record<string, unknown>
+    const question = typeof record.question === 'string' ? record.question : null
+    if (!question) continue
+    const rawOptions = Array.isArray(record.options) ? record.options : []
+    result.push({
+      question,
+      ...(typeof record.header === 'string' && record.header ? { header: record.header } : {}),
+      multiSelect: record.multiSelect === true,
+      options: rawOptions
+        .map((o, index) => {
+          const option = o as Record<string, unknown>
+          const label = typeof option.label === 'string' ? option.label : null
+          if (!label) return null
+          return {
+            id: `opt${index + 1}`,
+            label,
+            ...(typeof option.description === 'string' && option.description
+              ? { detail: option.description }
+              : {})
+          }
+        })
+        .filter((o): o is { id: string; label: string; detail?: string } => o !== null)
+    })
   }
+  return result
 }
 
 /**
- * Put the vendor's question to a person, and hand the answer back through the only channel that
+ * Put the vendor's question(s) to a person, and hand the answer(s) back through the only channel that
  * carries one.
  *
  * ⛔ `{behavior:'deny', message}` is the answer channel, and this is measured rather than
@@ -653,27 +694,33 @@ function questionFrom(input: unknown): {
  * in the run's `permission_denials`; nothing reads that field today, and anything that starts to
  * must not count these as denials.
  */
-async function answerNativeQuestion(
+async function answerNativeQuestions(
   sessionId: string,
-  asked: NonNullable<ReturnType<typeof questionFrom>>
+  askedList: NativeQuestion[]
 ): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
-  const kind = asked.options.length === 0 ? 'text' : asked.multiSelect ? 'multi' : 'choice'
-  let message: string
-  try {
-    const resolution = await rpc('question.ask', {
-      sessionId,
-      origin: 'native_tool',
-      kind,
-      question: asked.question,
-      ...(asked.header ? { header: asked.header } : {}),
-      ...(asked.options.length > 0 ? { options: asked.options } : {})
-    })
-    message = resolution.reply
-  } catch (err) {
-    // ⚠️ Says what happened rather than pretending to an answer. An agent told the operator
-    // declined would build on a refusal nobody made.
-    message = `The question could not be put to the operator (${String(err)}). Do not guess: stop and say what you were about to do.`
+  const replies: string[] = []
+  for (const asked of askedList) {
+    const kind = asked.options.length === 0 ? 'text' : asked.multiSelect ? 'multi' : 'choice'
+    try {
+      const resolution = await rpc('question.ask', {
+        sessionId,
+        origin: 'native_tool',
+        kind,
+        question: asked.question,
+        ...(asked.header ? { header: asked.header } : {}),
+        ...(asked.options.length > 0 ? { options: asked.options } : {})
+      })
+      replies.push(resolution.reply)
+    } catch (err) {
+      // ⚠️ Says what happened rather than pretending to an answer. An agent told the operator
+      // declined would build on a refusal nobody made.
+      replies.push(
+        `The question could not be put to the operator (${String(err)}). Do not guess: stop and say what you were about to do.`
+      )
+      break
+    }
   }
+  const message = replies.join('\n')
   return { content: [{ type: 'text' as const, text: JSON.stringify({ behavior: 'deny', message }) }] }
 }
 
