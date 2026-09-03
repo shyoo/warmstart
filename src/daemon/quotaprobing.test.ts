@@ -35,6 +35,51 @@ let settings: typeof import('./settings.js')
 
 const MIN = 60_000
 
+describe('screen-answered probes', () => {
+  it('retries a swallowed command until a complete quota panel appears', async () => {
+    let now = 0
+    let attempts = 0
+    const result = await quota.driveScreenProbe(
+      '/usage',
+      12_000,
+      () => {
+        attempts += 1
+      },
+      () => (attempts >= 3 ? 'complete panel' : 'startup screen'),
+      (value) =>
+        value === 'complete panel'
+          ? [{ id: '5h', label: '5h', percent: 12, resetsAt: null }]
+          : null,
+      async (ms) => {
+        now += ms
+      },
+      () => now
+    )
+
+    expect(result.attempts).toBe(3)
+    expect(result.windows?.[0]?.percent).toBe(12)
+  })
+
+  it('stops at the deadline when the panel never appears', async () => {
+    let now = 0
+    const writes: string[] = []
+    const result = await quota.driveScreenProbe(
+      '/usage',
+      6_000,
+      (value) => writes.push(value),
+      () => 'still starting',
+      () => null,
+      async (ms) => {
+        now += ms
+      },
+      () => now
+    )
+
+    expect(writes).toEqual(['/usage\r', '/usage\r'])
+    expect(result.windows).toBeNull()
+  })
+})
+
 /** A worker that exists, is signed in as far as anything knows, and can never be dispatched to. */
 function seedWorker(label: string, adapterId = 'claude-code'): string {
   return workers.createWorker({ adapterId, label, enabled: false }).id

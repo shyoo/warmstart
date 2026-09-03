@@ -219,15 +219,16 @@ const info: AdapterInfo = {
   },
   // ⭐ Measured 2026-08-27: `/usage` in the TUI costs nothing and renders both groups' windows.
   // `answer: 'screen'` because the panel is written to no file - see parseUsageScreen.
-  // ⚠️ readyMs is generous on purpose. This CLI signs in, refreshes experiments and reloads its
-  // slash commands before it will accept a keystroke, and anything typed earlier is swallowed.
+  // ⚠️ Startup duration varies while this CLI signs in, refreshes experiments and reloads its slash
+  // commands. The driver retries the free slash command during settleMs because an early keystroke
+  // is swallowed; readyMs merely avoids hammering the process during its normal startup interval.
   // 60 rows, not the default 30. Measured 2026-08-27: at 30 the panel scrolled and the last
   // group's five-hour window was below the fold, so the probe read three windows of four.
   // The panel's own footer said "(1-27 of 30 lines)".
   usageRefresh: {
     command: '/usage',
     readyMs: 20_000,
-    settleMs: 15_000,
+    settleMs: 30_000,
     answer: 'screen',
     cols: 120,
     rows: 100
@@ -740,10 +741,6 @@ export function parseUsageScreen(screen: string, now = Date.now()): QuotaWindow[
     for (const group of groupOrder.keys()) {
       const count = perGroup.get(group) ?? 0
       if (count < 2) {
-        log.warn(
-          `agy /usage panel was cut off: "${group}" showed ${count} of 2 windows. The probe session's ` +
-            'viewport is too short for this panel - no reading is recorded rather than a partial one.'
-        )
         return null
       }
     }

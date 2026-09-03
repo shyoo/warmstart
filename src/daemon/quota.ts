@@ -65,6 +65,47 @@ export const REFRESH_BACKOFF_MS = 10 * 60 * 1000
 /** How long a stored answer to "who is signed in, and is this root set up?" may go unchecked. */
 export const IDENTITY_STALE_AFTER_MS = 15 * 60 * 1000
 
+const SCREEN_PROBE_POLL_MS = 500
+const SCREEN_PROBE_RETRY_MS = 5_000
+
+/**
+ * Drive a screen-answered slash command until it produces a complete reading or its deadline ends.
+ *
+ * Antigravity startup is not a stable-duration operation: it refreshes experiments and commands
+ * before accepting input. A single command after a fixed delay is therefore lossy — when startup
+ * takes longer, the TUI swallows the only `/usage` and the probe can never recover. Repeating this
+ * client-side command is free, and `parse` is deliberately restricted to returning quota windows.
+ */
+export async function driveScreenProbe(
+  command: string,
+  timeoutMs: number,
+  write: (data: string) => void,
+  read: () => string,
+  parse: (screen: string) => QuotaWindow[] | null,
+  pause: (ms: number) => Promise<void> = wait,
+  now: () => number = Date.now
+): Promise<{ screen: string; windows: QuotaWindow[] | null; attempts: number }> {
+  const startedAt = now()
+  let nextAttemptAt = startedAt
+  let attempts = 0
+  let screen: string
+
+  do {
+    const current = now()
+    if (current >= nextAttemptAt) {
+      write(`${command}\r`)
+      attempts += 1
+      nextAttemptAt = current + SCREEN_PROBE_RETRY_MS
+    }
+    await pause(Math.min(SCREEN_PROBE_POLL_MS, Math.max(0, startedAt + timeoutMs - now())))
+    screen = stripAnsi(read())
+    const windows = parse(screen)
+    if (windows) return { screen, windows, attempts }
+  } while (now() < startedAt + timeoutMs)
+
+  return { screen, windows: null, attempts }
+}
+
 export interface DatedQuota extends QuotaSnapshot {
   ageMs: number
   stale: boolean
@@ -154,10 +195,22 @@ export async function refreshUsage(workerId: string): Promise<DatedQuota> {
     log.info(`refreshing usage on ${w.label} via \`${refresh.command}\``)
 
     await wait(refresh.readyMs)
-    writeSession(session.id, `${refresh.command}\r`)
-    await wait(refresh.settleMs)
-    // ⛔ Read before the session is closed - `backscroll` is keyed on a live session.
-    if (refresh.answer === 'screen') screen = stripAnsi(backscroll(session.id))
+    if (refresh.answer === 'screen') {
+      const parse = adapter(w.adapterId).parseUsage
+      if (!parse) throw new Error(`${w.adapterId} declares a screen usage refresh without a parser`)
+      const driven = await driveScreenProbe(
+        refresh.command,
+        refresh.settleMs,
+        (data) => writeSession(session.id, data),
+        () => backscroll(session.id),
+        parse
+      )
+      screen = driven.screen
+      log.info(`drove \`${refresh.command}\` ${driven.attempts} time(s) on ${w.label}`)
+    } else {
+      writeSession(session.id, `${refresh.command}\r`)
+      await wait(refresh.settleMs)
+    }
   } catch (err) {
     // ⚠️ Never fatal. A refresh that fails leaves the previous reading exactly as it was, with its
     // age attached, which is the state everything downstream already knows how to distrust.
@@ -1112,4 +1165,3 @@ export function forgetRefreshAttempts(): void {
  * unrecognised pool is ignorance, not permission.
  */
 export { sessionWindowFor, windowsForPool } from '@shared/tasks.js'
-

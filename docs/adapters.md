@@ -281,16 +281,20 @@ codebase where rendered text becomes state, permitted for a quota reading and no
 Live reading, 2026-08-27, agy 1.1.22, Google AI Pro: Gemini weekly 5.48% used · Gemini 5-hour
 32.80% · Claude-and-GPT weekly 42.80% · Claude-and-GPT 5-hour 0%.
 
-⚠️ Three traps, all measured rather than reasoned:
+⚠️ Four failure modes; the first three were measured, and the fourth is labelled with its basis:
 
 - The panel reports **remaining**; `QuotaWindow.percent` is **used**. Inverted in the parser.
+- A clipped **`Quota ava…` does not prove `Quota available`**. The parser accepts only the complete
+  label and rejects any displayed group that does not provide both validated windows, so a damaged
+  rendering becomes `n/a` rather than a false fresh 0% sample.
 - The panel is **taller than a default terminal and scrolls**. At 30 rows one group's five-hour
   window fell below the fold and three of four windows came back looking complete. The probe
   session now runs at 110x60 and the parser refuses any group showing one of its two windows.
-- **`Quota ava…` is a clipped rendering, not a 0% reading.** On t163 (2026-09-03), treating that
-  shortened text as the complete `Quota available` label stored Gemini 5-hour and 7-day at 0% used.
-  The parser now accepts only the complete label and rejects a displayed group unless both windows
-  validate, so the result is `n/a` rather than a false fresh sample.
+- ⚠️ **Inferred from the measured swallowed-input behaviour and the one-shot driver:** sign-in,
+  experiment refresh and slash-command reload can outlast the old fixed 20-second delay, after which
+  there was no recovery. The probe now retries the free `/usage` command every five seconds until a
+  complete panel parses or its bounded 30-second settle window expires; the retry is unit-proven but
+  has not been re-run against a live CLI.
 
 What was tried before and does not work:
 
