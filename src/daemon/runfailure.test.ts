@@ -2,7 +2,8 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import type { Session } from '@shared/protocol.js'
+import type { Session, Worker } from '@shared/protocol.js'
+import type { Task } from '@shared/tasks.js'
 
 /**
  * What happens to a task when the run under it does not succeed.
@@ -1067,6 +1068,151 @@ describe('a turn refused because the account is out of window', () => {
     await scheduler.onStreamResult(seeded.session, {
       isError: true,
       text: SESSION_LIMIT,
+      terminalReason: 'api_error'
+    })
+    expect(tasks.requireTask(seeded.task.id).status).toBe('awaiting_human')
+  })
+})
+
+/**
+ * ⛔ **t153, 2026-09-03.** Claude answered `api_error: API Error: 529 Overloaded. This is a server-side
+ * issue, usually temporary — try again in a moment. If it persists, check https://status.claude.com.`
+ * A temporary server-side 529 error is not a fault in the prompt or code, nor is it an account
+ * authentication failure. Quarantining the worker would take healthy accounts out of commission,
+ * and moving the task to `awaiting_human` halts work that could proceed automatically once the
+ * provider recovers.
+ */
+describe('a turn failed because the remote provider is overloaded (529)', () => {
+  const OVERLOAD_MSG =
+    'API Error: 529 Overloaded. This is a server-side issue, usually temporary — try again in a moment. If it persists, check https://status.claude.com.'
+
+  const refuse = async (
+    text = OVERLOAD_MSG,
+    options: { adapterId?: string; metered?: number; existingTask?: Task; worker?: Worker } = {}
+  ) => {
+    const seeded = options.existingTask
+      ? (() => {
+          seq += 1
+          const adapterId = options.adapterId ?? 'claude-code'
+          const worker: Worker = options.worker ?? workers.createWorker({ adapterId, label: `w${seq}`, enabled: false })
+          const session = seedSession(`5e551011-0000-4000-8000-00000000000${seq}`, worker.id, { adapterId })
+          const run = tasks.startRun({
+            taskId: options.existingTask.id,
+            workerId: worker.id,
+            sessionId: session.id,
+            projectId: null,
+            quotaUnverified: true,
+            costModelId: null
+          })
+          tasks.setStatus(options.existingTask.id, 'running', { assignee: worker.id })
+          return { worker, task: options.existingTask, run, session }
+        })()
+      : seedRunningTask({ adapterId: options.adapterId ?? 'claude-code', metered: options.metered })
+
+    await scheduler.onStreamResult(seeded.session, {
+      isError: true,
+      text,
+      terminalReason: 'api_error'
+    })
+    return seeded
+  }
+
+  it('⭐ schedules the task for automatic retry instead of handing it to a person', async () => {
+    const { task } = await refuse()
+    const after = tasks.requireTask(task.id)
+    expect(after.status).toBe('scheduled')
+    expect(after.notBefore).toBeGreaterThan(Date.now())
+    expect(after.assignee).toBeNull()
+    expect(after.holdReason).toMatch(/Provider overloaded \(attempt 1\/3\)/)
+  })
+
+  it('comes back by itself once that timeout has passed', async () => {
+    const { task } = await refuse()
+    db.db()
+      .prepare('update tasks set not_before = ? where id = ?')
+      .run(Date.now() - 1000, task.id)
+    expect(tasks.admitScheduled()).toBe(1)
+    expect(tasks.requireTask(task.id).status).toBe('ready')
+  })
+
+  it('does not quarantine the worker on DOA when the failure is provider overload', async () => {
+    // A run that metered 0 tokens would normally be deadOnArrival and strike the worker.
+    // Overload is the provider's server-side outage, not a broken credential.
+    const { worker } = await refuse(OVERLOAD_MSG, { metered: 0 })
+    const health = workers.requireWorker(worker.id).health
+    expect(health?.state).toBeUndefined()
+  })
+
+  it('does not charge the run to the work (outcome is preempted)', async () => {
+    const { run } = await refuse()
+    expect(tasks.requireRun(run.id).outcome).toBe('preempted')
+  })
+
+  it('says so on the thread, with the retry delay and expected time', async () => {
+    const { task } = await refuse()
+    const said = tasks.messagesFor(task.id).map((m) => m.text)
+    expect(said.some((t) => /temporary server-side issue from the provider/.test(t))).toBe(true)
+    expect(said.some((t) => /attempting again automatically/.test(t))).toBe(true)
+  })
+
+  it('applies exponential backoff across consecutive overload attempts', async () => {
+    const first = await refuse()
+    const task = tasks.requireTask(first.task.id)
+    expect(task.holdReason).toMatch(/attempt 1\/3/)
+
+    // Advance time and simulate second attempt
+    db.db().prepare('update tasks set not_before = ? where id = ?').run(Date.now() - 1000, task.id)
+    tasks.admitScheduled()
+
+    await refuse(OVERLOAD_MSG, { existingTask: task, worker: first.worker })
+    const taskSecond = tasks.requireTask(task.id)
+    expect(taskSecond.status).toBe('scheduled')
+    expect(taskSecond.holdReason).toMatch(/attempt 2\/3/)
+    // Delay for attempt 2 is OVERLOAD_RETRY_MS * 2 (120s)
+    expect(taskSecond.notBefore! - Date.now()).toBeGreaterThan(65_000)
+
+    // Advance time and simulate third attempt
+    db.db().prepare('update tasks set not_before = ? where id = ?').run(Date.now() - 1000, task.id)
+    tasks.admitScheduled()
+
+    await refuse(OVERLOAD_MSG, { existingTask: task, worker: first.worker })
+    const taskThird = tasks.requireTask(task.id)
+    expect(taskThird.status).toBe('scheduled')
+    expect(taskThird.holdReason).toMatch(/attempt 3\/3/)
+    // Delay for attempt 3 is OVERLOAD_RETRY_MS * 4 (240s)
+    expect(taskThird.notBefore! - Date.now()).toBeGreaterThan(180_000)
+  })
+
+  it('falls back to awaiting_human when MAX_OVERLOAD_ATTEMPTS is exceeded', async () => {
+    const first = await refuse()
+    const task = tasks.requireTask(first.task.id)
+
+    // Attempt 2
+    db.db().prepare('update tasks set not_before = ? where id = ?').run(Date.now() - 1000, task.id)
+    tasks.admitScheduled()
+    await refuse(OVERLOAD_MSG, { existingTask: task, worker: first.worker })
+
+    // Attempt 3
+    db.db().prepare('update tasks set not_before = ? where id = ?').run(Date.now() - 1000, task.id)
+    tasks.admitScheduled()
+    await refuse(OVERLOAD_MSG, { existingTask: task, worker: first.worker })
+
+    // Attempt 4 (exceeds MAX_OVERLOAD_ATTEMPTS = 3)
+    db.db().prepare('update tasks set not_before = ? where id = ?').run(Date.now() - 1000, task.id)
+    tasks.admitScheduled()
+    await refuse(OVERLOAD_MSG, { existingTask: task, worker: first.worker })
+
+    const finalTask = tasks.requireTask(task.id)
+    expect(finalTask.status).toBe('awaiting_human')
+    expect(finalTask.holdReason).toMatch(/remains overloaded after 3 attempts/)
+    expect(finalTask.holdReason).toMatch(/status\.claude\.com/)
+  })
+
+  it('⛔ does not read overload into an adapter that does not implement it', async () => {
+    const seeded = seedRunningTask({ adapterId: 'openai-compatible', metered: 900 })
+    await scheduler.onStreamResult(seeded.session, {
+      isError: true,
+      text: OVERLOAD_MSG,
       terminalReason: 'api_error'
     })
     expect(tasks.requireTask(seeded.task.id).status).toBe('awaiting_human')

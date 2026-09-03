@@ -335,6 +335,12 @@ rather than as a signal before one: `api_error` carrying *"You've hit your sessi
 CLI's wording (`outOfQuota`), the run ends `preempted`, and the task parks on the window's reset. It
 used to take the ordinary failure path to `awaiting_human`, a hold only a person can end, and on t108
 (2026-09-02) a task sat there for three hours after its window had reopened.
+⛔ A provider can also report a **temporary server overload** (e.g. `api_error: API Error: 529 Overloaded.
+This is a server-side issue, usually temporary — try again in a moment. If it persists, check
+https://status.claude.com.`, measured 2026-09-03, t153). The adapter recognises its own CLI's wording
+(`overloaded`), the run ends `preempted` (so the work prompt is not blamed), and the task is scheduled
+(`scheduled` with `not_before`) for an automatic retry with exponential backoff (1m, 2m, 4m; up to 3
+attempts), avoiding bogus worker quarantine and falling back to `awaiting_human` only if the outage persists.
 ⚠️ The same protocol also serves a **runaway stop** (`settings.autoRunawayStop`, default off), which
 ends differently: no window is closing, so there is nothing to resume after and the task rests at
 `awaiting_human` with no `not_before`. Preemption pauses; a runaway stop hands back.

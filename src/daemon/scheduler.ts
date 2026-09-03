@@ -3760,13 +3760,22 @@ async function endUnfinishedRun(
   // vendor refused for want of quota is not a failure of the work; it is the same event the mid-run
   // watchdog handles by parking the task, arriving by a different door. See `quotaFailurePark`.
   const parkAt = task && outcome === 'failed' ? quotaFailurePark(session, run, why) : null
+  const overloadRetry =
+    task && outcome === 'failed' && parkAt === null
+      ? overloadFailureRetry(session, run, why, task)
+      : null
+  const ad = adapter(session.adapterId)
+  const isOverload =
+    Boolean(ad.overloaded?.(why) || (session.id ? ad.overloaded?.(stripAnsi(backscroll(session.id))) : false))
 
-  finishRun(run.id, parkAt === null ? outcome : 'preempted', why)
+  finishRun(run.id, parkAt !== null || overloadRetry !== null ? 'preempted' : outcome, why)
 
   // ⛔ A blocked run is never dead on arrival, and the check is skipped rather than merely failing:
   // `deadOnArrival` reports on a dispatch that produced nothing, and this one produced a question.
   // Benching the worker over it would take a healthy account out of the fleet for doing its job.
-  const dead = outcome === 'blocked' ? null : deadOnArrival(session, run)
+  // Likewise for a provider overload (529): the worker's account is healthy, so benching the
+  // worker over a temporary outage would quarantine working accounts.
+  const dead = outcome === 'blocked' || isOverload ? null : deadOnArrival(session, run)
 
   if (task && (task.status === 'running' || task.status === 'assigned')) {
     if (parkAt !== null) {
@@ -3792,6 +3801,23 @@ async function endUnfinishedRun(
       // `quotaParkedTasks`, and a reading taken now is what lets this come back early if the vendor
       // was quoting a limit that has since rolled over.
       requestUrgentProbe(run.workerId, `a run here was refused for quota (t${task.seq})`)
+    } else if (overloadRetry !== null) {
+      const delaySec = Math.round((overloadRetry.retryAt - Date.now()) / 1000)
+      addMessage(
+        task.id,
+        'system',
+        `${why} This is a temporary server-side issue from the provider — attempting again ` +
+          `automatically in ${delaySec}s (attempt ${overloadRetry.attempt} of ${MAX_OVERLOAD_ATTEMPTS}, ` +
+          `expected ${new Date(overloadRetry.retryAt).toISOString()}).`
+      )
+      db()
+        .prepare('update tasks set not_before = ?, updated_at = ? where id = ?')
+        .run(overloadRetry.retryAt, Date.now(), task.id)
+      setStatus(task.id, 'scheduled', {
+        assignee: null,
+        holdReason: `Provider overloaded (attempt ${overloadRetry.attempt}/${MAX_OVERLOAD_ATTEMPTS})`,
+        holdUntil: overloadRetry.retryAt
+      })
     } else if (dead) {
       // ⚠️ The vendor's own words, where the stream gave any. `why` is a sentence a person can act
       // on — "your organization has disabled…" — while `deadOnArrival` can only report silence.
@@ -3808,6 +3834,12 @@ async function endUnfinishedRun(
       // no other eligible worker the task holds at `ready` with the reason on its row, which is the
       // true statement. ⛔ It is not marked `failed`: nothing about the work has been attempted.
       setStatus(task.id, 'ready', { assignee: null })
+    } else if (isOverload) {
+      const msg =
+        `The provider remains overloaded after ${MAX_OVERLOAD_ATTEMPTS} attempts (${why}). ` +
+        'Paused for human intervention — if it persists, check https://status.claude.com.'
+      addMessage(task.id, 'system', msg)
+      setStatus(task.id, 'awaiting_human', { assignee: 'human', holdReason: msg })
     } else {
       addMessage(task.id, 'system', why)
       // ⛔ The deterministic outcome happens first and unconditionally, so the task is already in a
@@ -3848,6 +3880,53 @@ async function endUnfinishedRun(
 function quotaFailurePark(session: Session, run: Run, why: string): number | null {
   if (!adapter(session.adapterId).outOfQuota?.(why)) return null
   return windowResetsAt(run.workerId)?.at ?? Date.now() + BLIND_PARK_MS
+}
+
+export const OVERLOAD_RETRY_MS = 60_000
+export const MAX_OVERLOAD_ATTEMPTS = 3
+
+/**
+ * Did this run fail because the remote provider was overloaded / experiencing a temporary outage?
+ *
+ * ⛔ **t153, 2026-09-03.** Claude answered `api_error: API Error: 529 Overloaded. This is a
+ * server-side issue, usually temporary — try again in a moment. If it persists, check
+ * https://status.claude.com.`
+ * A temporary server-side 529 error is not a fault in the prompt or code, nor is it an account
+ * authentication failure. Quarantining the worker would take healthy accounts out of commission,
+ * and moving the task to `awaiting_human` halts work that could proceed automatically once the
+ * provider recovers.
+ *
+ * ⚠️ Automatically schedules an attempt after a timeout with exponential backoff
+ * (1m, 2m, 4m), bounded by `MAX_OVERLOAD_ATTEMPTS`. If the provider remains overloaded past the
+ * limit, it falls back to `awaiting_human` for human intervention.
+ */
+export function overloadFailureRetry(
+  session: Session,
+  run: Run,
+  why: string,
+  task: Task
+): { retryAt: number; attempt: number } | null {
+  const ad = adapter(session.adapterId)
+  const isOverload =
+    Boolean(ad.overloaded?.(why) || (session.id ? ad.overloaded?.(stripAnsi(backscroll(session.id))) : false))
+  if (!isOverload) return null
+
+  const pastRuns = runsFor(task.id).filter((r) => r.id !== run.id)
+  let pastOverloads = 0
+  for (const past of pastRuns) {
+    if (past.note && ad.overloaded?.(past.note)) {
+      pastOverloads++
+    } else {
+      break
+    }
+  }
+  const attempt = pastOverloads + 1
+  if (attempt > MAX_OVERLOAD_ATTEMPTS) {
+    return null
+  }
+
+  const delayMs = OVERLOAD_RETRY_MS * Math.pow(2, attempt - 1)
+  return { retryAt: Date.now() + delayMs, attempt }
 }
 
 /**

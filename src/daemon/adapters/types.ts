@@ -215,6 +215,22 @@ export interface AgentAdapter {
   outOfQuota?: (reason: string) => boolean
 
   /**
+   * Does this failure mean *the remote provider is temporarily overloaded* (e.g. HTTP 529)?
+   *
+   * ⛔ **The distinction t153 turned on** (2026-09-03). A run whose CLI answered
+   * `api_error: API Error: 529 Overloaded. This is a server-side issue, usually temporary — try again in a moment. If it persists, check https://status.claude.com.`
+   * was wound up like an ordinary task failure and went to `awaiting_human` (or, if it happened
+   * before any metered turns, struck the worker as dead-on-arrival and quarantined it). Neither
+   * is true: the worker's credentials and setup are fine, and the work prompt is fine.
+   *
+   * ⚠️ Same rules as `needsReauth` and `outOfQuota`: anchored on measured phrases, never on
+   * `api_error` alone, and `false` is always the safe fallback. What this changes is allowing the
+   * scheduler to automatically retry after a timeout rather than abandoning the run to a person.
+   */
+  // ⚠️ A function property, not a method, for the same reason as `parseUsage` below.
+  overloaded?: (reason: string) => boolean
+
+  /**
    * Read a quota reading out of what the `/usage` panel rendered.
    *
    * ⛔ Required by, and only by, an adapter declaring `usageRefresh.answer === 'screen'`. This is

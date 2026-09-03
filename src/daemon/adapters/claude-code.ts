@@ -351,6 +351,23 @@ export const claudeCode: AgentAdapter = {
     )
   },
 
+  /**
+   * ⚠️ Measured, not imagined: verbatim what this CLI answered on 2026-09-03 (t153):
+   * `api_error: API Error: 529 Overloaded. This is a server-side issue, usually temporary — try again in a moment. If it persists, check https://status.claude.com.`
+   *
+   * ⛔ Anchored on HTTP 529, "overloaded", "server-side issue, usually temporary", and
+   * "status.claude.com". Never on `api_error` alone, for the reason `needsReauth` gives above.
+   */
+  overloaded: (reason: string): boolean => {
+    const said = reason.toLowerCase()
+    return (
+      said.includes('529') ||
+      said.includes('overloaded') ||
+      said.includes('server-side issue, usually temporary') ||
+      said.includes('status.claude.com')
+    )
+  },
+
   isInstalled(): boolean {
     return which(info.command) !== null
   },
