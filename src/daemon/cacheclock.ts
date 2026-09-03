@@ -405,8 +405,19 @@ export interface ResumeCompaction {
  * ⚠️ The same two-part `worthCompactingNow` test the clock uses, deliberately: a conversation is
  * compacted before a resume on exactly the terms it would have been compacted on while idle. This
  * adds a moment to the policy, never a second policy.
+ *
+ * ⛔ **Warm resumes are declined.** Compacting a conversation whose prefix is still comfortably
+ * warm (> `decideBeforeExpiryMs(ttl)`, >15m on a 1h TTL) discards an asset readable at 0.1·C, pays
+ * ~2.0·C to write a new summary, and stalls the operator ~2 minutes for context that regrows within
+ * minutes (measured t130, 2026-09-02: 121k shrunk to 30k was back to 88k in 6m). The prompt going
+ * in will read the warm prefix and refresh the TTL for free. Inside the last quarter of the TTL, or
+ * when the prefix has lapsed, compaction proceeds.
  */
-export function compactOnResume(session: Session, settings: Settings): ResumeCompaction {
+export function compactOnResume(
+  session: Session,
+  settings: Settings,
+  now = Date.now()
+): ResumeCompaction {
   const info = adapter(session.adapterId).info
   const no = (reason: string): ResumeCompaction => ({ compact: false, reason, estimatedCost: null })
 
@@ -430,6 +441,19 @@ export function compactOnResume(session: Session, settings: Settings): ResumeCom
         'the last compaction - not enough to be worth one'
     )
   }
+
+  // ⭐ Warmth gate: if the prefix is still comfortably warm, declining compaction allows the upcoming
+  // prompt to read the warm prefix at 0.1·C and refresh the TTL for free, avoiding a costly ~2.0·C
+  // rebuild and a 2-minute stall. Inside the last quarter of the TTL (or when lapsed), compaction proceeds.
+  const ttlMs = model.cacheTtlMs()
+  const untilExpiry = (session.cacheExpiresAt ?? 0) - now
+  if (session.cacheExpiresAt !== null && untilExpiry > decideBeforeExpiryMs(ttlMs)) {
+    return no(
+      `prefix is still warm (${Math.round(untilExpiry / 60000)}m of TTL left) - ` +
+        'the prompt will refresh it for free'
+    )
+  }
+
   const cost = model.costOfCompact(session)
   if (cost === null) return no('this cost model cannot price a compaction')
 

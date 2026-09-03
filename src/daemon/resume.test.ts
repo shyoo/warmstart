@@ -1,7 +1,7 @@
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { claudeCode } from './adapters/claude-code.js'
 import { antigravityCli } from './adapters/antigravity-cli.js'
 import { openaiCompatible } from './adapters/openai-compatible.js'
@@ -169,6 +169,9 @@ let dir: string
 let db: typeof import('./db.js')
 let sessions: typeof import('./sessions.js')
 let tasks: typeof import('./tasks.js')
+let scheduler: typeof import('./scheduler.js')
+let clock: typeof import('./cacheclock.js')
+let settings: typeof import('./settings.js')
 
 const WORKER = 'aaaaaaaa-0000-4000-8000-000000000001'
 const OTHER = 'aaaaaaaa-0000-4000-8000-000000000002'
@@ -242,6 +245,9 @@ beforeAll(async () => {
   db = await import('./db.js')
   sessions = await import('./sessions.js')
   tasks = await import('./tasks.js')
+  scheduler = await import('./scheduler.js')
+  clock = await import('./cacheclock.js')
+  settings = await import('./settings.js')
   db.openDb(join(dir, 'resume.db'))
   for (const id of [WORKER, OTHER]) {
     db.db()
@@ -611,3 +617,60 @@ describe('finished conversations this project could lend', () => {
     expect(sessions.finishedConversationsIn('p1', WORKER, 2).map((s) => s.id)).toEqual(['s-a', 's-b'])
   })
 })
+
+describe('openConversation on a warm continuation', () => {
+  it('⭐ sends the prompt directly without /compact when the continuation is warm', () => {
+    seed({ id: 's-warm-conv' })
+    const s = load('s-warm-conv')
+    const t = tasks.createTask({ title: 'do work' })
+    // Resuming a warm session with 28 minutes of TTL left (t130 case).
+    const warmRevive = {
+      ...s,
+      contextTokens: 121_839,
+      tokensSinceCompact: 121_839,
+      cacheExpiresAt: Date.now() + 28 * 60 * 1000
+    }
+    const plan = clock.compactOnResume(warmRevive, settings.DEFAULT_SETTINGS)
+    expect(plan.compact).toBe(false)
+    expect(plan.reason).toContain('prefix is still warm')
+
+    const sent: string[] = []
+    const spy = vi.spyOn(sessions, 'sendPrompt').mockImplementation((_id, text) => {
+      sent.push(text)
+    })
+    try {
+      scheduler.openConversation(s, t, 'do work', plan)
+      expect(sent).toEqual(['do work'])
+      expect(sent).not.toContain('/compact')
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('compacts first when resuming a lapsed prefix', () => {
+    seed({ id: 's-lapsed-conv' })
+    const s = load('s-lapsed-conv')
+    const t = tasks.createTask({ title: 'do work' })
+    const lapsedRevive = {
+      ...s,
+      contextTokens: 121_839,
+      tokensSinceCompact: 121_839,
+      cacheExpiresAt: Date.now() - 60 * 1000
+    }
+    const plan = clock.compactOnResume(lapsedRevive, settings.DEFAULT_SETTINGS)
+    expect(plan.compact).toBe(true)
+
+    const sent: string[] = []
+    const spy = vi.spyOn(sessions, 'sendPrompt').mockImplementation((_id, text) => {
+      sent.push(text)
+    })
+    try {
+      scheduler.openConversation(s, t, 'do work', plan)
+      expect(sent).toContain('/compact')
+      expect(sent).not.toContain('do work')
+    } finally {
+      spy.mockRestore()
+    }
+  })
+})
+

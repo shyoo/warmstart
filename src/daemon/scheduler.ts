@@ -2396,7 +2396,7 @@ const PROMPT_DELAY_MS = 2500
  * boundary wakes it, `RESUME_COMPACT_WAIT_MS` wakes it, and `sent` makes sure only the first of those
  * is acted on.
  */
-function openConversation(
+export function openConversation(
   session: Session,
   task: Task,
   promptText: string,

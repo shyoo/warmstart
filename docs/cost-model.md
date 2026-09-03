@@ -293,6 +293,14 @@ daemon that was not running, a prefix that had already lapsed, a task with no cl
 goes in first and the task's own prompt waits for the `compact_boundary`. Late is more expensive than
 early; it is not more expensive than reading 84k tokens on every turn of a twenty-minute run.
 
+⛔ **Warm resumes are declined (2026-09-02, t134).** A conversation resumed while its prefix is still
+comfortably warm (> `decideBeforeExpiryMs(ttl)`, >15m on a 1h TTL) is not compacted at resume: the
+prompt going in reads the warm cache prefix at **0.1·C** and refreshes the vendor's cache TTL for
+free. Compacting a warm prefix discards a valid cache entry, pays ~**2.0·C** to write a new summary, and
+stalls the operator ~2 minutes for context that regrows within minutes (measured t130, 2026-09-02:
+121k shrunk to 30k was back to 88k in 6m). Inside the last quarter of the TTL, or when the prefix has
+lapsed, compaction proceeds.
+
 ⛔ **The two cannot both fire.** A landed compaction zeroes `tokens_since_compact`, which is the growth
 half of `worthCompactingNow`, so a conversation shrunk before its prefix lapsed is left alone at resume.
 

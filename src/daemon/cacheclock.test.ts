@@ -501,6 +501,40 @@ describe('a conversation carried across runs is compacted before the next one sp
     expect(plan.reason).toContain('84254')
   })
 
+  it('⭐ leaves a warm continuation alone: the prompt refreshes the TTL for free', () => {
+    // 28 minutes of TTL left on a 1-hour cache (the t130 case): comfortably warm (> 15m).
+    // Compacting would discard a warm prefix readable at 0.1·C, pay ~2.0·C to write a summary,
+    // and stall the run for ~2 min. The incoming prompt reads the cache and refreshes it for free.
+    const warm = t92({ cacheExpiresAt: NOW + 28 * 60 * 1000 })
+    const plan = clock.compactOnResume(warm, settings.DEFAULT_SETTINGS, NOW)
+    expect(plan.compact).toBe(false)
+    expect(plan.reason).toContain('prefix is still warm')
+    expect(plan.reason).toContain('28m of TTL left')
+    expect(plan.reason).toContain('the prompt will refresh it for free')
+  })
+
+  it('⭐ compacts when inside the last quarter of the TTL before the prefix lapses', () => {
+    // 10 minutes of TTL left (<= 15m, decideBeforeExpiryMs for 1h TTL).
+    // The prefix is about to lapse anyway, so compacting before starting is appropriate.
+    const expiring = t92({ cacheExpiresAt: NOW + 10 * 60 * 1000 })
+    const plan = clock.compactOnResume(expiring, settings.DEFAULT_SETTINGS, NOW)
+    expect(plan.compact).toBe(true)
+    expect(plan.estimatedCost).toBeGreaterThan(0)
+  })
+
+  it('⭐ compacts when the prefix has already lapsed', () => {
+    // The t92 case: closed for 2h, prefix expired.
+    const lapsed = t92({ cacheExpiresAt: NOW - 10 * 60 * 1000 })
+    const plan = clock.compactOnResume(lapsed, settings.DEFAULT_SETTINGS, NOW)
+    expect(plan.compact).toBe(true)
+  })
+
+  it('compacts when cache expiry is unknown (null)', () => {
+    const unknownExpiry = t92({ cacheExpiresAt: null })
+    const plan = clock.compactOnResume(unknownExpiry, settings.DEFAULT_SETTINGS, NOW)
+    expect(plan.compact).toBe(true)
+  })
+
   it('leaves a small carried-over context alone: the same two-part test the clock uses', () => {
     // ⚠️ Both halves, exactly as `worthCompactingNow` applies them mid-flight. A resume is a new
     // moment for the policy, never a second policy.
