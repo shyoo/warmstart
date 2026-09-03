@@ -386,6 +386,12 @@ function windowIdFor(minutes: number): string {
   return `${Math.max(1, Math.round(minutes / 60))}h`
 }
 
+/** Names used in the quota view. Codex's 5h and 7d pools are GPT limits, not generic clocks. */
+function windowLabelFor(id: string): string {
+  if (id === '5h' || id === '7d') return `GPT ${id}`
+  return id
+}
+
 /** Newest-first day directories under `<CODEX_HOME>/sessions/YYYY/MM/DD`. */
 function rolloutDayDirs(sessionsDir: string): string[] {
   const descend = (dir: string): string[] => {
@@ -506,7 +512,7 @@ export function windowsFromRateLimits(limits: CodexRateLimits): QuotaSnapshot['w
     const resets = w.resets_at ?? w.resetsAt
     windows.push({
       id,
-      label: id,
+      label: windowLabelFor(id),
       percent,
       // Unix seconds here, milliseconds everywhere in this project.
       resetsAt: typeof resets === 'number' ? resets * 1000 : null

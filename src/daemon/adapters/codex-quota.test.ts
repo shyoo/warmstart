@@ -68,6 +68,7 @@ describe('codex rate_limits, read from a rollout', () => {
       secondary: { used_percent: 12, window_minutes: 10080, resets_at: null }
     })
     expect(windows.map((w) => w.id)).toEqual(['5h', '7d'])
+    expect(windows.map((w) => w.label)).toEqual(['GPT 5h', 'GPT 7d'])
     expect(windows[0]!.percent).toBe(41.5)
     expect(windows[1]!.resetsAt).toBeNull()
   })
@@ -184,8 +185,8 @@ describe('the two rungs, and why they are not interchangeable', () => {
       credits: { hasCredits: false, unlimited: false, balance: '0' }
     })
     expect(windows).toEqual([
-      { id: '5h', label: '5h', percent: 15, resetsAt: 1788338185 * 1000 },
-      { id: '7d', label: '7d', percent: 42, resetsAt: 1788924985 * 1000 }
+      { id: '5h', label: 'GPT 5h', percent: 15, resetsAt: 1788338185 * 1000 },
+      { id: '7d', label: 'GPT 7d', percent: 42, resetsAt: 1788924985 * 1000 }
     ])
   })
 })
@@ -253,4 +254,3 @@ describe('codex identity and JWT payload parsing', () => {
     })
   })
 })
-

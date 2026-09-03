@@ -1,6 +1,22 @@
 import { describe, expect, it } from 'vitest'
 import { QUOTA_STALE_AFTER_MS, quotaFreshness } from '@shared/tasks'
-import { cacheRemaining, quotaGap, timeRange, when } from './format'
+import { cacheRemaining, countdown, quotaGap, timeRange, when } from './format'
+
+describe('countdown', () => {
+  const NOW = Date.UTC(2026, 8, 2, 12, 0, 0)
+
+  it('uses explicit hours and minutes for a quota window', () => {
+    expect(countdown(NOW + (3 * 60 + 38) * 60_000, NOW)).toBe('3h 38m')
+  })
+
+  it('reserves colon notation for a countdown under one hour', () => {
+    expect(countdown(NOW + 12 * 60_000 + 7_000, NOW)).toBe('12:07')
+  })
+
+  it('does not make an unknown reset look like a time', () => {
+    expect(countdown(null, NOW)).toBe('--')
+  })
+})
 
 describe('quotaGap', () => {
   it('says what would produce a reading when the account has never been used', () => {
