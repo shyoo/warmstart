@@ -215,7 +215,7 @@ try {
   // rewrite that removed Cost and Controller as destinations.
   check(
     'the fixed destinations are reachable',
-    ['Dashboard', 'Controller', 'Conversations', 'Logs', 'Workers', 'Global'].every((label) =>
+    ['Dashboard', 'Controller', 'Cost Model', 'Routing Model', 'Conversations', 'Logs', 'Workers', 'Global'].every((label) =>
       nav.some((n) => n.startsWith(label))
     ),
     nav.join(' | ')
@@ -1194,27 +1194,70 @@ try {
     `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim().startsWith('Dashboard')).click()`
   )
   await wait(1500)
-  const costPanel = await evaluate('document.querySelector(".content")?.innerText ?? ""')
-  check('the cost view renders', costPanel.includes('Cost'))
+  const dashboardPanel = await evaluate('document.querySelector(".content")?.innerText ?? ""')
+  check('the cost view renders on dashboard', dashboardPanel.includes('Cost'))
   check(
     'it states the objective it is working to',
-    /cost 0\.\d\d/.test(costPanel),
+    /cost 0\.\d\d/.test(dashboardPanel),
+    'a scheduler that spends money should say what it is optimising for'
+  )
+  check(
+    'it says what each agent costs, or that nothing has been measured yet',
+    /what each agent costs/i.test(dashboardPanel) &&
+      (/×\d/.test(dashboardPanel) || /nothing has completed yet/i.test(dashboardPanel)),
+    'the estimator multiplies by these; a multiplier nobody can see is a multiplier nobody can check'
+  )
+  check(
+    'it explains how the multiplier is calculated',
+    dashboardPanel.includes('multiplier') && dashboardPanel.includes('Shrinkage')
+  )
+
+  section('cost model')
+  await evaluate(
+    `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim().startsWith('Cost Model')).click()`
+  )
+  await wait(1500)
+  const costModelPanel = await evaluate('document.querySelector(".content")?.innerText ?? ""')
+  check('the cost model analytics view renders', costModelPanel.includes('Cost Model'))
+  check(
+    'it states the objective it is working to',
+    /cost 0\.\d\d/.test(costModelPanel),
     'a scheduler that spends money should say what it is optimising for'
   )
   check(
     'an unknown remaining budget says so rather than showing a number',
-    costPanel.includes('size unknown') || costPanel.includes('unknown'),
+    costModelPanel.includes('size unknown') || costModelPanel.includes('unknown'),
     'this is the honest state on a CLI with no free usage probe'
   )
   check(
-    'shows cache clock and reserves sections',
-    /cache clock/i.test(costPanel) && /save what it holds/i.test(costPanel)
+    'shows cache clock and compaction reserves sections',
+    /cache clock/i.test(costModelPanel) && /compaction reserve/i.test(costModelPanel)
+  )
+  check(
+    'it explains what cost is and why it matters',
+    /what is cost/i.test(costModelPanel) && /why it matters/i.test(costModelPanel)
+  )
+  check(
+    'it lists active cost models loaded in the daemon',
+    /active cost models/i.test(costModelPanel)
   )
   check(
     'it says what each agent costs, or that nothing has been measured yet',
-    /what each agent costs/i.test(costPanel) &&
-      (/×\d/.test(costPanel) || /nothing has completed yet/i.test(costPanel)),
+    /what each agent costs/i.test(costModelPanel) &&
+      (/×\d/.test(costModelPanel) || /nothing has completed yet/i.test(costModelPanel)),
     'the estimator multiplies by these; a multiplier nobody can see is a multiplier nobody can check'
+  )
+
+  section('routing model')
+  await evaluate(
+    `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim().startsWith('Routing Model')).click()`
+  )
+  await wait(1500)
+  const routingPanel = await evaluate('document.querySelector(".content")?.innerText ?? ""')
+  check('the routing model view renders', routingPanel.includes('Routing Model'))
+  check(
+    'it shows the objective vector and routing factors',
+    /objective vector/i.test(routingPanel) && /routing evaluation rules/i.test(routingPanel)
   )
 
   section('controller')

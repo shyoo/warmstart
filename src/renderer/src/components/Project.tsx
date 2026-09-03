@@ -7,7 +7,7 @@ import { ProjectSettings } from './ProjectSettings'
 import { Conversations } from './Conversations'
 import { TerminalPane } from './Terminal'
 
-export type ProjectTab = 'tasks' | 'thread' | 'conversations' | 'sessionTui' | 'cost' | 'settings'
+export type ProjectTab = 'tasks' | 'thread' | 'conversations' | 'sessionTui' | 'settings'
 
 /**
  * ⛔ **Thread**, not Conversation. A conversation in this app is the agent session you resume with
@@ -27,7 +27,6 @@ export const PROJECT_TABS: Array<{ id: ProjectTab; label: string }> = [
   { id: 'thread', label: 'Thread' },
   { id: 'conversations', label: 'Conversations' },
   { id: 'sessionTui', label: 'Session TUI' },
-  { id: 'cost', label: 'Cost' },
   { id: 'settings', label: 'Settings' }
 ]
 
@@ -136,14 +135,6 @@ export function Project({
           openSession={openSession}
           setOpenSession={setOpenSession}
         />
-      ) : tab === 'cost' ? (
-        <div className="empty-inline">
-          <p>Per-project cost is not built yet.</p>
-          <p className="dim">
-            `runs` already carries a project id, so the data exists — what is missing is the
-            aggregation. Fleet-wide cost is on Overview in the meantime.
-          </p>
-        </div>
       ) : (
         <ProjectSettings
           project={project}

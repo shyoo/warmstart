@@ -1,19 +1,16 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { CostReport } from '@shared/protocol'
 import { rpc, useDaemonEvents } from '../lib/daemon'
-import { age, countdown, tokens } from '../lib/format'
+import { tokens } from '../lib/format'
 
 /**
- * Cost.
+ * Overview > Dashboard: What each agent costs
  *
- * ⛔ Every number here is shown **with its basis**. A scheduler that spends money on your behalf and
- * cannot say why is one you will either over-trust or turn off, and both are worse than a number with
- * an honest caveat attached.
- *
- * The two questions this answers: *why is that session still open?* and *can this account still
- * afford to save what it is holding?*
+ * Streamlined cost view focusing on learned relative agent efficiency factors,
+ * explaining in user-friendly terms how multipliers (e.g. ×2.91) are calculated
+ * from normalized priced tokens and sample shrinkage.
  */
-export function Cost({ now }: { now: number }): React.JSX.Element {
+export function Cost({ onOpenCostModel }: { now?: number; onOpenCostModel?: () => void }): React.JSX.Element {
   const [report, setReport] = useState<CostReport | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -47,8 +44,9 @@ export function Cost({ now }: { now: number }): React.JSX.Element {
         <div>
           <h2>Cost</h2>
           <p className="panel-sub">
-            What the scheduler believes, and on what basis. A warm prompt cache is an asset with an
-            expiry date — most of what this page shows is the arithmetic of not wasting one.
+            Learned agent cost factors across your fleet. Token usage is normalized into
+            input-token-equivalents and adjusted with statistical shrinkage to prevent small sample counts
+            from skewing estimates.
           </p>
         </div>
         <span className="num dim">
@@ -58,122 +56,35 @@ export function Cost({ now }: { now: number }): React.JSX.Element {
       </header>
 
       <section className="doc-section">
-        <h3>The cache clock, right now</h3>
-        {report.decisions.length === 0 ? (
-          <p className="dim">No live sessions, so there is nothing holding a cache open.</p>
-        ) : (
-          <table className="tbl">
-            <thead>
-              <tr>
-                <th>Session</th>
-                <th>Would do</th>
-                <th className="tbl-num">Context</th>
-                <th className="tbl-num">Expires</th>
-                <th className="tbl-num">Cost</th>
-                <th>Why</th>
-              </tr>
-            </thead>
-            <tbody>
-              {report.decisions.map((d) => (
-                <tr key={d.sessionId}>
-                  <td className="mono">{d.sessionId.slice(0, 6)}</td>
-                  <td>
-                    <span className={`status ${MOVE_TONE[d.move] ?? ''}`}>{MOVE_LABEL[d.move]}</span>
-                  </td>
-                  <td className="num tbl-num">{tokens(d.contextTokens)}</td>
-                  <td className="num tbl-num">{d.expiresAt ? countdown(d.expiresAt, now) : '—'}</td>
-                  <td className="num tbl-num">{d.estimatedCost ? tokens(d.estimatedCost) : '—'}</td>
-                  <td className="dim">{d.reason}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </section>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--sp-2)' }}>
+          <h3 style={{ margin: 0 }}>What each agent costs</h3>
+          {onOpenCostModel && (
+            <button className="btn" style={{ fontSize: 'var(--text-dense)', padding: 'var(--sp-1) var(--sp-2)' }} onClick={onOpenCostModel}>
+              View Full Cost Model in Analytics →
+            </button>
+          )}
+        </div>
 
-      <section className="doc-section">
-        <h3>Can each account still save what it holds?</h3>
-        <table className="tbl">
-          <tbody>
-            {report.reserves.map((r) => {
-              const worker = report.workers.find((w) => w.workerId === r.workerId)
-              return (
-                <tr key={r.workerId}>
-                  <td className="tbl-strong">{worker?.label ?? r.workerId.slice(0, 8)}</td>
-                  <td>
-                    <span className={`status ${RESERVE_TONE[r.verdict]}`}>
-                      {r.verdict === 'ok'
-                        ? 'reserve held'
-                        : r.verdict === 'at_risk'
-                          ? 'at risk'
-                          : 'unknown'}
-                    </span>
-                  </td>
-                  <td className="num tbl-num">{r.liveSessions} live</td>
-                  <td className="num tbl-num">{tokens(r.requiredTokens)} to save</td>
-                  <td className="dim">{r.reason}</td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
-        <p className="note">
-          <strong>Why this matters more than it looks.</strong> <code>/compact</code> fails at true
-          100%. An account that runs out while holding a large session strands that context — it
-          cannot be compacted, cannot continue, and its cache lapses long before the window resets.
-          Running out of room to <em>finish</em> is recoverable; running out of room to <em>save</em>{' '}
-          is not.
-        </p>
-      </section>
-
-      <section className="doc-section">
-        <h3>Windows</h3>
-        <table className="tbl">
-          <tbody>
-            {report.workers.map((w) => (
-              <tr key={w.workerId}>
-                <td className="tbl-strong">{w.label}</td>
-                <td className="num">
-                  {w.remainingTokens !== null ? (
-                    `${tokens(w.remainingTokens)} left`
-                  ) : (
-                    <span className="warn">size unknown</span>
-                  )}
-                </td>
-                <td className="num">
-                  {w.windowResetsAt ? `resets in ${countdown(w.windowResetsAt, now)}` : '—'}
-                </td>
-                <td>
-                  {w.liveRateLimitStatus ? (
-                    <span className={w.liveRateLimitStatus === 'allowed' ? 'ok' : 'warn'}>
-                      {w.liveRateLimitStatus}
-                    </span>
-                  ) : (
-                    <span className="dim">no live signal yet</span>
-                  )}
-                </td>
-                <td className="dim">
-                  {w.remainingBasis}
-                  {w.windowResetSource ? ` · reset from ${w.windowResetSource}` : ''}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </section>
-
-      <section className="doc-section">
-        <h3>What each agent costs</h3>
-        <p className="panel-sub">
+        <p className="panel-sub" style={{ marginBottom: 'var(--sp-3)' }}>
           Learned from completed runs, priced in input-token-equivalents so cache reads count for
           what they cost rather than for how many there were. The estimator multiplies a
           fleet-neutral task size (
-          <span className="num">{tokens(report.costFactors.neutralPriced)}</span> priced) by these.
+          <span className="num">{tokens(report.costFactors.neutralPriced)}</span> priced tokens) by these multipliers.
         </p>
+
         {report.costFactors.keys.length === 0 ? (
           <p className="dim">Nothing has completed yet, so every agent is assumed to cost the same.</p>
         ) : (
-          <table className="tbl">
+          <table className="tbl" style={{ marginBottom: 'var(--sp-3)' }}>
+            <thead>
+              <tr>
+                <th>Agent</th>
+                <th>Model</th>
+                <th className="tbl-num">Multiplier</th>
+                <th className="tbl-num">Median Run Cost</th>
+                <th>Observed Runs</th>
+              </tr>
+            </thead>
             <tbody>
               {report.costFactors.keys.map((k) => (
                 <tr key={`${k.adapterId}/${k.model ?? '?'}`}>
@@ -190,71 +101,32 @@ export function Cost({ now }: { now: number }): React.JSX.Element {
             </tbody>
           </table>
         )}
-        <p className="note">
-          <strong>Read the sample count, not just the multiplier.</strong> Each factor is pulled
-          toward 1 by how little has been measured, so a key with three runs shows about a third of
-          its apparent ratio — the measured column is what the data said before that. Nothing here
-          separates <em>this agent is expensive</em> from <em>this agent gets the big tasks</em>: no
-          task has yet run on two different agents. Warm starts are divided out first (currently ×
-          {report.costFactors.warmFactor.toFixed(2)} warm from {report.costFactors.warmSamples} runs,
-          ×{report.costFactors.coldFactor.toFixed(2)} cold from {report.costFactors.coldSamples}).
-        </p>
-      </section>
 
-      <section className="doc-section">
-        <h3>What it has done</h3>
-        <p className="panel-sub">
-          Median time you take to answer:{' '}
-          <span className="num">{Math.round(report.medianHumanLatencyMs / 60000)} minutes</span> —
-          measured from your own answers, and the reason a session waiting on you is worth keeping
-          warm.
-        </p>
-        {report.recent.length === 0 ? (
-          <p className="dim">Nothing yet.</p>
-        ) : (
-          <table className="tbl">
-            <tbody>
-              {report.recent.map((e, i) => (
-                <tr key={`${e.sessionId}-${e.ts}-${i}`}>
-                  <td className="dim num">{age(now - e.ts)}</td>
-                  <td className="mono">{e.sessionId.slice(0, 6)}</td>
-                  <td>
-                    <span className={`status ${MOVE_TONE[e.move] ?? ''}`}>{MOVE_LABEL[e.move]}</span>
-                  </td>
-                  <td className="num tbl-num">{e.estimatedCost ? tokens(e.estimatedCost) : '—'}</td>
-                  <td className="dim">{e.reason}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+        <div className="card" style={{ padding: 'var(--sp-3)', background: 'var(--color-surface)', marginTop: 'var(--sp-3)' }}>
+          <h4 style={{ margin: '0 0 var(--sp-2)', fontSize: 'var(--text-body)', fontWeight: 600 }}>
+            How the multiplier (e.g. ×2.91) is calculated in plain English:
+          </h4>
+          <ol style={{ margin: '0 0 var(--sp-2)', paddingLeft: 'var(--sp-4)', fontSize: 'var(--text-dense)', color: 'var(--color-text-dim)', lineHeight: 1.6 }}>
+            <li>
+              <strong>Priced Token Normalization:</strong> Raw tokens are converted into input-token-equivalents.
+              Cache reads are 90% cheaper, output tokens are 3×–5× more expensive, and cache writes are 1.25×.
+            </li>
+            <li>
+              <strong>Fleet Baseline Comparison:</strong> The system finds the median priced tokens across all tasks
+              in the fleet ({tokens(report.costFactors.neutralPriced)}). An agent whose median run is 1.2M tokens has a raw ratio of ~3.5×.
+            </li>
+            <li>
+              <strong>Sample Shrinkage (Why the number isn&rsquo;t just the raw ratio):</strong> If an agent only ran 2 or 3 tasks,
+              those tasks might just have been unusually large. The system applies shrinkage (formula: <code>ratio^(N / (N+5))</code>)
+              which pulls the multiplier closer to 1.0 until more runs (N) are completed. This is why a raw ratio of 3.5× with 8 runs becomes an applied multiplier of <strong>×2.91</strong>.
+            </li>
+            <li>
+              <strong>Warm vs. Cold Starts Separated:</strong> Reusing a warm session context costs far less than a fresh cold start.
+              Warmth is separated out first (currently ×{report.costFactors.warmFactor.toFixed(2)} warm vs ×{report.costFactors.coldFactor.toFixed(2)} cold) so an agent that inherits warm sessions isn&rsquo;t mistakenly credited as being cheaper.
+            </li>
+          </ol>
+        </div>
       </section>
     </div>
   )
-}
-
-const MOVE_LABEL: Record<string, string> = {
-  dispatch: 'send it work',
-  keepalive: 'keep alive',
-  compact: 'compact',
-  revive_compact: 'wake it to compact',
-  let_expire: 'let it expire',
-  handoff_close: 'hand off and close',
-  none: 'nothing yet'
-}
-
-const MOVE_TONE: Record<string, string> = {
-  dispatch: 'state-ok',
-  keepalive: 'state-running',
-  compact: 'state-warn',
-  revive_compact: 'state-warn',
-  let_expire: 'state-idle',
-  handoff_close: 'state-human',
-  none: 'state-idle'
-}
-
-const RESERVE_TONE: Record<string, string> = {
-  ok: 'state-ok',
-  at_risk: 'state-danger',
-  unknown: 'state-warn'
 }

@@ -35,6 +35,8 @@ import { Controller } from './components/Controller'
 import { Project as ProjectView, type ProjectTab } from './components/Project'
 import { SidebarResizer } from './components/SidebarResizer'
 import { AppSettings } from './components/AppSettings'
+import { CostModel } from './components/CostModel'
+import { RoutingModel } from './components/RoutingModel'
 import { ProjectDot, projectWorkState } from './lib/taskview'
 
 /**
@@ -67,6 +69,7 @@ type Route =
    * the last one is given a home, which is what the require-a-project migration does.
    */
   | { kind: 'unassigned'; taskId?: string }
+  | { kind: 'analytics'; page: 'cost-model' | 'routing-model' }
   /**
    * ⚠️ `taskId` so a run in the fleet-wide conversation list has somewhere to go. It cannot route
    * into a project tab, because the conversation it came from may belong to a different project
@@ -325,6 +328,23 @@ export function App(): React.JSX.Element {
         </nav>
 
         <nav className="nav-group">
+          <h2>Analytics</h2>
+          <NavItem
+            active={route.kind === 'analytics' && route.page === 'cost-model'}
+            onClick={() => setRoute({ kind: 'analytics', page: 'cost-model' })}
+          >
+            Cost Model
+          </NavItem>
+          <NavItem
+            active={route.kind === 'analytics' && route.page === 'routing-model'}
+            onClick={() => setRoute({ kind: 'analytics', page: 'routing-model' })}
+          >
+            Routing Model
+            <span className="nav-count dim">(not added yet)</span>
+          </NavItem>
+        </nav>
+
+        <nav className="nav-group">
           <h2>History</h2>
           <NavItem
             active={route.kind === 'history' && route.page === 'conversations'}
@@ -379,9 +399,13 @@ export function App(): React.JSX.Element {
           {!connected ? (
             <DaemonNotice status={status} />
           ) : route.kind === 'overview' && route.page === 'dashboard' ? (
-            <Overview now={now} />
+            <Overview now={now} onOpenCostModel={() => setRoute({ kind: 'analytics', page: 'cost-model' })} />
           ) : route.kind === 'overview' && route.page === 'controller' ? (
             <Controller now={now} />
+          ) : route.kind === 'analytics' && route.page === 'cost-model' ? (
+            <CostModel now={now} />
+          ) : route.kind === 'analytics' && route.page === 'routing-model' ? (
+            <RoutingModel />
           ) : route.kind === 'unassigned' ? (
             route.taskId ? (
               <TaskThread

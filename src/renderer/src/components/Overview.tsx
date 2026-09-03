@@ -8,13 +8,19 @@ import { LooseEnds } from './LooseEnds'
  * to the project it is running for, and until sessions carry a project id there is nothing here that
  * could say which.
  */
-export function Overview({ now }: { now: number }): React.JSX.Element {
+export function Overview({
+  now,
+  onOpenCostModel
+}: {
+  now: number
+  onOpenCostModel?: () => void
+}): React.JSX.Element {
   return (
     <div className="stack">
       {/* ⛔ Above the cost model, because it is the only thing on this page that is *waiting on a
           person*. Everything below it is a number to read; this is a decision somebody owes. */}
       <LooseEnds />
-      <Cost now={now} />
+      <Cost now={now} onOpenCostModel={onOpenCostModel} />
     </div>
   )
 }
