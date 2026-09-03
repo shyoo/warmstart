@@ -4,6 +4,7 @@ import { ROOT_MANDATE } from '@shared/tasks'
 import {
   completionTime,
   laneFor,
+  runningWorkspaceRows,
   visibleTasksForLane,
   MAX_COMPLETED_CARDS,
   MAX_LANE_CARDS
@@ -99,6 +100,45 @@ describe('Flow lane mapping', () => {
     for (const status of finishedStatuses) {
       expect(laneFor(mockTask({ status }))).toBe('finished')
     }
+  })
+})
+
+describe('workspace bindings in the Running lane', () => {
+  it('keeps a completed task out of Running even while its workspace claim remains', () => {
+    // ⛔ This is t164's shape: status reached `completed`, while the separate resource-release
+    // path had not yet cleared the workspace claim. The ticket must be drawn once, in Finished.
+    const rows = [
+      { id: 'running', activeTask: mockTask({ id: 't-running', status: 'running' }) },
+      { id: 'completed', activeTask: mockTask({ id: 't-completed', status: 'completed' }) },
+      { id: 'free', activeTask: null }
+    ]
+
+    expect(runningWorkspaceRows(rows).map((row) => row.id)).toEqual(['running', 'free'])
+    expect(laneFor(rows[1]!.activeTask!)).toBe('finished')
+  })
+
+  it('keeps only actual running states in a binding lane and leaves non-running workspace rows alone', () => {
+    const rows = [
+      { id: 'run', activeTask: mockTask({ status: 'running' }) },
+      { id: 'cancel', activeTask: mockTask({ status: 'cancelling' }) },
+      { id: 'ready', activeTask: mockTask({ status: 'ready' }) },
+      { id: 'queued', activeTask: mockTask({ status: 'scheduled' }) },
+      { id: 'dispatching', activeTask: mockTask({ status: 'assigned' }) },
+      { id: 'awaiting', activeTask: mockTask({ status: 'awaiting_human' }) },
+      { id: 'paused', activeTask: mockTask({ status: 'paused_user' }) },
+      { id: 'quota', activeTask: mockTask({ status: 'paused_quota' }) },
+      { id: 'failed', activeTask: mockTask({ status: 'failed' }) },
+      { id: 'cancelled', activeTask: mockTask({ status: 'cancelled' }) },
+      // Free and inbound rows have no active task; dropping either would hide pool capacity or a
+      // dispatch transition from the one column meant to explain them.
+      { id: 'free-or-inbound', activeTask: null }
+    ]
+
+    expect(runningWorkspaceRows(rows).map((row) => row.id)).toEqual([
+      'run',
+      'cancel',
+      'free-or-inbound'
+    ])
   })
 })
 

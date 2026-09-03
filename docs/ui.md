@@ -120,6 +120,9 @@ whose entire design is to be invisible.
   operator, and it was once the only resting state with nothing to press.
 - ⛔ **A run's `completed` beside a task's `awaiting_human` is not a contradiction** — the UI has to
   say so, because that pair is what somebody reads as broken.
+- ⛔ **A Flow ticket appears in one lifecycle lane only.** A workspace claim enriches Running only
+  while its task is `running` or `cancelling`; a release still unwinding must not pin a completed or
+  awaiting ticket under Running as a second copy.
 - ⛔ **A control that cannot be used is still a control.** Where `selectableEffort` is false the New
   Task form renders **no** effort control rather than a disabled one, which would sit there implying a
   choice was being made.

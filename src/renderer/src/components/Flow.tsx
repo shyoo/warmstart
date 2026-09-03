@@ -56,6 +56,19 @@ export function laneFor(task: Task): FlowLane {
   return LANES.find((lane) => lane.statuses.includes(task.status))?.id ?? 'queued'
 }
 
+/**
+ * The Running lane is a binding view, not a second copy of every workspace claim.
+ *
+ * A claim can outlive a run while `releaseFor` is unwinding it, or while a task deliberately keeps
+ * its tree awaiting a human. In either case the task's lifecycle lane is authoritative: a completed
+ * ticket must be in Finished, never green inside Running just because its workspace row is late.
+ */
+export function runningWorkspaceRows<
+  T extends { activeTask: Pick<Task, 'status' | 'holdReason'> | null }
+>(rows: T[]): T[] {
+  return rows.filter((row) => row.activeTask === null || laneFor(row.activeTask as Task) === 'running')
+}
+
 function activeMs(task: Task, now: number): number {
   return task.activeSince ? task.activeMs + now - task.activeSince : task.activeMs
 }
@@ -204,6 +217,11 @@ export function Flow({ projectId, fleet, onOpenTask }: {
       }
     })
   }, [workspaces, byId, inboundTasks, fleet])
+
+  // ⛔ A workspace claim is evidence of a resource hold, not evidence that its task is running.
+  // Keep free and inbound rows so the pool remains legible, but leave terminal/awaiting tickets to
+  // the one lifecycle lane that owns their status.
+  const runningRows = useMemo(() => runningWorkspaceRows(workspaceRows), [workspaceRows])
 
   /** Any remaining inbound tasks that did not fit in any free workspace (when pool is full). */
   const overflowInbound = useMemo(() => {
@@ -370,8 +388,8 @@ export function Flow({ projectId, fleet, onOpenTask }: {
                     // ⭐ The binding column. One card per workspace in the pool, visualizing
                     // ticket ↔ workspace ↔ worker bindings directly.
                     <div className="flow-binds">
-                      {workspaceRows.length > 0 ? (
-                        workspaceRows.map(renderWorkspaceRow)
+                      {runningRows.length > 0 ? (
+                        runningRows.map(renderWorkspaceRow)
                       ) : (
                         <span className="dim flow-binds-empty">This project has no workspace pool yet. One is built on its first dispatch.</span>
                       )}
@@ -400,7 +418,7 @@ export function Flow({ projectId, fleet, onOpenTask }: {
                   )}
                   <div className="flow-lane-label">
                     <span>{lane.label}</span>
-                    <b>{isRunningLane ? workspaces.filter((w) => w.taskId).length : laneTasks.length}</b>
+                    <b>{isRunningLane ? unbound.length + runningRows.filter((row) => row.activeTask !== null).length : laneTasks.length}</b>
                   </div>
                 </div>
               )
