@@ -2,7 +2,7 @@ import { sessionEnded } from '@shared/protocol'
 import { Fragment, useEffect, useRef, useState } from 'react'
 import type { AdapterDetection, AdapterInfo, ModelOptions, Session, Worker } from '@shared/protocol'
 import { rpc, useDaemonEvents, useNow, type FleetEntry } from '../lib/daemon'
-import { quotaFreshness } from '@shared/tasks'
+import { QUOTA_STALE_AFTER_MS, quotaFreshness } from '@shared/tasks'
 import { age, percent, quotaGap } from '../lib/format'
 import { SettingButtonSelect, type SettingOption } from './SettingButtonSelect'
 import { TerminalPane } from './Terminal'
@@ -395,6 +395,10 @@ export function Workers({
               // event froze at the age it arrived with — "read 2m ago" an hour later, and a fresh
               // reading that never went stale on screen. See `quotaFreshness` (t86).
               const reading = quota ? { ...quota, ...quotaFreshness(quota, now) } : null
+              // A failed refresh makes this number ineligible for scheduling immediately, but the
+              // account table follows the same display rule as the fleet card: a few-minute-old
+              // last good reading does not need an age label or an amber warning.
+              const readingIsOld = Boolean(reading && reading.ageMs > QUOTA_STALE_AFTER_MS)
               const gap = quotaGap(reading, probeKind(worker.id))
               /**
                * ⛔ Out of the Account cell and onto a row of their own.
@@ -577,7 +581,7 @@ export function Workers({
                               because nothing has used the account, not because anything failed, and
                               the two need different next moves from the operator. A reading that is
                               old *because every check failed* is the fault, and it says so. */}
-                          {reading.stale && (
+                          {readingIsOld && (
                             <div className={reading.error ? 'warn tbl-sub' : 'dim tbl-sub'} title={gap?.hint}>
                               read {age(reading.ageMs)}
                               {reading.error ? ' · last check failed' : ''}

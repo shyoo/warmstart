@@ -71,9 +71,17 @@ describe('what the card corner says', () => {
     expect(status).toMatchObject({ kind: 'age', label: '29m ago', failing: false })
   })
 
-  it('marks a stale reading whose every retry has failed as failing', () => {
+  it('does not show a short age just because the newest probe failed', () => {
     const status = cardStatus(
       entry({ quota: quota({ stale: true, ageMs: 60_000, error: 'exit 1' }) }),
+      NOW
+    )
+    expect(status).toBeNull()
+  })
+
+  it('marks an old reading whose every retry has failed as failing', () => {
+    const status = cardStatus(
+      entry({ quota: quota({ stale: true, ageMs: 29 * 60_000, error: 'exit 1' }) }),
       NOW
     )
     expect(status).toMatchObject({ kind: 'age', failing: true })

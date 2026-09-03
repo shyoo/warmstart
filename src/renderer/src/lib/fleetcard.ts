@@ -1,5 +1,5 @@
 import type { Session } from '@shared/protocol'
-import { quotaFreshness } from '@shared/tasks'
+import { QUOTA_STALE_AFTER_MS, quotaFreshness } from '@shared/tasks'
 import type { FleetEntry } from './daemon'
 import { age } from './format'
 
@@ -81,7 +81,11 @@ export function cardStatus(
 
   const quota = entry.quota
   const { ageMs, stale } = quotaFreshness(quota, now)
-  if (!quota || !stale || quota.windows.length === 0) return null
+  // A failed refresh makes the reading unfit for a scheduler gate immediately, but it must not
+  // make the card start shouting an age moments after a successful reading landed. The card's
+  // short-age rule is about display, not whether the daemon may rely on the number: reserve the
+  // corner (and its amber failure treatment) for a reading old enough to need an age at all.
+  if (!quota || !stale || quota.windows.length === 0 || ageMs <= QUOTA_STALE_AFTER_MS) return null
   return {
     kind: 'age',
     label: age(ageMs),
