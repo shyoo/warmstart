@@ -857,6 +857,32 @@ the calibration needs isolation.
 
 ## 6. Metering correctness
 
+### 6a. A stream's terminal usage record is not always the turn (2026-09-03)
+
+⛔ **Measured on agy 1.1.25**, three prompts down one conversation: `result.usage.input_tokens` came
+back 44,785 → 60,384 → 76,209 while the per-call `step_update` records for those same runs read
+44,785 (3 calls) → 15,599 → 15,825. The terminal record is **cumulative over the conversation**, so
+`creditStreamTurn` — which bills every final `usage` event once — charged turn 1 again on turn 2 and
+twice more on turn 3. A session's recorded spend grew with the square of its turn count.
+
+⛔ The same field is also **not a context level**, even within one run: it is a sum of prompt sizes
+across model calls, so a session that made three calls at 500k/700k/800k reported 2.0M and the fleet
+strip drew `2.0M/1.0M`. What the window holds is the prompt at the **last** call.
+
+⭐ [`src/daemon/streamusage.ts`](../src/daemon/streamusage.ts) settles both, and the rule is stated
+over the records rather than over a vendor name (AGENTS.md forbids the latter): **a run that emitted
+per-call usage is billed the sum of those calls and holds the last of them; a run that emitted none
+is billed its terminal record and says nothing about its window.** Codex and local-llm emit one
+terminal record each, so their behaviour is unchanged. ⚠️ `input` and `cacheRead` are disjoint
+categories — one stored agy turn carries 1,384,180 input against 23,169,687 cache reads over the
+same calls — so the window level is their **sum**, not `input` alone.
+
+⚠️ This is the second bug of its shape in this file: §1c is a stamp nobody wrote, and this is a
+number written from the wrong field. Both were invisible because the value they produced was
+plausible. A stream figure is worth an arithmetic check against the records beneath it.
+
+### 6b. Reading a transcript
+
 Three traps, all avoidable — the transcript carries what is needed.
 
 1. **Sum `usage.iterations[]`, not the top-level counts.** A compaction's own sampling iteration is

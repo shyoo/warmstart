@@ -465,8 +465,16 @@ function costModelFor(adapterId: string) {
  * its rollout, which carries per-request timing (HANDOFF R10). See cost-model.md §1c.
  *
  * ⚠️ Where no TTL is declared at all, `cacheExpiryFor` returns null and nothing below changes.
+ *
+ * @param contextTokens - The context window fill level at the end of the turn's *last* model
+ *   invocation. Distinct from `usage.input`, which is the cumulative sum of input tokens across
+ *   **every** model call inside the turn (i.e. the total billed input, not the window level).
+ *   For multi-step adapters like Antigravity, `usage.input` grows without bound across a long run
+ *   while the actual context size stays near the model's declared limit; conflating the two makes
+ *   the session gauge show `2.0M/1.0M`. When omitted, `usage.input` is used as before (correct
+ *   for single-request adapters like Codex where the two are identical for a given turn).
  */
-export function creditStreamTurn(session: Session, usage: StreamUsage): void {
+export function creditStreamTurn(session: Session, usage: StreamUsage, contextTokens?: number): void {
   const model = costModelFor(session.adapterId)
   const ts = Date.now()
   /**
@@ -486,7 +494,19 @@ export function creditStreamTurn(session: Session, usage: StreamUsage): void {
    * prefix as fresher than it is would be the wrong way to be wrong, but is the only number left.
    */
   const startedAt = promptSentAt(session.id) ?? ts
-  const expiry = model.cacheExpiryFor({ contextTokens: usage.input, lastRequestStartedAt: startedAt })
+  // ⚠️ `contextTokens` is the fill level of the model's context window when the turn ended, which
+  // is a different question from what the turn cost. A run that made several model calls spends the
+  // sum of their prompts and *holds* only the last one, so `usage.input` overstates the window by a
+  // factor of the call count — see `streamusage.ts`, where both numbers are worked out and where the
+  // measurement behind this sentence is recorded. When the run emitted no per-call usage there is
+  // nothing better to say than `usage.input`, clamped to the window so a single wrong reading cannot
+  // draw a bar past full.
+  const win = session.contextWindow ?? (session.model ? (model.modelSpec(session.model)?.context_window ?? null) : null)
+  const fallback = win ? Math.min(usage.input, win) : usage.input
+  const ctxTokens = contextTokens ?? fallback
+  // ⛔ The context level, not the turn's input. A prompt cache's TTL is priced off how much prefix
+  // is being held, and the prefix is what the window holds — not the total prompted across a run.
+  const expiry = model.cacheExpiryFor({ contextTokens: ctxTokens, lastRequestStartedAt: startedAt })
 
   const inserted = db()
     .prepare(
@@ -512,7 +532,7 @@ export function creditStreamTurn(session: Session, usage: StreamUsage): void {
       usage.cacheRead,
       usage.cacheWrite,
       0,
-      usage.input,
+      ctxTokens,
       session.model ? (model.modelSpec(session.model)?.tokenizer ?? null) : null,
       model.id
     ).changes
@@ -530,7 +550,7 @@ export function creditStreamTurn(session: Session, usage: StreamUsage): void {
         where id = ?`
     )
     .run(
-      usage.input,
+      ctxTokens,
       usage.input + usage.output + usage.cacheWrite,
       // ⛔ `startedAt`, not `ts`: the request start is what a TTL is measured from, and it is the
       // same number the row above was inserted with. Writing the response end here would have made

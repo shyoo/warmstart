@@ -32,6 +32,7 @@ import { recordRateLimit } from './quota.js'
 import { TranscriptTailer, creditStreamTurn, recordCompaction, recordTurn } from './transcript.js'
 import { log, onLog } from './log.js'
 import { setEventSink } from './events.js'
+import { forgetStreamUsage, noteStepUsage, takeTurnUsage } from './streamusage.js'
 import { onShutdownRequest } from './lifecycle.js'
 import { noteActivity } from './activity.js'
 import { onSettingChange } from './settings.js'
@@ -140,7 +141,18 @@ async function main(): Promise<void> {
       // callback was handed, which is the row as it was *before* `creditStreamTurn` wrote to it -
       // announcing a change while carrying the values from before it. `creditStreamTurn` now
       // announces its own write, from the store.
-      if (event.kind === 'usage' && event.final) creditStreamTurn(session, event.usage)
+      //
+      // ⭐ **The terminal record is not always the turn** (measured 2026-09-03, `streamusage.ts`).
+      // `agy` reports `result.usage` cumulatively over the *conversation*, so crediting it as-is
+      // bills every earlier turn again, and its `input_tokens` is a sum of prompt sizes rather than
+      // a window level — which is what drew `1.1M/1.0M` on the gauge. Where a run emitted per-call
+      // usage, `takeTurnUsage` returns their sum as the turn and the last call's prompt size as the
+      // context level; where it did not, it hands back the terminal record unchanged.
+      if (event.kind === 'usage' && !event.final) noteStepUsage(session.id, event.usage)
+      if (event.kind === 'usage' && event.final) {
+        const turn = takeTurnUsage(session.id, event.usage)
+        creditStreamTurn(session, turn.usage, turn.contextTokens ?? undefined)
+      }
       // ⛔ The peephole. A running task used to show a status and a token count and nothing else, so
       // "is this working or is it stuck?" could only be answered by opening the session pane and
       // reading a terminal. This is the same prose, already decoded, forwarded to whoever is looking
@@ -181,6 +193,7 @@ async function main(): Promise<void> {
         tailer?.stop()
         tailers.delete(sessionId)
       }, 3000)
+      forgetStreamUsage(sessionId)
       emit({ type: 'session.exit', sessionId, exitCode })
     }
   })

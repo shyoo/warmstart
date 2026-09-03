@@ -314,16 +314,42 @@ runs on these adapters are marked `quotaUnverified`.
 
 ## Still unmeasured, and why
 
-Everything below needs a **signed-in account and a real turn**, which is where free measurement stops.
+Everything below needed a **signed-in account and a real turn**, which is where free measurement
+stops. ⭐ **Nothing is open here today** — the last of these closed on 2026-09-03.
 
-| # | Question | Adapter |
+✅ **R13 closed 2026-09-03, and it was the bad answer: agy's `result.usage` is cumulative over the
+whole conversation.** Three prompts down one conversation on agy 1.1.25, reading the raw NDJSON:
+
+| run | `step_update.usage.input_tokens`, per model call | `result.usage.input_tokens` |
 |---|---|---|
-| **R13** | Is agy's `result.usage` the *turn's* total or the *conversation's*? Measured on a single-turn run, where the two are identical. If it is cumulative, multi-turn sessions are over-billed | `antigravity-cli` |
+| 1 (new conversation) | 14,687 + 14,947 + 15,151 | **44,785** |
+| 2 (`--continue`) | 15,599 | **60,384** |
+| 3 (`--continue`) | 15,825 | **76,209** |
+
+44,785 + 15,599 = 60,384 and + 15,825 = 76,209, exactly. So the terminal record repeats every
+earlier turn, and crediting it once per turn made a session's recorded spend grow with the *square*
+of its turn count — 4.7M in one session's `tokens_since_compact` against its own last reading of
+1.38M. ⛔ It is also **not a context level**: even within one run it is a sum of prompt sizes across
+model calls, which is what drew `1.1M/1.0M` and `2.0M/1.0M` on the session gauge.
+
+⭐ Both are fixed in [`src/daemon/streamusage.ts`](../src/daemon/streamusage.ts), and the rule is a
+fact about the *records*, not about this vendor: **a run that emitted per-call usage is billed the
+sum of those calls and holds the last of them in its window; a run that emitted none is billed its
+terminal record.** Codex and local-llm emit one terminal record each and take the second path
+unchanged. ⚠️ `input` and `cacheRead` are disjoint (session `f88c6fe8`: 1,384,180 input against
+23,169,687 cache reads over the same calls), so the window level is their sum.
+
+⚠️ **`/context` exists in the agy TUI and cannot answer this.** agy 1.1.25 has a `/context` slash
+command (*"Visualize current context usage"*, drawing a `└ Context Usage` panel), and
+`parseContextScreen` in the adapter reads that panel. But a work session on this adapter is
+`--print` with no TUI, and the only place a slash command can be typed is the throwaway PTY the
+quota probe opens — whose context is its own, not the work session's. A screen reading would answer
+for the wrong conversation, which is worse than the stream arithmetic above, not better.
 
 **Answered by measurement on 2026-08-27:** the print flag (above), and with it the first
 confirmation that a corrected argv reaches a signed-in Antigravity account: the CLI returns a
 valid `init` record listing 50-odd tools, with no turn spent. ⚠️ Everything past `init` on this
-adapter is still unmeasured, because it needs a real turn — R11 and R13 below.
+adapter was still unmeasured then, because it needed a real turn — R11 and R13, both since closed.
 
 ✅ **R12 closed 2026-08-30, negatively** (`docs/cost-model.md` §5): headless compaction is unreachable on `codex exec` — not because of compaction, but because a `streamPrompts: 'once'` CLI has no second input to drive it with.
 

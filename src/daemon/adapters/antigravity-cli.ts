@@ -401,6 +401,9 @@ function decodeStream(record: Record<string, unknown>): StreamEvent | StreamEven
       text = formatToolActivity(step) ?? ''
     }
     if (text) events.push({ kind: 'assistant_text', text })
+    // ⭐ One record per **model call**, and the only place the context window level is visible:
+    // `input_tokens` here is the prompt this call sent. The terminal `result` sums them, so it
+    // answers neither "what did the turn cost" nor "how full is the window" - see `streamusage.ts`.
     const usage = asRecord(step?.usage)
     if (usage) events.push({ kind: 'usage', usage: readUsage(usage), final: false })
     if (events.length > 0) return events.length === 1 ? events[0]! : events
@@ -449,9 +452,15 @@ function decodeStream(record: Record<string, unknown>): StreamEvent | StreamEven
       terminalReason: status
     }
     const usage = asRecord(result?.usage) ?? asRecord(record.usage)
-    // ⚠️ Two events from one record. The terminal record carries the turn's usage as well as its
-    // text, and this is the only place agentyard can bill this adapter from - `agy` writes its
-    // conversations as SQLite, which the transcript tailer cannot read.
+    // ⚠️ Two events from one record: the terminal record carries usage as well as text, and the
+    // stream is the only place agentyard can bill this adapter from - `agy` writes its conversations
+    // as SQLite, which the transcript tailer cannot read.
+    //
+    // ⛔ **This usage is cumulative over the whole conversation, not the turn** - measured
+    // 2026-09-03 on agy 1.1.25, three prompts down one conversation reporting 44,785 → 60,384 →
+    // 76,209 input against per-call sums of 44,785 → 15,599 → 15,825. It is emitted verbatim
+    // because a decoder's job is to report what the CLI said; `streamusage.ts` is where the run's
+    // own step records are summed into the turn, and where the arithmetic is recorded.
     return usage ? [{ kind: 'usage', usage: readUsage(usage), final: true }, finished] : finished
   }
 
@@ -531,6 +540,13 @@ export function parseTokenCount(str: string): number {
 
 /**
  * Parses the `/context` command modal output from Antigravity CLI.
+ *
+ * ⚠️ **The command is real and it cannot answer for a work session.** agy 1.1.25 carries `/context`
+ * (*"Visualize current context usage"*, drawing the `└ Context Usage` panel below), confirmed
+ * 2026-09-03. But a work session on this adapter is `--print` with no TUI to type into, and the one
+ * place a slash command *can* be typed is the throwaway PTY the quota probe opens - whose context is
+ * its own, near-empty one. So this parser is reached only if a panel already on screen contains the
+ * block; the session's real window level comes from its per-call stream usage (`streamusage.ts`).
  *
  * Examples:
  * ```

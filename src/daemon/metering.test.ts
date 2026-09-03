@@ -344,3 +344,112 @@ describe('a turn metered from the stream winds the session cache clock', () => {
     expect(inserted.n).toBeGreaterThan(0)
   })
 })
+
+/**
+ * `context_tokens` vs. `usage.input` for multi-step stream adapters.
+ *
+ * ⛔ **Measured 2026-09-03:** Antigravity sessions were showing `1.1M/1.0M` or `2.0M/1.0M` in the
+ * session gauge. The root cause was `creditStreamTurn` writing `usage.input` (from the terminal
+ * `result` event) directly to `context_tokens`. In agy, `result.usage.input_tokens` is a *sum of
+ * prompt sizes* over every model invocation — not the context window fill level. On a run with 3
+ * model calls at 500k, 700k, 800k tokens, the result reports 2.0M while the window held 800k.
+ *
+ * The fix has two halves. Here: `creditStreamTurn` takes the window level as an argument and only
+ * falls back to `usage.input` (clamped to the window) when the caller has nothing better. In
+ * `streamusage.ts`: the caller works out both numbers from the run's per-call usage records, which
+ * is also where the *second* bug lives — that same `result.usage` is cumulative over the whole
+ * conversation, so crediting it once per turn bills every earlier turn again.
+ */
+describe('creditStreamTurn uses contextTokens when provided, not usage.input', () => {
+  const AGY_SESSION = 'eeeeeeee-0000-4000-8000-000000000001'
+
+  beforeAll(() => {
+    db.db()
+      .prepare(
+        `insert into sessions (id, worker_id, adapter_id, transport, cwd, state, started_at,
+                               tokens_since_compact, purpose)
+         values (?,?,?,?,?,?,?,?,?)`
+      )
+      .run(AGY_SESSION, WORKER, 'antigravity-cli', 'stream', dir, 'live', Date.now(), 0, 'work')
+  })
+
+  const ctx = () =>
+    (
+      db.db().prepare('select context_tokens c, tokens_since_compact t from sessions where id = ?')
+        .get(AGY_SESSION) as { c: number | null; t: number }
+    )
+
+  it('uses the explicit contextTokens for context_tokens, not the cumulative usage.input', () => {
+    // Simulate a multi-step Antigravity run: 3 iterations summing to 2.0M input, but the last
+    // step only had 800k in the context window at that point.
+    const cumulativeInput = 2_000_000
+    const lastStepInput = 800_000
+
+    const session = sessions.getSession(AGY_SESSION)
+    expect(session).not.toBeNull()
+    transcript.creditStreamTurn(
+      session as NonNullable<typeof session>,
+      { input: cumulativeInput, output: 500, thinking: 0, cacheRead: 0, cacheWrite: 0 },
+      lastStepInput
+    )
+    const { c, t } = ctx()
+    // context_tokens must be the window fill level, not the billing total
+    expect(c).toBe(lastStepInput)
+    expect(c).not.toBe(cumulativeInput)
+    // tokens_since_compact must still use the full billed input
+    expect(t).toBe(cumulativeInput + 500)
+  })
+
+  it('falls back to usage.input when contextTokens is omitted (single-step adapters)', () => {
+    // Use a separate session so this test is not affected by the insert-or-ignore dedup of the row above.
+    const AGY_FALLBACK = 'ffffffff-0000-4000-8000-000000000001'
+    db.db()
+      .prepare(
+        `insert into sessions (id, worker_id, adapter_id, transport, cwd, state, started_at,
+                               tokens_since_compact, purpose)
+         values (?,?,?,?,?,?,?,?,?)`
+      )
+      .run(AGY_FALLBACK, WORKER, 'antigravity-cli', 'stream', dir, 'live', Date.now(), 0, 'work')
+
+    const fallbackSession = sessions.getSession(AGY_FALLBACK)
+    expect(fallbackSession).not.toBeNull()
+    const input = 75_000
+    transcript.creditStreamTurn(
+      fallbackSession as NonNullable<typeof fallbackSession>,
+      { input, output: 100, thinking: 0, cacheRead: 0, cacheWrite: 0 }
+    )
+    const stored = db
+      .db()
+      .prepare('select context_tokens c from sessions where id = ?')
+      .get(AGY_FALLBACK) as { c: number | null }
+    // Without a contextTokens override, usage.input is used as the context level
+    expect(stored.c).toBe(input)
+  })
+
+  it('clamps fallback to contextWindow when usage.input exceeds it and contextTokens is omitted', () => {
+    const AGY_CLAMP = 'ffffffff-0000-4000-8000-000000000002'
+    db.db()
+      .prepare(
+        `insert into sessions (id, worker_id, adapter_id, transport, cwd, state, started_at,
+                               tokens_since_compact, purpose, model)
+         values (?,?,?,?,?,?,?,?,?,?)`
+      )
+      .run(AGY_CLAMP, WORKER, 'antigravity-cli', 'stream', dir, 'live', Date.now(), 0, 'work', 'gemini-3.7-flash-medium')
+
+    const clampSession = sessions.getSession(AGY_CLAMP)
+    expect(clampSession).not.toBeNull()
+    // gemini-flash-3.7 context window is 1_000_000
+    const hugeInput = 1_500_000
+    transcript.creditStreamTurn(
+      clampSession as NonNullable<typeof clampSession>,
+      { input: hugeInput, output: 100, thinking: 0, cacheRead: 0, cacheWrite: 0 }
+    )
+    const stored = db
+      .db()
+      .prepare('select context_tokens c from sessions where id = ?')
+      .get(AGY_CLAMP) as { c: number | null }
+    expect(stored.c).toBe(1_000_000)
+  })
+})
+
+
