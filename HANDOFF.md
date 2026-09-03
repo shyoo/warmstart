@@ -166,7 +166,8 @@ M0–M6 are done. What is left is not a milestone but a list, in the order it wo
 8. **Put human-in-the-loop and `commit-and-merge` in front of a real agent.** Both built, neither
    used by one: dispatch a design task, answer what it asks, watch it merge — what L1–L3 cannot prove.
 9. **Meter codex off its rollout** — R10 is answered (§5), but `metering` stays `'stream'`, so a PTY-hosted codex run is unmetered, and the estimator never sees it.
-10. **Compute `overrunFactor` in cost, not raw tokens**, and let preempted runs feed `estimateTask`.
+10. **Peer quality review is planned, not built** (`transient_docs/quality_review_2026-09-03.md`, t153). A second agent grades a finished task’s diff on a published 7-dimension rubric; blind, one turn, small model, stored as a `#N Quality Review` run. ⛔ **Step 1 of §11 is time-critical**: `retireBranch` deletes a landed branch and no commit range is recorded, so every task that lands before `landed_base_sha`/`landed_head_sha` exist is permanently unreviewable.
+11. **Compute `overrunFactor` in cost, not raw tokens**, and let preempted runs feed `estimateTask`.
    ⚠️ 92–98% of a run's tokens are cache reads, so it fires on long work — why `autoRunawayStop` ships off.
 
 ## Open questions
