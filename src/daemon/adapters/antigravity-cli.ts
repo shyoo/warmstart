@@ -670,6 +670,31 @@ export function parseUsageScreen(screen: string, now = Date.now()): QuotaWindow[
       if (/Weekly Limit Remaining/.test(line)) kind = 'weekly'
       else if (/Five Hour Limit Remaining/.test(line)) kind = '5h'
 
+      // ⭐ Measured 2026-09-03 on agy 1.1.25: once a model group's weekly pool is exhausted,
+      // the CLI removes its five-hour bar and prints `Disabled: You have hit your weekly limit,
+      // the 5-hour limit does not currently apply.` instead. That is a complete panel and a hard
+      // gate, not a clipped reading. Encode the inapplicable shorter window as exhausted until the
+      // weekly reset so consumers that only understand the five-hour gate cannot dispatch into it.
+      if (
+        kind === '5h' &&
+        group &&
+        /Disabled:\s*You have hit your weekly limit,\s*the 5-hour limit does not currently apply/i.test(
+          line
+        )
+      ) {
+        const weekly = windowsById.get(`weekly:${group.id}`)
+        const id = `5h:${group.id}`
+        windowsById.set(id, {
+          id,
+          label: `${group.label} 5h`,
+          percent: 100,
+          resetsAt: weekly?.resetsAt ?? null,
+          group: group.id
+        })
+        kind = null
+        continue
+      }
+
       // The bar line carries the precise figure. A complete `Quota available` is the CLI's way of
       // writing 100% remaining with no reset worth stating. ⛔ A clipped `Quota ava…` is not that
       // value: t163 (2026-09-03) rendered both Gemini rows that way and the permissive old match

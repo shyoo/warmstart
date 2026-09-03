@@ -159,6 +159,31 @@ describe('the /usage panel', () => {
       .replace('] 67.20%', '] Quota ava…')
     expect(parseUsageScreen(clipped, NOW)).toBeNull()
   })
+
+  it('treats a five-hour window disabled by an exhausted weekly pool as gated until weekly reset', () => {
+    // ⭐ Verbatim leading text from a live agy 1.1.25 panel on 2026-09-03. The remainder of this
+    // vendor sentence was clipped at column 120, so only the stable complete sentence is matched.
+    const disabled = screen
+      .replace(
+        '[█████████████████████████████░░░░░░░░░░░░░░░░░░░░░] 57.20%',
+        '[░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░] 0.00%'
+      )
+      .replace(
+        '[██████████████████████████████████████████████████] 100.00%\n    Quota available',
+        'Disabled: You have hit your weekly limit, the 5-hour limit does not currently apply. Your weekly limit will fully re'
+      )
+    const windows = parseUsageScreen(disabled, NOW)
+
+    expect(windows).not.toBeNull()
+    expect(windows).toHaveLength(4)
+    const weekly = windows?.find((w) => w.label === 'Claude/GPT 7d')
+    const disabledFiveHour = windows?.find((w) => w.label === 'Claude/GPT 5h')
+    expect(weekly?.percent).toBe(100)
+    expect(disabledFiveHour?.percent).toBe(100)
+    expect(disabledFiveHour?.resetsAt).toBe(weekly?.resetsAt)
+    // It is the pessimistic bare gate too; a consumer without a model must not dispatch here.
+    expect(disabledFiveHour?.id).toBe('5h')
+  })
 })
 
 describe('parseTokenCount', () => {

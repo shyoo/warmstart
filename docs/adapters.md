@@ -281,7 +281,7 @@ codebase where rendered text becomes state, permitted for a quota reading and no
 Live reading, 2026-08-27, agy 1.1.22, Google AI Pro: Gemini weekly 5.48% used · Gemini 5-hour
 32.80% · Claude-and-GPT weekly 42.80% · Claude-and-GPT 5-hour 0%.
 
-⚠️ Four failure modes; the first three were measured, and the fourth is labelled with its basis:
+⚠️ Five failure modes; the first four were measured, and the fifth is labelled with its basis:
 
 - The panel reports **remaining**; `QuotaWindow.percent` is **used**. Inverted in the parser.
 - A clipped **`Quota ava…` does not prove `Quota available`**. The parser accepts only the complete
@@ -295,6 +295,11 @@ Live reading, 2026-08-27, agy 1.1.22, Google AI Pro: Gemini weekly 5.48% used ·
   there was no recovery. The probe now retries the free `/usage` command every five seconds until a
   complete panel parses or its bounded 30-second settle window expires; the retry is unit-proven but
   has not been re-run against a live CLI.
+- **An exhausted weekly pool has no five-hour bar.** Live-debugged 2026-09-03 on agy 1.1.25:
+  Claude/GPT weekly showed 0.00% remaining, then its five-hour row said `Disabled` because the weekly
+  limit had been hit. The old completeness guard discarded all four otherwise valid windows, so
+  Probe appeared to do nothing. The parser now carries that shorter window as 100% used until the
+  weekly reset: it is unavailable, and a five-hour-only scheduler gate must not dispatch into it.
 
 What was tried before and does not work:
 
