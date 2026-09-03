@@ -25,7 +25,7 @@ import {
   updateWorker
 } from './workers.js'
 import { accountUnavailability } from './eligibility.js'
-import { lastQuota, lastQuotaReading, refreshNow } from './quota.js'
+import { lastQuota, lastQuotaReading, probeWorker, refreshNow } from './quota.js'
 import { emit } from './events.js'
 import {
   backscroll,
@@ -235,7 +235,15 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
       // directly left this manual TUI invisible: the next scheduler tick started a second probe,
       // and `spawnSession` correctly rejected it as already refreshing. The resulting failed
       // attempt overwrote the fresh baseline the operator had just requested.
-      await refreshNow(p.id, 0)
+      const w = requireWorker(p.id)
+      const info = adapter(w.adapterId).info
+      if (info.usageRefresh) {
+        await refreshNow(p.id, 0)
+      } else {
+        await probeWorker(p.id).catch((err: unknown) => {
+          log.warn(`quota probe failed for ${p.id}:`, err)
+        })
+      }
       const reading =
         lastQuotaReading(p.id) ??
         lastQuota(p.id) ?? {

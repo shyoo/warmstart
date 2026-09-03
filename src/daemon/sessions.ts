@@ -409,6 +409,7 @@ export function hasOpenRun(sessionId: string): boolean {
 export function reopenable(session: Session, workerId: string): boolean {
   if (session.workerId !== workerId) return false
   if (session.purpose !== 'work') return false
+  if (session.contextTokens === 0) return false
   const caps = adapter(session.adapterId).info.capabilities
   if (!caps.resumeSession) return false
   // ⛔ **The vendor's own handle, where the vendor is the one that names conversations.** `spawn`
@@ -1439,3 +1440,21 @@ export function clearClockMove(sessionId: string): void {
     )
     .run(sessionId)
 }
+
+/**
+ * A session failed to resume (e.g. remote thread 404, corrupted rollout, or startup failure on warm run).
+ * Clear its context tokens and mark it failed so neither `finishedConversationsIn` nor `resumableSession`
+ * ever attempts to resume it again.
+ */
+export function invalidateSessionContext(sessionId: string): void {
+  db()
+    .prepare("update sessions set context_tokens = 0, state = 'failed' where id = ?")
+    .run(sessionId)
+  const session = getSession(sessionId)
+  if (session) {
+    session.contextTokens = 0
+    session.state = 'failed'
+    events.onChange(session)
+  }
+}
+

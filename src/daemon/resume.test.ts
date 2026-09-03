@@ -358,6 +358,12 @@ describe('which conversation is worth going back to', () => {
     const found = sessions.resumableSession([load('s-empty'), load('s-good')], WORKER, WS)
     expect(found?.id).toBe('s-good')
   })
+
+  it('refuses a candidate whose contextTokens is zero', () => {
+    seed({ id: 's-zero-context' })
+    sessions.invalidateSessionContext('s-zero-context')
+    expect(sessions.resumableSession([load('s-zero-context')], WORKER, WS)).toBeNull()
+  })
 })
 
 describe("the vendor's name for a conversation", () => {

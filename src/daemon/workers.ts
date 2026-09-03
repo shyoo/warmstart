@@ -507,9 +507,18 @@ export async function refreshIdentity(id: string, lift = false): Promise<Worker>
   db().prepare('update workers set identity_json = ? where id = ?').run(JSON.stringify(identity), id)
 
   if (lift && getWorker(id)?.health) {
+    const health = getWorker(id)!.health
     if (probe.subscriptionExpired) {
       log.info(`${w.label} was re-probed by hand; subscription is still expired`)
     } else {
+      if (health?.runId) {
+        const failedRun = row<{ session_id: string; started_warm: number | null }>(
+          db().prepare('select session_id, started_warm from runs where id = ?').get(health.runId)
+        )
+        if (failedRun?.session_id && failedRun.started_warm === 1) {
+          db().prepare("update sessions set context_tokens = 0, state = 'failed' where id = ?").run(failedRun.session_id)
+        }
+      }
       db().prepare('update workers set health_json = null where id = ?').run(id)
       log.info(`${w.label} was re-probed by hand; it is offered work again`)
     }

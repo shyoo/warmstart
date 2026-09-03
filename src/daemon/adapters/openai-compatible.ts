@@ -289,15 +289,25 @@ function decodeStream(record: Record<string, unknown>): StreamEvent | StreamEven
     if (item?.type === 'agent_message' && typeof item.text === 'string' && item.text) {
       return { kind: 'assistant_text', text: item.text }
     }
+    if (item?.type === 'error' && typeof item.message === 'string' && item.message) {
+      return { kind: 'assistant_text', text: item.message }
+    }
     return { kind: 'other', type }
   }
 
   if (type === 'turn.completed' || type === 'turn.failed') {
     const usage = asRecord(record.usage)
     const failed = type === 'turn.failed'
+    const errorRecord = asRecord(record.error)
+    const errorText =
+      typeof record.message === 'string'
+        ? record.message
+        : typeof errorRecord?.message === 'string'
+          ? errorRecord.message
+          : null
     const result: StreamEvent = {
       kind: 'result',
-      text: null,
+      text: errorText,
       costUsd: null,
       isError: failed,
       terminalReason: type
@@ -311,6 +321,23 @@ function decodeStream(record: Record<string, unknown>): StreamEvent | StreamEven
     // finish. Measured 2026-08-29 against codex-cli 0.151.0.
     if (usage && !failed) return [{ kind: 'usage', usage: readUsage(usage), final: true }, result]
     return result
+  }
+
+  if (type === 'error') {
+    const errorRecord = asRecord(record.error)
+    const errorText =
+      typeof record.message === 'string'
+        ? record.message
+        : typeof errorRecord?.message === 'string'
+          ? errorRecord.message
+          : null
+    return {
+      kind: 'result',
+      text: errorText,
+      costUsd: null,
+      isError: true,
+      terminalReason: 'error'
+    }
   }
   return type ? { kind: 'other', type } : null
 }
@@ -822,6 +849,25 @@ export const openaiCompatible: AgentAdapter = {
   subscriptionExpired: (reason: string): boolean => {
     const said = reason.toLowerCase()
     return said.includes('subscription expired') || said.includes('subscription has expired')
+  },
+
+  /**
+   * Remote provider overload / temporary backend outage errors for OpenAI / ChatGPT Codex backend.
+   *
+   * ⚠️ Measured: ChatGPT backend returning HTTP 404 from backend-api/codex/responses or HTTP 5xx/529.
+   */
+  overloaded: (reason: string): boolean => {
+    const said = reason.toLowerCase()
+    return (
+      said.includes('529') ||
+      said.includes('overloaded') ||
+      said.includes('server-side issue') ||
+      said.includes('status.openai.com') ||
+      said.includes('backend-api/codex/responses') ||
+      said.includes('503 service unavailable') ||
+      said.includes('502 bad gateway') ||
+      said.includes('504 gateway timeout')
+    )
   },
 
   isInstalled(): boolean {

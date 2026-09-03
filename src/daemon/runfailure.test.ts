@@ -28,6 +28,7 @@ let db: typeof import('./db.js')
 let workers: typeof import('./workers.js')
 let tasks: typeof import('./tasks.js')
 let scheduler: typeof import('./scheduler.js')
+let sessions: typeof import('./sessions.js')
 let questions: typeof import('./questions.js')
 let approvals: typeof import('./approvals.js')
 
@@ -91,8 +92,15 @@ function seedSession(
 
 let seq = 0
 
-/** A task that is running on a fresh session, as the scheduler would have left it. */
-function seedRunningTask(options: { adapterId?: string; metered?: number; lastRequestStartedAt?: number } = {}) {
+function seedRunningTask(
+  options: {
+    adapterId?: string
+    metered?: number
+    lastRequestStartedAt?: number
+    startedWarm?: boolean
+    contextTokens?: number
+  } = {}
+) {
   seq += 1
   const adapterId = options.adapterId ?? 'openai-compatible'
   const worker = workers.createWorker({
@@ -107,13 +115,18 @@ function seedRunningTask(options: { adapterId?: string; metered?: number; lastRe
     adapterId,
     lastRequestStartedAt: options.lastRequestStartedAt
   })
+  if (options.contextTokens !== undefined) {
+    db.db().prepare('update sessions set context_tokens = ? where id = ?').run(options.contextTokens, session.id)
+    session.contextTokens = options.contextTokens
+  }
   const run = tasks.startRun({
     taskId: task.id,
     workerId: worker.id,
     sessionId: session.id,
     projectId: null,
     quotaUnverified: true,
-    costModelId: null
+    costModelId: null,
+    startedWarm: options.startedWarm
   })
   if (options.metered) {
     tasks.creditTurn(session.id, {
@@ -139,6 +152,7 @@ beforeAll(async () => {
   workers = await import('./workers.js')
   tasks = await import('./tasks.js')
   scheduler = await import('./scheduler.js')
+  sessions = await import('./sessions.js')
   questions = await import('./questions.js')
   approvals = await import('./approvals.js')
   db.openDb(join(dir, 'runfail.db'))
@@ -239,16 +253,23 @@ describe('a run that produced nothing at all', () => {
     expect(workers.requireWorker(worker.id).health?.reason).toContain('disabled Claude subscription')
   })
 
-  it('says so on the task, so the thread is not a mystery', async () => {
-    const { task, session } = seedRunningTask()
+  it('spares the worker and clears the session prefix when a warm run fails on arrival', async () => {
+    const { worker, task, session } = seedRunningTask({ startedWarm: true, contextTokens: 10_000 })
     await scheduler.onStreamResult(session, {
       isError: true,
-      text: ORG_DISABLED,
-      terminalReason: 'api_error'
+      text: 'unexpected status 404 Not Found',
+      terminalReason: 'turn.failed'
     })
+    // ⛔ Worker must not be held out - the conversation failed to resume, not the account.
+    expect(workers.requireWorker(worker.id).health).toBeNull()
+    // Session context prefix cleared so it is not resumed again
+    const s = sessions.getSession(session.id)
+    expect(s?.contextTokens).toBe(0)
+    // Task stays ready for a cold restart
+    expect(tasks.getTask(task.id)?.status).toBe('ready')
     const said = tasks.messagesFor(task.id).map((m) => m.text).join('\n')
-    expect(said).toContain('held out of dispatch')
-    expect(said).toContain('back in the queue')
+    expect(said).toContain('The conversation prefix has been cleared')
+    expect(said).toContain('restart cold')
   })
 })
 
@@ -1209,12 +1230,23 @@ describe('a turn failed because the remote provider is overloaded (529)', () => 
   })
 
   it('⛔ does not read overload into an adapter that does not implement it', async () => {
-    const seeded = seedRunningTask({ adapterId: 'openai-compatible', metered: 900 })
+    const seeded = seedRunningTask({ adapterId: 'local-llm', metered: 900 })
     await scheduler.onStreamResult(seeded.session, {
       isError: true,
       text: OVERLOAD_MSG,
       terminalReason: 'api_error'
     })
     expect(tasks.requireTask(seeded.task.id).status).toBe('awaiting_human')
+  })
+
+  it('recognizes overload on openai-compatible and schedules retry', async () => {
+    const seeded = seedRunningTask({ adapterId: 'openai-compatible', metered: 0 })
+    await scheduler.onStreamResult(seeded.session, {
+      isError: true,
+      text: 'unexpected status 404 Not Found: Unknown error, url: https://chatgpt.com/backend-api/codex/responses',
+      terminalReason: 'turn.failed'
+    })
+    expect(tasks.requireTask(seeded.task.id).status).toBe('scheduled')
+    expect(workers.requireWorker(seeded.worker.id).health).toBeNull()
   })
 })

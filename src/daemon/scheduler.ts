@@ -101,6 +101,7 @@ import {
   finishedConversationsIn,
   getSession,
   hasOpenRun,
+  invalidateSessionContext,
   markClockMove,
   noteCurrentBranch,
   reopenable,
@@ -3822,22 +3823,50 @@ async function endUnfinishedRun(
       // ⚠️ The vendor's own words, where the stream gave any. `why` is a sentence a person can act
       // on — "your organization has disabled…" — while `deadOnArrival` can only report silence.
       const reason = session.lastRequestStartedAt === null && why.length > dead.length ? why : dead
-      recordDispatchFailure(run.workerId, reason, run.id)
-      addMessage(
-        task.id,
-        'system',
-        `Nothing ran on this worker. ${reason} That account is held out of dispatch until it is ` +
-          'probed again; this task goes back in the queue for another one.'
-      )
-      // ⚠️ Back to `ready`, not to a person. The gate added by `recordDispatchFailure` means the next
-      // tick cannot choose the same account, so this re-routes rather than loops - and when there is
-      // no other eligible worker the task holds at `ready` with the reason on its row, which is the
-      // true statement. ⛔ It is not marked `failed`: nothing about the work has been attempted.
-      setStatus(task.id, 'ready', { assignee: null })
+      if (run.startedWarm) {
+        invalidateSessionContext(session.id)
+        const isAccountFault = Boolean(ad.needsReauth?.(reason) || ad.subscriptionExpired?.(reason))
+        if (isAccountFault) {
+          recordDispatchFailure(run.workerId, reason, run.id)
+          addMessage(
+            task.id,
+            'system',
+            `Nothing ran on this worker. ${reason} That account is held out of dispatch until it is ` +
+              'probed again; this task goes back in the queue for another one.'
+          )
+        } else {
+          log.warn(
+            `conversation ${session.id.slice(0, 8)} failed to resume on ${run.workerId}; ` +
+              `cleared prefix without holding out worker: ${reason}`
+          )
+          addMessage(
+            task.id,
+            'system',
+            `Resuming conversation ${session.id.slice(0, 8)} failed (${reason}). ` +
+              'The conversation prefix has been cleared; this task will restart cold.'
+          )
+        }
+        setStatus(task.id, 'ready', { assignee: null })
+      } else {
+        recordDispatchFailure(run.workerId, reason, run.id)
+        addMessage(
+          task.id,
+          'system',
+          `Nothing ran on this worker. ${reason} That account is held out of dispatch until it is ` +
+            'probed again; this task goes back in the queue for another one.'
+        )
+        // ⚠️ Back to `ready`, not to a person. The gate added by `recordDispatchFailure` means the next
+        // tick cannot choose the same account, so this re-routes rather than loops - and when there is
+        // no other eligible worker the task holds at `ready` with the reason on its row, which is the
+        // true statement. ⛔ It is not marked `failed`: nothing about the work has been attempted.
+        setStatus(task.id, 'ready', { assignee: null })
+      }
     } else if (isOverload) {
+      const statusPage =
+        session.adapterId === 'openai-compatible' ? 'https://status.openai.com' : 'https://status.claude.com'
       const msg =
         `The provider remains overloaded after ${MAX_OVERLOAD_ATTEMPTS} attempts (${why}). ` +
-        'Paused for human intervention — if it persists, check https://status.claude.com.'
+        `Paused for human intervention — if it persists, check ${statusPage}.`
       addMessage(task.id, 'system', msg)
       setStatus(task.id, 'awaiting_human', { assignee: 'human', holdReason: msg })
     } else {

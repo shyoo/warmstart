@@ -291,6 +291,22 @@ describe('openai-compatible', () => {
       .toMatchObject({ isError: true, terminalReason: 'turn.failed' })
   })
 
+  it('decodes error messages from turn.failed into result text', () => {
+    expect(
+      parse('openai-compatible', ['{"type":"turn.failed","error":{"message":"backend-api error"}}']).find(
+        (e) => e.kind === 'result'
+      )
+    ).toMatchObject({ isError: true, terminalReason: 'turn.failed', text: 'backend-api error' })
+  })
+
+  it('decodes error item in item.completed into assistant_text', () => {
+    expect(
+      parse('openai-compatible', ['{"type":"item.completed","item":{"type":"error","message":"rate limited"}}']).find(
+        (e) => e.kind === 'assistant_text'
+      )
+    ).toMatchObject({ kind: 'assistant_text', text: 'rate limited' })
+  })
+
   it('skips the diagnostic codex prints before its first record', () => {
     const parser = new StreamParser(decoderFor('openai-compatible'))
     expect(parser.push('Reading additional input from stdin...\n')).toHaveLength(0)
