@@ -2939,6 +2939,13 @@ export function promptFor(
   const project = task.projectId ? getProject(task.projectId) : null
   const { policy } = resolveFinishPolicy(task, project)
   const checks = policyVerifies(policy) ? (project?.config?.check ?? []) : []
+  // Keep a task branch reviewable and cheap to rebase. This is conditional: a branch can legitimately
+  // carry separate commits when it contains independently useful work, and the agent must never
+  // rewrite anything that is already on the landing target.
+  const commitHygiene =
+    'When committing, if two or more commits ahead of this task branch’s landing target all belong ' +
+    'to this task, squash them into one coherent commit where safe. Do not rewrite commits already ' +
+    'on the landing target, force-push, or use a destructive reset.'
 
   if (adapter(adapterId).info.capabilities.mcp) {
     // ⛔ The completion mode changes what "finished" means, so it belongs in the same sentence
@@ -2966,7 +2973,7 @@ export function promptFor(
         : 'Work to the end without stopping between phases. ' +
           checkLead +
           'When the work is finished, call the MCP tool `task_complete` with a one-line summary. ') +
-        'If you need a decision from a person, call `ask_human` rather than guessing — offer the ' +
+        commitHygiene + ' If you need a decision from a person, call `ask_human` rather than guessing — offer the ' +
         'options you are choosing between, and it waits for a real answer.'
     )
   } else {
@@ -2981,7 +2988,7 @@ export function promptFor(
     parts.push(
       checkLead +
         'When the work is finished, commit what you have and end with a one-line summary of what ' +
-        'changed. If you need a decision from a person, end your reply with a line beginning ' +
+        'changed. ' + commitHygiene + ' If you need a decision from a person, end your reply with a line beginning ' +
         '`NEEDS DECISION:` followed by the question, and stop rather than guessing. If you are ' +
         'choosing between specific options, put each one on its own line directly under it as ' +
         '`- <the option> — <what choosing it means>`, so they can be offered as buttons.'
@@ -3017,6 +3024,7 @@ export function promptFor(
       'Commit everything you change' +
       (task.branch ? ` on \`${task.branch}\`` : '') +
       ' before your turn ends. ' +
+      commitHygiene + ' ' +
       (pushes
         ? 'Then push it — nothing will do that for you afterwards.'
         : 'Do not push; the tool takes it from there. Nothing will ask you again.')
@@ -4303,13 +4311,21 @@ export async function resolveConflictOnTask(
   }
 
   const base = landingBaseFor(project, resolveFinishPolicy(task, project).policy, await hasRemote(project.root))
+  const checks = policyVerifies(resolveFinishPolicy(task, project).policy) ? (project.config.check ?? []) : []
+  const checkStep =
+    checks.length > 0
+      ? `Run every project check (${checks.map((check) => `\`${check}\``).join(', ')}) after the final commit state is ready, and fix any failure before reporting complete. `
+      : 'Run the relevant project checks after the final commit state is ready, and fix any failure before reporting complete. '
   const instruction =
     `The landing failed because \`${task.branch}\` does not rebase cleanly onto \`${base}\`. ` +
     `Run \`git rebase ${base}\`, resolve every conflict, and finish the rebase. ` +
     'Keep both sides of the change wherever they are compatible — the other side is work that has ' +
     'already landed, so discarding it is never the answer. ' +
-    'Do not force-push and do not reset the branch. ' +
-    'When the rebase is done and the tree is clean, report the task complete again.'
+    `Once the rebase is clean, if two or more commits ahead of \`${base}\` all belong to this task, ` +
+    `squash them into one coherent commit (for example, \`git rebase -i ${base}\`). ` +
+    'Do not rewrite commits already on the landing target, force-push, or use a destructive reset. ' +
+    checkStep +
+    'Confirm there are no conflict markers and the tree is clean, commit or amend any fixes, then report the task complete again.'
 
   addMessage(task.id, 'human', instruction)
   const outcome = continueTask(task.id)
@@ -4336,12 +4352,21 @@ export async function resolveChecksOnTask(
   const msgs = messagesFor(task.id)
   const lastSystem = [...msgs].reverse().find((m) => m.role === 'system' && /landing failed|checks failed/i.test(m.text))
   const failureDetail = lastSystem ? lastSystem.text : (task.holdReason ?? 'Project checks failed')
+  const checks = project.config.check ?? []
+  const checkStep =
+    checks.length > 0
+      ? `Run every project check (${checks.map((check) => `\`${check}\``).join(', ')}) again after the fix. `
+      : 'Rerun the failing command after the fix. '
 
   const instruction =
     `The landing failed because project verification checks failed on \`${branch}\`:\n\n` +
     `${failureDetail}\n\n` +
-    'Please inspect and fix the failing checks (e.g. typecheck, lint, or tests), ensure the project checks pass cleanly, ' +
-    `commit your changes on \`${branch}\`, and report the task complete again.`
+    'Please inspect and fix the failing checks (e.g. typecheck, lint, or tests). ' +
+    'If two or more commits ahead of this task branch’s landing target all belong to this task, squash ' +
+    'them into one coherent commit where safe; do not rewrite commits already on the landing target, ' +
+    'force-push, or use a destructive reset. ' +
+    checkStep +
+    `Commit or amend the fixes on \`${branch}\` only after the checks pass, then report the task complete again.`
 
   addMessage(task.id, 'human', instruction)
   const outcome = continueTask(task.id)
@@ -4376,7 +4401,10 @@ export async function resolveCommitOnTask(
   const instruction =
     `The landing could not proceed because changes on \`${branch}\` are uncommitted:\n\n` +
     `${failureDetail}\n\n` +
-    `Please review your work, commit all intended changes on \`${branch}\`, and report the task complete again.`
+    'Please review your work. If two or more commits ahead of this task branch’s landing target all ' +
+    'belong to this task, squash them into one coherent commit where safe; do not rewrite commits ' +
+    'already on the landing target, force-push, or use a destructive reset. ' +
+    `Commit all intended changes on \`${branch}\`, then report the task complete again.`
 
   addMessage(task.id, 'human', instruction)
   const outcome = continueTask(task.id)

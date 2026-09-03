@@ -148,7 +148,9 @@ export function decideFinish({
           policy === 'custom' && instruction
             ? instruction
             : `You have ${loose} uncommitted file(s). Commit them on \`${state.branch ?? 'your branch'}\`, ` +
-              'then report the task complete again. Do not start new work.',
+              'and, if two or more commits ahead of the landing target all belong to this task, squash them ' +
+              'into one coherent commit where safe. Do not rewrite commits already on the landing target, ' +
+              'force-push, or use a destructive reset. Then report the task complete again. Do not start new work.',
         reason: `${loose} file(s) are uncommitted`
       }
     }

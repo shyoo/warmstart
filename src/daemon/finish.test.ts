@@ -167,6 +167,7 @@ describe('work the agent left uncommitted', () => {
     })
     expect(decision.kind).toBe('ask-agent')
     expect(decision.kind === 'ask-agent' && decision.instruction).toMatch(/commit them/i)
+    expect(decision.kind === 'ask-agent' && decision.instruction).toContain('squash them into one coherent commit')
   })
 
   it('counts an untracked file as work', () => {

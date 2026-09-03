@@ -92,6 +92,7 @@ describe('promptFor prompt construction', () => {
     const prompt = promptText(task, 'openai-compatible', false, { markDelivered: false })
     expect(prompt).toContain('You get one turn and no follow-up')
     expect(prompt).toContain('Commit everything you change')
+    expect(prompt).toContain('squash them into one coherent commit where safe')
     // ⛔ `DEFAULT_FINISH_INSTRUCTION` is "Run /commit", a Claude Code project skill. Sending
     // that to codex would spend its one turn looking for a command it does not have.
     expect(prompt).not.toContain('/commit')
@@ -360,6 +361,29 @@ describe('run prompt persistence and task.get preview', () => {
     expect(lastHuman?.text).toContain('The landing failed because project verification checks failed')
     expect(lastHuman?.text).toContain('1 problem (1 error)')
     expect(lastHuman?.text).toContain(`multi-agent-controller/t${task.seq}-fix-issue`)
+    expect(lastHuman?.text).toContain('squash them into one coherent commit where safe')
+    expect(lastHuman?.text).toContain('Rerun the failing command after the fix')
+  })
+
+  it('gives a conflict retry the full rebase, squash, and verification sequence', async () => {
+    const { execFileSync } = await import('node:child_process')
+    const projects = await import('./projects.js')
+    const root = mkdtempSync(join(tmpdir(), 'agentyard-resolve-conflict-'))
+    execFileSync('git', ['init', root])
+    const project = projects.addProject({ root })
+    const task = tasks.createTask({ title: 'Resolve a conflict', status: 'ready', projectId: project.id })
+    tasks.setStatus(task.id, 'awaiting_human', {
+      branch: `multi-agent-controller/t${task.seq}-resolve-a-conflict`,
+      holdReason: 'landing failed: conflict'
+    })
+
+    await expect(scheduler.resolveConflictOnTask(task.id)).resolves.toEqual({ ok: true })
+
+    const retry = tasks.messagesFor(task.id).filter((m) => m.role === 'human').at(-1)?.text
+    expect(retry).toContain('Run `git rebase main`')
+    expect(retry).toContain('squash them into one coherent commit')
+    expect(retry).toContain('Run the relevant project checks')
+    expect(retry).toContain('Confirm there are no conflict markers')
   })
 
   it('resolveCommitOnTask dispatches a new run asking the agent to commit and clears finish_asked_at', async () => {
