@@ -1066,6 +1066,99 @@ body {
   max-width: 1100px;
 }
 
+/* ---- project flow ----------------------------------------------------- */
+
+.flow {
+  max-width: none;
+}
+
+.flow-board {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(104px, 1fr));
+  min-height: 285px;
+  overflow-x: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: linear-gradient(180deg, var(--color-surface), var(--color-bg));
+}
+
+.flow-lane {
+  display: flex;
+  flex-direction: column;
+  min-width: 104px;
+  border-right: 1px solid var(--color-border);
+}
+
+.flow-lane:last-child { border-right: 0; }
+
+.flow-cards {
+  display: flex;
+  align-content: flex-start;
+  flex: 1;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+}
+
+.flow-ticket {
+  align-self: flex-start;
+  min-width: 39px;
+  border: 1px solid color-mix(in srgb, var(--flow-tone) 58%, var(--color-border));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--flow-tone) 13%, var(--color-surface));
+  color: var(--color-text);
+  cursor: pointer;
+  font: 600 var(--text-dense) var(--font-mono);
+  line-height: 25px;
+  padding: 0 var(--sp-2);
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--flow-tone) 25%, transparent);
+  animation: flow-arrive 360ms var(--ease) both;
+  transition: transform var(--motion-fast) var(--ease), background var(--motion-fast) var(--ease);
+}
+
+.flow-ticket:hover,
+.flow-ticket:focus-visible { background: color-mix(in srgb, var(--flow-tone) 23%, var(--color-surface)); transform: translateY(-2px); outline: none; }
+.flow-ticket--running, .flow-ticket--assigned, .flow-ticket--ready { --flow-tone: var(--state-running); }
+.flow-ticket--awaiting_human { --flow-tone: var(--state-human); }
+.flow-ticket--paused_user, .flow-ticket--paused_quota, .flow-ticket--cancelling { --flow-tone: var(--state-warn); }
+.flow-ticket--completed { --flow-tone: var(--state-ok); }
+.flow-ticket--failed { --flow-tone: var(--state-danger); }
+.flow-ticket--cancelled, .flow-ticket--draft, .flow-ticket--blocked, .flow-ticket--scheduled { --flow-tone: var(--state-idle); }
+
+.flow-lane-label {
+  display: flex;
+  justify-content: space-between;
+  border-top: 1px solid var(--color-border);
+  color: var(--color-text-dim);
+  font-size: var(--text-meta);
+  letter-spacing: .04em;
+  padding: var(--sp-2) var(--sp-3);
+  text-transform: uppercase;
+}
+
+.flow-lane-label b { color: var(--color-text-faint); font-weight: 500; }
+.flow-more { align-self: center; color: var(--color-text-dim); font-size: var(--text-meta); }
+
+.flow-workers {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-top: var(--sp-3);
+  color: var(--color-text-dim);
+  font-size: var(--text-dense);
+}
+
+.flow-workers-label { color: var(--color-text-faint); font-size: var(--text-meta); text-transform: uppercase; letter-spacing: .04em; }
+.flow-worker { display: inline-flex; gap: var(--sp-1); padding-left: var(--sp-2); border-left: 2px solid var(--color-border-strong); }
+.flow-worker--active { border-color: var(--state-running); color: var(--color-text); }
+
+@keyframes flow-arrive { from { opacity: 0; transform: translate(-10px, 5px) scale(.92); } to { opacity: 1; transform: translate(0, 0) scale(1); } }
+
+@media (prefers-reduced-motion: reduce) { .flow-ticket { animation: none; transition: none; } }
+
+@media (max-width: 900px) { .flow-board { grid-template-columns: repeat(7, minmax(126px, 1fr)); } }
+
 .panel-head {
   display: flex;
   align-items: flex-start;

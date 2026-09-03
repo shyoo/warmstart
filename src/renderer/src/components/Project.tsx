@@ -6,8 +6,9 @@ import { TaskThread } from './TaskThread'
 import { ProjectSettings } from './ProjectSettings'
 import { Conversations } from './Conversations'
 import { TerminalPane } from './Terminal'
+import { Flow } from './Flow'
 
-export type ProjectTab = 'tasks' | 'thread' | 'conversations' | 'sessionTui' | 'settings'
+export type ProjectTab = 'flow' | 'tasks' | 'thread' | 'conversations' | 'sessionTui' | 'settings'
 
 /**
  * ⛔ **Thread**, not Conversation. A conversation in this app is the agent session you resume with
@@ -23,6 +24,7 @@ export type ProjectTab = 'tasks' | 'thread' | 'conversations' | 'sessionTui' | '
  * beside it. Two tabs, two nouns; the pane that draws a TTY says so in its name.
  */
 export const PROJECT_TABS: Array<{ id: ProjectTab; label: string }> = [
+  { id: 'flow', label: 'Flow' },
   { id: 'tasks', label: 'Tasks' },
   { id: 'thread', label: 'Thread' },
   { id: 'conversations', label: 'Conversations' },
@@ -91,7 +93,9 @@ export function Project({
         ))}
       </div>
 
-      {tab === 'tasks' ? (
+      {tab === 'flow' ? (
+        <Flow projectId={project.id} fleet={fleet} onOpenTask={openTask} />
+      ) : tab === 'tasks' ? (
         <Tasks
           projects={projects}
           projectId={project.id}
