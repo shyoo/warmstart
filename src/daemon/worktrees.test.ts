@@ -108,7 +108,9 @@ describe('making a workspace pool smaller', () => {
     const next = await worktrees.claimWorkspace(smaller, 'run-6')
     expect(next?.path).toBe(first!.path)
     worktrees.releaseWorkspace(next!.claimId)
-  })
+  // This creates and checks out three real worktrees. Under the parallel suite on Windows, the
+  // filesystem work can exceed Vitest's 5s default without indicating a stalled operation.
+  }, 20_000)
 })
 
 afterAll(() => {
@@ -145,7 +147,9 @@ describe('claiming a workspace somebody left dirty', () => {
     expect(result.ok).toBe(true)
     expect(git(second!.path, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe(branch)
     worktrees.releaseWorkspace(second!.claimId)
-  })
+  // Real git must rescue the dirty checkout before switching it, which shares the same Windows
+  // filesystem contention as the three-worktree case above.
+  }, 20_000)
 
   it('keeps the work it moved out of the way, rather than resetting over it', async () => {
     // ⛔ The point of the whole fix. A dirty slot usually means the last run *failed*, which is
