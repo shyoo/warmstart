@@ -171,10 +171,11 @@ describe('promptFor prompt construction', () => {
     const prompt = promptText(task, 'antigravity-cli', false, { markDelivered: false })
     expect(prompt).toContain('Update readme')
     expect(prompt).toContain('Add install instructions to README.md')
-    expect(prompt).toContain('commit what you have and end with a one-line summary of what changed')
+    expect(prompt).toContain('commit what you have and end with a line beginning `TASK COMPLETE: `')
     // ⛔ An anchored contract, not an invitation to say something. It is what
     // `needsDecisionIn` matches on, so the two have to be checked against each other.
     expect(prompt).toContain('`NEEDS DECISION:`')
+    expect(prompt).toContain('`TASK COMPLETE: `')
     expect(scheduler.needsDecisionIn('NEEDS DECISION: which one?')?.question).toBe('which one?')
     // ⭐ And the option contract is in the same prompt, because the operator's side of a question is
     // a card with buttons on it. An agent that was not told this writes its choices into the
@@ -278,7 +279,7 @@ describe('run prompt persistence and task.get preview', () => {
     expect(detail.previewPrompt).toBeDefined()
     expect(detail.previewPrompt).toContain('Check task.get preview field')
     // Because worker is agy (antigravity-cli with mcp: false), it has commit instruction
-    expect(detail.previewPrompt).toContain('commit what you have and end with a one-line summary')
+    expect(detail.previewPrompt).toContain('commit what you have and end with a line beginning `TASK COMPLETE: `')
   })
 
   it('task.get returns dependencies and dependents with full task details', async () => {

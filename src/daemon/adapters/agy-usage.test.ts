@@ -138,10 +138,10 @@ describe('the /usage panel', () => {
     expect(new Set(windows?.map((w) => w.id)).size).toBe(4)
   })
 
-  it('parses "Quota available" or "Quota ava…" on the bar line as 0% used', () => {
+  it('parses a complete "Quota available" on the bar line as 0% used', () => {
     const screenWithQuotaAvailableOnBar = screen.replace(
       'Five Hour Limit Remaining\n    [██████████████████████████████████████████████████] 100.00%',
-      'Five Hour Limit Remaining\n    [██████████████████████████████████████████████████] Quota ava…'
+      'Five Hour Limit Remaining\n    [██████████████████████████████████████████████████] Quota available'
     )
     const windows = parseUsageScreen(screenWithQuotaAvailableOnBar, NOW)
     expect(windows).not.toBeNull()
@@ -149,6 +149,15 @@ describe('the /usage panel', () => {
     const claudeFiveHour = windows?.find((w) => w.label === 'Claude/GPT 5h')
     expect(claudeFiveHour?.percent).toBe(0)
     expect(claudeFiveHour?.resetsAt).toBeNull()
+  })
+
+  it('⛔ records no reading when a clipped "Quota ava…" would make a used window look unused', () => {
+    // The exact t163 failure: both Gemini labels were visibly clipped. Treating the ellipsis as
+    // "available" created two false 0% rows and a later real reading was charged as a huge delta.
+    const clipped = screen
+      .replace('] 94.52%', '] Quota ava…')
+      .replace('] 67.20%', '] Quota ava…')
+    expect(parseUsageScreen(clipped, NOW)).toBeNull()
   })
 })
 
@@ -316,4 +325,3 @@ describe('readAntigravityIdentity', () => {
     }
   })
 })
-

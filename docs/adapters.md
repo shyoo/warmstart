@@ -281,12 +281,16 @@ codebase where rendered text becomes state, permitted for a quota reading and no
 Live reading, 2026-08-27, agy 1.1.22, Google AI Pro: Gemini weekly 5.48% used · Gemini 5-hour
 32.80% · Claude-and-GPT weekly 42.80% · Claude-and-GPT 5-hour 0%.
 
-⚠️ Two traps, both measured rather than reasoned:
+⚠️ Three traps, all measured rather than reasoned:
 
 - The panel reports **remaining**; `QuotaWindow.percent` is **used**. Inverted in the parser.
 - The panel is **taller than a default terminal and scrolls**. At 30 rows one group's five-hour
   window fell below the fold and three of four windows came back looking complete. The probe
   session now runs at 110x60 and the parser refuses any group showing one of its two windows.
+- **`Quota ava…` is a clipped rendering, not a 0% reading.** On t163 (2026-09-03), treating that
+  shortened text as the complete `Quota available` label stored Gemini 5-hour and 7-day at 0% used.
+  The parser now accepts only the complete label and rejects a displayed group unless both windows
+  validate, so the result is `n/a` rather than a false fresh sample.
 
 What was tried before and does not work:
 

@@ -32,7 +32,7 @@ gaps are below. Scope: `transient_docs/implementation_plan_2026-08-24.md` §14, 
 src/daemon/            orchestratord. Runs as Electron-with-ELECTRON_RUN_AS_NODE, detached.
   index.ts             entry: lock, db, server, poller, scheduler, tailer wiring, shutdown
   server.ts  api.ts    HTTP+WS on 127.0.0.1:<random>, bearer token, typed RPC
-  db.ts                node:sqlite + numbered migrations (v36), each of which must survive a replay
+  db.ts                node:sqlite + numbered migrations (v37), each of which must survive a replay
   costmodel.ts         the four questions + the plan catalogue; price.ts turns a window delta into $
   workers.ts           registry, isolation roots, retire-keeps-credentials, display order only
                        (+ workerorder.test.ts)

@@ -2988,8 +2988,8 @@ export function promptFor(
         : ''
     parts.push(
       checkLead +
-        'When the work is finished, commit what you have and end with a one-line summary of what ' +
-        'changed. ' + commitHygiene + ' If you need a decision from a person, end your reply with a line beginning ' +
+        'When the work is finished, commit what you have and end with a line beginning `TASK COMPLETE: ` ' +
+        'followed by a one-line summary of what changed. ' + commitHygiene + ' If you need a decision from a person, end your reply with a line beginning ' +
         '`NEEDS DECISION:` followed by the question, and stop rather than guessing. If you are ' +
         'choosing between specific options, put each one on its own line directly under it as ' +
         '`- <the option> — <what choosing it means>`, so they can be offered as buttons.'
@@ -3635,8 +3635,15 @@ export async function onStreamResult(
   session: Session,
   result: { isError: boolean; text: string | null; terminalReason: string | null }
 ): Promise<void> {
+  const mcpLess = Boolean(session.adapterId && !adapter(session.adapterId).info.capabilities.mcp)
+  // An MCP-less adapter cannot call task_complete, so its prompt gives it two deliberately exact
+  // terminal contracts. Antigravity can occasionally report ERROR after it has already returned a
+  // complete response (t163, 2026-09-03, `context canceled`); its status is not allowed to erase
+  // the explicit completion signal, but a plausible-sounding paragraph still is not one.
+  const completion = mcpLess ? taskCompletionIn(result.text) : null
+
   if (!result.isError) {
-    if (session.adapterId && !adapter(session.adapterId).info.capabilities.mcp) {
+    if (mcpLess) {
       // ⛔ An adapter with no MCP has no `ask_human`, so the only channel left is the prompt
       // contract it was given: end with `NEEDS DECISION:` and stop. A run that did is **not**
       // complete, and completing it would file an unanswered question as finished work.
@@ -3672,8 +3679,12 @@ export async function onStreamResult(
           return
         }
       }
-      await completeTask(session.id, result.text?.trim() || 'Completed')
+      await completeTask(session.id, completion ?? (result.text?.trim() || 'Completed'))
     }
+    return
+  }
+  if (completion) {
+    await completeTask(session.id, completion)
     return
   }
   const run = runForSession(session.id)
@@ -3734,6 +3745,16 @@ export function needsDecisionIn(
     if (options.length === 8) break
   }
   return { question, options }
+}
+
+/** The completion contract for adapters that cannot call the MCP task_complete tool. */
+export function taskCompletionIn(text: string | null): string | null {
+  if (!text) return null
+  const line = stripAnsi(text)
+    .split(/\r?\n/)
+    .find((value) => /^[ \t>*-]*TASK COMPLETE:[ \t]*\S/i.test(value))
+  if (!line) return null
+  return (/^[ \t>*-]*TASK COMPLETE:[ \t]*(.*)$/i.exec(line)?.[1] ?? '').trim() || null
 }
 
 /**

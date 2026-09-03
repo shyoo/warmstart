@@ -653,9 +653,12 @@ export function parseUsageScreen(screen: string, now = Date.now()): QuotaWindow[
       if (/Weekly Limit Remaining/.test(line)) kind = 'weekly'
       else if (/Five Hour Limit Remaining/.test(line)) kind = '5h'
 
-      // The bar line carries the precise figure. `Quota available` (or `Quota ava…`) is the CLI's
-      // way of writing 100% remaining with no reset worth stating.
-      const bar = /\]\s*(?:([\d.]+)\s*%|(?:Quota\s+ava[a-z….]*))/i.exec(line)
+      // The bar line carries the precise figure. A complete `Quota available` is the CLI's way of
+      // writing 100% remaining with no reset worth stating. ⛔ A clipped `Quota ava…` is not that
+      // value: t163 (2026-09-03) rendered both Gemini rows that way and the permissive old match
+      // recorded a false 0% used, which then priced the next real reading as an enormous spend.
+      // A screen rendering must be complete enough to prove its number or it is no reading at all.
+      const bar = /\]\s*(?:([\d.]+)\s*%|(Quota\s+available))\s*$/i.exec(line)
       if (!bar || !group || !kind) continue
 
       const remaining = bar[1] !== undefined ? Number.parseFloat(bar[1]) : 100
@@ -715,7 +718,11 @@ export function parseUsageScreen(screen: string, now = Date.now()): QuotaWindow[
       const group = w.id.slice(w.id.indexOf(':') + 1)
       perGroup.set(group, (perGroup.get(group) ?? 0) + 1)
     }
-    for (const [group, count] of perGroup) {
+    // A heading is evidence that the group was on screen. It must contribute both rows, even when
+    // neither malformed row made it through the bar parser; otherwise two clipped `Quota ava…`
+    // strings look exactly like a missing group and the remaining old rows get stored as fresh.
+    for (const group of groupOrder.keys()) {
+      const count = perGroup.get(group) ?? 0
       if (count < 2) {
         log.warn(
           `agy /usage panel was cut off: "${group}" showed ${count} of 2 windows. The probe session's ` +

@@ -1184,6 +1184,40 @@ const MIGRATIONS: Migration[] = [
       conn.exec('alter table runs add column plan_source text;')
     }
     backfillRunPlans(conn, what)
+  },
+
+  // 37 - remove t163's malformed Antigravity quota read from pricing history.
+  //
+  // `Quota ava…` was a clipped screen rendering, not the complete `Quota available` value. The
+  // permissive parser stored the resulting false 0% Gemini windows at this exact instant, then the
+  // price timeline treated the next honest reading as a large spend. The run snapshot is a second
+  // input to that same timeline, so clearing only the sample would leave the false delta intact.
+  // Every predicate is deliberately exact: this is a repair of observed data, not a heuristic that
+  // gets to alter another account's zero reading. Both statements are replay-safe.
+  (conn) => {
+    const what = 'remove t163 malformed Antigravity quota reading'
+    const runId = 'cf22425a-d555-4756-9993-2cd0e5954420'
+    const workerId = 'f6ba9f23-3cb1-4c14-a439-5c84ba987be9'
+    const sampledAt = 1_788_459_715_254
+    conn
+      .prepare(
+        `update runs set quota_before_json = null
+          where id = ? and quota_before_json like ?`
+      )
+      .run(runId, `%${sampledAt}%`)
+    conn
+      .prepare(
+        `delete from quota_samples
+          where worker_id = ? and sampled_at = ?
+            and (window_id = '5h:gemini' and label = 'Gemini 5h' and percent = 0
+              or window_id = 'weekly:gemini' and label = 'Gemini 7d' and percent = 0
+              or window_id = '5h' and label = 'Claude/GPT 5h' and percent = 68.53
+              or window_id = 'weekly:claude-and-gpt' and label = 'Claude/GPT 7d' and percent = 100)`
+      )
+      .run(workerId, sampledAt)
+    // Keep the marker in a value that executes: `versionBefore` finds function migrations by their
+    // source, and a comment-only name can disappear from a bundled build.
+    void what
   }
 ]
 

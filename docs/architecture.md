@@ -284,9 +284,12 @@ left `quotaRisk` with no reachable trigger and quota vanished from routing for t
   Work needs a **run** to be visible, gated and billed. `continueTask()` re-queues and the scheduler
   routes it; the same worker, workspace and session win because `warmSessionFor` scores them highest,
   not because anything hard-codes them.
-- ⛔ **`task_complete` is the only signal that a task succeeded**, and a run is one attempt — whether
-  the *task* is done is a separate question. `completed` on a run beside `awaiting_human` on its task
-  is not a contradiction, and the UI has to say so.
+- ⛔ **`task_complete` is the only MCP completion signal; an adapter without MCP gets an equally exact
+  `TASK COMPLETE:` prompt contract.** A terminal status alone never proves success: t163 (2026-09-03)
+  returned `ERROR` after its completion prose. The scheduler accepts that error only beside the exact
+  contract line, never by reading intent from a paragraph. A run is one attempt — whether the *task*
+  is done is a separate question. `completed` on a run beside `awaiting_human` on its task is not a
+  contradiction, and the UI has to say so.
 - ⛔ **`awaiting_human` must say what it wants and offer somewhere to answer.** Every hand-off to a
   person writes its reason onto the task, and `resolveTask()` records the answer.
 - ⛔ **Cancel is not delete.** Cancel winds a run down through the preemption protocol into a resting

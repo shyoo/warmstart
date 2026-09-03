@@ -1169,6 +1169,11 @@ run is discovered, so money is computed on read in `daemon/price.ts` and memoise
 that `startRun`, `finishRun`, `setRunQuota` and the quota store all bump. What a run was *billed
 against* does not change, and is the only part worth freezing in a column.
 
+⛔ **A malformed quota rendering is removed from both inputs to that timeline.** t163's 2026-09-03
+Antigravity probe misread clipped `Quota ava…` text as 0% Gemini utilisation; its false sample and
+the run's before snapshot must be cleared together. Leaving either would make the next valid reading
+look like spend. The honest repair is no reading, so the affected run prices as `n/a`.
+
 ### Splitting a window between parallel runs
 
 Two agents on one account share the window they both drew from. `price.ts` cuts the timeline at

@@ -605,6 +605,12 @@ describe('a result that is not an error', () => {
     expect(scheduler.needsDecisionIn(null)).toBeNull()
   })
 
+  it('accepts only the explicit completion contract', () => {
+    expect(scheduler.taskCompletionIn('TASK COMPLETE: fixed quota parsing')).toBe('fixed quota parsing')
+    expect(scheduler.taskCompletionIn('I think the task is complete.')).toBeNull()
+    expect(scheduler.taskCompletionIn('TASK COMPLETE:   ')).toBeNull()
+  })
+
   it('on an adapter without MCP completes the task', async () => {
     const { run, task, session } = seedRunningTask({ adapterId: 'antigravity-cli' })
     await scheduler.onStreamResult(session, {
@@ -615,6 +621,20 @@ describe('a result that is not an error', () => {
     expect(tasks.requireRun(run.id).endedAt).not.toBeNull()
     expect(tasks.getTask(task.id)?.status).toBe('completed')
     expect(tasks.messagesFor(task.id).some((m) => m.text === 'here is the completed answer')).toBe(true)
+  })
+
+  it('honours an MCP-less completion contract even when Antigravity reports ERROR afterwards', async () => {
+    // t163 emitted its finished answer and then an ERROR terminal record. The marker is a contract
+    // from the prompt, unlike the surrounding prose, so it is sufficient evidence to finish.
+    const { run, task, session } = seedRunningTask({ metered: 500 })
+    await scheduler.onStreamResult(session, {
+      isError: true,
+      text: 'All checks passed.\nTASK COMPLETE: fixed the session context gauge',
+      terminalReason: 'ERROR'
+    })
+    expect(tasks.requireRun(run.id).outcome).toBe('completed')
+    expect(tasks.getTask(task.id)?.status).toBe('completed')
+    expect(tasks.messagesFor(task.id).some((m) => m.text === 'fixed the session context gauge')).toBe(true)
   })
 })
 

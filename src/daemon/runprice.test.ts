@@ -18,6 +18,9 @@ let price: typeof import('./price.js')
 
 const CLAUDE = 'aaaaaaaa-0000-4000-8000-00000000c1a0'
 const CODEX = 'aaaaaaaa-0000-4000-8000-00000000c0de'
+const T163_WORKER = 'f6ba9f23-3cb1-4c14-a439-5c84ba987be9'
+const T163_RUN = 'cf22425a-d555-4756-9993-2cd0e5954420'
+const T163_SAMPLE_AT = 1_788_459_715_254
 
 const HOUR = 3_600_000
 const T0 = 1_756_000_000_000
@@ -98,6 +101,7 @@ beforeAll(async () => {
   )
   worker.run(CLAUDE, 'ClaudeSecond', 'claude-code', join(dir, 'c'), '{"subscriptionType":"pro"}', T0)
   worker.run(CODEX, 'CodexFirst', 'openai-compatible', join(dir, 'x'), '{"subscriptionType":"Plus"}', T0)
+  worker.run(T163_WORKER, 'Antigravity', 'antigravity-cli', join(dir, 'a'), '{}', T0)
 })
 
 beforeEach(() => {
@@ -106,6 +110,39 @@ beforeEach(() => {
   db.db().exec('delete from quota_samples')
   price.bumpPricingEpoch()
   seq = 0
+})
+
+describe('repairing t163\'s malformed Antigravity quota reading', () => {
+  it('clears both the false sample and the matching run snapshot, without touching a neighbour', () => {
+    seedRun({
+      id: T163_RUN,
+      worker: T163_WORKER,
+      costModel: 'google.antigravity.2026-08',
+      startedAt: T163_SAMPLE_AT,
+      endedAt: T163_SAMPLE_AT + HOUR,
+      before: JSON.stringify({ windows: [], sampledAt: T163_SAMPLE_AT, stale: false })
+    })
+    const sample = db.db().prepare(
+      `insert into quota_samples (worker_id, window_id, label, percent, resets_at, source, sampled_at)
+       values (?,?,?,?,?,?,?)`
+    )
+    sample.run(T163_WORKER, '5h:gemini', 'Gemini 5h', 0, null, 'cli', T163_SAMPLE_AT)
+    sample.run(T163_WORKER, 'weekly:gemini', 'Gemini 7d', 0, null, 'cli', T163_SAMPLE_AT)
+    sample.run(T163_WORKER, '5h', 'Claude/GPT 5h', 68.53, null, 'cli', T163_SAMPLE_AT)
+    sample.run(T163_WORKER, 'weekly:claude-and-gpt', 'Claude/GPT 7d', 100, null, 'cli', T163_SAMPLE_AT)
+    sample.run(T163_WORKER, 'unrelated', 'Unrelated', 42, null, 'cli', T163_SAMPLE_AT)
+
+    db.db().exec(`pragma user_version = ${db.versionBefore('remove t163 malformed Antigravity quota reading')}`)
+    db.closeDb()
+    db.openDb(join(dir, 'runprice.db'))
+
+    expect(db.db().prepare('select quota_before_json from runs where id = ?').get(T163_RUN)).toEqual({
+      quota_before_json: null
+    })
+    expect(
+      db.db().prepare('select window_id from quota_samples where worker_id = ? and sampled_at = ? order by id').all(T163_WORKER, T163_SAMPLE_AT)
+    ).toEqual([{ window_id: 'unrelated' }])
+  })
 })
 
 afterAll(() => {
