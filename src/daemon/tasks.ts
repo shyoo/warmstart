@@ -73,6 +73,7 @@ interface TaskRow {
   objective_json: string | null
   finish_asked_at: number | null
   conflict_asked_at: number | null
+  resolve_retry_asked_at: number | null
   preemptible: number
   est_tokens: number | null
   cancel_json: string | null
@@ -156,6 +157,7 @@ function toTask(r: TaskRow, timing: ActiveTiming = ZERO_TIMING): Task {
     objective: r.objective_json ? (JSON.parse(r.objective_json) as Task['objective']) : 'inherit',
     finishAskedAt: r.finish_asked_at,
     conflictAskedAt: r.conflict_asked_at,
+    resolveRetryAskedAt: r.resolve_retry_asked_at,
     preemptible: r.preemptible === 1,
     estTokens: r.est_tokens,
     cancel: r.cancel_json ? (JSON.parse(r.cancel_json) as Task['cancel']) : null,
@@ -1334,6 +1336,15 @@ export function markFinishAsked(taskId: string): void {
  */
 export function markConflictAsked(taskId: string): void {
   db().prepare('update tasks set conflict_asked_at = ?, updated_at = ? where id = ?').run(
+    Date.now(),
+    Date.now(),
+    taskId
+  )
+}
+
+/** Record the one automatic recovery attempt. A second failure belongs to a person, not a loop. */
+export function markResolveRetryAsked(taskId: string): void {
+  db().prepare('update tasks set resolve_retry_asked_at = ?, updated_at = ? where id = ?').run(
     Date.now(),
     Date.now(),
     taskId

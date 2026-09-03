@@ -1428,6 +1428,11 @@ export interface RpcMap {
     params: { id: string }
     result: { task: Task; started: boolean; reason?: string }
   }
+  /** Resume a resolvable landing failure (conflict, verification, or uncommitted work) on its thread. */
+  'task.resolveRetry': {
+    params: { id: string }
+    result: { task: Task; started: boolean; reason?: string }
+  }
   /**
    * Hand a failed check verification back to an agent to fix and re-commit.
    */

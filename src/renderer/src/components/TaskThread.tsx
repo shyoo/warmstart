@@ -1279,30 +1279,10 @@ function Decide({
     !uncommitted &&
     /landing failed|not merged|waited for a turn|would not fast-forward|trunk/i.test(task.holdReason ?? '')
 
-  const handleResolveConflict = async () => {
+  const handleResolveRetry = async () => {
     setBusy(true)
     try {
-      await rpc('task.resolveConflict', { id: task.id })
-      await onRefresh()
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const handleResolveChecks = async () => {
-    setBusy(true)
-    try {
-      await rpc('task.resolveChecks', { id: task.id })
-      await onRefresh()
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const handleResolveCommit = async () => {
-    setBusy(true)
-    try {
-      await rpc('task.resolveCommit', { id: task.id })
+      await rpc('task.resolveRetry', { id: task.id })
       await onRefresh()
     } finally {
       setBusy(false)
@@ -1387,7 +1367,7 @@ function Decide({
             className="btn btn--primary"
             title="Dispatches a run on this thread that rebases the branch onto the landing target, resolves the conflicts and reports complete again."
             disabled={busy}
-            onClick={() => void handleResolveConflict()}
+            onClick={() => void handleResolveRetry()}
           >
             Resolve &amp; retry
           </button>
@@ -1406,9 +1386,9 @@ function Decide({
             className="btn btn--primary"
             title="Dispatches a run on this thread asking the agent to fix the failing checks, commit the fix, and report complete again."
             disabled={busy}
-            onClick={() => void handleResolveChecks()}
+            onClick={() => void handleResolveRetry()}
           >
-            Fix &amp; retry
+            Resolve &amp; retry
           </button>
           <span className="decide-what">
             <strong>Project checks failed.</strong> Sends the check output back to the agent to fix
@@ -1424,9 +1404,9 @@ function Decide({
             className="btn btn--primary"
             title="Dispatches a run on this thread asking the agent to review, commit uncommitted work, and report complete again."
             disabled={busy}
-            onClick={() => void handleResolveCommit()}
+            onClick={() => void handleResolveRetry()}
           >
-            Retry &amp; commit
+            Resolve &amp; retry
           </button>
           <span className="decide-what">
             <strong>Uncommitted work.</strong> Sends the branch back to an agent to commit the

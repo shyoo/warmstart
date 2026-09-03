@@ -1004,7 +1004,17 @@ const MIGRATIONS: Migration[] = [
          effort = null,
          tokenizer = null
    where model = '<synthetic>';
-  `
+  `,
+
+  // 35 - one automatic resolve-and-retry per task.
+  //
+  // ⛔ A landing failure is often actionable, but retries spend a real agent turn. Persist the ask
+  // before re-queueing so a second failure reaches a person instead of recreating the same run forever.
+  (conn) => {
+    if (!hasColumn(conn, 'tasks', 'resolve_retry_asked_at')) {
+      conn.exec('alter table tasks add column resolve_retry_asked_at integer;')
+    }
+  }
 ]
 
 /**

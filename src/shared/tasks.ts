@@ -348,6 +348,8 @@ export interface Task {
   finishAskedAt: number | null
   /** When the agent was asked to resolve a rebase conflict. ⛔ One ask, then a person. */
   conflictAskedAt: number | null
+  /** When the scheduler used this task's one automatic resolve-and-retry attempt. */
+  resolveRetryAskedAt: number | null
   preemptible: boolean
   estTokens: number | null
   cancel: CancelRecord | null

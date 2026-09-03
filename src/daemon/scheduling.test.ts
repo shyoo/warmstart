@@ -87,6 +87,7 @@ function makeTask(overrides: Partial<Task> = {}): Task {
     autoCompact: overrides.autoCompact ?? 'inherit',
     finishAskedAt: overrides.finishAskedAt ?? null,
     conflictAskedAt: overrides.conflictAskedAt ?? null,
+    resolveRetryAskedAt: overrides.resolveRetryAskedAt ?? null,
     preemptible: overrides.preemptible ?? true,
     estTokens: overrides.estTokens ?? null,
     cancel: overrides.cancel ?? null,
@@ -219,5 +220,36 @@ describe('scheduler tick: end-to-end FIFO dispatch', () => {
     const ready = tasks.listTasks({ projectId }).filter((t) => t.status === 'ready').sort(tasks.schedulingOrder)
     expect(ready[0]?.id).toBe(p0New.id)
     expect(ready[1]?.id).toBe(p2Old.id)
+  })
+})
+
+describe('automatic resolve and retry', () => {
+  it('requeues one actionable landing failure, then leaves the repeat for human review', async () => {
+    const task = tasks.createTask({ title: 'repair a red check', projectId })
+    db.db()
+      .prepare('update tasks set status = ?, assignee = ?, hold_reason = ?, branch = ? where id = ?')
+      .run(
+        'awaiting_human',
+        'human',
+        'landing failed: the project checks failed after rebase',
+        'multi-agent-controller/t1-repair-a-red-check',
+        task.id
+      )
+
+    expect(await scheduler.resolveRetryOnTask(task.id, true)).toEqual({ ok: true })
+    const retried = tasks.requireTask(task.id)
+    expect(retried.status).toBe('ready')
+    expect(retried.resolveRetryAskedAt).not.toBeNull()
+    expect(tasks.messagesFor(task.id).filter((m) => /Automatically retrying once/.test(m.text))).toHaveLength(1)
+
+    // Recreate the same resting failure after that retry. The marker is durable, so a daemon tick
+    // or restart cannot turn this into an unbounded sequence of billed recovery runs.
+    tasks.setStatus(task.id, 'awaiting_human', {
+      assignee: 'human',
+      holdReason: 'landing failed: the project checks failed after rebase'
+    })
+    expect(await scheduler.resolveRetryOnTask(task.id, true)).toMatchObject({ ok: false })
+    expect(tasks.requireTask(task.id).status).toBe('awaiting_human')
+    expect(tasks.messagesFor(task.id).filter((m) => /Automatically retrying once/.test(m.text))).toHaveLength(1)
   })
 })

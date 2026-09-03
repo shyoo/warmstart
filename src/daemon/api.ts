@@ -99,6 +99,7 @@ import {
   resolveChecksOnTask,
   resolveCommitOnTask,
   resolveConflictOnTask,
+  resolveRetryOnTask,
   resolveTask,
   tick
 } from './scheduler.js'
@@ -593,6 +594,11 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
 
     'task.resolveConflict': async (p) => {
       const result = await resolveConflictOnTask(p.id)
+      return { task: requireTask(p.id), started: result.ok, ...(result.reason ? { reason: result.reason } : {}) }
+    },
+
+    'task.resolveRetry': async (p) => {
+      const result = await resolveRetryOnTask(p.id)
       return { task: requireTask(p.id), started: result.ok, ...(result.reason ? { reason: result.reason } : {}) }
     },
 

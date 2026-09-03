@@ -50,6 +50,7 @@ import {
   schedulingOrder,
   setHoldReason,
   markConflictAsked,
+  markResolveRetryAsked,
   markFinishAsked,
   setRunQuota,
   setStatus,
@@ -3239,6 +3240,10 @@ async function landCompletion(
   summary: string
 ): Promise<void> {
 
+  // A first landing failure gets one fresh run. This is carried to the common teardown below so the
+  // run and workspace are closed before the retry becomes dispatchable.
+  let automaticRetry = false
+
   let effectiveSummary = (summary ?? '').trim()
   if (!effectiveSummary || effectiveSummary === 'Completed') {
     const recentActivity = activityFor(task.id)
@@ -3328,6 +3333,7 @@ async function landCompletion(
         })
         finishRun(run.id, 'completed', summary)
         await releaseFor(run.id, task.id, project.id)
+        await resolveRetryOnTask(task.id, true)
         return
       }
       // ⛔ Returns without ending the run. The agent is still working — it has been handed one more
@@ -3382,6 +3388,7 @@ async function landCompletion(
         })
         finishRun(run.id, 'completed', summary)
         await releaseFor(run.id, task.id, project.id)
+        await resolveRetryOnTask(task.id, true)
         return
       }
       // ⛔ Returns without ending the run, exactly like `ask-agent` above: the agent is still working
@@ -3444,6 +3451,7 @@ async function landCompletion(
         policy: resolveFinishPolicy(task, project).policy
       })
       if (result.ok) setStatus(task.id, 'completed')
+      else automaticRetry = true
     } else if (decision.kind === 'await-human') {
       addMessage(task.id, 'system', `Finished, and not landed: ${decision.reason}`)
       setStatus(task.id, 'awaiting_human', { assignee: 'human', holdReason: decision.reason })
@@ -3514,6 +3522,7 @@ async function landCompletion(
     closeSession(sessionId)
   }
   await releaseFor(run.id, task.id, project?.id ?? null)
+  if (automaticRetry) await resolveRetryOnTask(task.id, true)
   admitDependents(task.id)
 }
 
@@ -4373,6 +4382,42 @@ export async function resolveCommitOnTask(
   const outcome = continueTask(task.id)
   log.info(`t${task.seq}: asked an agent to commit uncommitted work (${outcome})`)
   return { ok: true }
+}
+
+/**
+ * The one recovery action behind every failed-landing button.
+ *
+ * ⚠️ The wording is deliberately broader than a conflict: a branch can need a rebase, a check fix,
+ * or a deliberate commit. They all need the same thing from the scheduler — another run on the same
+ * thread — and presenting them as separate recovery verbs taught people to pick the wrong one.
+ */
+export async function resolveRetryOnTask(
+  taskId: string,
+  automatic = false
+): Promise<{ ok: boolean; reason?: string }> {
+  const task = getTask(taskId)
+  if (!task) return { ok: false, reason: 'no such task' }
+  if (automatic && task.resolveRetryAskedAt !== null) {
+    return { ok: false, reason: 'automatic resolve-and-retry was already attempted; review this failure' }
+  }
+
+  const reason = task.holdReason ?? ''
+  const resolver =
+    /conflict|rebase/i.test(reason)
+      ? resolveConflictOnTask
+      : /checks? failed|verification failed/i.test(reason)
+        ? resolveChecksOnTask
+        : /uncommitted|cannot be asked after its turn ends|rescue|stash/i.test(reason)
+          ? resolveCommitOnTask
+          : null
+  if (!resolver) return { ok: false, reason: 'this landing failure needs human review' }
+
+  if (automatic) {
+    // ⛔ Before asking: a send/dispatch that fails still spent the one automatic chance.
+    markResolveRetryAsked(task.id)
+    addMessage(task.id, 'system', 'Automatically retrying once with the failure details. A second failure will wait for your review.')
+  }
+  return resolver(task.id)
 }
 
 export async function relandTask(taskId: string): Promise<{ ok: boolean; reason?: string }> {
