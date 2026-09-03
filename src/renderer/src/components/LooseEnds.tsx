@@ -64,11 +64,6 @@ export function LooseEnds(): React.JSX.Element | null {
     }
   }
 
-  // ⚠️ Absent rather than empty. A permanent "nothing to see" card on the fleet's front page trains
-  // people to skip the region it lives in, which is the one place this needs to be noticed.
-  if (!ends && !loading) return null
-  if (ends?.length === 0 && !loading) return null
-
   return (
     <div className="panel">
       <header className="panel-head">
@@ -85,7 +80,17 @@ export function LooseEnds(): React.JSX.Element | null {
 
       {note && <div className="notice">{note}</div>}
 
-      {ends && ends.length > 0 && <table className="tbl tbl-loose-ends">
+      {ends === null ? (
+        <p className="dim">Scanning projects for loose ends…</p>
+      ) : ends.length === 0 ? (
+        <div className="empty-inline">
+          <p>No loose ends.</p>
+          <p className="dim">
+            All worktrees are clean, finished branches have landed, and there are no uncommitted files or orphaned stashes.
+          </p>
+        </div>
+      ) : (
+        <table className="tbl tbl-loose-ends">
         <thead>
           <tr>
             <th>What</th>
@@ -182,7 +187,8 @@ export function LooseEnds(): React.JSX.Element | null {
             </tr>
           ))}
         </tbody>
-      </table>}
+      </table>
+      )}
     </div>
   )
 }

@@ -328,6 +328,31 @@ export function CostModel({ now }: { now: number }): React.JSX.Element {
           {report.costFactors.coldSamples} runs) so an agent that often inherits warm context is not
           mistakenly considered cheaper.
         </p>
+
+        <div className="card" style={{ padding: 'var(--sp-3)', background: 'var(--color-surface)', marginTop: 'var(--sp-3)' }}>
+          <h4 style={{ margin: '0 0 var(--sp-2)', fontSize: 'var(--text-body)', fontWeight: 600 }}>
+            How the multiplier (e.g. ×2.91) is calculated in plain English:
+          </h4>
+          <ol style={{ margin: '0 0 var(--sp-2)', paddingLeft: 'var(--sp-4)', fontSize: 'var(--text-dense)', color: 'var(--color-text-dim)', lineHeight: 1.6 }}>
+            <li>
+              <strong>Priced Token Normalization:</strong> Raw tokens are converted into input-token-equivalents.
+              Cache reads are 90% cheaper, output tokens are 3×–5× more expensive, and cache writes are 1.25×.
+            </li>
+            <li>
+              <strong>Fleet Baseline Comparison:</strong> The system finds the median priced tokens across all tasks
+              in the fleet ({tokens(report.costFactors.neutralPriced)}). An agent whose median run is 1.2M tokens has a raw ratio of ~3.5×.
+            </li>
+            <li>
+              <strong>Sample Shrinkage (Why the number isn&rsquo;t just the raw ratio):</strong> If an agent only ran 2 or 3 tasks,
+              those tasks might just have been unusually large. The system applies shrinkage (formula: <code>ratio^(N / (N+5))</code>)
+              which pulls the multiplier closer to 1.0 until more runs (N) are completed. This is why a raw ratio of 3.5× with 8 runs becomes an applied multiplier of <strong>×2.91</strong>.
+            </li>
+            <li>
+              <strong>Warm vs. Cold Starts Separated:</strong> Reusing a warm session context costs far less than a fresh cold start.
+              Warmth is separated out first (currently ×{report.costFactors.warmFactor.toFixed(2)} warm vs ×{report.costFactors.coldFactor.toFixed(2)} cold) so an agent that inherits warm sessions isn&rsquo;t mistakenly credited as being cheaper.
+            </li>
+          </ol>
+        </div>
       </section>
     </div>
   )

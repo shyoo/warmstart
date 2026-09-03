@@ -399,7 +399,7 @@ export function App(): React.JSX.Element {
           {!connected ? (
             <DaemonNotice status={status} />
           ) : route.kind === 'overview' && route.page === 'dashboard' ? (
-            <Overview now={now} onOpenCostModel={() => setRoute({ kind: 'analytics', page: 'cost-model' })} />
+            <Overview />
           ) : route.kind === 'overview' && route.page === 'controller' ? (
             <Controller now={now} />
           ) : route.kind === 'analytics' && route.page === 'cost-model' ? (
