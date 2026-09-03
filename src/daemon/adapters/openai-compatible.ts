@@ -231,10 +231,10 @@ const info: AdapterInfo = {
   login: { kind: 'cli', argv: ['login'] },
   verification: {
     level: 'measured',
-    asOf: '2026-08-29',
+    asOf: '2026-09-03',
     note:
-      'codex-cli 0.151.0 on Windows. Flag surface, CODEX_HOME, doctor JSON shape and the model list ' +
-      'in models_cache.json read from the running CLI (0.149.1, 2026-08-25). Quota, the --json event ' +
+      'codex-cli 0.151.0 on Windows. Flag surface, CODEX_HOME and doctor JSON shape; the running CLI ' +
+      'refreshed models_cache.json on 2026-09-03, listing gpt-5.6-sol as a visible model. Quota, the --json event ' +
       'shapes and the stdin contract re-measured against 0.151.0 on 2026-08-29: exec reads its ' +
       'prompt from stdin to EOF and blocks until the pipe closes, and turn.completed is both the ' +
       'usage record and the terminal one.'

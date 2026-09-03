@@ -191,6 +191,23 @@ describe('capability consequences, not capability fields', () => {
 })
 
 describe('a cost model may say it does not know', () => {
+  it('offers the Codex CLI models verified in its refreshed model cache', () => {
+    // Measured 2026-09-03 from codex-cli 0.151.0's `$CODEX_HOME/models_cache.json`: Sol is
+    // `visibility: list` (unlike gpt-reserve and codex-auto-review) and accepts all six levels.
+    // The cache is the CLI's own account-aware model catalogue, so it proves a Codex subscription
+    // may select Sol; the public API catalogue alone would not establish that.
+    const codex = costModel('openai.codex.2026-08')
+    expect(codex.modelIds()).toContain('gpt-5.6-sol')
+    expect(codex.modelSpec('gpt-5.6-sol')?.effort_levels).toEqual([
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max',
+      'ultra'
+    ])
+  })
+
   it('anthropic and openai price a steerable cache; google does not', () => {
     // ⭐ Codex moved from `unpriced` to priced on 2026-09-02, and the two remaining `false`s are not
     // the same kind of gap. Google bills context caching as storage per token-hour, which is a

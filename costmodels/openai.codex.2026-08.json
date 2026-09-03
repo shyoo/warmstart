@@ -14,11 +14,11 @@
     "1.25x to rebuild. So `kind` is `ttl_multiplier`, exactly as in the Anthropic file - not a new",
     "shape, just shorter and cheaper to rebuild.",
     "",
-    "⚠️ ONE 30m TTL COVERS ALL FOUR MODELS, and only the first two are documented at 30m.",
-    "gpt-5.6-terra and gpt-5.6-luna use `prompt_cache_options.ttl`, whose sole supported value is",
+    "⚠️ ONE 30m TTL COVERS ALL FIVE MODELS, and only the GPT-5.6 trio is documented at 30m.",
+    "gpt-5.6-sol, gpt-5.6-terra and gpt-5.6-luna use `prompt_cache_options.ttl`, whose sole supported value is",
     "'30m'. gpt-5.5 and gpt-5.4-mini predate that and use `prompt_cache_retention`, where the",
     "non-ZDR default '24h' 'typically keeps entries available for around 30 minutes and can retain",
-    "them for up to 24 hours'. Thirty minutes is therefore the honest number for all four: exact",
+    "them for up to 24 hours'. Thirty minutes is therefore the honest number for all five: exact",
     "for the newer pair, and the typical case for the older pair. ⛔ It is NOT a floor for the older",
     "pair - an organization with Zero Data Retention enabled defaults to 'in_memory' instead, which",
     "is '5 to 10 minutes of inactivity', and against that this file is optimistic. A ZDR fleet that",
@@ -39,8 +39,9 @@
     "brackets the TTL only as (5m, 10h]: it corroborates the documented 30m and does not measure it.",
     "The rollout field used is the same one probeQuota reads, so the check is free to repeat.",
     "",
-    "MODELS: read from $CODEX_HOME/models_cache.json on 2026-08-25 (codex-cli 0.149.1), which the CLI",
-    "refreshes itself. `gpt-reserve` and `codex-auto-review` are deliberately omitted: the first is not",
+    "MODELS: read from $CODEX_HOME/models_cache.json on 2026-09-03 (codex-cli 0.151.0), which the CLI",
+    "refreshes itself. Its `gpt-5.6-sol` entry is visible and supports low, medium, high, xhigh, max",
+    "and ultra reasoning. `gpt-reserve` and `codex-auto-review` are deliberately omitted: the first is not",
     "a model an operator should route to by name, and the second is the review agent rather than a",
     "coding model."
   ],
@@ -65,6 +66,7 @@
     "default_ttl": "30m",
     "scope": "organization",
     "min_cacheable_tokens": {
+      "gpt-5.6-sol": 1024,
       "gpt-5.6-terra": 1024,
       "gpt-5.6-luna": 1024,
       "gpt-5.5": 2048,
@@ -92,6 +94,22 @@
     "min_tokens_since_compact": 0
   },
   "models": [
+    {
+      "id": "gpt-5.6-sol",
+      "context_window": 400000,
+      "input_per_mtok": null,
+      "output_per_mtok": null,
+      "tokenizer": "o200k",
+      "context_awareness": false,
+      "effort_levels": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "ultra"
+      ]
+    },
     {
       "id": "gpt-5.6-terra",
       "context_window": 400000,
