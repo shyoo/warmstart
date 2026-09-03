@@ -1457,4 +1457,3 @@ export function invalidateSessionContext(sessionId: string): void {
     events.onChange(session)
   }
 }
-
