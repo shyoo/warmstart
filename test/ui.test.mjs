@@ -1542,20 +1542,38 @@ try {
   )
   check('the workers colgroup describes every column the header declares', colCount === '[10,10]', colCount)
 
-  // ⚠️ The cell's own width, not the button's. A 19% column on a narrow window is still narrow;
-  // what this asserts is that the three ordinary actions end up on one line, which is the thing
-  // that was wrong.
+  // ⛔ One menu per row, not three buttons. Sign in and Probe are pressed once at commissioning
+  // and Retire is destructive; a fifth of the table's width to hold them, with Retire one mis-click
+  // from the button somebody presses to refresh a quota reading, is what this replaced.
   const actionRows = await evaluate(
-    `JSON.stringify([...document.querySelectorAll('.tbl-workers .tbl-actions')].map(cell => {
-       const tops = new Set([...cell.querySelectorAll('.btn')].map(b => Math.round(b.getBoundingClientRect().top)))
-       return [cell.querySelectorAll('.btn').length, tops.size]
-     }))`
+    `JSON.stringify([...document.querySelectorAll('.tbl-workers tbody tr:not(.tbl-row--note)')].map(row => [
+       row.querySelectorAll('.tbl-action-cell .action-menu-btn').length,
+       row.querySelectorAll('.tbl-action-cell .btn').length
+     ]))`
   )
   check(
-    'every row of actions fits on one line instead of stacking',
-    JSON.parse(actionRows).every(([, lines]) => lines === 1),
-    `[buttons, lines] per row: ${actionRows} — measured at [[3,3],[4,4]] before the colgroup was fixed`
+    'every worker row carries one actions menu and no loose buttons',
+    JSON.parse(actionRows).length > 0 &&
+      JSON.parse(actionRows).every(([menus, loose]) => menus === 1 && loose === 0),
+    `[menus, loose buttons] per row: ${actionRows}`
   )
+
+  // ⚠️ Opened, so what is inside it is asserted rather than assumed. A menu that renders empty
+  // is indistinguishable from one that is closed.
+  await evaluate(
+    `document.querySelector('.tbl-workers tbody tr .tbl-action-cell .action-menu-btn')?.click()`
+  )
+  await wait(200)
+  const menuItems = await evaluate(
+    `JSON.stringify([...document.querySelectorAll('.tbl-workers .action-menu .action-menu-item')].map(b => b.innerText.trim()))`
+  )
+  check(
+    'and that menu holds sign-in, the probe and retire',
+    /Sign in/.test(menuItems) && /Probe|Recheck/.test(menuItems) && /Retire/.test(menuItems),
+    menuItems
+  )
+  await evaluate(`document.body.click()`)
+  await wait(150)
 
   // ⛔ Overflow, which under a fixed layout is not clipped and not wrapped — it is painted over the
   // next column. An account name is an email; an email has no space to break at.
@@ -1768,20 +1786,30 @@ try {
   // ⚠️ Column 7, not 6: the reorder arrows took the first cell on 2026-08-29 and shifted every
   // column after them. A positional selector is the one thing that breaks silently when a table
   // grows a column, so it is called out rather than quietly renumbered.
-  const modelSelect = `document.querySelector('.tbl tbody tr td:nth-child(7) select')`
+  // ⚠️ A `SettingButtonSelect`, not a `<select>`, since 2026-09-02 — the same control Settings >
+  // Global uses, so the fleet's pickers and the app's pickers are one thing to learn. It paints a
+  // button carrying the current label and opens its options on click, which is why the list has to
+  // be opened before it can be counted.
+  const modelBtn = `document.querySelector('.tbl tbody tr td:nth-child(7) .setting-btn-select')`
   check(
     'an account can be given a default model',
-    (await evaluate(`${modelSelect}?.tagName`)) === 'SELECT',
+    (await evaluate(`${modelBtn}?.tagName`)) === 'BUTTON',
     'before this there was no per-account default anywhere in the app'
   )
   check(
     'which starts at the CLI default, not at a model somebody has to undo',
-    (await evaluate(`${modelSelect}?.value`)) === '',
+    (await evaluate(`${modelBtn}?.querySelector('.setting-btn-select-value')?.innerText.trim()`)) ===
+      'CLI default',
     'null means the vendor picks — the state every install ran in before this control existed'
   )
+  await evaluate(`${modelBtn}?.click()`)
+  await wait(200)
+  const modelMenu = `document.querySelector('.tbl tbody tr td:nth-child(7) .setting-btn-select-menu')`
   check(
     '"CLI default" is offered as a real choice, so the setting can be cleared',
-    (await evaluate(`${modelSelect}?.options[0]?.text`)) === 'CLI default',
+    (await evaluate(
+      `${modelMenu}?.querySelector('.setting-btn-select-option .setting-btn-select-option-label')?.innerText.trim()`
+    )) === 'CLI default',
     'a picker with no empty option is one you can set and never unset'
   )
   // ⛔ The list comes from the daemon's cost models, not from a table in the renderer. A second list
@@ -1789,12 +1817,18 @@ try {
   const served = await evaluate(
     `window.agentyard.rpc('model.options').then(o => String(o.find(x => x.adapterId === 'claude-code')?.models.length ?? 0))`
   )
-  const offered = await evaluate(`String((${modelSelect}?.options.length ?? 1) - 1)`)
+  const offered = await evaluate(
+    `String((${modelMenu}?.querySelectorAll('.setting-btn-select-option').length ?? 1) - 1)`
+  )
   check(
     'and every model it offers came from the cost model that will price it',
     offered === served && served !== '0',
     `offered ${offered}, served ${served}`
   )
+  // ⚠️ Closed again. An open menu is absolutely positioned over the rows underneath it, and the
+  // order-arrow checks below click by position.
+  await evaluate(`document.body.click()`)
+  await wait(150)
 
   // ⭐ Ordering the fleet. The strip is a row of cards people learn the shape of, and until
   // 2026-08-29 that shape was the order the accounts were commissioned in, changeable only by

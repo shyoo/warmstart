@@ -1,10 +1,58 @@
 import { sessionEnded } from '@shared/protocol'
-import { Fragment, useEffect, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import type { AdapterDetection, AdapterInfo, ModelOptions, Session, Worker } from '@shared/protocol'
 import { rpc, useDaemonEvents, useNow, type FleetEntry } from '../lib/daemon'
 import { quotaFreshness } from '@shared/tasks'
 import { age, percent, quotaGap } from '../lib/format'
+import { SettingButtonSelect, type SettingOption } from './SettingButtonSelect'
 import { TerminalPane } from './Terminal'
+
+/**
+ * The (i) beside a column heading whose number needs a sentence.
+ *
+ * ⛔ A glyph with a `title`, not a paragraph under the table. A heading like `Max` is a word an
+ * operator either already knows or cannot guess from three letters, and the answer — *how many tasks
+ * this account may run at once* — is one sentence that nobody needs on screen twice.
+ */
+function ColumnInfo({ text }: { text: string }): React.JSX.Element {
+  return (
+    <span className="th-info" title={text} aria-label={text} role="img">
+      <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="1.6">
+        <circle cx="8" cy="8" r="6.4" />
+        <path d="M8 7.2 L8 11.2" strokeLinecap="round" />
+        <circle cx="8" cy="4.9" r="0.85" fill="currentColor" stroke="none" />
+      </svg>
+    </span>
+  )
+}
+
+/**
+ * ⚠️ "CLI default" is a real option, not a blank — it means the vendor picks, which is what every
+ * install did before this control existed. It leads the list because it is the value a fresh worker
+ * holds, and a picker whose first entry is not its own default reads as one that has been changed.
+ */
+function modelChoices(models: Array<{ id: string }>): SettingOption[] {
+  return [{ value: '', label: 'CLI default' }, ...models.map((m) => ({ value: m.id, label: m.id }))]
+}
+
+const ROLE_CHOICES: SettingOption[] = [
+  { value: 'both', label: 'work + judgment' },
+  { value: 'worker', label: 'work only' },
+  { value: 'controller', label: 'judgment only' }
+]
+
+/**
+ * How many tasks one account may run at once — the sentence behind the `Max` column's (i).
+ *
+ * ⛔ One string, used by the heading's tooltip and the input's alike. Two copies of this is how the
+ * header ends up describing a different setting from the box underneath it.
+ */
+const MAX_HELP =
+  'How many tasks this account may run at once. Raising it is what lets one worker do parallel ' +
+  'work — a second task on a busy account waits as `queued` until a slot frees. ⚠️ Not free: ' +
+  'parallel requests against one cached prefix each pay a cache write, and both sessions spend the ' +
+  'same quota window. Lowering it never interrupts work already running; it only holds later tasks ' +
+  'until capacity frees.'
 
 /**
  * Settings → Workers, and the commissioning wizard.
@@ -41,6 +89,34 @@ export function Workers({
   const [notice, setNotice] = useState<string | null>(null)
   const [loginSession, setLoginSession] = useState<Session | null>(null)
   const [loginEnded, setLoginEnded] = useState(false)
+  /**
+   * Which row's actions are open, if any.
+   *
+   * ⛔ One id rather than a flag per row, so opening a second menu closes the first without anybody
+   * having to remember to. Sign in, Probe and Retire used to sit in the row itself — three buttons
+   * on every account, of which two are pressed once at commissioning and the third is destructive
+   * and sat one mis-click away from a quota reading somebody was only trying to refresh.
+   */
+  const [menuWorkerId, setMenuWorkerId] = useState<string | null>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  // ⚠️ Escape as well as a click away. A menu that can only be dismissed by clicking the page is one
+  // a keyboard has no way out of.
+  useEffect(() => {
+    if (!menuWorkerId) return
+    const onDown = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuWorkerId(null)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMenuWorkerId(null)
+    }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [menuWorkerId])
 
   // ⚠️ The panel used to give no signal at all when the vendor's login finished. The terminal printed
   // `-- session exited (0) --` and nothing else changed, so there was no way to tell a completed
@@ -259,18 +335,21 @@ export function Workers({
               summed to 100% — so under `table-layout: fixed` the actions column was allotted
               nothing at all, and Sign in / Probe / Retire wrapped one per line inside a cell the
               width of a button. Every width below is a share of the same 100%; adding a column
-              means taking the room for it from the others, not appending to the list. */}
+              means taking the room for it from the others, not appending to the list.
+              ⭐ The three actions are one 6% menu now rather than a 19% row of buttons, and the
+              fourteen points that freed went where the content was actually being squeezed: Quota
+              (which now sets one window per line), Account, Model and Role. */}
           <colgroup>
             <col style={{ width: '3%' }} />
+            <col style={{ width: '16%' }} />
+            <col style={{ width: '7%' }} />
+            <col style={{ width: '15%' }} />
+            <col style={{ width: '10%' }} />
+            <col style={{ width: '5%' }} />
+            <col style={{ width: '16%' }} />
             <col style={{ width: '14%' }} />
+            <col style={{ width: '8%' }} />
             <col style={{ width: '6%' }} />
-            <col style={{ width: '13%' }} />
-            <col style={{ width: '11%' }} />
-            <col style={{ width: '4%' }} />
-            <col style={{ width: '12%' }} />
-            <col style={{ width: '9%' }} />
-            <col style={{ width: '9%' }} />
-            <col style={{ width: '19%' }} />
           </colgroup>
           <thead>
             <tr>
@@ -281,11 +360,22 @@ export function Workers({
               <th>Adapter</th>
               <th>Account</th>
               <th>Quota</th>
-              <th className="tbl-num">Max</th>
+              {/* ⚠️ `Max` is three letters that say what is being counted and not what it does. The
+                  (i) carries the sentence rather than the column carrying a second word nobody has
+                  room for. */}
+              <th className="tbl-num">
+                <span className="th-with-info">
+                  Max
+                  <ColumnInfo text={MAX_HELP} />
+                </span>
+              </th>
               <th>Model</th>
               <th>Role</th>
-              <th>Policy</th>
-              <th />
+              {/* ⛔ `Enable`, because that is the only thing left in the column. It said `Policy`
+                  while it held a switch and a `human-occupied` checkbox — a word broad enough to
+                  cover both and precise about neither. */}
+              <th>Enable</th>
+              <th className="tbl-num">Action</th>
             </tr>
           </thead>
           <tbody>
@@ -374,31 +464,38 @@ export function Workers({
                     {/* ⭐ This order is the fleet strip's order — the cards up there are these rows,
                         top to bottom. It is the only place the strip can be arranged from, because the
                         strip itself has no room for a control that is used once and then never again. */}
-                    <td className="tbl-order">
-                      <button
-                        type="button"
-                        className="order-btn"
-                        aria-label={`Move ${worker.label} up`}
-                        title="Move up in the fleet strip. Display order only — it changes nothing about which worker gets the next task."
-                        disabled={index === 0 || busy === `order:${worker.id}`}
-                        onClick={() => move(worker.id, -1)}
-                      >
-                        <svg viewBox="0 0 16 16" width="9" height="9" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M3 10 L8 5 L13 10" />
-                        </svg>
-                      </button>
-                      <button
-                        type="button"
-                        className="order-btn"
-                        aria-label={`Move ${worker.label} down`}
-                        title="Move down in the fleet strip. Display order only — it changes nothing about which worker gets the next task."
-                        disabled={index === fleet.length - 1 || busy === `order:${worker.id}`}
-                        onClick={() => move(worker.id, 1)}
-                      >
-                        <svg viewBox="0 0 16 16" width="9" height="9" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M3 6 L8 11 L13 6" />
-                        </svg>
-                      </button>
+                    {/* ⛔ The flex box is the div, never the <td>. `display: flex` on a table cell
+                        takes it out of the table's own layout: it stops sharing the row's height,
+                        so its bottom border was drawn at the height of two little arrows while
+                        every other cell's was drawn at the height of the row — which is the step in
+                        the rule that made the left edge of this table look torn. */}
+                    <td className="tbl-order-cell">
+                      <div className="tbl-order">
+                        <button
+                          type="button"
+                          className="order-btn"
+                          aria-label={`Move ${worker.label} up`}
+                          title="Move up in the fleet strip. Display order only — it changes nothing about which worker gets the next task."
+                          disabled={index === 0 || busy === `order:${worker.id}`}
+                          onClick={() => move(worker.id, -1)}
+                        >
+                          <svg viewBox="0 0 16 16" width="9" height="9" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M3 10 L8 5 L13 10" />
+                          </svg>
+                        </button>
+                        <button
+                          type="button"
+                          className="order-btn"
+                          aria-label={`Move ${worker.label} down`}
+                          title="Move down in the fleet strip. Display order only — it changes nothing about which worker gets the next task."
+                          disabled={index === fleet.length - 1 || busy === `order:${worker.id}`}
+                          onClick={() => move(worker.id, 1)}
+                        >
+                          <svg viewBox="0 0 16 16" width="9" height="9" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M3 6 L8 11 L13 6" />
+                          </svg>
+                        </button>
+                      </div>
                     </td>
                     <td>
                       <span className="tbl-strong">{worker.label}</span>
@@ -407,15 +504,16 @@ export function Workers({
                           fleet strip had said `off` on its card since M2; the table that owns the
                           control did not. */}
                       {!worker.enabled && <span className="tag tag--off">disabled</span>}
+                      {/* ⛔ Live only. A `warm` count is every conversation this account has ever
+                          closed and could in principle reopen — a number that only grows, that
+                          nobody acts on, and that read as a second status beside the one that
+                          matters. Whether something is *running here right now* is the question
+                          this row is scanned for. */}
                       {(() => {
                         const liveCount = sessions.filter((s) => !sessionEnded(s.state)).length
-                        const warmCount = sessions.length - liveCount
-                        return (
-                          <>
-                            {liveCount > 0 && <span className="tag tag--running">{liveCount} live</span>}
-                            {warmCount > 0 && <span className="tag">{warmCount} warm</span>}
-                          </>
-                        )
+                        return liveCount > 0 ? (
+                          <span className="tag tag--running">{liveCount} live</span>
+                        ) : null
                       })()}
                       <div className="tbl-path mono" title={worker.isolationRoot}>
                         {worker.isolationRoot}
@@ -443,15 +541,13 @@ export function Workers({
                           {worker.identity.subscriptionType}
                         </div>
                       )}
-                      {/* ⛔ Signed in, set up, and *still working* are three separate questions, and
-                          this column used to be asked all three. The labels stay here, because the
-                          Account column is where somebody looks to find out whether an account is
-                          usable; the sentence explaining each one is on the row below. */}
-                      {notes.length > 0 && (
-                        <div className={`tbl-sub ${notes.some((n) => n.tone === 'danger') ? 'danger' : 'warn'}`}>
-                          {notes.map((n) => n.label).join(' · ')}
-                        </div>
-                      )}
+                      {/* ⛔ The labels are gone from here, deliberately. `setup unfinished · held
+                          out of dispatch` was printed in this cell and then again, word for word,
+                          as the label of the note row directly underneath — so the one account with
+                          something wrong with it said each thing twice, in a column narrow enough
+                          that saying it once already wrapped. The note row below is the single
+                          place these are stated, and it carries the sentence and the fix with
+                          them. */}
                     </td>
                     {/* ⛔ A reading that exists is shown, however old. Replacing the numbers with the
                         word `stale` made an account read as unmeasured when what was true is that it
@@ -460,12 +556,23 @@ export function Workers({
                         reading at all still yield to `gap`: never probed, no usage data yet, a failed
                         probe and a provider that reports none are four different absences and the
                         hint is what tells them apart. */}
+                    {/* ⛔ One window per line, not a ` · `-joined string. Every reading here is two
+                        or three short pairs — `5h 11%`, `7d 13%` — and joining them made one long
+                        unbreakable-looking run that the column wrapped wherever it happened to
+                        run out, so `Claude 5h 34% ·` and `Claude 7d 34%` landed on four ragged
+                        lines and dragged the row down with them. A line each is both shorter and
+                        the shape the numbers are actually compared in: window against window. */}
                     <td className="num">
                       {reading && reading.windows.length > 0 ? (
                         <>
-                          <span className={reading.stale ? 'dim' : undefined}>
-                            {reading.windows.map((w) => `${w.label} ${percent(w.percent)}`).join(' · ')}
-                          </span>
+                          <div className={`quota-windows${reading.stale ? ' dim' : ''}`}>
+                            {reading.windows.map((w) => (
+                              <div key={w.label} className="quota-window">
+                                <span className="quota-window-label">{w.label}</span>
+                                <span className="quota-window-pct">{percent(w.percent)}</span>
+                              </div>
+                            ))}
+                          </div>
                           {/* ⛔ The age, not the word `stale`. An idle account's reading is old
                               because nothing has used the account, not because anything failed, and
                               the two need different next moves from the operator. A reading that is
@@ -499,14 +606,7 @@ export function Workers({
                         className="num-input"
                         value={worker.maxConcurrent}
                         disabled={busy === `max:${worker.id}`}
-                        title={
-                          'How many tasks this account may run at once. Raising it is what lets one ' +
-                          'worker do parallel work — a second task on a busy account waits as ' +
-                          '`queued` until a slot frees. ⚠️ Not free: parallel requests against one ' +
-                          'cached prefix each pay a cache write, and both sessions spend the same ' +
-                          'quota window. Lowering it never interrupts work already running; it only ' +
-                          'holds later tasks until capacity frees.'
-                        }
+                        title={MAX_HELP}
                         onChange={(e) => {
                           const next = Number.parseInt(e.target.value, 10)
                           // ⛔ An empty box is somebody mid-edit, not a request for zero workers.
@@ -543,36 +643,33 @@ export function Workers({
                             return (
                               <div key={p.id} className="pool-default-row">
                                 <span className="pool-default-label">{p.label}:</span>
-                                <select
+                                <SettingButtonSelect
                                   value={currentVal}
+                                  options={modelChoices(poolModels)}
+                                  ariaLabel={`${p.label} default model for ${worker.label}`}
                                   disabled={busy === `model:${worker.id}:${p.id}`}
-                                  onChange={(e) =>
+                                  onChange={(value) =>
                                     void guard(`model:${worker.id}:${p.id}`, () =>
                                       rpc('worker.update', {
                                         id: worker.id,
                                         defaultModels: {
                                           ...(worker.defaultModels ?? {}),
-                                          [p.id]: e.target.value || null
+                                          [p.id]: value || null
                                         }
                                       })
                                     )
                                   }
-                                >
-                                  <option value="">CLI default</option>
-                                  {poolModels.map((m) => (
-                                    <option key={m.id} value={m.id}>
-                                      {m.id}
-                                    </option>
-                                  ))}
-                                </select>
+                                />
                               </div>
                             )
                           })}
                         </div>
                       ) : (
                         <>
-                          <select
+                          <SettingButtonSelect
                             value={worker.defaultModel ?? ''}
+                            options={modelChoices(modelsFor(worker.adapterId)?.models ?? [])}
+                            ariaLabel={`Default model for ${worker.label}`}
                             disabled={busy === `model:${worker.id}`}
                             title={
                               'The model tasks on this account run on unless they pin their own. ' +
@@ -580,81 +677,71 @@ export function Workers({
                               'model it started with, because switching mid-conversation throws away its ' +
                               'prompt cache.'
                             }
-                            onChange={(e) =>
+                            onChange={(value) =>
                               void guard(`model:${worker.id}`, () =>
                                 rpc('worker.update', {
                                   id: worker.id,
                                   // ⛔ `null`, not `''` — the daemon reads undefined as "not mentioned" and
                                   // null as "clear it", and an empty string is neither.
-                                  defaultModel: e.target.value || null,
+                                  defaultModel: value || null,
                                   // ⚠️ Effort is cleared with the model it belonged to. A level that was
                                   // legal for the old model is not necessarily legal for the new one, and
                                   // the daemon would refuse the pair — so the operator re-picks it.
-                                  ...(e.target.value !== worker.defaultModel ? { defaultEffort: null } : {})
+                                  ...(value !== worker.defaultModel ? { defaultEffort: null } : {})
                                 })
                               )
                             }
-                          >
-                            <option value="">CLI default</option>
-                            {(modelsFor(worker.adapterId)?.models ?? []).map((m) => (
-                              <option key={m.id} value={m.id}>
-                                {m.id}
-                              </option>
-                            ))}
-                          </select>
+                          />
                           {/* Effort appears only where the CLI takes a flag for it *and* the chosen model
                               has levels. Antigravity has neither: it bakes effort into the model id and
                               refuses `--effort` outright, measured 2026-08-29. */}
                           {effortsFor(worker).length > 0 && (
-                            <select
+                            <SettingButtonSelect
                               className="tbl-sub-select"
                               value={worker.defaultEffort ?? ''}
+                              options={[
+                                { value: '', label: 'CLI default' },
+                                ...effortsFor(worker).map((level) => ({ value: level, label: level }))
+                              ]}
+                              ariaLabel={`Default reasoning effort for ${worker.label}`}
                               disabled={busy === `effort:${worker.id}`}
                               title={
                                 'How hard the model thinks. Like the model, this is read at launch and ' +
                                 'applies to the next run.'
                               }
-                              onChange={(e) =>
+                              onChange={(value) =>
                                 void guard(`effort:${worker.id}`, () =>
                                   rpc('worker.update', {
                                     id: worker.id,
-                                    defaultEffort: e.target.value || null
+                                    defaultEffort: value || null
                                   })
                                 )
                               }
-                            >
-                              <option value="">CLI default</option>
-                              {effortsFor(worker).map((level) => (
-                                <option key={level} value={level}>
-                                  {level}
-                                </option>
-                              ))}
-                            </select>
+                            />
                           )}
                         </>
                       )}
                     </td>
                     <td>
-                      <select
+                      <SettingButtonSelect
                         value={worker.role}
+                        options={ROLE_CHOICES}
+                        ariaLabel={`Role for ${worker.label}`}
+                        disabled={busy === `role:${worker.id}`}
                         title={
                           'Whether this account may be asked for judgment. A controller near the top of ' +
                           'its window stops being asked and the next call routes elsewhere — which is ' +
                           'why a dedicated one is worth having, and why nothing breaks without one.'
                         }
-                        onChange={(e) =>
+                        onChange={(value) =>
                           void guard(`role:${worker.id}`, () =>
                             rpc('worker.update', {
                               id: worker.id,
-                              role: e.target.value as 'worker' | 'controller' | 'both'
+                              role: value as 'worker' | 'controller' | 'both'
                             })
                           )
                         }
-                      >
-                        <option value="both">work + judgment</option>
-                        <option value="worker">work only</option>
-                        <option value="controller">judgment only</option>
-                      </select>
+                      />
                     </td>
                     <td>
                       {/* ⛔ Off is not retirement and must not read as it. Retiring is destructive
@@ -687,53 +774,91 @@ export function Workers({
                         >
                           <span className="switch-knob" />
                         </button>
-                        <span className={worker.enabled ? 'dim' : 'warn'}>
-                          {worker.enabled ? 'enabled' : 'disabled'}
-                        </span>
+                        {/* ⛔ No word beside the switch. `enabled` next to an on switch is the
+                            switch said twice, and the one state that genuinely needs saying out
+                            loud — off — is already a `disabled` tag on the worker's own name, where
+                            somebody scanning the fleet reads it. The title still carries the
+                            sentence, and `aria-label` + `aria-checked` carry it to a reader. */}
                       </div>
-                      <label className="check" title="Quota is tracked but never spent by Multi Agent Controller.">
-                        <input
-                          type="checkbox"
-                          checked={worker.humanOccupied}
-                          onChange={(e) =>
-                            void guard(`hu:${worker.id}`, () =>
-                              rpc('worker.update', { id: worker.id, humanOccupied: e.target.checked })
-                            )
-                          }
-                        />
-                        human-occupied
-                      </label>
                     </td>
-                    <td className="tbl-actions">
-                      <button
-                        className="btn btn--ghost"
-                        disabled={busy === `login:${worker.id}`}
-                        onClick={() => void startLogin(worker.id, worker.adapterId)}
+                    {/* ⛔ One menu, the same one the task table uses. Three buttons per row cost a
+                        fifth of the table's width to hold two controls used once at commissioning
+                        and a destructive one that sat a mis-click from the button beside it — and
+                        on the one row with something wrong with it they wrapped onto a second
+                        line, which is the row that could least afford to grow. */}
+                    <td className="tbl-action-cell">
+                      <div
+                        ref={menuWorkerId === worker.id ? menuRef : null}
+                        className="action-menu-wrap"
                       >
-                        Sign in
-                      </button>
-                      <button
-                        className="btn btn--ghost"
-                        disabled={busy === `probe:${worker.id}`}
-                        onClick={() => void probe(worker.id, worker.label)}
-                        title={
-                          suspect
-                            ? 'Re-reads this account and offers it work again. Press it once you have ' +
-                              'fixed what stopped the last run — this is the only thing that lifts the hold.'
-                            : "Reads the vendor CLI's own usage cache off disk. It never spends a token."
-                        }
-                      >
-                        {suspect ? 'Recheck' : 'Probe'}
-                      </button>
-                      <button
-                        className="btn btn--ghost btn--danger"
-                        onClick={() =>
-                          void guard(`ret:${worker.id}`, () => rpc('worker.retire', { id: worker.id }))
-                        }
-                        title="Closes the worker to new work. The isolation root stays on disk."
-                      >
-                        Retire
-                      </button>
+                        <button
+                          type="button"
+                          className={`action-menu-btn${menuWorkerId === worker.id ? ' action-menu-btn--open' : ''}`}
+                          aria-label={`Actions for ${worker.label}`}
+                          aria-haspopup="true"
+                          aria-expanded={menuWorkerId === worker.id}
+                          title="Actions"
+                          onClick={() =>
+                            setMenuWorkerId((cur) => (cur === worker.id ? null : worker.id))
+                          }
+                        >
+                          <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
+                            <circle cx="3" cy="8" r="1.5" />
+                            <circle cx="8" cy="8" r="1.5" />
+                            <circle cx="13" cy="8" r="1.5" />
+                          </svg>
+                        </button>
+                        {menuWorkerId === worker.id && (
+                          <div className="action-menu" role="menu">
+                            <button
+                              type="button"
+                              role="menuitem"
+                              className="action-menu-item"
+                              disabled={busy === `login:${worker.id}`}
+                              title="Runs the vendor's own login in a terminal. agentyard never sees the credential."
+                              onClick={() => {
+                                setMenuWorkerId(null)
+                                void startLogin(worker.id, worker.adapterId)
+                              }}
+                            >
+                              Sign in
+                            </button>
+                            <button
+                              type="button"
+                              role="menuitem"
+                              className="action-menu-item"
+                              disabled={busy === `probe:${worker.id}`}
+                              title={
+                                suspect
+                                  ? 'Re-reads this account and offers it work again. Press it once you have ' +
+                                    'fixed what stopped the last run — this is the only thing that lifts the hold.'
+                                  : "Reads the vendor CLI's own usage cache off disk. It never spends a token."
+                              }
+                              onClick={() => {
+                                setMenuWorkerId(null)
+                                void probe(worker.id, worker.label)
+                              }}
+                            >
+                              {suspect ? 'Recheck' : 'Probe'}
+                            </button>
+                            <div className="action-menu-divider" />
+                            <button
+                              type="button"
+                              role="menuitem"
+                              className="action-menu-item action-menu-item--danger"
+                              title="Closes the worker to new work. The isolation root stays on disk."
+                              onClick={() => {
+                                setMenuWorkerId(null)
+                                void guard(`ret:${worker.id}`, () =>
+                                  rpc('worker.retire', { id: worker.id })
+                                )
+                              }}
+                            >
+                              Retire
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     </td>
                   </tr>
                   {/* ⚠️ One row per account, however many things are wrong with it, and it draws

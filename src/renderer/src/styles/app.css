@@ -1271,13 +1271,47 @@ body {
   row-gap: var(--sp-1);
 }
 
-/* ⚠️ Two arrows stacked in a 4% column, not a row: side by side they wrapped the header cell and
-   pushed the Worker column narrower than its isolation path. */
+/* ⛔ The cell stays a cell. `display: flex` on a <td> takes it out of the table's layout entirely:
+   it no longer stretches to the row's height, so its bottom border was painted at the height of two
+   14px arrows while every neighbour's was painted at the height of the row — a rule that stepped up
+   at the left edge of every row and read as a broken line down the side of the table. The flex box
+   is the div inside it. */
+.tbl-order-cell {
+  padding-left: var(--sp-2);
+  padding-right: 0;
+}
+
+/* ⚠️ Two arrows stacked in a narrow column, not a row: side by side they wrapped the header cell
+   and pushed the Worker column narrower than its isolation path. */
 .tbl-order {
   display: flex;
   flex-direction: column;
   gap: 2px;
   align-items: center;
+}
+
+/* ---- a column heading that needs a sentence ----------------------------- */
+
+.th-with-info {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* ⚠️ `help` rather than `pointer`. Nothing happens when it is clicked, and a hand cursor on a glyph
+   that does nothing is a promise the control cannot keep. */
+.th-info {
+  display: inline-flex;
+  align-items: center;
+  color: var(--color-text-faint);
+  cursor: help;
+  opacity: 0.7;
+  transition: opacity var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease);
+}
+
+.th-info:hover {
+  opacity: 1;
+  color: var(--color-text);
 }
 
 .order-btn {
@@ -1398,7 +1432,19 @@ body {
     color var(--motion-fast) var(--ease);
 }
 
-.action-menu-item:hover {
+/* ⚠️ A menu item is a <button>, and one mid-flight is disabled while its RPC runs. Without this it
+   kept full contrast and a hover, so a press that was already in progress looked like one that had
+   done nothing. */
+.action-menu-item:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.action-menu-item:disabled:hover {
+  background: transparent;
+}
+
+.action-menu-item:not(:disabled):hover {
   background: var(--color-surface-2);
   color: var(--color-text);
 }
@@ -1465,19 +1511,54 @@ body {
   overflow: hidden;
 }
 
-/* ⚠️ Compact only here, and only in this column. The same three buttons in Projects and Loose ends
-   sit in tables with four columns and all the room they need; this one has ten, and a full-size
-   `.btn` in a 19% column is what made them stack one per line. */
-.tbl-workers .tbl-actions {
-  flex-wrap: nowrap;
-  gap: var(--sp-1);
+/* ⛔ `auto`, so the colgroup decides. `.tbl-action-cell` is 48px for the task table, which under
+   `table-layout: fixed` would fight the 6% <col> this table declares for the same column. */
+.tbl-workers .tbl-action-cell {
+  width: auto;
 }
 
-.tbl-workers .tbl-actions .btn {
-  margin-left: 0;
-  padding: 2px var(--sp-2);
-  font-size: var(--text-meta);
+/* ---- a quota reading, one window per line ------------------------------- */
+
+/*
+ * ⛔ Lines, not a ` · `-joined string. Every reading is two or three short pairs and joining them
+ * produced one long run that a 10% column wrapped wherever it happened to run out — `Claude 5h 34%
+ * ·` on one line, `Claude` on the next — so a three-window adapter set four ragged lines and made
+ * its row twice the height of every other. A line per window is both shorter and the shape these
+ * numbers are read in: window against window.
+ */
+.quota-windows {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.quota-window {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.quota-window-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* The percentages line up under each other, which is the only reason to put them on lines at all. */
+.quota-window-pct {
+  flex: 0 0 auto;
+  font-weight: 600;
+}
+
+/* ⚠️ Top, like every other cell in this table. A worker row is two or three lines tall — the label
+   over its isolation path, the account over its plan — so a control pinned to the row's *middle*
+   floats against a first line it has nothing to do with. The task table's rows are one line, which
+   is why `.tbl-action-cell` centres by default and why this one has to say otherwise. */
+.tbl-workers .tbl-action-cell,
+.tbl-workers .tbl-order-cell {
+  vertical-align: top;
 }
 
 /* ---- a worker's note row ------------------------------------------------ */
@@ -1781,6 +1862,9 @@ select {
 }
 
 /* A second, quieter select stacked under the first in one cell — effort under its model. */
+/* The second, quieter picker under a main one — effort under model. ⚠️ `.setting-btn-select-wrap`
+   is already `display: block; width: 100%`, so all this adds there is the gap and the dimmer text
+   that says which of the two leads. */
 .tbl-sub-select {
   display: block;
   margin-top: var(--sp-1);
@@ -1809,7 +1893,8 @@ select {
   white-space: nowrap;
 }
 
-.pool-default-row select {
+.pool-default-row select,
+.pool-default-row .setting-btn-select-wrap {
   flex: 1;
   min-width: 0;
 }
