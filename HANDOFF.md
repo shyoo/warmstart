@@ -7,9 +7,9 @@ started in CI, never run against a real agent CLI.
 **Current state + what to do next, not a changelog.** **Under 200 lines** — adding one means cutting
 the line it obsoletes. Where every other fact goes: [`docs/README.md`](docs/README.md).
 
-**Baseline (2026-09-03, measured):** typecheck · lint · build clean · `npm test` **1610/1612** (2
-POSIX-only skipped). ⚠️ `test:daemon` 147/147 · `test:ui` 232/232 · `test:pack` 18/18 · L4-landed are
-carried forward. CLIs here: claude 2.1.252 · agy 1.1.22 · codex 0.151.0 · local-llm 1.0.0 (qwen3-coder live tested).
+**Baseline (2026-09-03, measured):** typecheck · lint · build clean · `npm test` **1618/1620** (2 POSIX-only skipped).
+⚠️ `test:daemon` 147/147 · `test:ui` 232/232 · `test:pack` 18/18 · L4-landed carried forward — change since is flow binding visualization + tests.
+CLIs here: claude 2.1.252 · agy 1.1.22 · codex 0.151.0 · local-llm 1.0.0 (qwen3-coder live tested).
 ⚠️ With none installed — the CI state — the daemon suite skips 5 checks, each with a stated reason.
 
 ⭐ **`scripts/build-win.ps1` runs all of the above** (`-Help` for options, `-Restart` for the inner
@@ -97,7 +97,7 @@ src/mcp/               the MCP server the agent CLI spawns. Two tiers chosen by 
 src/main/              window host + the daemon's only client (holds the token); the tray, and
                        `uisettings.ts` - preferences main must read when the daemon is not answering
 src/renderer/          fleet strip, approvals bar, tasks, project settings (policy tier), workers,
-                       Logs, LooseEnds, Conversations (+ lib/format.test.ts)
+                       Logs, LooseEnds, Conversations, Flow (+ lib/format.test.ts)
 costmodels/            anthropic.* - google.antigravity.* - openai.codex.* - local.llm.*; compiled in, so a
                        packaging slip cannot leave the scheduler unable to price
 docs/                  the maintained reference: 12 pages + README.md, the index. Start there.
@@ -138,6 +138,7 @@ docs/                  the maintained reference: 12 pages + README.md, the index
 - ⛔ **Codex could never have completed a task, five bugs deep** (fixed 2026-08-30, `docs/adapters.md`): stdin held open against a CLI reading to EOF, `mcp: true` on an adapter that cannot register one, `turn.completed` without its terminal half — then, on t56, the landing. `landing.finishInstruction` was read with no policy check, so a `commit-and-merge` project sent codex *"Run /commit … Do not push"* — a Claude-only skill whose sixth step **is** the forbidden push; and `stall.test.ts` asserted a **host capability**, the WMI query codex's sandbox denies, so the suite went red in the worker and green on the host and the agent read that as its own regression. ⛔ And in a worktree it could not commit **at all**: `--sandbox workspace-write` forbids the trunk's `.git`, where a worktree keeps its index, objects and ref — three t56 runs, ~1.8M tokens, 30d quota 0%→34%, every commit refused at `index.lock`. `plan()` now passes `--add-dir` for each. ⚠️ **No codex task has completed yet**; t56 is the re-run that settles it, and the `--add-dir` grant is argv-proven and **unproven against a live sandbox**.
 - ⭐ **Antigravity runs, reports its quota, and resumes a conversation by id** (**R9**, measured 2026-08-28). ⚠️ It meters differently: one aggregate usage record per run, `cache_write` always 0, and cache reads that dwarf everything else — 12.5M in a median run (2026-08-30).
 - ⭐ **The estimator answers per agent and model, not one number for the fleet** (2026-08-30, `docs/cost-model.md` §10). `size(task) × factor(adapter, model)`, keyed off `runs.adapter_id`/`runs.model` (**migration 23**), warmth divided out. One fleet median was **81x** wrong across two agents. ⛔ **Routing was left alone deliberately**: zero of 54 tasks has run on two keys, so nothing yet separates *expensive agent* from *agent that gets the big tasks*. Factors feed estimates and gates only.
+- ⭐ **The Flow view visualizes the ticket ↔ workspace ↔ worker binding directly** (2026-09-03, t154/t159). A 6-column kanban board (`ready`, `queued`, `dispatching`, `running`, `awaiting`, `finished`) maps the full lifecycle. The running lane binds workspace slots: active runs show `t65 → ws1 / ClaudeFirst`, inbound dispatches show `ws4 / CodexFirst ← t68`, and idle trees show `ws4 free`. Hovering any ticket peeks prompt, status, duration and binding. 8 unit checks in `flow.test.ts` cover claim resolution and resident worker memory.
 - ⛔ **Nothing is proven off Windows.** CI runners carry no agent CLI, and CI is red (above). ⛔ **Unsigned**: a certificate and an Apple Developer account, not a config line.
 
 ## Next

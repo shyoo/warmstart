@@ -1074,7 +1074,11 @@ body {
 
 .flow-board {
   display: grid;
-  grid-template-columns: repeat(7, minmax(104px, 1fr));
+  /*
+   * ⛔ The running lane is wide because it is not a stack of chips — it is one row per workspace,
+   * naming the ticket, the tree and the account together. Six columns total: 3 on left, running, 2 on right.
+   */
+  grid-template-columns: repeat(3, minmax(90px, 0.75fr)) minmax(320px, 2.2fr) repeat(2, minmax(90px, 0.75fr));
   min-height: 285px;
   overflow-x: auto;
   border: 1px solid var(--color-border);
@@ -1123,7 +1127,12 @@ body {
 .flow-ticket--paused_user, .flow-ticket--paused_quota, .flow-ticket--cancelling { --flow-tone: var(--state-warn); }
 .flow-ticket--completed { --flow-tone: var(--state-ok); }
 .flow-ticket--failed { --flow-tone: var(--state-danger); }
-.flow-ticket--cancelled, .flow-ticket--draft, .flow-ticket--blocked, .flow-ticket--scheduled { --flow-tone: var(--state-idle); }
+.flow-ticket--cancelled, .flow-ticket--draft, .flow-ticket--blocked, .flow-ticket--scheduled,
+.flow-ticket--other { --flow-tone: var(--state-idle); }
+
+/* ⚠️ The rules above mirror STATUS_TONE in lib/taskview.tsx. Change both or neither. */
+.flow-ticket--other { cursor: default; }
+.flow-ticket--bound { box-shadow: inset 2px 0 0 color-mix(in srgb, var(--flow-tone) 70%, transparent); }
 
 .flow-lane-label {
   display: flex;
@@ -1139,25 +1148,210 @@ body {
 .flow-lane-label b { color: var(--color-text-faint); font-weight: 500; }
 .flow-more { align-self: center; color: var(--color-text-dim); font-size: var(--text-meta); }
 
-.flow-workers {
+.flow-lane--running {
+  background: color-mix(in srgb, var(--state-running) 4%, transparent);
+}
+
+.flow-binds {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
+  flex: 1;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  overflow-y: auto;
+}
+
+.flow-binds-empty { padding: var(--sp-2) 0; font-size: var(--text-meta); }
+
+/* One card of the ticket ↔ workspace ↔ worker binding. */
+.flow-bind {
+  display: flex;
   align-items: center;
   gap: var(--sp-2);
-  margin-top: var(--sp-3);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  font-size: var(--text-dense);
+  padding: var(--sp-1) var(--sp-2);
+  min-height: 32px;
+  animation: flow-arrive 360ms var(--ease) both;
+  transition: background var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease);
+}
+
+.flow-bind:hover {
+  background: var(--color-surface-2);
+  border-color: var(--color-border-strong);
+}
+
+.flow-bind--active {
+  background: color-mix(in srgb, var(--state-running) 7%, var(--color-surface));
+  border-color: color-mix(in srgb, var(--state-running) 30%, var(--color-border));
+}
+
+.flow-bind--inbound {
+  background: color-mix(in srgb, var(--state-warn) 5%, var(--color-surface));
+  border: 1px dashed color-mix(in srgb, var(--state-warn) 40%, var(--color-border));
+}
+
+.flow-bind--free {
+  background: color-mix(in srgb, var(--color-surface) 40%, transparent);
+  border: 1px dashed var(--color-border);
+  opacity: 0.85;
+}
+
+.flow-bind--stale { opacity: 0.75; }
+
+.flow-bind--unbound {
+  border: 1px dashed color-mix(in srgb, var(--state-running) 35%, var(--color-border));
+  margin-top: var(--sp-1);
+}
+
+.flow-bind-ticket { display: inline-flex; align-items: center; gap: var(--sp-1); }
+
+.flow-bind-arrow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-faint);
+  font-weight: 700;
+  font-size: 13px;
+  user-select: none;
+}
+
+.flow-bind-arrow--active { color: var(--color-accent); }
+.flow-bind-arrow--inbound { color: var(--state-warn); }
+
+.flow-bind-dest {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.flow-ws-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-text) 8%, var(--color-surface));
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
+  font-weight: 600;
+  font-size: var(--text-dense);
+  letter-spacing: -0.01em;
+}
+
+.flow-ws-badge--free {
+  color: var(--color-text-dim);
+  background: transparent;
+  border-style: dashed;
+}
+
+.flow-bind-slash { color: var(--color-text-faint); font-size: var(--text-meta); }
+
+.flow-worker-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
   color: var(--color-text-dim);
   font-size: var(--text-dense);
 }
 
-.flow-workers-label { color: var(--color-text-faint); font-size: var(--text-meta); text-transform: uppercase; letter-spacing: .04em; }
-.flow-worker { display: inline-flex; gap: var(--sp-1); padding-left: var(--sp-2); border-left: 2px solid var(--color-border-strong); }
-.flow-worker--active { border-color: var(--state-running); color: var(--color-text); }
+.flow-worker-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.flow-bind-meta {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.flow-bind-time {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--color-text-dim);
+  font-size: var(--text-meta);
+  font-variant-numeric: tabular-nums;
+}
+
+.flow-pulse-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--state-running);
+  box-shadow: 0 0 6px var(--state-running);
+  animation: flow-pulse 2s ease-in-out infinite;
+}
+
+@keyframes flow-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.85); }
+}
+
+.flow-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-meta);
+  text-transform: lowercase;
+}
+
+.flow-tag--held {
+  background: color-mix(in srgb, var(--state-warn) 15%, transparent);
+  color: var(--state-warn);
+}
+
+.flow-tag--landing {
+  background: color-mix(in srgb, var(--state-ok) 15%, transparent);
+  color: var(--state-ok);
+}
+
+.flow-tag--inbound {
+  background: color-mix(in srgb, var(--state-warn) 12%, transparent);
+  color: var(--state-warn);
+}
+
+.flow-tag--free {
+  color: var(--color-text-faint);
+}
+
+/*
+ * The one line that answers "what am I looking at" for the ticket under the pointer.
+ *
+ * ⚠️ In normal flow under the board, not a floating card: it cannot be clipped by the board's own
+ * scroll container, and it is filled from focus as well as hover so a keyboard reaches it.
+ */
+.flow-peek {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: 26px;
+  margin-top: var(--sp-2);
+  color: var(--color-text-dim);
+  font-size: var(--text-dense);
+}
+
+.flow-peek-seq { color: var(--color-text); font-weight: 600; }
+.flow-peek-title { color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.flow-peek-state { border: 0; background: none; padding: 0; color: var(--flow-tone, var(--color-text-dim)); text-transform: lowercase; }
+.flow-peek-time, .flow-peek-where { font-size: var(--text-meta); white-space: nowrap; }
 
 @keyframes flow-arrive { from { opacity: 0; transform: translate(-10px, 5px) scale(.92); } to { opacity: 1; transform: translate(0, 0) scale(1); } }
 
 @media (prefers-reduced-motion: reduce) { .flow-ticket { animation: none; transition: none; } }
 
-@media (max-width: 900px) { .flow-board { grid-template-columns: repeat(7, minmax(126px, 1fr)); } }
+@media (max-width: 1100px) { .flow-board { grid-template-columns: repeat(3, minmax(80px, 0.65fr)) minmax(280px, 1.9fr) repeat(2, minmax(80px, 0.65fr)); } }
 
 .panel-head {
   display: flex;

@@ -36,7 +36,7 @@ terminal bytes and goes to xterm.js and nowhere else.
 { kind: 'unassigned', … }   ⚠️ temporary; it removes itself once tasks.project_id is never null
 ```
 
-`ProjectTab` (`components/Project.tsx`): `tasks · thread · conversations · sessionTui · cost ·
+`ProjectTab` (`components/Project.tsx`): `flow · tasks · thread · conversations · sessionTui ·
 settings`.
 
 ⚠️ **`taskId` rides on the route**, not on the Tasks list: the Thread tab is a destination, so Back
@@ -50,6 +50,7 @@ thing entirely. See [`glossary.md`](glossary.md).
 
 | Component | Screen |
 |---|---|
+| `Flow` | project lifecycle map: 6-column kanban flow with ticket ↔ workspace ↔ worker bindings |
 | `FleetStrip` `Workers` `FleetSettings` | the fleet: per-account quota with its **age**, reset countdowns, live sessions |
 | `Tasks` `TaskThread` `Dependencies` | the board, one task's thread, and prerequisite edges |
 | `Attention` `Questions` | the approvals/questions bar — one keystroke above the operator's work |

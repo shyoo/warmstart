@@ -32,6 +32,7 @@ import type {
   TaskSort,
   TaskView,
   FinishPolicy,
+  FlowWorkspace,
   FinishPolicyChoice,
   ResolvedFinishPolicy,
   SessionSharing,
@@ -1110,6 +1111,18 @@ export interface RpcMap {
   'project.reload': { params: { id: string }; result: Project }
   'project.archive': { params: { id: string }; result: Project }
   'project.writeConfig': { params: { id: string }; result: { path: string } }
+  /**
+   * Which ticket is in which workspace, on which account — the Flow board's middle column.
+   *
+   * ⛔ **Daemon-computed, exactly as `fleet.list`'s gates are, and for the same reason.** The
+   * binding lives in the workspace claim, whose `holder` is a task id, a session id or
+   * `reland:<taskId>`; resolving those needs the runs table, and no method a renderer already calls
+   * ships one. Re-deriving it there from session `cwd`s would answer a weaker question and go silent
+   * on the two states worth naming — a task holding its tree between runs, and a landing attempt.
+   *
+   * ⚠️ Read-only: it never builds the pool. A project that has never dispatched answers `[]`.
+   */
+  'project.flow': { params: { projectId: string }; result: FlowWorkspace[] }
 
   'task.list': { params: { projectId?: string; includeDeleted?: boolean } | void; result: Task[] }
   /**

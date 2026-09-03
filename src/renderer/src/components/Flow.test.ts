@@ -88,10 +88,10 @@ describe('Flow lane mapping', () => {
     expect(laneFor(mockTask({ status: 'paused_user' }))).toBe('awaiting')
   })
 
-  it('maps blocked and draft tasks to held', () => {
-    expect(laneFor(mockTask({ status: 'draft' }))).toBe('held')
-    expect(laneFor(mockTask({ status: 'blocked' }))).toBe('held')
-    expect(laneFor(mockTask({ status: 'paused_quota' }))).toBe('held')
+  it('maps draft to ready, and blocked / paused_quota to queued', () => {
+    expect(laneFor(mockTask({ status: 'draft' }))).toBe('ready')
+    expect(laneFor(mockTask({ status: 'blocked' }))).toBe('queued')
+    expect(laneFor(mockTask({ status: 'paused_quota' }))).toBe('queued')
   })
 
   it('maps completed, failed, and cancelled tasks to finished', () => {

@@ -54,6 +54,7 @@ import {
   setProjectPolicy,
   writeStarterConfig
 } from './projects.js'
+import { flowWorkspaces } from './flow.js'
 import { ensurePool, retireStrandedBranch } from './worktrees.js'
 import {
   addMessage,
@@ -411,6 +412,8 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
     'project.reload': (p) => reloadProject(p.id),
     'project.archive': (p) => archiveProject(p.id),
     'project.writeConfig': (p) => ({ path: writeStarterConfig(p.id) }),
+    // ⛔ Resolved here, never in the renderer — see the method's note in protocol.ts.
+    'project.flow': (p) => flowWorkspaces(p.projectId),
 
     // ---- tasks -------------------------------------------------------------------------
     'task.list': (p) => listTasks(p ?? {}),

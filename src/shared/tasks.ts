@@ -1769,3 +1769,47 @@ export function resolveModelChoice(
     effortSource: effort ? 'task' : workerEffort ? 'worker' : 'cli'
   }
 }
+
+// ---------------------------------------------------------------------------- flow
+
+/**
+ * One workspace of a project's pool, with the ticket and the account currently bound to it.
+ *
+ * ⛔ **The binding is read off the claim, never guessed from a session's `cwd`.** A workspace claim
+ * is the only record of *which ticket owns which tree*: it is taken before the run starts, it is
+ * passed from the task to its session and back again between runs, and it survives a session that
+ * has closed with the operator still deciding. Matching live sessions to worktree paths answers a
+ * different and weaker question — *who has a process open there* — which is silent for exactly the
+ * cases an operator most needs named: a task holding ws2 between runs, and a landing attempt.
+ *
+ * ⚠️ Resolved in the daemon because no single renderer input can answer it. The claim's `holder` is
+ * a task id, a session id or `reland:<taskId>` — three shapes whose resolution needs the runs table
+ * that `task.list` does not ship.
+ */
+export interface FlowWorkspace {
+  /** The worktree path. `ws1`-style short name is `label`. */
+  path: string
+  label: string
+  /**
+   * Whether this member is still in the configured pool.
+   *
+   * ⚠️ False for a claim that outlived a narrowing of `poolSize` — those stay valid until the run
+   * ends, so the board keeps drawing them rather than dropping a task that is plainly running.
+   */
+  inPool: boolean
+  /** What is holding the claim, or null when the workspace is free. */
+  holding: 'session' | 'task' | 'landing' | null
+  taskId: string | null
+  taskSeq: number | null
+  /** `titleSummary ?? title`, so the board never renders a paragraph. */
+  taskTitle: string | null
+  taskStatus: TaskStatus | null
+  workerId: string | null
+  workerLabel: string | null
+  /** The adapter behind `workerLabel`, for the brand icon beside it. */
+  adapterId: string | null
+  sessionId: string | null
+  /** What the tree is checked out to, from the live session when one has reported it. */
+  branch: string | null
+  claimedAt: number | null
+}
