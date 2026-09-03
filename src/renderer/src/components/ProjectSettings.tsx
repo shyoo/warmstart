@@ -25,6 +25,7 @@ import {
 import type { Settings } from '@shared/protocol'
 import { rpc } from '../lib/daemon'
 import { SettingButtonSelect, type SettingOption } from './SettingButtonSelect'
+import { SettingRow } from './SettingRow'
 
 /**
  * Everything about one project that is a *setting* rather than a task.
@@ -271,19 +272,19 @@ function PolicyPanel({
         <div>
           <h2>Policy</h2>
           <p className="panel-sub">
-            What this project decides for every task in it. A task may still override any of these
-            from its own pane; <em>inherit</em> means the fleet default answers instead.
+            Defaults for this project&rsquo;s tasks. A task may override them; <em>inherit</em> follows
+            the fleet setting.
           </p>
         </div>
       </header>
 
-      <section className="doc-section">
-        <h3>When a task finishes</h3>
-        <PolicyRow
-          label="Finish policy"
-          resolved={`${FINISH_LABELS[resolvedFinish.policy]} (from the ${resolvedFinish.source})`}
+      <div className="setting-list">
+        <SettingRow
+          title="Finish policy"
+          description={`${FINISH_LABELS[resolvedFinish.policy]} — from the ${resolvedFinish.source}. Work that cannot land stays in Loose ends.`}
           control={
             <SettingButtonSelect
+              className="finish-picker setting-row-control-select"
               value={finishChoice}
               options={finishOptions}
               disabled={busy}
@@ -292,58 +293,41 @@ function PolicyPanel({
               onChange={(val) => apply({ finish: val as FinishPolicyChoice })}
             />
           }
-        >
-          Each rung does everything the one below it does plus one thing, so this is the furthest a
-          completed task in this project goes on its own. ⛔ Multi Agent Controller never writes a
-          commit for an agent and never discards work it declines to land — anything it will not land
-          appears under <strong>Loose ends</strong> on Overview. See <code>docs/landing.md</code>.
-        </PolicyRow>
+        />
 
         <TextPolicyRow
-          label="Landing target"
+          title="Landing target"
           value={project.config.landing?.target ?? 'main'}
           placeholder="main"
           disabled={busy}
           ariaLabel="Landing target branch"
           onSave={(val) => apply({ landingTarget: val })}
-          resolved={`branches are cut from and merged back into ${project.config.landing?.target ?? 'main'}`}
-        >
-          The trunk this project&rsquo;s work is judged against: task branches are based on it and
-          merged into it. ⚠️ Changing it does not move branches that already exist — they were cut
-          from the old one and rebase onto the new one when they next land.
-        </TextPolicyRow>
+          description={`New task branches start from ${project.config.landing?.target ?? 'main'}; existing branches do not move.`}
+        />
 
         {resolvedFinish.policy === 'custom' && (
           <TextPolicyRow
-            label="Custom finish instruction"
+            title="Custom finish instruction"
             value={project.config.landing?.finishInstruction ?? ''}
             placeholder={DEFAULT_FINISH_INSTRUCTION}
             multiline
             disabled={busy}
             ariaLabel="Custom finish instruction"
             onSave={(val) => apply({ finishInstruction: val })}
-            resolved={
+            description={
               project.config.landing?.finishInstruction
-                ? 'this project’s own wording'
-                : 'the default wording'
+                ? 'The instruction sent to the agent when it finishes.'
+                : 'Empty uses the default instruction.'
             }
-          >
-            ⚠️ An <strong>instruction to the agent</strong>, never a command the daemon runs. Leave it
-            empty to send the default. ⛔ It must not tell an agent to do something the policy above
-            forbids — a Claude-only <code>/commit</code> skill sent to an adapter without it, or an
-            instruction that pushes under a policy that does not, is how t56 was told to do the one
-            thing it was forbidden.
-          </TextPolicyRow>
+          />
         )}
-      </section>
 
-      <section className="doc-section">
-        <h3>How work runs here</h3>
-        <PolicyRow
-          label="Reusing conversations"
-          resolved={`${SHARING_LABELS[resolvedSharing.sharing]} (from the ${resolvedSharing.source})`}
+        <SettingRow
+          title="Session sharing"
+          description={`${SHARING_LABELS[resolvedSharing.sharing]} — from the ${resolvedSharing.source}. Reused context is visible to the task.`}
           control={
             <SettingButtonSelect
+              className="finish-picker setting-row-control-select"
               value={sharingChoice}
               options={[
                 { value: 'inherit', label: `inherit (${SHARING_LABELS[fleetSharing]})` },
@@ -356,19 +340,14 @@ function PolicyPanel({
               onChange={(val) => apply({ sessionShare: val as SessionSharingChoice })}
             />
           }
-        >
-          ⛔ An <strong>information boundary</strong>, not a performance switch: an agent that joins a
-          conversation sees everything said in it. Sharing never crosses a project or an account. What
-          it buys is measured — a cold turn rebuilt <strong>41,542</strong> tokens of prefix that a
-          reused one read back for <strong>65</strong>. It changes nothing about authority; a
-          task&rsquo;s mandate still decides what it may do.
-        </PolicyRow>
+        />
 
-        <PolicyRow
-          label="Completion mode"
-          resolved={`${COMPLETION_LABELS[resolvedCompletion.mode]} (from the ${resolvedCompletion.source})`}
+        <SettingRow
+          title="Completion mode"
+          description={`${COMPLETION_LABELS[resolvedCompletion.mode]} — from the ${resolvedCompletion.source}. Tasks still ask when they need direction.`}
           control={
             <SettingButtonSelect
+              className="finish-picker setting-row-control-select"
               value={completionChoice}
               options={[
                 { value: 'inherit', label: `inherit (${COMPLETION_LABELS[DEFAULT_FLEET_COMPLETION]})` },
@@ -381,18 +360,14 @@ function PolicyPanel({
               onChange={(val) => apply({ completion: val as CompletionModeChoice })}
             />
           }
-        >
-          Running to the end does not stop an agent asking you a question that changes what it builds
-          — that is what <code>ask_human</code> is for. Checking in is a different contract: the agent
-          reports at each phase boundary and waits to be steered. Takes effect on the next run.
-        </PolicyRow>
+        />
 
-        <PolicyRow
-          label="Workspace pool"
-          resolved={
+        <SettingRow
+          title="Workspace pool"
+          description={
             project.vcs === 'git'
-              ? `${project.config.workspaces?.poolSize ?? 3} parallel worktree${(project.config.workspaces?.poolSize ?? 3) === 1 ? '' : 's'}`
-              : 'one — a project with no repo runs in its own directory'
+              ? `${project.config.workspaces?.poolSize ?? 3} parallel worktree${(project.config.workspaces?.poolSize ?? 3) === 1 ? '' : 's'}. A full pool holds new tasks.`
+              : 'One workspace — this project has no repository.'
           }
           control={
             <input
@@ -412,41 +387,7 @@ function PolicyPanel({
               }}
             />
           }
-        >
-          How many tasks this project can run at once — one worktree each, created under{' '}
-          <span className="mono">
-            {project.config.workspaces?.root ?? `${project.name}_workspaces`}
-          </span>
-          . ⭐ A full pool <em>holds</em> a task rather than failing it, so this is a cap on disk and
-          on concurrency, never a source of lost work. ⚠️ New members are created on the next
-          dispatch; lowering it never interrupts a task already using a worktree, and leaves surplus
-          worktrees on disk unused after their current task finishes.
-        </PolicyRow>
-      </section>
-    </div>
-  )
-}
-
-/** One setting: the control, what it currently resolves to, and why it is the way it is. */
-function PolicyRow({
-  label,
-  resolved,
-  control,
-  children
-}: {
-  label: string
-  resolved: string
-  control: React.ReactNode
-  children: React.ReactNode
-}): React.JSX.Element {
-  return (
-    <div className="policy-row">
-      <div className="policy-control">{control}</div>
-      <div>
-        <p className="switch-state">
-          <strong>{label}</strong> · <span className="dim">{resolved}</span>
-        </p>
-        <p className="note">{children}</p>
+        />
       </div>
     </div>
   )
@@ -459,68 +400,64 @@ function PolicyRow({
  * branch name half-typed is a branch name that does not exist.
  */
 function TextPolicyRow({
-  label,
+  title,
   value,
   placeholder,
-  resolved,
+  description,
   disabled,
   ariaLabel,
   multiline,
-  onSave,
-  children
+  onSave
 }: {
-  label: string
+  title: string
   value: string
   placeholder: string
-  resolved: string
+  description: string
   disabled: boolean
   ariaLabel: string
   multiline?: boolean
   onSave: (value: string) => void
-  children: React.ReactNode
 }): React.JSX.Element {
   const [text, setText] = useState(value)
   useEffect(() => setText(value), [value])
   const dirty = text.trim() !== value.trim()
 
   return (
-    <div className="policy-row">
-      <div className="policy-control policy-control--text">
-        {multiline ? (
-          <textarea
-            className="text-input policy-textarea"
-            rows={4}
-            value={text}
-            placeholder={placeholder}
-            disabled={disabled}
-            aria-label={ariaLabel}
-            onChange={(e) => setText(e.target.value)}
-          />
-        ) : (
-          <input
-            className="text-input"
-            value={text}
-            placeholder={placeholder}
-            disabled={disabled}
-            aria-label={ariaLabel}
-            onChange={(e) => setText(e.target.value)}
-          />
-        )}
-        <button
-          className="btn btn--primary"
-          disabled={disabled || !dirty}
-          onClick={() => onSave(text)}
-        >
-          Save
-        </button>
-      </div>
-      <div>
-        <p className="switch-state">
-          <strong>{label}</strong> · <span className="dim">{resolved}</span>
-        </p>
-        <p className="note">{children}</p>
-      </div>
-    </div>
+    <SettingRow
+      title={title}
+      description={description}
+      control={
+        <div className="project-setting-text-control">
+          {multiline ? (
+            <textarea
+              className="text-input project-setting-textarea"
+              rows={4}
+              value={text}
+              placeholder={placeholder}
+              disabled={disabled}
+              aria-label={ariaLabel}
+              onChange={(e) => setText(e.target.value)}
+            />
+          ) : (
+            <input
+              className="text-input"
+              value={text}
+              placeholder={placeholder}
+              disabled={disabled}
+              aria-label={ariaLabel}
+              onChange={(e) => setText(e.target.value)}
+            />
+          )}
+          <button
+            className="btn btn--primary"
+            disabled={disabled || !dirty}
+            onClick={() => onSave(text)}
+          >
+            Save
+          </button>
+        </div>
+      }
+    />
   )
 }
 

@@ -2433,7 +2433,7 @@ try {
     `[...document.querySelectorAll('.tab')].find(b => b.innerText.trim() === 'Settings')?.click()`
   )
   await waitFor(
-    async () => await evaluate(`!!document.querySelector('.policy-row')`),
+    async () => await evaluate(`!!document.querySelector('.setting-row')`),
     'the project settings tab to render'
   )
 
@@ -2480,17 +2480,32 @@ try {
 
   // ⛔ The fix itself: the middle tier is settable, and what it resolves to says where it came from.
   const inheritedRow = await evaluate(
-    `[...document.querySelectorAll('.policy-row')].find(r => r.innerText.includes('Finish policy'))?.innerText ?? ''`
+    `[...document.querySelectorAll('.setting-row')].find(r => r.innerText.includes('Finish policy'))?.innerText ?? ''`
   )
   check(
     'a project that has decided nothing says it is inheriting, and from where',
     inheritedRow.includes('from the fleet'),
     inheritedRow.split('\n')[0]
   )
+  const finishLayout = JSON.parse(
+    await evaluate(`
+      (() => {
+        const row = [...document.querySelectorAll('.setting-row')].find(r => r.innerText.includes('Finish policy'));
+        const title = row?.querySelector('.setting-row-title')?.getBoundingClientRect();
+        const control = row?.querySelector('.setting-row-control')?.getBoundingClientRect();
+        return JSON.stringify({ titleRight: title?.right ?? 0, controlLeft: control?.left ?? 0 });
+      })()
+    `)
+  )
+  check(
+    'project policy controls align on the right, like Global Settings',
+    finishLayout.controlLeft > finishLayout.titleRight,
+    JSON.stringify(finishLayout)
+  )
 
   await evaluate(`
     (() => {
-      const row = [...document.querySelectorAll('.policy-row')].find(r => r.innerText.includes('Finish policy'));
+      const row = [...document.querySelectorAll('.setting-row')].find(r => r.innerText.includes('Finish policy'));
       row.querySelector('.setting-btn-select').click();
     })()
   `)
@@ -2510,7 +2525,7 @@ try {
     'project.setPolicy is the only write path this page has'
   )
   const decidedRow = await evaluate(
-    `[...document.querySelectorAll('.policy-row')].find(r => r.innerText.includes('Finish policy'))?.innerText ?? ''`
+    `[...document.querySelectorAll('.setting-row')].find(r => r.innerText.includes('Finish policy'))?.innerText ?? ''`
   )
   check(
     'and the page then says the answer came from the project',

@@ -2066,40 +2066,23 @@ select {
   opacity: 0.6;
 }
 
-/*
- * One setting: the control, then what it resolves to and why.
- *
- * ⚠️ The control column is fixed so a column of them lines up — a page of settings whose controls
- * each start at a different x reads as unrelated widgets rather than as one list of decisions.
- */
-.policy-row {
-  display: grid;
-  grid-template-columns: minmax(0, 260px) 1fr;
-  align-items: start;
-  gap: var(--sp-3);
-  margin-bottom: var(--sp-4);
-}
-
-.policy-control {
-  min-width: 0;
-}
-
-.policy-control--text {
+/* Project policy's typed values share Global Settings' right-side control column. */
+.project-setting-text-control {
   display: flex;
-  flex-direction: column;
+  justify-content: flex-end;
   gap: var(--sp-2);
-  align-items: flex-start;
+  align-items: center;
+  width: 260px;
 }
 
-.policy-textarea {
+.project-setting-text-control .text-input {
+  min-width: 0;
+  width: 100%;
+}
+
+.project-setting-textarea {
   font-family: var(--font-mono, monospace);
   resize: vertical;
-}
-
-@media (max-width: 900px) {
-  .policy-row {
-    grid-template-columns: 1fr;
-  }
 }
 
 /* A second, quieter select stacked under the first in one cell — effort under its model. */
@@ -3949,6 +3932,12 @@ select:focus-visible,
   display: flex;
   align-items: center;
   justify-content: flex-end;
+}
+
+/* A project-policy selector sits at the panel's right edge, so its menu opens back into the panel. */
+.setting-row-control .setting-btn-select-menu {
+  left: auto;
+  right: 0;
 }
 
 /* ⚠️ Wide enough for the longest label offered ("commit, verify, merge and push") and no wider, so

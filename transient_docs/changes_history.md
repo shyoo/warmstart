@@ -3175,7 +3175,6 @@ pre-size and no counterpart, so the compacted size is genuinely unknown until so
 back. Inventing it by subtracting an estimate would make it the one number on the row nobody
 measured.
 
-<<<<<<< HEAD
 ## A gate nobody could overrule, and a queue that priced itself as busy (2026-09-01)
 
 **t71, 00:31:06Z.** Re-run, and immediately held: *"ClaudeThird at 92% of its Claude 5h window"*,
