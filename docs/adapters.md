@@ -122,9 +122,12 @@ session, and it is guarded where it belongs: `warmSessionFor` returns null for a
 whatever its state says. `resumeSession` governs a **respawn** carrying prior context, which is one
 prompt into one fresh process — exactly what one-shot means.
 
-**⚠️ Still unmeasured:** whether a successful resume re-emits `thread.started` with the *same*
-`thread_id`. Reaching that needs a signed-in account. If it mints a new one, the fleet gets a session
-row per turn and falls back to cold starts rather than to a wrong answer.
+**⭐ Measured 2026-09-02, and it was the last open link:** a successful resume re-emits
+`thread.started` with the **same** `thread_id`. Two real turns on a signed-in account — the first was
+given a token on stdin, the second resumed that thread and answered with it, both reporting one id.
+So the fleet keeps one session row per conversation and the next dispatch still finds it. ⚠️ Had it
+minted a new id the failure would have been a row per turn and a fall back to cold starts, not a
+wrong answer, which is why this shipped ahead of the measurement rather than behind it.
 
 **⛔ A conversation whose CLI names it is not resumable until it has told us the name.** `spawn`
 resolves `resumeFrom` as `vendorSessionId ?? id`, which is right only where `mintsSessionId` is true.
@@ -153,8 +156,8 @@ behaviour falls out of it:
 - **`resumeSession: true`** → a task continued after its session has exited goes back into the
   conversation it was already having, instead of starting one that has never heard of it. The
   scheduler names the conversation; the adapter chooses the flag — `--resume <id>` for Claude Code,
-  `--conversation <id>` for Antigravity. ⛔ A claim about **the adapter**, not the CLI: `codex exec
-  resume` exists and is unwired, so `openai-compatible` says false. ⚠️ Two conditions the scheduler
+  `--conversation <id>` for Antigravity, and a whole different subcommand, `exec resume <thread_id>`,
+  for codex. ⛔ A claim about **the adapter**, not the CLI. ⚠️ Two conditions the scheduler
   checks before it will resume, both learned from real failures — the **same account** (a
   conversation lives in one isolation root) and the **same worktree** (Claude Code files transcripts
   under an encoding of the cwd, so resuming from elsewhere finds nothing and starts cold *quietly*).
@@ -168,6 +171,7 @@ behaviour falls out of it:
   on both turns** while `input_tokens` went 14,637 → 29,556: it restores the conversation and appears
   to re-send it at full input price. Resuming is still right there — the context is what the agent
   needs — but on this vendor it is not a *cache* saving, and nothing should claim one.
+  ⭐ **codex measured the same way 2026-09-02** (codex-cli 0.151.0): a resumed run answered with a token planted in the first turn and reported the same `thread_id`. Its argv is a *subcommand*, not a flag, and the flag placement it forces has its own section below — see § *`codex exec resume`, and the reasoning it corrected*.
 - **`metering`** → `transcript` is exact and survives a restart; `stream` bills from the wire and
   loses whatever a restarted daemon was not attached for; `none` would mean runs cost an **unknown**
   amount rather than zero. Doctor states which, and what it costs.

@@ -815,7 +815,9 @@ function borrowCandidates(task: Task, workerId?: string): { offerable: Session[]
       // ⚠️ Asked of the runs and of the lease, because they answer different questions: a run says
       // somebody is mid-turn, a lease says somebody has been given the right to speak next.
       leased: hasOpenRun(sessionId) || leaseHeld(sessionId),
-      intent: intentFor(task, session)
+      intent: intentFor(task, session),
+      // These are processes that are still up, and borrowing one means writing a prompt into it.
+      continuation: 'live'
     })
     if (refusal === null) offerable.push(session)
     // ⛔ Only `context-too-full`. A conversation held back by any other gate must never be compacted
@@ -880,7 +882,11 @@ function lendableConversations(task: Task, workerId: string): Session[] {
       whyNotShared(task, session, {
         hasWorkspace: true,
         leased: hasOpenRun(session.id),
-        intent: intentFor(task, session)
+        intent: intentFor(task, session),
+        // ⭐ `revive`, and this is what `codex exec resume` bought: these conversations are closed,
+        // so reopening one spawns a fresh process and a one-shot CLI is as able to do that as any
+        // other. Gating them `live` would refuse every codex prefix the fleet has ever built.
+        continuation: 'revive'
       }) === null
     )
   })

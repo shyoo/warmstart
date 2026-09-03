@@ -4,6 +4,7 @@ import { delimiter, join } from 'node:path'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { claudeCode } from './adapters/claude-code.js'
 import { antigravityCli } from './adapters/antigravity-cli.js'
+import { openaiCompatible } from './adapters/openai-compatible.js'
 import type { SpawnRequest } from './adapters/types.js'
 
 /**
@@ -33,7 +34,7 @@ const realPath = process.env.PATH
 
 beforeAll(() => {
   stubDir = mkdtempSync(join(tmpdir(), 'agentyard-resume-cli-'))
-  for (const command of ['claude', 'agy']) {
+  for (const command of ['claude', 'agy', 'codex']) {
     // Never executed. `which()` wants a regular file, plus the executable bit off Windows and a
     // PATHEXT-matching extension on it, so both names are written.
     for (const name of [command, `${command}.exe`]) {
@@ -96,10 +97,66 @@ describe('the resume flag each CLI actually takes', () => {
     expect(decoded).toMatchObject({ kind: 'init', sessionId: 'agy-conv-9' })
   })
 
+  /**
+   * ⚠ An attachment, not a bare request: `gitWritableRoots` reads the filesystem and returns
+   * nothing for the invented `C:\ws1`, so a plain REQ would prove only that an *empty* grant is
+   * omitted. The attachment directory is a grant this argv must carry either way.
+   */
+  const SHOT = {
+    id: 'att-1',
+    messageId: null,
+    taskId: null,
+    kind: 'image',
+    mediaType: 'image/png',
+    // ⚠ Forward slashes on purpose. `attachmentDirs` uses `node:path`, so a backslash path is one
+    // undivided segment on a POSIX CI runner and `dirname` answers `.` — the assertion below would
+    // then be measuring the runner's platform, not this argv.
+    file: 'C:/shots/a.png',
+    bytes: 10
+  } as unknown as NonNullable<SpawnRequest['attachments']>[number]
+
+  it('puts every flag `exec` owns ahead of the `resume` subcommand', () => {
+    const { args } = openaiCompatible.plan({ ...REQ, resumeFrom: 'thr-7', attachments: [SHOT] })
+    const at = (flag: string): number => args.indexOf(flag)
+    expect(args[0]).toBe('exec')
+    expect(at('resume')).toBeGreaterThan(0)
+    // ⛔ The whole reason the subcommand goes last. `--sandbox`, `--cd` and `--add-dir` are
+    // declared on `exec` and **not** on `resume` (measured, codex-cli 0.151.0), so any one of them
+    // written after the subcommand name is an argument error rather than a grant. `--sandbox` is
+    // the only boundary a headless run has, and the `--add-dir` grant is the t56 "can edit, can
+    // never commit" failure — neither may be dropped, so both have to be positioned instead.
+    for (const flag of ['--sandbox', '--cd', '--add-dir', '--skip-git-repo-check']) {
+      expect(at(flag), flag).toBeGreaterThan(-1)
+      expect(at(flag), flag).toBeLessThan(at('resume'))
+    }
+    // The attachment's directory is a grant like any other, and it is named before the subcommand
+    // too — `dirname`, so the file itself is not what is granted.
+    expect(args.slice(0, at('resume'))).toContain('C:/shots')
+    expect(args).toContain('-i')
+  })
+
+  it('ends a resume with the thread id and a `-` that means stdin', () => {
+    const { args } = openaiCompatible.plan({ ...REQ, resumeFrom: 'thr-7' })
+    // ⛔ `exec resume [OPTIONS] [SESSION_ID] [PROMPT]`, in that order. The `-` is the PROMPT and
+    // it means *read stdin* — the same one-shot channel a fresh `exec` uses. Without it resume
+    // prints `No prompt provided via stdin` and exits **0** having done nothing, which is the
+    // quietest failure this dispatch can have.
+    expect(args.slice(-2)).toEqual(['thr-7', '-'])
+  })
+
+  it('leaves plain `codex exec` alone when there is nothing to resume', () => {
+    const { args } = openaiCompatible.plan(REQ)
+    expect(args.slice(0, 2)).toEqual(['exec', '--json'])
+    expect(args).not.toContain('resume')
+    expect(args).not.toContain('-')
+    expect(args).toContain('--sandbox')
+    expect(args).toContain('--cd')
+  })
+
   it('only claims resumeSession where plan honours it', () => {
     // ⛔ The scheduler drops a cold start on the strength of this flag. An adapter that claims it
     // and ignores `resumeFrom` would silently lose the context and report a warm continuation.
-    for (const ad of [claudeCode, antigravityCli]) {
+    for (const ad of [claudeCode, antigravityCli, openaiCompatible]) {
       expect(ad.info.capabilities.resumeSession).toBe(true)
       expect(ad.plan({ ...REQ, resumeFrom: 'zzz' }).args.join(' ')).toContain('zzz')
     }

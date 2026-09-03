@@ -78,9 +78,23 @@ export type ShareRefusal =
   | 'no-workspace'
   | 'busy'
   | 'cannot-resume'
+  | 'one-shot'
   | 'cache-lapsed'
   | 'context-too-full'
   | null
+
+/**
+ * Which of the two reuses is being asked about.
+ *
+ * ⛔ **They are not the same question, and codex is where they came apart.** `live` means *send a
+ * prompt into the process that is running this conversation right now*; `revive` means *spawn a new
+ * process that reopens a conversation nobody is talking in*. A `streamPrompts: 'once'` CLI reads
+ * stdin to EOF and exits, so it can be revived and can never be spoken to — and until `codex exec
+ * resume` was wired it happened to fail both, which let one `resumeSession` check stand in for both
+ * gates. It cannot any more: leaving it as one would offer a live codex process as a warm session
+ * and write a prompt into a pipe that closed after its first turn.
+ */
+export type Continuation = 'live' | 'revive'
 
 /**
  * What the task would be run *as*, on the worker whose conversation is being considered.
@@ -126,7 +140,7 @@ export function mismatch(intent: ShareIntent | undefined, session: Session): Sha
 export function whyNotShared(
   task: Task,
   session: Session,
-  opts: { hasWorkspace: boolean; leased: boolean; intent?: ShareIntent }
+  opts: { hasWorkspace: boolean; leased: boolean; intent?: ShareIntent; continuation?: Continuation }
 ): ShareRefusal {
   // ⛔ Cross-project sharing is not a tuning question. One client's code in another client's
   // conversation is not something a scheduler gets to decide is acceptable.
@@ -147,7 +161,11 @@ export function whyNotShared(
   // and at that point it is a cold start wearing somebody else's context.
   if (!opts.hasWorkspace) return 'no-workspace'
   if (opts.leased) return 'busy'
-  if (!adapter(session.adapterId).info.capabilities.resumeSession) return 'cannot-resume'
+  const caps = adapter(session.adapterId).info.capabilities
+  if (!caps.resumeSession) return 'cannot-resume'
+  // ⛔ Defaults to `live`, which is the stricter of the two: a caller that forgets to say which
+  // reuse it means is refused a one-shot conversation rather than handed one it cannot speak in.
+  if ((opts.continuation ?? 'live') === 'live' && caps.streamPrompts === 'once') return 'one-shot'
   // ⛔ **A borrow buys a warm cache and nothing else, so a lapsed one buys nothing.**
   //
   // ⚠️ This gate belongs *here* and deliberately not in `resumableSession`, and the difference is

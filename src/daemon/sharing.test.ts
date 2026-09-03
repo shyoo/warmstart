@@ -213,6 +213,38 @@ describe('which conversations may be offered', () => {
     expect(sharing.whyNotShared(task(), session({ cacheExpiresAt: null }), open)).toBeNull()
   })
 
+  /**
+   * ⛔ The two halves of reuse, which stopped being the same answer the day `codex exec resume` was
+   * wired. Before that codex failed both for one reason and one check covered both; now a live
+   * codex process must still be refused — its stdin closed after its only turn — while its *closed*
+   * conversations are exactly the warm prefixes the fleet is trying not to rebuild.
+   */
+  it('refuses a live one-shot conversation but lends its closed ones', () => {
+    const codex = session({ adapterId: 'openai-compatible' })
+    expect(sharing.whyNotShared(task(), codex, { ...open, continuation: 'live' })).toBe('one-shot')
+    expect(sharing.whyNotShared(task(), codex, { ...open, continuation: 'revive' })).toBeNull()
+    // Unstated means live: the stricter reading, so a forgetful caller is refused rather than
+    // handed a pipe that closed.
+    expect(sharing.whyNotShared(task(), codex, open)).toBe('one-shot')
+  })
+
+  it('never offers a one-shot conversation as a live one, whichever adapter it is', () => {
+    // ⛔ The fleet-wide form of the rule above, so a new one-shot adapter inherits it instead of
+    // having to remember it. It lived in `adapters.test.ts` as `resumeSession === false` until
+    // codex could resume, at which point a capability could no longer say it.
+    const once = adapters.adapters().filter((a) => a.info.capabilities.streamPrompts === 'once')
+    expect(once.length).toBeGreaterThan(0)
+    for (const ad of once) {
+      const refusal = sharing.whyNotShared(task(), session({ adapterId: ad.info.id }), {
+        ...open,
+        continuation: 'live'
+      })
+      // `cannot-resume` is the earlier gate and an equally correct refusal; what must never happen
+      // is `null`.
+      expect(['one-shot', 'cannot-resume'], ad.info.id).toContain(refusal)
+    }
+  })
+
   it('refuses one whose context is already past the ceiling', () => {
     // ⛔ A borrowed conversation about to need compaction is a false economy: the borrower pays to
     // read a large prefix and then pays again to compact it, for context mostly about another task.
