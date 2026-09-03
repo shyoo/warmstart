@@ -82,7 +82,7 @@ src/daemon/            orchestratord. Runs as Electron-with-ELECTRON_RUN_AS_NODE
                        (+ estimator.test.ts) - one median for six agents was 81x wrong
   stream.ts            stream-json records: the free live rate-limit signal
   projects.ts          .multi_agent_controller/project.json; policy committed, state private
-  resources.ts         the broker - if the scheduler owns the claim, the lock is unnecessary
+  resources.ts         the broker; claims schedule agents, Git worktree locks preserve metadata
   worktrees.ts         pooled worktrees, task-named branches, prepare hook. ⛔ A slot does not
                        arrive clean; rescueDirt commits what the last run left onto its branch, and
                        taskBranches reads the ones nothing has checked out (+ .test.ts)

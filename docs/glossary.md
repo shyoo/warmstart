@@ -92,9 +92,12 @@ continuing the task cuts it again under the same name from `origin/<target>`.
 are: a single browser profile, a credit-metered external API, a dev-server port range, a physical
 device, a flaky test that must not run twice at once.
 
-> The point of modelling these: **if the scheduler owns the claim, the lock is unnecessary.** Agents
-> do not have to coordinate, because nothing dispatches two claimants at once. Hand-rolled locks in
-> agent prompts are a symptom of the scheduler not knowing about a resource.
+> The scheduler's claim governs admission: nothing dispatches two claimants at once. Git's
+> `worktree lock` is a different, lifecycle-only mechanism: it preserves a linked worktree's metadata
+> from pruning and makes Git refuse to move or remove it. It does **not** reserve the directory or
+> coordinate agents. The permanent local pool therefore does not use it; use it only for a worktree
+> on storage that may be unavailable. Hand-rolled locks in agent prompts are a symptom of the
+> scheduler not knowing about a resource.
 
 **External resource service** — an MCP server fronting something contended (credits, a browser, a
 queue). Registered with a `probe` tool that reports availability; Multi Agent Controller then stops dispatching
