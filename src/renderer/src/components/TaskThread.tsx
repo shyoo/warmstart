@@ -583,6 +583,15 @@ function TaskDetail({
                     'started with — caches belong to one model, so switching mid-conversation throws ' +
                     'the cached context away.'
                   }
+                  displayLabel={
+                    !(task.constraints.model)
+                      ? assigned?.defaultModels && Object.values(assigned.defaultModels).filter(Boolean).length > 1
+                        ? 'Auto-balance across pools'
+                        : assigned?.defaultModel
+                          ? (modelLabel(assigned.defaultModel) ?? assigned.defaultModel)
+                          : 'CLI default'
+                      : undefined
+                  }
                   onChange={(val) => {
                     void rpc('task.setModel', {
                       id: task.id,
@@ -609,6 +618,13 @@ function TaskDetail({
                   ]}
                   ariaLabel="Effort"
                   title="How hard the model thinks on the next run."
+                  displayLabel={
+                    !(task.constraints.effort)
+                      ? assigned?.defaultEffort
+                        ? (effortLabel(assigned.defaultEffort) ?? assigned.defaultEffort)
+                        : 'CLI default'
+                      : undefined
+                  }
                   onChange={(val) => {
                     void rpc('task.setModel', {
                       id: task.id,
@@ -1494,6 +1510,13 @@ function Decide({
                   // sent to the CLI and what the cost model is keyed by.
                   ...offeredModels.map((m) => ({ value: m.id, label: modelLabel(m.id) ?? m.id }))
                 ]}
+                displayLabel={
+                  !selectedModel
+                    ? selectedWorker?.defaultModel
+                      ? (modelLabel(selectedWorker.defaultModel) ?? selectedWorker.defaultModel)
+                      : 'CLI default model'
+                    : undefined
+                }
                 onChange={(val) => {
                   setSelectedModel(val)
                   setSelectedEffort('')
@@ -1519,6 +1542,13 @@ function Decide({
                     label: effortLabel(level) ?? level
                   }))
                 ]}
+                displayLabel={
+                  !selectedEffort
+                    ? selectedWorker?.defaultEffort
+                      ? (effortLabel(selectedWorker.defaultEffort) ?? selectedWorker.defaultEffort)
+                      : 'CLI default effort'
+                    : undefined
+                }
                 onChange={(val) => setSelectedEffort(val)}
               />
             )}
@@ -2301,6 +2331,7 @@ function FinishPicker({
         disabled={busy}
         ariaLabel="Finish policy"
         title="What happens to this task's work when it is done."
+        displayLabel={task.finishPolicy === 'inherit' ? inheritedLabel : undefined}
         onChange={(val) => void choose(val as FinishPolicyChoice)}
       />
       {note && <div className="note">{note}</div>}
@@ -2367,6 +2398,7 @@ function SharingPicker({
           'already been having. Cheaper — a cold start rebuilt 41,542 tokens of prefix that a ' +
           'reused one read back for 65 — but the agent sees everything said in that conversation.'
         }
+        displayLabel={task.sessionSharing === 'inherit' ? inheritedLabel : undefined}
         onChange={(val) => void choose(val as SessionSharingChoice)}
       />
       {note && <div className="note">{note}</div>}
@@ -2428,6 +2460,7 @@ function CompletionPicker({
           'stop it asking you a question when one changes what it builds; checking in makes it ' +
           'report at each phase boundary and wait. Takes effect on the next run.'
         }
+        displayLabel={task.completionMode === 'inherit' ? inheritedLabel : undefined}
         onChange={(val) => void choose(val as CompletionModeChoice)}
       />
       {note && <div className="note">{note}</div>}
@@ -2506,7 +2539,7 @@ function CompactionPicker({
         ariaLabel="Automatic compaction"
         title={
           cannot
-            ? 'This task’s agent cannot be asked to compact — the capability is declared by the ' +
+            ? 'This task\u2019s agent cannot be asked to compact — the capability is declared by the ' +
               'adapter, and only Claude Code declares it today. The setting is recorded either way ' +
               'and takes effect if this task moves to a worker that can.'
             : 'Whether the cache clock may compact this conversation, overriding Settings > Global. ' +
@@ -2515,6 +2548,7 @@ function CompactionPicker({
               'prefix worth reading while it is still warm. Unlike the settings above it applies to ' +
               'the conversation this task is in now, from the next tick.'
         }
+        displayLabel={task.autoCompact === 'inherit' ? inheritedLabel : undefined}
         onChange={(val) => void choose(val as AutoCompactChoice)}
       />
       {note && <div className="note">{note}</div>}
@@ -2580,6 +2614,7 @@ function ObjectivePicker({
         disabled={busy}
         aria-label="Optimization objective"
         title="Optimization objective (cost, velocity, quality) for this task's next run."
+        displayLabel={currentChoice === 'inherit' ? inheritedLabel : undefined}
         onChange={(value) => void choose(value as ObjectiveChoice)}
       />
       {note && <div className="note">{note}</div>}

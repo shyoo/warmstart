@@ -16,6 +16,14 @@ export interface SettingButtonSelectProps {
   className?: string
   style?: React.CSSProperties
   editIcon?: React.ReactNode
+  /**
+   * Override what the button displays without changing the dropdown options.
+   *
+   * ⚠️ Use this when the selected option's label is "inherit (actual-value)" but you want the
+   * button to read "actual-value" — the dropdown still says "inherit (…)" so the user understands
+   * what they are choosing, while the button shows what is actually in effect.
+   */
+  displayLabel?: string
 }
 
 /**
@@ -33,7 +41,8 @@ export function SettingButtonSelect(props: SettingButtonSelectProps): React.JSX.
     ariaLabel,
     className,
     style,
-    editIcon = '✒️'
+    editIcon = '✒️',
+    displayLabel
   } = props
   const resolvedAriaLabel = ariaLabel ?? props['aria-label']
   const [open, setOpen] = useState(false)
@@ -41,7 +50,7 @@ export function SettingButtonSelect(props: SettingButtonSelectProps): React.JSX.
   const menuRef = useRef<HTMLDivElement>(null)
 
   const currentOption = options.find((opt) => opt.value === value)
-  const displayLabel = currentOption ? currentOption.label : value
+  const buttonLabel = displayLabel ?? (currentOption ? currentOption.label : value)
 
   useEffect(() => {
     if (!open) return
@@ -86,7 +95,7 @@ export function SettingButtonSelect(props: SettingButtonSelectProps): React.JSX.
           }
         }}
       >
-        <span className="setting-btn-select-value">{displayLabel}</span>
+        <span className="setting-btn-select-value">{buttonLabel}</span>
         <span className="setting-btn-select-icon" aria-hidden="true">
           {editIcon}
         </span>
