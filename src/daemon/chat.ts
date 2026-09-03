@@ -4,8 +4,8 @@ import { db, row, rows } from './db.js'
 import { emit } from './events.js'
 import { log } from './log.js'
 import { chooseController } from './controller.js'
+import { getWorker } from './workers.js'
 import {
-  closeSession,
   getSession,
   listSessions,
   onSessionEnd,
@@ -52,12 +52,14 @@ interface ChatRow {
 }
 
 function toMessage(r: ChatRow): ChatMessage {
+  const workerId = r.session_id ? getSession(r.session_id)?.workerId : null
   return {
     id: r.id,
     threadId: r.thread_id,
     role: r.role as ChatMessage['role'],
     text: r.text,
     sessionId: r.session_id,
+    workerLabel: workerId ? getWorker(workerId)?.label ?? workerId : null,
     ts: r.ts
   }
 }
@@ -216,17 +218,7 @@ function listen(threadId: string, sessionId: string): void {
   })
 }
 
-/**
- * Start again.
- *
- * ⚠️ Closes the session, which throws away a warm prompt cache. Worth doing when the conversation has
- * drifted - a long thread is also a large context, and every subsequent turn pays to read it - but it
- * is a real cost, not a free tidy-up.
- */
-export function resetChat(threadId = DEFAULT_THREAD): void {
-  const sessionId = chatSessionFor(threadId)
-  if (sessionId && getSession(sessionId)) {
-    closeSession(sessionId)
-    append(threadId, 'system', 'Conversation reset. The next message starts a fresh session.', null)
-  }
+/** Clear the transcript shown in the controller panel; the live conversation remains warm. */
+export function clearChat(threadId = DEFAULT_THREAD): void {
+  db().prepare('delete from chat_messages where thread_id = ?').run(threadId)
 }

@@ -105,7 +105,7 @@ import {
 } from './scheduler.js'
 import { controllerReport, drainConsults, enqueueConsult } from './controller.js'
 import { gateQuestion, riskOf } from './judgment.js'
-import { chatHistory, resetChat, sendChat } from './chat.js'
+import { chatHistory, clearChat, sendChat } from './chat.js'
 import { costFactors, estimateTask } from './estimator.js'
 import { recentClockEvents, remainingTokens, reserveState } from './reserve.js'
 import { decide, medianHumanLatencyMs } from './cacheclock.js'
@@ -895,7 +895,7 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
     'scheduler.tick': () => tick(),
 
     // ---- the controller ----------------------------------------------------------------
-    'controller.report': (p) => controllerReport(p?.limit ?? 40),
+    'controller.report': (p) => controllerReport(p?.limit ?? 40, p?.offset ?? 0),
     // ⚠️ The one RPC that can spend tokens by being called. Nothing in a scheduler tick calls it.
     'controller.drain': () => drainConsults(),
 
@@ -927,8 +927,8 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
 
     'chat.history': (p) => chatHistory(p?.threadId),
     'chat.send': (p) => sendChat(p.text, p.threadId),
-    'chat.reset': (p) => {
-      resetChat(p?.threadId)
+    'chat.clear': (p) => {
+      clearChat(p?.threadId)
       return { ok: true as const }
     },
 

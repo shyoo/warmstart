@@ -233,9 +233,9 @@ export function latestAnswer(kind: ConsultKind, subjectId: string, maxAgeMs: num
   return r.answer_json ? safeParse(r.answer_json) : null
 }
 
-export function recentConsults(limit = 40): Consult[] {
+export function recentConsults(limit = 40, offset = 0): Consult[] {
   return rows<ConsultRow>(
-    db().prepare('select * from consults order by created_at desc limit ?').all(limit)
+    db().prepare('select * from consults order by created_at desc limit ? offset ?').all(limit, offset)
   ).map(toConsult)
 }
 
@@ -609,8 +609,9 @@ function asObject(text: string): Record<string, unknown> | null {
 
 // ---------------------------------------------------------------------------- reporting
 
-export function controllerReport(limit = 40): ControllerReport {
-  const recent = recentConsults(limit)
+export function controllerReport(limit = 40, offset = 0): ControllerReport {
+  const recent = recentConsults(limit, offset)
+  const total = (db().prepare('select count(*) as n from consults').get() as { n: number }).n
   const chosen = chooseController()
   return {
     generatedAt: Date.now(),
@@ -633,6 +634,7 @@ export function controllerReport(limit = 40): ControllerReport {
     usedThisHour: consultsStartedSince(Date.now() - 60 * 60 * 1000),
     hourlyCap: HOURLY_CAP,
     recent,
+    total,
     spentTokens: recent.reduce((sum, c) => sum + c.spentTokens, 0),
     fallbacks: recent.filter((c) => c.status === 'fallback').length
   }

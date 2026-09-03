@@ -965,6 +965,8 @@ export interface ChatMessage {
   role: 'human' | 'controller' | 'system'
   text: string
   sessionId: string | null
+  /** The controller worker that served this message, retained for an auditable conversation. */
+  workerLabel?: string | null
   ts: number
 }
 

@@ -3,7 +3,7 @@ import type { ControllerReport } from '@shared/protocol'
 import type { ChatMessage, Consult, ConsultKind } from '@shared/tasks'
 import { rpc, useDaemonEvents } from '../lib/daemon'
 import { isSubmitKey, useUiSettings } from '../lib/uisettings'
-import { age, duration, tokens, when } from '../lib/format'
+import { duration, tokens, when } from '../lib/format'
 import { Working } from '../lib/taskview'
 
 /**
@@ -25,18 +25,23 @@ export function Controller({ now }: { now: number }): React.JSX.Element {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [openConsultId, setOpenConsultId] = useState<string | null>(null)
+  const [page, setPage] = useState(0)
+  const [pageSize, setPageSize] = useState(20)
   const threadEnd = useRef<HTMLDivElement>(null)
 
   const refresh = useCallback(async () => {
     try {
-      const [next, history] = await Promise.all([rpc('controller.report', {}), rpc('chat.history', {})])
+      const [next, history] = await Promise.all([
+        rpc('controller.report', { limit: pageSize, offset: page * pageSize }),
+        rpc('chat.history', {})
+      ])
       setReport(next)
       setMessages(history)
       setError(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     }
-  }, [])
+  }, [page, pageSize])
 
   useEffect(() => {
     void refresh()
@@ -115,7 +120,8 @@ export function Controller({ now }: { now: number }): React.JSX.Element {
             messages.map((m) => (
               <div key={m.id} className={`msg msg--${m.role}`}>
                 <span className="msg-role">
-                  {m.role === 'controller' ? 'ctrl' : m.role}
+                  {m.role === 'controller' ? 'CONTROLLER' : m.role.toUpperCase()}
+                  {m.role === 'controller' && m.workerLabel ? ` · ${m.workerLabel}` : ''}
                   {/* The same clock the task thread carries: a conversation held across a working
                       day cannot be read without one. */}
                   <span className="msg-when" title={new Date(m.ts).toLocaleString()}>
@@ -130,7 +136,7 @@ export function Controller({ now }: { now: number }): React.JSX.Element {
               answering *here*, in sequence, and marked as unfinished for as long as that is true. */}
           {busy && (
             <div className="msg msg--controller msg--live">
-              <span className="msg-role">ctrl</span>
+              <span className="msg-role">CONTROLLER</span>
               <span className="msg-text">
                 <span className="dim">thinking</span>
                 <Working />
@@ -140,13 +146,7 @@ export function Controller({ now }: { now: number }): React.JSX.Element {
           <div ref={threadEnd} />
         </div>
 
-        {/*
-          ⚠️ `.compose`, not `.form-row`. That is a three-column grid built for a labelled settings
-          form, and this row has no label — so the input was laid into the 110px label track and the
-          Send/Reset pair was painted over the top of the placeholder, which is why "No controller
-          account is available" read as if it had a button sitting on it. Same layout the task
-          thread's composer uses, so the two read as the same control.
-        */}
+        {/* `.compose` has no label track, unlike the settings form grid. */}
         <div className="compose">
           <div className="compose-row">
             <textarea
@@ -174,10 +174,11 @@ export function Controller({ now }: { now: number }): React.JSX.Element {
             </button>
             <button
               className="btn btn--ghost"
-              title="Close the session and start again. This throws away a warm prompt cache — worth it when the conversation has drifted, but it is a real cost."
-              onClick={() => void rpc('chat.reset', {}).then(refresh)}
+              disabled={messages.length === 0}
+              title="Clear the messages shown here. The controller session remains available for the next message."
+              onClick={() => void rpc('chat.clear', {}).then(refresh)}
             >
-              Reset
+              Clear
             </button>
           </div>
           <p className="compose-hint">
@@ -198,7 +199,7 @@ export function Controller({ now }: { now: number }): React.JSX.Element {
             <table className="tbl">
               <thead>
                 <tr>
-                  <th style={{ width: '80px' }}>When</th>
+                  <th style={{ width: '180px' }}>When</th>
                   <th style={{ width: '110px' }}>Type</th>
                   <th style={{ width: '160px' }}>Subject</th>
                   <th style={{ width: '120px' }}>Evaluator</th>
@@ -215,7 +216,6 @@ export function Controller({ now }: { now: number }): React.JSX.Element {
                     <ConsultRowItem
                       key={c.id}
                       consult={c}
-                      now={now}
                       isOpen={isOpen}
                       onToggle={() => setOpenConsultId(isOpen ? null : c.id)}
                     />
@@ -223,6 +223,27 @@ export function Controller({ now }: { now: number }): React.JSX.Element {
                 })}
               </tbody>
             </table>
+            <div className="form-actions" style={{ justifyContent: 'space-between' }}>
+              <span className="note">
+                Showing {page * pageSize + 1}–{Math.min((page + 1) * pageSize, report.total)} of {report.total}
+              </span>
+              <span className="form-actions">
+                <label className="dim">
+                  Per page{' '}
+                  <select
+                    value={pageSize}
+                    onChange={(e) => {
+                      setPageSize(Number(e.target.value))
+                      setPage(0)
+                    }}
+                  >
+                    {[10, 20, 50, 100].map((size) => <option key={size} value={size}>{size}</option>)}
+                  </select>
+                </label>
+                <button className="btn btn--ghost" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>Previous</button>
+                <button className="btn btn--ghost" disabled={(page + 1) * pageSize >= report.total} onClick={() => setPage((p) => p + 1)}>Next</button>
+              </span>
+            </div>
             <p className="note">
               <strong>{tokens(report.spentTokens)}</strong> spent on judgment across these{' '}
               {report.recent.length}, {report.fallbacks} of which took the deterministic answer. Click
@@ -265,17 +286,16 @@ export function Controller({ now }: { now: number }): React.JSX.Element {
 
 function ConsultRowItem({
   consult: c,
-  now,
   isOpen,
   onToggle
 }: {
   consult: Consult
-  now: number
   isOpen: boolean
   onToggle: () => void
 }): React.JSX.Element {
+  const subjectTitle = truncate(c.subjectTitle ?? '', 52)
   const subjectDisplay = c.subjectSeq !== null && c.subjectSeq !== undefined
-    ? `t${c.subjectSeq}${c.subjectTitle ? ` · ${c.subjectTitle}` : ''}`
+    ? `t${c.subjectSeq}${subjectTitle ? ` · ${subjectTitle}` : ''}`
     : c.subjectId
       ? c.subjectId.slice(0, 8)
       : '—'
@@ -288,7 +308,7 @@ function ConsultRowItem({
         title="Click to view detailed decision, rationale, and prompt telemetry"
       >
         <td className="dim num tbl-when" title={new Date(c.createdAt).toLocaleString()}>
-          {age(now - c.createdAt)}
+          {new Date(c.createdAt).toLocaleString()}
         </td>
         <td>
           <span className="consult-kind-tag">{KIND_LABEL[c.kind] ?? c.kind}</span>
@@ -324,6 +344,10 @@ function ConsultRowItem({
       )}
     </>
   )
+}
+
+function truncate(text: string, maxLength: number): string {
+  return text.length > maxLength ? `${text.slice(0, maxLength - 1)}…` : text
 }
 
 function ConsultDetailPane({ consult: c }: { consult: Consult }): React.JSX.Element {
@@ -593,4 +617,3 @@ const STATUS_TONE: Record<string, string> = {
   fallback: 'state-idle',
   failed: 'state-warn'
 }
-

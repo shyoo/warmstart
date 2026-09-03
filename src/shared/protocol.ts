@@ -964,6 +964,8 @@ export interface ControllerReport {
   usedThisHour: number
   hourlyCap: number
   recent: Consult[]
+  /** Total ledger rows, before the requested page is applied. */
+  total: number
   spentTokens: number
   fallbacks: number
 }
@@ -1480,7 +1482,7 @@ export interface RpcMap {
 
   // ---- M4: the controller ---------------------------------------------------------------
   /** The ledger: every judgment call, what it decided, what it cost, and when it fell back. */
-  'controller.report': { params: { limit?: number } | void; result: ControllerReport }
+  'controller.report': { params: { limit?: number; offset?: number } | void; result: ControllerReport }
   /**
    * Drain the consult queue once, now, instead of waiting for the controller loop.
    * ⚠️ This is the one RPC in the daemon that can spend tokens on its own. Nothing in a scheduler
@@ -1516,7 +1518,8 @@ export interface RpcMap {
     params: { text: string; threadId?: string }
     result: { ok: boolean; sessionId?: string; reason?: string }
   }
-  'chat.reset': { params: { threadId?: string } | void; result: { ok: true } }
+  /** Remove the displayed conversation history without ending its warm session. */
+  'chat.clear': { params: { threadId?: string } | void; result: { ok: true } }
 
   // ---- worker tier: called by the MCP server on an agent's behalf -----------------------
   /** ⛔ The only signal that a task succeeded. A process exiting says nothing about the work. */
