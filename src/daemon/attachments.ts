@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { basename, dirname, extname, join } from 'node:path'
 import type { Attachment } from '@shared/tasks.js'
 import { db, row, rows } from './db.js'
 import { log } from './log.js'
@@ -91,7 +91,7 @@ function toAttachment(r: AttachmentRow): Attachment {
     messageId: r.message_id,
     taskId: r.task_id,
     kind: r.kind as Attachment['kind'],
-    mediaType: r.media_type as Attachment['mediaType'],
+    mediaType: r.media_type,
     file: r.file,
     bytes: r.bytes,
     width: r.width,
@@ -119,31 +119,28 @@ function attachmentDir(...parts: string[]): string {
 export function createAttachment(
   bytes: Buffer,
   declaredMediaType: string,
-  size?: { width?: number | null; height?: number | null }
+  size?: { width?: number | null; height?: number | null; name?: string | null }
 ): Attachment {
   if (bytes.length === 0) throw new Error('an attachment needs some bytes')
   if (bytes.length > MAX_BYTES) {
     throw new Error(
-      `that image is ${(bytes.length / 1024 / 1024).toFixed(1)} MB and the limit is ` +
-        `${MAX_BYTES / 1024 / 1024} MB — scale it down and paste it again`
+      `that file is ${(bytes.length / 1024 / 1024).toFixed(1)} MB and the limit is ${MAX_BYTES / 1024 / 1024} MB`
     )
   }
   const sniffed = sniffImage(bytes)
-  if (!sniffed) {
-    throw new Error(
-      `those bytes are not a PNG, JPEG, WebP or GIF, whatever they were labelled (${declaredMediaType})`
-    )
-  }
+  const kind: Attachment['kind'] = sniffed ? 'image' : 'file'
   // ⚠️ A mismatch is not an error. The clipboard routinely mislabels, and we already know what the
   // bytes are; the sniffed type is what gets stored and what the CLI is told. Logged once, so that
   // a pattern of them is visible rather than silent.
-  if (declaredMediaType !== sniffed.mediaType) {
+  if (sniffed && declaredMediaType !== sniffed.mediaType) {
     log.warn(
       `attachment declared ${declaredMediaType} but the bytes are ${sniffed.mediaType}; using the bytes`
     )
   }
   const id = randomUUID()
-  const file = join(attachmentDir('pending'), `${id}.${sniffed.ext}`)
+  const extension = sniffed?.ext ?? (extname(basename(size?.name ?? '')).replace(/^\./, '').replace(/[^a-zA-Z0-9]/g, '').slice(0, 12) || 'bin')
+  const mediaType = sniffed?.mediaType ?? (declaredMediaType || 'application/octet-stream')
+  const file = join(attachmentDir('pending'), `${id}.${extension}`)
   writeFileSync(file, bytes)
   db()
     .prepare(
@@ -152,14 +149,24 @@ export function createAttachment(
     )
     .run(
       id,
-      'image',
-      sniffed.mediaType,
+      kind,
+      mediaType,
       file,
       bytes.length,
       size?.width ?? null,
       size?.height ?? null,
       Date.now()
     )
+  return requireAttachment(id)
+}
+
+/** An explicit operator-selected directory. It stays in place and is granted to the spawned CLI. */
+export function createFolderAttachment(path: string): Attachment {
+  if (!path || !existsSync(path) || !statSync(path).isDirectory()) throw new Error('that folder is no longer available')
+  const id = randomUUID()
+  db().prepare(
+    'insert into attachments (id, message_id, task_id, kind, media_type, file, bytes, width, height, created_at) values (?,null,null,?,?,?,?,?,?,?)'
+  ).run(id, 'folder', 'inode/directory', path, 0, null, null, Date.now())
   return requireAttachment(id)
 }
 
@@ -193,6 +200,13 @@ export function bindAttachments(ids: string[], taskId: string, messageId: number
   for (const id of ids) {
     const found = getAttachment(id)
     if (!found || found.messageId !== null) continue
+    // ⛔ A folder is an external reference selected by the operator, not an upload. Moving it into
+    // the data directory would both surprise the person and potentially move their whole project.
+    if (found.kind === 'folder') {
+      update.run(messageId, taskId, found.file, id)
+      bound.push(requireAttachment(id))
+      continue
+    }
     const ext = found.file.split('.').pop() ?? 'png'
     const target = join(attachmentDir(taskId), `${id}.${ext}`)
     try {
@@ -287,12 +301,13 @@ export function attachmentBytes(attachment: Attachment): Buffer | null {
  */
 export function attachmentDirs(attachments: Attachment[]): string[] {
   const seen = new Set<string>()
-  for (const a of attachments) seen.add(dirname(a.file))
+  for (const a of attachments) seen.add(a.kind === 'folder' ? a.file : dirname(a.file))
   return [...seen]
 }
 
 /** Human-facing size, for the sentence the agent is given. */
 export function describeAttachment(a: Attachment): string {
+  if (a.kind === 'folder') return `${a.file} (folder)`
   const size = a.width && a.height ? `, ${a.width}×${a.height}` : ''
   const bytes =
     a.bytes >= 1024 * 1024

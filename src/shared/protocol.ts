@@ -1193,9 +1193,10 @@ export interface RpcMap {
    * filed. One never filed is deleted by `prunePending`.
    */
   'attachment.create': {
-    params: { dataBase64: string; mediaType: string; width?: number; height?: number }
+    params: { dataBase64: string; mediaType: string; name?: string; width?: number; height?: number }
     result: Attachment
   }
+  'attachment.folder': { params: { path: string }; result: Attachment }
   /** The bytes back, for the renderer's own thumbnails. */
   'attachment.read': { params: { id: string }; result: { attachment: Attachment; dataBase64: string } }
   'task.update': { params: TaskUpdateParams; result: Task }

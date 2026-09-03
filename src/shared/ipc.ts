@@ -66,6 +66,7 @@ export interface AgentyardApi {
   setUiSettings(patch: Partial<UiSettings>): Promise<UiSettings>
   setZoomFactor(factor: number): void
   getZoomFactor(): number
+  pickFolders(): Promise<string[]>
 }
 
 export const IPC = {
@@ -76,5 +77,6 @@ export const IPC = {
   statusPush: 'daemon:status-push',
   eventPush: 'daemon:event-push',
   uiSettingsGet: 'ui:settings-get',
-  uiSettingsSet: 'ui:settings-set'
+  uiSettingsSet: 'ui:settings-set',
+  pickFolders: 'attachment:pick-folders'
 } as const

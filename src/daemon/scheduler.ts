@@ -2914,7 +2914,7 @@ export function promptFor(
   // a fallback — it is the whole channel.
   if (attachments.length > 0) {
     parts.push(
-      (attachments.length === 1 ? 'Attached image: ' : 'Attached images: ') +
+      (attachments.length === 1 ? 'Attached context: ' : 'Attached context: ') +
         attachments.map(describeAttachment).join('; ') +
         '. Open the file if you need to see it.'
     )

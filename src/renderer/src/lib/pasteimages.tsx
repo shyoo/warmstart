@@ -23,7 +23,8 @@ export interface PastedImage {
   /** The attachment row's id, which is what `task.create` and `task.message` are given. */
   id: string
   /** A `data:` URL of the downscaled bytes, for the chip. Never round-trips to the daemon. */
-  preview: string
+  preview: string | null
+  name?: string
   width: number
   height: number
   bytes: number
@@ -79,6 +80,8 @@ export interface PasteImages {
   /** Wire to `onDrop`. `onDragOver` must call `preventDefault` or the drop never fires. */
   onDrop: (e: React.DragEvent) => void
   onDragOver: (e: React.DragEvent) => void
+  addFiles: (files: File[]) => Promise<void>
+  addFolders: () => Promise<void>
   remove: (id: string) => void
   /** After a successful submit. Does not delete the uploads — the message now owns them. */
   clear: () => void
@@ -167,6 +170,45 @@ export function usePastedImages(): PasteImages {
     [accept]
   )
 
+  const addFiles = useCallback(async (files: File[]) => {
+    setError(null)
+    setBusy(true)
+    try {
+      for (const file of files) {
+        if (file.type.startsWith('image/')) {
+          await accept([file])
+          continue
+        }
+        if (count.current >= MAX_IMAGES) throw new Error(`${MAX_IMAGES} attachments is the limit for one message`)
+        const attachment = await rpc('attachment.create', {
+          dataBase64: toBase64(await file.arrayBuffer()),
+          mediaType: file.type || 'application/octet-stream',
+          name: file.name
+        })
+        count.current += 1
+        setImages((current) => [...current, { id: attachment.id, preview: null, name: file.name, width: 0, height: 0, bytes: attachment.bytes }])
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }, [accept])
+
+  const addFolders = useCallback(async () => {
+    try {
+      const paths = await window.agentyard.pickFolders()
+      for (const path of paths) {
+        if (count.current >= MAX_IMAGES) throw new Error(`${MAX_IMAGES} attachments is the limit for one message`)
+        const attachment = await rpc('attachment.folder', { path })
+        count.current += 1
+        setImages((current) => [...current, { id: attachment.id, preview: null, name: path.split(/[/\\]/).pop() ?? path, width: 0, height: 0, bytes: 0 }])
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }, [])
+
   return {
     images,
     error,
@@ -178,6 +220,8 @@ export function usePastedImages(): PasteImages {
     onDragOver: (e) => {
       if ([...(e.dataTransfer?.items ?? [])].some((i) => i.kind === 'file')) e.preventDefault()
     },
+    addFiles,
+    addFolders,
     remove: (id) =>
       setImages((current) => {
         const next = current.filter((i) => i.id !== id)
@@ -200,10 +244,8 @@ export function ImageChips({ paste }: { paste: PasteImages }): React.JSX.Element
     <div className="chips">
       {paste.images.map((image) => (
         <span className="chip" key={image.id}>
-          <img className="chip-thumb" src={image.preview} alt="" />
-          <span className="chip-size dim">
-            {image.width}×{image.height}
-          </span>
+          {image.preview ? <img className="chip-thumb" src={image.preview} alt="" /> : <span className="chip-size dim">{image.name}</span>}
+          {image.preview && <span className="chip-size dim">{image.width}×{image.height}</span>}
           <button
             className="chip-x"
             title="Take this image off the message"

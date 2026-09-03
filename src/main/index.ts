@@ -331,6 +331,11 @@ void app.whenReady().then(() => {
     return uiSettings
   })
 
+  ipcMain.handle(IPC.pickFolders, async (): Promise<string[]> => {
+    const picked = await dialog.showOpenDialog({ properties: ['openDirectory', 'multiSelections'] })
+    return picked.canceled ? [] : picked.filePaths
+  })
+
   ipcMain.handle(IPC.daemonStart, async (): Promise<DaemonUiStatus> => {
     return toUiStatus(await daemon.ensure(daemonScriptPath(dirname)))
   })

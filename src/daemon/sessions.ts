@@ -975,7 +975,9 @@ function setState(id: string, state: SessionState): void {
  * it through a live session would mean spawning three CLIs to assert one branch.
  */
 export function inlineImagesFor(adapterId: string, attachments: Attachment[]): Attachment[] {
-  return adapter(adapterId).info.capabilities.imageInput === 'inline' ? attachments : []
+  return adapter(adapterId).info.capabilities.imageInput === 'inline'
+    ? attachments.filter((attachment) => attachment.kind === 'image')
+    : []
 }
 
 /**

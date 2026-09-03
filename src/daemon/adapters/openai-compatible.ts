@@ -1054,7 +1054,9 @@ export const openaiCompatible: AgentAdapter = {
     // `workspace-write` and the attachment store is outside the worktree, so without the grant
     // codex can be handed a path it is then forbidden to read — which is the one failure the path
     // fallback exists to prevent.
-    for (const attachment of req.attachments ?? []) args.push('-i', attachment.file)
+    for (const attachment of req.attachments ?? []) {
+      if (attachment.kind === 'image') args.push('-i', attachment.file)
+    }
     if (req.model) args.push('--model', req.model)
     // ⛔ Last, and in this order: `exec resume [OPTIONS] [SESSION_ID] [PROMPT]`. The `-` is the
     // PROMPT and it means *read the prompt from stdin* — the same one-shot channel a fresh `exec`

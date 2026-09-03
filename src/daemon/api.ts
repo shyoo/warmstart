@@ -13,7 +13,7 @@ import type { Task, TaskConstraints } from '@shared/tasks.js'
 import { resolveAutoCompact, resolveCompletionMode } from '@shared/tasks.js'
 import { existsSync } from 'node:fs'
 import { adapter, adapters } from './adapters/index.js'
-import { attachmentBytes, createAttachment, requireAttachment } from './attachments.js'
+import { attachmentBytes, createAttachment, createFolderAttachment, requireAttachment } from './attachments.js'
 import {
   createWorker,
   getWorker,
@@ -489,8 +489,10 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
     'attachment.create': (p) =>
       createAttachment(Buffer.from(p.dataBase64, 'base64'), p.mediaType, {
         width: p.width ?? null,
-        height: p.height ?? null
+        height: p.height ?? null,
+        name: p.name
       }),
+    'attachment.folder': (p) => createFolderAttachment(p.path),
 
     'attachment.read': (p) => {
       const attachment = requireAttachment(p.id)

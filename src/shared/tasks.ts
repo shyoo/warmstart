@@ -235,8 +235,8 @@ export interface Attachment {
   /** Null until the attachment is bound to the message it was pasted into. */
   messageId: number | null
   taskId: string | null
-  kind: 'image'
-  mediaType: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'
+  kind: 'image' | 'file' | 'folder'
+  mediaType: string
   /** Absolute path. This is what travels in the prompt text on every adapter. */
   file: string
   bytes: number

@@ -38,7 +38,8 @@ const api: AgentyardApi = {
   },
   getZoomFactor: () => {
     return webFrame.getZoomFactor()
-  }
+  },
+  pickFolders: () => ipcRenderer.invoke(IPC.pickFolders) as Promise<string[]>
 }
 
 contextBridge.exposeInMainWorld('agentyard', api)

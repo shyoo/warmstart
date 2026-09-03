@@ -951,9 +951,15 @@ function Thread({
               {m.text}
               {m.attachments.length > 0 && (
                 <span className="msg-images">
-                  {m.attachments.map((a) => (
-                    <MessageImage key={a.id} attachment={a} />
-                  ))}
+                  {m.attachments.map((a) =>
+                    a.kind === 'image' ? (
+                      <MessageImage key={a.id} attachment={a} />
+                    ) : (
+                      <span className="chip" key={a.id} title={a.file}>
+                        {a.kind === 'folder' ? 'Folder: ' : 'File: '}{a.file}
+                      </span>
+                    )
+                  )}
                 </span>
               )}
               {runForMsg?.prompt && (

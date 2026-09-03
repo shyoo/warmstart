@@ -1,5 +1,5 @@
 import type { Attachment } from '@shared/tasks.js'
-import { attachmentBytes } from '../attachments.js'
+import { attachmentBytes, attachmentDirs } from '../attachments.js'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
@@ -567,6 +567,7 @@ export const claudeCode: AgentAdapter = {
     // otherwise (adapters/types.ts), so this line is inert until the capability is promoted on
     // measured evidence rather than on the flag existing in `--help`.
     if (req.effort) args.push('--effort', req.effort)
+    for (const dir of attachmentDirs(req.attachments ?? [])) args.push('--add-dir', dir)
     if (req.mcpConfig) {
       args.push('--mcp-config', req.mcpConfig)
       if (req.transport === 'stream') {

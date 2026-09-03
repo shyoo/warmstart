@@ -13,6 +13,7 @@ import type {
   WrittenPermissions
 } from './types.js'
 import { asRecord, num, type StreamEvent, type StreamUsage } from '../stream.js'
+import { attachmentDirs } from '../attachments.js'
 import { log } from '../log.js'
 import { launchArgs, launchable, spawnEnv, which } from '../which.js'
 
@@ -1048,6 +1049,7 @@ export const antigravityCli: AgentAdapter = {
      * depend on the CLI cooperating.
      */
     if (req.cwd) args.push('--add-dir', req.cwd)
+    for (const dir of attachmentDirs(req.attachments ?? [])) args.push('--add-dir', dir)
 
     // ⛔ `--conversation`, not `--continue`. Measured on agy 1.1.21: `-c` / `--continue` resumes
     // *the most recent* conversation on this machine, which on a fleet running several worktrees at
