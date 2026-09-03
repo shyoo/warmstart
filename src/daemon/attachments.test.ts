@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -48,9 +48,11 @@ describe('what may become an attachment', () => {
    * which read it off whatever produced the image — and the file this writes is one an agent is
    * separately instructed by name to open.
    */
-  it('refuses an executable wearing a PNG label', () => {
+  it('keeps a non-image file as a file even when its declared type is wrong', () => {
     const exe = Buffer.concat([Buffer.from('MZ', 'latin1'), Buffer.alloc(64, 0x90)])
-    expect(() => attachments.createAttachment(exe, 'image/png')).toThrow(/not a PNG, JPEG, WebP/)
+    const made = attachments.createAttachment(exe, 'image/png', { name: 'tool.exe' })
+    expect(made.kind).toBe('file')
+    expect(made.file.endsWith('.exe')).toBe(true)
   })
 
   it('believes the bytes over the label when both are images', () => {
@@ -123,6 +125,20 @@ describe('binding an upload to the message that carried it', () => {
       /the limit is 8/
     )
   })
+
+  it('binds a selected folder without moving or owning it', () => {
+    const task = tasks.createTask({ title: 'Read this folder', status: 'draft' })
+    const folder = join(dir, 'operator-context')
+    mkdirSync(folder, { recursive: true })
+    const made = attachments.createFolderAttachment(folder)
+    tasks.addMessage(task.id, 'human', 'use this context', null, [made.id])
+
+    const bound = attachments.requireAttachment(made.id)
+    expect(bound.kind).toBe('folder')
+    expect(bound.file).toBe(folder)
+    expect(attachments.attachmentExists(bound)).toBe(true)
+    expect(attachments.attachmentDirs([bound])).toEqual([folder])
+  })
 })
 
 describe('uploads nobody ever sent', () => {
@@ -150,6 +166,17 @@ describe('uploads nobody ever sent', () => {
     const fresh = attachments.createAttachment(PNG, 'image/png')
     attachments.prunePending(60_000)
     expect(attachments.getAttachment(fresh.id)).not.toBeNull()
+  })
+
+  it('forgets an abandoned folder reference without deleting the operator’s folder', () => {
+    const folder = join(dir, 'still-the-operators')
+    mkdirSync(folder, { recursive: true })
+    const made = attachments.createFolderAttachment(folder)
+
+    attachments.prunePending(0)
+
+    expect(attachments.getAttachment(made.id)).toBeNull()
+    expect(existsSync(folder)).toBe(true)
   })
 })
 

@@ -2,7 +2,7 @@ import React, { useCallback, useRef, useState } from 'react'
 import { rpc } from './daemon.js'
 
 /**
- * Pasting and dropping images into a composer.
+ * Pasting, dropping, and selecting attachments in a composer.
  *
  * ⛔ **Downscaled in the renderer, before a byte leaves it.** The vendor's own recommendation is
  * 1568px on the longest edge, and for a full-screen grab that is the difference between roughly 1.1k
@@ -17,7 +17,9 @@ import { rpc } from './daemon.js'
 export const MAX_EDGE = 1568
 
 /** Per message, matching the daemon's own limit so the refusal happens where somebody can read it. */
-export const MAX_IMAGES = 8
+export const MAX_ATTACHMENTS = 8
+/** @deprecated Use MAX_ATTACHMENTS; retained for existing image-only callers. */
+export const MAX_IMAGES = MAX_ATTACHMENTS
 
 export interface PastedImage {
   /** The attachment row's id, which is what `task.create` and `task.message` are given. */
@@ -110,8 +112,8 @@ export function usePastedImages(): PasteImages {
     setBusy(true)
     try {
       for (const file of pictures) {
-        if (count.current >= MAX_IMAGES) {
-          setError(`${MAX_IMAGES} images is the limit for one message`)
+        if (count.current >= MAX_ATTACHMENTS) {
+          setError(`${MAX_ATTACHMENTS} attachments is the limit for one message`)
           break
         }
         const { blob, width, height } = await downscale(file)
@@ -162,7 +164,7 @@ export function usePastedImages(): PasteImages {
 
   const onDrop = useCallback(
     (e: React.DragEvent) => {
-      const files = [...(e.dataTransfer?.files ?? [])].filter((f) => f.type.startsWith('image/'))
+      const files = [...(e.dataTransfer?.files ?? [])]
       if (files.length === 0) return
       e.preventDefault()
       void accept(files)
@@ -179,7 +181,9 @@ export function usePastedImages(): PasteImages {
           await accept([file])
           continue
         }
-        if (count.current >= MAX_IMAGES) throw new Error(`${MAX_IMAGES} attachments is the limit for one message`)
+        if (count.current >= MAX_ATTACHMENTS) {
+          throw new Error(`${MAX_ATTACHMENTS} attachments is the limit for one message`)
+        }
         const attachment = await rpc('attachment.create', {
           dataBase64: toBase64(await file.arrayBuffer()),
           mediaType: file.type || 'application/octet-stream',
@@ -196,16 +200,22 @@ export function usePastedImages(): PasteImages {
   }, [accept])
 
   const addFolders = useCallback(async () => {
+    setError(null)
+    setBusy(true)
     try {
       const paths = await window.agentyard.pickFolders()
       for (const path of paths) {
-        if (count.current >= MAX_IMAGES) throw new Error(`${MAX_IMAGES} attachments is the limit for one message`)
+        if (count.current >= MAX_ATTACHMENTS) {
+          throw new Error(`${MAX_ATTACHMENTS} attachments is the limit for one message`)
+        }
         const attachment = await rpc('attachment.folder', { path })
         count.current += 1
         setImages((current) => [...current, { id: attachment.id, preview: null, name: path.split(/[/\\]/).pop() ?? path, width: 0, height: 0, bytes: 0 }])
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
     }
   }, [])
 
@@ -248,7 +258,7 @@ export function ImageChips({ paste }: { paste: PasteImages }): React.JSX.Element
           {image.preview && <span className="chip-size dim">{image.width}×{image.height}</span>}
           <button
             className="chip-x"
-            title="Take this image off the message"
+            title="Remove this attachment from the message"
             onClick={() => paste.remove(image.id)}
           >
             ×

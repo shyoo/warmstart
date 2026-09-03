@@ -129,16 +129,17 @@ edge applies to its next dispatch, and the thread says which of the two happened
 releases a dependent, so the picker never offers a `cancelled` or `failed` task; a `completed` one it
 does, because an edge satisfied the moment it is drawn is an ordinary thing to want to record.
 
-**Attachment** — *an image on a message*, with its bytes on disk and its row in sqlite
-(**migration 31**). Pasted or dropped into the New Task form or a thread note, downscaled by the
-renderer to **1568px** on the longest edge before a byte leaves it, and stored under
-`<dataDir>/attachments/<taskId>/`. ⛔ **Belongs to a message, not to a task**, which is what decides
-when it travels: `promptFor` already computes which messages are outstanding, and the attachments of
-those same messages are what rides with that prompt. Any other rule either replays a screenshot on
-every run of a long task or drops it on the fresh session a preemption starts. ⛔ **Never trusted on
-its label** — the magic number of the bytes decides what it is, because the file written is one an
-agent is separately told by name to open. An upload whose form was abandoned is collected by
-`prunePending`; see **Image input** for how the bytes actually reach each CLI.
+**Attachment** — *an image, file, or folder reference on a message*, with uploaded bytes on disk and
+its row in sqlite (**migration 31**). The New Task composer adds files or photos from its leading
+`+`, and folders from its adjacent Folder button. Images are downscaled to **1568px** on the longest
+edge before a byte leaves the renderer; files retain their bytes; a folder remains exactly where its
+owner selected it. ⛔ **Belongs to a message, not to a task**, which is what decides when it travels:
+`promptFor` already computes which messages are outstanding, and the attachments of those same
+messages are what rides with that prompt. Any other rule either replays a screenshot on every run of
+a long task or drops it on the fresh session a preemption starts. ⛔ **Never trusted on its label** —
+image magic numbers decide whether an upload is an image; a folder is never uploaded, moved, or
+deleted. An abandoned upload is collected by `prunePending`; its abandoned folder row is simply
+forgotten. See **Image input** for how paths reach each CLI.
 
 **Image input** — *how a CLI can be handed an image, if at all*, declared per adapter as
 `imageInput: 'inline' | 'spawn-flag' | 'none'`. ⛔ **Not a boolean, because the answer is not
@@ -149,9 +150,9 @@ block but **fails the entire turn** on one, `num_turns: 0`, measured 2026-08-31.
 why this is a gate in `sendPrompt` rather than a courtesy each adapter keeps for itself: a run that
 died that way would read as the agent having failed the task. ⚠️ It replaced `multimodalInput`,
 which was `true` on all three built-ins, read by nothing, and wrong about one of them. ⛔ **The
-absolute path goes into the prompt text on every adapter regardless** — ~20 tokens, all three read a
-PNG off disk with their own view tool, and on Antigravity it is not a fallback but the only channel
-there is.
+absolute path goes into the prompt text on every adapter regardless** — all three also receive the
+attachment directory through `--add-dir`, so a sandbox is allowed to open the path it was told. A
+selected folder itself is granted this way; on Antigravity that is the only channel for images too.
 
 **Thread** — *a task's messages*, human and agent, in the order they were said. ⛔ **Not a
 conversation.** A conversation is the agent's own session — it has a vendor id, you resume it with

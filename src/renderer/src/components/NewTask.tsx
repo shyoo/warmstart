@@ -172,7 +172,8 @@ export function NewTask({
   const [customTime, setCustomTime] = useState('')
   const [saving, setSaving] = useState<'draft' | 'ready' | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-  // ⚠️ Uploaded the moment they are pasted, so what the form carries is a list of ids.
+  const attachmentPickerRef = useRef<HTMLInputElement>(null)
+  // ⚠️ Uploaded the moment they are added, so what the form carries is a list of ids.
   const paste = usePastedImages()
 
   /**
@@ -334,7 +335,9 @@ export function NewTask({
   }
 
   const armed = scheduleOption !== 'now'
-  const canSend = !saving && prompt.trim().length > 0
+  // ⛔ A send waits for an upload. Otherwise a click between selecting a file and its RPC completing
+  // would create the task without the context the person just chose.
+  const canSend = !saving && !paste.busy && prompt.trim().length > 0
   const sendLabel = saving === 'ready' ? '…' : isPlan ? 'Decompose' : armed ? 'Schedule' : 'Send'
 
   return (
@@ -441,6 +444,38 @@ export function NewTask({
         answers nobody has chosen.
       */}
       <div className="composer-bar" role="group" aria-label="Task settings">
+        {!isPlan && (
+          <>
+            <input
+              ref={attachmentPickerRef}
+              type="file"
+              multiple
+              hidden
+              onChange={(e) => {
+                const files = [...(e.currentTarget.files ?? [])]
+                e.currentTarget.value = ''
+                void paste.addFiles(files)
+              }}
+            />
+            <button
+              type="button"
+              className="btn btn--quiet"
+              aria-label="Add files or photos"
+              title="Add files or photos to this task"
+              onClick={() => attachmentPickerRef.current?.click()}
+            >
+              +
+            </button>
+            <button
+              type="button"
+              className="btn btn--quiet"
+              title="Add a folder as additional context"
+              onClick={() => void paste.addFolders()}
+            >
+              Folder
+            </button>
+          </>
+        )}
         {!fixedProjectId && (
           <PillSelect
             ariaLabel="Project"

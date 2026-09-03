@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { Attachment } from '@shared/tasks.js'
 import { execFileSync } from 'node:child_process'
-import { chmodSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, join, resolve } from 'node:path'
 import { adapter, adapters } from './adapters/index.js'
@@ -1221,6 +1221,7 @@ describe('an image, and the three channels it can travel down', () => {
   )
   let store: string | null = null
   let image: Attachment
+  let folder: Attachment
 
   beforeAll(async () => {
     store = mkdtempSync(join(tmpdir(), 'agentyard-adapter-image-'))
@@ -1229,6 +1230,9 @@ describe('an image, and the three channels it can travel down', () => {
     const attachments = await import('./attachments.js')
     db.openDb(join(store, 'images.db'))
     image = attachments.createAttachment(png, 'image/png', { width: 1, height: 1 })
+    const folderPath = join(store, 'operator-context')
+    mkdirSync(folderPath)
+    folder = attachments.createFolderAttachment(folderPath)
   })
 
   afterAll(async () => {
@@ -1305,6 +1309,20 @@ describe('an image, and the three channels it can travel down', () => {
     // the one failure the file-path fallback exists to prevent.
     const dir = dirname(image.file)
     expect(plan.args[plan.args.indexOf(dir) - 1]).toBe('--add-dir')
+  })
+
+  it('grants a selected folder to each agent without treating it as an image', () => {
+    for (const adapterId of ['claude-code', 'antigravity-cli', 'openai-compatible'] as const) {
+      const plan = adapter(adapterId).plan({
+        sessionId: 'ignored',
+        isolationRoot: 'C:/tmp/root',
+        cwd: process.cwd(),
+        transport: 'stream',
+        attachments: [folder]
+      })
+      expect(plan.args[plan.args.indexOf(folder.file) - 1], adapterId).toBe('--add-dir')
+      expect(plan.args).not.toContain('-i')
+    }
   })
 
   /**

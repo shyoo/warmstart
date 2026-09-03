@@ -264,6 +264,12 @@ export function prunePending(olderThanMs = PENDING_TTL_MS, now = Date.now()): nu
       .all(now - olderThanMs)
   )
   for (const r of stale) {
+    // ⛔ A folder is an operator-owned external reference, not upload data. Abandoning the form
+    // deletes our row but must never remove the folder the person selected.
+    if (r.kind === 'folder') {
+      db().prepare('delete from attachments where id = ?').run(r.id)
+      continue
+    }
     try {
       if (existsSync(r.file)) rmSync(r.file, { force: true })
     } catch (err) {
@@ -319,7 +325,8 @@ export function describeAttachment(a: Attachment): string {
 /** Are the bytes really where the row says, at the size the row claims? Used by the suites. */
 export function attachmentExists(a: Attachment): boolean {
   try {
-    return existsSync(a.file) && statSync(a.file).size === a.bytes
+    const stat = statSync(a.file)
+    return a.kind === 'folder' ? stat.isDirectory() : stat.size === a.bytes
   } catch {
     return false
   }
