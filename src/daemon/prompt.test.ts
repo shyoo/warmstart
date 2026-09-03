@@ -449,7 +449,7 @@ describe('an attachment and the message it belongs to', () => {
     // disk with their own view tool, and this is what rescues a run whose inline block a vendor
     // update quietly stopped accepting.
     expect(built.text).toContain(image.file)
-    expect(built.text).toContain('Attached image:')
+    expect(built.text).toContain('Attached context:')
   })
 
   it('names the path to antigravity too, which is the only channel it has', () => {
@@ -476,7 +476,7 @@ describe('an attachment and the message it belongs to', () => {
     })
     expect(second.text).toContain('and one more thing')
     expect(second.attachments).toEqual([])
-    expect(second.text).not.toContain('Attached image')
+    expect(second.text).not.toContain('Attached context')
   })
 
   it('travels again when a preemption re-sends the first prompt', () => {
@@ -509,6 +509,6 @@ describe('an attachment and the message it belongs to', () => {
     const task = tasks.createTask({ title: 'No pictures here', status: 'ready' })
     const built = scheduler.promptFor(task, 'claude-code', false, { markDelivered: false })
     expect(built.attachments).toEqual([])
-    expect(built.text).not.toContain('Attached image')
+    expect(built.text).not.toContain('Attached context')
   })
 })
