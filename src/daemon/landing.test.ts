@@ -168,7 +168,9 @@ describe('landing without a remote', () => {
     expect(git(root, 'branch', '--list', branch)).toContain(branch)
     // And the agent's commit is still on it, which is what makes this recoverable.
     expect(git(ws, 'log', '--oneline', '-1')).toContain('the agent did the work')
-  })
+  // This creates a real repository and worktree. Windows can spend more than Vitest's default 5s
+  // on its filesystem bookkeeping without the safety check or its result being stalled.
+  }, 20_000)
 
   it('says which branch is in the way when the trunk is on another one', async () => {
     const branch = 'multi-agent-controller/t82-elsewhere'

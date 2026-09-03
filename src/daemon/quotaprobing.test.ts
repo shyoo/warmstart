@@ -87,7 +87,10 @@ beforeAll(async () => {
 })
 
 beforeEach(() => {
-  db.db().exec('delete from quota_samples; delete from rate_limit_samples; delete from settings')
+  // Every case describes its own fleet. Leaving an enabled worker from an earlier gate test here
+  // lets the final sweep invoke that worker's real identity CLI, turning a test about a disabled
+  // account into an environment-dependent 5-second timeout.
+  db.db().exec('delete from quota_samples; delete from rate_limit_samples; delete from settings; delete from workers')
   quota.clearUrgentProbes()
 })
 
