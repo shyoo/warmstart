@@ -50,6 +50,7 @@ import {
   isTrunkMovedTask,
   isUncommittedTask,
   isWorking,
+  reassignmentModel,
   statusLabel,
   STATUS_TONE,
   STOPPABLE,
@@ -1069,9 +1070,11 @@ function PausedQuotaBanner({
   }, [task.constraints.workerId, task.constraints.model, task.constraints.effort])
 
   const selectedWorker = fleet.find((e) => e.worker.id === selectedWorkerId)?.worker ?? null
+  const selectedEntry = fleet.find((e) => e.worker.id === selectedWorkerId) ?? null
   const adapterOptions = modelOptions.find((o) => o.adapterId === selectedWorker?.adapterId)
   const offeredModels = adapterOptions?.models ?? []
   const canSetEffort = adapterOptions?.selectableEffort ?? false
+  const inheritedModel = resolveModelChoice(null, selectedWorker, canSetEffort, selectedEntry?.quota).model
   const offeredEfforts = canSetEffort
     ? (offeredModels.find((m) => m.id === selectedModel)?.effortLevels ?? [])
     : []
@@ -1179,7 +1182,7 @@ function PausedQuotaBanner({
                 const w = fleet.find((entry) => entry.worker.id === nextWorkerId)?.worker
                 const offered = modelOptions.find((o) => o.adapterId === w?.adapterId)?.models ?? []
                 if (selectedModel && !offered.some((m) => m.id === selectedModel)) {
-                  setSelectedModel(w?.defaultModel ?? '')
+                  setSelectedModel(reassignmentModel(selectedModel, offered))
                   setSelectedEffort('')
                 }
               }
@@ -1195,8 +1198,8 @@ function PausedQuotaBanner({
               options={[
                 {
                   value: '',
-                  label: selectedWorker?.defaultModel
-                    ? `account default (${modelLabel(selectedWorker.defaultModel)})`
+                  label: inheritedModel
+                    ? `account default (${modelLabel(inheritedModel) ?? inheritedModel})`
                     : 'CLI default model'
                 },
                 ...offeredModels.map((m) => ({ value: m.id, label: modelLabel(m.id) ?? m.id }))
@@ -1277,9 +1280,11 @@ function Decide({
   }, [task.constraints.workerId, task.constraints.model, task.constraints.effort])
 
   const selectedWorker = fleet.find((e) => e.worker.id === selectedWorkerId)?.worker ?? null
+  const selectedEntry = fleet.find((e) => e.worker.id === selectedWorkerId) ?? null
   const adapterOptions = modelOptions.find((o) => o.adapterId === selectedWorker?.adapterId)
   const offeredModels = adapterOptions?.models ?? []
   const canSetEffort = adapterOptions?.selectableEffort ?? false
+  const inheritedModel = resolveModelChoice(null, selectedWorker, canSetEffort, selectedEntry?.quota).model
   const offeredEfforts = canSetEffort
     ? (offeredModels.find((m) => m.id === selectedModel)?.effortLevels ?? [])
     : []
@@ -1518,7 +1523,7 @@ function Decide({
                   const w = fleet.find((entry) => entry.worker.id === nextWorkerId)?.worker
                   const offered = modelOptions.find((o) => o.adapterId === w?.adapterId)?.models ?? []
                   if (selectedModel && !offered.some((m) => m.id === selectedModel)) {
-                    setSelectedModel(w?.defaultModel ?? '')
+                    setSelectedModel(reassignmentModel(selectedModel, offered))
                     setSelectedEffort('')
                   }
                 }
@@ -1534,8 +1539,8 @@ function Decide({
                 options={[
                   {
                     value: '',
-                    label: selectedWorker?.defaultModel
-                      ? `account default (${modelLabel(selectedWorker.defaultModel)})`
+                    label: inheritedModel
+                      ? `account default (${modelLabel(inheritedModel) ?? inheritedModel})`
                       : 'CLI default model'
                   },
                   // ⚠️ The label is written for a person; the value stays the id, which is what is
@@ -1544,8 +1549,8 @@ function Decide({
                 ]}
                 displayLabel={
                   !selectedModel
-                    ? selectedWorker?.defaultModel
-                      ? (modelLabel(selectedWorker.defaultModel) ?? selectedWorker.defaultModel)
+                    ? inheritedModel
+                      ? (modelLabel(inheritedModel) ?? inheritedModel)
                       : 'CLI default model'
                     : undefined
                 }

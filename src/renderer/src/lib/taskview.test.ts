@@ -24,6 +24,7 @@ import {
   isUncommittedTask,
   isWorking,
   modelLine,
+  reassignmentModel,
   projectWorkState,
   STATUS_TONE,
   statusLabel,
@@ -615,6 +616,23 @@ describe('the model under the account, in the Worker column', () => {
   it('still names a model when the adapter options have not arrived yet', () => {
     // A fleet whose cost models failed to load still runs work, and the column still says what on.
     expect(modelLine(routed(), fleet(), [])?.label).toBe('Sonnet 5')
+  })
+})
+
+describe('model reassignment', () => {
+  it('clears an incompatible pin so a multi-pool worker resolves its own configured default', () => {
+    expect(
+      reassignmentModel('claude-sonnet-5', [
+        { id: 'gemini-3.8-medium' },
+        { id: 'gemini-3.7-flash-medium' }
+      ])
+    ).toBe('')
+  })
+
+  it('keeps a model pin that the target worker offers', () => {
+    expect(reassignmentModel('gemini-3.8-medium', [{ id: 'gemini-3.8-medium' }])).toBe(
+      'gemini-3.8-medium'
+    )
   })
 })
 

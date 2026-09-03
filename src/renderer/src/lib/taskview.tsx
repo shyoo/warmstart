@@ -246,6 +246,17 @@ export function modelLine(
 }
 
 /**
+ * Keep a task's valid model pin when changing its worker; otherwise return to inheritance.
+ *
+ * ⛔ Do not copy `worker.defaultModel` here. Multi-pool workers such as Antigravity resolve their
+ * default from `defaultModels` and current quota, so copying the single-model legacy field pins a
+ * task to a different model than the worker's configured default.
+ */
+export function reassignmentModel(model: string, offeredModels: ReadonlyArray<{ id: string }>): string {
+  return model && offeredModels.some((offered) => offered.id === model) ? model : ''
+}
+
+/**
  * How long an agent was actually working on this task.
  *
  * ⛔ **Active time, not wall-clock, and the column that shows it is the one headed "Took".** The
