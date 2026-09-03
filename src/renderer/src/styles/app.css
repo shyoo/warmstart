@@ -1548,6 +1548,13 @@ body {
   white-space: nowrap;
 }
 
+.action-menu--up {
+  top: auto;
+  bottom: calc(100% + 4px);
+  left: 0;
+  right: auto;
+}
+
 :root[data-theme="light"] .action-menu,
 @media (prefers-color-scheme: light) {
   :root:not([data-theme="dark"]) .action-menu {
@@ -2242,6 +2249,48 @@ select:focus-visible,
   justify-content: space-between;
   gap: var(--sp-3);
   padding: var(--sp-1) var(--sp-1) 0;
+}
+
+.ask-foot-left {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.ask-attach-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-2);
+  color: var(--color-text-dim);
+  font-size: 16px;
+  line-height: 1;
+  font-weight: 500;
+  cursor: pointer;
+  flex: 0 0 auto;
+  transition:
+    background var(--motion-fast) var(--ease),
+    color var(--motion-fast) var(--ease),
+    border-color var(--motion-fast) var(--ease);
+}
+
+.ask-attach-btn:hover,
+.ask-attach-btn--open {
+  background: var(--color-border);
+  color: var(--color-text);
+  border-color: var(--color-border-strong);
+}
+
+.ask-attach-btn:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
 }
 
 .ask-hint {

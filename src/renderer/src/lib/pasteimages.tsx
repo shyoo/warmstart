@@ -77,6 +77,7 @@ export interface PasteImages {
   /** Null unless the last attempt failed. Shown next to the composer, never swallowed. */
   error: string | null
   busy: boolean
+  accept: (files: File[]) => Promise<void>
   /** Wire to `onPaste` on the textarea. */
   onPaste: (e: React.ClipboardEvent) => void
   /** Wire to `onDrop`. `onDragOver` must call `preventDefault` or the drop never fires. */
@@ -223,6 +224,7 @@ export function usePastedImages(): PasteImages {
     images,
     error,
     busy,
+    accept,
     onPaste,
     onDrop,
     // ⛔ Without this the browser never fires `drop` at all — it treats the textarea as a

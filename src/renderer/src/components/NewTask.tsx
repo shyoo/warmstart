@@ -74,6 +74,11 @@ const KIND_OPTIONS: PillOption[] = [
   { value: 'plan', label: 'Plan', hint: 'too big for one task — decomposed into drafts first' }
 ]
 
+const ATTACH_OPTIONS: PillOption[] = [
+  { value: 'file', label: 'Add a file or photo' },
+  { value: 'folder', label: 'Add a folder' }
+]
+
 const KIND_SHORT: Record<ComposerKind, string> = { task: 'Task', plan: 'Plan' }
 
 /** `2026-09-02T14:30` — what `datetime-local` wants, in the operator's own timezone. */
@@ -457,23 +462,26 @@ export function NewTask({
                 void paste.addFiles(files)
               }}
             />
-            <button
-              type="button"
-              className="btn btn--quiet"
-              aria-label="Add files or photos"
-              title="Add files or photos to this task"
-              onClick={() => attachmentPickerRef.current?.click()}
-            >
-              +
-            </button>
-            <button
-              type="button"
-              className="btn btn--quiet"
-              title="Add a folder as additional context"
-              onClick={() => void paste.addFolders()}
-            >
-              Folder
-            </button>
+            <Pill
+              ariaLabel="Add attachment"
+              title="Add a file, photo, or folder"
+              label="+"
+              menu={(close) => (
+                <PillOptions
+                  options={ATTACH_OPTIONS}
+                  value=""
+                  ariaLabel="Add attachment"
+                  onPick={(next) => {
+                    close()
+                    if (next === 'file') {
+                      attachmentPickerRef.current?.click()
+                    } else if (next === 'folder') {
+                      void paste.addFolders()
+                    }
+                  }}
+                />
+              )}
+            />
           </>
         )}
         {!fixedProjectId && (
