@@ -343,15 +343,34 @@ describe('task branches the repository still has a name for', () => {
   it(
     'surfaces it in the loose-ends scan, which is where an operator would ever see it',
     async () => {
-      const branch = 'multi-agent-controller/t31-in-the-panel'
-      const { project, root } = seed(branch)
+      const { project, taskId, root } = seed('multi-agent-controller/temporary-panel-branch')
+      const task = tasks.requireTask(taskId)
+      const branch = `multi-agent-controller/t${task.seq}-in-the-panel`
+      git(root, 'branch', '-m', branch)
+      tasks.setStatus(task.id, 'completed')
       git(root, 'switch', 'main')
 
       const ends = (await finish.scanLooseEnds()).filter((e) => e.projectId === project.id)
       const stranded = ends.find((e) => e.branch === branch)
       expect(stranded?.kind).toBe('stranded')
-      expect(stranded?.taskSeq).toBe(31)
+      expect(stranded?.taskSeq).toBe(task.seq)
       expect(stranded?.summary).toContain('only the name is left')
+    },
+    60_000
+  )
+
+  it(
+    'does not offer cleanup actions for a branch its active task still owns',
+    async () => {
+      const { project, taskId, root } = seed('multi-agent-controller/temporary-active-branch')
+      const task = tasks.requireTask(taskId)
+      const branch = `multi-agent-controller/t${task.seq}-still-working`
+      git(root, 'branch', '-m', branch)
+
+      const ends = (await finish.scanLooseEnds()).filter((e) => e.projectId === project.id)
+      expect(ends.find((end) => end.branch === branch)).toBeUndefined()
+      // It remains a normal ready task, not a hidden terminal state invented to clean up its branch.
+      expect(tasks.requireTask(task.id).status).toBe('ready')
     },
     60_000
   )
