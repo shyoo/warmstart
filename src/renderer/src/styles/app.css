@@ -1170,6 +1170,44 @@ body {
 
 /* ---- filtering the table ------------------------------------------------- */
 
+.tasks-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-2);
+  flex-wrap: wrap;
+}
+
+.tasks-bar .chips {
+  margin-bottom: 0;
+}
+
+.tasks-search {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+}
+
+.tasks-search input {
+  padding: 3px var(--sp-2);
+  font-size: var(--text-meta);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+  min-width: 180px;
+}
+
+.tasks-search input:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+.tasks-search input::placeholder {
+  color: var(--color-text-faint);
+}
+
 /* ⛔ Toggles, not tabs. Several can be on at once, so they must not look like a tab bar — a tab bar
    promises exactly one selection and would make a two-chip state read as a rendering fault. */
 .chips {
@@ -1296,6 +1334,24 @@ body {
 
 .tbl-num {
   text-align: right;
+}
+
+.tbl-title-cell {
+  max-width: 48ch;
+}
+
+.tbl-title {
+  display: block;
+  max-width: 48ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tbl-title .tbl-strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tbl-path {

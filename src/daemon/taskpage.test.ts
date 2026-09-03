@@ -319,3 +319,54 @@ describe('what order they come back in', () => {
     expect(tasks.pageTasks({ asc: true }).tasks.map((t) => t.seq)).toEqual([1, 2, 3, 4])
   })
 })
+
+// ---------------------------------------------------------------------------- searching
+
+describe('searching tasks', () => {
+  beforeEach(() => {
+    at('Fix the login modal bug', 'running')
+    at('Refactor auth service', 'completed')
+    at('Update documentation', 'awaiting_human')
+  })
+
+  it('filters by title query case-insensitively', () => {
+    const page = tasks.pageTasks({ query: 'login' })
+    expect(page.tasks).toHaveLength(1)
+    expect(page.tasks[0]?.title).toBe('Fix the login modal bug')
+    expect(page.total).toBe(1)
+  })
+
+  it('matches task sequence number via #seq, t<seq>, or bare number', () => {
+    const firstSeq = tasks.pageTasks({ sort: 'seq', asc: true }).tasks[0]?.seq
+    expect(firstSeq).toBeDefined()
+    const pageWithT = tasks.pageTasks({ query: `t${firstSeq}` })
+    expect(pageWithT.tasks.map((t) => t.seq)).toContain(firstSeq)
+
+    const pageWithHash = tasks.pageTasks({ query: `#${firstSeq}` })
+    expect(pageWithHash.tasks.map((t) => t.seq)).toContain(firstSeq)
+
+    const pageWithNum = tasks.pageTasks({ query: `${firstSeq}` })
+    expect(pageWithNum.tasks.map((t) => t.seq)).toContain(firstSeq)
+  })
+
+  it('filters counts to reflect the search query across views', () => {
+    const page = tasks.pageTasks({ query: 'auth' })
+    expect(page.total).toBe(1)
+    expect(page.counts).toEqual({ active: 0, needs_you: 0, blocked: 0, done: 1, failed: 0 })
+  })
+
+  it('returns empty results when query matches nothing', () => {
+    const page = tasks.pageTasks({ query: 'nonexistent-xyz-term' })
+    expect(page.tasks).toHaveLength(0)
+    expect(page.total).toBe(0)
+    expect(page.counts).toEqual({ active: 0, needs_you: 0, blocked: 0, done: 0, failed: 0 })
+  })
+
+  it('filters by branch name when present', () => {
+    const tId = at('Task with custom branch', 'running')
+    db.db().prepare('update tasks set branch = ? where id = ?').run('feature/payment-v2', tId)
+    const page = tasks.pageTasks({ query: 'payment-v2' })
+    expect(page.tasks).toHaveLength(1)
+    expect(page.tasks[0]?.id).toBe(tId)
+  })
+})

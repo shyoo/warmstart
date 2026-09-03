@@ -600,6 +600,97 @@ try {
     await evaluate('!!document.querySelector(".tbl tbody")')
   )
 
+  // ---- tasks list controls and layout -------------------------------------------------
+  const tasksView = await evaluate(`
+    JSON.stringify((() => {
+      const searchInput = document.querySelector('.tasks-search input[type="search"]');
+      const titleEl = document.querySelector('.tbl-title');
+      const titleStyle = titleEl ? window.getComputedStyle(titleEl) : null;
+      return {
+        hasSearch: !!searchInput,
+        titleNowrap: titleStyle ? titleStyle.whiteSpace === 'nowrap' : false,
+        titleEllipsis: titleStyle ? titleStyle.textOverflow === 'ellipsis' : false
+      };
+    })())
+  `)
+  const tv = JSON.parse(tasksView)
+  check('tasks view offers a search input', tv.hasSearch === true, tasksView)
+  check('task titles do not wrap in table rows', tv.titleNowrap === true && tv.titleEllipsis === true, tasksView)
+
+  // Verify search filtering and clearing
+  await evaluate(`(() => {
+    const input = document.querySelector('.tasks-search input[type="search"]');
+    if (!input) return;
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+    setter?.call(input, 'nonexistent_task_query_term_xyz');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  })()`)
+  await wait(600)
+  check(
+    'searching for a missing query shows clear-search empty state',
+    await evaluate(`!!document.querySelector('.empty-inline button') && document.querySelector('.empty-inline button')?.innerText.includes('Clear search')`)
+  )
+  await evaluate(`document.querySelector('.empty-inline button')?.click()`)
+  await wait(600)
+  check(
+    'clearing search restores the tasks table',
+    await evaluate('!!document.querySelector(".tbl tbody tr")')
+  )
+
+  // Verify First and End pager navigation
+  await evaluate(`(() => {
+    const sel = document.querySelector('select[aria-label="Tasks per page"]');
+    if (!sel) return;
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value')?.set;
+    setter?.call(sel, '1');
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+  })()`)
+  await wait(600)
+
+  const pagerState = await evaluate(`
+    JSON.stringify((() => {
+      const buttons = [...document.querySelectorAll('.pager-nav button')];
+      const first = buttons.find(b => /first/i.test(b.innerText));
+      const newer = buttons.find(b => /newer/i.test(b.innerText));
+      const older = buttons.find(b => /older/i.test(b.innerText));
+      const end = buttons.find(b => /end/i.test(b.innerText));
+      return {
+        firstDisabled: first?.disabled,
+        newerDisabled: newer?.disabled,
+        olderDisabled: older?.disabled,
+        endDisabled: end?.disabled
+      };
+    })())
+  `)
+  const ps = JSON.parse(pagerState)
+  check('on first page, First and Newer are disabled, Older and End are enabled', ps.firstDisabled === true && ps.newerDisabled === true && ps.olderDisabled === false && ps.endDisabled === false, pagerState)
+
+  await evaluate(`[...document.querySelectorAll('.pager-nav button')].find(b => /end/i.test(b.innerText))?.click()`)
+  await wait(600)
+  const endState = await evaluate(`
+    JSON.stringify((() => {
+      const buttons = [...document.querySelectorAll('.pager-nav button')];
+      const first = buttons.find(b => /first/i.test(b.innerText));
+      const end = buttons.find(b => /end/i.test(b.innerText));
+      return { firstDisabled: first?.disabled, endDisabled: end?.disabled };
+    })())
+  `)
+  const es = JSON.parse(endState)
+  check('navigating with End reaches the last page disabling End and enabling First', es.endDisabled === true && es.firstDisabled === false, endState)
+
+  await evaluate(`[...document.querySelectorAll('.pager-nav button')].find(b => /first/i.test(b.innerText))?.click()`)
+  await wait(600)
+
+  // Restore page size to 50
+  await evaluate(`(() => {
+    const sel = document.querySelector('select[aria-label="Tasks per page"]');
+    if (!sel) return;
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value')?.set;
+    setter?.call(sel, '50');
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+  })()`)
+  await wait(600)
+
   // ---- filing a task ------------------------------------------------------------------
   // ⛔ Order is the assertion, and since 2026-09-02 it is the reverse of what it was. The prompt used
   // to sit *under* five labelled setting rows, on the reasoning that settings narrow what a task is

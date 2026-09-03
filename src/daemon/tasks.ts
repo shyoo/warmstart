@@ -259,6 +259,7 @@ export function pageTasks(
     asc?: boolean
     limit?: number
     offset?: number
+    query?: string
   } = {}
 ): TaskPage {
   const clauses: string[] = []
@@ -268,7 +269,18 @@ export function pageTasks(
     clauses.push('t.project_id = ?')
     args.push(opts.projectId)
   }
-  // ⚠️ The scope every count is taken over: the project and the deleted rule, but never the bucket
+  const q = opts.query?.trim()
+  if (q) {
+    const num = /^#?t?(\d+)$/i.exec(q)?.[1]
+    if (num) {
+      clauses.push('(t.seq = ? or t.title like ? or (t.branch is not null and t.branch like ?))')
+      args.push(Number(num), `%${q}%`, `%${q}%`)
+    } else {
+      clauses.push('(t.title like ? or (t.branch is not null and t.branch like ?))')
+      args.push(`%${q}%`, `%${q}%`)
+    }
+  }
+  // ⚠️ The scope every count is taken over: the project, search query and the deleted rule, but never the bucket
   // selection. Built before the status clause is added for exactly that reason.
   const scope = clauses.length ? `where ${clauses.join(' and ')}` : ''
   const scopeArgs = [...args]

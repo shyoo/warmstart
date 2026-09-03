@@ -1130,6 +1130,8 @@ export interface RpcMap {
       asc?: boolean
       limit?: number
       offset?: number
+      /** Optional search query filtering title, branch, or task number. */
+      query?: string
     } | void
     result: TaskPage
   }

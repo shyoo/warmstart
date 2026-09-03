@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
+import { Fragment, useCallback, useDeferredValue, useEffect, useRef, useState } from 'react'
 import type { Project, Task, TaskSort, TaskView } from '@shared/tasks'
 import { TASK_VIEW_ORDER, TASK_VIEWS } from '@shared/tasks'
 import type { ModelOptions } from '@shared/protocol'
@@ -117,6 +117,8 @@ export function Tasks({
   const [sort, setSort] = useState<TaskSort>('updated')
   const [asc, setAsc] = useState(false)
   const [page, setPage] = useState(0)
+  const [search, setSearch] = useState('')
+  const deferredSearch = useDeferredValue(search)
   const [menuTaskId, setMenuTaskId] = useState<string | null>(null)
   /**
    * The models each CLI offers. ⛔ Fetched, not compiled in — same reasoning as the pin pill in
@@ -165,7 +167,8 @@ export function Tasks({
       sort,
       asc,
       limit: pageSize,
-      offset: page * pageSize
+      offset: page * pageSize,
+      ...(deferredSearch.trim() ? { query: deferredSearch.trim() } : {})
     })
     if (page > 0 && page * pageSize >= got.total) {
       setPage(Math.max(0, Math.ceil(got.total / pageSize) - 1))
@@ -174,7 +177,7 @@ export function Tasks({
     setTasks(got.tasks)
     setTotal(got.total)
     setCounts(got.counts)
-  }, [projectId, views, sort, asc, page, pageSize])
+  }, [projectId, views, sort, asc, page, pageSize, deferredSearch])
 
   useEffect(() => {
     void refresh()
@@ -186,7 +189,7 @@ export function Tasks({
   useEffect(() => {
     setPage(0)
     setMenuTaskId(null)
-  }, [views, sort, asc, projectId, pageSize])
+  }, [views, sort, asc, projectId, pageSize, deferredSearch])
 
   const toggleView = (view: TaskView): void => {
     const next = views.includes(view) ? views.filter((v) => v !== view) : [...views, view]
@@ -266,38 +269,63 @@ export function Tasks({
       {/* ⛔ Counts on every chip, whatever is selected. The number is what makes the row worth
           having: it says what you would get *before* you click, and `Needs you 3` is the one an
           operator is actually scanning for. */}
-      <div className="chips">
-        <button
-          className={`chip${views.length === 0 ? ' chip--on' : ''}`}
-          onClick={() => {
-            setViews([])
-            writeViews([])
-          }}
-          title="Every task in this project, in whatever state"
-        >
-          All
-          {counts && <span className="chip-n">{Object.values(counts).reduce((a, b) => a + b, 0)}</span>}
-        </button>
-        {TASK_VIEW_ORDER.map((v) => (
+      <div className="tasks-bar">
+        <div className="chips">
           <button
-            key={v.id}
-            className={`chip${views.includes(v.id) ? ' chip--on' : ''}`}
-            onClick={() => toggleView(v.id)}
-            title={TASK_VIEWS[v.id].join(', ')}
+            className={`chip${views.length === 0 ? ' chip--on' : ''}`}
+            onClick={() => {
+              setViews([])
+              writeViews([])
+            }}
+            title="Every task in this project, in whatever state"
           >
-            {v.label}
-            {counts && <span className="chip-n">{counts[v.id]}</span>}
+            All
+            {counts && <span className="chip-n">{Object.values(counts).reduce((a, b) => a + b, 0)}</span>}
           </button>
-        ))}
+          {TASK_VIEW_ORDER.map((v) => (
+            <button
+              key={v.id}
+              className={`chip${views.includes(v.id) ? ' chip--on' : ''}`}
+              onClick={() => toggleView(v.id)}
+              title={TASK_VIEWS[v.id].join(', ')}
+            >
+              {v.label}
+              {counts && <span className="chip-n">{counts[v.id]}</span>}
+            </button>
+          ))}
+        </div>
+        <div className="tasks-search">
+          <input
+            type="search"
+            aria-label="Search tasks"
+            placeholder="Search tasks…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
       </div>
 
       {tasks.length === 0 ? (
         <div className="empty-inline">
-          {/* ⚠️ Two different nothings. A project with no tasks needs telling what to do; a filter
+          {/* ⚠️ Three different nothings. A project with no tasks needs telling what to do; a search
+              that matches none of them needs telling that the query returned nothing; a filter
               that matches none of them needs telling that the tasks still exist — offering the same
               "file one and the scheduler will route it" to somebody who has forty tasks and one chip
               selected reads as the app having lost them. */}
-          {views.length > 0 ? (
+          {search.trim() ? (
+            <>
+              <p>No tasks match &ldquo;{search.trim()}&rdquo;.</p>
+              <p className="dim">
+                The search query is filtering the list — clear it to see all tasks.
+              </p>
+              <button
+                className="btn"
+                onClick={() => setSearch('')}
+              >
+                Clear search
+              </button>
+            </>
+          ) : views.length > 0 ? (
             <>
               <p>No tasks in {views.length === 1 ? 'that view' : 'those views'}.</p>
               <p className="dim">
@@ -401,11 +429,13 @@ export function Tasks({
                     onClick={() => onOpenTask(task.id)}
                   >
                     <td className="num tbl-num">{task.seq}</td>
-                    <td>
-                      <span className="tbl-strong">
-                        {task.lineageDepth > 0 && <span className="dim">{'└ '}</span>}
-                        {taskLabelShort(task)}
-                      </span>
+                    <td className="tbl-title-cell">
+                      <div className="tbl-title" title={task.title}>
+                        <span className="tbl-strong">
+                          {task.lineageDepth > 0 && <span className="dim">{'└ '}</span>}
+                          {taskLabelShort(task)}
+                        </span>
+                      </div>
                       {task.branch && <div className="tbl-path mono">{task.branch}</div>}
                     </td>
                     <td className="dim">
@@ -628,13 +658,24 @@ export function Tasks({
         <div className="pager">
           <div className="pager-nav">
             {pages > 1 && (
-              <button
-                className="btn btn--ghost"
-                disabled={page === 0}
-                onClick={() => setPage((p) => p - 1)}
-              >
-                ← Newer
-              </button>
+              <>
+                <button
+                  className="btn btn--ghost"
+                  disabled={page === 0}
+                  onClick={() => setPage(0)}
+                  title="First page"
+                >
+                  ⇤ First
+                </button>
+                <button
+                  className="btn btn--ghost"
+                  disabled={page === 0}
+                  onClick={() => setPage((p) => p - 1)}
+                  title="Newer tasks"
+                >
+                  ← Newer
+                </button>
+              </>
             )}
             <span className="dim">
               {pages > 1
@@ -642,13 +683,24 @@ export function Tasks({
                 : `${total} task${total === 1 ? '' : 's'}`}
             </span>
             {pages > 1 && (
-              <button
-                className="btn btn--ghost"
-                disabled={page >= pages - 1}
-                onClick={() => setPage((p) => p + 1)}
-              >
-                Older →
-              </button>
+              <>
+                <button
+                  className="btn btn--ghost"
+                  disabled={page >= pages - 1}
+                  onClick={() => setPage((p) => p + 1)}
+                  title="Older tasks"
+                >
+                  Older →
+                </button>
+                <button
+                  className="btn btn--ghost"
+                  disabled={page >= pages - 1}
+                  onClick={() => setPage(pages - 1)}
+                  title="Last page"
+                >
+                  End ⇥
+                </button>
+              </>
             )}
           </div>
           <label className="pager-size">
