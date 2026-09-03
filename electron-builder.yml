@@ -28,12 +28,14 @@ files:
   - '!**/*.map'
   - '!**/*.ts'
 
-# ⚠️ Linux only, and not redundant with `buildResources`. electron-builder reads resources/icon.png to
-# make the .desktop entry and the macOS .icns, but a Linux `BrowserWindow` needs a real file at
-# runtime or the task switcher shows Electron's default. See windowIcon() in src/main/index.ts.
+# ⚠️ Runtime icons are not redundant with `buildResources`: the builder consumes the latter to stamp
+# the executable/bundle, while BrowserWindow and Tray need real files after packaging. Windows Tray
+# uses the multi-resolution `.ico`; Linux and macOS use the PNG. See `trayIconPath()`.
 extraResources:
   - from: resources/icon.png
     to: icon.png
+  - from: resources/icon.ico
+    to: icon.ico
 
 asar: true
 asarUnpack:

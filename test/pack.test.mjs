@@ -217,6 +217,11 @@ try {
     check('and its largest layer is embedded in the executable',
       largest !== undefined && readFileSync(binary).includes(largest),
       `${largest?.length ?? 0} bytes of icon looked for in ${(statSync(binary).size / 1e6).toFixed(1)} MB`)
+    // ⛔ The executable resource is not what `new Tray()` reads. It needs this separate runtime
+    // file, or the app can have the right taskbar icon while its keep-running affordance is blank.
+    const trayIco = join(resources, 'icon.ico')
+    check('the runtime tray icon is shipped beside the executable', existsSync(trayIco),
+      existsSync(trayIco) ? `${icoLayers(trayIco).length} layers, ${statSync(trayIco).size} bytes` : `${trayIco} is missing`)
   } else if (process.platform === 'darwin') {
     const icns = readdirSync(resources).filter((f) => f.endsWith('.icns'))
     check('electron-builder generated an .icns into the bundle', icns.length > 0,

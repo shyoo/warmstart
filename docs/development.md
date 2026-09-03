@@ -141,6 +141,9 @@ describes.
   the parent matches nothing. `npm run test:pack` is the only suite that catches this.
 - ⛔ **`ready-to-show` is not a guarantee.** See [`testing.md`](testing.md) § *A window the operator
   did not ask for* for the measurement and what `showwindow.ts` does about it.
+- **A Windows tray icon is a runtime resource.** The `.ico` embedded in the executable is not what
+  `new Tray()` reads; `resources/icon.ico` is copied through `extraResources` and loaded by
+  `trayIconPath()`. `test:pack` checks both the embedded app icon and the runtime tray file.
 
 ### Git and worktrees
 

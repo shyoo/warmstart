@@ -16,6 +16,7 @@ import type { DaemonEvent, RpcMethod } from '@shared/protocol.js'
 import { DaemonClient, daemonScriptPath, type DaemonStatus } from './daemon.js'
 import { DEFAULT_UI_SETTINGS, readUiSettings, writeUiSettings } from './uisettings.js'
 import { showWhenItCan } from './showwindow.js'
+import { trayIconPath } from './trayicon.js'
 import { readWindowBounds, trackWindowBounds } from './windowstate.js'
 import { dataDir } from '../daemon/paths.js'
 
@@ -197,21 +198,8 @@ async function stopDaemonAndQuit(): Promise<void> {
   app.quit()
 }
 
-/**
- * ⛔ Drawn, not shipped. The tray needs a small square icon and `resources/icon.png` is a 512px app
- * icon; scaling it down per platform is more moving parts than one path can carry. A generated mark
- * is legible at 16px, matches the accent, and cannot go missing from a package.
- */
 function trayImage(): Electron.NativeImage {
-  const svg =
-    '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">' +
-    '<rect x="3" y="6" width="26" height="6" rx="3" fill="#7aa2f7"/>' +
-    '<rect x="3" y="14" width="18" height="6" rx="3" fill="#7aa2f7" opacity="0.75"/>' +
-    '<rect x="3" y="22" width="10" height="6" rx="3" fill="#7aa2f7" opacity="0.5"/>' +
-    '</svg>'
-  return nativeImage.createFromDataURL(
-    `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`
-  )
+  return nativeImage.createFromPath(trayIconPath(process.platform, app.isPackaged, process.resourcesPath, dirname))
 }
 
 function applyTraySetting(): void {
