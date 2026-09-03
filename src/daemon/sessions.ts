@@ -669,6 +669,15 @@ export function spawnSession(opts: SpawnOptions): Session {
     if (inFlight > 0) throw new Error(`worker '${worker.label}' is already answering a consult`)
   }
 
+  // ⚠️ One review at a time per worker, and exempt from `maxConcurrent` for the same reason a
+  // consult is: the limit exists to bound unattended *work* — parallel agents editing repositories
+  // for hours — and a review is one short read-only turn holding no workspace. ⛔ It does hold the
+  // operator's trunk open for reading, which is why it is bounded at all.
+  if (purpose === 'review') {
+    const inFlight = sessionsForWorker(worker.id).filter((s) => s.purpose === 'review').length
+    if (inFlight > 0) throw new Error(`worker '${worker.label}' is already reviewing`)
+  }
+
   // One probe at a time per worker. Two TUIs racing to rewrite the same usage cache would answer a
   // question nobody asked twice, and the second reading is not fresher than the first.
   if (purpose === 'probe') {
@@ -705,6 +714,8 @@ export function spawnSession(opts: SpawnOptions): Session {
   //                and applies itself; an unattended controller that could *act* would be a much
   //                larger thing to trust, and every tool definition is also cache prefix.
   //  - `chat`    — the controller tier, because a person is watching what it does.
+  //  - `review`  — no tools, for the same reason as `consult`, plus one of its own: the reviewer is
+  //                never told to call `task_complete`, so it never hunts for a tool it does not have.
   //  - `work`    — the worker tier.
   const mcpConfig =
     purpose === 'work'

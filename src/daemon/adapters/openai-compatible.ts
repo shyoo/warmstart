@@ -117,6 +117,7 @@ const info: AdapterInfo = {
     // `exec` has no approval prompt at all, so the sandbox is the only thing standing between the
     // agent and the machine.
     permissionModes: ['read-only', 'workspace-write', 'danger-full-access'],
+    readOnlyPermissionMode: 'read-only',
     classifierBackedAuto: false,
     approvalChannel: 'settings_rules',
     // ⚠️ Codex does have compaction in its session lifecycle, but whether it can be driven from a

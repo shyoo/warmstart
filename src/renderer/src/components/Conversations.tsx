@@ -480,6 +480,14 @@ function RunLine({ run, index }: { run: ConversationRun; index: number }): React
       </span>
       <span className="conv-run-tokens num dim">{tokens(run.tokens || null)}</span>
       <span className="conv-run-model mono dim">{run.model ?? '—'}</span>
+      {/* ⛔ Labelled, never hidden. A quality review really happened on this conversation and really
+          spent these tokens; filtering it out here would make this page disagree with the runs it is
+          a view of. */}
+      {run.kind !== 'work' && (
+        <span className="dim" title="A peer quality review of another agent's work on this task.">
+          review
+        </span>
+      )}
       {run.startedWarm !== null && (
         <span className={`conv-run-warm ${run.startedWarm ? 'ok' : 'dim'}`}>
           {run.startedWarm ? 'warm' : 'cold'}

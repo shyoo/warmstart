@@ -17,6 +17,8 @@ describe('local-llm adapter unit tests', () => {
     expect(ad.info.capabilities).toEqual({
       transports: ['stream'],
       permissionModes: [],
+      // ⛔ Null: no mode of this bridge is read-only, so it is never offered a quality review.
+      readOnlyPermissionMode: null,
       classifierBackedAuto: false,
       approvalChannel: 'none',
       manualCompact: false,

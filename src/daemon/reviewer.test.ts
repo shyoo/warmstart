@@ -1,0 +1,261 @@
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import type { Task } from '@shared/tasks.js'
+
+/**
+ * Who is allowed to grade whom.
+ *
+ * ⛔ **A review never grades its own author**, and the exclusion is by **adapter**, not by worker:
+ * one Claude account grading another Claude account is Claude grading Claude, and the whole reason
+ * this feature exists — the standard mitigation for a judge's self-preference bias — evaporates.
+ *
+ * ⛔ **No eligible peer means no review**, and the refusal names every candidate considered and why
+ * each was rejected. Every stored score was produced by a non-author; there is no asterisked variant
+ * of that claim, and no path here that settles for a self-graded one.
+ */
+
+let dir: string
+let db: typeof import('./db.js')
+let reviewer: typeof import('./reviewer.js')
+
+const CLAUDE_A = 'aaaaaaaa-0000-4000-8000-000000000001'
+const CLAUDE_B = 'aaaaaaaa-0000-4000-8000-000000000002'
+const CODEX = 'aaaaaaaa-0000-4000-8000-000000000003'
+const AGY = 'aaaaaaaa-0000-4000-8000-000000000004'
+const TASK = 'bbbbbbbb-0000-4000-8000-000000000001'
+
+let seq = 0
+
+function worker(id: string, label: string, adapterId: string): void {
+  db.db()
+    .prepare(
+      `insert or replace into workers (id, label, adapter_id, isolation_root, enabled,
+                                       human_occupied, max_concurrent, role, created_at)
+       values (?,?,?,?,1,0,1,'worker',?)`
+    )
+    .run(id, label, adapterId, join(dir, label), Date.now())
+}
+
+function disable(id: string): void {
+  db.db().prepare('update workers set enabled = 0 where id = ?').run(id)
+}
+
+function workRun(workerId: string, adapterId: string, model: string, outcome = 'completed'): void {
+  seq += 1
+  db.db()
+    .prepare(
+      `insert into runs (id, task_id, session_id, worker_id, started_at, ended_at, outcome,
+                         quota_unverified, adapter_id, model, input_tokens, output_tokens,
+                         cache_read_tokens, cache_write_tokens, kind)
+       values (?,?,null,?,?,?,?,0,?,?,0,0,0,0,'work')`
+    )
+    .run(`run-${seq}`, TASK, workerId, seq * 1000, seq * 1000 + 10, outcome, adapterId, model)
+}
+
+const task = (): Task => ({ id: TASK }) as Task
+
+beforeAll(async () => {
+  dir = mkdtempSync(join(tmpdir(), 'agentyard-reviewer-'))
+  process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
+  db = await import('./db.js')
+  db.openDb(join(dir, 'reviewer.db'))
+  reviewer = await import('./reviewer.js')
+  db.db()
+    .prepare(
+      `insert into tasks (id, seq, title, status, created_by_json, mandate_json, budget_json,
+                          created_at, updated_at)
+       values (?, 1, 'a task', 'completed', '{}', '{}', '{}', ?, ?)`
+    )
+    .run(TASK, Date.now(), Date.now())
+})
+
+afterAll(() => {
+  try {
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+  } catch {
+    // A held file handle on Windows is not a test failure.
+  }
+})
+
+beforeEach(() => {
+  db.db().prepare('delete from runs').run()
+  db.db().prepare('delete from workers').run()
+  db.db().prepare('delete from quality_reviews').run()
+})
+
+describe('picking a reviewer', () => {
+  it('never picks the agent that did the work', () => {
+    worker(CLAUDE_A, 'ClaudeFirst', 'claude-code')
+    worker(CODEX, 'CodexFirst', 'openai-compatible')
+    workRun(CLAUDE_A, 'claude-code', 'claude-opus-5')
+
+    expect(reviewer.pickReviewer(task()).worker?.adapterId).toBe('openai-compatible')
+  })
+
+  it('excludes by adapter, not by account: a second Claude is still Claude', () => {
+    worker(CLAUDE_A, 'ClaudeFirst', 'claude-code')
+    worker(CLAUDE_B, 'ClaudeSecond', 'claude-code')
+    workRun(CLAUDE_A, 'claude-code', 'claude-opus-5')
+
+    const choice = reviewer.pickReviewer(task())
+    expect(choice.worker).toBeNull()
+    expect(choice.reason).toContain('did this work')
+  })
+
+  it('excludes every adapter that contributed, not only the last one', () => {
+    worker(CLAUDE_A, 'ClaudeFirst', 'claude-code')
+    worker(CODEX, 'CodexFirst', 'openai-compatible')
+    worker(AGY, 'AgyFirst', 'antigravity-cli')
+    // Codex started it; Claude finished it. Neither may grade it.
+    workRun(CODEX, 'openai-compatible', 'gpt-5.6-terra')
+    workRun(CLAUDE_A, 'claude-code', 'claude-opus-5')
+
+    expect(reviewer.pickReviewer(task()).worker?.adapterId).toBe('antigravity-cli')
+  })
+
+  it('names every rejection when nothing is left, rather than saying "unavailable"', () => {
+    worker(CLAUDE_A, 'ClaudeFirst', 'claude-code')
+    worker(CODEX, 'CodexFirst', 'openai-compatible')
+    workRun(CLAUDE_A, 'claude-code', 'claude-opus-5')
+    disable(CODEX)
+
+    const choice = reviewer.pickReviewer(task())
+    expect(choice.worker).toBeNull()
+    expect(choice.reason).toContain('ClaudeFirst did this work')
+    expect(choice.reason).toContain('CodexFirst')
+  })
+
+  it('says so plainly when this machine has only one agent commissioned', () => {
+    worker(CLAUDE_A, 'ClaudeFirst', 'claude-code')
+    workRun(CLAUDE_A, 'claude-code', 'claude-opus-5')
+
+    expect(reviewer.pickReviewer(task()).reason).toContain('no peer to review this work')
+  })
+
+  it('offers the cheap rung of the chosen provider, so a grade costs a fraction of the work', () => {
+    worker(CLAUDE_A, 'ClaudeFirst', 'claude-code')
+    worker(CODEX, 'CodexFirst', 'openai-compatible')
+    workRun(CLAUDE_A, 'claude-code', 'claude-opus-5')
+
+    expect(reviewer.pickReviewer(task()).model).toBe(reviewer.REVIEW_MODELS['openai-compatible'])
+  })
+
+  /**
+   * ⚠️ Round-robin over reviewers, so no single agent's taste dominates the dataset. It is the
+   * closest this gets to a two-judge panel at one judge's cost.
+   */
+  it('prefers the reviewer that has graded this subject least recently', () => {
+    worker(CLAUDE_A, 'ClaudeFirst', 'claude-code')
+    worker(CODEX, 'CodexFirst', 'openai-compatible')
+    worker(AGY, 'AgyFirst', 'antigravity-cli')
+    workRun(CLAUDE_A, 'claude-code', 'claude-opus-5')
+
+    // Codex has already graded three of this subject's tasks; Antigravity has graded none.
+    for (let i = 0; i < 3; i += 1) {
+      db.db()
+        .prepare(
+          `insert into quality_reviews (id, task_id, run_id, reviewer_worker_id, reviewer_adapter,
+                                        subject_adapter, status, rubric_version, created_at)
+           values (?,?,'r',?,'openai-compatible','claude-code','complete','1.0',?)`
+        )
+        .run(`q${i}`, TASK, CODEX, Date.now())
+    }
+
+    expect(reviewer.pickReviewer(task()).worker?.adapterId).toBe('antigravity-cli')
+  })
+
+  it('ignores a failed run when working out who did the work', () => {
+    worker(CLAUDE_A, 'ClaudeFirst', 'claude-code')
+    worker(CODEX, 'CodexFirst', 'openai-compatible')
+    // Codex tried and failed; Claude did the work. Codex is not an author and may grade it.
+    workRun(CODEX, 'openai-compatible', 'gpt-5.6-terra', 'failed')
+    workRun(CLAUDE_A, 'claude-code', 'claude-opus-5')
+
+    expect(reviewer.pickReviewer(task()).worker?.adapterId).toBe('openai-compatible')
+  })
+})
+
+describe('who is being graded', () => {
+  it('credits the adapter of the last non-failed work run', async () => {
+    const review = await import('./review.js')
+    worker(CLAUDE_A, 'ClaudeFirst', 'claude-code')
+    worker(CODEX, 'CodexFirst', 'openai-compatible')
+    workRun(CODEX, 'openai-compatible', 'gpt-5.6-terra')
+    workRun(CLAUDE_A, 'claude-code', 'claude-opus-5')
+
+    const authorship = review.authorshipOf(TASK)
+    expect(authorship.subjectAdapter).toBe('claude-code')
+    expect(authorship.subjectModel).toBe('claude-opus-5')
+    // ⚠️ And the flag that says this score is not clean evidence about that agent.
+    expect(authorship.mixed).toBe(true)
+    expect(authorship.authors).toHaveLength(2)
+  })
+
+  it('is not mixed when one agent did every run', async () => {
+    const review = await import('./review.js')
+    worker(CLAUDE_A, 'ClaudeFirst', 'claude-code')
+    workRun(CLAUDE_A, 'claude-code', 'claude-opus-5')
+    workRun(CLAUDE_A, 'claude-code', 'claude-opus-5')
+
+    expect(review.authorshipOf(TASK).mixed).toBe(false)
+  })
+
+  it('does not count a quality review as authorship of the work it graded', async () => {
+    const review = await import('./review.js')
+    worker(CLAUDE_A, 'ClaudeFirst', 'claude-code')
+    workRun(CLAUDE_A, 'claude-code', 'claude-opus-5')
+    seq += 1
+    db.db()
+      .prepare(
+        `insert into runs (id, task_id, session_id, worker_id, started_at, outcome, quota_unverified,
+                           adapter_id, model, input_tokens, output_tokens, cache_read_tokens,
+                           cache_write_tokens, kind)
+         values (?,?,null,?,?, 'completed',0,'openai-compatible','gpt-5.4-mini',0,0,0,0,'quality_review')`
+      )
+      .run(`run-${seq}`, TASK, CODEX, seq * 1000)
+
+    // ⛔ Otherwise the reviewer becomes an author and can never review this task again — and worse,
+    // the next reviewer sees a mixed-authorship task that was never mixed.
+    const authorship = review.authorshipOf(TASK)
+    expect(authorship.mixed).toBe(false)
+    expect(authorship.subjectAdapter).toBe('claude-code')
+  })
+})
+
+describe('the run history the judge is shown', () => {
+  it('says a preempted run was the scheduler’s doing, not the agent’s', async () => {
+    const review = await import('./review.js')
+    worker(CLAUDE_A, 'ClaudeFirst', 'claude-code')
+    workRun(CLAUDE_A, 'claude-code', 'claude-opus-5', 'preempted')
+    workRun(CLAUDE_A, 'claude-code', 'claude-opus-5')
+
+    const history = review.runHistoryText(TASK)
+    // ⚠️ Without this sentence the judge reads a two-run task as one failure and scores
+    // self-sufficiency down for something the agent did not do.
+    expect(history).toContain('Not a failure of the work')
+    expect(history).toContain('2 run(s)')
+  })
+
+  it('names no agent, no model and no account', async () => {
+    const review = await import('./review.js')
+    worker(CLAUDE_A, 'ClaudeFirst', 'claude-code')
+    workRun(CLAUDE_A, 'claude-code', 'claude-opus-5')
+
+    const history = review.runHistoryText(TASK)
+    expect(history).not.toContain('claude')
+    expect(history).not.toContain('ClaudeFirst')
+  })
+
+  it('marks where a different agent took over, without saying which', async () => {
+    const review = await import('./review.js')
+    worker(CLAUDE_A, 'ClaudeFirst', 'claude-code')
+    workRun(CODEX, 'openai-compatible', 'gpt-5.6-terra')
+    workRun(CLAUDE_A, 'claude-code', 'claude-opus-5')
+
+    const history = review.runHistoryText(TASK)
+    expect(history).toContain('a different agent took over here')
+    expect(history).not.toContain('openai-compatible')
+  })
+})

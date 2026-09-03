@@ -3528,6 +3528,44 @@ select:focus-visible,
   color: var(--color-text);
 }
 
+/* Quality review: the request box in the facts column, and the dimension disclosure in a row. */
+.side-note {
+  font-size: var(--text-meta);
+  line-height: var(--leading-body);
+  margin-top: var(--sp-1);
+  overflow-wrap: anywhere;
+}
+
+/* ⚠️ A wider key column than `.side-run-fact`: the dimension names are prose, not field names. */
+.review-dimensions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  margin-top: var(--sp-1);
+  padding-left: var(--sp-2);
+  border-left: 1px solid var(--color-border);
+}
+
+.review-dimensions .side-run-fact {
+  grid-template-columns: 120px minmax(0, 1fr);
+}
+
+.linkish {
+  align-self: flex-start;
+  margin-top: var(--sp-1);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-text-faint);
+  font-size: var(--text-meta);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.linkish:hover {
+  color: var(--color-text);
+}
+
 .side-run-fact--usage {
   align-items: flex-start;
 }

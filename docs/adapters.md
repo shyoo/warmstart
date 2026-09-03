@@ -37,6 +37,13 @@ first spawn.** That is the whole reason `AdapterInfo.verification` exists.
 | Prompt cache TTL | **60m** (`1h`, 2.0× write) | ⛔ unpriced (storage per token-hour) | **30m** (1.25× write) | ⛔ none |
 | Free quota probe | ✔ the `.claude.json` cache; `/usage` refreshes it | ⛔ **measured — see below** | ✔ **`account/rateLimits/read`**, rollout as fallback | ⛔ none (unlimited) |
 | Reports cache reads | via transcript | ⛔ no | ✔ reads **and** writes | ⛔ server-side |
+| Read-only mode (may review) | ✔ `plan` | ✔ `plan` | ✔ `read-only` | ⛔ **none — never reviews** |
+
+⛔ **`readOnlyPermissionMode` is a capability and `null` is a real answer.** A quality review runs in
+the operator's own project root — the one directory in this app where an unwanted edit is not
+recoverable by throwing a branch away — so an adapter that cannot declare a mode which reads and does
+not write is never offered one, rather than being run in a mode that might. Measured 2026-09-03 from
+each adapter's own declaration; `external.ts` defaults it to `null`, which is the safe direction.
 
 **Read the ⛔ column-by-column, not row-by-row.** Two of these three CLIs have no classifier and no
 approval callback, and yet only one of them can hold a fleet. That difference is invisible in a

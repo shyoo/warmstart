@@ -239,6 +239,7 @@ describe('a dispatch that produced nothing', () => {
       taskId: 't',
       sessionId: 's',
       workerId: 'w',
+      kind: 'work',
       startedWarm: null,
       adapterId: null,
       model: null,

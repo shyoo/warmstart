@@ -1248,6 +1248,79 @@ const MIGRATIONS: Migration[] = [
       )
       .run(workerId, sampledAt)
     void what
+  },
+
+  // 39 - peer quality review: a run has a kind, a landed task remembers its commit range, and a
+  // grade has somewhere to live.
+  //
+  // ⛔ **`landed_base_sha` / `landed_head_sha` are the urgent half**, and they are here for a reason
+  // that expires: `mergeLocal` fast-forwards the trunk and then deletes the branch, and nothing ever
+  // recorded which commits the task produced. `LandingResult.commit` was logged and thrown away and
+  // the base was never captured at all, so **every task that lands without these columns is
+  // permanently unreviewable** — its commits are in the trunk's history with nothing identifying
+  // them. ⚠️ No backfill is possible; `runs.trunk_sha_before` is read at dispatch, *before* the
+  // rebase, so it is not a parent of the landed commits and guessing from it would produce a review
+  // of the wrong diff. See `review.ts`'s resolution ladder, which refuses rather than guesses.
+  //
+  // ⛔ **`runs.kind`, and every reader of `runs` had to be visited.** A review is a `runs` row so
+  // that `creditTurn` meters it and the thread's timeline numbers it — both already exist and a
+  // parallel table would need a second copy of each. The cost is that 25 `from runs` references
+  // across seven files meant *work* and now have to say so; the ones where a review would corrupt a
+  // number (the estimator's training data, the task's "what ran on it", `activeMs`) carry
+  // `kind = 'work'` and are covered by their own tests.
+  //
+  // ⚠️ Guarded by `hasColumn` / `if not exists` like migrations 28, 31 and 32: `versionBefore` lets
+  // a test rewind `user_version` and reopen, replaying every migration after the one it wanted, so
+  // anything added here has to survive being run twice.
+  (conn) => {
+    const what = 'peer quality review tables'
+    if (!hasColumn(conn, 'runs', 'kind')) {
+      conn.exec("alter table runs add column kind text not null default 'work';")
+    }
+    for (const column of ['landed_base_sha', 'landed_head_sha', 'quality_review_id', 'quality_reviewer']) {
+      if (!hasColumn(conn, 'tasks', column)) {
+        conn.exec(`alter table tasks add column ${column} text;`)
+      }
+    }
+    if (!hasColumn(conn, 'tasks', 'quality_review_score')) {
+      conn.exec('alter table tasks add column quality_review_score real;')
+    }
+    if (!hasColumn(conn, 'tasks', 'quality_review_at')) {
+      conn.exec('alter table tasks add column quality_review_at integer;')
+    }
+    conn.exec(`
+      create table if not exists quality_reviews (
+        id                 text primary key,
+        task_id            text not null references tasks(id) on delete cascade,
+        run_id             text not null,
+        reviewer_worker_id text not null,
+        reviewer_adapter   text not null,
+        reviewer_model     text,
+        subject_adapter    text not null,
+        subject_model      text,
+        mixed_authorship   integer not null default 0,
+        authorship_json    text not null default '[]',
+        base_sha           text,
+        head_sha           text,
+        diff_files         integer,
+        diff_insertions    integer,
+        diff_deletions     integer,
+        diff_truncated     integer not null default 0,
+        scores_json        text,
+        composite          real,
+        summary            text,
+        notable_json       text not null default '[]',
+        status             text not null,
+        failure_reason     text,
+        rubric_version     text not null,
+        blinded            integer not null default 1,
+        blinding_leak      integer not null default 0,
+        created_at         integer not null,
+        completed_at       integer
+      );
+      create index if not exists quality_reviews_task on quality_reviews(task_id, created_at desc);
+    `)
+    void what
   }
 ]
 

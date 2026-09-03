@@ -151,6 +151,44 @@ describe('landing without a remote', () => {
     expect(git(root, 'branch', '--list', branch)).toBe('')
   })
 
+  /**
+   * ⛔ **This has to happen at the landing or it never can.** `retireBranch` deletes the branch two
+   * lines after the merge, and from then on the task's commits are in the trunk's history with
+   * nothing identifying which ones they are. There is no backfill — `runs.trunk_sha_before` is read
+   * at dispatch, before the rebase, so it is not a parent of what landed.
+   */
+  it('records the commit range it landed, and both ends still resolve after the branch is gone', async () => {
+    const branch = 'multi-agent-controller/t86-range'
+    const { project, taskId, root, ws } = seedLocal(branch)
+    const base = git(root, 'rev-parse', 'main')
+
+    const result = await land(project, taskId, ws, branch, 'commit-and-merge')
+    expect(result.ok).toBe(true)
+
+    const landed = tasks.requireTask(taskId)
+    expect(landed.landedBaseSha).toBe(base)
+    expect(landed.landedHeadSha).toBe(result.commit)
+    // ⛔ The branch is gone, and the range still answers — which is the only reason to record it.
+    expect(git(root, 'branch', '--list', branch)).toBe('')
+    expect(git(root, 'rev-parse', `${landed.landedBaseSha}^{commit}`)).toBe(base)
+    expect(
+      git(root, 'diff', '--name-only', `${landed.landedBaseSha}..${landed.landedHeadSha}`)
+    ).toContain('work.txt')
+  })
+
+  it('records nothing when the landing did not land, so no range points at unlanded work', async () => {
+    const branch = 'multi-agent-controller/t87-norange'
+    const { project, taskId, ws } = seedLocal(branch)
+    // A trunk on another branch: the merge refuses and the work stays put.
+    git(join(dir, `local${seq}`), 'switch', '-c', 'operators-own-branch')
+
+    const result = await land(project, taskId, ws, branch, 'commit-and-merge')
+    expect(result.ok).toBe(false)
+    const after = tasks.requireTask(taskId)
+    expect(after.landedBaseSha).toBeNull()
+    expect(after.landedHeadSha).toBeNull()
+  })
+
   it('⛔ refuses to merge into a trunk somebody is working in, and keeps the branch', async () => {
     const branch = 'multi-agent-controller/t81-busy'
     const { project, taskId, root, ws } = seedLocal(branch)

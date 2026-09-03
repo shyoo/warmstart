@@ -1,3 +1,4 @@
+import type { QualityReview } from './review.js'
 import type {
   Approval,
   ApprovalRule,
@@ -23,6 +24,7 @@ import type {
   ResourceAvailability,
   RestingState,
   RunOutcome,
+  RunKind,
   Run,
   Task,
   TaskConstraints,
@@ -539,7 +541,12 @@ export function sessionEnded(state: SessionState): boolean {
  * limit for the same reason a consult is, and the cache clock ignores it - a session that lives for
  * fifteen seconds has no prefix worth keeping warm.
  */
-export type SessionPurpose = 'work' | 'login' | 'consult' | 'chat' | 'probe'
+/**
+ * ⚠️ `'review'` is none of the others, which is why it is its own value: it needs a real `cwd`
+ * (unlike `consult`), no MCP tools (unlike `work`), a read-only permission mode, and a concurrency
+ * bound of its own.
+ */
+export type SessionPurpose = 'work' | 'login' | 'consult' | 'chat' | 'probe' | 'review'
 
 /** One assistant turn's metering, read from the agent's own transcript. */
 export interface Turn {
@@ -583,6 +590,12 @@ export interface ConversationRun {
   startedWarm: boolean | null
   tokens: number
   model: string | null
+  /**
+   * ⛔ Shown, never filtered out. A quality review is a real conversation that really happened and
+   * really spent tokens; hiding it here would make this page disagree with the `runs` table it is a
+   * view of. It is labelled instead, so a run that is not work reads as one.
+   */
+  kind: RunKind
 }
 
 /** One task's use of a conversation, with the runs it took underneath it in the order they ran. */
@@ -648,6 +661,21 @@ export interface Conversation {
 export interface AdapterCapabilities {
   transports: SessionTransport[]
   permissionModes: string[]
+  /**
+   * The member of `permissionModes` in which this CLI may **read** the repository and may not write
+   * to it.
+   *
+   * ⛔ A capability, not a name, and `null` is a real answer: an adapter with no such mode is never
+   * offered a quality review rather than being run in a mode that could edit the trunk. That gate
+   * matters more here than anywhere else in this app — a reviewer is spawned in the operator's own
+   * project root, the one directory where an unwanted edit cannot be recovered by throwing a branch
+   * away.
+   *
+   * ⚠️ Measured per CLI, and they disagree: `plan` on claude-code and antigravity-cli, `read-only`
+   * on codex, nothing at all on local-llm. Declarative adapters default to `null`, which is the safe
+   * direction — a JSON adapter is excluded until it says otherwise.
+   */
+  readOnlyPermissionMode: string | null
   /** Is there a reviewer that is not the human? Claude yes, Antigravity no. Plan §9.1. */
   classifierBackedAuto: boolean
   approvalChannel: 'permission_prompt_tool' | 'settings_rules' | 'none'
@@ -1173,6 +1201,8 @@ export interface RpcMap {
       compactions: Compaction[]
       /** The live tail for this task, if anything is running. Same content as `task.activity`. */
       activity: Array<{ text: string; ts: number }>
+      /** Every quality review of this task, newest first. ⛔ Kept, never replaced. */
+      reviews?: QualityReview[]
       /**
        * How many tasks are held at `blocked` waiting on this one.
        *
@@ -1203,6 +1233,28 @@ export interface RpcMap {
       resolvedObjective?: Objective
       previewPrompt?: string
     } | null
+  }
+  /**
+   * Can this task be quality-reviewed, and by whom?
+   *
+   * ⛔ Free, and asked before the button is drawn. Two things can make the answer no and they are
+   * different in kind: **no eligible peer** is a passing condition (an account is out of window),
+   * while **no recoverable diff** is permanent — the task landed before its commit range was
+   * recorded and its branch has been retired. The reason string says which.
+   */
+  'review.eligibility': {
+    params: { taskId: string }
+    result: { ok: boolean; reviewer: string | null; reviewerModel: string | null; reason: string }
+  }
+  /**
+   * Grade this task's diff against the published rubric, with an agent that did not write it.
+   *
+   * ⚠️ Spends one turn on the reviewer's account and resolves when the grade is stored. `ok: false`
+   * means nothing was asked and nothing was spent.
+   */
+  'review.request': {
+    params: { taskId: string }
+    result: { ok: true; review: QualityReview } | { ok: false; reason: string }
   }
   'task.create': { params: TaskCreateParams; result: Task }
   /**

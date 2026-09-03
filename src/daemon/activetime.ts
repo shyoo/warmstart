@@ -248,7 +248,11 @@ export function timingForTasks(taskIds: string[], now = Date.now()): Map<string,
     const found = rows<{ id: string; task_id: string; started_at: number; ended_at: number | null }>(
       db()
         .prepare(
-          `select id, task_id, started_at, ended_at from runs where task_id in (${holes})`
+          // ⛔ `kind = 'work'`. `activeMs` is *how long an agent worked on this task*, and grading
+          // the work is not working on it — a five-minute review would otherwise be added to the
+          // duration of the task it graded, on every per-agent and per-model number derived from it.
+          `select id, task_id, started_at, ended_at from runs
+             where task_id in (${holes}) and kind = 'work'`
         )
         .all(...chunk)
     )

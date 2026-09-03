@@ -26,6 +26,12 @@ import {
   type TaskMessage
 } from '@shared/tasks'
 import type { ModelOptions, Session } from '@shared/protocol'
+import {
+  RUBRIC_DIMENSIONS,
+  RUBRIC_LABELS,
+  RUBRIC_WEIGHTS,
+  type QualityReview
+} from '@shared/review'
 import { rpc, useActivity, useDaemonEvents, useNow, type FleetEntry } from '../lib/daemon'
 import { isSubmitKey, useUiSettings } from '../lib/uisettings'
 import { ImageChips, usePastedImages } from '../lib/pasteimages'
@@ -66,6 +72,8 @@ export interface TaskDetailData {
   sessions: Session[]
   /** Optional so a cached detail from a previous build renders rather than crashing. */
   compactions?: Compaction[]
+  /** Every quality review of this task, newest first. Optional for the same reason as above. */
+  reviews?: QualityReview[]
   activity: Array<{ text: string; ts: number }>
   /** How many tasks are held at `blocked` waiting on this one. Counted by the daemon. */
   blocking: number
@@ -318,9 +326,10 @@ function TaskDetail({
     sessions,
     compactions = [],
     dependencies = [],
-    dependents = []
+    dependents = [],
+    reviews = []
   } = detail
-  const timeline = chronologicalTimeline(runs, compactions)
+  const timeline = chronologicalTimeline(runs, compactions, reviews)
   // ⛔ Served, never compiled in — the renderer holds no cost models, and the capability flags that
   // decide whether an effort control exists at all live with the adapter, not here.
   const [modelOptions, setModelOptions] = useState<ModelOptions[]>([])
@@ -800,6 +809,8 @@ function TaskDetail({
             </Fact>
           </div>
 
+          <QualityReviewBox task={task} reviews={reviews} refresh={refresh} />
+
           {timeline.length > 0 && (
             <div className="detail-side-box">
               {/* ⚠️ The label carries the distinction: attempts and context compactions in chronological order. */}
@@ -807,7 +818,7 @@ function TaskDetail({
                 className="side-label"
                 title="Chronological timeline of task attempts and context compactions."
               >
-                timeline · runs & compactions
+                timeline · runs, compactions & reviews
               </div>
               {timeline.map((item, idx) =>
                 item.kind === 'run' ? (
@@ -819,12 +830,21 @@ function TaskDetail({
                     fleet={fleet}
                     now={now}
                   />
-                ) : (
+                ) : item.kind === 'compaction' ? (
                   <CompactionRow
                     key={`compact-${item.compaction.id}`}
                     index={idx + 1}
                     compaction={item.compaction}
                     sessions={sessions}
+                    fleet={fleet}
+                    now={now}
+                  />
+                ) : (
+                  <ReviewRow
+                    key={`review-${item.review.id}`}
+                    index={idx + 1}
+                    review={item.review}
+                    runs={runs}
                     fleet={fleet}
                     now={now}
                   />
@@ -1984,6 +2004,244 @@ function RunRow({
  * what fills it in, so a session that never runs again keeps its dash forever. That dash is the
  * honest answer.
  */
+/**
+ * The button, and what it says when it cannot be pressed.
+ *
+ * ⛔ **Every disabled state names its reason**, never a bare "unavailable". There are two kinds and
+ * an operator acts on them differently: *no eligible peer* passes on its own (an account comes back
+ * into window), while *no recoverable diff* is permanent — the task landed before its commit range
+ * was recorded and its branch is gone. Both arrive as one sentence from the daemon, which is the
+ * only thing that can tell them apart.
+ *
+ * ⚠️ Offered only on a task that has finished. Grading work that is still moving would score a
+ * snapshot and store it as if it were the result.
+ */
+function QualityReviewBox({
+  task,
+  reviews,
+  refresh
+}: {
+  task: Task
+  reviews: QualityReview[]
+  refresh: () => Promise<void>
+}): React.JSX.Element | null {
+  const [eligibility, setEligibility] = useState<
+    { ok: boolean; reviewer: string | null; reviewerModel: string | null; reason: string } | null
+  >(null)
+  const [running, setRunning] = useState(false)
+  const [failed, setFailed] = useState<string | null>(null)
+  const finished = task.status === 'completed' || task.status === 'cancelled'
+  const latest = reviews.find((r) => r.status === 'complete') ?? null
+
+  useEffect(() => {
+    if (!finished) return
+    void rpc('review.eligibility', { taskId: task.id })
+      .then(setEligibility)
+      .catch(() => setEligibility(null))
+  }, [task.id, finished, reviews.length])
+
+  if (!finished) return null
+
+  const request = async () => {
+    setRunning(true)
+    setFailed(null)
+    try {
+      const result = await rpc('review.request', { taskId: task.id })
+      if (!result.ok) setFailed(result.reason)
+      await refresh()
+    } catch (err) {
+      setFailed(err instanceof Error ? err.message : String(err))
+    } finally {
+      setRunning(false)
+    }
+  }
+
+  return (
+    <div className="detail-side-box">
+      <div
+        className="side-label"
+        title={
+          'A second agent grades this task’s diff against a published rubric. It is never the agent ' +
+          'that did the work, and nothing in the fleet gates on the score — it is an instrument.'
+        }
+      >
+        quality review
+      </div>
+      {latest && (
+        <div className="side-run-fact">
+          <span className="side-run-key">latest:</span>
+          <span className="side-run-val">
+            <strong className="num">{latest.composite?.toFixed(1) ?? '—'} / 10</strong>
+            <span className="dim"> · {when(latest.completedAt ?? latest.createdAt)}</span>
+          </span>
+        </div>
+      )}
+      <button
+        type="button"
+        className="btn"
+        disabled={running || !eligibility?.ok}
+        onClick={() => void request()}
+      >
+        {running ? 'grading…' : latest ? 'Review again' : 'Request review'}
+      </button>
+      <div className="side-note dim">
+        {eligibility === null
+          ? 'checking whether a peer can review this…'
+          : eligibility.ok
+            ? `${eligibility.reviewer} would grade this` +
+              (eligibility.reviewerModel ? ` on ${modelLabel(eligibility.reviewerModel)}` : '')
+            : eligibility.reason}
+      </div>
+      {failed && <div className="side-note warn">{failed}</div>}
+    </div>
+  )
+}
+
+/**
+ * One quality review in the timeline — ⭐ `#N Quality Review`, which is the label this feature was
+ * asked for by name.
+ *
+ * ⚠️ The dimensions are behind a disclosure. The composite is what a glance wants; the seven
+ * rationales are what somebody arguing with the number wants, and they are long.
+ */
+function ReviewRow({
+  index,
+  review,
+  runs,
+  fleet,
+  now
+}: {
+  index: number
+  review: QualityReview
+  runs: Run[]
+  fleet: FleetEntry[]
+  now: number
+}): React.JSX.Element {
+  const [open, setOpen] = useState(false)
+  const reviewer = fleet.find((f) => f.worker.id === review.reviewerWorkerId)?.worker.label
+  const run = runs.find((r) => r.id === review.runId)
+  const spent = run
+    ? run.inputTokens + run.outputTokens + run.cacheReadTokens + run.cacheWriteTokens
+    : null
+
+  return (
+    <div className="side-run">
+      <div className="side-run-head">
+        <span className="side-run-seq">#{index} Quality Review</span>
+        <span className="num dim">{timeRange(review.createdAt, review.completedAt, now)}</span>
+      </div>
+      <div className="side-run-facts">
+        <div className="side-run-fact">
+          <span className="side-run-key">score:</span>
+          <span className="side-run-val">
+            {review.status === 'complete' && review.composite !== null ? (
+              <strong className="num">{review.composite.toFixed(1)} / 10</strong>
+            ) : (
+              <span className={review.status === 'pending' ? 'dim' : 'warn'}>
+                {review.status === 'pending' ? 'grading…' : review.status}
+              </span>
+            )}
+          </span>
+        </div>
+        <div className="side-run-fact">
+          <span className="side-run-key">reviewer:</span>
+          <span
+            className="side-run-val dim"
+            title="A different agent than the one that did the work. A review never grades its own author."
+          >
+            {reviewer ?? review.reviewerAdapter}
+            {review.reviewerModel ? ` · ${modelLabel(review.reviewerModel)}` : ''}
+          </span>
+        </div>
+        {review.diffFiles !== null && (
+          <div className="side-run-fact">
+            <span className="side-run-key">diff:</span>
+            <span className="side-run-val num dim">
+              {review.diffFiles} file(s) +{review.diffInsertions}/-{review.diffDeletions}
+              {review.diffTruncated ? ' · truncated' : ''}
+            </span>
+          </div>
+        )}
+        {spent !== null && (
+          <div className="side-run-fact">
+            <span className="side-run-key">tokens:</span>
+            <span className="side-run-val num dim">{tokens(spent)}</span>
+          </div>
+        )}
+        {(review.mixedAuthorship || review.blindingLeak) && (
+          <div className="side-run-fact">
+            <span className="side-run-key">caveat:</span>
+            <span
+              className="side-run-val warn"
+              title={
+                'A score carrying either of these is not clean evidence about one agent. Mixed ' +
+                'authorship means more than one agent contributed work; a blinding leak means a ' +
+                'name survived in the prose that could not be redacted without destroying the text.'
+              }
+            >
+              {[review.mixedAuthorship ? 'mixed authorship' : '', review.blindingLeak ? 'blinding leak' : '']
+                .filter(Boolean)
+                .join(' · ')}
+            </span>
+          </div>
+        )}
+        {review.failureReason && (
+          <div className="side-run-fact">
+            <span className="side-run-key">reason:</span>
+            <span className="side-run-val dim">{review.failureReason}</span>
+          </div>
+        )}
+        {review.summary && (
+          <div className="side-run-fact">
+            <span className="side-run-key">summary:</span>
+            <span className="side-run-val dim">{review.summary}</span>
+          </div>
+        )}
+        {review.scores && (
+          <>
+            <button type="button" className="linkish" onClick={() => setOpen(!open)}>
+              {open ? 'hide' : 'show'} the seven dimensions
+            </button>
+            {open && (
+              <div className="review-dimensions">
+                {RUBRIC_DIMENSIONS.map((dimension) => {
+                  const entry = review.scores?.[dimension]
+                  if (!entry) return null
+                  return (
+                    <div className="side-run-fact" key={dimension}>
+                      <span
+                        className="side-run-key"
+                        title={`${RUBRIC_LABELS[dimension].asks} Weight ${RUBRIC_WEIGHTS[dimension].toFixed(2)}.`}
+                      >
+                        {RUBRIC_LABELS[dimension].label}:
+                      </span>
+                      <span className="side-run-val">
+                        <strong className="num">
+                          {entry.score === null ? 'n/a' : `${entry.score}/10`}
+                        </strong>
+                        <span className="dim"> {entry.rationale}</span>
+                      </span>
+                    </div>
+                  )
+                })}
+                <div className="side-run-fact">
+                  <span className="side-run-key">rubric:</span>
+                  <span
+                    className="side-run-val dim"
+                    title="The composite is a weighted mean the daemon computes from the dimensions above, so changing a weight re-scores history rather than orphaning it."
+                  >
+                    v{review.rubricVersion} · weighted mean over the dimensions scored
+                  </span>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function CompactionRow({
   index,
   compaction: c,

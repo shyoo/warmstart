@@ -63,6 +63,14 @@ thing entirely. See [`glossary.md`](glossary.md).
 | `Terminal` | the real agent TUI over xterm.js, not a reconstruction |
 | `AppSettings` `SettingRow` `SettingButtonSelect` `SidebarResizer` | chrome |
 
+⛔ **Quality review has no view of its own**, and that is a decision rather than an omission. It is a
+field on a task, not a place to go: a dedicated "Quality" page would be a second board to keep in
+step with the first, and the cross-agent comparison the feature exists to enable is a *query* over
+stored rows — a thing to run when there is something to compare, not a screen to build before there
+is. It appears in three places only: a `Quality` column in `Tasks`, a `#N Quality Review` row in
+`TaskThread`'s timeline (⚠️ the underlying run is filtered out so it draws once, not twice), and the
+request box in that thread's facts column, whose every disabled state names its reason.
+
 ⚠️ `Conversations` is **one table, two scopes** — the same component renders with and without a
 project. There is deliberately no fleet-wide Resources table: it listed the pools a project's own
 Settings tab already shows.

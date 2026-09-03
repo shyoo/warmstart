@@ -40,6 +40,7 @@ function run(input: {
   project?: string | null
   outcome?: string
   taskId?: string | null
+  kind?: string
 }): void {
   seq += 1
   const output = Math.round(input.total * 0.005)
@@ -48,8 +49,8 @@ function run(input: {
     .prepare(
       `insert into runs (id, task_id, project_id, session_id, worker_id, started_at, outcome,
                          quota_unverified, cost_model_id, started_warm, adapter_id, model,
-                         input_tokens, output_tokens, cache_read_tokens, cache_write_tokens)
-       values (?,?,?,null,?,?,?,0,?,?,?,?,0,?,?,0)`
+                         input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, kind)
+       values (?,?,?,null,?,?,?,0,?,?,?,?,0,?,?,0,?)`
     )
     .run(
       `run-${seq}`,
@@ -63,7 +64,8 @@ function run(input: {
       input.adapter,
       input.model,
       output,
-      cacheRead
+      cacheRead,
+      input.kind ?? 'work'
     )
 }
 
@@ -236,6 +238,63 @@ describe('what an agent costs', () => {
     })
     // The size is measured from 25 runs; the factor from one. The answer is a one-sample answer.
     expect(estimate.confidence).toBe('low')
+  })
+})
+
+/**
+ * ⛔ **A quality review is a `runs` row, and the estimator must not learn from it.** A review is one
+ * cheap read-only turn on somebody else's task; folded into the median for "what does a task cost on
+ * this agent" it drags the factor down, and every routing, admission and overrun gate reads that
+ * number. This is the acceptance criterion for the `kind` column — not that it exists.
+ */
+describe('a quality review is not training data', () => {
+  it('does not enter the per-agent factor, however many of them there are', () => {
+    twoAgents()
+    const before = estimator.costFactors()
+    const cheapBefore = before.keys.find((k) => k.model === 'claude-sonnet-5')
+
+    // Twenty reviews on the cheap agent, each a fraction of a real run.
+    for (let i = 0; i < 20; i += 1) {
+      run({
+        worker: CHEAP_WORKER,
+        adapter: 'claude-code',
+        model: 'claude-sonnet-5',
+        costModel: ANTHROPIC,
+        total: 20_000,
+        warm: false,
+        kind: 'quality_review'
+      })
+    }
+
+    const after = estimator.costFactors()
+    const cheapAfter = after.keys.find((k) => k.model === 'claude-sonnet-5')
+    expect(cheapAfter?.samples).toBe(cheapBefore?.samples)
+    expect(cheapAfter?.factor).toBe(cheapBefore?.factor)
+  })
+
+  it('cannot be called a runaway, because it is not measured against work at all', () => {
+    twoAgents()
+    db.db()
+      .prepare(
+        `insert or replace into tasks (id, seq, title, status, created_by_json, mandate_json,
+                                       budget_json, created_at, updated_at)
+         values ('task-reviewed', 900, 'a reviewed task', 'completed', '{}', '{}', '{}', ?, ?)`
+      )
+      .run(Date.now(), Date.now())
+    run({
+      worker: CHEAP_WORKER,
+      adapter: 'claude-code',
+      model: 'claude-sonnet-5',
+      costModel: ANTHROPIC,
+      total: 40_000,
+      taskId: 'task-reviewed',
+      kind: 'quality_review'
+    })
+    const reviewRun = db
+      .db()
+      .prepare("select id from runs where kind = 'quality_review' order by rowid desc limit 1")
+      .get() as { id: string }
+    expect(estimator.overrunFactor(reviewRun.id)).toBeNull()
   })
 })
 

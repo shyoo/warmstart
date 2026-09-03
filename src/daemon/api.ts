@@ -13,6 +13,8 @@ import type { Task, TaskConstraints } from '@shared/tasks.js'
 import { resolveAutoCompact, resolveCompletionMode } from '@shared/tasks.js'
 import { existsSync } from 'node:fs'
 import { adapter, adapters } from './adapters/index.js'
+import { reviewsForTask } from './review.js'
+import { requestReview, reviewEligibility } from './reviewer.js'
 import { attachmentBytes, createAttachment, createFolderAttachment, requireAttachment } from './attachments.js'
 import {
   createWorker,
@@ -453,6 +455,10 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
         sessions,
         compactions: compactionsForTask(p.id),
         activity: activityFor(p.id),
+        // ⛔ Every review, not just the latest. A second review never sees the first (anchoring), so
+        // two independent scores that disagree are the most interesting rows in this dataset — they
+        // measure how much the *judge* is worth — and the thread has to be able to show both.
+        reviews: reviewsForTask(p.id),
         blocking: blockedDependentsOf(p.id),
         dependencies,
         dependents,
@@ -481,6 +487,13 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
         previewPrompt
       }
     },
+    // ---- quality review -----------------------------------------------------------------
+    // ⛔ Two calls, and the split is the point. `review.eligibility` is free and answers *before*
+    // anybody presses anything — no peer, or no recoverable diff, are both states the button has to
+    // state rather than discover. `review.request` spends a turn.
+    'review.eligibility': (p) => reviewEligibility(p.taskId),
+    'review.request': (p) => requestReview(p.taskId),
+
     'task.create': (p) =>
       createTask({
         ...p,

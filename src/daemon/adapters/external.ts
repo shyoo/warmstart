@@ -60,6 +60,9 @@ function capabilitiesFrom(file: ExternalAdapterFile): AdapterInfo['capabilities'
   return {
     transports: declared.transports ?? ['pty'],
     permissionModes: declared.permissionModes ?? [],
+    // ⛔ Null unless declared. A JSON adapter that has not said which of its modes cannot write is
+    // not offered a review; the alternative is guessing on the operator's trunk.
+    readOnlyPermissionMode: declared.readOnlyPermissionMode ?? null,
     classifierBackedAuto: declared.classifierBackedAuto ?? false,
     approvalChannel: declared.approvalChannel ?? 'none',
     manualCompact: declared.manualCompact ?? false,

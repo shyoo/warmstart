@@ -385,6 +385,16 @@ export function Tasks({
                   read as money by everybody who saw it — now it *is* money, with the tokens kept
                   underneath in the same quiet treatment the model line uses. */}
               <th className="tbl-num">Price</th>
+              {/* ⛔ A grade, and nothing gates on it. It sits beside Price because both are
+                  after-the-fact measurements of one attempt — what it cost, and whether it was any
+                  good — and because the comparison this column exists for is between agents, which
+                  is a query over these rows rather than a screen of its own. */}
+              <th
+                className="tbl-num"
+                title="Peer quality review: a different agent's weighted score out of 10, against the published rubric. Nothing in the fleet gates on it."
+              >
+                Quality
+              </th>
               {/* ⛔ Both dates, not one. When a task was filed and when it last moved answer
                   different questions — "how long has this been sitting here" and "is anything still
                   happening" — and a task filed weeks ago that ran an hour ago looks identical to a
@@ -482,6 +492,22 @@ export function Tasks({
                       >
                         {tokens(task.budget.spentTokens || null)}
                       </div>
+                    </td>
+                    <td className="num tbl-num">
+                      {task.qualityScore === null ? (
+                        <span className="dim">—</span>
+                      ) : (
+                        <span
+                          title={
+                            `Scored ${task.qualityScore.toFixed(1)}/10 by ${task.qualityReviewer ?? 'another agent'}` +
+                            (task.qualityReviewedAt
+                              ? ` on ${new Date(task.qualityReviewedAt).toLocaleString()}`
+                              : '')
+                          }
+                        >
+                          {task.qualityScore.toFixed(1)}
+                        </span>
+                      )}
                     </td>
                     <td className="tbl-when dim" title={new Date(task.createdAt).toLocaleString()}>
                       {when(task.createdAt)}

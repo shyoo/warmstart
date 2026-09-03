@@ -384,6 +384,36 @@ leaves and no workspace has it checked out. Listed on Overview.
 
 ---
 
+**Quality review** — *a second agent grading the first agent's diff against a published rubric.*
+Each task runs once for cost reasons, so nothing else in this app says whether it went **well**:
+`completed` is a statement about a process exiting and `activeMs` one about speed. ⛔ **Nothing gates
+on the score** — no task changes status, no routing decision reads it, the estimator never sees a
+review run. It is an *instrument*. A review is a `runs` row with `kind: 'quality_review'`, which is
+how its tokens are metered and how it earns its `#N Quality Review` line in the thread.
+
+**Rubric** — the seven dimensions a review scores 0–10, with **written anchors at 2/4/6/8/10** so a 7
+means the same thing twice. Requirement fidelity and correctness carry 40% between them; codebase fit
+carries 15% and never more. ⛔ The headline **composite** is a weighted mean the daemon computes from
+the stored dimensions — never a holistic number the judge is asked for — so changing a weight
+re-scores history rather than orphaning it. Weights and dimensions are published in
+`src/shared/review.ts`. ⚠️ A dimension that does not apply scores `null`, not 0, and the mean
+renormalises over what was scored.
+
+**Subject agent** — *who is being graded.* The adapter of the **last non-failed work run**, stored on
+the review rather than derived at read time. ⚠️ When more than one adapter contributed, the review is
+**mixed authorship** and any comparison between agents must exclude those rows: a score attributed to
+one agent for a task another did most of is not evidence about either. ⛔ The score is never
+apportioned between them — nothing here can measure who wrote which hunk.
+
+**Blinding** — removing what identifies the author from everything a reviewer reads. ⛔ **Exact on
+structured fields, best-effort on prose, and the difference is recorded.** Trailers, model ids,
+worker labels and vendor dotfile directories come out completely; a commit body that explains a
+vendor-specific bug cannot be redacted without destroying its meaning, so `blindingLeak` is stored
+and a comparison that has not excluded leaked reviews is not a clean one. Measured 2026-09-03 on this
+repository: 37 of the last 60 commits carry an agent trailer and 20 name an agent in prose.
+
+---
+
 **Adapter** — the integration for one agent CLI (`claude-code`, `antigravity-cli`,
 `openai-compatible`, `local-llm`). Declares **capabilities** (what it can do — `manualCompact`, `resumeSession`,
 `imageInput`, `quotaProbe`, `classifierBackedAuto`, … the full list is `AdapterCapabilities` in

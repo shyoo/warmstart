@@ -11,6 +11,7 @@ import {
   type Principal,
   type Priority,
   type Run,
+  type RunKind,
   type RunOutcome,
   type RunQuota,
   type Task,
@@ -84,6 +85,12 @@ interface TaskRow {
   hold_until: number | null
   quota_override_until: number | null
   branch: string | null
+  landed_base_sha: string | null
+  landed_head_sha: string | null
+  quality_review_id: string | null
+  quality_review_score: number | null
+  quality_review_at: number | null
+  quality_reviewer: string | null
   deleted_at: number | null
   created_at: number
   updated_at: number
@@ -101,15 +108,20 @@ interface TaskRow {
  * ⚠️ `last_run_ended_at` reads the **latest** run's `ended_at`, not `max(ended_at)`. `max` skips
  * nulls, so a task whose newest attempt is still running would inherit the end time of the attempt
  * before it and render as finished while it was working.
+ *
+ * ⛔ `kind = 'work'` on all four, and this is the answer to *"who did this task"*. A quality review
+ * is a run on the task by a **different agent** (that is the whole point of it), so without the
+ * filter a reviewed task reports the *reviewer's* model as its own and the Worker column starts
+ * lying on every reviewed row — quietly, and only after somebody presses the review button.
  */
 const TASK_SELECT = `
   select t.*,
-    (select min(started_at) from runs r where r.task_id = t.id) as first_run_at,
-    (select r.ended_at from runs r where r.task_id = t.id
+    (select min(started_at) from runs r where r.task_id = t.id and r.kind = 'work') as first_run_at,
+    (select r.ended_at from runs r where r.task_id = t.id and r.kind = 'work'
       order by r.started_at desc limit 1) as last_run_ended_at,
-    (select r.worker_id from runs r where r.task_id = t.id
+    (select r.worker_id from runs r where r.task_id = t.id and r.kind = 'work'
       order by r.started_at desc limit 1) as last_run_worker_id,
-    (select r.model from runs r where r.task_id = t.id
+    (select r.model from runs r where r.task_id = t.id and r.kind = 'work'
       order by r.started_at desc limit 1) as last_run_model
   from tasks t`
 
@@ -189,6 +201,12 @@ function toTask(r: TaskRow, timing: ActiveTiming = ZERO_TIMING): Task {
     holdUntil: r.hold_until,
     quotaOverrideUntil: r.quota_override_until,
     branch: r.branch,
+    landedBaseSha: r.landed_base_sha ?? null,
+    landedHeadSha: r.landed_head_sha ?? null,
+    qualityReviewId: r.quality_review_id ?? null,
+    qualityScore: r.quality_review_score ?? null,
+    qualityReviewedAt: r.quality_review_at ?? null,
+    qualityReviewer: r.quality_reviewer ?? null,
     firstRunAt: r.first_run_at,
     lastRunEndedAt: r.last_run_ended_at,
     activeMs: timing.activeMs,
@@ -987,6 +1005,32 @@ export function updateTask(
 }
 
 /** The note a preempted or cancelled run leaves so its successor does not rediscover the branch. */
+/**
+ * Remember which commits a task landed.
+ *
+ * ⛔ **The one write that makes a landed task reviewable, and it has no second chance.** Every
+ * successful strategy retires the branch straight after the merge, and from that moment the task's
+ * commits sit in the trunk's history with nothing pointing at them. There is no backfill: the only
+ * other SHA on record, `runs.trunk_sha_before`, is read at dispatch — before the rebase — so it is
+ * not a parent of what landed, and diffing from it would produce somebody else's changes.
+ *
+ * ⚠️ Writes only what it was given, and `coalesce` keeps an earlier answer rather than blanking it:
+ * a strategy that could not resolve one of the two (a PR flow with no merge base yet) must not
+ * erase a range a previous landing of the same task recorded.
+ */
+export function recordLandedRange(taskId: string, base: string | null, head: string | null): void {
+  if (!base && !head) return
+  db()
+    .prepare(
+      `update tasks
+          set landed_base_sha = coalesce(?, landed_base_sha),
+              landed_head_sha = coalesce(?, landed_head_sha),
+              updated_at = ?
+        where id = ?`
+    )
+    .run(base, head, Date.now(), taskId)
+}
+
 export function setTaskHandoff(taskId: string, note: string): void {
   db().prepare('update tasks set handoff_note = ?, updated_at = ? where id = ?')
     .run(note, Date.now(), taskId)
@@ -1074,6 +1118,7 @@ export function markDelivered(ids: number[]): void {
 
 interface RunRow {
   id: string
+  kind?: string | null
   task_id: string | null
   project_id: string | null
   session_id: string | null
@@ -1113,6 +1158,9 @@ function toRun(r: RunRow, blockedMs = 0): Run {
     taskId: r.task_id ?? '',
     sessionId: r.session_id,
     workerId: r.worker_id,
+    // ⚠️ Coalesced, not trusted. Every row written before migration 39 was work, because work was
+    // the only thing a run could be.
+    kind: (r.kind as Run['kind']) ?? 'work',
     startedAt: r.started_at,
     endedAt: r.ended_at,
     outcome: r.outcome as RunOutcome | null,
@@ -1227,6 +1275,14 @@ export function startRun(input: {
   prompt?: string | null | undefined
   /** The effective optimization objective vector active when this run was dispatched. */
   objective?: Objective | null | undefined
+  /**
+   * What this run is. ⚠️ Defaults to `'work'`, which is what every caller but the reviewer means.
+   *
+   * ⛔ A review is a run so that the one metering path meters it and the one timeline numbers it.
+   * See `RunKind`, and the `kind = 'work'` filters this column forced onto every query that means
+   * work.
+   */
+  kind?: RunKind | undefined
 }): Run {
   const id = randomUUID()
   const key = runKey(input.workerId, input.sessionId)
@@ -1234,8 +1290,8 @@ export function startRun(input: {
     .prepare(
       `insert into runs (id, task_id, project_id, session_id, worker_id, started_at,
                          quota_unverified, cost_model_id, started_warm, adapter_id, model,
-                         trunk_sha_before, prompt, objective_json)
-       values (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+                         trunk_sha_before, prompt, objective_json, kind)
+       values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
     )
     .run(
       id,
@@ -1254,7 +1310,8 @@ export function startRun(input: {
       key.model,
       input.trunkShaBefore ?? null,
       input.prompt ?? null,
-      input.objective ? JSON.stringify(input.objective) : null
+      input.objective ? JSON.stringify(input.objective) : null,
+      input.kind ?? 'work'
     )
   stampPlan(id, [])
   bumpPricingEpoch()
@@ -1370,7 +1427,10 @@ export function creditTurn(
     )
     .run(tokens.input, tokens.output, tokens.cacheRead, tokens.cacheWrite, run.id)
 
-  if (run.taskId) {
+  // ⛔ The run is charged, the **task's budget is not** — for a review only. That budget gates this
+  // task's own admission and overrun, and a grade of the work must never be able to push the work
+  // over its budget. The two writes are split on `kind` for exactly that reason.
+  if (run.taskId && run.kind === 'work') {
     const task = getTask(run.taskId)
     if (task) {
       const spent =

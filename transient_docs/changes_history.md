@@ -3653,3 +3653,55 @@ no pointer event, so the menus it opened were never dismissed, and a document-wi
 — picking `now` as a worker id. Every read is scoped to its own pill's wrapper and every dismissal
 is a real `pointerdown`. 15 checks in `ui.test.mjs`, 17 unit checks across `composerprefs.test.ts`
 and `tasks.test.ts`.
+
+## Peer quality review — grading an agent's work, and storing the grade (2026-09-03, t153 → t170)
+
+t153 asked for an **implementation plan** and produced one: `transient_docs/quality_review_2026-09-03.md`,
+796 lines, whose own commit message ends *"Plan only. Nothing in `src/` implements any of this."* The
+task then read as **completed and landed**, which it was — the plan landed. t170 is the implementation,
+and the first thing it confirmed is that the operator's suspicion was right: nothing in `src/` did any
+of it.
+
+⛔ **Step 1 of the plan's order of work had an expiry date, and that is why it shipped first.**
+`mergeLocal` fast-forwards the trunk and then calls `retireBranch` → `git branch -D`. After that a
+task's commits are in the trunk's history with **nothing identifying which ones they are**:
+`LandingResult.commit` was logged and discarded and the base was never captured at all. Every task
+that landed before `landed_base_sha`/`landed_head_sha` existed is permanently unreviewable, and there
+is no backfill — `runs.trunk_sha_before` is read at *dispatch*, before the rebase, so it is not a
+parent of what landed and diffing from it would produce somebody else's changes. The resolution
+ladder therefore has three rungs and the third is a **refusal**: a review of the wrong commits is
+worse than no review, because it produces a number indistinguishable from a real one.
+
+⛔ **`runs.kind` was the riskiest part, and it was risky by breadth rather than depth.** 25 `from runs`
+references across seven files meant *work*, because work was the only thing a run could be. A review
+is a `runs` row — that is how `creditTurn` meters it and how the thread numbers it `#N Quality
+Review`, both of which already existed — so each site had to be visited. Three of them would have
+been quietly wrong: the estimator would have learned a task's cost from one-turn grades, `activeMs`
+would have counted grading as working, and `TASK_SELECT` would have reported the **reviewer's** model
+as the task's own on every reviewed row. Each has its own test now; that, not the column existing, is
+the acceptance criterion. ⚠️ `creditTurn` splits its two writes on `kind`: the run is charged (the
+operator asked for a review's price to be book-kept) and the task's budget is not, because that
+budget gates the task's own admission and a grade must not push the work over it.
+
+⚠️ **Blinding is exact on structured fields and best-effort on prose, and says which.** Measured over
+the last 60 commits on this branch: **37** carry a `Co-Authored-By:` trailer naming the model and
+**20** name an agent in the message body. Trailers, model ids, worker labels and vendor dotfile
+directories come out mechanically. A commit body explaining a codex-specific sandbox bug does not —
+redacting it produces a paragraph that no longer means anything, and the reviewer would score the
+redaction. So `blinding_leak` is stored, and a cross-agent comparison that has not excluded leaked
+reviews is not a clean comparison. ⚠️ The git author is *not* a leak: all 60 commits are authored by
+the operator.
+
+⭐ **The composite is the daemon's, never the judge's.** Holistic scoring is where LLM judges are
+least reliable on long agentic outputs, so no holistic number is asked for; the weighted mean is
+computed from the stored dimensions, which means changing a weight re-scores history instead of
+orphaning it. The 10-point scale ships with written anchors at 2/4/6/8/10 — the documented mitigation
+for the score-range drift a bare 10-point line invites — and the hand-calibrated worked example
+(`d31b2e9`, 8.6) is a test, so a weight change that moves it has to be deliberate.
+
+⛔ **Step 10 of the plan is not done and cannot be done from here: no review has ever been run.**
+Every cost figure in §9.1 of the plan is an estimate, and whether a small model can hold a
+seven-dimension rubric and produce non-clustered scores is unmeasured (R17). The experiment is one
+field on every record: review the same five tasks on the small and the large model of one provider
+and compare the spread. If the small model clusters everything at 7–8 it is not a judge and
+`REVIEW_MODELS` moves up a rung.

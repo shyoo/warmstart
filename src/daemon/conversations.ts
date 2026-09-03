@@ -57,6 +57,7 @@ interface RunRow {
   outcome: string | null
   started_warm: number | null
   model: string | null
+  kind: string | null
   tokens: number | null
 }
 
@@ -112,7 +113,7 @@ export function listConversations(opts: { projectId?: string; limit?: number } =
         // screens are where the full text belongs; here it would fill the row and say nothing.
         `select r.id as run_id, r.session_id, r.task_id, t.seq,
                 coalesce(t.title_summary, t.title) as title,
-                r.started_at, r.ended_at, r.outcome, r.started_warm, r.model,
+                r.started_at, r.ended_at, r.outcome, r.started_warm, r.model, r.kind,
                 r.input_tokens + r.output_tokens + r.cache_read_tokens + r.cache_write_tokens
                   as tokens
            from runs r join tasks t on t.id = r.task_id
@@ -140,7 +141,9 @@ export function listConversations(opts: { projectId?: string; limit?: number } =
       // rendering it as a cold start would put a measurement nobody took beside ones that were taken.
       startedWarm: r.started_warm === null ? null : r.started_warm === 1,
       tokens: r.tokens ?? 0,
-      model: r.model
+      model: r.model,
+      // ⚠️ Carried, not filtered. See `ConversationRun.kind`.
+      kind: (r.kind as ConversationRun['kind']) ?? 'work'
     }
     const tasksHere = bySession.get(r.session_id) ?? new Map<string, ConversationTask>()
     const existing = tasksHere.get(r.task_id)

@@ -1,6 +1,11 @@
 # Peer quality review — grading an agent's work, and storing the grade (2026-09-03)
 
-**Filed 2026-09-03 (t153). Plan only — nothing in `src/` implements any of this yet.**
+**Filed 2026-09-03 (t153) as a plan. ⭐ Implemented 2026-09-03 (t170) — steps 1-9 of §11 are in
+`src/`; step 10 (running one in flight) is the operator's, and R17 in §12 is still open.**
+⚠️ Two deviations from what is written below, both deliberate: the migration is **39**, not 35 (three
+landed in between), and the rubric weights live in `src/shared/review.ts` rather than
+`src/daemon/review.ts` because the thread renders each dimension beside the weight it carried and a
+second copy in the renderer would be a second thing to keep in step.
 Four design decisions were put to the operator and are recorded in §4. Everything measured here was
 measured in this worktree on 2026-09-03 against the repository at `da837d9`.
 

@@ -41,6 +41,7 @@ const info: AdapterInfo = {
     transports: ['stream'],
     // No sandbox, no approval flow, no permission callback.
     permissionModes: [],
+    readOnlyPermissionMode: null,
     classifierBackedAuto: false,
     approvalChannel: 'none',
     manualCompact: false,

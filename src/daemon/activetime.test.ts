@@ -158,14 +158,20 @@ function task(id: string, seq: number): void {
     .run(id, seq, T, T)
 }
 
-function run(id: string, taskId: string, startMin: number, endMin: number | null): void {
+function run(
+  id: string,
+  taskId: string,
+  startMin: number,
+  endMin: number | null,
+  kind: 'work' | 'quality_review' = 'work'
+): void {
   db.db()
     .prepare(
       `insert into runs (id, task_id, session_id, worker_id, started_at, ended_at, quota_unverified,
-                         input_tokens, output_tokens, cache_read_tokens, cache_write_tokens)
-       values (?,?,'s',?,?,?,0,0,0,0,0)`
+                         input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, kind)
+       values (?,?,'s',?,?,?,0,0,0,0,0,?)`
     )
-    .run(id, taskId, WORKER, at(startMin), endMin === null ? null : at(endMin))
+    .run(id, taskId, WORKER, at(startMin), endMin === null ? null : at(endMin), kind)
 }
 
 function question(id: string, runId: string, askedMin: number, patch: { answered?: number; parked?: number } = {}): void {
@@ -268,6 +274,28 @@ describe('reading the waits back out of the database', () => {
     const found = activetime.timingForTasks(['t1', 't2'], at(600))
     expect(found.get('t1')?.activeMs).toBe(10 * MIN)
     expect(found.get('t2')?.activeMs).toBe(20 * MIN)
+  })
+
+  /**
+   * ⛔ `activeMs` is *how long an agent worked on this task*, and grading the work is not working on
+   * it. A five-minute review would otherwise be added to the duration of the task it graded — on
+   * every per-agent and per-model duration derived from it, and only on the tasks somebody reviewed.
+   */
+  it('does not count a quality review as time spent working on the task', () => {
+    task('t1', 1)
+    run('r1', 't1', 0, 10)
+    run('r-review', 't1', 100, 140, 'quality_review')
+
+    expect(activetime.timingForTasks(['t1'], at(600)).get('t1')?.activeMs).toBe(10 * MIN)
+  })
+
+  it('reports a task whose only run is a review as never worked on', () => {
+    task('t1', 1)
+    run('r-review', 't1', 0, 40, 'quality_review')
+
+    const t = activetime.timingForTasks(['t1'], at(600)).get('t1')
+    expect(t?.activeMs).toBe(0)
+    expect(t?.activeSince).toBeNull()
   })
 
   it('answers for a task with no runs at all', () => {

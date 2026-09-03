@@ -104,6 +104,29 @@ describe('capability consequences, not capability fields', () => {
     }
   })
 
+  /**
+   * ⛔ **The gate that lets a reviewer stand in the operator's own trunk.** A quality review runs in
+   * the project root — not a pooled worktree — because a landed task's branch is gone and a review
+   * has to be able to read the code around the change. The one thing that makes standing there
+   * acceptable is that the CLI is in a mode that cannot write, and `null` is a real answer: an
+   * adapter with no such mode is never offered a review rather than being run in one that can edit.
+   */
+  it('every adapter names a read-only mode it actually has, or admits it has none', () => {
+    for (const a of ALL) {
+      const mode = a.info.capabilities.readOnlyPermissionMode
+      if (mode === null) continue
+      expect(a.info.capabilities.permissionModes, a.info.id).toContain(mode)
+    }
+  })
+
+  it('declares no read-only mode when it has no permission modes at all', () => {
+    for (const a of ALL) {
+      if (a.info.capabilities.permissionModes.length === 0) {
+        expect(a.info.capabilities.readOnlyPermissionMode, a.info.id).toBeNull()
+      }
+    }
+  })
+
   it('an adapter with no classifier defaults to a safe unattended mode', () => {
     // ⛔ No fake auto modes. Codex sandboxes to workspace-write; Antigravity skips TUI prompts for
     // headless execution in pooled worktrees governed by mandate and landing checks.

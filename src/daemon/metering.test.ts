@@ -360,6 +360,85 @@ describe('a turn metered from the stream winds the session cache clock', () => {
  * is also where the *second* bug lives — that same `result.usage` is cumulative over the whole
  * conversation, so crediting it once per turn bills every earlier turn again.
  */
+/**
+ * ⛔ **A grade must never push the work over its budget.** `creditTurn` charges the run *and* the
+ * task's `budget.spentTokens`, and that budget gates this task's own admission and overrun. A
+ * quality review is a run on the task by a different agent, so the two writes are split on `kind`:
+ * the run is charged (it really did spend those tokens, and the operator asked for that bookkeeping)
+ * and the task's budget is not.
+ */
+describe('a quality review is charged to its run and not to the task it grades', () => {
+  const REVIEWED = 'aaaaaaaa-0000-4000-8000-0000000000f1'
+  const REVIEW_SESSION = 'aaaaaaaa-0000-4000-8000-0000000000f2'
+  const WORK_SESSION = 'aaaaaaaa-0000-4000-8000-0000000000f3'
+  let tasks: typeof import('./tasks.js')
+
+  beforeAll(async () => {
+    tasks = await import('./tasks.js')
+    db.db()
+      .prepare(
+        `insert into tasks (id, seq, title, status, created_by_json, mandate_json, budget_json,
+                            created_at, updated_at)
+         values (?, 901, 'a reviewed task', 'completed', '{}', '{}', ?, ?, ?)`
+      )
+      .run(REVIEWED, JSON.stringify({ grantedTokens: 0, spentTokens: 0 }), Date.now(), Date.now())
+    for (const id of [WORK_SESSION, REVIEW_SESSION]) {
+      db.db()
+        .prepare(
+          `insert into sessions (id, worker_id, adapter_id, transport, cwd, state, started_at,
+                                 tokens_since_compact, purpose)
+           values (?,?,?,?,?,?,?,?,?)`
+        )
+        .run(id, WORKER, 'claude-code', 'stream', dir, 'live', Date.now(), 0, 'work')
+    }
+  })
+
+  const spent = (): number =>
+    (
+      JSON.parse(
+        (db.db().prepare('select budget_json b from tasks where id = ?').get(REVIEWED) as { b: string })
+          .b
+      ) as { spentTokens: number }
+    ).spentTokens
+
+  it('charges a work run to the task budget, as it always has', () => {
+    tasks.startRun({
+      taskId: REVIEWED,
+      workerId: WORKER,
+      sessionId: WORK_SESSION,
+      projectId: null,
+      quotaUnverified: false,
+      costModelId: null
+    })
+    tasks.creditTurn(WORK_SESSION, { input: 1000, output: 100, cacheRead: 0, cacheWrite: 0 })
+    expect(spent()).toBe(1100)
+  })
+
+  it('charges a review run to the run only, leaving the task budget where it was', () => {
+    const before = spent()
+    const run = tasks.startRun({
+      taskId: REVIEWED,
+      workerId: WORKER,
+      sessionId: REVIEW_SESSION,
+      projectId: null,
+      quotaUnverified: false,
+      costModelId: null,
+      kind: 'quality_review'
+    })
+    tasks.creditTurn(REVIEW_SESSION, { input: 50_000, output: 900, cacheRead: 0, cacheWrite: 0 })
+
+    // ⭐ The run carries it — the operator asked for a review's price to be book-kept.
+    const charged = db
+      .db()
+      .prepare('select input_tokens i, output_tokens o from runs where id = ?')
+      .get(run.id) as { i: number; o: number }
+    expect(charged.i).toBe(50_000)
+    expect(charged.o).toBe(900)
+    // ⛔ And the task's budget does not.
+    expect(spent()).toBe(before)
+  })
+})
+
 describe('creditStreamTurn uses contextTokens when provided, not usage.input', () => {
   const AGY_SESSION = 'eeeeeeee-0000-4000-8000-000000000001'
 

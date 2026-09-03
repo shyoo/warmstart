@@ -24,7 +24,7 @@ Everything else in the daemon goes through those two, so swapping the driver is 
 ## 2. The migration contract
 
 `MIGRATIONS` in `db.ts` is a numbered, **append-only** array. `MIGRATION_COUNT` is its length and is
-the `user_version` a current database sits at — **36** as of 2026-09-03.
+the `user_version` a current database sits at — **39** as of 2026-09-03.
 
 - ⛔ **Never edit a migration that has shipped.** Add the next one.
 - ⛔ **Every migration must survive being replayed.** `sessionstate.test.ts` rewinds `user_version`
@@ -60,11 +60,12 @@ the first. Both are required and `paths.test.ts` fails if either is removed.
 | `clock_events` | every cache-clock decision, including the no-ops | |
 | `compactions` | a compaction as an **ask** with a before and an after | a row that never landed stays visible |
 | `projects` | a directory plus policy | policy is committed in `.multi_agent_controller/project.json`; state is private |
-| `tasks` | the DAG | `status`, `kind`, `priority`, mandate, budget, the three inherited policies, `auto_compact`, `hold_until`, `quota_override_until`, `title_summary`, `resolve_retry_asked_at` |
+| `tasks` | the DAG | `status`, `kind`, `priority`, mandate, budget, the three inherited policies, `auto_compact`, `hold_until`, `quota_override_until`, `title_summary`, `resolve_retry_asked_at`, `landed_base_sha`/`landed_head_sha`, `quality_review_*` |
 | `task_deps` | prerequisite edges | cycle-checked on insert |
 | `task_messages` | the thread | `delivered_at` marks what has reached a session |
 | `attachments` | image metadata; bytes under `<dataDir>/attachments/` | `attachments.ts` is the only writer |
-| `runs` | one attempt of a task on one session | ⛔ never deleted — the estimator's training data. `adapter_id`, `model`, `quota_before/after_json`, `trunk_sha_before`, `prompt`, `started_warm`, `plan_id`/`plan_raw`/`plan_source` — ⛔ the plan is stamped, the price is derived on read by `src/daemon/price.ts` |
+| `runs` | one attempt of a task on one session | ⛔ never deleted — the estimator's training data. `adapter_id`, `model`, `quota_before/after_json`, `trunk_sha_before`, `prompt`, `started_warm`, `plan_id`/`plan_raw`/`plan_source`, **`kind`** — ⛔ the plan is stamped, the price is derived on read by `src/daemon/price.ts` |
+| `quality_reviews` | one peer grade of one task's diff | ⛔ every review kept, never replaced; `tasks.quality_review_id` points at the latest. `run_id` is the metering *and* the timeline entry |
 | `approvals` `approval_rules` | the permission gate and its remembered answers | |
 | `questions` | the third object: content answers, not allow/deny | born parked when the asker is gone |
 | `resources` `resource_claims` | the broker | claims are reconciled at startup |
@@ -150,6 +151,8 @@ rung is an additive key if it is ever wanted.
 | `ConsultStatus` | `pending` · `answered` · `fallback` · `failed` |
 | `ResourceKind` | `exclusive` · `counted` · `rate_limited` |
 | `SessionTransport` | `pty` · `stream` |
+| `RunKind` | `work` · `quality_review` — ⛔ **not descriptive.** Every query that means *work* says so, or a one-turn grade lands in the estimator's training data, in `activeMs`, and in the task's "what ran on it" |
+| `ReviewStatus` | `pending` · `complete` · `failed` · `refused` — ⚠️ `refused` means nothing was asked (no diff, no peer); `failed` means it was asked and the answer was unusable. Neither writes a score |
 
 ## 5. Adding a column — the checklist
 

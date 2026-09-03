@@ -116,6 +116,10 @@ measurement behind it, in [`docs/architecture.md`](docs/architecture.md) §4. Th
   [`src/daemon/worktrees.ts`](src/daemon/worktrees.ts), and a landing that landed nothing must not
   say it landed. A clean workspace is not evidence the work was done. The tool never writes a commit
   and never destroys work; what it declines to land surfaces under **Loose ends**.
+- **A quality review never grades its own author, and no path writes a score that could not name its
+  reviewer.** Excluded by *adapter*, not by account — one Claude grading another Claude is Claude
+  grading Claude. No eligible peer means no review; there is no self-graded variant. ⛔ Nothing gates
+  on the score.
 - **Cancel is not delete.** Cancel winds down into a resting state and destroys nothing. Delete is
   human-only, soft by default, and never removes runs.
 - **Agents work in a pooled worktree, never the trunk**, on a branch named for the *task*. ⛔ A slot

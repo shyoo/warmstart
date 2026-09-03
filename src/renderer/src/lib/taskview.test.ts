@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { Compaction, Project, Run, Task, TaskStatus } from '@shared/tasks'
 import type { ModelOptions, Worker } from '@shared/protocol'
+import type { QualityReview } from '@shared/review'
 import type { FleetEntry } from './daemon'
 import {
   FINISH_LABELS,
@@ -638,8 +639,8 @@ describe('model reassignment', () => {
 
 describe('timeline ordering for runs and compactions', () => {
   it('merges and sorts runs and compactions chronologically by timestamp', () => {
-    const run1 = { id: 'r1', startedAt: 1000 } as unknown as Run
-    const run2 = { id: 'r2', startedAt: 3000 } as unknown as Run
+    const run1 = { id: 'r1', startedAt: 1000, kind: 'work' } as unknown as Run
+    const run2 = { id: 'r2', startedAt: 3000, kind: 'work' } as unknown as Run
     const c1 = { id: 'c1', ts: 2000, askedAt: 2000 } as unknown as Compaction
     const c2 = { id: 'c2', ts: 4000, askedAt: 4000 } as unknown as Compaction
 
@@ -654,6 +655,24 @@ describe('timeline ordering for runs and compactions', () => {
 
   it('handles empty runs and compactions', () => {
     expect(chronologicalTimeline([], [])).toEqual([])
+  })
+
+  /**
+   * ⛔ A review is a `runs` row *and* a `quality_reviews` row — that is how its tokens get metered
+   * and how it earns a number in this list. Drawing both halves would put a `#N Run` on the task
+   * carrying the reviewer's model, which is exactly the lie the `kind = 'work'` filters exist to
+   * prevent one layer down.
+   */
+  it('draws a review once, from the review and never from its run', () => {
+    const work = { id: 'r1', startedAt: 1000, kind: 'work' } as unknown as Run
+    const reviewRun = { id: 'r2', startedAt: 2000, kind: 'quality_review' } as unknown as Run
+    const review = { id: 'q1', runId: 'r2', createdAt: 2000 } as unknown as QualityReview
+
+    const timeline = chronologicalTimeline([work, reviewRun], [], [review])
+    expect(timeline).toEqual([
+      { kind: 'run', run: work, ts: 1000 },
+      { kind: 'review', review, ts: 2000 }
+    ])
   })
 })
 

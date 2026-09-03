@@ -1,5 +1,6 @@
 import { resolveModelChoice, type Compaction, type Run, type Task } from '@shared/tasks'
 import type { ModelOptions, Session } from '@shared/protocol'
+import type { QualityReview } from '@shared/review'
 import type { FleetEntry } from './daemon'
 import { duration } from './format'
 import { modelLabel } from './modelname'
@@ -397,21 +398,31 @@ export function dependencyTooltip(
 export type TimelineItem =
   | { kind: 'run'; run: Run; ts: number }
   | { kind: 'compaction'; compaction: Compaction; ts: number }
+  | { kind: 'review'; review: QualityReview; ts: number }
 
 /**
- * Merges runs and compactions into a single chronological timeline (oldest first, newest last).
+ * Merges runs, compactions and quality reviews into one chronological timeline (oldest first).
+ *
+ * ⛔ **A review is one entry, not two.** It *is* a `runs` row — that is how its tokens are metered
+ * and how it earns a number in this list — so the run half is filtered out here and the review half
+ * rendered instead. Without the filter every review would appear twice, once as `#N Run` with a
+ * reviewer's model on somebody else's task.
  */
 export function chronologicalTimeline(
   runs: Run[] = [],
-  compactions: Compaction[] = []
+  compactions: Compaction[] = [],
+  reviews: QualityReview[] = []
 ): TimelineItem[] {
   const items: TimelineItem[] = [
-    ...runs.map((r) => ({ kind: 'run' as const, run: r, ts: r.startedAt })),
+    ...runs
+      .filter((r) => r.kind === 'work')
+      .map((r) => ({ kind: 'run' as const, run: r, ts: r.startedAt })),
     ...compactions.map((c) => ({
       kind: 'compaction' as const,
       compaction: c,
       ts: c.askedAt ?? c.ts
-    }))
+    })),
+    ...reviews.map((r) => ({ kind: 'review' as const, review: r, ts: r.createdAt }))
   ]
   return items.sort((a, b) => a.ts - b.ts)
 }

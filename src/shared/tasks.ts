@@ -480,6 +480,35 @@ export interface Task {
    * ⚠️ Null until something has run, and null on a run whose session never learned a model.
    */
   ranModel: string | null
+  /**
+   * The commit range this task landed, recorded at the moment the landing knew it.
+   *
+   * ⛔ **The only record that survives the branch.** `mergeLocal` fast-forwards the trunk and then
+   * deletes the branch; after that the task's commits are in the trunk's history and nothing
+   * identifies which ones they are. These two SHAs are what `git diff base..head` needs, and after a
+   * fast-forward both stay reachable from the trunk forever.
+   *
+   * ⚠️ Null on every task that landed before this was recorded, and that is not repairable —
+   * `runs.trunkShaBefore` is read at *dispatch*, before the rebase, so it is not a parent of the
+   * landed commits. A reader that cannot resolve a range refuses rather than guessing: a review of
+   * the wrong commits is worse than no review, because it produces a number that looks real.
+   */
+  landedBaseSha: string | null
+  landedHeadSha: string | null
+  /**
+   * The latest quality review of this task, denormalised for the table.
+   *
+   * ⛔ **The only denormalisation in this feature**, and it is paid for: the task table sorts and
+   * filters over hundreds of rows, and a join per row on every keystroke of the filter box is a real
+   * cost. All four fields are written by `recordReview` and by nothing else.
+   *
+   * ⚠️ `null` means *not reviewed*, which is a different thing from *reviewed and scored zero*.
+   */
+  qualityReviewId: string | null
+  qualityScore: number | null
+  qualityReviewedAt: number | null
+  /** The reviewer's adapter id. ⛔ Never the subject's — a review never grades its own author. */
+  qualityReviewer: string | null
   deletedAt: number | null
   createdAt: number
   updatedAt: number
@@ -512,11 +541,23 @@ export interface TaskConstraints {
 }
 
 /** One attempt of a task on one session. Runs are what the estimator learns from. */
+/**
+ * What a run *was*, which until 2026-09-03 was always the same answer.
+ *
+ * ⛔ A quality review is a `runs` row so that it is metered by the one path that meters runs and
+ * numbered by the one timeline that numbers them. That makes this discriminator load-bearing rather
+ * than descriptive: every query that means *work* — the estimator's training data, a task's "what
+ * ran on it", `activeMs` — has to say so, or a one-turn grade contaminates a number every gate reads.
+ */
+export type RunKind = 'work' | 'quality_review'
+
 export interface Run {
   id: string
   taskId: string
   sessionId: string | null
   workerId: string
+  /** ⚠️ `'work'` on every row written before the column existed, which is what they all were. */
+  kind: RunKind
   startedAt: number
   endedAt: number | null
   outcome: RunOutcome | null
@@ -1525,6 +1566,14 @@ export interface LandingResult {
   strategy: LandingStrategyId
   ok: boolean
   commit?: string
+  /**
+   * The commit the landed work sits on top of — the other half of a reviewable range.
+   *
+   * ⛔ Captured *after* the rebase and beside `commit`, because that is the only moment both are
+   * known. Without it a landed task's diff is unrecoverable the instant `retireBranch` runs, which
+   * it does on every successful merge-local and auto-land. See `Task.landedBaseSha`.
+   */
+  base?: string
   branch?: string
   prUrl?: string
   /** Why it fell back or refused. Always populated when `ok` is false. */

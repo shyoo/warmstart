@@ -154,6 +154,7 @@ const info: AdapterInfo = {
     // Measured from `agy --help`: `--mode` accepts accept-edits and plan; `--dangerously-skip-
     // permissions` is separate. `default` means "the settings file decides".
     permissionModes: ['default', 'accept-edits', 'plan', 'dangerously-skip-permissions'],
+    readOnlyPermissionMode: 'plan',
     classifierBackedAuto: false,
     approvalChannel: 'settings_rules',
     manualCompact: false,

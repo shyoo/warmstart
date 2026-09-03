@@ -12,7 +12,14 @@ import type {
 } from '@shared/tasks.js'
 import { policyFor } from './projects.js'
 import { claim, landResourceId, openClaims, release, upsertResource } from './resources.js'
-import { addDependency, addMessage, getTask, mandateAllows, setStatus } from './tasks.js'
+import {
+  addDependency,
+  addMessage,
+  getTask,
+  mandateAllows,
+  recordLandedRange,
+  setStatus
+} from './tasks.js'
 import { landedRef, rescueAtTip } from './worktrees.js'
 import { launchArgs, which } from './which.js'
 import { log } from './log.js'
@@ -328,6 +335,31 @@ export async function abortRebase(workspacePath: string): Promise<void> {
  * business: another worktree still holds the branch, or the workspace has been taken away. A branch
  * that outlives its task is untidy; a finish that reports failure because of it is wrong.
  */
+/**
+ * Resolve a ref to a full SHA, or `null` when it does not resolve.
+ *
+ * ⚠️ Null rather than a throw, and every caller treats it as *"this landing recorded no reviewable
+ * range"*. Failing a landing that otherwise worked because a bookkeeping read did not is the wrong
+ * trade: the work is on the trunk either way, and the review that cannot be run later refuses on
+ * its own terms with a sentence saying why.
+ */
+async function revParse(cwd: string, ref: string): Promise<string | null> {
+  try {
+    return await git(cwd, ['rev-parse', `${ref}^{commit}`])
+  } catch {
+    return null
+  }
+}
+
+/** The commit two refs diverged from. Same null-not-throw contract as `revParse`. */
+async function mergeBase(cwd: string, a: string, b: string): Promise<string | null> {
+  try {
+    return await git(cwd, ['merge-base', a, b])
+  } catch {
+    return null
+  }
+}
+
 async function retireBranch(cwd: string, branch: string): Promise<boolean> {
   try {
     if ((await git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'])) === branch) {
@@ -593,6 +625,11 @@ export const mergeLocal: LandingStrategy = {
       }
 
       const commit = await git(ctx.workspacePath, ['rev-parse', 'HEAD'])
+      // ⛔ Resolved *after* the rebase, which is the only moment it is the parent of what lands.
+      // `runs.trunk_sha_before` is the same idea read at dispatch and is a different commit; the
+      // whole point of recording this pair is that `retireBranch` below makes the branch unavailable
+      // and nothing else identifies the task's commits afterwards. See `Task.landedBaseSha`.
+      const baseSha = await revParse(ctx.workspacePath, base)
 
       // ⛔ The trunk has to be clean and on the target. Anything else and the work stays on its
       // branch with a sentence naming what is in the way, because the alternative is editing a
@@ -632,6 +669,7 @@ export const mergeLocal: LandingStrategy = {
         strategy: 'merge-local',
         ok: true,
         commit,
+        ...(baseSha ? { base: baseSha } : {}),
         branch: ctx.branch,
         reason: `merged into local \`${target}\` as ${commit.slice(0, 8)}. Not pushed.`
       }
@@ -851,6 +889,9 @@ export const autoLand: LandingStrategy = {
       }
 
       const commit = await git(ctx.workspacePath, ['rev-parse', 'HEAD'])
+      // ⛔ After the rebase, for the reason `mergeLocal` states: `retireBranch` below is about to
+      // make this range unrecoverable any other way.
+      const baseSha = await revParse(ctx.workspacePath, base)
 
       if (remote) {
         await git(ctx.workspacePath, ['push', 'origin', `HEAD:${target}`])
@@ -869,6 +910,7 @@ export const autoLand: LandingStrategy = {
         strategy: 'auto-land',
         ok: true,
         commit,
+        ...(baseSha ? { base: baseSha } : {}),
         checkOutput: checks.output,
         // ⚠️ Carried on the *success* too, because "it landed, after waiting for t26" is the sentence
         // the operator who started both tasks needs, and it is the only evidence that the queue ran.
@@ -937,6 +979,10 @@ export const pullRequest: LandingStrategy = {
       await git(ctx.workspacePath, ['push', '--set-upstream', 'origin', ctx.branch])
 
       const commit = await git(ctx.workspacePath, ['rev-parse', 'HEAD'])
+      // ⚠️ A merge base rather than the target's tip: this strategy does not rebase, so the target
+      // may carry commits this branch does not. The merge base is the commit the branch actually
+      // diverged from, which is the range a reviewer wants either way.
+      const baseSha = await mergeBase(ctx.workspacePath, policy.landingTarget, 'HEAD')
       const title = `t${ctx.task.seq}: ${ctx.task.title}`.slice(0, 120)
       const body = [
         ctx.task.handoffNote ? `${ctx.task.handoffNote}\n` : '',
@@ -976,6 +1022,7 @@ export const pullRequest: LandingStrategy = {
         strategy: 'pull-request',
         ok: true,
         commit,
+        ...(baseSha ? { base: baseSha } : {}),
         branch: ctx.branch,
         ...(prUrl ? { prUrl } : {})
       }
@@ -1158,6 +1205,11 @@ export async function landTask(ctx: LandingContext): Promise<LandingResult> {
       holdReason: `landing failed: ${result.reason}`
     })
   } else {
+    // ⛔ **Written here, on the one path every strategy's success goes through.** The branch this
+    // range names has usually just been deleted by `retireBranch`, and after that nothing else in
+    // the system can say which commits on the trunk were this task's. A task that lands without
+    // this recorded is permanently unreviewable — there is no backfill, only a refusal later.
+    recordLandedRange(ctx.task.id, result.base ?? null, result.commit ?? null)
     addMessage(
       ctx.task.id,
       'system',

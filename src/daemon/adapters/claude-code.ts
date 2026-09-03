@@ -22,6 +22,7 @@ const info: AdapterInfo = {
   capabilities: {
     transports: ['pty', 'stream'],
     permissionModes: ['default', 'manual', 'acceptEdits', 'plan', 'auto', 'dontAsk', 'bypassPermissions'],
+    readOnlyPermissionMode: 'plan',
     classifierBackedAuto: true,
     approvalChannel: 'permission_prompt_tool',
     manualCompact: true,

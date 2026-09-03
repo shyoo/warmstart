@@ -224,6 +224,11 @@ function loadSamples(): Sample[] {
                 (input_tokens + output_tokens + cache_read_tokens + cache_write_tokens) as total
            from runs
           where outcome = 'completed'
+            -- ⛔ Work only. A quality review is a cheap one-turn run on somebody else's task, and
+            -- folding it into the median for "what does a task cost on this agent" would corrupt
+            -- the number every routing, overrun and admission gate reads — downward, and by more
+            -- the more the feature is used.
+            and kind = 'work'
             and (input_tokens + output_tokens + cache_read_tokens + cache_write_tokens) > 0
           order by started_at desc
           limit ?`
@@ -268,7 +273,7 @@ function fingerprint(): string {
       `select count(*) as n,
               coalesce(max(ended_at), 0) as last,
               coalesce(sum(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens), 0) as spend
-         from runs where outcome = 'completed'`
+         from runs where outcome = 'completed' and kind = 'work'`
     )
     .get() as { n: number; last: number; spend: number }
   return `${row.n}:${row.last}:${row.spend}`
@@ -537,7 +542,7 @@ export function overrunFactor(runId: string): number | null {
               r.started_warm, r.input_tokens, r.output_tokens, r.cache_read_tokens,
               r.cache_write_tokens,
               (r.input_tokens + r.output_tokens + r.cache_read_tokens + r.cache_write_tokens) as total
-         from runs r where r.id = ?`
+         from runs r where r.id = ? and r.kind = 'work'`
     )
     .get(runId) as (SampleRow & { task_id: string | null }) | undefined
   if (!run?.task_id || run.total <= 0) return null
