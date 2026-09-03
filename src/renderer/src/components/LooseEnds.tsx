@@ -2,6 +2,10 @@ import { useCallback, useEffect, useState } from 'react'
 import type { LooseEnd } from '@shared/tasks'
 import { rpc, useDaemonEvents } from '../lib/daemon'
 
+// The overview unmounts while another page is open. Keep the last confirmed scan at module scope so
+// returning to it does not briefly erase the decisions the operator was just reading.
+let previousEnds: LooseEnd[] | null = null
+
 /**
  * Work that exists and is going nowhere.
  *
@@ -20,17 +24,23 @@ import { rpc, useDaemonEvents } from '../lib/daemon'
  * ⛔ Nothing here destroys anything. Land it, file a task to deal with it, or say you already know.
  */
 export function LooseEnds(): React.JSX.Element | null {
-  const [ends, setEnds] = useState<LooseEnd[] | null>(null)
+  const [ends, setEnds] = useState<LooseEnd[] | null>(previousEnds)
+  const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
   const [note, setNote] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
+    setLoading(true)
     try {
-      setEnds(await rpc('looseend.list'))
+      const next = await rpc('looseend.list')
+      previousEnds = next
+      setEnds(next)
     } catch {
       // ⚠️ Silent. A repository this cannot read is not a reason to take the Overview down, and the
       // scan runs against every project's whole pool on a page that is otherwise always available.
-      setEnds([])
+      if (previousEnds === null) setEnds([])
+    } finally {
+      setLoading(false)
     }
   }, [])
 
@@ -56,7 +66,8 @@ export function LooseEnds(): React.JSX.Element | null {
 
   // ⚠️ Absent rather than empty. A permanent "nothing to see" card on the fleet's front page trains
   // people to skip the region it lives in, which is the one place this needs to be noticed.
-  if (!ends || ends.length === 0) return null
+  if (!ends && !loading) return null
+  if (ends?.length === 0 && !loading) return null
 
   return (
     <div className="panel">
@@ -69,11 +80,12 @@ export function LooseEnds(): React.JSX.Element | null {
             discarded, and nothing on this page discards anything.
           </p>
         </div>
+        {loading && <span className="loose-ends-loading" role="status">Refreshing…</span>}
       </header>
 
       {note && <div className="notice">{note}</div>}
 
-      <table className="tbl">
+      {ends && ends.length > 0 && <table className="tbl tbl-loose-ends">
         <thead>
           <tr>
             <th>What</th>
@@ -100,7 +112,7 @@ export function LooseEnds(): React.JSX.Element | null {
                   {end.kind === 'unlanded' && end.taskSeq !== null && (
                     <button
                       type="button"
-                      className="btn"
+                      className="btn btn--ok"
                       disabled={busy !== null}
                       onClick={() =>
                         void act(async () => {
@@ -121,7 +133,7 @@ export function LooseEnds(): React.JSX.Element | null {
                   {end.kind === 'stranded' && end.branch !== null && (
                     <button
                       type="button"
-                      className="btn"
+                      className="btn btn--danger"
                       disabled={busy !== null}
                       onClick={() =>
                         void act(async () => {
@@ -139,7 +151,7 @@ export function LooseEnds(): React.JSX.Element | null {
                   )}
                   <button
                     type="button"
-                    className="btn"
+                    className="btn btn--primary"
                     disabled={busy !== null}
                     onClick={() =>
                       void act(async () => {
@@ -153,7 +165,7 @@ export function LooseEnds(): React.JSX.Element | null {
                   </button>
                   <button
                     type="button"
-                    className="btn btn--ghost"
+                    className="btn"
                     disabled={busy !== null}
                     onClick={() =>
                       void act(async () => {
@@ -170,7 +182,7 @@ export function LooseEnds(): React.JSX.Element | null {
             </tr>
           ))}
         </tbody>
-      </table>
+      </table>}
     </div>
   )
 }

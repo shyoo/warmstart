@@ -13,7 +13,7 @@ import {
 import { db, rows } from './db.js'
 import { log } from './log.js'
 import { listProjects, policyFor } from './projects.js'
-import { mandateAllows } from './tasks.js'
+import { listTasks, mandateAllows } from './tasks.js'
 import type { MergeReading } from './landing.js'
 import { ensurePool, taskBranches, workspaceState } from './worktrees.js'
 import type { WorkspaceState } from './worktrees.js'
@@ -396,9 +396,47 @@ export async function scanLooseEnds(): Promise<LooseEnd[]> {
     }
     // ⚠️ Deduplicated by id: the stash entry is per repository and every member reports it.
     const seen = new Set<string>()
+    // A loose end is the clean-up left *after* a task stopped.  A live task owns its workspace and
+    // branch while it works; showing that work here races the task pane and offers clean-up actions
+    // before the task is done.  Branch names carry the task sequence, so resolve that evidence from
+    // the durable task row rather than inferring state from the worktree's current contents.
+    const closedTaskSeqs = new Set(
+      listTasks({ projectId: project.id })
+        .filter((task) => task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled')
+        .map((task) => task.seq)
+    )
     for (const path of members) {
       const state = await workspaceState(path, policy.landingTarget)
-      for (const end of looseEndsIn(project, state)) {
+      const taskSeq = taskSeqFromBranch(state.branch)
+      const closedStashes = (state.stashBranches ?? []).filter((branch) => {
+        const stashTaskSeq = taskSeqFromBranch(branch)
+        return stashTaskSeq !== null && closedTaskSeqs.has(stashTaskSeq)
+      })
+      // A parked pool member is normally detached, so its `branch` cannot be used to attribute a
+      // stash.  Git's stash subject can; emit that repository-wide row independently and let `seen`
+      // collapse the identical reading from the other pool members.
+      if (closedStashes.length > 0) {
+        for (const end of looseEndsIn(project, {
+          ...state,
+          branch: null,
+          dirtyFiles: [],
+          untrackedFiles: [],
+          unlandedCommits: 0,
+          stashes: closedStashes.length
+        })) {
+          if (seen.has(end.id) || dismissed.has(end.id)) continue
+          seen.add(end.id)
+          found.push(end)
+        }
+      }
+      // `looseEndsIn` is intentionally also used as a pure unit-tested description of a workspace.
+      // Narrow the scan here, where task lifecycle evidence is available.
+      const scopedState = {
+        ...state,
+        stashes: 0
+      }
+      if (taskSeq === null || !closedTaskSeqs.has(taskSeq)) continue
+      for (const end of looseEndsIn(project, scopedState)) {
         if (seen.has(end.id) || dismissed.has(end.id)) continue
         seen.add(end.id)
         found.push(end)
@@ -413,7 +451,7 @@ export async function scanLooseEnds(): Promise<LooseEnd[]> {
     // only trace either of them left was an *absent* sentence in a finish message.
     for (const branch of await taskBranches(project, policy.landingTarget)) {
       // ⚠️ `-1` is "git could not measure it", not "nothing on it". Neither reported nor retired.
-      if (branch.ahead < 0) continue
+      if (branch.ahead < 0 || branch.taskSeq === null || !closedTaskSeqs.has(branch.taskSeq)) continue
       const end: LooseEnd = {
         projectId: project.id,
         projectName: project.name,

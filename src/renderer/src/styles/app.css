@@ -1381,6 +1381,47 @@ body {
   padding-right: 0;
 }
 
+/* Loose Ends is a short list of deliberate choices. Keep the choices in one row: wrapping a
+   destructive action below a different row's content makes it far too easy to read it as belonging
+   to the wrong leftover. */
+.tbl-loose-ends th:last-child,
+.tbl-loose-ends td:last-child {
+  width: 1%;
+  white-space: nowrap;
+}
+
+.tbl-loose-ends .tbl-actions {
+  flex-wrap: nowrap;
+  gap: var(--sp-1);
+}
+
+.tbl-loose-ends .btn {
+  margin-left: 0;
+}
+
+.loose-ends-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  color: var(--color-text-dim);
+  font-size: var(--text-meta);
+  white-space: nowrap;
+}
+
+.loose-ends-loading::before {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--color-border-strong);
+  border-top-color: var(--color-accent);
+  border-radius: 50%;
+  content: '';
+  animation: loose-ends-spin 0.75s linear infinite;
+}
+
+@keyframes loose-ends-spin {
+  to { transform: rotate(360deg); }
+}
+
 /* ⚠️ Two arrows stacked in a narrow column, not a row: side by side they wrapped the header cell
    and pushed the Worker column narrower than its isolation path. */
 .tbl-order {

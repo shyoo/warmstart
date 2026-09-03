@@ -653,6 +653,11 @@ export interface WorkspaceState {
   targetBehind: number
   /** Stashes taken in this repository. ⚠️ Shared across the pool - the object store is one. */
   stashes: number
+  /**
+   * Task branches named by Git in those stashes.  A stash is repository-wide, but the task it
+   * preserves is not: this lets the loose-ends scan omit work for a task that is still live.
+   */
+  stashBranches?: string[]
 }
 
 /**
@@ -838,7 +843,8 @@ export async function workspaceState(path: string, target: string): Promise<Work
     unlandedCommits: 0,
     landedRef: target,
     targetBehind: 0,
-    stashes: 0
+    stashes: 0,
+    stashBranches: []
   }
   if (!existsSync(path)) return state
 
@@ -899,7 +905,14 @@ export async function workspaceState(path: string, target: string): Promise<Work
   }
 
   try {
-    state.stashes = (await git(path, ['stash', 'list'])).split(/\r?\n/).filter(Boolean).length
+    const stashes = (await git(path, ['stash', 'list', '--format=%gs']))
+      .split(/\r?\n/)
+      .filter(Boolean)
+    state.stashes = stashes.length
+    state.stashBranches = stashes.flatMap((subject) => {
+      const match = /^(?:On|WIP on) (.+?):/.exec(subject)
+      return match?.[1] ? [match[1]] : []
+    })
   } catch {
     // No stash ref yet.
   }
