@@ -271,6 +271,9 @@ function WorkerCard({
   const { stale } = quotaFreshness(quota, now)
   const windows = quota?.windows ?? []
   const suspect = worker.health?.state === 'suspect' ? worker.health : null
+  const subscriptionExpired =
+    isWorkerSubscriptionExpired(worker) ||
+    /subscription.*expired|disabled claude subscription access/i.test(quota?.error ?? '')
 
   const maxDisplay = 3
   const gauged = gaugedSessions(sessions)
@@ -361,17 +364,16 @@ function WorkerCard({
         </div>
       )}
 
-      {windows.length === 0 ? (
+      {subscriptionExpired ? (
+        <div className="wcard-unknown wcard-unknown--expired">
+          <span className="dot dot--bad" />
+          Subscription expired
+        </div>
+      ) : windows.length === 0 ? (
         !suspect && (
-          <div
-            className={`wcard-unknown${isSubscriptionExpired || /subscription.*expired|disabled claude subscription access/i.test(quota?.error ?? '') ? ' wcard-unknown--expired' : ''}`}
-          >
-            <span
-              className={`dot ${isSubscriptionExpired || /subscription.*expired|disabled claude subscription access/i.test(quota?.error ?? '') ? 'dot--bad' : 'dot--down'}`}
-            />
-            {isSubscriptionExpired || /subscription.*expired|disabled claude subscription access/i.test(quota?.error ?? '')
-              ? 'Subscription expired'
-              : 'quota unknown'}
+          <div className="wcard-unknown">
+            <span className="dot dot--down" />
+            quota unknown
           </div>
         )
       ) : (

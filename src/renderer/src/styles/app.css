@@ -991,6 +991,11 @@ body {
  * a small one, and should not scan as a value in a column of values.
  */
 .price {
+  /* Money is scanned against a decimal point, not aligned like the transcript-derived token counts
+     below it. The UI face makes 0 and 8 distinct at the small table size. */
+  font-family: var(--font-ui);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
   white-space: nowrap;
 }
 

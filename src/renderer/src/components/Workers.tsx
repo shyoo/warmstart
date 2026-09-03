@@ -589,7 +589,11 @@ export function Workers({
                         lines and dragged the row down with them. A line each is both shorter and
                         the shape the numbers are actually compared in: window against window. */}
                     <td className="num">
-                      {reading && reading.windows.length > 0 ? (
+                      {gap ? (
+                        <span className={gap.label.toLowerCase().includes('expired') ? 'danger' : 'warn'} title={gap.hint}>
+                          {gap.label}
+                        </span>
+                      ) : reading && reading.windows.length > 0 ? (
                         <>
                           <div className={`quota-windows${reading.stale ? ' dim' : ''}`}>
                             {reading.windows.map((w) => (
@@ -604,16 +608,12 @@ export function Workers({
                               the two need different next moves from the operator. A reading that is
                               old *because every check failed* is the fault, and it says so. */}
                           {readingIsOld && (
-                            <div className={reading.error ? 'warn tbl-sub' : 'dim tbl-sub'} title={gap?.hint}>
+                            <div className={reading.error ? 'warn tbl-sub' : 'dim tbl-sub'} title={reading.error ?? undefined}>
                               read {age(reading.ageMs)}
                               {reading.error ? ' · last check failed' : ''}
                             </div>
                           )}
                         </>
-                      ) : gap ? (
-                        <span className={gap.label.toLowerCase().includes('expired') ? 'danger' : 'warn'} title={gap.hint}>
-                          {gap.label}
-                        </span>
                       ) : null}
                     </td>
                     {/* ⭐ Editable, because the daemon has enforced this number since M1 and nothing

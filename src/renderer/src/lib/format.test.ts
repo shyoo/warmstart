@@ -163,6 +163,11 @@ describe('a provider that has no usage probe at all', () => {
 })
 
 describe('an account whose subscription has expired', () => {
+  it('outranks a historical quota reading', () => {
+    const gap = quotaGap({ windows: [{}], error: 'Subscription expired', ageMs: 2 * 3600_000, stale: true })
+    expect(gap?.label).toBe('Subscription expired')
+  })
+
   it('says Subscription expired when quota error indicates expired subscription', () => {
     const gap = quotaGap({ windows: [], error: 'Subscription expired' })
     expect(gap?.label).toBe('Subscription expired')
