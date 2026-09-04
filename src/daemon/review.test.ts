@@ -99,6 +99,13 @@ describe('parsing a reviewer’s reply', () => {
     expect(composite(parsed.scores)).toBe(8)
   })
 
+  it('rejects a verdict for a different rubric version', () => {
+    const parsed = parseReviewReply({ ...good, rubric_version: '1.1' })
+    expect(parsed.ok).toBe(false)
+    if (parsed.ok) return
+    expect(parsed.reason).toContain('expected 1.0')
+  })
+
   it('accepts a null score, which is how "this dimension does not apply" is said', () => {
     const parsed = parseReviewReply({
       ...good,

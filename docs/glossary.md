@@ -391,12 +391,14 @@ on the score** — no task changes status, no routing decision reads it, the est
 review run. It is an *instrument*. A review is a `runs` row with `kind: 'quality_review'`, which is
 how its tokens are metered and how it earns its `#N Quality Review` line in the thread.
 
-**Rubric** — the seven dimensions a review scores 0–10, with **written anchors at 2/4/6/8/10** so a 7
+**Rubric** — a versioned definition of the seven dimensions a review scores 0–10, with **written anchors at 2/4/6/8/10** so a 7
 means the same thing twice. Requirement fidelity and correctness carry 40% between them; codebase fit
 carries 15% and never more. ⛔ The headline **composite** is a weighted mean the daemon computes from
-the stored dimensions — never a holistic number the judge is asked for — so changing a weight
-re-scores history rather than orphaning it. Weights and dimensions are published in
-`src/shared/review.ts`. ⚠️ A dimension that does not apply scores `null`, not 0, and the mean
+the stored dimensions using the review's stored rubric version — never a holistic number the judge
+is asked for. Weights and labels in `src/shared/review.ts` and prompt anchors in
+`src/daemon/review.ts` are append-only (`1.0`, `1.1`, …), so a later rubric change cannot reinterpret
+history. A task's displayed quality is the arithmetic mean of all
+its completed, scored reviews; failed/refused reviews do not enter it. ⚠️ A dimension that does not apply scores `null`, not 0, and the mean
 renormalises over what was scored.
 
 **Subject agent** — *who is being graded.* The adapter of the **last non-failed work run**, stored on

@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { Task } from '@shared/tasks.js'
+import { RUBRIC_DIMENSIONS, type DimensionScore, type RubricDimension } from '@shared/review.js'
 
 /**
  * Who is allowed to grade whom.
@@ -108,11 +109,11 @@ describe('picking a reviewer', () => {
     worker(CLAUDE_A, 'ClaudeFirst', 'claude-code')
     worker(CODEX, 'CodexFirst', 'openai-compatible')
     worker(AGY, 'AgyFirst', 'antigravity-cli')
-    // Codex started it; Claude finished it. Neither may grade it.
-    workRun(CODEX, 'openai-compatible', 'gpt-5.6-terra')
+    // Antigravity started it; Claude finished it. Neither may grade it.
+    workRun(AGY, 'antigravity-cli', 'gemini-3.7-flash-medium')
     workRun(CLAUDE_A, 'claude-code', 'claude-opus-5')
 
-    expect(reviewer.pickReviewer(task()).worker?.adapterId).toBe('antigravity-cli')
+    expect(reviewer.pickReviewer(task()).worker?.adapterId).toBe('openai-compatible')
   })
 
   it('names every rejection when nothing is left, rather than saying "unavailable"', () => {
@@ -150,20 +151,36 @@ describe('picking a reviewer', () => {
     worker(CLAUDE_A, 'ClaudeFirst', 'claude-code')
     worker(CODEX, 'CodexFirst', 'openai-compatible')
     worker(AGY, 'AgyFirst', 'antigravity-cli')
-    workRun(CLAUDE_A, 'claude-code', 'claude-opus-5')
+    workRun(AGY, 'antigravity-cli', 'gemini-3.7-flash-medium')
 
-    // Codex has already graded three of this subject's tasks; Antigravity has graded none.
+    // Codex has already graded three of this subject's tasks; Claude has graded none.
     for (let i = 0; i < 3; i += 1) {
       db.db()
         .prepare(
           `insert into quality_reviews (id, task_id, run_id, reviewer_worker_id, reviewer_adapter,
-                                        subject_adapter, status, rubric_version, created_at)
-           values (?,?,'r',?,'openai-compatible','claude-code','complete','1.0',?)`
+                                          subject_adapter, status, rubric_version, created_at)
+             values (?,?,'r',?,'openai-compatible','antigravity-cli','complete','1.0',?)`
         )
         .run(`q${i}`, TASK, CODEX, Date.now())
     }
 
-    expect(reviewer.pickReviewer(task()).worker?.adapterId).toBe('antigravity-cli')
+    expect(reviewer.pickReviewer(task()).worker?.adapterId).toBe('claude-code')
+  })
+
+  it('rotates repeated reviews of one task before reusing a reviewer adapter', () => {
+    worker(CLAUDE_A, 'ClaudeFirst', 'claude-code')
+    worker(CODEX, 'CodexFirst', 'openai-compatible')
+    worker(AGY, 'AgyFirst', 'antigravity-cli')
+    workRun(AGY, 'antigravity-cli', 'gemini-3.7-flash-medium')
+    db.db()
+      .prepare(
+        `insert into quality_reviews (id, task_id, run_id, reviewer_worker_id, reviewer_adapter,
+                                      subject_adapter, status, rubric_version, created_at)
+         values ('prior',?,'r',?,'openai-compatible','antigravity-cli','complete','1.0',?)`
+      )
+      .run(TASK, CODEX, Date.now())
+
+    expect(reviewer.pickReviewer(task()).worker?.adapterId).toBe('claude-code')
   })
 
   it('ignores a failed run when working out who did the work', () => {
@@ -174,6 +191,62 @@ describe('picking a reviewer', () => {
     workRun(CLAUDE_A, 'claude-code', 'claude-opus-5')
 
     expect(reviewer.pickReviewer(task()).worker?.adapterId).toBe('openai-compatible')
+  })
+})
+
+describe('the task headline', () => {
+  it('averages every completed scored review and keeps the review count', async () => {
+    const review = await import('./review.js')
+    const tasks = await import('./tasks.js')
+    worker(CODEX, 'CodexFirst', 'openai-compatible')
+    const scores = (score: number): Record<RubricDimension, DimensionScore> =>
+      Object.fromEntries(
+        RUBRIC_DIMENSIONS.map((dimension) => [
+          dimension,
+          { score, rationale: 'measured in the committed diff' }
+        ])
+      ) as Record<RubricDimension, DimensionScore>
+    const first = review.createPendingReview({
+      taskId: TASK,
+      runId: 'review-run-1',
+      reviewerWorkerId: CODEX,
+      reviewerAdapter: 'openai-compatible',
+      reviewerModel: 'gpt-5.4-mini',
+      subjectAdapter: 'claude-code',
+      subjectModel: 'claude-opus-5',
+      authorship: [],
+      mixed: false,
+      diff: null,
+      blindingLeak: false
+    })
+    review.completeReview(first.id, {
+      ok: true,
+      scores: scores(6),
+      summary: 'first',
+      notable: []
+    })
+    const second = review.createPendingReview({
+      taskId: TASK,
+      runId: 'review-run-2',
+      reviewerWorkerId: CODEX,
+      reviewerAdapter: 'openai-compatible',
+      reviewerModel: 'gpt-5.4-mini',
+      subjectAdapter: 'claude-code',
+      subjectModel: 'claude-opus-5',
+      authorship: [],
+      mixed: false,
+      diff: null,
+      blindingLeak: false
+    })
+    review.completeReview(second.id, {
+      ok: true,
+      scores: scores(10),
+      summary: 'second',
+      notable: []
+    })
+
+    expect(tasks.getTask(TASK)?.qualityScore).toBe(8)
+    expect(tasks.getTask(TASK)?.qualityReviewCount).toBe(2)
   })
 })
 

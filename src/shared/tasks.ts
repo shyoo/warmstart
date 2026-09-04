@@ -503,9 +503,12 @@ export interface Task {
    * cost. All four fields are written by `recordReview` and by nothing else.
    *
    * ⚠️ `null` means *not reviewed*, which is a different thing from *reviewed and scored zero*.
+   * The score is the arithmetic mean across `qualityReviewCount` completed, scored reviews.
    */
   qualityReviewId: string | null
   qualityScore: number | null
+  /** Number of completed, scored reviews included in `qualityScore`'s arithmetic mean. */
+  qualityReviewCount: number
   qualityReviewedAt: number | null
   /** The reviewer's adapter id. ⛔ Never the subject's — a review never grades its own author. */
   qualityReviewer: string | null

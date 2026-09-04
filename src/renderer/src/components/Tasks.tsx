@@ -499,7 +499,7 @@ export function Tasks({
                       ) : (
                         <span
                           title={
-                            `Scored ${task.qualityScore.toFixed(1)}/10 by ${task.qualityReviewer ?? 'another agent'}` +
+                            `${task.qualityReviewCount > 1 ? `Average of ${task.qualityReviewCount} completed reviews` : `Scored by ${task.qualityReviewer ?? 'another agent'}`}: ${task.qualityScore.toFixed(1)}/10` +
                             (task.qualityReviewedAt
                               ? ` on ${new Date(task.qualityReviewedAt).toLocaleString()}`
                               : '')

@@ -1321,6 +1321,25 @@ const MIGRATIONS: Migration[] = [
       create index if not exists quality_reviews_task on quality_reviews(task_id, created_at desc);
     `)
     void what
+  },
+
+  // 40 - a task's headline quality is the mean of every completed, scored peer review.
+  (conn) => {
+    if (!hasColumn(conn, 'tasks', 'quality_review_count')) {
+      conn.exec('alter table tasks add column quality_review_count integer not null default 0;')
+    }
+    conn.exec(`
+      update tasks
+         set quality_review_score = (
+               select round(avg(q.composite), 1) from quality_reviews q
+                where q.task_id = tasks.id and q.status = 'complete' and q.composite is not null
+             ),
+             quality_review_count = (
+               select count(q.composite) from quality_reviews q
+                where q.task_id = tasks.id and q.status = 'complete' and q.composite is not null
+             )
+       where exists (select 1 from quality_reviews q where q.task_id = tasks.id)
+    `)
   }
 ]
 

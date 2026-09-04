@@ -154,6 +154,20 @@ describe('the resolution ladder', () => {
     if (range.ok) return
     expect(range.reason).toContain('no longer resolves')
   })
+
+  it('refuses recorded commits that exist but were never landed on the configured trunk', async () => {
+    const project = makeRepo()
+    const { base, head } = branchWithWork(project, 'feature')
+
+    const range = await review.resolveRange(
+      task({ landedBaseSha: base, landedHeadSha: head }),
+      project,
+      'main'
+    )
+    expect(range.ok).toBe(false)
+    if (range.ok) return
+    expect(range.reason).toContain('no longer resolves in the trunk')
+  })
 })
 
 describe('assembling the diff', () => {

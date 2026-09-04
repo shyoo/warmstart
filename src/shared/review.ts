@@ -42,7 +42,7 @@ export type RubricDimension = (typeof RUBRIC_DIMENSIONS)[number]
  * does not apply, as tests do not to a pure-CSS change — must neither drag the mean down nor
  * silently redistribute its weight to whichever dimension happens to be listed next.
  */
-export const RUBRIC_WEIGHTS: Record<RubricDimension, number> = {
+const RUBRIC_WEIGHTS_1_0: Record<RubricDimension, number> = {
   requirement_fidelity: 0.2,
   correctness: 0.2,
   tests: 0.15,
@@ -53,7 +53,7 @@ export const RUBRIC_WEIGHTS: Record<RubricDimension, number> = {
 }
 
 /** What each dimension is called on screen, and the one question it asks. */
-export const RUBRIC_LABELS: Record<RubricDimension, { label: string; asks: string }> = {
+const RUBRIC_LABELS_1_0: Record<RubricDimension, { label: string; asks: string }> = {
   requirement_fidelity: {
     label: 'Requirement fidelity',
     asks: 'Did it do what was actually asked — all of it, and only it?'
@@ -91,7 +91,31 @@ export const RUBRIC_LABELS: Record<RubricDimension, { label: string; asks: strin
  * different rubrics are not comparable, and the only way to find that out later is to have written
  * down which rubric produced each one.
  */
+export interface RubricDefinition {
+  version: string
+  weights: Record<RubricDimension, number>
+  labels: Record<RubricDimension, { label: string; asks: string }>
+}
+
+/**
+ * Append-only rubric catalogue. A review is interpreted with the definition it stored, never with
+ * whichever weights happen to be current when it is read months later.
+ */
+export const RUBRICS: Readonly<Record<string, RubricDefinition>> = Object.freeze({
+  '1.0': Object.freeze({
+    version: '1.0',
+    weights: Object.freeze(RUBRIC_WEIGHTS_1_0),
+    labels: Object.freeze(RUBRIC_LABELS_1_0)
+  })
+})
+
 export const RUBRIC_VERSION = '1.0'
+export const RUBRIC_WEIGHTS = RUBRICS[RUBRIC_VERSION]!.weights
+export const RUBRIC_LABELS = RUBRICS[RUBRIC_VERSION]!.labels
+
+export function rubricFor(version: string): RubricDefinition | null {
+  return RUBRICS[version] ?? null
+}
 
 export interface DimensionScore {
   /** 0–10, or `null` when the dimension does not apply to this change. ⛔ Never 0 for "unknown". */
@@ -149,17 +173,23 @@ export interface QualityReview {
  *
  * ⛔ Computed here from the stored dimension scores and **never read from the model's reply**.
  * Holistic scoring is where LLM judges are least reliable on long agentic outputs, and computing it
- * means changing a weight re-scores history rather than orphaning it.
+ * means the model cannot smuggle in a holistic score. Historical reviews use their stored rubric
+ * version, so a later weight change cannot reinterpret them.
  *
  * ⚠️ Returns null when nothing was scored — an honest "no number", distinct from a zero.
  */
-export function composite(scores: Partial<Record<RubricDimension, DimensionScore>>): number | null {
+export function composite(
+  scores: Partial<Record<RubricDimension, DimensionScore>>,
+  rubricVersion = RUBRIC_VERSION
+): number | null {
+  const rubric = rubricFor(rubricVersion)
+  if (!rubric) return null
   let weighted = 0
   let total = 0
   for (const dimension of RUBRIC_DIMENSIONS) {
     const entry = scores[dimension]
     if (!entry || entry.score === null) continue
-    const weight = RUBRIC_WEIGHTS[dimension]
+    const weight = rubric.weights[dimension]
     weighted += weight * entry.score
     total += weight
   }

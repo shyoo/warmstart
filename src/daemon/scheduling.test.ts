@@ -69,6 +69,7 @@ function makeTask(overrides: Partial<Task> = {}): Task {
     landedHeadSha: overrides.landedHeadSha ?? null,
     qualityReviewId: overrides.qualityReviewId ?? null,
     qualityScore: overrides.qualityScore ?? null,
+    qualityReviewCount: overrides.qualityReviewCount ?? 0,
     qualityReviewedAt: overrides.qualityReviewedAt ?? null,
     qualityReviewer: overrides.qualityReviewer ?? null,
     status: overrides.status ?? 'ready',

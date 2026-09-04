@@ -89,6 +89,7 @@ interface TaskRow {
   landed_head_sha: string | null
   quality_review_id: string | null
   quality_review_score: number | null
+  quality_review_count: number
   quality_review_at: number | null
   quality_reviewer: string | null
   deleted_at: number | null
@@ -205,6 +206,7 @@ function toTask(r: TaskRow, timing: ActiveTiming = ZERO_TIMING): Task {
     landedHeadSha: r.landed_head_sha ?? null,
     qualityReviewId: r.quality_review_id ?? null,
     qualityScore: r.quality_review_score ?? null,
+    qualityReviewCount: r.quality_review_count ?? 0,
     qualityReviewedAt: r.quality_review_at ?? null,
     qualityReviewer: r.quality_reviewer ?? null,
     firstRunAt: r.first_run_at,

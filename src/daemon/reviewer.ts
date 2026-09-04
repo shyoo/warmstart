@@ -99,6 +99,13 @@ function recentReviewsOf(reviewerAdapter: string, subjectAdapter: string, since:
   return r.n
 }
 
+function reviewsOfTask(reviewerAdapter: string, taskId: string): number {
+  const r = db()
+    .prepare('select count(*) as n from quality_reviews where reviewer_adapter = ? and task_id = ?')
+    .get(reviewerAdapter, taskId) as { n: number }
+  return r.n
+}
+
 /** The 5h window this fleet gates on, or null when nothing fresh enough to trust says. */
 function window5h(workerId: string): { percent: number } | null {
   const quota = lastQuota(workerId)
@@ -122,7 +129,7 @@ export function pickReviewer(task: Task): ReviewerChoice {
   const rejected: string[] = []
   /** ⚠️ Counted apart from the rest: "everybody here wrote it" is a different sentence. */
   let rejectedAsAuthor = 0
-  const candidates: Array<{ worker: Worker; reviews: number; headroom: number }> = []
+  const candidates: Array<{ worker: Worker; taskReviews: number; reviews: number; headroom: number }> = []
 
   for (const worker of listWorkers()) {
     if (worker.retiredAt) continue
@@ -158,6 +165,7 @@ export function pickReviewer(task: Task): ReviewerChoice {
     }
     candidates.push({
       worker,
+      taskReviews: reviewsOfTask(worker.adapterId, task.id),
       reviews: subject ? recentReviewsOf(worker.adapterId, subject, since) : 0,
       headroom: win ? 1 - win.percent / 100 : 0.5
     })
@@ -181,7 +189,9 @@ export function pickReviewer(task: Task): ReviewerChoice {
     }
   }
 
-  candidates.sort((a, b) => a.reviews - b.reviews || b.headroom - a.headroom)
+  candidates.sort(
+    (a, b) => a.taskReviews - b.taskReviews || a.reviews - b.reviews || b.headroom - a.headroom
+  )
   const chosen = candidates[0] as { worker: Worker }
   return {
     worker: chosen.worker,
@@ -291,7 +301,7 @@ export async function requestReview(taskId: string): Promise<
       followUps,
       history: blindedHistory.text,
       diff: { ...diff, text: blindedDiff.text },
-      trunkSha: null
+      trunkSha: range.trunkSha
     })
 
     const run = startRun({

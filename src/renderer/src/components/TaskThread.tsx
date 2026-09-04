@@ -28,8 +28,7 @@ import {
 import type { ModelOptions, Session } from '@shared/protocol'
 import {
   RUBRIC_DIMENSIONS,
-  RUBRIC_LABELS,
-  RUBRIC_WEIGHTS,
+  rubricFor,
   type QualityReview
 } from '@shared/review'
 import { rpc, useActivity, useDaemonEvents, useNow, type FleetEntry } from '../lib/daemon'
@@ -2032,6 +2031,7 @@ function QualityReviewBox({
   const [failed, setFailed] = useState<string | null>(null)
   const finished = task.status === 'completed' || task.status === 'cancelled'
   const latest = reviews.find((r) => r.status === 'complete') ?? null
+  const completed = reviews.filter((r) => r.status === 'complete' && r.composite !== null)
 
   useEffect(() => {
     if (!finished) return
@@ -2069,10 +2069,12 @@ function QualityReviewBox({
       </div>
       {latest && (
         <div className="side-run-fact">
-          <span className="side-run-key">latest:</span>
+          <span className="side-run-key">{completed.length > 1 ? 'average:' : 'score:'}</span>
           <span className="side-run-val">
-            <strong className="num">{latest.composite?.toFixed(1) ?? '—'} / 10</strong>
-            <span className="dim"> · {when(latest.completedAt ?? latest.createdAt)}</span>
+            <strong className="num">{task.qualityScore?.toFixed(1) ?? '—'} / 10</strong>
+            <span className="dim">
+              {' '}· {completed.length} {completed.length === 1 ? 'review' : 'reviews'}
+            </span>
           </span>
         </div>
       )}
@@ -2123,6 +2125,7 @@ function ReviewRow({
   const spent = run
     ? run.inputTokens + run.outputTokens + run.cacheReadTokens + run.cacheWriteTokens
     : null
+  const rubric = rubricFor(review.rubricVersion)
 
   return (
     <div className="side-run">
@@ -2207,13 +2210,18 @@ function ReviewRow({
                 {RUBRIC_DIMENSIONS.map((dimension) => {
                   const entry = review.scores?.[dimension]
                   if (!entry) return null
+                  const definition = rubric?.labels[dimension]
                   return (
                     <div className="side-run-fact" key={dimension}>
                       <span
                         className="side-run-key"
-                        title={`${RUBRIC_LABELS[dimension].asks} Weight ${RUBRIC_WEIGHTS[dimension].toFixed(2)}.`}
+                        title={
+                          definition && rubric
+                            ? `${definition.asks} Weight ${rubric.weights[dimension].toFixed(2)}.`
+                            : `Rubric ${review.rubricVersion} is not available in this build.`
+                        }
                       >
-                        {RUBRIC_LABELS[dimension].label}:
+                        {definition?.label ?? dimension}:
                       </span>
                       <span className="side-run-val">
                         <strong className="num">
@@ -2228,7 +2236,7 @@ function ReviewRow({
                   <span className="side-run-key">rubric:</span>
                   <span
                     className="side-run-val dim"
-                    title="The composite is a weighted mean the daemon computes from the dimensions above, so changing a weight re-scores history rather than orphaning it."
+                    title="The composite is a weighted mean computed with this stored, immutable rubric version."
                   >
                     v{review.rubricVersion} · weighted mean over the dimensions scored
                   </span>

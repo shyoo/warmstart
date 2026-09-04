@@ -5,9 +5,8 @@ import type { Project, Task, TaskMessage } from '@shared/tasks.js'
 import {
   composite,
   RUBRIC_DIMENSIONS,
-  RUBRIC_LABELS,
   RUBRIC_VERSION,
-  RUBRIC_WEIGHTS,
+  rubricFor,
   type DimensionScore,
   type QualityReview,
   type ReviewAuthor,
@@ -145,7 +144,7 @@ export const DIFF_BUDGET_CHARS = 120_000
 const GENERATED = /(^|\/)(package-lock\.json|pnpm-lock\.yaml|yarn\.lock|dist|out|release|node_modules)(\/|$)/
 
 export type RangeResolution =
-  | { ok: true; base: string; head: string; cwd: string; from: 'landed' | 'branch' }
+  | { ok: true; base: string; head: string; trunkSha: string; cwd: string; from: 'landed' | 'branch' }
   | { ok: false; reason: string }
 
 /**
@@ -167,16 +166,22 @@ export async function resolveRange(
   target: string
 ): Promise<RangeResolution> {
   const cwd = project.root
+  const trunkSha = await resolves(cwd, target)
+  if (!trunkSha) return { ok: false, reason: `the landing target '${target}' does not resolve` }
   if (task.landedBaseSha && task.landedHeadSha) {
     const base = await resolves(cwd, task.landedBaseSha)
     const head = await resolves(cwd, task.landedHeadSha)
-    if (base && head) return { ok: true, base, head, cwd, from: 'landed' }
+    const baseBeforeHead = base && head ? await isAncestor(cwd, base, head) : false
+    const headOnTrunk = head ? await isAncestor(cwd, head, trunkSha) : false
+    if (base && head && baseBeforeHead && headOnTrunk) {
+      return { ok: true, base, head, trunkSha, cwd, from: 'landed' }
+    }
   }
   if (task.branch) {
     const branch = await resolves(cwd, task.branch)
     if (branch) {
       const base = await tryGit(cwd, ['merge-base', target, task.branch])
-      if (base) return { ok: true, base, head: branch, cwd, from: 'branch' }
+      if (base) return { ok: true, base, head: branch, trunkSha, cwd, from: 'branch' }
     }
   }
   return {
@@ -187,6 +192,15 @@ export async function resolveRange(
           'diff to review'
         : 'this task landed before its commit range was recorded and its branch has been retired, ' +
           'so there is no diff to review'
+  }
+}
+
+async function isAncestor(cwd: string, ancestor: string, descendant: string): Promise<boolean> {
+  try {
+    await git(cwd, ['merge-base', '--is-ancestor', ancestor, descendant])
+    return true
+  } catch {
+    return false
   }
 }
 
@@ -278,7 +292,7 @@ export async function collectDiff(cwd: string, base: string, head: string): Prom
  * scales drift; the operator asked for 10-point, so the documented mitigation ships with it — five
  * described states to interpolate between rather than a bare line to pick a number off.
  */
-const ANCHORS: Record<RubricDimension, string> = {
+const ANCHORS_1_0: Record<RubricDimension, string> = {
   requirement_fidelity: [
     '10 — Every stated requirement is met. Ambiguities were resolved the way a careful colleague',
     '     would, and where a judgment call was made it is stated.',
@@ -351,13 +365,21 @@ const ANCHORS: Record<RubricDimension, string> = {
   ].join('\n')
 }
 
+/** Append-only beside `RUBRICS`: anchors are part of a rubric, not mutable prompt prose. */
+const RUBRIC_ANCHORS: Readonly<Record<string, Record<RubricDimension, string>>> = Object.freeze({
+  '1.0': Object.freeze(ANCHORS_1_0)
+})
+
 /** The rubric section of the prompt: seven dimensions, their weights, and all their anchors. */
-export function rubricText(): string {
+export function rubricText(version = RUBRIC_VERSION): string {
+  const anchors = RUBRIC_ANCHORS[version]
+  const rubric = rubricFor(version)
+  if (!anchors || !rubric) throw new Error(`no complete definition for rubric ${version}`)
   return RUBRIC_DIMENSIONS.map((dimension, i) => {
-    const { label, asks } = RUBRIC_LABELS[dimension]
+    const { label, asks } = rubric.labels[dimension]
     return (
-      `${i + 1}. ${label}  (key: "${dimension}", weight ${RUBRIC_WEIGHTS[dimension].toFixed(2)})\n` +
-      `   ${asks}\n${indent(ANCHORS[dimension])}`
+      `${i + 1}. ${label}  (key: "${dimension}", weight ${rubric.weights[dimension].toFixed(2)})\n` +
+      `   ${asks}\n${indent(anchors[dimension])}`
     )
   }).join('\n\n')
 }
@@ -467,6 +489,12 @@ const MAX_RATIONALE = 600
  * score of 0, which is a real grade and would be a lie about the work.
  */
 export function parseReviewReply(reply: Record<string, unknown>): ParsedReview {
+  if (reply.rubric_version !== RUBRIC_VERSION) {
+    return {
+      ok: false,
+      reason: `the reply used rubric ${JSON.stringify(reply.rubric_version)}, expected ${RUBRIC_VERSION}`
+    }
+  }
   const raw = reply.scores
   if (!raw || typeof raw !== 'object') return { ok: false, reason: 'the reply carried no `scores` object' }
   const source = raw as Record<string, unknown>
@@ -731,10 +759,10 @@ export function createPendingReview(input: PendingReviewInput): QualityReview {
  * Settle a review, and denormalise the headline onto its task.
  *
  * ⛔ **The composite is computed here from the stored dimension scores**, never read from the
- * model's reply — so changing a weight re-scores history instead of orphaning it, and a judge is
- * never asked for the holistic number it is least reliable at.
+ * model's reply. The stored rubric version selects the immutable weights, so a later version never
+ * rewrites history, and a judge is never asked for the holistic number it is least reliable at.
  *
- * ⚠️ The four `tasks.quality_review_*` columns are written by this function and by nothing else.
+ * ⚠️ The five `tasks.quality_review_*` columns are written by this function and by nothing else.
  */
 export function completeReview(
   id: string,
@@ -752,7 +780,7 @@ export function completeReview(
     return requireReview(id)
   }
 
-  const score = composite(parsed.scores)
+  const score = composite(parsed.scores, existing.rubricVersion)
   const now = Date.now()
   db()
     .prepare(
@@ -771,6 +799,17 @@ export function completeReview(
         where id = ?`
     )
     .run(id, score, now, existing.reviewerAdapter, existing.taskId)
+
+  const aggregate = db()
+    .prepare(
+      `select avg(composite) as score, count(composite) as count
+         from quality_reviews
+        where task_id = ? and status = 'complete' and composite is not null`
+    )
+    .get(existing.taskId) as { score: number | null; count: number }
+  db()
+    .prepare('update tasks set quality_review_score = ?, quality_review_count = ? where id = ?')
+    .run(aggregate.score === null ? null : Math.round(aggregate.score * 10) / 10, aggregate.count, existing.taskId)
 
   log.info(
     `quality review ${id.slice(0, 8)} scored ${score ?? 'nothing'} on ${existing.subjectAdapter}'s work`

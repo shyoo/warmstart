@@ -25,6 +25,7 @@ function mockTask(over: Partial<Task> = {}): Task {
     landedHeadSha: null,
     qualityReviewId: null,
     qualityScore: null,
+    qualityReviewCount: 0,
     qualityReviewedAt: null,
     qualityReviewer: null,
     status: 'ready',
