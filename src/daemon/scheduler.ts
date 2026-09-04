@@ -4654,7 +4654,21 @@ async function evictResident(project: { id: string; name: string }): Promise<boo
   )
   // ⚠️ Waits for the process, not for the request. `releaseWorkspaceOf` parks the tree with git, and
   // an agent that still has file handles in it makes that fail for reasons nobody can reproduce.
-  await closeAndWait(victim.id)
+  //
+  // ⛔ **And the answer is acted on.** `closeAndWait` returns `false` when the wait ran out — the
+  // process was asked to go and did not — and that answer was thrown away here, so a session that
+  // would not die had its workspace parked and handed to the next task anyway. Two agents then held
+  // one worktree, which is the single thing the pool exists to make impossible: the stuck one still
+  // had the directory, the new one was dispatched into it, and the panel named only the newcomer.
+  // A tree whose last occupant is still breathing is not free, so nothing is released and the pool
+  // stays honestly full — `Contended` is the right answer to that, and it retries every tick.
+  if (!(await closeAndWait(victim.id))) {
+    log.warn(
+      `session ${victim.id.slice(0, 8)} did not exit, so ${victim.cwd} stays with it — ` +
+        'it is still in that tree, and handing it on would put two agents in one workspace'
+    )
+    return false
+  }
   await releaseWorkspaceOf(victim.id)
   return true
 }
