@@ -101,12 +101,14 @@ function window5h(workerId: string): { percent: number } | null {
 }
 
 /**
- * Pick the agent that will grade this task, or say precisely why none can.
+ * Find the peers that can grade this task. The picker asks for configured/routable peers; the
+ * request path additionally asks whether each account is available at this instant.
  *
- * The gates, in order: not an author · the shared account list · the same quota water mark work
- * goes through · a declared read-only mode · not already reviewing.
+ * The gates, in order: not an author · grading enabled · worker enabled · a declared read-only
+ * stream mode · then, when availability is required, the shared account list · the same quota water
+ * mark work goes through · not already reviewing.
  */
-function reviewCandidates(task: Task): { candidates: Worker[]; reason: string } {
+function reviewCandidates(task: Task, requireAvailable: boolean): { candidates: Worker[]; reason: string } {
   const { authors } = authorshipOf(task.id)
   const authorAdapters = new Set(authors.map((a) => a.adapterId))
   const rejected: string[] = []
@@ -125,18 +127,30 @@ function reviewCandidates(task: Task): { candidates: Worker[]; reason: string } 
       rejected.push(`${worker.label} is not enabled for grading`)
       continue
     }
-    const blocked = accountUnavailability(worker)
-    if (blocked) {
-      rejected.push(blocked)
+    const info = adapter(worker.adapterId).info
+    if (!worker.enabled) {
+      rejected.push(`${worker.label} disabled`)
       continue
     }
-    const info = adapter(worker.adapterId).info
     if (!info.capabilities.readOnlyPermissionMode) {
       rejected.push(`${worker.label} has no read-only mode, so it may not read the trunk`)
       continue
     }
     if (!info.capabilities.transports.includes('stream')) {
       rejected.push(`${worker.label} cannot run a non-interactive session`)
+      continue
+    }
+    // The menu answers which commissioned peers are routable reviewers, not which of them could
+    // start this instant. Login, health, quota and an in-flight review are transient facts: hiding a
+    // configured reviewer whenever one changes made Antigravity and Local LLM vanish from t211's
+    // menu. The request path repeats the query with `requireAvailable`, immediately before spawn.
+    if (!requireAvailable) {
+      candidates.push(worker)
+      continue
+    }
+    const blocked = accountUnavailability(worker)
+    if (blocked) {
+      rejected.push(blocked)
       continue
     }
     const win = window5h(worker.id)
@@ -174,6 +188,15 @@ function reviewCandidates(task: Task): { candidates: Worker[]; reason: string } 
   return { candidates, reason: '' }
 }
 
+/** Routable peers shown in the reviewer picker; transient availability is checked on request. */
+export function reviewCandidateOptions(task: Task): ReviewCandidate[] {
+  return reviewCandidates(task, false).candidates.map((worker) => ({
+    workerId: worker.id,
+    label: worker.label,
+    model: gradingModel(worker)
+  }))
+}
+
 /**
  * Choose an eligible reviewer. A named worker is a hard request and is revalidated here; Auto
  * chooses uniformly from the eligible accounts. Every choice still uses that adapter's small
@@ -184,7 +207,7 @@ export function pickReviewer(
   workerId?: string | null,
   random: () => number = Math.random
 ): ReviewerChoice {
-  const eligible = reviewCandidates(task)
+  const eligible = reviewCandidates(task, true)
   if (eligible.candidates.length === 0) return { worker: null, reason: eligible.reason }
 
   const chosen = workerId
@@ -234,15 +257,14 @@ export async function reviewEligibility(taskId: string): Promise<{
   const range = await resolveRange(task, project, landingTargetFor(task, project))
   if (!range.ok) return { ok: false, reviewers: [], reason: range.reason }
 
-  const eligible = reviewCandidates(task)
-  if (eligible.candidates.length === 0) return { ok: false, reviewers: [], reason: eligible.reason }
+  const reviewers = reviewCandidateOptions(task)
+  if (reviewers.length === 0) {
+    const eligible = reviewCandidates(task, false)
+    return { ok: false, reviewers: [], reason: eligible.reason }
+  }
   return {
     ok: true,
-    reviewers: eligible.candidates.map((worker) => ({
-      workerId: worker.id,
-      label: worker.label,
-      model: gradingModel(worker)
-    })),
+    reviewers,
     reason: ''
   }
 }

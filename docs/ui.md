@@ -71,8 +71,10 @@ stored rows — a thing to run when there is something to compare, not a screen 
 is. It appears in three places only: a `Quality` column in `Tasks`, a `#N Quality Review` row in
 `TaskThread`'s timeline (⚠️ the underlying run is filtered out so it draws once, not twice), and the
 request box in that thread's facts column, whose every disabled state names its reason. The request
-box offers **Auto**, which randomly chooses an eligible account and uses that adapter's small review
-model selected on that worker, plus each eligible account by name. New built-in workers start with
+box offers **Auto**, which randomly chooses an available account and uses that adapter's small review
+model selected on that worker, plus each routable peer by name. Transient account state (login,
+health, quota, or another review in flight) does not make a configured peer vanish from the picker;
+the daemon revalidates availability immediately before starting it. New built-in workers start with
 the adapter's smallest configured model; the Workers card can change it or opt the account out of
 grading. A pending review overlays **grading** in Tasks, TaskThread and Flow without changing the
 task's stored lifecycle status or claiming a worktree. Accounts on any adapter that authored the work are absent;

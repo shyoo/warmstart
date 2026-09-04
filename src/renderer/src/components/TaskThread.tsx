@@ -2201,7 +2201,7 @@ function QualityReviewBox({
         disabled={running || !eligibility?.ok}
         onChange={(event) => setReviewerId(event.target.value)}
       >
-        <option value="auto">Auto · random eligible small model</option>
+        <option value="auto">Auto · random available small model</option>
         {eligibility?.reviewers.map((reviewer) => (
           <option key={reviewer.workerId} value={reviewer.workerId}>
             {reviewer.label}
@@ -2222,8 +2222,8 @@ function QualityReviewBox({
           ? 'checking whether a peer can review this…'
           : eligibility.ok
             ? reviewerId === 'auto'
-              ? `Auto chooses randomly from ${eligibility.reviewers.length} eligible ${eligibility.reviewers.length === 1 ? 'worker' : 'workers'}; each uses its small review model`
-              : 'The selected worker will grade this using its small review model'
+              ? 'Auto chooses randomly from the currently available routable peers; each uses its small review model'
+              : 'The selected peer will be checked for current availability, then grade this using its small review model'
             : eligibility.reason}
       </div>
       {failed && <div className="side-note warn">{failed}</div>}

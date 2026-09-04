@@ -1366,10 +1366,10 @@ export interface RpcMap {
   /**
    * Can this task be quality-reviewed, and by whom?
    *
-   * ⛔ Free, and asked before the button is drawn. Two things can make the answer no and they are
-   * different in kind: **no eligible peer** is a passing condition (an account is out of window),
-   * while **no recoverable diff** is permanent — the task landed before its commit range was
-   * recorded and its branch has been retired. The reason string says which.
+   * ⛔ Free, and asked before the button is drawn. It lists configured, routable peers even when
+   * transient account state prevents an immediate run; `review.request` revalidates availability.
+   * No routable peer can change through configuration, while **no recoverable diff** is permanent —
+   * the task landed before its commit range was recorded and its branch has been retired.
    */
   'review.eligibility': {
     params: { taskId: string }

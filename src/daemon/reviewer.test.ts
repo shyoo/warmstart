@@ -43,6 +43,10 @@ function disable(id: string): void {
   db.db().prepare('update workers set enabled = 0 where id = ?').run(id)
 }
 
+function markSignedOut(id: string): void {
+  db.db().prepare('update workers set identity_json = ? where id = ?').run('{"loggedIn":false}', id)
+}
+
 function workRun(workerId: string, adapterId: string, model: string, outcome = 'completed'): void {
   seq += 1
   db.db()
@@ -178,6 +182,24 @@ describe('picking a reviewer', () => {
     const autoChoice = reviewer.pickReviewer(task())
     expect(autoChoice.worker?.id).toBe(LOCAL)
     expect(autoChoice.model).toBe('qwen3-coder-30b-a3b')
+  })
+
+  it('lists routable peers even when transient state prevents an immediate review', () => {
+    const LOCAL = 'aaaaaaaa-0000-4000-8000-000000000005'
+    worker(CLAUDE_A, 'ClaudeFirst', 'claude-code')
+    worker(CODEX, 'CodexFirst', 'openai-compatible')
+    worker(AGY, 'Antigravity', 'antigravity-cli')
+    worker(LOCAL, 'LocalLlm', 'local-llm')
+    workRun(CLAUDE_A, 'claude-code', 'claude-opus-5')
+    markSignedOut(LOCAL)
+
+    expect(reviewer.reviewCandidateOptions(task()).map((candidate) => candidate.workerId)).toEqual([
+      CODEX,
+      AGY,
+      LOCAL
+    ])
+    // Request-time selection still protects the machine from spawning an unavailable endpoint.
+    expect(reviewer.pickReviewer(task(), LOCAL).worker).toBeNull()
   })
 
   it('refuses a manual selection from an adapter that participated in the work', () => {
