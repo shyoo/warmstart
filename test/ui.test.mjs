@@ -861,14 +861,13 @@ try {
     JSON.stringify((() => {
       const composer = document.querySelector('.composer');
       const bars = [...composer.querySelectorAll('.composer-bar')];
-      const names = bars.map(bar =>
+      const names = bars.flatMap(bar =>
         [...bar.querySelectorAll('button.pill')].map(p => p.getAttribute('aria-label'))
-      );
+      ).filter(Boolean);
       return {
         rows: bars.length,
-        captions: [...composer.querySelectorAll('.composer-group-label')].map(l => l.innerText.trim()),
-        planner: names[0] ?? [],
-        pieces: names[1] ?? [],
+        planner: names.filter(n => !n.startsWith('Piece')),
+        pieces: names.filter(n => n.startsWith('Piece')),
         sendLabel: ([...composer.querySelectorAll('.composer-send button')]
           .find(b => b.classList.contains('btn--primary'))?.innerText ?? '').trim()
       };
@@ -876,17 +875,16 @@ try {
   `)
   const p = JSON.parse(planned)
   check(
-    '⛔ Plan & Split draws two rows of settings rather than hiding every control',
-    p.rows === 2,
+    '⛔ Plan & Split draws the pieces’ settings rather than hiding every control',
+    p.planner?.length > 0 && p.pieces?.length > 0,
     planned
   )
+  // ⚠️ One row, not two. The two-row shape this once asserted was replaced by a single bar
+  // that prefixes every piece control with the word `Piece`, which is what tells the two apart now —
+  // so the naming is the thing worth pinning, and asserting `rows === 2` was testing a dead layout.
   check(
-    'and labels them, because two identical rows of pills tell you nothing',
-    // ⚠️ Compared lowercased: the caption is uppercased by CSS, and `innerText` reports the
-    // *rendered* text, so asserting the source casing tests the stylesheet rather than the markup.
-    p.captions?.length === 2 &&
-      p.captions[0]?.toLowerCase() === 'planner' &&
-      p.captions[1]?.toLowerCase() === 'each piece',
+    'and names the piece controls apart from the planner’s, because two identical pills tell you nothing',
+    p.pieces?.length > 0 && p.pieces.every((n) => n.startsWith('Piece ')),
     planned
   )
   check(
@@ -894,12 +892,18 @@ try {
     ['Worker', 'Model', 'Priority', 'Finish policy'].every((n) => p.planner?.includes(n)),
     planned
   )
+  // ⛔ `Piece workers` is the multi-select that carries an account *and* a per-account model, which
+  // is the closed list `pieceConstraints()` files each child against. If it ever stops being drawn,
+  // the composer silently files pieces with no constraints and the dispatcher picks the biggest model
+  // it can — which is exactly the fault t197 was reported for.
   check(
     '⛔ and the pieces have their own account and model — "plan with one, build with another"',
-    ['Piece worker', 'Piece model', 'How many pieces'].every((n) => p.pieces?.includes(n)),
+    ['Piece workers', 'Piece Priority', 'Piece Limit', 'Piece Finish Policy'].every((n) =>
+      p.pieces?.includes(n)
+    ),
     planned
   )
-  check('the send button says what it will do', p.sendLabel === 'Plan it', planned)
+  check('the send button says what it will do', p.sendLabel === 'Plan & Split', planned)
 
   // Back to Task, so nothing below inherits the plan kind.
   await evaluate(
