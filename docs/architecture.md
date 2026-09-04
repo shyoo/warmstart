@@ -330,6 +330,10 @@ produces a question nobody can reply to.
 
 - **Agents work in a pooled worktree, never the trunk.** The branch is named after the *task*
   (`multi-agent-controller/t123-…`), never after the workspace it landed in.
+- **A new task starts from the ref its finish policy will rebase onto**: the local target for
+  `merge-local`, otherwise `origin/<target>` when it exists. A subtask starts from its parent's
+  branch while that branch still carries work the trunk lacks; after the parent lands it uses the
+  trunk. An existing clean branch with no commits of its own is fast-forwarded to the same base.
 - ⛔ **A slot does not arrive clean.** `switch --detach` carries uncommitted changes with it, so
   parking frees a member's *branch* and leaves its *edits* for whoever claims it next. **Committed if
   there is a branch, stashed if there is not, `reset --hard` never.**

@@ -2,8 +2,11 @@ import { execFile, execFileSync } from 'node:child_process'
 import { promisify } from 'node:util'
 import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import type { Project, Task } from '@shared/tasks.js'
+import type { FinishPolicy, Project, Task } from '@shared/tasks.js'
+import { resolveFinishPolicy } from '@shared/tasks.js'
+import { landingBaseFor } from './landingbase.js'
 import { landingTargetFor, policyFor } from './projects.js'
+import { settings } from './settings.js'
 import { availability, claim, openClaims, release, upsertResource, workspacePoolId } from './resources.js'
 import { log } from './log.js'
 
@@ -55,25 +58,42 @@ async function gitOk(cwd: string, args: string[]): Promise<boolean> {
 /**
  * The ref new task branches start from.
  *
- * ⭐ **The same ref work is measured as landed against**, which is why this delegates to
- * `landedRef` rather than repeating its two lines. They were separate copies of one rule until
- * 2026-08-29, and this is exactly the shape of the bug that day produced: two definitions of "where
- * is the trunk really", each defensible, quietly disagreeing. Branch off what a task's work will be
- * judged against, or a resumed task starts behind the work that already landed.
+ * ⭐ **The same ref the landing will rebase onto**, which is why this delegates to `landingBaseFor`
+ * rather than deciding for itself. Branch off anything else and the rebase at the end has to replay
+ * the difference, and every task pays for history it never touched.
+ *
+ * ⭐ Measured on this repository, 2026-09-04: local `main` was **41 commits ahead of
+ * `origin/main`**. This project finishes with `commit-and-merge`, which merges into the *local*
+ * trunk and never pushes, so `origin/main` had not moved in days. This function preferred
+ * `origin/main` anyway — it delegated to `landedRef`, whose question is the different one of *where
+ * work has to reach to count as shipped*. So a task started against an idle fleet, touching a file
+ * nobody else had open, was cut 41 commits back and then asked to rebase onto local `main` to land.
+ * That is the "it almost certainly hits a rebase issue when it tries to land" the operator reported,
+ * and it was not the agents' doing. Two definitions of "where is the trunk", and the stale one won.
  *
  * ⚠️ `HEAD` only when neither ref resolves — a repository whose first commit is not on the target
  * branch yet. A repo with no remote is normal and must not be a failure.
  */
-export async function baseRef(
+export async function trunkBaseRef(
   project: Project,
+  policy?: FinishPolicy,
   task?: Pick<Task, 'landingTarget'> | null
 ): Promise<string> {
-  // ⛔ **The task's target, not the project's**, and that is what makes a split work at all. A child
-  // cut from `main` would not contain its siblings' work, so a `depends_on` edge between two pieces
-  // would order their runs and deliver nothing — the second would rebuild against a base that never
-  // saw the first. For every task with no target of its own the two are the same string.
-  const ref = await landedRef(project.root, landingTargetFor(task, project))
-  return (await gitOk(project.root, ['rev-parse', '--verify', ref])) ? ref : 'HEAD'
+  const target = landingTargetFor(task, project)
+  const remote = await gitOk(project.root, ['rev-parse', '--verify', `refs/remotes/origin/${target}`])
+  const wanted = landingBaseFor(project, policy, remote, task)
+  if (await gitOk(project.root, ['rev-parse', '--verify', wanted])) return wanted
+  if (await gitOk(project.root, ['rev-parse', '--verify', target])) return target
+  return 'HEAD'
+}
+
+/**
+ * Where this task's branch begins: the ref its landing strategy will rebase onto. Split work carries
+ * the planner branch in `task.landingTarget`; ordinary work resolves to the project's trunk.
+ */
+export async function baseRef(project: Project, task?: Task | null): Promise<string> {
+  const { policy } = resolveFinishPolicy(task ?? null, project, settings().finishPolicy)
+  return trunkBaseRef(project, policy, task)
 }
 
 /**
@@ -97,7 +117,9 @@ export async function ensurePool(project: Project): Promise<string[]> {
   }
 
   mkdirSync(policy.workspaceRoot, { recursive: true })
-  const base = await baseRef(project)
+  // ⚠️ `trunkBaseRef`, not `baseRef`: a pool member at rest belongs to no task, so there is no
+  // parent branch to inherit and the trunk is the only sensible place to sit.
+  const base = await trunkBaseRef(project)
   const members: string[] = []
 
   for (let i = 1; i <= policy.poolSize; i++) {
@@ -239,7 +261,8 @@ export async function switchResidentBranch(
   project: Project,
   path: string,
   branch: string,
-  task?: Pick<Task, 'landingTarget'> | null
+  /** ⛔ The task the branch belongs to, so a subtask still borrows onto its parent's base. */
+  task?: Task | null
 ): Promise<SwitchResult> {
   const state = await workspaceState(path, landingTargetFor(task, project))
   if (state.branch === branch) return { ok: true, from: branch }
@@ -262,9 +285,10 @@ export async function switchResidentBranch(
     // the same defect `baseRef`'s own comment describes, one call site over.
     const base = await baseRef(project, task)
     // Git refuses to check one branch out into two worktrees, correctly. A leftover holder is parked.
-    await parkOtherHolders(project, branch, path, base)
+    await parkOtherHolders(project, branch, path)
     if (await gitOk(path, ['rev-parse', '--verify', branch])) {
       await git(path, ['switch', branch])
+      await catchUpEmptyBranch(path, branch, base)
     } else {
       await git(path, ['switch', '-c', branch, base])
     }
@@ -290,6 +314,35 @@ export interface PrepareResult {
  * package installed inside a workspace vanishes on the next sync. So preparation is *declared* by the
  * project and re-run on claim, rather than patched.
  */
+/**
+ * Move a branch that carries **nothing of its own** up to the current base.
+ *
+ * ⛔ **`--ff-only`, and only at zero commits ahead.** Both halves are the safety. A branch with no
+ * commits the base does not already have is a *name* and nothing else — that is the same licence
+ * `retireBranch` deletes on — so fast-forwarding it discards, by construction, nothing. Git refuses
+ * the fast-forward if that reading is somehow wrong, which makes the guarantee git's rather than
+ * this function's.
+ *
+ * ⭐ The case this exists for is the second dispatch of a task whose first run produced no commits:
+ * the branch already exists, so the `switch -c … base` above is skipped, and the branch keeps
+ * pointing at wherever the trunk stood the *first* time — which on a busy fleet is many landings
+ * ago. The task then rebases that whole gap at the end, for work it never did.
+ *
+ * ⚠️ Best-effort, silently. A branch that will not fast-forward is a branch with real work on it,
+ * which is the normal case and not a problem to report.
+ */
+async function catchUpEmptyBranch(path: string, branch: string, base: string): Promise<void> {
+  try {
+    const ahead = Number(await git(path, ['rev-list', '--count', `${base}..${branch}`]))
+    if (ahead !== 0) return
+    if (await git(path, ['status', '--porcelain'])) return
+    await git(path, ['merge', '--ff-only', base])
+    log.info(`fast-forwarded empty branch ${branch} to ${base}`)
+  } catch {
+    // The branch has work, or the base does not resolve. Either way, leave it exactly as it is.
+  }
+}
+
 /**
  * On Windows, sandboxed agent runs (e.g. Codex with `--sandbox workspace-write`) apply NTFS ACLs
  * and temporary sandbox user permissions. An interrupted run or sandbox cleanup glitch can leave
@@ -340,7 +393,8 @@ export async function prepareWorkspace(
   project: Project,
   workspace: Workspace,
   branch: string | null,
-  task?: Pick<Task, 'landingTarget'> | null
+  /** ⛔ The task, so the base can be its parent's branch when it is a subtask. See `baseRef`. */
+  task?: Task | null
 ): Promise<PrepareResult> {
   cleanWorkspaceAcls(workspace.path)
   const policy = policyFor(project)
@@ -361,7 +415,7 @@ export async function prepareWorkspace(
       // refuse to hand the same branch to a second worktree - correctly - so the stale holder is
       // parked first. This is a retry, not a conflict: the scheduler never runs one task twice at
       // once, so any other worktree still sitting on this branch is a leftover.
-      await parkOtherHolders(project, branch, workspace.path, base)
+      await parkOtherHolders(project, branch, workspace.path)
       // ⛔ Before the switch, not after. A pool member does not arrive clean: `switch --detach`
       // *carries* uncommitted changes with it, so a task that ended without committing leaves its
       // edits sitting in the slot, and the next task to claim that slot dies on `switch -c` with
@@ -369,6 +423,7 @@ export async function prepareWorkspace(
       await rescueDirt(workspace.path, branch)
       if (await gitOk(workspace.path, ['rev-parse', '--verify', branch])) {
         await git(workspace.path, ['switch', branch])
+        await catchUpEmptyBranch(workspace.path, branch, base)
       } else {
         // ⛔ Created inside the claimed worktree. The trunk is never switched.
         await git(workspace.path, ['switch', '-c', branch, base])
@@ -440,8 +495,7 @@ export function workspaceEnv(
 export async function parkOtherHolders(
   project: Project,
   branch: string,
-  keepPath: string,
-  base: string
+  keepPath: string
 ): Promise<void> {
   let listing: string
   try {
@@ -458,6 +512,9 @@ export async function parkOtherHolders(
       const samePath = normalise(path) === normalise(keepPath) || normalise(path) === normalise(project.root)
       if (held === `refs/heads/${branch}` && !samePath) {
         try {
+          // ⚠️ The trunk, not the caller's base. The caller may be cutting a subtask from its
+          // parent's branch, and parking a stranger's worktree onto that would be nonsense.
+          const base = await trunkBaseRef(project)
           await rescueDirt(path, base)
           await git(path, ['switch', '--detach', base])
           log.info(`parked ${path}, which still held ${branch}`)
@@ -674,7 +731,7 @@ function normalise(p: string): string {
 export async function parkWorkspace(project: Project, path: string): Promise<Rescue | null> {
   if (project.vcs !== 'git') return null
   try {
-    const base = await baseRef(project)
+    const base = await trunkBaseRef(project)
     // ⛔ Blind, and deliberately first. `git switch` **refuses** while a rebase is in progress, so a
     // workspace abandoned mid-rebase can never be parked and the slot is lost until somebody notices
     // by hand. `beginConflictResolution` leaves exactly that state on purpose and every caller is

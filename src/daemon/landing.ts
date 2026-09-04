@@ -10,6 +10,7 @@ import type {
   ResourceClaim,
   Task
 } from '@shared/tasks.js'
+import { landingBaseFor, landingStrategyIdFor } from './landingbase.js'
 import { landingTargetFor, policyFor } from './projects.js'
 import { claim, landResourceId, openClaims, release, upsertResource } from './resources.js'
 import {
@@ -20,11 +21,14 @@ import {
   recordLandedRange,
   setStatus
 } from './tasks.js'
-import { baseRef, landedRef, parkOtherHolders, parkPooledHolders, rescueAtTip } from './worktrees.js'
+import { landedRef, parkOtherHolders, parkPooledHolders, rescueAtTip } from './worktrees.js'
 import { launchArgs, which } from './which.js'
 import { log } from './log.js'
 
 const run = promisify(execFile)
+
+// ⛔ Re-exported, not redefined: every existing caller keeps one import site and one answer.
+export { landingBaseFor }
 
 /**
  * Landing: what happens to a task's branch when the work is done.
@@ -173,41 +177,6 @@ async function rebaseInProgress(cwd: string): Promise<boolean> {
   } catch {
     return false
   }
-}
-
-/**
- * The ref a landing will actually rebase onto.
- *
- * ⛔ **One answer, because two of them was the bug.** `merge-local` rebases onto the *local* target
- * and says so in its own comment — *"never `origin/<target>`; rebasing onto the remote would
- * quietly make this policy depend on a fetch, which is the thing it exists to avoid"*. `auto-land`
- * rebases onto `origin/<target>`. `readMergeability` had its own third copy of the rule and always
- * preferred the remote, so on the default policy the pre-flight check answered about a **different
- * base** than the one used.
- *
- * ⭐ Measured on t59, 2026-08-30, with a trunk two commits ahead of its remote:
- * `merge-tree origin/main HEAD` said **clean**, `merge-tree main HEAD` said **conflict**.
- * `decideFinish` was told clean, chose `land`, and `git rebase main` then failed inside `landTask` —
- * so `resolve-conflict`, the one verdict that hands a conflict back to the agent that is still
- * there, was passed two branches earlier. The task dead-ended at `awaiting_human`, which is exactly
- * the failure that verdict was written to prevent.
- *
- * ⚠️ Callers still do their own fetch. This decides the name only, so that asking what the base is
- * cannot have the side effect of changing what it points at.
- */
-export function landingBaseFor(
-  project: Project,
-  policy: FinishPolicy | undefined,
-  remote: boolean,
-  task?: Pick<Task, 'landingTarget'> | null
-): string {
-  const target = landingTargetFor(task, project)
-  // ⚠️ `merge-branch` joins `merge-local` here for the same reason: both land into a purely local
-  // ref, so preferring `origin/<target>` would make them depend on a fetch — and for a plan branch,
-  // which is never pushed, `origin/<target>` does not exist at all.
-  const id = strategyFor(project, policy, task).id
-  if (id === 'merge-local' || id === 'merge-branch') return target
-  return remote ? `origin/${target}` : target
 }
 
 export async function readMergeability(
@@ -674,7 +643,7 @@ export const mergeLocal: LandingStrategy = {
       } else {
         // Landing into a non-trunk branch (such as the planner's branch)
         try {
-          await parkOtherHolders(ctx.project, target, ctx.workspacePath, await baseRef(ctx.project))
+          await parkOtherHolders(ctx.project, target, ctx.workspacePath)
           await git(ctx.project.root, ['branch', '-f', target, commit])
         } catch (err) {
           return {
@@ -1297,43 +1266,15 @@ const STRATEGIES: Record<LandingStrategyId, LandingStrategy> = {
 }
 
 /**
- * Which strategy a resolved policy runs.
- *
- * ⛔ The policy is the authority. `custom` is the one that falls through to the project's own
- * `landing.strategy`, because a custom policy is an instruction to the agent and the tool is only
- * tidying up behind it.
- */
-const FOR_POLICY: Partial<Record<FinishPolicy, LandingStrategyId>> = {
-  'commit-and-verify': 'verify-only',
-  'commit-and-merge': 'merge-local',
-  'commit-and-push': 'auto-land',
-  'pull-request': 'pull-request',
-  'commit-only': 'leave-branch',
-  'await-human': 'leave-branch'
-}
-
-/**
- * ⛔ **`merge-branch` is chosen from data, never from a kind.** The question it answers is *does this
- * task land somewhere other than the project's own target* — which is a fact about the resolved
- * target, true for a split child and false for everything else. `if (task.kind === 'plan')` in the
- * landing path would be a mode name deciding a merge, and the moment anything else needs to land off
- * the trunk it would be wrong in a way that is invisible from here.
- *
- * ⚠️ Only substitutes for a strategy that *merges*. A task told `commit-only` or `pull-request`
- * keeps that answer whatever its target is: the operator asked for a branch or a PR, and having a
- * private landing target is not a reason to overrule them.
+ * ⛔ Through `landingStrategyIdFor`, which `worktrees.ts` reads too. The mapping used to live here,
+ * where the file that cuts the branches could not see it — see `landingbase.ts` for what that cost.
  */
 export function strategyFor(
   project: Project,
   policy?: FinishPolicy,
   task?: Pick<Task, 'landingTarget'> | null
 ): LandingStrategy {
-  const byPolicy = policy ? FOR_POLICY[policy] : undefined
-  const id = byPolicy ?? policyFor(project).landingStrategy
-  if (id === 'merge-local' && landingTargetFor(task, project) !== policyFor(project).landingTarget) {
-    return mergeBranch
-  }
-  return STRATEGIES[id] ?? leaveBranch
+  return STRATEGIES[landingStrategyIdFor(project, policy, task)] ?? leaveBranch
 }
 
 /**
