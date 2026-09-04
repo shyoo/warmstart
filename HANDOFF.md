@@ -40,7 +40,7 @@ src/daemon/            orchestratord. Runs as Electron-with-ELECTRON_RUN_AS_NODE
                        alone (+ sessionstate.test.ts)
   transcript.ts        metering: iterations[], TTL split, cache clock  (+ .test.ts)
   tasks.ts             DAG, admission, mandates, budgets, runs           (+ tasks.test.ts)
-  cancel.ts            wind-down into a resting state; delete is separate and human-only
+  cancel.ts            wind-down into a resting state; delete is separate, human-only and UI-confirmed
   attachments.ts       the only writer of attachment bytes: sniff, bind, prune (+ .test.ts)
   approvals.ts         policy engine, escalation clock, remembered rules
   scheduler.ts         scoring, dispatch, watchdogs, continueTask (+ routing.test.ts,

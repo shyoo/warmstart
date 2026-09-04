@@ -637,6 +637,80 @@ try {
     await evaluate('!!document.querySelector(".tbl tbody tr")')
   )
 
+  // ⛔ Delete is the destructive row action. The first click may only ask; No must leave the task
+  // intact, and the affirmative choice is the only route from this UI to `task.delete`.
+  const deleteFixtureTitle = 'Delete confirmation UI fixture'
+  const deleteFixtureId = await evaluate(`
+    (async () => {
+      const task = await window.agentyard.rpc('task.create', {
+        title: ${JSON.stringify(deleteFixtureTitle)}, status: 'draft'
+      });
+      return task.id;
+    })()
+  `)
+  await wait(600)
+  const openDelete = async () => {
+    await evaluate(`(() => {
+      const row = [...document.querySelectorAll('.tbl tbody tr')]
+        .find(r => r.innerText.includes(${JSON.stringify(deleteFixtureTitle)}));
+      row?.querySelector('button[aria-label^="Actions for"]')?.click();
+    })()`)
+    await wait(100)
+    await evaluate(`
+      [...document.querySelectorAll('[role="menuitem"]')]
+        .find(b => b.innerText.trim() === 'Delete')?.click()
+    `)
+    await wait(150)
+  }
+  await openDelete()
+  const confirmation = await evaluate(`
+    JSON.stringify((() => {
+      const dialog = document.querySelector('[role="alertdialog"]');
+      const buttons = [...(dialog?.querySelectorAll('button') ?? [])];
+      return {
+        text: dialog?.innerText ?? '',
+        no: buttons.some(b => b.innerText.trim() === 'No'),
+        yes: buttons.some(b => b.innerText.trim() === 'Yes, delete'),
+        focused: document.activeElement?.innerText?.trim() ?? ''
+      };
+    })())
+  `)
+  const dc = JSON.parse(confirmation)
+  check(
+    'Delete asks for a Yes or No confirmation and defaults focus to No',
+    dc.text.includes(deleteFixtureTitle) && dc.no === true && dc.yes === true && dc.focused === 'No',
+    confirmation
+  )
+  await evaluate(`
+    [...document.querySelectorAll('[role="alertdialog"] button')]
+      .find(b => b.innerText.trim() === 'No')?.click()
+  `)
+  await wait(100)
+  const declinedDelete = await evaluate(`
+    (async () => {
+      const task = await window.agentyard.rpc('task.get', { id: ${JSON.stringify(deleteFixtureId)} });
+      return !document.querySelector('[role="alertdialog"]') && task.task.id === ${JSON.stringify(deleteFixtureId)};
+    })()
+  `)
+  check('choosing No keeps the task', declinedDelete === true)
+
+  await openDelete()
+  await evaluate(`
+    [...document.querySelectorAll('[role="alertdialog"] button')]
+      .find(b => b.innerText.trim() === 'Yes, delete')?.click()
+  `)
+  await wait(400)
+  const acceptedDelete = await evaluate(`
+    (async () => {
+      const page = await window.agentyard.rpc('task.page', {
+        views: [], sort: 'updated', asc: false, limit: 10, offset: 0,
+        query: ${JSON.stringify(deleteFixtureTitle)}
+      });
+      return !document.querySelector('[role="alertdialog"]') && page.total === 0;
+    })()
+  `)
+  check('only choosing Yes deletes the task', acceptedDelete === true)
+
   // Verify First and End pager navigation
   await evaluate(`(() => {
     const sel = document.querySelector('select[aria-label="Tasks per page"]');

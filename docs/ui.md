@@ -131,6 +131,8 @@ whose entire design is to be invisible.
 - ⛔ **A Flow ticket appears in one lifecycle lane only.** A workspace claim enriches Running only
   while its task is `running` or `cancelling`; a release still unwinding must not pin a completed or
   awaiting ticket under Running as a second copy.
+- ⛔ **Deleting a task requires an explicit Yes or No confirmation.** No is focused first and Escape
+  declines; the task list must never turn the destructive row-menu click directly into an RPC.
 - ⛔ **A control that cannot be used is still a control.** Where `selectableEffort` is false the New
   Task form renders **no** effort control rather than a disabled one, which would sit there implying a
   choice was being made.

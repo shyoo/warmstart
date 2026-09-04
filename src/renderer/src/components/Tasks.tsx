@@ -120,6 +120,7 @@ export function Tasks({
   const [search, setSearch] = useState('')
   const deferredSearch = useDeferredValue(search)
   const [menuTaskId, setMenuTaskId] = useState<string | null>(null)
+  const [pendingDelete, setPendingDelete] = useState<Task | null>(null)
   /**
    * The models each CLI offers. ⛔ Fetched, not compiled in — same reasoning as the pin pill in
    * `NewTask`: the renderer holds no model catalogue of its own.
@@ -130,6 +131,7 @@ export function Tasks({
    */
   const [modelOptions, setModelOptions] = useState<ModelOptions[]>([])
   const menuRef = useRef<HTMLDivElement | null>(null)
+  const declineDeleteRef = useRef<HTMLButtonElement | null>(null)
   // The latest live line per running row. The thread keeps its own copy of the same broadcast.
   const { activity } = useActivity()
   const now = useNow(1000)
@@ -159,6 +161,16 @@ export function Tasks({
       window.removeEventListener('keydown', onKeyDown)
     }
   }, [menuTaskId])
+
+  useEffect(() => {
+    if (!pendingDelete) return
+    declineDeleteRef.current?.focus()
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setPendingDelete(null)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [pendingDelete])
 
   const refresh = useCallback(async () => {
     const got = await rpc('task.page', {
@@ -228,13 +240,18 @@ export function Tasks({
     await refresh()
   }
 
-  const remove = async (task: Task) => {
-    const blockers = await rpc('task.deleteCheck', { id: task.id })
-    if (!blockers.ok) {
-      setError(`Cannot delete t${task.seq}:\n${blockers.reasons.map((r) => `• ${r}`).join('\n')}`)
-      return
+  const requestDelete = async (task: Task) => {
+    setError(null)
+    try {
+      const blockers = await rpc('task.deleteCheck', { id: task.id })
+      if (!blockers.ok) {
+        setError(`Cannot delete t${task.seq}:\n${blockers.reasons.map((r) => `• ${r}`).join('\n')}`)
+        return
+      }
+      setPendingDelete(task)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
     }
-    await act(() => rpc('task.delete', { id: task.id }))
   }
 
   return (
@@ -253,6 +270,44 @@ export function Tasks({
       </header>
 
       {error && <div className="alert">{error}</div>}
+      {pendingDelete && (
+        <div className="confirm-shade" role="presentation">
+          <div
+            className="confirm-dialog"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="delete-task-title"
+            aria-describedby="delete-task-copy"
+          >
+            <h3 id="delete-task-title">Delete t{pendingDelete.seq}?</h3>
+            <p id="delete-task-copy">
+              Are you sure you want to delete &ldquo;{taskLabelShort(pendingDelete)}&rdquo;? Its runs
+              will be kept, but the task will be removed from your task list.
+            </p>
+            <div className="confirm-actions">
+              <button
+                ref={declineDeleteRef}
+                type="button"
+                className="btn"
+                onClick={() => setPendingDelete(null)}
+              >
+                No
+              </button>
+              <button
+                type="button"
+                className="btn btn--danger"
+                onClick={() => {
+                  const task = pendingDelete
+                  setPendingDelete(null)
+                  void act(() => rpc('task.delete', { id: task.id }))
+                }}
+              >
+                Yes, delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {adding && (
         <NewTask
           projects={projects}
@@ -641,7 +696,7 @@ export function Tasks({
                               title="Delete. Runs are kept either way — they are the record of what this cost."
                               onClick={() => {
                                 setMenuTaskId(null)
-                                void remove(task)
+                                void requestDelete(task)
                               }}
                             >
                               Delete
