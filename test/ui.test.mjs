@@ -2929,6 +2929,75 @@ try {
     JSON.stringify(cleared)
   )
 
+  section('what the thread ledger says a task cost')
+  // ⭐ The right pane's two money-adjacent rows, read back from the built app. Price and tokens are
+  // two measurements docs/cost-model.md §5 never reconciles, and they were drawn as one number with
+  // a caption under it — which reads as the token count *explaining* the price. Two labelled rows,
+  // and the unit lives in the label so the value stays a number.
+  const cost = JSON.parse(
+    await evaluate(`
+      JSON.stringify((() => {
+        const facts = [...document.querySelectorAll('.detail-side .fact')];
+        const at = (re) => facts.find(f => re.test(f.querySelector('.fact-label')?.innerText ?? ''));
+        const val = (re) => at(re)?.querySelector('.fact-value')?.innerText.replace(/\\s+/g, ' ').trim() ?? null;
+        return { price: val(/^price$/i), tokens: val(/^tokens$/i), model: val(/^model$/i) };
+      })())
+    `)
+  )
+  check('price is its own row', cost.price !== null, JSON.stringify(cost))
+  check('and tokens is another', cost.tokens !== null, JSON.stringify(cost))
+  check(
+    '⛔ neither row repeats its unit in the value — the label already carries it',
+    !/tokens/i.test(cost.tokens ?? 'tokens') && !/\$/.test(cost.tokens ?? '$'),
+    JSON.stringify(cost)
+  )
+  check(
+    '⚠️ a task that has never run is priced n/a, which is not $0.00',
+    /n\/a/i.test(cost.price ?? ''),
+    JSON.stringify(cost)
+  )
+  // ⚠️ Nothing has run, so there is no measurement to lead with and no second line to disagree with
+  // it. The model row says what the next dispatch would ask for, and says only that.
+  check(
+    'the model row names the CLI’s own choice when nobody has pinned one',
+    /CLI default/.test(cost.model ?? ''),
+    JSON.stringify(cost)
+  )
+
+  section('the three views of a project are the same width')
+  // ⛔ Flow, Tasks and Thread are looked at one after another. A 1100px cap on one of them and not
+  // the others made the task table jump narrow on the way in from the board beside it.
+  await evaluate(`document.querySelector('.detail-head .back-to-list')?.click()`)
+  await waitFor(
+    async () => await evaluate(`!!document.querySelector('.panel .tbl tbody tr')`),
+    'the task list this thread was opened from'
+  )
+  const widths = JSON.parse(
+    await evaluate(`
+      JSON.stringify((() => {
+        // ⚠️ The panel the task table is actually in, not one built here: the point is that this
+        // screen opts out of the cap, which a synthetic element could not tell us.
+        const el = document.querySelector('.panel .tbl')?.closest('.panel');
+        const plain = document.createElement('div');
+        plain.className = 'panel';
+        document.body.appendChild(plain);
+        const out = {
+          wide: el ? getComputedStyle(el).maxWidth : null,
+          classes: el ? el.className : null,
+          plain: getComputedStyle(plain).maxWidth
+        };
+        plain.remove();
+        return out;
+      })())
+    `)
+  )
+  check('a task list takes the whole window', widths.wide === 'none', JSON.stringify(widths))
+  check(
+    '⚠️ while an ordinary panel keeps its reading measure',
+    widths.plain === '1100px',
+    JSON.stringify(widths)
+  )
+
   const errors = await evaluate('window.__agentyardErrors?.length ?? 0')
   check('no uncaught renderer errors', errors === 0)
 } catch (err) {

@@ -410,7 +410,7 @@ export function Flow({ projectId, fleet, onOpenTask }: {
   }
 
   return (
-    <section className="flow panel">
+    <section className="flow panel panel--wide">
       <header className="panel-head">
         <div>
           <h2>Flow</h2>

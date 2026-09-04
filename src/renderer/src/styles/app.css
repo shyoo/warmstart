@@ -1008,20 +1008,6 @@ body {
   margin-left: 1px;
 }
 
-/* The same treatment `.tbl-model` gives a model beneath an account: a qualifier, not a peer. */
-.price-sub {
-  display: block;
-  font-size: 10px;
-  color: var(--color-text-faint);
-  margin-top: 1px;
-  white-space: nowrap;
-}
-
-.price-stack {
-  display: inline-block;
-  min-width: 0;
-}
-
 .nav-item--ghost {
   color: var(--color-text-faint);
   font-style: italic;
@@ -1066,11 +1052,18 @@ body {
   max-width: 1100px;
 }
 
-/* ---- project flow ----------------------------------------------------- */
-
-.flow {
+/*
+ * ⛔ **For panels whose content is a board, not a paragraph.** The 1100px cap above exists so prose
+ * and forms keep a readable measure; a wide table of tasks reads worse under it, not better —
+ * columns the reader is comparing get squeezed while half the window stays empty. The flow board,
+ * the task table and the thread beside them are the three views of the same project and are looked
+ * at one after another, so they take the whole window or none of them should.
+ */
+.panel--wide {
   max-width: none;
 }
+
+/* ---- project flow ----------------------------------------------------- */
 
 .flow-board {
   display: grid;

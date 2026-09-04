@@ -254,8 +254,11 @@ export function Tasks({
     }
   }
 
+  // ⛔ Wide, like the flow board and the thread it sits between. A task row is a table of columns
+  // being compared across rows — worker, model, price, age — and the 1100px measure that keeps prose
+  // readable squeezes exactly those columns while the rest of the window goes unused.
   return (
-    <div className="panel">
+    <div className="panel panel--wide">
       <header className="panel-head">
         <div>
           <h2>Tasks</h2>

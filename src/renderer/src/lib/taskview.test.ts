@@ -25,6 +25,7 @@ import {
   isUncommittedTask,
   isWorking,
   kindLabel,
+  modelFacts,
   modelLine,
   pieceSettings,
   reassignmentModel,
@@ -641,6 +642,78 @@ describe('the model under the account, in the Worker column', () => {
   it('still names a model when the adapter options have not arrived yet', () => {
     // A fleet whose cost models failed to load still runs work, and the column still says what on.
     expect(modelLine(routed(), fleet(), [])?.label).toBe('Sonnet 5')
+  })
+})
+
+/**
+ * ⛔ The bug this describes is a *disagreement between two rows of the same pane*: the model row said
+ * `Gemini 3.7 Flash Med` while the run beneath it, and every turn in it, was answered by 3.8. Neither
+ * number was wrong on its own — one was a measurement and the other a prediction, and the pane led
+ * with the prediction under a tooltip claiming it was what launched.
+ */
+describe('the model row in the thread', () => {
+  const requested = (over: Partial<{ model: string | null; effort: string | null; source: string }> = {}) => ({
+    model: 'gemini-3.7-flash-medium',
+    effort: null,
+    source: 'this account’s default (Antigravity)',
+    ...over
+  })
+
+  it('⛔ leads with what the transcript says answered, not with what would be asked for now', () => {
+    const { headline, note } = modelFacts({
+      observed: { model: 'gemini-3.8-flash-medium', effort: null },
+      ran: null,
+      requested: requested()
+    })
+    expect(headline.text).toBe('Gemini 3.8 Flash Med')
+    expect(headline.title).toContain('gemini-3.8-flash-medium')
+    // ⚠️ The prediction survives, worded as one. "running X" under a headline of Y read as a
+    // contradiction; "next run asks for Y" under a headline of X is two facts.
+    expect(note).toMatchObject({ tone: 'warn', text: 'next run asks for Gemini 3.7 Flash Med' })
+  })
+
+  it('reports the last run’s model once the session that ran it has closed', () => {
+    const { headline } = modelFacts({
+      observed: null,
+      ran: 'gemini-3.8-flash-medium',
+      requested: requested()
+    })
+    expect(headline.text).toBe('Gemini 3.8 Flash Med')
+  })
+
+  it('confirms rather than warns when the two agree', () => {
+    const { headline, note } = modelFacts({
+      observed: { model: 'claude-sonnet-5', effort: 'medium' },
+      ran: null,
+      requested: requested({ model: 'claude-sonnet-5', effort: 'medium' })
+    })
+    expect(headline.text).toBe('Sonnet 5 Med')
+    expect(note).toMatchObject({ tone: 'dim', text: 'confirmed by the transcript' })
+  })
+
+  it('⚠️ shows the resolution alone, and no note, until a turn has been metered', () => {
+    const { headline, note } = modelFacts({ observed: null, ran: null, requested: requested() })
+    expect(headline.text).toBe('Gemini 3.7 Flash Med')
+    expect(headline.title).toContain('what the next run asks for')
+    expect(note).toBeNull()
+  })
+
+  it('words an unchosen model as the CLI’s own answer', () => {
+    const { headline } = modelFacts({
+      observed: null,
+      ran: null,
+      requested: requested({ model: null, source: 'no model chosen — the CLI picks' })
+    })
+    expect(headline.text).toBe('CLI default')
+  })
+
+  it('notices a level that drifted even when the model held', () => {
+    const { note } = modelFacts({
+      observed: { model: 'claude-sonnet-5', effort: 'high' },
+      ran: null,
+      requested: requested({ model: 'claude-sonnet-5', effort: 'medium' })
+    })
+    expect(note).toMatchObject({ tone: 'warn', text: 'next run asks for Sonnet 5 Med' })
   })
 })
 

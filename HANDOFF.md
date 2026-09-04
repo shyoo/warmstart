@@ -7,8 +7,8 @@ started in CI, never run against a real agent CLI.
 **Current state + what to do next, not a changelog.** **Under 200 lines** — adding one means cutting
 the line it obsoletes. Where every other fact goes: [`docs/README.md`](docs/README.md).
 
-**Baseline (2026-09-04, measured):** typecheck · lint · build clean · `npm test` **1903/1905** across 95 files (2 POSIX-only skipped).
-`test:daemon` **155/155**, `test:ui` **262/262** — measured, not carried forward; `test:pack` **19/19** carried forward. ⚠️ `test:pack` fails every check but its first if `release/` predates `src/`; its first check says so — run `npm run pack` and re-run rather than reading the rest.
+**Baseline (2026-09-04, measured):** typecheck · lint · build clean · `npm test` **1909/1911** across 95 files (2 POSIX-only skipped).
+`test:daemon` **155/155**, `test:ui` **269/269** — measured, not carried forward; `test:pack` **19/19** carried forward. ⚠️ `test:pack` fails every check but its first if `release/` predates `src/`; its first check says so — run `npm run pack` and re-run rather than reading the rest.
 CLIs here: claude 2.1.252 · agy 1.1.25 · codex 0.151.0 · local-llm 1.0.0 (qwen3-coder live tested). ⚠️ With none installed — the CI state — the daemon suite skips 5 checks, each with a stated reason.
 Quality Review offers Auto and named eligible workers (revalidated server-side); t190 Run #1 quota probe repaired in DB (Gemini 5h 47%, 7d 27% → $0.24).
 ⭐ **`scripts/build-win.ps1` runs all of the above** (`-Help` for options, `-Restart` for the inner
@@ -164,7 +164,7 @@ M0–M6 are done. What is left is not a milestone but a list, in the order it wo
 5. **`antigravity-cli` still has no real isolation root.** `envFor()` sets no `HOME`, so all four
    workers share the operator's `~/.gemini`. Per-worker `HOME` is the fix; the credential is in the
    OS keyring so sign-in *should* survive, and "should" is doing the work there.
-6. **Thread and Cost have no automated coverage.** `ui.test.mjs` drives a project's **Settings**, **Conversations** and **Session TUI**; those two are by hand.
+6. **Cost has no automated coverage, and the thread only a corner of one.** `ui.test.mjs` drives a project's **Settings**, **Conversations**, **Session TUI**, and — since 2026-09-04 — the thread's prerequisite editor and its price/tokens/model rows. Everything else on both is by hand.
 7. **Put human-in-the-loop and `commit-and-merge` in front of a real agent.** Both built, neither
    used by one: dispatch a design task, answer what it asks, watch it merge — what L1–L3 cannot prove.
 8. **Meter codex off its rollout** — R10 is answered (§5), but `metering` stays `'stream'`, so a PTY-hosted codex run is unmetered, and the estimator never sees it.

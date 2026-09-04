@@ -57,6 +57,7 @@ import {
   isTrunkMovedTask,
   isUncommittedTask,
   isWorking,
+  modelFacts,
   reassignmentModel,
   statusLabel,
   STATUS_TONE,
@@ -205,52 +206,31 @@ export function TaskThread({
 /**
  * What this task is actually running on.
  *
- * ⛔ **Two numbers, not one.** `requested` is what the dispatch asked for — the task's pin, or the
- * account's default, or nothing at all; `observed` is what the agent's own transcript says answered
- * each turn. They are different questions and they disagree in the cases that matter: a CLI that
- * fell back when a model was busy, an operator who typed `/model` inside the session, an alias like
- * `opus` resolving to a dated id. Showing one number would pick a side and be wrong half the time.
- *
- * ⚠️ Nothing at all until a turn has been metered. An empty session has no observation yet, and
- * inventing "probably the default" here is exactly the guess the rest of this file refuses to make.
+ * ⛔ **Two facts, and which one leads is the whole point.** What the transcript says answered each
+ * turn is a measurement; what a dispatch starting now would ask for is a prediction. `modelFacts`
+ * decides between them — see the note there for why leading with the prediction made this row
+ * contradict the run list beneath it — and this draws the answer.
  */
 function ModelFact({
   session,
+  ran,
   requested
 }: {
   session: Session | null
+  ran: string | null
   requested: { model: string | null; effort: string | null; source: string }
 }): React.JSX.Element {
-  const observed = session?.model ?? null
-  const observedEffort = session?.effort ?? null
-
-  // ⚠️ The CLI's own default is a real answer and reads as one. "—" would look like a broken field.
-  const asked = modelLabel(requested.model, requested.effort) ?? 'CLI default'
-  const differs = observed !== null && requested.model !== null && observed !== requested.model
-  const effortDiffers =
-    observedEffort !== null && requested.effort !== null && observedEffort !== requested.effort
-
+  const { headline, note } = modelFacts({
+    observed: session ? { model: session.model ?? null, effort: session.effort ?? null } : null,
+    ran,
+    requested
+  })
   return (
     <>
-      {/* ⛔ The id is in the tooltip on both lines. This field is the one an operator reads when a
-          run went somewhere unexpected, so the exact string has to stay recoverable — a name written
-          for reading may not be the thing that was sent. */}
-      <span
-        title={`${requested.model ?? 'no model chosen'} — asked for at launch, ${requested.source}`}
-      >
-        {asked}
-      </span>
-      {(observed || observedEffort) && (differs || effortDiffers) && (
-        <div
-          className="tbl-sub warn"
-          title={`${observed ?? requested.model ?? ''} — what the transcript says actually answered each turn`}
-        >
-          running {modelLabel(observed, observedEffort) ?? asked}
-        </div>
-      )}
-      {(observed || observedEffort) && !differs && !effortDiffers && (
-        <div className="tbl-sub dim" title="confirmed by the transcript, turn by turn">
-          confirmed by the transcript
+      <span title={headline.title}>{headline.text}</span>
+      {note && (
+        <div className={`tbl-sub ${note.tone}`} title={note.title}>
+          {note.text}
         </div>
       )}
     </>
@@ -375,7 +355,16 @@ function TaskDetail({
     fleet.find((e) => e.worker.id === (task.constraints.workerId || task.assignee))?.worker ?? null
   const canSetEffort =
     modelOptions.find((o) => o.adapterId === assigned?.adapterId)?.selectableEffort ?? false
-  const resolved = resolveModelChoice(task.constraints, assigned, canSetEffort)
+  // ⛔ With the account's own quota reading, because that is what the dispatch resolves against. A
+  // worker with more than one model pool picks the emptier one at spawn time (`resolveModelChoice`),
+  // so predicting without the reading here does not predict the same model the scheduler will run —
+  // it silently returns the first pool's default and the ledger disagrees with its own run list.
+  const resolved = resolveModelChoice(
+    task.constraints,
+    assigned,
+    canSetEffort,
+    fleet.find((e) => e.worker.id === assigned?.id)?.quota
+  )
   const offered = modelOptions.find((o) => o.adapterId === assigned?.adapterId)?.models ?? []
   // Effort needs both halves: a CLI that takes the flag, and a chosen model that has levels.
   const taskEfforts = canSetEffort
@@ -650,7 +639,11 @@ function TaskDetail({
                 metered since M3 and shown nowhere at all — the transcript knew and the operator did
                 not. */}
             <Fact label="model">
-              <ModelFact session={liveSession ?? null} requested={requestedModel} />
+              <ModelFact
+                session={liveSession ?? null}
+                ran={task.ranModel ?? runs[0]?.model ?? null}
+                requested={requestedModel}
+              />
               {/* ⚠️ Only where the account's CLI has models to offer. A fleet whose cost models failed
                   to load still runs work; it just cannot be re-pointed from here. */}
               {offered.length > 0 && (
@@ -846,25 +839,30 @@ function TaskDetail({
                 the same work — the price is this task's share of the account's own window, the
                 token count is metered from the agent's transcript — and docs/cost-model.md §5 is
                 explicit that they are never reconciled. Both are shown; neither is derived from the
-                other; the tooltip on each says which it is. */}
+                other; the tooltip on each says which it is.
+
+                ⚠️ **A row each, not a number with a footnote.** The token total used to hang under the
+                price as a `price-sub` caption, which read as an annotation *of* the price — the one
+                reading §5 forbids. Two labelled rows in the same ledger as every other fact say what
+                they are on their own, and the label carries the unit so the value stays a number. */}
             <Fact label="price">
-              <span className="price-stack">
-                <Money
-                  usd={task.budget.spentUsd}
-                  estimated={task.budget.spentUsdEstimated}
-                  partial={task.budget.spentUsdPartial}
-                  title={taskPriceTitle(task.budget)}
-                />
-                <span
-                  className="price-sub num"
-                  title={
-                    'Everything every run of this task has spent — input, output and cache, summed from ' +
-                    'the agent’s own transcript. A total, so it only ever grows, and much larger than ' +
-                    'the context above because every turn re-reads the whole window.'
-                  }
-                >
-                  {tokens(task.budget.spentTokens || null)} tokens
-                </span>
+              <Money
+                usd={task.budget.spentUsd}
+                estimated={task.budget.spentUsdEstimated}
+                partial={task.budget.spentUsdPartial}
+                title={taskPriceTitle(task.budget)}
+              />
+            </Fact>
+            <Fact label="tokens">
+              <span
+                className="num"
+                title={
+                  'Everything every run of this task has spent — input, output and cache, summed from ' +
+                  'the agent’s own transcript. A total, so it only ever grows, and much larger than ' +
+                  'the context above because every turn re-reads the whole window.'
+                }
+              >
+                {tokens(task.budget.spentTokens || null)}
               </span>
             </Fact>
             {workspace && (
@@ -2039,26 +2037,30 @@ function RunRow({
             </span>
           </span>
         </div>
+        {/* ⛔ Price and tokens are two rows here for the same reason they are two rows in the
+            ledger above: they measure the same work by two instruments that are never reconciled,
+            and stacking one under the other made the second read as a gloss on the first. */}
         <div className="side-run-fact">
           <span className="side-run-key">price:</span>
           <span className="side-run-val">
-            <span className="price-stack">
-              <Money
-                usd={run.price?.usd ?? null}
-                estimated={run.price?.estimated ?? false}
-                title={runPriceTitle(run.price)}
-              />
-              <span
-                className="price-sub num"
-                title={
-                  'What this run spent: input + output + cache read + cache write, summed from the ' +
-                  'transcript. ⛔ Not the size of the context — a single long conversation re-reads its ' +
-                  'whole window every turn, so the total runs far ahead of it.'
-                }
-              >
-                {tokens(spent || null)} tokens
-              </span>
-            </span>
+            <Money
+              usd={run.price?.usd ?? null}
+              estimated={run.price?.estimated ?? false}
+              title={runPriceTitle(run.price)}
+            />
+          </span>
+        </div>
+        <div className="side-run-fact">
+          <span className="side-run-key">tokens:</span>
+          <span
+            className="side-run-val num"
+            title={
+              'What this run spent: input + output + cache read + cache write, summed from the ' +
+              'transcript. ⛔ Not the size of the context — a single long conversation re-reads its ' +
+              'whole window every turn, so the total runs far ahead of it.'
+            }
+          >
+            {tokens(spent || null)}
           </span>
         </div>
         <div className="side-run-fact">

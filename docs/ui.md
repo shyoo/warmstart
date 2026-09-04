@@ -160,6 +160,11 @@ is too large and too varied.
 - Fonts are stacks with system fallbacks (Inter, JetBrains Mono; both OFL and vendorable later
   without changing a rule).
 
+- **`.panel` caps at 1100px; `.panel--wide` does not.** The cap is a reading measure for prose and
+  forms. A panel whose content is a *board* — Flow, the task table — opts out, because squeezing the
+  columns a reader is comparing while half the window stays empty is worse, not calmer. ⛔ Flow, Tasks
+  and the thread are three views of one project, looked at one after another: they are all wide.
+
 ⚠️ Reuse an existing class before adding one. The check-command textarea once borrowed `.ask-input`,
 whose entire design is to be invisible.
 
@@ -181,6 +186,14 @@ whose entire design is to be invisible.
   because the turn has already failed.
 - ⛔ **`awaiting_human` must offer somewhere to answer.** It is the one status explicitly about the
   operator, and it was once the only resting state with nothing to press.
+- ⛔ **A measurement outranks a prediction wherever both exist, and the label says which is which.**
+  The thread's `model` row leads with what the transcript says answered each turn and demotes the
+  resolution to *next run asks for …*. Leading with the resolution made the row disagree with the run
+  list under it on any account with more than one model pool, where the dispatch resolves the pool
+  against a live quota reading (`modelFacts`, `resolveModelChoice`).
+- ⛔ **Price and tokens are two rows, never a number with a caption.** They measure the same work with
+  two instruments that [`cost-model.md`](cost-model.md) §5 never reconciles, so stacking the token
+  count under the price read as a gloss *on* the price. One labelled row each, unit in the label.
 - ⛔ **A run's `completed` beside a task's `awaiting_human` is not a contradiction** — the UI has to
   say so, because that pair is what somebody reads as broken.
 - ⛔ **A Flow ticket appears in one lifecycle lane only.** A workspace claim enriches Running only

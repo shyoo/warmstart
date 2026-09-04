@@ -252,6 +252,62 @@ export function modelLine(
 }
 
 /**
+ * The same "what ran beats what would run" rule, for the thread's `model` row.
+ *
+ * ⛔ **The headline is a measurement wherever one exists.** This pane used to lead with the
+ * *resolution* — what a dispatch starting now would ask for — under a tooltip that said "asked for
+ * at launch". Those are not the same sentence, and on an account with more than one model pool they
+ * are routinely not the same model: the dispatch resolves the pool against a live quota reading and
+ * takes the emptier one, so the ledger announced `Gemini 3.7 Flash Med` over a run whose every turn
+ * was answered by 3.8. Nothing was wrong with the run; the row was reporting a prediction as a fact.
+ *
+ * ⚠️ **The prediction is still shown, as the second line, and only when it differs.** It is the
+ * answer to a real question — *what would the next turn use?* — which is exactly what an operator
+ * who has just re-pinned the model wants confirmed. Wording it as `next run asks for …` is the whole
+ * fix: two lines that say what they are cannot contradict each other.
+ *
+ * ⚠️ Nothing observed at all until a turn has been metered, and then the resolution is the only
+ * thing there is to show. An empty session has no observation, and inventing "probably the default"
+ * is the guess the rest of this file refuses to make.
+ */
+export function modelFacts(input: {
+  /** The live session's own reading, which is the only source that also knows the effort. */
+  observed: { model: string | null; effort: string | null } | null
+  /** What the last run recorded, for a task whose session has since closed. */
+  ran: string | null
+  requested: { model: string | null; effort: string | null; source: string }
+}): {
+  headline: { text: string; title: string }
+  note: { text: string; title: string; tone: 'warn' | 'dim' } | null
+} {
+  const { observed, ran, requested } = input
+  const model = observed?.model ?? ran ?? null
+  const effort = observed?.effort ?? null
+  // ⚠️ The CLI's own default is a real answer and reads as one. "—" would look like a broken field.
+  const asked = modelLabel(requested.model, requested.effort) ?? 'CLI default'
+  const askedTitle = `${requested.model ?? 'no model chosen'} — what the next run asks for, ${requested.source}`
+
+  const seen = modelLabel(model, effort)
+  if (!seen) return { headline: { text: asked, title: askedTitle }, note: null }
+
+  const differs =
+    (requested.model !== null && model !== null && requested.model !== model) ||
+    (requested.effort !== null && effort !== null && requested.effort !== effort)
+  return {
+    headline: {
+      text: seen,
+      // ⛔ The id stays in reach on every line. This field is the one an operator reads when a run
+      // went somewhere unexpected, and a name written for reading may not be the string that was
+      // sent.
+      title: `${model ?? ''} — what the transcript says actually answered each turn`
+    },
+    note: differs
+      ? { text: `next run asks for ${asked}`, title: askedTitle, tone: 'warn' }
+      : { text: 'confirmed by the transcript', title: 'confirmed by the transcript, turn by turn', tone: 'dim' }
+  }
+}
+
+/**
  * What kind of thing this task is, in the words the composer used to file it.
  *
  * ⛔ **A fact the thread was missing entirely.** A Plan & Split task's page looked exactly like an
