@@ -228,6 +228,46 @@ describe('scheduler tick: end-to-end FIFO dispatch', () => {
     expect(ready[0]?.id).toBe(p0New.id)
     expect(ready[1]?.id).toBe(p2Old.id)
   })
+
+  it('holds a queued task at capacity when a 1-slot worker is occupied by a landing task whose session has closed', async () => {
+    // ⛔ When a task on a one-slot worker (like CodexFirst) reports complete, its process exits
+    // while landTask is in progress. The scheduler tick must recognize that the worker is still
+    // busy and hold queued tasks with '${worker.label} at capacity', preventing concurrent dispatches.
+    const w = workers.createWorker({ adapterId: 'claude-code', label: 'CodexOne', maxConcurrent: 1 })
+    // Ensure worker is enabled and identity is checked
+    workers.updateWorker(w.id, { enabled: true })
+    db.db()
+      .prepare('update workers set identity_json = ? where id = ?')
+      .run(JSON.stringify({ loggedIn: true, account: 'test@example.com' }), w.id)
+
+    // Task 1 was dispatched and is now in 'running' state, but its session closed (landing):
+    const task1 = tasks.createTask({ title: 'Task 1 Landing', projectId })
+    const run1 = tasks.startRun({
+      taskId: task1.id,
+      workerId: w.id,
+      sessionId: 'closed-landing-session',
+      projectId,
+      quotaUnverified: false,
+      costModelId: null
+    })
+    tasks.setStatus(task1.id, 'running', { assignee: w.id })
+
+    // Task 2 is queued:
+    const task2 = tasks.createTask({ title: 'Task 2 Queued', projectId })
+
+    const res = await scheduler.tick()
+    expect(res.dispatched).toBe(0)
+    const t2After = tasks.requireTask(task2.id)
+    expect(t2After.status).toBe('ready')
+    expect(t2After.holdReason).toMatch(/CodexOne at capacity/)
+
+    // Once Task 1 finishes landing:
+    tasks.setStatus(task1.id, 'completed')
+    tasks.finishRun(run1.id, 'completed')
+
+    // Worker is now free, runningTaskReservations is 0:
+    expect(scheduler.retainedReservations(w.id, [])).toBe(0)
+  })
 })
 
 describe('automatic resolve and retry', () => {

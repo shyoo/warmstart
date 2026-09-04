@@ -104,6 +104,7 @@ import {
   resolveConflictOnTask,
   resolveRetryOnTask,
   resolveTask,
+  retainedReservations,
   tick
 } from './scheduler.js'
 import { controllerReport, drainConsults, enqueueConsult } from './controller.js'
@@ -205,7 +206,12 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
           // ⛔ Both gates called here rather than reimplemented in the renderer. See the fields'
           // notes in protocol.ts: together these are what "ready" means everywhere in the daemon.
           unavailable: accountUnavailability(worker),
-          atCapacity: atCapacity(liveSessions, worker.maxConcurrent, null)
+          atCapacity: atCapacity(
+            liveSessions,
+            worker.maxConcurrent,
+            null,
+            retainedReservations(worker.id, liveSessions)
+          )
         }
       }),
 

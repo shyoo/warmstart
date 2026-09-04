@@ -1048,7 +1048,7 @@ export function chooseTarget(task: Task): WorkerChoice {
     // stand in for — or hide — another's. `warmSessionFor` does that filtering; see its comment.
     const reuse = warmSessionFor(task, worker.id)
     const sessions = sessionsForWorker(worker.id)
-    const retained = awaitingHumanReservations(worker.id, sessions)
+    const retained = retainedReservations(worker.id, sessions)
     if (atCapacity(sessions, worker.maxConcurrent, reuse, retained)) {
       reasons.push(`${worker.label} at capacity`)
       continue
@@ -4323,6 +4323,33 @@ export function awaitingHumanReservations(workerId: string, sessions: Session[])
     if (task.status !== 'awaiting_human' || task.ranOn !== workerId) return false
     return !runsFor(task.id).some((run) => run.sessionId && liveSessionIds.has(run.sessionId))
   }).length
+}
+
+/**
+ * Closed sessions are absent from `sessionsForWorker`, but a task that is still running (e.g.
+ * completing or landing after its CLI process has exited, such as with one-shot adapters like Codex)
+ * still owns one worker slot. Do not count one whose session is live: that session is already in the
+ * ordinary concurrency total.
+ */
+export function runningTaskReservations(workerId: string, sessions: Session[]): number {
+  const liveSessionIds = new Set(sessions.map((session) => session.id))
+  return listTasks().filter((task) => {
+    const isRunningOnWorker =
+      task.status === 'running' && (task.assignee === workerId || task.ranOn === workerId)
+    const hasOpenRunOnWorker = runsFor(task.id).some(
+      (run) => run.workerId === workerId && run.endedAt === null && (run.kind === 'work' || !run.kind)
+    )
+    if (!isRunningOnWorker && !hasOpenRunOnWorker) return false
+    return !runsFor(task.id).some((run) => run.sessionId && liveSessionIds.has(run.sessionId))
+  }).length
+}
+
+/**
+ * Total slots held on this worker by tasks whose sessions are not currently in `sessions`
+ * (both tasks parked at `awaiting_human` and tasks still `running` while completing/landing).
+ */
+export function retainedReservations(workerId: string, sessions: Session[]): number {
+  return awaitingHumanReservations(workerId, sessions) + runningTaskReservations(workerId, sessions)
 }
 
 // ⛔ Re-exported, not redefined. It moved to `sessions.ts` so `sharing.ts` could ask it without

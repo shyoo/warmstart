@@ -68,18 +68,20 @@ Before scoring, every worker in the fleet is evaluated against hard admission ru
 
 ### 2.2 Concurrency & The 1-Slot Session Reuse Rule
 Each worker defines `maxConcurrent` (default `1` parallel run):
-- `atCapacity(sessions, maxConcurrent, reuse)` counts active work sessions on that worker.
+- `atCapacity(sessions, maxConcurrent, reuse, retained)` counts active work sessions plus retained task reservations on that worker.
 - ⛔ **The 1-Slot Continuation Rule:** Reusing an existing idle session (`reuse`) starts **no new process**. Therefore, `reuse` is explicitly **exempt** from the capacity count.
+- ⛔ **Retained Task Reservations:** Closed sessions are absent from `sessionsForWorker`. However, tasks parked at `awaiting_human` or tasks still `running` (such as completing/landing work after a one-shot CLI like Codex has exited) still own a slot. `retainedReservations()` counts these uncounted tasks so the scheduler and `spawnSession` do not dispatch into an occupied worker.
 
 ```typescript
 // src/daemon/scheduler.ts
 export function atCapacity(
   sessions: Session[],
   maxConcurrent: number,
-  reuse: Session | null
+  reuse: Session | null,
+  retained = 0
 ): boolean {
   const busy = sessions.filter((s) => s.purpose === 'work' && s.id !== reuse?.id).length
-  return busy >= maxConcurrent
+  return busy + retained >= maxConcurrent
 }
 ```
 

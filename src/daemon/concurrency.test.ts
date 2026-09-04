@@ -22,6 +22,7 @@ let db: typeof import('./db.js')
 let workers: typeof import('./workers.js')
 let scheduler: typeof import('./scheduler.js')
 let tasks: typeof import('./tasks.js')
+let sessions: typeof import('./sessions.js')
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'agentyard-concurrency-'))
@@ -30,6 +31,7 @@ beforeAll(async () => {
   workers = await import('./workers.js')
   scheduler = await import('./scheduler.js')
   tasks = await import('./tasks.js')
+  sessions = await import('./sessions.js')
   db.openDb(join(dir, 'concurrency.db'))
 })
 
@@ -155,5 +157,74 @@ describe('the capacity gate above one slot', () => {
     const warm = session('still-warm')
     expect(scheduler.awaitingHumanReservations(worker.id, [warm])).toBe(0)
     expect(scheduler.atCapacity([warm], worker.maxConcurrent, warm, 0)).toBe(false)
+  })
+
+  it('keeps a slot for a task that is still running or landing after its session closed', () => {
+    // ⛔ When a one-shot adapter like Codex calls task_complete, its CLI process exits immediately
+    // and the session becomes 'closed' while landTask is still checking and merging work.
+    // Without retained reservations for running tasks, the scheduler and spawnSession would treat
+    // the worker as idle and dispatch another task, violating maxConcurrent (measured on t164/t165, t179/t180).
+    const worker = add(1)
+    const runningTask = tasks.createTask({ title: 'landing in progress' })
+    const run = tasks.startRun({
+      taskId: runningTask.id,
+      workerId: worker.id,
+      sessionId: 'closed-while-landing',
+      projectId: null,
+      quotaUnverified: false,
+      costModelId: null
+    })
+    tasks.setStatus(runningTask.id, 'running', { assignee: worker.id })
+
+    // Session is closed, so absent from sessionsForWorker ([]).
+    const runningRetained = scheduler.runningTaskReservations(worker.id, [])
+    expect(runningRetained).toBe(1)
+    const totalRetained = scheduler.retainedReservations(worker.id, [])
+    expect(totalRetained).toBe(1)
+    expect(scheduler.atCapacity([], worker.maxConcurrent, null, totalRetained)).toBe(true)
+    expect(scheduler.runningTaskReservations('another-worker', [])).toBe(0)
+
+    // Does not double-count if the session is still live:
+    const liveSession = session('closed-while-landing')
+    expect(scheduler.runningTaskReservations(worker.id, [liveSession])).toBe(0)
+
+    // Once landing finishes and the run is closed, the slot is freed:
+    tasks.setStatus(runningTask.id, 'completed')
+    tasks.finishRun(run.id, 'completed')
+    expect(scheduler.runningTaskReservations(worker.id, [])).toBe(0)
+    expect(scheduler.retainedReservations(worker.id, [])).toBe(0)
+    expect(scheduler.atCapacity([], worker.maxConcurrent, null, 0)).toBe(false)
+  })
+
+  it('spawnSession refuses when an uncounted open run exists on a 1-slot worker', () => {
+    const worker = add(1)
+    const runningTask = tasks.createTask({ title: 'task with open run' })
+    const run = tasks.startRun({
+      taskId: runningTask.id,
+      workerId: worker.id,
+      sessionId: 'session-closed-early',
+      projectId: null,
+      quotaUnverified: false,
+      costModelId: null
+    })
+    tasks.setStatus(runningTask.id, 'running', { assignee: worker.id })
+
+    // spawnSession checks live sessions + open runs on this worker.
+    // Even if sessionsForWorker is empty, the open run must block spawning a second work session.
+    expect(() =>
+      sessions.spawnSession({
+        workerId: worker.id,
+        purpose: 'work'
+      })
+    ).toThrow(/is at its concurrency limit \(1\/1\)/)
+
+    // Once the run finishes, spawnSession no longer throws concurrency limit
+    tasks.finishRun(run.id, 'completed')
+    // (It might throw due to cwd/isolation or lack of CLI, but not concurrency limit)
+    try {
+      sessions.spawnSession({ workerId: worker.id, purpose: 'work' })
+    } catch (err: unknown) {
+      expect((err as Error).message).not.toMatch(/is at its concurrency limit/)
+    }
   })
 })

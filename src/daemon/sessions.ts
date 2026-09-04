@@ -650,7 +650,17 @@ export function spawnSession(opts: SpawnOptions): Session {
   if (blocked) throw new Error(blocked)
 
   if (purpose === 'work') {
-    const running = sessionsForWorker(worker.id).filter((s) => s.purpose === 'work').length
+    const liveWork = sessionsForWorker(worker.id).filter((s) => s.purpose === 'work')
+    const liveIds = new Set(liveWork.map((s) => s.id))
+    const uncountedOpenRuns = rows<{ id: string; session_id: string | null }>(
+      db()
+        .prepare(
+          "select id, session_id from runs where worker_id = ? and ended_at is null and coalesce(kind, 'work') = 'work'"
+        )
+        .all(worker.id)
+    ).filter((r) => !r.session_id || !liveIds.has(r.session_id)).length
+
+    const running = liveWork.length + uncountedOpenRuns
     if (running >= worker.maxConcurrent) {
       throw new Error(
         `worker '${worker.label}' is at its concurrency limit (${running}/${worker.maxConcurrent})`
