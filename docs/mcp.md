@@ -54,7 +54,7 @@ any way to assign work directly to another worker.
 |---|---|
 | `approve` | the permission prompt tool. Called by the CLI in place of showing a card |
 | `task_complete` | ⛔ **the only signal that a task succeeded.** A process exiting cleanly says nothing |
-| `ask_human` | put a question to the operator and **wait**. Blocks for minutes by design |
+| `ask_human` | put a question to the operator and **wait** (single choice, multi-checkboxes via `multi_select`, or open text) |
 | `checkpoint` | report a finished phase and wait for the go-ahead. `checkpointed` completion mode |
 | `task_create` | file a follow-up, inheriting a **narrowed** mandate and a share of the budget |
 | `handoff` | leave a note for whoever continues; prepended to the next run's prompt |
@@ -65,10 +65,14 @@ any way to assign work directly to another worker.
 deliberate: an answer arriving while the session is warm costs a cache read, where the same answer
 after a restart costs a full rebuild. ⛔ It replaced `request_human`, which routed through the approval
 path — an agent asking *"OAuth, session cookies, or magic link?"* got back `The operator agreed.`
+It supports multiple selection via `multi_select: true` (or `multiSelect`), extracts embedded XML
+attributes, and detects multi-select intent from phrasing.
 
 ⚠️ **An adapter with no MCP has no `ask_human`.** Its prompt asks it to end with a `NEEDS DECISION:`
 line plus one `- option — detail` bullet per choice, and the daemon files a real `Question` row from
-it. ⛔ However it arrived, a question that does not become a row is a question nobody can reply to.
+it. Multiple choices are indicated with `NEEDS DECISION: [multi] <question>` or `(select all that apply)`.
+The operator UI also includes a `+ select multiple` mode toggle on question cards.
+⛔ However it arrived, a question that does not become a row is a question nobody can reply to.
 
 ⛔ **`task_split` blocks on a structural approval, and that is the point.** An agent told in its prompt
 to ask before splitting can forget; an agent whose tool call does not return until a person has answered

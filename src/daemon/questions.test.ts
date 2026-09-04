@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { Session } from '@shared/protocol.js'
+import { isMultiSelectQuestion, cleanQuestionText, extractEmbeddedParameters } from '@shared/tasks.js'
 
 /**
  * The third object.
@@ -337,6 +338,39 @@ describe('answering', () => {
     const reply = questions.renderAnswer(questions.requireQuestion(id))
     expect(reply).toContain('OAuth (external provider)')
     expect(reply).toContain('Magic-link email')
+  })
+
+  it('detects multi-select questions and extracts embedded parameters (t191 case)', () => {
+    const rawQuestion =
+      'Which direct-money sources should the adapter pipeline actually read in this round? Pick everything that should be built now.\n' +
+      '</question>\n' +
+      '<parameter name="header">Money sources</parameter>'
+    const embedded = extractEmbeddedParameters(rawQuestion)
+    expect(embedded.header).toBe('Money sources')
+    expect(embedded.question).toContain('Which direct-money sources')
+    expect(embedded.question).not.toContain('</question>')
+    expect(embedded.question).not.toContain('Money sources')
+
+    const isMulti = isMultiSelectQuestion(embedded.question, THREE_WAYS, embedded.header)
+    expect(isMulti).toBe(true)
+
+    const cleaned = cleanQuestionText(embedded.question)
+    expect(cleaned).toContain('Which direct-money sources')
+  })
+
+  it('detects multi-select markers across headers, bracket tags, and options', () => {
+    expect(isMultiSelectQuestion('Select components', [], 'multi')).toBe(true)
+    expect(isMultiSelectQuestion('Select components', [], 'Checkboxes')).toBe(true)
+    expect(isMultiSelectQuestion('[multi] Which tools should we enable?')).toBe(true)
+    expect(isMultiSelectQuestion('Which packages to install? (select all that apply)')).toBe(true)
+    expect(isMultiSelectQuestion('Which options?', ['Option A (select all that apply)'])).toBe(true)
+    expect(isMultiSelectQuestion('Which single option do you want?')).toBe(false)
+  })
+
+  it('cleans bracketed multi markers from question text', () => {
+    expect(cleanQuestionText('[multi] Which tools to install?')).toBe('Which tools to install?')
+    expect(cleanQuestionText('[checkbox] Which tools to install?')).toBe('Which tools to install?')
+    expect(cleanQuestionText('Which tools to install? (multi-select)')).toBe('Which tools to install?')
   })
 
   it('finds the questions asked against one task', () => {

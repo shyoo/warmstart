@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { readFileSync } from 'node:fs'
 import http from 'node:http'
 import type { DaemonEndpoint, RpcMethod, RpcParams, RpcResponse, RpcResult } from '@shared/protocol.js'
+import { cleanQuestionText, extractEmbeddedParameters, isMultiSelectQuestion } from '@shared/tasks.js'
 import { paths } from '../daemon/paths.js'
 
 /**
@@ -146,7 +147,13 @@ server.registerTool(
     // here carrying the whole question - labels, per-option prose, `multiSelect` - and was being
     // flattened into three buttons. It is routed to the Question object instead.
     const askedList = questionsFrom(args.input)
-    if (toolName === 'AskUserQuestion' && askedList.length > 0) {
+    if (
+      (toolName === 'AskUserQuestion' ||
+        toolName === 'ask_question' ||
+        toolName === 'AskQuestion' ||
+        toolName === 'ask_human') &&
+      askedList.length > 0
+    ) {
       return await answerNativeQuestions(sessionId, askedList)
     }
 
@@ -202,36 +209,60 @@ server.registerTool(
     description:
       'Put a question to the operator and wait for a real answer. Use this instead of guessing ' +
       'whenever the answer changes what you build. Offer options when there is a fixed set of ' +
-      'sensible ones — the operator answers those in one click — and leave them out for an open ' +
-      'question. If nobody answers in time you are told so plainly; stop rather than guessing.',
+      'sensible ones — the operator answers those in one click. Set `multi_select` to true ' +
+      '(or `multiSelect`) if the operator can choose more than one option (checkboxes). ' +
+      'Leave options empty for an open question. If nobody answers in time you are told so plainly; stop rather than guessing.',
     inputSchema: {
       question: z.string().describe('The question, in full. The operator sees exactly this text.'),
       header: z.string().optional().describe('A few words naming the decision, e.g. "Auth approach"'),
       options: z
         .array(
-          z.object({
-            label: z.string().describe('The choice, as the operator will see it on a button'),
-            detail: z.string().optional().describe('What choosing this means, and what it costs')
-          })
+          z.union([
+            z.string(),
+            z.object({
+              label: z.string().describe('The choice, as the operator will see it on a button'),
+              detail: z.string().optional().describe('What choosing this means, and what it costs')
+            })
+          ])
         )
         .optional()
         .describe('Leave empty for an open question'),
-      multi_select: z.boolean().optional().describe('May the operator choose more than one?')
+      multi_select: z
+        .boolean()
+        .optional()
+        .describe('May the operator choose more than one option (checkboxes)? Set true for multiple selection.'),
+      multiSelect: z.boolean().optional().describe('Alias for multi_select'),
+      is_multi_select: z.boolean().optional().describe('Alias for multi_select'),
+      multiple: z.boolean().optional().describe('Alias for multi_select')
     }
   },
   async (args) => {
     const sessionId = process.env.MULTI_AGENT_CONTROLLER_SESSION_ID ?? ''
-    const options = args.options ?? []
-    // ⛔ The kind is derived from what was actually supplied, not asked for separately. A caller that
-    // says `choice` and sends no options has described a question nobody can answer.
-    const kind = options.length === 0 ? 'text' : args.multi_select ? 'multi' : 'choice'
+    const rawQuestion = args.question
+    const embedded = extractEmbeddedParameters(rawQuestion)
+    const questionText = cleanQuestionText(embedded.question)
+    const header = args.header || embedded.header
+
+    const rawOptions = args.options ?? []
+    const options = rawOptions.map((o) => (typeof o === 'string' ? { label: o } : o))
+
+    const explicitMulti =
+      args.multi_select === true ||
+      args.multiSelect === true ||
+      args.is_multi_select === true ||
+      args.multiple === true ||
+      embedded.multiSelect === true
+    const isMulti = explicitMulti || isMultiSelectQuestion(questionText, options, header)
+
+    // ⛔ The kind is derived from what was actually supplied or inferred, not asked for separately.
+    const kind = options.length === 0 ? 'text' : isMulti ? 'multi' : 'choice'
     try {
       const resolution = await rpc('question.ask', {
         sessionId,
         origin: 'ask_human',
         kind,
-        question: args.question,
-        ...(args.header ? { header: args.header } : {}),
+        question: questionText,
+        ...(header ? { header } : {}),
         ...(options.length > 0
           ? {
               options: options.map((option, index) => ({
@@ -773,24 +804,52 @@ function questionsFrom(input: unknown): NativeQuestion[] {
   for (const item of list) {
     if (!item || typeof item !== 'object') continue
     const record = item as Record<string, unknown>
-    const question = typeof record.question === 'string' ? record.question : null
-    if (!question) continue
+    const rawQuestion = typeof record.question === 'string' ? record.question : null
+    if (!rawQuestion) continue
+    const embedded = extractEmbeddedParameters(rawQuestion)
+    const question = cleanQuestionText(embedded.question)
+    const header =
+      typeof record.header === 'string' && record.header ? record.header : embedded.header
     const rawOptions = Array.isArray(record.options) ? record.options : []
+    const explicitMulti =
+      record.multiSelect === true ||
+      record.multi_select === true ||
+      record.is_multi_select === true ||
+      record.multiple === true ||
+      embedded.multiSelect === true
+    const isMulti =
+      explicitMulti ||
+      isMultiSelectQuestion(
+        question,
+        rawOptions as Array<{ label?: string; detail?: string } | string>,
+        header
+      )
+
     result.push({
       question,
-      ...(typeof record.header === 'string' && record.header ? { header: record.header } : {}),
-      multiSelect: record.multiSelect === true,
+      ...(header ? { header } : {}),
+      multiSelect: isMulti,
       options: rawOptions
         .map((o, index) => {
+          if (typeof o === 'string') {
+            return { id: `opt${index + 1}`, label: o }
+          }
           const option = o as Record<string, unknown>
-          const label = typeof option.label === 'string' ? option.label : null
+          const label =
+            typeof option.label === 'string'
+              ? option.label
+              : typeof option.text === 'string'
+                ? option.text
+                : null
           if (!label) return null
           return {
-            id: `opt${index + 1}`,
+            id: typeof option.id === 'string' && option.id.trim() ? option.id.trim() : `opt${index + 1}`,
             label,
             ...(typeof option.description === 'string' && option.description
               ? { detail: option.description }
-              : {})
+              : typeof option.detail === 'string' && option.detail
+                ? { detail: option.detail }
+                : {})
           }
         })
         .filter((o): o is { id: string; label: string; detail?: string } => o !== null)

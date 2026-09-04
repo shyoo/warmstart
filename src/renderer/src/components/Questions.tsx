@@ -28,6 +28,7 @@ export function QuestionCard({
   compact?: boolean
 }): React.JSX.Element {
   const { settings } = useUiSettings()
+  const [isMulti, setIsMulti] = useState(question.kind === 'multi')
   const [chosen, setChosen] = useState<string[]>([])
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
@@ -47,14 +48,27 @@ export function QuestionCard({
   const [other, setOther] = useState(false)
   const textRef = useRef<HTMLTextAreaElement>(null)
 
-  const multi = question.kind === 'multi'
+  useEffect(() => {
+    setIsMulti(question.kind === 'multi')
+  }, [question.kind])
+
   const hasOptions = question.options.length > 0
 
   const toggle = (id: string): void => {
     setOther(false)
     setChosen((prev) =>
-      multi ? (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]) : [id]
+      isMulti ? (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]) : [id]
     )
+  }
+
+  const toggleMulti = (): void => {
+    setIsMulti((prev) => {
+      const next = !prev
+      if (!next && chosen.length > 1) {
+        setChosen(chosen.slice(0, 1))
+      }
+      return next
+    })
   }
 
   const chooseOther = (): void => {
@@ -108,6 +122,16 @@ export function QuestionCard({
     <div className={`question-card${question.parkedAt ? ' question-card--parked' : ''}`}>
       <div className="question-head">
         <span className="tag tag--human">{question.header ?? 'a decision is wanted'}</span>
+        {hasOptions && (
+          <button
+            type="button"
+            className="question-mode-toggle"
+            onClick={toggleMulti}
+            title={isMulti ? 'Switch to single-choice' : 'Switch to multiple-checkboxes'}
+          >
+            {isMulti ? '✓ multiple choices' : '+ select multiple'}
+          </button>
+        )}
         {question.parkedAt && (
           <span className="dim question-parked">
             The session that asked this has ended. Answering it starts the work again.
@@ -126,7 +150,7 @@ export function QuestionCard({
               disabled={busy}
               onClick={() => toggle(option.id)}
             >
-              <span className={`question-mark${multi ? ' question-mark--multi' : ''}`}>
+              <span className={`question-mark${isMulti ? ' question-mark--multi' : ''}`}>
                 {chosen.includes(option.id) ? '✓' : ''}
               </span>
               <span className="question-option-body">
@@ -145,7 +169,7 @@ export function QuestionCard({
             disabled={busy}
             onClick={chooseOther}
           >
-            <span className={`question-mark${multi ? ' question-mark--multi' : ''}`}>
+            <span className={`question-mark${isMulti ? ' question-mark--multi' : ''}`}>
               {other ? '✓' : ''}
             </span>
             <span className="question-option-body">
@@ -155,7 +179,7 @@ export function QuestionCard({
               </span>
             </span>
           </button>
-          {multi && !other && <p className="question-hint dim">Choose as many as apply.</p>}
+          {isMulti && !other && <p className="question-hint dim">Choose as many as apply.</p>}
         </div>
       )}
 

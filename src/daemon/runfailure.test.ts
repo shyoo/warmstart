@@ -652,6 +652,42 @@ describe('a result that is not an error', () => {
     expect(questions.openQuestions().some((q) => q.id === filed?.id)).toBe(true)
   })
 
+  it('files a multi-select question when marked with [multi] or multi phrases', async () => {
+    const { task, session } = seedRunningTask({ metered: 500 })
+    await scheduler.onStreamResult(session, {
+      isError: false,
+      text:
+        'I surveyed the pipeline options.\nNEEDS DECISION: [multi] Which direct-money sources should the pipeline read?\n' +
+        '- Stripe — direct credit card billing\n' +
+        '- PayPal — legacy web payments\n' +
+        '- In-app purchases — mobile stores',
+      terminalReason: null
+    })
+
+    const [filed] = questions.questionsForTask(task.id)
+    expect(filed, 'the question was filed').toBeDefined()
+    expect(filed?.question).toBe('Which direct-money sources should the pipeline read?')
+    expect(filed?.kind).toBe('multi')
+    expect(filed?.options).toHaveLength(3)
+    expect(filed?.options[0]?.label).toBe('Stripe')
+    expect(filed?.options[0]?.detail).toBe('direct credit card billing')
+  })
+
+  it('detects [multi] and select-all tags in needsDecisionIn', () => {
+    const tagged = scheduler.needsDecisionIn(
+      'NEEDS DECISION: [multi] which components should be active?\n- Component A\n- Component B'
+    )
+    expect(tagged?.kind).toBe('multi')
+    expect(tagged?.question).toBe('which components should be active?')
+    expect(tagged?.options).toHaveLength(2)
+
+    const phrase = scheduler.needsDecisionIn(
+      'NEEDS DECISION: Select all packages to deploy\n- pkg-a\n- pkg-b'
+    )
+    expect(phrase?.kind).toBe('multi')
+    expect(phrase?.question).toBe('Select all packages to deploy')
+  })
+
   it('reads the options only from the contract, never out of the sentence', () => {
     // ⛔ What antigravity actually wrote on t63. There is deliberately no attempt to recover choices
     //    from prose — a question with no parsed options is still answerable in the text box.

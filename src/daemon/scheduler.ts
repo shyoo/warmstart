@@ -2,6 +2,7 @@ import { sessionEnded } from '@shared/protocol.js'
 import type {
   Attachment,
   Project,
+  QuestionKind,
   QuestionOption,
   Run,
   RunQuota,
@@ -11,6 +12,8 @@ import type {
 import { describeAttachment } from './attachments.js'
 import {
   WINDOW_HIGH_WATER,
+  cleanQuestionText,
+  isMultiSelectQuestion,
   policyVerifies,
   resolveCompletionMode,
   resolveModelChoice
@@ -3218,7 +3221,9 @@ export function promptFor(
         'followed by a one-line summary of what changed. ' + commitHygiene + ' If you need a decision from a person, end your reply with a line beginning ' +
         '`NEEDS DECISION:` followed by the question, and stop rather than guessing. If you are ' +
         'choosing between specific options, put each one on its own line directly under it as ' +
-        '`- <the option> — <what choosing it means>`, so they can be offered as buttons.'
+        '`- <the option> — <what choosing it means>`, so they can be offered as buttons. ' +
+        'If multiple options can be chosen (checkboxes), indicate that with `NEEDS DECISION: [multi] <question>` ' +
+        'or include `(multi-select)` / `(select all that apply)` in the question.'
     )
   }
 
@@ -3965,7 +3970,7 @@ export async function onStreamResult(
           fileParkedQuestion({
             sessionId: session.id,
             origin: 'ask_human',
-            kind: asked.options.length > 0 ? 'choice' : 'text',
+            kind: asked.kind,
             question: asked.question,
             ...(asked.options.length > 0 ? { options: asked.options } : {})
           })
@@ -4021,13 +4026,15 @@ export async function onStreamResult(
  */
 export function needsDecisionIn(
   text: string | null
-): { question: string; options: QuestionOption[] } | null {
+): { question: string; options: QuestionOption[]; kind: QuestionKind } | null {
   if (!text) return null
   const lines = stripAnsi(text).split(/\r?\n/)
   const at = lines.findIndex((line) => /^[ \t>*-]*NEEDS DECISION:/i.test(line))
   if (at === -1) return null
-  const question = (/^[ \t>*-]*NEEDS DECISION:[ \t]*(.*)$/i.exec(lines[at] ?? '')?.[1] ?? '').trim()
-  if (!question) return null
+  const rawQuestion = (/^[ \t>*-]*NEEDS DECISION:[ \t]*(.*)$/i.exec(lines[at] ?? '')?.[1] ?? '').trim()
+  if (!rawQuestion) return null
+
+  const question = cleanQuestionText(rawQuestion)
 
   const options: QuestionOption[] = []
   for (const line of lines.slice(at + 1)) {
@@ -4044,7 +4051,10 @@ export function needsDecisionIn(
     })
     if (options.length === 8) break
   }
-  return { question, options }
+
+  const isMulti = isMultiSelectQuestion(rawQuestion, options)
+  const kind: QuestionKind = options.length === 0 ? 'text' : isMulti ? 'multi' : 'choice'
+  return { question, options, kind }
 }
 
 /** The completion contract for adapters that cannot call the MCP task_complete tool. */

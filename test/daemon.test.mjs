@@ -1155,6 +1155,32 @@ async function runApprovalChecks(d) {
     )
     check('and the question leaves the queue', (await d.rpc('question.list')).length === 0)
 
+    // ---------------------------------------------------------------- multi-select via ask_human
+    const askingMulti = mcp('tools/call', {
+      name: 'ask_human',
+      arguments: {
+        question: 'Which direct-money sources should the adapter pipeline read? Pick everything that should be built now.',
+        options: ['Stripe', 'PayPal', 'Apple Pay'],
+        multi_select: true
+      }
+    })
+    await wait(2500)
+    const openMulti = (await d.rpc('question.list')).find((q) => q.question.includes('direct-money sources'))
+    check('a multi-select question opens with kind: multi', openMulti?.kind === 'multi', JSON.stringify(openMulti))
+    if (openMulti) {
+      await d.rpc('question.answer', {
+        id: openMulti.id,
+        optionIds: [openMulti.options[0].id, openMulti.options[2].id]
+      })
+    }
+    const answeredMulti = (await askingMulti).result?.content?.[0]?.text ?? ''
+    check(
+      'multi-select answer includes all chosen options',
+      answeredMulti.includes('Stripe') && answeredMulti.includes('Apple Pay'),
+      answeredMulti
+    )
+    check('and the multi-select question leaves the queue', (await d.rpc('question.list')).length === 0)
+
     // ---------------------------------------------------------------- the CLI's own question tool
     //
     // ⛔ The payload below is verbatim from the R14 capture (claude-code 2.1.251). It arrives
@@ -1251,6 +1277,45 @@ async function runApprovalChecks(d) {
         String(multiReply.message).includes('Q1 Opt 1') &&
         String(multiReply.message).includes('Q2 Opt 2'),
       JSON.stringify(multiReply)
+    )
+
+    // Multi-select AskUserQuestion payload
+    const nativeMulti = mcp('tools/call', {
+      name: 'approve',
+      arguments: {
+        tool_name: 'AskUserQuestion',
+        tool_use_id: 'toolu_01MultiSelectNative',
+        input: {
+          questions: [
+            {
+              question: 'Which features should we enable? (select all that apply)',
+              header: 'Features',
+              multiSelect: true,
+              options: [
+                { label: 'Feature A', description: 'desc A' },
+                { label: 'Feature B', description: 'desc B' }
+              ]
+            }
+          ]
+        }
+      }
+    })
+    await wait(1500)
+    const nativeMultiQ = (await d.rpc('question.list')).find((q) => q.header === 'Features')
+    check('native AskUserQuestion with multiSelect opens with kind: multi', nativeMultiQ?.kind === 'multi', JSON.stringify(nativeMultiQ))
+    if (nativeMultiQ) {
+      await d.rpc('question.answer', {
+        id: nativeMultiQ.id,
+        optionIds: [nativeMultiQ.options[0].id, nativeMultiQ.options[1].id]
+      })
+    }
+    const nativeMultiReply = body(await nativeMulti)
+    check(
+      'native multi-select aggregates both chosen labels',
+      nativeMultiReply.behavior === 'deny' &&
+        String(nativeMultiReply.message).includes('Feature A') &&
+        String(nativeMultiReply.message).includes('Feature B'),
+      JSON.stringify(nativeMultiReply)
     )
 
     // ⚠️ A payload that is not a question still has to work as a permission prompt.

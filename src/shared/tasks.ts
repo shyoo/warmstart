@@ -925,6 +925,81 @@ export interface QuestionResolution {
   answer: QuestionAnswer | null
 }
 
+/**
+ * Detect whether a question was intended to be multi-select / checkboxes.
+ *
+ * Checks for:
+ * 1. Bracketed tags like `[multi]`, `[multi-select]`, `[checkbox]`, `(multi-select)`, `(select all that apply)`
+ * 2. Explicit multi-select phrases like "pick everything", "select all", "choose all", "check all", "any number of", "all that apply", "multiple options", etc.
+ * 3. Header tags like "multi", "checkbox"
+ */
+export function isMultiSelectQuestion(
+  question: string,
+  options?: Array<{ label?: string; detail?: string } | string>,
+  header?: string
+): boolean {
+  if (header && /\b(multi|multi-?select|checkbox(?:es)?)\b/i.test(header)) return true
+  if (/\[(multi|multi-?select|checkbox(?:es)?)\]/i.test(question)) return true
+  if (/\((multi|multi-?select|multiple|checkbox(?:es)?|select all that apply)\)/i.test(question)) return true
+  if (
+    /\b(pick everything|select all|choose all|check all|check any|select any|choose any|any number of|all that apply|all of the above|everything that applies|multiple options|more than one option|multiple choices)\b/i.test(
+      question
+    )
+  ) {
+    return true
+  }
+  if (options) {
+    for (const opt of options) {
+      const text = typeof opt === 'string' ? opt : `${opt.label ?? ''} ${opt.detail ?? ''}`
+      if (/\b(select all that apply|all that apply|check all|multiple choices)\b/i.test(text)) {
+        return true
+      }
+    }
+  }
+  return false
+}
+
+/** Clean bracketed multi-select tags from question text so they don't clutter the UI. */
+export function cleanQuestionText(text: string): string {
+  return text
+    .replace(/\s*\[(multi|multi-?select|checkbox(?:es)?)\]\s*/gi, ' ')
+    .replace(/\s*\((multi|multi-?select|checkbox(?:es)?)\)\s*/gi, ' ')
+    .trim()
+}
+
+/**
+ * Extract embedded XML parameters (e.g. from models that output `<parameter name="header">...`
+ * or `</question>` in their tool arguments, as measured on claude-code in t191).
+ */
+export function extractEmbeddedParameters(rawQuestion: string): {
+  question: string
+  header?: string
+  multiSelect?: boolean
+} {
+  let question = rawQuestion
+  let header: string | undefined
+  let multiSelect: boolean | undefined
+
+  const headerMatch = /<parameter\s+name=["']header["']>([^<]+)(?:<\/parameter>|$)/i.exec(question)
+  if (headerMatch?.[1]) {
+    header = headerMatch[1].trim()
+    question = question.replace(headerMatch[0], '').trim()
+  }
+
+  const multiMatch =
+    /<parameter\s+name=["'](?:multi_select|multiSelect|is_multi_select|multiple)["']>([^<]+)(?:<\/parameter>|$)/i.exec(
+      question
+    )
+  if (multiMatch?.[1]) {
+    multiSelect = /^(true|1|yes)$/i.test(multiMatch[1].trim())
+    question = question.replace(multiMatch[0], '').trim()
+  }
+
+  question = question.replace(/<\/?question>/gi, '').trim()
+
+  return { question, header, multiSelect }
+}
+
 /** A remembered answer. `Bash(npm test)`-shaped, matched by tool plus a glob over the target. */
 export interface ApprovalRule {
   id: string

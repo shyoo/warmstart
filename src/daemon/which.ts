@@ -143,6 +143,7 @@ export function formatCmdInvocation(
  * For node-pty on Windows, node-pty uses CreateProcessW directly which natively supports
  * batch files (.cmd, .bat). Passing cmd.exe to node-pty with quoted arguments causes cmd.exe
  * quote stripping issues, so unwrapping to the direct batch file target is safer and cleaner.
+ * Non-batch commands (including shell builtins like `echo`) must remain under cmd.exe.
  */
 export function unwrapForPty(
   command: string,
