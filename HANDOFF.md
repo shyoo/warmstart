@@ -10,6 +10,7 @@ the line it obsoletes. Where every other fact goes: [`docs/README.md`](docs/READ
 **Baseline (2026-09-04, measured):** typecheck · lint · build clean · `npm test` **1900/1902** across 95 files (2 POSIX-only skipped).
 `test:daemon` **155/155**, `test:ui` **262/262** — measured, not carried forward; `test:pack` **19/19** carried forward. ⚠️ `test:pack` fails every check but its first if `release/` predates `src/`; its first check says so — run `npm run pack` and re-run rather than reading the rest.
 CLIs here: claude 2.1.252 · agy 1.1.25 · codex 0.151.0 · local-llm 1.0.0 (qwen3-coder live tested). ⚠️ With none installed — the CI state — the daemon suite skips 5 checks, each with a stated reason.
+Loose task branches t173 and t191 were retired after verification against local `main`: t173 had no commits beyond it; t191's graph-distinct tip had the identical tree and patch already landed as `60d844c`.
 ⭐ **`scripts/build-win.ps1` runs all of the above** (`-Help` for options, `-Restart` for the inner
 loop); content-addressed, **92s cold, ~0s warm**. ⛔ One packaged app, `release\win-unpacked\` —
 [`docs/development.md`](docs/development.md) §3.
