@@ -157,8 +157,9 @@ describe('where the composer offers to stop the work', () => {
 describe('the clock beside the hold', () => {
   const NOW = 1_700_000_000_000
   const held = (
-    over: Partial<Pick<Task, 'holdReason' | 'holdUntil'>> = {}
-  ): Pick<Task, 'holdReason' | 'holdUntil'> => ({
+    over: Partial<Pick<Task, 'status' | 'holdReason' | 'holdUntil'>> = {}
+  ): Pick<Task, 'status' | 'holdReason' | 'holdUntil'> => ({
+    status: 'ready',
     holdReason: 'ClaudeThird at 92% of its Claude 5h window',
     holdUntil: null,
     ...over
@@ -184,7 +185,28 @@ describe('the clock beside the hold', () => {
   })
 
   it('has nothing to say about a task nobody is holding', () => {
-    expect(holdLine({ holdReason: null, holdUntil: NOW + 60_000 }, NOW)).toBeNull()
+    expect(holdLine({ status: 'ready', holdReason: null, holdUntil: NOW + 60_000 }, NOW)).toBeNull()
+  })
+
+  it('does not present a completed task as still waiting on its last landing failure', () => {
+    expect(
+      holdLine(
+        held({
+          status: 'completed',
+          holdReason:
+            'Retry landing failed: 1 commit(s) on `multi-agent-controller/t191-cost-model`'
+        }),
+        NOW
+      )
+    ).toBeNull()
+  })
+
+  it('keeps the reason that explains how an unsuccessful task ended', () => {
+    for (const status of ['failed', 'cancelled'] as const) {
+      expect(holdLine(held({ status, holdReason: 'agent stopped before completion' }), NOW)).toBe(
+        'agent stopped before completion'
+      )
+    }
   })
 })
 

@@ -545,7 +545,7 @@ function TaskDetail({
                 </button>
               )}
             </Fact>
-            {task.holdReason && (
+            {holdLine(task, now) && (
               <Fact label={task.status === 'awaiting_human' ? 'wants' : 'waiting on'}>
                 {holdLine(task, now)}
               </Fact>

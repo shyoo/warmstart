@@ -169,6 +169,9 @@ whose entire design is to be invisible.
 - ⛔ **A held task says *why*, and says *when* where the refusal has an end.** `ready` on its own is
   unreadable: it is the scheduler's word for *eligible*, and a person who just filed a task reads it
   as *waiting for me*.
+- ⛔ **A completed task is not still waiting on its last hold.** `holdReason` is durable history and
+  may survive a landing failure that was resolved separately; task rows and the detail facts suppress
+  it after completion. Failed and cancelled tasks retain their reason because it can explain the end.
 - ⛔ **An avoidable quota preemption warns before it acts.** The running task's quota-gate fact shows
   the persisted one-minute countdown, its reason, and **Override preemption**; clicking it keeps the
   same session running until the measured window reset. A vendor refusal is not offered as a choice

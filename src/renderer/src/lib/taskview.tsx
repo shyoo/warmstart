@@ -75,9 +75,14 @@ export function statusLabel(task: Pick<Task, 'status' | 'holdReason'>): string {
  * a time anybody can name, and inventing a countdown for it would be worse than the silence.
  */
 export function holdLine(
-  task: Pick<Task, 'holdReason' | 'holdUntil'>,
+  task: Pick<Task, 'status' | 'holdReason' | 'holdUntil'>,
   now = Date.now()
 ): string | null {
+  // A completed task is no longer waiting on anything. `holdReason` is retained as history, so a
+  // landing failure resolved separately can still be present after completion; drawing it here
+  // turns that old event into the task's apparent current state. Failed and cancelled tasks keep
+  // their reasons because those can explain how they ended.
+  if (task.status === 'completed') return null
   if (!task.holdReason) return null
   const left = task.holdUntil ? task.holdUntil - now : 0
   if (left <= 0) return task.holdReason
@@ -555,4 +560,3 @@ export function canRelandTask(task: Pick<Task, 'branch' | 'holdReason'>): boolea
     reason
   )
 }
-
