@@ -8,7 +8,7 @@ started in CI, never run against a real agent CLI.
 the line it obsoletes. Where every other fact goes: [`docs/README.md`](docs/README.md).
 
 **Baseline (2026-09-04, measured):** typecheck · lint · build clean · `npm test` **1798/1800** across 92 files (2 POSIX-only skipped).
-⚠️ `test:ui` **258/258** carried forward from t182 before its rebase. `test:pack` 18/18 carried forward. ⛔ `test:daemon` is **19/20 — one pre-existing failure**, `session.spawn: File not found:` on the PTY probe, reproduced identically on unmodified `main` (6df9080) in a clean worktree, so it is environmental and not t182's. Latest is t182's Plan & Split implementation, rebased over t183/t184 lifecycle and quota fixes.
+`test:daemon` **150/150** clean (PTY probe unwrapping fixed). `test:ui` **258/258** clean. `test:pack` 18/18 carried forward.
 CLIs here: claude 2.1.252 · agy 1.1.25 · codex 0.151.0 · local-llm 1.0.0 (qwen3-coder live tested). ⚠️ With none installed — the CI state — the daemon suite skips 5 checks, each with a stated reason.
 ⭐ **`scripts/build-win.ps1` runs all of the above** (`-Help` for options, `-Restart` for the inner
 loop); content-addressed, **92s cold, ~0s warm**. ⛔ One packaged app, `release\win-unpacked\` —

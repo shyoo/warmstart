@@ -81,4 +81,13 @@ describe('unwrapForPty', () => {
       args: ['exec', '--version']
     })
   })
+
+  it('leaves non-batch commands (like shell builtins) under cmd.exe untouched', () => {
+    if (process.platform !== 'win32') return
+    const res = unwrapForPty('cmd.exe', ['/d', '/c', 'echo agentyard-pty-probe'])
+    expect(res).toEqual({
+      command: 'cmd.exe',
+      args: ['/d', '/c', 'echo agentyard-pty-probe']
+    })
+  })
 })

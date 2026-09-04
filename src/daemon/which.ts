@@ -160,8 +160,12 @@ export function unwrapForPty(
 
   const cmdAndArgs = args.slice(cIdx + 1)
   if (cmdAndArgs.length === 0) return { command, args }
+  const rawTarget = cmdAndArgs[0]!
+  const target = rawTarget.replace(/^["']|["']$/g, '')
+  const ext = extname(target).toLowerCase()
+  if (ext !== '.cmd' && ext !== '.bat') return { command, args }
   return {
-    command: cmdAndArgs[0]!,
+    command: target,
     args: cmdAndArgs.slice(1)
   }
 }
