@@ -3,7 +3,6 @@ import type { Worker } from '@shared/protocol.js'
 import type { Task } from '@shared/tasks.js'
 import { WINDOW_HIGH_WATER } from '@shared/tasks.js'
 import { adapter } from './adapters/index.js'
-import { db } from './db.js'
 import { accountUnavailability } from './eligibility.js'
 import { extractJson } from './controller.js'
 import { landingTargetFor, getProject } from './projects.js'
@@ -82,28 +81,10 @@ export interface ReviewerChoice {
   model?: string | null
 }
 
-/**
- * How many reviews this reviewer has already produced of this subject's work in the window.
- *
- * ⚠️ Round-robin over reviewers, so no single agent's taste dominates the dataset. It is the closest
- * this gets to Senior SWE-Bench's two-judge panel at one judge's cost, and it spreads the bias
- * across the data rather than removing it from any single score.
- */
-function recentReviewsOf(reviewerAdapter: string, subjectAdapter: string, since: number): number {
-  const r = db()
-    .prepare(
-      `select count(*) as n from quality_reviews
-        where reviewer_adapter = ? and subject_adapter = ? and created_at >= ?`
-    )
-    .get(reviewerAdapter, subjectAdapter, since) as { n: number }
-  return r.n
-}
-
-function reviewsOfTask(reviewerAdapter: string, taskId: string): number {
-  const r = db()
-    .prepare('select count(*) as n from quality_reviews where reviewer_adapter = ? and task_id = ?')
-    .get(reviewerAdapter, taskId) as { n: number }
-  return r.n
+export interface ReviewCandidate {
+  workerId: string
+  label: string
+  model: string | null
 }
 
 /** The 5h window this fleet gates on, or null when nothing fresh enough to trust says. */
@@ -117,19 +98,15 @@ function window5h(workerId: string): { percent: number } | null {
  * Pick the agent that will grade this task, or say precisely why none can.
  *
  * The gates, in order: not an author · the shared account list · the same quota water mark work
- * goes through · a declared read-only mode · not already reviewing. Then the fewest recent reviews
- * of this subject, then the most quota headroom.
+ * goes through · a declared read-only mode · not already reviewing.
  */
-export function pickReviewer(task: Task): ReviewerChoice {
+function reviewCandidates(task: Task): { candidates: Worker[]; reason: string } {
   const { authors } = authorshipOf(task.id)
   const authorAdapters = new Set(authors.map((a) => a.adapterId))
-  const subject = authors.length ? (authors[authors.length - 1] as { adapterId: string }).adapterId : ''
-  const since = Date.now() - 30 * 24 * 60 * 60 * 1000
-
   const rejected: string[] = []
   /** ⚠️ Counted apart from the rest: "everybody here wrote it" is a different sentence. */
   let rejectedAsAuthor = 0
-  const candidates: Array<{ worker: Worker; taskReviews: number; reviews: number; headroom: number }> = []
+  const candidates: Worker[] = []
 
   for (const worker of listWorkers()) {
     if (worker.retiredAt) continue
@@ -163,12 +140,7 @@ export function pickReviewer(task: Task): ReviewerChoice {
       rejected.push(`${worker.label} is already reviewing`)
       continue
     }
-    candidates.push({
-      worker,
-      taskReviews: reviewsOfTask(worker.adapterId, task.id),
-      reviews: subject ? recentReviewsOf(worker.adapterId, subject, since) : 0,
-      headroom: win ? 1 - win.percent / 100 : 0.5
-    })
+    candidates.push(worker)
   }
 
   if (candidates.length === 0) {
@@ -178,7 +150,7 @@ export function pickReviewer(task: Task): ReviewerChoice {
     const everyoneWroteIt = rejected.length > 0 && rejectedAsAuthor === rejected.length
     const nobodyAtAll = rejected.length === 0
     return {
-      worker: null,
+      candidates: [],
       reason:
         everyoneWroteIt || nobodyAtAll
           ? [
@@ -189,14 +161,39 @@ export function pickReviewer(task: Task): ReviewerChoice {
     }
   }
 
-  candidates.sort(
-    (a, b) => a.taskReviews - b.taskReviews || a.reviews - b.reviews || b.headroom - a.headroom
-  )
-  const chosen = candidates[0] as { worker: Worker }
+  return { candidates, reason: '' }
+}
+
+/**
+ * Choose an eligible reviewer. A named worker is a hard request and is revalidated here; Auto
+ * chooses uniformly from the eligible accounts. Every choice still uses that adapter's small
+ * review model rather than inheriting the worker's work model.
+ */
+export function pickReviewer(
+  task: Task,
+  workerId?: string | null,
+  random: () => number = Math.random
+): ReviewerChoice {
+  const eligible = reviewCandidates(task)
+  if (eligible.candidates.length === 0) return { worker: null, reason: eligible.reason }
+
+  const chosen = workerId
+    ? eligible.candidates.find((worker) => worker.id === workerId)
+    : eligible.candidates[Math.min(eligible.candidates.length - 1, Math.floor(random() * eligible.candidates.length))]
+
+  if (!chosen) {
+    const requested = listWorkers().find((worker) => worker.id === workerId)
+    return {
+      worker: null,
+      reason: requested
+        ? `${requested.label} is not eligible to review this task`
+        : 'the selected reviewer no longer exists'
+    }
+  }
   return {
-    worker: chosen.worker,
+    worker: chosen,
     reason: '',
-    model: REVIEW_MODELS[chosen.worker.adapterId] ?? null
+    model: REVIEW_MODELS[chosen.adapterId] ?? null
   }
 }
 
@@ -209,15 +206,14 @@ export function pickReviewer(task: Task): ReviewerChoice {
  */
 export async function reviewEligibility(taskId: string): Promise<{
   ok: boolean
-  reviewer: string | null
-  reviewerModel: string | null
+  reviewers: ReviewCandidate[]
   reason: string
 }> {
   const task = getTask(taskId)
-  if (!task) return { ok: false, reviewer: null, reviewerModel: null, reason: 'no such task' }
+  if (!task) return { ok: false, reviewers: [], reason: 'no such task' }
   const project = task.projectId ? getProject(task.projectId) : null
   if (!project) {
-    return { ok: false, reviewer: null, reviewerModel: null, reason: 'this task has no project to read' }
+    return { ok: false, reviewers: [], reason: 'this task has no project to read' }
   }
   // ⛔ **The task's own target.** A split child lands onto its plan branch and never onto `main`, so
   // measured against `main` the ladder's first rung fails (its head is not an ancestor of the trunk)
@@ -226,14 +222,17 @@ export async function reviewEligibility(taskId: string): Promise<{
   // graded on. `resolveRange` refuses to review the wrong commits by name; this is the reference
   // point that keeps it able to tell.
   const range = await resolveRange(task, project, landingTargetFor(task, project))
-  if (!range.ok) return { ok: false, reviewer: null, reviewerModel: null, reason: range.reason }
+  if (!range.ok) return { ok: false, reviewers: [], reason: range.reason }
 
-  const choice = pickReviewer(task)
-  if (!choice.worker) return { ok: false, reviewer: null, reviewerModel: null, reason: choice.reason }
+  const eligible = reviewCandidates(task)
+  if (eligible.candidates.length === 0) return { ok: false, reviewers: [], reason: eligible.reason }
   return {
     ok: true,
-    reviewer: choice.worker.label,
-    reviewerModel: choice.model ?? null,
+    reviewers: eligible.candidates.map((worker) => ({
+      workerId: worker.id,
+      label: worker.label,
+      model: REVIEW_MODELS[worker.adapterId] ?? null
+    })),
     reason: ''
   }
 }
@@ -245,7 +244,7 @@ export async function reviewEligibility(taskId: string): Promise<{
  * real so that `creditTurn` meters its tokens by the one path that meters runs and the thread
  * numbers it `#N Quality Review` by the one timeline that numbers them.
  */
-export async function requestReview(taskId: string): Promise<
+export async function requestReview(taskId: string, workerId?: string | null): Promise<
   { ok: true; review: QualityReview } | { ok: false; reason: string }
 > {
   const task = getTask(taskId)
@@ -256,7 +255,7 @@ export async function requestReview(taskId: string): Promise<
   const range = await resolveRange(task, project, landingTargetFor(task, project))
   if (!range.ok) return { ok: false, reason: range.reason }
 
-  const choice = pickReviewer(task)
+  const choice = pickReviewer(task, workerId)
   if (!choice.worker) return { ok: false, reason: choice.reason }
   const worker = choice.worker
 

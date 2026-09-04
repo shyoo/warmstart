@@ -143,44 +143,35 @@ describe('picking a reviewer', () => {
     expect(reviewer.pickReviewer(task()).model).toBe(reviewer.REVIEW_MODELS['openai-compatible'])
   })
 
-  /**
-   * ⚠️ Round-robin over reviewers, so no single agent's taste dominates the dataset. It is the
-   * closest this gets to a two-judge panel at one judge's cost.
-   */
-  it('prefers the reviewer that has graded this subject least recently', () => {
+  it('lets Auto choose any eligible worker randomly', () => {
     worker(CLAUDE_A, 'ClaudeFirst', 'claude-code')
     worker(CODEX, 'CodexFirst', 'openai-compatible')
     worker(AGY, 'AgyFirst', 'antigravity-cli')
     workRun(AGY, 'antigravity-cli', 'gemini-3.7-flash-medium')
 
-    // Codex has already graded three of this subject's tasks; Claude has graded none.
-    for (let i = 0; i < 3; i += 1) {
-      db.db()
-        .prepare(
-          `insert into quality_reviews (id, task_id, run_id, reviewer_worker_id, reviewer_adapter,
-                                          subject_adapter, status, rubric_version, created_at)
-             values (?,?,'r',?,'openai-compatible','antigravity-cli','complete','1.0',?)`
-        )
-        .run(`q${i}`, TASK, CODEX, Date.now())
-    }
-
-    expect(reviewer.pickReviewer(task()).worker?.adapterId).toBe('claude-code')
+    expect(reviewer.pickReviewer(task(), null, () => 0).worker?.id).toBe(CLAUDE_A)
+    expect(reviewer.pickReviewer(task(), null, () => 0.999).worker?.id).toBe(CODEX)
   })
 
-  it('rotates repeated reviews of one task before reusing a reviewer adapter', () => {
+  it('honours a manually selected eligible worker and still uses its small model', () => {
     worker(CLAUDE_A, 'ClaudeFirst', 'claude-code')
     worker(CODEX, 'CodexFirst', 'openai-compatible')
     worker(AGY, 'AgyFirst', 'antigravity-cli')
     workRun(AGY, 'antigravity-cli', 'gemini-3.7-flash-medium')
-    db.db()
-      .prepare(
-        `insert into quality_reviews (id, task_id, run_id, reviewer_worker_id, reviewer_adapter,
-                                      subject_adapter, status, rubric_version, created_at)
-         values ('prior',?,'r',?,'openai-compatible','antigravity-cli','complete','1.0',?)`
-      )
-      .run(TASK, CODEX, Date.now())
 
-    expect(reviewer.pickReviewer(task()).worker?.adapterId).toBe('claude-code')
+    const choice = reviewer.pickReviewer(task(), CODEX)
+    expect(choice.worker?.id).toBe(CODEX)
+    expect(choice.model).toBe(reviewer.REVIEW_MODELS['openai-compatible'])
+  })
+
+  it('refuses a manual selection from an adapter that participated in the work', () => {
+    worker(CLAUDE_A, 'ClaudeFirst', 'claude-code')
+    worker(CODEX, 'CodexFirst', 'openai-compatible')
+    workRun(CLAUDE_A, 'claude-code', 'claude-opus-5')
+
+    const choice = reviewer.pickReviewer(task(), CLAUDE_A)
+    expect(choice.worker).toBeNull()
+    expect(choice.reason).toContain('not eligible')
   })
 
   it('ignores a failed run when working out who did the work', () => {

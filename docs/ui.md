@@ -70,7 +70,10 @@ step with the first, and the cross-agent comparison the feature exists to enable
 stored rows — a thing to run when there is something to compare, not a screen to build before there
 is. It appears in three places only: a `Quality` column in `Tasks`, a `#N Quality Review` row in
 `TaskThread`'s timeline (⚠️ the underlying run is filtered out so it draws once, not twice), and the
-request box in that thread's facts column, whose every disabled state names its reason.
+request box in that thread's facts column, whose every disabled state names its reason. The request
+box offers **Auto**, which randomly chooses an eligible account and uses that adapter's small review
+model, plus each eligible account by name. Accounts on any adapter that authored the work are absent;
+the daemon revalidates a named choice when the button is pressed rather than trusting the menu.
 
 ⛔ **In Plan & Split the composer draws two labelled rows of pills, and this is decision D5.** The
 first is **Planner** — worker, model, effort, reuse, finish, priority, dependencies, attachments — which

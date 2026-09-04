@@ -1365,7 +1365,11 @@ export interface RpcMap {
    */
   'review.eligibility': {
     params: { taskId: string }
-    result: { ok: boolean; reviewer: string | null; reviewerModel: string | null; reason: string }
+    result: {
+      ok: boolean
+      reviewers: Array<{ workerId: string; label: string; model: string | null }>
+      reason: string
+    }
   }
   /**
    * Grade this task's diff against the published rubric, with an agent that did not write it.
@@ -1374,7 +1378,8 @@ export interface RpcMap {
    * means nothing was asked and nothing was spent.
    */
   'review.request': {
-    params: { taskId: string }
+    /** Null/omitted means Auto; a worker id is revalidated against the same eligibility gates. */
+    params: { taskId: string; workerId?: string | null }
     result: { ok: true; review: QualityReview } | { ok: false; reason: string }
   }
   'task.create': { params: TaskCreateParams; result: Task }

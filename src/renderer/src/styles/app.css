@@ -3595,6 +3595,11 @@ select:focus-visible,
 }
 
 /* Quality review: the request box in the facts column, and the dimension disclosure in a row. */
+.quality-review-select {
+  width: 100%;
+  margin-bottom: var(--sp-2);
+}
+
 .side-note {
   font-size: var(--text-meta);
   line-height: var(--leading-body);

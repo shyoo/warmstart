@@ -512,7 +512,7 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
     // anybody presses anything — no peer, or no recoverable diff, are both states the button has to
     // state rather than discover. `review.request` spends a turn.
     'review.eligibility': (p) => reviewEligibility(p.taskId),
-    'review.request': (p) => requestReview(p.taskId),
+    'review.request': (p) => requestReview(p.taskId, p.workerId),
 
     'task.create': (p) =>
       createTask({

@@ -2130,8 +2130,13 @@ function QualityReviewBox({
   refresh: () => Promise<void>
 }): React.JSX.Element | null {
   const [eligibility, setEligibility] = useState<
-    { ok: boolean; reviewer: string | null; reviewerModel: string | null; reason: string } | null
+    {
+      ok: boolean
+      reviewers: Array<{ workerId: string; label: string; model: string | null }>
+      reason: string
+    } | null
   >(null)
+  const [reviewerId, setReviewerId] = useState('auto')
   const [running, setRunning] = useState(false)
   const [failed, setFailed] = useState<string | null>(null)
   const finished = task.status === 'completed' || task.status === 'cancelled'
@@ -2140,6 +2145,7 @@ function QualityReviewBox({
 
   useEffect(() => {
     if (!finished) return
+    setReviewerId('auto')
     void rpc('review.eligibility', { taskId: task.id })
       .then(setEligibility)
       .catch(() => setEligibility(null))
@@ -2151,7 +2157,10 @@ function QualityReviewBox({
     setRunning(true)
     setFailed(null)
     try {
-      const result = await rpc('review.request', { taskId: task.id })
+      const result = await rpc('review.request', {
+        taskId: task.id,
+        workerId: reviewerId === 'auto' ? null : reviewerId
+      })
       if (!result.ok) setFailed(result.reason)
       await refresh()
     } catch (err) {
@@ -2183,6 +2192,21 @@ function QualityReviewBox({
           </span>
         </div>
       )}
+      <select
+        className="reassign-select quality-review-select"
+        aria-label="Quality review worker"
+        value={reviewerId}
+        disabled={running || !eligibility?.ok}
+        onChange={(event) => setReviewerId(event.target.value)}
+      >
+        <option value="auto">Auto · random eligible small model</option>
+        {eligibility?.reviewers.map((reviewer) => (
+          <option key={reviewer.workerId} value={reviewer.workerId}>
+            {reviewer.label}
+            {reviewer.model ? ` · ${modelLabel(reviewer.model)}` : ' · CLI default'}
+          </option>
+        ))}
+      </select>
       <button
         type="button"
         className="btn"
@@ -2195,8 +2219,9 @@ function QualityReviewBox({
         {eligibility === null
           ? 'checking whether a peer can review this…'
           : eligibility.ok
-            ? `${eligibility.reviewer} would grade this` +
-              (eligibility.reviewerModel ? ` on ${modelLabel(eligibility.reviewerModel)}` : '')
+            ? reviewerId === 'auto'
+              ? `Auto chooses randomly from ${eligibility.reviewers.length} eligible ${eligibility.reviewers.length === 1 ? 'worker' : 'workers'}; each uses its small review model`
+              : 'The selected worker will grade this using its small review model'
             : eligibility.reason}
       </div>
       {failed && <div className="side-note warn">{failed}</div>}
