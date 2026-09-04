@@ -4786,7 +4786,12 @@ export async function resolveConflictOnTask(
     return { ok: false, reason: 'this task is already running; it will be asked when it reports' }
   }
 
-  const base = landingBaseFor(project, resolveFinishPolicy(task, project).policy, await hasRemote(project.root))
+  // ⛔ **The task's own target, not the project's.** A piece of a Plan & Split lands onto its
+  // planner's branch, and `landingBaseFor` answers about the project's trunk unless it is handed the
+  // task — so this instruction told a split child to rebase onto `main` and commit there. It did.
+  // The prompt is the whole of the agent's picture of where its work goes; a wrong ref here is not a
+  // wrong sentence, it is work put on the wrong branch by an agent doing exactly as it was told.
+  const base = landingBaseFor(project, resolveFinishPolicy(task, project).policy, await hasRemote(project.root), task)
   const checks = policyVerifies(resolveFinishPolicy(task, project).policy) ? (project.config.check ?? []) : []
   const checkStep =
     checks.length > 0
@@ -4909,7 +4914,12 @@ export async function resolveTrunkMovedOnTask(
   const lastSystem = [...msgs].reverse().find((m) => m.role === 'system' && /trunk moved|trunk tripwire|branch is empty/i.test(m.text))
   const failureDetail = lastSystem ? lastSystem.text : (task.holdReason ?? 'The trunk moved during this run and this branch is empty')
 
-  const base = landingBaseFor(project, resolveFinishPolicy(task, project).policy, await hasRemote(project.root))
+  // ⛔ **The task's own target, not the project's.** A piece of a Plan & Split lands onto its
+  // planner's branch, and `landingBaseFor` answers about the project's trunk unless it is handed the
+  // task — so this instruction told a split child to rebase onto `main` and commit there. It did.
+  // The prompt is the whole of the agent's picture of where its work goes; a wrong ref here is not a
+  // wrong sentence, it is work put on the wrong branch by an agent doing exactly as it was told.
+  const base = landingBaseFor(project, resolveFinishPolicy(task, project).policy, await hasRemote(project.root), task)
   const checks = policyVerifies(resolveFinishPolicy(task, project).policy) ? (project.config.check ?? []) : []
   const checkStep =
     checks.length > 0

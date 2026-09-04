@@ -497,7 +497,21 @@ export function Tasks({
                     <td className="tbl-title-cell">
                       <div className="tbl-title" title={task.title}>
                         <span className="tbl-strong">
-                          {task.lineageDepth > 0 && <span className="dim">{'└ '}</span>}
+                          {/* ⛔ A glyph that means *this belongs to something else*, not a box-drawing
+                              corner. `└` claims to join the row above it, and this table is sorted
+                              by whatever column the operator picked — one click on Updated and the
+                              corner points at an unrelated task. A marker that says "child" says the
+                              same thing in every sort order, which is the only thing the row
+                              actually knows. */}
+                          {task.lineageDepth > 0 && (
+                            <span
+                              className="tbl-subtask"
+                              title="A piece of a larger task — open it to see its parent"
+                              aria-label="subtask"
+                            >
+                              ➥{' '}
+                            </span>
+                          )}
                           {taskLabelShort(task)}
                         </span>
                       </div>

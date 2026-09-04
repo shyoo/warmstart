@@ -20,7 +20,7 @@ import {
   recordLandedRange,
   setStatus
 } from './tasks.js'
-import { baseRef, landedRef, parkOtherHolders, rescueAtTip } from './worktrees.js'
+import { baseRef, landedRef, parkOtherHolders, parkPooledHolders, rescueAtTip } from './worktrees.js'
 import { launchArgs, which } from './which.js'
 import { log } from './log.js'
 
@@ -779,6 +779,21 @@ export const mergeBranch: LandingStrategy = {
     }
 
     try {
+      // ⛔ **Park a pooled slot still sitting on the target — first, before the rebase.**
+      //    This is the deadlock t197 hit, and it is structural rather than unlucky: the planner's own
+      //    workspace holds the plan branch, and if parking it at the end of phase 1 did not take —
+      //    a slot busy, a switch refused, a daemon restart — then every child of that plan is refused
+      //    its landing for ever. The children rest at `awaiting_human`, which is not a settled status,
+      //    so the planner stays `blocked` on them and nothing in the fleet can move any of it again.
+      //    ⚠️ Only this tool's own pool members are freed. The operator's trunk, and any worktree
+      //    they made themselves, are left where they are — so the refusal below still stands for the
+      //    one kind of holder that actually means somebody is working.
+      //    ⛔ **Before the rebase, not before the write.** Freeing a slot commits whatever an
+      //    interrupted run left in it *onto the target*, so a park done later would move the target
+      //    after this branch had already been rebased onto it — and the ancestry proof below would
+      //    then refuse the landing it had just made possible.
+      await parkPooledHolders(ctx.project, target, ctx.workspacePath)
+
       // ⚠️ The local ref always. A plan branch is never pushed — see `docs/landing.md` — so there is
       // no `origin/<target>` to prefer and asking for one would resolve to nothing.
       try {
@@ -1091,7 +1106,9 @@ export const autoLand: LandingStrategy = {
       const remote = await hasRemote(ctx.workspacePath)
       if (remote) await git(ctx.workspacePath, ['fetch', 'origin', '--prune'])
       // ⛔ The same helper `readMergeability` asks, so the check and the act cannot disagree.
-      const base = landingBaseFor(ctx.project, ctx.policy, remote)
+      // ⚠️ With the task, so a branch whose target is not the project's trunk is rebased onto the
+      // target it will actually be merged into.
+      const base = landingBaseFor(ctx.project, ctx.policy, remote, ctx.task)
 
       try {
         await git(ctx.workspacePath, ['rebase', base])

@@ -247,6 +247,81 @@ export function modelLine(
 }
 
 /**
+ * What kind of thing this task is, in the words the composer used to file it.
+ *
+ * ⛔ **A fact the thread was missing entirely.** A Plan & Split task's page looked exactly like an
+ * ordinary task's — same header, same ledger — while behaving completely differently: it files
+ * subtasks, waits for them, lands onto its own branch and is run twice. Somebody opening it had no
+ * way to tell which of the two they were looking at, and the settings that only apply to one of them
+ * were drawn for both.
+ */
+export function kindLabel(task: Pick<Task, 'kind'>): string {
+  return task.kind === 'plan' ? 'Plan & Split' : 'Task'
+}
+
+/**
+ * The settings every piece of this plan is filed with, as short lines for the ledger.
+ *
+ * ⛔ **Read from where the daemon reads them.** These are the same two fields `pieceConstraints`
+ * resolves — `childDefaults` first, the planner's own `constraints.pieceConstraints` behind it — so
+ * the pane cannot claim an account the split will not use. Two readers of one setting, each with its
+ * own idea of precedence, is the failure this project has already paid for once.
+ *
+ * ⚠️ Accounts are named by their **labels**, resolved through the fleet, with the model each one was
+ * given beside it. A worker id in a ledger is a string nobody recognises, and the pairing of account
+ * and model is the thing being checked when somebody opens this at all.
+ */
+export function pieceSettings(
+  task: Pick<Task, 'kind' | 'childDefaults' | 'constraints' | 'priority'>,
+  fleet: FleetEntry[]
+): Array<{ label: string; value: string }> {
+  if (task.kind !== 'plan') return []
+  const defaults = task.childDefaults ?? {}
+  const fallback = task.constraints?.pieceConstraints ?? {}
+  const ids = (
+    defaults.workerIds?.length
+      ? defaults.workerIds
+      : fallback.workerIds?.length
+        ? fallback.workerIds
+        : defaults.workerId
+          ? [defaults.workerId]
+          : fallback.workerId
+            ? [fallback.workerId]
+            : []
+  ).filter((id): id is string => !!id)
+  const models = defaults.modelsByWorker ?? fallback.modelsByWorker ?? {}
+  const efforts = defaults.effortsByWorker ?? fallback.effortsByWorker ?? {}
+
+  const rows: Array<{ label: string; value: string }> = []
+  rows.push({
+    label: 'workers',
+    value:
+      ids.length === 0
+        ? // ⚠️ Said plainly rather than left blank. "Nobody chose" and "the pane does not know" look
+          // identical when the row is empty, and only one of them is true here.
+          'any account the scheduler picks'
+        : ids
+            .map((id) => {
+              const label = fleet.find((f) => f.worker.id === id)?.worker.label ?? id.slice(0, 8)
+              const model = models[id]
+              const effort = efforts[id]
+              const named = modelLabel(model ?? null, effort ?? null)
+              return named ? `${label} · ${named}` : label
+            })
+            .join(', ')
+  })
+  const single = ids.length <= 1 ? (defaults.model ?? fallback.model ?? null) : null
+  if (single) {
+    rows.push({ label: 'model', value: modelLabel(single, defaults.effort ?? fallback.effort ?? null) ?? single })
+  }
+  rows.push({ label: 'priority', value: defaults.priority ?? task.priority })
+  if (defaults.finishPolicy) rows.push({ label: 'finish', value: defaults.finishPolicy })
+  if (defaults.sessionSharing) rows.push({ label: 'conversation', value: defaults.sessionSharing })
+  if (defaults.maxChildren) rows.push({ label: 'fan-out', value: `up to ${defaults.maxChildren} pieces` })
+  return rows
+}
+
+/**
  * Keep a task's valid model pin when changing its worker; otherwise return to inheritance.
  *
  * ⛔ Do not copy `worker.defaultModel` here. Multi-pool workers such as Antigravity resolve their

@@ -8,7 +8,7 @@ import {
   setStatus
 } from './tasks.js'
 import { log } from './log.js'
-import type { ChildDefaults, Principal, Task } from '@shared/tasks.js'
+import type { ChildDefaults, Principal, Task, TaskConstraints } from '@shared/tasks.js'
 
 /**
  * Plan & Split: turning one planner's plan into the tasks that carry it out.
@@ -122,6 +122,60 @@ export function validateSplit(
 }
 
 /**
+ * The constraints every piece of one plan is filed with.
+ *
+ * ⛔ **The operator's list of accounts, or nothing — never the fleet's own choice.** This is the bug
+ * t197 reported and it was as bad as it sounds: the Pieces row named Antigravity and Codex, the
+ * composer sent them as `workerIds`, and this function's predecessor read only the singular
+ * `workerId` that the row does not set. Every child was therefore filed with an empty `constraints`,
+ * went through the ordinary dispatcher, and was handed to the largest and most expensive account in
+ * the fleet for work whose whole point was that it was small. A setting that is displayed, stored,
+ * validated and then not read is worse than one that was never offered.
+ *
+ * ⚠️ **Two shapes carry the same answer, and both are read.** The composer writes the pieces' accounts
+ * into `childDefaults` *and* into the planner's own `constraints.pieceConstraints`; older plan tasks
+ * have only one of the two. `childDefaults` wins where both are present, because it is the field
+ * `task_split` is handed directly.
+ *
+ * ⭐ A single named account is written to `workerId` as well as `workerIds`. The scheduler reads
+ * either, but `sharing.ts`, the thread's Worker pill and the estimator all read the singular one, and
+ * an operator who picked exactly one account has pinned it.
+ */
+export function pieceConstraints(
+  parent: Task,
+  defaults: ChildDefaults | null | undefined
+): TaskConstraints {
+  const fallback: TaskConstraints = parent.constraints?.pieceConstraints ?? {}
+  const ids = (defaults?.workerIds?.length
+    ? defaults.workerIds
+    : fallback.workerIds?.length
+      ? fallback.workerIds
+      : defaults?.workerId
+        ? [defaults.workerId]
+        : fallback.workerId
+          ? [fallback.workerId]
+          : []
+  ).filter((id): id is string => !!id)
+
+  const models = defaults?.modelsByWorker ?? fallback.modelsByWorker
+  const efforts = defaults?.effortsByWorker ?? fallback.effortsByWorker
+  // ⚠️ A fleet-wide model only where no account was named. A model id belongs to one CLI, so sending
+  // one alongside a list of accounts from different CLIs would hand at least one of them an id it
+  // cannot start on — which is why the per-account maps exist at all.
+  const model = ids.length > 1 ? null : (defaults?.model ?? fallback.model ?? null)
+  const effort = ids.length > 1 ? null : (defaults?.effort ?? fallback.effort ?? null)
+
+  return {
+    ...(ids.length === 1 ? { workerId: ids[0]! } : {}),
+    ...(ids.length > 0 ? { workerIds: ids } : {}),
+    ...(models && Object.keys(models).length > 0 ? { modelsByWorker: models } : {}),
+    ...(efforts && Object.keys(efforts).length > 0 ? { effortsByWorker: efforts } : {}),
+    ...(model ? { model } : {}),
+    ...(effort ? { effort } : {})
+  }
+}
+
+/**
  * File the whole plan, or none of it.
  *
  * ⛔ **The parent's edges are `settled`, not `completed`.** A planner has to be woken by the children
@@ -144,6 +198,9 @@ export function applySplit(
   if (!check.ok) return check
 
   const inherit = defaults ?? parent.childDefaults ?? {}
+  // ⛔ Resolved once, before the loop, so every piece of one plan is filed with the identical set of
+  // accounts. Recomputing per child would be a second place for the answer to differ.
+  const constraints = pieceConstraints(parent, inherit)
   const created: Task[] = []
 
   try {
@@ -156,7 +213,9 @@ export function applySplit(
         kind: 'work',
         status: 'ready',
         priority: inherit.priority ?? parent.priority,
-        assigneeHint: inherit.workerId ?? null,
+        // ⚠️ The hint is only meaningful for one account. With a list it is left unset and the
+        // `workerIds` gate below is what does the narrowing.
+        assigneeHint: constraints.workerId ?? null,
         finishPolicy: inherit.finishPolicy ?? 'inherit',
         sessionSharing: inherit.sessionSharing ?? 'inherit',
         // ⛔ **The plan branch, so a later piece can see an earlier one's work.** This is what makes
@@ -166,14 +225,10 @@ export function applySplit(
         // ⛔ Equal shares, never `shareBudget`'s halving — see `CreateTaskInput.budgetShare`.
         budgetShare: 1 / pieces.length,
         mergeDuplicates: false,
-        // ⚠️ `workerId` here is a **pin**, not the `assigneeHint` above, and the composer's Pieces row
-        // says so: an operator who picks an account for the pieces has picked it, and the scheduler
-        // skipping every other worker is the behaviour they asked for.
-        constraints: {
-          ...(inherit.workerId ? { workerId: inherit.workerId } : {}),
-          ...(inherit.model ? { model: inherit.model } : {}),
-          ...(inherit.effort ? { effort: inherit.effort } : {})
-        }
+        // ⚠️ These are **pins**, not the `assigneeHint` above, and the composer's Pieces row says so:
+        // an operator who names accounts for the pieces has chosen them, and the scheduler skipping
+        // every other worker is precisely the behaviour they asked for.
+        constraints
       })
       created.push(child)
     }

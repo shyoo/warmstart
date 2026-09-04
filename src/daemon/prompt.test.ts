@@ -308,6 +308,43 @@ describe('run prompt persistence and task.get preview', () => {
     expect(detail.dependents?.map((d) => d.title)).toEqual(['Downstream task'])
   })
 
+  /**
+   * ⛔ **Lineage is not a dependency, and the thread needed both.** A piece of a Plan & Split does not
+   * depend on its planner — the planner depends on the piece, so it can be woken when the piece
+   * settles — which means `dependencies` and `dependents` between them cannot answer "whose plan is
+   * this?" A subtask's page could name the branch it merged into and never name the task it belonged
+   * to, which is the first thing anybody opening it wants.
+   */
+  it('task.get names a subtask’s parent and a planner’s pieces', async () => {
+    const handlers = api.buildApi({ version: '1.0.0', port: 1234, startedAt: Date.now() })
+    const split = await import('./split.js')
+    const plan = tasks.createTask({ title: 'Plan the work', kind: 'plan' })
+    db.db()
+      .prepare('update tasks set branch = ? where id = ?')
+      .run(`multi-agent-controller/t${plan.seq}-plan-the-work`, plan.id)
+
+    const filed = split.applySplit(
+      plan.id,
+      [{ title: 'first piece', dependsOn: [] }, { title: 'second piece', dependsOn: [] }],
+      { kind: 'agent', workerId: 'w', sessionId: 's', runId: 'r' }
+    )
+    expect(filed.ok).toBe(true)
+    if (!filed.ok) return
+
+    const plannerPage = (await handlers['task.get']({ id: plan.id })) as NonNullable<
+      Awaited<ReturnType<(typeof handlers)['task.get']>>
+    >
+    expect(plannerPage.children?.map((c) => c.id)).toEqual(filed.children.map((c) => c.id))
+    expect(plannerPage.parent).toBeNull()
+
+    const piecePage = (await handlers['task.get']({ id: filed.children[0]!.id })) as NonNullable<
+      Awaited<ReturnType<(typeof handlers)['task.get']>>
+    >
+    expect(piecePage.parent?.id).toBe(plan.id)
+    expect(piecePage.parent?.kind).toBe('plan')
+    expect(piecePage.children).toEqual([])
+  })
+
   it('instructs agent to run project checks before committing when project defines checks', async () => {
     const projects = await import('./projects.js')
     const root = mkdtempSync(join(tmpdir(), 'agentyard-checks-prompt-'))
@@ -473,6 +510,83 @@ describe('run prompt persistence and task.get preview', () => {
     expect(retry).toContain(`rebase \`multi-agent-controller/t${task.seq}-resolve-trunk-moved\` onto \`main\``)
     expect(retry).toContain('ensure all intended changes are committed')
     expect(retry).toContain('squash them into one coherent commit')
+  })
+
+  /**
+   * Where a stuck piece of a plan is told to put its work.
+   *
+   * ⛔ **The most expensive kind of wrong sentence there is.** These two prompts *name a ref*, and an
+   * agent does exactly what the ref says: t192 was told to rebase onto `main` and land on `main`, and
+   * it did — putting a subtask's work on the trunk while its planner sat waiting for the branch it
+   * was supposed to have merged into. Both prompts resolved the base from the *project*, because
+   * `landingBaseFor` answers about the project's trunk unless it is handed the task. Nothing failed
+   * and nothing was logged; the work simply went somewhere else.
+   */
+  describe('the ref a recovery prompt names', () => {
+    const splitChild = async (
+      title: string
+    ): Promise<{ seq: number; taskId: string; planBranch: string }> => {
+      const { execFileSync } = await import('node:child_process')
+      const projects = await import('./projects.js')
+      const root = mkdtempSync(join(tmpdir(), 'agentyard-piece-target-'))
+      execFileSync('git', ['init', root])
+      const project = projects.addProject({ root })
+      const planBranch = 'multi-agent-controller/t900-the-plan'
+      const task = tasks.createTask({
+        title,
+        status: 'ready',
+        projectId: project.id,
+        // What `applySplit` writes onto every piece: the planner's branch, not the trunk.
+        landingTarget: planBranch
+      })
+      tasks.setStatus(task.id, 'awaiting_human', {
+        branch: `multi-agent-controller/t${task.seq}-a-piece`,
+        holdReason: 'landing failed'
+      })
+      return { seq: task.seq, taskId: task.id, planBranch }
+    }
+
+    it('⛔ sends a conflicted piece at its plan branch, never at the trunk', async () => {
+      const { seq, taskId, planBranch } = await splitChild('A piece with a conflict')
+      await expect(scheduler.resolveConflictOnTask(taskId)).resolves.toEqual({ ok: true })
+
+      const asked = tasks.messagesFor(taskId).filter((m) => m.role === 'human').at(-1)?.text ?? ''
+      expect(asked).toContain(`git rebase ${planBranch}`)
+      expect(asked).toContain(`does not rebase cleanly onto \`${planBranch}\``)
+      // ⛔ The trunk is not named anywhere in it. An agent given both refs will pick one.
+      expect(asked).not.toContain('`main`')
+      expect(asked).not.toContain('rebase main')
+      expect(seq).toBeGreaterThan(0)
+    })
+
+    it('⛔ sends a trunk-moved piece at its plan branch too', async () => {
+      const { taskId, planBranch } = await splitChild('A piece whose target moved')
+      tasks.setStatus(taskId, 'awaiting_human', {
+        holdReason: 'the trunk moved during this run and this branch is empty — check where the work went'
+      })
+
+      await expect(scheduler.resolveRetryOnTask(taskId)).resolves.toEqual({ ok: true })
+      const asked = tasks.messagesFor(taskId).filter((m) => m.role === 'human').at(-1)?.text ?? ''
+      expect(asked).toContain(planBranch)
+      expect(asked).not.toContain('onto `main`')
+    })
+
+    it('still names the trunk for an ordinary task, which is what makes the change inert elsewhere', async () => {
+      const { execFileSync } = await import('node:child_process')
+      const projects = await import('./projects.js')
+      const root = mkdtempSync(join(tmpdir(), 'agentyard-ordinary-target-'))
+      execFileSync('git', ['init', root])
+      const project = projects.addProject({ root })
+      const task = tasks.createTask({ title: 'An ordinary task', status: 'ready', projectId: project.id })
+      tasks.setStatus(task.id, 'awaiting_human', {
+        branch: `multi-agent-controller/t${task.seq}-ordinary`,
+        holdReason: 'landing failed'
+      })
+
+      await expect(scheduler.resolveConflictOnTask(task.id)).resolves.toEqual({ ok: true })
+      const asked = tasks.messagesFor(task.id).filter((m) => m.role === 'human').at(-1)?.text ?? ''
+      expect(asked).toContain('git rebase main')
+    })
   })
 })
 

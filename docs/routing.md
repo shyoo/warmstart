@@ -56,7 +56,7 @@ Task routing executes in four sequential phases:
 Before scoring, every worker in the fleet is evaluated against hard admission rules in `src/daemon/scheduler.ts` and `src/daemon/eligibility.ts`:
 
 ### 2.1 Task Constraints & Account Fitness
-- **Target constraints:** If `task.constraints.workerId` or `task.constraints.adapterId` is set, only matching workers are considered.
+- **Target constraints:** If `task.constraints.workerId` or `task.constraints.adapterId` is set, only matching workers are considered. ⛔ `workerIds` is the same gate over a **list** — what the composer's Each piece row writes onto every piece of a Plan & Split — and a candidate outside it is *discarded*, never merely scored lower. `modelsByWorker` then gives each named account its own model, because a model id belongs to one CLI and a single `model` alongside a list of accounts from different CLIs would hand at least one of them an id it cannot start on.
 - **Account fitness (`accountUnavailability`):** A worker is excluded if it is:
   - Switched off (`enabled: false`)
   - Human-occupied (`humanOccupied: true` — tracked for quota accounting, but never handed automated turns)

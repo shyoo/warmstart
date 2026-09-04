@@ -48,6 +48,8 @@ import {
   CANCELLABLE,
   canRelandTask,
   chronologicalTimeline,
+  kindLabel,
+  pieceSettings,
   elapsed,
   holdLine,
   isChecksFailedTask,
@@ -78,6 +80,10 @@ export interface TaskDetailData {
   blocking: number
   dependencies?: Task[]
   dependents?: Task[]
+  /** The task that filed this one — a Plan & Split planner, for a piece of a split. */
+  parent?: Task | null
+  /** The pieces this task filed, for a planner. Ordered as filed, failures included. */
+  children?: Task[]
   resolvedFinish?: ResolvedFinishPolicy
   resolvedSharing?: ResolvedSessionSharing
   inheritedFinish?: ResolvedFinishPolicy
@@ -326,6 +332,8 @@ function TaskDetail({
     compactions = [],
     dependencies = [],
     dependents = [],
+    parent = null,
+    children = [],
     reviews = []
   } = detail
   const timeline = chronologicalTimeline(runs, compactions, reviews)
@@ -350,6 +358,9 @@ function TaskDetail({
     (s) => s.id === runs[0]?.sessionId && !sessionEnded(s.state)
   )
   const workspace = workspacePathFor(runs, sessions)
+  // ⚠️ Empty for everything that is not a Plan & Split task, which is what keeps the ledger the same
+  // shape it has always been for an ordinary one.
+  const pieces = pieceSettings(task, fleet)
 
   /**
    * What the *next* dispatch would ask for: the task's own pin, else the account's default, else the
@@ -541,6 +552,72 @@ function TaskDetail({
             )}
             {/* ⛔ Offered only where the hold is one this fleet invented. See `QuotaOverride`. */}
             <QuotaOverride task={task} onChanged={refresh} />
+            {/* ⛔ **The first thing the ledger says, because it changes what everything below it
+                means.** A Plan & Split task is run twice, files subtasks, waits on them and lands
+                onto its own branch; an ordinary task does none of that. The two pages were
+                indistinguishable, so an operator checking a plan's settings was reading a pane that
+                never said which kind of task they were looking at. */}
+            <Fact label="type">
+              <span
+                title={
+                  task.kind === 'plan'
+                    ? 'An agent plans this with you, files the pieces for your approval, waits for ' +
+                      'every one of them to settle, and comes back to review the result as a whole.'
+                    : 'One thread of work, dispatched to an agent.'
+                }
+              >
+                {kindLabel(task)}
+              </span>
+            </Fact>
+
+            {/* ⛔ Lineage, and it is not a dependency. A piece of a plan does *not* depend on its
+                planner — the edge points the other way — so neither list below can name it, and a
+                subtask's page could say which branch it merged into without ever saying whose plan
+                it belonged to. */}
+            {parent && (
+              <Fact label="parent">
+                <button
+                  type="button"
+                  className="dep-link"
+                  onClick={() => onOpenTask?.(parent.id)}
+                  title={`Open t${parent.seq}: ${parent.title} (${statusLabel(parent)})`}
+                >
+                  <span className="dep-seq">t{parent.seq}</span>
+                  <span className="dep-title">{taskLabel(parent)}</span>
+                  <span className={`status ${STATUS_TONE[parent.status] ?? ''}`}>
+                    {statusLabel(parent)}
+                    {isWorking(parent) && <Working />}
+                  </span>
+                </button>
+              </Fact>
+            )}
+
+            {/* The pieces of this plan, with how each one turned out. ⚠️ The whole set, failures
+                included: the resolution turn exists to deal with those, so hiding them would
+                describe a different task. */}
+            {children.length > 0 && (
+              <Fact label="pieces">
+                <DependencyList tasks={children} fallbackCount={0} onOpenTask={onOpenTask} />
+              </Fact>
+            )}
+
+            {/* ⛔ What each piece is filed with, read from the same two fields the daemon resolves.
+                The operator sets these on the composer's Pieces row and had nowhere to check them
+                afterwards — which is how a split ran on accounts nobody chose without anybody being
+                able to see that it had. */}
+            {pieces.length > 0 && (
+              <Fact label="each piece">
+                <span className="piece-settings">
+                  {pieces.map((row) => (
+                    <span key={row.label} className="piece-setting">
+                      <span className="piece-setting-label">{row.label}</span>
+                      <span className="piece-setting-value">{row.value}</span>
+                    </span>
+                  ))}
+                </span>
+              </Fact>
+            )}
+
             <Fact label="depends on">
               <DependencyEditor
                 task={task}

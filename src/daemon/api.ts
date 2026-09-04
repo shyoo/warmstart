@@ -9,7 +9,7 @@ import type {
   Settings,
   Worker
 } from '@shared/protocol.js'
-import type { Task, TaskConstraints } from '@shared/tasks.js'
+import type { ChildDefaults, Task, TaskConstraints } from '@shared/tasks.js'
 import { resolveAutoCompact, resolveCompletionMode } from '@shared/tasks.js'
 import { existsSync } from 'node:fs'
 import { adapter, adapters } from './adapters/index.js'
@@ -88,7 +88,12 @@ import {
   requestApproval
 } from './approvals.js'
 import { answerQuestion, askQuestion, openQuestions, questionsForTask } from './questions.js'
-import { addSplitDependency, applySplit, validateSplit } from './split.js'
+import {
+  addSplitDependency,
+  applySplit,
+  childrenOf as splitChildrenOf,
+  validateSplit
+} from './split.js'
 import { allAvailability } from './resources.js'
 import { activityFor } from './activity.js'
 import {
@@ -452,6 +457,11 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
       // different prompt with a reassuring resemblance to the real one.
       const previewPrompt = promptFor(task, adapterId, false, { markDelivered: false }).text
       const dependencies = dependenciesFor(p.id)
+      // ⛔ The lineage, which no edge in this graph carries. A piece of a plan does not *depend on*
+      // its planner — the planner depends on the piece — so neither list below can answer "whose
+      // plan is this?" or "what did this plan file?".
+      const parent = task.parentTaskId ? (getTask(task.parentTaskId) ?? null) : null
+      const children = splitChildrenOf(p.id)
       const dependents = dependentsOf(p.id)
         .map((id) => getTask(id))
         .filter((t): t is typeof task => !!t && t.deletedAt === null)
@@ -469,6 +479,8 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
         blocking: blockedDependentsOf(p.id),
         dependencies,
         dependents,
+        parent,
+        children,
         resolvedFinish: resolveFinishPolicy(task, project),
         resolvedSharing: resolveSessionSharing(task, project),
         inheritedFinish: resolveFinishPolicy(null, project),
@@ -951,7 +963,13 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
         // `ROOT_MANDATE.maxChildren = 5` against a decomposition cap of 8, so a split of six was
         // refused with a message about a limit nobody had set.
         ...(p.maxChildren ? { mandate: { maxChildren: p.maxChildren } } : {}),
-        ...(p.childDefaults ? { childDefaults: p.childDefaults } : {})
+        // ⛔ Checked at the door, like every other constraint. The accounts and models named for the
+        // pieces are stored here and read by `applySplit` months later, with no operator in the
+        // room; an id that names nothing would produce children no candidate loop can ever match and
+        // a model the cost model cannot price. `checkConstraints` refuses both, here, once.
+        ...(p.childDefaults
+          ? { childDefaults: { ...p.childDefaults, ...checkedChildAccounts(p.childDefaults) } }
+          : {})
       }),
     'task.estimate': (p) => {
       // ⚠️ The worker is optional and the answer changes enormously with it. A caller that wants
@@ -1212,6 +1230,26 @@ function inheritedModels(worker: Worker | null): string[] {
   )
   if (worker.defaultModel) models.push(worker.defaultModel)
   return [...new Set(models)]
+}
+
+/**
+ * Validate the accounts and models a plan's pieces are to be filed with.
+ *
+ * ⛔ Through `checkConstraints`, never a second copy of the same rules. The Pieces row carries the
+ * same three questions the task's own row does — which account, which model, which effort — and two
+ * validators for one question is how they drift.
+ */
+function checkedChildAccounts(defaults: ChildDefaults): Partial<ChildDefaults> {
+  const checked = checkConstraints({
+    ...(defaults.workerIds?.length ? { workerIds: defaults.workerIds } : {}),
+    ...(defaults.modelsByWorker ? { modelsByWorker: defaults.modelsByWorker } : {}),
+    ...(defaults.effortsByWorker ? { effortsByWorker: defaults.effortsByWorker } : {})
+  })
+  return {
+    ...(checked.workerIds ? { workerIds: checked.workerIds } : {}),
+    ...(checked.modelsByWorker ? { modelsByWorker: checked.modelsByWorker } : {}),
+    ...(checked.effortsByWorker ? { effortsByWorker: checked.effortsByWorker } : {})
+  }
 }
 
 export function checkConstraints(c: TaskConstraints): TaskConstraints {

@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import type { Project, Task } from '@shared/tasks.js'
 import { landingTargetFor, policyFor } from './projects.js'
-import { claim, openClaims, release, upsertResource, workspacePoolId } from './resources.js'
+import { availability, claim, openClaims, release, upsertResource, workspacePoolId } from './resources.js'
 import { log } from './log.js'
 
 const run = promisify(execFile)
@@ -257,7 +257,10 @@ export async function switchResidentBranch(
   }
 
   try {
-    const base = await baseRef(project)
+    // ⛔ The task's base, not the project's. A split child whose branch does not exist yet is cut
+    // here, and cutting it from `main` would give it a workspace that cannot see its siblings' work —
+    // the same defect `baseRef`'s own comment describes, one call site over.
+    const base = await baseRef(project, task)
     // Git refuses to check one branch out into two worktrees, correctly. A leftover holder is parked.
     await parkOtherHolders(project, branch, path, base)
     if (await gitOk(path, ['rev-parse', '--verify', branch])) {
@@ -464,6 +467,66 @@ export async function parkOtherHolders(
       }
     }
   }
+}
+
+/**
+ * Detach any **pooled** worktree still sitting on this branch, and say whether one is left.
+ *
+ * ⛔ **Narrower than `parkOtherHolders`, and the narrowness is the whole point.** A branch checked out
+ * somewhere is normally a reason to refuse to move it — a worktree that holds a branch is somebody
+ * working, and git refuses for good reasons. But a *pool member* is this tool's own, it is claimed by
+ * the scheduler or by nothing, and a slot left on a branch after its run ended is litter rather than
+ * a person. Only those are parked; the operator's trunk and any worktree they made by hand are left
+ * exactly where they are, and the caller's refusal still stands for them.
+ *
+ * ⭐ **This is what breaks the Plan & Split deadlock.** Phase 1 parks the planner's slot off the plan
+ * branch — but "parks" is best-effort, and a slot that failed to park (busy, dirty, or the daemon
+ * restarted mid-flight) refuses every child's landing onto that branch for ever. The children then
+ * rest at `awaiting_human`, which is not a settled status, so the planner stays `blocked` on them and
+ * no part of the plan can move again without a person with a git prompt.
+ *
+ * ⚠️ Returns the members it could not free, so a caller can distinguish "nothing held it" from "it is
+ * held by something I am not allowed to move".
+ */
+export async function parkPooledHolders(
+  project: Project,
+  branch: string,
+  keepPath: string
+): Promise<string[]> {
+  if (project.vcs !== 'git') return []
+  const members = availability(workspacePoolId(project.id))?.resource.members ?? []
+  if (members.length === 0) return []
+  const pooled = new Set(members.map(normalise))
+  const stuck: string[] = []
+
+  let listing: string
+  try {
+    listing = await git(project.root, ['worktree', 'list', '--porcelain'])
+  } catch {
+    return []
+  }
+
+  let path: string | null = null
+  for (const line of listing.split(/\r?\n/)) {
+    if (line.startsWith('worktree ')) path = line.slice('worktree '.length).trim()
+    else if (line.startsWith('branch ') && path) {
+      const held = line.slice('branch '.length).trim()
+      if (held !== `refs/heads/${branch}`) continue
+      if (normalise(path) === normalise(keepPath)) continue
+      if (!pooled.has(normalise(path))) continue
+      try {
+        // ⚠️ Detached **at the branch's own tip**, so nothing the slot was holding is left behind and
+        // no work is moved: `rescueDirt` commits whatever it finds onto the branch first.
+        await rescueDirt(path, branch)
+        await git(path, ['switch', '--detach', branch])
+        log.info(`parked pooled workspace ${path}, which still held ${branch}`)
+      } catch (err) {
+        stuck.push(path)
+        log.warn(`could not park ${path} off ${branch}:`, err)
+      }
+    }
+  }
+  return stuck
 }
 
 /**

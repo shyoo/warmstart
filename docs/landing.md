@@ -280,6 +280,11 @@ require the operator's own checkout to be sitting on that plan branch — which 
 So the fast-forward is done with `git update-ref` from inside the piece's own worktree, against a branch
 that is checked out nowhere:
 
+0. ⭐ **Free any of this tool's own pooled workspaces still sitting on the target**, and only those.
+   Whatever an interrupted run left in such a slot is committed onto the branch first, so nothing is
+   discarded to make room. ⛔ **Before the rebase**, because that commit moves the target — parking
+   later would move it out from under a piece that had just been rebased onto it, and step 4 would
+   then refuse the landing this step had made possible.
 1. Rebase the piece onto its target. ⭐ This is also what absorbs a **sibling that landed while the piece
    ran**, which is the common case rather than an edge one.
 2. Run the project's checks.
@@ -289,6 +294,15 @@ that is checked out nowhere:
    `update-ref`, which is a **compare-and-swap**: a sibling that landed between the proof and the write
    makes this fail rather than silently discarding its commits.
 
+⛔ **Step 0 is what stops a split wedging, and the wedge was real.** Phase 1 parks the planner's slot off
+the plan branch, but parking is best-effort — a slot that is busy, dirty, or caught by a daemon restart
+keeps the branch. Step 3 then refuses *every* piece for ever; the pieces rest at `awaiting_human`, which
+is not a settled status, so the planner stays `blocked` on children that can never settle and no part of
+the plan can move again without a person at a git prompt. ⚠️ The narrowness is the safety: only members
+of this project's workspace pool are freed. The operator's trunk, and any worktree they made by hand, are
+left exactly where they are and step 3 still refuses for them — a worktree holding a branch is somebody
+working, unless it is one of ours.
+
 ⚠️ **Chosen from data, never from a task kind.** `strategyFor` picks it when the task's resolved landing
 target differs from the project's own — and only in place of a strategy that was going to merge anyway.
 A task told `commit-only` or `pull-request` keeps that answer whatever its target is.
@@ -296,6 +310,13 @@ A task told `commit-only` or `pull-request` keeps that answer whatever its targe
 ⚠️ Two pieces finishing together contend for the same branch, so the landing lease is keyed on the
 **branch** rather than the project — the same queue mechanism `merge-local` uses, under a different key,
 so an ordinary task landing onto `main` never waits behind them.
+
+⛔ **Every prompt that names a ref names *this task's* target.** A piece's recovery prompts — the one
+sent when its landing conflicts, and the one sent when its target moved under an empty branch — resolve
+the base through the task, not the project. Measured on t192: both resolved it from the project, so a
+piece was told to rebase onto `main` and land on `main`, and it did exactly that — putting a subtask's
+work on the trunk while its planner waited for a branch that never moved. A wrong ref in a prompt is not
+a wrong sentence; it is work on the wrong branch, by an agent doing as it was told.
 
 ⛔ **A plan branch is never pushed.** `landedRef` prefers `origin/<target>` when it verifies, so a pushed
 plan branch would start being measured against the remote and local merges into it would read as

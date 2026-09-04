@@ -933,11 +933,16 @@ try {
     )
     await wait(300)
   }
+  // ⛔ Found through `aria-controls`, not through the pill's parent. The menu is rendered into a
+  // portal at the document root so that no scroll container can clip it, so it is not a sibling of
+  // the button any more — and the id the button already publishes is the only honest link between
+  // the two.
   const menuOf = (name) => `
     (() => {
       const pill = [...document.querySelectorAll('button.pill')]
         .find(p => p.getAttribute('aria-label') === ${JSON.stringify(name)});
-      return pill?.parentElement?.querySelector('.pill-menu') ?? null;
+      const id = pill?.getAttribute('aria-controls');
+      return id ? document.getElementById(id) : null;
     })()
   `
   const menuValues = async (name) =>

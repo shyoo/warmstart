@@ -334,8 +334,12 @@ export function NewTask({
             finishPolicy: pieceFinishPolicy,
             sessionSharing: pieceSessionSharing,
             maxChildren: pieceLimit,
+            // ⛔ All three, and they are what `applySplit` actually files each piece with. The
+            // efforts used to be sent in `pieceConstraints` only, so a split read from
+            // `childDefaults` — which is the field `task_split` is handed — silently lost them.
             ...(pieceWorkerIds.length > 0 ? { workerIds: pieceWorkerIds } : {}),
-            ...(Object.keys(pieceModels).length > 0 ? { modelsByWorker: pieceModels } : {})
+            ...(Object.keys(pieceModels).length > 0 ? { modelsByWorker: pieceModels } : {}),
+            ...(Object.keys(pieceEfforts).length > 0 ? { effortsByWorker: pieceEfforts } : {})
           },
           constraints: {
             ...(prefs.workerId ? { workerId: prefs.workerId } : {}),

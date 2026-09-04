@@ -228,3 +228,60 @@ describe('the capacity gate above one slot', () => {
     }
   })
 })
+
+/**
+ * A planner waiting for its own pieces, and the question of whether one workspace can deadlock.
+ *
+ * ⛔ **t197 asked it directly: file a Plan & Split when only one workspace is left — can it wedge?**
+ * The answer has to be *no by construction*, and the construction is this: a planner that has filed
+ * its split is `blocked`, and `blocked` reserves nothing. Its run ended, its session closed, its
+ * workspace went back to the pool. If a blocked planner held a slot, a one-account fleet would have
+ * nothing left to run the very pieces it is waiting for, and neither the planner nor its children
+ * could ever move again — the planner waiting on children that cannot be dispatched, holding the
+ * only thing that could dispatch them.
+ *
+ * ⚠️ The other half of the answer lives in `mergebranch.test.ts`: a plan branch left checked out in a
+ * pooled slot used to refuse every child's landing for ever, which is the same wedge by another road.
+ */
+describe('a planner blocked on its own pieces', () => {
+  it('⛔ holds no slot, so the pieces it waits for can be dispatched', () => {
+    const worker = add(1)
+    const plan = tasks.createTask({ title: 'plan the work', kind: 'plan' })
+    const run = tasks.startRun({
+      taskId: plan.id,
+      workerId: worker.id,
+      sessionId: 'planner-session',
+      projectId: null,
+      quotaUnverified: false,
+      costModelId: null
+    })
+    tasks.setStatus(plan.id, 'running', { assignee: worker.id })
+    expect(scheduler.retainedReservations(worker.id, [])).toBe(1)
+
+    // The split is filed: `applySplit` parks the parent, then the run ends as `blocked`.
+    tasks.setStatus(plan.id, 'blocked', { holdReason: 'waiting on 2 pieces of its own plan' })
+    tasks.finishRun(run.id, 'blocked')
+
+    expect(scheduler.retainedReservations(worker.id, [])).toBe(0)
+    expect(scheduler.atCapacity([], worker.maxConcurrent, null, 0)).toBe(false)
+  })
+
+  it('⚠️ still holds one while the split approval is open, because a person is being waited on', () => {
+    // ⛔ Not a bug, and not the same state. `task_split` blocks on an approval, and the session is
+    // kept warm so the answer resumes into it rather than paying for a cold rebuild. That costs a
+    // slot for as long as the card is unanswered — which is the price of the approval being
+    // structural, and is stated here so it is a decision rather than a surprise.
+    const worker = add(1)
+    const plan = tasks.createTask({ title: 'plan awaiting approval', kind: 'plan' })
+    tasks.startRun({
+      taskId: plan.id,
+      workerId: worker.id,
+      sessionId: 'approval-session',
+      projectId: null,
+      quotaUnverified: false,
+      costModelId: null
+    })
+    tasks.setStatus(plan.id, 'awaiting_human', { assignee: worker.id })
+    expect(scheduler.awaitingHumanReservations(worker.id, [])).toBe(1)
+  })
+})

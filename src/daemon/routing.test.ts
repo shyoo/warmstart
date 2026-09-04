@@ -1119,3 +1119,68 @@ describe('warmth as a fraction of what the provider granted', () => {
     expect(warmthOf(codex)).toBeGreaterThan(0.95)
   })
 })
+
+/**
+ * The accounts a split's pieces are allowed to run on.
+ *
+ * ⛔ **The whole of the operator's complaint in t197, at the layer that decides.** They named two
+ * small, cheap accounts for the pieces; a piece was dispatched to the largest model in the fleet.
+ * The list has to be a *gate* — a candidate that is not on it is discarded, not merely scored lower —
+ * because scoring can always be outweighed and a routing preference is not what was asked for.
+ *
+ * ⚠️ Every account here is `claude-code`. The adapter is irrelevant to the rule and Antigravity
+ * permits exactly one account per machine, so using it would test the commissioning limit instead.
+ */
+describe('a task pinned to a list of accounts', () => {
+  it('is never dispatched to an account that is not on the list', () => {
+    db.db().prepare('update workers set enabled = 0').run()
+    const chosen = workers.createWorker({ adapterId: 'claude-code', label: 'Small-pieces-A', enabled: true })
+    const notChosen = workers.createWorker({ adapterId: 'claude-code', label: 'Expensive-default', enabled: true })
+
+    // ⛔ The excluded account is given the *emptiest* window, which makes it the one scoring would
+    // reach for. The gate has to beat the score, or the operator's list is only a preference.
+    const now = Date.now()
+    const sample = db.db().prepare(
+      `insert into quota_samples (worker_id, window_id, label, percent, resets_at, source, sampled_at)
+       values (?,?,?,?,?,?,?)`
+    )
+    sample.run(chosen.id, 'session', 'Claude 5h', 40, now + 4 * 3600 * 1000, 'cli', now)
+    sample.run(notChosen.id, 'session', 'Claude 5h', 0, now + 4 * 3600 * 1000, 'cli', now)
+
+    const task = tasks.createTask({
+      title: 'a piece of somebody else’s plan',
+      constraints: { workerIds: [chosen.id] }
+    })
+
+    const choice = scheduler.chooseTarget(task)
+    expect(choice.worker?.id).toBe(chosen.id)
+  })
+
+  it('waits rather than routing around a list whose accounts are all switched off', () => {
+    db.db().prepare('update workers set enabled = 0').run()
+    const offline = workers.createWorker({ adapterId: 'claude-code', label: 'Named-but-off', enabled: false })
+    workers.createWorker({ adapterId: 'claude-code', label: 'Tempting-substitute', enabled: true })
+
+    const task = tasks.createTask({
+      title: 'a piece whose accounts are unavailable',
+      constraints: { workerIds: [offline.id] }
+    })
+
+    // ⛔ No worker, not "the next best one". Silently substituting an account the operator excluded
+    // is the failure this gate exists to make impossible.
+    expect(scheduler.chooseTarget(task).worker).toBeNull()
+  })
+
+  it('gives each named account the model chosen for it, not one model for the fleet', async () => {
+    const { resolveModelChoice } = await import('@shared/tasks.js')
+    const first = workers.createWorker({ adapterId: 'claude-code', label: 'Per-worker-model-A', enabled: true })
+    const second = workers.createWorker({ adapterId: 'claude-code', label: 'Per-worker-model-B', enabled: true })
+
+    const constraints = {
+      workerIds: [first.id, second.id],
+      modelsByWorker: { [first.id]: 'claude-haiku-4-5-20251001', [second.id]: 'claude-sonnet-5' }
+    }
+    expect(resolveModelChoice(constraints, first, false).model).toBe('claude-haiku-4-5-20251001')
+    expect(resolveModelChoice(constraints, second, false).model).toBe('claude-sonnet-5')
+  })
+})

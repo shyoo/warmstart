@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { menuPosition, type MenuPlacement } from '../lib/menuposition'
 
 /**
  * One setting, drawn as a word you can click.
@@ -8,6 +10,14 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react'
  * wherever the platform decides. Eight of those is the cluttered row this replaced. A pill is as
  * wide as the answer it is currently showing, and the menu is elements this app draws — so it can
  * hold a list of tasks, a date field, or anything else a setting needs to be chosen with.
+ *
+ * ⛔ **The menu is rendered into a portal, not into the pill.** It used to be an absolutely
+ * positioned child of `.pill-wrap`, which meant any ancestor with a scroll container in it clipped
+ * the menu at that ancestor's edge — and the composer's Plan & Split row is exactly that
+ * (`overflow-x: auto` makes a box a scroll container in both axes). A Finish or Workers menu opened
+ * there was cut off a few pixels tall and the options underneath could not be reached at all. Out at
+ * the document root nothing can clip it; `menuPosition` then places it against the button, flipping
+ * above when the window has no room below, which is the usual case for a composer near the bottom.
  *
  * ⚠️ **The menu content is a render prop, not a list.** Two of the composer's controls are not
  * one-of-many — prerequisites are a multi-select and the schedule has a custom time in it — and the
@@ -46,6 +56,14 @@ export function Pill({
 }): React.JSX.Element {
   const [open, setOpen] = useState(false)
   /**
+   * Null until the menu has been measured once.
+   *
+   * ⛔ Rendered invisible for that first frame rather than at (0,0): a menu that paints in the corner
+   * and then jumps to its pill is a flash the eye follows, and this is a control people open dozens
+   * of times per task.
+   */
+  const [place, setPlace] = useState<MenuPlacement | null>(null)
+  /**
    * ⚠️ Focus goes back to the button *after* the menu has gone, in an effect rather than in the
    * closing call. Dismissing with Escape or picking an option destroys the element focus is
    * currently on, and a browser left to resolve that on its own drops focus to `<body>` — which
@@ -54,12 +72,59 @@ export function Pill({
   const [returnFocus, setReturnFocus] = useState(false)
   const wrapRef = useRef<HTMLDivElement>(null)
   const buttonRef = useRef<HTMLButtonElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
   const menuId = useId()
 
   const close = useCallback(() => {
     setOpen(false)
     setReturnFocus(true)
   }, [])
+
+  /**
+   * Measure the button and the menu, and put the menu where both fit.
+   *
+   * ⚠️ The menu is measured *unconstrained* — `maxHeight` from a previous pass is cleared before
+   * reading `scrollHeight` — or a menu that was once clamped short would stay short after the window
+   * grew or the pill moved up.
+   */
+  const reposition = useCallback(() => {
+    const button = buttonRef.current
+    const menu = menuRef.current
+    if (!button || !menu) return
+    const anchor = button.getBoundingClientRect()
+    const width = menu.offsetWidth
+    const height = menu.scrollHeight
+    setPlace(
+      menuPosition(
+        { left: anchor.left, top: anchor.top, width: anchor.width, height: anchor.height },
+        { width, height },
+        { width: window.innerWidth, height: window.innerHeight },
+        align
+      )
+    )
+  }, [align])
+
+  // ⛔ Before paint, so the menu is never seen in the wrong place.
+  useLayoutEffect(() => {
+    if (!open) {
+      setPlace(null)
+      return
+    }
+    reposition()
+  }, [open, reposition])
+
+  // ⚠️ Scrolling *anything* moves the pill, so the listener is on the capture phase: a scroll inside
+  // the composer's own row does not bubble to the window.
+  useEffect(() => {
+    if (!open) return
+    const onMove = (): void => reposition()
+    window.addEventListener('resize', onMove)
+    window.addEventListener('scroll', onMove, true)
+    return () => {
+      window.removeEventListener('resize', onMove)
+      window.removeEventListener('scroll', onMove, true)
+    }
+  }, [open, reposition])
 
   useEffect(() => {
     if (open || !returnFocus) return
@@ -71,8 +136,13 @@ export function Pill({
     if (!open) return
     // ⚠️ `pointerdown`, not `click`: a click on another pill's button would otherwise toggle that one
     // open in the same gesture that closed this one, which reads as the menu jumping sideways.
+    // ⛔ Both elements, because the menu is no longer inside the wrapper. Checking only the wrapper
+    // made every click *inside the menu* read as a click outside it.
     const onPointerDown = (e: PointerEvent): void => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false)
+      const target = e.target as Node
+      if (wrapRef.current?.contains(target)) return
+      if (menuRef.current?.contains(target)) return
+      setOpen(false)
     }
     const onKeyDown = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') {
@@ -112,15 +182,23 @@ export function Pill({
       >
         {label}
       </button>
-      {open && (
-        <div
-          id={menuId}
-          className={`pill-menu${align === 'right' ? ' pill-menu--right' : ''}`}
-          role="presentation"
-        >
-          {menu(close)}
-        </div>
-      )}
+      {open &&
+        createPortal(
+          <div
+            ref={menuRef}
+            id={menuId}
+            className={`pill-menu${place ? ` pill-menu--${place.placement}` : ' pill-menu--measuring'}`}
+            role="presentation"
+            style={
+              place
+                ? { left: place.left, top: place.top, maxHeight: place.maxHeight }
+                : { left: 0, top: 0, visibility: 'hidden' }
+            }
+          >
+            {menu(close)}
+          </div>,
+          document.body
+        )}
     </div>
   )
 }

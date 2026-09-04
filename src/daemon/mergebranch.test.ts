@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -22,6 +22,7 @@ let db: typeof import('./db.js')
 let projects: typeof import('./projects.js')
 let tasks: typeof import('./tasks.js')
 let landing: typeof import('./landing.js')
+let resources: typeof import('./resources.js')
 
 const git = (cwd: string, ...args: string[]): string =>
   execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
@@ -86,12 +87,16 @@ function seedSplit(): {
 }
 
 beforeAll(async () => {
-  dir = mkdtempSync(join(tmpdir(), 'agentyard-mergebranch-'))
+  // ⚠️ `realpath`, because git prints the long form of a Windows path and the pool stores what it
+  // was given. A member recorded as `C:\Users\SUNGHW~1\…` never matches `git worktree list`, which
+  // would make the pooled-holder check below silently pass for the wrong reason.
+  dir = realpathSync.native(mkdtempSync(join(tmpdir(), 'agentyard-mergebranch-')))
   process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
   db = await import('./db.js')
   projects = await import('./projects.js')
   tasks = await import('./tasks.js')
   landing = await import('./landing.js')
+  resources = await import('./resources.js')
   db.openDb(join(dir, 'mergebranch.db'))
 })
 
@@ -230,5 +235,80 @@ describe('merge-branch', () => {
     const log = git(root, 'log', '--format=%s', planBranch)
     expect(log).toContain('a sibling landed first')
     expect(log).toContain('the piece did its work')
+  })
+})
+
+/**
+ * The plan branch left checked out in a pooled slot — the deadlock, and the one way out of it.
+ *
+ * ⛔ **This is t197's "is a Plan & Split deadlockable?", answered by construction rather than by
+ * argument.** Phase 1 parks the planner's workspace off the plan branch, but parking is best-effort:
+ * a slot that was busy, dirty, or caught by a daemon restart keeps the branch. Every child then has
+ * its landing refused, rests at `awaiting_human` — which is not a settled status — and the planner
+ * stays `blocked` on children that can never settle. Nothing in the fleet can move any of it again.
+ *
+ * ⚠️ The distinction being tested is *who* holds it. This tool's own pool members are litter and are
+ * freed; anything else is a person, and the refusal stands.
+ */
+describe('a target left checked out in a pooled workspace', () => {
+  it('⭐ frees this tool’s own slot and lands, instead of refusing every child for ever', async () => {
+    const { project, planBranch, childBranch, childTaskId, root, ws } = seedSplit()
+    // The planner's slot never got parked at the end of phase 1, and it is a member of the pool.
+    const slot = join(dir, `split${seq}-slot`)
+    git(root, 'worktree', 'add', slot, planBranch)
+    resources.upsertResource({
+      id: resources.workspacePoolId(project.id),
+      projectId: project.id,
+      kind: 'counted',
+      label: 'pool',
+      members: [slot, ws]
+    })
+    const childTip = git(ws, 'rev-parse', 'HEAD')
+
+    const result = await land(project, childTaskId, ws, childBranch)
+    expect(result.ok).toBe(true)
+    expect(git(root, 'rev-parse', planBranch)).toBe(childTip)
+    // ⛔ The freed slot is detached, not moved to some other branch and not left dirty.
+    expect(git(slot, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('HEAD')
+  })
+
+  it('⛔ still refuses when the holder is not one of this tool’s workspaces', async () => {
+    const { project, planBranch, childBranch, childTaskId, root, ws } = seedSplit()
+    const theirs = join(dir, `split${seq}-theirs`)
+    git(root, 'worktree', 'add', theirs, planBranch)
+    // The pool knows nothing about that directory, so it is somebody working.
+    resources.upsertResource({
+      id: resources.workspacePoolId(project.id),
+      projectId: project.id,
+      kind: 'counted',
+      label: 'pool',
+      members: [ws]
+    })
+    const before = git(root, 'rev-parse', planBranch)
+
+    const result = await land(project, childTaskId, ws, childBranch)
+    expect(result.ok).toBe(false)
+    expect(result.reason).toMatch(/checked out/)
+    expect(git(root, 'rev-parse', planBranch)).toBe(before)
+    expect(git(theirs, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe(planBranch)
+  })
+
+  it('does not free a slot holding work: what it finds is committed onto the branch first', async () => {
+    const { project, planBranch, childBranch, childTaskId, root, ws } = seedSplit()
+    const slot = join(dir, `split${seq}-dirty`)
+    git(root, 'worktree', 'add', slot, planBranch)
+    writeFileSync(join(slot, 'left-behind.txt'), 'an interrupted run left this\n')
+    resources.upsertResource({
+      id: resources.workspacePoolId(project.id),
+      projectId: project.id,
+      kind: 'counted',
+      label: 'pool',
+      members: [slot, ws]
+    })
+
+    const result = await land(project, childTaskId, ws, childBranch)
+    expect(result.ok).toBe(true)
+    // ⛔ Nothing was discarded to make room: the stray file is on the plan branch's history.
+    expect(git(root, 'log', '--format=%s', '--name-only', planBranch)).toContain('left-behind.txt')
   })
 })

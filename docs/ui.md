@@ -87,6 +87,33 @@ both coherent, and neither has been asked for.
 failure they buy, and it is worse than one row. The fan-out pill's number is written into the task's
 **mandate**, so the number shown is the number enforced — never a second, invisible cap.
 
+⛔ **The accounts named on the Each piece row are a gate, and they reach the pieces.** The Workers
+control there is a multi-select with a model and effort per account, and what it sets is `workerIds` on
+every piece — read by `chooseTarget` as a *hard gate*, so a candidate not on the list is discarded rather
+than scored lower. Measured on t197: the row was sent, stored and validated, and `applySplit` read only
+the singular `workerId` beside it — so every piece was filed with no constraint at all, went through the
+ordinary dispatcher, and was handed the largest model in the fleet for work whose whole point was that it
+was small. A setting that is displayed and then not read is worse than one never offered.
+
+⛔ **A pill's menu is rendered into a portal at the document root, positioned by `lib/menuposition.ts`.**
+It used to be an absolutely positioned child of the pill, which every scroll container between it and the
+page could clip — and the Plan & Split row *is* one, because `overflow-x: auto` makes a box a scroll
+container in both axes. Its menus were cut to a few pixels tall with their options unreachable. Out at
+the root nothing can clip it; the placement flips **above** the pill when the window has no room below,
+which is the ordinary case for a composer sitting near the bottom of the window.
+
+⭐ **A task's thread says which kind of task it is, and a subtask says whose plan it belongs to.** The
+facts column carries `type` (`Task` or `Plan & Split`) first, because it changes what everything under it
+means; `parent`, for a piece of a split — ⛔ **lineage is not a dependency**, the edge points the other
+way, so neither the `depends on` nor the `blocks` list can ever name it; `pieces`, with how each one
+turned out, failures included; and `each piece`, which reads back the accounts and models the Pieces row
+set, resolved exactly as `applySplit` resolves them.
+
+⚠️ A subtask is marked in the task table with **➥**, not a `└`. A box-drawing corner claims to join the
+row above it, and this table is sorted by whatever column the operator picked — one click on Updated and
+the corner points at an unrelated task. The marker says *this belongs to something else*, which is the
+only thing the row actually knows.
+
 ⚠️ `Conversations` is **one table, two scopes** — the same component renders with and without a
 project. There is deliberately no fleet-wide Resources table: it listed the pools a project's own
 Settings tab already shows.
@@ -104,6 +131,7 @@ list. Logic extracted into a pure function under `lib/` is provable at L1 instea
 | `taskview.tsx` `fleetcard.ts` `fleetcounts.ts` | derived view state |
 | `format.ts` `modelname.ts` `agenticon.ts` | display formatting |
 | `live.ts` | `showsLiveOutput(status)` — which statuses get a peephole |
+| `menuposition.ts` | where a pill's portalled menu goes: flip above, clamp to the window, never clip |
 | `prefs.ts` | saved views, fleet collapse and density, page size (localStorage) |
 | `uisettings.ts` `zoom.ts` | tray/Enter behaviour and zoom, mirrored from main's `ui-settings.json` |
 | `pasteimages.tsx` | paste-to-attach; downscales to 1568px and uploads one image per call |

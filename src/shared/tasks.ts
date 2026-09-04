@@ -109,8 +109,27 @@ export type DependencyRequirement = 'completed' | 'settled'
  */
 export interface ChildDefaults {
   workerId?: string | null
+  /**
+   * Every account a piece of this plan may run on.
+   *
+   * ⛔ **A closed list, not a preference.** The composer's Pieces row lets an operator name two or
+   * three cheap accounts for work they have already decided is small, and the scheduler must pick
+   * from *that* list or from none — a split whose pieces were routed to whatever the fleet felt like
+   * is a split whose settings did nothing. It was exactly that until 2026-09-04: the composer sent
+   * this field, `applySplit` read only the singular `workerId` beside it, and every child was filed
+   * with no constraint at all and picked up by the largest model in the fleet.
+   *
+   * ⚠️ Empty or absent means *the scheduler chooses*, which is the honest reading of a control
+   * nobody touched. One entry is a pin, and is written to `workerId` as well so every other reader
+   * of a pinned account sees it.
+   */
+  workerIds?: string[]
   model?: string | null
   effort?: string | null
+  /** The model each named account runs a piece with — a model id belongs to one CLI, never to a fleet. */
+  modelsByWorker?: Record<string, string>
+  /** The effort each named account is asked for, where its CLI takes an effort flag at all. */
+  effortsByWorker?: Record<string, string>
   finishPolicy?: FinishPolicyChoice
   sessionSharing?: SessionSharingChoice
   priority?: Priority

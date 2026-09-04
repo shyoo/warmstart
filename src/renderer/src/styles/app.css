@@ -1619,6 +1619,13 @@ body {
   font-weight: 600;
 }
 
+/* The subtask marker. Dim and normal-weight so it reads as a mark on the title rather than as the
+   first character of it. */
+.tbl-subtask {
+  font-weight: 400;
+  color: var(--color-text-faint);
+}
+
 .tbl-num {
   text-align: right;
 }
@@ -5011,13 +5018,16 @@ select:focus-visible,
   font-size: var(--text-dense);
 }
 
+/* ⛔ `fixed`, and placed by `menuposition.ts` into a portal at the document root. Absolute
+   positioning inside `.pill-wrap` meant every scroll container between the pill and the page clipped
+   the menu — the Plan & Split composer row is one (`overflow-x: auto`), and its menus were cut to a
+   few pixels tall with their options unreachable. Nothing at the root can clip it. */
 .pill-menu {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
+  position: fixed;
   z-index: 120;
   min-width: 200px;
   max-width: 380px;
+  overflow-y: auto;
   background: var(--color-surface-2);
   border: 1px solid var(--color-border-strong);
   border-radius: var(--radius);
@@ -5030,9 +5040,12 @@ select:focus-visible,
 
 /* ⚠️ Right-aligned for the pills near the right edge — worker, model, effort and the clock. Opening
    left from there puts half the menu outside the window. */
-.pill-menu--right {
-  left: auto;
-  right: 0;
+/* ⚠️ Kept as a no-op hook: the *side* is decided in `menuPosition`, which has the window's width and
+   the menu's own, and writes `left` directly. A CSS rule that also moved it would be a second
+   opinion about the same pixel. */
+.pill-menu--above,
+.pill-menu--below {
+  right: auto;
 }
 
 .pill-options {
@@ -5164,4 +5177,29 @@ select:focus-visible,
 .btn--quiet:hover:not(:disabled) {
   background: var(--color-surface-2);
   color: var(--color-text);
+}
+
+/* The Pieces row's settings, as read back in a plan task's ledger. One per line, label first, so the
+   pairing of an account with the model it was given survives a narrow pane. */
+.piece-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.piece-setting {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: baseline;
+}
+
+.piece-setting-label {
+  flex: 0 0 5.5em;
+  font-size: var(--text-meta);
+  color: var(--color-text-faint);
+}
+
+.piece-setting-value {
+  min-width: 0;
+  word-break: break-word;
 }

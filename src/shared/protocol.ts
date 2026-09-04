@@ -1223,6 +1223,24 @@ export interface RpcMap {
       dependencies?: Task[]
       /** Tasks that depend on this task (downstream dependents). */
       dependents?: Task[]
+      /**
+       * The task this one was filed by, when it was filed by another task at all.
+       *
+       * ⛔ **Not derivable from `dependencies`.** A piece of a Plan & Split does not depend on its
+       * planner — the edge points the other way, so the planner waits on the piece — and the pieces
+       * of one plan have no edges between them unless the planner asked for them. Without this the
+       * thread of a subtask could say *which branch it lands on* and never say *whose plan it is*,
+       * which is the first thing anybody opening it wants to know.
+       */
+      parent?: Task | null
+      /**
+       * The pieces this task filed, for a Plan & Split planner.
+       *
+       * ⚠️ Ordered by `seq`, which is the order they were filed, and always the *whole* set —
+       * including the ones that failed. A planner's resolution turn exists precisely to deal with
+       * those, so a list that quietly omitted them would be describing a different task.
+       */
+      children?: Task[]
       resolvedFinish?: ResolvedFinishPolicy
       resolvedSharing?: ResolvedSessionSharing
       inheritedFinish?: ResolvedFinishPolicy

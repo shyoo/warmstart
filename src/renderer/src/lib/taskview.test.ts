@@ -24,7 +24,9 @@ import {
   isTrunkMovedTask,
   isUncommittedTask,
   isWorking,
+  kindLabel,
   modelLine,
+  pieceSettings,
   reassignmentModel,
   projectWorkState,
   STATUS_TONE,
@@ -732,3 +734,71 @@ describe('landing recovery actions and canRelandTask', () => {
   })
 })
 
+/**
+ * What a Plan & Split task's page says about itself.
+ *
+ * ⛔ **Both of these are facts the thread simply did not have.** A plan task rendered exactly like an
+ * ordinary one — same header, same ledger — while behaving nothing like it, and the accounts its
+ * pieces were meant to run on were set on the composer and then visible nowhere. That is how a split
+ * ran on an account nobody chose without anybody being able to see that it had.
+ */
+describe('a plan task, as its own page describes it', () => {
+  const planner = (over: Partial<Task> = {}): Task =>
+    ({
+      kind: 'plan',
+      priority: 'P2',
+      childDefaults: null,
+      constraints: {},
+      ...over
+    }) as Task
+
+  const fleet: FleetEntry[] = [
+    { worker: { id: 'w-agy', label: 'Antigravity', adapterId: 'antigravity-cli' }, quota: null, sessions: [] },
+    { worker: { id: 'w-cx', label: 'CodexFirst', adapterId: 'openai-compatible' }, quota: null, sessions: [] }
+  ] as unknown as FleetEntry[]
+
+  it('says which kind of task it is, in the composer’s own words', () => {
+    expect(kindLabel(planner())).toBe('Plan & Split')
+    expect(kindLabel({ kind: 'work' })).toBe('Task')
+  })
+
+  it('names every account the pieces may run on, with the model each was given', () => {
+    const rows = pieceSettings(
+      planner({
+        childDefaults: {
+          workerIds: ['w-agy', 'w-cx'],
+          modelsByWorker: { 'w-agy': 'gemini-3-flash', 'w-cx': 'gpt-5.6-terra' },
+          priority: 'P3',
+          maxChildren: 4
+        }
+      }),
+      fleet
+    )
+    const workers = rows.find((r) => r.label === 'workers')?.value ?? ''
+    expect(workers).toContain('Antigravity')
+    expect(workers).toContain('CodexFirst')
+    // ⛔ The account and its model together. Read apart, a routing mistake is invisible.
+    expect(workers).toMatch(/Antigravity · .+, CodexFirst · .+/)
+    expect(rows.find((r) => r.label === 'priority')?.value).toBe('P3')
+    expect(rows.find((r) => r.label === 'fan-out')?.value).toBe('up to 4 pieces')
+  })
+
+  it('reads the planner’s own pieceConstraints when childDefaults has no accounts', () => {
+    const rows = pieceSettings(
+      planner({ constraints: { pieceConstraints: { workerIds: ['w-cx'] } } }),
+      fleet
+    )
+    expect(rows.find((r) => r.label === 'workers')?.value).toContain('CodexFirst')
+  })
+
+  it('says plainly that nobody was chosen rather than leaving the row empty', () => {
+    const rows = pieceSettings(planner(), fleet)
+    expect(rows.find((r) => r.label === 'workers')?.value).toBe('any account the scheduler picks')
+  })
+
+  it('says nothing at all about pieces for an ordinary task', () => {
+    expect(
+      pieceSettings({ kind: 'work', priority: 'P2', childDefaults: null, constraints: {} }, fleet)
+    ).toEqual([])
+  })
+})

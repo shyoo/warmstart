@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import type { Principal } from '@shared/tasks.js'
+import type { ChildDefaults, Principal, TaskConstraints } from '@shared/tasks.js'
 
 /**
  * Plan & Split's safety boundary, driven where it is cheapest: a temp database, no agent, no prompt
@@ -50,11 +50,19 @@ afterAll(() => {
 })
 
 /** A planner, with the branch a split needs to cut its pieces from. */
-function planner(overrides: { maxChildren?: number } = {}): ReturnType<typeof tasks.createTask> {
+function planner(
+  overrides: {
+    maxChildren?: number
+    childDefaults?: ChildDefaults
+    constraints?: TaskConstraints
+  } = {}
+): ReturnType<typeof tasks.createTask> {
   const task = tasks.createTask({
     title: 'Build the thing',
     kind: 'plan',
-    ...(overrides.maxChildren ? { mandate: { maxChildren: overrides.maxChildren } } : {})
+    ...(overrides.maxChildren ? { mandate: { maxChildren: overrides.maxChildren } } : {}),
+    ...(overrides.childDefaults ? { childDefaults: overrides.childDefaults } : {}),
+    ...(overrides.constraints ? { constraints: overrides.constraints } : {})
   })
   db.db()
     .prepare('update tasks set branch = ? where id = ?')
@@ -264,5 +272,103 @@ describe('addSplitDependency', () => {
     if (!result.ok) return
     const [first, second] = result.children
     expect(split.addSplitDependency(parent.id, first!.seq, second!.seq).ok).toBe(false)
+  })
+})
+
+/**
+ * Who a piece of a plan is allowed to run on.
+ *
+ * ⛔ **The regression these exist for is silent and expensive.** An operator named two cheap accounts
+ * on the Pieces row; the pieces were filed with no constraint at all, went through the ordinary
+ * dispatcher and were handed to the largest model in the fleet. Nothing failed — the split worked,
+ * the work got done, and the bill was wrong. So the assertion is on the *stored* constraint of each
+ * child, which is the only artefact the scheduler ever reads.
+ */
+describe('pieceConstraints', () => {
+  const AT = 'w-antigravity'
+  const CX = 'w-codex'
+
+  it('carries every account the operator named on the Pieces row', () => {
+    const parent = planner({
+      childDefaults: {
+        workerIds: [AT, CX],
+        modelsByWorker: { [AT]: 'flash-3.8', [CX]: '5.6-terra' },
+        effortsByWorker: { [CX]: 'medium' }
+      }
+    })
+    const constraints = split.pieceConstraints(parent, parent.childDefaults)
+    expect(constraints.workerIds).toEqual([AT, CX])
+    expect(constraints.modelsByWorker).toEqual({ [AT]: 'flash-3.8', [CX]: '5.6-terra' })
+    expect(constraints.effortsByWorker).toEqual({ [CX]: 'medium' })
+  })
+
+  it('reads the planner’s own pieceConstraints when childDefaults carries no accounts', () => {
+    const parent = planner({
+      constraints: { pieceConstraints: { workerIds: [AT, CX], modelsByWorker: { [AT]: 'flash-3.8' } } }
+    })
+    const constraints = split.pieceConstraints(parent, parent.childDefaults)
+    expect(constraints.workerIds).toEqual([AT, CX])
+    expect(constraints.modelsByWorker).toEqual({ [AT]: 'flash-3.8' })
+  })
+
+  it('prefers childDefaults over pieceConstraints when both name accounts', () => {
+    const parent = planner({
+      childDefaults: { workerIds: [CX] },
+      constraints: { pieceConstraints: { workerIds: [AT] } }
+    })
+    expect(split.pieceConstraints(parent, parent.childDefaults).workerIds).toEqual([CX])
+  })
+
+  it('pins the singular workerId too when exactly one account was named', () => {
+    const parent = planner({ childDefaults: { workerIds: [CX] } })
+    const constraints = split.pieceConstraints(parent, parent.childDefaults)
+    expect(constraints.workerId).toBe(CX)
+    expect(constraints.workerIds).toEqual([CX])
+  })
+
+  it('leaves the choice open when the operator named nobody', () => {
+    const parent = planner()
+    expect(split.pieceConstraints(parent, parent.childDefaults)).toEqual({})
+  })
+
+  it('drops a fleet-wide model where several accounts were named, because an id belongs to one CLI', () => {
+    const parent = planner({ childDefaults: { workerIds: [AT, CX], model: 'opus-5' } })
+    const constraints = split.pieceConstraints(parent, parent.childDefaults)
+    expect(constraints.model).toBeUndefined()
+    expect(constraints.workerIds).toEqual([AT, CX])
+  })
+
+  it('keeps a single account’s model and effort', () => {
+    const parent = planner({ childDefaults: { workerId: CX, model: '5.6-terra', effort: 'medium' } })
+    const constraints = split.pieceConstraints(parent, parent.childDefaults)
+    expect(constraints).toMatchObject({ workerId: CX, model: '5.6-terra', effort: 'medium' })
+  })
+
+  it('files every piece against the named accounts and never against the fleet', () => {
+    const parent = planner({
+      childDefaults: {
+        workerIds: [AT, CX],
+        modelsByWorker: { [AT]: 'flash-3.8', [CX]: '5.6-terra' }
+      }
+    })
+    const result = split.applySplit(parent.id, [piece('one'), piece('two')], AGENT, parent.childDefaults)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    for (const child of result.children) {
+      const stored = tasks.requireTask(child.id)
+      expect(stored.constraints.workerIds).toEqual([AT, CX])
+      expect(stored.constraints.modelsByWorker).toEqual({ [AT]: 'flash-3.8', [CX]: '5.6-terra' })
+      // ⛔ Never a pin on an account nobody chose: two named accounts is a list, not a pin.
+      expect(stored.constraints.workerId).toBeUndefined()
+    }
+  })
+
+  it('hints the assignee only when one account was named', () => {
+    const one = planner({ childDefaults: { workerIds: [CX] } })
+    const many = planner({ childDefaults: { workerIds: [AT, CX] } })
+    const first = split.applySplit(one.id, [piece('a'), piece('b')], AGENT, one.childDefaults)
+    const second = split.applySplit(many.id, [piece('c'), piece('d')], AGENT, many.childDefaults)
+    expect(first.ok && first.children[0]!.assigneeHint).toBe(CX)
+    expect(second.ok && second.children[0]!.assigneeHint).toBeNull()
   })
 })
