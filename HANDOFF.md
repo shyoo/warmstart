@@ -8,7 +8,7 @@ started in CI, never run against a real agent CLI.
 the line it obsoletes. Where every other fact goes: [`docs/README.md`](docs/README.md).
 
 **Baseline (2026-09-04, measured):** typecheck · lint · build clean · `npm test` **1746/1748** (2 POSIX-only skipped).
-⚠️ `test:daemon` 147/147 · `test:ui` 232/232 · `test:pack` 18/18 · L4-landed carried forward — changes since are covered at L1 — latest is t177's `--add-dir` grant for what a workspace links out at.
+⚠️ `test:daemon` 147/147 · `test:ui` 232/232 · `test:pack` 18/18 · L4-landed carried forward — changes since are covered at L1 — latest is t178's Plan & Split design, which is documentation only.
 CLIs here: claude 2.1.252 · agy 1.1.25 · codex 0.151.0 · local-llm 1.0.0 (qwen3-coder live tested). ⚠️ With none installed — the CI state — the daemon suite skips 5 checks, each with a stated reason.
 ⭐ **`scripts/build-win.ps1` runs all of the above** (`-Help` for options, `-Restart` for the inner
 loop); content-addressed, **92s cold, ~0s warm**. ⛔ One packaged app, `release\win-unpacked\` —
@@ -145,14 +145,14 @@ docs/                  the maintained reference: 12 pages + README.md, the index
 
 M0–M6 are done. What is left is not a milestone but a list, in the order it would pay off:
 
-1. **Run the suites on macOS or Linux with an agent CLI installed** — the largest unmeasured surface.
-2. **R2 (`tokens_per_percent`)** — now only the reserve's *token* rung needs it; routing and the reserve's high-water rung read percentages directly.
+1. **Plan & Split — designed and approved 2026-09-03, none of it built** (`transient_docs/plan_and_split_2026-09-03.md`: five answered decisions, ten commits).
+   ⛔ The expensive part is not the MCP tool — children merge into the **plan** branch and `merge-local` merges inside the operator's own trunk checkout, so a sixth landing strategy and a per-task landing target come first. Start with the `task_deps` release rule; it is self-contained. ⚠️ `landingTarget` has **24** production readers, not the thirteen first counted, and two change *meaning*, not wiring: the trunk tripwire fires on a sibling landing (§3.9) and `resolveRange` would grade a child over its siblings' commits (§3.10) — both silent when wrong.
+2. **Run the suites on macOS or Linux with an agent CLI installed** — the largest unmeasured surface.
 3. **Signing and notarisation**, without which the installers warn or refuse.
 4. **Reuse across tasks — built end to end, unproven in flight** (2026-09-01, `docs/sessions.md`).
    Borrowing now also **revives another task's *finished* conversation** by `--resume` — the case
    that fires on a real fleet: completing a task closes its session and each new one rebuilt ~41.5k
-   tokens. Gated on **same project, account, model, effort**. ⛔ The borrower is told whose context
-   it is; the lender's thread is told by name.
+   tokens. Gated on **same project, account, model, effort**.
    ⭐ Clock **move 5b** compacts a conversation past **70%** a queued task was refused. ⚠️ Sharing
    stays **off at every tier** (operator, 2026-09-01): nothing has run in flight, 60% never fired,
    and **no conversation has served two tasks** — Conversations' `Shared` chip is empty by
