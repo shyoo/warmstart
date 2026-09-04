@@ -317,14 +317,14 @@ export function Workers({
             <col style={{ width: '3%' }} />
             <col style={{ width: '16%' }} />
             <col style={{ width: '7%' }} />
-            <col style={{ width: '15%' }} />
+            <col style={{ width: '14%' }} />
+            <col style={{ width: '12%' }} />
             <col style={{ width: '10%' }} />
             <col style={{ width: '5%' }} />
-            <col style={{ width: '16%' }} />
             <col style={{ width: '13%' }} />
-            <col style={{ width: '13%' }} />
-            <col style={{ width: '8%' }} />
-            <col style={{ width: '6%' }} />
+            <col style={{ width: '10%' }} />
+            <col style={{ width: '10%' }} />
+            <col style={{ width: '10%' }} />
           </colgroup>
           <thead>
             <tr>
@@ -333,6 +333,7 @@ export function Workers({
               <th />
               <th>Worker</th>
               <th>Adapter</th>
+              <th>Config location</th>
               <th>Account</th>
               <th>Quota</th>
               {/* ⚠️ `Max` is three letters that say what is being counted and not what it does. The
@@ -347,10 +348,6 @@ export function Workers({
               <th>Model</th>
               <th>Grading model</th>
               <th>Role</th>
-              {/* ⛔ `Enable`, because that is the only thing left in the column. It said `Policy`
-                  while it held a switch and a `human-occupied` checkbox — a word broad enough to
-                  cover both and precise about neither. */}
-              <th>Enable</th>
               <th className="tbl-num">Action</th>
             </tr>
           </thead>
@@ -498,29 +495,50 @@ export function Workers({
                         </button>
                       </div>
                     </td>
+                    <td className="worker-cell">
+                      <div className="worker-identity">
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={worker.enabled}
+                          aria-label={`${worker.label} enabled`}
+                          disabled={busy === `en:${worker.id}`}
+                          className={`switch switch--sm ${worker.enabled ? 'switch--on' : ''}`}
+                          title={
+                            worker.enabled
+                              ? 'On — may be chosen for new work and for judgment. Turn it off to hold ' +
+                                'this account out of dispatch without retiring it: nothing is deleted and ' +
+                                'its quota keeps being read.'
+                              : 'Off — held out of dispatch. Nothing new is scheduled here and it is never ' +
+                                'asked for judgment. A session already running is left alone; stop that from ' +
+                                'Overview if you want it gone.'
+                          }
+                          onClick={() =>
+                            void guard(`en:${worker.id}`, () =>
+                              rpc('worker.update', { id: worker.id, enabled: !worker.enabled })
+                            )
+                          }
+                        >
+                          <span className="switch-knob" />
+                        </button>
+                        <div className="worker-identity-info">
+                          <span className="tbl-strong">{worker.label}</span>
+                          {!worker.enabled && <span className="tag tag--off">disabled</span>}
+                          {(() => {
+                            const liveCount = sessions.filter((s) => !sessionEnded(s.state)).length
+                            return liveCount > 0 ? (
+                              <span className="tag tag--running">{liveCount} live</span>
+                            ) : null
+                          })()}
+                        </div>
+                      </div>
+                    </td>
+                    <td className="dim">{worker.adapterId}</td>
                     <td>
-                      <span className="tbl-strong">{worker.label}</span>
-                      {/* ⚠️ A disabled worker used to be a cleared checkbox in the last column and
-                          nothing else - identical at a glance to one that simply had no work. The
-                          fleet strip had said `off` on its card since M2; the table that owns the
-                          control did not. */}
-                      {!worker.enabled && <span className="tag tag--off">disabled</span>}
-                      {/* ⛔ Live only. A `warm` count is every conversation this account has ever
-                          closed and could in principle reopen — a number that only grows, that
-                          nobody acts on, and that read as a second status beside the one that
-                          matters. Whether something is *running here right now* is the question
-                          this row is scanned for. */}
-                      {(() => {
-                        const liveCount = sessions.filter((s) => !sessionEnded(s.state)).length
-                        return liveCount > 0 ? (
-                          <span className="tag tag--running">{liveCount} live</span>
-                        ) : null
-                      })()}
                       <div className="tbl-path mono" title={worker.isolationRoot}>
                         {worker.isolationRoot}
                       </div>
                     </td>
-                    <td className="dim">{worker.adapterId}</td>
                     {/* ⚠️ Who this account is, and nothing else. Everything that is a *sentence*
                         about it is on the note row below. ⛔ `tbl-account` breaks the string: an
                         account is usually an email, an email has no spaces to wrap at, and under a
@@ -599,7 +617,7 @@ export function Workers({
                         ⚠️ A number input, not a dropdown: there is no measured ceiling to offer, and a
                         list of options would present a guess as a rule. The floor is enforced in
                         `boundedConcurrency`, not here, so a hand-written RPC cannot get under it. */}
-                    <td className="num tbl-num">
+                    <td>
                       <input
                         type="number"
                         min={1}
@@ -666,8 +684,9 @@ export function Workers({
                           })}
                         </div>
                       ) : (
-                        <>
+                        <div className="worker-model-row">
                           <SettingButtonSelect
+                            className="worker-model-select"
                             value={worker.defaultModel ?? ''}
                             options={modelChoices(modelsFor(worker.adapterId)?.models ?? [])}
                             ariaLabel={`Default model for ${worker.label}`}
@@ -698,7 +717,7 @@ export function Workers({
                               refuses `--effort` outright, measured 2026-08-29. */}
                           {effortsFor(worker).length > 0 && (
                             <SettingButtonSelect
-                              className="tbl-sub-select"
+                              className="worker-effort-select"
                               value={worker.defaultEffort ?? ''}
                               options={[
                                 { value: '', label: 'CLI default' },
@@ -720,11 +739,12 @@ export function Workers({
                               }
                             />
                           )}
-                        </>
+                        </div>
                       )}
                     </td>
                     <td>
                       <SettingButtonSelect
+                        className="worker-grading-select"
                         value={worker.gradingModel ?? ''}
                         options={modelChoices(modelsFor(worker.adapterId)?.models ?? [])}
                         ariaLabel={`Grading model for ${worker.label}`}
@@ -752,53 +772,10 @@ export function Workers({
                         } /> Grading</label>
                       </div>
                     </td>
-                    <td>
-                      {/* ⛔ Off is not retirement and must not read as it. Retiring is destructive
-                          and one-way; this holds a commissioned account out of dispatch and leaves
-                          its isolation root, identity and quota history exactly where they are.
-                          ⚠️ It does not touch a session already running - see the title text. Killing
-                          live work from a settings toggle is the kind of surprise nobody forgives. */}
-                      <div className="switch-row switch-row--cell">
-                        <button
-                          type="button"
-                          role="switch"
-                          aria-checked={worker.enabled}
-                          aria-label={`${worker.label} enabled`}
-                          disabled={busy === `en:${worker.id}`}
-                          className={`switch switch--sm ${worker.enabled ? 'switch--on' : ''}`}
-                          title={
-                            worker.enabled
-                              ? 'On — may be chosen for new work and for judgment. Turn it off to hold ' +
-                                'this account out of dispatch without retiring it: nothing is deleted and ' +
-                                'its quota keeps being read.'
-                              : 'Off — held out of dispatch. Nothing new is scheduled here and it is never ' +
-                                'asked for judgment. A session already running is left alone; stop that from ' +
-                                'Overview if you want it gone.'
-                          }
-                          onClick={() =>
-                            void guard(`en:${worker.id}`, () =>
-                              rpc('worker.update', { id: worker.id, enabled: !worker.enabled })
-                            )
-                          }
-                        >
-                          <span className="switch-knob" />
-                        </button>
-                        {/* ⛔ No word beside the switch. `enabled` next to an on switch is the
-                            switch said twice, and the one state that genuinely needs saying out
-                            loud — off — is already a `disabled` tag on the worker's own name, where
-                            somebody scanning the fleet reads it. The title still carries the
-                            sentence, and `aria-label` + `aria-checked` carry it to a reader. */}
-                      </div>
-                    </td>
-                    {/* ⛔ One menu, the same one the task table uses. Three buttons per row cost a
-                        fifth of the table's width to hold two controls used once at commissioning
-                        and a destructive one that sat a mis-click from the button beside it — and
-                        on the one row with something wrong with it they wrapped onto a second
-                        line, which is the row that could least afford to grow. */}
                     <td className="tbl-action-cell worker-actions">
-                      <button className="btn btn--ghost" disabled={busy === `login:${worker.id}`} onClick={() => void startLogin(worker.id, worker.adapterId)}>Sign in</button>
-                      <button className="btn btn--ghost" disabled={busy === `probe:${worker.id}`} onClick={() => void probe(worker.id, worker.label)}>{suspect ? 'Recheck' : 'Probe'}</button>
-                      <button className="btn btn--ghost danger" disabled={busy === `ret:${worker.id}`} onClick={() => void guard(`ret:${worker.id}`, () => rpc('worker.retire', { id: worker.id }))}>Retire</button>
+                      <button className="btn" disabled={busy === `login:${worker.id}`} onClick={() => void startLogin(worker.id, worker.adapterId)}>Sign in</button>
+                      <button className="btn" disabled={busy === `probe:${worker.id}`} onClick={() => void probe(worker.id, worker.label)}>{suspect ? 'Recheck' : 'Probe'}</button>
+                      <button className="btn btn--danger" disabled={busy === `ret:${worker.id}`} onClick={() => void guard(`ret:${worker.id}`, () => rpc('worker.retire', { id: worker.id }))}>Retire</button>
                     </td>
                   </tr>
                   {/* ⚠️ One row per account, however many things are wrong with it, and it draws

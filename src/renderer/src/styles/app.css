@@ -1977,30 +1977,70 @@ body {
 .tbl-workers colgroup, .tbl-workers thead { display: none; }
 .tbl-workers tbody { display: grid; gap: var(--sp-3); }
 .tbl-workers tbody > tr:not(.tbl-row--note) {
-  display: grid; grid-template-columns: minmax(220px, .72fr) minmax(0, 1.6fr);
+  display: grid; grid-template-columns: minmax(180px, 220px) minmax(0, 1fr);
   align-items: start; border: 1px solid var(--color-border); border-radius: var(--radius-md);
   background: var(--color-surface); padding: var(--sp-3); overflow: visible;
 }
 .tbl-workers tbody > tr:not(.tbl-row--note) > td {
-  grid-column: 2; display: grid; grid-template-columns: 160px minmax(0, 1fr);
-  align-items: center; gap: var(--sp-3); min-width: 0; padding: 6px var(--sp-2); border: 0;
+  grid-column: 2; display: grid; grid-template-columns: 115px minmax(0, 1fr);
+  align-items: center; gap: var(--sp-2); min-width: 0; padding: 5px var(--sp-2); border: 0;
 }
 .tbl-workers tbody > tr:not(.tbl-row--note) > td::before { color: var(--color-text-dim); font-size: var(--text-meta); }
 .tbl-workers tbody > tr:not(.tbl-row--note) > td:nth-child(1) { grid-column: 1; grid-row: 1; display: block; width: 24px; padding: 0; }
-.tbl-workers tbody > tr:not(.tbl-row--note) > td:nth-child(2) { grid-column: 1; grid-row: 1 / span 9; display: block; padding: 0 0 0 32px; }
+.tbl-workers tbody > tr:not(.tbl-row--note) > td:nth-child(2) { grid-column: 1; grid-row: 1 / span 10; display: block; padding: 0 0 0 32px; }
 .tbl-workers tbody > tr:not(.tbl-row--note) > td:nth-child(3)::before { content: 'Adapter'; }
-.tbl-workers tbody > tr:not(.tbl-row--note) > td:nth-child(4)::before { content: 'Account'; }
-.tbl-workers tbody > tr:not(.tbl-row--note) > td:nth-child(5)::before { content: 'Quota'; }
-.tbl-workers tbody > tr:not(.tbl-row--note) > td:nth-child(6)::before { content: 'Max parallel instances'; }
-.tbl-workers tbody > tr:not(.tbl-row--note) > td:nth-child(7)::before { content: 'Default model'; }
-.tbl-workers tbody > tr:not(.tbl-row--note) > td:nth-child(8)::before { content: 'Grading model'; }
-.tbl-workers tbody > tr:not(.tbl-row--note) > td:nth-child(9)::before { content: 'Role'; }
-.tbl-workers tbody > tr:not(.tbl-row--note) > td:nth-child(10)::before { content: 'Enabled'; }
+.tbl-workers tbody > tr:not(.tbl-row--note) > td:nth-child(4)::before { content: 'Config location'; }
+.tbl-workers tbody > tr:not(.tbl-row--note) > td:nth-child(5)::before { content: 'Account'; }
+.tbl-workers tbody > tr:not(.tbl-row--note) > td:nth-child(6)::before { content: 'Quota'; }
+.tbl-workers tbody > tr:not(.tbl-row--note) > td:nth-child(7)::before { content: 'Max parallel instances'; }
+.tbl-workers tbody > tr:not(.tbl-row--note) > td:nth-child(8)::before { content: 'Default model'; }
+.tbl-workers tbody > tr:not(.tbl-row--note) > td:nth-child(9)::before { content: 'Grading model'; }
+.tbl-workers tbody > tr:not(.tbl-row--note) > td:nth-child(10)::before { content: 'Role'; }
 .tbl-workers tbody > tr:not(.tbl-row--note) > td:nth-child(11)::before { content: 'Actions'; }
-.tbl-workers .worker-role-checks, .tbl-workers .worker-actions { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+.tbl-workers .worker-cell { overflow: visible; }
+.tbl-workers .worker-identity { display: flex; align-items: center; gap: var(--sp-2); }
+.tbl-workers .worker-identity-info { display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-1); }
+.tbl-workers .worker-role-checks { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
 .tbl-workers .worker-role-checks label { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
-.tbl-workers .worker-actions { width: auto; }
-.tbl-workers .worker-actions .btn { padding: 4px 9px; }
+.tbl-workers .worker-model-row { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: nowrap; }
+.tbl-workers .worker-model-select { width: auto; min-width: 150px; max-width: 200px; }
+.tbl-workers .worker-effort-select { width: auto; min-width: 100px; max-width: 130px; margin-top: 0; }
+.tbl-workers .worker-grading-select { width: auto; min-width: 150px; max-width: 200px; }
+.tbl-workers .num-input { text-align: left; justify-self: start; }
+.tbl-workers .tbl-path { max-width: 100%; font-size: var(--text-meta); color: var(--color-text-dim); }
+.tbl-workers .worker-actions { display: flex; flex-direction: row; flex-wrap: nowrap; align-items: center; gap: var(--sp-2); width: auto; white-space: nowrap; }
+.tbl-workers .worker-actions .btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 3px 10px; font-size: var(--text-dense); line-height: 1.4;
+  border-radius: var(--radius-sm); background: var(--color-surface-2);
+  border: 1px solid var(--color-border-strong); color: var(--color-text);
+  cursor: pointer; white-space: nowrap;
+  transition: background var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease);
+}
+.tbl-workers .worker-actions .btn:hover:not(:disabled) { background: var(--color-border); color: var(--color-text); }
+.tbl-workers .worker-actions .btn--danger,
+.tbl-workers .worker-actions .btn.danger {
+  color: var(--state-danger); border-color: rgba(247, 118, 142, 0.35); background: rgba(247, 118, 142, 0.08);
+}
+.tbl-workers .worker-actions .btn--danger:hover:not(:disabled),
+.tbl-workers .worker-actions .btn.danger:hover:not(:disabled) {
+  background: rgba(247, 118, 142, 0.2); border-color: var(--state-danger); color: var(--state-danger);
+}
+.tbl-workers .tbl-row--off td:nth-child(1),
+.tbl-workers .tbl-row--off td:nth-child(2),
+.tbl-workers .tbl-row--off .worker-cell {
+  opacity: 1;
+}
+.tbl-workers .switch {
+  opacity: 1 !important;
+}
+.tbl-workers .switch:not(.switch--on) {
+  background: var(--color-surface-2);
+  border-color: var(--color-border-strong);
+}
+.tbl-workers .switch:not(.switch--on) .switch-knob {
+  background: var(--color-text-dim);
+}
 .tbl-workers .tbl-row--note { display: block; margin: calc(-1 * var(--sp-3)) 1px 0; }
 .tbl-workers .tbl-row--note > td { display: block; border: 1px solid var(--color-border); border-top: 0; border-radius: 0 0 var(--radius-md) var(--radius-md); }
 @media (max-width: 900px) {
@@ -3019,7 +3059,7 @@ select:focus-visible,
 }
 
 /* The same 0.55 the fleet strip's card has used since M2, so `off` looks like one thing. */
-.tbl-row--off td {
+.tbl-row--off td:not(.worker-cell) {
   opacity: 0.55;
 }
 

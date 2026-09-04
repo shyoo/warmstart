@@ -2129,7 +2129,7 @@ try {
        rows: document.querySelectorAll('.tbl-workers .tbl-row--note').length,
        note: document.querySelector('.tbl-workers .tbl-row--note')?.innerText ?? '',
        span: document.querySelector('.tbl-workers .tbl-row--note td')?.colSpan ?? 0,
-       inAccountColumn: [...document.querySelectorAll('.tbl-workers tbody tr:not(.tbl-row--note) td:nth-child(4)')]
+       inAccountColumn: [...document.querySelectorAll('.tbl-workers tbody tr:not(.tbl-row--note) td:nth-child(5)')]
          .some(td => td.innerText.includes('subscription expired'))
      })`
   )
@@ -2323,7 +2323,7 @@ try {
   // Global uses, so the fleet's pickers and the app's pickers are one thing to learn. It paints a
   // button carrying the current label and opens its options on click, which is why the list has to
   // be opened before it can be counted.
-  const modelBtn = `document.querySelector('.tbl tbody tr td:nth-child(7) .setting-btn-select')`
+  const modelBtn = `document.querySelector('.tbl tbody tr td:nth-child(8) .setting-btn-select')`
   check(
     'an account can be given a default model',
     (await evaluate(`${modelBtn}?.tagName`)) === 'BUTTON',
@@ -2337,7 +2337,7 @@ try {
   )
   await evaluate(`${modelBtn}?.click()`)
   await wait(200)
-  const modelMenu = `document.querySelector('.tbl tbody tr td:nth-child(7) .setting-btn-select-menu')`
+  const modelMenu = `document.querySelector('.tbl tbody tr td:nth-child(8) .setting-btn-select-menu')`
   check(
     '"CLI default" is offered as a real choice, so the setting can be cleared',
     (await evaluate(
