@@ -6,6 +6,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { AdapterDetection, AdapterInfo, QuotaSnapshot } from '@shared/protocol.js'
 import type { AgentAdapter, IdentityProbe, SpawnPlan, SpawnRequest } from './types.js'
+import { workspaceGrants } from './grants.js'
 import { asRecord, textBlocks, type StreamEvent } from '../stream.js'
 import { log } from '../log.js'
 import { launchArgs, launchable, spawnEnv, which } from '../which.js'
@@ -629,6 +630,19 @@ export const claudeCode: AgentAdapter = {
     // otherwise (adapters/types.ts), so this line is inert until the capability is promoted on
     // measured evidence rather than on the flag existing in `--help`.
     if (req.effort) args.push('--effort', req.effort)
+    // ⭐ The same grants codex gets, and for the same two reasons: a worktree's git metadata and
+    // anything a link inside the workspace points out of it at (`adapters/grants.js`). ⛔ **Not the
+    // trunk's working tree**, which is what "add the project directory" would mean and would hand a
+    // worker the one directory the invariant says no agent may work in. `<trunk>/.git` and
+    // `<trunk>/node_modules` are the mechanics; `<trunk>/src` is somebody else's checkout.
+    //
+    // ⚠️ **Precaution, not a measured fix, and the difference is worth keeping straight.** t171
+    // (2026-09-03) measured this failing on *codex*, whose Windows sandbox refuses a write through a
+    // junction it was not told about. Nothing here has been measured refusing Claude Code on this
+    // platform — `--add-dir` on this CLI *widens tool access* rather than naming a workspace
+    // (`docs/adapters.md`), so the cost is a wider grant and the benefit is that the same worktree
+    // stops behaving differently depending on which account drew it.
+    for (const dir of workspaceGrants(req.cwd)) args.push('--add-dir', dir)
     for (const dir of attachmentDirs(req.attachments ?? [])) args.push('--add-dir', dir)
     if (req.mcpConfig) {
       args.push('--mcp-config', req.mcpConfig)

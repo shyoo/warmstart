@@ -109,6 +109,20 @@ function under test — and assert the other contract, which in a denied environ
 one. ⭐ Running the checks is not the agent's job anyway: `runChecks` runs `check` in the daemon,
 outside any sandbox.
 
+### A suite that fails because of the *shape* of the workspace it is in
+
+⛔ **Pool members are not interchangeable, and the difference is invisible.** On t171, 2026-09-03,
+`npm test` in `ws2` died before a single test ran — `EPERM: operation not permitted, open
+…\ws2\node_modules\.vite-temp\vitest.config.ts.timestamp-….mjs` — while the same task, branch and
+commands passed 1,576 / 1,642 / 1,644 tests in `ws1` and `ws3`. `ws2/node_modules` is a directory
+junction to the trunk's; a codex sandbox resolves the link before it checks it, and the target had
+never been granted. `linkedWritableRoots` now grants it (`adapters.md`).
+
+⚠️ The lesson that outlives the fix: **a suite that fails in one workspace and passes in another is
+reporting on the workspace, not on the change.** An agent has no way to tell those apart from the
+inside, and the honest move when a suite cannot start is to say which workspace it was and what the
+error was — not to conclude the change is broken, and not to commit as though the suite had run.
+
 ### A test that needs a CLI on PATH, on a machine that has none
 
 ⛔ **Any test that calls `plan()` needs the CLI on PATH, and CI has none installed.** `plan()` resolves

@@ -1,11 +1,20 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { Attachment } from '@shared/tasks.js'
 import { execFileSync } from 'node:child_process'
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, join, resolve } from 'node:path'
 import { adapter, adapters } from './adapters/index.js'
-import { gitWritableRoots } from './adapters/openai-compatible.js'
+import { gitWritableRoots, linkedWritableRoots, workspaceGrants } from './adapters/grants.js'
 import { costModel, loadCostModels } from './costmodel.js'
 import { spawnEnv } from './which.js'
 import { APPROVE_TOOL, MCP_SERVER_NAME } from './mcpconfig.js'
@@ -1244,6 +1253,135 @@ describe('a worker that has to be able to commit', () => {
     //    is the thing this must never quietly become.
     expect(plan.args).toContain('workspace-write')
     expect(plan.args).not.toContain('--dangerously-bypass-approvals-and-sandbox')
+  })
+})
+
+/**
+ * ⛔ The fault that made one pool member in three unable to run the suite at all.
+ *
+ * Measured on t171, 2026-09-03. `ws2/node_modules` on this install is a directory junction to the
+ * trunk's, so that one worktree does not carry a second copy. The sandbox was told about the
+ * workspace and the two git directories and nothing else, and `npm test` died before a single test
+ * ran: `EPERM: operation not permitted, open …\ws2\node_modules\.vite-temp\vitest.config.ts…`.
+ *
+ * ⚠️ **The expensive part is that it looked like flakiness.** The same task, branch and commands
+ * passed 1,576 / 1,642 / 1,644 tests in `ws1` and `ws3`, which have real directories there. An agent
+ * cannot tell "this workspace is shaped differently" from "I broke the build", and this one
+ * committed with the suite unverified rather than reporting a fault it had no way to name.
+ *
+ * ⛔ Built on a **real** `git worktree` with a **real** junction, for `gitWritableRoots`' reason: the
+ * whole fault is the gap between what a workspace looks like and what it resolves to, and a fixture
+ * made of plain directories would encode the assumption instead of testing it.
+ */
+describe('a workspace that shares a directory with the trunk', () => {
+  let trunk: string
+  let work: string
+  let made = false
+
+  const norm = (p: string): string => {
+    try {
+      return realpathSync.native(p).toLowerCase()
+    } catch {
+      return resolve(p).toLowerCase()
+    }
+  }
+
+  beforeAll(() => {
+    trunk = mkdtempSync(join(tmpdir(), 'agentyard-linked-trunk-'))
+    work = join(mkdtempSync(join(tmpdir(), 'agentyard-linked-ws-')), 'ws1')
+    const git = (args: string[], cwd: string): void => {
+      execFileSync('git', args, { cwd, stdio: 'pipe' })
+    }
+    git(['init', '-q', '-b', 'main'], trunk)
+    git(['config', 'user.email', 'test@example.com'], trunk)
+    git(['config', 'user.name', 'test'], trunk)
+    writeFileSync(join(trunk, 'a.txt'), 'a\n')
+    git(['add', '-A'], trunk)
+    git(['commit', '-qm', 'first'], trunk)
+    mkdirSync(join(trunk, 'node_modules', 'vite'), { recursive: true })
+    git(['worktree', 'add', '-q', '-b', 'topic', work], trunk)
+    mkdirSync(join(work, 'src'))
+    // ⛔ `'junction'`, not `'dir'`. A directory *symlink* on Windows needs a privilege no scheduled
+    //    worker has, a junction needs none, and a junction is what this install actually holds.
+    //    Node ignores the type off Windows and makes an ordinary symlink, which resolves the same.
+    symlinkSync(join(trunk, 'node_modules'), join(work, 'node_modules'), 'junction')
+    symlinkSync(join(work, 'src'), join(work, 'lib'), 'junction')
+    made = true
+  })
+
+  afterAll(() => {
+    try {
+      rmSync(join(work, '..'), { recursive: true, force: true })
+      rmSync(trunk, { recursive: true, force: true })
+    } catch {
+      // Windows file locks
+    }
+  })
+
+  it('grants where a link leaves the workspace for, not where it appears to be', () => {
+    expect(made, 'the junction fixture must actually have been built').toBe(true)
+    expect(linkedWritableRoots(work).map(norm)).toEqual([norm(join(trunk, 'node_modules'))])
+  })
+
+  it('stays quiet about a link that lands back inside, and about ordinary directories', () => {
+    expect(made, 'the junction fixture must actually have been built').toBe(true)
+    // ⛔ The guard against widening by habit, the same one `gitWritableRoots` carries. `lib` is a
+    //    link and `src` is a directory, and the sandbox already covers both because they are in
+    //    `cwd`. ⚠️ `trunk` is the control: `node_modules` there is a real directory, and a
+    //    workspace that shares nothing must ask for nothing.
+    const roots = linkedWritableRoots(work).map(norm)
+    expect(roots).not.toContain(norm(join(work, 'lib')))
+    expect(roots).not.toContain(norm(join(work, 'src')))
+    expect(linkedWritableRoots(trunk)).toEqual([])
+  })
+
+  it('hands an adapter one list covering the commit and the test run alike', () => {
+    expect(made, 'the junction fixture must actually have been built').toBe(true)
+    const grants = workspaceGrants(work).map(norm)
+    const covered = (p: string): boolean => grants.some((r) => norm(p).startsWith(r))
+    const gitDir = resolve(work, /gitdir:\s*(.+)/.exec(readFileSync(join(work, '.git'), 'utf8'))![1]!.trim())
+    expect(covered(join(gitDir, 'index.lock'))).toBe(true)
+    expect(covered(join(trunk, '.git', 'objects'))).toBe(true)
+    // ⭐ The one t171 was missing, and the reason the two lists are asked for together.
+    expect(covered(join(trunk, 'node_modules', 'vite'))).toBe(true)
+  })
+
+  it('names it on the codex argv, ahead of any resume, with the sandbox still on', () => {
+    expect(made, 'the junction fixture must actually have been built').toBe(true)
+    const plan = adapter('openai-compatible').plan({
+      sessionId: 'ignored',
+      isolationRoot: 'C:/tmp/root',
+      cwd: work,
+      transport: 'stream',
+      resumeFrom: 'thread-1'
+    })
+    for (const root of linkedWritableRoots(work)) {
+      expect(plan.args[plan.args.indexOf(root) - 1]).toBe('--add-dir')
+      // ⛔ `--add-dir` is declared on `exec` and not on `resume`; after the subcommand it is an
+      //    argument error rather than a grant.
+      expect(plan.args.indexOf(root)).toBeLessThan(plan.args.indexOf('resume'))
+    }
+    expect(plan.args).toContain('workspace-write')
+    expect(plan.args).not.toContain('--dangerously-bypass-approvals-and-sandbox')
+  })
+
+  it('gives Claude Code the same grants, and never the trunk it works beside', () => {
+    expect(made, 'the junction fixture must actually have been built').toBe(true)
+    const plan = adapter('claude-code').plan({
+      sessionId: '5e551011-0000-4000-8000-000000000001',
+      isolationRoot: 'C:/tmp/root',
+      cwd: work,
+      transport: 'stream'
+    })
+    for (const root of workspaceGrants(work)) {
+      expect(plan.args[plan.args.indexOf(root) - 1]).toBe('--add-dir')
+    }
+    // ⛔ The whole difference between this and "allow the project directory". The trunk's checkout
+    //    is the one place no agent may work (AGENTS.md), and nothing about a worktree's mechanics
+    //    needs it — only its `.git` and whatever it links to.
+    const granted = plan.args.filter((_, i) => plan.args[i - 1] === '--add-dir').map(norm)
+    expect(granted).not.toContain(norm(trunk))
+    expect(granted).toContain(norm(join(trunk, 'node_modules')))
   })
 })
 

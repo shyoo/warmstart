@@ -2,7 +2,7 @@ import { attachmentDirs } from '../attachments.js'
 import { execFile, execFileSync, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
 import type { AdapterDetection, AdapterInfo, QuotaSnapshot } from '@shared/protocol.js'
 import type {
   AgentAdapter,
@@ -12,65 +12,10 @@ import type {
   SpawnRequest,
   WrittenPermissions
 } from './types.js'
+import { gitWritableRoots, linkedWritableRoots } from './grants.js'
 import { asRecord, num, type StreamEvent, type StreamUsage } from '../stream.js'
 import { log } from '../log.js'
 import { formatCmdInvocation, launchArgs, launchable, spawnEnv, which } from '../which.js'
-
-/**
- * The directories a `git commit` in `cwd` has to write to, other than `cwd` itself.
- *
- * ⛔ **A worktree keeps none of its git metadata inside itself.** `<worktree>/.git` is a *file*
- * holding `gitdir: <trunk>/.git/worktrees/<slot>`, and a commit writes the index there, the new
- * objects into the common `.git/objects`, and the branch ref into the common `.git/refs/heads`.
- * Every one of those is outside the sandbox `--sandbox workspace-write` draws around `cwd`.
- *
- * ⭐ Measured on t56, 2026-08-30, across three runs and ~1.8M tokens that could never have landed:
- * *"Could not commit: sandbox denies writes to `.git/worktrees/ws1/index.lock`, so sync/rebase and
- * staging both failed."* The agent edited the files it was asked to and could not commit them — not
- * a t56 fault and not a codex fault, but every pooled worktree on this adapter, for every task.
- *
- * ⚠️ This returns the **common** `.git`, which is wider than the one slot: it holds every branch's
- * refs and every task's objects, so a worker given it could rewrite refs belonging to another task.
- * That is not an oversight and there is no narrower grant — a worktree commit genuinely needs all
- * three paths, and two of them are shared by construction. The narrow fix is a different
- * architecture (a real clone per worker, `.git` inside the workspace), not a smaller flag.
- *
- * ⚠️ Returns empty for an ordinary clone, where `.git` is a directory already inside `cwd` and
- * nothing needs widening, and for a directory that is not a repository at all — a project declared
- * `vcs: none` runs here too, under `--skip-git-repo-check`.
- */
-export function gitWritableRoots(cwd: string): string[] {
-  try {
-    const dotGit = join(cwd, '.git')
-    if (!existsSync(dotGit)) return []
-    // A directory means an ordinary clone: the metadata is already inside the workspace.
-    if (statSync(dotGit).isDirectory()) return []
-
-    const pointer = readFileSync(dotGit, 'utf8').trim()
-    const match = /^gitdir:\s*(.+)$/m.exec(pointer)
-    if (!match?.[1]) return []
-    const gitDir = resolve(cwd, match[1].trim())
-    if (!existsSync(gitDir)) return []
-
-    const roots = [gitDir]
-    // ⚠️ `commondir` is written relative to `gitDir` (`../..` for a standard worktree). Resolved,
-    // it is the trunk's `.git` — where objects and refs live. Absent on some layouts, in which
-    // case the slot directory is all there is to grant.
-    const commonFile = join(gitDir, 'commondir')
-    if (existsSync(commonFile)) {
-      const common = resolve(gitDir, readFileSync(commonFile, 'utf8').trim())
-      if (existsSync(common)) roots.push(common)
-    }
-    // Deduplicated, and the common dir usually contains the slot dir — but only usually, so both
-    // are passed rather than assuming the containment.
-    return [...new Set(roots)]
-  } catch (err) {
-    // ⚠️ Never fatal. Failing to widen produces the old behaviour — an agent that cannot commit —
-    // which is bad; refusing to spawn produces no agent at all, which is worse.
-    log.warn(`could not work out git metadata roots for ${cwd}:`, err)
-    return []
-  }
-}
 
 /**
  * Codex CLI — the OpenAI-compatible adapter.
@@ -1132,6 +1077,15 @@ export const openaiCompatible: AgentAdapter = {
         }
         args.push('--add-dir', root)
       }
+      // ⛔ And the directories a link inside the workspace points *out* of it at — a
+      // `node_modules` junction to the trunk's is the one this install has. Measured on t171,
+      // 2026-09-03: `npm test` in `ws2` died at `EPERM` writing `node_modules/.vite-temp/…`, before
+      // any test ran, while the same commands passed in `ws1` and `ws3`. See `linkedWritableRoots`.
+      // ⚠️ No `icacls` reset for these, and here the asymmetry is a budget rather than a
+      // preference: the call above is `/t` recursive and capped at 5s, and a shared `node_modules`
+      // is six figures of files. It would time out on every spawn and fix nothing — what was
+      // missing is the grant, not the ACLs.
+      for (const root of linkedWritableRoots(req.cwd)) args.push('--add-dir', root)
       // ⛔ Here, ahead of any `resume`, rather than beside the `-i` flags they belong to.
       // `--add-dir` is declared on `exec` and **not on the `resume` subcommand** (measured against
       // `codex exec resume --help`, codex-cli 0.151.0), so a grant written after the subcommand

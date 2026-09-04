@@ -1,4 +1,4 @@
-import { resolve } from 'node:path'
+import { resolve, sep } from 'node:path'
 
 /**
  * One spelling for one directory.
@@ -39,4 +39,25 @@ export function samePath(a: string, b: string): boolean {
   // to differ, and a comparison that caught two of the three would be worse than one that is honest
   // about the platform it runs on.
   return canonicalPath(a).toLowerCase() === canonicalPath(b).toLowerCase()
+}
+
+/**
+ * Is `child` the same directory as `parent`, or somewhere beneath it?
+ *
+ * ⛔ **Not `child.startsWith(parent)`.** That answers yes for `…/ws10` under `…/ws1` — two different
+ * pool members — and no for `C:\Dev\x` under `c:\Dev`, which is one directory spelled twice. The
+ * separator has to be part of the test and the comparison has to be `samePath`'s, for exactly the
+ * reasons `canonicalPath` gives.
+ *
+ * ⚠️ Pure string arithmetic on already-resolved paths: it does not touch the filesystem and does not
+ * follow links, so a caller asking *"did this link escape the workspace?"* has to resolve both sides
+ * with `realpathSync` first. `linkedWritableRoots` is the caller that does.
+ */
+export function withinPath(parent: string, child: string): boolean {
+  if (samePath(parent, child)) return true
+  const from = canonicalPath(parent)
+  const to = canonicalPath(child)
+  const prefix = from.endsWith(sep) ? from : from + sep
+  if (process.platform !== 'win32') return to.startsWith(prefix)
+  return to.toLowerCase().startsWith(prefix.toLowerCase())
 }

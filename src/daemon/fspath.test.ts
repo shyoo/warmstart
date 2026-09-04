@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { canonicalPath, samePath } from './fspath.js'
+import { canonicalPath, samePath, withinPath } from './fspath.js'
 
 /**
  * One directory, one identity.
@@ -59,5 +59,41 @@ describe.runIf(!win)('POSIX paths, where case is meaning', () => {
 
   it('still resolves traversal and duplicate separators', () => {
     expect(samePath('/dev/x/ws2/../ws1', '/dev/x/ws1')).toBe(true)
+  })
+})
+
+/**
+ * Containment, which is the same question as identity with one more way to get it wrong.
+ *
+ * ⚠️ Read by `linkedWritableRoots`, which asks *"did this link leave the workspace?"* on every
+ * spawn. A false yes hands a sandboxed CLI a directory it did not need; a false no leaves a worker
+ * unable to write through its own `node_modules`, which is the fault t171 spent a run on.
+ */
+describe('one directory beneath another', () => {
+  const sep = win ? '\\' : '/'
+  const root = win ? 'C:\\Dev\\x' : '/dev/x'
+  const at = (...parts: string[]): string => [root, ...parts].join(sep)
+
+  it('counts a directory as within itself, because a grant of it covers it', () => {
+    expect(withinPath(at('ws1'), at('ws1'))).toBe(true)
+    expect(withinPath(at('ws1') + sep, at('ws1'))).toBe(true)
+  })
+
+  it('follows the separator, not the string', () => {
+    // ⛔ The bug a `startsWith` would ship: `ws10` is a different pool member from `ws1`, and a
+    // containment test that says otherwise decides one worktree's link escaped into another's.
+    expect(withinPath(at('ws1'), at('ws10'))).toBe(false)
+    expect(withinPath(at('ws1'), at('ws1', 'node_modules'))).toBe(true)
+  })
+
+  it('answers no when the child is above or beside the parent', () => {
+    expect(withinPath(at('ws1'), root)).toBe(false)
+    expect(withinPath(at('ws1'), at('ws2', 'node_modules'))).toBe(false)
+  })
+
+  it('compares the way samePath does, so the platform decides about case', () => {
+    // The same split as above: one directory spelled two ways on Windows, two directories anywhere
+    // else. Nothing here may fold case on its own.
+    expect(withinPath(root.toLowerCase(), at('ws1'))).toBe(win)
   })
 })
