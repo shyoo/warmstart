@@ -616,10 +616,12 @@ against the other and failed on a real panel.
   it verbatim reports a nearly-exhausted account as nearly empty — the one direction the gate cannot
   survive, since `QUOTA_HIGH_WATER` would never trip.
 - The panel is **taller than a default terminal and scrolls**. The first live run returned three
-  windows of four: at 30 rows the last group's five-hour window fell below the fold, silently, and
-  that window is a candidate for the `5h` id the gate reads. The probe session now takes its geometry
-  from the adapter (110×60), and the parser refuses any group showing one of its two windows rather
-  than under-reporting.
+  windows of four: at 30 rows the last group's five-hour window fell below the fold, silently. The
+  probe session now takes its geometry from the adapter (120×100), and the parser requires both
+  known groups with both windows. Whole-group loss is measured too: on t183 (2026-09-03), the 03:19
+  reading had Gemini 5h at 78% and both Claude/GPT windows at 100%; the 03:29 capture contained only
+  Claude/GPT, and the Gemini 3.8 run was preempted six seconds later. Missing a pool now makes the
+  reading unknown rather than promoting the remaining pool's quota.
 
 ⚠️ **Two five-hour windows, one gate.** Gemini and Claude/GPT are metered separately and a snapshot
 cannot know which group the next run will use, so the **busiest** is promoted to the `5h` id the

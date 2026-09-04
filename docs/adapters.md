@@ -300,7 +300,11 @@ Live reading, 2026-08-27, agy 1.1.22, Google AI Pro: Gemini weekly 5.48% used ·
   rendering becomes `n/a` rather than a false fresh 0% sample.
 - The panel is **taller than a default terminal and scrolls**. At 30 rows one group's five-hour
   window fell below the fold and three of four windows came back looking complete. The probe
-  session now runs at 110x60 and the parser refuses any group showing one of its two windows.
+  session now runs at 120×100 and the parser requires both known groups with both windows. That
+  second condition is load-bearing: on t183 (2026-09-03), the 03:19 probe read Gemini 5h at 78% and
+  both Claude/GPT windows at 100%; the 03:29 capture contained only the internally complete
+  Claude/GPT pair, and the scheduler preempted the Gemini 3.8 run six seconds later. A missing pool
+  is an incomplete reading, never evidence that the other pool's quota applies.
 - ⚠️ **Measured 2026-09-03 (startup 1.5s–2.5s, probe 5.2s–5.5s):** The old fixed 20-second `readyMs`
   wait caused every probe to unconditionally wait 20.5s before reading (and 50s on missed panels).
   `readyMs` is now 5s and `settleMs` is 15s; the driver sends `/usage` immediately after startup and

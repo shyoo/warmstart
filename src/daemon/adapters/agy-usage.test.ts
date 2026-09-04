@@ -116,13 +116,25 @@ describe('the /usage panel', () => {
     expect(parseUsageScreen(cut, NOW)).toBeNull()
   })
 
-  it('a whole group missing is fine - that is a shorter panel, not a truncated one', () => {
-    // ⚠️ The complement, so the guard above cannot be satisfied by simply refusing everything: an
-    // account with one model group is a legitimate two-window panel.
+  it('⛔ refuses a whole missing group rather than applying Claude/GPT quota to a Gemini run', () => {
+    // Measured on t183, 2026-09-03: the 03:19 probe read all four windows, including Gemini 5h at
+    // 78%. At 03:29 the viewport exposed only the bottom Claude/GPT group at 100%; accepting those
+    // two internally complete windows made the fallback gate preempt a Gemini 3.8 run six seconds
+    // later. A group can disappear at the viewport edge just as easily as half of one can.
     const oneGroup = screen.slice(0, screen.indexOf('CLAUDE AND GPT MODELS'))
-    const windows = parseUsageScreen(oneGroup, NOW)
-    expect(windows).toHaveLength(2)
-    expect(windows?.some((w) => w.id === '5h')).toBe(true)
+    expect(parseUsageScreen(oneGroup, NOW)).toBeNull()
+
+    const onlyClaudeAndGpt = `Models & Quota\n${screen.slice(screen.indexOf('CLAUDE AND GPT MODELS'))}`
+    expect(parseUsageScreen(onlyClaudeAndGpt, NOW)).toBeNull()
+  })
+
+  it('accepts the measured alternate Claude/GPT heading spellings', () => {
+    // The CLI has rendered "and", "&", and "/" between these pool names. Completeness follows the
+    // same containment rule as model-to-pool selection rather than requiring one heading slug.
+    for (const heading of ['CLAUDE & GPT MODELS', 'CLAUDE/GPT MODELS']) {
+      const alternate = screen.replace('CLAUDE AND GPT MODELS', heading)
+      expect(parseUsageScreen(alternate, NOW)).toHaveLength(4)
+    }
   })
 
   it('ignores a percentage that is not attached to a bar', () => {
@@ -185,7 +197,6 @@ describe('the /usage panel', () => {
     expect(disabledFiveHour?.id).toBe('5h')
   })
 })
-
 describe('parseTokenCount', () => {
   it('parses abbreviations and commas into exact numbers', () => {
     expect(parseTokenCount('28.9k')).toBe(28900)

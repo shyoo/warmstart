@@ -657,7 +657,7 @@ export function parseUsageScreen(screen: string, now = Date.now()): QuotaWindow[
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i] ?? ''
 
-      const heading = /^\s*([A-Z][A-Z0-9 &]*?)\s+MODELS\s*$/.exec(line)
+      const heading = /^\s*([A-Z][A-Z0-9 &/]*?)\s+MODELS\s*$/.exec(line)
       if (heading?.[1]) {
         const name = heading[1].trim()
         const groupId = name.toLowerCase().replace(/[^a-z0-9]+/g, '-')
@@ -752,9 +752,12 @@ export function parseUsageScreen(screen: string, now = Date.now()): QuotaWindow[
   })
   if (windows.length === 0) return null
 
-  // ⛔ A group must contribute BOTH of its windows or the read is not trustworthy. This panel is
+  // ⛔ BOTH known groups must contribute BOTH windows or the read is not trustworthy. This panel is
   // taller than a default terminal and scrolls - its own footer says "(1-27 of 30 lines)" - so a
-  // viewport that cuts it mid-group is the normal failure, not an exotic one.
+  // viewport can cut off half a group or a whole one. t183 (2026-09-03) proved the second case: a
+  // probe exposed only Claude/GPT at 100%, and its otherwise-complete pair was applied to a Gemini
+  // run six seconds later. Antigravity's Google AI account exposes these two pools; there is no
+  // measured one-pool panel, so accepting one would turn missing evidence into a preemption.
   if (hasUsage) {
     const perGroup = new Map<string, number>()
     for (const w of windows) {
@@ -768,6 +771,24 @@ export function parseUsageScreen(screen: string, now = Date.now()): QuotaWindow[
     for (const group of groupOrder.keys()) {
       const count = perGroup.get(group) ?? 0
       if (count < 2) {
+        return null
+      }
+    }
+    const groupIds = [...perGroup.keys()]
+    const expectedGroups = [
+      { label: 'Gemini', present: groupIds.some((group) => group.includes('gemini')) },
+      {
+        label: 'Claude/GPT',
+        present: groupIds.some((group) => group.includes('claude') || group.includes('gpt'))
+      }
+    ]
+    for (const group of expectedGroups) {
+      if (!group.present) {
+        log.warn(
+          `agy /usage panel was cut off: the "${group.label}" group was missing. The probe session's ` +
+            'viewport did not contain the complete panel - no reading is recorded rather than ' +
+            'applying another model pool\'s quota.'
+        )
         return null
       }
     }
