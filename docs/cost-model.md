@@ -1359,6 +1359,38 @@ case an equal split gets wrong.
 own interactive use of the account, and charging it to whichever task ran next is a lie that grows
 with how long the fleet idles.
 
+### A run the readings only partly cover
+
+⛔ **A run is priced from the stretch of it the readings actually cover, and the part they do not is
+declared.** A run's span is clamped to the series before anything is attributed, so a run that began
+before the first reading, or outlived the last one, keeps whatever was measured in between instead of
+being thrown away whole.
+
+⚠️ **The closing reading carries the *vendor's* timestamp, not ours** — and that is why this case is
+common rather than exotic. `captureQuotaAfter` asks the CLI for a reading the moment a run finishes;
+what comes back is whatever that provider's own panel last computed. Measured on this install
+2026-09-04: **t210** ran 20:18:23 → 20:50:28 on ClaudeFirst and moved `weekly_all` from 18% to 22%
+entirely inside its own span, but its closing reading was stamped **20:48:44** — 104 seconds before
+the run ended. Demanding a reading at or after the run's end discarded the whole measurement, and the
+run priced `n/a` while its four points of weekly window were real and unambiguously its.
+
+⛔ **The number is then a lower bound, and that is the one flavour of `estimated` with a
+*direction*.** A shared or stale share is imprecise about a movement that *was* read; this one is
+short of a stretch nobody read, so the truth is that figure **or more, never less**.
+`RunPrice.unmeasuredMs` carries how much went unread, the basis says it in words, and the tooltip
+leads with it — `At least this much — 2m of this run fell outside the window readings`.
+
+⛔ **Bounded by the same twelve hours (`ANCHOR_MAX_MS`) that already refuse a stale anchor**, and for
+the same reason: past that the measured slice stops being a useful lower bound on the whole run, and
+a number is worse than a dash. A run with *nothing* read while it was open stays `no_reading`.
+
+⭐ **Clamping cannot move a run the readings already covered.** Segments exist only between readings,
+so an overlap was already bounded by those same two instants; the change can only turn an `n/a` into
+a number. Verified over the live database on 2026-09-04: of **378** runs, exactly **2** changed —
+both `no_reading` → priced — and no already-priced run moved by a cent. That is what made it safe to
+apply to eight days of history, and no migration was needed to do so: a price is **derived, never
+stored**, so every historical run re-prices itself the next time it is asked.
+
 ### The six ways a price is `n/a`
 
 They are six different facts and they render six different tooltips. A single dash for all of them
@@ -1387,7 +1419,9 @@ marks the positive part estimated; a 2-point-or-larger fall stays `window_reset`
 
 `Price` replaced `Tokens` in the Tasks table and in the task thread, stacked — money over the token
 count in the same quiet treatment the model line gets under an account. A `*` marks every figure
-that is a split, a stale anchor or a run still in flight, and it always carries a title saying which.
+that is a split, a stale anchor, a corrected panel, a partly-unread run or a run still in flight, and
+it always carries a title saying which — the partly-unread one first, because it is the only one that
+says which *way* the number is wrong.
 A task total missing any of its runs renders `≥`, because a lower bound presented as a complete
 figure is the one rendering of this feature that would actively mislead.
 

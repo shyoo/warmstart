@@ -21,6 +21,7 @@ function price(over: Partial<RunPrice>): RunPrice {
     onOverage: null,
     percent: 5,
     estimated: false,
+    unmeasuredMs: 0,
     reason: 'measured',
     basis: 'Claude Pro, $20/month over a 7-day window',
     planId: 'pro',
@@ -63,6 +64,39 @@ describe('what the tooltip on a run’s price says', () => {
   it('explains an estimate that came from a stale anchor rather than from a neighbour', () => {
     const title = runPriceTitle(price({ estimated: true, parallelRunIds: [] }))
     expect(title).toMatch(/still in flight|too far from its edges/i)
+  })
+
+  /**
+   * ⛔ **The one flavour of estimate with a direction, and it has to say so.** A run whose closing
+   * reading was stamped before it ended is priced from what *was* read: the number is short, never
+   * long. Told only "estimate", a reader takes it for the whole run — which is how t210's real
+   * $0.18 would have gone on being read as its whole cost.
+   */
+  it('says a partly-unread run is a lower bound, and how much of it went unread', () => {
+    const title = runPriceTitle(
+      price({ estimated: true, parallelRunIds: [], unmeasuredMs: 104_000 })
+    )
+    expect(title).toMatch(/at least this much/i)
+    expect(title).toMatch(/2m of this run fell outside/)
+    expect(title).toMatch(/this or more, never less/i)
+  })
+
+  it('prefers the lower-bound sentence over the shared-window one, which says less', () => {
+    const title = runPriceTitle(
+      price({ estimated: true, reason: 'shared_window', parallelRunIds: ['x'], unmeasuredMs: 60_000 })
+    )
+    expect(title).toMatch(/at least this much/i)
+  })
+
+  it('says seconds when the unread stretch is seconds', () => {
+    const title = runPriceTitle(price({ estimated: true, parallelRunIds: [], unmeasuredMs: 12_000 }))
+    expect(title).toMatch(/12s of this run/)
+  })
+
+  it('leaves a run the readings covered end to end unqualified', () => {
+    const title = runPriceTitle(price({ estimated: false, unmeasuredMs: 0 }))
+    expect(title).not.toMatch(/at least this much/i)
+    expect(title).toMatch(/Measured/)
   })
 
   /** ⛔ Five different facts, five different sentences. A reader must be able to tell them apart. */

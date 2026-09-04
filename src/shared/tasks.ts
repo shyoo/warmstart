@@ -839,8 +839,22 @@ export interface RunPrice {
   onOverage: boolean | null
   /** The share of the billing window attributed to this run. */
   percent: number | null
-  /** The `*`: a split, a stale reading, or a run still in flight. */
+  /** The `*`: a split, a stale reading, a corrected panel, or a run still in flight. */
   estimated: boolean
+  /**
+   * How much of the run no window reading covered, in milliseconds — `0` when they covered it end
+   * to end, `null` when the run has no price at all.
+   *
+   * ⛔ **Non-zero makes `usd` a lower bound**, and that is the one flavour of `estimated` with a
+   * *direction*. A shared or stale share is imprecise about a movement that was read; this one is
+   * short of a stretch nobody read, so the truth is this or more and never less. Carried to the UI
+   * rather than left in the basis prose, because the tooltip has to be able to say which of the
+   * two it is looking at.
+   *
+   * ⚠️ Routinely non-zero for a real reason: a vendor's closing reading carries the *vendor's*
+   * timestamp, which is commonly a minute or two before the run actually ended.
+   */
+  unmeasuredMs: number | null
   reason: PriceReason
   /** One sentence, straight into the tooltip. */
   basis: string

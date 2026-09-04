@@ -49,6 +49,15 @@ function naHead(price: RunPrice): string {
 }
 
 function estimatedHead(price: RunPrice): string {
+  // ⛔ First, because it is the only one of the three that says which *way* the number is wrong.
+  // A reader told "estimate" and nothing else will read a lower bound as a measurement.
+  if (price.unmeasuredMs) {
+    return (
+      `At least this much — ${describeGap(price.unmeasuredMs)} of this run fell outside the ` +
+      'window readings, so whatever it spent there is missing from this number. The true cost is ' +
+      'this or more, never less.'
+    )
+  }
   if (price.parallelRunIds.length > 0) {
     const n = price.parallelRunIds.length
     return (
@@ -60,6 +69,14 @@ function estimatedHead(price: RunPrice): string {
     'Estimate — either this run is still in flight, or the nearest window readings either side of ' +
     'it were taken too far from its edges to be called a measurement.'
   )
+}
+
+/** ⚠️ Matches the daemon's own wording in `price.ts`, so the tooltip and the basis agree. */
+function describeGap(ms: number): string {
+  const seconds = Math.max(1, Math.round(ms / 1000))
+  if (seconds < 90) return `${seconds}s`
+  const minutes = Math.round(seconds / 60)
+  return minutes < 90 ? `${minutes}m` : `${(minutes / 60).toFixed(1)}h`
 }
 
 /**

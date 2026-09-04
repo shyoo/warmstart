@@ -470,3 +470,146 @@ describe('what a stored run costs', () => {
     expect(price.priceForRun('memo')!.percent).toBeCloseTo(4, 6)
   })
 })
+
+/**
+ * t210: the closing reading is stamped before the run ended, so the run priced `n/a`.
+ *
+ * ⛔ **A vendor's `sampledAt` is the vendor's, not ours.** `captureQuotaAfter` asks the CLI for a
+ * closing reading the moment a run finishes; what comes back is whatever that provider's own panel
+ * last computed, which is routinely a minute or two stale. Every one of these rows is the shape the
+ * live database actually holds — `quota_after_json.sampledAt` *earlier* than `runs.ended_at` — and
+ * before this was fixed each of them threw away a run whose spend had been measured in full.
+ *
+ * ⚠️ These go through the real migration replay like everything else in this file, so what they
+ * assert is the pass that ships rather than a hand-built object.
+ */
+describe('a closing reading stamped before the run ended', () => {
+  /** The literal t210 timings, in minutes past T0: run 0.42 -> 32.5, last reading at 30.7. */
+  const MIN = 60_000
+
+  it('prices the run instead of discarding it, and says the number is a lower bound', () => {
+    seedRun({
+      id: 't210',
+      worker: CLAUDE,
+      costModel: 'anthropic.subscription.2026-08',
+      startedAt: T0 + Math.round(0.42 * MIN),
+      endedAt: T0 + Math.round(32.5 * MIN),
+      before: quota(T0, [['weekly_all', 18], ['session', 0]]),
+      // ⛔ 30.7 minutes, against a run that ended at 32.5. This is the whole bug.
+      after: quota(T0 + Math.round(30.7 * MIN), [['weekly_all', 22], ['session', 56]])
+    })
+    replayMigration()
+    const p = price.priceForRun('t210')!
+    expect(p.reason).toBe('measured')
+    expect(p.percent).toBeCloseTo(4, 6)
+    // 4% of a $4.60 weekly window.
+    expect(p.usd!).toBeCloseTo(0.184, 3)
+    expect(p.estimated).toBe(true)
+    // ⛔ The tooltip has to say which direction the imprecision runs, or a reader takes the number
+    // for the whole run.
+    expect(p.basis).toMatch(/At least this much/)
+    expect(p.basis).toMatch(/fell outside the window readings/)
+  })
+
+  it('names how much of the run went unread, rather than only that some did', () => {
+    seedRun({
+      id: 'gap',
+      worker: CLAUDE,
+      costModel: 'anthropic.subscription.2026-08',
+      startedAt: T0,
+      endedAt: T0 + 10 * MIN,
+      before: quota(T0, [['weekly_all', 10]]),
+      after: quota(T0 + 8 * MIN, [['weekly_all', 13]])
+    })
+    replayMigration()
+    expect(price.priceForRun('gap')!.basis).toMatch(/2m of this run fell outside/)
+  })
+
+  it('leaves a run whose closing reading landed after it alone, basis and all', () => {
+    seedRun({
+      id: 'clean',
+      worker: CLAUDE,
+      costModel: 'anthropic.subscription.2026-08',
+      startedAt: T0,
+      endedAt: T0 + 10 * MIN,
+      before: quota(T0, [['weekly_all', 10]]),
+      // A second past the end, which is what a working probe produces.
+      after: quota(T0 + 10 * MIN + 1000, [['weekly_all', 14]])
+    })
+    replayMigration()
+    const p = price.priceForRun('clean')!
+    expect(p.percent).toBeCloseTo(4, 6)
+    expect(p.estimated).toBe(false)
+    expect(p.basis).not.toMatch(/At least this much/)
+  })
+
+  /**
+   * ⛔ **The property that made this safe to apply to eight days of history.** The fix clamps a
+   * run's span to the readings that exist; it cannot move a run those readings already covered.
+   * Measured against the live database on 2026-09-04: of 378 runs, exactly two changed — both from
+   * `no_reading` to a price — and no already-priced run moved by a cent.
+   */
+  it('does not disturb a neighbouring run that was already priced', () => {
+    seedRun({
+      id: 'first',
+      worker: CODEX,
+      costModel: 'openai.codex.2026-08',
+      startedAt: T0,
+      endedAt: T0 + 10 * MIN,
+      before: quota(T0, [['7d', 10]]),
+      after: quota(T0 + 10 * MIN + 1000, [['7d', 13]])
+    })
+    replayMigration()
+    const before = price.priceForRun('first')!.usd
+    seedRun({
+      id: 'second',
+      worker: CODEX,
+      costModel: 'openai.codex.2026-08',
+      startedAt: T0 + 20 * MIN,
+      endedAt: T0 + 40 * MIN,
+      before: quota(T0 + 20 * MIN, [['7d', 13]]),
+      after: quota(T0 + 38 * MIN, [['7d', 19]])
+    })
+    replayMigration()
+    expect(price.priceForRun('first')!.usd).toBe(before)
+    expect(price.priceForRun('second')!.percent).toBeCloseTo(6, 6)
+    expect(price.priceForRun('second')!.estimated).toBe(true)
+  })
+
+  it('still refuses a run nothing was read during at all', () => {
+    seedRun({
+      id: 'unread',
+      worker: CLAUDE,
+      costModel: 'anthropic.subscription.2026-08',
+      // Both readings predate the run: it ran entirely outside the series.
+      startedAt: T0 + 60 * MIN,
+      endedAt: T0 + 70 * MIN,
+      before: quota(T0, [['weekly_all', 10]]),
+      after: quota(T0 + 5 * MIN, [['weekly_all', 12]])
+    })
+    replayMigration()
+    const p = price.priceForRun('unread')!
+    expect(p.reason).toBe('no_reading')
+    expect(p.usd).toBeNull()
+  })
+
+  it('folds a truncated run into its task total and marks the total an estimate', () => {
+    seedRun({
+      id: 'tt',
+      worker: CLAUDE,
+      costModel: 'anthropic.subscription.2026-08',
+      startedAt: T0,
+      endedAt: T0 + 10 * MIN,
+      taskId: 'truncated-task',
+      before: quota(T0, [['weekly_all', 0]]),
+      after: quota(T0 + 8 * MIN, [['weekly_all', 4]])
+    })
+    replayMigration()
+    const total = price.priceForTask('truncated-task')!
+    expect(total.usd!).toBeCloseTo(0.184, 3)
+    // ⛔ Not `partial`: the run *has* a price. It is `estimated`, which is the flag that says the
+    // number could be short — conflating the two would tell a reader a run was missing entirely.
+    expect(total.partial).toBe(false)
+    expect(total.estimated).toBe(true)
+  })
+})

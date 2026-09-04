@@ -75,8 +75,22 @@ export interface Attribution {
   /** The share of the window this run is answerable for, or null when it cannot be said. */
   percent: number | null
   reason: AttributionReason
-  /** The `*`. True whenever the number is a split, a stale reading, or a run still in flight. */
+  /**
+   * The `*`. True whenever the number is a split, a stale reading, a run still in flight, a
+   * corrected reading, or a run the series only partly covered.
+   */
   estimated: boolean
+  /**
+   * How much of the run ran outside the series entirely, in milliseconds. `0` for a run the
+   * readings covered end to end.
+   *
+   * ⛔ **Non-zero makes `percent` a lower bound**, and that is a different statement from every
+   * other reason `estimated` is set. A shared or stale number is imprecise about a movement that
+   * *was* read; this one is missing a stretch nobody read at all, so the true share is this or
+   * more — never less. `price.ts` says so in the basis rather than leaving a reader to assume the
+   * number is complete.
+   */
+  unmeasuredMs: number
   /** Who it shared the window with, for the hover message. */
   parallelRunIds: string[]
 }
@@ -131,6 +145,15 @@ const RESET_DROP_PERCENT = 2
  * `resets_at` is not used for this: measured 2026-09-02 over 1,263 consecutive weekly samples, it
  * moved forward 384 times while the percentage fell 6 times — a rolling window re-reports its
  * horizon constantly. The movement itself is the honest signal, in either direction.
+ *
+ * ⛔ **A run the series only partly covers is priced from the part it covers, not discarded.** Its
+ * span is clamped to the readings that exist, and how much fell outside them comes back as
+ * `unmeasuredMs` so the caller can say the number is a lower bound. The case is common rather than
+ * exotic: a vendor's closing reading carries the *vendor's* timestamp, so a run that ended at
+ * 20:50:28 routinely stores an `after` stamped 20:48:44 (t210, measured 2026-09-04) — and demanding
+ * a reading at or after the run's end threw away a 4-point window movement that was measured in full
+ * and unambiguously that run's. ⚠️ Bounded by `ANCHOR_MAX_MS` like every other gap, and a run with
+ * *nothing* read while it was open is still `no_reading`.
  */
 export function attribute(
   runs: AttributionRun[],
@@ -147,7 +170,13 @@ export function attribute(
     options.direction === 'falls' ? a.percent - b.percent : b.percent - a.percent
 
   const noReading = (id: string): void => {
-    out.set(id, { percent: null, reason: 'no_reading', estimated: false, parallelRunIds: [] })
+    out.set(id, {
+      percent: null,
+      reason: 'no_reading',
+      estimated: false,
+      unmeasuredMs: 0,
+      parallelRunIds: []
+    })
   }
 
   if (series.length < 2) {
@@ -164,7 +193,10 @@ export function attribute(
     to: number
     stale: boolean
     inFlight: boolean
+    /** How much of the run fell outside the series, so its share is a lower bound by that much. */
+    unmeasuredMs: number
   }
+  const first = series[0]!
   const spans: Span[] = []
   for (const run of runs) {
     const inFlight = run.endedAt === null
@@ -172,25 +204,45 @@ export function attribute(
     // beside it, and pretending it does would credit the run with a window movement nobody read.
     const end = inFlight ? Math.min(now, last.at) : run.endedAt!
 
-    const before = lastAtOrBefore(series, run.startedAt)
-    const after = firstAtOrAfter(series, end)
-    if (!before || !after) {
+    // ⛔ **The part of this run the series can actually speak for**, which is not always the whole
+    // run. See `truncated`. Clamping changes no arithmetic for a run the series already covered:
+    // segments only exist between readings, so an overlap was already bounded by these same two
+    // instants. What it changes is *which runs get a span at all*.
+    const from = Math.max(run.startedAt, first.at)
+    const to = Math.min(end, last.at)
+    if (to <= from) {
+      // Nothing was read while this run was open — including the in-flight run whose account has
+      // not been probed since it started, which is the same statement.
       noReading(run.id)
       continue
     }
-    const gapBefore = run.startedAt - before.at
-    const gapAfter = after.at - end
+
+    // How much of the run ran outside the series entirely. ⚠️ Not the same quantity as the anchor
+    // gaps below: those are *measured* stretches whose readings are old, this is a stretch with no
+    // reading at either end, so whatever was spent in it is missing from the answer rather than
+    // imprecisely shared into it.
+    const unmeasured = from - run.startedAt + (end - to)
+    if (unmeasured > ANCHOR_MAX_MS) {
+      // ⛔ Past this the measured slice is not a useful lower bound on the whole run — the same
+      // judgment `ANCHOR_MAX_MS` already makes about a gap wide enough to hide anything.
+      noReading(run.id)
+      continue
+    }
+
+    // ⚠️ Both exist by construction now: `from` is at or after the first reading and `to` at or
+    // before the last, so each side has one to anchor against. The gaps still matter, and mean what
+    // they always meant — how old the reading anchoring this edge is.
+    const before = lastAtOrBefore(series, from)!
+    const after = firstAtOrAfter(series, to)!
+    const gapBefore = from - before.at
+    const gapAfter = after.at - to
     if (gapBefore > ANCHOR_MAX_MS || gapAfter > ANCHOR_MAX_MS) {
-      noReading(run.id)
-      continue
-    }
-    if (inFlight && last.at <= run.startedAt) {
       noReading(run.id)
       continue
     }
     const stale =
       gapBefore > ANCHOR_STALE_MS || gapAfter > ANCHOR_STALE_MS || !!before.stale || !!after.stale
-    spans.push({ run, from: run.startedAt, to: end, stale, inFlight })
+    spans.push({ run, from, to, stale, inFlight, unmeasuredMs: unmeasured })
   }
 
   const acc = new Map<
@@ -240,6 +292,7 @@ export function attribute(
         percent: null,
         reason: 'window_reset',
         estimated: false,
+        unmeasuredMs: 0,
         parallelRunIds: [...rec.parallel]
       })
       continue
@@ -249,7 +302,8 @@ export function attribute(
       // can make a quiet segment read -0.0001, and a negative cost is not a thing.
       percent: Math.max(0, rec.percent),
       reason: rec.shared ? 'shared_window' : 'measured',
-      estimated: rec.shared || s.stale || s.inFlight || rec.corrected,
+      estimated: rec.shared || s.stale || s.inFlight || rec.corrected || s.unmeasuredMs > 0,
+      unmeasuredMs: s.unmeasuredMs,
       parallelRunIds: [...rec.parallel]
     })
   }
@@ -634,6 +688,8 @@ interface SubscriptionPart {
   usd: number | null
   percent: number | null
   basis: string
+  /** How much of the run no reading covered. See `RunPrice.unmeasuredMs`. */
+  unmeasuredMs: number
   /** The `n/a` verdict when `usd` is null; one of the five, and each renders its own tooltip. */
   reason: RunPrice['reason']
   estimated: boolean
@@ -686,6 +742,7 @@ function subscriptionPart(r: PricedRunRow, cm: CostModel | null, ctx: PriceCtx):
     usd: null,
     percent: null,
     basis,
+    unmeasuredMs: 0,
     reason,
     estimated: false,
     parallel: new Set(),
@@ -723,6 +780,8 @@ function subscriptionPart(r: PricedRunRow, cm: CostModel | null, ctx: PriceCtx):
   const parallel = new Set<string>()
   let estimated = false
   let sawReset = false
+  /** The widest stretch of this run no reading covered, across the windows it was priced on. */
+  let unmeasuredMs = 0
   for (const w of windows) {
     const a = ctx.attributionFor(r.worker_id, w.id).get(r.id)
     if (!a) continue
@@ -733,6 +792,7 @@ function subscriptionPart(r: PricedRunRow, cm: CostModel | null, ctx: PriceCtx):
     if (a.percent === null) continue
     usage.push({ window: w, percent: a.percent })
     estimated = estimated || a.estimated
+    unmeasuredMs = Math.max(unmeasuredMs, a.unmeasuredMs)
     for (const id of a.parallelRunIds) parallel.add(id)
   }
 
@@ -748,7 +808,16 @@ function subscriptionPart(r: PricedRunRow, cm: CostModel | null, ctx: PriceCtx):
   return {
     usd: priced.usd,
     percent: usage.reduce((sum, u) => sum + u.percent, 0),
-    basis: priced.basis,
+    // ⛔ Said out loud, because it is the one kind of `estimated` that has a *direction*. A shared
+    // or stale share is imprecise about a movement that was read; this one is short of a stretch
+    // nobody read, so the true cost is this or more. A reader who is not told that will take the
+    // number for the whole run.
+    basis:
+      unmeasuredMs > 0
+        ? `${priced.basis} ⚠️ At least this much: ${describeGap(unmeasuredMs)} of this run fell ` +
+          'outside the window readings, and whatever it spent there is not in this number.'
+        : priced.basis,
+    unmeasuredMs,
     reason: estimated && parallel.size > 0 ? 'shared_window' : 'measured',
     estimated,
     parallel,
@@ -881,6 +950,9 @@ function combine(
     onOverage: columns.onOverage,
     percent: sub.percent,
     estimated,
+    // ⛔ `null` where there is no price at all, so "covered end to end" (`0`) stays distinguishable
+    // from "there was nothing to cover" — the same null-is-not-zero rule the rest of this file keeps.
+    unmeasuredMs: usd === null ? null : sub.unmeasuredMs,
     reason,
     basis: parts.length > 0 ? parts.join(' ') : sub.basis,
     planId: sub.plan?.id ?? null,
@@ -889,6 +961,14 @@ function combine(
     windowId: sub.windowId,
     parallelRunIds: [...parallel]
   }
+}
+
+/** A duration in the words a tooltip wants. ⚠️ Rounded up: "0 minutes" would read as none at all. */
+function describeGap(ms: number): string {
+  const seconds = Math.max(1, Math.round(ms / 1000))
+  if (seconds < 90) return `${seconds}s`
+  const minutes = Math.round(seconds / 60)
+  return minutes < 90 ? `${minutes}m` : `${(minutes / 60).toFixed(1)}h`
 }
 
 function parseQuota(json: string | null): RunQuota | null {

@@ -177,15 +177,23 @@ describe('the answers that are not numbers', () => {
     expect(result.get('reset')!.percent).toBeNull()
   })
 
-  it('is n/a with no reading before the run', () => {
+  /**
+   * ⛔ **A run the readings only partly cover is priced from the part they cover, not discarded.**
+   * The series starts a minute into this run, so the first minute is unmeasured — but the movement
+   * after it was read, really happened, and really belongs to this run. See the block below.
+   */
+  it('prices from the first reading when the run began before the series did', () => {
     const result = attribute([run('r', 1, 3)], [reading(2, 5), reading(4, 9)], t(5))
-    expect(result.get('r')!.reason).toBe('no_reading')
-    expect(result.get('r')!.percent).toBeNull()
+    expect(result.get('r')!.reason).toBe('measured')
+    expect(result.get('r')!.percent).toBeCloseTo(4, 9)
+    expect(result.get('r')!.estimated).toBe(true)
+    expect(result.get('r')!.unmeasuredMs).toBe(MIN)
   })
 
-  it('is n/a with no reading after the run', () => {
+  it('is n/a when every reading predates the run, so nothing was read while it ran', () => {
     const result = attribute([run('r', 3, 9)], [reading(1, 5), reading(2, 6)], t(10))
     expect(result.get('r')!.reason).toBe('no_reading')
+    expect(result.get('r')!.percent).toBeNull()
   })
 
   it('is n/a with a single reading, which has nothing to be subtracted from', () => {
@@ -206,6 +214,160 @@ describe('the answers that are not numbers', () => {
   it('is n/a when the nearest reading is half a day away', () => {
     const result = attribute([run('r', 1000, 1002)], [reading(0, 5), reading(2000, 40)], t(2001))
     expect(result.get('r')!.reason).toBe('no_reading')
+  })
+})
+
+/**
+ * The bug t210 found: a finished run whose account was never read again after it ended.
+ *
+ * ⛔ **The closing reading carries the *vendor's* timestamp, not ours.** `captureQuotaAfter` asks
+ * the CLI for a fresh reading when a run finishes, and what comes back is whatever that vendor's
+ * own panel last computed — which is routinely a minute or two old. So a run that ended at 20:50:28
+ * stores an `after` reading stamped 20:48:44, and demanding a reading at-or-after the run's end
+ * threw the whole run away. Measured on this install 2026-09-04: t210 moved `weekly_all` from 18%
+ * to 22% entirely inside its own span and priced `n/a`.
+ *
+ * ⛔ **This is a lower bound, and it is the only reason `estimated` is set that has a direction.**
+ * A shared or stale share is imprecise about a movement that *was* read; this one is short of a
+ * stretch nobody read, so the truth is this or more, never less. `unmeasuredMs` carries how much,
+ * and `price.ts` puts it in the basis rather than letting a reader take the number for the whole run.
+ */
+describe('a run the readings only partly cover', () => {
+  it('prices the measured part when nothing was read after the run ended', () => {
+    // The run ends at t10; the last reading is at t8. Two minutes of tail nobody read.
+    const result = attribute([run('r', 0, 10)], [reading(0, 18), reading(8, 22)], t(11))
+    const r = result.get('r')!
+    expect(r.reason).toBe('measured')
+    expect(r.percent).toBeCloseTo(4, 9)
+    expect(r.estimated).toBe(true)
+    expect(r.unmeasuredMs).toBe(2 * MIN)
+  })
+
+  it('is exactly the t210 shape, to the number', () => {
+    // ⭐ The real readings: weekly_all 18 -> 21 -> 22 -> 22 while one run held the account, and the
+    // run outlived the last of them. 18 -> 22 is four points, and every one of them is this run's.
+    const result = attribute(
+      [{ id: 't210', startedAt: t(0.42), endedAt: t(32.5) }],
+      [reading(0, 18), reading(19.7, 21), reading(25.2, 22), reading(30.7, 22)],
+      t(40)
+    )
+    const r = result.get('t210')!
+    expect(r.percent).toBeCloseTo(4, 9)
+    expect(r.reason).toBe('measured')
+    expect(r.estimated).toBe(true)
+    expect(r.unmeasuredMs).toBeGreaterThan(0)
+  })
+
+  it('counts the head and the tail together, so a run short at both ends says so once', () => {
+    const result = attribute([run('r', 0, 10)], [reading(2, 5), reading(7, 9)], t(11))
+    const r = result.get('r')!
+    expect(r.percent).toBeCloseTo(4, 9)
+    // 2 minutes before the series began, 3 after it ended.
+    expect(r.unmeasuredMs).toBe(5 * MIN)
+    expect(r.estimated).toBe(true)
+  })
+
+  it('leaves a run the readings cover end to end an unqualified measurement', () => {
+    const r = attribute([run('r', 1, 3)], [reading(1, 10), reading(3, 16)], t(4)).get('r')!
+    expect(r.unmeasuredMs).toBe(0)
+    expect(r.estimated).toBe(false)
+    expect(r.reason).toBe('measured')
+  })
+
+  /**
+   * ⛔ The bound is `ANCHOR_MAX_MS` — the same twelve hours that already refuse a run anchored to
+   * yesterday's reading, and for the same reason. Past it the measured slice stops being a useful
+   * lower bound on the whole run, and a number is worse than a dash.
+   */
+  it('refuses when more of the run went unread than a reading may be old', () => {
+    const thirteenHours = 13 * 60
+    const result = attribute(
+      [run('r', 0, thirteenHours)],
+      [reading(0, 10), reading(30, 14)],
+      t(thirteenHours + 1)
+    )
+    expect(result.get('r')!.reason).toBe('no_reading')
+    expect(result.get('r')!.percent).toBeNull()
+  })
+
+  it('prices an eleven-hour tail, because eleven is inside the bound and the movement is real', () => {
+    const elevenHours = 11 * 60
+    const result = attribute(
+      [run('r', 0, elevenHours)],
+      [reading(0, 10), reading(30, 14)],
+      t(elevenHours + 1)
+    )
+    expect(result.get('r')!.percent).toBeCloseTo(4, 9)
+    expect(result.get('r')!.estimated).toBe(true)
+  })
+
+  /**
+   * ⛔ **The property that makes this fix safe to apply to eight days of history.** Clamping a
+   * span to the series changes no arithmetic for a run the series already covered: segments only
+   * exist between readings, so an overlap was already bounded by those same two instants. The fix
+   * can only turn an `n/a` into a number — it can never move one that was already there.
+   *
+   * ⚠️ Verified against the live database on 2026-09-04 as well as here: of 378 runs, exactly two
+   * changed, both from `no_reading` to a price, and not one already-priced run moved by a cent.
+   */
+  it('does not move a run the readings already covered, whatever else is in the series', () => {
+    const runs = [run('a', 10, 20), run('b', 15, 25)]
+    const covered = [reading(5, 0), reading(12, 4), reading(18, 9), reading(30, 17)]
+    const withTail = attribute(runs, covered, t(40))
+    // The same runs, with a later reading appended and an earlier one prepended: the series now
+    // extends past both edges in both directions, and the shares must be identical.
+    const wider = attribute(runs, [reading(-100, 0), ...covered, reading(200, 17)], t(400))
+    for (const id of ['a', 'b']) {
+      expect(wider.get(id)!.percent).toBeCloseTo(withTail.get(id)!.percent!, 9)
+      expect(withTail.get(id)!.unmeasuredMs).toBe(0)
+    }
+  })
+
+  it('still splits a truncated run share with whoever held the window beside it', () => {
+    const result = attribute(
+      [run('a', 0, 10), run('b', 0, 10)],
+      [reading(0, 10), reading(6, 16)],
+      t(11)
+    )
+    expect(result.get('a')!.percent).toBeCloseTo(3, 9)
+    expect(result.get('b')!.percent).toBeCloseTo(3, 9)
+    expect(result.get('a')!.reason).toBe('shared_window')
+    expect(result.get('a')!.unmeasuredMs).toBe(4 * MIN)
+  })
+
+  it('reports a window that rolled over as a reset, not as a cheap truncated run', () => {
+    // ⛔ The reset check runs on the segments, so truncating the span must not smuggle a rollover
+    // past it: a run across a reset is `n/a` whether or not its tail was read.
+    const result = attribute([run('r', 0, 20)], [reading(0, 90), reading(10, 3)], t(21))
+    expect(result.get('r')!.reason).toBe('window_reset')
+    expect(result.get('r')!.percent).toBeNull()
+  })
+
+  it('is n/a when a truncated run remaining anchor is still half a day stale', () => {
+    // The series covers the run's start but the next reading is 20 hours later: the movement
+    // between them could hide anything, and that judgment is unchanged by this fix.
+    const result = attribute([run('r', 0, 2)], [reading(-1, 5), reading(20 * 60, 40)], t(21 * 60))
+    expect(result.get('r')!.reason).toBe('no_reading')
+  })
+
+  it('keeps an open run own rule: nothing read since it started is n/a, not a zero', () => {
+    const result = attribute([run('live', 9, null)], [reading(1, 10), reading(3, 14)], t(10))
+    expect(result.get('live')!.reason).toBe('no_reading')
+    expect(result.get('live')!.percent).toBeNull()
+  })
+
+  it('treats a credit purse the same way, because it is the same algorithm', () => {
+    // A meter that falls as money is spent: 100 -> 94 while the run held it, and the run outlived
+    // the last reading. Six credits spent, and the tail is unmeasured.
+    const result = attribute(
+      [run('r', 0, 10)],
+      [reading(0, 100), reading(6, 94)],
+      t(11),
+      { direction: 'falls' }
+    )
+    expect(result.get('r')!.percent).toBeCloseTo(6, 9)
+    expect(result.get('r')!.unmeasuredMs).toBe(4 * MIN)
+    expect(result.get('r')!.estimated).toBe(true)
   })
 })
 
