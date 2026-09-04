@@ -27,6 +27,11 @@ import {
   updateWorker
 } from './workers.js'
 import { accountUnavailability } from './eligibility.js'
+import { routingDecisions } from './routingdecisions.js'
+import type { VelocityReport } from '@shared/routing.js'
+import { paceFactors, paceFor, paceValue } from './pace.js'
+import { GRADE_BATCH_MAX, gradeUngraded, qualityReport, ungradedTasks } from './quality.js'
+import { weights, WEIGHT_FORMULAS } from './objective.js'
 import { lastQuota, lastQuotaReading, probeWorker, refreshNow } from './quota.js'
 import { emit } from './events.js'
 import {
@@ -961,6 +966,15 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
         })
       }
     },
+    // ---- analytics -----------------------------------------------------------------------
+    // ⛔ Reads, all of them, with one exception: `quality.grade` spends turns and is only ever
+    // reached by somebody pressing a button. Nothing in a scheduler tick calls it.
+    'routing.decisions': (p) => routingDecisions(p?.limit ?? 5, p?.offset ?? 0),
+    'routing.velocity': () => velocityReport(),
+    'quality.report': () => qualityReport(),
+    'quality.ungraded': (p) => ungradedTasks(p?.limit ?? 25),
+    'quality.grade': (p) => gradeUngraded(p?.limit ?? GRADE_BATCH_MAX),
+
     'scheduler.tick': () => tick(),
 
     // ---- the controller ----------------------------------------------------------------
@@ -1384,4 +1398,56 @@ export function checkConstraints(c: TaskConstraints): TaskConstraints {
   }
 
   return checked
+}
+
+/**
+ * Who can take work right now, and how fast each account has been measured to work.
+ *
+ * ⛔ **The two halves are read from the two places that own them**, never re-derived here:
+ * availability from `accountUnavailability` — the one shared list of account gates, which work and
+ * judgment both read — and pace from `pace.ts`, which is what the `pace` scoring term reads. A third
+ * copy of either would be a third answer to a question the scheduler has already answered.
+ *
+ * ⚠️ Capacity is reported rather than folded into `unavailable`: a worker at its concurrency limit is
+ * busy, not unfit, and the two look identical in a single boolean.
+ */
+function velocityReport(): VelocityReport {
+  const objective = settings().objective ?? DEFAULT_OBJECTIVE
+  const factors = paceFactors()
+  const w = weights(objective)
+  return {
+    generatedAt: Date.now(),
+    objective,
+    paceWeight: w.pace,
+    paceFormula: WEIGHT_FORMULAS.pace,
+    neutralActiveMs: factors.neutralActiveMs,
+    samples: factors.samples,
+    workers: listWorkers()
+      .filter((worker) => !worker.retiredAt)
+      .map((worker) => {
+        const measured = paceFor(factors, worker.adapterId, worker.defaultModel)
+        const quota = lastQuota(worker.id)
+        // ⚠️ The *tightest* applicable window, not the 5h one by name: an account can be fine on its
+        // five hours and nearly out of its week, and routing is held by whichever bites first.
+        const window =
+          quota && !quota.stale
+            ? [...quota.windows].sort((a, b) => b.percent - a.percent)[0] ?? null
+            : null
+        return {
+          workerId: worker.id,
+          label: worker.label,
+          adapterId: worker.adapterId,
+          medianActiveMs: measured.medianActiveMs,
+          samples: measured.samples,
+          factor: measured.factor,
+          value: paceValue(measured.factor),
+          basis: measured.basis,
+          running: sessionsForWorker(worker.id).filter((session) => session.purpose === 'work').length,
+          maxConcurrent: worker.maxConcurrent,
+          unavailable: accountUnavailability(worker),
+          windowPercent: window ? window.percent : null,
+          windowLabel: window ? (window.label ?? window.id) : null
+        }
+      })
+  }
 }

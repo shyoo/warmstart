@@ -215,7 +215,7 @@ try {
   // rewrite that removed Cost and Controller as destinations.
   check(
     'the fixed destinations are reachable',
-    ['Dashboard', 'Controller', 'Cost Model', 'Routing Model', 'Conversations', 'Logs', 'Workers', 'Global'].every((label) =>
+    ['Dashboard', 'Controller', 'Routing Model', 'Statistics', 'Conversations', 'Logs', 'Workers', 'Global'].every((label) =>
       nav.some((n) => n.startsWith(label))
     ),
     nav.join(' | ')
@@ -1349,9 +1349,16 @@ try {
   const dashboardPanel = await evaluate('document.querySelector(".content")?.innerText ?? ""')
   check('the loose ends view renders on dashboard', dashboardPanel.includes('Loose ends'))
 
-  section('cost model')
+  section('routing model > cost')
+  // ⛔ Cost is no longer a sibling of Routing Model in the sidebar — it is the cost axis *of* the
+  // routing model and is a tab under it. The page itself is unchanged, so every check below is the
+  // one it has always been; only how the page is reached moved.
   await evaluate(
-    `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim().startsWith('Cost Model')).click()`
+    `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim().startsWith('Routing Model')).click()`
+  )
+  await wait(800)
+  await evaluate(
+    `[...document.querySelectorAll('.tab')].find(b => b.innerText.trim() === 'Cost').click()`
   )
   await wait(1500)
   const costModelPanel = await evaluate('document.querySelector(".content")?.innerText ?? ""')
@@ -1412,16 +1419,100 @@ try {
     /multiplier/i.test(costModelPanel) && /shrinkage/i.test(costModelPanel)
   )
 
-  section('routing model')
+  section('routing model > overview')
   await evaluate(
     `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim().startsWith('Routing Model')).click()`
   )
   await wait(1500)
+  const routingTabs = await evaluate('[...document.querySelectorAll(".tab")].map(b => b.innerText.trim())')
+  check(
+    'the routing model is one page per axis, plus the overview that ties them together',
+    ['Overview', 'Quality', 'Cost', 'Velocity'].every((label) => routingTabs.includes(label)),
+    routingTabs.join(' | ')
+  )
   const routingPanel = await evaluate('document.querySelector(".content")?.innerText ?? ""')
   check('the routing model view renders', routingPanel.includes('Routing Model'))
   check(
-    'it shows the objective vector and routing factors',
-    /objective vector/i.test(routingPanel) && /routing evaluation rules/i.test(routingPanel)
+    'it publishes the sum a score actually is, rather than describing it',
+    /weight/.test(routingPanel) && /value/.test(routingPanel) && /2\.2×cost/.test(routingPanel),
+    'a rendered number nobody can derive is a number nobody can check'
+  )
+  check(
+    'it states the balanced vector as quality 40 / cost 30 / velocity 30',
+    /quality 0\.40/.test(routingPanel) &&
+      /cost 0\.30/.test(routingPanel) &&
+      /velocity 0\.30/.test(routingPanel),
+    routingPanel.slice(0, 400)
+  )
+  check(
+    'it shows the recorded decisions, or says plainly that none have been recorded',
+    /routing decisions/i.test(routingPanel) &&
+      (/Show the arithmetic/.test(routingPanel) || /Nothing has been dispatched/i.test(routingPanel)),
+    'the table is the point of the page; an empty one has to say why it is empty'
+  )
+
+  section('routing model > quality')
+  await evaluate(
+    `[...document.querySelectorAll('.tab')].find(b => b.innerText.trim() === 'Quality').click()`
+  )
+  await wait(1500)
+  const qualityPanel = await evaluate('document.querySelector(".content")?.innerText ?? ""')
+  check(
+    'it explains the peer review in plain language, not as a list of fields',
+    /never the author/i.test(qualityPanel) && /blind/i.test(qualityPanel),
+    'the two claims the whole feature rests on'
+  )
+  check(
+    'it publishes the rubric with its weights',
+    /Requirement fidelity/i.test(qualityPanel) && /Self-sufficiency/i.test(qualityPanel) && /0\.20/.test(qualityPanel)
+  )
+  check(
+    'it says how much finished work has no grade, and offers to grade some',
+    /ungraded/i.test(qualityPanel) && /Grade up to 5/.test(qualityPanel),
+    'the count without the button is a complaint; the button without the count is a gamble'
+  )
+  check(
+    'it says the button spends real turns',
+    /spends one real turn/i.test(qualityPanel),
+    'a button that costs money has to say so before it is pressed'
+  )
+
+  section('routing model > velocity')
+  await evaluate(
+    `[...document.querySelectorAll('.tab')].find(b => b.innerText.trim() === 'Velocity').click()`
+  )
+  await wait(1500)
+  const velocityPanel = await evaluate('document.querySelector(".content")?.innerText ?? ""')
+  check(
+    'it separates availability from measured pace',
+    /available/i.test(velocityPanel) && /pace/i.test(velocityPanel),
+    'a gate and a preference fail differently and must not be shown as one number'
+  )
+  check(
+    'it names the gates in the order they are asked',
+    /concurrency/i.test(velocityPanel) && /quota water mark/i.test(velocityPanel) && /capabilit/i.test(velocityPanel)
+  )
+  check(
+    'it says the pace factor is learned from active time, never wall-clock',
+    /active time/i.test(velocityPanel) && /wall-clock/i.test(velocityPanel),
+    'the whole reason the number is not the span the task existed inside'
+  )
+  check(
+    'it admits what the measurement cannot separate',
+    /gets the long tasks/i.test(velocityPanel),
+    'a factor presented without its confound is a confident unsourced number'
+  )
+
+  section('statistics')
+  await evaluate(
+    `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim().startsWith('Statistics')).click()`
+  )
+  await wait(1200)
+  const statsPanel = await evaluate('document.querySelector(".content")?.innerText ?? ""')
+  check(
+    'the statistics placeholder says what is missing and what to read instead',
+    /Not added yet/i.test(statsPanel) && /Routing Model/i.test(statsPanel),
+    statsPanel.slice(0, 200)
   )
 
   section('controller')

@@ -105,16 +105,35 @@ Every candidate that clears Phase 1 is scored using the objective vector.
 ### 3.1 Objective Weights
 Weights derive from the objective vector `(cost, velocity, quality)` configured globally or per-project/task:
 
-| Term | Direction | Weight Formula (`objective.ts`) | Balanced (`0.34, 0.33, 0.33`) | Value Range | Meaning of Value = 1 |
+| Term | Direction | Weight Formula (`objective.ts`) | Balanced (`cost 0.30, velocity 0.30, quality 0.40`) | Value Range | Meaning of Value = 1 |
 |---|:---:|---|:---:|:---:|---|
-| **`warm`** | Bonus (+1) | `1.0 + 2.2×cost − 0.6×velocity` | `+1.550` | 0 .. 1 | A full TTL of prompt cache remaining — **the provider's own TTL**, 60m on Anthropic, 30m on Codex |
-| **`affinity`** | Bonus (+1) | `0.8 + 1.0×cost + 0.4×quality` | `+1.272` | 0 or 1 | A conversation already holds this task's context — **live or reopenable** |
-| **`contextRot`** | Penalty (−1) | `0.6 + 1.6×quality` | `−1.128` | 0 .. 1 | Context window is 100% full (starts at >50%) |
-| **`projectSwitch`** | Penalty (−1) | `0.3 + 0.6×cost` | `−0.504` | 0 or 1 | Reusable session belongs to another project |
-| **`quotaRisk`** | Penalty (−1) | `0.5 + 1.2×cost` | `−0.908` | 0 .. 1 | At 92% of window or vendor rate-limit warning |
-| **`cold`** | Penalty (−1) | `0.8 + 2.0×cost − 0.7×velocity` | `−1.249` | 0 or 1 | No conversation to reuse, live or reopenable (pays full cache write) |
-| **`capabilityFit`** | Bonus (+1) | `0.7 + 1.3×quality` | `+1.129` | 0 .. 1 | All required task capabilities are present |
+| **`warm`** | Bonus (+1) | `1.0 + 2.2×cost − 0.6×velocity` | `+1.480` | 0 .. 1 | A full TTL of prompt cache remaining — **the provider's own TTL**, 60m on Anthropic, 30m on Codex |
+| **`affinity`** | Bonus (+1) | `0.8 + 1.0×cost + 0.4×quality` | `+1.260` | 0 or 1 | A conversation already holds this task's context — **live or reopenable** |
+| **`contextRot`** | Penalty (−1) | `0.6 + 1.6×quality` | `−1.240` | 0 .. 1 | Context window is 100% full (starts at >50%) |
+| **`projectSwitch`** | Penalty (−1) | `0.3 + 0.6×cost` | `−0.480` | 0 or 1 | Reusable session belongs to another project |
+| **`quotaRisk`** | Penalty (−1) | `0.5 + 1.2×cost` | `−0.860` | 0 .. 1 | At 92% of window or vendor rate-limit warning |
+| **`cold`** | Penalty (−1) | `0.8 + 2.0×cost − 0.7×velocity` | `−1.190` | 0 or 1 | No conversation to reuse, live or reopenable (pays full cache write) |
+| **`capabilityFit`** | Bonus (+1) | `0.7 + 1.3×quality` | `+1.220` | 0 .. 1 | All required task capabilities are present |
+| **`pace`** | Bonus (+1), **signed value** | `0.3 + 1.7×velocity` | `+0.810` | −1 .. +1 | Measured 4x **faster** than the fleet's median task. −1 is 4x slower; **0 is both "exactly average" and "nothing measured"** |
 | **`unproven`** | Penalty (−1) | Fixed `0.35` | `−0.350` | 0 .. 1.5 | Account has never completed a metered turn |
+
+⚠️ **`pace` is the only term whose value can be negative**, and deliberately. Every other term
+measures a quantity with a floor — there is no such thing as less-than-no prompt cache — while pace
+has a real middle: the fleet's own centre. A penalty-only reading would score the fleet's fastest
+agent identically to its median one, which is precisely the discrimination the term exists to add.
+Its value comes from `pace.ts`: a per-(agent, model) median of **active time** over finished tasks,
+expressed as a ratio against the geometric mean of the fleet's task durations, shrunk in log space by
+`ratio^(n/(n+4))`, then mapped through `−log(factor)/log(4)` and clamped to `[−1, +1]`.
+
+- ⛔ **Active time, never wall-clock.** A task dispatched at 09:00, blocked on a question at 09:04 and
+  answered at 17:00 took four minutes of agent work. `activetime.ts` is the only place that
+  subtraction is done, and this reads it rather than repeating it.
+- ⛔ An unmeasured key scores **0**, never a guess — the same rule an untrustworthy quota reading
+  follows.
+- ⛔ The measurement **cannot separate** *"that agent is slow"* from *"that agent gets the long
+  tasks"*: no task on this fleet has been completed twice on two different keys. That is why the
+  factor is shrunk, why the weight is modest, and why the basis is printed beside every number in
+  Analytics › Routing Model › Velocity.
 
 Total score:
 $$\text{Score} = \sum (\text{sign} \times \text{weight} \times \text{value})$$
@@ -267,6 +286,51 @@ Then `fallbackFor` automatically selects the **top-scoring candidate (`best`)** 
 
 ---
 
+## 4.9 Phase 4: The decision is kept
+
+⛔ **Every dispatch writes a `routing_decisions` row before anything can fail** (`routingdecisions.ts`,
+called from `dispatch`). It holds the objective vector that was in force, every weight it produced with
+its published formula, and **every candidate's term-by-term derivation** — value, weight, sign,
+contribution and the basis in words — plus how the winner was picked (`score`, `controller` or
+`pinned`).
+
+- ⛔ **Written at dispatch, not in `chooseTarget`.** Scoring runs on every tick for every eligible
+  task, most of which are then held for a resource, a window or a controller answer. Recording there
+  would fill the table with hypotheticals at one row per task per tick. A row here means *this task
+  was actually handed to this account*.
+- ⛔ **Read back, never recomputed.** The windows, prompt caches and context sizes that produced a
+  score existed for one tick. Re-deriving one later produces a plausible number that answers a
+  different question and is indistinguishable from the real one — the same argument
+  `quality_reviews` makes for storing its rubric version.
+- ⚠️ A row is written **before** the spawn can fail, deliberately: a dispatch that then loses a race
+  for a worktree does not un-make the routing decision. The row holds no run id and claims no run
+  started.
+- ⚠️ Recording is wrapped: nothing the fleet does depends on the row existing, and a scheduler that
+  refused to start work because an analytics insert threw would trade the thing that matters for the
+  thing that watches it.
+
+The ledger is what **Analytics › Routing Model › Overview** renders, five at a time with a pager.
+
+---
+
+## 4.10 Where each axis is measured, and where it is shown
+
+The scheduler weighs exactly three things, and each has its own body of measurement, its own failure
+modes and its own honest gaps. The UI is one tab per axis for that reason, not for layout:
+
+| Axis | Measured in | Feeds | Shown in |
+|---|---|---|---|
+| **Quality** | `review.ts` / `reviewer.ts` — a peer agent grades a landed diff against a seven-dimension rubric | ⛔ **Nothing.** It is an instrument; no routing decision reads a composite | Routing Model › Quality |
+| **Cost** | `estimator.ts`, `price.ts`, `spend.ts` — what runs actually cost, per (agent, model) | `warm`, `cold`, `quotaRisk`, `projectSwitch`, `affinity` | Routing Model › Cost |
+| **Velocity** | `pace.ts` over `activetime.ts` — median active time per finished task, per (agent, model) | `pace`, plus the concurrency multiplier in `policy()` | Routing Model › Velocity |
+
+⛔ **Quality genuinely does not feed the score, and the UI says so on the page.** The `quality` weight
+in the objective vector moves `contextRot`, `affinity` and `capabilityFit` — it does not read a peer
+review. Wiring a measured score into a gate before it has been shown to measure anything is a mistake
+this project has already made once and written down.
+
+---
+
 ## 5. Worked Examples
 
 ### Scenario 1: Warm Session Reuse on a 1-Slot Worker
@@ -275,7 +339,7 @@ Then `fallbackFor` automatically selects the **top-scoring candidate (`best`)** 
 - Task `t12` receives a user reply. It previously ran on `Worker A` (`claude-code`, 1 slot allowed).
 - `Worker A` has `Session s1` idle with 45 minutes remaining on prompt cache TTL.
 - `Worker B` (`claude-code`, 1 slot allowed) is completely idle (0 sessions open, 0% quota used).
-- Objective: Balanced (`cost: 0.34, velocity: 0.33, quality: 0.33`).
+- Objective: Balanced (`cost: 0.30, velocity: 0.30, quality: 0.40`).
 
 **Phase 1 (Hard Gates):**
 - `Worker A`: `sessions = [s1]`, `reuse = s1`. `busy = sessions.filter(s => s.id !== reuse.id).length = 0 < 1`. **Worker A is ELIGIBLE (not at capacity).**
@@ -285,15 +349,19 @@ Then `fallbackFor` automatically selects the **top-scoring candidate (`best`)** 
 
 | Term | Weight | Worker A (Warm Reuse) | Worker B (Cold Start) |
 |---|:---:|---|---|
-| `warm` | `+1.550` | $45/60 \times 1.550 = \mathbf{+1.163}$ | $0 \times 1.550 = \mathbf{0.000}$ |
-| `affinity`| `+1.272` | $1.0 \times 1.272 = \mathbf{+1.272}$ | $0 \times 1.272 = \mathbf{0.000}$ |
-| `cold` | `−1.249` | $0 \times -1.249 = \mathbf{0.000}$ | $1.0 \times -1.249 = \mathbf{-1.249}$ |
-| `capabilityFit` | `+1.129` | $1.0 \times 1.129 = \mathbf{+1.129}$ | $1.0 \times 1.129 = \mathbf{+1.129}$ |
-| `quotaRisk` | `−0.908` | $0.0 \times -0.908 = \mathbf{0.000}$ | $0.0 \times -0.908 = \mathbf{0.000}$ |
-| **Total Score** | | $\mathbf{+3.564}$ | $\mathbf{-0.120}$ |
+| `warm` | `+1.480` | $45/60 \times 1.480 = \mathbf{+1.110}$ | $0 \times 1.480 = \mathbf{0.000}$ |
+| `affinity`| `+1.260` | $1.0 \times 1.260 = \mathbf{+1.260}$ | $0 \times 1.260 = \mathbf{0.000}$ |
+| `cold` | `−1.190` | $0 \times -1.190 = \mathbf{0.000}$ | $1.0 \times -1.190 = \mathbf{-1.190}$ |
+| `capabilityFit` | `+1.220` | $1.0 \times 1.220 = \mathbf{+1.220}$ | $1.0 \times 1.220 = \mathbf{+1.220}$ |
+| `quotaRisk` | `−0.860` | $0.0 \times -0.860 = \mathbf{0.000}$ | $0.0 \times -0.860 = \mathbf{0.000}$ |
+| `pace` | `+0.810` | $0.0 \times 0.810 = \mathbf{0.000}$ | $0.0 \times 0.810 = \mathbf{0.000}$ |
+| **Total Score** | | $\mathbf{+3.590}$ | $\mathbf{+0.030}$ |
 
 **Outcome:**
-Score gap is $3.564 - (-0.120) = 3.684 \gg 0.10$. **Worker A wins decisively.** 0 tokens spent on routing.
+Score gap is $3.590 - 0.030 = 3.560 \gg 0.10$. **Worker A wins decisively.** 0 tokens spent on routing.
+
+⚠️ Both workers score `pace` at **0** here because neither has finished a task on this fleet yet.
+Once each has, that term is what separates two otherwise-identical cold candidates.
 
 ---
 
@@ -322,33 +390,36 @@ Score gap is $3.564 - (-0.120) = 3.684 \gg 0.10$. **Worker A wins decisively.** 
   - **Worker 2 (Claude 2):** 5h window at 71% used.
   - **Worker 3 (Claude 3):** 5h window at 40% used, but received a fresh `rate_limit_event` warning on its 7-day window (`allowed_warning`).
   - **Worker 4 (Claude 4):** 5h window at 94% used.
-- Objective: Balanced (`quotaRisk` weight: `0.908`).
+- Objective: Balanced (`quotaRisk` weight: `0.860`). No worker has a measured pace yet, so `pace` is
+  `0.000` for all four and the comparison is `quotaRisk` alone.
 
 **Phase 1 (Hard Gates):**
 - Worker 1, 2, 3: Pool % < 92%. **Eligible.**
 - Worker 4: Pool % = 94% ≥ 92%. **Excluded** (`Claude 4 at 94% of its 5h window`, hold until reset).
 
 **Phase 2 (Scoring Quota Risk):**
+The cold baseline every candidate shares here is $\text{cold} + \text{capabilityFit} = -1.190 + 1.220 = +0.030$.
+
 - **Worker 1:**
   - $\text{percent} = 35 \le 50 \implies \text{windowRisk} = 0.0$
   - $\text{quotaRisk} = \max(0, 0.0) = 0.0$
-  - Quota contribution: $0.0 \times -0.908 = \mathbf{0.000}$
-  - Total Score: $\mathbf{-0.120}$
+  - Quota contribution: $0.0 \times -0.860 = \mathbf{0.000}$
+  - Total Score: $\mathbf{+0.030}$
 - **Worker 2:**
   - $\text{percent} = 71 \implies \text{windowRisk} = (71 - 50) / 42 = 0.500$
   - $\text{quotaRisk} = \max(0, 0.500) = 0.500$
-  - Quota contribution: $0.500 \times -0.908 = \mathbf{-0.454}$
-  - Total Score: $-0.120 - 0.454 = \mathbf{-0.574}$
+  - Quota contribution: $0.500 \times -0.860 = \mathbf{-0.430}$
+  - Total Score: $0.030 - 0.430 = \mathbf{-0.400}$
 - **Worker 3:**
   - $\text{percent} = 40 \implies \text{windowRisk} = 0.0$
   - `rate_limit_event` advisory $\implies \text{evidence} = 1.0$
   - $\text{quotaRisk} = \max(1.0, 0.0) = 1.000$
-  - Quota contribution: $1.000 \times -0.908 = \mathbf{-0.908}$
-  - Total Score: $-0.120 - 0.908 = \mathbf{-1.028}$
+  - Quota contribution: $1.000 \times -0.860 = \mathbf{-0.860}$
+  - Total Score: $0.030 - 0.860 = \mathbf{-0.830}$
 
 **Outcome:**
-Rankings: **Worker 1 (-0.120)** > **Worker 2 (-0.574)** > **Worker 3 (-1.028)**.
-Worker 1 beats Worker 2 by 0.454 (> 0.10), so **Worker 1 wins cleanly** without a controller consult.
+Rankings: **Worker 1 (+0.030)** > **Worker 2 (-0.400)** > **Worker 3 (-0.830)**.
+Worker 1 beats Worker 2 by 0.430 (> 0.10), so **Worker 1 wins cleanly** without a controller consult.
 
 ---
 
@@ -357,9 +428,12 @@ Worker 1 beats Worker 2 by 0.454 (> 0.10), so **Worker 1 wins cleanly** without 
 **Context:**
 - Task `t30` is a large refactor estimated at **220,000 tokens**.
 - Candidates:
-  - **Worker A:** Cold, 5h window at 54% used ($\text{windowRisk} = (54-50)/42 = 0.095 \implies \text{score} = -0.206$).
-  - **Worker B:** Cold, 5h window at 52% used ($\text{windowRisk} = (52-50)/42 = 0.048 \implies \text{score} = -0.164$).
-- Score gap: $|-0.164 - (-0.206)| = 0.042 \le 0.10$ (`ROUTE_EPSILON`).
+  - **Worker A:** Cold, 5h window at 54% used ($\text{windowRisk} = (54-50)/42 = 0.095 \implies \text{score} = 0.030 - 0.082 = -0.052$).
+  - **Worker B:** Cold, 5h window at 52% used ($\text{windowRisk} = (52-50)/42 = 0.048 \implies \text{score} = 0.030 - 0.041 = -0.011$).
+  - Neither has a measured pace, so `pace` contributes `0.000` to both. ⚠️ **This is the tie the
+    velocity axis exists to break**: once either has finished a task, the term stops being 0 and the
+    consult below is no longer reached.
+- Score gap: $|-0.011 - (-0.052)| = 0.041 \le 0.10$ (`ROUTE_EPSILON`).
 
 **Execution:**
 1. Both workers have fresh quota readings (no baseline probe needed).
@@ -367,10 +441,10 @@ Worker 1 beats Worker 2 by 0.454 (> 0.10), so **Worker 1 wins cleanly** without 
 3. The controller receives:
    ```
    # Candidates
-   - w_b — Worker B: score -0.164, cold start
-     weighed: cold -1.249, capabilityFit +1.129, quotaRisk -0.044
-   - w_a — Worker A: score -0.206, cold start
-     weighed: cold -1.249, capabilityFit +1.129, quotaRisk -0.086
+   - w_b — Worker B: score -0.011, cold start
+     weighed: cold -1.190, capabilityFit +1.220, quotaRisk -0.041 (unmeasurable here: pace)
+   - w_a — Worker A: score -0.052, cold start
+     weighed: cold -1.190, capabilityFit +1.220, quotaRisk -0.082 (unmeasurable here: pace)
    ```
 4. **If Controller replies:** `{"workerId": "w_b", "why": "Worker B has slightly lower window utilization"}` $\implies$ Dispatched to `Worker B`.
 5. **If Controller times out (90s) or has no quota:** Fallback chooses `Worker B` (highest arithmetic score). Zero disruption.

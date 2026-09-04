@@ -50,6 +50,15 @@ export interface Weights {
   /** A cold start pays a full cache write. This is what prices splitting. */
   cold: number
   capabilityFit: number
+  /**
+   * How much a *measured* difference in how long an agent takes is worth.
+   *
+   * ⛔ Velocity-only, because that is the axis it belongs to and nothing else. Being slow is not the
+   * same as being expensive — a cheap agent that takes three hours and a dear one that takes twenty
+   * minutes are both real, and folding cost into this weight would make the cost axis pay twice for
+   * the same preference while the velocity axis paid nothing.
+   */
+  pace: number
 }
 
 /**
@@ -69,7 +78,8 @@ export const WEIGHT_FORMULAS: Record<keyof Weights, string> = {
   projectSwitch: '0.3 + 0.6×cost',
   quotaRisk: '0.5 + 1.2×cost',
   cold: '0.8 + 2.0×cost − 0.7×velocity',
-  capabilityFit: '0.7 + 1.3×quality'
+  capabilityFit: '0.7 + 1.3×quality',
+  pace: '0.3 + 1.7×velocity'
 }
 
 export function weights(objective: Objective): Weights {
@@ -83,7 +93,11 @@ export function weights(objective: Objective): Weights {
     projectSwitch: 0.3 + 0.6 * cost,
     quotaRisk: 0.5 + 1.2 * cost,
     cold: 0.8 + 2.0 * cost - 0.7 * velocity,
-    capabilityFit: 0.7 + 1.3 * quality
+    capabilityFit: 0.7 + 1.3 * quality,
+    // Measured speed matters to everyone a little and to velocity-weighted work a lot. It is never
+    // zero: a fleet that has learned one agent takes four times as long should still prefer the
+    // other when nothing else separates them.
+    pace: 0.3 + 1.7 * velocity
   }
 }
 

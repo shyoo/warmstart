@@ -1129,7 +1129,7 @@ export type ObjectiveChoice = ObjectivePreset | Objective | 'inherit'
 
 export const PRESETS: Record<ObjectivePreset, Objective> = {
   economy: { cost: 0.7, velocity: 0.15, quality: 0.15 },
-  balanced: { cost: 0.34, velocity: 0.33, quality: 0.33 },
+  balanced: { cost: 0.3, velocity: 0.3, quality: 0.4 },
   velocity: { cost: 0.15, velocity: 0.7, quality: 0.15 },
   quality: { cost: 0.15, velocity: 0.15, quality: 0.7 }
 }
@@ -1137,7 +1137,7 @@ export const PRESETS: Record<ObjectivePreset, Objective> = {
 export const OBJECTIVE_PRESET_ORDER: ObjectivePreset[] = ['balanced', 'economy', 'velocity', 'quality']
 
 export const OBJECTIVE_PRESET_LABELS: Record<ObjectivePreset, string> = {
-  balanced: 'balanced (34% cost, 33% velocity, 33% quality)',
+  balanced: 'balanced (40% quality, 30% cost, 30% velocity)',
   economy: 'economy (70% cost, 15% velocity, 15% quality)',
   velocity: 'velocity (15% cost, 70% velocity, 15% quality)',
   quality: 'quality (15% cost, 15% velocity, 70% quality)'

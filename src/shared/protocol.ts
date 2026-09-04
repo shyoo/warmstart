@@ -1,4 +1,6 @@
 import type { QualityReview } from './review.js'
+import type { GradeBatchOutcome, QualityReport, UngradedTask } from './quality.js'
+import type { RoutingDecisionPage, VelocityReport } from './routing.js'
 import type {
   Approval,
   ApprovalRule,
@@ -122,7 +124,7 @@ export interface Settings {
   completionMode: CompletionMode
   /**
    * What the scheduler optimises for, fleet-wide, when a project or task has not specified otherwise.
-   * Default balanced (34% cost, 33% velocity, 33% quality).
+   * Default balanced (40% quality, 30% cost, 30% velocity).
    */
   objective: Objective
   /**
@@ -1553,6 +1555,33 @@ export interface RpcMap {
   'resource.list': { params: void; result: ResourceAvailability[] }
   /** Everything the cost model currently believes, and on what basis. */
   'cost.report': { params: void; result: CostReport }
+  /**
+   * The kept routing decisions, newest first.
+   *
+   * ⛔ Read back from the ledger, never recomputed. The windows, caches and context sizes that
+   * produced a score existed for one tick; re-deriving it now would answer a different question in
+   * an identical-looking number. See `@shared/routing.ts`.
+   */
+  'routing.decisions': {
+    params: { limit?: number; offset?: number }
+    result: RoutingDecisionPage
+  }
+  /** Who can take work right now, and how long each account has been measured to take. */
+  'routing.velocity': { params: void; result: VelocityReport }
+  /** What peer review has measured about each agent, and how much work is still ungraded. */
+  'quality.report': { params: void; result: QualityReport }
+  /** The tasks nothing has graded, newest first — what the grade button would work through. */
+  'quality.ungraded': { params: { limit?: number }; result: UngradedTask[] }
+  /**
+   * Grade up to five ungraded tasks.
+   *
+   * ⚠️ **Spends a real turn on a real account for each one**, sequentially, and resolves when the
+   * last is stored. Capped in the daemon at `GRADE_BATCH_MAX`, not by this parameter.
+   */
+  'quality.grade': {
+    params: { limit?: number }
+    result: { results: GradeBatchOutcome[]; graded: number; skipped: number }
+  }
   /**
    * The recent past of the daemon's log, for a panel that has just opened.
    *

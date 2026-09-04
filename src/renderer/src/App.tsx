@@ -35,8 +35,7 @@ import { Controller } from './components/Controller'
 import { Project as ProjectView, type ProjectTab } from './components/Project'
 import { SidebarResizer } from './components/SidebarResizer'
 import { AppSettings } from './components/AppSettings'
-import { CostModel } from './components/CostModel'
-import { RoutingModel } from './components/RoutingModel'
+import { RoutingModel, type RoutingTab } from './components/RoutingModel'
 import { ProjectDot, projectWorkState } from './lib/taskview'
 
 /**
@@ -69,7 +68,14 @@ type Route =
    * the last one is given a home, which is what the require-a-project migration does.
    */
   | { kind: 'unassigned'; taskId?: string }
-  | { kind: 'analytics'; page: 'cost-model' | 'routing-model' }
+  /**
+   * ⚠️ `tab` rides on the route for the same reason `taskId` does on a project: a tab is a
+   * destination, so Back has to return to the one you were reading rather than to whichever the
+   * page opens on. ⛔ Cost is no longer its own page — it is the cost axis of the routing model and
+   * lives under it, which is where it was always being read from.
+   */
+  | { kind: 'analytics'; page: 'routing-model'; tab: RoutingTab }
+  | { kind: 'analytics'; page: 'statistics' }
   /**
    * ⚠️ `taskId` so a run in the fleet-wide conversation list has somewhere to go. It cannot route
    * into a project tab, because the conversation it came from may belong to a different project
@@ -330,16 +336,16 @@ export function App(): React.JSX.Element {
         <nav className="nav-group">
           <h2>Analytics</h2>
           <NavItem
-            active={route.kind === 'analytics' && route.page === 'cost-model'}
-            onClick={() => setRoute({ kind: 'analytics', page: 'cost-model' })}
-          >
-            Cost Model
-          </NavItem>
-          <NavItem
             active={route.kind === 'analytics' && route.page === 'routing-model'}
-            onClick={() => setRoute({ kind: 'analytics', page: 'routing-model' })}
+            onClick={() => setRoute({ kind: 'analytics', page: 'routing-model', tab: 'overview' })}
           >
             Routing Model
+          </NavItem>
+          <NavItem
+            active={route.kind === 'analytics' && route.page === 'statistics'}
+            onClick={() => setRoute({ kind: 'analytics', page: 'statistics' })}
+          >
+            Statistics
             <span className="nav-count dim">(not added yet)</span>
           </NavItem>
         </nav>
@@ -402,10 +408,32 @@ export function App(): React.JSX.Element {
             <Overview />
           ) : route.kind === 'overview' && route.page === 'controller' ? (
             <Controller now={now} />
-          ) : route.kind === 'analytics' && route.page === 'cost-model' ? (
-            <CostModel now={now} />
           ) : route.kind === 'analytics' && route.page === 'routing-model' ? (
-            <RoutingModel />
+            <RoutingModel
+              tab={route.tab}
+              // ⚠️ `setRouteNow`, not `setRoute`: switching tab inside a page is a move, and pushing
+              // every one onto history would make Back walk the tabs instead of leaving the page.
+              setTab={(tab) => setRouteNow({ kind: 'analytics', page: 'routing-model', tab })}
+              now={now}
+            />
+          ) : route.kind === 'analytics' && route.page === 'statistics' ? (
+            <div className="panel">
+              <header className="panel-head">
+                <div>
+                  <h2>Statistics</h2>
+                  <p className="panel-sub">
+                    Fleet-wide throughput, spend and outcome history over time.
+                  </p>
+                </div>
+                <span className="tag">Not added yet</span>
+              </header>
+              <div className="notice">
+                Nothing here yet. The measurements this page will draw on already exist — every run is
+                metered, priced and timed — so what is missing is the presentation, not the data. Until
+                then, the Routing Model tabs answer the per-decision questions and Overview answers the
+                fleet-wide ones.
+              </div>
+            </div>
           ) : route.kind === 'unassigned' ? (
             route.taskId ? (
               <TaskThread

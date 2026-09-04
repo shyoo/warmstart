@@ -5271,3 +5271,96 @@ select:focus-visible,
   min-width: 0;
   word-break: break-word;
 }
+
+/* ---- analytics: routing model ------------------------------------------ */
+
+/*
+ * ⛔ A block of arithmetic, not prose. The Routing Model tabs publish the formulas the scheduler
+ * actually evaluates, and a proportional font makes an aligned derivation unreadable — the columns
+ * are how a reader checks that the terms sum to the total they are shown.
+ */
+.code-block {
+  font-family: var(--font-mono);
+  font-size: var(--text-dense);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  margin: 0 0 var(--sp-3);
+  padding: var(--sp-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text-dim);
+  overflow-x: auto;
+}
+
+/* Two derivations side by side, so a reader compares them line for line rather than by scrolling. */
+.two-col {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-3);
+}
+
+.doc-h4 {
+  font-size: var(--text-body);
+  font-weight: 600;
+  margin: var(--sp-3) 0 var(--sp-1);
+  overflow: hidden;
+}
+
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-3);
+}
+
+.metric-tile {
+  padding: var(--sp-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+}
+
+.metric-tile-value {
+  font-family: var(--font-mono);
+  font-size: var(--text-title);
+  font-weight: 600;
+}
+
+.metric-tile-label {
+  font-size: var(--text-dense);
+  color: var(--color-text-dim);
+  margin-top: var(--sp-1);
+}
+
+.tag--ok {
+  border-color: var(--state-ok);
+  color: var(--state-ok);
+}
+
+/* A numbered explanation, spaced enough that each step reads as a step rather than a paragraph. */
+.doc-list {
+  margin: 0 0 var(--sp-3);
+  padding-left: var(--sp-4);
+  color: var(--color-text-dim);
+  font-size: var(--text-dense);
+  line-height: 1.6;
+}
+
+.doc-list li {
+  margin-bottom: var(--sp-2);
+}
+
+.doc-list strong {
+  color: var(--color-text);
+}
+
+/* An action and the sentence that says what it costs, on one line. */
+.row-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+  font-size: var(--text-dense);
+}

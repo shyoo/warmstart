@@ -614,6 +614,19 @@ describe('the routing score shows its own arithmetic', () => {
     expect(legend).toContain('fixed, not from the objective')
   })
 
+  /**
+   * ⛔ The velocity axis's measured half, and the only signed value in the whole score. A legend that
+   * described it the way it describes every other term — "1 = …" — would tell a reader that 0 is a
+   * floor, when 0 here is the *middle*: exactly the fleet's median pace, and also "nothing measured".
+   */
+  it('says that pace is signed, and that its zero means unmeasured as well as average', () => {
+    const legend = scheduler.scoreLegend({ cost: 0.3, velocity: 0.3, quality: 0.4 }).join('\n')
+    expect(legend).toMatch(/pace\s+bonus/)
+    expect(legend).toContain('0.3 + 1.7×velocity')
+    expect(legend).toContain('unmeasured')
+    expect(legend).toContain('4x slower')
+  })
+
   it('prints every term with its value, its weight, its contribution and its basis', () => {
     const terms = [
       term('cold', 1.249, 1, -1, 'no session to reuse, so a start pays a full cache write'),

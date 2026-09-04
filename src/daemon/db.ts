@@ -1478,7 +1478,32 @@ const MIGRATIONS: Migration[] = [
         when 'local-llm' then 'qwen3-coder-30b-a3b'
         else null end`)
     }
-  }
+  },
+  // 45 - a routing decision is kept, so the arithmetic can be checked rather than believed.
+  //
+  // ⛔ The whole breakdown as JSON, not a score column. Every term's weight, value and basis existed
+  // for one tick; a table that stored only the total would answer "which worker won" and could never
+  // answer "why", which is the only question anybody asks of a routing decision afterwards.
+  `
+  create table if not exists routing_decisions (
+    id               text primary key,
+    task_id          text,
+    task_seq         integer,
+    task_title       text not null,
+    project_id       text,
+    chosen_worker_id text,
+    chosen_label     text,
+    objective_json   text not null,
+    weights_json     text not null,
+    formulas_json    text not null,
+    candidates_json  text not null,
+    epsilon          real not null,
+    basis            text not null,
+    warm             integer not null default 0,
+    decided_at       integer not null
+  );
+  create index if not exists routing_decisions_time on routing_decisions(decided_at desc);
+  `
 ]
 
 /**

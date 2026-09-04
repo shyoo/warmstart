@@ -21,6 +21,9 @@ import {
 import type { QuotaWindow, Session, Worker } from '@shared/protocol.js'
 import { adapter } from './adapters/index.js'
 import type { ProbeDemand } from './quota.js'
+import { paceFactors, paceFor, paceValue, type PaceFactors } from './pace.js'
+import { recordRoutingDecision } from './routingdecisions.js'
+import type { RoutingBasis, RoutingCandidate } from '@shared/routing.js'
 import {
   ensureFreshQuota,
   lastQuota,
@@ -762,6 +765,20 @@ export interface WorkerChoice {
    * moment it could move.
    */
   holdUntil?: number | null
+  /** The model this candidate would run, resolved before the spawn. Null where it is the CLI's own. */
+  model?: string | null
+  /**
+   * Every candidate that was scored, in the order they were ranked.
+   *
+   * ⛔ Carried on the winner rather than recomputed, so the ledger `dispatch` writes holds the *same
+   * arithmetic* that ordered them — see `routingdecisions.ts`. Present only on a choice that can
+   * actually dispatch; a deferred or empty choice has nothing to record.
+   */
+  scored?: RoutingCandidate[]
+  /** The vector these weights came from — fleet default, project override or task override. */
+  objective?: Objective
+  /** How the winner was picked. See `RoutingBasis`. */
+  routedBy?: RoutingBasis
 }
 
 /**
@@ -1028,6 +1045,8 @@ export function chooseTarget(task: Task): WorkerChoice {
   const project = task.projectId ? getProject(task.projectId) : undefined
   const objective = resolveObjective(project?.config?.objective, task.objective, settings().objective)
   const w = weights(objective)
+  // ⛔ Once per decision, not once per candidate. See `scoreCandidate`'s `pace` parameter.
+  const pace = paceFactors()
 
   const candidates: WorkerChoice[] = []
 
@@ -1162,14 +1181,18 @@ export function chooseTarget(task: Task): WorkerChoice {
     // The live-reuse exemption exists because sending a prompt into a running agent starts none,
     // and extending it to here would raise the real concurrency by one on every resumed task.
     const resumable = reuse ? null : reopenableFor(task, worker.id)
+    // ⚠️ Resolved once and kept: the score reads it, and the decision ledger records it, and a second
+    // resolution between the two would be a second chance to name a different model.
+    const model = session?.model ?? resumable?.model ?? resolveModelChoice(task.constraints, worker, false, quota).model
     candidates.push({
       worker,
       session,
       reason: '',
       quotaUnverified,
+      model,
       ...(() => {
         // One computation, used for both the ordering and the explanation.
-        const breakdown = scoreCandidate(task, worker, session, resumable, w, trustedWindows)
+        const breakdown = scoreCandidate(task, worker, session, resumable, w, trustedWindows, pace, model)
         return { score: breakdown.total, breakdown }
       })()
     })
@@ -1193,12 +1216,42 @@ export function chooseTarget(task: Task): WorkerChoice {
   const best = candidates[0] as WorkerChoice
   const second = candidates[1]
 
+  /**
+   * The winner, with the whole ranked field attached so `dispatch` can write it down.
+   *
+   * ⛔ Built from the same `breakdown` objects that produced the ordering. Nothing here recomputes a
+   * score; a second implementation of the arithmetic is the one thing that would make this ledger
+   * worse than useless, because it would look authoritative and disagree.
+   */
+  const decided = (winner: WorkerChoice, basis: RoutingBasis): WorkerChoice => ({
+    ...winner,
+    objective,
+    routedBy: basis,
+    // ⚠️ Eight, not four. The consult shortlist is four because a controller reading more than that
+    // is paying for prose it will not use; a person auditing a decision months later wants the field.
+    scored: candidates.slice(0, 8).map((c) => ({
+      workerId: (c.worker as Worker).id,
+      label: (c.worker as Worker).label,
+      adapterId: (c.worker as Worker).adapterId,
+      model: c.model ?? null,
+      warm: !!c.session,
+      quotaUnverified: c.quotaUnverified,
+      score: c.score,
+      chosen: (c.worker as Worker).id === winner.worker?.id,
+      terms: c.breakdown?.terms ?? []
+    }))
+  })
+
   // ---- the routing judgment event, and every reason not to fire it -------------------------
   //
   // ⛔ Read the conditions rather than the call: this asks for judgment only when the arithmetic has
   // genuinely failed to separate two candidates AND the task is large enough that ε is worth more
   // than the turn. On a one-worker fleet, on a small task, or on any clear win, nothing is spent.
-  if (!second || task.kind === 'plan') return best
+  // ⚠️ `pinned` when the task named its account: one candidate is not a decision the arithmetic made,
+  // and a table that called it `score` would claim a comparison that never happened.
+  if (!second || task.kind === 'plan') {
+    return decided(best, task.constraints.workerId ? 'pinned' : 'score')
+  }
   // ⚠️ For the *best* candidate, not the fleet. The floor asks "is this task big enough to be worth
   // a controller turn", and on an agent whose runs cost 12x the fleet median the same work clears a
   // floor it would not clear elsewhere — which is the honest answer to the question being asked.
@@ -1208,7 +1261,7 @@ export function chooseTarget(task: Task): WorkerChoice {
     warm: !!best.session
   }).tokens
   const tie = Math.abs(best.score - second.score) <= ROUTE_EPSILON
-  if (!tie || estimate < ROUTE_CONSULT_FLOOR_TOKENS) return best
+  if (!tie || estimate < ROUTE_CONSULT_FLOOR_TOKENS) return decided(best, 'score')
 
   const answered = latestAnswer('route', task.id, ROUTE_ANSWER_MAX_AGE_MS) as
     | { workerId?: string }
@@ -1217,7 +1270,7 @@ export function chooseTarget(task: Task): WorkerChoice {
     // ⛔ Validated again, here, against the candidate set that exists *now*. The fleet the controller
     // was shown is minutes old; an account can be disabled or hit its window in between.
     const picked = candidates.find((c) => c.worker?.id === answered.workerId)
-    if (picked) return picked
+    if (picked) return decided(picked, 'controller')
   }
 
   if (hasPendingConsult('route', task.id)) {
@@ -1263,7 +1316,7 @@ export function chooseTarget(task: Task): WorkerChoice {
     // UI when they want to check the arithmetic rather than the answer.
     detail: routeDetail(task, shortlist, scoreLegend(objective))
   })
-  if (!queued) return best
+  if (!queued) return decided(best, 'score')
   return {
     ...best,
     worker: null,
@@ -1473,7 +1526,11 @@ const SIGN_OF: Record<keyof ReturnType<typeof weights>, 1 | -1> = {
   projectSwitch: -1,
   quotaRisk: -1,
   cold: -1,
-  capabilityFit: 1
+  capabilityFit: 1,
+  // ⛔ `+1` with a **signed** value, which is why it is not listed as a penalty. See `paceValue`:
+  // the term is positive for an agent measured faster than the fleet's centre and negative for one
+  // measured slower, so a single direction here would be a lie about half of its range.
+  pace: 1
 }
 
 /** `score = Σ sign × weight × value`, and nothing else. */
@@ -1541,6 +1598,9 @@ const VALUE_MEANS: Record<string, string> = {
   quotaRisk: `1 = at ${QUOTA_HIGH_WATER}% of its window (adjusted for reset horizon; 0 below ${QUOTA_RISK_FLOOR}%)`,
   cold: '1 = no conversation to reuse, live or reopenable',
   capabilityFit: '1 = every capability the task needs is present',
+  // ⚠️ The only signed value in the table, and the only one whose 0 is a *middle* rather than a
+  // floor: 0 is both "exactly the fleet's median pace" and "nothing measured yet".
+  pace: '+1 = measured 4x faster than the fleet median task, -1 = 4x slower, 0 = unmeasured',
   unproven: '1.5 max = never probed and never worked'
 }
 
@@ -1621,7 +1681,17 @@ function scoreCandidate(
   resumable: Session | null,
   w: ReturnType<typeof weights>,
   /** The windows the gate evaluated, or empty when there was nothing trustworthy to read. */
-  trustedWindows: QuotaWindow[]
+  trustedWindows: QuotaWindow[],
+  /**
+   * What the fleet has measured about how long each agent takes, read **once** for the whole tick.
+   *
+   * ⛔ Passed in rather than looked up per candidate: `paceFactors` walks up to 200 finished tasks,
+   * and a five-worker fleet would otherwise do that five times to answer the same question with the
+   * same answer.
+   */
+  pace: PaceFactors,
+  /** The model this candidate would actually run — the held conversation's, or the resolved default. */
+  paceModel: string | null
 ): ScoreBreakdown {
   const now = Date.now()
 
@@ -1703,6 +1773,11 @@ function scoreCandidate(
   const met = needs.filter((n) => caps[n] === true)
   const fit = needs.length === 0 ? 1 : met.length / needs.length
 
+  // ⚠️ The model the *conversation* is on wins over the worker's default, because that is the model
+  // the turn would actually be served by — the same rule the `warm` term follows when it reads
+  // `held` rather than `worker`.
+  const measuredPace = paceFor(pace, worker.adapterId, held?.model ?? paceModel)
+
   const everWorked = hasEverWorked(worker.id)
   const doubt = unproven(worker, everWorked)
 
@@ -1766,6 +1841,14 @@ function scoreCandidate(
       needs.length === 0
         ? 'the task requires no specific capability, so every adapter fits'
         : `${met.length} of ${needs.length} required capabilities present`
+    ],
+    [
+      'pace',
+      w.pace,
+      WEIGHT_FORMULAS.pace,
+      paceValue(measuredPace.factor),
+      1,
+      measuredPace.basis
     ],
     [
       'unproven',
@@ -1969,9 +2052,45 @@ function noteQuotaOverrideDispatch(task: Task, worker: Worker): void {
   )
 }
 
+/**
+ * Write the routing decision down, and never let a failure to do so stop a dispatch.
+ *
+ * ⚠️ Wrapped, because this is an *instrument*. Nothing the fleet does depends on the row existing,
+ * and a scheduler that refused to start work because an analytics insert threw would be trading the
+ * thing that matters for the thing that watches it.
+ */
+function noteRoutingDecision(task: Task, choice: WorkerChoice): void {
+  if (!choice.scored || !choice.objective) return
+  try {
+    recordRoutingDecision({
+      taskId: task.id,
+      taskSeq: task.seq,
+      taskTitle: task.titleSummary ?? task.title,
+      projectId: task.projectId,
+      chosenWorkerId: choice.worker?.id ?? null,
+      chosenLabel: choice.worker?.label ?? null,
+      objective: choice.objective,
+      weights: weights(choice.objective) as unknown as Record<string, number>,
+      weightFormulas: WEIGHT_FORMULAS,
+      epsilon: ROUTE_EPSILON,
+      basis: choice.routedBy ?? 'score',
+      warm: !!choice.session,
+      candidates: choice.scored
+    })
+  } catch (err) {
+    log.warn(`could not record the routing decision for t${task.seq}:`, err)
+  }
+}
+
 async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
   const worker = choice.worker as Worker
   const quotaUnverified = choice.quotaUnverified
+
+  // ⛔ **Here, before anything can fail.** The decision has been made by the time this function is
+  // entered; a workspace this dispatch then loses a race for does not un-make it, and a ledger that
+  // only recorded the dispatches that succeeded would quietly answer a different question than the
+  // one it claims to. See `routingdecisions.ts`.
+  noteRoutingDecision(task, choice)
 
   // ⛔ **In the thread, not only in the log.** A run that only happened because somebody overruled
   // the water mark is the run most likely to end mid-thought when the window closes, and the person
