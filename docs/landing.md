@@ -52,6 +52,16 @@ to do.
 ⚠️ Verification is not named in `commit-and-merge` or `commit-and-push` because **merging always
 verifies** — merging unverified work into a trunk is worse than leaving it on a branch.
 
+⛔ **A `conversation` task answers `await-human` from its kind, above all three tiers.** Not a default
+it starts on — a chat filed into a project set to `commit-and-merge` would otherwise land the
+repository every time the agent said something conclusive. The override holds only while the task's own
+policy is `inherit` (`isOpenConversation`), and the one thing that writes a real rung is the thread's
+**Commit** button. That write does two jobs: it is what the landing reads when the agent reports
+complete, and it is what switches the next turn back to the ordinary "commit and report complete"
+instruction. Commit **asks the agent** rather than committing, on the same session so the context
+survives — the daemon does not author commits, which is the same rule `commit-after-verified` runs into
+above.
+
 ⚠️ `agent-lands` is the pre-2026-08-30 spelling of `commit-and-push` and is still read from an
 existing `project.json`. A rename that silently changed what a config *does* would be worse than the
 bug it fixed.

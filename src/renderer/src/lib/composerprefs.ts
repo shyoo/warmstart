@@ -31,11 +31,12 @@ const KEY = 'multi_agent_controller.composer'
 /**
  * What the composer files, as far as the *shape* of the thing goes.
  *
- * ⚠️ `task` and `plan` only. Multi-task and conversation are coming and are deliberately not
- * stubbed in here — an option that files nothing is worse than a missing one, because somebody picks
- * it. `plan` is the existing goal-decomposition path (`task.plan`) wearing its real name.
+ * ⚠️ Three. `plan` is the existing goal-decomposition path (`task.plan`) wearing its real name, and
+ * `conversation` files an ordinary task of kind `conversation` — the same dispatch, with the
+ * single-turn closing contract removed. Multi-task is still deliberately not stubbed in here: an
+ * option that files nothing is worse than a missing one, because somebody picks it.
  */
-export type ComposerKind = 'task' | 'plan'
+export type ComposerKind = 'task' | 'plan' | 'conversation'
 
 /** Model and effort, as last chosen for one account. Empty string means *whatever it inherits*. */
 export interface ModelChoice {
@@ -176,7 +177,10 @@ export function readComposerPrefs(): ComposerPrefs {
     const p = parsed as Record<string, unknown>
     return {
       priority: isPriority(p.priority) ? p.priority : DEFAULT_COMPOSER_PREFS.priority,
-      kind: p.kind === 'plan' || p.kind === 'task' ? p.kind : DEFAULT_COMPOSER_PREFS.kind,
+      kind:
+        p.kind === 'plan' || p.kind === 'task' || p.kind === 'conversation'
+          ? p.kind
+          : DEFAULT_COMPOSER_PREFS.kind,
       // ⚠️ Through `readFinishPolicy`, so a config written before `agent-lands` was renamed still
       // comes back meaning what it meant when it was chosen.
       finishPolicy: readFinishPolicy(p.finishPolicy) ?? DEFAULT_COMPOSER_PREFS.finishPolicy,

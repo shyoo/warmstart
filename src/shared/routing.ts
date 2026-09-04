@@ -51,7 +51,14 @@ export interface RoutingCandidate {
  * controller consult named the winner. ⚠️ `pinned` is a decision with one candidate because the task
  * named its worker; it is recorded so a table of decisions does not silently omit them.
  */
-export type RoutingBasis = 'score' | 'controller' | 'pinned'
+/**
+ * How a dispatch chose its account.
+ *
+ * ⚠️ `sticky` is not a kind of score. It says the task already had a conversation on that account and
+ * keeping it was worth more than any comparison — see `stickyWorkerFor`. A decision recorded as
+ * `sticky` still carries the whole ranked field, so the arithmetic it declined to use is auditable.
+ */
+export type RoutingBasis = 'score' | 'controller' | 'pinned' | 'sticky'
 
 export interface RoutingDecision {
   id: string

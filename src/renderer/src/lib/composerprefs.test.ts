@@ -111,11 +111,20 @@ describe('what the new-task composer was left set to', () => {
     expect(readComposerPrefs().finishPolicy).toBe('commit-and-push')
   })
 
+  it('remembers conversation, which is a kind the composer files', () => {
+    stub({
+      'multi_agent_controller.composer': JSON.stringify({ kind: 'conversation' })
+    })
+    expect(readComposerPrefs().kind).toBe('conversation')
+  })
+
   it('drops only the field it cannot read, never the record around it', () => {
     stub({
       'multi_agent_controller.composer': JSON.stringify({
         priority: 'P9',
-        kind: 'conversation',
+        // ⚠️ `multi-task` and not `conversation`: conversation is a real kind now, and a test whose
+        // "unreadable" example quietly became readable would go on passing while asserting nothing.
+        kind: 'multi-task',
         finishPolicy: 'nonsense',
         sessionSharing: 'maybe',
         workerId: 'w-codex',

@@ -905,6 +905,51 @@ try {
   )
   check('the send button says what it will do', p.sendLabel === 'Plan & Split', planned)
 
+  // ⛔ **Conversation, and what it *removes* from the row.** A conversation is `Reuse` + `await
+  // human`, and both come from the kind rather than from a pill — `resolveFinishPolicy` and
+  // `resolveSessionSharing` answer them off the task above project and fleet. So the two controls
+  // are absent, and absence is the assertion: a Finish pill on a conversation would offer a landing
+  // the resolver will not perform, and somebody would set it and wait for a merge that never comes.
+  //
+  // ⚠️ Driven here rather than unit-tested for the same reason the Plan row is. The resolver is
+  // covered by `conversationkind.test.ts`; what only the built app can say is whether the pills that
+  // must not be drawn are in fact not drawn.
+  await evaluate(
+    `[...document.querySelectorAll('button.pill')].find(p => p.getAttribute('aria-label') === 'What this files')?.click()`
+  )
+  await wait(300)
+  await evaluate(
+    `[...document.querySelectorAll('.pill-menu [role="option"]')].find(o => o.dataset.value === 'conversation')?.click()`
+  )
+  await wait(500)
+  const chat = await evaluate(`
+    JSON.stringify((() => {
+      const composer = document.querySelector('.composer');
+      const names = [...composer.querySelectorAll('.composer-bar button.pill')]
+        .map(p => p.getAttribute('aria-label')).filter(Boolean);
+      return {
+        names,
+        kind: ([...composer.querySelectorAll('button.pill')]
+          .find(p => p.getAttribute('aria-label') === 'What this files')?.innerText ?? '').trim(),
+        sendLabel: ([...composer.querySelectorAll('.composer-send button')]
+          .find(b => b.classList.contains('btn--primary'))?.innerText ?? '').trim()
+      };
+    })())
+  `)
+  const convo = JSON.parse(chat)
+  check('the composer offers Conversation as a third kind', convo.kind?.includes('Conversation'), chat)
+  check(
+    '⛔ and drops the Finish and Conversation pills, because the kind already answers both',
+    !convo.names?.includes('Finish policy') && !convo.names?.includes('Conversation policy'),
+    chat
+  )
+  check(
+    '⚠️ while keeping everything a conversation still chooses — account, model, priority, project',
+    ['Worker', 'Model', 'Priority'].every((n) => convo.names?.includes(n)),
+    chat
+  )
+  check('the send button says Start rather than Send', convo.sendLabel === 'Start', chat)
+
   // Back to Task, so nothing below inherits the plan kind.
   await evaluate(
     `[...document.querySelectorAll('button.pill')].find(p => p.getAttribute('aria-label') === 'What this files')?.click()`

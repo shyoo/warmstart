@@ -291,8 +291,17 @@ Then `fallbackFor` automatically selects the **top-scoring candidate (`best`)** 
 ⛔ **Every dispatch writes a `routing_decisions` row before anything can fail** (`routingdecisions.ts`,
 called from `dispatch`). It holds the objective vector that was in force, every weight it produced with
 its published formula, and **every candidate's term-by-term derivation** — value, weight, sign,
-contribution and the basis in words — plus how the winner was picked (`score`, `controller` or
-`pinned`).
+contribution and the basis in words — plus how the winner was picked (`score`, `controller`,
+`pinned` or `sticky`).
+
+- ⛔ **`sticky` is a conversation returning to the account it is already talking to**, and it wins
+  outright rather than adding a term. Warmth is one weight among nine, which is right for unattended
+  work and wrong for a thread a person is in: routing it elsewhere silently swaps the model, drops
+  every turn of context, and answers the operator's next sentence as a stranger. ⚠️ The two escapes
+  are the candidate list rather than a special case — a person who reassigns writes
+  `constraints.workerId` and the loop skips everyone else, and an account that has spent its window is
+  removed by the quota gate. In both, nothing is found and the ordinary scoring decides. A sticky
+  decision still records the whole ranked field, so the arithmetic it declined to use is auditable.
 
 - ⛔ **Written at dispatch, not in `chooseTarget`.** Scoring runs on every tick for every eligible
   task, most of which are then held for a resource, a window or a controller answer. Recording there

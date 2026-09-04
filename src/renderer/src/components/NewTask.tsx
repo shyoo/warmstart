@@ -67,8 +67,7 @@ const PRIORITY_OPTIONS: PillOption[] = [
 ]
 
 /**
- * ⚠️ Two, and the second one is the existing goal-decomposition path under its own name. Multi-task
- * and conversation belong here next and are deliberately not listed yet: an option that files
+ * ⚠️ Three. Multi-task belongs here next and is deliberately not listed yet: an option that files
  * nothing is worse than a missing one, because somebody picks it and nothing happens.
  */
 const KIND_OPTIONS: PillOption[] = [
@@ -77,6 +76,11 @@ const KIND_OPTIONS: PillOption[] = [
     value: 'plan',
     label: 'Plan&Split',
     hint: 'an agent plans it with you, then files and delegates the pieces'
+  },
+  {
+    value: 'conversation',
+    label: 'Conversation',
+    hint: 'a thread you keep talking in — it stops after each turn and commits when you say so'
   }
 ]
 
@@ -95,7 +99,11 @@ const ATTACH_OPTIONS: PillOption[] = [
   { value: 'folder', label: 'Add a folder' }
 ]
 
-const KIND_SHORT: Record<ComposerKind, string> = { task: 'Task', plan: 'Plan&Split' }
+const KIND_SHORT: Record<ComposerKind, string> = {
+  task: 'Task',
+  plan: 'Plan&Split',
+  conversation: 'Conversation'
+}
 
 /** `2026-09-02T14:30` — what `datetime-local` wants, in the operator's own timezone. */
 function localInputValue(at: number): string {
@@ -282,6 +290,15 @@ export function NewTask({
 
   const kind = prefs.kind
   const isPlan = kind === 'plan'
+  /**
+   * ⛔ A conversation's Finish and Conversation pills are not disabled, they are **absent**. Both
+   * answers come from the kind — `resolveFinishPolicy` reads `await-human` and
+   * `resolveSessionSharing` reads `on` off a conversation task, above the project and the fleet — so
+   * a control showing either would be offering a choice that is not on the table. The rest of the
+   * row is unchanged: priority, project, dependencies, worker and model all still mean what they
+   * always did on a conversation.
+   */
+  const isConversation = kind === 'conversation'
   const depTasks = dependsOn
     .map((id) => candidateTasks.find((t) => t.id === id))
     .filter((t): t is Task => !!t)
@@ -365,8 +382,12 @@ export function NewTask({
           // ⚠️ Absent, not empty, like every other optional field on this call.
           ...(paste.ids.length > 0 ? { attachmentIds: paste.ids } : {}),
           priority: prefs.priority,
-          finishPolicy: prefs.finishPolicy,
-          sessionSharing: prefs.sessionSharing,
+          // ⚠️ `inherit` on a conversation, and that is the value that *means* something: the kind
+          // answers both of these, and it can only keep answering them while nothing has been
+          // written over the top. See `isOpenConversation`.
+          finishPolicy: isConversation ? 'inherit' : prefs.finishPolicy,
+          sessionSharing: isConversation ? 'inherit' : prefs.sessionSharing,
+          ...(isConversation ? { kind: 'conversation' as const } : {}),
           status: targetStatus,
           ...(notBefore ? { notBefore } : {}),
           // ⚠️ Absent, not empty here too - `dependsOn: []` is an empty list of edges, which is what
@@ -405,7 +426,16 @@ export function NewTask({
   // ⛔ A send waits for an upload. Otherwise a click between selecting a file and its RPC completing
   // would create the task without the context the person just chose.
   const canSend = !saving && !paste.busy && prompt.trim().length > 0
-  const sendLabel = saving === 'ready' ? '…' : isPlan ? 'Plan & Split' : armed ? 'Schedule' : 'Send'
+  const sendLabel =
+    saving === 'ready'
+      ? '…'
+      : isPlan
+        ? 'Plan & Split'
+        : armed
+          ? 'Schedule'
+          : isConversation
+            ? 'Start'
+            : 'Send'
 
   return (
     <div className="composer">
@@ -427,7 +457,9 @@ export function NewTask({
           placeholder={
             isPlan
               ? 'Describe the outcome. An agent plans it with you, then files and delegates the pieces.'
-              : 'Describe the work as you would to a colleague. You can paste an image in here as well.'
+              : isConversation
+                ? 'Start the conversation. The agent answers and stops; you reply in the same thread, and commit when you are ready.'
+                : 'Describe the work as you would to a colleague. You can paste an image in here as well.'
           }
           onChange={(e) => setPrompt(e.target.value)}
           onPaste={paste.onPaste}
@@ -601,63 +633,67 @@ export function NewTask({
               />
             )}
             <span className="composer-gap" aria-hidden="true" />
-            <PillSelect
-              ariaLabel="Conversation policy"
-              title={
-                'Whether this task may continue in a conversation another task in this project has ' +
-                'already been having. Cheaper — a cold start rebuilt 41,542 tokens of prefix that a ' +
-                'reused one read back for 65 — but the agent sees everything said in that conversation.' +
-                (prefs.sessionSharing === 'inherit'
-                  ? `\n\nInherited from the ${inheritedSharing.source}: ${inheritedSharingLong}.`
-                  : '')
-              }
-              muted={prefs.sessionSharing === 'inherit'}
-              value={prefs.sessionSharing}
-              label={
-                prefs.sessionSharing === 'inherit'
-                  ? inheritedSharingShort
-                  : SHARING_SHORT[prefs.sessionSharing]
-              }
-              options={[
-                {
-                  value: 'inherit',
-                  label: `Inherit — ${inheritedSharingLong}`,
-                  hint: `from the ${inheritedSharing.source}, and follows it as it changes`
-                },
-                { value: 'on', label: SHARING_LABELS.on },
-                { value: 'off', label: SHARING_LABELS.off }
-              ]}
-              onChange={(v) => setPrefs({ ...prefs, sessionSharing: v as SessionSharingChoice })}
-            />
+            {!isConversation && (
+              <PillSelect
+                ariaLabel="Conversation policy"
+                title={
+                  'Whether this task may continue in a conversation another task in this project has ' +
+                  'already been having. Cheaper — a cold start rebuilt 41,542 tokens of prefix that a ' +
+                  'reused one read back for 65 — but the agent sees everything said in that conversation.' +
+                  (prefs.sessionSharing === 'inherit'
+                    ? `\n\nInherited from the ${inheritedSharing.source}: ${inheritedSharingLong}.`
+                    : '')
+                }
+                muted={prefs.sessionSharing === 'inherit'}
+                value={prefs.sessionSharing}
+                label={
+                  prefs.sessionSharing === 'inherit'
+                    ? inheritedSharingShort
+                    : SHARING_SHORT[prefs.sessionSharing]
+                }
+                options={[
+                  {
+                    value: 'inherit',
+                    label: `Inherit — ${inheritedSharingLong}`,
+                    hint: `from the ${inheritedSharing.source}, and follows it as it changes`
+                  },
+                  { value: 'on', label: SHARING_LABELS.on },
+                  { value: 'off', label: SHARING_LABELS.off }
+                ]}
+                onChange={(v) => setPrefs({ ...prefs, sessionSharing: v as SessionSharingChoice })}
+              />
+            )}
 
-            <PillSelect
-              ariaLabel="Finish policy"
-              title={
-                'What happens when the agent says it is done. Each rung does everything the one ' +
-                'below does plus one thing.' +
-                (prefs.finishPolicy === 'inherit'
-                  ? `\n\nInherited from the ${inheritedFinish.source}: ${inheritedFinishLong}.`
-                  : '')
-              }
-              muted={prefs.finishPolicy === 'inherit'}
-              value={prefs.finishPolicy}
-              label={
-                prefs.finishPolicy === 'inherit'
-                  ? inheritedFinishShort
-                  : (FINISH_SHORT[prefs.finishPolicy] ?? prefs.finishPolicy)
-              }
-              options={[
-                {
-                  value: 'inherit',
-                  label: `Inherit — ${inheritedFinishLong}`,
-                  hint: `from the ${inheritedFinish.source}, and follows it as it changes`
-                },
-                // ⛔ From FINISH_ORDER, never a hand-written copy. Three dropdowns each carried their
-                // own list of these and all three still offered `agent-lands` after the rename.
-                ...FINISH_ORDER.map((p) => ({ value: p, label: FINISH_LABELS[p] }))
-              ]}
-              onChange={(v) => setPrefs({ ...prefs, finishPolicy: v as FinishPolicyChoice })}
-            />
+            {!isConversation && (
+              <PillSelect
+                ariaLabel="Finish policy"
+                title={
+                  'What happens when the agent says it is done. Each rung does everything the one ' +
+                  'below does plus one thing.' +
+                  (prefs.finishPolicy === 'inherit'
+                    ? `\n\nInherited from the ${inheritedFinish.source}: ${inheritedFinishLong}.`
+                    : '')
+                }
+                muted={prefs.finishPolicy === 'inherit'}
+                value={prefs.finishPolicy}
+                label={
+                  prefs.finishPolicy === 'inherit'
+                    ? inheritedFinishShort
+                    : (FINISH_SHORT[prefs.finishPolicy] ?? prefs.finishPolicy)
+                }
+                options={[
+                  {
+                    value: 'inherit',
+                    label: `Inherit — ${inheritedFinishLong}`,
+                    hint: `from the ${inheritedFinish.source}, and follows it as it changes`
+                  },
+                  // ⛔ From FINISH_ORDER, never a hand-written copy. Three dropdowns each carried their
+                  // own list of these and all three still offered `agent-lands` after the rename.
+                  ...FINISH_ORDER.map((p) => ({ value: p, label: FINISH_LABELS[p] }))
+                ]}
+                onChange={(v) => setPrefs({ ...prefs, finishPolicy: v as FinishPolicyChoice })}
+              />
+            )}
 
             <span className="composer-gap" aria-hidden="true" />
             <PillSelect

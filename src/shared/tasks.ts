@@ -82,8 +82,34 @@ export interface Project {
  * ⛔ A `plan` task is **decomposed, not dispatched**. Its output is a set of draft children with
  * dependency edges - which keeps decomposition visible, cancellable, billable to a budget and
  * re-runnable when the plan turns out wrong, rather than being a hidden phase. Plan §18.1.
+ *
+ * ⛔ A `conversation` is **the same work with the single-turn contract removed**. A `work` task is
+ * told to run to the end and commit in one turn if it can, which is right for unattended progress
+ * and wrong for the case a person is sitting there: every turn ends in a landing decision nobody
+ * asked for. A conversation keeps the thread, the session, the branch and the workspace between
+ * turns, ends each turn back at `awaiting_human`, and commits only when a person presses the
+ * button. It is not a different scheduler path — it is `work` with a different closing instruction
+ * and a stickier route. See `isOpenConversation`.
  */
-export type TaskKind = 'work' | 'plan'
+export type TaskKind = 'work' | 'plan' | 'conversation'
+
+/**
+ * A conversation nobody has asked to commit yet.
+ *
+ * ⛔ **The one flag that decides which contract a turn runs under**, and it is derived rather than
+ * stored so it cannot disagree with the finish policy beside it. A conversation's finish policy is
+ * `inherit` for its whole ordinary life — `resolveFinishPolicy` reads the kind and answers
+ * `await-human`, which is what keeps a project set to `commit-and-merge` from landing a chat. The
+ * **only** thing that writes a real rung onto a conversation is the Commit button, and that write is
+ * precisely the moment the turn contract has to change back: the agent is now being asked to commit
+ * and report complete, so it needs the ordinary closing instruction and the ordinary
+ * `task_complete` landing path. One field, two states, no third place to keep them in step.
+ */
+export function isOpenConversation(
+  task: Pick<Task, 'kind' | 'finishPolicy'> | null | undefined
+): boolean {
+  return !!task && task.kind === 'conversation' && task.finishPolicy === 'inherit'
+}
 
 /**
  * What a dependency edge counts as met.
@@ -1755,6 +1781,15 @@ export function resolveFinishPolicy(
 ): ResolvedFinishPolicy {
   const instruction = finishInstructionFor(project)
 
+  // ⛔ **A conversation answers `await-human` from its kind, above the project and the fleet.** Not
+  // as a default it merely starts on: a chat filed into a project set to `commit-and-merge` would
+  // otherwise land the repository every time the agent said something conclusive, which is the one
+  // thing the kind exists to stop. ⚠️ Only while its own policy is `inherit` — the Commit button
+  // writes a real rung, and from that moment the operator's choice is the answer. That is the whole
+  // of the override, and `isOpenConversation` is the same test read from the other side.
+  if (isOpenConversation(task)) {
+    return { policy: 'await-human', source: 'task', instruction: null }
+  }
   if (task && task.finishPolicy !== 'inherit') {
     return {
       policy: task.finishPolicy,
@@ -1791,6 +1826,12 @@ export function resolveSessionSharing(
   project: Project | null | undefined,
   fleetSharing: SessionSharing = DEFAULT_FLEET_SHARING
 ): ResolvedSessionSharing {
+  // ⛔ Reuse is half of what a conversation *is*, so it comes from the kind rather than from the
+  // tier below it. ⚠️ Still only while the task is on `inherit`: somebody who explicitly turns
+  // sharing off on one conversation has said something, and the kind does not get to overrule it.
+  if (task && task.kind === 'conversation' && task.sessionSharing === 'inherit') {
+    return { sharing: 'on', source: 'task' }
+  }
   if (task && task.sessionSharing !== 'inherit') {
     return { sharing: task.sessionSharing, source: 'task' }
   }
@@ -1799,6 +1840,32 @@ export function resolveSessionSharing(
     if (choice !== 'inherit') return { sharing: choice, source: 'project' }
   }
   return { sharing: fleetSharing, source: 'fleet' }
+}
+
+/**
+ * What is sitting in a task's workspace right now, as the thread's own buttons need it.
+ *
+ * ⛔ **A measurement, not a status.** It exists because Finish on a conversation is irreversible in
+ * the way that matters — it releases the workspace, and the branch and the tree go back to the pool
+ * — while the thing it would discard is invisible from every record the task keeps. So the answer
+ * has to be read out of git at the moment somebody is about to press the button, and it has to be
+ * able to say *I could not look* as a distinct answer from *there is nothing there*.
+ *
+ * ⚠️ Counts rather than file lists. The card says "4 files"; it does not need their names, and
+ * shipping a hundred paths through the RPC to render one number is the kind of surplus that ends up
+ * being logged.
+ */
+export interface PendingWork {
+  /** False when there is no git project or no workspace to look in; `reason` says which. */
+  supported: boolean
+  reason: string
+  branch: string | null
+  dirtyFiles: number
+  untrackedFiles: number
+  /** Commits on the branch the landing target does not have. Safe work — see `hasDiff`. */
+  unlandedCommits: number
+  /** Is there **uncommitted** work here? The one question the Commit button and the Finish warning ask. */
+  hasDiff: boolean
 }
 
 /**

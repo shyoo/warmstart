@@ -3,6 +3,8 @@ import { useCallback, useEffect, useState } from 'react'
 import {
   FINISH_LABELS,
   FINISH_ORDER,
+  FINISH_SHORT,
+  type FinishPolicy,
   resolveModelChoice,
   AUTO_COMPACT_LABELS,
   COMPLETION_LABELS,
@@ -15,6 +17,7 @@ import {
   type FinishPolicyChoice,
   type Attachment,
   type Objective,
+  type PendingWork,
   type ObjectiveChoice,
   type ResolvedAutoCompact,
   type ResolvedCompletionMode,
@@ -747,24 +750,49 @@ function TaskDetail({
             {/* ⛔ Settable while the task is running, and settable after it has finished — which is
                 the point. Switching a task resting in `awaiting_human` to a landing policy *is* the
                 decision to land it, and the same bar a first completion faced is applied again. */}
-            <Fact label="finish">
-              <FinishPicker
-                task={task}
-                inheritedFinish={detail.inheritedFinish}
-                onChanged={refresh}
-              />
-            </Fact>
-            {/* ⚠️ Next to `finish` because they are the same shape of decision — three tiers, `inherit`
-                a real value, changeable at any time — and an operator who has learnt one has learnt
-                the other. ⛔ Unlike `finish`, this one only records: a task already talking in a
-                conversation is never moved out of it. */}
-            <Fact label="conversation">
-              <SharingPicker
-                task={task}
-                inheritedSharing={detail.inheritedSharing}
-                onChanged={refresh}
-              />
-            </Fact>
+            {/* ⛔ On a conversation these two are read-only facts, not pickers, because the kind is
+                what answers them — `resolveFinishPolicy` and `resolveSessionSharing` read
+                `await-human` and `on` off a conversation task above the project and the fleet. A
+                dropdown here would offer a choice that is not on the table, and the one write that
+                *is* allowed to change the finish policy is the Commit button, which is a decision
+                about this commit rather than a setting. ⚠️ The finish fact still shows a real rung
+                once Commit has written one — at that point it is the answer, and hiding it would
+                hide what the landing is about to do. */}
+            {task.kind === 'conversation' && task.finishPolicy === 'inherit' ? (
+              <>
+                <Fact label="finish">
+                  <span title="A conversation rests after every turn and commits only when you press Commit. The project's own finish policy does not apply to it.">
+                    await human — you decide, per turn
+                  </span>
+                </Fact>
+                <Fact label="conversation">
+                  <span title="A conversation reuses its own session between turns, which is what makes each reply warm. This is part of the kind, not a setting.">
+                    {SHARING_LABELS.on} — kept between turns
+                  </span>
+                </Fact>
+              </>
+            ) : (
+              <>
+                <Fact label="finish">
+                  <FinishPicker
+                    task={task}
+                    inheritedFinish={detail.inheritedFinish}
+                    onChanged={refresh}
+                  />
+                </Fact>
+                {/* ⚠️ Next to `finish` because they are the same shape of decision — three tiers, `inherit`
+                    a real value, changeable at any time — and an operator who has learnt one has learnt
+                    the other. ⛔ Unlike `finish`, this one only records: a task already talking in a
+                    conversation is never moved out of it. */}
+                <Fact label="conversation">
+                  <SharingPicker
+                    task={task}
+                    inheritedSharing={detail.inheritedSharing}
+                    onChanged={refresh}
+                  />
+                </Fact>
+              </>
+            )}
             {/* ⛔ Third of the same shape, and it belongs beside the other two: three tiers,
                 `inherit` a real value, effective on the next run. ⚠️ It is not a care setting -
                 an autonomous agent still stops to ask when a decision changes what it builds. */}
@@ -1333,6 +1361,20 @@ function PausedQuotaBanner({
 }
 
 /**
+ * The rungs the Commit button offers, and the two it does not.
+ *
+ * ⛔ **Derived from `FINISH_ORDER`, never hand-written**, for the reason the composer's own list
+ * carries: three dropdowns each kept their own copy of these and all three still offered
+ * `agent-lands` a week after the rename. ⚠️ `await-human` is dropped because it is what the
+ * conversation is already doing — offering it under a button called Commit would be a button that
+ * does nothing — and `custom` because it is an instruction the project wrote for its *own* finish,
+ * which is a different question from what this one commit should do.
+ */
+const COMMIT_RUNGS: FinishPolicy[] = FINISH_ORDER.filter(
+  (policy) => policy !== 'await-human' && policy !== 'custom'
+)
+
+/**
  * The two ways to settle a task that is waiting on a person, each next to what it actually does.
  *
  * ⛔ They were indistinguishable, and the tooltips were the reason: *"records that you are
@@ -1398,6 +1440,48 @@ function Decide({
         ? 'The one task waiting on it stays blocked — only a completed task releases it.'
         : `The ${blocking} tasks waiting on it stay blocked — only a completed task releases them.`
 
+  /**
+   * What is sitting uncommitted in this task's workspace, for a conversation.
+   *
+   * ⛔ Fetched rather than derived, and only for the kind that needs it. Finish releases the
+   * workspace, so on a conversation it can walk away from files nothing else on this page mentions —
+   * see `PendingWork`. ⚠️ `null` while it is being read, which is *not* the same as "nothing there":
+   * the Commit button appears when the answer arrives and the Finish warning with it, rather than
+   * either being drawn on a guess.
+   */
+  const [pending, setPending] = useState<PendingWork | null>(null)
+  const [confirmFinish, setConfirmFinish] = useState(false)
+  const [commitError, setCommitError] = useState<string | null>(null)
+  const conversation = task.kind === 'conversation'
+
+  const readPending = useCallback(async (): Promise<void> => {
+    if (!conversation) return
+    try {
+      const answer = await rpc('task.pendingWork', { id: task.id })
+      setPending(answer)
+      // ⚠️ An arming that outlives the thing it warned about is a trap. Once the tree is clean the
+      // next press of Finish must be an ordinary press again.
+      if (!answer.supported || !answer.hasDiff) setConfirmFinish(false)
+    } catch {
+      // ⚠️ A tree that cannot be read is not a tree with nothing in it. Leaving `pending` alone keeps
+      // whatever the last successful read said rather than replacing it with a reassuring absence.
+    }
+  }, [conversation, task.id])
+
+  // ⚠️ Re-read when the task moves, because every action on this card changes the tree: a commit
+  // empties it, a reply can fill it again. `updatedAt` is the cheapest honest trigger.
+  useEffect(() => {
+    void readPending()
+  }, [readPending, task.updatedAt])
+
+  // ⚠️ `hasDiff` only, and only once the read has come back. `pending === null` means *not yet
+  // known*, and drawing a warning or a Commit button off an unknown is how a card ends up telling
+  // somebody there is nothing to lose a moment before there is.
+  const uncommittedNow = conversation && pending?.supported === true && pending.hasDiff
+  const uncommittedLine = pending
+    ? `${pending.dirtyFiles + pending.untrackedFiles} uncommitted file(s) in this workspace.`
+    : ''
+
   // ⛔ Offered only when the thing that stopped it is a conflict, and read from `holdReason`
   // because that is where `landTask`'s failure is actually recorded. A *fix the conflict* button on
   // a task that failed its checks would send an agent to rebase something that rebases fine.
@@ -1422,6 +1506,18 @@ function Decide({
     try {
       await rpc('task.land', { id: task.id })
       await onRefresh()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleCommit = async (finishPolicy: FinishPolicy): Promise<void> => {
+    setBusy(true)
+    try {
+      const result = await rpc('task.commitConversation', { id: task.id, finishPolicy })
+      setCommitError(result.ok ? null : (result.reason ?? 'the commit could not be started'))
+      await onRefresh()
+      await readPending()
     } finally {
       setBusy(false)
     }
@@ -1462,15 +1558,40 @@ function Decide({
       <div className="decide-option">
         <button
           className="btn btn--ok"
-          title="Records your judgement that this is finished. ⚠️ Nothing verified the work — task_complete remains the only signal that an agent finished."
+          title={
+            uncommittedNow
+              ? 'There is uncommitted work in this workspace. Finishing releases it — commit first, or press again to finish anyway.'
+              : 'Records your judgement that this is finished. ⚠️ Nothing verified the work — task_complete remains the only signal that an agent finished.'
+          }
           disabled={busy}
-          onClick={() => void onResolve()}
+          onClick={() => {
+            // ⛔ **The warning is a first press, not a dialog**, and it is armed only when something
+            // would actually be lost. Finish releases the workspace back to the pool, so on a
+            // conversation carrying uncommitted files it is the one irreversible button on this
+            // card — and nothing else on the page says those files exist. A confirmation that fired
+            // on every finish would be trained away within a day; this one only ever appears when it
+            // is telling the truth.
+            if (uncommittedNow && !confirmFinish) {
+              setConfirmFinish(true)
+              return
+            }
+            void onResolve()
+          }}
         >
-          Mark done
+          {conversation ? (confirmFinish && uncommittedNow ? 'Finish anyway' : 'Finish') : 'Mark done'}
         </button>
         <span className="decide-what">
           <strong>Finished.</strong> {releases} ⚠️ Your judgement, written into the thread as such —
           nothing here checked the work.
+          {uncommittedNow && (
+            <>
+              {' '}
+              <span className="decide-warn">
+                ⚠️ {uncommittedLine} Finishing releases this workspace, and uncommitted files go back
+                to the pool with it. Commit below first, or press Finish again to finish anyway.
+              </span>
+            </>
+          )}
         </span>
       </div>
 
@@ -1481,13 +1602,40 @@ function Decide({
           disabled={busy}
           onClick={() => void onStop()}
         >
-          Stop here
+          {conversation ? 'Stop' : 'Stop here'}
         </button>
         <span className="decide-what">
           <strong>Not finished.</strong> Parks it as <span className="mono">paused_user</span>, which
           Resume picks back up. {holds} The branch and the workspace are kept.
         </span>
       </div>
+
+      {/* ⛔ Drawn only when there is something to commit, which is why `pendingWork` runs git rather
+          than reading the task. A Commit button on a clean tree would dispatch a turn to commit
+          nothing, and one that was always there would say nothing about whether it was needed. */}
+      {conversation && uncommittedNow && (
+        <div className="decide-option">
+          <SettingButtonSelect
+            className="commit-select"
+            value=""
+            disabled={busy}
+            ariaLabel="Commit this conversation"
+            displayLabel="Commit…"
+            options={COMMIT_RUNGS.map((rung) => ({
+              value: rung,
+              label: `${FINISH_SHORT[rung]} — ${FINISH_LABELS[rung]}`
+            }))}
+            onChange={(rung) => void handleCommit(rung as FinishPolicy)}
+          />
+          <span className="decide-what">
+            <strong>Commit it.</strong> {uncommittedLine} Asks this conversation’s agent — in the
+            same session, so it still has the context — to commit on{' '}
+            <span className="mono">{pending?.branch ?? task.branch}</span> and report complete, then
+            the rung you pick above is what the tool does with the branch afterwards.
+            {commitError && <span className="decide-warn"> ⚠️ {commitError}</span>}
+          </span>
+        </div>
+      )}
 
       {conflicted && (
         <div className="decide-option">

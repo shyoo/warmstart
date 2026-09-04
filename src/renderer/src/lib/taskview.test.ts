@@ -855,6 +855,10 @@ describe('a plan task, as its own page describes it', () => {
   it('says which kind of task it is, in the composer’s own words', () => {
     expect(kindLabel(planner())).toBe('Plan & Split')
     expect(kindLabel({ kind: 'work' })).toBe('Task')
+    // ⛔ Its own name, not "Task". A conversation's thread behaves differently at the end of every
+    // turn — it rests instead of landing, and its finish policy is not the project's — and a header
+    // that called it a Task would be telling somebody the opposite of what the buttons do.
+    expect(kindLabel({ kind: 'conversation' })).toBe('Conversation')
   })
 
   it('names every account the pieces may run on, with the model each was given', () => {

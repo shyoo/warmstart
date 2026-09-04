@@ -1,0 +1,341 @@
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import type { Project, Task } from '@shared/tasks.js'
+import type { Session, Worker } from '@shared/protocol.js'
+import {
+  isOpenConversation,
+  resolveFinishPolicy,
+  resolveSessionSharing
+} from '@shared/tasks.js'
+
+/**
+ * The `conversation` kind: a task with the single-turn contract taken out of it.
+ *
+ * ⛔ **What is being pinned here is a set of *subtractions*, which is the hardest kind of behaviour
+ * to keep.** A conversation is dispatched by the same scheduler, lands by the same landing path and
+ * is priced by the same cost model as any other task — the only differences are that it is never
+ * told to finish in one turn, never told to commit, never allowed to inherit a landing policy from
+ * its project, and never routed off the account it is already talking to. Every one of those is a
+ * sentence that is *absent*, and an absence is exactly what a refactor puts back without noticing.
+ *
+ * ⚠️ The four are deliberately tested against the same task object rather than four fixtures. They
+ * are one decision — *a person is in this loop* — and a conversation that kept three of them would
+ * be worse than one that kept none, because it would look like it was working.
+ */
+
+let dir: string
+let db: typeof import('./db.js')
+let workers: typeof import('./workers.js')
+let tasks: typeof import('./tasks.js')
+let scheduler: typeof import('./scheduler.js')
+
+let claude: Worker
+let second: Worker
+let turn = 0
+
+const project = (finish?: string): Project =>
+  ({
+    id: 'p1',
+    name: 'repo',
+    root: 'C:\\repo',
+    vcs: 'git',
+    config: finish === undefined ? {} : { landing: { finish } }
+  }) as unknown as Project
+
+const promptText = (task: Task, adapterId = 'claude-code'): string =>
+  scheduler.promptFor(task, adapterId, false, { markDelivered: false }).text
+
+beforeAll(async () => {
+  dir = mkdtempSync(join(tmpdir(), 'agentyard-conversationkind-'))
+  process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
+  db = await import('./db.js')
+  workers = await import('./workers.js')
+  tasks = await import('./tasks.js')
+  scheduler = await import('./scheduler.js')
+  const { claudeCode } = await import('./adapters/claude-code.js')
+  claudeCode.isInstalled = () => true
+  db.openDb(join(dir, 'conversationkind.db'))
+  claude = workers.createWorker({ adapterId: 'claude-code', label: 'convo-1', enabled: true })
+  second = workers.createWorker({ adapterId: 'claude-code', label: 'convo-2', enabled: true })
+})
+
+afterAll(() => {
+  db.closeDb()
+  try {
+    rmSync(dir, { recursive: true, force: true })
+  } catch {
+    // A held file handle on Windows is not a test failure.
+  }
+})
+
+describe('what a conversation resolves its two forced settings to', () => {
+  const convo = (): Task =>
+    ({
+      id: 'c1',
+      seq: 1,
+      kind: 'conversation',
+      finishPolicy: 'inherit',
+      sessionSharing: 'inherit',
+      constraints: {}
+    }) as Task
+
+  it('answers await-human over a project that says commit-and-merge', () => {
+    // ⛔ The case the kind exists for. Without this, filing a chat into an ordinary project would
+    // merge the repository every time the agent said something that sounded conclusive.
+    expect(resolveFinishPolicy(convo(), project('commit-and-merge'))).toEqual({
+      policy: 'await-human',
+      source: 'task',
+      instruction: null
+    })
+  })
+
+  it('answers reuse-on, which is the other half of what a conversation is', () => {
+    expect(resolveSessionSharing(convo(), project())).toEqual({ sharing: 'on', source: 'task' })
+  })
+
+  it('leaves an ordinary task alone', () => {
+    const work = { ...convo(), kind: 'work' } as Task
+    expect(resolveFinishPolicy(work, project('commit-and-merge')).policy).toBe('commit-and-merge')
+    expect(resolveSessionSharing(work, project()).sharing).toBe('off')
+  })
+
+  it('stands aside the moment a rung is written, because that write is the Commit button', () => {
+    // ⛔ Not a loophole — the mechanism. `isOpenConversation` is false from here on, which is what
+    // switches the next turn back to the ordinary "commit and report complete" instruction.
+    const asked = { ...convo(), finishPolicy: 'commit-and-merge' } as Task
+    expect(isOpenConversation(asked)).toBe(false)
+    expect(resolveFinishPolicy(asked, project()).policy).toBe('commit-and-merge')
+  })
+
+  it('still lets somebody turn sharing off on one conversation', () => {
+    const solo = { ...convo(), sessionSharing: 'off' } as Task
+    expect(resolveSessionSharing(solo, project()).sharing).toBe('off')
+  })
+})
+
+describe('what a conversation is told at the end of its turn', () => {
+  const conversation = (): Task =>
+    tasks.requireTask(
+      tasks.createTask({ title: 'Talk this through with me', kind: 'conversation', status: 'ready' })
+        .id
+    )
+
+  it('is told it gets another turn, and is not told to run to the end', () => {
+    const prompt = promptText(conversation())
+    expect(prompt).toContain('This is an ongoing conversation, not a one-shot task')
+    expect(prompt).toContain('you will get another turn')
+    expect(prompt).not.toContain('Work to the end without stopping between phases')
+  })
+
+  it('is told not to commit, and is not handed the commit-hygiene paragraph', () => {
+    const prompt = promptText(conversation())
+    expect(prompt).toContain('Do not commit, merge, push, or run this project’s checks unless you are asked to')
+    expect(prompt).not.toContain('squash them into one coherent commit')
+  })
+
+  it('is told not to reach for task_complete on its own judgement, but is told the tool exists', () => {
+    // ⚠️ Both halves. An agent that is never told the tool exists hunts for a way to finish and
+    // burns the turn; one that is told to call it when it feels done closes the conversation.
+    const prompt = promptText(conversation())
+    expect(prompt).toContain('Do not call `task_complete` on your own judgement')
+    expect(prompt).toContain('call `ask_human` rather than guessing')
+  })
+
+  it('never gets the one-turn landing instruction a print-mode CLI is given', () => {
+    // ⛔ `streamPrompts: 'once'`. That block says "you get one turn and no follow-up, so finish the
+    // job in it" and commit — the precise instruction this kind exists to withhold.
+    const prompt = promptText(conversation(), 'openai-compatible')
+    expect(prompt).not.toContain('You get one turn and no follow-up')
+    expect(prompt).toContain('This is an ongoing conversation')
+  })
+
+  it('gets the MCP-less wording of the same contract on an adapter with no tools', () => {
+    const prompt = promptText(conversation(), 'antigravity-cli')
+    expect(prompt).toContain('This is an ongoing conversation')
+    expect(prompt).toContain('Do not end a reply with a line beginning `TASK COMPLETE: `')
+    expect(prompt).toContain('NEEDS DECISION:')
+  })
+
+  it('goes back to the ordinary instruction once Commit has written a rung', () => {
+    const task = conversation()
+    tasks.updateTask(task.id, { finishPolicy: 'commit-and-merge' })
+    const prompt = promptText(tasks.requireTask(task.id))
+    expect(prompt).toContain('call the MCP tool `task_complete` with a one-line summary')
+    expect(prompt).toContain('squash them into one coherent commit')
+    expect(prompt).not.toContain('This is an ongoing conversation')
+  })
+
+  it('leaves an ordinary task’s instruction exactly as it was', () => {
+    const work = tasks.createTask({ title: 'Ordinary work', status: 'ready' })
+    const prompt = promptText(work)
+    expect(prompt).toContain('Work to the end without stopping between phases')
+    expect(prompt).not.toContain('This is an ongoing conversation')
+  })
+})
+
+describe('which account a conversation comes back to', () => {
+  /** A live session on `worker`, and a finished run of `taskId` in it. */
+  const talkedTo = (taskId: string, worker: Worker): string => {
+    const sessionId = `sess-${taskId}-${worker.id}`.slice(0, 40)
+    db.db()
+      .prepare(
+        `insert into sessions (id, worker_id, adapter_id, transport, cwd, state, purpose,
+                               tokens_since_compact, started_at)
+         values (?,?,?,'stream','C:\\ws1','live','work',0,?)`
+      )
+      .run(sessionId, worker.id, worker.adapterId, Date.now())
+    const run = tasks.startRun({
+      taskId,
+      workerId: worker.id,
+      sessionId,
+      projectId: null,
+      quotaUnverified: true,
+      costModelId: null
+    })
+    tasks.finishRun(run.id, 'completed', 'the turn ended; the conversation is still open')
+    return sessionId
+  }
+
+  it('comes back to the account it was already talking to, and says why', () => {
+    // ⚠️ One task and one assertion set, because two would need two live sessions on the same
+    // one-slot account — and the second of those is at capacity for reasons that have nothing to do
+    // with what is being tested here.
+    const task = tasks.createTask({ title: 'Sticky chat', kind: 'conversation', status: 'ready' })
+    talkedTo(task.id, second)
+    const choice = scheduler.chooseTarget(tasks.requireTask(task.id))
+    expect(choice.worker?.id).toBe(second.id)
+    expect(choice.routedBy).toBe('sticky')
+    // ⛔ And the field it declined to use is still written down. A decision that skipped the
+    // arithmetic must not also hide it, or the routing ledger would have a hole exactly where the
+    // question "why did this not go to the cheaper account" gets asked.
+    expect((choice.scored ?? []).find((c) => c.chosen)?.workerId).toBe(second.id)
+  })
+
+  it('follows a person who reassigns it, because a pin empties the candidate list of everyone else', () => {
+    // ⛔ One of the two escapes, and it is the candidate loop rather than a special case here.
+    const task = tasks.createTask({ title: 'Reassigned chat', kind: 'conversation', status: 'ready' })
+    talkedTo(task.id, second)
+    tasks.updateTask(task.id, { constraints: { workerId: claude.id } })
+    const choice = scheduler.chooseTarget(tasks.requireTask(task.id))
+    expect(choice.worker?.id).toBe(claude.id)
+    expect(choice.routedBy).toBe('pinned')
+  })
+
+  it('does not stick an ordinary task to its last account', () => {
+    const task = tasks.createTask({ title: 'Ordinary, and re-routable', status: 'ready' })
+    talkedTo(task.id, second)
+    expect(scheduler.chooseTarget(tasks.requireTask(task.id)).routedBy).not.toBe('sticky')
+  })
+})
+
+describe('what ends a conversation turn', () => {
+  /** A conversation that is `running`, in a live session, on `claude`. */
+  const talking = (adapterId = 'claude-code'): { task: Task; session: Session; runId: string } => {
+    turn += 1
+    const sessionId = `7a1c0000-0000-4000-8000-00000000000${turn}`
+    db.db()
+      .prepare(
+        `insert into sessions (id, worker_id, adapter_id, transport, cwd, state, purpose,
+                               tokens_since_compact, started_at)
+         values (?,?,?,'stream',?,'live','work',0,?)`
+      )
+      .run(sessionId, claude.id, adapterId, dir, Date.now())
+    const task = tasks.createTask({
+      title: `Turn ${turn}`,
+      kind: 'conversation',
+      status: 'ready'
+    })
+    const run = tasks.startRun({
+      taskId: task.id,
+      workerId: claude.id,
+      sessionId,
+      projectId: null,
+      quotaUnverified: true,
+      costModelId: null
+    })
+    tasks.setStatus(task.id, 'running', { assignee: claude.id })
+    return {
+      task,
+      runId: run.id,
+      session: {
+        id: sessionId,
+        workerId: claude.id,
+        adapterId,
+        transport: 'stream',
+        projectId: null,
+        cwd: dir,
+        state: 'live',
+        purpose: 'work',
+        model: null,
+        effort: null,
+        startedAt: Date.now(),
+        lastRequestStartedAt: null
+      } as unknown as Session
+    }
+  }
+
+  it('closes the run and hands the task back, because nothing else would', async () => {
+    // ⛔ The gap this fills. An ordinary run stays open until `task_complete`, and a conversation is
+    // told never to send one — so without this the run stays open and the task stays `running`
+    // forever, with the operator watching a finished reply and no buttons under it.
+    const { task, runId, session } = talking()
+    await scheduler.onStreamResult(session, { isError: false, text: 'Here is what I found.', terminalReason: null })
+
+    const after = tasks.requireRun(runId)
+    expect(after.endedAt).not.toBeNull()
+    expect(after.outcome).toBe('completed')
+    expect(tasks.requireTask(task.id).status).toBe('awaiting_human')
+    expect(tasks.requireTask(task.id).holdReason).toContain('finished this turn')
+  })
+
+  it('keeps the session alive, which is what makes the next reply warm', async () => {
+    const { session } = talking()
+    await scheduler.onStreamResult(session, { isError: false, text: 'Done for now.', terminalReason: null })
+    const row = db.db().prepare('select state from sessions where id = ?').get(session.id) as {
+      state: string
+    }
+    expect(row.state).toBe('live')
+  })
+
+  it('leaves an ordinary task’s run open, exactly as it was', async () => {
+    // ⛔ The blast radius. Every task in the fleet goes through this function on every clean turn,
+    // and closing their runs here would end every run at its first reply.
+    const { task, runId, session } = talking()
+    // ⚠️ Written in SQL because `kind` is set at filing and there is no updater for it — nothing in
+    // the app turns one kind of task into another, and this fixture is not asking for one.
+    db.db().prepare("update tasks set kind = 'work' where id = ?").run(task.id)
+    await scheduler.onStreamResult(session, { isError: false, text: 'Still going.', terminalReason: null })
+    expect(tasks.requireRun(runId).endedAt).toBeNull()
+    expect(tasks.requireTask(task.id).status).toBe('running')
+  })
+
+  it('does not end the turn once Commit has asked for a landing', async () => {
+    // ⛔ A conversation being asked to commit is under the ordinary contract again: it has been told
+    // to call `task_complete`, and ending its turn underneath it would close the run it needs.
+    const { task, runId, session } = talking()
+    tasks.updateTask(task.id, { finishPolicy: 'commit-and-merge' })
+    await scheduler.onStreamResult(session, { isError: false, text: 'Committing now.', terminalReason: null })
+    expect(tasks.requireRun(runId).endedAt).toBeNull()
+  })
+})
+
+describe('what the Commit button does', () => {
+  it('refuses without a git project, and says so rather than pretending', async () => {
+    const task = tasks.createTask({ title: 'Nowhere to commit', kind: 'conversation', status: 'ready' })
+    await expect(scheduler.commitConversation(task.id, 'commit-only')).resolves.toEqual({
+      ok: false,
+      reason: 'not a git project'
+    })
+  })
+
+  it('reports no workspace rather than an empty diff when it has nowhere to look', async () => {
+    // ⚠️ The distinction the card is built on: *I could not look* is not *there is nothing there*.
+    const task = tasks.createTask({ title: 'No workspace', kind: 'conversation', status: 'ready' })
+    const answer = await scheduler.pendingWorkFor(task.id)
+    expect(answer.supported).toBe(false)
+    expect(answer.hasDiff).toBe(false)
+    expect(answer.reason).toContain('no git project')
+  })
+})

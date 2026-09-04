@@ -3566,6 +3566,24 @@ select:focus-visible,
 }
 
 /*
+ * ⛔ Warning colour, inside the sentence rather than as a banner above the card. What it says is a
+ * qualification of one button — *this one is about to release four uncommitted files* — and a banner
+ * would say it about the whole card, where two of the three buttons keep the workspace.
+ */
+.decide-warn {
+  color: var(--state-warn);
+}
+
+/*
+ * The Commit rung picker sits in the button column, so it has to fill it exactly as the buttons
+ * beside it do — a select sized to its own longest label would make one row of three wider than the
+ * other two.
+ */
+.commit-select {
+  width: 100%;
+}
+
+/*
  * The worker / model / effort selectors on the Reassign option: one row, three equal shares.
  * ⛔ `flex: 1 1 0` and not `1 1 auto`. With an `auto` basis each selector is sized by its own
  * longest label first and only then shrunk, which is what put them on three lines in a column this

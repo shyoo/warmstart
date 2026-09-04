@@ -1,6 +1,8 @@
 import { sessionEnded } from '@shared/protocol.js'
 import type {
   Attachment,
+  FinishPolicy,
+  PendingWork,
   Project,
   QuestionKind,
   QuestionOption,
@@ -12,8 +14,10 @@ import type {
 import { describeAttachment } from './attachments.js'
 import {
   WINDOW_HIGH_WATER,
+  FINISH_LABELS,
   cleanQuestionText,
   isMultiSelectQuestion,
+  isOpenConversation,
   policyVerifies,
   resolveCompletionMode,
   resolveModelChoice
@@ -62,7 +66,8 @@ import {
   markFinishAsked,
   setRunQuota,
   setStatus,
-  startRun
+  startRun,
+  updateTask
 } from './tasks.js'
 import { childrenOf as splitChildrenOf } from './split.js'
 import { enqueueConsult, hasPendingConsult, latestAnswer } from './controller.js'
@@ -1027,6 +1032,38 @@ function reopenableFor(task: Task, workerId: string): Session | null {
  *
  * ⛔ The gates ask capabilities, never adapter names.
  */
+/**
+ * The account a conversation is already being had on.
+ *
+ * ⛔ **Conversations only, and it wins outright rather than adding to a score.** Warmth is one
+ * weighted term among nine, so an ordinary task coming back from `awaiting_human` can be routed to
+ * whichever account looks cheapest this minute — right for unattended work, and wrong for a thread a
+ * person is talking in, where switching accounts silently swaps the model, drops every turn of
+ * context and answers the operator's next sentence as a stranger. A conversation's whole value is
+ * that it is the *same* conversation.
+ *
+ * ⛔ **The two escapes are the candidate list, not a special case here**, which is what makes them
+ * trustworthy. A person who presses Reassign writes `constraints.workerId`, and the loop above
+ * already skips every other worker — so the sticky account is either the one they picked or not in
+ * the list at all. An account that has spent its window is removed by the quota gate. In both cases
+ * this finds nothing and the ordinary scoring decides, which is exactly the fallback that was asked
+ * for: change accounts when a person says so, or when the window runs out, and never otherwise.
+ *
+ * ⚠️ The most recent session that still exists, by run start. A conversation whose session was
+ * evicted still names its account — reviving a closed conversation on the account that holds its
+ * transcript is the same continuity, one rung colder.
+ */
+function stickyWorkerFor(task: Task): string | null {
+  if (task.kind !== 'conversation') return null
+  const runs = [...runsFor(task.id)].sort((a, b) => b.startedAt - a.startedAt)
+  for (const run of runs) {
+    if (!run.sessionId) continue
+    const session = getSession(run.sessionId)
+    if (session) return session.workerId
+  }
+  return null
+}
+
 export function chooseTarget(task: Task): WorkerChoice {
   const reasons: string[] = []
   /**
@@ -1249,6 +1286,14 @@ export function chooseTarget(task: Task): WorkerChoice {
   // than the turn. On a one-worker fleet, on a small task, or on any clear win, nothing is spent.
   // ⚠️ `pinned` when the task named its account: one candidate is not a decision the arithmetic made,
   // and a table that called it `score` would claim a comparison that never happened.
+  // ⛔ Before the tie-break, the consult and the score, because it is not a preference between
+  // candidates — it is the statement that this task already has a conversation. See `stickyWorkerFor`.
+  const sticky = stickyWorkerFor(task)
+  if (sticky) {
+    const stayed = candidates.find((c) => c.worker?.id === sticky)
+    if (stayed) return decided(stayed, 'sticky')
+  }
+
   if (!second || task.kind === 'plan') {
     return decided(best, task.constraints.workerId ? 'pinned' : 'score')
   }
@@ -3196,6 +3241,53 @@ function resolutionInstruction(task: Task, checkLead: string, commitHygiene: str
   ].join('\n')
 }
 
+/**
+ * What a conversation is told at the end of every turn, instead of "finish the job".
+ *
+ * ⛔ **The whole of the difference between this kind and `work`, and it is a subtraction.** The
+ * ordinary closing instruction says run to the end, run the checks, commit, squash, report complete
+ * — which is exactly right for a task dispatched at 3am and exactly wrong when a person is reading
+ * each turn as it lands. Left in place it makes every reply in a conversation end with a landing
+ * nobody asked for, and an agent that has been told to commit will commit half-finished work rather
+ * than appear to have disobeyed.
+ *
+ * ⛔ **`task_complete` is still named, and is still the only completion signal.** What changes is
+ * who decides to send it: the agent is told not to reach for it on its own judgement, because the
+ * person it is talking to has a Finish button and that button is the judgement. Leaving the tool
+ * unmentioned would be worse than either — see the note in `promptFor` about naming tools an agent
+ * has not got, which has the same failure mode in reverse.
+ *
+ * ⚠️ Nothing is said about the project's checks or about squashing. Both belong to a commit, the
+ * Commit button is what asks for one, and that button re-enters the ordinary instruction above with
+ * the rung the operator picked. Saying it here would be telling the agent to do work whose result it
+ * has just been told not to commit.
+ *
+ * ⚠️ Two endings, because the terminal contract is not the same on both. An MCP adapter is told not
+ * to *call* `task_complete`; an MCP-less one is told not to *write* the line that stands in for it.
+ * Naming the wrong one would be naming a channel the agent has not got, which is the failure the
+ * note on `capabilities.mcp` in `promptFor` describes.
+ */
+function conversationInstruction(mcpLess: boolean): string {
+  return (
+    'This is an ongoing conversation, not a one-shot task. Answer what has just been asked and ' +
+    'stop there — you will get another turn, so there is no need to finish everything now and no ' +
+    'need to leave the work in a shippable state at the end of every turn. ' +
+    'Do not commit, merge, push, or run this project’s checks unless you are asked to: a person ' +
+    'decides when this work is committed, from the buttons on this thread. ' +
+    (mcpLess
+      ? 'Do not end a reply with a line beginning `TASK COMPLETE: ` on your own judgement — that ' +
+        'line reports the whole task finished, so write it only if you are told the work is done. ' +
+        'If you need a decision from a person, end your reply with a line beginning `NEEDS DECISION:` ' +
+        'followed by the question, and stop rather than guessing. If you are choosing between ' +
+        'specific options, put each one on its own line directly under it as ' +
+        '`- <the option> — <what choosing it means>`, so they can be offered as buttons.'
+      : 'Do not call `task_complete` on your own judgement — call it only if you are told the work ' +
+        'is done. If you need a decision from a person, call `ask_human` rather than guessing — ' +
+        'offer the options you are choosing between, and it waits for a real answer.')
+  )
+}
+
+
 export function promptFor(
   task: Task,
   adapterId: string,
@@ -3308,7 +3400,9 @@ export function promptFor(
       checks.length > 0
         ? `Before reporting complete, run this project's checks (${checks.map((c) => `\`${c}\``).join(', ')}) and ensure they pass. `
         : ''
-    if (planPhase === 'planning') {
+    if (isOpenConversation(task)) {
+      parts.push(conversationInstruction(false))
+    } else if (planPhase === 'planning') {
       parts.push(planningInstruction(checkLead))
     } else if (planPhase === 'resolving') {
       parts.push(resolutionInstruction(task, checkLead, commitHygiene))
@@ -3335,8 +3429,14 @@ export function promptFor(
       checks.length > 0
         ? `Before finishing, run this project's checks (${checks.map((c) => `\`${c}\``).join(', ')}) and ensure they pass cleanly. `
         : ''
+    // ⛔ The same subtraction as above, in the vocabulary this adapter was given. An MCP-less agent's
+    // terminal contract is a line of text rather than a tool call, so a conversation has to be told
+    // not to write that line rather than not to call that tool — but it still has to be told what
+    // the line *is*, because being asked to finish is a thing that can happen to it later.
     parts.push(
-      checkLead +
+      isOpenConversation(task)
+        ? conversationInstruction(true)
+        : checkLead +
         'When the work is finished, commit what you have and end with a line beginning `TASK COMPLETE: ` ' +
         'followed by a one-line summary of what changed. ' + commitHygiene + ' If you need a decision from a person, end your reply with a line beginning ' +
         '`NEEDS DECISION:` followed by the question, and stop rather than guessing. If you are ' +
@@ -3345,6 +3445,16 @@ export function promptFor(
         'If multiple options can be chosen (checkboxes), indicate that with `NEEDS DECISION: [multi] <question>` ' +
         'or include `(multi-select)` / `(select all that apply)` in the question.'
     )
+  }
+
+  // ⛔ **A conversation stops here, and skipping the block below is the point rather than an
+  // omission.** What follows tells a `streamPrompts: 'once'` CLI that it gets one turn and must
+  // commit everything in it — the exact instruction a conversation exists to withhold. The reason
+  // that block exists still holds for such an adapter (its process really does end with the turn),
+  // but the consequence does not: a conversation's next turn arrives on a *revived* session, its
+  // workspace is retained across the wait, and the commit is the operator's to ask for.
+  if (isOpenConversation(task)) {
+    return { text: parts.join('\n\n'), attachments }
   }
 
   // ⛔ A `streamPrompts: 'once'` CLI gets its landing instruction **here or never**. The
@@ -4080,6 +4190,10 @@ export async function onStreamResult(
   // complete response (t163, 2026-09-03, `context canceled`); its status is not allowed to erase
   // the explicit completion signal, but a plausible-sounding paragraph still is not one.
   const completion = mcpLess ? taskCompletionIn(result.text) : null
+  // ⚠️ Read once, above the branches, because a conversation's turn ends on *every* clean path
+  // through them and each one used to be able to answer "which task is this" differently.
+  const openRun = runForSession(session.id)
+  const runTask = openRun?.taskId ? getTask(openRun.taskId) : null
 
   if (!result.isError) {
     if (mcpLess) {
@@ -4118,7 +4232,21 @@ export async function onStreamResult(
           return
         }
       }
+      // ⛔ Ahead of the completion below, because on this adapter a conversation that has not been
+      // asked to finish has no way to say "I am done" and must never be read as having said it. An
+      // explicit `TASK COMPLETE:` line is still honoured — that is the operator's contract with the
+      // agent, and an agent that writes it has been told to.
+      if (isOpenConversation(runTask) && !completion) {
+        if (openRun && runTask) await endConversationTurn(session, openRun, runTask)
+        return
+      }
       await completeTask(session.id, completion ?? (result.text?.trim() || 'Completed'))
+      return
+    }
+    // ⛔ The turn that has just ended on an MCP adapter, which nothing else closes. See
+    // `endConversationTurn` for why the run ends here and the session does not.
+    if (isOpenConversation(runTask) && openRun && runTask && !openRun.outcome) {
+      await endConversationTurn(session, openRun, runTask)
     }
     return
   }
@@ -4214,6 +4342,47 @@ export function taskCompletionIn(text: string | null): string | null {
  * of a completion signal — which also meant three questions in a row looked like a task that kept
  * failing and would summon `maybeTriage` to explain a pattern that was not there.
  */
+/**
+ * A conversation's turn is over, and that is not the end of anything else.
+ *
+ * ⛔ **Something has to end a conversation's turn, because nothing else will.** An ordinary run stays
+ * open until `task_complete` arrives — that is the whole of its contract, and it is why the prompt
+ * insists on it. A conversation is told the opposite, so without this its run would stay open, its
+ * task would stay `running`, and the operator would be left watching a finished reply with no Finish,
+ * no Stop and no Commit in front of them until the stall watchdog eventually mentioned it.
+ *
+ * ⛔ **The run ends; the session, the workspace and the branch do not.** That split is the feature.
+ * Closing the run is what returns the task to a person and what keeps the metering honest — a turn
+ * that has been paid for is a turn that has ended. Keeping the session live is what makes the reply
+ * warm: `warmSessionFor` finds this task's own idle session first and unconditionally, `atCapacity`
+ * exempts the session a task would reuse, and `releaseFor` deliberately leaves the workspace with the
+ * conversation rather than with the run. So the next turn is a prompt written into a process that
+ * still has every one of these turns in its context, standing in the same worktree on the same branch.
+ *
+ * ⚠️ The cost of that is one of the account's `maxConcurrent` slots, held until somebody presses
+ * Finish or Stop. It is the same reservation a task resting on a question already makes, it is
+ * counted (`retainedReservations`), and it is the price of the warm prefix the whole cost model is
+ * built to buy.
+ */
+async function endConversationTurn(session: Session, run: Run, task: Task): Promise<void> {
+  const why =
+    'The agent finished this turn. Reply to carry on in the same conversation, or use Finish, Stop ' +
+    'or Commit below. Nothing has been committed and nothing has been landed.'
+  finishRun(run.id, 'completed', 'the turn ended; the conversation is still open')
+  addMessage(task.id, 'system', why)
+  // ⚠️ The run ends either way; the *reason* is only written over a task that was still working. A
+  // conversation whose agent asked a question is already resting on that question, and replacing
+  // "the agent asked and is waiting on you: …" with this sentence would hide the one thing the
+  // operator actually has to answer.
+  if (task.status === 'running' || task.status === 'assigned') {
+    setStatus(task.id, 'awaiting_human', { assignee: 'human', holdReason: why })
+  }
+  // ⛔ `releaseFor`, never `releaseWorkspaceOf`. The run's own claims go back so nothing it took
+  // leaks; the worktree stays with the session, which is still standing in it.
+  await releaseFor(run.id, task.id, task.projectId)
+  void captureQuotaAfter(requireRun(run.id))
+}
+
 async function endUnfinishedRun(
   session: Session,
   run: Run,
@@ -5132,6 +5301,130 @@ export async function resolveRetryOnTask(
     addMessage(task.id, 'system', 'Automatically retrying once with the failure details. A second failure will wait for your review.')
   }
   return resolver(task.id)
+}
+
+/**
+ * Is there work in this task's workspace that pressing Finish would walk away from?
+ *
+ * ⛔ **Read from the tree, at the moment it is asked, and never inferred.** The alternative was to
+ * decide whether to draw the Commit button from what the task *says* — a run that reported, a hold
+ * reason mentioning "uncommitted" — and every one of those is a record of something that was true
+ * once. An agent that edited three files and did not mention it leaves no such record at all, and a
+ * Finish button drawn without a warning on top of three uncommitted files is the one failure this
+ * whole card exists to prevent.
+ *
+ * ⛔ **The workspace is found by holder, in the two places a holder can be.** A conversation resting
+ * between turns has its claim reassigned to the *task* (`releaseWorkspaceOf`, retaining); one whose
+ * agent is still live has it held by the *session*. Looking in only one place answers "no diff" for
+ * half the states this is asked in, which is a wrong answer that reads exactly like a right one.
+ *
+ * ⚠️ Every failure is reported as `supported: false` with a reason rather than as an absence of
+ * work. "There is nothing to commit" and "I could not look" are different sentences, and the UI
+ * shows the second one instead of hiding a button.
+ */
+export async function pendingWorkFor(taskId: string): Promise<PendingWork> {
+  const none: PendingWork = {
+    supported: false,
+    reason: '',
+    branch: null,
+    dirtyFiles: 0,
+    untrackedFiles: 0,
+    unlandedCommits: 0,
+    hasDiff: false
+  }
+  const task = getTask(taskId)
+  if (!task) return { ...none, reason: 'no such task' }
+  const project = task.projectId ? getProject(task.projectId) : null
+  if (!project || project.vcs !== 'git') {
+    return { ...none, reason: 'this task has no git project, so there is nothing to commit' }
+  }
+  const held =
+    workspaceHeldBy(project, task.id) ??
+    (() => {
+      const session = sessionOf(task.id)
+      return session ? workspaceHeldBy(project, session.id) : null
+    })()
+  if (!held) {
+    return { ...none, reason: 'this task is not holding a workspace' }
+  }
+  const state = await workspaceState(held.path, landingTargetFor(task, project))
+  return {
+    supported: true,
+    reason: '',
+    branch: state.branch,
+    dirtyFiles: state.dirtyFiles.length,
+    untrackedFiles: state.untrackedFiles.length,
+    unlandedCommits: state.unlandedCommits,
+    // ⛔ Uncommitted files only, and deliberately not `holdsWork`. An unlanded *commit* is work that
+    // is already safe on the branch — Finish leaves it exactly where the agent put it, and warning
+    // about it would be crying wolf on the ordinary end of every conversation that did commit.
+    hasDiff: state.dirtyFiles.length > 0 || state.untrackedFiles.length > 0
+  }
+}
+
+/**
+ * Ask the agent to commit this thread's work, on the rung the operator picked.
+ *
+ * ⛔ **It asks rather than commits, because the daemon does not author commits** — the rule
+ * `decideFinish` is built on, and the reason `commit-after-verified` cannot exist. The button is
+ * shown precisely when the tree is dirty, so there is nothing here that could be landed without a
+ * turn, and a second code path that landed a clean tree directly would be a button that does two
+ * different things depending on state nobody can see.
+ *
+ * ⛔ **The rung is written to `finishPolicy` first, and that write does two jobs.** It is what the
+ * landing will read when the agent reports complete — so `commit·verify·merge` really merges — and
+ * it is what takes this task out of `isOpenConversation`, which switches the next turn back to the
+ * ordinary closing instruction. Without the second, the agent would be handed the conversation
+ * instruction that tells it *not* to commit, in the same turn it is being asked to commit, and would
+ * quite reasonably do nothing.
+ */
+export async function commitConversation(
+  taskId: string,
+  policy: FinishPolicy
+): Promise<{ ok: boolean; reason?: string }> {
+  const task = getTask(taskId)
+  if (!task) return { ok: false, reason: 'no such task' }
+  const project = task.projectId ? getProject(task.projectId) : null
+  if (!project || project.vcs !== 'git') return { ok: false, reason: 'not a git project' }
+  if (task.status === 'running' || task.status === 'assigned') {
+    return { ok: false, reason: 'this task is already running; wait for the turn to end' }
+  }
+  const branch = task.branch ?? branchNameFor(task.seq, task.title)
+  if (!branch) return { ok: false, reason: 'this task has no branch' }
+
+  updateTask(task.id, { finishPolicy: policy })
+  // ⛔ Cleared for the same reason `resolveCommitOnTask` clears it: the next `task_complete` has to
+  // reach a real finish decision rather than being turned away as already-asked.
+  db().prepare('update tasks set finish_asked_at = null where id = ?').run(task.id)
+
+  const checks = policyVerifies(policy) ? (project.config.check ?? []) : []
+  const checkStep =
+    checks.length > 0
+      ? `Run this project's checks (${checks.map((check) => `\`${check}\``).join(', ')}) and fix any failure before you report complete. `
+      : ''
+  const after =
+    policy === 'commit-only'
+      ? 'Nothing will be merged or pushed afterwards. '
+      : policy === 'commit-and-verify'
+        ? 'Nothing will be merged or pushed afterwards; the tool runs the checks again on its side. '
+        : policy === 'pull-request'
+          ? 'The tool pushes the branch and opens the pull request afterwards — do not open one yourself. '
+          : 'The tool takes it from there and lands the branch afterwards. '
+
+  const instruction =
+    `Please commit this conversation's work now: ${FINISH_LABELS[policy]}.\n\n` +
+    `Commit everything you have changed on \`${branch}\`. ` +
+    'If two or more commits ahead of this branch’s landing target all belong to this task, squash ' +
+    'them into one coherent commit where safe. Do not rewrite commits already on the landing ' +
+    'target, force-push, or use a destructive reset. ' +
+    checkStep +
+    after +
+    'When the commit is in place, call `task_complete` with a one-line summary of what it contains.'
+
+  addMessage(task.id, 'human', instruction)
+  const outcome = continueTask(task.id)
+  log.info(`t${task.seq}: asked the agent to commit this conversation as ${policy} (${outcome})`)
+  return { ok: true }
 }
 
 export async function relandTask(taskId: string): Promise<{ ok: boolean; reason?: string }> {

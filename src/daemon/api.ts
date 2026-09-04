@@ -107,6 +107,8 @@ import {
   continueTask,
   deliverToLiveSession,
   promptFor,
+  commitConversation,
+  pendingWorkFor,
   relandTask,
   QUOTA_HIGH_WATER,
   QUOTA_OVERRIDE_FALLBACK_MS,
@@ -585,6 +587,12 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
      * also acts, this only records a preference - a task already talking in a conversation is not
      * moved out of it, because moving an agent mid-thought is the one thing sharing must never do.
      */
+    /**
+     * ⚠️ Runs git, and only when asked. See the note in protocol.ts for why it is not on `task.get`.
+     */
+    'task.pendingWork': (p) => pendingWorkFor(p.id),
+    /** ⛔ One call, because the rung it writes decides both the landing and the next turn's prompt. */
+    'task.commitConversation': (p) => commitConversation(p.id, p.finishPolicy),
     'task.setSessionSharing': (p) => updateTask(p.id, { sessionSharing: p.sessionSharing }),
     'task.setCompletionMode': (p) => updateTask(p.id, { completionMode: p.completionMode }),
     /**

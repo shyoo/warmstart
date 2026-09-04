@@ -319,7 +319,9 @@ export function modelFacts(input: {
  * were drawn for both.
  */
 export function kindLabel(task: Pick<Task, 'kind'>): string {
-  return task.kind === 'plan' ? 'Plan & Split' : 'Task'
+  if (task.kind === 'plan') return 'Plan & Split'
+  if (task.kind === 'conversation') return 'Conversation'
+  return 'Task'
 }
 
 /**

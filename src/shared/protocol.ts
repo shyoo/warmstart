@@ -18,6 +18,7 @@ import type {
   Priority,
   Project,
   ProjectPolicyPatch,
+  PendingWork,
   Question,
   QuestionKind,
   QuestionOption,
@@ -1428,6 +1429,32 @@ export interface RpcMap {
     result: Task
   }
   'task.resume': { params: { id: string }; result: Task }
+  /**
+   * What is uncommitted in this task's workspace at this instant.
+   *
+   * ⛔ **Asked, not pushed, and asked late.** The thread's Finish button is what makes this
+   * necessary — it releases the workspace, so pressing it over four edited files loses them into a
+   * pooled worktree — and the only honest answer comes from reading the tree right then. Putting it
+   * on `task.get` would have made every open of every thread run git, to answer a question only a
+   * task resting in front of a person can act on.
+   *
+   * ⚠️ It runs git, so it is not free and is not a subscription. The pane asks when a conversation
+   * comes to rest and after each of its own actions, and never on a timer.
+   */
+  'task.pendingWork': { params: { id: string }; result: PendingWork }
+  /**
+   * Ask this conversation's agent to commit, on the rung the operator picked.
+   *
+   * ⛔ **The rung is a parameter rather than a separate `setFinishPolicy` call**, because the two
+   * writes have to be one decision: the policy is what the landing will read *and* what switches the
+   * next turn out of the conversation contract. Split across two round trips there is a window in
+   * which the task has a landing policy and still the conversation prompt, and a turn dispatched in
+   * that window would be told to commit and told not to, in the same breath.
+   */
+  'task.commitConversation': {
+    params: { id: string; finishPolicy: FinishPolicy }
+    result: { ok: boolean; reason?: string }
+  }
   /**
    * Dispatch this task now even though the account it needs is at or past the 92% water mark.
    *

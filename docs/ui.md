@@ -103,6 +103,25 @@ the singular `workerId` beside it — so every piece was filed with no constrain
 ordinary dispatcher, and was handed the largest model in the fleet for work whose whole point was that it
 was small. A setting that is displayed and then not read is worse than one never offered.
 
+⛔ **The Conversation kind hides two pills, and hiding them is what it means.** A conversation is
+`Reuse` + `await human`, and both come from the kind rather than from the row: `resolveFinishPolicy`
+and `resolveSessionSharing` answer `await-human` and `on` off a conversation task **above the project
+and the fleet**, so a project set to `commit-and-merge` cannot land a chat. The composer therefore
+draws neither pill — a control offering a choice that is not on the table is worse than a missing one
+— and files the task with both fields on `inherit`, which is the value that keeps the kind answering.
+The thread shows the same two as read-only facts.
+
+⛔ **A conversation's thread offers Finish · Stop · Commit, and Commit is drawn only when git says
+there is something to commit.** `task.pendingWork` reads the workspace at the moment the card renders;
+`hasDiff` counts **uncommitted** files only, because an unlanded commit is already safe on the branch
+and warning about it would cry wolf on every conversation that did commit. Finish releases the
+workspace, so over a dirty tree it arms once and says what it would lose before it will do it. The
+Commit menu offers the finish ladder minus `await-human` (which is what the conversation is already
+doing) and `custom` (an instruction about the project's own finish, not about this commit); picking a
+rung writes it to the task and asks the agent — in the same session, so it still has the context — to
+commit and report complete, after which the ordinary landing path runs that rung. ⚠️ It asks rather
+than commits because the daemon never authors a commit; see [`landing.md`](landing.md).
+
 ⛔ **A pill's menu is rendered into a portal at the document root, positioned by `lib/menuposition.ts`.**
 It used to be an absolutely positioned child of the pill, which every scroll container between it and the
 page could clip — and the Plan & Split row *is* one, because `overflow-x: auto` makes a box a scroll
@@ -111,7 +130,7 @@ the root nothing can clip it; the placement flips **above** the pill when the wi
 which is the ordinary case for a composer sitting near the bottom of the window.
 
 ⭐ **A task's thread says which kind of task it is, and a subtask says whose plan it belongs to.** The
-facts column carries `type` (`Task` or `Plan & Split`) first, because it changes what everything under it
+facts column carries `type` (`Task`, `Plan & Split` or `Conversation`) first, because it changes what everything under it
 means; `parent`, for a piece of a split — ⛔ **lineage is not a dependency**, the edge points the other
 way, so neither the `depends on` nor the `blocks` list can ever name it; `pieces`, with how each one
 turned out, failures included; and `each piece`, which reads back the accounts and models the Pieces row
