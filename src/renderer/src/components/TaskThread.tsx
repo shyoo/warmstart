@@ -1186,7 +1186,7 @@ function PausedQuotaBanner({
             options={[
               { value: '', label: 'Auto (scheduler decides)' },
               ...fleet
-                .filter((e) => e.worker.enabled)
+                .filter((e) => e.worker.enabled || e.worker.id === selectedWorkerId)
                 .map((e) => ({
                   value: e.worker.id,
                   label: `${e.worker.label} (${e.worker.adapterId})`
@@ -1528,10 +1528,17 @@ function Decide({
               ariaLabel="Reassign worker"
               options={[
                 { value: '', label: 'Auto (scheduler decides)' },
-                ...fleet.map((e) => ({
-                  value: e.worker.id,
-                  label: `${e.worker.label} (${e.worker.adapterId})`
-                }))
+                /* ⛔ Deactivated accounts are not offered. Reassigning to a disabled worker
+                   parks the task on an account the scheduler will never hand a turn, so the menu
+                   lists only what can actually pick the work up. The one exception is the account
+                   this task is already pinned to — if it was deactivated after assignment it stays
+                   in the list, so the button reads its label instead of a bare id. */
+                ...fleet
+                  .filter((e) => e.worker.enabled || e.worker.id === selectedWorkerId)
+                  .map((e) => ({
+                    value: e.worker.id,
+                    label: `${e.worker.label} (${e.worker.adapterId})`
+                  }))
               ]}
               onChange={(nextWorkerId) => {
                 setSelectedWorkerId(nextWorkerId)
