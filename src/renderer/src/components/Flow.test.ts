@@ -60,6 +60,7 @@ function mockTask(over: Partial<Task> = {}): Task {
     holdReason: null,
     holdUntil: null,
     quotaOverrideUntil: null,
+    quotaPreemptWarning: null,
     branch: null,
     firstRunAt: null,
     lastRunEndedAt: null,

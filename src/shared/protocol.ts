@@ -1302,9 +1302,9 @@ export interface RpcMap {
    * ⛔ **An override of one number, granted by a person, expiring with the window it overrules.**
    * The water mark is this fleet's own caution — the vendor served every turn up to it — and on a
    * task pinned to a single account there was no way to say *"the remaining 8% is more than this
-   * needs"*. It lifts the dispatch gate and the matching mid-run percentage preempt, and it lifts
-   * nothing else: a disabled or signed-out account, a worker at capacity, the window boundary
-   * itself, and a turn the vendor **refused** are all untouched.
+   * needs"*. It lifts the dispatch gate and either avoidable mid-run quota preempt: the percentage
+   * cliff and the early wrap-up before a known window boundary. It lifts nothing else: a disabled
+   * or signed-out account, a worker at capacity, and a turn the vendor **refused** are untouched.
    *
    * ⚠️ `until` defaults to the reset of the window being overruled, so the permission dies with its
    * own reason. Pass `until: null` to withdraw one. `applies` is false when the task is not

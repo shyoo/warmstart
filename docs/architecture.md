@@ -183,7 +183,7 @@ path would have re-asked an agent to commit on every completion. In each case th
 function of state the action has not changed yet.
 
 **Record the ask, with the evidence that would prove it landed** — `clock_move`, the `preempting` set,
-`finish_asked_at` — and owe a re-read before acting on the far side of the wait. ⚠️ "A turn happened"
+`quota_preempt_json`, `finish_asked_at` — and owe a re-read before acting on the far side of the wait. ⚠️ "A turn happened"
 is not that evidence: an agent replying *"I don't understand /compact"* is a turn. Compaction is
 proved by `tokensSinceCompact` falling; a keepalive by the TTL moving. And the clock **stops asking**
 after `MAX_MOVE_ATTEMPTS`. See [`cost-model.md`](cost-model.md) §4.

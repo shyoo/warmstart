@@ -214,13 +214,13 @@ describe('a run past its estimate', () => {
  */
 describe('the switches that gate all of this', () => {
   /** A worker whose window closes inside the preempt margin, from a live rate-limit record. */
-  function seedClosingWindow(workerId: string): void {
+  function seedClosingWindow(workerId: string, resetInMs = 10 * 60_000): void {
     db.db()
       .prepare(
         `insert into rate_limit_samples (worker_id, session_id, window_id, status, resets_at, sampled_at)
          values (?,?,?,?,?,?)`
       )
-      .run(workerId, null, '5h', 'allowed', Date.now() + 60_000, Date.now())
+      .run(workerId, null, '5h', 'allowed', Date.now() + resetInMs, Date.now())
   }
 
   it('leaves a closing window alone when preemption is off', async () => {
@@ -247,6 +247,17 @@ describe('the switches that gate all of this', () => {
     seedClosingWindow(tasks.requireRun(run.id).workerId)
 
     await scheduler.tick()
+    const warning = tasks.requireTask(task.id).quotaPreemptWarning
+    expect(warning?.trigger).toBe('window')
+    expect(warning?.preemptAt).toBe(Date.now() + scheduler.QUOTA_PREEMPT_WARNING_MS)
+    expect(wrapUpsOn(task.id)).toBe(0)
+
+    await vi.advanceTimersByTimeAsync(scheduler.QUOTA_PREEMPT_WARNING_MS - 1)
+    await scheduler.tick()
+    expect(wrapUpsOn(task.id)).toBe(0)
+
+    await vi.advanceTimersByTimeAsync(1)
+    await scheduler.tick()
     await vi.advanceTimersByTimeAsync(130_000)
 
     expect(tasks.requireRun(run.id).outcome).toBe('preempted')
@@ -254,6 +265,41 @@ describe('the switches that gate all of this', () => {
     // carries it and resumes itself. Nobody has to come back and press anything.
     expect(tasks.getTask(task.id)?.status).toBe('paused_quota')
     expect(tasks.getTask(task.id)?.notBefore).not.toBeNull()
+  })
+
+  it('lets a person override during the warning without losing the running session', async () => {
+    const { task, run } = seedRunawayTask(0)
+    const workerId = tasks.requireRun(run.id).workerId
+    seedClosingWindow(workerId)
+
+    await scheduler.tick()
+    const warning = tasks.requireTask(task.id).quotaPreemptWarning
+    expect(warning).not.toBeNull()
+
+    tasks.setQuotaOverride(task.id, warning!.resumeAt)
+    expect(tasks.requireTask(task.id).quotaPreemptWarning).toBeNull()
+    await vi.advanceTimersByTimeAsync(30_000)
+    await scheduler.tick()
+
+    expect(wrapUpsOn(task.id)).toBe(0)
+    expect(tasks.requireRun(run.id).endedAt).toBeNull()
+    expect(tasks.requireTask(task.id).status).toBe('running')
+  })
+
+  it('does not delay a vendor refusal behind an earlier override prompt', async () => {
+    const { task, run } = seedRunawayTask(0)
+    const workerId = tasks.requireRun(run.id).workerId
+    seedClosingWindow(workerId)
+    await scheduler.tick()
+    expect(tasks.requireTask(task.id).quotaPreemptWarning).not.toBeNull()
+
+    seedRateLimit(workerId, 'five_hour', 'rejected', Date.now() + 3_600_000)
+    await scheduler.tick()
+    expect(tasks.requireTask(task.id).quotaPreemptWarning).toBeNull()
+    await vi.advanceTimersByTimeAsync(130_000)
+
+    expect(tasks.requireRun(run.id).outcome).toBe('preempted')
+    expect(tasks.requireTask(task.id).status).toBe('paused_quota')
   })
 
   it('never stops a runaway until somebody asks for it', async () => {
@@ -371,10 +417,51 @@ describe('the switches that gate all of this', () => {
       .run(workerId, '5h', '5-hour', 96, Date.now() + 3_600_000, 'probe', Date.now())
 
     await scheduler.tick()
+    expect(tasks.requireTask(task.id).quotaPreemptWarning?.trigger).toBe('overrun')
+    await vi.advanceTimersByTimeAsync(scheduler.QUOTA_PREEMPT_WARNING_MS)
+    await scheduler.tick()
     await vi.advanceTimersByTimeAsync(130_000)
 
     expect(tasks.requireRun(run.id).outcome).toBe('preempted')
     expect(tasks.getTask(task.id)?.status).toBe('paused_quota')
+  })
+
+  /**
+   * ⛔ **The minute is a deadline, not a countdown that re-arms.** The watchdog re-evaluates the
+   * same trigger every ten seconds, and the reading behind it moves; if a fresher percentage wrote a
+   * fresh `preemptAt`, an account climbing one point at a time would postpone its own preemption
+   * indefinitely and the grace period would become a way of never acting at all.
+   */
+  it('sharpens its reason on a newer reading without buying another minute', async () => {
+    const { task, run } = seedRunawayTask(0)
+    const workerId = tasks.requireRun(run.id).workerId
+    const seedPercent = (percent: number): void => {
+      db.db()
+        .prepare(
+          `insert into quota_samples (worker_id, window_id, label, percent, resets_at, source, sampled_at)
+           values (?,?,?,?,?,?,?)`
+        )
+        .run(workerId, '5h', '5-hour', percent, Date.now() + 3_600_000, 'probe', Date.now())
+    }
+
+    seedPercent(96)
+    await scheduler.tick()
+    const first = tasks.requireTask(task.id).quotaPreemptWarning
+    expect(first?.reason).toContain('96%')
+    const posted = tasks.messagesFor(task.id).filter((m) => m.text.includes('Quota preemption warning')).length
+    expect(posted).toBe(1)
+
+    await vi.advanceTimersByTimeAsync(30_000)
+    seedPercent(98)
+    await scheduler.tick()
+
+    const second = tasks.requireTask(task.id).quotaPreemptWarning
+    expect(second?.preemptAt).toBe(first?.preemptAt)
+    expect(second?.reason).toContain('98%')
+    expect(wrapUpsOn(task.id)).toBe(0)
+    expect(
+      tasks.messagesFor(task.id).filter((m) => m.text.includes('Quota preemption warning')).length
+    ).toBe(posted)
   })
 
   /**
@@ -493,6 +580,9 @@ describe('the switches that gate all of this', () => {
 
       seedRateLimit(workerId, 'five_hour', 'allowed_warning', Date.now() + 3_600_000)
 
+      await scheduler.tick()
+      expect(tasks.requireTask(task.id).quotaPreemptWarning?.trigger).toBe('overrun')
+      await vi.advanceTimersByTimeAsync(scheduler.QUOTA_PREEMPT_WARNING_MS)
       await scheduler.tick()
       await vi.advanceTimersByTimeAsync(130_000)
 

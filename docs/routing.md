@@ -94,7 +94,7 @@ export function atCapacity(
 - **Pool-aware lookup:** Multi-pool workers (such as Google Antigravity, which meters Gemini separately from Claude/GPT) look up the specific quota pool matching the task's resolved model (`resolveModelChoice`).
 - **Freshness & Expiry:** Quota readings that have passed their `resetsAt` time or are stale are marked `quotaUnverified: true` and are **not** blocked (allowing CLIs without usage probes to operate).
 - **The 92% Gate (`QUOTA_HIGH_WATER = 92`):** If a trusted pool reading is ≥ 92%, the candidate is excluded with `${worker.label} at X% of its window`, and `quotaHoldUntil` is set to the window's `resetsAt` timestamp.
-- **The Human 92% Override (`task.overrideQuota`):** 92% is a caution, not a vendor rejection. An operator can overrule the 92% gate for a pinned task. The override lifts the dispatch cut and matching 95% preemption cliff, but **never** bypasses `windowRisk` scoring, vendor `rejected` rate-limits, or disabled account gates.
+- **The Timed Human Override (`task.overrideQuota`):** 92% and the early wrap-up before a known reset are cautions from this fleet, not vendor rejections. An avoidable mid-run quota preemption first writes a durable 60-second warning (`quota_preempt_json`), posts it to the thread, and exposes **Override preemption** with a live countdown. The watchdog re-reads the trigger after the minute; a changing percentage updates the reason without restarting the deadline. The override lasts until that window resets and lifts the dispatch cut, matching 95% cliff, and early boundary wrap-up, but **never** bypasses `windowRisk` scoring, vendor `rejected` rate-limits, or disabled account gates. A rejection is immediate because the turn has already been refused.
 
 ---
 

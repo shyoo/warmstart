@@ -49,6 +49,7 @@ import {
   runsFor,
   schedulingOrder,
   setHoldReason,
+  setQuotaPreemptWarning,
   markConflictAsked,
   markResolveRetryAsked,
   markFinishAsked,
@@ -236,6 +237,9 @@ export const QUOTA_MIDRUN_PREEMPT_WATER = 95
  */
 export const QUOTA_WARNED_PREEMPT_WATER = 50
 
+/** Time for a watching operator to overrule an automatic, still-avoidable quota preemption. */
+export const QUOTA_PREEMPT_WARNING_MS = 60_000
+
 /** How long a task may be parked when nothing will say when the window actually resets. */
 const BLIND_PARK_MS = 5 * 60 * 60 * 1000
 
@@ -275,7 +279,7 @@ export function overrunVerdict(
      */
     quotaOverride?: boolean
   } = {}
-): { reason: string; resumeAt: number } | null {
+): { reason: string; resumeAt: number; overridable: boolean } | null {
   const park = (sample: LiveRateLimit | null): number =>
     (sample?.resetsAt && sample.resetsAt > Date.now() ? sample.resetsAt : null) ??
     windowResetsAt(workerId)?.at ??
@@ -286,7 +290,8 @@ export function overrunVerdict(
   if (refused) {
     return {
       reason: `vendor refused the turn (${refused.status} on ${refused.windowId})`,
-      resumeAt: park(refused)
+      resumeAt: park(refused),
+      overridable: false
     }
   }
 
@@ -299,7 +304,11 @@ export function overrunVerdict(
   if (opts.quotaOverride) return null
 
   if (percent >= QUOTA_MIDRUN_PREEMPT_WATER) {
-    return { reason: `${percent}% of 5h window used`, resumeAt: park(sessionRateLimit(workerId)) }
+    return {
+      reason: `${percent}% of 5h window used`,
+      resumeAt: park(sessionRateLimit(workerId)),
+      overridable: true
+    }
   }
 
   // Two signals about the *same* window. Neither would act alone at this level.
@@ -312,7 +321,8 @@ export function overrunVerdict(
   ) {
     return {
       reason: `${percent}% of 5h window used, and the vendor is warning about it (${warned.status})`,
-      resumeAt: park(warned)
+      resumeAt: park(warned),
+      overridable: true
     }
   }
 
@@ -2575,6 +2585,55 @@ const WRAP_UP_GRACE_MS = 120_000
  */
 const preempting = new Set<string>()
 
+/** Give a watching operator one durable minute to overrule an avoidable quota preemption. */
+async function warnBeforeQuotaPreempt(
+  task: Task,
+  session: Session,
+  trigger: 'window' | 'overrun',
+  resumeAt: number,
+  reason: string
+): Promise<boolean> {
+  const now = Date.now()
+  const current = requireTask(task.id)
+  if (quotaOverridden(current, now)) {
+    if (current.quotaPreemptWarning) setQuotaPreemptWarning(task.id, null)
+    return false
+  }
+
+  const existing = current.quotaPreemptWarning
+  if (!existing || existing.trigger !== trigger) {
+    const preemptAt = trigger === 'window'
+      ? Math.min(now + QUOTA_PREEMPT_WARNING_MS, resumeAt)
+      : now + QUOTA_PREEMPT_WARNING_MS
+    const graceSeconds = Math.max(0, Math.ceil((preemptAt - now) / 1000))
+    setQuotaPreemptWarning(task.id, { trigger, reason, preemptAt, resumeAt })
+    addMessage(
+      task.id,
+      'system',
+      `Quota preemption warning: ${reason}. Automatic preemption in ` +
+        `${graceSeconds} seconds unless a person overrides it.`
+    )
+    log.warn(
+      `t${task.seq} will be preempted for quota in ${graceSeconds}s ` +
+        `unless overridden (${reason})`
+    )
+    return true
+  }
+
+  // A changing percentage may sharpen the explanation, but it must not restart the countdown.
+  const warning =
+    existing.reason === reason && existing.resumeAt === resumeAt
+      ? existing
+      : { ...existing, reason, resumeAt }
+  if (warning !== existing) setQuotaPreemptWarning(task.id, warning)
+  if (now < warning.preemptAt) return true
+
+  setQuotaPreemptWarning(task.id, null)
+  log.warn(`t${task.seq} preempted after its quota override window elapsed (${reason})`)
+  await preempt(task, session, resumeAt, reason)
+  return true
+}
+
 /**
  * ⛔ Runs before dispatch on every tick, and costs nothing: every input is already in the database.
  *
@@ -2646,9 +2705,22 @@ async function runWatchdogs(): Promise<void> {
     const project = task.projectId ? getProject(task.projectId) : null
     const taskObjective = resolveObjective(project?.config?.objective, task.objective, switches.objective)
     const margin = policy(taskObjective).preemptMarginMs
-    if (switches.autoPreempt && reset && reset.at - Date.now() <= margin && task.preemptible) {
-      await preempt(task, session, reset.at, reset.source)
+
+    // A rejection outranks an earlier caution. The turn has already failed, so leaving a stored
+    // boundary warning in front of this check would misleadingly offer a choice for another minute.
+    const refused =
+      switches.autoOverrunPreempt && task.preemptible
+        ? overrunVerdict(run.workerId, null, { quotaOverride: quotaOverridden(task) })
+        : null
+    if (refused) {
+      if (task.quotaPreemptWarning) setQuotaPreemptWarning(task.id, null)
+      log.warn(`t${task.seq} preempted for quota overrun risk (${refused.reason})`)
+      await preempt(task, session, refused.resumeAt, refused.reason)
       continue
+    }
+
+    if (switches.autoPreempt && reset && reset.at - Date.now() <= margin && task.preemptible) {
+      if (await warnBeforeQuotaPreempt(task, session, 'window', reset.at, reset.source)) continue
     }
 
     // 2. Active 5h quota exhaustion, or a vendor refusal mid-stream.
@@ -2674,11 +2746,28 @@ async function runWatchdogs(): Promise<void> {
         quotaOverride: quotaOverridden(task)
       })
       if (verdict) {
-        log.warn(`t${task.seq} preempted for quota overrun risk (${verdict.reason})`)
-        await preempt(task, session, verdict.resumeAt, verdict.reason)
+        if (verdict.overridable) {
+          if (
+            await warnBeforeQuotaPreempt(
+              task,
+              session,
+              'overrun',
+              verdict.resumeAt,
+              verdict.reason
+            )
+          ) {
+            continue
+          }
+        } else {
+          log.warn(`t${task.seq} preempted for quota overrun risk (${verdict.reason})`)
+          await preempt(task, session, verdict.resumeAt, verdict.reason)
+        }
         continue
       }
     }
+
+    // The trigger was re-read above and no longer exists. Its prompt must disappear with it.
+    if (task.quotaPreemptWarning) setQuotaPreemptWarning(task.id, null)
 
     // 2. A runaway. Nothing to compare against means it cannot be one - being first is not a crime.
     // ⛔ Opted into, and off by default. See `autoRunawayStop` in settings.ts for why this trigger is

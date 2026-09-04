@@ -446,15 +446,29 @@ export interface Task {
    *
    * ⛔ **It overrules a percentage of ours and nothing else.** The 92% gate is this fleet's own
    * caution, computed from a reading; it is not the vendor declining anything. So an override lets
-   * the dispatch gate and the mid-run percentage preempt pass, and leaves untouched every gate that
-   * rests on something other than a percentage — a disabled or signed-out account, a worker at
-   * capacity, the window boundary itself, and above all a turn the vendor actually **refused**,
-   * which no operator setting can talk out of having happened.
+   * the dispatch gate, the mid-run percentage preempt, and the early window-boundary preempt pass.
+   * It leaves untouched every gate that rests on something else — a disabled or signed-out account,
+   * a worker at capacity, and above all a turn the vendor actually **refused**, which no operator
+   * setting can talk out of having happened.
    *
    * ⚠️ A deadline, not a boolean, and it is written from the reset of the window being overruled —
    * so the permission expires with the reason for it, whether or not anything ran meanwhile.
    */
   quotaOverrideUntil: number | null
+  /**
+   * A deterministic grace period before an automatic quota preemption.
+   *
+   * ⛔ Persisted before it is shown: every watchdog tick re-evaluates the trigger, so an in-memory
+   * countdown would restart on daemon restart and could postpone the action forever. `trigger`
+   * identifies the evidence class; changing percentages update the reason without buying another
+   * minute. A vendor refusal is never represented here because the turn has already been denied.
+   */
+  quotaPreemptWarning: {
+    trigger: 'window' | 'overrun'
+    reason: string
+    preemptAt: number
+    resumeAt: number
+  } | null
   branch: string | null
   /**
    * The ref this task's work lands onto, or null to take the project's.

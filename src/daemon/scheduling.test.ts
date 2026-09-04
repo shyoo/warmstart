@@ -104,6 +104,7 @@ function makeTask(overrides: Partial<Task> = {}): Task {
     holdReason: overrides.holdReason ?? null,
     holdUntil: overrides.holdUntil ?? null,
     quotaOverrideUntil: overrides.quotaOverrideUntil ?? null,
+    quotaPreemptWarning: overrides.quotaPreemptWarning ?? null,
     branch: overrides.branch ?? null,
     firstRunAt: overrides.firstRunAt ?? null,
     lastRunEndedAt: overrides.lastRunEndedAt ?? null,

@@ -270,6 +270,24 @@ describe('task.overrideQuota', () => {
     expect(result.task.quotaOverrideUntil).toBe(resetsAt)
   })
 
+  it('answers a live preemption warning and keeps its measured window boundary', async () => {
+    const worker = seedWorker('ClaudeThird')
+    const task = pinnedTask(worker.id)
+    const resumeAt = Date.now() + RESET_IN_MS
+    tasks.setQuotaPreemptWarning(task.id, {
+      trigger: 'window',
+      reason: 'Claude 5h resets soon',
+      preemptAt: Date.now() + 60_000,
+      resumeAt
+    })
+
+    const result = await handlers()['task.overrideQuota']({ id: task.id })
+    expect(result.applies).toBe(true)
+    expect(result.until).toBe(resumeAt)
+    expect(result.task.quotaOverrideUntil).toBe(resumeAt)
+    expect(result.task.quotaPreemptWarning).toBeNull()
+  })
+
   it('says so plainly when the grant changes nothing right now', async () => {
     const worker = seedWorker('ClaudeThird')
     seedQuota(worker.id, 5)

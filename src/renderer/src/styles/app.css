@@ -3129,6 +3129,12 @@ select:focus-visible,
   overflow-wrap: anywhere;
 }
 
+/* The one fact that is counting down to an action. Warning colour, not danger: the whole point of
+   the minute is that nothing has happened yet and a person can still decide it. */
+.quota-countdown {
+  color: var(--state-warn);
+}
+
 .dep-list {
   display: flex;
   flex-direction: column;

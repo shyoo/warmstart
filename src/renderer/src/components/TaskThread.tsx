@@ -1632,10 +1632,17 @@ function Decide({
 }
 
 /**
- * Run this now anyway, at 92% of a window.
+ * Run this now anyway, at 92% of a window — or keep a run alive through the minute before an
+ * automatic quota preemption.
  *
- * ⛔ **Shown only when the hold is one the fleet invented for itself.** The water mark is a caution
- * computed from a reading — the vendor served every turn up to it — and on a task pinned to one
+ * ⛔ **The countdown is the daemon's, not this component's.** `quotaPreemptWarning` is written to
+ * the database before it is ever shown, so the deadline survives a reload and a restart of the app
+ * that is displaying it; the renderer only subtracts a ticking clock from a number it was given. A
+ * vendor **refusal** never appears here, because that turn has already been declined and there is
+ * nothing left to choose.
+ *
+ * ⛔ **Otherwise shown only when the hold is one the fleet invented for itself.** The water mark is
+ * a caution computed from a reading — the vendor served every turn up to it — and on a task pinned to one
  * account there was no way to say *"8% is more than this needs"*. Every other hold on this row ends
  * when something else happens (a run finishes, a dependency completes, somebody signs in) and has
  * nothing here to overrule, so no button appears on one. ⚠️ Matched on the sentence the gate writes,
@@ -1659,8 +1666,9 @@ function QuotaOverride({
   const held =
     (task.status === 'ready' && /% of its .* window/.test(task.holdReason ?? '')) ||
     task.status === 'paused_quota'
+  const warning = task.status === 'running' ? task.quotaPreemptWarning : null
   const live = task.quotaOverrideUntil !== null && task.quotaOverrideUntil > now
-  if (!held && !live) return null
+  if (!held && !live && !warning) return null
 
   // ⚠️ `withdraw` sends an explicit `null`; granting sends no `until` at all, so the daemon dates
   // the permission from the window it measured rather than from a clock in the renderer.
@@ -1685,22 +1693,35 @@ function QuotaOverride({
         </>
       ) : (
         <>
+          {warning && (
+            <span className="quota-countdown">
+              Preempts in {duration(Math.max(0, warning.preemptAt - now))}: {warning.reason}.{' '}
+            </span>
+          )}
           <button
             className="btn btn--warn"
             disabled={busy}
             title={
-              task.status === 'paused_quota'
-                ? 'Override preemption and resume this task immediately even though the account is at or past 92% of its window.'
-                : 'Dispatch this task even though the account is at or past 92% of its window. Expires when that window resets. ⚠️ A turn the vendor actually refuses still stops the run, and so does the window boundary itself.'
+              warning
+                ? 'Keep this run going until the quota window resets rather than wrapping it up now. A turn the vendor actually refuses will still stop it.'
+                : task.status === 'paused_quota'
+                  ? 'Override preemption and resume this task immediately even though the account is at or past 92% of its window.'
+                  : 'Dispatch this task even though the account is at or past 92% of its window. Expires when that window resets. ⚠️ A turn the vendor actually refuses still stops the run, and so does the window boundary itself.'
             }
             onClick={() => void set(false)}
           >
-            {task.status === 'paused_quota' ? 'Override & continue' : 'Run now anyway'}
+            {warning
+              ? 'Override preemption'
+              : task.status === 'paused_quota'
+                ? 'Override & continue'
+                : 'Run now anyway'}
           </button>{' '}
           <span className="dim">
-            {task.status === 'paused_quota'
-              ? 'resumes immediately and overrides the quota gate'
-              : 'spends into the window this task is waiting on'}
+            {warning
+              ? `keeps this run going until ${new Date(warning.resumeAt).toLocaleTimeString()}`
+              : task.status === 'paused_quota'
+                ? 'resumes immediately and overrides the quota gate'
+                : 'spends into the window this task is waiting on'}
           </span>
         </>
       )}

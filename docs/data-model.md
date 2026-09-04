@@ -60,7 +60,7 @@ the first. Both are required and `paths.test.ts` fails if either is removed.
 | `clock_events` | every cache-clock decision, including the no-ops | |
 | `compactions` | a compaction as an **ask** with a before and an after | a row that never landed stays visible |
 | `projects` | a directory plus policy | policy is committed in `.multi_agent_controller/project.json`; state is private |
-| `tasks` | the DAG | `status`, `kind`, `priority`, mandate, budget, the three inherited policies, `auto_compact`, `hold_until`, `quota_override_until`, `title_summary`, `resolve_retry_asked_at`, `landed_base_sha`/`landed_head_sha`, `quality_review_*`, **`landing_target`**, **`child_defaults_json`** |
+| `tasks` | the DAG | `status`, `kind`, `priority`, mandate, budget, the three inherited policies, `auto_compact`, `hold_until`, `quota_override_until`, **`quota_preempt_json`**, `title_summary`, `resolve_retry_asked_at`, `landed_base_sha`/`landed_head_sha`, `quality_review_*`, **`landing_target`**, **`child_defaults_json`** |
 | `task_deps` | prerequisite edges | cycle-checked on insert; **`require`** is what counts as met — see below |
 | `task_messages` | the thread | `delivered_at` marks what has reached a session |
 | `attachments` | image metadata; bytes under `<dataDir>/attachments/` | `attachments.ts` is the only writer |

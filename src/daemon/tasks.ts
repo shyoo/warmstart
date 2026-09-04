@@ -86,6 +86,7 @@ interface TaskRow {
   hold_reason: string | null
   hold_until: number | null
   quota_override_until: number | null
+  quota_preempt_json: string | null
   branch: string | null
   landing_target: string | null
   child_defaults_json: string | null
@@ -205,6 +206,9 @@ function toTask(r: TaskRow, timing: ActiveTiming = ZERO_TIMING): Task {
     holdReason: r.hold_reason,
     holdUntil: r.hold_until,
     quotaOverrideUntil: r.quota_override_until,
+    quotaPreemptWarning: r.quota_preempt_json
+      ? (JSON.parse(r.quota_preempt_json) as Task['quotaPreemptWarning'])
+      : null,
     branch: r.branch,
     landingTarget: r.landing_target ?? null,
     childDefaults: parseChildDefaults(r.child_defaults_json),
@@ -908,7 +912,7 @@ export function setStatus(taskId: string, status: TaskStatus, extra: Partial<Tas
     .prepare(
       `update tasks set status = ?, assignee = ?, branch = coalesce(?, branch),
                         handoff_note = coalesce(?, handoff_note), hold_reason = ?, hold_until = ?,
-                        updated_at = ?
+                        quota_preempt_json = null, updated_at = ?
         where id = ?`
     )
     .run(
@@ -976,8 +980,29 @@ export function setHoldReason(taskId: string, reason: string | null, until: numb
 export function setQuotaOverride(taskId: string, until: number | null): Task {
   requireTask(taskId)
   db()
-    .prepare('update tasks set quota_override_until = ?, updated_at = ? where id = ?')
-    .run(until, Date.now(), taskId)
+    .prepare(
+      `update tasks
+          set quota_override_until = ?,
+              quota_preempt_json = case when ? is not null then null else quota_preempt_json end,
+              updated_at = ?
+        where id = ?`
+    )
+    .run(until, until, Date.now(), taskId)
+  const task = requireTask(taskId)
+  emit({ type: 'task.changed', task })
+  return task
+}
+
+/** Record or clear the durable grace period before an automatic quota preemption. */
+export function setQuotaPreemptWarning(
+  taskId: string,
+  warning: Task['quotaPreemptWarning']
+): Task {
+  const current = requireTask(taskId)
+  if (JSON.stringify(current.quotaPreemptWarning) === JSON.stringify(warning)) return current
+  db()
+    .prepare('update tasks set quota_preempt_json = ?, updated_at = ? where id = ?')
+    .run(warning ? JSON.stringify(warning) : null, Date.now(), taskId)
   const task = requireTask(taskId)
   emit({ type: 'task.changed', task })
   return task

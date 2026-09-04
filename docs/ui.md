@@ -141,6 +141,10 @@ whose entire design is to be invisible.
 - ⛔ **A held task says *why*, and says *when* where the refusal has an end.** `ready` on its own is
   unreadable: it is the scheduler's word for *eligible*, and a person who just filed a task reads it
   as *waiting for me*.
+- ⛔ **An avoidable quota preemption warns before it acts.** The running task's quota-gate fact shows
+  the persisted one-minute countdown, its reason, and **Override preemption**; clicking it keeps the
+  same session running until the measured window reset. A vendor refusal is not offered as a choice
+  because the turn has already failed.
 - ⛔ **`awaiting_human` must offer somewhere to answer.** It is the one status explicitly about the
   operator, and it was once the only resting state with nothing to press.
 - ⛔ **A run's `completed` beside a task's `awaiting_human` is not a contradiction** — the UI has to

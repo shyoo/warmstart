@@ -1375,6 +1375,21 @@ const MIGRATIONS: Migration[] = [
     if (!hasColumn(conn, 'tasks', 'child_defaults_json')) {
       conn.exec('alter table tasks add column child_defaults_json text;')
     }
+  },
+
+  // 42 - the one-minute, operator-overridable warning before an automatic quota preemption.
+  //
+  // ⛔ **The countdown is durable evidence, not UI state.** The watchdog runs every ten seconds and
+  // re-evaluates the same trigger; without a stored first-seen deadline, every tick (and every daemon
+  // restart) could create a fresh minute and the preemption would never land. One JSON value keeps
+  // the trigger, explanation, action deadline and eventual resume boundary atomic.
+  //
+  // ⚠️ Null on every existing task, so this migration changes no run until its watchdog records a
+  // warning. Guarded because migration replay is part of this database's test contract.
+  (conn) => {
+    if (!hasColumn(conn, 'tasks', 'quota_preempt_json')) {
+      conn.exec('alter table tasks add column quota_preempt_json text;')
+    }
   }
 ]
 

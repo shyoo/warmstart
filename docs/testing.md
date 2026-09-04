@@ -207,4 +207,6 @@ operator's own app, and ask before reaching for a kill.
   one, and CI depends on the distinction.
 - Report **numbers**, not "tests pass". They become the `Baseline` line in `HANDOFF.md`.
 - A new guard is not trusted until you have watched it go **red**.
+- A watchdog grace period needs three assertions: the first tick warns without acting, a tick before
+  the durable deadline still waits, and a tick at/after it acts only if the trigger remains true.
 - Two POSIX-only checks are skipped on Windows; that is expected, not a failure.

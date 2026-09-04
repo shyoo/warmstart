@@ -694,6 +694,7 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
       const pinned = before.constraints.workerId ? getWorker(before.constraints.workerId) : null
       const until =
         p.until ??
+        before.quotaPreemptWarning?.resumeAt ??
         before.holdUntil ??
         before.notBefore ??
         (pinned ? (windowResetsAt(pinned.id)?.at ?? null) : null) ??
@@ -707,7 +708,8 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
       }
       const applies =
         (before.status === 'ready' && before.holdUntil !== null && before.holdUntil > Date.now()) ||
-        resumed
+        resumed ||
+        before.quotaPreemptWarning !== null
       const reason = applies
         ? `${before.holdReason ?? (resumed ? 'preemption paused_quota' : 'the quota gate')} — overridden until ${new Date(until).toISOString()}`
         : 'nothing is holding this task on quota right now; the override is recorded and will ' +
