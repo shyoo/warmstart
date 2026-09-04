@@ -1092,6 +1092,13 @@ export function chooseTarget(task: Task): WorkerChoice {
     if (task.constraints.workerIds && task.constraints.workerIds.length > 0 && !task.constraints.workerIds.includes(worker.id)) continue
     if (task.constraints.adapterId && task.constraints.adapterId !== worker.adapterId) continue
 
+    // ⛔ Role gate: a worker with role 'controller' is reserved for judgment/consults only,
+    // not unattended work tasks.
+    if (worker.role === 'controller') {
+      reasons.push(`${worker.label} is controller only`)
+      continue
+    }
+
     // ⛔ Every way an *account* can be unfit to be handed a turn, in one shared list: disabled,
     // human-occupied, no CLI installed, checkably signed out, or held out by a run that produced
     // nothing. These used to be written out here and half-written in the controller, which is how

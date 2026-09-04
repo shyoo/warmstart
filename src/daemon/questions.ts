@@ -13,7 +13,7 @@ import { log } from './log.js'
 import { getSession } from './sessions.js'
 import { costModel } from './costmodel.js'
 import { adapter } from './adapters/index.js'
-import { addMessage, getTask, markDelivered, messagesFor, runForSession, setStatus } from './tasks.js'
+import { addMessage, getTask, markDelivered, messagesFor, onRunStart, onTaskSettled, runForSession, setStatus } from './tasks.js'
 
 /**
  * Questions.
@@ -453,21 +453,57 @@ export function parkQuestionsForSession(sessionId: string): number {
   return parked
 }
 
-/** A task that was deleted means its open questions are void. */
-export function voidQuestionsForTask(taskId: string): void {
-  for (const q of openQuestions()) {
-    if (q.taskId !== taskId) continue
-    const resolution = park(q.id, 'task was deleted')
+/** A task that was deleted or settled means its open questions are void. */
+export function voidQuestionsForTask(taskId: string, reason = 'task deleted'): void {
+  const open = rows<QuestionRow>(
+    db().prepare('select * from questions where task_id = ? and answered_at is null').all(taskId)
+  ).map(toQuestion)
+  for (const q of open) {
+    const resolution = park(q.id, reason)
     waiters.get(q.id)?.(resolution)
     const timer = timers.get(q.id)
     if (timer) clearTimeout(timer)
     timers.delete(q.id)
     waiters.delete(q.id)
     db().prepare('update questions set answered_at = ?, answer_json = ?, answered_by = ? where id = ?')
-      .run(Date.now(), JSON.stringify({ optionIds: [], text: 'task deleted' }), 'human', q.id)
+      .run(Date.now(), JSON.stringify({ optionIds: [], text: reason }), 'system', q.id)
     emit({ type: 'question.answered', question: requireQuestion(q.id) })
   }
 }
+
+/** Sweep any dangling questions on already settled tasks. */
+export function sweepSettledTaskQuestions(): number {
+  try {
+    const dangling = rows<QuestionRow>(
+      db().prepare(`
+        select q.* from questions q
+        join tasks t on q.task_id = t.id
+        where q.answered_at is null and t.status in ('completed', 'cancelled')
+      `).all()
+    )
+    for (const q of dangling) {
+      db().prepare(
+        "update questions set answered_at = ?, answer_json = ?, answered_by = 'system' where id = ?"
+      ).run(Date.now(), JSON.stringify({ optionIds: [], text: 'task settled' }), q.id)
+    }
+    return dangling.length
+  } catch {
+    return 0
+  }
+}
+
+// ⛔ Sweep any dangling questions on already settled tasks on startup
+sweepSettledTaskQuestions()
+
+onTaskSettled((taskId, status) => {
+  if (status === 'completed' || status === 'cancelled') {
+    voidQuestionsForTask(taskId, `task ${status}`)
+  }
+})
+
+onRunStart((taskId) => {
+  voidQuestionsForTask(taskId, 'task continued on new run')
+})
 
 // ---------------------------------------------------------------------------- reading
 
@@ -484,7 +520,7 @@ export function openQuestions(): Question[] {
       select q.* from questions q
       left join tasks t on q.task_id = t.id
       where q.answered_at is null
-        and (q.task_id is null or t.deleted_at is null)
+        and (q.task_id is null or (t.deleted_at is null and t.status not in ('completed', 'cancelled')))
       order by q.asked_at
     `).all()
   ).map(toQuestion)

@@ -116,7 +116,7 @@ async function probeEndpoint(
     try {
       const url = new URL('/v1/models', endpoint)
       const transport = url.protocol === 'https:' ? https : http
-      const req = transport.get(url, { timeout: 2_000 }, (res) => {
+      const req = transport.get(url, { timeout: 5_000 }, (res) => {
         let body = ''
         res.on('data', (d: Buffer) => { body += d.toString() })
         res.on('end', () => {
@@ -140,7 +140,7 @@ async function probeEndpoint(
       })
       req.on('timeout', () => {
         req.destroy()
-        done({ ok: false, models: [], error: 'timeout (2s)' })
+        done({ ok: false, models: [], error: 'timeout (5s)' })
       })
     } catch (err) {
       done({ ok: false, models: [], error: err instanceof Error ? err.message : String(err) })
@@ -337,12 +337,19 @@ export const localLlm: AgentAdapter = {
    * is genuinely nothing to probe. The staleness ladder treats this correctly — it never asks for
    * a refresh and the UI shows "not reported".
    */
-  async probeQuota(): Promise<Omit<QuotaSnapshot, 'workerId'>> {
+  async probeQuota(isolationRoot?: string): Promise<Omit<QuotaSnapshot, 'workerId'>> {
+    let error: string | undefined = undefined
+    if (isolationRoot) {
+      const probe = await probeEndpoint(isolationRoot)
+      if (!probe.ok) {
+        error = probe.error ?? 'could not connect'
+      }
+    }
     return {
       windows: [],
       sampledAt: Date.now(),
-      source: 'unknown',
-      error: 'local LLM — no subscription quota. The server has no rate limits.'
+      source: error ? 'unknown' : 'cli',
+      error
     }
   },
 

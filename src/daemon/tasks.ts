@@ -996,6 +996,20 @@ export function admitBlocked(): number {
   return released
 }
 
+type SettledListener = (taskId: string, status: TaskStatus) => void
+const settledListeners: SettledListener[] = []
+
+export function onTaskSettled(listener: SettledListener): void {
+  settledListeners.push(listener)
+}
+
+type RunStartListener = (taskId: string) => void
+const runStartListeners: RunStartListener[] = []
+
+export function onRunStart(listener: RunStartListener): void {
+  runStartListeners.push(listener)
+}
+
 /**
  * Write a task's status, and let the DAG act on it.
  *
@@ -1072,7 +1086,10 @@ export function setStatus(taskId: string, status: TaskStatus, extra: Partial<Tas
   // ⚠️ Every settled status, not only `completed`, because a `settled` edge releases on all three —
   // a planner waiting on its pieces has to be woken by the ones that failed. `admit()` still decides
   // per edge, so an ordinary `completed` edge is unmoved by a failure.
-  if (current.status !== status && SETTLED_STATUSES.includes(status)) admitDependents(taskId)
+  if (current.status !== status && SETTLED_STATUSES.includes(status)) {
+    admitDependents(taskId)
+    for (const fn of settledListeners) fn(taskId, status)
+  }
   return task
 }
 
@@ -1549,6 +1566,7 @@ export function startRun(input: {
     )
   stampPlan(id, [])
   bumpPricingEpoch()
+  for (const fn of runStartListeners) fn(input.taskId)
   const run = requireRun(id)
   emit({ type: 'run.changed', run })
   return run

@@ -92,7 +92,7 @@ import {
   removeRule,
   requestApproval
 } from './approvals.js'
-import { answerQuestion, askQuestion, openQuestions, questionsForTask } from './questions.js'
+import { answerQuestion, askQuestion, openQuestions, questionsForTask, voidQuestionsForTask } from './questions.js'
 import {
   addSplitDependency,
   applySplit,
@@ -622,12 +622,16 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
         // Reassigned to auto / scheduler choice: clear workerId, adapterId, model, effort
         const { workerId, adapterId, model, effort, ...rest } = task.constraints
         const isResting = !['running', 'assigned'].includes(task.status)
+        voidQuestionsForTask(task.id, 'task reassigned')
         return updateTask(p.id, {
           constraints: rest,
           ...(isResting ? { assigneeHint: null } : {})
         })
       }
       const worker = requireWorker(p.workerId)
+      if (task.constraints.workerId !== worker.id) {
+        voidQuestionsForTask(task.id, 'task reassigned')
+      }
       // If the adapter changed, clear model and effort because they belong to the previous adapter
       const adapterChanged = task.constraints.adapterId && task.constraints.adapterId !== worker.adapterId
       const constraints = checkConstraints({
@@ -691,7 +695,10 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
         ...(p.hard ? { hard: p.hard } : {}),
         requestedBy: 'human'
       }),
-    'task.resume': (p) => resumeTask(p.id),
+    'task.resume': (p) => {
+      voidQuestionsForTask(p.id, 'task resumed')
+      return resumeTask(p.id)
+    },
     /**
      * A person overruling the 92% water mark on one task.
      *
@@ -1312,7 +1319,10 @@ export function checkConstraints(c: TaskConstraints): TaskConstraints {
 
   if (c.workerIds) {
     for (const id of c.workerIds) {
-      requireWorker(id)
+      const w = requireWorker(id)
+      if (w.role === 'controller') {
+        throw new Error(`${w.label} has role 'controller' and cannot be assigned to work tasks`)
+      }
     }
   }
 
@@ -1355,6 +1365,9 @@ export function checkConstraints(c: TaskConstraints): TaskConstraints {
   let worker: Worker | null = null
   if (c.workerId) {
     worker = requireWorker(c.workerId)
+    if (worker.role === 'controller') {
+      throw new Error(`${worker.label} has role 'controller' and cannot be assigned to work tasks`)
+    }
     checked.adapterId = worker.adapterId
   }
 

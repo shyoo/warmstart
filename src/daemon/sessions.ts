@@ -16,7 +16,7 @@ import { db, row, rows } from './db.js'
 import { costModel } from './costmodel.js'
 import { adapter } from './adapters/index.js'
 import { samePath } from './fspath.js'
-import { refreshIdentity, requireWorker, watchReadiness } from './workers.js'
+import { getWorker, refreshIdentity, requireWorker, watchReadiness } from './workers.js'
 import { log } from './log.js'
 import { ensureDir, paths } from './paths.js'
 import { removeMcpConfig, writeMcpConfig } from './mcpconfig.js'
@@ -289,10 +289,17 @@ function toSession(r: SessionRow): Session {
  * measurement's clothes, and the reader has no way to tell. Unknown stays unknown.
  */
 function contextWindowFor(adapterId: string, model: string | null): number | null {
-  if (!model) return null
   try {
-    const spec = costModel(adapter(adapterId).info.policy.costModelId).modelSpec(model)
-    return spec?.context_window ?? null
+    const cm = costModel(adapter(adapterId).info.policy.costModelId)
+    if (model) {
+      const spec = cm.modelSpec(model)
+      if (spec?.context_window) return spec.context_window
+    }
+    if (adapterId === 'local-llm') {
+      const firstId = cm.modelIds()[0]
+      return (firstId ? cm.modelSpec(firstId)?.context_window : null) ?? 32768
+    }
+    return null
   } catch {
     // An unknown adapter or an unpriced model is a missing denominator, not a broken session.
     return null
@@ -550,6 +557,11 @@ export function sessionsAndWarmConversationsForWorker(workerId: string): Session
       )
       .all(workerId)
   ).map(toSession)
+
+  const worker = getWorker(workerId)
+  if (!worker || !adapter(worker.adapterId).info.capabilities.resumeSession) {
+    return liveRows
+  }
 
   const seenKeys = new Set<string>()
   for (const s of liveRows) {

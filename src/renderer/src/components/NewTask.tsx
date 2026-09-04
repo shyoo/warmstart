@@ -258,9 +258,9 @@ export function NewTask({
   const inheritedSharingShort = SHARING_SHORT[inheritedSharing.sharing] ?? inheritedSharing.sharing
   const inheritedSharingLong = SHARING_LABELS[inheritedSharing.sharing] ?? inheritedSharing.sharing
 
-  // ⛔ Only accounts that could actually take work. Offering a switched-off worker as a pin produces
-  // a task that waits forever on a candidate loop that will never match it.
-  const pinnable = fleet.filter((e) => e.worker.enabled).map((e) => e.worker)
+  // ⛔ Only accounts that could actually take work. Offering a switched-off worker or a controller-only
+  // worker as a pin produces a task that waits forever on a candidate loop that will never match it.
+  const pinnable = fleet.filter((e) => e.worker.enabled && e.worker.role !== 'controller').map((e) => e.worker)
   const pinned = pinnable.find((w) => w.id === prefs.workerId) ?? null
   const forAdapter = pinned ? (options.find((o) => o.adapterId === pinned.adapterId) ?? null) : null
   const canSetEffort = forAdapter?.selectableEffort ?? false

@@ -372,8 +372,29 @@ function WorkerCard({
       ) : windows.length === 0 ? (
         !suspect && (
           <div className="wcard-unknown">
-            <span className="dot dot--down" />
-            quota unknown
+            {worker.adapterId === 'local-llm' ? (
+              worker.identity?.loggedIn === true && !quota?.error ? (
+                <>
+                  <span className="dot dot--ok" />
+                  endpoint alive
+                </>
+              ) : worker.identity?.loggedIn === false || quota?.error ? (
+                <>
+                  <span className="dot dot--down" />
+                  endpoint offline
+                </>
+              ) : (
+                <>
+                  <span className="dot dot--down" />
+                  endpoint unprobed
+                </>
+              )
+            ) : (
+              <>
+                <span className="dot dot--down" />
+                quota unknown
+              </>
+            )}
           </div>
         )
       ) : (

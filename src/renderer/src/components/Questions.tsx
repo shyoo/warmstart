@@ -229,7 +229,13 @@ export function QuestionCard({
  * person answers about a task lives beside the composer — putting it in the read-only column on the
  * right would make it look like a fact rather than a prompt.
  */
-export function TaskQuestions({ taskId }: { taskId: string }): React.JSX.Element | null {
+export function TaskQuestions({
+  taskId,
+  taskStatus
+}: {
+  taskId: string
+  taskStatus?: string
+}): React.JSX.Element | null {
   const [open, setOpen] = useState<Question[]>([])
 
   const refresh = useCallback(() => {
@@ -249,6 +255,7 @@ export function TaskQuestions({ taskId }: { taskId: string }): React.JSX.Element
     }
   })
 
+  if (taskStatus === 'completed' || taskStatus === 'cancelled') return null
   if (open.length === 0) return null
   return (
     <div className="question-list">

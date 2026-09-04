@@ -84,10 +84,18 @@ describe('local-llm adapter unit tests', () => {
     expect(plan.args).toEqual(['--version'])
   })
 
-  it('probeQuota returns empty windows and informative error', async () => {
-    const quota = await ad.probeQuota('http://127.0.0.1:8080')
-    expect(quota.windows).toEqual([])
-    expect(quota.error).toContain('no subscription quota')
+  it('probeQuota returns empty windows and tests endpoint reachability', async () => {
+    // When unreachable:
+    const quotaUnreachable = await ad.probeQuota('http://127.0.0.1:1')
+    expect(quotaUnreachable.windows).toEqual([])
+    expect(quotaUnreachable.source).toBe('unknown')
+    expect(quotaUnreachable.error).toMatch(/connect|ECONNREFUSED/i)
+
+    // When isolationRoot not provided:
+    const quotaNone = await ad.probeQuota('')
+    expect(quotaNone.windows).toEqual([])
+    expect(quotaNone.source).toBe('cli')
+    expect(quotaNone.error).toBeUndefined()
   })
 
   it('encodeStreamPrompt serialises into Antigravity-compatible stream JSON', () => {

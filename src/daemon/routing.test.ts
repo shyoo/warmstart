@@ -1196,4 +1196,17 @@ describe('a task pinned to a list of accounts', () => {
     expect(resolveModelChoice(constraints, first, false).model).toBe('claude-haiku-4-5-20251001')
     expect(resolveModelChoice(constraints, second, false).model).toBe('claude-sonnet-5')
   })
+
+  it('rejects workers with role controller from taking work tasks', () => {
+    db.db().prepare('update workers set enabled = 0').run()
+    const ctrl = workers.createWorker({ adapterId: 'claude-code', label: 'Ctrl-only', enabled: true })
+    db.db().prepare('update workers set role = ? where id = ?').run('controller', ctrl.id)
+    const workTask = tasks.createTask({
+      title: 'a work task',
+      constraints: { workerId: ctrl.id }
+    })
+    const choice = scheduler.chooseTarget(workTask)
+    expect(choice.worker).toBeNull()
+    expect(choice.reason).toContain('controller only')
+  })
 })

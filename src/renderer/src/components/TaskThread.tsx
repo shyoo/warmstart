@@ -452,7 +452,7 @@ function TaskDetail({
           {/* ⛔ Between the conversation and the box for replying, because that is what it is: the
               agent's turn to speak ended with a question, and this is where the answer goes. In the
               ledger on the right it would read as a fact about the task rather than a prompt. */}
-          <TaskQuestions taskId={task.id} />
+          <TaskQuestions taskId={task.id} taskStatus={task.status} />
 
           {detail.previewPrompt && task.status !== 'draft' && task.status !== 'running' && (
             <div className="thread-preview-prompt">
@@ -1289,7 +1289,7 @@ function PausedQuotaBanner({
             options={[
               { value: '', label: 'Auto (scheduler decides)' },
               ...fleet
-                .filter((e) => e.worker.enabled || e.worker.id === selectedWorkerId)
+                .filter((e) => (e.worker.enabled && e.worker.role !== 'controller') || e.worker.id === selectedWorkerId)
                 .map((e) => ({
                   value: e.worker.id,
                   label: `${e.worker.label} (${e.worker.adapterId})`
@@ -1757,7 +1757,7 @@ function Decide({
                    this task is already pinned to — if it was deactivated after assignment it stays
                    in the list, so the button reads its label instead of a bare id. */
                 ...fleet
-                  .filter((e) => e.worker.enabled || e.worker.id === selectedWorkerId)
+                  .filter((e) => (e.worker.enabled && e.worker.role !== 'controller') || e.worker.id === selectedWorkerId)
                   .map((e) => ({
                     value: e.worker.id,
                     label: `${e.worker.label} (${e.worker.adapterId})`
@@ -3224,7 +3224,7 @@ function WorkerPicker({
   onChanged?: () => Promise<void>
 }): React.JSX.Element {
   const [busy, setBusy] = useState(false)
-  const pinnable = fleet.filter((e) => e.worker.enabled).map((e) => e.worker)
+  const pinnable = fleet.filter((e) => e.worker.enabled && e.worker.role !== 'controller').map((e) => e.worker)
   const currentWorkerId = task.constraints.workerId ?? ''
 
   const choose = async (workerId: string): Promise<void> => {
