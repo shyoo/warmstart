@@ -88,9 +88,11 @@ awaiting_human · paused_quota · paused_user
 cancelling · cancelled · completed · failed
 ```
 
-⛔ **Every held status needs something that ends the hold.** `blocked` ← `admitDependents()`;
-`scheduled` ← `admitScheduled()`; `paused_quota` ← `resumeQuotaPaused()`, which reads a clock **and**
-`quotaReleaseFor()`. A new held status owes a releaser, or it is a task nothing will ever move.
+⛔ **Every held status needs something that ends the hold.** `blocked` ← `admitDependents()`, fired by
+`setStatus` on the transition into any settled status and never by a call site, with `admitBlocked()`
+on the tick as the backstop; `scheduled` ← `admitScheduled()`; `paused_quota` ← `resumeQuotaPaused()`, which
+reads a clock **and** `quotaReleaseFor()`. A new held status owes a releaser, or it is a task nothing
+will ever move.
 
 ⚠️ **`queued` is not a status.** A task the scheduler passed over is still `ready`, with a
 `hold_reason` and — where the refusal has a known end — a `hold_until` beside it.

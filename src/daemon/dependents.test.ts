@@ -173,3 +173,120 @@ describe('adding and dropping a prerequisite by hand', () => {
     expect(said.some((t) => t.includes(`No longer waits on t${first.seq}`))).toBe(true)
   })
 })
+
+/**
+ * A completion releases what was waiting on it, whichever path completed it.
+ *
+ * ⛔ **The failure these pin, measured 2026-09-04.** t192 finished, failed to land twice, rested at
+ * `awaiting_human`, and was landed by hand — `relandTask`, which writes `completed` and had no
+ * `admitDependents` beside it. t193 sat at `blocked` behind a prerequisite that was finished, and
+ * nothing in the system was ever going to look again. `decomposeTask` had the same hole. Both were
+ * *call sites*, which is why the fix is not a third call: `setStatus` admits on the transition, so
+ * the seven places that complete a task cannot each be wrong in their own way.
+ */
+describe('a completion admits what waits on it', () => {
+  it('releases a blocked dependent the moment the status is written', () => {
+    const first = tasks.createTask({ title: 'runs first' })
+    const second = tasks.createTask({ title: 'runs after' })
+    tasks.attachDependency(second.id, first.id)
+    expect(tasks.requireTask(second.id).status).toBe('blocked')
+
+    // ⛔ `setStatus` alone — no `admitDependents`, no scheduler. That is the whole claim: the paths
+    // that stranded t193 did exactly this and nothing more.
+    tasks.setStatus(first.id, 'completed')
+    expect(tasks.requireTask(second.id).status).toBe('ready')
+  })
+
+  it('leaves a dependent blocked while another prerequisite is unfinished', () => {
+    const a = tasks.createTask({ title: 'one' })
+    const b = tasks.createTask({ title: 'two' })
+    const waiting = tasks.createTask({ title: 'waits on both' })
+    tasks.attachDependency(waiting.id, a.id)
+    tasks.attachDependency(waiting.id, b.id)
+    tasks.setStatus(a.id, 'completed')
+    expect(tasks.requireTask(waiting.id).status).toBe('blocked')
+    tasks.setStatus(b.id, 'completed')
+    expect(tasks.requireTask(waiting.id).status).toBe('ready')
+  })
+
+  it('does not release a dependent when the prerequisite stops any other way', () => {
+    // ⚠️ The inverse, and the reason admission recomputes rather than fires. `failed`, `cancelled`
+    // and `awaiting_human` are all *stopped*, and none of them is *done*.
+    for (const status of ['failed', 'cancelled', 'awaiting_human'] as const) {
+      const first = tasks.createTask({ title: `runs first (${status})` })
+      const second = tasks.createTask({ title: `runs after (${status})` })
+      tasks.attachDependency(second.id, first.id)
+      tasks.setStatus(first.id, status)
+      expect(tasks.requireTask(second.id).status).toBe('blocked')
+    }
+  })
+
+  it("releases a `settled` edge on a prerequisite that failed, from the same write", () => {
+    // ⛔ The half `completed` alone would have missed. `task_split` writes `require: 'settled'`
+    // precisely so a planner is woken by the pieces that *failed* — and outside `cancelTask`, no
+    // production path admitted on a failure at all, so the planner's own resolution turn depended
+    // on a call nobody made.
+    const child = tasks.createTask({ title: 'a piece' })
+    const planner = tasks.createTask({ title: 'the planner' })
+    tasks.addDependency(planner.id, child.id, 'settled')
+    tasks.admit(planner.id)
+    expect(tasks.requireTask(planner.id).status).toBe('blocked')
+
+    tasks.setStatus(child.id, 'failed')
+    expect(tasks.requireTask(planner.id).status).toBe('ready')
+  })
+
+  it('does not walk the graph again when a completed task is re-written', () => {
+    // ⚠️ Only the transition admits. A completed task whose row is re-written — an assignee, a hold
+    // reason — is not a second completion, and a dependent a person has since put back to `draft`
+    // must not be dragged into the queue by it.
+    const first = tasks.createTask({ title: 'runs first' })
+    const second = tasks.createTask({ title: 'runs after' })
+    tasks.attachDependency(second.id, first.id)
+    tasks.setStatus(first.id, 'completed')
+    tasks.setStatus(second.id, 'draft')
+    tasks.setStatus(first.id, 'completed', { assignee: null })
+    expect(tasks.requireTask(second.id).status).toBe('draft')
+  })
+})
+
+/**
+ * The backstop, for the rows the missing calls already stranded.
+ *
+ * ⚠️ Nothing about a `blocked` task expires, so a single missed admission is permanent. `t193` was
+ * seven hours old when a person noticed. This sweep is what makes the failure cost one tick.
+ */
+describe('the blocked-task sweep', () => {
+  it('releases a task stranded behind a prerequisite that already completed', () => {
+    const first = tasks.createTask({ title: 'runs first' })
+    const second = tasks.createTask({ title: 'runs after' })
+    tasks.addDependency(second.id, first.id)
+    // ⛔ The stranded state, built the way the bug built it: the edge written, the prerequisite
+    // completed, and the dependent left at `blocked` because nobody admitted it.
+    db.db().prepare("update tasks set status = 'completed' where id = ?").run(first.id)
+    db.db().prepare("update tasks set status = 'blocked' where id = ?").run(second.id)
+
+    expect(tasks.admitBlocked()).toBe(1)
+    expect(tasks.requireTask(second.id).status).toBe('ready')
+  })
+
+  it('leaves a genuine block alone, and says so by releasing nothing', () => {
+    const first = tasks.createTask({ title: 'runs first' })
+    const second = tasks.createTask({ title: 'runs after' })
+    tasks.attachDependency(second.id, first.id)
+    expect(tasks.admitBlocked()).toBe(0)
+    expect(tasks.requireTask(second.id).status).toBe('blocked')
+  })
+
+  it('ignores a task somebody deleted', () => {
+    // ⚠️ A soft-deleted row keeps its status and its edges. Putting one back in the queue would
+    // dispatch work that is not on anybody's board.
+    const first = tasks.createTask({ title: 'runs first' })
+    const second = tasks.createTask({ title: 'runs after' })
+    tasks.addDependency(second.id, first.id)
+    db.db().prepare("update tasks set status = 'completed' where id = ?").run(first.id)
+    db.db().prepare("update tasks set status = 'blocked', deleted_at = ? where id = ?").run(Date.now(), second.id)
+    expect(tasks.admitBlocked()).toBe(0)
+    expect(tasks.requireTask(second.id).status).toBe('blocked')
+  })
+})

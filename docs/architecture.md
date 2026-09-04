@@ -271,11 +271,24 @@ left `quotaRisk` with no reachable trigger and quota vanished from routing for t
   contention that created it, so a P0 filed a minute later would queue behind it; a hold is re-decided
   from `schedulingOrder` every tick, which is what makes priority mean anything. ⚠️ Keep the retry
   narrow: only contention meets a different world on the next attempt.
-- ⛔ **Every held status needs something that ends the hold.** `admitDependents()` in `tasks.ts` is the
-  only thing that re-admits a `blocked` task; `admitScheduled()` looks at `scheduled` and nothing
-  else; `resumeQuotaPaused()` is the clock for `paused_quota`. A second copy of `admitDependents` in
+- ⛔ **Every held status needs something that ends the hold.** `admit()` in `tasks.ts` is the only
+  thing that re-admits a `blocked` task; `admitScheduled()` looks at `scheduled` and nothing else;
+  `resumeQuotaPaused()` is the clock for `paused_quota`. A second copy of `admitDependents` in
   `scheduler.ts` re-set each dependent to the status it already had, so for months **no completed task
   ever unblocked anything**. Never reimplement it. A new held status owes a releaser too.
+- ⛔ **A task that settles admits its dependents inside `setStatus`, on the transition into
+  `completed`, `failed` or `cancelled`.** It was the caller's job until 2026-09-04, and most of the
+  seven paths that settle a task never did it: `relandTask` — a failed landing driven home by hand —
+  and `decomposeTask` skipped it outright, and on the failure and cancellation paths a `settled`
+  edge (the one `task_split` writes, so a planner is woken by the pieces that *failed*) was released
+  by nothing outside `cancelTask`. Measured: t192 was landed by hand at 14:40, and t193 was still
+  `blocked` behind it when a person looked. A `blocked` task holds no clock, no worker and no
+  session, so **nothing about it ever expires** and one missed event strands it permanently.
+  ⚠️ `admit()` still decides per edge, so an ordinary `completed` edge is unmoved by a failure.
+  ⚠️ The backstop is `admitBlocked()` on the tick, which re-reads every blocked row against the world
+  and logs at warn when it releases one — a release there means a bug above it. ⚠️ Admission now
+  lands a moment *before* the settling task's workspace is released, so a dependent can reach `ready`
+  and find the pool full: that is a hold, and the next tick runs it.
 - ⛔ **Every gate on whether an *account* may be handed a turn lives in `eligibility.ts`, in one
   list.** Work and judgment both read it; they kept their own copies until 2026-08-27 and the copies
   drifted. A gate that needs to know *what is being asked* belongs at the call site; anything true of

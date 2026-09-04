@@ -32,7 +32,7 @@ import { getWorker, listWorkers, recordDispatchFailure } from './workers.js'
 import { accountUnavailability } from './eligibility.js'
 import { getProject, landingTargetFor, policyFor, reloadProject } from './projects.js'
 import {
-  admitDependents,
+  admitBlocked,
   admitScheduled,
   quotaParkedTasks,
   resumeQuotaPaused,
@@ -367,6 +367,11 @@ export interface TickResult {
 
 export async function tick(): Promise<TickResult> {
   admitScheduled()
+  // ⛔ Beside it for the same reason `resumeQuotaPaused` is: a different status, held by a different
+  // thing. A `blocked` task waits on an *event* — its prerequisite completing — and an event that
+  // was missed never comes again, so the graph needs one place that checks rather than remembers.
+  // See `admitBlocked`; it logs at warn when it finds one, because finding one means a bug upstream.
+  admitBlocked()
   // ⛔ Beside `admitScheduled` and not inside it, because the two read different statuses. A task
   // parked for a quota window is the one kind of hold that ends on a clock rather than on a person,
   // and until this call existed nothing anywhere put one back (t60, 2026-08-31).
@@ -3390,7 +3395,9 @@ export function resolveTask(taskId: string, note?: string): Task {
   const session = sessionOf(task.id)
   if (session) closeSession(session.id)
 
-  admitDependents(task.id)
+  // ⚠️ Dependents are admitted by the `setStatus` above, for every path that completes a task. The
+  // explicit call that used to sit here was one of three, and the four paths without one is how
+  // t193 stayed blocked behind a finished t192.
   return requireTask(task.id)
 }
 
@@ -3801,7 +3808,9 @@ async function landCompletion(
   }
   await releaseFor(run.id, task.id, project?.id ?? null)
   if (automaticRetry) await resolveRetryOnTask(task.id, true)
-  admitDependents(task.id)
+  // ⚠️ No `admitDependents` here any more: `setStatus` does it on the transition into `completed`,
+  // above, for this path and for the ones that never had a call at all. It lands a moment earlier
+  // than it used to — before the workspace is released — which can cost a dependent one tick.
 }
 
 /**

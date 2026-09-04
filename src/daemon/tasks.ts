@@ -830,7 +830,13 @@ export function admit(taskId: string): Task {
 }
 
 /**
- * Re-admit everything waiting on this task. Called whenever a task reaches a terminal state.
+ * Re-admit everything waiting on this task.
+ *
+ * ⛔ **Called by `setStatus` on every transition into a settled status, so no path that finishes a
+ * task has to remember it.** Several did not — see the header on `setStatus`. Callers may still call
+ * it directly for a resting state that is not settled (`cancelTask` does, for `paused_user` and
+ * `draft`); it is idempotent, because `admit()` recomputes from the world and writes nothing when
+ * the answer has not changed.
  *
  * ⛔ `admit()`, which recomputes each dependent's status **from the world**. The scheduler carried a
  * private copy of this for months that re-set each dependent to the status it already had — a no-op
@@ -931,6 +937,73 @@ export function admitScheduled(): number {
   return due.length
 }
 
+/**
+ * The other half of the clock tick: a `blocked` task whose prerequisites are, in fact, all done.
+ *
+ * ⛔ **The backstop, not the mechanism.** `setStatus` admits dependents the moment a task settles,
+ * and that is what makes the DAG advance. This exists because a `blocked` task holds no clock, no
+ * worker and no session — nothing about it expires — so a single missed admission strands it for
+ * ever, and the missed admissions found so far (t192 → t193, 2026-09-04) were only noticed by a
+ * person looking at the board hours later. A ten-second query is cheaper than that.
+ *
+ * ⚠️ It also repairs rows stranded by the versions that had the bug, on the first tick after this
+ * ships, without a migration: their prerequisites have already settled and `admit()` reads the
+ * world rather than a history.
+ *
+ * ⚠️ Costs nothing to run and nothing to be wrong about: `admit()` recomputes each row from its
+ * edges and writes only on a change, so a tick that finds every block genuine emits no event. Zero
+ * tokens, which is the bar every loop in this system is held to.
+ */
+export function admitBlocked(): number {
+  const held = rows<TaskRow>(
+    db()
+      .prepare(
+        "select * from tasks where status = 'blocked' and deleted_at is null order by created_at asc, seq asc"
+      )
+      .all()
+  )
+  let released = 0
+  for (const r of held) {
+    if (admit(r.id).status !== 'blocked') {
+      released += 1
+      log.warn(
+        `t${r.seq} was blocked behind prerequisites that are all complete — released by the ` +
+          'admission sweep. Something completed without admitting its dependents.'
+      )
+    }
+  }
+  return released
+}
+
+/**
+ * Write a task's status, and let the DAG act on it.
+ *
+ * ⛔ **A transition into a settled status admits this task's dependents, here, once.** It used to be
+ * the caller's job, and there are seven places that settle a task — most of them forgot. Measured
+ * 2026-09-04: t192 was landed by hand from `awaiting_human` (`relandTask` in scheduler.ts), reached
+ * `completed`, and t193 sat at `blocked` for seven hours behind a prerequisite that was finished;
+ * `decomposeTask` in judgment.ts had the same hole, so a decomposed parent released nothing either,
+ * and on the `failed` and `cancelled` paths a `settled` edge — the one `task_split` writes, whose
+ * whole purpose is to wake a planner whatever its pieces did — was released by nothing outside
+ * `cancelTask`. The bug is not that a call was missing; it is that *remembering* was the mechanism,
+ * on a graph whose whole purpose is to advance without being remembered.
+ *
+ * ⚠️ All three of `SETTLED_STATUSES`, not `completed` alone — `admit()` still decides per edge, so an
+ * ordinary `completed` edge is unmoved by a dependency that failed.
+ *
+ * ⚠️ On a real transition only. `setStatus` is also how a status is re-written with new fields, and
+ * a settled task re-written is not a second settling; walking its dependents again would be work
+ * with no possible effect, on every such write.
+ *
+ * ⚠️ No recursion to worry about: `admit()` only ever writes `blocked`, `scheduled` or `ready`, so a
+ * dependent admitted here cannot admit anything in turn.
+ *
+ * ⚠️ It fires *before* the caller finishes tidying up — closing the run, releasing the workspace.
+ * A dependent therefore reaches `ready` a moment before the slot its prerequisite was holding comes
+ * free, and the next tick may find nothing to run it in. That is a hold, not a failure: the task
+ * carries the reason on its row and the tick after that dispatches it. The alternative — admitting
+ * only after every caller's cleanup — is the arrangement that just cost seven hours.
+ */
 export function setStatus(taskId: string, status: TaskStatus, extra: Partial<Task> = {}): Task {
   const current = requireTask(taskId)
   // ⚠️ `'assignee' in extra`, not `?? current`. A task going back into the queue has to *lose* its
@@ -973,6 +1046,12 @@ export function setStatus(taskId: string, status: TaskStatus, extra: Partial<Tas
         (assignee && assignee !== current.assignee ? ` on ${assignee.slice(0, 8)}` : '')
     )
   }
+  // ⛔ Last, and only on the transition. See the header: this is the one place a task that has come
+  // to rest reaches the tasks waiting on it, whichever path produced it.
+  // ⚠️ Every settled status, not only `completed`, because a `settled` edge releases on all three —
+  // a planner waiting on its pieces has to be woken by the ones that failed. `admit()` still decides
+  // per edge, so an ordinary `completed` edge is unmoved by a failure.
+  if (current.status !== status && SETTLED_STATUSES.includes(status)) admitDependents(taskId)
   return task
 }
 

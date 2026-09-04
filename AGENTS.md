@@ -104,8 +104,10 @@ measurement behind it, in [`docs/architecture.md`](docs/architecture.md) §4. Th
   image name — not in code, not in a shell, not once in a test. ⛔ Never kill a bare pid; read the
   command line and confirm it is yours, and if you cannot read it the answer is no.
 - **A contended resource is a hold, never a failure**, and every held status needs something that
-  ends the hold. `admitDependents()` in [`src/shared/tasks.ts`](src/shared/tasks.ts) is the only
-  thing that re-admits a `blocked` task — never reimplement it.
+  ends the hold. `admit()` in [`src/daemon/tasks.ts`](src/daemon/tasks.ts) is the only thing that
+  re-admits a `blocked` task — never reimplement it. ⛔ **A task that settles admits its dependents
+  from inside `setStatus`, not from the call site**: seven paths settle a task and remembering was
+  not a mechanism (t192 → t193, 2026-09-04). `admitBlocked()` on the tick is the backstop.
 - **Work is visible, gated and billed only as a *run*.** A reply to a stopped task is a new run on
   the same thread, never a note pushed into a warm session. `task_complete` is the only signal an
   agent finished; a clean exit says nothing.
