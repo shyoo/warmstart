@@ -217,6 +217,14 @@ export function release(claimId: string): void {
   announce(r.resource_id)
 }
 
+export function claimsForHolder(holder: string): ResourceClaim[] {
+  return rows<ClaimRow>(
+    db()
+      .prepare('select * from resource_claims where holder = ? and released_at is null')
+      .all(holder)
+  ).map(toClaim)
+}
+
 /**
  * Release everything a holder still has.
  *

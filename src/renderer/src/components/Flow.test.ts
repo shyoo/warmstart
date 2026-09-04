@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import type { Task, TaskStatus } from '@shared/tasks'
+import type { Worker } from '@shared/protocol'
+import type { FlowWorkspace, Task, TaskStatus } from '@shared/tasks'
 import { ROOT_MANDATE } from '@shared/tasks'
+import type { FleetEntry } from '../lib/daemon'
 import {
+  computeWorkspaceRows,
   completionTime,
   laneFor,
   runningWorkspaceRows,
@@ -64,6 +67,47 @@ function mockTask(over: Partial<Task> = {}): Task {
     createdAt: 1000,
     updatedAt: 1000,
     deletedAt: null,
+    ...over
+  }
+}
+
+function mockWorkspace(over: Partial<FlowWorkspace> = {}): FlowWorkspace {
+  return {
+    path: 'C:/ws/ws1',
+    label: 'ws1',
+    inPool: true,
+    holding: null,
+    taskId: null,
+    taskSeq: null,
+    taskTitle: null,
+    taskStatus: null,
+    workerId: 'w-1',
+    workerLabel: 'CodexFirst',
+    adapterId: 'codex',
+    sessionId: null,
+    branch: null,
+    claimedAt: null,
+    ...over
+  }
+}
+
+function mockWorker(over: Partial<Worker> = {}): Worker {
+  return {
+    id: 'w-1',
+    label: 'CodexFirst',
+    adapterId: 'codex',
+    isolationRoot: '',
+    enabled: true,
+    humanOccupied: false,
+    role: 'both',
+    maxConcurrent: 1,
+    defaultModel: null,
+    defaultEffort: null,
+    identity: null,
+    health: null,
+    sortOrder: 0,
+    retiredAt: null,
+    createdAt: 1000,
     ...over
   }
 }
@@ -145,6 +189,83 @@ describe('workspace bindings in the Running lane', () => {
       'cancel',
       'free-or-inbound'
     ])
+  })
+})
+
+describe('computeWorkspaceRows', () => {
+  it('prevents a single task from occupying multiple workspaces (Bug 1)', () => {
+    // When t168 was dispatched, ws1 and ws2 both had claims for t168.
+    // computeWorkspaceRows must bind t168 to only ONE workspace row, leaving the other free.
+    const t168 = mockTask({ id: 't-168', seq: 168, status: 'running' })
+    const byId = new Map([['t-168', t168]])
+    const workspaces = [
+      mockWorkspace({ path: 'C:/ws/ws1', label: 'ws1', taskId: 't-168', taskSeq: 168, holding: 'session' }),
+      mockWorkspace({ path: 'C:/ws/ws2', label: 'ws2', taskId: 't-168', taskSeq: 168, holding: 'session' })
+    ]
+
+    const rows = computeWorkspaceRows(workspaces, byId, [], [])
+    expect(rows).toHaveLength(2)
+
+    // First row binds t168 as activeTask
+    expect(rows[0]!.activeTask?.id).toBe('t-168')
+    expect(rows[0]!.ws.label).toBe('ws1')
+
+    // Second row cannot bind t168; it is demoted to free/idle
+    expect(rows[1]!.activeTask).toBeNull()
+    expect(rows[1]!.ws.label).toBe('ws2')
+    expect(rows[1]!.ws.taskId).toBeNull()
+    expect(rows[1]!.ws.holding).toBeNull()
+  })
+
+  it('treats workspace with completed or non-running task as free instead of active running (Bug 2)', () => {
+    // When t167 completed, Flow UI must not show it as running in ws4.
+    // The workspace slot must remain in the pool and be displayed as free.
+    const t167 = mockTask({ id: 't-167', seq: 167, status: 'completed' })
+    const byId = new Map([['t-167', t167]])
+    const workspaces = [
+      mockWorkspace({
+        path: 'C:/ws/ws4',
+        label: 'ws4',
+        taskId: 't-167',
+        taskSeq: 167,
+        taskStatus: 'completed',
+        holding: 'session'
+      })
+    ]
+
+    const rows = computeWorkspaceRows(workspaces, byId, [], [])
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.activeTask).toBeNull()
+    expect(rows[0]!.ws.label).toBe('ws4')
+    expect(rows[0]!.ws.taskId).toBeNull()
+    expect(rows[0]!.ws.holding).toBeNull()
+
+    // And runningWorkspaceRows does NOT drop ws4 from the board
+    const running = runningWorkspaceRows(rows)
+    expect(running).toHaveLength(1)
+    expect(running[0]!.ws.label).toBe('ws4')
+  })
+
+  it('matches free workspace from completed task with inbound task', () => {
+    const t167 = mockTask({ id: 't-167', seq: 167, status: 'completed' })
+    const inbound = mockTask({ id: 't-169', seq: 169, status: 'assigned', assignee: 'w-1' })
+    const byId = new Map([['t-167', t167]])
+    const workspaces = [
+      mockWorkspace({ path: 'C:/ws/ws4', label: 'ws4', taskId: 't-167', taskSeq: 167, workerId: 'w-1' })
+    ]
+    const fleet: FleetEntry[] = [
+      {
+        worker: mockWorker({ id: 'w-1', label: 'CodexFirst', adapterId: 'codex' }),
+        sessions: [],
+        quota: null
+      }
+    ]
+
+    const rows = computeWorkspaceRows(workspaces, byId, [inbound], fleet)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.activeTask).toBeNull()
+    expect(rows[0]!.inboundTask?.id).toBe('t-169')
+    expect(rows[0]!.inboundWorker?.label).toBe('CodexFirst')
   })
 })
 

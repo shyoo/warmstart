@@ -68,11 +68,15 @@ import {
 } from './judgment.js'
 import { escalateStale, voidApprovalsForSession } from './approvals.js'
 import { fileParkedQuestion, parkQuestionsForSession } from './questions.js'
+import { samePath } from './fspath.js'
 import {
   Contended,
   availability,
   claim,
+  claimsForHolder,
+  openClaims,
   reassignClaim,
+  release,
   releaseAllFor,
   upsertResource,
   workspacePoolId
@@ -1984,6 +1988,15 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
   const priorCwd = past.find((s) => s.workerId === worker.id)?.cwd ?? lent[0]?.cwd
 
   if (project) {
+    // ⛔ A task cannot occupy two independent workspaces. If an ended session of this task still holds
+    // a workspace claim, release it before claiming so the slot is free and can be reused.
+    for (const s of past) {
+      if (sessionEnded(s.state)) {
+        await releaseWorkspaceOf(s.id)
+      }
+    }
+    workspace ??= workspaceHeldBy(project, task.id)
+
     // ⚠️ Claimed under the **task's** name, and moved to the session's below. The session's working
     // directory is the workspace, so there is no session to claim on behalf of until there is a
     // workspace to put it in. See `reassignClaim`.
@@ -2000,6 +2013,14 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
     // 2026-08-29.
     if (!workspace) {
       throw new Contended(`no free workspace in ${project.name}`, workspacePoolId(project.id))
+    }
+
+    // ⛔ Clean up any other workspace claim held by this task. One task works in one workspace only.
+    const poolId = workspacePoolId(project.id)
+    for (const c of openClaims(poolId)) {
+      if (c.holder === task.id && c.member && !samePath(c.member, workspace.path)) {
+        release(c.id)
+      }
     }
 
     branch = project.vcs === 'git' ? branchNameFor(task.seq, task.title) : null
@@ -2280,6 +2301,7 @@ async function dispatchIntoWarmSession(
       )
     }
     reassignClaim(reclaimed.claimId, session.id)
+    workspaces.set(session.id, { workspace: reclaimed, projectId: project.id })
   }
 
   // ⛔ Before anything is sent into it. Two tasks in one conversation would interleave their turns,
@@ -2287,6 +2309,7 @@ async function dispatchIntoWarmSession(
   // unrepresentable rather than merely discouraged. Refusing here is safe — the task stays `ready`
   // and the next tick will find it a session, warm or otherwise.
   if (!acquireSessionLease(session.id, task.id)) {
+    if (reclaimed) await releaseWorkspaceOf(session.id)
     throw new Error(
       `the conversation ${session.id.slice(0, 8)} is already in use by another task; t${task.seq} waits`
     )
@@ -2316,6 +2339,7 @@ async function dispatchIntoWarmSession(
       // ⛔ Give the lease back. A task that cannot use the conversation must not hold it shut, and
       // this is the one path between acquiring it and `releaseFor` that does not open a run.
       releaseAllFor(task.id)
+      if (reclaimed) await releaseWorkspaceOf(session.id)
       throw new Error(moved.error ?? `could not put ${path} on ${branch} for t${task.seq}`)
     }
     notice = moved.notice
@@ -3246,6 +3270,13 @@ export async function completeTask(sessionId: string, summary: string): Promise<
   completing.add(sessionId)
   try {
     await landCompletion(sessionId, run, task, summary)
+  } catch (err) {
+    log.error(`could not complete task ${task.id} on session ${sessionId}:`, err)
+    const session = getSession(sessionId)
+    if (session && sessionEnded(session.state)) {
+      await releaseWorkspaceOf(sessionId, task.id)
+    }
+    throw err
   } finally {
     completing.delete(sessionId)
   }
@@ -3351,6 +3382,7 @@ async function landCompletion(
         })
         finishRun(run.id, 'completed', summary)
         await releaseFor(run.id, task.id, project.id)
+        await releaseWorkspaceOf(sessionId, task.id)
         await resolveRetryOnTask(task.id, true)
         return
       }
@@ -3367,6 +3399,7 @@ async function landCompletion(
         setStatus(task.id, 'awaiting_human', { assignee: 'human', holdReason: decision.reason })
         finishRun(run.id, 'completed', summary)
         await releaseFor(run.id, task.id, project.id)
+        await releaseWorkspaceOf(sessionId, task.id)
       }
       return
     }
@@ -3406,6 +3439,7 @@ async function landCompletion(
         })
         finishRun(run.id, 'completed', summary)
         await releaseFor(run.id, task.id, project.id)
+        await releaseWorkspaceOf(sessionId, task.id)
         await resolveRetryOnTask(task.id, true)
         return
       }
@@ -3451,6 +3485,7 @@ async function landCompletion(
           setStatus(task.id, 'awaiting_human', { assignee: 'human', holdReason: decision.reason })
           finishRun(run.id, 'completed', summary)
           await releaseFor(run.id, task.id, project.id)
+          await releaseWorkspaceOf(sessionId, task.id)
         }
         return
       }
@@ -3535,9 +3570,15 @@ async function landCompletion(
   // The cache clock decides from here whether to keepalive it, compact it, or let it go.
   const settled = getTask(task.id)
   if (settled?.status === 'awaiting_human') {
-    log.info(`t${task.seq} is waiting on a person - keeping its session warm for the reply`)
+    const session = getSession(sessionId)
+    if (session && !sessionEnded(session.state)) {
+      log.info(`t${task.seq} is waiting on a person - keeping its session warm for the reply`)
+    } else {
+      await releaseWorkspaceOf(sessionId, task.id)
+    }
   } else {
-    closeSession(sessionId)
+    await closeAndWait(sessionId)
+    await releaseWorkspaceOf(sessionId)
   }
   await releaseFor(run.id, task.id, project?.id ?? null)
   if (automaticRetry) await resolveRetryOnTask(task.id, true)
@@ -4077,18 +4118,31 @@ async function releaseFor(
  */
 async function releaseWorkspaceOf(sessionId: string, retainForTaskId: string | null = null): Promise<void> {
   const held = workspaces.get(sessionId)
-  if (!held) return
-  workspaces.delete(sessionId)
-  if (retainForTaskId) {
-    // The task is waiting on a person, not finished. Holding the exact tree prevents both another
-    // task taking its branch and a one-slot worker starting unrelated work before the reply arrives.
-    reassignClaim(held.workspace.claimId, retainForTaskId)
+  if (held) {
+    workspaces.delete(sessionId)
+    if (retainForTaskId) {
+      // The task is waiting on a person, not finished. Holding the exact tree prevents both another
+      // task taking its branch and a one-slot worker starting unrelated work before the reply arrives.
+      reassignClaim(held.workspace.claimId, retainForTaskId)
+      releaseAllFor(sessionId)
+      return
+    }
+    const project = held.projectId ? getProject(held.projectId) : null
+    if (project) announceRescue(await parkWorkspace(project, held.workspace.path))
+    releaseWorkspace(held.workspace.claimId)
     releaseAllFor(sessionId)
     return
   }
-  const project = held.projectId ? getProject(held.projectId) : null
-  if (project) announceRescue(await parkWorkspace(project, held.workspace.path))
-  releaseWorkspace(held.workspace.claimId)
+
+  // Fallback: If not in the in-memory map, clean up any open workspace claims held in the database.
+  const open = claimsForHolder(sessionId)
+  for (const c of open) {
+    if (retainForTaskId && c.resourceId.startsWith('workspace:')) {
+      reassignClaim(c.id, retainForTaskId)
+    } else {
+      release(c.id)
+    }
+  }
   releaseAllFor(sessionId)
 }
 

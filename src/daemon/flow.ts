@@ -1,6 +1,6 @@
 import { sessionEnded } from '@shared/protocol.js'
 import type { Session } from '@shared/protocol.js'
-import type { FlowWorkspace, ResourceClaim, Task } from '@shared/tasks.js'
+import type { FlowWorkspace, ResourceClaim, Task, TaskStatus } from '@shared/tasks.js'
 import { samePath } from './fspath.js'
 import { getResource, openClaims, workspacePoolId } from './resources.js'
 import { getSession, listSessions } from './sessions.js'
@@ -18,6 +18,12 @@ import { getWorker } from './workers.js'
  * ⚠️ The pool's `members` array is the order the board draws — `ws1` first — so the row a task
  * appears in does not move as claims come and go.
  */
+
+const TERMINAL_TASK_STATUSES = new Set<TaskStatus>(['completed', 'cancelled', 'failed'])
+
+function isTaskFinished(task: Task | null | undefined): boolean {
+  return !task || TERMINAL_TASK_STATUSES.has(task.status)
+}
 
 /** `C:\Dev\ws\ws2` → `ws2`. The pool names its members, so this is a display trim, not a parse. */
 function shortName(path: string): string {
@@ -54,26 +60,41 @@ function resolveHolder(claim: ResourceClaim): {
   workerId: string | null
 } {
   if (claim.holder.startsWith('reland:')) {
+    const task = getTask(claim.holder.slice('reland:'.length))
+    if (isTaskFinished(task)) {
+      return { holding: null, task: null, sessionId: null, workerId: null }
+    }
     return {
       holding: 'landing',
-      task: getTask(claim.holder.slice('reland:'.length)),
+      task,
       sessionId: null,
       workerId: null
     }
   }
 
   const asTask = getTask(claim.holder)
-  if (asTask) return { holding: 'task', task: asTask, sessionId: null, workerId: null }
+  if (asTask) {
+    if (isTaskFinished(asTask)) {
+      return { holding: null, task: null, sessionId: null, workerId: null }
+    }
+    return { holding: 'task', task: asTask, sessionId: null, workerId: null }
+  }
 
   const session = getSession(claim.holder)
-  if (!session) return { holding: null, task: null, sessionId: null, workerId: null }
+  if (!session || sessionEnded(session.state)) {
+    return { holding: null, task: null, sessionId: null, workerId: null }
+  }
   // ⚠️ `runForSession` first — the open run is what this conversation is about *now*. The last run
   // is the fallback for the seconds between a run ending and its claim being released, where the
   // honest answer is still the task that was just being worked on.
   const run = runForSession(session.id) ?? lastRunForSession(session.id)
+  const task = run ? getTask(run.taskId) : null
+  if (isTaskFinished(task)) {
+    return { holding: null, task: null, sessionId: session.id, workerId: session.workerId }
+  }
   return {
     holding: 'session',
-    task: run ? getTask(run.taskId) : null,
+    task,
     sessionId: session.id,
     workerId: session.workerId
   }
@@ -95,7 +116,7 @@ export function flowWorkspaces(projectId: string): FlowWorkspace[] {
     .filter((member) => !resource.members.some((m) => samePath(m, member)))
   const paths = [...resource.members, ...extras]
 
-  return paths.map((path) => {
+  const bound = paths.map((path) => {
     const claim = claims.find((c) => samePath(c.member!, path)) ?? null
     const held = claim
       ? resolveHolder(claim)
@@ -132,4 +153,33 @@ export function flowWorkspaces(projectId: string): FlowWorkspace[] {
       claimedAt: claim?.acquiredAt ?? null
     }
   })
+
+  // ⛔ A single task cannot occupy two independent workspaces.
+  // If multiple workspaces resolve to the same task, keep only the most authoritative binding
+  // (live session over landing over retained task claim, newer claimedAt over older) and
+  // demote any duplicate workspace to free so it can take other work.
+  const seen = new Map<string, number>()
+  for (let i = 0; i < bound.length; i++) {
+    const ws = bound[i]!
+    if (!ws.taskId) continue
+    const prevIdx = seen.get(ws.taskId)
+    if (prevIdx === undefined) {
+      seen.set(ws.taskId, i)
+      continue
+    }
+    const prev = bound[prevIdx]!
+    const rank = (h: FlowWorkspace['holding']): number =>
+      h === 'session' ? 3 : h === 'landing' ? 2 : h === 'task' ? 1 : 0
+    const prevScore = rank(prev.holding) * 1e14 + (prev.claimedAt ?? 0)
+    const currScore = rank(ws.holding) * 1e14 + (ws.claimedAt ?? 0)
+    const [winnerIdx, loser] = currScore >= prevScore ? [i, prev] : [prevIdx, ws]
+    seen.set(ws.taskId, winnerIdx)
+    loser.holding = null
+    loser.taskId = null
+    loser.taskSeq = null
+    loser.taskTitle = null
+    loser.taskStatus = null
+  }
+
+  return bound
 }

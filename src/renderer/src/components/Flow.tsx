@@ -95,11 +95,79 @@ function bindingLine(ws: FlowWorkspace): string {
   return `t${ws.taskSeq} ${how} ${where}`
 }
 
-interface BoundWorkspaceRow {
+export interface BoundWorkspaceRow {
   ws: FlowWorkspace
   activeTask: Task | null
   inboundTask: Task | null
   inboundWorker: { label: string; adapterId: string | null } | null
+}
+
+/**
+ * Bindings for each workspace in the pool:
+ * - An active workspace shows its ticket and worker: `t65 -> ws1 / ClaudeFirst`
+ * - An available workspace paired with an inbound task shows: `ws4 / CodexFirst <- t68`
+ * - An idle workspace shows: `ws4 / CodexFirst free`
+ *
+ * ⛔ A task can only occupy ONE workspace, and only while running (or live landing).
+ * A completed/awaiting or duplicate task must not show as running in any workspace row.
+ */
+export function computeWorkspaceRows(
+  workspaces: FlowWorkspace[],
+  byId: Map<string, Task>,
+  inboundTasks: Task[],
+  fleet: FleetEntry[]
+): BoundWorkspaceRow[] {
+  const unassignedInbound = [...inboundTasks]
+  const boundTaskIds = new Set<string>()
+
+  return workspaces.map((ws) => {
+    if (ws.taskId) {
+      const candidate = byId.get(ws.taskId) ?? null
+      const isRunning = candidate
+        ? laneFor(candidate) === 'running'
+        : ws.taskStatus === 'running' || ws.taskStatus === 'cancelling'
+      if (isRunning && !boundTaskIds.has(ws.taskId)) {
+        boundTaskIds.add(ws.taskId)
+        return {
+          ws,
+          activeTask: candidate,
+          inboundTask: null,
+          inboundWorker: null
+        }
+      }
+    }
+
+    // Workspace is free/available for inbound tasks.
+    // Clear any stale holding/task metadata on this workspace row so it renders as free or inbound.
+    const freeWs: FlowWorkspace = (ws.taskId || ws.holding)
+      ? { ...ws, taskId: null, taskSeq: null, taskTitle: null, taskStatus: null, holding: null }
+      : ws
+
+    // Try to match an inbound task!
+    let matchIdx = -1
+    if (freeWs.workerId) {
+      matchIdx = unassignedInbound.findIndex((t) => t.assignee === freeWs.workerId)
+    }
+    if (matchIdx === -1 && unassignedInbound.length > 0) {
+      matchIdx = 0
+    }
+    if (matchIdx !== -1) {
+      const inboundTask = unassignedInbound.splice(matchIdx, 1)[0]!
+      const w = fleet.find((f) => f.worker.id === inboundTask.assignee)?.worker
+      return {
+        ws: freeWs,
+        activeTask: null,
+        inboundTask,
+        inboundWorker: w ? { label: w.label, adapterId: w.adapterId } : null
+      }
+    }
+    return {
+      ws: freeWs,
+      activeTask: null,
+      inboundTask: null,
+      inboundWorker: null
+    }
+  })
 }
 
 /** A compact, live map of how this project's work is moving through the scheduler. */
@@ -149,9 +217,18 @@ export function Flow({ projectId, fleet, onOpenTask }: {
   /** Which tree each ticket is in, so a lane can mark a ticket that holds one. */
   const homeOf = useMemo(() => {
     const map = new Map<string, FlowWorkspace>()
-    for (const ws of workspaces) if (ws.taskId) map.set(ws.taskId, ws)
+    for (const ws of workspaces) {
+      if (!ws.taskId) continue
+      // ⛔ Only running or legitimately holding (awaiting_human) tasks hold a workspace home.
+      // Completed, failed, cancelled tasks never hold a workspace.
+      const t = byId.get(ws.taskId)
+      if (t && (t.status === 'completed' || t.status === 'failed' || t.status === 'cancelled')) continue
+      if (ws.taskStatus === 'completed' || ws.taskStatus === 'failed' || ws.taskStatus === 'cancelled') continue
+      // If two workspaces have the same taskId, only the first/authoritative one is home.
+      if (!map.has(ws.taskId)) map.set(ws.taskId, ws)
+    }
     return map
-  }, [workspaces])
+  }, [workspaces, byId])
 
   /**
    * Running work that no workspace claim accounts for.
@@ -180,43 +257,10 @@ export function Flow({ projectId, fleet, onOpenTask }: {
    * - An available workspace paired with an inbound task shows: `ws4 / CodexFirst <- t68`
    * - An idle workspace shows: `ws4 / CodexFirst free`
    */
-  const workspaceRows = useMemo<BoundWorkspaceRow[]>(() => {
-    const unassignedInbound = [...inboundTasks]
-    return workspaces.map((ws) => {
-      if (ws.taskId) {
-        return {
-          ws,
-          activeTask: byId.get(ws.taskId) ?? null,
-          inboundTask: null,
-          inboundWorker: null
-        }
-      }
-      // Workspace is free. Try to match an inbound task!
-      let matchIdx = -1
-      if (ws.workerId) {
-        matchIdx = unassignedInbound.findIndex((t) => t.assignee === ws.workerId)
-      }
-      if (matchIdx === -1 && unassignedInbound.length > 0) {
-        matchIdx = 0
-      }
-      if (matchIdx !== -1) {
-        const inboundTask = unassignedInbound.splice(matchIdx, 1)[0]!
-        const w = fleet.find((f) => f.worker.id === inboundTask.assignee)?.worker
-        return {
-          ws,
-          activeTask: null,
-          inboundTask,
-          inboundWorker: w ? { label: w.label, adapterId: w.adapterId } : null
-        }
-      }
-      return {
-        ws,
-        activeTask: null,
-        inboundTask: null,
-        inboundWorker: null
-      }
-    })
-  }, [workspaces, byId, inboundTasks, fleet])
+  const workspaceRows = useMemo<BoundWorkspaceRow[]>(
+    () => computeWorkspaceRows(workspaces, byId, inboundTasks, fleet),
+    [workspaces, byId, inboundTasks, fleet]
+  )
 
   // ⛔ A workspace claim is evidence of a resource hold, not evidence that its task is running.
   // Keep free and inbound rows so the pool remains legible, but leave terminal/awaiting tickets to
@@ -270,8 +314,8 @@ export function Flow({ projectId, fleet, onOpenTask }: {
     const { ws, activeTask, inboundTask, inboundWorker } = row
     const heldFor = ws.claimedAt ? duration(now - ws.claimedAt) : null
 
-    // Case 1: Active running / holding task: t65 -> ws1 / ClaudeFirst
-    if (activeTask || ws.taskId || ws.taskSeq) {
+    // Case 1: Active running / landing task: t65 -> ws1 / ClaudeFirst
+    if (activeTask || ((ws.holding === 'landing' || ws.holding === 'session') && (ws.taskStatus === 'running' || ws.taskStatus === 'cancelling'))) {
       return (
         <div
           className={`flow-bind flow-bind--active${ws.inPool ? '' : ' flow-bind--stale'}`}
