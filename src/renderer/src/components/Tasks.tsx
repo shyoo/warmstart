@@ -260,8 +260,8 @@ export function Tasks({
         <div>
           <h2>Tasks</h2>
           <p className="panel-sub">
-            A task is a thread of work with an assignee — not a prompt. Anyone can file one: you, the
-            controller, or an agent mid-run.
+            Each task can be a question or something to implement, left for the AI agents — it is
+            effectively a prompt. Anyone can file one: you, the controller, or an agent mid-run.
           </p>
         </div>
         <button className="btn btn--primary" onClick={() => setAdding((v) => !v)}>
