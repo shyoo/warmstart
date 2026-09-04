@@ -86,11 +86,14 @@ export type Validated<T> = { ok: true; value: T } | { ok: false; reason: string 
  * stylistic preference — it makes a cycle impossible by construction rather than detectable after the
  * fact, and an agent-authored DAG is exactly where cycles come from (plan §7.2).
  */
-export function validateDecomposition(answer: Record<string, unknown>): Validated<DecomposedChild[]> {
+export function validateDecomposition(
+  answer: Record<string, unknown>,
+  maxChildren = MAX_DECOMPOSE_CHILDREN
+): Validated<DecomposedChild[]> {
   const raw = answer.children
   if (!Array.isArray(raw) || raw.length === 0) return { ok: false, reason: 'no children in the answer' }
-  if (raw.length > MAX_DECOMPOSE_CHILDREN) {
-    return { ok: false, reason: `${raw.length} children exceeds the cap of ${MAX_DECOMPOSE_CHILDREN}` }
+  if (raw.length > maxChildren) {
+    return { ok: false, reason: `${raw.length} children exceeds the cap of ${maxChildren}` }
   }
 
   const children: DecomposedChild[] = []
@@ -303,6 +306,7 @@ export function questionStillStands(consult: Consult): { ok: boolean; reason: st
  * written at promotion, when what the previous milestone learned is known.
  */
 export function decomposeQuestion(task: Task): string {
+  const maxChildren = task.constraints?.pieceLimit ?? MAX_DECOMPOSE_CHILDREN
   const project = task.projectId ? getProject(task.projectId) : null
   const goal = [task.title, ...messagesFor(task.id).filter((m) => m.role === 'human').map((m) => m.text)]
   const open = listTasks({ ...(task.projectId ? { projectId: task.projectId } : {}) })
@@ -330,7 +334,7 @@ export function decomposeQuestion(task: Task): string {
     '```',
     '',
     'Rules, all of which are enforced — an answer that breaks one is discarded entirely:',
-    `- At most ${MAX_DECOMPOSE_CHILDREN} children. Prefer whole pieces of work; split only where the`,
+    `- At most ${maxChildren} children. Prefer whole pieces of work; split only where the`,
     '  work is genuinely wide. Four large children beat twelve small ones.',
     '- List them in dependency order. Every index in `dependsOn` must be SMALLER than the child\'s own',
     '  position in the array. Cycles are impossible if you follow this, and rejected if you do not.',
@@ -351,7 +355,8 @@ export function decomposeQuestion(task: Task): string {
 function applyDecompose(task: Task, answer: Record<string, unknown>): ApplyResult {
   // ⛔ The whole answer is validated before anything is created. A half-applied decomposition leaves
   // a task list that is neither the old plan nor the new one, which is worse than either.
-  const checked = validateDecomposition(answer)
+  const maxChildren = task.constraints?.pieceLimit ?? MAX_DECOMPOSE_CHILDREN
+  const checked = validateDecomposition(answer, maxChildren)
   if (!checked.ok) return bad(checked.reason)
   noteTitleSummary(task, answer)
 
@@ -362,7 +367,10 @@ function applyDecompose(task: Task, answer: Record<string, unknown>): ApplyResul
       projectId: task.projectId,
       parentTaskId: task.id,
       createdBy: { kind: 'controller' },
-      priority: task.priority,
+      priority: task.constraints?.piecePriority ?? task.priority,
+      finishPolicy: task.constraints?.pieceFinishPolicy ?? 'commit-and-merge',
+      sessionSharing: task.constraints?.pieceSessionSharing ?? 'on',
+      constraints: task.constraints?.pieceConstraints ?? {},
       // ⛔ Draft. The most open-ended thing the controller produces lands in the one status that
       // cannot dispatch, is not assigned and holds no worker.
       status: 'draft',

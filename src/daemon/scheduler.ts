@@ -1024,6 +1024,7 @@ export function chooseTarget(task: Task): WorkerChoice {
 
   for (const worker of listWorkers()) {
     if (task.constraints.workerId && task.constraints.workerId !== worker.id) continue
+    if (task.constraints.workerIds && task.constraints.workerIds.length > 0 && !task.constraints.workerIds.includes(worker.id)) continue
     if (task.constraints.adapterId && task.constraints.adapterId !== worker.adapterId) continue
 
     // ⛔ Every way an *account* can be unfit to be handed a turn, in one shared list: disabled,
@@ -2042,7 +2043,7 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
       }
     }
 
-    branch = project.vcs === 'git' ? branchNameFor(task.seq, task.title) : null
+    branch = project.vcs === 'git' ? (task.branch ?? branchNameFor(task.seq, task.title)) : null
     // ⛔ The task goes through, so a split child is cut from its **plan branch** rather than the
     //    project's trunk. Without it child 2 would be branched off `main`, would not contain child 1's
     //    work, and a `depends_on` edge between them would order the runs and deliver nothing.
@@ -3564,7 +3565,7 @@ async function landCompletion(
     // ⛔ The *finish* policy, not the project policy beside it. It decides which ref the landing
     // will rebase onto, so the mergeability check has to be told it or it answers about another.
     const finishPolicy = resolveFinishPolicy(task, project).policy
-    const merge = await readMergeability(project, held.workspace.path, task.branch, finishPolicy)
+    const merge = await readMergeability(project, held.workspace.path, task.branch, finishPolicy, task)
     const decision = decideFinish({
       task,
       project,

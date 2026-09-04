@@ -12,7 +12,7 @@ import {
 } from '@shared/tasks.js'
 import { db, rows } from './db.js'
 import { log } from './log.js'
-import { listProjects, policyFor } from './projects.js'
+import { landingTargetFor, listProjects, policyFor } from './projects.js'
 import { listTasks, mandateAllows } from './tasks.js'
 import type { MergeReading } from './landing.js'
 import { ensurePool, taskBranches, workspaceState } from './worktrees.js'
@@ -223,14 +223,14 @@ export function decideFinish({
       return {
         kind: 'trunk-moved',
         reason:
-          `\`${state.branch}\` carries no commits, but the trunk's \`${project?.config.landing?.target ?? 'target'}\` ` +
+          `\`${state.branch}\` carries no commits, but the trunk's \`${project ? landingTargetFor(task, project) : 'target'}\` ` +
           `moved from ${trunk.before.slice(0, 8)} to ${trunk.after.slice(0, 8)} while this run was in ` +
           'flight. Work that lands in the trunk directly is never seen by the checks, the rebase or ' +
           'the landing policy — so this is being handed to you rather than reported as finished.',
         commits: unexplained.length > 0 ? unexplained : trunk.commits
       }
     }
-    const localTarget = project ? policyFor(project).landingTarget : 'the target'
+    const localTarget = project ? landingTargetFor(task, project) : 'the target'
     if (state.targetBehind > 0) {
       return {
         kind: 'nothing-to-land',

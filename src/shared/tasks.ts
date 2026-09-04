@@ -594,6 +594,8 @@ export interface TaskConstraints {
    * the control that sets it has to say so rather than call itself a hint.
    */
   workerId?: string
+  /** Multiple workers allowed for this task. Pinned to any of these accounts. */
+  workerIds?: string[]
   adapterId?: string
   model?: string
   /**
@@ -605,9 +607,23 @@ export interface TaskConstraints {
    * claims a setting nothing applied, which is worse than not offering the choice.
    */
   effort?: string
+  /** Model per worker ID, when multiple workers or a specific worker model is specified. */
+  modelsByWorker?: Record<string, string>
+  /** Effort per worker ID, where selectable. */
+  effortsByWorker?: Record<string, string>
   /** Capabilities the task cannot run without, e.g. `manualCompact`. */
   needs?: string[]
   workspacePolicy?: 'pooled' | 'trunk' | 'direct' | 'any'
+  /** For plan tasks: priority for each decomposed piece. */
+  piecePriority?: Priority
+  /** For plan tasks: max piece limit (e.g. <=5). */
+  pieceLimit?: number
+  /** For plan tasks: finish policy for each piece (e.g. commit-and-merge into planner branch). */
+  pieceFinishPolicy?: FinishPolicyChoice
+  /** For plan tasks: session sharing for each piece. */
+  pieceSessionSharing?: SessionSharingChoice
+  /** For plan tasks: constraints for each piece (e.g. allowed workers & models). */
+  pieceConstraints?: TaskConstraints
 }
 
 /** One attempt of a task on one session. Runs are what the estimator learns from. */
@@ -1832,11 +1848,18 @@ export function windowsForPool(
  * worker's effort, because the two are separate choices the CLI takes as separate flags.
  */
 export function resolveModelChoice(
-  constraints: Pick<TaskConstraints, 'model' | 'effort'> | null | undefined,
+  constraints:
+    | (Pick<TaskConstraints, 'model' | 'effort'> & {
+        modelsByWorker?: Record<string, string>
+        effortsByWorker?: Record<string, string>
+      })
+    | null
+    | undefined,
   // ⚠️ Structural, not `Pick<Worker, …>`: `Worker` is not imported here and TypeScript resolved the
   // name to the DOM's own `Worker` global without complaining, which typechecked into nonsense.
   worker:
     | {
+        id?: string
         defaultModel: string | null
         defaultEffort: string | null
         defaultModels?: Record<string, string | null> | null
@@ -1846,7 +1869,11 @@ export function resolveModelChoice(
   selectableEffort: boolean,
   quota?: QuotaSnapshot | null
 ): ResolvedModelChoice {
-  const model = constraints?.model ?? null
+  const workerSpecificModel =
+    worker && 'id' in worker && worker.id && constraints?.modelsByWorker
+      ? constraints.modelsByWorker[worker.id]
+      : undefined
+  const model = workerSpecificModel || constraints?.model || null
   let workerModel: string | null = null
 
   if (worker?.defaultModels && Object.keys(worker.defaultModels).length > 0) {
@@ -1894,7 +1921,11 @@ export function resolveModelChoice(
     return { model: resolvedModel, modelSource, effort: null, effortSource: 'cli' }
   }
 
-  const effort = constraints?.effort ?? null
+  const workerSpecificEffort =
+    worker && 'id' in worker && worker.id && constraints?.effortsByWorker
+      ? constraints.effortsByWorker[worker.id]
+      : undefined
+  const effort = workerSpecificEffort || constraints?.effort || null
   const workerEffort = worker?.defaultEffort ?? null
   return {
     model: resolvedModel,

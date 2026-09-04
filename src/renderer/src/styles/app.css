@@ -4817,6 +4817,133 @@ select:focus-visible,
   max-width: 80ch;
 }
 
+.composer-bar--plan {
+  display: block;
+  padding: var(--sp-1) var(--sp-1) 0;
+  overflow-x: auto;
+}
+
+.composer-plan-table {
+  border-collapse: collapse;
+  border-spacing: 0;
+  border: none;
+  background: transparent;
+  width: auto;
+}
+
+.composer-plan-table tr {
+  border: none;
+  background: transparent;
+}
+
+.composer-plan-table th,
+.composer-plan-table td {
+  padding: 2px 4px;
+  vertical-align: middle;
+  text-align: left;
+  border: none;
+  background: transparent;
+  white-space: nowrap;
+}
+
+.composer-plan-label {
+  font-size: var(--text-dense);
+  font-weight: 600;
+  color: var(--color-text-dim);
+  padding-right: var(--sp-2) !important;
+  width: 90px;
+}
+
+.workers-menu {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  min-width: 300px;
+  max-width: 420px;
+  padding: var(--sp-1);
+}
+
+.workers-menu-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 4px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.workers-menu-title {
+  font-size: var(--text-dense);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.workers-menu-action {
+  font-size: var(--text-meta);
+  color: var(--color-accent);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+}
+
+.workers-menu-action:hover {
+  text-decoration: underline;
+}
+
+.workers-menu-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.workers-menu-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+}
+
+.workers-menu-worker-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  user-select: none;
+}
+
+.workers-menu-worker-info {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.workers-menu-worker-name {
+  font-size: var(--text-dense);
+  font-weight: 500;
+  color: var(--color-text);
+}
+
+.workers-menu-model-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-left: 20px;
+}
+
+.workers-menu-model-select {
+  width: 100%;
+  font-size: var(--text-meta);
+  padding: 2px 4px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
 /* ---- pill ---- */
 
 .pill-wrap {

@@ -12,6 +12,7 @@ import {
   type Objective,
   type Principal,
   type Priority,
+  type Project,
   type Run,
   type RunKind,
   type RunOutcome,
@@ -32,6 +33,8 @@ import { costModel } from './costmodel.js'
 import { bumpPricingEpoch, priceForRun, priceForTask, subscriptionOf } from './price.js'
 import { emit } from './events.js'
 import { log } from './log.js'
+import { getProject } from './projects.js'
+import { branchNameFor } from './worktrees.js'
 
 /**
  * Tasks.
@@ -476,6 +479,25 @@ export interface CreateTaskInput {
   attachmentIds?: string[]
 }
 
+export function isSplitWork(task: Task): boolean {
+  if (!task.parentTaskId) return false
+  const parent = getTask(task.parentTaskId)
+  return parent?.kind === 'plan'
+}
+
+export function plannerBranchFor(project: Project, task: Task): string | null {
+  if (task.kind === 'plan') {
+    return task.branch ?? (project.vcs === 'git' ? branchNameFor(task.seq, task.title) : null)
+  }
+  if (task.parentTaskId) {
+    const parent = getTask(task.parentTaskId)
+    if (parent?.kind === 'plan') {
+      return parent.branch ?? (project.vcs === 'git' ? branchNameFor(parent.seq, parent.title) : null)
+    }
+  }
+  return null
+}
+
 export function createTask(input: CreateTaskInput): Task {
   const title = input.title.trim()
   if (!title) throw new Error('a task needs a title')
@@ -521,6 +543,13 @@ export function createTask(input: CreateTaskInput): Task {
   const id = randomUUID()
   const seq = nextSeq()
   const now = Date.now()
+  const effectiveProjectId = input.projectId ?? parent?.projectId ?? null
+  const project = effectiveProjectId ? getProject(effectiveProjectId) : null
+  const effectiveLandingTarget =
+    input.landingTarget ??
+    (parent?.kind === 'plan'
+      ? (parent.branch ?? (project && project.vcs === 'git' ? branchNameFor(parent.seq, parent.title) : null))
+      : null)
 
   db()
     .prepare(
@@ -534,7 +563,7 @@ export function createTask(input: CreateTaskInput): Task {
     .run(
       id,
       seq,
-      input.projectId ?? parent?.projectId ?? null,
+      effectiveProjectId,
       title,
       input.kind ?? 'work',
       input.status ?? 'ready',
@@ -559,7 +588,7 @@ export function createTask(input: CreateTaskInput): Task {
       input.autoCompact ?? 'inherit',
       input.preemptible === false ? 0 : 1,
       input.estTokens ?? null,
-      input.landingTarget ?? null,
+      effectiveLandingTarget,
       input.childDefaults ? JSON.stringify(input.childDefaults) : null,
       now,
       now

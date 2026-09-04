@@ -29,11 +29,9 @@ import {
   modelChoiceFor,
   readComposerPrefs,
   rememberModelChoice,
-  rememberPieceModelChoice,
   writeComposerPrefs,
   type ComposerKind,
-  type ComposerPrefs,
-  type PiecePrefs
+  type ComposerPrefs
 } from '../lib/composerprefs'
 
 /**
@@ -77,7 +75,7 @@ const KIND_OPTIONS: PillOption[] = [
   { value: 'task', label: 'Task', hint: 'one thread of work, dispatched to an agent' },
   {
     value: 'plan',
-    label: 'Plan & Split',
+    label: 'Plan&Split',
     hint: 'an agent plans it with you, then files and delegates the pieces'
   }
 ]
@@ -97,7 +95,7 @@ const ATTACH_OPTIONS: PillOption[] = [
   { value: 'folder', label: 'Add a folder' }
 ]
 
-const KIND_SHORT: Record<ComposerKind, string> = { task: 'Task', plan: 'Plan & Split' }
+const KIND_SHORT: Record<ComposerKind, string> = { task: 'Task', plan: 'Plan&Split' }
 
 /** `2026-09-02T14:30` — what `datetime-local` wants, in the operator's own timezone. */
 function localInputValue(at: number): string {
@@ -191,6 +189,14 @@ export function NewTask({
    * nothing about it.
    */
   const [dependsOn, setDependsOn] = useState<string[]>([])
+  const [plannerFinishPolicy, setPlannerFinishPolicy] = useState<FinishPolicyChoice>('commit-only')
+  const [piecePriority, setPiecePriority] = useState<ComposerPrefs['priority']>('P2')
+  const [pieceLimit, setPieceLimit] = useState<number>(5)
+  const [pieceSessionSharing, setPieceSessionSharing] = useState<SessionSharingChoice>('on')
+  const [pieceFinishPolicy, setPieceFinishPolicy] = useState<FinishPolicyChoice>('commit-and-merge')
+  const [pieceWorkerIds, setPieceWorkerIds] = useState<string[]>([])
+  const [pieceModels, setPieceModels] = useState<Record<string, string>>({})
+  const [pieceEfforts, setPieceEfforts] = useState<Record<string, string>>({})
   const [scheduleOption, setScheduleOption] = useState<ScheduleOption>('now')
   const [customTime, setCustomTime] = useState('')
   const [saving, setSaving] = useState<'draft' | 'ready' | null>(null)
@@ -280,41 +286,6 @@ export function NewTask({
     .map((id) => candidateTasks.find((t) => t.id === id))
     .filter((t): t is Task => !!t)
 
-  // ⛔ The pieces' row resolves its model exactly the way the planner's does — a remembered id is
-  //    re-checked against what the pinned account can actually run, because a model list belongs to
-  //    one CLI and a stale id would be handed to an adapter that cannot start on it.
-  const pieces = prefs.pieces
-  const setPieces = (next: PiecePrefs): void => setPrefs({ ...prefs, pieces: next })
-  const piecePinned = pinnable.find((w) => w.id === pieces.workerId) ?? null
-  const pieceAdapter = piecePinned
-    ? (options.find((o) => o.adapterId === piecePinned.adapterId) ?? null)
-    : null
-  const pieceRemembered = modelChoiceFor(pieces, pieces.workerId)
-  const pieceModel =
-    pieceAdapter && pieceAdapter.models.some((m) => m.id === pieceRemembered.model)
-      ? pieceRemembered.model
-      : ''
-  const pieceCanSetEffort = pieceAdapter?.selectableEffort ?? false
-  const pieceResolved = resolveModelChoice(
-    { model: pieceModel || undefined },
-    piecePinned,
-    pieceCanSetEffort
-  )
-  const pieceEffectiveModel =
-    pieceAdapter?.models.find((m) => m.id === (pieceResolved.model ?? '')) ?? null
-  const pieceEfforts = pieceCanSetEffort ? (pieceEffectiveModel?.effortLevels ?? []) : []
-  const pieceEffort = pieceEfforts.includes(pieceRemembered.effort) ? pieceRemembered.effort : ''
-  const piecesInheritedModelLabel = modelLabel(piecePinned?.defaultModel) ?? 'CLI default'
-
-  const choosePieceModel = (next: string): void => {
-    const levels = pieceAdapter?.models.find((m) => m.id === next)?.effortLevels ?? []
-    const keptEffort = pieceCanSetEffort && levels.includes(pieceEffort) ? pieceEffort : ''
-    setPrefs(rememberPieceModelChoice(prefs, pieces.workerId, { model: next, effort: keptEffort }))
-  }
-
-  const choosePieceEffort = (next: string): void => {
-    setPrefs(rememberPieceModelChoice(prefs, pieces.workerId, { model: pieceModel, effort: next }))
-  }
 
   const chooseWorker = (workerId: string): void => {
     // ⛔ The model is not cleared, it is *re-read for the account now pinned*. Clearing was right
@@ -340,38 +311,41 @@ export function NewTask({
     setSaving(targetStatus)
     try {
       if (isPlan) {
-        // ⛔ **Both rows travel.** The top level is what the planning turn runs as — a real dispatch
-        // to a real account — and `childDefaults` is what each piece it files inherits. The old call
-        // sent a title and a project because nothing here ran; a planner does.
+        const pieceConstraints =
+          pieceWorkerIds.length > 0 || Object.keys(pieceModels).length > 0 || Object.keys(pieceEfforts).length > 0
+            ? {
+                ...(pieceWorkerIds.length > 0 ? { workerIds: pieceWorkerIds } : {}),
+                ...(Object.keys(pieceModels).length > 0 ? { modelsByWorker: pieceModels } : {}),
+                ...(Object.keys(pieceEfforts).length > 0 ? { effortsByWorker: pieceEfforts } : {})
+              }
+            : undefined
+
         await rpc('task.plan', {
           title: prompt.trim(),
           projectId: projectId || null,
           ...(paste.ids.length > 0 ? { attachmentIds: paste.ids } : {}),
           priority: prefs.priority,
-          finishPolicy: prefs.finishPolicy,
+          finishPolicy: plannerFinishPolicy,
           sessionSharing: prefs.sessionSharing,
           ...(dependsOn.length > 0 ? { dependsOn } : {}),
-          ...(prefs.workerId || model || effort
-            ? {
-                constraints: {
-                  ...(prefs.workerId ? { workerId: prefs.workerId } : {}),
-                  ...(model ? { model } : {}),
-                  ...(effort ? { effort } : {})
-                }
-              }
-            : {}),
-          maxChildren: pieces.maxChildren,
-          // ⚠️ Absent, not empty, field by field — the daemon reads a present value as a choice, and
-          // a row of empty strings would be settings that name nothing rather than settings nobody
-          // touched.
+          maxChildren: pieceLimit,
           childDefaults: {
-            priority: pieces.priority,
-            finishPolicy: pieces.finishPolicy,
-            sessionSharing: pieces.sessionSharing,
-            maxChildren: pieces.maxChildren,
-            ...(pieces.workerId ? { workerId: pieces.workerId } : {}),
-            ...(pieceModel ? { model: pieceModel } : {}),
-            ...(pieceEffort ? { effort: pieceEffort } : {})
+            priority: piecePriority,
+            finishPolicy: pieceFinishPolicy,
+            sessionSharing: pieceSessionSharing,
+            maxChildren: pieceLimit,
+            ...(pieceWorkerIds.length > 0 ? { workerIds: pieceWorkerIds } : {}),
+            ...(Object.keys(pieceModels).length > 0 ? { modelsByWorker: pieceModels } : {})
+          },
+          constraints: {
+            ...(prefs.workerId ? { workerId: prefs.workerId } : {}),
+            ...(model ? { model } : {}),
+            ...(effort ? { effort } : {}),
+            piecePriority,
+            pieceLimit,
+            pieceFinishPolicy,
+            pieceSessionSharing,
+            ...(pieceConstraints ? { pieceConstraints } : {})
           }
         })
       } else {
@@ -427,7 +401,7 @@ export function NewTask({
   // ⛔ A send waits for an upload. Otherwise a click between selecting a file and its RPC completing
   // would create the task without the context the person just chose.
   const canSend = !saving && !paste.busy && prompt.trim().length > 0
-  const sendLabel = saving === 'ready' ? '…' : isPlan ? 'Plan it' : armed ? 'Schedule' : 'Send'
+  const sendLabel = saving === 'ready' ? '…' : isPlan ? 'Plan & Split' : armed ? 'Schedule' : 'Send'
 
   return (
     <div className="composer">
@@ -532,23 +506,8 @@ export function NewTask({
         `Commit·Verify·Merge` `Auto` it is a status line you can click, and the dim ones are the
         answers nobody has chosen.
       */}
-      {/*
-        ⛔ **In Plan & Split this row is the PLANNER's settings, and it is labelled.** Until t182 every
-        control here was hidden the moment the kind pill said Plan — honest while a plan task was
-        never dispatched and nothing would have read them, and wrong the moment one is. A planning
-        turn is a real run on a real account with a real model, and those are exactly the things
-        somebody wants to choose for it.
-
-        ⚠️ The caption is not decoration. Two identical rows of pills with nothing to tell them apart
-        is the failure this buys, and it is worse than one row.
-      */}
-      {isPlan && (
-        <div className="composer-group-label" aria-hidden="true">
-          Planner
-        </div>
-      )}
-      <div className="composer-bar" role="group" aria-label={isPlan ? 'Planner settings' : 'Task settings'}>
-        {(
+      <div className={`composer-bar${isPlan ? ' composer-bar--plan' : ''}`} role="group" aria-label="Task settings">
+        {!isPlan ? (
           <>
             <input
               ref={attachmentPickerRef}
@@ -581,72 +540,62 @@ export function NewTask({
                 />
               )}
             />
-          </>
-        )}
-        {!fixedProjectId && (
-          <PillSelect
-            ariaLabel="Project"
-            title="A git project gets a pooled worktree and a branch named after the task. Agents never work in the trunk."
-            muted={!projectId}
-            value={projectId}
-            label={projectId ? (projectNames.get(projectId) ?? projectId) : 'No project'}
-            options={[
-              { value: '', label: 'No project', hint: 'runs without a workspace or a branch' },
-              ...projects.map((p) => ({ value: p.id, label: p.name }))
-            ]}
-            onChange={setProjectId}
-          />
-        )}
 
-        <PillSelect
-          ariaLabel="Priority"
-          title="Priority orders the queue. It does not jump a task past its dependencies."
-          muted={prefs.priority === 'P2'}
-          value={prefs.priority}
-          label={prefs.priority}
-          options={PRIORITY_OPTIONS}
-          onChange={(v) => setPrefs({ ...prefs, priority: v as ComposerPrefs['priority'] })}
-        />
+            <PillSelect
+              ariaLabel="What this files"
+              title="A task is dispatched to an agent. A plan is decomposed into drafts first."
+              muted={kind === 'task'}
+              value={kind}
+              label={KIND_SHORT[kind]}
+              options={KIND_OPTIONS}
+              onChange={(v) => setPrefs({ ...prefs, kind: v as ComposerKind })}
+            />
 
-        <PillSelect
-          ariaLabel="What this files"
-          title={
-            'A task is dispatched to an agent as written. Plan & Split gives the first turn to a ' +
-            'planning agent: it reads the repository, asks you what it needs, then files the pieces ' +
-            'for approval and waits for them.'
-          }
-          muted={kind === 'task'}
-          value={kind}
-          label={KIND_SHORT[kind]}
-          options={KIND_OPTIONS}
-          onChange={(v) => setPrefs({ ...prefs, kind: v as ComposerKind })}
-        />
+            <PillSelect
+              ariaLabel="Priority"
+              title="Priority orders the queue. It does not jump a task past its dependencies."
+              muted={prefs.priority === 'P2'}
+              value={prefs.priority}
+              label={prefs.priority}
+              options={PRIORITY_OPTIONS}
+              onChange={(v) => setPrefs({ ...prefs, priority: v as ComposerPrefs['priority'] })}
+            />
 
-        {(
-          <Pill
-            ariaLabel="Wait for other tasks"
-            title="This task is held at blocked until every task named here has completed. You can add or drop a prerequisite later from its thread."
-            muted={dependsOn.length === 0}
-            label={
-              dependsOn.length === 0
-                ? 'Dep'
-                : dependsOn.length === 1
-                  ? `Dep t${depTasks[0]?.seq ?? '?'}`
-                  : `Dep ×${dependsOn.length}`
-            }
-            menu={() => (
-              <DependencyMenu
-                all={candidateTasks}
-                chosen={dependsOn}
-                onChange={setDependsOn}
-                projectNames={projectNames}
+            <Pill
+              ariaLabel="Wait for other tasks"
+              title="This task is held at blocked until every task named here has completed. You can add or drop a prerequisite later from its thread."
+              muted={dependsOn.length === 0}
+              label={
+                dependsOn.length === 0
+                  ? 'Depends on'
+                  : dependsOn.length === 1
+                    ? `Dep t${depTasks[0]?.seq ?? '?'}`
+                    : `Dep ×${dependsOn.length}`
+              }
+              menu={() => (
+                <DependencyMenu
+                  all={candidateTasks}
+                  chosen={dependsOn}
+                  onChange={setDependsOn}
+                  projectNames={projectNames}
+                />
+              )}
+            />
+
+            {!fixedProjectId && (
+              <PillSelect
+                ariaLabel="Project"
+                title="A git project gets a pooled worktree and a branch named after the task. Agents never work in the trunk."
+                muted={!projectId}
+                value={projectId}
+                label={projectId ? (projectNames.get(projectId) ?? projectId) : 'No project'}
+                options={[
+                  { value: '', label: 'No project', hint: 'runs without a workspace or a branch' },
+                  ...projects.map((p) => ({ value: p.id, label: p.name }))
+                ]}
+                onChange={setProjectId}
               />
             )}
-          />
-        )}
-
-        {(
-          <>
             <span className="composer-gap" aria-hidden="true" />
             <PillSelect
               ariaLabel="Conversation policy"
@@ -716,9 +665,9 @@ export function NewTask({
               }
               muted={!prefs.workerId}
               value={prefs.workerId}
-              label={pinned?.label ?? 'Auto'}
+              label={pinned?.label ?? 'Auto Worker'}
               options={[
-                { value: '', label: 'Auto', hint: 'the scheduler picks' },
+                { value: '', label: 'Auto Worker', hint: 'the scheduler picks' },
                 ...pinnable.map((w) => ({ value: w.id, label: w.label }))
               ]}
               onChange={chooseWorker}
@@ -776,154 +725,295 @@ export function NewTask({
               />
             )}
           </>
+        ) : (
+          <>
+            <input
+              ref={attachmentPickerRef}
+              type="file"
+              multiple
+              hidden
+              onChange={(e) => {
+                const files = [...(e.currentTarget.files ?? [])]
+                e.currentTarget.value = ''
+                void paste.addFiles(files)
+              }}
+            />
+            <table className="composer-plan-table">
+              <tbody>
+                <tr>
+                  <th className="composer-plan-label">Planner</th>
+                  <td>
+                    <Pill
+                      ariaLabel="Add attachment"
+                      title="Add a file, photo, or folder"
+                      label="+"
+                      menu={(close) => (
+                        <PillOptions
+                          options={ATTACH_OPTIONS}
+                          value=""
+                          ariaLabel="Add attachment"
+                          onPick={(next) => {
+                            close()
+                            if (next === 'file') {
+                              attachmentPickerRef.current?.click()
+                            } else if (next === 'folder') {
+                              void paste.addFolders()
+                            }
+                          }}
+                        />
+                      )}
+                    />
+                  </td>
+                  <td>
+                    <PillSelect
+                      ariaLabel="What this files"
+                      title="A task is dispatched to an agent. A plan is decomposed into drafts first."
+                      muted={false}
+                      value={kind}
+                      label={KIND_SHORT[kind]}
+                      options={KIND_OPTIONS}
+                      onChange={(v) => setPrefs({ ...prefs, kind: v as ComposerKind })}
+                    />
+                  </td>
+                  <td>
+                    <PillSelect
+                      ariaLabel="Priority"
+                      title="Priority orders the queue. It does not jump a task past its dependencies."
+                      muted={prefs.priority === 'P2'}
+                      value={prefs.priority}
+                      label={prefs.priority}
+                      options={PRIORITY_OPTIONS}
+                      onChange={(v) => setPrefs({ ...prefs, priority: v as ComposerPrefs['priority'] })}
+                    />
+                  </td>
+                  <td>
+                    <div style={{ display: 'inline-flex', gap: '4px', alignItems: 'center' }}>
+                      <Pill
+                        ariaLabel="Wait for other tasks"
+                        title="This task is held at blocked until every task named here has completed."
+                        muted={dependsOn.length === 0}
+                        label={
+                          dependsOn.length === 0
+                            ? 'Depends on'
+                            : dependsOn.length === 1
+                              ? `Dep t${depTasks[0]?.seq ?? '?'}`
+                              : `Dep ×${dependsOn.length}`
+                        }
+                        menu={() => (
+                          <DependencyMenu
+                            all={candidateTasks}
+                            chosen={dependsOn}
+                            onChange={setDependsOn}
+                            projectNames={projectNames}
+                          />
+                        )}
+                      />
+                      {!fixedProjectId && (
+                        <PillSelect
+                          ariaLabel="Project"
+                          title="A git project gets a pooled worktree and a branch named after the task."
+                          muted={!projectId}
+                          value={projectId}
+                          label={projectId ? (projectNames.get(projectId) ?? projectId) : 'No project'}
+                          options={[
+                            { value: '', label: 'No project', hint: 'runs without a workspace or a branch' },
+                            ...projects.map((p) => ({ value: p.id, label: p.name }))
+                          ]}
+                          onChange={setProjectId}
+                        />
+                      )}
+                    </div>
+                  </td>
+                  <td>
+                    <PillSelect
+                      ariaLabel="Conversation policy"
+                      title="Whether this task may continue in a conversation another task in this project has already been having."
+                      muted={prefs.sessionSharing === 'inherit'}
+                      value={prefs.sessionSharing}
+                      label={
+                        prefs.sessionSharing === 'inherit'
+                          ? inheritedSharingShort
+                          : SHARING_SHORT[prefs.sessionSharing]
+                      }
+                      options={[
+                        {
+                          value: 'inherit',
+                          label: `Inherit — ${inheritedSharingLong}`,
+                          hint: `from the ${inheritedSharing.source}, and follows it as it changes`
+                        },
+                        { value: 'on', label: SHARING_LABELS.on },
+                        { value: 'off', label: SHARING_LABELS.off }
+                      ]}
+                      onChange={(v) => setPrefs({ ...prefs, sessionSharing: v as SessionSharingChoice })}
+                    />
+                  </td>
+                  <td>
+                    <PillSelect
+                      ariaLabel="Finish policy"
+                      title="What happens when the agent says it is done."
+                      muted={plannerFinishPolicy === 'commit-only'}
+                      value={plannerFinishPolicy}
+                      label={
+                        plannerFinishPolicy === 'commit-only'
+                          ? 'Commit'
+                          : plannerFinishPolicy === 'inherit'
+                            ? inheritedFinishShort
+                            : (FINISH_SHORT[plannerFinishPolicy] ?? plannerFinishPolicy)
+                      }
+                      options={[
+                        { value: 'commit-only', label: 'Commit' },
+                        ...FINISH_ORDER.filter((p) => p !== 'commit-only').map((p) => ({
+                          value: p,
+                          label: FINISH_LABELS[p]
+                        }))
+                      ]}
+                      onChange={(v) => setPlannerFinishPolicy(v as FinishPolicyChoice)}
+                    />
+                  </td>
+                  <td>
+                    <div style={{ display: 'inline-flex', gap: '4px', alignItems: 'center' }}>
+                      <PillSelect
+                        ariaLabel="Worker"
+                        align="right"
+                        muted={!prefs.workerId}
+                        value={prefs.workerId}
+                        label={pinned?.label ?? 'Auto Worker'}
+                        options={[
+                          { value: '', label: 'Auto Worker', hint: 'the scheduler picks' },
+                          ...pinnable.map((w) => ({ value: w.id, label: w.label }))
+                        ]}
+                        onChange={chooseWorker}
+                      />
+                      <PillSelect
+                        ariaLabel="Model"
+                        align="right"
+                        disabled={!forAdapter}
+                        muted={!model}
+                        value={model}
+                        label={model ? (modelLabel(model) ?? model) : inheritedModelLabel}
+                        options={[
+                          {
+                            value: '',
+                            label: `Inherit — ${inheritedModelLabel}`,
+                            hint: pinned ? 'whatever this account reaches for' : undefined
+                          },
+                          ...(forAdapter?.models ?? []).map((m) => ({
+                            value: m.id,
+                            label: modelLabel(m.id) ?? m.id,
+                            hint: m.id
+                          }))
+                        ]}
+                        onChange={chooseModel}
+                      />
+                      {efforts.length > 0 && (
+                        <PillSelect
+                          ariaLabel="Effort"
+                          align="right"
+                          muted={!effort}
+                          value={effort}
+                          label={effort ? (effortLabel(effort) ?? effort) : inheritedEffortLabel}
+                          options={[
+                            { value: '', label: `Inherit — ${inheritedEffortLabel}` },
+                            ...efforts.map((level) => ({ value: level, label: effortLabel(level) ?? level }))
+                          ]}
+                          onChange={chooseEffort}
+                        />
+                      )}
+                    </div>
+                  </td>
+                </tr>
+                <tr>
+                  <th className="composer-plan-label">Each Piece</th>
+                  <td></td>
+                  <td></td>
+                  <td>
+                    <PillSelect
+                      ariaLabel="Piece Priority"
+                      title="Priority applied to each decomposed piece."
+                      muted={piecePriority === 'P2'}
+                      value={piecePriority}
+                      label={piecePriority}
+                      options={PRIORITY_OPTIONS}
+                      onChange={(v) => setPiecePriority(v as ComposerPrefs['priority'])}
+                    />
+                  </td>
+                  <td>
+                    <PillSelect
+                      ariaLabel="Piece Limit"
+                      title="Maximum number of pieces to decompose the goal into."
+                      value={String(pieceLimit)}
+                      label={`<=${pieceLimit}`}
+                      options={FANOUT_OPTIONS}
+                      onChange={(v) => setPieceLimit(Number(v))}
+                    />
+                  </td>
+                  <td>
+                    <PillSelect
+                      ariaLabel="Piece Session Sharing"
+                      title="Session sharing policy for each decomposed piece."
+                      muted={pieceSessionSharing === 'on'}
+                      value={pieceSessionSharing}
+                      label={
+                        pieceSessionSharing === 'inherit'
+                          ? inheritedSharingShort
+                          : (SHARING_SHORT[pieceSessionSharing] ?? pieceSessionSharing)
+                      }
+                      options={[
+                        { value: 'on', label: SHARING_LABELS.on },
+                        { value: 'off', label: SHARING_LABELS.off },
+                        {
+                          value: 'inherit',
+                          label: `Inherit — ${inheritedSharingLong}`,
+                          hint: `from the ${inheritedSharing.source}`
+                        }
+                      ]}
+                      onChange={(v) => setPieceSessionSharing(v as SessionSharingChoice)}
+                    />
+                  </td>
+                  <td>
+                    <PillSelect
+                      ariaLabel="Piece Finish Policy"
+                      title="Finish policy for each decomposed piece. Split work merges into the Planner branch."
+                      muted={pieceFinishPolicy === 'commit-and-merge'}
+                      value={pieceFinishPolicy}
+                      label={
+                        pieceFinishPolicy === 'commit-and-merge'
+                          ? 'Commit·Verify·Merge Branch'
+                          : pieceFinishPolicy === 'inherit'
+                            ? inheritedFinishShort
+                            : (FINISH_SHORT[pieceFinishPolicy] ?? pieceFinishPolicy)
+                      }
+                      options={[
+                        { value: 'commit-and-merge', label: 'Commit·Verify·Merge Branch' },
+                        ...FINISH_ORDER.filter((p) => p !== 'commit-and-merge').map((p) => ({
+                          value: p,
+                          label: FINISH_LABELS[p]
+                        }))
+                      ]}
+                      onChange={(v) => setPieceFinishPolicy(v as FinishPolicyChoice)}
+                    />
+                  </td>
+                  <td>
+                    <WorkersPicker
+                      workers={pinnable}
+                      modelOptions={options}
+                      selectedWorkerIds={pieceWorkerIds}
+                      selectedModels={pieceModels}
+                      selectedEfforts={pieceEfforts}
+                      onChange={(workerIds, models, efforts) => {
+                        setPieceWorkerIds(workerIds)
+                        setPieceModels(models)
+                        setPieceEfforts(efforts)
+                      }}
+                    />
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </>
         )}
       </div>
 
-      {/*
-        ⛔ **The pieces' settings, and they are a separate row because they are a separate decision.**
-        "Plan with one model, build with another" is decision D5 and the case that motivated Plan &
-        Split at all: the planning turn wants something that reads a repository well and asks good
-        questions, and the pieces want whatever is cheapest that can follow a concrete instruction.
-        One row would have forced them to be the same.
-      */}
-      {isPlan && (
-        <>
-          <div className="composer-group-label" aria-hidden="true">
-            Each piece
-          </div>
-          <div className="composer-bar" role="group" aria-label="Piece settings">
-            <PillSelect
-              ariaLabel="Piece priority"
-              title="The priority every piece is filed at. They still wait on each other's dependencies."
-              muted={pieces.priority === 'P2'}
-              value={pieces.priority}
-              label={pieces.priority}
-              options={PRIORITY_OPTIONS}
-              onChange={(v) => setPieces({ ...pieces, priority: v as PiecePrefs['priority'] })}
-            />
-
-            <PillSelect
-              ariaLabel="How many pieces"
-              title={
-                'The most pieces the planner may file. Written into the task’s mandate, so this is ' +
-                'the number that is actually enforced rather than a suggestion in the prompt.'
-              }
-              muted={pieces.maxChildren === 5}
-              value={String(pieces.maxChildren)}
-              label={`≤${pieces.maxChildren}`}
-              options={FANOUT_OPTIONS}
-              onChange={(v) => setPieces({ ...pieces, maxChildren: Number(v) })}
-            />
-
-            <span className="composer-gap" aria-hidden="true" />
-            <PillSelect
-              ariaLabel="Piece conversation policy"
-              title="Whether each piece may continue a conversation another task has already been having."
-              muted={pieces.sessionSharing === 'inherit'}
-              value={pieces.sessionSharing}
-              label={
-                pieces.sessionSharing === 'inherit'
-                  ? inheritedSharingShort
-                  : SHARING_SHORT[pieces.sessionSharing]
-              }
-              options={[
-                {
-                  value: 'inherit',
-                  label: `Inherit — ${inheritedSharingLong}`,
-                  hint: `from the ${inheritedSharing.source}, and follows it as it changes`
-                },
-                { value: 'on', label: SHARING_LABELS.on },
-                { value: 'off', label: SHARING_LABELS.off }
-              ]}
-              onChange={(v) => setPieces({ ...pieces, sessionSharing: v as SessionSharingChoice })}
-            />
-
-            <PillSelect
-              ariaLabel="Piece finish policy"
-              title={
-                'What happens when each piece says it is done. ⚠️ Pieces merge into this plan’s own ' +
-                'branch, never into the trunk — only the finished plan lands.'
-              }
-              muted={pieces.finishPolicy === 'inherit'}
-              value={pieces.finishPolicy}
-              label={
-                pieces.finishPolicy === 'inherit'
-                  ? inheritedFinishShort
-                  : (FINISH_SHORT[pieces.finishPolicy] ?? pieces.finishPolicy)
-              }
-              options={[
-                {
-                  value: 'inherit',
-                  label: `Inherit — ${inheritedFinishLong}`,
-                  hint: `from the ${inheritedFinish.source}, and follows it as it changes`
-                },
-                ...FINISH_ORDER.map((p) => ({ value: p, label: FINISH_LABELS[p] }))
-              ]}
-              onChange={(v) => setPieces({ ...pieces, finishPolicy: v as FinishPolicyChoice })}
-            />
-
-            <span className="composer-gap" aria-hidden="true" />
-            <PillSelect
-              ariaLabel="Piece worker"
-              align="right"
-              title={
-                'The account every piece runs on. Auto lets the scheduler weigh quota and cache ' +
-                'warmth per piece, which is usually what you want when several run at once.'
-              }
-              muted={!pieces.workerId}
-              value={pieces.workerId}
-              label={piecePinned?.label ?? 'Auto'}
-              options={[
-                { value: '', label: 'Auto', hint: 'the scheduler picks, per piece' },
-                ...pinnable.map((w) => ({ value: w.id, label: w.label }))
-              ]}
-              onChange={(workerId) => setPieces({ ...pieces, workerId })}
-            />
-
-            <PillSelect
-              ariaLabel="Piece model"
-              align="right"
-              disabled={!pieceAdapter}
-              title={
-                pieceAdapter
-                  ? 'The model every piece runs with.'
-                  : 'Pin an account for the pieces first — a model list belongs to one CLI.'
-              }
-              muted={!pieceModel}
-              value={pieceModel}
-              label={pieceModel ? (modelLabel(pieceModel) ?? pieceModel) : piecesInheritedModelLabel}
-              options={[
-                { value: '', label: `Inherit — ${piecesInheritedModelLabel}` },
-                ...(pieceAdapter?.models ?? []).map((m) => ({
-                  value: m.id,
-                  label: modelLabel(m.id) ?? m.id,
-                  hint: m.id
-                }))
-              ]}
-              onChange={choosePieceModel}
-            />
-
-            {pieceEfforts.length > 0 && (
-              <PillSelect
-                ariaLabel="Piece effort"
-                align="right"
-                title="How hard each piece's account is asked to think."
-                muted={!pieceEffort}
-                value={pieceEffort}
-                label={pieceEffort ? (effortLabel(pieceEffort) ?? pieceEffort) : 'CLI default'}
-                options={[
-                  { value: '', label: 'Inherit — CLI default' },
-                  ...pieceEfforts.map((level) => ({
-                    value: level,
-                    label: effortLabel(level) ?? level
-                  }))
-                ]}
-                onChange={choosePieceEffort}
-              />
-            )}
-          </div>
-        </>
-      )}
 
       <p className="composer-hint">
         {isPlan
@@ -1018,5 +1108,152 @@ function DependencyMenu({
         )}
       </div>
     </div>
+  )
+}
+
+function WorkersPicker({
+  workers,
+  modelOptions,
+  selectedWorkerIds,
+  selectedModels,
+  selectedEfforts,
+  onChange
+}: {
+  workers: Array<{
+    id: string
+    label: string
+    adapterId: string
+    defaultModel?: string | null
+    defaultEffort?: string | null
+  }>
+  modelOptions: ModelOptions[]
+  selectedWorkerIds: string[]
+  selectedModels: Record<string, string>
+  selectedEfforts: Record<string, string>
+  onChange: (
+    workerIds: string[],
+    models: Record<string, string>,
+    efforts: Record<string, string>
+  ) => void
+}): React.JSX.Element {
+  const label = useMemo(() => {
+    if (selectedWorkerIds.length === 0) return 'Workers'
+    if (selectedWorkerIds.length === 1) {
+      const w = workers.find((x) => x.id === selectedWorkerIds[0])
+      return w ? w.label : '1 Worker'
+    }
+    return `${selectedWorkerIds.length} Workers`
+  }, [selectedWorkerIds, workers])
+
+  const toggleWorker = (id: string): void => {
+    if (selectedWorkerIds.includes(id)) {
+      const next = selectedWorkerIds.filter((x) => x !== id)
+      onChange(next, selectedModels, selectedEfforts)
+    } else {
+      onChange([...selectedWorkerIds, id], selectedModels, selectedEfforts)
+    }
+  }
+
+  const setWorkerModel = (id: string, model: string): void => {
+    const nextModels = { ...selectedModels, [id]: model }
+    if (!model) delete nextModels[id]
+    onChange(selectedWorkerIds, nextModels, selectedEfforts)
+  }
+
+  const setWorkerEffort = (id: string, effort: string): void => {
+    const nextEfforts = { ...selectedEfforts, [id]: effort }
+    if (!effort) delete nextEfforts[id]
+    onChange(selectedWorkerIds, selectedModels, nextEfforts)
+  }
+
+  const selectAll = (): void => {
+    onChange([], {}, {})
+  }
+
+  return (
+    <Pill
+      ariaLabel="Piece workers"
+      title="Select which workers may run decomposed pieces, and their models"
+      align="right"
+      muted={selectedWorkerIds.length === 0}
+      label={label}
+      menu={() => (
+        <div className="workers-menu">
+          <div className="workers-menu-head">
+            <span className="workers-menu-title">Workers & Models</span>
+            {selectedWorkerIds.length > 0 && (
+              <button type="button" className="workers-menu-action" onClick={selectAll}>
+                Reset to Auto (All)
+              </button>
+            )}
+          </div>
+          <div className="workers-menu-list">
+            {workers.map((w) => {
+              const isChecked = selectedWorkerIds.includes(w.id)
+              const forAdapter = modelOptions.find((o) => o.adapterId === w.adapterId)
+              const models = forAdapter?.models ?? []
+              const selectedModel = selectedModels[w.id] ?? ''
+              const effectiveModel = models.find((m) => m.id === selectedModel)
+              const canEffort = forAdapter?.selectableEffort ?? false
+              const effortLevels = canEffort ? (effectiveModel?.effortLevels ?? []) : []
+              const selectedEffort = selectedEfforts[w.id] ?? ''
+
+              return (
+                <div key={w.id} className="workers-menu-item">
+                  <label className="workers-menu-worker-row">
+                    <div className="workers-menu-worker-info">
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={() => toggleWorker(w.id)}
+                      />
+                      <span className="workers-menu-worker-name">{w.label}</span>
+                    </div>
+                  </label>
+                  {(isChecked || selectedWorkerIds.length === 0) && (
+                    <div className="workers-menu-model-row">
+                      <select
+                        aria-label={`Model for ${w.label}`}
+                        className="workers-menu-model-select"
+                        value={selectedModel}
+                        onChange={(e) => setWorkerModel(w.id, e.target.value)}
+                      >
+                        <option value="">
+                          CLI default (
+                          {w.defaultModel
+                            ? (modelLabel(w.defaultModel) ?? w.defaultModel)
+                            : 'default'}
+                          )
+                        </option>
+                        {models.map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {modelLabel(m.id) ?? m.id}
+                          </option>
+                        ))}
+                      </select>
+                      {effortLevels.length > 0 && (
+                        <select
+                          aria-label={`Effort for ${w.label}`}
+                          className="workers-menu-model-select"
+                          value={selectedEffort}
+                          onChange={(e) => setWorkerEffort(w.id, e.target.value)}
+                        >
+                          <option value="">Default effort</option>
+                          {effortLevels.map((l) => (
+                            <option key={l} value={l}>
+                              {effortLabel(l) ?? l}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+    />
   )
 }

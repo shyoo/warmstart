@@ -261,6 +261,11 @@ So the merge is a `git merge --ff-only` **inside the trunk**, attempted only whe
 target and has nothing uncommitted in it. When it is not, the branch is kept, and the task says which
 of the three it was: a dirty tree, a detached HEAD, or another branch checked out.
 
+⭐ **Split work merges into the planner's branch, not the trunk.** When a task is a child of a plan task,
+its target ref is the planner's branch (`plannerBranchFor()`). Merging updates the planner branch directly
+via `git branch -f <planner-branch> <commit>` without touching the trunk, keeping `main` clean until the planner
+or user merges the plan.
+
 ⚠️ **This means `main` stops moving on the days you are mid-edit in it**, and finished tasks queue as
 branches saying *"committed and verified, waiting for a clean trunk"*. That is the cost of the safe
 default. ⛔ The alternative — stashing your work to make room — is not on offer: the tool does not

@@ -943,7 +943,7 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
         ...(p.priority ? { priority: p.priority } : {}),
         ...(p.finishPolicy ? { finishPolicy: p.finishPolicy } : {}),
         ...(p.sessionSharing ? { sessionSharing: p.sessionSharing } : {}),
-        ...(p.constraints ? { constraints: p.constraints } : {}),
+        ...(p.constraints ? { constraints: checkConstraints(p.constraints) } : {}),
         ...(p.dependsOn?.length ? { dependsOn: p.dependsOn } : {}),
         ...(p.attachmentIds?.length ? { attachmentIds: p.attachmentIds } : {}),
         // ⛔ **The fan-out the operator picked is written into the mandate**, which is what
@@ -1216,6 +1216,48 @@ function inheritedModels(worker: Worker | null): string[] {
 
 export function checkConstraints(c: TaskConstraints): TaskConstraints {
   const checked: TaskConstraints = { ...c }
+
+  if (c.workerIds) {
+    for (const id of c.workerIds) {
+      requireWorker(id)
+    }
+  }
+
+  if (c.modelsByWorker) {
+    for (const [wId, model] of Object.entries(c.modelsByWorker)) {
+      if (!model) continue
+      const w = requireWorker(wId)
+      const info = adapter(w.adapterId).info
+      const cm = costModel(info.policy.costModelId)
+      const spec = cm.modelSpec(model)
+      if (!spec) {
+        throw new Error(`'${model}' is not a model ${info.label} can be priced for`)
+      }
+    }
+  }
+
+  if (c.effortsByWorker) {
+    for (const [wId, effort] of Object.entries(c.effortsByWorker)) {
+      if (!effort) continue
+      const w = requireWorker(wId)
+      const info = adapter(w.adapterId).info
+      if (!info.capabilities.selectableEffort) {
+        throw new Error(`${info.label} takes no effort flag — effort is set inside the session`)
+      }
+      const cm = costModel(info.policy.costModelId)
+      const model = c.modelsByWorker?.[wId]
+      if (model) {
+        const spec = cm.modelSpec(model)
+        if (spec && !spec.effort_levels.includes(effort)) {
+          throw new Error(`'${model}' has no effort level '${effort}'`)
+        }
+      }
+    }
+  }
+
+  if (c.pieceConstraints) {
+    checked.pieceConstraints = checkConstraints(c.pieceConstraints)
+  }
 
   let worker: Worker | null = null
   if (c.workerId) {

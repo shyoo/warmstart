@@ -324,6 +324,15 @@ export function cleanWorkspaceAcls(workspacePath: string): void {
   }
 }
 
+export async function ensurePlannerBranch(project: Project, branchName: string): Promise<void> {
+  if (project.vcs !== 'git') return
+  if (!(await gitOk(project.root, ['rev-parse', '--verify', `refs/heads/${branchName}`]))) {
+    const base = await baseRef(project)
+    await git(project.root, ['branch', branchName, base])
+    log.info(`created planner branch ${branchName} from ${base}`)
+  }
+}
+
 export async function prepareWorkspace(
   project: Project,
   workspace: Workspace,
@@ -339,6 +348,10 @@ export async function prepareWorkspace(
       // A repo with no remote has nothing to fetch; that is fine, not an error.
       if (await gitOk(project.root, ['remote', 'get-url', 'origin'])) {
         await git(workspace.path, ['fetch', 'origin', '--prune'])
+      }
+      const target = landingTargetFor(task, project)
+      if (target && target !== policy.landingTarget) {
+        await ensurePlannerBranch(project, target)
       }
       const base = await baseRef(project, task)
       // A task that ran before left its branch checked out in whichever workspace it used. Git will
@@ -421,7 +434,7 @@ export function workspaceEnv(
  * ⛔ Only pool members are touched, and only when they hold the branch we are about to claim. The
  * trunk is never switched.
  */
-async function parkOtherHolders(
+export async function parkOtherHolders(
   project: Project,
   branch: string,
   keepPath: string,

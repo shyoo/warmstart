@@ -20,7 +20,7 @@ import {
   recordLandedRange,
   setStatus
 } from './tasks.js'
-import { landedRef, rescueAtTip } from './worktrees.js'
+import { baseRef, landedRef, parkOtherHolders, rescueAtTip } from './worktrees.js'
 import { launchArgs, which } from './which.js'
 import { log } from './log.js'
 
@@ -234,7 +234,7 @@ export async function readMergeability(
     // ⛛ Through `landingBaseFor`, so this asks about the ref the landing will really use. Reading
     // `origin/<target>` under a policy that rebases onto the local one is how t59 was told a
     // conflicted branch was clean.
-    const base = landingBaseFor(project, policy, remote)
+    const base = landingBaseFor(project, policy, remote, task)
     // Both sides must resolve; a target that does not exist yet is no reading rather than a conflict.
     await git(workspacePath, ['rev-parse', '--verify', `${base}^{commit}`])
     try {
@@ -610,7 +610,7 @@ export const mergeLocal: LandingStrategy = {
       // ⛔ Through the same helper `readMergeability` asks, and that is the whole point: the two had
       // separate copies of this rule, disagreed on the default policy, and t59 was told its branch
       // was clean against `origin/main` and then failed rebasing onto `main`.
-      const base = landingBaseFor(ctx.project, ctx.policy, false)
+      const base = landingBaseFor(ctx.project, ctx.policy, false, ctx.task)
       try {
         await git(ctx.workspacePath, ['rebase', base])
       } catch (err) {
@@ -641,47 +641,68 @@ export const mergeLocal: LandingStrategy = {
       // and nothing else identifies the task's commits afterwards. See `Task.landedBaseSha`.
       const baseSha = await revParse(ctx.workspacePath, base)
 
-      // ⛔ The trunk has to be clean and on the target. Anything else and the work stays on its
-      // branch with a sentence naming what is in the way, because the alternative is editing a
-      // working tree somebody is using.
-      const blocked = await trunkNotReady(ctx.project.root, target)
-      if (blocked) {
-        return {
-          strategy: 'merge-local',
-          ok: false,
-          branch: ctx.branch,
-          commit,
-          reason:
-            `committed and verified on \`${ctx.branch}\`, but not merged: ${blocked}. ` +
-            'The branch is intact — merge it when the trunk is free.'
+      if (target === policyFor(ctx.project).landingTarget) {
+        // ⛔ The trunk has to be clean and on the target. Anything else and the work stays on its
+        // branch with a sentence naming what is in the way, because the alternative is editing a
+        // working tree somebody is using.
+        const blocked = await trunkNotReady(ctx.project.root, target)
+        if (blocked) {
+          return {
+            strategy: 'merge-local',
+            ok: false,
+            branch: ctx.branch,
+            commit,
+            reason:
+              `committed and verified on \`${ctx.branch}\`, but not merged: ${blocked}. ` +
+              'The branch is intact — merge it when the trunk is free.'
+          }
         }
-      }
 
-      try {
-        await git(ctx.project.root, ['merge', '--ff-only', ctx.branch])
-      } catch (err) {
-        return {
-          strategy: 'merge-local',
-          ok: false,
-          branch: ctx.branch,
-          commit,
-          reason:
-            `committed and verified on \`${ctx.branch}\`, but the trunk would not fast-forward: ` +
-            (err instanceof Error ? err.message : String(err))
+        try {
+          await git(ctx.project.root, ['merge', '--ff-only', ctx.branch])
+        } catch (err) {
+          return {
+            strategy: 'merge-local',
+            ok: false,
+            branch: ctx.branch,
+            commit,
+            reason:
+              `committed and verified on \`${ctx.branch}\`, but the trunk would not fast-forward: ` +
+              (err instanceof Error ? err.message : String(err))
+          }
+        }
+      } else {
+        // Landing into a non-trunk branch (such as the planner's branch)
+        try {
+          await parkOtherHolders(ctx.project, target, ctx.workspacePath, await baseRef(ctx.project))
+          await git(ctx.project.root, ['branch', '-f', target, commit])
+        } catch (err) {
+          return {
+            strategy: 'merge-local',
+            ok: false,
+            branch: ctx.branch,
+            commit,
+            reason:
+              `committed and verified on \`${ctx.branch}\`, but could not update \`${target}\`: ` +
+              (err instanceof Error ? err.message : String(err))
+          }
         }
       }
 
       // The fast-forward above is the proof `retireBranch` requires: every commit on the branch is
       // now on the target.
       await retireBranch(ctx.workspacePath, ctx.branch)
-      log.info(`merged t${ctx.task.seq} (${commit.slice(0, 8)}) into local ${target}, not pushed`)
+      log.info(`merged t${ctx.task.seq} (${commit.slice(0, 8)}) into ${target}, not pushed`)
       return {
         strategy: 'merge-local',
         ok: true,
         commit,
         ...(baseSha ? { base: baseSha } : {}),
         branch: ctx.branch,
-        reason: `merged into local \`${target}\` as ${commit.slice(0, 8)}. Not pushed.`
+        reason:
+          target === policyFor(ctx.project).landingTarget
+            ? `merged into local \`${target}\` as ${commit.slice(0, 8)}. Not pushed.`
+            : `merged into planner branch \`${target}\` as ${commit.slice(0, 8)}.`
       }
     } finally {
       release(turn.lock.id)

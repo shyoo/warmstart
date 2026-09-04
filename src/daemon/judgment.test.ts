@@ -109,6 +109,56 @@ describe('decomposition lands on the board', () => {
     expect(listTasks().filter((t) => t.parentTaskId === plan.id)).toHaveLength(0)
     expect(getTask(plan.id)?.status).not.toBe('completed')
   })
+
+  it('propagates piece settings and constraints to child tasks', () => {
+    const plan = createTask({
+      title: 'Plan with piece preferences',
+      kind: 'plan',
+      constraints: {
+        piecePriority: 'P1',
+        pieceLimit: 3,
+        pieceFinishPolicy: 'commit-and-merge',
+        pieceSessionSharing: 'on',
+        pieceConstraints: {
+          workerIds: ['w1', 'w2'],
+          modelsByWorker: { w1: 'm1' }
+        }
+      }
+    })
+    const result = applyConsult(consultFor('decompose', plan.id), {
+      children: [
+        { title: 'Piece 1' },
+        { title: 'Piece 2', dependsOn: [0] }
+      ]
+    })
+    expect(result.ok, result.reason).toBe(true)
+    const children = listTasks().filter((t) => t.parentTaskId === plan.id)
+    expect(children).toHaveLength(2)
+    expect(children.every((c) => c.priority === 'P1')).toBe(true)
+    expect(children.every((c) => c.finishPolicy === 'commit-and-merge')).toBe(true)
+    expect(children.every((c) => c.sessionSharing === 'on')).toBe(true)
+    expect(children.every((c) => c.constraints.workerIds?.[0] === 'w1')).toBe(true)
+    expect(children.every((c) => c.constraints.modelsByWorker?.w1 === 'm1')).toBe(true)
+  })
+
+  it('respects pieceLimit cap during decomposition validation', () => {
+    const plan = createTask({
+      title: 'Plan with tight limit',
+      kind: 'plan',
+      constraints: {
+        pieceLimit: 2
+      }
+    })
+    const result = applyConsult(consultFor('decompose', plan.id), {
+      children: [
+        { title: 'Piece 1' },
+        { title: 'Piece 2' },
+        { title: 'Piece 3' }
+      ]
+    })
+    expect(result.ok).toBe(false)
+    expect(result.reason).toContain('exceeds the cap of 2')
+  })
 })
 
 describe('the gate moves an agent-filed task somewhere definite', () => {

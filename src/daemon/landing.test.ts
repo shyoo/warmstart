@@ -149,7 +149,44 @@ describe('landing without a remote', () => {
     expect(result.reason).toContain('Not pushed')
     // The branch is retired once the trunk provably contains it.
     expect(git(root, 'branch', '--list', branch)).toBe('')
-  })
+  }, 20_000)
+
+  it('merges split work into the planner branch and leaves main untouched', async () => {
+    seq += 1
+    const root = makeRepo(`local${seq}`)
+    const project = projects.addProject({ root })
+    const plannerTask = tasks.createTask({
+      title: `planner ${seq}`,
+      projectId: project.id,
+      kind: 'plan'
+    })
+    const plannerBranch = tasks.plannerBranchFor(project, plannerTask)!
+    git(root, 'branch', plannerBranch, 'main')
+    const mainBefore = git(root, 'rev-parse', 'main')
+
+    const childBranch = `multi-agent-controller/t${seq + 100}-child`
+    const childTask = tasks.createTask({
+      title: `child ${seq}`,
+      projectId: project.id,
+      parentTaskId: plannerTask.id
+    })
+    const ws = join(dir, `local${seq}-ws`)
+    git(root, 'worktree', 'add', '-b', childBranch, ws, plannerBranch)
+    writeFileSync(join(ws, 'piece.txt'), 'piece work\n')
+    git(ws, 'add', '-A')
+    git(ws, 'commit', '-m', 'the piece did the work')
+
+    const result = await land(project, childTask.id, ws, childBranch, 'commit-and-merge')
+
+    expect(result.ok, result.reason).toBe(true)
+    expect(result.strategy).toBe('merge-branch')
+    // Main was NOT moved
+    expect(git(root, 'rev-parse', 'main')).toBe(mainBefore)
+    // Planner branch WAS moved to include the child commit
+    expect(git(root, 'log', '-1', '--oneline', plannerBranch)).toContain('the piece did the work')
+    // Child branch was retired
+    expect(git(root, 'branch', '--list', childBranch)).toBe('')
+  }, 20_000)
 
   /**
    * ⛔ **This has to happen at the landing or it never can.** `retireBranch` deletes the branch two
