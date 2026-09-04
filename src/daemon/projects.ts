@@ -3,7 +3,7 @@ import { existsSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import { basename, join, resolve } from 'node:path'
 import { canonicalPath } from './fspath.js'
 import { execFileSync } from 'node:child_process'
-import type { LandingStrategyId, Project, ProjectConfig, Vcs } from '@shared/tasks.js'
+import type { LandingStrategyId, Project, ProjectConfig, Task, Vcs } from '@shared/tasks.js'
 import type { ProjectPolicyPatch } from '@shared/tasks.js'
 import { readFinishPolicy } from '@shared/tasks.js'
 import { db, row, rows } from './db.js'
@@ -361,6 +361,31 @@ export interface ProjectPolicy {
  * The committed config with defaults filled in. Everything downstream reads this, never the raw
  * JSON, so an absent key and a default value are the same thing to a caller.
  */
+/**
+ * The ref this task's work lands onto: its own if it has one, otherwise the project's.
+ *
+ * ⛔ **One resolver, and every reader goes through it.** `landingTarget` had 24 production readers
+ * when this was written, and the failure mode of missing one is documented in this repository by
+ * name: two reference points in one finish path, and the silent one won — t22, 2026-08-29, where
+ * `decideFinish` read the local `main` and `landTask` read `origin/main` 109ms later and the task
+ * reported success. A split whose children are *cut from* the plan branch by one path and *measured
+ * against* `main` by another reproduces that exactly.
+ *
+ * ⭐ Provably inert for everything that is not a split: `Task.landingTarget` is null on every row
+ * that existed before it, so this returns the project's answer unchanged.
+ *
+ * ⚠️ Takes a partial task rather than a `Task`, because three of its callers hold nothing else —
+ * `baseRef` is asked for a base before the task row is loaded, and widening them all to fetch one
+ * would put a query in the dispatch path for a field that is null.
+ */
+export function landingTargetFor(
+  task: Pick<Task, 'landingTarget'> | null | undefined,
+  project: Project
+): string {
+  const own = task?.landingTarget?.trim()
+  return own && own.length > 0 ? own : policyFor(project).landingTarget
+}
+
 export function policyFor(project: Project): ProjectPolicy {
   const c = project.config
   return {

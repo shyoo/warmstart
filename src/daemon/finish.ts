@@ -91,6 +91,24 @@ export interface FinishInputs {
    */
   trunk?: TrunkReading | null
   /**
+   * The commits on this task's target that a **sibling** put there, if any are known.
+   *
+   * ⛔ **The third condition on the tripwire, and it exists because Plan & Split makes the first two
+   * ordinary.** The rule is *empty branch* + *target moved* = an agent worked in the trunk. Under a
+   * split, children land onto the shared plan branch **while their siblings run**, so a child that
+   * legitimately produced no commits — it answered a question, or its work was already there — would
+   * be refused its verdict and named in the log as a tripwire hit, constantly and by design.
+   *
+   * ⛔ Not solved by exempting children. That hands back exactly the hole t17 came through, on the
+   * tasks that write the most code: a child that commits onto the plan branch instead of its own
+   * branch is the *same* failure, one level down. So the movement is attributed instead — commits a
+   * sibling is known to have landed are subtracted, and anything left over still fires.
+   *
+   * ⚠️ An empty array means *nothing is attributable*, which is the state of every ordinary task and
+   * keeps the rule exactly as it was.
+   */
+  siblingLanded?: string[]
+  /**
    * Whether the branch would rebase onto its target, read without touching anything.
    *
    * ⚠️ `null` is **no reading**, exactly like `trunk`: a git too old for `merge-tree`, a target that
@@ -115,7 +133,8 @@ export function decideFinish({
   state,
   hasChecks,
   trunk,
-  merge
+  merge,
+  siblingLanded = []
 }: FinishInputs): FinishDecision {
   const { policy, instruction } = resolveFinishPolicy(task, project)
   const loose = state.dirtyFiles.length + state.untrackedFiles.length
@@ -194,7 +213,13 @@ export function decideFinish({
     // ⚠️ Both conditions, deliberately. The trunk moving on its own means an operator was working,
     //    which happens constantly and is nobody's fault; a branch being empty on its own is the
     //    commonest honest outcome there is. Only together are they worth stopping for.
-    if (trunk && trunk.after !== trunk.before) {
+    // ⛔ Attribute the movement before accusing anybody of it. Every commit a sibling landed is
+    //    subtracted; if that accounts for all of them the target moved for a reason this design
+    //    creates on purpose, and the run is ordinary. Anything unaccounted for still fires.
+    const unexplained = trunk
+      ? trunk.commits.filter((c) => !siblingLanded.some((sha) => sha && c.startsWith(sha.slice(0, 8))))
+      : []
+    if (trunk && trunk.after !== trunk.before && (trunk.commits.length === 0 || unexplained.length > 0)) {
       return {
         kind: 'trunk-moved',
         reason:
@@ -202,7 +227,7 @@ export function decideFinish({
           `moved from ${trunk.before.slice(0, 8)} to ${trunk.after.slice(0, 8)} while this run was in ` +
           'flight. Work that lands in the trunk directly is never seen by the checks, the rebase or ' +
           'the landing policy — so this is being handed to you rather than reported as finished.',
-        commits: trunk.commits
+        commits: unexplained.length > 0 ? unexplained : trunk.commits
       }
     }
     const localTarget = project ? policyFor(project).landingTarget : 'the target'

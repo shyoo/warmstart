@@ -24,12 +24,16 @@ import { effortLabel, modelLabel } from '../lib/modelname'
 import { taskLabelShort } from '../lib/taskview'
 import { Pill, PillOptions, PillSelect, type PillOption } from './Pill'
 import {
+  MAX_PIECES,
+  MIN_PIECES,
   modelChoiceFor,
   readComposerPrefs,
   rememberModelChoice,
+  rememberPieceModelChoice,
   writeComposerPrefs,
   type ComposerKind,
-  type ComposerPrefs
+  type ComposerPrefs,
+  type PiecePrefs
 } from '../lib/composerprefs'
 
 /**
@@ -71,15 +75,29 @@ const PRIORITY_OPTIONS: PillOption[] = [
  */
 const KIND_OPTIONS: PillOption[] = [
   { value: 'task', label: 'Task', hint: 'one thread of work, dispatched to an agent' },
-  { value: 'plan', label: 'Plan', hint: 'too big for one task — decomposed into drafts first' }
+  {
+    value: 'plan',
+    label: 'Plan & Split',
+    hint: 'an agent plans it with you, then files and delegates the pieces'
+  }
 ]
+
+/**
+ * ⛔ Starts at 2 and stops at 8. The floor is the daemon's own rule — a split of one is refused,
+ * because it buys a round trip and a cold context and delivers no parallelism. The ceiling is what
+ * `validateSplit` enforces, so the number on the pill is the number that will actually be allowed.
+ */
+const FANOUT_OPTIONS: PillOption[] = Array.from({ length: MAX_PIECES - MIN_PIECES + 1 }, (_, i) => ({
+  value: String(MIN_PIECES + i),
+  label: `Up to ${MIN_PIECES + i} pieces`
+}))
 
 const ATTACH_OPTIONS: PillOption[] = [
   { value: 'file', label: 'Add a file or photo' },
   { value: 'folder', label: 'Add a folder' }
 ]
 
-const KIND_SHORT: Record<ComposerKind, string> = { task: 'Task', plan: 'Plan' }
+const KIND_SHORT: Record<ComposerKind, string> = { task: 'Task', plan: 'Plan & Split' }
 
 /** `2026-09-02T14:30` — what `datetime-local` wants, in the operator's own timezone. */
 function localInputValue(at: number): string {
@@ -262,6 +280,42 @@ export function NewTask({
     .map((id) => candidateTasks.find((t) => t.id === id))
     .filter((t): t is Task => !!t)
 
+  // ⛔ The pieces' row resolves its model exactly the way the planner's does — a remembered id is
+  //    re-checked against what the pinned account can actually run, because a model list belongs to
+  //    one CLI and a stale id would be handed to an adapter that cannot start on it.
+  const pieces = prefs.pieces
+  const setPieces = (next: PiecePrefs): void => setPrefs({ ...prefs, pieces: next })
+  const piecePinned = pinnable.find((w) => w.id === pieces.workerId) ?? null
+  const pieceAdapter = piecePinned
+    ? (options.find((o) => o.adapterId === piecePinned.adapterId) ?? null)
+    : null
+  const pieceRemembered = modelChoiceFor(pieces, pieces.workerId)
+  const pieceModel =
+    pieceAdapter && pieceAdapter.models.some((m) => m.id === pieceRemembered.model)
+      ? pieceRemembered.model
+      : ''
+  const pieceCanSetEffort = pieceAdapter?.selectableEffort ?? false
+  const pieceResolved = resolveModelChoice(
+    { model: pieceModel || undefined },
+    piecePinned,
+    pieceCanSetEffort
+  )
+  const pieceEffectiveModel =
+    pieceAdapter?.models.find((m) => m.id === (pieceResolved.model ?? '')) ?? null
+  const pieceEfforts = pieceCanSetEffort ? (pieceEffectiveModel?.effortLevels ?? []) : []
+  const pieceEffort = pieceEfforts.includes(pieceRemembered.effort) ? pieceRemembered.effort : ''
+  const piecesInheritedModelLabel = modelLabel(piecePinned?.defaultModel) ?? 'CLI default'
+
+  const choosePieceModel = (next: string): void => {
+    const levels = pieceAdapter?.models.find((m) => m.id === next)?.effortLevels ?? []
+    const keptEffort = pieceCanSetEffort && levels.includes(pieceEffort) ? pieceEffort : ''
+    setPrefs(rememberPieceModelChoice(prefs, pieces.workerId, { model: next, effort: keptEffort }))
+  }
+
+  const choosePieceEffort = (next: string): void => {
+    setPrefs(rememberPieceModelChoice(prefs, pieces.workerId, { model: pieceModel, effort: next }))
+  }
+
   const chooseWorker = (workerId: string): void => {
     // ⛔ The model is not cleared, it is *re-read for the account now pinned*. Clearing was right
     // when there was one model slot — an id belongs to one CLI and would be handed to an adapter
@@ -286,10 +340,40 @@ export function NewTask({
     setSaving(targetStatus)
     try {
       if (isPlan) {
-        // ⛔ A plan task is decomposed, not dispatched. Its children arrive as drafts and their
-        // prompts are written at promotion, not now — which is also why it carries no worker, model,
-        // schedule or landing policy: nothing here runs, and each draft answers those for itself.
-        await rpc('task.plan', { title: prompt.trim(), projectId: projectId || null })
+        // ⛔ **Both rows travel.** The top level is what the planning turn runs as — a real dispatch
+        // to a real account — and `childDefaults` is what each piece it files inherits. The old call
+        // sent a title and a project because nothing here ran; a planner does.
+        await rpc('task.plan', {
+          title: prompt.trim(),
+          projectId: projectId || null,
+          ...(paste.ids.length > 0 ? { attachmentIds: paste.ids } : {}),
+          priority: prefs.priority,
+          finishPolicy: prefs.finishPolicy,
+          sessionSharing: prefs.sessionSharing,
+          ...(dependsOn.length > 0 ? { dependsOn } : {}),
+          ...(prefs.workerId || model || effort
+            ? {
+                constraints: {
+                  ...(prefs.workerId ? { workerId: prefs.workerId } : {}),
+                  ...(model ? { model } : {}),
+                  ...(effort ? { effort } : {})
+                }
+              }
+            : {}),
+          maxChildren: pieces.maxChildren,
+          // ⚠️ Absent, not empty, field by field — the daemon reads a present value as a choice, and
+          // a row of empty strings would be settings that name nothing rather than settings nobody
+          // touched.
+          childDefaults: {
+            priority: pieces.priority,
+            finishPolicy: pieces.finishPolicy,
+            sessionSharing: pieces.sessionSharing,
+            maxChildren: pieces.maxChildren,
+            ...(pieces.workerId ? { workerId: pieces.workerId } : {}),
+            ...(pieceModel ? { model: pieceModel } : {}),
+            ...(pieceEffort ? { effort: pieceEffort } : {})
+          }
+        })
       } else {
         const notBefore = plannedStart(scheduleOption, customTime, readClock())
         if (notBefore === 'invalid') {
@@ -343,7 +427,7 @@ export function NewTask({
   // ⛔ A send waits for an upload. Otherwise a click between selecting a file and its RPC completing
   // would create the task without the context the person just chose.
   const canSend = !saving && !paste.busy && prompt.trim().length > 0
-  const sendLabel = saving === 'ready' ? '…' : isPlan ? 'Decompose' : armed ? 'Schedule' : 'Send'
+  const sendLabel = saving === 'ready' ? '…' : isPlan ? 'Plan it' : armed ? 'Schedule' : 'Send'
 
   return (
     <div className="composer">
@@ -364,7 +448,7 @@ export function NewTask({
           aria-label="Prompt"
           placeholder={
             isPlan
-              ? 'Describe the outcome — it is broken into drafts rather than dispatched'
+              ? 'Describe the outcome. An agent plans it with you, then files and delegates the pieces.'
               : 'Describe the work as you would to a colleague. You can paste an image in here as well.'
           }
           onChange={(e) => setPrompt(e.target.value)}
@@ -448,8 +532,23 @@ export function NewTask({
         `Commit·Verify·Merge` `Auto` it is a status line you can click, and the dim ones are the
         answers nobody has chosen.
       */}
-      <div className="composer-bar" role="group" aria-label="Task settings">
-        {!isPlan && (
+      {/*
+        ⛔ **In Plan & Split this row is the PLANNER's settings, and it is labelled.** Until t182 every
+        control here was hidden the moment the kind pill said Plan — honest while a plan task was
+        never dispatched and nothing would have read them, and wrong the moment one is. A planning
+        turn is a real run on a real account with a real model, and those are exactly the things
+        somebody wants to choose for it.
+
+        ⚠️ The caption is not decoration. Two identical rows of pills with nothing to tell them apart
+        is the failure this buys, and it is worse than one row.
+      */}
+      {isPlan && (
+        <div className="composer-group-label" aria-hidden="true">
+          Planner
+        </div>
+      )}
+      <div className="composer-bar" role="group" aria-label={isPlan ? 'Planner settings' : 'Task settings'}>
+        {(
           <>
             <input
               ref={attachmentPickerRef}
@@ -499,21 +598,23 @@ export function NewTask({
           />
         )}
 
-        {!isPlan && (
-          <PillSelect
-            ariaLabel="Priority"
-            title="Priority orders the queue. It does not jump a task past its dependencies."
-            muted={prefs.priority === 'P2'}
-            value={prefs.priority}
-            label={prefs.priority}
-            options={PRIORITY_OPTIONS}
-            onChange={(v) => setPrefs({ ...prefs, priority: v as ComposerPrefs['priority'] })}
-          />
-        )}
+        <PillSelect
+          ariaLabel="Priority"
+          title="Priority orders the queue. It does not jump a task past its dependencies."
+          muted={prefs.priority === 'P2'}
+          value={prefs.priority}
+          label={prefs.priority}
+          options={PRIORITY_OPTIONS}
+          onChange={(v) => setPrefs({ ...prefs, priority: v as ComposerPrefs['priority'] })}
+        />
 
         <PillSelect
           ariaLabel="What this files"
-          title="A task is dispatched to an agent. A plan is decomposed into drafts first."
+          title={
+            'A task is dispatched to an agent as written. Plan & Split gives the first turn to a ' +
+            'planning agent: it reads the repository, asks you what it needs, then files the pieces ' +
+            'for approval and waits for them.'
+          }
           muted={kind === 'task'}
           value={kind}
           label={KIND_SHORT[kind]}
@@ -521,7 +622,7 @@ export function NewTask({
           onChange={(v) => setPrefs({ ...prefs, kind: v as ComposerKind })}
         />
 
-        {!isPlan && (
+        {(
           <Pill
             ariaLabel="Wait for other tasks"
             title="This task is held at blocked until every task named here has completed. You can add or drop a prerequisite later from its thread."
@@ -544,7 +645,7 @@ export function NewTask({
           />
         )}
 
-        {!isPlan && (
+        {(
           <>
             <span className="composer-gap" aria-hidden="true" />
             <PillSelect
@@ -678,10 +779,157 @@ export function NewTask({
         )}
       </div>
 
+      {/*
+        ⛔ **The pieces' settings, and they are a separate row because they are a separate decision.**
+        "Plan with one model, build with another" is decision D5 and the case that motivated Plan &
+        Split at all: the planning turn wants something that reads a repository well and asks good
+        questions, and the pieces want whatever is cheapest that can follow a concrete instruction.
+        One row would have forced them to be the same.
+      */}
+      {isPlan && (
+        <>
+          <div className="composer-group-label" aria-hidden="true">
+            Each piece
+          </div>
+          <div className="composer-bar" role="group" aria-label="Piece settings">
+            <PillSelect
+              ariaLabel="Piece priority"
+              title="The priority every piece is filed at. They still wait on each other's dependencies."
+              muted={pieces.priority === 'P2'}
+              value={pieces.priority}
+              label={pieces.priority}
+              options={PRIORITY_OPTIONS}
+              onChange={(v) => setPieces({ ...pieces, priority: v as PiecePrefs['priority'] })}
+            />
+
+            <PillSelect
+              ariaLabel="How many pieces"
+              title={
+                'The most pieces the planner may file. Written into the task’s mandate, so this is ' +
+                'the number that is actually enforced rather than a suggestion in the prompt.'
+              }
+              muted={pieces.maxChildren === 5}
+              value={String(pieces.maxChildren)}
+              label={`≤${pieces.maxChildren}`}
+              options={FANOUT_OPTIONS}
+              onChange={(v) => setPieces({ ...pieces, maxChildren: Number(v) })}
+            />
+
+            <span className="composer-gap" aria-hidden="true" />
+            <PillSelect
+              ariaLabel="Piece conversation policy"
+              title="Whether each piece may continue a conversation another task has already been having."
+              muted={pieces.sessionSharing === 'inherit'}
+              value={pieces.sessionSharing}
+              label={
+                pieces.sessionSharing === 'inherit'
+                  ? inheritedSharingShort
+                  : SHARING_SHORT[pieces.sessionSharing]
+              }
+              options={[
+                {
+                  value: 'inherit',
+                  label: `Inherit — ${inheritedSharingLong}`,
+                  hint: `from the ${inheritedSharing.source}, and follows it as it changes`
+                },
+                { value: 'on', label: SHARING_LABELS.on },
+                { value: 'off', label: SHARING_LABELS.off }
+              ]}
+              onChange={(v) => setPieces({ ...pieces, sessionSharing: v as SessionSharingChoice })}
+            />
+
+            <PillSelect
+              ariaLabel="Piece finish policy"
+              title={
+                'What happens when each piece says it is done. ⚠️ Pieces merge into this plan’s own ' +
+                'branch, never into the trunk — only the finished plan lands.'
+              }
+              muted={pieces.finishPolicy === 'inherit'}
+              value={pieces.finishPolicy}
+              label={
+                pieces.finishPolicy === 'inherit'
+                  ? inheritedFinishShort
+                  : (FINISH_SHORT[pieces.finishPolicy] ?? pieces.finishPolicy)
+              }
+              options={[
+                {
+                  value: 'inherit',
+                  label: `Inherit — ${inheritedFinishLong}`,
+                  hint: `from the ${inheritedFinish.source}, and follows it as it changes`
+                },
+                ...FINISH_ORDER.map((p) => ({ value: p, label: FINISH_LABELS[p] }))
+              ]}
+              onChange={(v) => setPieces({ ...pieces, finishPolicy: v as FinishPolicyChoice })}
+            />
+
+            <span className="composer-gap" aria-hidden="true" />
+            <PillSelect
+              ariaLabel="Piece worker"
+              align="right"
+              title={
+                'The account every piece runs on. Auto lets the scheduler weigh quota and cache ' +
+                'warmth per piece, which is usually what you want when several run at once.'
+              }
+              muted={!pieces.workerId}
+              value={pieces.workerId}
+              label={piecePinned?.label ?? 'Auto'}
+              options={[
+                { value: '', label: 'Auto', hint: 'the scheduler picks, per piece' },
+                ...pinnable.map((w) => ({ value: w.id, label: w.label }))
+              ]}
+              onChange={(workerId) => setPieces({ ...pieces, workerId })}
+            />
+
+            <PillSelect
+              ariaLabel="Piece model"
+              align="right"
+              disabled={!pieceAdapter}
+              title={
+                pieceAdapter
+                  ? 'The model every piece runs with.'
+                  : 'Pin an account for the pieces first — a model list belongs to one CLI.'
+              }
+              muted={!pieceModel}
+              value={pieceModel}
+              label={pieceModel ? (modelLabel(pieceModel) ?? pieceModel) : piecesInheritedModelLabel}
+              options={[
+                { value: '', label: `Inherit — ${piecesInheritedModelLabel}` },
+                ...(pieceAdapter?.models ?? []).map((m) => ({
+                  value: m.id,
+                  label: modelLabel(m.id) ?? m.id,
+                  hint: m.id
+                }))
+              ]}
+              onChange={choosePieceModel}
+            />
+
+            {pieceEfforts.length > 0 && (
+              <PillSelect
+                ariaLabel="Piece effort"
+                align="right"
+                title="How hard each piece's account is asked to think."
+                muted={!pieceEffort}
+                value={pieceEffort}
+                label={pieceEffort ? (effortLabel(pieceEffort) ?? pieceEffort) : 'CLI default'}
+                options={[
+                  { value: '', label: 'Inherit — CLI default' },
+                  ...pieceEfforts.map((level) => ({
+                    value: level,
+                    label: effortLabel(level) ?? level
+                  }))
+                ]}
+                onChange={choosePieceEffort}
+              />
+            )}
+          </div>
+        </>
+      )}
+
       <p className="composer-hint">
         {isPlan
-          ? 'Turned into a handful of draft tasks with dependencies between them. Drafts dispatch ' +
-            'nothing — you promote them one at a time, and each prompt is written then.'
+          ? 'An agent plans this with you first — it reads the repository and asks what it needs to ' +
+            'know. You approve the whole split before anything is filed. The pieces branch off this ' +
+            'plan’s branch and merge back into it, and only the finished plan reaches the trunk.'
           : 'Sent to the agent as written, after any handoff from an earlier run. These settings are ' +
             'remembered for the next task; dimmed ones are inherited.'}
       </p>

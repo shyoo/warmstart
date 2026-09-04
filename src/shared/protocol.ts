@@ -35,7 +35,9 @@ import type {
   TaskView,
   FinishPolicy,
   FlowWorkspace,
+  ChildDefaults,
   FinishPolicyChoice,
+  Priority,
   ResolvedFinishPolicy,
   SessionSharing,
   AutoCompactChoice,
@@ -1566,7 +1568,30 @@ export interface RpcMap {
    */
   'controller.drain': { params: void; result: { answered: number; note: string } }
   /** Decompose a coarse goal into draft children. Files a `plan` task, which is the unit of work. */
-  'task.plan': { params: { title: string; projectId?: string | null; prompt?: string }; result: Task }
+  /**
+   * File a Plan & Split task.
+   *
+   * ⛔ **Two sets of settings, and that is decision D5.** The top level is what the *planning turn*
+   * runs as — a real dispatch to a real account, which is the whole of t182 — and `childDefaults` is
+   * what each piece it files inherits. They were one set of settings that the composer hid entirely,
+   * because until a plan task was dispatched none of them would have been read.
+   */
+  'task.plan': {
+    params: {
+      title: string
+      projectId?: string | null
+      prompt?: string
+      priority?: Priority
+      finishPolicy?: FinishPolicyChoice
+      sessionSharing?: SessionSharingChoice
+      constraints?: TaskConstraints
+      dependsOn?: string[]
+      attachmentIds?: string[]
+      childDefaults?: ChildDefaults
+      maxChildren?: number
+    }
+    result: Task
+  }
   /**
    * What work like this has cost before, from completed runs. Median, never mean.
    *
@@ -1606,6 +1631,25 @@ export interface RpcMap {
     result: { ok: boolean; seq?: number; reason?: string }
   }
   'agent.handoff': { params: { sessionId: string; note: string }; result: { ok: true } }
+  /**
+   * File a whole Plan & Split at once, blocking until the operator approves or refuses it.
+   *
+   * ⚠️ `reply` is what the agent is shown, and it is load-bearing either way: on approval it names
+   * each piece as `t<seq>` and tells the planner to stop, because an agent that carries on after
+   * splitting is spending a turn on work it has just delegated. On refusal it carries the operator's
+   * own note, so the planner revises rather than re-filing the same plan.
+   */
+  'agent.split': {
+    params: {
+      sessionId: string
+      pieces: Array<{ title: string; summary?: string; dependsOn: number[] }>
+    }
+    result: { ok: boolean; reply: string; seqs?: number[] }
+  }
+  'agent.depend': {
+    params: { sessionId: string; taskSeq: number; dependsOnSeq: number }
+    result: { ok: boolean; reason?: string }
+  }
 }
 
 export interface TaskCreateParams {

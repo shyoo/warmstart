@@ -30,7 +30,7 @@ import {
 } from './quota.js'
 import { getWorker, listWorkers, recordDispatchFailure } from './workers.js'
 import { accountUnavailability } from './eligibility.js'
-import { getProject, policyFor, reloadProject } from './projects.js'
+import { getProject, landingTargetFor, policyFor, reloadProject } from './projects.js'
 import {
   admitDependents,
   admitScheduled,
@@ -56,6 +56,7 @@ import {
   setStatus,
   startRun
 } from './tasks.js'
+import { childrenOf as splitChildrenOf } from './split.js'
 import { enqueueConsult, hasPendingConsult, latestAnswer } from './controller.js'
 import {
   decomposeQuestion,
@@ -389,9 +390,16 @@ export async function tick(): Promise<TickResult> {
   let planned = 0
 
   for (const task of ready) {
-    // ⛔ A `plan` task is decomposed, not dispatched. Sending a roadmap to a coding agent produces
-    // either a half-built version of all six milestones or a very expensive opinion.
-    if (task.kind === 'plan') {
+    // ⛔ **A Plan & Split task is dispatched like any other, and that is the whole of t178.** It used
+    // to be handed to the unattended controller instead — which has no tools, cannot read the
+    // repository and cannot ask a question, so it answered once in JSON and its children arrived as
+    // draft rows with no prompts. Planning is a *reading* job: it needs the repo in front of it and
+    // `ask_human` in its hand, which is exactly what a normal dispatch provides.
+    //
+    // ⚠️ The controller consult survives as the fallback for the one case that still cannot be given
+    // an agent turn — a plan task with **no project**, which has no workspace to read and nothing to
+    // split work across. That is decision D1: replace the behaviour, keep the escape hatch.
+    if (task.kind === 'plan' && !task.projectId) {
       if (askForPlan(task)) planned++
       else {
         const why = 'decomposition was asked for recently and is on cooldown'
@@ -2025,7 +2033,10 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
     }
 
     branch = project.vcs === 'git' ? branchNameFor(task.seq, task.title) : null
-    const prepared = await prepareWorkspace(project, workspace, branch)
+    // ⛔ The task goes through, so a split child is cut from its **plan branch** rather than the
+    //    project's trunk. Without it child 2 would be branched off `main`, would not contain child 1's
+    //    work, and a `depends_on` edge between them would order the runs and deliver nothing.
+    const prepared = await prepareWorkspace(project, workspace, branch, task)
     if (!prepared.ok) {
       releaseWorkspace(workspace.claimId)
       throw new Error(prepared.error ?? 'workspace preparation failed')
@@ -2166,7 +2177,7 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
     // the two kinds of run together.
     startedWarm: revive !== null,
     // ⭐ The tripwire's first half. See `decideFinish`'s `trunk-moved` branch for what it is for.
-    trunkShaBefore: project ? await trunkTargetSha(project, policyFor(project).landingTarget) : null,
+    trunkShaBefore: project ? await trunkTargetSha(project, landingTargetFor(task, project)) : null,
     prompt: promptText,
     objective: resolveObjective(project?.config?.objective, task.objective, settings().objective)
   })
@@ -2363,7 +2374,7 @@ async function dispatchIntoWarmSession(
     costModelId: adapter(worker.adapterId).info.policy.costModelId,
     // The session never closed, which is the warmest a run gets.
     startedWarm: true,
-    trunkShaBefore: project ? await trunkTargetSha(project, policyFor(project).landingTarget) : null,
+    trunkShaBefore: project ? await trunkTargetSha(project, landingTargetFor(task, project)) : null,
     prompt: promptText,
     objective: resolveObjective(project?.config?.objective, task.objective, settings().objective)
   })
@@ -2892,6 +2903,81 @@ export interface BuiltPrompt {
  * into it. The caller needs the list itself: a `spawn-flag` adapter puts the files in its argv, an
  * `inline` one puts the bytes in the envelope, and neither can be recovered from a sentence.
  */
+/**
+ * Which turn of a Plan & Split task this is.
+ *
+ * ⛔ Derived from whether the plan has pieces yet, not from a stored phase. A phase column would be a
+ * second copy of a fact the edges already carry, and the two would disagree the first time a split
+ * half-failed. ⚠️ `planning` is also the answer for a planner whose split was refused, which is
+ * correct: it is being asked to plan again.
+ */
+export function planPhaseOf(task: Task): 'planning' | 'resolving' {
+  return splitChildrenOf(task.id).length > 0 ? 'resolving' : 'planning'
+}
+
+/**
+ * What the planner is told on its first turn.
+ *
+ * ⛔ **"Do not write code" is the load-bearing sentence.** An agent handed a repository and a
+ * requirement will start building it, and a planner that builds the first piece itself has spent the
+ * expensive context on the cheapest part of the job and left its own split with nothing to do.
+ */
+function planningInstruction(checkLead: string): string {
+  void checkLead
+  return [
+    'You are PLANNING this work, not doing it.',
+    '',
+    'Read enough of the repository to be concrete — real file names, real functions, real ' +
+      'constraints. Use `ask_human` for anything that changes what gets built; that is what this ' +
+      'phase is for, and a question now is far cheaper than three subtasks built on a guess.',
+    '',
+    'When the requirement is settled, call `task_split` ONCE with the whole plan. Each piece must be ' +
+      'completable by an agent that has NOT read this conversation, so its instruction has to carry ' +
+      'its own context: what to change, where, and what "done" looks like. Use `depends_on` only ' +
+      'where one piece genuinely needs another’s code — an edge you did not need costs a subtask’s ' +
+      'wait for nothing.',
+    '',
+    'The operator approves the whole split before anything is filed, so make each piece legible on a ' +
+      'card. Do NOT write code, and do NOT start any of the pieces yourself. After the split ' +
+      'returns, stop — you will be started again once every piece has settled.'
+  ].join('\n')
+}
+
+/**
+ * What the planner is told when its pieces have all settled.
+ *
+ * ⛔ The table of outcomes is prepended by the caller, because "some of them failed" is the normal
+ * case and the resolution turn exists precisely to deal with it. A planner woken with no idea what
+ * happened would start by re-reading every child's thread at full price.
+ */
+function resolutionInstruction(task: Task, checkLead: string, commitHygiene: string): string {
+  // ⛔ Named with their outcomes, because "some of them failed" is the normal case and a planner
+  //    woken with no idea what happened would re-read every child's thread at full price to find out.
+  const roll = splitChildrenOf(task.id)
+    .map((child) => {
+      const label = child.titleSummary ?? child.title.split(/\r?\n/)[0] ?? ''
+      const why = child.status === 'completed' ? '' : ` — ${child.holdReason ?? 'no reason recorded'}`
+      return `  t${child.seq} · ${child.status}${why}: ${label.slice(0, 160)}`
+    })
+    .join('\n')
+  return [
+    'Every piece of your plan has settled, and this branch already contains everything they merged ' +
+      'into it. Some may have failed — that is why you are here rather than the task simply closing.',
+    '',
+    'How each piece turned out:',
+    roll,
+    '',
+    'Review the result as a WHOLE: the pieces were built by agents that could not see each other’s ' +
+      'work, so the seams between them are where the problems are. Small gaps you fix here. Large ' +
+      'ones, or anything that changes what was agreed, ask about with `ask_human`.',
+    '',
+    'Work to the end without stopping between phases. ' +
+      checkLead +
+      'When the work is finished, call the MCP tool `task_complete` with a one-line summary. ' +
+      commitHygiene
+  ].join('\n')
+}
+
 export function promptFor(
   task: Task,
   adapterId: string,
@@ -2982,6 +3068,12 @@ export function promptFor(
     'to this task, squash them into one coherent commit where safe. Do not rewrite commits already ' +
     'on the landing target, force-push, or use a destructive reset.'
 
+  // ⛔ **A plan task's closing instruction is a different instruction**, and it is selected on
+  // `task.kind` — which is a domain fact, not a mode name. (The rule this codebase enforces against
+  // branching on a name is about adapters and objectives, which are *data*; what kind of thing a task
+  // is is not.) Phase 1 delegates and stops; phase 2 reviews what came back and finishes.
+  const planPhase = task.kind === 'plan' ? planPhaseOf(task) : null
+
   if (adapter(adapterId).info.capabilities.mcp) {
     // ⛔ The completion mode changes what "finished" means, so it belongs in the same sentence
     // as `task_complete` rather than somewhere earlier in the prompt. ⚠️ `ask_human` is offered
@@ -2998,6 +3090,11 @@ export function promptFor(
       checks.length > 0
         ? `Before reporting complete, run this project's checks (${checks.map((c) => `\`${c}\``).join(', ')}) and ensure they pass. `
         : ''
+    if (planPhase === 'planning') {
+      parts.push(planningInstruction(checkLead))
+    } else if (planPhase === 'resolving') {
+      parts.push(resolutionInstruction(task, checkLead, commitHygiene))
+    } else
     parts.push(
       (checkpointed
         ? 'Work in phases. At each phase boundary call the MCP tool `checkpoint` with what you have ' +
@@ -3087,6 +3184,36 @@ export function promptFor(
     }
   }
   return { text: parts.join('\n\n'), attachments }
+}
+
+/**
+ * The commits this task's **siblings** put on their shared landing target.
+ *
+ * ⛔ **The third leg of the trunk tripwire, and Plan & Split is why it is needed.** The tripwire
+ * refuses a verdict when a task's branch is empty *and* its target moved during the run — the t17
+ * signature, an agent that worked in the trunk instead of on its branch. Under a split that pairing
+ * stops being evidence of anything: children land onto the shared plan branch **while their siblings
+ * run**, by design and constantly, so a child that legitimately committed nothing would be refused
+ * its verdict and named in the log as a tripwire hit.
+ *
+ * ⛔ Attribution rather than exemption. Exempting children would hand back exactly the hole t17 came
+ * through, on the tasks that write the most code — a child that commits onto the plan branch instead
+ * of its own branch is the same failure one level down. So sibling commits are *subtracted*, and
+ * anything left unaccounted for still fires.
+ *
+ * ⚠️ Empty for every task that is not part of a split, which leaves the rule exactly as it was.
+ */
+function siblingLandedShas(task: Task): string[] {
+  if (!task.parentTaskId || !task.landingTarget) return []
+  return listTasks()
+    .filter(
+      (other) =>
+        other.id !== task.id &&
+        other.parentTaskId === task.parentTaskId &&
+        other.landingTarget === task.landingTarget &&
+        !!other.landedHeadSha
+    )
+    .map((other) => other.landedHeadSha as string)
 }
 
 /**
@@ -3337,11 +3464,11 @@ async function landCompletion(
     // what it returns; nothing below decides anything for itself. See finish.ts for why the tool
     // never authors a commit here.
     const policy = policyFor(project)
-    const state = await workspaceState(held.workspace.path, policy.landingTarget)
+    const state = await workspaceState(held.workspace.path, landingTargetFor(task, project))
     // ⛔ Read **before** anything lands. `landTask` fast-forwards the trunk itself on a project with
     // no remote, so a reading taken afterwards would report the tool's own push as the movement it
     // is looking for — a tripwire that fires on its own footsteps is worse than none.
-    const trunk = await readTrunkMovement(project, policy.landingTarget, run)
+    const trunk = await readTrunkMovement(project, landingTargetFor(task, project), run)
     // ⭐ Asked **before** the decision, and it touches nothing — `merge-tree` merges in memory. This
     // is what lets a conflict be handed back to the live conversation instead of becoming a dead-end
     // `awaiting_human` discovered inside `landTask` two branches later. See `readMergeability`.
@@ -3355,7 +3482,8 @@ async function landCompletion(
       state,
       hasChecks: policy.check.length > 0,
       trunk,
-      merge
+      merge,
+      siblingLanded: siblingLandedShas(task)
     })
     log.info(`t${task.seq} finish: ${decision.kind} (${finishPolicy})`)
 
@@ -3516,7 +3644,7 @@ async function landCompletion(
       //
       // ⚠️ Logged at warn, and the log line is the one an operator greps for after the fact.
       log.warn(
-        `t${task.seq} trunk tripwire: \`${policy.landingTarget}\` moved during run ` +
+        `t${task.seq} trunk tripwire: \`${landingTargetFor(task, project)}\` moved during run ` +
           `${run.id.slice(0, 8)} while \`${task.branch}\` stayed empty`
       )
       const listed = decision.commits.length
@@ -3661,13 +3789,22 @@ export async function onSessionExit(session: Session, exitCode: number | null): 
             'resume it to continue or inspect the work.'
           : `The session ended (exit ${exitCode}) without reporting completion. ` +
           'Nothing here can tell whether the work was finished, so it is over to you.'
+    // ⛔ A planner that has just filed its split is the third case, and it is not a failure either.
+    //    It was told to stop — the whole design is that the wait costs nothing, which means ending
+    //    the process — so its run ended for the best possible reason. Recording `failed` here would
+    //    put a red run on every successful Plan & Split and feed the estimator a fault that never
+    //    happened.
+    const parkedOnItsOwnPlan = run.taskId ? getTask(run.taskId)?.status === 'blocked' : false
     await endUnfinishedRun(
       session,
       run,
-      why,
+      parkedOnItsOwnPlan
+        ? 'The agent filed its plan as subtasks and stopped, as instructed. This task waits for ' +
+          'them and comes back by itself.'
+        : why,
       // ⛔ Not a failure. The agent did the work it was asked for up to the point where it needed
       // an answer, and an unanswered question is not a fault of the run.
-      waiting || parked > 0 || clockCompaction ? 'blocked' : 'failed'
+      waiting || parked > 0 || clockCompaction || parkedOnItsOwnPlan ? 'blocked' : 'failed'
     )
   }
   // ⛔ Run or no run, and after the run either way. This is the moment the workspace goes back,
@@ -4252,7 +4389,7 @@ async function switchBorrowedTree(
   const from = session.currentBranch
   if (from === branch) return { ok: true, notice: null }
 
-  const result = await switchResidentBranch(project, path, branch)
+  const result = await switchResidentBranch(project, path, branch, task)
   if (!result.ok) {
     log.info(
       `t${task.seq} cannot borrow the conversation in ${path}: ${result.error ?? 'switch failed'}`
@@ -4759,11 +4896,11 @@ export async function relandTask(taskId: string): Promise<{ ok: boolean; reason?
   if (!workspace) return didNotLand('every workspace is busy; try again in a moment')
 
   try {
-    const prepared = await prepareWorkspace(project, workspace, task.branch)
+    const prepared = await prepareWorkspace(project, workspace, task.branch, task)
     if (!prepared.ok) return didNotLand(prepared.error ?? 'could not prepare a workspace')
 
     const policy = policyFor(project)
-    const state = await workspaceState(workspace.path, policy.landingTarget)
+    const state = await workspaceState(workspace.path, landingTargetFor(task, project))
     // ⛔ The same decision as a first completion, not a shortcut past it. A branch reaching this by
     // a button press gets the identical bar: authority, checks, a clean tree, real commits.
     const decision = decideFinish({ task, project, state, hasChecks: policy.check.length > 0 })

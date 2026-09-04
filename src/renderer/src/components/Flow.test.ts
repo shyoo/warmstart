@@ -20,6 +20,8 @@ function mockTask(over: Partial<Task> = {}): Task {
     projectId: 'p-1',
     title: 'test prompt',
     titleSummary: null,
+    landingTarget: null,
+    childDefaults: null,
     kind: 'work',
     landedBaseSha: null,
     landedHeadSha: null,

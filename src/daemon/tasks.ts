@@ -5,6 +5,8 @@ import {
   statusesForViews,
   viewForStatus,
   type Budget,
+  type ChildDefaults,
+  type DependencyRequirement,
   type Mandate,
   type MandateOperation,
   type Objective,
@@ -85,6 +87,8 @@ interface TaskRow {
   hold_until: number | null
   quota_override_until: number | null
   branch: string | null
+  landing_target: string | null
+  child_defaults_json: string | null
   landed_base_sha: string | null
   landed_head_sha: string | null
   quality_review_id: string | null
@@ -202,6 +206,8 @@ function toTask(r: TaskRow, timing: ActiveTiming = ZERO_TIMING): Task {
     holdUntil: r.hold_until,
     quotaOverrideUntil: r.quota_override_until,
     branch: r.branch,
+    landingTarget: r.landing_target ?? null,
+    childDefaults: parseChildDefaults(r.child_defaults_json),
     landedBaseSha: r.landed_base_sha ?? null,
     landedHeadSha: r.landed_head_sha ?? null,
     qualityReviewId: r.quality_review_id ?? null,
@@ -218,6 +224,21 @@ function toTask(r: TaskRow, timing: ActiveTiming = ZERO_TIMING): Task {
     deletedAt: r.deleted_at,
     createdAt: r.created_at,
     updatedAt: r.updated_at
+  }
+}
+
+/**
+ * ⚠️ A malformed blob reads as *no defaults*, never as a throw. This column is written by a form and
+ * read on every task load; a task that cannot be listed because its settings did not parse is a
+ * worse failure than one that files its pieces on the project's defaults.
+ */
+function parseChildDefaults(json: string | null): ChildDefaults | null {
+  if (!json) return null
+  try {
+    const parsed = JSON.parse(json) as ChildDefaults | null
+    return parsed && typeof parsed === 'object' ? parsed : null
+  } catch {
+    return null
   }
 }
 
@@ -427,6 +448,26 @@ export interface CreateTaskInput {
   status?: 'draft' | 'ready'
   kind?: TaskKind
   prompt?: string
+  /** The ref this task's work lands onto. Null/absent takes the project's — see `landingTargetFor`. */
+  landingTarget?: string | null
+  /** What each piece of a Plan & Split inherits. Only a `plan` task carries one. */
+  childDefaults?: ChildDefaults | null
+  /**
+   * The share of the parent's remaining budget this child gets, as `1/n`.
+   *
+   * ⛔ **A split divides equally; `shareBudget`'s halving is for a chain, not a fan.** Evaluated in
+   * creation order, halving gives five children 50 / 25 / 12.5 / 6.25 / 3.1% of what the parent had
+   * — which is not a division of anything, it is a decay. ⚠️ Moot while human root tasks are created
+   * with `grantedTokens: 0`, and still worth being right: the arithmetic is one line and a quiet
+   * wrong answer stays wrong.
+   */
+  budgetShare?: number
+  /**
+   * ⛔ Set false by `task_split` alone. `findNearDuplicate` merges an agent-filed task whose title
+   * matches a live one and returns the **existing** task — inside a split that silently drops a piece
+   * of work and leaves the planner waiting on a task belonging to something else entirely.
+   */
+  mergeDuplicates?: boolean
   /** Images already uploaded through `attachment.create`, bound to this task's first message. */
   attachmentIds?: string[]
 }
@@ -457,7 +498,7 @@ export function createTask(input: CreateTaskInput): Task {
       throw new Error(`task ${parent.seq} has reached its fan-out cap of ${parent.mandate.maxChildren}`)
     }
     mandate = narrowMandate(parent.mandate, input.mandate)
-    budget = shareBudget(parent.budget)
+    budget = shareBudget(parent.budget, input.budgetShare ?? 0.5)
   } else {
     // A human-authored root task holds full authority by default; the controller narrows from there.
     mandate = narrowMandate(ROOT_MANDATE, input.mandate)
@@ -466,7 +507,7 @@ export function createTask(input: CreateTaskInput): Task {
 
   // Near-duplicate merge at admission. Agents re-file the same idea; two rows for one intent is
   // noise, and noise is what makes a task list stop being read.
-  const duplicate = findNearDuplicate(title, input.projectId ?? null)
+  const duplicate = input.mergeDuplicates === false ? null : findNearDuplicate(title, input.projectId ?? null)
   if (duplicate && createdBy.kind !== 'human') {
     log.info(`merged near-duplicate task "${title}" into t${duplicate.seq}`)
     addMessage(duplicate.id, 'system', `A duplicate of this task was filed and merged: "${title}".`)
@@ -483,8 +524,8 @@ export function createTask(input: CreateTaskInput): Task {
                           parent_task_id, lineage_depth, assignee_hint, mandate_json, budget_json,
                           not_before, deadline, requires_json, constraints_json, verification,
                           finish_policy, session_sharing, completion_mode, objective_json, auto_compact,
-                          preemptible, est_tokens, created_at, updated_at)
-       values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+                          preemptible, est_tokens, landing_target, child_defaults_json, created_at, updated_at)
+       values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
     )
     .run(
       id,
@@ -514,6 +555,8 @@ export function createTask(input: CreateTaskInput): Task {
       input.autoCompact ?? 'inherit',
       input.preemptible === false ? 0 : 1,
       input.estTokens ?? null,
+      input.landingTarget ?? null,
+      input.childDefaults ? JSON.stringify(input.childDefaults) : null,
       now,
       now
     )
@@ -572,7 +615,11 @@ function findNearDuplicate(title: string, projectId: string | null): Task | null
  * because a cycle discovered by the scheduler is a deadlock; a cycle discovered at the edge is an
  * error message.
  */
-export function addDependency(taskId: string, dependsOn: string): void {
+export function addDependency(
+  taskId: string,
+  dependsOn: string,
+  require: DependencyRequirement = 'completed'
+): void {
   if (taskId === dependsOn) throw new Error('a task cannot depend on itself')
   requireTask(taskId)
   requireTask(dependsOn)
@@ -580,8 +627,25 @@ export function addDependency(taskId: string, dependsOn: string): void {
     throw new Error('that dependency would create a cycle')
   }
   db()
-    .prepare('insert or ignore into task_deps (task_id, depends_on) values (?, ?)')
-    .run(taskId, dependsOn)
+    .prepare('insert or ignore into task_deps (task_id, depends_on, require) values (?, ?, ?)')
+    .run(taskId, dependsOn, require)
+}
+
+/**
+ * What a single edge counts as met, read straight from `task_deps` rather than off the `Task`.
+ *
+ * ⚠️ Deliberately not on the `Task` object. `dependsOn` is a `string[]` read by the composer, the
+ * dependency picker and the flow view, and widening it to carry a per-edge rule would have made
+ * every one of those readers care about something none of them decide. `admit()` is the only caller
+ * that needs the rule, so the rule is fetched where it is used.
+ */
+function requirementsFor(taskId: string): Array<{ dependsOn: string; require: DependencyRequirement }> {
+  return rows<{ depends_on: string; require: string }>(
+    db().prepare('select depends_on, require from task_deps where task_id = ?').all(taskId)
+  ).map((r) => ({
+    dependsOn: r.depends_on,
+    require: r.require === 'settled' ? 'settled' : 'completed'
+  }))
 }
 
 export function removeDependency(taskId: string, dependsOn: string): void {
@@ -697,6 +761,14 @@ const TERMINAL_OR_HELD: TaskStatus[] = [
 ]
 
 /**
+ * The statuses a `settled` edge releases on: the work stopped, however it stopped.
+ *
+ * ⛔ `cancelling` is **not** here. It is a wind-down in progress, not a resting state, and a planner
+ * woken by it would read a child's result while that child was still being stopped.
+ */
+const SETTLED_STATUSES: TaskStatus[] = ['completed', 'failed', 'cancelled']
+
+/**
  * Recompute a task's derived status. `blocked`, `scheduled` and `ready` are *facts about the world*
  * - unmet dependencies, a future start time, neither - and are never set by hand.
  */
@@ -704,9 +776,15 @@ export function admit(taskId: string): Task {
   const task = requireTask(taskId)
   if (TERMINAL_OR_HELD.includes(task.status)) return task
 
-  const unmet = task.dependsOn.filter((id) => {
-    const dep = getTask(id)
-    return !dep || dep.status !== 'completed'
+  // ⛔ **The rule is per edge, and `completed` is still the default.** A `settled` edge — written
+  // only by `task_split` — releases on any terminal state, because a planner waiting on its children
+  // has to be woken by the ones that *failed* too; that is the whole point of the resolution turn.
+  // A `completed` edge keeps the meaning a person means by "do B after A", so loosening this
+  // globally would have silently rewritten every edge already in the fleet.
+  const unmet = requirementsFor(task.id).filter((edge) => {
+    const dep = getTask(edge.dependsOn)
+    if (!dep) return true
+    return edge.require === 'settled' ? !SETTLED_STATUSES.includes(dep.status) : dep.status !== 'completed'
   })
 
   const next: TaskStatus = unmet.length

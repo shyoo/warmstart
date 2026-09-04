@@ -58,6 +58,8 @@ any way to assign work directly to another worker.
 | `checkpoint` | report a finished phase and wait for the go-ahead. `checkpointed` completion mode |
 | `task_create` | file a follow-up, inheriting a **narrowed** mandate and a share of the budget |
 | `handoff` | leave a note for whoever continues; prepended to the next run's prompt |
+| `task_split` | file a whole Plan & Split at once — 2 to N pieces with edges between them. ⛔ Raises **one** approval and blocks on it; atomic |
+| `task_depend` | add one edge between two pieces of **this task's own** split. ⛔ never an arbitrary task in the fleet |
 
 ⚠️ `ask_human` blocks until somebody answers **or the session's prompt cache expires**. That is
 deliberate: an answer arriving while the session is warm costs a cache read, where the same answer
@@ -67,6 +69,27 @@ path — an agent asking *"OAuth, session cookies, or magic link?"* got back `Th
 ⚠️ **An adapter with no MCP has no `ask_human`.** Its prompt asks it to end with a `NEEDS DECISION:`
 line plus one `- option — detail` bullet per choice, and the daemon files a real `Question` row from
 it. ⛔ However it arrived, a question that does not become a row is a question nobody can reply to.
+
+⛔ **`task_split` blocks on a structural approval, and that is the point.** An agent told in its prompt
+to ask before splitting can forget; an agent whose tool call does not return until a person has answered
+cannot. ⛔ **One approval for the whole split, not one per piece:** every coding subtask trips `riskOf`'s
+`controller` gate, so a split of five would otherwise raise five consults and leave five drafts — and on
+an install with no controller turn available, none of them would ever run.
+
+⚠️ Its reply text is load-bearing either way. On approval it names each piece as `t<seq>` and tells the
+planner to **stop**, because an agent that carries on after splitting is spending a billed turn on work
+it has just delegated; on refusal it carries the operator's own note, so the planner revises rather than
+re-filing what was just turned down.
+
+⚠️ **Two more tools is a bigger prompt prefix on every worker session, not only on plan tasks** — a
+session's MCP config is frozen for its lifetime and workers on one project get identical configs (§2).
+That is a real, recurring cost, paid to avoid a third tier and the third prompt-cache prefix it would
+buy. `checkpoint` sets the precedent: registered for everyone, *named in the prompt* only where it
+applies.
+
+⚠️ The approval window holds the planner's worker slot — `awaitingHumanReservations` counts an
+`awaiting_human` task against `maxConcurrent` so the answer can resume a warm session. Same price
+`ask_human` already pays, and worth knowing before a split is raised at midnight.
 
 ## 4. Controller tier
 

@@ -85,6 +85,39 @@ export interface Project {
  */
 export type TaskKind = 'work' | 'plan'
 
+/**
+ * What a dependency edge counts as met.
+ *
+ * ⛔ `completed` is the default and the meaning every edge in the fleet already had: *"do B after A"*
+ * means A succeeded. `settled` releases on any resting terminal state — `completed`, `failed` or
+ * `cancelled` — and is written by `task_split` alone, because a planner has to be woken by the
+ * children that failed as well as the ones that worked. It is told which was which.
+ */
+export type DependencyRequirement = 'completed' | 'settled'
+
+/**
+ * The settings a Plan & Split parent hands to each piece it files.
+ *
+ * ⛔ **Separate from the parent's own settings, which is decision D5.** "Plan with one model, build
+ * with another" is the case that motivated Plan & Split at all: the planning turn wants a model that
+ * reads a repository well and asks good questions, and the pieces want whatever is cheapest that can
+ * follow a concrete instruction. One row of settings would have forced them to be the same.
+ *
+ * ⚠️ Every field is optional and an absent one means *inherit*, resolved against the project exactly
+ * as an ordinary task's would be. A stored `null` and an absent key mean the same thing here on
+ * purpose: this is written by a form where "leave it alone" is the common answer.
+ */
+export interface ChildDefaults {
+  workerId?: string | null
+  model?: string | null
+  effort?: string | null
+  finishPolicy?: FinishPolicyChoice
+  sessionSharing?: SessionSharingChoice
+  priority?: Priority
+  /** How many pieces the planner may file. Bounded by the task's mandate, which stays the authority. */
+  maxChildren?: number
+}
+
 export type TaskStatus =
   | 'draft'
   | 'ready'
@@ -423,6 +456,26 @@ export interface Task {
    */
   quotaOverrideUntil: number | null
   branch: string | null
+  /**
+   * The ref this task's work lands onto, or null to take the project's.
+   *
+   * ⛔ **Null on every task that is not a split**, which is what makes the resolver inert. `landing
+   * TargetFor(task, project)` returns the project's answer whenever this is null, so the 24 readers
+   * that went through it changed nothing for any task that existed when it was added.
+   *
+   * ⚠️ Set on a split's **children**, to their planner's branch — the integration branch — so that
+   * child 2 is cut from a base that already contains child 1's work. Read `docs/landing.md`: a base
+   * and a measurement that disagree is t22, and it reports success.
+   */
+  landingTarget: string | null
+  /**
+   * What each piece of a Plan & Split inherits, set on the planner when the task is filed.
+   *
+   * ⚠️ Null for every `work` task. Only a `plan` task carries one, and `task_split` reads it when it
+   * files the children rather than asking the agent to choose — a model picked by the operator in
+   * the composer is not something an agent should be able to talk its way out of.
+   */
+  childDefaults: ChildDefaults | null
   /**
    * When work first started on this task, and when the last attempt stopped.
    *
@@ -771,7 +824,7 @@ export type QuestionKind = 'text' | 'choice' | 'multi'
  * exists. `ask_human` is one the agent asked for deliberately. Worth keeping apart: the first says
  * something about the CLI, the second about the prompt.
  */
-export type QuestionOrigin = 'ask_human' | 'native_tool' | 'checkpoint'
+export type QuestionOrigin = 'ask_human' | 'native_tool' | 'checkpoint' | 'task_split'
 
 export interface QuestionOption {
   id: string
@@ -1089,6 +1142,21 @@ export type LandingStrategyId =
   | 'verify-only'
   /** Rebase, check, fast-forward the **local** trunk, retire the branch. No remote. */
   | 'merge-local'
+  /**
+   * Rebase, check, and fast-forward a target **ref** that is checked out nowhere.
+   *
+   * ⛔ The strategy a split child lands with, and it exists because `merge-local` cannot do this.
+   * `merge-local` runs `git merge --ff-only` inside the operator's own trunk checkout and is gated
+   * on that checkout having the target *checked out* — correct, because git refuses to update a
+   * branch a worktree holds. A child landing onto its plan branch would therefore require the
+   * operator's checkout to be sitting on the plan branch, which is never acceptable: the trunk is
+   * the operator's, and agents work in a pooled worktree.
+   *
+   * ⚠️ Chosen from **data** — whether the task's resolved landing target is the project's own — and
+   * never from `task.kind`. A landing path that branches on a mode name is the thing this codebase
+   * refuses everywhere else.
+   */
+  | 'merge-branch'
 
 /**
  * What happens to a task's work when the agent says it is finished.

@@ -53,6 +53,7 @@ thing entirely. See [`glossary.md`](glossary.md).
 | `Flow` | project lifecycle map: 6-column kanban flow with ticket ↔ workspace ↔ worker bindings |
 | `FleetStrip` `Workers` `FleetSettings` | the fleet: per-account quota with its **age**, reset countdowns, live sessions |
 | `Tasks` `TaskThread` `Dependencies` | the board, one task's thread, and prerequisite edges |
+| `NewTask` `Pill` | the composer: the prompt first, its settings as a row of **pills** under it |
 | `Attention` `Questions` | the approvals/questions bar — one keystroke above the operator's work |
 | `Overview` `Controller` `Conversations` | dashboard, the controller chat, and conversation history |
 | `Project` `ProjectSettings` `Projects` | the project routes and the policy tier |
@@ -70,6 +71,21 @@ stored rows — a thing to run when there is something to compare, not a screen 
 is. It appears in three places only: a `Quality` column in `Tasks`, a `#N Quality Review` row in
 `TaskThread`'s timeline (⚠️ the underlying run is filtered out so it draws once, not twice), and the
 request box in that thread's facts column, whose every disabled state names its reason.
+
+⛔ **In Plan & Split the composer draws two labelled rows of pills, and this is decision D5.** The
+first is **Planner** — worker, model, effort, reuse, finish, priority, dependencies, attachments — which
+is what the *planning turn* runs as. The second is **Each piece**, plus a fan-out pill, which is what
+every subtask it files inherits. "Plan with one model, build with another" is the case Plan & Split
+exists for, and one row would have forced them to be the same.
+
+⚠️ Until t182 **every one of those controls was hidden** whenever the kind pill said Plan. That was
+honest while a plan task was never dispatched — nothing would have read them — and wrong the moment one
+is. Only the Draft button and the schedule clock stay task-only: a scheduled plan and a draft plan are
+both coherent, and neither has been asked for.
+
+⚠️ The captions are not decoration. Two identical rows of pills with nothing to tell them apart is the
+failure they buy, and it is worse than one row. The fan-out pill's number is written into the task's
+**mandate**, so the number shown is the number enforced — never a second, invisible cap.
 
 ⚠️ `Conversations` is **one table, two scopes** — the same component renders with and without a
 project. There is deliberately no fleet-wide Resources table: it listed the pools a project's own
@@ -91,6 +107,7 @@ list. Logic extracted into a pure function under `lib/` is provable at L1 instea
 | `prefs.ts` | saved views, fleet collapse and density, page size (localStorage) |
 | `uisettings.ts` `zoom.ts` | tray/Enter behaviour and zoom, mirrored from main's `ui-settings.json` |
 | `pasteimages.tsx` | paste-to-attach; downscales to 1568px and uploads one image per call |
+| `composerprefs.ts` | what the composer was last set to — ⛔ **last-selected beats inherited**, and model/effort are keyed **per account** |
 
 ⚠️ `UiSettings` is **separate from fleet `Settings`** on purpose. Those live in the daemon's database
 and change what the *scheduler* does; these are read by the main process and change what the *window*

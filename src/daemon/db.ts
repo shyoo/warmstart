@@ -1340,6 +1340,41 @@ const MIGRATIONS: Migration[] = [
              )
        where exists (select 1 from quality_reviews q where q.task_id = tasks.id)
     `)
+  },
+
+  // 41 - a dependency edge gains a release rule, and a task gains a landing target of its own.
+  //
+  // ⛔ **`task_deps.require` exists because `admit()` had no way to release an edge onto work that
+  // did not succeed.** It counted a prerequisite as met only when the dependency reached
+  // `completed`, so a subtask that failed or was cancelled held its dependent at `blocked` for ever
+  // — and every held status in this fleet owes an answer to *what ends the hold*. Plan & Split needs
+  // the other rule: a planner waits for its children to **settle**, and a child that failed has
+  // settled. It is why the planner is told which ones failed rather than never being woken at all.
+  //
+  // ⛔ **Defaulted to `completed`, which is what makes it inert.** Loosening `admit()` globally
+  // would silently change the meaning of every edge already in the fleet: a person who says *"do B
+  // after A"* means A succeeded, and releasing B onto a failed A is a different instruction than the
+  // one they gave. Only `task_split` writes `settled`; the composer's edges, `attachDependency`'s
+  // and `applyDecompose`'s all keep today's meaning without being visited.
+  //
+  // ⛔ **`tasks.landing_target` is null for every row that exists**, so `landingTargetFor` returns
+  // the project's answer unchanged and this column changes nothing until a split sets one. That is
+  // deliberate: the resolver has 24 readers and the failure mode when one is missed is two reference
+  // points in one finish path with the silent one winning — t22, 2026-08-29.
+  //
+  // ⚠️ Guarded by `hasColumn` like migrations 28, 31, 32 and 39: `versionBefore` rewinds
+  // `user_version` and reopens, replaying every migration after the one it wanted, so this has to
+  // survive being run twice.
+  (conn) => {
+    if (!hasColumn(conn, 'task_deps', 'require')) {
+      conn.exec("alter table task_deps add column require text not null default 'completed';")
+    }
+    if (!hasColumn(conn, 'tasks', 'landing_target')) {
+      conn.exec('alter table tasks add column landing_target text;')
+    }
+    if (!hasColumn(conn, 'tasks', 'child_defaults_json')) {
+      conn.exec('alter table tasks add column child_defaults_json text;')
+    }
   }
 ]
 

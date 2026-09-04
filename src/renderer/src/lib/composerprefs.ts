@@ -59,6 +59,34 @@ export interface ComposerPrefs {
    * Clearing loses the choice; keying by worker keeps it and still never crosses adapters.
    */
   byWorker: Record<string, ModelChoice>
+  /**
+   * What the **pieces** of a Plan & Split are set to, kept separately from the planner's own row.
+   *
+   * ⛔ **Decision D5, and the case that motivated Plan & Split at all: plan with one model, build
+   * with another.** The planning turn wants a model that reads a repository well and asks good
+   * questions; the pieces want whatever is cheapest that can follow a concrete instruction. One row
+   * of settings would have forced them to be the same, which is the choice nobody wanted to make.
+   *
+   * ⚠️ Remembered on the same last-selected rule as the planner's row, and defaulted to inherit.
+   */
+  pieces: PiecePrefs
+}
+
+export interface PiecePrefs {
+  priority: Priority
+  finishPolicy: FinishPolicyChoice
+  sessionSharing: SessionSharingChoice
+  workerId: string
+  byWorker: Record<string, ModelChoice>
+  /**
+   * How many pieces the planner may file.
+   *
+   * ⛔ **One cap, and it is the one the operator sees.** `ROOT_MANDATE.maxChildren` was 5 while the
+   * decomposition path capped at 8, so a split of six was refused with a message about a fan-out cap
+   * nobody had set. This number is written into the task's mandate, so the number on the pill is the
+   * number enforced.
+   */
+  maxChildren: number
 }
 
 /**
@@ -73,7 +101,15 @@ export const DEFAULT_COMPOSER_PREFS: ComposerPrefs = {
   finishPolicy: 'inherit',
   sessionSharing: 'inherit',
   workerId: '',
-  byWorker: {}
+  byWorker: {},
+  pieces: {
+    priority: 'P2',
+    finishPolicy: 'inherit',
+    sessionSharing: 'inherit',
+    workerId: '',
+    byWorker: {},
+    maxChildren: 5
+  }
 }
 
 function isPriority(v: unknown): v is Priority {
@@ -97,6 +133,28 @@ function readByWorker(raw: unknown): Record<string, ModelChoice> {
   }
   return out
 }
+
+/** ⚠️ Field by field, like the row above it: an unreadable piece setting must not reset the rest. */
+function readPieces(raw: unknown): PiecePrefs {
+  const d = DEFAULT_COMPOSER_PREFS.pieces
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { ...d, byWorker: {} }
+  const p = raw as Record<string, unknown>
+  const cap = typeof p.maxChildren === 'number' ? Math.round(p.maxChildren) : d.maxChildren
+  return {
+    priority: isPriority(p.priority) ? p.priority : d.priority,
+    finishPolicy: readFinishPolicy(p.finishPolicy) ?? d.finishPolicy,
+    sessionSharing: isSharing(p.sessionSharing) ? p.sessionSharing : d.sessionSharing,
+    workerId: typeof p.workerId === 'string' ? p.workerId : '',
+    byWorker: readByWorker(p.byWorker),
+    // ⚠️ Clamped rather than rejected. A stored 40 is a setting from a build that allowed one, and
+    // the honest repair is the nearest legal value, not a silent reset to the default.
+    maxChildren: Math.min(MAX_PIECES, Math.max(MIN_PIECES, Number.isFinite(cap) ? cap : d.maxChildren))
+  }
+}
+
+/** The bounds the fan-out pill offers. ⛔ `MIN` is 2: a split of one is refused by the daemon. */
+export const MIN_PIECES = 2
+export const MAX_PIECES = 8
 
 /**
  * What the composer was left set to, with anything unreadable replaced field by field.
@@ -126,7 +184,8 @@ export function readComposerPrefs(): ComposerPrefs {
         ? p.sessionSharing
         : DEFAULT_COMPOSER_PREFS.sessionSharing,
       workerId: typeof p.workerId === 'string' ? p.workerId : '',
-      byWorker: readByWorker(p.byWorker)
+      byWorker: readByWorker(p.byWorker),
+      pieces: readPieces(p.pieces)
     }
   } catch {
     return { ...DEFAULT_COMPOSER_PREFS }
@@ -143,8 +202,23 @@ export function writeComposerPrefs(prefs: ComposerPrefs): void {
 }
 
 /** What this account was last run with. Absent is `{ model: '', effort: '' }` — inherit both. */
-export function modelChoiceFor(prefs: ComposerPrefs, workerId: string): ModelChoice {
+export function modelChoiceFor(
+  prefs: Pick<ComposerPrefs, 'byWorker'>,
+  workerId: string
+): ModelChoice {
   return prefs.byWorker[workerId] ?? { model: '', effort: '' }
+}
+
+/** The pieces row's own per-account model memory. ⚠️ Same rule, separate store — see `PiecePrefs`. */
+export function rememberPieceModelChoice(
+  prefs: ComposerPrefs,
+  workerId: string,
+  choice: ModelChoice
+): ComposerPrefs {
+  return {
+    ...prefs,
+    pieces: { ...prefs.pieces, byWorker: { ...prefs.pieces.byWorker, [workerId]: { ...choice } } }
+  }
 }
 
 /**

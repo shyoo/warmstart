@@ -4790,6 +4790,18 @@ select:focus-visible,
   min-width: 0;
 }
 
+/* ⛔ Only drawn in Plan & Split, where there are two rows of pills that would otherwise be
+   indistinguishable. A caption on the single-row case would be a label on a form, which is exactly
+   what the pill row exists instead of. */
+.composer-group-label {
+  padding: var(--sp-2) var(--sp-1) 0;
+  font-size: var(--text-meta);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-faint);
+}
+
 .composer-hint {
   margin: var(--sp-2) 0 0;
   padding: 0 var(--sp-1);

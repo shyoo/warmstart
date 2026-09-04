@@ -1,0 +1,268 @@
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import type { Principal } from '@shared/tasks.js'
+
+/**
+ * Plan & Split's safety boundary, driven where it is cheapest: a temp database, no agent, no prompt
+ * and no UI.
+ *
+ * ⛔ The two rules worth the most here are the ones that are **silent** when wrong. A split that
+ * half-applies leaves a planner blocked on children that do not exist — nothing releases it, ever —
+ * and an edge whose release rule is wrong either wakes a planner too early or never wakes it at all.
+ * Neither raises an error at the time.
+ */
+
+let dir: string
+let db: typeof import('./db.js')
+let tasks: typeof import('./tasks.js')
+let split: typeof import('./split.js')
+
+const AGENT: Principal = {
+  kind: 'agent',
+  workerId: 'w-test',
+  sessionId: 's-test',
+  runId: 'r-test'
+}
+
+beforeAll(async () => {
+  dir = mkdtempSync(join(tmpdir(), 'agentyard-split-'))
+  process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
+  db = await import('./db.js')
+  tasks = await import('./tasks.js')
+  split = await import('./split.js')
+  db.openDb(join(dir, 'split.db'))
+})
+
+beforeEach(() => {
+  db.db().exec('delete from task_deps')
+  db.db().exec('delete from tasks')
+})
+
+afterAll(() => {
+  db.closeDb()
+  try {
+    rmSync(dir, { recursive: true, force: true })
+  } catch {
+    // A held file handle on Windows is not a test failure.
+  }
+})
+
+/** A planner, with the branch a split needs to cut its pieces from. */
+function planner(overrides: { maxChildren?: number } = {}): ReturnType<typeof tasks.createTask> {
+  const task = tasks.createTask({
+    title: 'Build the thing',
+    kind: 'plan',
+    ...(overrides.maxChildren ? { mandate: { maxChildren: overrides.maxChildren } } : {})
+  })
+  db.db()
+    .prepare('update tasks set branch = ? where id = ?')
+    .run('multi-agent-controller/t1-build-the-thing', task.id)
+  return tasks.requireTask(task.id)
+}
+
+const piece = (title: string, dependsOn: number[] = []): { title: string; dependsOn: number[] } => ({
+  title,
+  dependsOn
+})
+
+describe('validateSplit', () => {
+  it('refuses a split of one, because it buys a round trip and no parallelism', () => {
+    const result = split.validateSplit(planner(), [piece('do everything')])
+    expect(result.ok).toBe(false)
+    expect(result.ok === false && result.reason).toMatch(/at least 2/)
+  })
+
+  it('refuses a task that is not a plan task', () => {
+    const work = tasks.createTask({ title: 'ordinary work' })
+    const result = split.validateSplit(work, [piece('a'), piece('b')])
+    expect(result.ok).toBe(false)
+    expect(result.ok === false && result.reason).toMatch(/not a Plan & Split task/)
+  })
+
+  it('refuses an edge that does not point backwards, which is what makes a cycle impossible', () => {
+    const result = split.validateSplit(planner(), [piece('a', [1]), piece('b')])
+    expect(result.ok).toBe(false)
+    expect(result.ok === false && result.reason).toMatch(/not an earlier piece/)
+  })
+
+  it('refuses a piece that depends on itself', () => {
+    const result = split.validateSplit(planner(), [piece('a'), piece('b', [1])])
+    expect(result.ok).toBe(false)
+  })
+
+  it('accepts an edge that points at an earlier piece', () => {
+    expect(split.validateSplit(planner(), [piece('a'), piece('b', [0])]).ok).toBe(true)
+  })
+
+  it('refuses two pieces with the same instruction, which would silently become one', () => {
+    const result = split.validateSplit(planner(), [piece('Add the migration'), piece('add  the MIGRATION!')])
+    expect(result.ok).toBe(false)
+    expect(result.ok === false && result.reason).toMatch(/same instruction/)
+  })
+
+  it('refuses a piece with no instruction', () => {
+    const result = split.validateSplit(planner(), [piece('a'), piece('   ')])
+    expect(result.ok).toBe(false)
+  })
+
+  it('enforces the task’s own fan-out cap, so the number shown is the number allowed', () => {
+    const result = split.validateSplit(planner({ maxChildren: 3 }), [
+      piece('a'),
+      piece('b'),
+      piece('c'),
+      piece('d')
+    ])
+    expect(result.ok).toBe(false)
+    expect(result.ok === false && result.reason).toMatch(/fan-out cap of 3/)
+  })
+
+  it('refuses a planner with no branch, which would give every piece the trunk as its base', () => {
+    const bare = tasks.createTask({ title: 'no branch yet', kind: 'plan' })
+    const result = split.validateSplit(bare, [piece('a'), piece('b')])
+    expect(result.ok).toBe(false)
+    expect(result.ok === false && result.reason).toMatch(/no branch/)
+  })
+})
+
+describe('applySplit', () => {
+  it('files every piece and parks the planner on them', () => {
+    const parent = planner()
+    const result = split.applySplit(parent.id, [piece('one'), piece('two'), piece('three')], AGENT)
+    expect(result.ok).toBe(true)
+    expect(result.ok && result.children).toHaveLength(3)
+    expect(tasks.requireTask(parent.id).status).toBe('blocked')
+  })
+
+  it('cuts every piece from the plan branch, not the trunk', () => {
+    const parent = planner()
+    const result = split.applySplit(parent.id, [piece('one'), piece('two')], AGENT)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    for (const child of result.children) {
+      expect(child.landingTarget).toBe(parent.branch)
+    }
+  })
+
+  it('divides the budget equally rather than halving it per child', () => {
+    const parent = tasks.createTask({ title: 'budgeted plan', kind: 'plan', budgetTokens: 1000 })
+    db.db().prepare('update tasks set branch = ? where id = ?').run('b', parent.id)
+    const result = split.applySplit(parent.id, [piece('a'), piece('b'), piece('c'), piece('d')], AGENT)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    // ⛔ 250 each, not 500 / 250 / 125 / 62 — see `CreateTaskInput.budgetShare`.
+    for (const child of result.children) {
+      expect(child.budget.grantedTokens).toBe(250)
+    }
+  })
+
+  it('writes the edges between pieces that the planner asked for', () => {
+    const parent = planner()
+    const result = split.applySplit(parent.id, [piece('first'), piece('second', [0])], AGENT)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const second = tasks.requireTask(result.children[1]!.id)
+    expect(second.dependsOn).toContain(result.children[0]!.id)
+    expect(second.status).toBe('blocked')
+  })
+
+  it('does not merge two pieces whose titles collide with a live task elsewhere', () => {
+    tasks.createTask({ title: 'Add the migration' })
+    const parent = planner()
+    const result = split.applySplit(parent.id, [piece('Add the migration'), piece('other')], AGENT)
+    expect(result.ok).toBe(true)
+    // ⛔ Two distinct rows: the near-duplicate merge would have returned the existing task and left
+    //    the planner waiting on work belonging to something else entirely.
+    expect(result.ok && new Set(result.children.map((c) => c.id)).size).toBe(2)
+  })
+
+  it('refuses without writing anything when the plan is invalid', () => {
+    const parent = planner()
+    const before = tasks.listTasks().length
+    const result = split.applySplit(parent.id, [piece('only one')], AGENT)
+    expect(result.ok).toBe(false)
+    expect(tasks.listTasks()).toHaveLength(before)
+    expect(tasks.requireTask(parent.id).status).not.toBe('blocked')
+  })
+})
+
+describe('the edge release rule', () => {
+  it('holds the planner while a piece is still running', () => {
+    const parent = planner()
+    const result = split.applySplit(parent.id, [piece('a'), piece('b')], AGENT)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    tasks.setStatus(result.children[0]!.id, 'completed')
+    tasks.admitDependents(result.children[0]!.id)
+    expect(tasks.requireTask(parent.id).status).toBe('blocked')
+  })
+
+  it('⛔ releases the planner when the last piece FAILS, not only when it completes', () => {
+    const parent = planner()
+    const result = split.applySplit(parent.id, [piece('a'), piece('b')], AGENT)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    tasks.setStatus(result.children[0]!.id, 'completed')
+    tasks.admitDependents(result.children[0]!.id)
+    tasks.setStatus(result.children[1]!.id, 'failed')
+    tasks.admitDependents(result.children[1]!.id)
+    // Without `require = 'settled'` this is `blocked` for ever, and nothing in the fleet releases it.
+    expect(tasks.requireTask(parent.id).status).toBe('ready')
+  })
+
+  it('releases the planner when a piece is cancelled', () => {
+    const parent = planner()
+    const result = split.applySplit(parent.id, [piece('a'), piece('b')], AGENT)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    for (const child of result.children) {
+      tasks.setStatus(child.id, 'cancelled')
+      tasks.admitDependents(child.id)
+    }
+    expect(tasks.requireTask(parent.id).status).toBe('ready')
+  })
+
+  it('⛔ leaves an ordinary `completed` edge meaning exactly what it meant', () => {
+    const a = tasks.createTask({ title: 'first' })
+    const b = tasks.createTask({ title: 'second' })
+    tasks.attachDependency(b.id, a.id)
+    tasks.setStatus(a.id, 'failed')
+    tasks.admitDependents(a.id)
+    // A person who says "do B after A" means A succeeded. Loosening this globally would have
+    // silently rewritten every edge already in the fleet.
+    expect(tasks.requireTask(b.id).status).toBe('blocked')
+  })
+})
+
+describe('addSplitDependency', () => {
+  it('adds an edge between two of this planner’s own pieces', () => {
+    const parent = planner()
+    const result = split.applySplit(parent.id, [piece('a'), piece('b')], AGENT)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const [first, second] = result.children
+    expect(split.addSplitDependency(parent.id, second!.seq, first!.seq).ok).toBe(true)
+    expect(tasks.requireTask(second!.id).dependsOn).toContain(first!.id)
+  })
+
+  it('⛔ refuses a task that is not one of its own pieces', () => {
+    const parent = planner()
+    const stranger = tasks.createTask({ title: 'somebody else’s work' })
+    const result = split.applySplit(parent.id, [piece('a'), piece('b')], AGENT)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const outcome = split.addSplitDependency(parent.id, result.children[0]!.seq, stranger.seq)
+    expect(outcome.ok).toBe(false)
+    expect(outcome.ok === false && outcome.reason).toMatch(/not one of this task/)
+  })
+
+  it('refuses an edge that would close a cycle', () => {
+    const parent = planner()
+    const result = split.applySplit(parent.id, [piece('a'), piece('b', [0])], AGENT)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const [first, second] = result.children
+    expect(split.addSplitDependency(parent.id, first!.seq, second!.seq).ok).toBe(false)
+  })
+})

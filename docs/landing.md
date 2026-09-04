@@ -128,6 +128,14 @@ trunk instead of its assigned branch.
 Because commits on the trunk bypass checks, rebases and landing policies, the task is handed to human
 review at `awaiting_human`.
 
+⛔ **A third condition, because Plan & Split makes the first two ordinary.** A split's pieces land onto
+their shared plan branch *while their siblings run* — by design, and constantly — so for a piece the
+pairing above stops being evidence of anything. Movement that is attributable to a **sibling's** landing
+(matched against each sibling's recorded `landed_head_sha`) is subtracted before the rule is applied.
+⛔ Not an exemption for children: a piece that commits onto the plan branch instead of its own branch is
+the same failure one level down, so anything left unaccounted for still fires, and the report names only
+the unexplained commits.
+
 In the UI, you can:
 - **Mark done** — if you inspected the commits in trunk and accept them as the finished work.
 - **Resolve & retry** — sends the branch back to an agent to rebase onto the moved trunk, ensure all
@@ -257,6 +265,36 @@ of the three it was: a dirty tree, a detached HEAD, or another branch checked ou
 branches saying *"committed and verified, waiting for a clean trunk"*. That is the cost of the safe
 default. ⛔ The alternative — stashing your work to make room — is not on offer: the tool does not
 reach into a checkout somebody is typing in.
+
+## Merging into a branch nobody is standing in
+
+⛔ **`merge-branch` is the sixth strategy, and it exists because `merge-local` structurally cannot land
+a split's piece.** A piece lands onto its **planner's** branch, so under `merge-local` every piece would
+require the operator's own checkout to be sitting on that plan branch — which is never acceptable.
+
+So the fast-forward is done with `git update-ref` from inside the piece's own worktree, against a branch
+that is checked out nowhere:
+
+1. Rebase the piece onto its target. ⭐ This is also what absorbs a **sibling that landed while the piece
+   ran**, which is the common case rather than an edge one.
+2. Run the project's checks.
+3. ⛔ Verify the target is checked out in **no** worktree — asked of `git worktree list`, never assumed.
+   A failure to read the list counts as *held*: the safe direction is to decline the merge.
+4. ⛔ Prove the fast-forward with `merge-base --is-ancestor`, then write it with the three-argument
+   `update-ref`, which is a **compare-and-swap**: a sibling that landed between the proof and the write
+   makes this fail rather than silently discarding its commits.
+
+⚠️ **Chosen from data, never from a task kind.** `strategyFor` picks it when the task's resolved landing
+target differs from the project's own — and only in place of a strategy that was going to merge anyway.
+A task told `commit-only` or `pull-request` keeps that answer whatever its target is.
+
+⚠️ Two pieces finishing together contend for the same branch, so the landing lease is keyed on the
+**branch** rather than the project — the same queue mechanism `merge-local` uses, under a different key,
+so an ordinary task landing onto `main` never waits behind them.
+
+⛔ **A plan branch is never pushed.** `landedRef` prefers `origin/<target>` when it verifies, so a pushed
+plan branch would start being measured against the remote and local merges into it would read as
+unlanded.
 
 ## Landed means pushed
 

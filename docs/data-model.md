@@ -60,8 +60,8 @@ the first. Both are required and `paths.test.ts` fails if either is removed.
 | `clock_events` | every cache-clock decision, including the no-ops | |
 | `compactions` | a compaction as an **ask** with a before and an after | a row that never landed stays visible |
 | `projects` | a directory plus policy | policy is committed in `.multi_agent_controller/project.json`; state is private |
-| `tasks` | the DAG | `status`, `kind`, `priority`, mandate, budget, the three inherited policies, `auto_compact`, `hold_until`, `quota_override_until`, `title_summary`, `resolve_retry_asked_at`, `landed_base_sha`/`landed_head_sha`, `quality_review_*` |
-| `task_deps` | prerequisite edges | cycle-checked on insert |
+| `tasks` | the DAG | `status`, `kind`, `priority`, mandate, budget, the three inherited policies, `auto_compact`, `hold_until`, `quota_override_until`, `title_summary`, `resolve_retry_asked_at`, `landed_base_sha`/`landed_head_sha`, `quality_review_*`, **`landing_target`**, **`child_defaults_json`** |
+| `task_deps` | prerequisite edges | cycle-checked on insert; **`require`** is what counts as met — see below |
 | `task_messages` | the thread | `delivered_at` marks what has reached a session |
 | `attachments` | image metadata; bytes under `<dataDir>/attachments/` | `attachments.ts` is the only writer |
 | `runs` | one attempt of a task on one session | ⛔ never deleted — the estimator's training data. `adapter_id`, `model`, `quota_before/after_json`, `trunk_sha_before`, `prompt`, `started_warm`, `plan_id`/`plan_raw`/`plan_source`, **`kind`** — ⛔ the plan is stamped, the price is derived on read by `src/daemon/price.ts` |
@@ -141,7 +141,9 @@ rung is an additive key if it is ever wanted.
 
 | Union | Values |
 |---|---|
-| `TaskKind` | `work` · `plan` |
+| `TaskKind` | `work` · `plan` — ⚠️ `plan` is **Plan & Split**: dispatched to a planning agent, not handed to the controller |
+| `DependencyRequirement` | `completed` · `settled` — ⛔ `completed` is the default and every pre-existing edge's meaning: *"do B after A"* means A succeeded. `settled` releases on `completed`/`failed`/`cancelled` and is written by `task_split` alone, because a planner must be woken by the pieces that failed too. ⚠️ `cancelling` is deliberately **not** settled: it is a wind-down in progress, not a resting state |
+| `LandingStrategyId` | `auto-land` · `leave-branch` · `pull-request` · `verify-only` · `merge-local` · **`merge-branch`** — ⛔ the last is chosen from *data* (does this task's resolved target differ from the project's?), never from a task kind. See [`landing.md`](landing.md) |
 | `Priority` | `P0` · `P1` · `P2` · `P3` |
 | `MandateOperation` | `read` · `write` · `commit` · `push` · `spawn_tasks` · `land` |
 | `ApprovalOrigin` | `permission_prompt` · `tool_gate` · `resource_gate` |

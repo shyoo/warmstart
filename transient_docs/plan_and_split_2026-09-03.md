@@ -2,6 +2,14 @@
 
 **2026-09-03 · t178 · design of record, not status.** Status lives in `HANDOFF.md`.
 
+⭐ **Built on 2026-09-04 by t182**, substantially as designed. Where the implementation departed from
+this document, the code and the docs it owes are the authority: `docs/landing.md` for `merge-branch`,
+`docs/mcp.md` for the two tools, `docs/routing.md` §3.9 for the two-turn dispatch, and `docs/ui.md`
+for the two composer rows. ⚠️ Two things this document got wrong, both found by building it:
+**§3.9's remedy** is sibling *attribution* rather than a third condition on the reading, and a
+diverged target is **not** a refusal — the rebase that precedes the fast-forward absorbs it, which is
+what makes a sibling landing mid-run an ordinary event rather than an error.
+
 A **Plan & Split** task is one an agent *plans* rather than performs: it clarifies the requirement
 with the operator, files a handful of concrete subtasks, waits for every one of them to settle, and
 then comes back to look at the result as a whole.

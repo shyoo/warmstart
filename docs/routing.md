@@ -185,6 +185,29 @@ $$\text{quotaRisk} = \max(\text{evidence}, \text{windowRisk}(\text{trustedWindow
 
 ---
 
+## 3.9 A Plan & Split task is dispatched, not decomposed
+
+⛔ **`kind: 'plan'` used to be skipped by the dispatcher entirely** and handed to the unattended
+controller, which has no tools, cannot read the repository and cannot ask a question — so it answered
+once in JSON and its children arrived as draft rows with no prompts. Planning is a *reading* job: it
+needs the repo in front of it and `ask_human` in its hand, which is what an ordinary dispatch provides.
+
+A plan task therefore routes and dispatches like any other, and takes **two** turns:
+
+1. **Planning.** The agent reads, asks, and calls `task_split` once. Its run then ends and the task
+   parks at `blocked` on one `settled` edge per piece. ⭐ The wait bills nothing and **holds nothing** —
+   `retainedReservations` counts a worker slot as held by `awaiting_human` and by `running`-with-a-closed
+   -session, and by neither for `blocked`.
+2. **Resolution.** The last piece to settle re-admits the planner through `admitDependents`. It comes
+   back with a table of how every piece turned out, reviews the integrated branch as a whole, and
+   finishes the task normally.
+
+⚠️ The controller `decompose` consult survives as the fallback for the one case that still cannot be
+given an agent turn: a plan task with **no project**, which has no workspace to read and nothing to
+split work across.
+
+---
+
 ## 4. Phase 3: Tie-Breaking, Controller Judgment Consult & Fallback
 
 Once candidates are scored, they are sorted descending: `best` (highest score) and `second`.
@@ -192,7 +215,7 @@ Once candidates are scored, they are sorted descending: `best` (highest score) a
 ### 4.1 When Arithmetic Decides Immediately (Zero Tokens)
 The scheduler selects `best` immediately without consulting the LLM controller if:
 - There is only 1 eligible candidate worker.
-- The task is a decomposition task (`task.kind === 'plan'`).
+- The task is a Plan & Split task (`task.kind === 'plan'`).
 - The score difference between `best` and `second` exceeds `ROUTE_EPSILON` (`|best.score - second.score| > 0.10`).
 - The estimated task size is below `ROUTE_CONSULT_FLOOR_TOKENS` (`estimate < 150,000` tokens). On small tasks, the cost of asking the controller exceeds any difference $\epsilon$ could recover.
 

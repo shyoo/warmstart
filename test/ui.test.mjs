@@ -842,6 +842,75 @@ try {
   // has a second sentence. A single-line box that ate Enter was a lie about what it would accept.
   check('the prompt takes more than one line', f.textarea === true, filing)
 
+  // ⛔ **Plan & Split, which is the whole of t182.** The kind pill said `Plan` and every other
+  // control vanished — honest while a plan task was never dispatched and nothing would have read
+  // them, and wrong the moment one is. A planning turn is a real run on a real account, so it has a
+  // worker, a model and an effort; and its pieces have their own, which is decision D5.
+  //
+  // ⚠️ Driven in the built app because the failure was *visual*: the settings were reachable in
+  // state and drawn by nothing. A unit test on the prefs module would have passed throughout.
+  await evaluate(
+    `[...document.querySelectorAll('button.pill')].find(p => p.getAttribute('aria-label') === 'What this files')?.click()`
+  )
+  await wait(300)
+  await evaluate(
+    `[...document.querySelectorAll('.pill-menu [role="option"]')].find(o => o.dataset.value === 'plan')?.click()`
+  )
+  await wait(500)
+  const planned = await evaluate(`
+    JSON.stringify((() => {
+      const composer = document.querySelector('.composer');
+      const bars = [...composer.querySelectorAll('.composer-bar')];
+      const names = bars.map(bar =>
+        [...bar.querySelectorAll('button.pill')].map(p => p.getAttribute('aria-label'))
+      );
+      return {
+        rows: bars.length,
+        captions: [...composer.querySelectorAll('.composer-group-label')].map(l => l.innerText.trim()),
+        planner: names[0] ?? [],
+        pieces: names[1] ?? [],
+        sendLabel: ([...composer.querySelectorAll('.composer-send button')]
+          .find(b => b.classList.contains('btn--primary'))?.innerText ?? '').trim()
+      };
+    })())
+  `)
+  const p = JSON.parse(planned)
+  check(
+    '⛔ Plan & Split draws two rows of settings rather than hiding every control',
+    p.rows === 2,
+    planned
+  )
+  check(
+    'and labels them, because two identical rows of pills tell you nothing',
+    // ⚠️ Compared lowercased: the caption is uppercased by CSS, and `innerText` reports the
+    // *rendered* text, so asserting the source casing tests the stylesheet rather than the markup.
+    p.captions?.length === 2 &&
+      p.captions[0]?.toLowerCase() === 'planner' &&
+      p.captions[1]?.toLowerCase() === 'each piece',
+    planned
+  )
+  check(
+    'the planner row keeps the account, model and effort the planning turn runs as',
+    ['Worker', 'Model', 'Priority', 'Finish policy'].every((n) => p.planner?.includes(n)),
+    planned
+  )
+  check(
+    '⛔ and the pieces have their own account and model — "plan with one, build with another"',
+    ['Piece worker', 'Piece model', 'How many pieces'].every((n) => p.pieces?.includes(n)),
+    planned
+  )
+  check('the send button says what it will do', p.sendLabel === 'Plan it', planned)
+
+  // Back to Task, so nothing below inherits the plan kind.
+  await evaluate(
+    `[...document.querySelectorAll('button.pill')].find(p => p.getAttribute('aria-label') === 'What this files')?.click()`
+  )
+  await wait(300)
+  await evaluate(
+    `[...document.querySelectorAll('.pill-menu [role="option"]')].find(o => o.dataset.value === 'task')?.click()`
+  )
+  await wait(400)
+
   // A pill's menu is elements this app draws, so it is opened and read the way a person would.
   //
   // ⛔ Every read is scoped to *its own* pill's wrapper, and every menu is dismissed with a real

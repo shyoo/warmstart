@@ -39,6 +39,48 @@ describe('what the new-task composer was left set to', () => {
     expect(readComposerPrefs().sessionSharing).toBe('inherit')
   })
 
+  it('⛔ remembers the pieces row separately from the planner’s own', () => {
+    const store: Record<string, string> = {}
+    stub(store)
+    const prefs = readComposerPrefs()
+    writeComposerPrefs({
+      ...prefs,
+      workerId: 'w-opus',
+      pieces: { ...prefs.pieces, workerId: 'w-haiku', maxChildren: 7, finishPolicy: 'commit-only' }
+    })
+    const back = readComposerPrefs()
+    // "Plan with one model, build with another" is the case Plan & Split exists for; one row of
+    // settings would have forced the planner and its pieces onto the same account.
+    expect(back.workerId).toBe('w-opus')
+    expect(back.pieces.workerId).toBe('w-haiku')
+    expect(back.pieces.maxChildren).toBe(7)
+    expect(back.pieces.finishPolicy).toBe('commit-only')
+  })
+
+  it('⚠️ clamps a stored fan-out from a build that allowed a different range', () => {
+    const store: Record<string, string> = {}
+    stub(store)
+    const prefs = readComposerPrefs()
+    writeComposerPrefs({ ...prefs, pieces: { ...prefs.pieces, maxChildren: 40 } })
+    expect(readComposerPrefs().pieces.maxChildren).toBe(8)
+    writeComposerPrefs({ ...prefs, pieces: { ...prefs.pieces, maxChildren: 1 } })
+    // The floor is the daemon's own rule: a split of one is refused.
+    expect(readComposerPrefs().pieces.maxChildren).toBe(2)
+  })
+
+  it('keeps the planner’s row when the pieces row is unreadable', () => {
+    const store: Record<string, string> = { 'multi_agent_controller.composer': JSON.stringify({
+      priority: 'P0',
+      workerId: 'w-opus',
+      pieces: 'not an object'
+    }) }
+    stub(store)
+    const back = readComposerPrefs()
+    expect(back.priority).toBe('P0')
+    expect(back.workerId).toBe('w-opus')
+    expect(back.pieces).toEqual(DEFAULT_COMPOSER_PREFS.pieces)
+  })
+
   it('comes back with what was last chosen', () => {
     const store: Record<string, string> = {}
     stub(store)
@@ -47,6 +89,7 @@ describe('what the new-task composer was left set to', () => {
       kind: 'plan',
       finishPolicy: 'commit-only',
       sessionSharing: 'on',
+      pieces: { ...DEFAULT_COMPOSER_PREFS.pieces },
       workerId: 'w-claude',
       byWorker: { 'w-claude': { model: 'claude-opus-5', effort: 'high' } }
     })

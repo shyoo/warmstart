@@ -88,6 +88,7 @@ import {
   requestApproval
 } from './approvals.js'
 import { answerQuestion, askQuestion, openQuestions, questionsForTask } from './questions.js'
+import { addSplitDependency, applySplit, validateSplit } from './split.js'
 import { allAvailability } from './resources.js'
 import { activityFor } from './activity.js'
 import {
@@ -934,7 +935,21 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
         title: p.title,
         kind: 'plan',
         projectId: p.projectId ?? null,
-        ...(p.prompt ? { prompt: p.prompt } : {})
+        ...(p.prompt ? { prompt: p.prompt } : {}),
+        // ⛔ The planner's own settings. Until t182 a plan task took none of these, because it was
+        // never dispatched and nothing would have read them; it is a real run now.
+        ...(p.priority ? { priority: p.priority } : {}),
+        ...(p.finishPolicy ? { finishPolicy: p.finishPolicy } : {}),
+        ...(p.sessionSharing ? { sessionSharing: p.sessionSharing } : {}),
+        ...(p.constraints ? { constraints: p.constraints } : {}),
+        ...(p.dependsOn?.length ? { dependsOn: p.dependsOn } : {}),
+        ...(p.attachmentIds?.length ? { attachmentIds: p.attachmentIds } : {}),
+        // ⛔ **The fan-out the operator picked is written into the mandate**, which is what
+        // `createTask` actually enforces. There is never a second, invisible cap: the old shape had
+        // `ROOT_MANDATE.maxChildren = 5` against a decomposition cap of 8, so a split of six was
+        // refused with a message about a limit nobody had set.
+        ...(p.maxChildren ? { mandate: { maxChildren: p.maxChildren } } : {}),
+        ...(p.childDefaults ? { childDefaults: p.childDefaults } : {})
       }),
     'task.estimate': (p) => {
       // ⚠️ The worker is optional and the answer changes enormously with it. A caller that wants
@@ -1003,6 +1018,101 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
       } catch (err) {
         return { ok: false, reason: err instanceof Error ? err.message : String(err) }
       }
+    },
+    /**
+     * File a whole Plan & Split, once the operator has approved it.
+     *
+     * ⛔ **Validated, then approved, then written — in that order.** The operator is never shown a
+     * plan that cannot be filed, so every rule `applySplit` enforces is checked *before* the card is
+     * raised. And nothing is written until they answer, so a refusal costs a message rather than a
+     * cleanup.
+     *
+     * ⚠️ This blocks for as long as the operator takes, and it holds the planner's worker slot while
+     * it does — `awaitingHumanReservations` counts an `awaiting_human` task against `maxConcurrent`
+     * so that the answer can resume a warm session. That is the price of a structural approval, and
+     * it is the same price `ask_human` already pays.
+     */
+    'agent.split': async (p) => {
+      const run = runForSession(p.sessionId)
+      const parent = run?.taskId ? getTask(run.taskId) : null
+      if (!parent || !run) {
+        return { ok: false, reply: 'This session is not working on a task, so it cannot split one.' }
+      }
+
+      const pieces = p.pieces ?? []
+      const precheck = validateSplit(parent, pieces)
+      if (!precheck.ok) {
+        return { ok: false, reply: `That split was not filed: ${precheck.reason}` }
+      }
+
+      const listed = pieces
+        .map((piece, i) => {
+          const label = piece.summary?.trim() || piece.title.trim().split(/\r?\n/)[0] || `piece ${i + 1}`
+          const waits = piece.dependsOn?.length
+            ? ` (after ${piece.dependsOn.map((d) => `#${d + 1}`).join(', ')})`
+            : ''
+          return `${i + 1}. ${label}${waits}`
+        })
+        .join('\n')
+
+      const resolution = await askQuestion({
+        sessionId: p.sessionId,
+        origin: 'task_split',
+        kind: 'choice',
+        header: `Split t${parent.seq} into ${pieces.length}?`,
+        question:
+          `t${parent.seq} wants to split into ${pieces.length} pieces and delegate them:\n\n${listed}\n\n` +
+          'Approving files all of them at once and starts them; they branch off this plan’s branch ' +
+          'and merge back into it, and nothing reaches the trunk until the whole plan is reviewed. ' +
+          'Refusing sends your note back to the planner so it can revise.',
+        options: [
+          { id: 'approve', label: `File all ${pieces.length}`, detail: 'They start as soon as an account is free' },
+          { id: 'refuse', label: 'Not like this', detail: 'Add a note and the planner revises the plan' }
+        ]
+      })
+
+      const approved = resolution.status === 'answered' && resolution.answer?.optionIds?.includes('approve')
+      if (!approved) {
+        // ⚠️ The operator's own words go back verbatim. A planner told only "refused" has nothing to
+        // revise towards and will re-file something very close to what was just turned down.
+        const note = resolution.answer?.text?.trim()
+        return {
+          ok: false,
+          reply:
+            resolution.status === 'answered'
+              ? `The operator did not approve that split.${note ? ` They said: ${note}` : ''} ` +
+                'Revise the plan and call task_split again, or ask them what they would prefer.'
+              : `Nobody answered, so nothing was filed (${resolution.status}). Stop here rather than guessing.`
+        }
+      }
+
+      const result = applySplit(
+        parent.id,
+        pieces,
+        { kind: 'agent', workerId: run.workerId, sessionId: p.sessionId, runId: run.id },
+        parent.childDefaults
+      )
+      if (!result.ok) return { ok: false, reply: `That split was not filed: ${result.reason}` }
+
+      const seqs = result.children.map((c) => c.seq)
+      return {
+        ok: true,
+        seqs,
+        // ⛔ **This text is load-bearing.** It tells the planner to stop, because an agent that keeps
+        // working after splitting is spending a billed turn on work it has just delegated — and it
+        // says what will wake it, so stopping does not read as abandoning the task.
+        reply:
+          `Filed ${seqs.length} pieces: ${seqs.map((s) => `t${s}`).join(', ')}. This task now waits ` +
+          'for all of them to settle. STOP NOW — do not start any of this work yourself. You will be ' +
+          'started again automatically, with a summary of how every piece turned out, and your job ' +
+          'then is to review the result as a whole and finish the task.'
+      }
+    },
+    'agent.depend': (p) => {
+      const run = runForSession(p.sessionId)
+      const parent = run?.taskId ? getTask(run.taskId) : null
+      if (!parent) return { ok: false, reason: 'this session is not working on a task' }
+      return addSplitDependency(parent.id, p.taskSeq, p.dependsOnSeq)
     },
     'agent.handoff': (p) => {
       const run = runForSession(p.sessionId)

@@ -10,7 +10,7 @@ import type {
   ResourceClaim,
   Task
 } from '@shared/tasks.js'
-import { policyFor } from './projects.js'
+import { landingTargetFor, policyFor } from './projects.js'
 import { claim, landResourceId, openClaims, release, upsertResource } from './resources.js'
 import {
   addDependency,
@@ -195,9 +195,18 @@ async function rebaseInProgress(cwd: string): Promise<boolean> {
  * ⚠️ Callers still do their own fetch. This decides the name only, so that asking what the base is
  * cannot have the side effect of changing what it points at.
  */
-export function landingBaseFor(project: Project, policy: FinishPolicy | undefined, remote: boolean): string {
-  const target = policyFor(project).landingTarget
-  if (strategyFor(project, policy).id === 'merge-local') return target
+export function landingBaseFor(
+  project: Project,
+  policy: FinishPolicy | undefined,
+  remote: boolean,
+  task?: Pick<Task, 'landingTarget'> | null
+): string {
+  const target = landingTargetFor(task, project)
+  // ⚠️ `merge-branch` joins `merge-local` here for the same reason: both land into a purely local
+  // ref, so preferring `origin/<target>` would make them depend on a fetch — and for a plan branch,
+  // which is never pushed, `origin/<target>` does not exist at all.
+  const id = strategyFor(project, policy, task).id
+  if (id === 'merge-local' || id === 'merge-branch') return target
   return remote ? `origin/${target}` : target
 }
 
@@ -205,9 +214,10 @@ export async function readMergeability(
   project: Project,
   workspacePath: string,
   branch: string,
-  policy?: FinishPolicy
+  policy?: FinishPolicy,
+  task?: Pick<Task, 'landingTarget'> | null
 ): Promise<MergeReading | null> {
-  const target = policyFor(project).landingTarget
+  const target = landingTargetFor(task, project)
   try {
     if (await rebaseInProgress(workspacePath)) {
       return {
@@ -569,7 +579,7 @@ export const mergeLocal: LandingStrategy = {
   },
 
   async land(ctx): Promise<LandingResult> {
-    const target = policyFor(ctx.project).landingTarget
+    const target = landingTargetFor(ctx.task, ctx.project)
 
     upsertResource({
       id: landResourceId(ctx.project.id),
@@ -680,6 +690,203 @@ export const mergeLocal: LandingStrategy = {
 }
 
 /**
+ * Rebase, check, and fast-forward a target **ref** that is checked out nowhere.
+ *
+ * ⛔ **This exists because `merge-local` structurally cannot do it.** `merge-local` runs
+ * `git merge --ff-only` *inside the operator's own trunk checkout* and is gated on that checkout
+ * having the target branch checked out and clean — which is correct, because git refuses to update a
+ * branch a worktree holds. Under Plan & Split a child lands onto its **planner's** branch, so under
+ * `merge-local` every child would need the operator's own checkout parked on the plan branch. That
+ * is never acceptable: the trunk is the operator's, and agents work in a pooled worktree.
+ *
+ * So the fast-forward is done with `update-ref`, from inside the child's own worktree, against a
+ * branch nothing has checked out. ⛔ **The precondition is verified, not assumed.** It happens to be
+ * true while children run — the planner is `blocked` and its workspace was parked on a detached HEAD
+ * when phase 1 ended — but "true today" and "checked" are different things, and this is the one
+ * place in the feature where being wrong corrupts a branch rather than failing a task.
+ *
+ * ⛔ **`update-ref` is given the old value.** The three-argument form fails if the ref has moved
+ * since it was read, which makes the whole thing a compare-and-swap rather than a blind write: a
+ * sibling that lands in the window between the ancestry proof and the write loses the race and
+ * retries, instead of having its commits silently discarded.
+ */
+export const mergeBranch: LandingStrategy = {
+  id: 'merge-branch',
+
+  async canLand(ctx) {
+    if (ctx.project.vcs !== 'git') return { ok: false, reason: 'project is not a git repository' }
+    if (!mandateAllows(ctx.task, 'land')) {
+      return { ok: false, reason: 'the task has no authority to land' }
+    }
+    if (ctx.task.verification === 'required') {
+      return { ok: false, reason: 'task requires human verification before landing' }
+    }
+    if (!(await isClean(ctx.workspacePath))) {
+      return { ok: false, reason: 'the workspace has uncommitted changes' }
+    }
+    if (await tipIsRescue(ctx.workspacePath)) return { ok: false, reason: RESCUE_TIP_REASON }
+    return { ok: true }
+  },
+
+  async land(ctx): Promise<LandingResult> {
+    const target = landingTargetFor(ctx.task, ctx.project)
+
+    // ⛔ Keyed on the **branch**, not the project. Two siblings finishing together contend for the
+    // plan branch, and nothing else in the fleet does — while an ordinary task landing onto `main`
+    // in the same project must not be made to wait behind them. Same queue mechanism, different key.
+    const resourceId = `land-branch:${ctx.project.id}:${target}`
+    upsertResource({
+      id: resourceId,
+      projectId: ctx.project.id,
+      kind: 'exclusive',
+      label: `${ctx.project.name} ${target}`,
+      capacity: 1
+    })
+    const turn = await awaitLandTurn(ctx, resourceId)
+    if (!turn.lock) {
+      const waited = Math.round(landQueue.waitMs / 1000)
+      return {
+        strategy: 'merge-branch',
+        ok: false,
+        branch: ctx.branch,
+        reason:
+          turn.gaveUp === 'cancelled'
+            ? 'this task was cancelled while it was queued to land'
+            : `another task is still landing onto \`${target}\` after ${waited}s of waiting`,
+        ...(turn.queuedBehind ? { contendedWith: turn.queuedBehind } : {})
+      }
+    }
+
+    try {
+      // ⚠️ The local ref always. A plan branch is never pushed — see `docs/landing.md` — so there is
+      // no `origin/<target>` to prefer and asking for one would resolve to nothing.
+      try {
+        await git(ctx.workspacePath, ['rebase', target])
+      } catch (err) {
+        await git(ctx.workspacePath, ['rebase', '--abort']).catch(() => undefined)
+        return {
+          strategy: 'merge-branch',
+          ok: false,
+          branch: ctx.branch,
+          reason: `rebase onto ${target} conflicted: ${err instanceof Error ? err.message : String(err)}`
+        }
+      }
+
+      const checks = await runChecks(ctx.project, ctx.workspacePath)
+      if (!checks.ok) {
+        return {
+          strategy: 'merge-branch',
+          ok: false,
+          branch: ctx.branch,
+          reason: 'the project checks failed after rebase',
+          checkOutput: checks.output
+        }
+      }
+
+      const commit = await git(ctx.workspacePath, ['rev-parse', 'HEAD'])
+      const baseSha = await revParse(ctx.workspacePath, target)
+
+      // ⛔ The precondition, checked rather than trusted. A branch checked out in *any* worktree of
+      // this repository — the operator's trunk or another pooled slot — must not be moved under it.
+      const heldBy = await branchCheckedOutIn(ctx.workspacePath, target)
+      if (heldBy) {
+        return {
+          strategy: 'merge-branch',
+          ok: false,
+          branch: ctx.branch,
+          commit,
+          reason:
+            `committed and verified on \`${ctx.branch}\`, but not merged: \`${target}\` is ` +
+            `checked out at ${heldBy}, and moving a branch a worktree holds is what git refuses ` +
+            'outright. The branch is intact.'
+        }
+      }
+
+      // ⛔ The ancestry proof. `update-ref` will happily move a branch backwards or sideways; only a
+      // fast-forward is a merge. The rebase above should guarantee it, and this asks anyway, because
+      // a merge strategy that silently does the wrong thing looks exactly like one that worked.
+      if (baseSha && !(await isAncestorOf(ctx.workspacePath, baseSha, commit))) {
+        return {
+          strategy: 'merge-branch',
+          ok: false,
+          branch: ctx.branch,
+          commit,
+          reason:
+            `committed and verified on \`${ctx.branch}\`, but \`${target}\` moved to a commit ` +
+            'this branch does not contain, so the merge would not be a fast-forward. The branch is intact.'
+        }
+      }
+
+      try {
+        // ⛔ Compare-and-swap: the third argument is the value read above, so a sibling that landed
+        // in between makes this fail rather than lose its commits.
+        await git(ctx.workspacePath, [
+          'update-ref',
+          `refs/heads/${target}`,
+          commit,
+          ...(baseSha ? [baseSha] : [])
+        ])
+      } catch (err) {
+        return {
+          strategy: 'merge-branch',
+          ok: false,
+          branch: ctx.branch,
+          commit,
+          reason:
+            `committed and verified on \`${ctx.branch}\`, but \`${target}\` would not ` +
+            `fast-forward: ${err instanceof Error ? err.message : String(err)}`
+        }
+      }
+
+      await retireBranch(ctx.workspacePath, ctx.branch)
+      log.info(`merged t${ctx.task.seq} (${commit.slice(0, 8)}) into ${target} by ref, not pushed`)
+      return {
+        strategy: 'merge-branch',
+        ok: true,
+        commit,
+        ...(baseSha ? { base: baseSha } : {}),
+        branch: ctx.branch,
+        reason: `merged into \`${target}\` as ${commit.slice(0, 8)}. Not pushed.`
+      }
+    } finally {
+      release(turn.lock.id)
+    }
+  }
+}
+
+/**
+ * Which worktree has this branch checked out, or null if none does.
+ *
+ * ⚠️ Reads `git worktree list --porcelain`, which enumerates the trunk *and* every pooled slot from
+ * any one of them — so asking from inside a child's workspace still sees the operator's checkout.
+ * ⛔ A failure to answer reads as *held*, not as free: this gate exists to protect a branch, and the
+ * safe direction when git cannot be asked is to decline the merge.
+ */
+async function branchCheckedOutIn(cwd: string, branch: string): Promise<string | null> {
+  let out: string
+  try {
+    out = await git(cwd, ['worktree', 'list', '--porcelain'])
+  } catch {
+    return 'an unreadable worktree list'
+  }
+  let path: string | null = null
+  for (const line of out.split(/\r?\n/)) {
+    if (line.startsWith('worktree ')) path = line.slice('worktree '.length).trim()
+    else if (line.trim() === `branch refs/heads/${branch}`) return path ?? 'another worktree'
+  }
+  return null
+}
+
+async function isAncestorOf(cwd: string, ancestor: string, descendant: string): Promise<boolean> {
+  try {
+    await git(cwd, ['merge-base', '--is-ancestor', ancestor, descendant])
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
  * Why the trunk cannot take a fast-forward right now, or null.
  *
  * ⚠️ Read-only. Three questions, and each one is a state the operator created deliberately: a dirty
@@ -728,8 +935,8 @@ export const landQueue = { waitMs: 15 * 60 * 1000, pollMs: 500 }
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
 /** Whoever is holding this project's landing lock, if it is not us. */
-function landingHolder(projectId: string, self: string): string | null {
-  return openClaims(landResourceId(projectId)).find((c) => c.holder !== self)?.holder ?? null
+function landingHolder(resourceId: string, self: string): string | null {
+  return openClaims(resourceId).find((c) => c.holder !== self)?.holder ?? null
 }
 
 /**
@@ -776,17 +983,19 @@ function noteLandingOrder(taskId: string, holderId: string): boolean {
  * patient face, and a task the operator has cancelled must not go on holding a workspace to land work
  * they just said they did not want.
  */
-async function awaitLandTurn(ctx: LandingContext): Promise<{
+async function awaitLandTurn(
+  ctx: LandingContext,
+  resourceId: string = landResourceId(ctx.project.id)
+): Promise<{
   lock: ResourceClaim | null
   queuedBehind: string | null
   gaveUp?: 'timeout' | 'cancelled'
 }> {
-  const resourceId = landResourceId(ctx.project.id)
   const first = claim(resourceId, ctx.task.id)
   // ⭐ The overwhelmingly common path: nobody else is landing, and this costs one synchronous query.
   if (first) return { lock: first, queuedBehind: null }
 
-  const holder = landingHolder(ctx.project.id, ctx.task.id)
+  const holder = landingHolder(resourceId, ctx.task.id)
   const linked = holder ? noteLandingOrder(ctx.task.id, holder) : false
   const other = holder ? getTask(holder) : null
   addMessage(
@@ -830,8 +1039,7 @@ export const autoLand: LandingStrategy = {
   },
 
   async land(ctx): Promise<LandingResult> {
-    const policy = policyFor(ctx.project)
-    const target = policy.landingTarget
+    const target = landingTargetFor(ctx.task, ctx.project)
 
     // ⛔ Exclusive for the whole of rebase-check-push. Released in `finally` without exception.
     upsertResource({
@@ -982,7 +1190,7 @@ export const pullRequest: LandingStrategy = {
       // ⚠️ A merge base rather than the target's tip: this strategy does not rebase, so the target
       // may carry commits this branch does not. The merge base is the commit the branch actually
       // diverged from, which is the range a reviewer wants either way.
-      const baseSha = await mergeBase(ctx.workspacePath, policy.landingTarget, 'HEAD')
+      const baseSha = await mergeBase(ctx.workspacePath, landingTargetFor(ctx.task, ctx.project), 'HEAD')
       const title = `t${ctx.task.seq}: ${ctx.task.title}`.slice(0, 120)
       const body = [
         ctx.task.handoffNote ? `${ctx.task.handoffNote}\n` : '',
@@ -1001,7 +1209,7 @@ export const pullRequest: LandingStrategy = {
         'pr',
         'create',
         '--base',
-        policy.landingTarget,
+        landingTargetFor(ctx.task, ctx.project),
         '--head',
         ctx.branch,
         '--title',
@@ -1046,7 +1254,8 @@ const STRATEGIES: Record<LandingStrategyId, LandingStrategy> = {
   'leave-branch': leaveBranch,
   'pull-request': pullRequest,
   'verify-only': verifyOnly,
-  'merge-local': mergeLocal
+  'merge-local': mergeLocal,
+  'merge-branch': mergeBranch
 }
 
 /**
@@ -1065,9 +1274,28 @@ const FOR_POLICY: Partial<Record<FinishPolicy, LandingStrategyId>> = {
   'await-human': 'leave-branch'
 }
 
-export function strategyFor(project: Project, policy?: FinishPolicy): LandingStrategy {
+/**
+ * ⛔ **`merge-branch` is chosen from data, never from a kind.** The question it answers is *does this
+ * task land somewhere other than the project's own target* — which is a fact about the resolved
+ * target, true for a split child and false for everything else. `if (task.kind === 'plan')` in the
+ * landing path would be a mode name deciding a merge, and the moment anything else needs to land off
+ * the trunk it would be wrong in a way that is invisible from here.
+ *
+ * ⚠️ Only substitutes for a strategy that *merges*. A task told `commit-only` or `pull-request`
+ * keeps that answer whatever its target is: the operator asked for a branch or a PR, and having a
+ * private landing target is not a reason to overrule them.
+ */
+export function strategyFor(
+  project: Project,
+  policy?: FinishPolicy,
+  task?: Pick<Task, 'landingTarget'> | null
+): LandingStrategy {
   const byPolicy = policy ? FOR_POLICY[policy] : undefined
-  return STRATEGIES[byPolicy ?? policyFor(project).landingStrategy] ?? leaveBranch
+  const id = byPolicy ?? policyFor(project).landingStrategy
+  if (id === 'merge-local' && landingTargetFor(task, project) !== policyFor(project).landingTarget) {
+    return mergeBranch
+  }
+  return STRATEGIES[id] ?? leaveBranch
 }
 
 /**
@@ -1077,7 +1305,7 @@ export function strategyFor(project: Project, policy?: FinishPolicy): LandingStr
  * that says exactly why, and leaves the repository in a state a person can act on.
  */
 export async function landTask(ctx: LandingContext): Promise<LandingResult> {
-  const strategy = strategyFor(ctx.project, ctx.policy)
+  const strategy = strategyFor(ctx.project, ctx.policy, ctx.task)
 
   // ⛔ Before the strategy, and only when the workspace is clean. A task that produced **no commits**
   // has nothing to land, and saying "landed as <the commit that was already there>" is not a
@@ -1091,7 +1319,7 @@ export async function landTask(ctx: LandingContext): Promise<LandingResult> {
     ctx.task.verification !== 'required' &&
     (await isClean(ctx.workspacePath))
   ) {
-    const target = policyFor(ctx.project).landingTarget
+    const target = landingTargetFor(ctx.task, ctx.project)
     const base = await landedRef(ctx.workspacePath, target)
     if ((await commitsAhead(ctx.workspacePath, ctx.branch, base)) === 0) {
       // ⛔ **Asked before the verdict, because the verdict is otherwise unfalsifiable.** Everything
@@ -1213,7 +1441,7 @@ export async function landTask(ctx: LandingContext): Promise<LandingResult> {
     addMessage(
       ctx.task.id,
       'system',
-      `Landed as ${result.commit?.slice(0, 8)} onto ${policyFor(ctx.project).landingTarget}.` +
+      `Landed as ${result.commit?.slice(0, 8)} onto ${landingTargetFor(ctx.task, ctx.project)}.` +
         (behind ? ` It queued behind t${behind.seq} and landed once that finished.` : '')
     )
   }

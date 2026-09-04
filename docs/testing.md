@@ -96,6 +96,25 @@ broken.
 When you change anything on a project tab, **mutate the code and watch the suite go red first.** If it
 stays green, the suite is not reaching your change.
 
+### A merge strategy that silently does nothing looks exactly like one that worked
+
+⛔ **`merge-branch` moves a git ref with `update-ref`**, which will happily move a branch backwards,
+sideways, or out from under a worktree that has it checked out. Those are the two ways this corrupts a
+repository rather than failing a task, and neither raises an error at the time.
+
+So `mergebranch.test.ts` uses **real git in a real repository** — a stub of `update-ref` would pass
+against every broken version — and each guard was watched going **red** before it was trusted green:
+
+| Guard | Watched red by |
+|---|---|
+| the target must be checked out nowhere | replacing `branchCheckedOutIn` with `null` — the refusal test fails |
+| a sibling's landing is not an agent in the trunk | dropping the `unexplained` filter in `decideFinish` — `landingtarget.test.ts` fails |
+
+⭐ The same practice found a real defect in `applySplit` before it shipped: inter-piece edges were
+written with `addDependency`, which is the raw edge write and deliberately does **not** re-admit, so a
+piece that should have waited sat at `ready` and would have been dispatched in parallel with the piece
+it depended on. The ordering the planner asked for would have been discarded silently.
+
 ### A test may not assert a host capability
 
 ⛔ `expect(sampleProcessTree(pid)).not.toBeNull()` reads as a test of this code and is a test of

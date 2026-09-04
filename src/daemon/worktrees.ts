@@ -2,8 +2,8 @@ import { execFile, execFileSync } from 'node:child_process'
 import { promisify } from 'node:util'
 import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import type { Project } from '@shared/tasks.js'
-import { policyFor } from './projects.js'
+import type { Project, Task } from '@shared/tasks.js'
+import { landingTargetFor, policyFor } from './projects.js'
 import { claim, openClaims, release, upsertResource, workspacePoolId } from './resources.js'
 import { log } from './log.js'
 
@@ -64,8 +64,15 @@ async function gitOk(cwd: string, args: string[]): Promise<boolean> {
  * ⚠️ `HEAD` only when neither ref resolves — a repository whose first commit is not on the target
  * branch yet. A repo with no remote is normal and must not be a failure.
  */
-export async function baseRef(project: Project): Promise<string> {
-  const ref = await landedRef(project.root, policyFor(project).landingTarget)
+export async function baseRef(
+  project: Project,
+  task?: Pick<Task, 'landingTarget'> | null
+): Promise<string> {
+  // ⛔ **The task's target, not the project's**, and that is what makes a split work at all. A child
+  // cut from `main` would not contain its siblings' work, so a `depends_on` edge between two pieces
+  // would order their runs and deliver nothing — the second would rebuild against a base that never
+  // saw the first. For every task with no target of its own the two are the same string.
+  const ref = await landedRef(project.root, landingTargetFor(task, project))
   return (await gitOk(project.root, ['rev-parse', '--verify', ref])) ? ref : 'HEAD'
 }
 
@@ -231,10 +238,10 @@ export async function trunkCommitsSince(
 export async function switchResidentBranch(
   project: Project,
   path: string,
-  branch: string
+  branch: string,
+  task?: Pick<Task, 'landingTarget'> | null
 ): Promise<SwitchResult> {
-  const policy = policyFor(project)
-  const state = await workspaceState(path, policy.landingTarget)
+  const state = await workspaceState(path, landingTargetFor(task, project))
   if (state.branch === branch) return { ok: true, from: branch }
 
   const loose = [...state.dirtyFiles, ...state.untrackedFiles]
@@ -320,7 +327,8 @@ export function cleanWorkspaceAcls(workspacePath: string): void {
 export async function prepareWorkspace(
   project: Project,
   workspace: Workspace,
-  branch: string | null
+  branch: string | null,
+  task?: Pick<Task, 'landingTarget'> | null
 ): Promise<PrepareResult> {
   cleanWorkspaceAcls(workspace.path)
   const policy = policyFor(project)
@@ -332,7 +340,7 @@ export async function prepareWorkspace(
       if (await gitOk(project.root, ['remote', 'get-url', 'origin'])) {
         await git(workspace.path, ['fetch', 'origin', '--prune'])
       }
-      const base = await baseRef(project)
+      const base = await baseRef(project, task)
       // A task that ran before left its branch checked out in whichever workspace it used. Git will
       // refuse to hand the same branch to a second worktree - correctly - so the stale holder is
       // parked first. This is a retry, not a conflict: the scheduler never runs one task twice at

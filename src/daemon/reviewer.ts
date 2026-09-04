@@ -6,7 +6,7 @@ import { adapter } from './adapters/index.js'
 import { db } from './db.js'
 import { accountUnavailability } from './eligibility.js'
 import { extractJson } from './controller.js'
-import { policyFor, getProject } from './projects.js'
+import { landingTargetFor, getProject } from './projects.js'
 import { lastQuota } from './quota.js'
 import {
   authorshipOf,
@@ -219,7 +219,13 @@ export async function reviewEligibility(taskId: string): Promise<{
   if (!project) {
     return { ok: false, reviewer: null, reviewerModel: null, reason: 'this task has no project to read' }
   }
-  const range = await resolveRange(task, project, policyFor(project).landingTarget)
+  // ⛔ **The task's own target.** A split child lands onto its plan branch and never onto `main`, so
+  // measured against `main` the ladder's first rung fails (its head is not an ancestor of the trunk)
+  // and the second resolves `merge-base(main, child)` — which is where the *plan branch* diverged,
+  // putting the planner's commits and every earlier sibling's work inside the range this child is
+  // graded on. `resolveRange` refuses to review the wrong commits by name; this is the reference
+  // point that keeps it able to tell.
+  const range = await resolveRange(task, project, landingTargetFor(task, project))
   if (!range.ok) return { ok: false, reviewer: null, reviewerModel: null, reason: range.reason }
 
   const choice = pickReviewer(task)
@@ -247,7 +253,7 @@ export async function requestReview(taskId: string): Promise<
   const project = task.projectId ? getProject(task.projectId) : null
   if (!project) return { ok: false, reason: 'this task has no project to read' }
 
-  const range = await resolveRange(task, project, policyFor(project).landingTarget)
+  const range = await resolveRange(task, project, landingTargetFor(task, project))
   if (!range.ok) return { ok: false, reason: range.reason }
 
   const choice = pickReviewer(task)

@@ -374,6 +374,125 @@ server.registerTool(
   }
 )
 
+/**
+ * File a whole plan at once, and block on the operator approving it.
+ *
+ * ⛔ **The approval is structural, not an instruction.** An agent told in its prompt to ask before
+ * splitting can forget, or can decide this particular split is obvious; an agent whose `task_split`
+ * call does not return until a person has answered cannot. That is the whole reason this blocks
+ * rather than filing and notifying.
+ *
+ * ⛔ **One approval for the whole split, not one per child.** Every coding subtask trips `riskOf`'s
+ * `controller` gate — any agent-filed task whose mandate allows `commit` or `push` does — so a split
+ * of five would otherwise raise five separate consults and leave five drafts, and on an install with
+ * no controller turn available none of them would ever run. The operator approved this exact set, by
+ * title, one second ago; asking again five times is not a second safety check, it is a way to make
+ * the feature unusable.
+ *
+ * ⚠️ Atomic. Nothing is written until the operator says yes, and if any piece cannot be filed the
+ * ones already created are unwound — a planner blocked on half a plan has no way out.
+ */
+server.registerTool(
+  'task_split',
+  {
+    title: 'Break this plan into subtasks and delegate them',
+    description:
+      'File the whole plan in one call: two or more concrete pieces, each with its own full ' +
+      'instruction. The operator approves the entire split before anything is filed, so make each ' +
+      'piece legible on a card. Each piece must be completable by an agent that has NOT read this ' +
+      'conversation, so its instruction has to carry its own context: what to change, where, and ' +
+      'what done looks like. Use depends_on only where one piece genuinely needs another’s code — ' +
+      'an edge you did not need costs a subtask’s wait. After this returns, STOP: the work is ' +
+      'delegated and you will be woken again when every piece has settled.',
+    inputSchema: {
+      pieces: z
+        .array(
+          z.object({
+            instruction: z
+              .string()
+              .describe('The full prompt for this piece, self-contained. This is what the agent is sent.'),
+            summary: z
+              .string()
+              .optional()
+              .describe('A short label for the board, e.g. "Add the migration"'),
+            depends_on: z
+              .array(z.number().int())
+              .optional()
+              .describe('Indices of EARLIER pieces in this list, starting at 0. Must point backwards.')
+          })
+        )
+        .describe('Two or more pieces. A split of one is refused.')
+    }
+  },
+  async (args) => {
+    const sessionId = process.env.MULTI_AGENT_CONTROLLER_SESSION_ID ?? ''
+    try {
+      const result = await rpc('agent.split', {
+        sessionId,
+        pieces: (args.pieces ?? []).map((p) => ({
+          title: p.instruction,
+          ...(p.summary ? { summary: p.summary } : {}),
+          dependsOn: p.depends_on ?? []
+        }))
+      })
+      return {
+        content: [{ type: 'text' as const, text: result.reply }],
+        ...(result.ok ? {} : { isError: true })
+      }
+    } catch (err) {
+      return { content: [{ type: 'text' as const, text: String(err) }], isError: true }
+    }
+  }
+)
+
+/**
+ * Add one edge between two pieces of this planner's own split.
+ *
+ * ⛔ Scoped to this task's own children, and the daemon enforces it rather than trusting the
+ * argument. An agent that can add an arbitrary edge anywhere in the fleet can hold up work it has
+ * never seen; the blast radius of a mistake here is the plan the agent is holding, and nothing else.
+ *
+ * ⚠️ Usually unnecessary — `task_split` takes the edges inline, which is one call instead of N. This
+ * exists for the ordering a planner only realises it needs after seeing the pieces filed.
+ */
+server.registerTool(
+  'task_depend',
+  {
+    title: 'Make one piece of this plan wait for another',
+    description:
+      'Add a dependency between two pieces of THIS task’s split, by their t-numbers. The blocked ' +
+      'piece will not be dispatched until the one it needs has completed. Prefer passing depends_on ' +
+      'to task_split; use this only for an ordering you discovered afterwards.',
+    inputSchema: {
+      task: z.number().int().describe('The t-number of the piece that must WAIT'),
+      depends_on: z.number().int().describe('The t-number of the piece it waits FOR')
+    }
+  },
+  async (args) => {
+    const sessionId = process.env.MULTI_AGENT_CONTROLLER_SESSION_ID ?? ''
+    try {
+      const result = await rpc('agent.depend', {
+        sessionId,
+        taskSeq: args.task,
+        dependsOnSeq: args.depends_on
+      })
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: result.ok
+              ? `t${args.task} now waits for t${args.depends_on}.`
+              : `Not added: ${result.reason}`
+          }
+        ],
+        ...(result.ok ? {} : { isError: true })
+      }
+    } catch (err) {
+      return { content: [{ type: 'text' as const, text: String(err) }], isError: true }
+    }
+  }
+)
+
 server.registerTool(
   'handoff',
   {
