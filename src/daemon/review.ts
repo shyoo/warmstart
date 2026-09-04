@@ -506,7 +506,7 @@ export function parseReviewReply(reply: Record<string, unknown>): ParsedReview {
       return { ok: false, reason: `the reply had no score for \`${dimension}\`` }
     }
     const { score, rationale } = entry as { score?: unknown; rationale?: unknown }
-    if (score !== null && (typeof score !== 'number' || !Number.isInteger(score) || score < 0 || score > 10)) {
+    if (score !== null && (typeof score !== 'number' || !Number.isFinite(score) || score < 0 || score > 10)) {
       return { ok: false, reason: `\`${dimension}\` scored ${JSON.stringify(score)}, which is not 0-10 or null` }
     }
     if (typeof rationale !== 'string' || rationale.trim().length === 0) {

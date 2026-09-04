@@ -125,14 +125,24 @@ describe('parsing a reviewer’s reply', () => {
     expect(parsed.reason).toContain('codebase_fit')
   })
 
-  it('rejects a score outside 0-10, and one that is not an integer', () => {
-    for (const score of [11, -1, 7.5, '8']) {
+  it('rejects a score outside 0-10, or a non-number', () => {
+    for (const score of [11, -1, NaN, Infinity, '8']) {
       const parsed = parseReviewReply({
         ...good,
         scores: { ...good.scores, correctness: { score, rationale: 'x' } }
       })
       expect(parsed.ok, `score ${JSON.stringify(score)} should be rejected`).toBe(false)
     }
+  })
+
+  it('accepts a floating-point score between 0 and 10 (e.g. 9.5)', () => {
+    const parsed = parseReviewReply({
+      ...good,
+      scores: { ...good.scores, correctness: { score: 9.5, rationale: 'Minor edge case.' } }
+    })
+    expect(parsed.ok).toBe(true)
+    if (!parsed.ok) return
+    expect(parsed.scores.correctness.score).toBe(9.5)
   })
 
   it('rejects a score with no rationale, because an unexplained number is not evidence', () => {
