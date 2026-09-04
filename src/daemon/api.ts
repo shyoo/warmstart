@@ -1198,6 +1198,7 @@ export function checkWorkerDefaults(
   adapterId: string,
   patch: {
     defaultModel?: string | null
+    gradingModel?: string | null
     defaultEffort?: string | null
     defaultModels?: Record<string, string | null> | null
   }
@@ -1209,6 +1210,10 @@ export function checkWorkerDefaults(
     if (!cm.modelSpec(patch.defaultModel)) {
       throw new Error(`'${patch.defaultModel}' is not a model ${info.label} can be priced for`)
     }
+  }
+
+  if (patch.gradingModel && !cm.modelSpec(patch.gradingModel)) {
+    throw new Error(`'${patch.gradingModel}' is not a model ${info.label} can be priced for`)
   }
 
   if (patch.defaultModels) {

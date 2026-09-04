@@ -1,5 +1,5 @@
 import { sessionEnded } from '@shared/protocol'
-import { Fragment, useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import type { AdapterDetection, AdapterInfo, ModelOptions, Session, Worker } from '@shared/protocol'
 import { rpc, useDaemonEvents, useNow, type FleetEntry } from '../lib/daemon'
 import { isWorkerSubscriptionExpired, QUOTA_STALE_AFTER_MS, quotaFreshness } from '@shared/tasks'
@@ -34,12 +34,6 @@ function ColumnInfo({ text }: { text: string }): React.JSX.Element {
 function modelChoices(models: Array<{ id: string }>): SettingOption[] {
   return [{ value: '', label: 'CLI default' }, ...models.map((m) => ({ value: m.id, label: m.id }))]
 }
-
-const ROLE_CHOICES: SettingOption[] = [
-  { value: 'both', label: 'work + judgment' },
-  { value: 'worker', label: 'work only' },
-  { value: 'controller', label: 'judgment only' }
-]
 
 /**
  * How many tasks one account may run at once — the sentence behind the `Max` column's (i).
@@ -97,27 +91,6 @@ export function Workers({
    * on every account, of which two are pressed once at commissioning and the third is destructive
    * and sat one mis-click away from a quota reading somebody was only trying to refresh.
    */
-  const [menuWorkerId, setMenuWorkerId] = useState<string | null>(null)
-  const menuRef = useRef<HTMLDivElement>(null)
-
-  // ⚠️ Escape as well as a click away. A menu that can only be dismissed by clicking the page is one
-  // a keyboard has no way out of.
-  useEffect(() => {
-    if (!menuWorkerId) return
-    const onDown = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuWorkerId(null)
-    }
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setMenuWorkerId(null)
-    }
-    document.addEventListener('mousedown', onDown)
-    document.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('mousedown', onDown)
-      document.removeEventListener('keydown', onKey)
-    }
-  }, [menuWorkerId])
-
   // ⚠️ The panel used to give no signal at all when the vendor's login finished. The terminal printed
   // `-- session exited (0) --` and nothing else changed, so there was no way to tell a completed
   // sign-in from a hung one, and Done looked like it had done nothing.
@@ -348,7 +321,8 @@ export function Workers({
             <col style={{ width: '10%' }} />
             <col style={{ width: '5%' }} />
             <col style={{ width: '16%' }} />
-            <col style={{ width: '14%' }} />
+            <col style={{ width: '13%' }} />
+            <col style={{ width: '13%' }} />
             <col style={{ width: '8%' }} />
             <col style={{ width: '6%' }} />
           </colgroup>
@@ -371,6 +345,7 @@ export function Workers({
                 </span>
               </th>
               <th>Model</th>
+              <th>Grading model</th>
               <th>Role</th>
               {/* ⛔ `Enable`, because that is the only thing left in the column. It said `Policy`
                   while it held a switch and a `human-occupied` checkbox — a word broad enough to
@@ -750,24 +725,32 @@ export function Workers({
                     </td>
                     <td>
                       <SettingButtonSelect
-                        value={worker.role}
-                        options={ROLE_CHOICES}
-                        ariaLabel={`Role for ${worker.label}`}
-                        disabled={busy === `role:${worker.id}`}
-                        title={
-                          'Whether this account may be asked for judgment. A controller near the top of ' +
-                          'its window stops being asked and the next call routes elsewhere — which is ' +
-                          'why a dedicated one is worth having, and why nothing breaks without one.'
-                        }
+                        value={worker.gradingModel ?? ''}
+                        options={modelChoices(modelsFor(worker.adapterId)?.models ?? [])}
+                        ariaLabel={`Grading model for ${worker.label}`}
+                        disabled={busy === `grading-model:${worker.id}`}
+                        title="The model this account uses for peer reviews. New workers start on the adapter's smallest configured model."
                         onChange={(value) =>
-                          void guard(`role:${worker.id}`, () =>
-                            rpc('worker.update', {
-                              id: worker.id,
-                              role: value as 'worker' | 'controller' | 'both'
-                            })
+                          void guard(`grading-model:${worker.id}`, () =>
+                            rpc('worker.update', { id: worker.id, gradingModel: value || null })
                           )
                         }
                       />
+                    </td>
+                    <td>
+                      <div className="worker-role-checks" aria-label={`Roles for ${worker.label}`}>
+                        <label><input type="checkbox" checked={worker.role !== 'controller'} onChange={(e) => {
+                          const next = e.target.checked ? (worker.role === 'controller' ? 'both' : worker.role) : (worker.role === 'both' ? 'controller' : 'worker')
+                          void guard(`role:${worker.id}`, () => rpc('worker.update', { id: worker.id, role: next }))
+                        }} /> Work</label>
+                        <label><input type="checkbox" checked={worker.role !== 'worker'} onChange={(e) => {
+                          const next = e.target.checked ? (worker.role === 'worker' ? 'both' : worker.role) : (worker.role === 'both' ? 'worker' : 'controller')
+                          void guard(`role:${worker.id}`, () => rpc('worker.update', { id: worker.id, role: next }))
+                        }} /> Judgment</label>
+                        <label><input type="checkbox" checked={worker.gradingEnabled} onChange={() =>
+                          void guard(`grading-role:${worker.id}`, () => rpc('worker.update', { id: worker.id, gradingEnabled: !worker.gradingEnabled }))
+                        } /> Grading</label>
+                      </div>
                     </td>
                     <td>
                       {/* ⛔ Off is not retirement and must not read as it. Retiring is destructive
@@ -812,79 +795,10 @@ export function Workers({
                         and a destructive one that sat a mis-click from the button beside it — and
                         on the one row with something wrong with it they wrapped onto a second
                         line, which is the row that could least afford to grow. */}
-                    <td className="tbl-action-cell">
-                      <div
-                        ref={menuWorkerId === worker.id ? menuRef : null}
-                        className="action-menu-wrap"
-                      >
-                        <button
-                          type="button"
-                          className={`action-menu-btn${menuWorkerId === worker.id ? ' action-menu-btn--open' : ''}`}
-                          aria-label={`Actions for ${worker.label}`}
-                          aria-haspopup="true"
-                          aria-expanded={menuWorkerId === worker.id}
-                          title="Actions"
-                          onClick={() =>
-                            setMenuWorkerId((cur) => (cur === worker.id ? null : worker.id))
-                          }
-                        >
-                          <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
-                            <circle cx="3" cy="8" r="1.5" />
-                            <circle cx="8" cy="8" r="1.5" />
-                            <circle cx="13" cy="8" r="1.5" />
-                          </svg>
-                        </button>
-                        {menuWorkerId === worker.id && (
-                          <div className="action-menu" role="menu">
-                            <button
-                              type="button"
-                              role="menuitem"
-                              className="action-menu-item"
-                              disabled={busy === `login:${worker.id}`}
-                              title="Runs the vendor's own login in a terminal. agentyard never sees the credential."
-                              onClick={() => {
-                                setMenuWorkerId(null)
-                                void startLogin(worker.id, worker.adapterId)
-                              }}
-                            >
-                              Sign in
-                            </button>
-                            <button
-                              type="button"
-                              role="menuitem"
-                              className="action-menu-item"
-                              disabled={busy === `probe:${worker.id}`}
-                              title={
-                                suspect
-                                  ? 'Re-reads this account and offers it work again. Press it once you have ' +
-                                    'fixed what stopped the last run — this is the only thing that lifts the hold.'
-                                  : "Reads the vendor CLI's own usage cache off disk. It never spends a token."
-                              }
-                              onClick={() => {
-                                setMenuWorkerId(null)
-                                void probe(worker.id, worker.label)
-                              }}
-                            >
-                              {suspect ? 'Recheck' : 'Probe'}
-                            </button>
-                            <div className="action-menu-divider" />
-                            <button
-                              type="button"
-                              role="menuitem"
-                              className="action-menu-item action-menu-item--danger"
-                              title="Closes the worker to new work. The isolation root stays on disk."
-                              onClick={() => {
-                                setMenuWorkerId(null)
-                                void guard(`ret:${worker.id}`, () =>
-                                  rpc('worker.retire', { id: worker.id })
-                                )
-                              }}
-                            >
-                              Retire
-                            </button>
-                          </div>
-                        )}
-                      </div>
+                    <td className="tbl-action-cell worker-actions">
+                      <button className="btn btn--ghost" disabled={busy === `login:${worker.id}`} onClick={() => void startLogin(worker.id, worker.adapterId)}>Sign in</button>
+                      <button className="btn btn--ghost" disabled={busy === `probe:${worker.id}`} onClick={() => void probe(worker.id, worker.label)}>{suspect ? 'Recheck' : 'Probe'}</button>
+                      <button className="btn btn--ghost danger" disabled={busy === `ret:${worker.id}`} onClick={() => void guard(`ret:${worker.id}`, () => rpc('worker.retire', { id: worker.id }))}>Retire</button>
                     </td>
                   </tr>
                   {/* ⚠️ One row per account, however many things are wrong with it, and it draws
@@ -892,7 +806,7 @@ export function Workers({
                       the time — is one an operator learns to stop reading. */}
                   {notes.length > 0 && (
                     <tr className={`tbl-row--note${worker.enabled ? '' : ' tbl-row--off'}`}>
-                      <td colSpan={10}>
+                       <td colSpan={11}>
                         {notes.map((n) => (
                           <div key={n.key} className="tbl-note">
                             <span className={`tbl-note-label ${n.tone}`}>{n.label}</span>

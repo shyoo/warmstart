@@ -15,6 +15,7 @@ import { modelLabel } from './modelname'
  */
 
 export const STATUS_TONE: Record<string, string> = {
+  grading: 'state-running',
   running: 'state-running',
   assigned: 'state-running',
   ready: 'state-running',
@@ -56,7 +57,8 @@ export const STATUS_LABEL: Record<string, string> = { assigned: 'dispatching' }
  * ⭐ Measured 2026-08-29: t22 sat at `ready` for seven minutes with `Antigravity at capacity`
  * written on it, and read as a task waiting on the operator to press something.
  */
-export function statusLabel(task: Pick<Task, 'status' | 'holdReason'>): string {
+export function statusLabel(task: Pick<Task, 'status' | 'holdReason' | 'gradingWorkerId'>): string {
+  if (task.gradingWorkerId) return 'grading'
   if (task.status === 'ready' && task.holdReason) return 'queued'
   return STATUS_LABEL[task.status] ?? task.status
 }
@@ -92,8 +94,8 @@ export function holdLine(
 /** Statuses where an agent is actively executing work. */
 export const WORKING_STATUSES = new Set(['running'])
 
-export function isWorking(task: Pick<Task, 'status'>): boolean {
-  return task.status === 'running'
+export function isWorking(task: Pick<Task, 'status' | 'gradingWorkerId'>): boolean {
+  return task.status === 'running' || Boolean(task.gradingWorkerId)
 }
 
 /**

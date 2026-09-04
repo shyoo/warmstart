@@ -128,6 +128,22 @@ afterAll(() => {
 })
 
 describe('what an account is allowed to default to', () => {
+  it('starts new workers on each adapter\'s smallest grading model', () => {
+    expect(workers.createWorker({ adapterId: 'claude-code', label: 'grader-claude' }).gradingModel).toBe('claude-haiku-4-5')
+    expect(workers.createWorker({ adapterId: 'openai-compatible', label: 'grader-codex' }).gradingModel).toBe('gpt-5.4-mini')
+    const agy = workers.createWorker({ adapterId: 'antigravity-cli', label: 'grader-agy' })
+    expect(agy.gradingModel).toBe('gemini-3.8-flash-low')
+    workers.retireWorker(agy.id)
+  })
+
+  it('validates and stores a worker grading model and role', () => {
+    const w = workers.createWorker({ adapterId: 'claude-code', label: 'grader-settings' })
+    api.checkWorkerDefaults('claude-code', { gradingModel: 'claude-sonnet-5' })
+    expect(() => api.checkWorkerDefaults('claude-code', { gradingModel: 'gpt-5.4-mini' })).toThrow(/not a model/)
+    const saved = workers.updateWorker(w.id, { gradingModel: 'claude-sonnet-5', gradingEnabled: false })
+    expect(saved.gradingModel).toBe('claude-sonnet-5')
+    expect(saved.gradingEnabled).toBe(false)
+  })
   it('stores a model its own CLI can be priced for', () => {
     const w = workers.createWorker({ adapterId: 'claude-code', label: 'defaults-1' })
     const saved = workers.updateWorker(w.id, { defaultModel: 'claude-opus-5', defaultEffort: 'xhigh' })
@@ -277,4 +293,3 @@ describe('budget-aware automatic pool balancing across multiple pools', () => {
     expect(r.modelSource).toBe('task')
   })
 })
-

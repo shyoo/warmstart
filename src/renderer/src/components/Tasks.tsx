@@ -588,7 +588,7 @@ export function Tasks({
                       {when(task.updatedAt)}
                     </td>
                     <td>
-                      <span className={`status ${STATUS_TONE[task.status] ?? ''}`}>
+                      <span className={`status ${STATUS_TONE[task.gradingWorkerId ? 'grading' : task.status] ?? ''}`}>
                         {statusLabel(task)}
                         {isWorking(task) && <Working />}
                       </span>

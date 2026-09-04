@@ -297,6 +297,10 @@ export interface Worker {
    * did before this field existed and what a worker keeps doing until somebody sets one.
    */
   defaultModel: string | null
+  /** Model used for peer reviews performed by this account. */
+  gradingModel?: string | null
+  /** Whether this account may be selected as a peer reviewer. */
+  gradingEnabled?: boolean
   /** ⚠️ Only ever sent where the adapter declares `selectableEffort`; dropped otherwise. */
   defaultEffort: string | null
   /**
@@ -1174,6 +1178,8 @@ export interface RpcMap {
         | 'maxConcurrent'
         | 'role'
         | 'defaultModel'
+        | 'gradingModel'
+        | 'gradingEnabled'
         | 'defaultEffort'
         | 'defaultModels'
       >

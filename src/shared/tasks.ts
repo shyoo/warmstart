@@ -612,6 +612,8 @@ export interface Task {
   qualityReviewedAt: number | null
   /** The reviewer's adapter id. ⛔ Never the subject's — a review never grades its own author. */
   qualityReviewer: string | null
+  /** Reviewer account while a peer grade is in flight; display state, not task lifecycle state. */
+  gradingWorkerId?: string | null
   deletedAt: number | null
   createdAt: number
   updatedAt: number

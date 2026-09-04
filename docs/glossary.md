@@ -391,8 +391,11 @@ on the score** — no task changes status, no routing decision reads it, the est
 review run. It is an *instrument*. A review is a `runs` row with `kind: 'quality_review'`, which is
 how its tokens are metered and how it earns its `#N Quality Review` line in the thread.
 The operator may choose **Auto** (a random eligible account) or a named eligible account; either way
-the reviewer uses its adapter's small review model. Eligibility excludes every adapter that authored
+the reviewer uses the grading model stored on that worker, initially the adapter's smallest
+configured model. Eligibility excludes workers whose Grading role is off and every adapter that authored
 the work, not merely the worker account, and is enforced again when the review starts.
+**Grading** is a display overlay while that read-only run is pending, not a task status: completed
+work remains completed and the review owns no pooled workspace.
 
 **Rubric** — a versioned definition of the seven dimensions a review scores 0–10, with **written anchors at 2/4/6/8/10** so a 7
 means the same thing twice. Requirement fidelity and correctness carry 40% between them; codebase fit

@@ -67,6 +67,7 @@ interface TaskRow {
   assignee_hint: string | null
   last_run_worker_id?: string | null
   last_run_model?: string | null
+  grading_worker_id?: string | null
   mandate_json: string
   budget_json: string
   not_before: number | null
@@ -131,7 +132,10 @@ const TASK_SELECT = `
     (select r.worker_id from runs r where r.task_id = t.id and r.kind = 'work'
       order by r.started_at desc limit 1) as last_run_worker_id,
     (select r.model from runs r where r.task_id = t.id and r.kind = 'work'
-      order by r.started_at desc limit 1) as last_run_model
+      order by r.started_at desc limit 1) as last_run_model,
+    (select q.reviewer_worker_id from quality_reviews q
+      where q.task_id = t.id and q.status = 'pending'
+      order by q.created_at desc limit 1) as grading_worker_id
   from tasks t`
 
 /**
@@ -238,6 +242,7 @@ function toTask(r: TaskRow, timing: ActiveTiming = ZERO_TIMING): Task {
     qualityReviewCount: r.quality_review_count ?? 0,
     qualityReviewedAt: r.quality_review_at ?? null,
     qualityReviewer: r.quality_reviewer ?? null,
+    gradingWorkerId: r.grading_worker_id ?? null,
     firstRunAt: r.first_run_at,
     lastRunEndedAt: r.last_run_ended_at,
     activeMs: timing.activeMs,

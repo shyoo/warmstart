@@ -50,8 +50,8 @@ thing entirely. See [`glossary.md`](glossary.md).
 
 | Component | Screen |
 |---|---|
-| `Flow` | project lifecycle map: 6-column kanban flow with ticket ↔ workspace ↔ worker bindings |
-| `FleetStrip` `Workers` `FleetSettings` | the fleet: per-account quota with its **age**, reset countdowns, live sessions |
+| `Flow` | project lifecycle map: 6-column kanban flow with ticket ↔ workspace ↔ worker bindings and read-only grading runs |
+| `FleetStrip` `Workers` `FleetSettings` | the fleet: per-account quota with its **age**, reset countdowns, live sessions; one two-column settings card per worker |
 | `Tasks` `TaskThread` `Dependencies` | the board, one task's thread, and prerequisite edges |
 | `NewTask` `Pill` | the composer: the prompt first, its settings as a row of **pills** under it |
 | `Attention` `Questions` | the approvals/questions bar — one keystroke above the operator's work |
@@ -72,7 +72,10 @@ is. It appears in three places only: a `Quality` column in `Tasks`, a `#N Qualit
 `TaskThread`'s timeline (⚠️ the underlying run is filtered out so it draws once, not twice), and the
 request box in that thread's facts column, whose every disabled state names its reason. The request
 box offers **Auto**, which randomly chooses an eligible account and uses that adapter's small review
-model, plus each eligible account by name. Accounts on any adapter that authored the work are absent;
+model selected on that worker, plus each eligible account by name. New built-in workers start with
+the adapter's smallest configured model; the Workers card can change it or opt the account out of
+grading. A pending review overlays **grading** in Tasks, TaskThread and Flow without changing the
+task's stored lifecycle status or claiming a worktree. Accounts on any adapter that authored the work are absent;
 the daemon revalidates a named choice when the button is pressed rather than trusting the menu.
 
 ⛔ **In Plan & Split the composer draws two labelled rows of pills, and this is decision D5.** The

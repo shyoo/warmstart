@@ -50,6 +50,7 @@ export function visibleTasksForLane(laneId: FlowLane, laneTasks: Task[]): Task[]
 }
 
 export function laneFor(task: Task): FlowLane {
+  if (task.gradingWorkerId) return 'running'
   // Ready with a daemon-supplied hold reason is eligible work that cannot currently move. It is
   // shown beside scheduled work in queued, not as a second invented domain status.
   if (task.status === 'ready' && task.holdReason) return 'queued'
@@ -74,6 +75,7 @@ function activeMs(task: Task, now: number): number {
 }
 
 function taskTime(task: Task, now: number): string {
+  if (task.gradingWorkerId) return 'grading'
   const live = activeMs(task, now)
   if (live > 0) return task.activeSince ? `working ${duration(live)}` : `worked ${duration(live)}`
   return task.status === 'ready' ? 'ready to route' : task.status
@@ -241,9 +243,10 @@ export function Flow({ projectId, fleet, onOpenTask }: {
    * five running tasks would be the same class of bug this view was rewritten to fix.
    */
   const unbound = useMemo(
-    () => tasks.filter((task) => laneFor(task) === 'running' && !homeOf.has(task.id)),
+    () => tasks.filter((task) => laneFor(task) === 'running' && !task.gradingWorkerId && !homeOf.has(task.id)),
     [tasks, homeOf]
   )
+  const grading = useMemo(() => tasks.filter((task) => Boolean(task.gradingWorkerId)), [tasks])
 
   /**
    * Tickets on their way in: dispatched/assigned to an account, waiting to claim a workspace.
@@ -448,6 +451,22 @@ export function Flow({ projectId, fleet, onOpenTask }: {
                           <span className="flow-bind-dest dim">workspace unknown</span>
                         </div>
                       ) : null}
+                      {grading.map((task) => {
+                        const reviewer = fleet.find((entry) => entry.worker.id === task.gradingWorkerId)?.worker
+                        return (
+                          <div className="flow-bind flow-bind--grading" key={`grading:${task.id}`} title={`t${task.seq} is being graded${reviewer ? ` by ${reviewer.label}` : ''}`}>
+                            <span className="flow-bind-ticket">{ticket(task, 'grading')}</span>
+                            <span className="flow-bind-arrow flow-bind-arrow--active" aria-hidden="true">→</span>
+                            <span className="flow-bind-dest">
+                              <span className="flow-worker-pill">
+                                <AgentIcon adapterId={reviewer?.adapterId ?? null} size={14} />
+                                <span className="flow-worker-name">{reviewer?.label ?? 'reviewer'}</span>
+                              </span>
+                            </span>
+                            <span className="flow-bind-meta"><span className="flow-tag flow-tag--grading">grading</span></span>
+                          </div>
+                        )
+                      })}
                       {overflowInbound.length > 0 ? (
                         <div className="flow-bind flow-bind--inbound" title="Dispatched to an account, waiting for a free workspace in the pool.">
                           <span className="flow-bind-dest dim">waiting for workspace</span>
@@ -466,7 +485,7 @@ export function Flow({ projectId, fleet, onOpenTask }: {
                   )}
                   <div className="flow-lane-label">
                     <span>{lane.label}</span>
-                    <b>{isRunningLane ? unbound.length + runningRows.filter((row) => row.activeTask !== null).length : laneTasks.length}</b>
+                    <b>{isRunningLane ? grading.length + unbound.length + runningRows.filter((row) => row.activeTask !== null).length : laneTasks.length}</b>
                   </div>
                 </div>
               )
@@ -482,7 +501,7 @@ export function Flow({ projectId, fleet, onOpenTask }: {
               <>
                 <span className="flow-peek-seq mono">t{peeked.seq}</span>
                 <span className="flow-peek-title">{peeked.titleSummary ?? peeked.title}</span>
-                <span className={`flow-peek-state flow-ticket--${peeked.status}`}>{peeked.status.replace(/_/g, ' ')}</span>
+                <span className={`flow-peek-state flow-ticket--${peeked.gradingWorkerId ? 'grading' : peeked.status}`}>{peeked.gradingWorkerId ? 'grading' : peeked.status.replace(/_/g, ' ')}</span>
                 <span className="flow-peek-time">{taskTime(peeked, now)}</span>
                 <span className="flow-peek-where dim">
                   {peekedHome

@@ -30,7 +30,7 @@ import {
   spawnSession
 } from './sessions.js'
 import { finishRun, getTask, messagesFor, startRun } from './tasks.js'
-import { listWorkers } from './workers.js'
+import { defaultGradingModel, listWorkers } from './workers.js'
 import { log } from './log.js'
 
 /**
@@ -56,6 +56,17 @@ const REVIEW_TIMEOUT_MS = 5 * 60 * 1000
 /** The same settling delay a consult uses: a freshly spawned CLI swallows what arrives too early. */
 const PROMPT_DELAY_MS = 2500
 
+/** Kept exported for callers comparing the built-in defaults; persisted worker choice wins. */
+export const REVIEW_MODELS: Record<string, string> = {
+  'claude-code': defaultGradingModel('claude-code')!,
+  'antigravity-cli': defaultGradingModel('antigravity-cli')!,
+  'openai-compatible': defaultGradingModel('openai-compatible')!
+}
+
+function gradingModel(worker: Worker): string | null {
+  return worker.gradingModel ?? defaultGradingModel(worker.adapterId)
+}
+
 /**
  * The cheap rung of each provider's pool, by adapter.
  *
@@ -67,12 +78,6 @@ const PROMPT_DELAY_MS = 2500
  *
  * ⚠️ A missing entry is a real answer — the adapter's own default model is used.
  */
-export const REVIEW_MODELS: Record<string, string> = {
-  'claude-code': 'claude-haiku-4-5',
-  'antigravity-cli': 'gemini-3.7-flash-medium',
-  'openai-compatible': 'gpt-5.4-mini'
-}
-
 export interface ReviewerChoice {
   worker: Worker | null
   /** ⛔ Never a bare "unavailable": names every candidate considered and why each was rejected. */
@@ -113,6 +118,10 @@ function reviewCandidates(task: Task): { candidates: Worker[]; reason: string } 
     if (authorAdapters.has(worker.adapterId)) {
       rejected.push(`${worker.label} did this work`)
       rejectedAsAuthor += 1
+      continue
+    }
+    if (worker.gradingEnabled === false) {
+      rejected.push(`${worker.label} is not enabled for grading`)
       continue
     }
     const blocked = accountUnavailability(worker)
@@ -193,7 +202,7 @@ export function pickReviewer(
   return {
     worker: chosen,
     reason: '',
-    model: REVIEW_MODELS[chosen.adapterId] ?? null
+    model: gradingModel(chosen)
   }
 }
 
@@ -231,7 +240,7 @@ export async function reviewEligibility(taskId: string): Promise<{
     reviewers: eligible.candidates.map((worker) => ({
       workerId: worker.id,
       label: worker.label,
-      model: REVIEW_MODELS[worker.adapterId] ?? null
+      model: gradingModel(worker)
     })),
     reason: ''
   }
@@ -281,7 +290,7 @@ export async function requestReview(taskId: string, workerId?: string | null): P
   const followUps = humanFollowUps(messagesFor(taskId)).map((t) => blind(t, vocabulary).text)
   const leaked = blindedDiff.leaked || blindedHistory.leaked
 
-  const model = REVIEW_MODELS[worker.adapterId] ?? undefined
+  const model = gradingModel(worker) ?? undefined
   const readOnly = adapter(worker.adapterId).info.capabilities.readOnlyPermissionMode ?? undefined
 
   let sessionId: string | null = null

@@ -516,7 +516,7 @@ function TaskDetail({
         <aside className="detail-side">
           <div className="detail-side-box">
             <Fact label="status">
-              <span className={`status ${STATUS_TONE[task.status] ?? ''}`}>
+              <span className={`status ${STATUS_TONE[task.gradingWorkerId ? 'grading' : task.status] ?? ''}`}>
                 {statusLabel(task)}
                 {isWorking(task) && <Working />}
               </span>

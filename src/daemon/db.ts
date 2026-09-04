@@ -1460,6 +1460,24 @@ const MIGRATIONS: Migration[] = [
       create index if not exists spend_samples_worker_time
         on spend_samples(worker_id, sampled_at desc);
     `)
+  },
+  // 44 - grading is an explicit per-worker role with its own model.
+  (conn) => {
+    const addedModel = !hasColumn(conn, 'workers', 'grading_model')
+    if (addedModel) {
+      conn.exec('alter table workers add column grading_model text;')
+    }
+    if (!hasColumn(conn, 'workers', 'grading_enabled')) {
+      conn.exec('alter table workers add column grading_enabled integer not null default 1;')
+    }
+    if (addedModel) {
+      conn.exec(`update workers set grading_model = case adapter_id
+        when 'claude-code' then 'claude-haiku-4-5'
+        when 'antigravity-cli' then 'gemini-3.8-flash-low'
+        when 'openai-compatible' then 'gpt-5.4-mini'
+        when 'local-llm' then 'qwen3-coder-30b-a3b'
+        else null end`)
+    }
   }
 ]
 

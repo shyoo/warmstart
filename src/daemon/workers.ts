@@ -18,6 +18,8 @@ interface WorkerRow {
   role: string
   max_concurrent: number
   default_model: string | null
+  grading_model: string | null
+  grading_enabled: number
   default_effort: string | null
   default_models_json: string | null
   identity_json: string | null
@@ -38,6 +40,8 @@ function toWorker(r: WorkerRow): Worker {
     role: (r.role as WorkerRole) ?? 'both',
     maxConcurrent: r.max_concurrent,
     defaultModel: r.default_model,
+    gradingModel: r.grading_model,
+    gradingEnabled: r.grading_enabled !== 0,
     defaultEffort: r.default_effort,
     defaultModels: r.default_models_json ? (JSON.parse(r.default_models_json) as Record<string, string | null>) : null,
     identity: (() => {
@@ -150,13 +154,15 @@ export function createWorker(input: {
   const defaultEffort = null
   const defaultModels = policy.defaultModels ?? null
   const defaultModelsJson = defaultModels ? JSON.stringify(defaultModels) : null
+  const gradingModel = defaultGradingModel(input.adapterId)
 
   db()
     .prepare(
       `insert into workers (id, adapter_id, label, isolation_root, enabled, human_occupied,
                             max_concurrent, default_model, default_effort, default_models_json,
+                            grading_model, grading_enabled,
                             sort_order, created_at)
-       values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`
     )
     .run(
       id,
@@ -171,6 +177,7 @@ export function createWorker(input: {
       defaultModel,
       defaultEffort,
       defaultModelsJson,
+      gradingModel,
       tail,
       now
     )
@@ -216,6 +223,8 @@ export function updateWorker(
       | 'maxConcurrent'
       | 'role'
       | 'defaultModel'
+      | 'gradingModel'
+      | 'gradingEnabled'
       | 'defaultEffort'
       | 'defaultModels'
     >
@@ -234,7 +243,8 @@ export function updateWorker(
   db()
     .prepare(
       `update workers set label = ?, enabled = ?, human_occupied = ?, max_concurrent = ?, role = ?,
-                          default_model = ?, default_effort = ?, default_models_json = ?
+                          default_model = ?, default_effort = ?, default_models_json = ?,
+                          grading_model = ?, grading_enabled = ?
        where id = ?`
     )
     .run(
@@ -249,6 +259,8 @@ export function updateWorker(
       patch.defaultModel === undefined ? current.defaultModel : patch.defaultModel,
       patch.defaultEffort === undefined ? current.defaultEffort : patch.defaultEffort,
       defaultModelsJson,
+      patch.gradingModel === undefined ? (current.gradingModel ?? null) : patch.gradingModel,
+      (patch.gradingEnabled ?? current.gradingEnabled) ? 1 : 0,
       id
     )
   // A lower limit is an admission gate, not a preemption order. Sessions already using the account
@@ -260,6 +272,16 @@ export function updateWorker(
     )
   }
   return announce(requireWorker(id))
+}
+
+/** Smallest configured review rung for a built-in adapter; external adapters use their CLI default. */
+export function defaultGradingModel(adapterId: string): string | null {
+  return {
+    'claude-code': 'claude-haiku-4-5',
+    'antigravity-cli': 'gemini-3.8-flash-low',
+    'openai-compatible': 'gpt-5.4-mini',
+    'local-llm': 'qwen3-coder-30b-a3b'
+  }[adapterId] ?? null
 }
 
 /**

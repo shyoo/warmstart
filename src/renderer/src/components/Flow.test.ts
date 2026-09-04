@@ -139,6 +139,10 @@ describe('Flow lane mapping', () => {
     expect(laneFor(mockTask({ status: 'cancelling' }))).toBe('running')
   })
 
+  it('shows a completed task in running while its peer grade is in flight', () => {
+    expect(laneFor(mockTask({ status: 'completed', gradingWorkerId: 'reviewer-1' }))).toBe('running')
+  })
+
   it('maps human-waiting tasks to awaiting', () => {
     expect(laneFor(mockTask({ status: 'awaiting_human' }))).toBe('awaiting')
     expect(laneFor(mockTask({ status: 'paused_user' }))).toBe('awaiting')

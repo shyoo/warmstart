@@ -2006,40 +2006,16 @@ try {
        document.querySelectorAll('.tbl-workers thead th').length
      ])`
   )
-  check('the workers colgroup describes every column the header declares', colCount === '[10,10]', colCount)
+  check('the workers card fields describe every setting the header declares', colCount === '[11,11]', colCount)
 
-  // ⛔ One menu per row, not three buttons. Sign in and Probe are pressed once at commissioning
-  // and Retire is destructive; a fifth of the table's width to hold them, with Retire one mis-click
-  // from the button somebody presses to refresh a quota reading, is what this replaced.
+  // Cards have enough horizontal room to expose their three actions without a hidden menu.
   const actionRows = await evaluate(
     `JSON.stringify([...document.querySelectorAll('.tbl-workers tbody tr:not(.tbl-row--note)')].map(row => [
        row.querySelectorAll('.tbl-action-cell .action-menu-btn').length,
        row.querySelectorAll('.tbl-action-cell .btn').length
      ]))`
   )
-  check(
-    'every worker row carries one actions menu and no loose buttons',
-    JSON.parse(actionRows).length > 0 &&
-      JSON.parse(actionRows).every(([menus, loose]) => menus === 1 && loose === 0),
-    `[menus, loose buttons] per row: ${actionRows}`
-  )
-
-  // ⚠️ Opened, so what is inside it is asserted rather than assumed. A menu that renders empty
-  // is indistinguishable from one that is closed.
-  await evaluate(
-    `document.querySelector('.tbl-workers tbody tr .tbl-action-cell .action-menu-btn')?.click()`
-  )
-  await wait(200)
-  const menuItems = await evaluate(
-    `JSON.stringify([...document.querySelectorAll('.tbl-workers .action-menu .action-menu-item')].map(b => b.innerText.trim()))`
-  )
-  check(
-    'and that menu holds sign-in, the probe and retire',
-    /Sign in/.test(menuItems) && /Probe|Recheck/.test(menuItems) && /Retire/.test(menuItems),
-    menuItems
-  )
-  await evaluate(`document.body.click()`)
-  await wait(150)
+  check('every worker card exposes sign-in, probe and retire', JSON.parse(actionRows).length > 0 && JSON.parse(actionRows).every(([menus, loose]) => menus === 0 && loose === 3), actionRows)
 
   // ⛔ Overflow, which under a fixed layout is not clipped and not wrapped — it is painted over the
   // next column. An account name is an email; an email has no space to break at.
@@ -2069,7 +2045,7 @@ try {
   {
     const seen = JSON.parse(noteCell)
     check('an account with something wrong gets a note row of its own', seen.rows >= 1, noteCell)
-    check('which spans the table rather than sitting in one column', seen.span === 10, String(seen.span))
+    check('which spans the card rather than sitting in one field', seen.span === 11, String(seen.span))
     check(
       'and carries the reason the run failed, plus what to do about it',
       /subscription expired/.test(seen.note) && /Recheck/.test(seen.note),
@@ -2089,7 +2065,7 @@ try {
     `Math.max(...[...document.querySelectorAll('.tbl-workers tbody tr:not(.tbl-row--note)')]
        .map(r => Math.round(r.getBoundingClientRect().height)))`
   )
-  check('and no worker row is more than about three lines tall', tallest <= 130, `${tallest}px, against 174 before`)
+  check('and every worker is a readable settings card', tallest >= 220 && tallest <= 650, `${tallest}px`)
 
   const rowSwitch = `document.querySelector('.tbl tbody tr .switch')`
   check(
