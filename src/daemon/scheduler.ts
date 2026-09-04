@@ -173,6 +173,7 @@ import {
 } from './cacheclock.js'
 import {
   compactionInFlight,
+  compactionsForTask,
   lastCompactionLandedAt,
   noteCompactionAsked,
   onCompactionLanded
@@ -3639,13 +3640,26 @@ export async function onSessionExit(session: Session, exitCode: number | null): 
 
   const run = runForSession(session.id)
   if (run) {
+    const clockCompaction = run.taskId
+      ? compactionsForTask(run.taskId).findLast(
+          (item) =>
+            item.sessionId === session.id &&
+            item.trigger === 'clock' &&
+            item.landedAt !== null &&
+            item.landedAt >= run.startedAt
+        )
+      : null
     const why = waiting
       ? `The agent stopped to ask you something: "${waiting.slice(0, 400)}" ` +
         `The session then ended (exit ${exitCode}) without reporting completion.`
       : parked > 0
         ? `The agent asked ${parked === 1 ? 'a question' : `${parked} questions`} that ` +
           `${parked === 1 ? 'was' : 'were'} still unanswered when the session ended (exit ${exitCode}).`
-        : `The session ended (exit ${exitCode}) without reporting completion. ` +
+        : clockCompaction
+          ? 'The cache clock compacted this conversation and stopped the interrupted run. ' +
+            'The compacted conversation is preserved, but the agent did not report completion; ' +
+            'resume it to continue or inspect the work.'
+          : `The session ended (exit ${exitCode}) without reporting completion. ` +
           'Nothing here can tell whether the work was finished, so it is over to you.'
     await endUnfinishedRun(
       session,
@@ -3653,7 +3667,7 @@ export async function onSessionExit(session: Session, exitCode: number | null): 
       why,
       // ⛔ Not a failure. The agent did the work it was asked for up to the point where it needed
       // an answer, and an unanswered question is not a fault of the run.
-      waiting || parked > 0 ? 'blocked' : 'failed'
+      waiting || parked > 0 || clockCompaction ? 'blocked' : 'failed'
     )
   }
   // ⛔ Run or no run, and after the run either way. This is the moment the workspace goes back,

@@ -122,6 +122,11 @@ export function noteCompactionLanded(
  */
 const waitingForCompaction = new Map<string, Set<() => void>>()
 
+/** Is another lifecycle path waiting for this boundary and therefore responsible for what follows? */
+export function compactionAwaited(sessionId: string): boolean {
+  return (waitingForCompaction.get(sessionId)?.size ?? 0) > 0
+}
+
 /** Register a one-shot listener. Returns the unsubscribe, which is safe to call twice. */
 export function onCompactionLanded(sessionId: string, listener: () => void): () => void {
   const listeners = waitingForCompaction.get(sessionId) ?? new Set<() => void>()

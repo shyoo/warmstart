@@ -4,10 +4,15 @@ import type { Session, Turn } from '@shared/protocol.js'
 import { db } from './db.js'
 import { costModel } from './costmodel.js'
 import { adapter } from './adapters/index.js'
-import { clearClockMove, getSession, promptSentAt } from './sessions.js'
+import { clearClockMove, closeSession, getSession, promptSentAt } from './sessions.js'
 import { emit } from './events.js'
-import { addMessage, creditTurn } from './tasks.js'
-import { compactionLanded, fillPostTokens, noteCompactionLanded } from './compaction.js'
+import { addMessage, creditTurn, runForSession } from './tasks.js'
+import {
+  compactionAwaited,
+  compactionLanded,
+  fillPostTokens,
+  noteCompactionLanded
+} from './compaction.js'
 import { clearDispatchFailure } from './workers.js'
 import type { StreamUsage } from './stream.js'
 import { log } from './log.js'
@@ -419,7 +424,22 @@ export function recordCompaction(
   // *waiting* for this — the resume path holds a task's prompt back until the conversation is
   // smaller — so it must not be woken into a half-recorded state where the row it would read still
   // says the compaction is outstanding.
+  // Capture this before waking the one-shot listeners, which remove themselves. The resume path is
+  // waiting specifically so it can send the task prompt after the boundary; it owns what follows
+  // and must not be mistaken for a clock interruption of an already-running work turn.
+  const awaited = compactionAwaited(sessionId)
   compactionLanded(sessionId)
+
+  // A slash command takes over the current turn. When the cache clock injects `/compact` into an
+  // open run, the boundary is therefore the end of what that process can usefully do: Claude is
+  // back at its input loop, while the run is still waiting for a `task_complete` that the displaced
+  // work turn can no longer send. t182 (2026-09-03) remained `running` in exactly that state after
+  // its compaction had visibly finished. Close only clock-issued compactions on open runs; an agent
+  // compacting its own context, an automatic CLI boundary, and move 7 between runs must continue.
+  if (record.trigger === 'clock' && !awaited && runForSession(sessionId)) {
+    log.info(`session ${sessionId.slice(0, 8)} finished its clock compaction; closing the interrupted run`)
+    closeSession(sessionId)
+  }
   return true
 }
 

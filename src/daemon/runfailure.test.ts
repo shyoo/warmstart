@@ -31,6 +31,8 @@ let scheduler: typeof import('./scheduler.js')
 let sessions: typeof import('./sessions.js')
 let questions: typeof import('./questions.js')
 let approvals: typeof import('./approvals.js')
+let transcript: typeof import('./transcript.js')
+let compaction: typeof import('./compaction.js')
 
 const ORG_DISABLED =
   'Your organization has disabled Claude subscription access for Claude Code. ' +
@@ -155,6 +157,8 @@ beforeAll(async () => {
   sessions = await import('./sessions.js')
   questions = await import('./questions.js')
   approvals = await import('./approvals.js')
+  transcript = await import('./transcript.js')
+  compaction = await import('./compaction.js')
   db.openDb(join(dir, 'runfail.db'))
 })
 
@@ -169,6 +173,78 @@ afterAll(() => {
   } catch {
     // A held file handle on Windows is not a test failure.
   }
+})
+
+describe('a cache-clock compaction that interrupts an open run', () => {
+  it('closes the session at the boundary instead of holding the run open', async () => {
+    const { task, run, session } = seedRunningTask({ adapterId: 'claude-code', metered: 1000 })
+    compaction.noteCompactionAsked({
+      sessionId: session.id,
+      taskId: task.id,
+      reason: 'compaction reserve at risk',
+      preTokens: 120_000
+    })
+
+    expect(
+      transcript.recordCompaction(session.id, {
+        preTokens: 120_000,
+        durationMs: 105_000,
+        trigger: 'manual'
+      })
+    ).toBe(true)
+    const closed = db
+      .db()
+      .prepare('select state from sessions where id = ?')
+      .get(session.id) as { state: string }
+    expect(closed.state).toBe('closed')
+
+    // A real process exit invokes this callback. Drive it explicitly because the fixture has no
+    // CLI process, then assert the clock's interruption is a hold and not blamed on the work.
+    await scheduler.onSessionExit({ ...session, state: 'closed', closedAt: Date.now() }, 0)
+    expect(tasks.requireRun(run.id).outcome).toBe('blocked')
+    expect(tasks.requireTask(task.id).status).toBe('awaiting_human')
+    expect(tasks.requireTask(task.id).holdReason).toContain('cache clock compacted')
+  })
+
+  it('does not close a compaction initiated by the agent', () => {
+    const { session } = seedRunningTask({ adapterId: 'claude-code', metered: 1000 })
+    transcript.recordCompaction(session.id, {
+      preTokens: 120_000,
+      durationMs: 105_000,
+      trigger: 'manual'
+    })
+    const stillLive = db
+      .db()
+      .prepare('select state from sessions where id = ?')
+      .get(session.id) as { state: string }
+    expect(stillLive.state).toBe('live')
+  })
+
+  it('lets the resume waiter continue the run after its pre-prompt compaction', () => {
+    const { task, session } = seedRunningTask({ adapterId: 'claude-code', metered: 1000 })
+    compaction.noteCompactionAsked({
+      sessionId: session.id,
+      taskId: task.id,
+      reason: 'compacting the resumed conversation before prompting',
+      preTokens: 120_000
+    })
+    let resumed = false
+    compaction.onCompactionLanded(session.id, () => {
+      resumed = true
+    })
+
+    transcript.recordCompaction(session.id, {
+      preTokens: 120_000,
+      durationMs: 105_000,
+      trigger: 'manual'
+    })
+    expect(resumed).toBe(true)
+    const stillLive = db
+      .db()
+      .prepare('select state from sessions where id = ?')
+      .get(session.id) as { state: string }
+    expect(stillLive.state).toBe('live')
+  })
 })
 
 describe('an error the CLI reports without exiting', () => {

@@ -290,6 +290,12 @@ left `quotaRisk` with no reachable trigger and quota vanished from routing for t
   contract line, never by reading intent from a paragraph. A run is one attempt — whether the *task*
   is done is a separate question. `completed` on a run beside `awaiting_human` on its task is not a
   contradiction, and the UI has to say so.
+- ⛔ **A clock-issued compaction ends the run it interrupted when its boundary lands.** `/compact`
+  takes over the active turn; after the boundary the CLI is waiting for input and the displaced turn
+  can no longer report `task_complete`. The session is closed, the run is recorded as `blocked`, and
+  the compacted conversation and workspace are preserved for a person to resume. Agent-initiated and
+  automatic CLI compactions do not end a run; a pre-prompt resume compaction has a boundary waiter
+  that continues its run, and `revive_compact` has no open run to end.
 - ⛔ **`awaiting_human` must say what it wants and offer somewhere to answer.** Every hand-off to a
   person writes its reason onto the task, and `resolveTask()` records the answer.
 - ⛔ **Cancel is not delete.** Cancel winds a run down through the preemption protocol into a resting
