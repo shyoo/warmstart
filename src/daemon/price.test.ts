@@ -156,6 +156,27 @@ describe('the answers that are not numbers', () => {
     expect(result.get('later')!.percent).toBeCloseTo(5, 9)
   })
 
+  it('keeps a run priceable when a panel corrects a percentage downward by less than a reset', () => {
+    // Observed on t207: the Antigravity Gemini weekly panel said 41.69%, then 41.61% six seconds
+    // after the run ended. Treating that 0.08-point correction as a reset discarded the valid
+    // 39.72% -> 41.69% movement and rendered its price n/a.
+    const result = attribute(
+      [run('t207', 0, 60)],
+      [reading(0, 39.72), reading(45, 41.69), reading(60, 41.61)],
+      t(61)
+    )
+    const priced = result.get('t207')!
+    expect(priced.percent).toBeCloseTo(1.97, 9)
+    expect(priced.reason).toBe('measured')
+    expect(priced.estimated).toBe(true)
+  })
+
+  it('still rejects a two-point fall as a reset rather than smoothing it away', () => {
+    const result = attribute([run('reset', 0, 60)], [reading(0, 40), reading(60, 38)], t(61))
+    expect(result.get('reset')!.reason).toBe('window_reset')
+    expect(result.get('reset')!.percent).toBeNull()
+  })
+
   it('is n/a with no reading before the run', () => {
     const result = attribute([run('r', 1, 3)], [reading(2, 5), reading(4, 9)], t(5))
     expect(result.get('r')!.reason).toBe('no_reading')

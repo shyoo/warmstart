@@ -7,7 +7,7 @@ started in CI, never run against a real agent CLI.
 **Current state + what to do next, not a changelog.** **Under 200 lines** — adding one means cutting
 the line it obsoletes. Where every other fact goes: [`docs/README.md`](docs/README.md).
 
-**Baseline (2026-09-04, measured):** typecheck · lint · build clean · `npm test` **1915/1917** across 95 files (2 POSIX-only skipped).
+**Baseline (2026-09-04, measured):** typecheck · lint · build clean · `npm test` **1918/1920** across 95 files (2 POSIX-only skipped). Price attribution treats sub-2-point panel corrections as estimated zero movement, not resets, so t207 and historical runs recalculate from their stored quota timelines.
 `test:daemon` **155/155**, `test:ui` **269/269** — measured, not carried forward; `test:pack` **19/19** carried forward. ⚠️ `test:pack` fails every check but its first if `release/` predates `src/`; its first check says so — run `npm run pack` and re-run rather than reading the rest.
 CLIs here: claude 2.1.252 · agy 1.1.25 · codex 0.151.0 · local-llm 1.0.0 (qwen3-coder live tested). ⚠️ With none installed — the CI state — the daemon suite skips 5 checks, each with a stated reason.
 Flow UI binds running tasks with closed sessions as landing/releasing; t190 Run #1 quota probe repaired in DB (Gemini 5h 47%, 7d 27% → $0.24).

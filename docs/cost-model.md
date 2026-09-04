@@ -1378,7 +1378,10 @@ zero.
 
 ⚠️ **`resets_at` is not a rollover detector.** Measured 2026-09-02 over 1,263 consecutive weekly
 samples: it moved forward **384** times while the percentage fell **6** times — a rolling window
-re-reports its horizon constantly. The percentage falling is the honest signal.
+re-reports its horizon constantly. The percentage falling is the honest signal, except for a panel
+correction below **2 percentage points**: t207's Antigravity weekly reading corrected 41.69% to
+41.61% six seconds after its run ended. The pricing pass drops such a correction from spend and
+marks the positive part estimated; a 2-point-or-larger fall stays `window_reset`.
 
 ### On screen
 

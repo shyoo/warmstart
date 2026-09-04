@@ -158,6 +158,35 @@ afterAll(() => {
 })
 
 describe('migration 35 — which subscription each run was billed against', () => {
+  it('retrospectively prices t207-shaped Antigravity history despite its final panel correction', () => {
+    // These are the persisted t207 Run #1 facts: a complete Gemini pair, plus the 41.69% reading
+    // the panel corrected to 41.61% after completion. The correction must not turn every task
+    // whose timeline contains it into `n/a`.
+    seedRun({
+      id: 't207-shaped',
+      worker: T163_WORKER,
+      costModel: 'google.antigravity.2026-08',
+      model: 'gemini-3.8-flash-medium',
+      startedAt: T0,
+      endedAt: T0 + HOUR,
+      before: quota(T0, [['5h:gemini', 73.97], ['weekly:gemini', 39.72]]),
+      after: quota(T0 + HOUR, [['5h:gemini', 86.53], ['weekly:gemini', 41.61]])
+    })
+    db.db()
+      .prepare(
+        `insert into quota_samples (worker_id, window_id, label, percent, resets_at, source, sampled_at)
+         values (?, 'weekly:gemini', 'Gemini 7d', 41.69, null, 'cli', ?)`
+      )
+      .run(T163_WORKER, T0 + 45 * 60_000)
+
+    const priced = price.priceForRun('t207-shaped')!
+    expect(priced.reason).toBe('measured')
+    expect(priced.usd).not.toBeNull()
+    expect(priced.usd!).toBeGreaterThan(0)
+    expect(priced.estimated).toBe(true)
+    expect(price.priceForTask('task-t207-shaped')!.usd).toBe(priced.usd)
+  })
+
   /**
    * ⭐ **The measurement this whole migration exists for.** The operator switched Codex from free to
    * paid partway through this install's history. The identity string says `Plus` for *both* eras,

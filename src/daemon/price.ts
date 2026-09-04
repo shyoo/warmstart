@@ -95,6 +95,17 @@ const ANCHOR_MAX_MS = 12 * 60 * 60 * 1000
 const EPS = 0.001
 
 /**
+ * A small backwards movement is a corrected reading, not a billing-window reset.
+ *
+ * Antigravity's live panel has reported a 1.60-point maximum downward correction without a reset
+ * (158 observed falls through 2026-09-04); its next actual reset-sized fall was 2.00 points. The
+ * boundary is deliberately in this common attribution layer rather than special-casing a vendor:
+ * every source can correct a rounded percentage, but a reset remains too important to silently
+ * smooth over. A correction is omitted from the spend and marks the affected answer estimated.
+ */
+const RESET_DROP_PERCENT = 2
+
+/**
  * Split a window's movement across the runs that were holding it.
  *
  * The timeline is cut at every reading. Each consecutive pair is a *segment* carrying a delta, and
@@ -182,9 +193,12 @@ export function attribute(
     spans.push({ run, from: run.startedAt, to: end, stale, inFlight })
   }
 
-  const acc = new Map<string, { percent: number; shared: boolean; parallel: Set<string>; reset: boolean }>()
+  const acc = new Map<
+    string,
+    { percent: number; shared: boolean; parallel: Set<string>; reset: boolean; corrected: boolean }
+  >()
   for (const s of spans) {
-    acc.set(s.run.id, { percent: 0, shared: false, parallel: new Set(), reset: false })
+    acc.set(s.run.id, { percent: 0, shared: false, parallel: new Set(), reset: false, corrected: false })
   }
 
   for (let i = 0; i + 1 < series.length; i++) {
@@ -196,8 +210,15 @@ export function attribute(
     if (active.length === 0) continue
 
     const delta = spentAcross(a, b)
-    if (delta < -EPS) {
+    if (delta <= -RESET_DROP_PERCENT) {
       for (const { s } of active) acc.get(s.run.id)!.reset = true
+      continue
+    }
+    if (delta < -EPS) {
+      // A panel corrected a rounded percentage downward. It cannot make a run cheaper, so it
+      // contributes no spend; it does make the positive part an estimate rather than a clean
+      // measurement. t207's 41.69% -> 41.61% Antigravity weekly reading is this exact case.
+      for (const { s } of active) acc.get(s.run.id)!.corrected = true
       continue
     }
 
@@ -228,7 +249,7 @@ export function attribute(
       // can make a quiet segment read -0.0001, and a negative cost is not a thing.
       percent: Math.max(0, rec.percent),
       reason: rec.shared ? 'shared_window' : 'measured',
-      estimated: rec.shared || s.stale || s.inFlight,
+      estimated: rec.shared || s.stale || s.inFlight || rec.corrected,
       parallelRunIds: [...rec.parallel]
     })
   }
