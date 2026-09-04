@@ -6,6 +6,7 @@ import type { FleetEntry } from '../lib/daemon'
 import {
   computeWorkspaceRows,
   completionTime,
+  bindingLine,
   laneFor,
   runningWorkspaceRows,
   visibleTasksForLane,
@@ -270,6 +271,64 @@ describe('computeWorkspaceRows', () => {
     expect(rows[0]!.activeTask).toBeNull()
     expect(rows[0]!.inboundTask?.id).toBe('t-169')
     expect(rows[0]!.inboundWorker?.label).toBe('CodexFirst')
+  })
+
+  it('binds running task in workspace that is releasing or landing, preventing workspace unknown', () => {
+    // When t204 finishes its turn and is landing or releasing its workspace,
+    // computeWorkspaceRows must bind t204 as activeTask rather than demoting the row to free.
+    const t204 = mockTask({ id: 't-204', seq: 204, status: 'running' })
+    const byId = new Map([['t-204', t204]])
+    const workspacesReleasing = [
+      mockWorkspace({
+        path: 'C:/ws/ws3',
+        label: 'ws3',
+        taskId: 't-204',
+        taskSeq: 204,
+        taskStatus: 'running',
+        holding: 'releasing',
+        workerLabel: 'CodexFirst'
+      })
+    ]
+
+    const releasingRows = computeWorkspaceRows(workspacesReleasing, byId, [], [])
+    expect(releasingRows).toHaveLength(1)
+    expect(releasingRows[0]!.activeTask?.id).toBe('t-204')
+    expect(releasingRows[0]!.ws.label).toBe('ws3')
+    expect(releasingRows[0]!.ws.holding).toBe('releasing')
+
+    // Same for landing
+    const workspacesLanding = [
+      mockWorkspace({
+        path: 'C:/ws/ws3',
+        label: 'ws3',
+        taskId: 't-204',
+        taskSeq: 204,
+        taskStatus: 'running',
+        holding: 'landing',
+        workerLabel: 'CodexFirst'
+      })
+    ]
+    const landingRows = computeWorkspaceRows(workspacesLanding, byId, [], [])
+    expect(landingRows).toHaveLength(1)
+    expect(landingRows[0]!.activeTask?.id).toBe('t-204')
+    expect(landingRows[0]!.ws.label).toBe('ws3')
+    expect(landingRows[0]!.ws.holding).toBe('landing')
+  })
+})
+
+describe('bindingLine description helper', () => {
+  it('formats releasing, landing, holding, working in and free states correctly', () => {
+    const base = { path: 'C:/ws/ws3', label: 'ws3', workerLabel: 'CodexFirst', workerId: 'w-1', inPool: true, adapterId: 'codex', sessionId: null, branch: null, claimedAt: null }
+    expect(bindingLine({ ...base, taskId: 't-1', taskSeq: 204, taskTitle: null, taskStatus: 'running', holding: 'releasing' }))
+      .toBe('t204 releasing ws3 / CodexFirst')
+    expect(bindingLine({ ...base, taskId: 't-1', taskSeq: 204, taskTitle: null, taskStatus: 'running', holding: 'landing' }))
+      .toBe('t204 landing in ws3 / CodexFirst')
+    expect(bindingLine({ ...base, taskId: 't-1', taskSeq: 204, taskTitle: null, taskStatus: 'awaiting_human', holding: 'task' }))
+      .toBe('t204 holding ws3 / CodexFirst')
+    expect(bindingLine({ ...base, taskId: 't-1', taskSeq: 204, taskTitle: null, taskStatus: 'running', holding: 'session' }))
+      .toBe('t204 working in ws3 / CodexFirst')
+    expect(bindingLine({ ...base, taskId: null, taskSeq: null, taskTitle: null, taskStatus: null, holding: null }))
+      .toBe('ws3 / CodexFirst — free')
   })
 })
 

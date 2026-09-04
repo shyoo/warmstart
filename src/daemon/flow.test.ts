@@ -246,9 +246,13 @@ describe('the ticket ↔ workspace ↔ worker binding the Flow board draws', () 
     }
   })
 
-  it('never reports an ended session as holding a workspace', () => {
-    const taskId = file('running task whose session died')
-    const sessionId = session('s-dead', WS1)
+  it('reports a running task whose session ended as releasing, avoiding workspace unknown', () => {
+    // ⛔ When an agent finishes its turn and the session exits (e.g. one-shot CLIs like Codex, or
+    // during turn completion), the task is still running while landing or releasing the workspace.
+    // Flow must bind the task to its workspace with holding: 'releasing' rather than demoting to null,
+    // which caused the ticket to appear as 'workspace unknown' in Flow.
+    const taskId = file('running task whose session ended')
+    const sessionId = session('s-ending', WS1)
     tasks.startRun({
       taskId,
       workerId,
@@ -262,12 +266,56 @@ describe('the ticket ↔ workspace ↔ worker binding the Flow board draws', () 
     expect(claim).not.toBeNull()
     resources.reassignClaim(claim!.id, sessionId)
 
-    // Session exits
+    // Session exits / closes, but task is still running (winding down / releasing)
     db.db().prepare("update sessions set state = 'closed' where id = ?").run(sessionId)
 
     const row = rowFor('ws1')
-    expect(row.holding).toBeNull()
-    expect(row.taskId).toBeNull()
+    expect(row.taskId).toBe(taskId)
+    expect(row.taskSeq).toBe(tasks.requireTask(taskId).seq)
+    expect(row.holding).toBe('releasing')
+    expect(row.workerLabel).toBe('ClaudeSecond')
+
+    // Once the task settles/completes, the workspace is no longer reported as held
+    tasks.setStatus(taskId, 'completed')
+    const completedRow = rowFor('ws1')
+    expect(completedRow.holding).toBeNull()
+    expect(completedRow.taskId).toBeNull()
+  })
+
+  it('reports a task in landing phase as landing even if its session has closed', () => {
+    const taskId = file('running task currently landing')
+    const sessionId = session('s-landing', WS1)
+    tasks.startRun({
+      taskId,
+      workerId,
+      sessionId,
+      projectId,
+      quotaUnverified: false,
+      costModelId: null
+    })
+    tasks.setStatus(taskId, 'running')
+    const claim = resources.claim(poolId, taskId, 1, WS1)
+    expect(claim).not.toBeNull()
+    resources.reassignClaim(claim!.id, sessionId)
+
+    // Task acquires the landing lock
+    const landResId = resources.landResourceId(projectId)
+    resources.upsertResource({
+      id: landResId,
+      projectId,
+      kind: 'exclusive',
+      label: 'demo landing',
+      capacity: 1
+    })
+    expect(resources.claim(landResId, taskId)).not.toBeNull()
+
+    // Session exits (e.g. codex completed turn before landTask finished)
+    db.db().prepare("update sessions set state = 'closed' where id = ?").run(sessionId)
+
+    const row = rowFor('ws1')
+    expect(row.taskId).toBe(taskId)
+    expect(row.holding).toBe('landing')
+    expect(row.workerLabel).toBe('ClaudeSecond')
   })
 
   it('deduplicates workspaces so a single task never occupies two independent workspaces', () => {

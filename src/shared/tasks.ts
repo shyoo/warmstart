@@ -2117,7 +2117,7 @@ export interface FlowWorkspace {
    */
   inPool: boolean
   /** What is holding the claim, or null when the workspace is free. */
-  holding: 'session' | 'task' | 'landing' | null
+  holding: 'session' | 'task' | 'landing' | 'releasing' | null
   taskId: string | null
   taskSeq: number | null
   /** `titleSummary ?? title`, so the board never renders a paragraph. */

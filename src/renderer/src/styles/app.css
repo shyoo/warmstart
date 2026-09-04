@@ -1310,6 +1310,11 @@ body {
   color: var(--state-ok);
 }
 
+.flow-tag--releasing {
+  background: color-mix(in srgb, var(--state-warn) 15%, transparent);
+  color: var(--state-warn);
+}
+
 .flow-tag--inbound {
   background: color-mix(in srgb, var(--state-warn) 12%, transparent);
   color: var(--state-warn);

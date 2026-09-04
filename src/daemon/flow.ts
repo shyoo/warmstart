@@ -2,10 +2,11 @@ import { sessionEnded } from '@shared/protocol.js'
 import type { Session } from '@shared/protocol.js'
 import type { FlowWorkspace, ResourceClaim, Task, TaskStatus } from '@shared/tasks.js'
 import { samePath } from './fspath.js'
-import { getResource, openClaims, workspacePoolId } from './resources.js'
+import { getResource, landResourceId, openClaims, workspacePoolId } from './resources.js'
 import { getSession, listSessions } from './sessions.js'
 import { getTask, lastRunForSession, runForSession } from './tasks.js'
 import { getWorker } from './workers.js'
+import { isTaskLanding } from './landing.js'
 
 /**
  * Who is working where, for the Flow board.
@@ -23,6 +24,12 @@ const TERMINAL_TASK_STATUSES = new Set<TaskStatus>(['completed', 'cancelled', 'f
 
 function isTaskFinished(task: Task | null | undefined): boolean {
   return !task || TERMINAL_TASK_STATUSES.has(task.status)
+}
+
+function isLanding(taskId: string, projectId: string | null): boolean {
+  if (isTaskLanding(taskId)) return true
+  if (!projectId) return false
+  return openClaims(landResourceId(projectId)).some((c) => c.holder === taskId)
 }
 
 /** `C:\Dev\ws\ws2` → `ws2`. The pool names its members, so this is a display trim, not a parse. */
@@ -48,7 +55,7 @@ function lastSessionInPath(sessions: Session[], path: string): Session | null {
  * Three holder shapes, because three different things take a workspace claim and each is a state an
  * operator reads differently:
  *
- *  - a **session id** — a live conversation is working in that tree right now;
+ *  - a **session id** — a live conversation is working in that tree right now, or winding down/releasing;
  *  - a **task id** — the task holds its own tree between runs (dispatch has claimed it and not yet
  *    started, or the run ended with the task waiting on a person and the tree kept for its return);
  *  - **`reland:<taskId>`** — a landing attempt is using the tree, with no agent in it at all.
@@ -77,11 +84,12 @@ function resolveHolder(claim: ResourceClaim): {
     if (isTaskFinished(asTask)) {
       return { holding: null, task: null, sessionId: null, workerId: null }
     }
-    return { holding: 'task', task: asTask, sessionId: null, workerId: null }
+    const holding = isLanding(asTask.id, asTask.projectId) ? 'landing' : 'task'
+    return { holding, task: asTask, sessionId: null, workerId: null }
   }
 
   const session = getSession(claim.holder)
-  if (!session || sessionEnded(session.state)) {
+  if (!session) {
     return { holding: null, task: null, sessionId: null, workerId: null }
   }
   // ⚠️ `runForSession` first — the open run is what this conversation is about *now*. The last run
@@ -92,8 +100,13 @@ function resolveHolder(claim: ResourceClaim): {
   if (isTaskFinished(task)) {
     return { holding: null, task: null, sessionId: session.id, workerId: session.workerId }
   }
+  const holding = isLanding(task!.id, task!.projectId)
+    ? 'landing'
+    : sessionEnded(session.state)
+      ? 'releasing'
+      : 'session'
   return {
-    holding: 'session',
+    holding,
     task,
     sessionId: session.id,
     workerId: session.workerId
@@ -169,7 +182,7 @@ export function flowWorkspaces(projectId: string): FlowWorkspace[] {
     }
     const prev = bound[prevIdx]!
     const rank = (h: FlowWorkspace['holding']): number =>
-      h === 'session' ? 3 : h === 'landing' ? 2 : h === 'task' ? 1 : 0
+      h === 'session' ? 4 : h === 'landing' ? 3 : h === 'releasing' ? 2 : h === 'task' ? 1 : 0
     const prevScore = rank(prev.holding) * 1e14 + (prev.claimedAt ?? 0)
     const currScore = rank(ws.holding) * 1e14 + (ws.claimedAt ?? 0)
     const [winnerIdx, loser] = currScore >= prevScore ? [i, prev] : [prevIdx, ws]

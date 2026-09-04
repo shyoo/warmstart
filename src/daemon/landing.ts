@@ -1277,6 +1277,13 @@ export function strategyFor(
   return STRATEGIES[landingStrategyIdFor(project, policy, task)] ?? leaveBranch
 }
 
+const activeLandings = new Set<string>()
+
+/** Whether a task is currently executing inside `landTask`. */
+export function isTaskLanding(taskId: string): boolean {
+  return activeLandings.has(taskId)
+}
+
 /**
  * Land, or fall back honestly.
  *
@@ -1284,7 +1291,9 @@ export function strategyFor(
  * that says exactly why, and leaves the repository in a state a person can act on.
  */
 export async function landTask(ctx: LandingContext): Promise<LandingResult> {
-  const strategy = strategyFor(ctx.project, ctx.policy, ctx.task)
+  activeLandings.add(ctx.task.id)
+  try {
+    const strategy = strategyFor(ctx.project, ctx.policy, ctx.task)
 
   // ⛔ Before the strategy, and only when the workspace is clean. A task that produced **no commits**
   // has nothing to land, and saying "landed as <the commit that was already there>" is not a
@@ -1424,5 +1433,8 @@ export async function landTask(ctx: LandingContext): Promise<LandingResult> {
         (behind ? ` It queued behind t${behind.seq} and landed once that finished.` : '')
     )
   }
-  return result
+    return result
+  } finally {
+    activeLandings.delete(ctx.task.id)
+  }
 }

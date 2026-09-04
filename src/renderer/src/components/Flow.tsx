@@ -83,15 +83,17 @@ function taskTime(task: Task, now: number): string {
  * What a workspace row says about itself, in the words the operator's question is asked in:
  * *who is handling this, and where*.
  */
-function bindingLine(ws: FlowWorkspace): string {
+export function bindingLine(ws: FlowWorkspace): string {
   const where = `${ws.label}${ws.workerLabel ? ` / ${ws.workerLabel}` : ''}`
   if (!ws.taskSeq) return `${where} — free`
   const how =
     ws.holding === 'landing'
       ? 'landing in'
-      : ws.holding === 'task'
-        ? 'holding'
-        : 'working in'
+      : ws.holding === 'releasing'
+        ? 'releasing'
+        : ws.holding === 'task'
+          ? 'holding'
+          : 'working in'
   return `t${ws.taskSeq} ${how} ${where}`
 }
 
@@ -314,8 +316,8 @@ export function Flow({ projectId, fleet, onOpenTask }: {
     const { ws, activeTask, inboundTask, inboundWorker } = row
     const heldFor = ws.claimedAt ? duration(now - ws.claimedAt) : null
 
-    // Case 1: Active running / landing task: t65 -> ws1 / ClaudeFirst
-    if (activeTask || ((ws.holding === 'landing' || ws.holding === 'session') && (ws.taskStatus === 'running' || ws.taskStatus === 'cancelling'))) {
+    // Case 1: Active running / landing / releasing task: t65 -> ws1 / ClaudeFirst
+    if (activeTask || ((ws.holding === 'landing' || ws.holding === 'releasing' || ws.holding === 'session') && (ws.taskStatus === 'running' || ws.taskStatus === 'cancelling'))) {
       return (
         <div
           className={`flow-bind flow-bind--active${ws.inPool ? '' : ' flow-bind--stale'}`}
@@ -348,6 +350,8 @@ export function Flow({ projectId, fleet, onOpenTask }: {
               <span className="flow-tag flow-tag--held">held</span>
             ) : ws.holding === 'landing' ? (
               <span className="flow-tag flow-tag--landing">landing</span>
+            ) : ws.holding === 'releasing' ? (
+              <span className="flow-tag flow-tag--releasing">releasing</span>
             ) : null}
           </span>
         </div>
