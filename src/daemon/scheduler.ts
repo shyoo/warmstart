@@ -40,6 +40,7 @@ import {
   quotaParkedTasks,
   resumeQuotaPaused,
   addMessage,
+  creditRunListUsd,
   finishRun,
   getTask,
   listTasks,
@@ -3938,8 +3939,22 @@ export async function onSessionExit(session: Session, exitCode: number | null): 
  */
 export async function onStreamResult(
   session: Session,
-  result: { isError: boolean; text: string | null; terminalReason: string | null }
+  result: {
+    isError: boolean
+    text: string | null
+    terminalReason: string | null
+    /**
+     * ⚠️ The vendor's list price for the invocation so far, where the adapter reports one. It was
+     * decoded onto `StreamEvent.costUsd` and then dropped here, because this function took three
+     * fields of a record that carries four.
+     */
+    costUsd?: number | null
+  }
 ): Promise<void> {
+  // ⛔ **First, and before every early return below.** This record is the only place the number is
+  // ever offered, and each of the branches that follow ends the run — so crediting it anywhere else
+  // in this function means losing it on whichever path the turn actually took.
+  creditRunListUsd(session.id, result.costUsd ?? null)
   const mcpLess = Boolean(session.adapterId && !adapter(session.adapterId).info.capabilities.mcp)
   // An MCP-less adapter cannot call task_complete, so its prompt gives it two deliberately exact
   // terminal contracts. Antigravity can occasionally report ERROR after it has already returned a

@@ -10,7 +10,7 @@ import { money, tokens } from '../lib/format'
  * the two they are looking at. Marking it here means every surface that shows a price shows the
  * caveat, and a new surface cannot forget to.
  *
- * ⚠️ `n/a` is not `$0.00` — see `money()`. The five reasons a price cannot be given are five
+ * ⚠️ `n/a` is not `$0.00` — see `money()`. The six reasons a price cannot be given are six
  * different facts, and the title says which one this is.
  */
 
@@ -40,6 +40,9 @@ function naHead(price: RunPrice): string {
       return `n/a — ${price.planLabel ?? 'this plan'} has no subscription price to divide. That is not the same as free work: it is a cost this tool cannot meter.`
     case 'no_window':
       return 'n/a — this provider reports no billing window, so there is nothing to take a fraction of.'
+    case 'no_meter':
+      return 'n/a — no meter reached this run: neither a subscription window nor a spend meter reported usage.'
+    case 'no_plan':
     default:
       return 'n/a — nothing on this run says which subscription it was billed against.'
   }
@@ -59,13 +62,24 @@ function estimatedHead(price: RunPrice): string {
   )
 }
 
-/** The same sentence for a whole task, whose total is a sum of its runs. */
+/**
+ * The same sentence for a whole task, whose total is a sum of its runs.
+ *
+ * ⛔ **The headline is layered, and the sentence names the layers.** `spentUsd` is an amortised
+ * share of a flat subscription **plus** whatever a vendor billed directly on top of it, so calling
+ * it "this task’s share of the subscription" would have described only half of it. `spentListUsd`
+ * is said last and said as *not* part of the total — it is what the work would have cost on a
+ * market-rated API, which is a different question from what it cost.
+ */
 export function taskPriceTitle(budget: Budget): string {
   if (budget.spentUsd === null || budget.spentUsd === undefined) {
     return 'n/a — none of this task’s runs could be priced. Open the task to see why for each one.'
   }
+  const overage = budget.spentOverageUsd
   const parts = [
-    `${money(budget.spentUsd)} — this task’s share of the subscription, summed over every run.`
+    overage !== null && overage !== undefined && overage > 0
+      ? `${money(budget.spentUsd)} — this task’s share of the subscription plus ${money(overage)} billed directly on top of it, summed over every run.`
+      : `${money(budget.spentUsd)} — this task’s share of the subscription, summed over every run.`
   ]
   if (budget.spentUsdPartial) {
     parts.push(
@@ -78,8 +92,14 @@ export function taskPriceTitle(budget: Budget): string {
     )
   }
   parts.push(
-    `Derived from the account’s own window readings, not from the ${tokens(budget.spentTokens || null)} of tokens below.`
+    `Derived from the account’s own window and meter readings, not from the ${tokens(budget.spentTokens || null)} of tokens below.`
   )
+  // ⛔ Last, and explicitly outside the total. Nobody on this fleet is billed this number.
+  if (budget.spentListUsd !== null && budget.spentListUsd !== undefined) {
+    parts.push(
+      `Separately, and not part of the above: ${money(budget.spentListUsd)} is what this work would have cost on a market-rated API.`
+    )
+  }
   return parts.join(' ')
 }
 

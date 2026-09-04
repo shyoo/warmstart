@@ -1,5 +1,6 @@
 import { db, rows } from './db.js'
-import { costModel, type BillingWindowRef, type PlanRef } from './costmodel.js'
+import { costModel, CostModel, type BillingWindowRef, type PlanRef } from './costmodel.js'
+import type { SpendMeter } from '@shared/protocol.js'
 import { log } from './log.js'
 import type { RunPrice, RunQuota } from '@shared/tasks.js'
 
@@ -13,8 +14,19 @@ import type { RunPrice, RunQuota } from '@shared/tasks.js'
  * fleet is measured in minutes. So the answer is computed from the timeline on demand and memoised
  * against an epoch, and `bumpPricingEpoch()` is what every writer of a run or a reading calls.
  *
- * ⛔ **No pricing arithmetic here.** The dollars come from `CostModel.priceOfWindowUsage`; this file
- * decides only *whose* percent is whose. See AGENTS.md and docs/cost-model.md §13.
+ * ⛔ **No pricing arithmetic here.** The dollars come from `CostModel.priceOfWindowUsage` and
+ * `CostModel.priceOfMeterUsage`; this file decides only *whose* share of a movement is whose. See
+ * AGENTS.md and docs/cost-model.md §13.
+ *
+ * ⛔ **Money is layered, because a subscription fleet is billed in layers.** `subscriptionUsd` is
+ * an amortised share of a flat monthly fee — nobody is charged it at the moment the run happens.
+ * `overageUsd` is money that really was billed on top: Claude extra-usage overage, Antigravity
+ * cloud credits, Codex credits, attributed off `spend_samples` exactly the way a quota window is
+ * attributed off `quota_samples`. `usd` is the sum of those two and nothing else; `listUsd` — what
+ * the same work would have cost on a market-rated API — is carried beside them and never added in.
+ *
+ * ⚠️ **`null` is not `0` anywhere in here.** A layer nobody measured is absent, and a total missing
+ * one of its layers is a *lower bound* that says so in its `basis`.
  */
 
 // ---------------------------------------------------------------------------- the pure algorithm
@@ -35,6 +47,29 @@ export interface AttributionRun {
 }
 
 export type AttributionReason = 'measured' | 'shared_window' | 'no_reading' | 'window_reset'
+
+/**
+ * Which way the series moves when money is spent.
+ *
+ * ⛔ **The two are mirror images, and the algorithm below is one algorithm.** A quota window
+ * `rises` toward 100% as an account is drawn down, and a fall is a rollover. A credit purse
+ * `falls` toward zero as money is spent, and a rise is a top-up. Both of the exceptional cases are
+ * *the baseline moved*, and both poison every run across them for the same reason: what the run
+ * spent either side of the move is unknowable, in an unknown ratio.
+ *
+ * ⚠️ Maps from `SpendMeter.direction`: `'spend_rises'` → `'rises'`, `'balance_falls'` → `'falls'`.
+ */
+export type SeriesDirection = 'rises' | 'falls'
+
+export interface AttributeOptions {
+  /**
+   * Defaults to `'rises'`, which is the quota-window behaviour this function was written for.
+   *
+   * ⛔ The default is load-bearing: every existing caller and every existing test in
+   * `price.test.ts` passes no options and must come out **unchanged to the number**.
+   */
+  direction?: SeriesDirection
+}
 
 export interface Attribution {
   /** The share of the window this run is answerable for, or null when it cannot be said. */
@@ -74,19 +109,31 @@ const EPS = 0.001
  * own interactive use of the account, and charging it to whichever task ran next would be a lie
  * that grows with how long the fleet sits idle.
  *
- * ⛔ **A segment where the percentage falls is a rollover, and it poisons every run across it.**
- * A run that starts at 98% and ends at 2% did not earn a refund; its real cost is unknowable once
- * the baseline has moved, so it is `n/a` rather than clamped. `resets_at` is not used for this:
- * measured 2026-09-02 over 1,263 consecutive weekly samples, it moved forward 384 times while the
- * percentage fell 6 times — a rolling window re-reports its horizon constantly.
+ * ⛔ **A segment where the series moves *backwards* means the baseline moved, and it poisons every
+ * run across it.** For a rising quota window that is a rollover: a run that starts at 98% and ends
+ * at 2% did not earn a refund, and its real cost is unknowable once the window has reset, so it is
+ * `n/a` rather than clamped. For a falling credit purse it is a **top-up**, which is the exact
+ * analogue — the money that arrived mid-run hides however much was spent around it. Both come out
+ * as `window_reset`, whose name is now narrower than its meaning; the string is kept because it is
+ * a `PriceReason` a UI already renders.
+ *
+ * `resets_at` is not used for this: measured 2026-09-02 over 1,263 consecutive weekly samples, it
+ * moved forward 384 times while the percentage fell 6 times — a rolling window re-reports its
+ * horizon constantly. The movement itself is the honest signal, in either direction.
  */
 export function attribute(
   runs: AttributionRun[],
   readings: Reading[],
-  now: number
+  now: number,
+  options: AttributeOptions = {}
 ): Map<string, Attribution> {
   const out = new Map<string, Attribution>()
   const series = dedupe(readings)
+  // ⚠️ Normalised exactly once, here, into "how much was spent across this segment". Everything
+  // below — the duration weighting, the dropped idle segments, the bounds — is direction-blind,
+  // and a second `if` further down is how the two cases would drift apart.
+  const spentAcross = (a: Reading, b: Reading): number =>
+    options.direction === 'falls' ? a.percent - b.percent : b.percent - a.percent
 
   const noReading = (id: string): void => {
     out.set(id, { percent: null, reason: 'no_reading', estimated: false, parallelRunIds: [] })
@@ -148,7 +195,7 @@ export function attribute(
       .filter((x) => x.overlap > 0)
     if (active.length === 0) continue
 
-    const delta = b.percent - a.percent
+    const delta = spentAcross(a, b)
     if (delta < -EPS) {
       for (const { s } of active) acc.get(s.run.id)!.reset = true
       continue
@@ -227,22 +274,52 @@ let memo: { epoch: number; runs: Map<string, RunPrice>; tasks: Map<string, TaskP
 /**
  * Throw the memoised prices away.
  *
- * ⛔ Called from `startRun`, `finishRun`, `setRunQuota` and the quota store — the four places a
- * fact this depends on changes. Cheap: the recompute is one pass over `runs` and `quota_samples`
- * (238 and ~2,000 rows on this install), and it only happens the next time somebody asks.
+ * ⛔ Called from `startRun`, `finishRun`, `setRunQuota` and the quota store — and, now that money
+ * is layered, from every writer of the pay-as-you-go side too: a `spend_samples` row landing, and
+ * a run's `list_usd` / `on_overage` being stamped. Each of those changes an answer this file has
+ * already memoised, and the memo has no other way to find out.
+ *
+ * Cheap: the recompute is one pass over `runs`, `quota_samples` and `spend_samples` (238 and
+ * ~2,000 rows on this install), and it only happens the next time somebody asks.
  */
 export function bumpPricingEpoch(): void {
   epoch++
   memo = null
 }
 
-/** What a whole task has spent, folded over its runs. */
+/**
+ * The current epoch, for the tests that check a writer remembered to bump it.
+ *
+ * ⚠️ Exported for that and nothing else — no caller may branch on it. It is a cache generation
+ * number, not a fact about money, and a decision keyed on it would be a decision keyed on how often
+ * something happened to be recomputed.
+ */
+export function pricingEpoch(): number {
+  return epoch
+}
+
+/**
+ * What a whole task has spent, folded over its runs.
+ *
+ * ⛔ **Three totals, each with its own `partial`.** They are folded over different subsets of the
+ * same runs — a run can carry a list price and no measurable overage, or the reverse — so one
+ * shared "this is short" flag would be wrong for two of the three every time it was right for one.
+ */
 export interface TaskPrice {
+  /** Subscription share + directly-billed overage, summed over every run that could be priced. */
   usd: number | null
   /** Any contributing run's number was a split, a stale reading, or still in flight. */
   estimated: boolean
   /** ⚠️ At least one run could not be priced, so this total is a **lower bound**. */
   partial: boolean
+  /** The directly-billed part of `usd`. ⚠️ A component of it, never a second charge beside it. */
+  overageUsd: number | null
+  /** ⚠️ At least one run's overage is unknown, so `overageUsd` is a **lower bound**. */
+  overagePartial: boolean
+  /** ⛔ The API-equivalent list price, which is **not** part of `usd`. See `RunPrice.listUsd`. */
+  listUsd: number | null
+  /** ⚠️ At least one run has no list price, so `listUsd` is a **lower bound**. */
+  listPartial: boolean
 }
 
 export function priceForRun(runId: string): RunPrice | null {
@@ -275,6 +352,10 @@ interface PricedRunRow {
   plan_source: string | null
   quota_before_json: string | null
   quota_after_json: string | null
+  /** ⛔ Carried, never summed into `usd`. What this run would have cost on a market-rated API. */
+  list_usd: number | null
+  /** ⚠️ `null` is "nobody knows", which is not the same statement as `0` / not on overage. */
+  on_overage: number | null
 }
 
 interface WorkerRow {
@@ -287,6 +368,24 @@ interface SampleRow {
   window_id: string
   percent: number
   sampled_at: number
+}
+
+interface SpendSampleRow {
+  worker_id: string
+  meter_id: string
+  label: string
+  unit: string
+  balance: number | null
+  direction: string
+  usd_per_unit: number | null
+  sampled_at: number
+}
+
+/** One money meter of one worker, and everything ever read off it. */
+interface MeterSeries {
+  meter: Pick<SpendMeter, 'id' | 'label' | 'unit' | 'usdPerUnit'>
+  direction: SeriesDirection
+  readings: Reading[]
 }
 
 function compute(): { runs: Map<string, RunPrice>; tasks: Map<string, TaskPrice> } {
@@ -307,7 +406,8 @@ function build(out: Map<string, RunPrice>, taskOut: Map<string, TaskPrice>): voi
     db()
       .prepare(
         `select id, task_id, worker_id, started_at, ended_at, cost_model_id, model,
-                plan_id, plan_source, quota_before_json, quota_after_json
+                plan_id, plan_source, quota_before_json, quota_after_json,
+                list_usd, on_overage
            from runs order by started_at asc`
       )
       .all()
@@ -351,6 +451,49 @@ function build(out: Map<string, RunPrice>, taskOut: Map<string, TaskPrice>): voi
     windowsOfRun.set(r.id, [...ids])
   }
 
+  // The money meters, per worker. ⚠️ The direction is the meter's own: a credit purse *falls* as
+  // money is spent and a cumulative counter *rises*, and `attribute` is told which so that a
+  // top-up and a billing rollover both come out as "the baseline moved" rather than as spend.
+  // ⚠️ `balance is not null` skips the rows a failed probe writes — the analogue of `window_id != ''`.
+  const meters = new Map<string, Map<string, MeterSeries>>()
+  for (const s of rows<SpendSampleRow>(
+    db()
+      .prepare(
+        `select worker_id, meter_id, label, unit, balance, direction, usd_per_unit, sampled_at
+           from spend_samples
+          where meter_id != '' and balance is not null
+          order by sampled_at asc`
+      )
+      .all()
+  )) {
+    let byMeter = meters.get(s.worker_id)
+    if (!byMeter) {
+      byMeter = new Map<string, MeterSeries>()
+      meters.set(s.worker_id, byMeter)
+    }
+    const existing = byMeter.get(s.meter_id)
+    // ⚠️ The newest sample wins the *description* — a vendor may relabel a meter or start
+    // publishing a conversion it did not have before — while every sample contributes a reading.
+    const meter = {
+      id: s.meter_id,
+      label: s.label,
+      unit: s.unit === 'credits' ? ('credits' as const) : ('usd' as const),
+      usdPerUnit: s.unit === 'credits' ? s.usd_per_unit : 1
+    }
+    const direction: SeriesDirection = s.direction === 'balance_falls' ? 'falls' : 'rises'
+    if (existing) {
+      existing.meter = meter
+      existing.direction = direction
+      existing.readings.push({ at: s.sampled_at, percent: s.balance! })
+    } else {
+      byMeter.set(s.meter_id, {
+        meter,
+        direction,
+        readings: [{ at: s.sampled_at, percent: s.balance! }]
+      })
+    }
+  }
+
   const runsByWorker = new Map<string, PricedRunRow[]>()
   for (const r of runRows) {
     const list = runsByWorker.get(r.worker_id)
@@ -378,6 +521,29 @@ function build(out: Map<string, RunPrice>, taskOut: Map<string, TaskPrice>): voi
     return found
   }
 
+  // ⚠️ A cache of its own rather than a second use of the one above: the keys are meter ids, which
+  // share no namespace with window ids, and the series is attributed with a different direction.
+  const meterAttributions = new Map<string, Map<string, Attribution>>()
+  const metersOf = (workerId: string): MeterSeries[] => [...(meters.get(workerId)?.values() ?? [])]
+  const meterAttributionFor = (workerId: string, m: MeterSeries): Map<string, Attribution> => {
+    const key = `${workerId} ${m.meter.id}`
+    let found = meterAttributions.get(key)
+    if (!found) {
+      found = attribute(
+        (runsByWorker.get(workerId) ?? []).map((r) => ({
+          id: r.id,
+          startedAt: r.started_at,
+          endedAt: r.ended_at
+        })),
+        m.readings,
+        now,
+        { direction: m.direction }
+      )
+      meterAttributions.set(key, found)
+    }
+    return found
+  }
+
   // Every window this worker has ever reported, for runs that carried no snapshot of their own.
   const workerWindows = new Map<string, string[]>()
   for (const key of series.keys()) {
@@ -390,51 +556,126 @@ function build(out: Map<string, RunPrice>, taskOut: Map<string, TaskPrice>): voi
   }
 
   for (const r of runRows) {
-    out.set(r.id, priceOne(r, { identities, windowsOfRun, workerWindows, attributionFor }))
+    out.set(
+      r.id,
+      priceOne(r, {
+        identities,
+        windowsOfRun,
+        workerWindows,
+        attributionFor,
+        metersOf,
+        meterAttributionFor
+      })
+    )
   }
 
+  // ⚠️ Each total folds over the runs that *have* that number, and records separately when it was
+  // short. A run priced in subscription dollars with no meter reading contributes to `usd` and
+  // makes `overageUsd` a lower bound, and saying that with one flag would misreport one of them.
   for (const r of runRows) {
     if (!r.task_id) continue
     const price = out.get(r.id)!
-    const seen = taskOut.get(r.task_id) ?? { usd: null, estimated: false, partial: false }
+    const seen: TaskPrice = taskOut.get(r.task_id) ?? {
+      usd: null,
+      estimated: false,
+      partial: false,
+      overageUsd: null,
+      overagePartial: false,
+      listUsd: null,
+      listPartial: false
+    }
     if (price.usd === null) {
       seen.partial = true
     } else {
       seen.usd = (seen.usd ?? 0) + price.usd
       seen.estimated = seen.estimated || price.estimated
     }
+    if (price.overageUsd === null) seen.overagePartial = true
+    else seen.overageUsd = (seen.overageUsd ?? 0) + price.overageUsd
+    if (price.listUsd === null) seen.listPartial = true
+    else seen.listUsd = (seen.listUsd ?? 0) + price.listUsd
     taskOut.set(r.task_id, seen)
   }
 }
 
-function priceOne(
-  r: PricedRunRow,
-  ctx: {
-    identities: Map<string, string | null>
-    windowsOfRun: Map<string, string[]>
-    workerWindows: Map<string, string[]>
-    attributionFor: (workerId: string, windowId: string) => Map<string, Attribution>
+/** Everything `priceOne` needs from the pass around it. */
+interface PriceCtx {
+  identities: Map<string, string | null>
+  windowsOfRun: Map<string, string[]>
+  workerWindows: Map<string, string[]>
+  attributionFor: (workerId: string, windowId: string) => Map<string, Attribution>
+  metersOf: (workerId: string) => MeterSeries[]
+  meterAttributionFor: (workerId: string, meter: MeterSeries) => Map<string, Attribution>
+}
+
+/** The subscription layer: an amortised share of a flat monthly fee, or why there isn't one. */
+interface SubscriptionPart {
+  usd: number | null
+  percent: number | null
+  basis: string
+  /** The `n/a` verdict when `usd` is null; one of the five, and each renders its own tooltip. */
+  reason: RunPrice['reason']
+  estimated: boolean
+  parallel: Set<string>
+  windowId: string | null
+  plan: PlanRef | null
+}
+
+/** The pay-as-you-go layer: money a vendor really billed, on top of the subscription. */
+interface OveragePart {
+  usd: number | null
+  basis: string
+  estimated: boolean
+  parallel: Set<string>
+  /** How many meters this worker has ever reported. ⚠️ Zero is why `no_meter` exists. */
+  meters: number
+}
+
+function priceOne(r: PricedRunRow, ctx: PriceCtx): RunPrice {
+  // ⚠️ Read straight off the row rather than derived. Both are facts a probe wrote about this run
+  // and neither moves when a later run is discovered — unlike everything else in this file.
+  const listUsd = typeof r.list_usd === 'number' ? r.list_usd : null
+  const onOverage = r.on_overage === null || r.on_overage === undefined ? null : r.on_overage !== 0
+
+  let cm: CostModel | null = null
+  if (r.cost_model_id) {
+    try {
+      cm = costModel(r.cost_model_id)
+    } catch {
+      cm = null
+    }
   }
-): RunPrice {
-  const na = (reason: RunPrice['reason'], basis: string, plan?: PlanRef | null): RunPrice => ({
+
+  const overage = overagePart(r, cm, ctx)
+  const sub = subscriptionPart(r, cm, ctx)
+  return combine(r, sub, overage, { listUsd, onOverage })
+}
+
+/**
+ * ⛔ **Unchanged arithmetic.** This is exactly what `usd` was before money became layered, moved
+ * behind a name; every number it produces, and every one of the five ways it declines to produce
+ * one, is what it always was. What changed is only that a caller now adds something to it.
+ */
+function subscriptionPart(r: PricedRunRow, cm: CostModel | null, ctx: PriceCtx): SubscriptionPart {
+  const na = (
+    reason: RunPrice['reason'],
+    basis: string,
+    plan?: PlanRef | null
+  ): SubscriptionPart => ({
     usd: null,
     percent: null,
-    estimated: false,
-    reason,
     basis,
-    planId: plan?.id ?? null,
-    planLabel: plan?.label ?? null,
-    planSource: (r.plan_source as RunPrice['planSource']) ?? plan?.source ?? null,
+    reason,
+    estimated: false,
+    parallel: new Set(),
     windowId: null,
-    parallelRunIds: []
+    plan: plan ?? null
   })
 
-  if (!r.cost_model_id) return na('no_plan', 'This run predates the cost-model column, so nothing knows what it was billed against.')
-
-  let cm
-  try {
-    cm = costModel(r.cost_model_id)
-  } catch {
+  if (!r.cost_model_id) {
+    return na('no_plan', 'This run predates the cost-model column, so nothing knows what it was billed against.')
+  }
+  if (!cm) {
     return na('no_plan', `No cost model '${r.cost_model_id}' is loaded, so this run has no subscription to divide.`)
   }
 
@@ -481,21 +722,150 @@ function priceOne(
   }
 
   const priced = cm.priceOfWindowUsage(plan.id, usage)
-  if (!priced) {
-    return na('unpriced_plan', `${plan.label} has no subscription price to divide.`, plan)
-  }
+  if (!priced) return na('unpriced_plan', `${plan.label} has no subscription price to divide.`, plan)
 
-  const percent = usage.reduce((sum, u) => sum + u.percent, 0)
   return {
     usd: priced.usd,
-    percent,
-    estimated,
-    reason: estimated && parallel.size > 0 ? 'shared_window' : 'measured',
+    percent: usage.reduce((sum, u) => sum + u.percent, 0),
     basis: priced.basis,
-    planId: plan.id,
-    planLabel: plan.label,
-    planSource: (r.plan_source as RunPrice['planSource']) ?? plan.source,
+    reason: estimated && parallel.size > 0 ? 'shared_window' : 'measured',
+    estimated,
+    parallel,
     windowId: usage.map((u) => u.window.id).join(' + '),
+    plan
+  }
+}
+
+/**
+ * The directly-billed dollars this run is answerable for.
+ *
+ * ⛔ **One unknown meter makes the whole layer unknown.** A worker's meters are not independent
+ * bills to be summed as far as they go: a total that silently omits the one meter that could not
+ * be read is a smaller number wearing a complete number's clothes. `null`, and the basis says why.
+ *
+ * ⛔ **A worker with no meters is `null`, not `$0.00`.** Nobody has asked that account what it has
+ * been billed; "not measured" and "measured, and it was nothing" are different facts, and only the
+ * second one is a number.
+ */
+function overagePart(r: PricedRunRow, cm: CostModel | null, ctx: PriceCtx): OveragePart {
+  const series = ctx.metersOf(r.worker_id)
+  const parallel = new Set<string>()
+  if (series.length === 0) {
+    return {
+      usd: null,
+      basis:
+        'No spend meter has been read for this account, so nothing is known about money billed on top of the subscription.',
+      estimated: false,
+      parallel,
+      meters: 0
+    }
+  }
+  if (!cm) {
+    return {
+      usd: null,
+      basis: 'No cost model is loaded for this run, so its meters cannot be converted to dollars.',
+      estimated: false,
+      parallel,
+      meters: series.length
+    }
+  }
+
+  let usd = 0
+  let estimated = false
+  const parts: string[] = []
+  const unknown: string[] = []
+  for (const m of series) {
+    const a = ctx.meterAttributionFor(r.worker_id, m).get(r.id)
+    if (!a || a.percent === null) {
+      unknown.push(
+        a?.reason === 'window_reset'
+          ? `${m.meter.label} was topped up or rolled over while this run was in flight`
+          : `${m.meter.label} has no complete pair of readings around this run`
+      )
+      continue
+    }
+    const priced = cm.priceOfMeterUsage(m.meter, a.percent)
+    if (!priced) {
+      // ⛔ Real and unpriceable: the vendor publishes the credits and no conversion for them.
+      unknown.push(`${m.meter.label} is metered in credits with no published dollar value`)
+      continue
+    }
+    usd += priced.usd
+    estimated = estimated || a.estimated
+    for (const id of a.parallelRunIds) parallel.add(id)
+    parts.push(priced.basis)
+  }
+
+  if (unknown.length > 0) {
+    return {
+      usd: null,
+      basis: `Directly-billed money is unknown for this run: ${unknown.join('; ')}.`,
+      estimated,
+      parallel,
+      meters: series.length
+    }
+  }
+  return { usd, basis: parts.join(' + '), estimated, parallel, meters: series.length }
+}
+
+/**
+ * The headline, and everything a reader needs to distrust it properly.
+ *
+ * ⛔ **`null` is absent, not zero.** Both layers missing is `n/a` with the reason that says which
+ * kind of missing; one layer missing is the other layer alone, and the `basis` says out loud that
+ * the total is a lower bound — because a partial sum presented as a complete one is the single
+ * rendering of this feature that would actively mislead.
+ *
+ * ⛔ **`listUsd` is not in the sum.** It travels on the result, and only ever beside it.
+ */
+function combine(
+  r: PricedRunRow,
+  sub: SubscriptionPart,
+  overage: OveragePart,
+  columns: { listUsd: number | null; onOverage: boolean | null }
+): RunPrice {
+  const parallel = new Set([...sub.parallel, ...overage.parallel])
+  const estimated = sub.estimated || overage.estimated
+  const usd = sub.usd === null && overage.usd === null ? null : (sub.usd ?? 0) + (overage.usd ?? 0)
+
+  // Every component that went into the number, named — and the one that could not be.
+  const parts: string[] = []
+  if (sub.usd !== null) parts.push(`Subscription share: ${sub.basis}`)
+  if (overage.usd !== null && overage.basis) parts.push(`Billed directly: ${overage.basis}`)
+  if (usd !== null && (sub.usd === null || overage.usd === null)) {
+    parts.push(`⚠️ A lower bound: ${sub.usd === null ? sub.basis : overage.basis}`)
+  }
+  if (columns.listUsd !== null) {
+    parts.push(
+      `Carried separately, and not part of this total: $${columns.listUsd.toFixed(4)} at API list price.`
+    )
+  }
+
+  const reason: RunPrice['reason'] =
+    usd !== null
+      ? estimated && parallel.size > 0
+        ? 'shared_window'
+        : 'measured'
+      : // ⚠️ Nothing meters this run at all — no billing window and no spend meter. Distinct from
+        // `no_window`, which means the provider has a window and reported none for this run.
+        sub.reason === 'no_window' && overage.meters === 0
+        ? 'no_meter'
+        : sub.reason
+
+  return {
+    usd,
+    subscriptionUsd: sub.usd,
+    overageUsd: overage.usd,
+    listUsd: columns.listUsd,
+    onOverage: columns.onOverage,
+    percent: sub.percent,
+    estimated,
+    reason,
+    basis: parts.length > 0 ? parts.join(' ') : sub.basis,
+    planId: sub.plan?.id ?? null,
+    planLabel: sub.plan?.label ?? null,
+    planSource: (r.plan_source as RunPrice['planSource']) ?? sub.plan?.source ?? null,
+    windowId: sub.windowId,
     parallelRunIds: [...parallel]
   }
 }

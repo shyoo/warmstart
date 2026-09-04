@@ -21,6 +21,7 @@ let dir: string
 let db: typeof import('./db.js')
 let costmodel: typeof import('./costmodel.js')
 let estimator: typeof import('./estimator.js')
+let price: typeof import('./price.js')
 
 const CHEAP_WORKER = 'aaaaaaaa-0000-4000-8000-000000000001'
 const DEAR_WORKER = 'aaaaaaaa-0000-4000-8000-000000000002'
@@ -41,6 +42,14 @@ function run(input: {
   outcome?: string
   taskId?: string | null
   kind?: string
+  /**
+   * A real clock span and the window percentages read at each end of it.
+   *
+   * ⚠️ Money needs all three. `price.ts` anchors a run between the reading before it started and the
+   * one after it ended; a run with no such pair prices `n/a`, which is the default here and is the
+   * state most of this file's fixtures are deliberately left in.
+   */
+  priced?: { startedAt: number; endedAt: number; from: number; to: number }
 }): void {
   seq += 1
   const output = Math.round(input.total * 0.005)
@@ -49,15 +58,16 @@ function run(input: {
     .prepare(
       `insert into runs (id, task_id, project_id, session_id, worker_id, started_at, outcome,
                          quota_unverified, cost_model_id, started_warm, adapter_id, model,
-                         input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, kind)
-       values (?,?,?,null,?,?,?,0,?,?,?,?,0,?,?,0,?)`
+                         input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, kind,
+                         ended_at, quota_before_json, quota_after_json)
+       values (?,?,?,null,?,?,?,0,?,?,?,?,0,?,?,0,?,?,?,?)`
     )
     .run(
       `run-${seq}`,
       input.taskId ?? null,
       input.project ?? null,
       input.worker,
-      Date.now() + seq,
+      input.priced ? input.priced.startedAt : Date.now() + seq,
       input.outcome ?? 'completed',
       input.costModel,
       input.warm === undefined || input.warm === null ? null : input.warm ? 1 : 0,
@@ -65,8 +75,69 @@ function run(input: {
       input.model,
       output,
       cacheRead,
-      input.kind ?? 'work'
+      input.kind ?? 'work',
+      input.priced ? input.priced.endedAt : null,
+      input.priced ? quota(input.priced.startedAt, input.priced.from) : null,
+      input.priced ? quota(input.priced.endedAt, input.priced.to) : null
     )
+  // ⛔ Prices are memoised against an epoch, not a clock, and this is the writer that changes them.
+  price.bumpPricingEpoch()
+}
+
+const T0 = 1_756_000_000_000
+const HOUR = 3_600_000
+
+/** One quota reading, in the shape a run carries. */
+function quota(at: number, percent: number): string {
+  return JSON.stringify({
+    windows: [{ id: 'weekly_all', label: 'weekly_all', percent }],
+    sampledAt: at,
+    stale: false
+  })
+}
+
+/**
+ * ⛔ **A fleet whose money ordering and token ordering disagree, on purpose.**
+ *
+ * The dear agent burns 80x the tokens per run and one *tenth* the billing window. Nothing measured
+ * in priced tokens can produce the money answer here, so any test that comes out the money way is
+ * reading the money series and not a proxy for it.
+ *
+ * ⚠️ Both agents are billed against the Anthropic file, because that is the loaded cost model with
+ * a priced subscription plan to divide. The vendor is not what these cases are about.
+ */
+function pricedFleet(): void {
+  let cheap = 0
+  let dear = 0
+  for (let i = 0; i < 6; i += 1) {
+    // Non-overlapping hours: a shared window would split the movement between the two runs across
+    // it, which is `price.ts`'s business and not this file's.
+    run({
+      worker: CHEAP_WORKER,
+      adapter: 'claude-code',
+      model: 'claude-sonnet-5',
+      costModel: ANTHROPIC,
+      total: 150_000,
+      warm: false,
+      priced: { startedAt: T0 + i * 4 * HOUR, endedAt: T0 + i * 4 * HOUR + HOUR, from: cheap, to: cheap + 10 }
+    })
+    cheap += 10
+    run({
+      worker: DEAR_WORKER,
+      adapter: 'antigravity-cli',
+      model: 'gemini-3.7-flash-medium',
+      costModel: ANTHROPIC,
+      total: 12_000_000,
+      warm: false,
+      priced: {
+        startedAt: T0 + i * 4 * HOUR + 2 * HOUR,
+        endedAt: T0 + i * 4 * HOUR + 3 * HOUR,
+        from: dear,
+        to: dear + 1
+      }
+    })
+    dear += 1
+  }
 }
 
 function task(patch: Partial<Task> = {}): Task {
@@ -101,23 +172,27 @@ beforeAll(async () => {
   db = await import('./db.js')
   costmodel = await import('./costmodel.js')
   estimator = await import('./estimator.js')
+  price = await import('./price.js')
   db.openDb(join(dir, 'estimator.db'))
   costmodel.loadCostModels()
   const workers = db
     .db()
     .prepare(
       `insert into workers (id, label, adapter_id, isolation_root, enabled, human_occupied,
-                            max_concurrent, role, created_at)
-       values (?, ?, ?, ?, 1, 0, 1, 'worker', ?)`
+                            max_concurrent, role, identity_json, created_at)
+       values (?, ?, ?, ?, 1, 0, 1, 'worker', ?, ?)`
     )
-  workers.run(CHEAP_WORKER, 'Claude', 'claude-code', join(dir, 'w1'), Date.now())
-  workers.run(DEAR_WORKER, 'Antigravity', 'antigravity-cli', join(dir, 'w2'), Date.now())
+  // ⚠️ Both carry a subscription, because a plan with a monthly fee is what there is to divide; a
+  // worker with no identity prices `n/a` however many readings its runs carry.
+  workers.run(CHEAP_WORKER, 'Claude', 'claude-code', join(dir, 'w1'), '{"subscriptionType":"pro"}', Date.now())
+  workers.run(DEAR_WORKER, 'Antigravity', 'antigravity-cli', join(dir, 'w2'), '{"subscriptionType":"pro"}', Date.now())
 })
 
 beforeEach(() => {
   db.db().exec('delete from runs')
   seq = 0
   estimator.resetCostFactors()
+  price.bumpPricingEpoch()
 })
 
 afterAll(() => {
@@ -363,5 +438,285 @@ describe('overrun', () => {
     })
     estimator.resetCostFactors()
     expect(estimator.overrunFactor(`run-${seq}`)!).toBeGreaterThan(5)
+  })
+})
+
+/**
+ * ⛔ **Money is the primary indicator, and money is not always there.**
+ *
+ * This fleet runs on subscriptions, so a token count is a proxy for a bill nobody pays; what the
+ * operator evaluates the cost axis on is dollars. But a run prices `n/a` for six distinct reasons
+ * (price.ts), so every case below is really about the *pair*: the money answer where there is one,
+ * and provably the old token answer where there is not.
+ */
+describe('the unit is money, with a token fallback', () => {
+  function taskRow(id: string): void {
+    db.db()
+      .prepare(
+        `insert or replace into tasks (id, seq, title, status, created_by_json, mandate_json,
+                                       budget_json, created_at, updated_at)
+         values (?, 1, 'a task', 'running', '{}', '{}', '{}', ?, ?)`
+      )
+      .run(id, Date.now(), Date.now())
+  }
+
+  /**
+   * ⭐ **The case the whole change exists for.** In tokens the dear agent is 80x the cheap one; in
+   * money it is a *tenth* of it, because it burns cache reads and barely touches the billing
+   * window. A factor learned from priced tokens puts these two on the wrong sides of 1.
+   */
+  it('learns a key’s factor from dollars once it has enough priced runs', () => {
+    pricedFleet()
+    estimator.resetCostFactors()
+    const keys = estimator.costFactors().keys
+    const cheap = keys.find((k) => k.model === 'claude-sonnet-5')!
+    const dear = keys.find((k) => k.model === 'gemini-3.7-flash-medium')!
+
+    expect(cheap.learnedFrom).toBe('usd')
+    expect(dear.learnedFrom).toBe('usd')
+    expect(cheap.usdSamples).toBe(6)
+    // 10% of a weekly window on Claude Pro against 1%. ⚠️ Unrounded: the integer median the token
+    // series uses would report both of these as $0.
+    expect(cheap.medianUsd!).toBeCloseTo(0.46, 2)
+    expect(dear.medianUsd!).toBeCloseTo(0.046, 3)
+
+    // ⛔ The token series says the opposite, and loudly. If the factors followed it they could not
+    // come out this way round, so this is the money series being read and not a proxy for it.
+    expect(cheap.medianPriced).toBeLessThan(dear.medianPriced / 10)
+    expect(cheap.factor).toBeGreaterThan(1)
+    expect(dear.factor).toBeLessThan(1)
+  })
+
+  it('estimates a task in dollars, and says so in the basis', () => {
+    pricedFleet()
+    estimator.resetCostFactors()
+    const estimate = estimator.estimateTask(task(), {
+      adapterId: 'claude-code',
+      model: 'claude-sonnet-5'
+    })
+    expect(estimate.usd).not.toBeNull()
+    expect(estimate.usd!).toBeGreaterThan(0)
+    expect(estimate.basis).toContain('in dollars from 12 priced run(s)')
+    expect(estimate.basis).toContain('learned from 6 priced run(s) in dollars')
+    // The token answer is still there beside it: it is the fallback *and* the historical series.
+    expect(estimate.pricedTokens).toBeGreaterThan(0)
+  })
+
+  /**
+   * ⛔ **The strict-extension case for a single key.** Nothing here can be priced, so `learnedFrom`
+   * must be the token series and every money field must be absent rather than zero — a `$0.00`
+   * would be read as "this was free", which is the opposite of what is true.
+   */
+  it('falls back to priced tokens where no run could be priced, with an explicit basis', () => {
+    twoAgents()
+    estimator.resetCostFactors()
+    const key = estimator.costFactors().keys.find((k) => k.model === 'claude-sonnet-5')!
+    expect(key.learnedFrom).toBe('priced_tokens')
+    expect(key.medianUsd).toBeNull()
+    expect(key.medianUsd).not.toBe(0)
+    expect(key.usdSamples).toBe(0)
+    expect(estimator.costFactors().neutralUsd).toBeNull()
+
+    const estimate = estimator.estimateTask(task(), {
+      adapterId: 'claude-code',
+      model: 'claude-sonnet-5'
+    })
+    expect(estimate.usd).toBeNull()
+    expect(estimate.usdConfidence).toBe('none')
+    expect(estimate.basis).toContain('no run behind this estimate could be priced in money')
+    expect(estimate.basis).toContain('none of its runs could be priced in money')
+  })
+
+  /**
+   * ⚠️ **A key's dollar samples are a subset of its samples.** Conflating the two would claim
+   * twelve dollar measurements where there are six, and shrink the factor as though it had them.
+   */
+  it('counts a mixed key’s dollar samples apart from its samples', () => {
+    pricedFleet()
+    for (let i = 0; i < 6; i += 1) {
+      run({
+        worker: CHEAP_WORKER,
+        adapter: 'claude-code',
+        model: 'claude-sonnet-5',
+        costModel: ANTHROPIC,
+        total: 150_000,
+        warm: false
+      })
+    }
+    estimator.resetCostFactors()
+    const factors = estimator.costFactors()
+    const cheap = factors.keys.find((k) => k.model === 'claude-sonnet-5')!
+
+    expect(cheap.samples).toBe(12)
+    expect(cheap.usdSamples).toBe(6)
+    expect(cheap.usdSamples).toBeLessThan(cheap.samples)
+    // Six is still above the line, so the key keeps its money factor - on six readings, not twelve.
+    expect(cheap.learnedFrom).toBe('usd')
+    expect(cheap.factor).toBeCloseTo(cheap.ratio ** (6 / 11), 6)
+
+    // The fleet-wide count is a subset in exactly the same way.
+    expect(factors.samples).toBe(18)
+    expect(factors.usdSamples).toBe(12)
+  })
+
+  /**
+   * ⛔ **Below the line a key keeps the token answer.** One priced run out of many is not a
+   * reputation; it is whichever run happened to be sampled while somebody was reading the window.
+   */
+  it('will not learn money from one reading', () => {
+    twoAgents()
+    run({
+      worker: CHEAP_WORKER,
+      adapter: 'claude-code',
+      model: 'claude-sonnet-5',
+      costModel: ANTHROPIC,
+      total: 150_000,
+      warm: false,
+      priced: { startedAt: T0, endedAt: T0 + HOUR, from: 0, to: 40 }
+    })
+    estimator.resetCostFactors()
+    const cheap = estimator.costFactors().keys.find((k) => k.model === 'claude-sonnet-5')!
+    expect(cheap.usdSamples).toBe(1)
+    expect(cheap.medianUsd).not.toBeNull()
+    expect(cheap.learnedFrom).toBe('priced_tokens')
+  })
+
+  describe('overrun', () => {
+    /**
+     * ⭐ A run of perfectly ordinary *size* that ate 40% of a weekly window. The token ratio is
+     * about 1 — it is exactly the median run for its key — so a watchdog reading tokens sees
+     * nothing at all, and only the money path can catch it.
+     */
+    it('measures a runaway in dollars where both sides are priced', () => {
+      pricedFleet()
+      taskRow('task-money')
+      run({
+        worker: CHEAP_WORKER,
+        adapter: 'claude-code',
+        model: 'claude-sonnet-5',
+        costModel: ANTHROPIC,
+        total: 150_000,
+        warm: false,
+        outcome: 'running',
+        taskId: 'task-money',
+        // ⚠️ `running` with a real end anchor: the run must be priceable without becoming a
+        // completed sample, which would fold its own cost into the median it is measured against.
+        priced: { startedAt: T0 + 24 * HOUR, endedAt: T0 + 25 * HOUR, from: 60, to: 100 }
+      })
+      estimator.resetCostFactors()
+      const factor = estimator.overrunFactor(`run-${seq}`)
+      expect(factor).not.toBeNull()
+      expect(factor!).toBeGreaterThan(3)
+    })
+
+    it('falls back to the priced-token ratio when either side has no price', () => {
+      pricedFleet()
+      taskRow('task-tokens')
+      // No anchors, so this run prices `n/a` however well the fleet around it is measured.
+      run({
+        worker: CHEAP_WORKER,
+        adapter: 'claude-code',
+        model: 'claude-sonnet-5',
+        costModel: ANTHROPIC,
+        total: 150_000 * 12,
+        warm: false,
+        outcome: 'running',
+        taskId: 'task-tokens'
+      })
+      estimator.resetCostFactors()
+      const runId = `run-${seq}`
+      // The run itself is the unpriced half: the fleet around it is fully measured in dollars.
+      expect(price.priceForRun(runId)?.usd ?? null).toBeNull()
+
+      const factor = estimator.overrunFactor(runId)
+      // ⛔ Not null. An unpriceable run is not exempt from the watchdog; it is measured in the unit
+      // that is available, which is what this function did before money existed.
+      expect(factor).not.toBeNull()
+      // ⛔ And measured in *that* unit, exactly: 5×9,000 output + 0.1×1,791,000 cache reads is
+      // 224,100 input-token-equivalents, over the same task's estimate on the same key. A money
+      // ratio cannot be this number, so this pins which side of the fallback was taken.
+      const estimate = estimator.estimateTask(task(), {
+        adapterId: 'claude-code',
+        model: 'claude-sonnet-5',
+        warm: false
+      })
+      expect(factor!).toBeCloseTo(224_100 / estimate.pricedTokens, 9)
+    })
+
+    it('still refuses to judge a task nothing has measured', () => {
+      taskRow('task-first')
+      run({
+        worker: CHEAP_WORKER,
+        adapter: 'claude-code',
+        model: 'claude-sonnet-5',
+        costModel: ANTHROPIC,
+        total: 150_000,
+        outcome: 'running',
+        taskId: 'task-first',
+        priced: { startedAt: T0, endedAt: T0 + HOUR, from: 0, to: 40 }
+      })
+      estimator.resetCostFactors()
+      // Killing work for the crime of being first is the failure this guard exists to avoid, and a
+      // dollar figure on one side of the ratio does not make the other side measured.
+      expect(estimator.overrunFactor(`run-${seq}`)).toBeNull()
+    })
+  })
+
+  /**
+   * ⛔ **The proof that this is a strict extension and not a rewrite.**
+   *
+   * Every number below was measured from the implementation as it stood at 1a27420, before money
+   * entered this file at all, on this exact fixture. A fleet with no priced run must still produce
+   * them to the last digit: the money branches are gated on dollar samples that do not exist here,
+   * so nothing they do can reach these values.
+   */
+  it('is byte-identical to the pre-money answer when nothing can be priced', () => {
+    twoAgents()
+    estimator.resetCostFactors()
+    const f = estimator.costFactors()
+    const dear = f.keys.find((k) => k.model === 'gemini-3.7-flash-medium')!
+    const cheap = f.keys.find((k) => k.model === 'claude-sonnet-5')!
+
+    expect(dear.samples).toBe(12)
+    expect(dear.medianPriced).toBe(1_494_000)
+    expect(dear.ratio).toBe(8.944271909999182)
+    expect(dear.factor).toBe(4.6954672842399)
+    expect(cheap.medianPriced).toBe(18_675)
+    expect(cheap.ratio).toBe(0.11180339887498977)
+    expect(cheap.factor).toBe(0.21297134863583295)
+    expect(f.warmFactor).toBe(1)
+    expect(f.coldFactor).toBe(1.174821163691458)
+    expect(f.neutralPriced).toBe(172_736)
+    expect(f.neutralRaw).toBe(1_387_435)
+
+    const onCheap = estimator.estimateTask(task(), {
+      adapterId: 'claude-code',
+      model: 'claude-sonnet-5'
+    })
+    const onDear = estimator.estimateTask(task(), {
+      adapterId: 'antigravity-cli',
+      model: 'gemini-3.7-flash-medium'
+    })
+    const stated = estimator.estimateTask(task({ estTokens: 400_000 }), {
+      adapterId: 'claude-code',
+      model: 'claude-sonnet-5'
+    })
+    expect([onCheap.tokens, onCheap.pricedTokens, onCheap.factor]).toEqual([
+      295_484, 36_788, 0.21297134863583295
+    ])
+    expect([onDear.tokens, onDear.pricedTokens, onDear.factor]).toEqual([
+      6_514_656, 811_076, 4.6954672842399
+    ])
+    expect([stated.tokens, stated.pricedTokens, stated.factor]).toEqual([
+      85_189, 10_606, 0.21297134863583295
+    ])
+    expect(onCheap.confidence).toBe('medium')
+
+    // And the money fields are absent rather than zero, which is the whole difference between
+    // "we could not measure this" and "this was free".
+    for (const e of [onCheap, onDear, stated]) {
+      expect(e.usd).toBeNull()
+      expect(e.usdConfidence).toBe('none')
+    }
   })
 })

@@ -2,6 +2,7 @@ import type { Task } from '@shared/tasks.js'
 import { db, rows } from './db.js'
 import { adapter } from './adapters/index.js'
 import { costModel, type CostModel } from './costmodel.js'
+import { priceForRun, pricesForRuns } from './price.js'
 import { log } from './log.js'
 
 /**
@@ -39,8 +40,24 @@ export interface Estimate {
    * in this unit for exactly that reason.
    */
   pricedTokens: number
+  /**
+   * The same estimate in **money**, and the primary cost indicator now.
+   *
+   * ⛔ `null` is `n/a`, never `$0.00`. A run prices `n/a` for six distinct reasons (price.ts), so a
+   * fleet can be busy and still have nothing to divide; every consumer here falls back to
+   * `pricedTokens` rather than treating an unpriceable fleet as a free one.
+   */
+  usd: number | null
+  /**
+   * How much the *money* answer is worth, which is not how much the token answer is worth.
+   *
+   * ⚠️ A key's priced runs are a subset of its runs, so this is routinely lower than `confidence`
+   * and is `none` exactly when `usd` is null.
+   */
+  usdConfidence: Confidence
   confidence: Confidence
   samples: number
+  /** Which unit the answer came from, and where the factor was learned. Every cost belief says so. */
   basis: string
   /** The agent/model multiplier applied; 1 when no key was given or none is known yet. */
   factor: number
@@ -89,7 +106,18 @@ const SHRINK_K = 5
 const FACTOR_FLOOR = 0.05
 const FACTOR_CEILING = 20
 
+/**
+ * How many priced runs a key needs before its factor is learned from dollars rather than tokens.
+ *
+ * ⛔ Money is primary but it is not always *there*: a run with no complete pair of window readings
+ * prices `n/a`, and a key with one priced run out of thirty would otherwise have its whole
+ * reputation set by whichever run happened to be sampled. Below this line the key keeps the priced
+ * token answer, which is the number this file has always produced, and `basis` says which it used.
+ */
+const USD_MIN_SAMPLES = 3
+
 interface SampleRow {
+  id: string
   project_id: string | null
   adapter_id: string | null
   model: string | null
@@ -108,6 +136,8 @@ interface Sample {
   model: string | null
   raw: number
   priced: number
+  /** What this run cost in money, or null where it could not be priced at all. */
+  usd: number | null
   warm: boolean | null
   assumed: boolean
 }
@@ -119,6 +149,21 @@ export interface CostFactor {
   samples: number
   /** Median priced cost of a run on this key, in input-token-equivalents. */
   medianPriced: number
+  /**
+   * The median run on this key in **dollars**, or null where none of its runs could be priced.
+   *
+   * ⛔ Never rounded to whole dollars. A run on this fleet costs cents, and the integer median the
+   * token series uses would report every key as $0.
+   */
+  medianUsd: number | null
+  /**
+   * ⚠️ **Its own count, and never `samples`.** A key's priced runs are a strict subset of its runs,
+   * because some of them price `n/a`. Conflating the two would claim a 35-run key had 35 dollar
+   * measurements when it had four, and shrink its factor as though it did.
+   */
+  usdSamples: number
+  /** Which series `ratio` was actually measured in. The basis string is built from this. */
+  learnedFrom: 'usd' | 'priced_tokens'
   /** What the data says before shrinkage — published so the shrinkage is visible, not implied. */
   ratio: number
   /** What is actually applied. */
@@ -136,7 +181,11 @@ export interface CostFactors {
   /** The fleet's median run, priced and raw, with every factor divided out. The neutral unit. */
   neutralPriced: number
   neutralRaw: number
+  /** The same neutral run in dollars, or null where no run in the window could be priced. */
+  neutralUsd: number | null
   samples: number
+  /** ⚠️ How many of `samples` yielded a price. Always ≤ `samples`, and often far fewer. */
+  usdSamples: number
   assumed: boolean
 }
 
@@ -146,6 +195,22 @@ function median(values: number[]): number {
   const middle = Math.floor(sorted.length / 2)
   return sorted.length % 2 === 0
     ? Math.round(((sorted[middle - 1] ?? 0) + (sorted[middle] ?? 0)) / 2)
+    : (sorted[middle] ?? 0)
+}
+
+/**
+ * The same median, unrounded.
+ *
+ * ⛔ Money needs its own, because `median` rounds to an integer — correct for a token count and
+ * catastrophic for dollars, where every run on this fleet would round to $0. Kept as a second
+ * function rather than a flag on the first so that the token series is provably unchanged.
+ */
+function medianFloat(values: number[]): number {
+  if (values.length === 0) return 0
+  const sorted = [...values].sort((a, b) => a - b)
+  const middle = Math.floor(sorted.length / 2)
+  return sorted.length % 2 === 0
+    ? ((sorted[middle - 1] ?? 0) + (sorted[middle] ?? 0)) / 2
     : (sorted[middle] ?? 0)
 }
 
@@ -219,7 +284,7 @@ function loadSamples(): Sample[] {
   const raw = rows<SampleRow>(
     db()
       .prepare(
-        `select project_id, adapter_id, model, cost_model_id, started_warm,
+        `select id, project_id, adapter_id, model, cost_model_id, started_warm,
                 input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
                 (input_tokens + output_tokens + cache_read_tokens + cache_write_tokens) as total
            from runs
@@ -236,6 +301,11 @@ function loadSamples(): Sample[] {
       .all(SAMPLE_LIMIT)
   )
 
+  // ⛔ One batched call for the whole sample set. `pricesForRuns` prices *every* run in the database
+  // behind a memo keyed on an epoch, so asking it per row would re-enter that pass 200 times a tick
+  // for one answer each — pathological, and invisible until the runs table is large.
+  const prices = pricesForRuns(raw.map((row) => row.id))
+
   return raw.map((row) => {
     const priced = modelFor(row)?.priceRun({
       inputTokens: row.input_tokens,
@@ -251,6 +321,9 @@ function loadSamples(): Sample[] {
       model: row.model,
       raw: row.total,
       priced: priced ? priced.tokens : row.total,
+      // ⚠️ `usd ?? null`, not `usd ?? 0`. A run nobody could price is absent from the money series,
+      // not a free run in it, and a zero here would drag every median it touched toward nothing.
+      usd: prices.get(row.id)?.usd ?? null,
       warm: row.started_warm === null ? null : row.started_warm === 1,
       assumed: priced ? priced.assumed : true
     }
@@ -292,6 +365,9 @@ export function costFactors(): CostFactors {
 
   const samples = loadSamples()
   const globalPriced = centre(samples.map((s) => s.priced))
+  // ⛔ The fleet's centre in money, measured over the priced subset only. A run that priced `n/a`
+  // is not in this series at any level, which is why `usdSamples` is counted separately everywhere.
+  const globalUsd = centre(samples.filter((s) => s.usd !== null).map((s) => s.usd!))
 
   const groups = new Map<string, Sample[]>()
   for (const s of samples) {
@@ -311,14 +387,29 @@ export function costFactors(): CostFactors {
     const cut = id.lastIndexOf('/')
     const modelPart = id.slice(cut + 1)
     const medianPriced = median(list.map((s) => s.priced))
-    const ratio = globalPriced > 0 ? medianPriced / globalPriced : 1
+    const usdList = list.filter((s) => s.usd !== null).map((s) => s.usd!)
+    const medianUsd = usdList.length > 0 ? medianFloat(usdList) : null
+    // Money where the key has earned it, priced tokens where it has not. ⛔ The token branch is
+    // reached whenever the dollar one is short, so a fleet with no prices at all computes exactly
+    // what this function computed before money existed — the change is a strict extension.
+    const fromUsd = usdList.length >= USD_MIN_SAMPLES && globalUsd > 0 && (medianUsd ?? 0) > 0
+    const ratio = fromUsd
+      ? medianUsd! / globalUsd
+      : globalPriced > 0
+        ? medianPriced / globalPriced
+        : 1
     keys.push({
       adapterId: id.slice(0, cut),
       model: modelPart === '?' ? null : modelPart,
       samples: list.length,
       medianPriced,
+      medianUsd,
+      // ⚠️ Shrunk on the count of the series it was *measured* in. A ratio from four dollar
+      // readings is a four-sample claim however many token samples sit behind the same key.
+      usdSamples: usdList.length,
+      learnedFrom: fromUsd ? 'usd' : 'priced_tokens',
       ratio,
-      factor: shrink(ratio, list.length),
+      factor: shrink(ratio, fromUsd ? usdList.length : list.length),
       assumed: list.some((s) => s.assumed)
     })
   }
@@ -354,6 +445,8 @@ export function costFactors(): CostFactors {
         (s.warm === true ? warmFactor : s.warm === false ? coldFactor : 1)
       : 1
 
+  const usdNeutral = samples.filter((s) => s.usd !== null).map((s) => s.usd! / divisor(s))
+
   const value: CostFactors = {
     keys,
     warmFactor,
@@ -362,7 +455,9 @@ export function costFactors(): CostFactors {
     coldSamples: coldSet.length,
     neutralPriced: median(samples.map((s) => s.priced / divisor(s))),
     neutralRaw: median(samples.map((s) => s.raw / divisor(s))),
+    neutralUsd: usdNeutral.length > 0 ? medianFloat(usdNeutral) : null,
     samples: samples.length,
+    usdSamples: usdNeutral.length,
     assumed: samples.some((s) => s.assumed)
   }
   cached = { fingerprint: print, value }
@@ -378,8 +473,8 @@ export function resetCostFactors(): void {
 function factorFor(
   factors: CostFactors,
   on: EstimateOn | undefined
-): { factor: number; samples: number; basis: string; assumed: boolean } {
-  if (!on?.adapterId) return { factor: 1, samples: 0, basis: '', assumed: false }
+): { factor: number; samples: number; usdSamples: number; basis: string; assumed: boolean } {
+  if (!on?.adapterId) return { factor: 1, samples: 0, usdSamples: 0, basis: '', assumed: false }
 
   const exact = factors.keys.find(
     (k) => k.adapterId === on.adapterId && k.model === (on.model ?? null)
@@ -389,6 +484,7 @@ function factorFor(
     return {
       factor: 1,
       samples: 0,
+      usdSamples: 0,
       basis: `, and nothing has completed on ${on.adapterId} yet, so no agent factor is applied`,
       assumed: false
     }
@@ -397,12 +493,24 @@ function factorFor(
   const warmth = on.warm === undefined ? 1 : on.warm ? factors.warmFactor : factors.coldFactor
   const warmthNote =
     on.warm === undefined ? '' : `, ×${warmth.toFixed(2)} for ${on.warm ? 'a warm' : 'a cold'} start`
+  // ⚠️ Says which series the multiplier was measured in. A ×12 learned from dollars and a ×12
+  // learned from priced tokens are different claims about the same key, and a reader chasing a
+  // routing decision cannot tell them apart from the number alone.
+  const unitNote =
+    rung.learnedFrom === 'usd'
+      ? `, learned from ${rung.usdSamples} priced run(s) in dollars`
+      : `, learned in priced tokens${
+          rung.usdSamples > 0
+            ? ` — only ${rung.usdSamples} of its run(s) could be priced in money`
+            : ' — none of its runs could be priced in money'
+        }`
   return {
     factor: rung.factor * warmth,
     samples: rung.samples,
+    usdSamples: rung.usdSamples,
     basis:
       `, ×${rung.factor.toFixed(2)} for ${keyId(rung.adapterId, rung.model)} ` +
-      `(${rung.samples} run(s), raw ratio ${rung.ratio.toFixed(2)} shrunk toward 1)${warmthNote}` +
+      `(${rung.samples} run(s), raw ratio ${rung.ratio.toFixed(2)} shrunk toward 1)${unitNote}${warmthNote}` +
       (exact ? '' : ' — that model has no runs of its own, so the adapter-wide rung is used'),
     assumed: rung.assumed
   }
@@ -411,6 +519,10 @@ function factorFor(
 function estimateOf(input: {
   raw: number
   priced: number
+  /** The size in money, or null where nothing behind this estimate could be priced. */
+  usd: number | null
+  /** How many priced runs the money size rests on. ⚠️ ≤ `samples`, and often far fewer. */
+  usdSamples: number
   samples: number
   confidence: Confidence
   basis: string
@@ -418,16 +530,31 @@ function estimateOf(input: {
   factors: CostFactors
 }): Estimate {
   const applied = factorFor(input.factors, input.on)
+  const usd = input.usd === null ? null : input.usd * applied.factor
   return {
     tokens: Math.round(input.raw * applied.factor),
     pricedTokens: Math.round(input.priced * applied.factor),
+    usd,
+    // ⛔ `none` exactly when there is no money answer, so nothing can read a dollar figure that
+    // nothing measured. Otherwise the lower of the size's and the factor's own dollar samples.
+    usdConfidence:
+      usd === null
+        ? 'none'
+        : applied.usdSamples > 0
+          ? lower(confidenceFor(input.usdSamples), confidenceFor(applied.usdSamples))
+          : confidenceFor(input.usdSamples),
     // ⚠️ The lower of the two. A confident size estimate scaled by a one-sample factor is a
     // one-sample answer, and a gate told otherwise is a gate that opens when it should not.
     confidence: applied.samples
       ? lower(input.confidence, confidenceFor(applied.samples))
       : input.confidence,
     samples: input.samples,
-    basis: input.basis + applied.basis,
+    basis:
+      input.basis +
+      (input.usd === null
+        ? ', in priced tokens — no run behind this estimate could be priced in money'
+        : `, in dollars from ${input.usdSamples} priced run(s), with priced tokens beside it`) +
+      applied.basis,
     factor: applied.factor,
     assumed: applied.assumed || input.factors.assumed
   }
@@ -443,7 +570,7 @@ function estimateOf(input: {
 function withinProject(
   projectId: string,
   factors: CostFactors
-): { raw: number; priced: number; samples: number } | null {
+): { raw: number; priced: number; usd: number | null; usdSamples: number; samples: number } | null {
   const samples = loadSamples().filter((s) => s.projectId === projectId)
   if (samples.length === 0) return null
   const divisor = (s: Sample): number => {
@@ -453,9 +580,12 @@ function withinProject(
     const warmth = s.warm === true ? factors.warmFactor : s.warm === false ? factors.coldFactor : 1
     return (key?.factor ?? 1) * warmth
   }
+  const usd = samples.filter((s) => s.usd !== null).map((s) => s.usd! / divisor(s))
   return {
     raw: median(samples.map((s) => s.raw / divisor(s))),
     priced: median(samples.map((s) => s.priced / divisor(s))),
+    usd: usd.length > 0 ? medianFloat(usd) : null,
+    usdSamples: usd.length,
     samples: samples.length
   }
 }
@@ -475,9 +605,17 @@ export function estimateTask(task: Task, on?: EstimateOn): Estimate {
   // estimating "400k tokens" is describing the work, not predicting which CLI will be handed it.
   if (task.estTokens && task.estTokens > 0) {
     const pricedShare = factors.neutralRaw > 0 ? factors.neutralPriced / factors.neutralRaw : 1
+    // What a fleet-neutral token of work has cost in money. ⚠️ Null where the fleet has no priced
+    // run at all — a stated token count cannot invent a dollar figure nothing has measured.
+    const usdShare =
+      factors.neutralUsd !== null && factors.neutralRaw > 0
+        ? factors.neutralUsd / factors.neutralRaw
+        : null
     return estimateOf({
       raw: task.estTokens,
       priced: task.estTokens * pricedShare,
+      usd: usdShare === null ? null : task.estTokens * usdShare,
+      usdSamples: factors.usdSamples,
       samples: 0,
       confidence: 'medium',
       basis: 'stated on the task',
@@ -490,9 +628,13 @@ export function estimateTask(task: Task, on?: EstimateOn): Estimate {
     return {
       tokens: COLD_FALLBACK_TOKENS,
       pricedTokens: COLD_FALLBACK_TOKENS,
+      // ⛔ No money answer, rather than a pessimistic one. The token fallback is anchored to a real
+      // measured run; there is no equivalent dollar figure to be deliberately pessimistic *with*.
+      usd: null,
+      usdConfidence: 'none',
       confidence: 'none',
       samples: 0,
-      basis: 'nothing measured yet - deliberately pessimistic',
+      basis: 'nothing measured yet - deliberately pessimistic, and in priced tokens',
       factor: 1,
       assumed: false
     }
@@ -515,6 +657,8 @@ export function estimateTask(task: Task, on?: EstimateOn): Estimate {
   return estimateOf({
     raw: factors.neutralRaw,
     priced: factors.neutralPriced,
+    usd: factors.neutralUsd,
+    usdSamples: factors.usdSamples,
     samples: factors.samples,
     confidence: factors.samples < 5 ? 'low' : 'medium',
     basis: `median of ${factors.samples} completed run(s) across all projects, de-scaled by agent`,
@@ -525,6 +669,10 @@ export function estimateTask(task: Task, on?: EstimateOn): Estimate {
 
 /**
  * How far past its estimate a run has gone. The runaway watchdog's input.
+ *
+ * ⛔ **In money where money exists, and against its own agent's estimate.** The dollar ratio is
+ * preferred because that is the axis the operator evaluates cost on; it falls back to priced tokens
+ * the moment either side is `n/a`, which on a fleet whose windows are not being read is most runs.
  *
  * ⛔ **Priced, and against its own agent's estimate.** Both halves were wrong before 2026-08-30: the
  * ratio was taken in raw tokens, which are 92-98% cache reads and so grow with a run's *length*
@@ -538,7 +686,7 @@ export function estimateTask(task: Task, on?: EstimateOn): Estimate {
 export function overrunFactor(runId: string): number | null {
   const run = db()
     .prepare(
-      `select r.task_id as task_id, r.project_id, r.adapter_id, r.model, r.cost_model_id,
+      `select r.id as id, r.task_id as task_id, r.project_id, r.adapter_id, r.model, r.cost_model_id,
               r.started_warm, r.input_tokens, r.output_tokens, r.cache_read_tokens,
               r.cache_write_tokens,
               (r.input_tokens + r.output_tokens + r.cache_read_tokens + r.cache_write_tokens) as total
@@ -565,6 +713,13 @@ export function overrunFactor(runId: string): number | null {
     ...(run.started_warm === null ? {} : { warm: run.started_warm === 1 })
   })
   if (estimate.confidence === 'none') return null
+
+  // Money first. ⚠️ Both sides must be real: a run priced `n/a` against a dollar estimate, or the
+  // reverse, is not a ratio at all, and silently treating either `null` as zero would either
+  // exonerate a runaway or condemn an ordinary run.
+  const spentUsd = priceForRun(runId)?.usd ?? null
+  if (spentUsd !== null && estimate.usd !== null && estimate.usd > 0) return spentUsd / estimate.usd
+
   return (priced?.tokens ?? run.total) / Math.max(1, estimate.pricedTokens)
 }
 

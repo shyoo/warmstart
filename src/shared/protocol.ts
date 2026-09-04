@@ -159,6 +159,24 @@ export interface CostFactorReport {
     /** What is actually applied. */
     factor: number
     assumed: boolean
+    /**
+     * The median run on this rung in **dollars** rather than priced tokens.
+     *
+     * ⛔ Carried beside `medianPriced` rather than replacing it: money is now the primary
+     * indicator, but the two are measured from different things (§5) and neither is derived from
+     * the other. `null` where no run on this rung could be priced at all.
+     */
+    medianUsd: number | null
+    /** ⚠️ How many of `samples` yielded a price. Always ≤ `samples`, and often far fewer. */
+    usdSamples: number
+    /**
+     * Which series `ratio` was actually measured in.
+     *
+     * ⛔ Carried because a ×12 learned from dollars and a ×12 learned from priced tokens are
+     * different claims about the same rung, and the number alone cannot tell them apart. Every
+     * belief carries its basis (AGENTS.md), and for this rung the basis is *which unit*.
+     */
+    learnedFrom: 'usd' | 'priced_tokens'
   }>
   warmFactor: number
   coldFactor: number
@@ -167,7 +185,11 @@ export interface CostFactorReport {
   /** The fleet's median run with every factor divided out — the unit `factor` multiplies. */
   neutralPriced: number
   neutralRaw: number
+  /** The same fleet-neutral run in **dollars**, or null where no run in the window could be priced. */
+  neutralUsd: number | null
   samples: number
+  /** ⚠️ Fleet-wide count of runs that could be priced in money. Always ≤ `samples`. */
+  usdSamples: number
   assumed: boolean
 }
 
@@ -200,6 +222,20 @@ export interface CostReport {
    * runs and a 12x from one are different claims, and the second is mostly the prior.
    */
   costFactors: CostFactorReport
+  /**
+   * What each worker's money meters last read — the pay-as-you-go side of the cost picture, beside
+   * the quota windows that carry the subscription side.
+   *
+   * ⚠️ `sampledAt` is null where the worker has never been probed, and `error` carries the last
+   * failed probe verbatim. A meter reading is never shown without its age.
+   */
+  spend: Array<{
+    workerId: string
+    label: string
+    meters: SpendMeter[]
+    sampledAt: number | null
+    error: string | null
+  }>
   workers: Array<{
     workerId: string
     label: string
@@ -431,6 +467,53 @@ export interface QuotaSnapshot {
   sampledAt: number
   source: 'cli' | 'config-cache' | 'unknown'
   /** Set when the probe failed. The scheduler degrades conservatively rather than stalling. */
+  error?: string
+}
+
+/**
+ * One meter of **money actually billed**, as opposed to a `QuotaWindow`'s share of a flat fee.
+ *
+ * ⛔ **The money analogue of a quota window, and deliberately not the same type.** A window is a
+ * percentage of something already paid for; a meter is a purse or a counter that a vendor charges
+ * against on top of the subscription — Claude extra-usage overage, Antigravity cloud credits,
+ * Codex credits. The two are summed into one headline (`RunPrice.usd`) and are never conflated on
+ * the way there.
+ */
+export interface SpendMeter {
+  id: string
+  label: string
+  /** ⚠️ A column, not an assumption, so a credit purse is a value rather than a schema change. */
+  unit: 'usd' | 'credits'
+  /**
+   * What the meter read. `null` means the probe ran and found nothing — which is a fact, and not
+   * the same statement as a balance of zero.
+   */
+  balance: number | null
+  /**
+   * Which way the number moves when money is spent.
+   *
+   * ⛔ `'balance_falls'` is a purse being drawn down, where a *rise* is a top-up;
+   * `'spend_rises'` is a cumulative counter, where a *fall* is a billing-period rollover. Both of
+   * those are "the baseline moved", and both poison every run across them — the exact analogue of
+   * a quota window rolling over. See `attribute()` in daemon/price.ts.
+   */
+  direction: 'balance_falls' | 'spend_rises'
+  /**
+   * What one unit is worth in dollars. Always 1 for a `usd` meter.
+   *
+   * ⛔ `null` where the vendor publishes no conversion, which makes the meter **real but
+   * unpriceable** — such a movement is `n/a`, never $0.00.
+   */
+  usdPerUnit: number | null
+}
+
+/** Every meter one worker reports, at one moment. The money analogue of `QuotaSnapshot`. */
+export interface SpendSnapshot {
+  workerId: string
+  meters: SpendMeter[]
+  sampledAt: number
+  source: 'cli' | 'config-cache' | 'stream' | 'unknown'
+  /** Set when the probe failed. ⚠️ A failed probe is recorded, not dropped — see `QuotaSnapshot`. */
   error?: string
 }
 
@@ -735,6 +818,24 @@ export interface AdapterCapabilities {
    */
   selectableEffort: boolean
   quotaProbe: 'cli' | 'api' | 'none'
+  /**
+   * Where this adapter's **money** reading comes from, if it has one at all.
+   *
+   * ⛔ The money analogue of `quotaProbe`, and a capability rather than a lookup table for the same
+   * reason: nothing may branch on which adapter it is holding. A vendor that starts publishing a
+   * balance becomes a value here and an implementation of `probeSpend`, and no scheduling code
+   * changes.
+   *
+   *  - `none`         — this CLI reports no money at all. Every adapter starts here, and most stay.
+   *  - `cli`          — a command has to be run to read it. Nothing declares this yet.
+   *  - `config-cache` — it is already on disk, left behind by the CLI's own work. A file read, no
+   *    process, no token. Codex writes its credit balance into every rollout.
+   *  - `stream`       — it rides a turn already being paid for and arrives unasked. Claude Code
+   *    reports `total_cost_usd` and its overage flags on records this fleet is already decoding.
+   *    ⛔ There is nothing to poll on such an adapter, and `probeSpend` must not exist on one: a
+   *    separate probe would be a second way to learn the same fact, and a costlier one.
+   */
+  spendProbe: 'none' | 'cli' | 'config-cache' | 'stream'
   /**
    * Does this CLI's `stream` transport hold a conversation on stdin, or read one prompt and stop?
    *
@@ -1620,8 +1721,16 @@ export interface RpcMap {
     params: { id: string; workerId?: string }
     result: {
       tokens: number
-      /** The same number in input-token-equivalents, the unit comparisons are made in. */
+      /** The same number in input-token-equivalents, the fallback unit and historical series. */
       pricedTokens: number
+      /**
+       * The same estimate in **money**, the primary cost indicator.
+       *
+       * ⛔ `null` is `n/a` — no run behind this estimate could be priced — and never `$0.00`.
+       */
+      usd: number | null
+      /** ⚠️ How much the *money* answer is worth. `none` exactly when `usd` is null. */
+      usdConfidence: 'none' | 'low' | 'medium' | 'high'
       confidence: 'none' | 'low' | 'medium' | 'high'
       basis: string
       /** The agent/model multiplier applied; 1 when no worker was named or none is known yet. */

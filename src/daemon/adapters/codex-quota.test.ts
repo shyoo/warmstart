@@ -3,12 +3,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import {
+  creditBalance,
   formatPlan,
   lastRateLimits,
   openaiCompatible,
   parseJwtPayload,
   readCodexAuthIdentity,
   rolloutQuota,
+  rolloutSpend,
   windowsFromRateLimits
 } from './openai-compatible.js'
 import { parseQuotaResetTime } from '../quota.js'
@@ -139,6 +141,113 @@ describe('the rollout rung', () => {
     expect(q.error).toMatch(/unlimited credits/)
     // ⚠️ Still the vendor's timestamp: we know *when* we learned there is nothing to meter.
     expect(q.sampledAt).toBe(Date.parse('2026-08-30T01:23:30.316Z'))
+  })
+})
+
+/**
+ * The credit purse, off the same file the quota comes from.
+ *
+ * ⛔ **It was on disk for three months.** `lastRateLimits` has parsed the `credits` block since M5
+ * and read exactly one field of it — `unlimited`, for an error string. The balance beside it was
+ * dropped, so a fleet that could say what percentage of a window an account had burned could not say
+ * that its purse had fallen while it did. ⚠️ `balance` is typed `number | string | null` in the
+ * records seen so far, and every one of those spellings has to come out as the same fact or as
+ * `null` — never as `0`, which is a claim that the account is out of money.
+ */
+describe("codex's credit meter", () => {
+  const withCredits = (credits: string): string =>
+    readFileSync(FIXTURE, 'utf8').replace(
+      '"credits":{"has_credits":false,"unlimited":false,"balance":null}',
+      credits
+    )
+
+  it('reads a numeric balance and dates it by the vendor timestamp', () => {
+    const dir = join(root, 'spend-number')
+    plantRollout(
+      dir,
+      ['2026', '08', '29'],
+      'rollout-spend-number.jsonl',
+      withCredits('"credits":{"has_credits":true,"unlimited":false,"balance":412.5}')
+    )
+    const s = rolloutSpend(dir)
+    expect(s.source).toBe('config-cache')
+    expect(s.error).toBeUndefined()
+    expect(s.meters).toEqual([
+      {
+        id: 'codex_credits',
+        label: 'Codex credits',
+        unit: 'credits',
+        balance: 412.5,
+        // A purse: it falls as work is done, and a rise is a top-up rather than spend.
+        direction: 'balance_falls',
+        // ⛔ Null, and it stays null until a vendor publishes a conversion. `n/a`, never $0.00.
+        usdPerUnit: null
+      }
+    ])
+    // ⛔ The rollout's own timestamp. This reading is only ever as fresh as the worker's last turn,
+    // and stamping it with our clock would present a balance from Tuesday as one taken now.
+    expect(s.sampledAt).toBe(Date.parse('2026-08-30T01:23:30.316Z'))
+  })
+
+  it('reads a balance the vendor sent as a string, because it has sent one', () => {
+    const dir = join(root, 'spend-string')
+    plantRollout(
+      dir,
+      ['2026', '08', '29'],
+      'rollout-spend-string.jsonl',
+      withCredits('"credits":{"has_credits":true,"unlimited":false,"balance":"37"}')
+    )
+    expect(rolloutSpend(dir).meters[0]!.balance).toBe(37)
+  })
+
+  it('reports a null balance as a meter that read nothing, not as a purse at zero', () => {
+    // ⚠️ The fixture's own account, unmodified: free plan, `"balance":null`. The meter is real and
+    // the number is absent, which is a different sentence from "there is no money left".
+    const dir = join(root, 'spend-null')
+    plantRollout(dir, ['2026', '08', '29'], 'rollout-spend-null.jsonl', readFileSync(FIXTURE, 'utf8'))
+    const s = rolloutSpend(dir)
+    expect(s.meters).toHaveLength(1)
+    expect(s.meters[0]!.balance).toBeNull()
+  })
+
+  it('parses defensively, and answers null rather than a number it made up', () => {
+    expect(creditBalance(0)).toBe(0)
+    expect(creditBalance('0')).toBe(0)
+    expect(creditBalance('12.5')).toBe(12.5)
+    expect(creditBalance(null)).toBeNull()
+    expect(creditBalance(undefined)).toBeNull()
+    expect(creditBalance('')).toBeNull()
+    expect(creditBalance('lots')).toBeNull()
+    expect(creditBalance(Number.NaN)).toBeNull()
+  })
+
+  it('gives an unlimited account no meter at all, and says why', () => {
+    // ⛔ The same account state `probeQuota` already reports, reported the same way. A meter invented
+    // for an unlimited account would draw a purse that never moves — indistinguishable on screen
+    // from one nobody is spending from.
+    const dir = join(root, 'spend-unlimited')
+    plantRollout(
+      dir,
+      ['2026', '08', '29'],
+      'rollout-spend-unlimited.jsonl',
+      withCredits('"credits":{"has_credits":true,"unlimited":true,"balance":null}')
+    )
+    const s = rolloutSpend(dir)
+    expect(s.meters).toEqual([])
+    expect(s.error).toMatch(/unlimited credits/)
+    expect(s.sampledAt).toBe(Date.parse('2026-08-30T01:23:30.316Z'))
+  })
+
+  it('says so when the root holds no rollouts at all', () => {
+    const s = rolloutSpend(join(root, 'spend-empty'))
+    expect(s.meters).toEqual([])
+    expect(s.source).toBe('unknown')
+    expect(s.error).toMatch(/no codex rollout files/)
+  })
+
+  it('declares the capability the poller reads, rather than being recognised by name', () => {
+    expect(openaiCompatible.info.capabilities.spendProbe).toBe('config-cache')
+    expect(typeof openaiCompatible.probeSpend).toBe('function')
   })
 })
 

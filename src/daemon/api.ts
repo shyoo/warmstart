@@ -122,6 +122,7 @@ import { decide, medianHumanLatencyMs } from './cacheclock.js'
 import { DEFAULT_OBJECTIVE, parseObjective, resolveObjective } from './objective.js'
 import { setSetting, settings } from './settings.js'
 import { lastRateLimit, windowResetsAt } from './quota.js'
+import { lastSpend } from './spend.js'
 import { compactionsForTask } from './compaction.js'
 import { listConversations } from './conversations.js'
 import { log, logFiles, recentLog } from './log.js'
@@ -919,7 +920,30 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
         decisions: live.map((session) => decide(session, { objective })),
         recent: recentClockEvents(30) as CostReport['recent'],
         medianHumanLatencyMs: medianHumanLatencyMs(),
+        // ⚠️ Published whole, `learnedFrom` and all. The money fields are measured now, and
+        // `null` still means "nothing on this rung could be priced" rather than $0.00. `usdSamples`
+        // is its own count on every rung: a key's priced runs are a subset of its runs, so it is
+        // routinely far below `samples`. ⛔ Never re-mapped field by field on the way out — a rung
+        // that gains a basis the estimator publishes would silently lose it here.
         costFactors: costFactors(),
+        // ⚠️ One entry per worker that has ever been probed, and none for the rest — an account
+        // nobody has asked is absent here rather than present with a meter at zero. `sampledAt` is
+        // the **vendor's** timestamp where the vendor supplied one, which is what makes the age on
+        // screen an honest age; `error` carries the last failed probe verbatim.
+        spend: listWorkers().flatMap((w) => {
+          const reading = lastSpend(w.id)
+          return reading
+            ? [
+                {
+                  workerId: w.id,
+                  label: w.label,
+                  meters: reading.meters,
+                  sampledAt: reading.sampledAt,
+                  error: reading.error ?? null
+                }
+              ]
+            : []
+        }),
         settings: settings(),
         workers: listWorkers().map((w) => {
           const remaining = remainingTokens(w.id)
@@ -983,6 +1007,10 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
       return {
         tokens: estimate.tokens,
         pricedTokens: estimate.pricedTokens,
+        // ⚠️ `null` where the runs behind the answer could not be priced, which is a different
+        // statement from "it is free"; `usdConfidence` is `none` in exactly that case.
+        usd: estimate.usd,
+        usdConfidence: estimate.usdConfidence,
         confidence: estimate.confidence,
         basis: estimate.basis,
         factor: estimate.factor,

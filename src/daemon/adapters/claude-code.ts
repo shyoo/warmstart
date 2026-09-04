@@ -42,6 +42,14 @@ const info: AdapterInfo = {
     // messages cache — see docs/cost-model.md §11 for why that is a different decision.
     selectableEffort: true,
     quotaProbe: 'cli',
+    // ⭐ **Money arrives unasked here, on records this fleet already decodes.** The `result`
+    // record carries `total_cost_usd` and the `rate_limit_event` carries `isUsingOverage` /
+    // `overageStatus` — both were being thrown away. ⛔ So there is no `probeSpend` on this
+    // adapter and there must not be one: the signal rides a turn already being paid for, and a
+    // poller asking the same question again would be the expensive way to learn what is already
+    // in hand. ⚠️ `total_cost_usd` on a subscription is the **API-equivalent list price**, not
+    // money out of pocket — see `creditRunListUsd` in tasks.ts.
+    spendProbe: 'stream',
     // stdin stays open and takes prompt after prompt; that is what the stream transport is for.
     streamPrompts: 'conversation',
     // `--session-id` takes a uuid we choose, which is what makes the transcript path knowable before

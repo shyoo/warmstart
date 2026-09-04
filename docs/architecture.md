@@ -67,7 +67,7 @@ The RPC method table is the object literal in `daemon/api.ts` — ~90 methods gr
 |---|---|---|---|
 | **Scheduler tick** | `TICK_MS` = 10s | `scheduler.ts` `tick()` | ⛔ **nothing** |
 | **Controller drain** | `CONTROLLER_LOOP_MS` = 30s | `controller.ts` | tokens, on judgment events only |
-| **Quota poller** | self-paced, `probeDemand()` | `quota.ts` | no tokens; opens a PTY per refresh |
+| **Quota poller** | self-paced, `probeDemand()` | `quota.ts` | no tokens; opens a PTY per refresh. ⚠️ Reads **money** on the same pass — see below |
 
 ### The scheduler tick, in order
 
@@ -104,6 +104,13 @@ delay, refreshing only where something is about to act on the number: a run in f
 past its reset, or a live rate-limit warning (`requestUrgentProbe`). `ensureFreshQuota()` at the
 dispatch gate and at run end shares the same ledger, so two terminals never open on one account.
 Details and the staleness ladder: [`cost-model.md`](cost-model.md) §5.
+
+⛔ **It reads money on the same pass, and deliberately owns no second timer.** `probeSpendFor`
+(`spend.ts`) asks whatever the adapter's `spendProbe` capability says can be asked — never which
+adapter it is — and writes `spend_samples`. The two readings answer halves of one question, and the
+account worth asking about is the same account in both. ⚠️ It never throws and never fails the quota
+probe beside it: an adapter that breaks its own best-effort contract must not cost that account the
+window reading every gate and reserve is computed from.
 
 ## 3. The data directory
 

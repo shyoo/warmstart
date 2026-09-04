@@ -153,15 +153,31 @@ const TASK_SELECT = `
  *
  * ⚠️ `spentUsdPartial` is the difference between "this task cost $0.10" and "this task cost at
  * least $0.10": true whenever any of its runs could not be priced at all.
+ *
+ * ⛔ `spentListUsd` rides along and is **not** part of `spentUsd` — it is what the task would have
+ * cost on a market-rated API, which is a different question from what it cost. `spentOverageUsd`
+ * *is* part of `spentUsd`: the share of it that a vendor billed directly rather than amortised out
+ * of the subscription. See `RunPrice` and daemon/price.ts.
  */
 function withPrice(budget: Budget, taskId: string): Budget {
   const price = priceForTask(taskId)
-  if (!price) return { ...budget, spentUsd: null, spentUsdEstimated: false, spentUsdPartial: false }
+  if (!price) {
+    return {
+      ...budget,
+      spentUsd: null,
+      spentUsdEstimated: false,
+      spentUsdPartial: false,
+      spentOverageUsd: null,
+      spentListUsd: null
+    }
+  }
   return {
     ...budget,
     spentUsd: price.usd,
     spentUsdEstimated: price.estimated,
-    spentUsdPartial: price.partial
+    spentUsdPartial: price.partial,
+    spentOverageUsd: price.overageUsd,
+    spentListUsd: price.listUsd
   }
 }
 
@@ -1620,6 +1636,70 @@ export function runForSession(sessionId: string): Run | null {
       .get(sessionId)
   )
   return r ? toRun(r) : null
+}
+
+/**
+ * Record what this run's work would have cost at the vendor's list price.
+ *
+ * ⛔ **Not money out of pocket, and the comment is the point.** Claude Code's `result` record carries
+ * `total_cost_usd`, and on a subscription that number is the **API-equivalent list price** — what
+ * these tokens would have been billed at market rate by an account paying per token. Nobody on this
+ * fleet pays it. It goes in `list_usd`, it is never summed into a headline cost (`RunPrice.usd` is
+ * subscription + overage and says so), and it is genuinely useful for the one question it answers:
+ * what is the subscription worth against pay-as-you-go.
+ *
+ * ⛔ **Replaces, never adds.** `total_cost_usd` is cumulative for the invocation, exactly as the
+ * `usage` record's counters are cumulative for a turn (see `StreamEvent.usage` in stream.ts). A
+ * session that emits two `result` records has not spent the sum of them; it has spent the second.
+ * Adding would double-count every multi-result session, quietly and in the expensive direction.
+ *
+ * ⚠️ A session with no open run swallows it. The record can arrive after the run has been closed —
+ * a finish, a cancel, a wrap-up — and there is nothing to attribute it to then. Silence is right:
+ * inventing a run to hold a number is worse than losing the number.
+ */
+export function creditRunListUsd(sessionId: string, usd: number | null): void {
+  // ⚠️ `null` is *the vendor said nothing*, which must not be written as 0 — that would claim a turn
+  // was free rather than unmeasured, and `RunPrice` keeps those apart everywhere else.
+  if (usd === null || !Number.isFinite(usd)) return
+  const run = runForSession(sessionId)
+  if (!run) return
+  db().prepare('update runs set list_usd = ? where id = ?').run(usd, run.id)
+  bumpPricingEpoch()
+}
+
+/**
+ * Mark the run that was open when the vendor said something about overage.
+ *
+ * ⛔ **Nullable, and null is not `false`.** The columns start null and stay null unless the vendor
+ * speaks: `on_overage = 0` means *it told us this run was not on overage*, and `null` means *it
+ * never said*. Collapsing the two would turn every un-instrumented run into positive evidence that
+ * no extra-usage money was spent on it, which is exactly the belief that cannot be manufactured.
+ *
+ * ⚠️ Each field is written only when it was said. A `rate_limit_event` carrying a status and no
+ * boolean must not blank a boolean an earlier event on the same run established.
+ *
+ * ⚠️ No event emitted. This fires on every rate-limit record of every turn, and the price a reader
+ * sees is derived on read anyway — the epoch bump is what makes the next read correct.
+ */
+export function markRunOverage(
+  sessionId: string,
+  info: { isUsingOverage?: boolean; overageStatus?: string }
+): void {
+  const run = runForSession(sessionId)
+  if (!run) return
+  const sets: string[] = []
+  const args: Array<number | string> = []
+  if (typeof info.isUsingOverage === 'boolean') {
+    sets.push('on_overage = ?')
+    args.push(info.isUsingOverage ? 1 : 0)
+  }
+  if (typeof info.overageStatus === 'string') {
+    sets.push('overage_status = ?')
+    args.push(info.overageStatus)
+  }
+  if (sets.length === 0) return
+  db().prepare(`update runs set ${sets.join(', ')} where id = ?`).run(...args, run.id)
+  bumpPricingEpoch()
 }
 
 /**

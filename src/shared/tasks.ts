@@ -283,6 +283,20 @@ export interface Budget {
   spentUsdEstimated?: boolean
   /** ⚠️ At least one run could not be priced, so the total above is a **lower bound**. */
   spentUsdPartial?: boolean
+  /**
+   * The vendor's API-equivalent list price for every run of this task, summed.
+   *
+   * ⛔ **Not a component of `spentUsd`**, for the reason `RunPrice.listUsd` gives: it is what
+   * this task *would* have cost on a market-rated API, not what anybody was billed.
+   *
+   * ⚠️ Derived on read like `spentUsd`, and never written to `budget_json`.
+   */
+  spentListUsd?: number | null
+  /**
+   * The directly-billed pay-as-you-go share of `spentUsd` — overage and credits, not the amortised
+   * subscription. ⚠️ Derived on read like `spentUsd`, and never written to `budget_json`.
+   */
+  spentOverageUsd?: number | null
 }
 
 export type MessageRole = 'human' | 'agent' | 'controller' | 'system'
@@ -750,7 +764,7 @@ export interface Run {
 /**
  * Why a run costs what it costs — or why it costs nothing that can be said.
  *
- * ⛔ **Five of these seven are `n/a`, and they are deliberately not one value.** "the account is
+ * ⛔ **Six of these eight are `n/a`, and they are deliberately not one value.** "the account is
  * free", "nobody read the window either side of this run" and "the window rolled over mid-run" are
  * three different facts about the same missing number, and a reader who is shown one dash for all
  * three has no way to tell a run that cost nothing from a run nobody measured.
@@ -770,11 +784,57 @@ export type PriceReason =
   | 'unpriced_plan'
   /** No plan could be resolved at all. */
   | 'no_plan'
+  /**
+   * No meter reached this run: neither a subscription window nor a spend meter had anything to say.
+   *
+   * ⚠️ Distinct from `no_reading`, which means a meter exists and this run fell between two of its
+   * readings. This one means there was nothing to read from in the first place.
+   */
+  | 'no_meter'
 
-/** A run's cost in money, with the basis every cost belief in this repo has to carry. */
+/**
+ * A run's cost in money, with the basis every cost belief in this repo has to carry.
+ *
+ * ⛔ **Money here is layered, and `usd` is the headline sum of exactly two of the layers.**
+ * Every agent on this fleet runs on a subscription, so what an operator pays is an amortised share
+ * of a flat monthly fee (`subscriptionUsd`) **plus** whatever was billed directly on top of it
+ * (`overageUsd`). `listUsd` is carried beside them and is **never** part of `usd` — see its own
+ * note. See daemon/price.ts and docs/cost-model.md §13.
+ */
 export interface RunPrice {
-  /** ⛔ `null` is `n/a`, and `reason` says which `n/a`. Never rendered as $0.00. */
+  /**
+   * The headline: `subscriptionUsd + overageUsd`, treating `null` as *absent* rather than zero.
+   *
+   * ⛔ `null` is `n/a`, and `reason` says which `n/a`. Never rendered as $0.00. Where only one
+   * of the two layers could be priced this is that layer alone, and `basis` says the total is a
+   * lower bound.
+   *
+   * ⚠️ Kept as the field name, and as the number every existing call site already reads, so that
+   * adding the layers below broke no surface that only ever wanted "what did this cost".
+   */
   usd: number | null
+  /**
+   * This run's share of the billing window × the plan's monthly fee.
+   *
+   * ⚠️ **Amortised, not cash.** Nobody is charged this at the moment the run happens; the
+   * subscription was already paid. It is what the run consumed *of* that payment.
+   */
+  subscriptionUsd: number | null
+  /**
+   * Directly-measured pay-as-you-go dollars: Claude extra-usage overage, Antigravity cloud credits,
+   * Codex credits. Attributed from `spend_samples` the same way the window percent is.
+   */
+  overageUsd: number | null
+  /**
+   * What the same work would have cost on the vendor's market-rated API.
+   *
+   * ⛔ **Never part of `usd`, and never summed with either layer above.** It answers "is the
+   * subscription worth it", which is a different question from "what did this cost me"; adding it
+   * would double-count a bill that was never issued.
+   */
+  listUsd: number | null
+  /** Whether this run was drawing on paid overage rather than the subscription. `null` = unknown. */
+  onOverage: boolean | null
   /** The share of the billing window attributed to this run. */
   percent: number | null
   /** The `*`: a split, a stale reading, or a run still in flight. */

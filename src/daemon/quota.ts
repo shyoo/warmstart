@@ -8,6 +8,8 @@ import { listWorkers, refreshIdentityIfStale, requireWorker } from './workers.js
 import { settings } from './settings.js'
 import { log } from './log.js'
 import { bumpPricingEpoch } from './price.js'
+import { probeSpendFor } from './spend.js'
+import { markRunOverage } from './tasks.js'
 
 /**
  * The quota poller.
@@ -121,6 +123,12 @@ export async function probeWorker(workerId: string): Promise<DatedQuota> {
   const probed = await adapter(w.adapterId).probeQuota(w.isolationRoot)
   const snapshot: QuotaSnapshot = { workerId, ...probed }
   storeAndPublish(snapshot)
+  // ⛔ **Money rides the same pacing, deliberately, rather than owning a second timer.** The two
+  // readings answer halves of one question — what the subscription bought and what is being billed
+  // on top of it — and the account that is worth asking about is the same account in both cases.
+  // ⚠️ `probeSpendFor` never throws and never touches the quota reading above it: an adapter that
+  // breaks its own contract must not cost this account its window. See spend.ts.
+  await probeSpendFor(workerId)
   // ⛔ Logged whether it worked or not. This is the cheap rung — a file read, no process — and it is
   // the one that runs on its own every few minutes, so it is also the one an operator is most likely
   // to be asking about: *when did it last look at that account, and what did it see?* It said
@@ -152,6 +160,16 @@ export async function probeWorker(workerId: string): Promise<DatedQuota> {
  * button a person pressed — never in a scheduler tick.
  */
 export async function refreshUsage(workerId: string): Promise<DatedQuota> {
+  const quota = await readUsage(workerId)
+  // ⛔ **After the refresh, not instead of it, and on every path out of it.** A screen-answered
+  // refresh never reaches `probeWorker`, so without this the one adapter whose quota is hardest to
+  // read would be the one whose meters were never asked about. ⚠️ Cheap twice over: the probe is a
+  // file read, and a reading identical to the one already stored writes no row at all (spend.ts).
+  await probeSpendFor(workerId)
+  return quota
+}
+
+async function readUsage(workerId: string): Promise<DatedQuota> {
   const w = requireWorker(workerId)
   const refresh = adapter(w.adapterId).info.usageRefresh
 
@@ -524,7 +542,14 @@ export function isRefusal(status: string): boolean {
 export function recordRateLimit(
   workerId: string,
   sessionId: string | null,
-  info: { status: string; rateLimitType: string; resetsAt: number | null }
+  info: {
+    status: string
+    rateLimitType: string
+    resetsAt: number | null
+    /** ⚠️ The vendor's own words for the overage state, when it says anything at all. */
+    overageStatus?: string
+    isUsingOverage?: boolean
+  }
 ): void {
   db()
     .prepare(
@@ -532,6 +557,13 @@ export function recordRateLimit(
        values (?,?,?,?,?,?)`
     )
     .run(workerId, sessionId, info.rateLimitType, info.status, info.resetsAt, Date.now())
+
+  // ⛔ **The other half of this record, which was decoded and then dropped.** `isUsingOverage` and
+  // `overageStatus` say that the turn now running is being billed as *extra usage* — real money, on
+  // top of the subscription — and this event is the only place either is ever stated. It cannot
+  // price anything by itself; what it does is mark which runs were burning it, and without that mark
+  // no overage arithmetic is possible at all. See `markRunOverage`.
+  if (sessionId) markRunOverage(sessionId, info)
 
   if (info.status !== 'allowed') {
     log.warn(`worker ${workerId.slice(0, 8)} rate limit status is '${info.status}' (${info.rateLimitType})`)

@@ -3,7 +3,7 @@ import { execFile, execFileSync, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { AdapterDetection, AdapterInfo, QuotaSnapshot } from '@shared/protocol.js'
+import type { AdapterDetection, AdapterInfo, QuotaSnapshot, SpendSnapshot } from '@shared/protocol.js'
 import type {
   AgentAdapter,
   IdentityProbe,
@@ -140,6 +140,11 @@ const info: AdapterInfo = {
     // ⚠️ Still no `usageRefresh`: making this reading current means spending a turn, so an idle
     // codex worker goes stale and the staleness ladder is the honest answer.
     quotaProbe: 'cli',
+    // ⭐ **The balance was already on disk too.** Every rollout that records `rate_limits` records
+    // `credits` beside it, and only `unlimited` was ever read — the number itself was parsed and
+    // dropped. So the money rung is the same rung as the quota one: a file read, no process, no
+    // token. See `rolloutSpend`.
+    spendProbe: 'config-cache',
     /**
      * ⛔ `once`, measured 2026-08-29 against codex-cli 0.151.0. `codex exec` with no positional
      * PROMPT reads stdin **to EOF** — `exec --help` says so and the process says so, printing
@@ -716,10 +721,12 @@ async function readAccountRateLimits(isolationRoot: string): Promise<CodexRateLi
         if (!msg) continue
         if (msg.id === 1) {
           // The handshake is answered; ask the one question and nothing else.
-          child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'initialized' })}\n`)
-          child.stdin.write(
-            `${JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'account/rateLimits/read' })}\n`
-          )
+          if (child.stdin.writable) {
+            child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'initialized' })}\n`)
+            child.stdin.write(
+              `${JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'account/rateLimits/read' })}\n`
+            )
+          }
         } else if (msg.id === 2) {
           const result = asRecord(msg.result)
           const limits = asRecord(result?.rateLimits) as CodexRateLimits | undefined
@@ -728,14 +735,16 @@ async function readAccountRateLimits(isolationRoot: string): Promise<CodexRateLi
       }
     })
 
-    child.stdin.write(
-      `${JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'initialize',
-        params: { clientInfo: { name: 'multi-agent-controller', title: 'quota probe', version: '1' } }
-      })}\n`
-    )
+    if (child.stdin.writable) {
+      child.stdin.write(
+        `${JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'initialize',
+          params: { clientInfo: { name: 'multi-agent-controller', title: 'quota probe', version: '1' } }
+        })}\n`
+      )
+    }
   })
 }
 
@@ -787,6 +796,109 @@ export function rolloutQuota(isolationRoot: string): Omit<QuotaSnapshot, 'worker
   }
   return {
     windows: [],
+    sampledAt: Date.now(),
+    source: 'unknown',
+    error: `no rate_limits record in the ${files.length} newest codex rollout(s)`
+  }
+}
+
+/**
+ * A credit balance out of `credits.balance`, defensively.
+ *
+ * ⛔ **Unparseable is `null`, never `0`.** The field is typed `number | string | null` in the
+ * records this fleet has seen — a paid account answered the string `'0'` — and a purse read as zero
+ * says *this account is out of money*, which is a sentence that stops work. `null` says *nobody
+ * knows*, which is the truth and which the pipeline renders `n/a`.
+ */
+export function creditBalance(raw: number | string | null | undefined): number | null {
+  if (typeof raw === 'number') return Number.isFinite(raw) ? raw : null
+  if (typeof raw !== 'string') return null
+  const trimmed = raw.trim()
+  if (!trimmed) return null
+  const parsed = Number(trimmed)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+/**
+ * Codex's money meter: the credit purse, read off the same rollout the quota comes from.
+ *
+ * ⭐ **It was on disk the whole time.** `lastRateLimits` has parsed `credits` since M5 and used
+ * exactly one field of it — `unlimited`, for an error string. The balance beside it was dropped, so
+ * a fleet that could tell you what percentage of a window an account had used could not tell you
+ * that its purse had fallen by $4 doing it. This is that number, and it costs what the quota read
+ * costs: one file, no process, no token.
+ *
+ * ⛔ `usdPerUnit: null`, and it stays null until a vendor publishes a conversion. A credit is not a
+ * dollar, and inventing a rate would put a fabricated number into a bill — `price.ts` renders an
+ * unpriceable meter `n/a` and must be allowed to.
+ *
+ * ⚠️ Dated by the **vendor's** timestamp, like `rolloutQuota`: the rollout is only ever as fresh as
+ * the worker's last turn, and an idle account's reading has to be allowed to age visibly.
+ *
+ * ⚠️ Separate from `probeSpend` for the same reason `rolloutQuota` is separate from `probeQuota` —
+ * so it can be tested without a codex on PATH or a signed-in account.
+ */
+export function rolloutSpend(isolationRoot: string): Omit<SpendSnapshot, 'workerId'> {
+  const files = recentRollouts(isolationRoot)
+  if (files.length === 0) {
+    return {
+      meters: [],
+      sampledAt: Date.now(),
+      source: 'unknown',
+      error:
+        'there are no codex rollout files under ' +
+        `${join(isolationRoot, 'sessions')} yet, so no credit balance has been written`
+    }
+  }
+  for (const file of files) {
+    let found: ReturnType<typeof lastRateLimits>
+    try {
+      found = lastRateLimits(readFileSync(file, 'utf8'))
+    } catch (err) {
+      log.debug(`codex probeSpend could not read ${file}:`, err)
+      continue
+    }
+    if (!found) continue
+    const credits = found.limits.credits
+    // ⛔ The same account state `probeQuota` already reports, reported the same way: an unlimited
+    // account has no meter, and saying so is not a failed probe. A meter invented for it would read
+    // as a purse that never moves, which is indistinguishable from one nobody is spending from.
+    if (credits?.unlimited === true) {
+      return {
+        meters: [],
+        sampledAt: found.at,
+        source: 'config-cache',
+        error: 'codex reports unlimited credits, so there is no purse to meter'
+      }
+    }
+    if (!credits) {
+      return {
+        meters: [],
+        sampledAt: found.at,
+        source: 'config-cache',
+        error: 'codex reported rate limits with no `credits` block'
+      }
+    }
+    return {
+      meters: [
+        {
+          id: 'codex_credits',
+          label: 'Codex credits',
+          unit: 'credits',
+          // ⚠️ A row with a null balance is still written by the store: the probe ran, and *what it
+          // found* is that this account publishes no number. See spend.ts.
+          balance: creditBalance(credits.balance),
+          // A purse. It falls as work is done, and a rise is a top-up — not spend. See `attribute`.
+          direction: 'balance_falls',
+          usdPerUnit: null
+        }
+      ],
+      sampledAt: found.at,
+      source: 'config-cache'
+    }
+  }
+  return {
+    meters: [],
     sampledAt: Date.now(),
     source: 'unknown',
     error: `no rate_limits record in the ${files.length} newest codex rollout(s)`
@@ -981,6 +1093,19 @@ export const openaiCompatible: AgentAdapter = {
     }
 
     return rolloutQuota(isolationRoot)
+  },
+
+  /**
+   * The credit purse, off the newest rollout.
+   *
+   * ⛔ **The rollout only, deliberately, where `probeQuota` asks the app-server first.** The live
+   * call answers `account/rateLimits/read` in ~700ms and spawns a process to do it; this reading is
+   * in the same file the quota fallback already reads, and it rides beside a probe that has just run.
+   * Spending a process on the second copy of a number the first one left on disk is the kind of cost
+   * this whole adapter was written to avoid.
+   */
+  async probeSpend(isolationRoot: string): Promise<Omit<SpendSnapshot, 'workerId'>> {
+    return rolloutSpend(isolationRoot)
   },
 
   /**

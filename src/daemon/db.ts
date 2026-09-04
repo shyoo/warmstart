@@ -1390,6 +1390,76 @@ const MIGRATIONS: Migration[] = [
     if (!hasColumn(conn, 'tasks', 'quota_preempt_json')) {
       conn.exec('alter table tasks add column quota_preempt_json text;')
     }
+  },
+
+  // 43 - money as the primary cost indicator: the layered dollars, and the meters they come from.
+  //
+  // ⛔ **Money is layered, and the layers are not interchangeable.** Every agent on this fleet
+  // runs on a *subscription*, so a token count is a proxy for a bill nobody pays. What an operator
+  // is actually charged is an amortised share of a flat monthly fee **plus** whatever was billed
+  // directly on top of it — Claude extra-usage overage, Antigravity cloud credits, Codex credits.
+  // The subscription share stays derived on read (daemon/price.ts, migration 36's reasoning still
+  // applies to it verbatim); the pay-as-you-go side is *measured*, so it gets columns.
+  //
+  // ⛔ **`list_usd` is carried and never summed in.** It is the vendor's API-equivalent list
+  // price for the same work — what this run *would* have cost on a market-rated API. It answers
+  // "is the subscription worth it", which is a different question from "what did this cost me", and
+  // adding it to either of the other two would double-count a bill that was never issued.
+  //
+  // ⚠️ **All three columns are nullable, and `null` is not `0`.** "nothing knows whether this run
+  // was on overage" and "this run was measured and drew no overage" are two different facts, and
+  // every consumer keeps them apart — exactly as the five `n/a` reasons already do for the
+  // subscription share. A default of 0 here would have printed a measurement over an absence.
+  //
+  // ⛔ **There is deliberately no `overage_usd` column.** The dollars a meter movement is worth are
+  // attributed across whichever runs were open across it, so they change the moment a *later*
+  // overlapping run is discovered — migration 36's reasoning, unchanged, applied to the second
+  // layer. `overageUsd` is derived on read in price.ts off `spend_samples`; a column would be
+  // correct only until the next run started on that account. What *is* stamped here is the pair of
+  // facts a probe stated about this run alone and that no later run can move.
+  //
+  // `spend_samples` is the money analogue of `quota_samples`, and deliberately the same shape:
+  //
+  //   • `direction` because the two kinds of meter move opposite ways. A credit purse *falls* as
+  //     money is spent and a rise is a top-up; a cumulative spend counter *rises* and a fall is a
+  //     billing-period rollover. Both are "the baseline moved" and both poison the runs across them,
+  //     which is why it is one column rather than two tables.
+  //   • `balance` is nullable because a probe that ran and found nothing is a fact worth keeping —
+  //     the same reason `quota_samples` keeps a row with an `error` and no percent.
+  //   • `usd_per_unit` is nullable because a vendor may publish credits with no conversion. Such a
+  //     meter is real and unpriceable, and must read `n/a` rather than $0.00.
+  //   • `unit` is a column rather than an assumption, so credits are a value and not a migration.
+  //
+  // ⚠️ Guarded by `hasColumn` and `if not exists`, like migrations 28/31/32/35: `versionBefore`
+  // lets a test rewind `user_version` and reopen, which replays every migration after the one it
+  // wanted, so anything added later has to survive being run twice.
+  (conn) => {
+    for (const [column, type] of [
+      ['list_usd', 'real'],
+      ['on_overage', 'integer'],
+      ['overage_status', 'text']
+    ] as Array<[string, string]>) {
+      if (!hasColumn(conn, 'runs', column)) {
+        conn.exec(`alter table runs add column ${column} ${type};`)
+      }
+    }
+    conn.exec(`
+      create table if not exists spend_samples (
+        id           integer primary key autoincrement,
+        worker_id    text not null references workers(id) on delete cascade,
+        meter_id     text not null,
+        label        text not null,
+        unit         text not null,
+        balance      real,
+        direction    text not null,
+        usd_per_unit real,
+        source       text not null,
+        error        text,
+        sampled_at   integer not null
+      );
+      create index if not exists spend_samples_worker_time
+        on spend_samples(worker_id, sampled_at desc);
+    `)
   }
 ]
 

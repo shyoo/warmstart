@@ -58,6 +58,9 @@ const info: AdapterInfo = {
     selectableEffort: false,
     // Local — no quota to probe. The worker is always eligible from a quota perspective.
     quotaProbe: 'none',
+    // Nothing to bill: the model runs on the operator's own machine. ⛔ Which is a reason for
+    // `none`, not for zero — a run here is `unpriced`, and that is a different statement.
+    spendProbe: 'none',
     // ⭐ The bridge keeps stdin open and reads NDJSON prompts line by line, so follow-up messages
     // (wrap-up nudges, finish instructions) can be sent mid-conversation.
     streamPrompts: 'conversation',

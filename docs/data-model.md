@@ -24,7 +24,7 @@ Everything else in the daemon goes through those two, so swapping the driver is 
 ## 2. The migration contract
 
 `MIGRATIONS` in `db.ts` is a numbered, **append-only** array. `MIGRATION_COUNT` is its length and is
-the `user_version` a current database sits at — **40** as of 2026-09-03.
+the `user_version` a current database sits at — **43** as of 2026-09-04.
 
 - ⛔ **Never edit a migration that has shipped.** Add the next one.
 - ⛔ **Every migration must survive being replayed.** `sessionstate.test.ts` rewinds `user_version`
@@ -53,6 +53,7 @@ the first. Both are required and `paths.test.ts` fails if either is removed.
 |---|---|---|
 | `workers` | one account = one quota bucket | `isolation_root` is absolute; `role`, `health_json`, `sort_order`, `default_model(s)` |
 | `quota_samples` | window readings | ⛔ upsert on `(worker, window, sampled_at)`; `window_group` is the pool |
+| `spend_samples` | money-meter readings — the analogue of `quota_samples` | written by `spend.ts` off the quota poller's own pass. `direction` says whether the number falls (a credit purse) or rises (a cumulative counter); `balance` and `usd_per_unit` are nullable, and ⛔ null is *unknown*, never `0`. ⚠️ A probe that found nothing writes a row with `meter_id = ''` and an `error` — the analogue of `quota_samples`' empty `window_id`, and skipped by `price.ts` for the same reason. ⚠️ Identity is (worker, meter, the **vendor's** timestamp): re-reading one reading writes nothing |
 | `rate_limit_samples` | the vendor's live `rate_limit_event` | `rateLimitType` names the window |
 | `calibration` | percent → tokens, per (worker, model, tokenizer) | ⚠️ **zero rows**; R2 is still open |
 | `sessions` | one live agent process | `state`, `purpose`, `vendor_session_id`, `current_branch`, `clock_move*` |
@@ -64,7 +65,7 @@ the first. Both are required and `paths.test.ts` fails if either is removed.
 | `task_deps` | prerequisite edges | cycle-checked on insert; **`require`** is what counts as met — see below |
 | `task_messages` | the thread | `delivered_at` marks what has reached a session |
 | `attachments` | image metadata; bytes under `<dataDir>/attachments/` | `attachments.ts` is the only writer |
-| `runs` | one attempt of a task on one session | ⛔ never deleted — the estimator's training data. `adapter_id`, `model`, `quota_before/after_json`, `trunk_sha_before`, `prompt`, `started_warm`, `plan_id`/`plan_raw`/`plan_source`, **`kind`** — ⛔ the plan is stamped, the price is derived on read by `src/daemon/price.ts` |
+| `runs` | one attempt of a task on one session | ⛔ never deleted — the estimator's training data. `adapter_id`, `model`, `quota_before/after_json`, `trunk_sha_before`, `prompt`, `started_warm`, `plan_id`/`plan_raw`/`plan_source`, **`kind`**, `list_usd`/`on_overage`/`overage_status` — ⛔ the plan and the three facts a probe stated about *this run alone* are stamped; **both** money layers are derived on read by `src/daemon/price.ts`, because an attribution changes the moment a later overlapping run is found — which is why there is no `overage_usd` column. ⚠️ All three money columns are nullable and null means *not known* |
 | `quality_reviews` | one peer grade of one task's diff | ⛔ every review is kept with its immutable `rubric_version`; `tasks.quality_review_score` is the mean of all completed, scored reviews and `quality_review_count` states its denominator. `run_id` is the metering *and* the timeline entry |
 | `approvals` `approval_rules` | the permission gate and its remembered answers | |
 | `questions` | the third object: content answers, not allow/deny | born parked when the asker is gone |

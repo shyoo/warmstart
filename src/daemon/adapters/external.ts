@@ -80,6 +80,9 @@ function capabilitiesFrom(file: ExternalAdapterFile): AdapterInfo['capabilities'
     // declaration that got it wrong would fail at spawn on somebody's account rather than here.
     selectableEffort: false,
     quotaProbe: 'none',
+    // ⛔ Not negotiable from a config file, for the same reason as the metering above: reading a
+    // balance needs a decoder, and a declaration has no way to carry one.
+    spendProbe: 'none',
     // Irrelevant until a declarative adapter can decode a stream, and `conversation` is the
     // shape a PTY has anyway.
     streamPrompts: 'conversation',

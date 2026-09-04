@@ -1082,6 +1082,29 @@ the estimate still cannot correct itself: the sample query reads `outcome = 'com
 did, so a preempted run contributes nothing and stopping long runs makes the picture of "work like
 this" *shorter*, not more accurate. Turning `autoRunawayStop` on remains the operator's call.
 
+### The estimator answers in money, and falls back to tokens when it cannot (2026-09-04)
+
+`size(task) × factor(adapter, model)` was originally denominated only in priced tokens, which on a
+subscription fleet is a proxy for a bill nobody pays. The cost axis now evaluates **money first**
+wherever the estimator is read:
+
+- `estimateTask` produces `usd` and `usdConfidence` along with `pricedTokens` and raw `tokens`.
+- `CostFactor` learns its factor from dollars (`medianUsd`) once it has three priced runs on that key,
+  and from priced tokens below that. `usdSamples` counts runs with a valid price and is always $\le$
+  `samples`.
+- When dollar pricing cannot be established (`usd` is null, because of unpriced plans, missing readings,
+  or zero priced runs), consumers deterministically fall back to `pricedTokens` and raw `tokens`
+  rather than treating the work as free.
+- `overrunFactor()` divides in dollars where both the live run and the estimate are priced, and in
+  priced tokens otherwise.
+
+⛔ **Boundaries: what is money and what is not.**
+- **Budgets remain in tokens** (`task.budgetTokens`). Quota enforcement and runaway ceilings check
+  raw metered tokens, not money.
+- **`objective.ts` weights are not in money.** The objective vector `[cost, velocity, quality]`
+  produces routing weights (`warm`, `affinity`, `contextRot`, `cold`, `quotaRisk`) as unit-sum
+  trade-offs, not dollar amounts.
+
 ---
 
 ## 11. Changing model or effort inside a conversation
@@ -1127,6 +1150,104 @@ says nothing about cache cost on that provider rather than guessing.
 Everything above this section is priced in *tokens* or in *quota percent*. This section is the one
 that says **dollars**, and it exists because those two units answer neither of the two questions an
 operator actually asks: *what did that task cost me*, and *which of these tasks is expensive*.
+
+### Money is layered, because the bill is (2026-09-04, migration 43)
+
+⛔ **Money, not tokens, is the primary cost indicator on this fleet** — every agent here runs on a
+*subscription*, so a token count is a proxy for a bill nobody pays. And the money an operator is
+actually out is **two numbers added together**, with a third carried beside them and never summed
+in:
+
+| layer | what it is | where it comes from |
+|---|---|---|
+| `subscriptionUsd` | this run's share of the billing window × the plan's monthly fee | ⚠️ **amortised, not cash.** Derived on read from `quota_samples`, via `priceOfWindowUsage` |
+| `overageUsd` | money a vendor really billed on top: Claude extra usage, Antigravity cloud credits, Codex credits | measured, from `spend_samples`, via `priceOfMeterUsage` |
+| `listUsd` | what the same work would have cost on a market-rated API | stamped on the run |
+
+`RunPrice.usd` = `subscriptionUsd + overageUsd`, and ⛔ **never `listUsd`**. The list price answers
+*is the subscription worth it*, which is a different question from *what did this cost me*; adding
+it would double-count a bill that was never issued.
+
+⛔ **`null` is not `0` in any of the three.** One layer missing gives the other layer alone and the
+`basis` says the total is a **lower bound**; both missing is `n/a`. A worker nobody has probed for
+meters has `overageUsd: null`, not `$0.00` — "not measured" and "measured, and it was nothing" are
+different facts and only the second one is a number.
+
+⛔ **One unknown meter makes the whole overage layer unknown.** A total that silently omits the one
+meter that could not be read is a smaller number wearing a complete number's clothes.
+
+### Spend meters, and the series that falls
+
+`spend_samples` is the money analogue of `quota_samples`, and `attribute()` in `price.ts` splits it
+across overlapping runs with the same duration-weighted algorithm — because it *is* the same
+algorithm, given a `direction`:
+
+| direction | the series | spending it means | going the other way means |
+|---|---|---|---|
+| `spend_rises` (default) | a quota window climbing to 100%, a cumulative spend counter | the number rises | a rollover |
+| `balance_falls` | a credit purse being drawn down | the number falls | ⭐ a **top-up** |
+
+⭐ **A top-up is the exact analogue of a rollover, and gets the same verdict.** $40 of credit
+arriving mid-run hides however much was spent either side of it, in an unknown ratio — so it is
+`n/a`, and it poisons every run across it. The `PriceReason` keeps the name `window_reset`, whose
+meaning is now the wider *the baseline moved*.
+
+### The spend pipeline, end-to-end (2026-09-04)
+
+`spend_samples` is the database store for pay-as-you-go meter readings, mirroring `quota_samples`:
+
+- **Database Table (`spend_samples`):**
+  Columns: `worker_id`, `meter_id`, `label`, `unit`, `direction`, `usd_per_unit`, `balance`, `sampled_at`, `source`, `error`.
+  ⛔ There is no `overage_usd` on `runs` to match it: an attribution moves when a later overlapping run
+  is found, so both money layers are derived on read (migration 36's reasoning, applied twice).
+  Every successful or failed probe writes a sample. An unparseable or failed probe records `error` with a null balance.
+
+- **Contract (`src/shared/protocol.ts`, `src/daemon/spend.ts`):**
+  - `SpendMeter`: `{ id, label, unit: 'usd' | 'credits', balance: number | null, direction: 'balance_falls' | 'spend_rises', usdPerUnit: number | null }`.
+  - `SpendSnapshot`: `{ workerId, meters: SpendMeter[], sampledAt: number, source: 'cli' | 'config-cache' | 'stream' | 'unknown', error?: string }`.
+  - `SpendReading`: `{ balance: number, at: number }` used when `attribute()` walks meter histories.
+  - Adapter hook: `AgentAdapter.probeSpend?(isolationRoot: string): Promise<Omit<SpendSnapshot, 'workerId'>>`.
+
+- **Capability (`AdapterCapabilities.spendProbe`):**
+  Declared as `'cli' | 'config-cache' | 'stream' | 'none'`. It dictates whether the daemon must poll or whether signals arrive in-band:
+
+| adapter | `spendProbe` | the signal | dated by | probe cost (wall-clock & processes) |
+|---|---|---|---|---|
+| `openai-compatible` | `config-cache` | `credits.balance` in newest rollout file (`CODEX_HOME/sessions/rollouts/`) | ⛔ the **rollout's** timestamp | **~1ms** file read, 0 extra processes, 0 tokens |
+| `claude-code` | `stream` | `result.total_cost_usd` → `runs.list_usd`; `rate_limit_event`'s `isUsingOverage` / `overageStatus` → `runs.on_overage` / `overage_status` | the turn it rode in on | **0ms** (in-band on stream), 0 extra processes, 0 tokens |
+| `antigravity-cli` | `none` | negative measurement result (see below) | — | 0 processes, 0 tokens |
+| `local-llm` | `none` | self-hosted, unmetered | — | 0 processes, 0 tokens |
+
+⭐ **Antigravity `/credits` PTY panel timing and negative measurement result (2026-09-04):**
+Driving `/credits` was spiked in a real PTY session (`agy 1.1.26` on Google AI Pro):
+- The command renders a modal dialog box in ~120ms wall-clock time.
+- Screen scraping the rendered panel text yields: `Remaining AI Credits: AI Credits not enabled (enable in /settings)`.
+- It reports no numeric dollar balance, no credit count, no expiration, and no tier.
+- Setting `useAiCredits: true` in `settings.json` still yields `not enabled` on consumer accounts.
+- Because no spend meter or numeric balance is published by the CLI, `spendProbe` is declared `none` and no speculative parser is committed.
+
+⛔ **The money probe rides the quota poller's pacing rather than owning a timer.** The two readings
+answer halves of one question and the account worth asking about is the same account in both, so
+`probeWorker` asks for both and `refreshUsage` asks again on the way out. ⚠️ A spend probe that
+throws is recorded as a failed reading and **never fails the quota probe beside it** — trading a
+window reading, which every gate and reserve is computed from, for a balance nothing gates on would
+be the wrong way round.
+
+⛔ **`total_cost_usd` replaces, it does not accumulate.** It is cumulative for the invocation, exactly
+as the `usage` record's counters are cumulative for a turn, so a session emitting two `result`
+records has spent the second number and not their sum. And on a subscription it is the
+**API-equivalent list price** — `listUsd`, never part of `usd`.
+
+⚠️ **`on_overage` is nullable and `null` is not `false`.** `0` means the vendor said this run was not
+on overage; `null` means it never said. The boolean prices nothing by itself; what it does is mark
+which runs were burning real extra-usage money, without which no overage arithmetic is possible.
+
+⛔ **The direction is normalised exactly once**, at the top of `attribute()`. `'rises'` is the
+default, so every caller written before meters existed is unchanged to the number — `price.test.ts`
+asserts the falling worked example against the same 10% / 7% the rising one produces.
+
+⛔ **Credits with no published conversion are `null`, not `0`.** `usd_per_unit` is nullable, which
+makes such a meter real and unpriceable; `$0.00` would claim the credits it burned cost nothing.
 
 ### The formula
 
@@ -1192,9 +1313,11 @@ over this install's own rows: every codex run up to 2026-09-01 21:28Z reports a 
 reports `5h` + `7d`. Eight runs on the free side, sixteen on the paid, no overlap. This is strictly
 better than deducing the plan from the model name — the eight free-era runs recorded no model at all.
 
-⛔ **The plan is stored; the price is not.** A run's dollars change the moment a *later* overlapping
-run is discovered, so money is computed on read in `daemon/price.ts` and memoised against an epoch
-that `startRun`, `finishRun`, `setRunQuota` and the quota store all bump. What a run was *billed
+⛔ **The plan is stored; the subscription share is not.** A run's dollars change the moment a
+*later* overlapping run is discovered, so money is computed on read in `daemon/price.ts` and
+memoised against an epoch that `startRun`, `finishRun`, `setRunQuota` and the quota store all bump —
+and, since migration 43, every writer of the pay-as-you-go side too: a `spend_samples` row, and a
+run's `list_usd` / `on_overage`. What a run was *billed
 against* does not change, and is the only part worth freezing in a column.
 
 ⛔ **A malformed quota rendering is removed from both inputs to that timeline.** t163's 2026-09-03
@@ -1236,9 +1359,9 @@ case an equal split gets wrong.
 own interactive use of the account, and charging it to whichever task ran next is a lie that grows
 with how long the fleet idles.
 
-### The five ways a price is `n/a`
+### The six ways a price is `n/a`
 
-They are five different facts and they render five different tooltips. A single dash for all of them
+They are six different facts and they render six different tooltips. A single dash for all of them
 would leave a reader unable to tell a run that cost nothing from a run nobody measured.
 
 | reason | what it means |
@@ -1248,6 +1371,7 @@ would leave a reader unable to tell a run that cost nothing from a run nobody me
 | `unpriced_plan` | a free or self-hosted plan: known, and with no subscription to divide |
 | `no_window` | the provider reports no window the money can be divided over |
 | `no_plan` | nothing says which subscription this run was billed against |
+| `no_meter` | nothing meters this run at all: no billing window **and** no spend meter. ⚠️ Not `no_window`, which means a window exists and reported nothing for this run |
 
 ⚠️ **A window that did not move is `$0.00`, not `n/a`.** The run *was* measured; the measurement was
 zero.
@@ -1270,16 +1394,28 @@ figure is the one rendering of this feature that would actively mislead.
 attempts on 2026-08-24 and the numbers were deliberately **not guessed**. The schema has the slot;
 fill it when the adapter is built.
 
-**Owed:** the far side of a codex resume. `codex exec resume <thread_id>` is measured as far as an
-unauthenticated machine can take it (§1b, and `openai-compatible.ts`): the argv parses, `-` reads the
-prompt from stdin, and a bad id is refused with `no rollout found for thread id`. What needs a
-signed-in account is whether a *successful* resume re-emits `thread.started` carrying the **same**
-`thread_id`. If codex mints a fresh id per resume, this fleet accumulates one session row per turn
-and stops finding the conversation on the next dispatch — degrading to the cold starts it did before,
-not to a wrong answer, which is why it shipped ahead of the measurement. ⚠️ Also unrun: whether the
-resumed turn reads the prefix back at all, i.e. non-zero `cached_input_tokens` on it. The rollout for
-`bffdc5d2` is 3.1 MB and holds 148 `response_item` records under the id `thread/resume` looks up, so
-the conversation is demonstrably on disk; what is unproven is the read, not the storage.
+**Owed:** authoritative, published conversion rates from credit units to USD for vendor credit
+meters (Codex credits, Antigravity credits). Until a vendor publishes exact credit-to-dollar pricing,
+`usd_per_unit` remains `null`, rendering credit meters real but unpriceable (`n/a`, never `$0.00`).
+
+**Owed:** a `channel: "api"` cost model file (`costmodels/*.api.*.json`) with per-MTok rates (input,
+output, cache write, cache read) for accounts billed on pay-per-token API keys rather than flat monthly
+subscriptions. All models currently loaded are `channel: "subscription"` with null token cash rates.
+
+**Owed:** the far side of a codex resume — the *cache read*, not the thread. ⭐ The thread half is
+**measured** (2026-09-02, two real turns on codex-cli 0.151.0): a resumed run answered with a token
+planted in the first turn and re-emitted the **same** `thread_id`, so this fleet gets one session row
+per conversation rather than one per turn. ⚠️ Still unrun: whether the resumed turn reads the prefix
+back at all, i.e. non-zero `cached_input_tokens` on it. The rollout for `bffdc5d2` is 3.1 MB and holds
+148 `response_item` records under the id `thread/resume` looks up, so the conversation is demonstrably
+on disk; what is unproven is the read, not the storage.
 
 **Owed:** a measured reuse rate for a Zero Data Retention org, whose codex prefixes live *"5 to 10
 minutes of inactivity"* rather than 30 (§1b). The cost model would be optimistic for such a fleet.
+
+**Owed:** ⛔ **no figure in §13 has been read against a real invoice**, and no live account has been
+probed for a meter. `spend_samples` is exercised by `spend.test.ts` and `codex-quota.test.ts` only, so
+no real balance, list price or overage flag has been seen in flight.
+
+*(Closed 2026-09-04: Antigravity `/credits`, measured in a real PTY and answered in the negative —
+see §13. `spendProbe` stays `none` and no speculative parser was written.)*

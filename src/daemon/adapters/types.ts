@@ -5,6 +5,7 @@ import type {
   QuotaSnapshot,
   QuotaWindow,
   SessionTransport,
+  SpendSnapshot,
   WorkerIdentity
 } from '@shared/protocol.js'
 import type { StreamDecoder } from '../stream.js'
@@ -125,6 +126,27 @@ export interface AgentAdapter {
    * matters more than it sounds.
    */
   probeQuota(isolationRoot: string): Promise<Omit<QuotaSnapshot, 'workerId'>>
+
+  /**
+   * What this account's **money** meters read — a credit purse, a cumulative spend counter, an
+   * overage bill. The pay-as-you-go side of the same question `probeQuota` asks about the flat fee.
+   *
+   * ⚠️ Best-effort by contract, exactly as `probeQuota` is: return a snapshot rather than throw,
+   * always set `source`, and never present a stale reading as current — date it by the **vendor's**
+   * timestamp wherever the vendor supplies one, because the staleness ladder in quota.ts reads it. A
+   * probe that ran and found nothing returns no meters and an `error` saying why; that is a fact,
+   * and it is recorded rather than dropped.
+   *
+   * ⛔ **It must cost no tokens.** This is called from the quota poller's own pacing, which runs for
+   * weeks at a time, and a loop that bills anything is the one thing this scheduler may never be
+   * (AGENTS.md). A file read is the rung this was designed around; a command is affordable only if
+   * it spends nothing.
+   *
+   * ⚠️ Optional, and absent on every adapter whose `spendProbe` is `'none'` or `'stream'`. `'stream'`
+   * means the number arrives unasked on a turn already being paid for — there is nothing to poll,
+   * and implementing this there would buy a second, costlier route to a fact already in hand.
+   */
+  probeSpend?(isolationRoot: string): Promise<Omit<SpendSnapshot, 'workerId'>>
 
   plan(req: SpawnRequest): SpawnPlan
 

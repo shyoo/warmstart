@@ -1,0 +1,11 @@
+Antigravity CLI  credits
+Model AI Credits
+
+Remaining AI Credits: AI Credits not enabled (enable in /settings)
+
+Actions
+
+> Get More AI Credits
+  See Activity
+
+Keyboard: ↑/↓ Navigate  enter Select / Toggle  esc Close

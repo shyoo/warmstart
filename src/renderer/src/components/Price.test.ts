@@ -14,6 +14,11 @@ import { runPriceTitle, taskPriceTitle } from './Price'
 function price(over: Partial<RunPrice>): RunPrice {
   return {
     usd: 0.23,
+    // ⚠️ The layers behind the headline. `usd` is their sum; `listUsd` is never part of it.
+    subscriptionUsd: 0.23,
+    overageUsd: null,
+    listUsd: null,
+    onOverage: null,
     percent: 5,
     estimated: false,
     reason: 'measured',

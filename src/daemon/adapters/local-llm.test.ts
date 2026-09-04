@@ -25,6 +25,8 @@ describe('local-llm adapter unit tests', () => {
       resumeSession: false,
       mcp: false,
       quotaProbe: 'none',
+      // Nothing to bill: the model runs on the operator's own machine.
+      spendProbe: 'none',
       streamPrompts: 'conversation',
       metering: 'stream',
       maxAccounts: null,

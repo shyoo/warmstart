@@ -1371,8 +1371,31 @@ try {
     /cache clock/i.test(costModelPanel) && /compaction reserve/i.test(costModelPanel)
   )
   check(
-    'it explains what cost is and why it matters',
-    /what is cost/i.test(costModelPanel) && /why it matters/i.test(costModelPanel)
+    'it leads with what a run costs in money, not in tokens',
+    /what a run costs in money/i.test(costModelPanel),
+    'every agent on this fleet is on a subscription, so tokens are a proxy for a bill nobody pays'
+  )
+  check(
+    'it names the three layers and says the list price is excluded',
+    /subscription/i.test(costModelPanel) &&
+      /overage/i.test(costModelPanel) &&
+      /list price/i.test(costModelPanel),
+    'usd = subscription + overage; listUsd rides beside it and is never summed in'
+  )
+  check(
+    'it says unpriced work is n/a rather than free',
+    /n\/a/i.test(costModelPanel) && /\$0\.00/.test(costModelPanel),
+    'a run nobody could price and a run that cost nothing are different facts'
+  )
+  check(
+    'it shows where the money is measured, or that no meter reported',
+    /spend meters/i.test(costModelPanel),
+    'a dollar figure whose source is invisible is a dollar figure nobody can check'
+  )
+  check(
+    'it keeps the token arithmetic as the stated fallback',
+    /token normalization/i.test(costModelPanel) && /fall(s|ing|back| back)/i.test(costModelPanel),
+    'money-first is only honest if the page says what happens when there is no price'
   )
   check(
     'it lists active cost models loaded in the daemon',

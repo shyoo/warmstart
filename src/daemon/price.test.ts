@@ -1,5 +1,9 @@
-import { describe, expect, it } from 'vitest'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { attribute, type AttributionRun, type Reading } from './price.js'
+import { costModel } from './costmodel.js'
 
 /**
  * Who owes what, when two agents shared one account.
@@ -9,8 +13,12 @@ import { attribute, type AttributionRun, type Reading } from './price.js'
  * N%, and more than one run was open while it did. Getting it wrong is silent: the number still
  * renders, still looks like money, and is simply attributed to the wrong task.
  *
- * Every case below is a literal fixture rather than a database. The database layer above this is
- * three lookups and a memo; the decisions all live in `attribute`.
+ * Every case about *whose share is whose* is a literal fixture rather than a database: the
+ * decisions all live in `attribute`, and it is a pure function of readings and run edges. The one
+ * block at the bottom that opens a database is there because the thing it asserts — that `usd` is
+ * the sum of the two money layers and that the API list price stayed out of it — is a property of
+ * the pass that reads rows, and asserting it against a hand-built object would only be asserting
+ * the test's own arithmetic.
  */
 
 const MIN = 60_000
@@ -267,5 +275,257 @@ describe('the edges', () => {
     const result = attribute([run('a', 1, 3), run('b', 90, 92)], [reading(1, 1), reading(3, 2)], t(4))
     expect([...result.keys()].sort()).toEqual(['a', 'b'])
     expect(result.get('b')!.reason).toBe('no_reading')
+  })
+})
+
+describe('the same split, on a purse that falls instead of a window that rises', () => {
+  /**
+   * ⭐ **The worked example again, upside down, asserted to the number.**
+   *
+   * A credit purse is the mirror of a quota window: it *falls* as money is spent. The same two
+   * overlapping runs, and a balance reading 100 / 95 / 85 / 83 credits at t1 / t2 / t3 / t4 — the
+   * same 0 / 5 / 15 / 17 of spend, counted downwards. task1 = 5 + 10/2 = 10, task2 = 10/2 + 2 = 7,
+   * exactly as before.
+   *
+   * ⛔ This is one algorithm and not two. If these numbers ever stop matching the rising case's,
+   * the direction has leaked past the one place that normalises it.
+   */
+  it('reproduces the worked example on a falling series, to the same numbers', () => {
+    const result = attribute(
+      [run('task1', 1, 3), run('task2', 2, 4)],
+      [reading(1, 100), reading(2, 95), reading(3, 85), reading(4, 83)],
+      t(5),
+      { direction: 'falls' }
+    )
+    expect(result.get('task1')!.percent).toBeCloseTo(10, 9)
+    expect(result.get('task2')!.percent).toBeCloseTo(7, 9)
+    expect(result.get('task1')!.reason).toBe('shared_window')
+    expect(result.get('task2')!.parallelRunIds).toEqual(['task1'])
+  })
+
+  /**
+   * ⛔ **A top-up is a rollover.** $40 of credit arriving mid-run hides however much was spent
+   * either side of it, in an unknown ratio — the same fact a weekly window resetting from 98% to 2%
+   * states about a rising series. It poisons every run across it, and the verdict keeps the
+   * `window_reset` name a UI already renders even though no window was involved.
+   */
+  it('calls a purse that was topped up mid-run n/a, for every run across it', () => {
+    const result = attribute(
+      [run('a', 1, 4), run('b', 2, 5)],
+      [reading(1, 20), reading(2, 12), reading(3, 90), reading(5, 86)],
+      t(6),
+      { direction: 'falls' }
+    )
+    expect(result.get('a')!.reason).toBe('window_reset')
+    expect(result.get('a')!.percent).toBeNull()
+    expect(result.get('b')!.reason).toBe('window_reset')
+    expect(result.get('b')!.percent).toBeNull()
+  })
+
+  it('does not call a run n/a for a top-up that happened outside it', () => {
+    const result = attribute(
+      [run('later', 6, 8)],
+      [reading(1, 4), reading(3, 90), reading(6, 88), reading(8, 83)],
+      t(9),
+      { direction: 'falls' }
+    )
+    expect(result.get('later')!.reason).toBe('measured')
+    expect(result.get('later')!.percent).toBeCloseTo(5, 9)
+  })
+
+  /**
+   * ⛔ **The default is the guarantee.** Every existing caller passes no options, and a rising
+   * series has to come out of this function exactly as it did before it learned about purses.
+   */
+  it('leaves a rising series untouched when no direction is asked for', () => {
+    const readings = [reading(1, 0), reading(2, 5), reading(3, 15), reading(4, 17)]
+    const runs = [run('task1', 1, 3), run('task2', 2, 4)]
+    const implicit = attribute(runs, readings, t(5))
+    const explicit = attribute(runs, readings, t(5), { direction: 'rises' })
+    expect(implicit.get('task1')!.percent).toBeCloseTo(10, 9)
+    expect(explicit.get('task1')!.percent).toBeCloseTo(10, 9)
+    // ⚠️ And a falling reading of the *same* series is a rollover, not a negative cost.
+    expect(attribute(runs, readings, t(5), { direction: 'falls' }).get('task1')!.reason).toBe(
+      'window_reset'
+    )
+  })
+})
+
+describe('turning a meter movement into money', () => {
+  const cm = costModel('anthropic.subscription.2026-08')
+
+  it('takes a dollar meter at face value', () => {
+    expect(cm.priceOfMeterUsage({ id: 'm', label: 'Extra usage', unit: 'usd', usdPerUnit: 1 }, 0.75)!.usd)
+      .toBeCloseTo(0.75, 9)
+  })
+
+  it('converts credits at the vendor’s published rate', () => {
+    const priced = cm.priceOfMeterUsage(
+      { id: 'm', label: 'Cloud credits', unit: 'credits', usdPerUnit: 0.01 },
+      120
+    )!
+    expect(priced.usd).toBeCloseTo(1.2, 9)
+    expect(priced.basis).toContain('120.00 credits')
+  })
+
+  /**
+   * ⛔ **Unpriceable is not free.** A vendor that publishes a credit balance and no conversion has
+   * given a meter that is real and cannot be turned into dollars. `$0.00` would say the 120 credits
+   * this run burned cost nothing, which is the one thing that is certainly false.
+   */
+  it('refuses to price credits the vendor publishes no dollar value for', () => {
+    expect(
+      cm.priceOfMeterUsage({ id: 'm', label: 'Cloud credits', unit: 'credits', usdPerUnit: null }, 120)
+    ).toBeNull()
+  })
+})
+
+/**
+ * The layers, over real rows.
+ *
+ * ⛔ **The one part of the money answer that cannot be a fixture.** Whether `usd` is the sum of the
+ * two layers, and whether `listUsd` stayed out of it, is a property of the pass that reads the
+ * database — and asserting it against a hand-built object would be asserting the test's arithmetic.
+ */
+describe('layering a run’s money', () => {
+  let dir: string
+  let db: typeof import('./db.js')
+  let price: typeof import('./price.js')
+
+  const WORKER = 'aaaaaaaa-0000-4000-8000-00000001a7e5'
+  const T0 = 1_756_000_000_000
+  const HOUR = 3_600_000
+
+  const quota = (at: number, percent: number): string =>
+    JSON.stringify({
+      windows: [{ id: 'weekly_all', label: 'weekly_all', percent }],
+      sampledAt: at,
+      stale: false
+    })
+
+  function seedRun(id: string, listUsd: number | null): void {
+    db.db()
+      .prepare(
+        `insert or ignore into tasks (id, seq, title, status, created_by_json, mandate_json,
+                                      budget_json, created_at, updated_at)
+         values (?,1,?, 'completed','{}','{}','{"grantedTokens":0,"spentTokens":0}',?,?)`
+      )
+      .run(`task-${id}`, id, T0, T0)
+    db.db()
+      .prepare(
+        `insert into runs (id, task_id, worker_id, started_at, ended_at, outcome, quota_unverified,
+                           input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
+                           cost_model_id, quota_before_json, quota_after_json, list_usd, on_overage)
+         values (?,?,?,?,?, 'completed',0, 0,0,0,0, 'anthropic.subscription.2026-08', ?,?,?,?)`
+      )
+      .run(
+        id,
+        `task-${id}`,
+        WORKER,
+        T0,
+        T0 + HOUR,
+        quota(T0, 0),
+        quota(T0 + HOUR, 5),
+        listUsd,
+        listUsd === null ? null : 1
+      )
+  }
+
+  function seedMeter(opts: {
+    unit: 'usd' | 'credits'
+    usdPerUnit: number | null
+    balances: Array<[number, number]>
+  }): void {
+    const insert = db.db().prepare(
+      `insert into spend_samples (worker_id, meter_id, label, unit, balance, direction,
+                                  usd_per_unit, source, sampled_at)
+       values (?,?,?,?,?, 'balance_falls', ?, 'cli', ?)`
+    )
+    for (const [at, balance] of opts.balances) {
+      insert.run(WORKER, 'purse', 'Extra usage', opts.unit, balance, opts.usdPerUnit, at)
+    }
+  }
+
+  beforeAll(async () => {
+    dir = mkdtempSync(join(tmpdir(), 'agentyard-layers-'))
+    db = await import('./db.js')
+    price = await import('./price.js')
+    db.openDb(join(dir, 'layers.db'))
+    db.db()
+      .prepare(
+        `insert into workers (id, label, adapter_id, isolation_root, enabled, human_occupied,
+                              max_concurrent, role, identity_json, created_at)
+         values (?, 'ClaudeLayered', 'claude-code', ?, 1, 0, 1, 'worker', ?, ?)`
+      )
+      .run(WORKER, join(dir, 'w'), '{"subscriptionType":"pro"}', T0)
+  })
+
+  beforeEach(() => {
+    db.db().exec('delete from runs')
+    db.db().exec('delete from tasks')
+    db.db().exec('delete from spend_samples')
+    price.bumpPricingEpoch()
+  })
+
+  afterAll(() => {
+    db.closeDb()
+    try {
+      rmSync(dir, { recursive: true, force: true })
+    } catch {
+      // A held file handle on Windows is not a test failure.
+    }
+  })
+
+  /**
+   * ⭐ **The headline is the sum of two layers, and of exactly two.** 5% of a weekly window on
+   * Claude Pro is $0.2300 of amortised subscription; the purse fell $0.75 across the same hour and
+   * that is money somebody was actually charged. $9.99 of API list price sits beside both and is
+   * ⛔ **provably not in the total** — it is nearly ten times either layer, so a sum that included
+   * it could not be mistaken for one that did not.
+   */
+  it('adds the subscription share to what was billed directly, and leaves list price out', () => {
+    seedRun('layered', 9.99)
+    seedMeter({ unit: 'usd', usdPerUnit: 1, balances: [[T0, 40], [T0 + HOUR, 39.25]] })
+    price.bumpPricingEpoch()
+    const p = price.priceForRun('layered')!
+    expect(p.subscriptionUsd!).toBeCloseTo(0.23, 3)
+    expect(p.overageUsd!).toBeCloseTo(0.75, 9)
+    expect(p.usd!).toBeCloseTo(0.98, 3)
+    expect(p.listUsd).toBe(9.99)
+    expect(p.onOverage).toBe(true)
+    expect(p.usd!).toBeLessThan(1)
+    expect(p.basis).toContain('not part of this total')
+  })
+
+  /**
+   * ⛔ **Credits with no conversion are `null`, not `0`.** The purse demonstrably fell by 120
+   * credits; what that cost is unpublished. The overage layer is unknown, the subscription layer
+   * still stands on its own, and the total says out loud that it is a lower bound.
+   */
+  it('reports unpriceable credits as unknown, and the total as a lower bound', () => {
+    seedRun('creditsonly', null)
+    seedMeter({ unit: 'credits', usdPerUnit: null, balances: [[T0, 500], [T0 + HOUR, 380]] })
+    price.bumpPricingEpoch()
+    const p = price.priceForRun('creditsonly')!
+    expect(p.overageUsd).toBeNull()
+    expect(p.overageUsd).not.toBe(0)
+    expect(p.subscriptionUsd!).toBeCloseTo(0.23, 3)
+    expect(p.usd!).toBeCloseTo(0.23, 3)
+    expect(p.basis).toContain('lower bound')
+    expect(p.listUsd).toBeNull()
+    expect(p.onOverage).toBeNull()
+  })
+
+  it('folds the layers over a task, keeping each total’s shortfall separate', () => {
+    seedRun('layered', 9.99)
+    seedMeter({ unit: 'usd', usdPerUnit: 1, balances: [[T0, 40], [T0 + HOUR, 39.25]] })
+    price.bumpPricingEpoch()
+    const total = price.priceForTask('task-layered')!
+    expect(total.usd!).toBeCloseTo(0.98, 3)
+    expect(total.overageUsd!).toBeCloseTo(0.75, 9)
+    // ⛔ The list price is a total of its own and never joins the one above it.
+    expect(total.listUsd).toBe(9.99)
+    expect(total.partial).toBe(false)
+    expect(total.listPartial).toBe(false)
   })
 })

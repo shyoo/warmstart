@@ -2,7 +2,7 @@ import { readdirSync, readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { paths } from './paths.js'
 import { log } from './log.js'
-import type { CostModelSummary } from '@shared/protocol.js'
+import type { CostModelSummary, SpendMeter } from '@shared/protocol.js'
 import builtinAnthropic from '../../costmodels/anthropic.subscription.2026-08.json' with { type: 'json' }
 import builtinGoogle from '../../costmodels/google.antigravity.2026-08.json' with { type: 'json' }
 import builtinOpenai from '../../costmodels/openai.codex.2026-08.json' with { type: 'json' }
@@ -540,6 +540,39 @@ export class CostModel {
         `${entry.label}, $${entry.monthly_usd}/month over a ${days}-day window ` +
         `($${(entry.monthly_usd * (days / DAYS_PER_MONTH)).toFixed(3)} per full window): ` +
         parts.join(' + ')
+    }
+  }
+
+  /**
+   * What a movement on a **spend meter** is worth, in dollars.
+   *
+   * ⛔ **The other half of the money formula, and here for the same reason as the first half**
+   * (AGENTS.md: *"No pricing arithmetic inline. Ask the cost-model object."*). `price.ts` decides
+   * only *whose* share of a movement is whose; turning `amount` into dollars — including deciding
+   * that it cannot be turned into dollars — is this object's job, and inlining the multiply at the
+   * one call site is how the second call site gets a different answer.
+   *
+   * A `usd` meter is already dollars and needs no conversion. A `credits` meter needs
+   * `usdPerUnit`, and ⛔ **without it the answer is `null`, never `0`** — a vendor that publishes
+   * credits with no conversion has given a meter that is real and unpriceable, and `$0.00` would
+   * claim the movement cost nothing.
+   *
+   * ⚠️ Unlike `priceOfWindowUsage` this is subscription-independent: it is money that was billed,
+   * not a share of money already paid. It asks the plan catalogue nothing.
+   */
+  priceOfMeterUsage(
+    meter: Pick<SpendMeter, 'id' | 'label' | 'unit' | 'usdPerUnit'>,
+    amount: number
+  ): { usd: number; basis: string } | null {
+    if (!Number.isFinite(amount)) return null
+    if (meter.unit === 'usd') {
+      return { usd: amount, basis: `$${amount.toFixed(4)} billed directly on ${meter.label}` }
+    }
+    const rate = meter.usdPerUnit
+    if (rate === null || rate === undefined || !Number.isFinite(rate)) return null
+    return {
+      usd: amount * rate,
+      basis: `${amount.toFixed(2)} credits on ${meter.label} at $${rate}/credit`
     }
   }
 

@@ -36,8 +36,17 @@ first spawn.** That is the whole reason `AdapterInfo.verification` exists.
 | Resumes a past conversation | ✔ `--resume <id>` | ✔ `--conversation <id>` | ✔ **`exec resume <thread_id>`** — measured 2026-09-02 | ⛔ fresh conversation per dispatch |
 | Prompt cache TTL | **60m** (`1h`, 2.0× write) | ⛔ unpriced (storage per token-hour) | **30m** (1.25× write) | ⛔ none |
 | Free quota probe | ✔ the `.claude.json` cache; `/usage` refreshes it | ⛔ **measured — see below** | ✔ **`account/rateLimits/read`**, rollout as fallback | ⛔ none (unlimited) |
+| Free **money** meter (`spendProbe`) | `stream` — `total_cost_usd` and the overage flags ride a turn already paid for | ⛔ `none` — cloud credits are real and nothing read reports a balance | `config-cache` — `credits.balance`, in the rollout the quota already comes from | ⛔ `none` — it runs on the operator's own machine |
 | Reports cache reads | via transcript | ⛔ no | ✔ reads **and** writes | ⛔ server-side |
 | Read-only mode (may review) | ✔ `plan` | ✔ `plan` | ✔ `read-only` | ⛔ **none — never reviews** |
+
+⛔ **`spendProbe` says *where the money comes from*, not whether there is any.** It is the capability
+the poller reads instead of recognising an adapter by name, and `'stream'` and `'config-cache'` are
+different enough to matter: a `config-cache` meter has to be fetched (`probeSpend`, a file read, on
+the quota poller's own pacing), a `stream` meter **arrives unasked** on a record already being
+decoded, and an adapter declaring `'stream'` is therefore never polled and must carry no
+`probeSpend` at all. ⚠️ `'none'` is *this adapter reports no money*, which is not *this account
+spends none* — Antigravity's cloud credits are real and unread.
 
 ⛔ **`readOnlyPermissionMode` is a capability and `null` is a real answer.** A quality review runs in
 the operator's own project root — the one directory in this app where an unwanted edit is not
@@ -335,6 +344,26 @@ What was tried before and does not work:
 from turns Multi Agent Controller metered itself. ⚠️ That is a **floor**, not a percentage: it cannot see what the
 vendor counted that never reached a stream. `reserve.ts` already treats accrued spend as a floor, and
 runs on these adapters are marked `quotaUnverified`.
+
+### What was tried for Antigravity spend/credits (2026-09-04)
+
+Driving `/credits` in a real PTY session was spiked on 2026-09-04 (`agy 1.1.26` on Google AI Pro).
+Like `/usage`, `/credits` is handled client-side without consuming an API turn. However, the rendered
+curses dialog box (drawn in ~120ms) reports:
+`Remaining AI Credits: AI Credits not enabled (enable in /settings)`.
+No numeric balance, no credit count, and no billing window are presented. Enabling `useAiCredits: true`
+in `~/.gemini/settings.json` produces the same `not enabled` result on individual accounts.
+Because no parseable number or spend meter exists, `antigravity-cli` declares `spendProbe: 'none'`
+and carries no probe function.
+
+### The adapter spend probe contract
+
+`AdapterCapabilities.spendProbe` governs how a CLI surfaces money meters:
+- `'config-cache'` (`openai-compatible`): reads cached balances from disk on the quota poller's pacing
+  via `probeSpend(isolationRoot)`. In Codex, reads `credits.balance` from rollout JSON files in ~1ms (0 tokens, 0 extra processes).
+- `'stream'` (`claude-code`): usage and overage data arrive in-band on stream turns (`result.total_cost_usd`
+  and `rate_limit_event.isUsingOverage`). It requires no polling, so `probeSpend` is omitted.
+- `'none'` (`antigravity-cli`, `local-llm`): no spend meters available.
 
 ## Still unmeasured, and why
 

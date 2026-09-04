@@ -195,6 +195,12 @@ const info: AdapterInfo = {
     // slash command - free, no turn - and the panel it draws is the only place the number exists.
     // See parseUsageScreen for why reading a screen is defensible here and nowhere else.
     quotaProbe: 'cli',
+    // ⚠️ `none`, and a measurement rather than an oversight: Antigravity's cloud credits are a
+    // real pay-as-you-go meter, but driving `/credits` in a real PTY on agy 1.1.26 (measured
+    // 2026-09-04) returns "Remaining AI Credits: AI Credits not enabled (enable in /settings)"
+    // with no numeric balance or currency. Nothing this adapter reads reports a balance for them.
+    // It becomes a value here the day an active credit-bearing account publishes a parseable reading.
+    spendProbe: 'none',
     // stdin stays open and takes prompt after prompt; that is what the stream transport is for.
     streamPrompts: 'conversation',
     mintsSessionId: false,

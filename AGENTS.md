@@ -162,9 +162,11 @@ swallows every keystroke until answered. `gemini-cli` is dead; the Google adapte
 
 **Cost and quota** — [`docs/cost-model.md`](docs/cost-model.md). ⛔ Do not re-derive these from
 memory; several are counter-intuitive. No pricing arithmetic inline — ask the cost-model object, and
-let it say `unpriced` rather than inventing a number. `/usage` costs a real turn in **print mode
+let it say `unpriced` rather than inventing a number. Runs are priced in layered money (subscription
+allocation + overage cash; list price excluded). `/usage` costs a real turn in **print mode
 only**; interactive it is free. A cost is a difference, so a run gets two quota readings or none. A
-vendor's rate-limit signal names a *window*, and a caution is not a refusal. Changing tool
+falling spend series draws down a purse, where a rise is a top-up (baseline reset). A vendor's
+rate-limit signal names a *window*, and a caution is not a refusal. Changing tool
 definitions invalidates the whole prompt cache prefix.
 
 **Schema** — [`docs/data-model.md`](docs/data-model.md). Migrations are numbered, append-only and

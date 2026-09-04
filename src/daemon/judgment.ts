@@ -16,7 +16,7 @@ import { getProject } from './projects.js'
 import { listWorkers } from './workers.js'
 import { costModel } from './costmodel.js'
 import { adapter } from './adapters/index.js'
-import { estimateTask, pessimisticOn } from './estimator.js'
+import { estimateTask, pessimisticOn, type Estimate } from './estimator.js'
 import { resolveObjective } from './objective.js'
 import { settings } from './settings.js'
 import { log } from './log.js'
@@ -510,6 +510,19 @@ function applyTriage(task: Task, answer: Record<string, unknown>): ApplyResult {
  * to contain task explosion, not to add a turn to it. Only what this returns as `controller` costs
  * anything. Plan §7.2.
  */
+/**
+ * A cost, said the way the operator evaluates one: money first, tokens beside it.
+ *
+ * ⛔ Never `$0.00` for an unpriced estimate. Where there is no dollar figure the sentence is the
+ * token sentence this file has always produced — a controller reading "$0.00" would conclude the
+ * work was free, which is the opposite of "nobody could measure it".
+ */
+function costPhrase(estimate: Estimate): string {
+  return estimate.usd === null
+    ? `${estimate.tokens} tokens`
+    : `$${estimate.usd.toFixed(2)} (${estimate.tokens} tokens)`
+}
+
 export function riskOf(task: Task): { gate: RiskGate; why: string } {
   const project = task.projectId ? getProject(task.projectId) : null
   const objective = resolveObjective(project?.config?.objective, task.objective, settings().objective)
@@ -527,12 +540,17 @@ export function riskOf(task: Task): { gate: RiskGate; why: string } {
   // Nothing has chosen a worker at this point, and the two answers differ by 81x on this install's
   // data (estimator.ts) — a gate fed the middle number admits Antigravity work against a budget it
   // cannot fit in.
-  const estimate = estimateTask(task, pessimisticOn()).tokens
+  // ⚠️ The comparison stays in tokens, because a budget is granted and spent in tokens. Money is
+  // reported beside it where it is known — it is what an operator on a subscription actually reads —
+  // but a dollar figure is `n/a` often enough that gating on it would gate on nothing.
+  const estimated = estimateTask(task, pessimisticOn())
+  const estimate = estimated.tokens
 
   if (parent && parent.budget.grantedTokens > 0 && estimate > remaining) {
     return {
       gate: 'controller',
-      why: `estimated ${estimate} tokens against ${remaining} left in its parent's budget`
+      why:
+        `estimated ${costPhrase(estimated)} against ${remaining} left in its parent's budget`
     }
   }
   if (task.mandate.allowed.includes('push') && task.lineageDepth > gateAboveDepth) {
@@ -568,7 +586,7 @@ export function gateQuestion(task: Task, why: string): string {
     `# Provenance\nlineage depth ${task.lineageDepth}, filed by an agent working on ` +
       (parent ? `t${parent.seq} "${parent.title}"` : 'an unknown task'),
     `# Authority it would run under\n${task.mandate.allowed.join(', ')}`,
-    `# Estimated cost\n${estimateTask(task, pessimisticOn()).tokens} tokens ` +
+    `# Estimated cost\n${costPhrase(estimateTask(task, pessimisticOn()))} ` +
       `(${estimateTask(task, pessimisticOn()).basis})`,
     '',
     siblings.length ? `# Other open work in this project\n${siblings.join('\n')}` : '',
@@ -688,7 +706,7 @@ export function routeQuestion(task: Task, candidates: RouteCandidate[]): string 
     '',
     `# Task t${task.seq}`,
     task.title,
-    `estimated ${estimateTask(task, pessimisticOn()).tokens} tokens ` +
+    `estimated ${costPhrase(estimateTask(task, pessimisticOn()))} ` +
       `(${estimateTask(task, pessimisticOn()).basis})`,
     '',
     '# Candidates',
