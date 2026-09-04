@@ -60,7 +60,8 @@ const PROMPT_DELAY_MS = 2500
 export const REVIEW_MODELS: Record<string, string> = {
   'claude-code': defaultGradingModel('claude-code')!,
   'antigravity-cli': defaultGradingModel('antigravity-cli')!,
-  'openai-compatible': defaultGradingModel('openai-compatible')!
+  'openai-compatible': defaultGradingModel('openai-compatible')!,
+  'local-llm': defaultGradingModel('local-llm')!
 }
 
 function gradingModel(worker: Worker): string | null {

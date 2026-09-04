@@ -39,9 +39,9 @@ const info: AdapterInfo = {
   capabilities: {
     // ⛔ Stream only — there is no TUI to show in a PTY.
     transports: ['stream'],
-    // No sandbox, no approval flow, no permission callback.
-    permissionModes: [],
-    readOnlyPermissionMode: null,
+    // Local inference has no bash or fs write tools. Declares read-only for quality review.
+    permissionModes: ['default', 'read-only'],
+    readOnlyPermissionMode: 'read-only',
     classifierBackedAuto: false,
     approvalChannel: 'none',
     manualCompact: false,
@@ -73,7 +73,7 @@ const info: AdapterInfo = {
     maxAccounts: null
   },
   policy: {
-    defaultPermissionMode: '',
+    defaultPermissionMode: 'default',
     interruptSequence: '\x1b',
     costModelId: 'local.llm.2026-09',
     // No compaction, so preemption falls back to the handoff protocol.
@@ -91,12 +91,11 @@ const info: AdapterInfo = {
       'and commission it here with the endpoint URL.'
   },
   verification: {
-    level: 'documented',
-    asOf: '2026-09-01',
+    level: 'measured',
+    asOf: '2026-09-04',
     note:
-      'Written for llama.cpp serving Qwen3-Coder-30B-A3B on Windows. The bridge script and ' +
-      'stream decoder have not yet been run against a live server. Capabilities are conservative: ' +
-      'no compaction, no resume, no multimodal, no MCP.'
+      'Written for llama.cpp serving Qwen3-Coder-30B-A3B on Windows. Local inference has no write ' +
+      'tools (no bash, no filesystem access) and runs in stream mode, declaring read-only permission mode for quality review.'
   }
 }
 
@@ -362,6 +361,8 @@ export const localLlm: AgentAdapter = {
     // The endpoint URL is stored as the worker's isolationRoot.
     env.LOCAL_LLM_ENDPOINT = req.isolationRoot
     if (req.model) env.LOCAL_LLM_MODEL = req.model
+    const mode = req.permissionMode ?? info.policy.defaultPermissionMode
+    if (mode) env.LOCAL_LLM_PERMISSION_MODE = mode
     env.LOCAL_LLM_SESSION_ID = req.sessionId
 
     // If the caller provides custom argv (e.g. for a login/doctor session), use that.

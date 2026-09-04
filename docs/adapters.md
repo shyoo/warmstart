@@ -38,7 +38,7 @@ first spawn.** That is the whole reason `AdapterInfo.verification` exists.
 | Free quota probe | ✔ the `.claude.json` cache; `/usage` refreshes it | ⛔ **measured — see below** | ✔ **`account/rateLimits/read`**, rollout as fallback | ⛔ none (unlimited) |
 | Free **money** meter (`spendProbe`) | `stream` — `total_cost_usd` and the overage flags ride a turn already paid for | ⛔ `none` — cloud credits are real and nothing read reports a balance | `config-cache` — `credits.balance`, in the rollout the quota already comes from | ⛔ `none` — it runs on the operator's own machine |
 | Reports cache reads | via transcript | ⛔ no | ✔ reads **and** writes | ⛔ server-side |
-| Read-only mode (may review) | ✔ `plan` | ✔ `plan` | ✔ `read-only` | ⛔ **none — never reviews** |
+| Read-only mode (may review) | ✔ `plan` | ✔ `plan` | ✔ `read-only` | ✔ `read-only` |
 
 ⛔ **`spendProbe` says *where the money comes from*, not whether there is any.** It is the capability
 the poller reads instead of recognising an adapter by name, and `'stream'` and `'config-cache'` are
@@ -53,6 +53,8 @@ the operator's own project root — the one directory in this app where an unwan
 recoverable by throwing a branch away — so an adapter that cannot declare a mode which reads and does
 not write is never offered one, rather than being run in a mode that might. Measured 2026-09-03 from
 each adapter's own declaration; `external.ts` defaults it to `null`, which is the safe direction.
+`local-llm` declares `read-only` (with `qwen3-coder-30b-a3b` as its review model) as local inference
+has no filesystem or shell write tools and runs non-interactively via its bridge.
 
 **Read the ⛔ column-by-column, not row-by-row.** Two of these three CLIs have no classifier and no
 approval callback, and yet only one of them can hold a fleet. That difference is invisible in a

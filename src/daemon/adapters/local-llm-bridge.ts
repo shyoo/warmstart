@@ -32,6 +32,8 @@ const ENDPOINT = process.env.LOCAL_LLM_ENDPOINT ?? 'http://127.0.0.1:8080'
 const MODEL = process.env.LOCAL_LLM_MODEL ?? ''
 const CONTEXT_SIZE = Number.parseInt(process.env.LOCAL_LLM_CONTEXT_SIZE ?? '32768', 10)
 const SESSION_ID = process.env.LOCAL_LLM_SESSION_ID ?? null
+const PERMISSION_MODE = process.env.LOCAL_LLM_PERMISSION_MODE ?? 'default'
+const IS_READ_ONLY = PERMISSION_MODE === 'read-only'
 
 // ---------------------------------------------------------------------------- types
 
@@ -136,7 +138,7 @@ async function chatCompletion(
     messages,
     stream: true,
     stream_options: { include_usage: true },
-    tools: TOOLS.length > 0 ? TOOLS : undefined,
+    tools: IS_READ_ONLY ? undefined : (TOOLS.length > 0 ? TOOLS : undefined),
     max_tokens: Math.min(CONTEXT_SIZE, 16384),
     temperature: 0.7,
     top_p: 0.8
@@ -499,10 +501,11 @@ async function main(): Promise<void> {
   const messages: ChatMessage[] = [
     {
       role: 'system',
-      content:
-        'You are a coding assistant working on a software project. ' +
-        'When you have completed the task, call the task_complete tool with a summary. ' +
-        'If you need clarification from the human, call the ask_human tool.'
+      content: IS_READ_ONLY
+        ? 'You are a code review assistant. Evaluate the provided task diff and context according to the rubric instructions, and reply with the requested JSON.'
+        : 'You are a coding assistant working on a software project. ' +
+          'When you have completed the task, call the task_complete tool with a summary. ' +
+          'If you need clarification from the human, call the ask_human tool.'
     }
   ]
 

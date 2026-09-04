@@ -1061,7 +1061,8 @@ describe('local-llm adapter', () => {
   it('declares conservative capabilities appropriate for local inference', () => {
     const c = ad.info.capabilities
     expect(c.transports).toEqual(['stream'])
-    expect(c.permissionModes).toEqual([])
+    expect(c.permissionModes).toEqual(['default', 'read-only'])
+    expect(c.readOnlyPermissionMode).toBe('read-only')
     expect(c.classifierBackedAuto).toBe(false)
     expect(c.approvalChannel).toBe('none')
     expect(c.manualCompact).toBe(false)

@@ -164,6 +164,22 @@ describe('picking a reviewer', () => {
     expect(choice.model).toBe(reviewer.REVIEW_MODELS['openai-compatible'])
   })
 
+  it('allows a local-llm worker to be picked or selected as reviewer with its grading model', () => {
+    const LOCAL = 'aaaaaaaa-0000-4000-8000-000000000005'
+    worker(CLAUDE_A, 'ClaudeFirst', 'claude-code')
+    worker(LOCAL, 'LocalLlm', 'local-llm')
+    workRun(CLAUDE_A, 'claude-code', 'claude-opus-5')
+
+    const choice = reviewer.pickReviewer(task(), LOCAL)
+    expect(choice.worker?.id).toBe(LOCAL)
+    expect(choice.model).toBe('qwen3-coder-30b-a3b')
+    expect(reviewer.REVIEW_MODELS['local-llm']).toBe('qwen3-coder-30b-a3b')
+
+    const autoChoice = reviewer.pickReviewer(task())
+    expect(autoChoice.worker?.id).toBe(LOCAL)
+    expect(autoChoice.model).toBe('qwen3-coder-30b-a3b')
+  })
+
   it('refuses a manual selection from an adapter that participated in the work', () => {
     worker(CLAUDE_A, 'ClaudeFirst', 'claude-code')
     worker(CODEX, 'CodexFirst', 'openai-compatible')

@@ -16,9 +16,8 @@ describe('local-llm adapter unit tests', () => {
     expect(ad.info.label).toBe('Local LLM')
     expect(ad.info.capabilities).toEqual({
       transports: ['stream'],
-      permissionModes: [],
-      // ⛔ Null: no mode of this bridge is read-only, so it is never offered a quality review.
-      readOnlyPermissionMode: null,
+      permissionModes: ['default', 'read-only'],
+      readOnlyPermissionMode: 'read-only',
       classifierBackedAuto: false,
       approvalChannel: 'none',
       manualCompact: false,
@@ -36,6 +35,7 @@ describe('local-llm adapter unit tests', () => {
       forkSession: false,
       selectableEffort: false
     })
+    expect(ad.info.policy.defaultPermissionMode).toBe('default')
     expect(ad.info.policy.costModelId).toBe('local.llm.2026-09')
     expect(ad.info.policy.wrapUpProtocol).toBe('handoff')
     expect(ad.info.policy.needsExplicitBudget).toBe(true)
@@ -54,8 +54,21 @@ describe('local-llm adapter unit tests', () => {
     expect(plan.env.ELECTRON_RUN_AS_NODE).toBe('1')
     expect(plan.env.LOCAL_LLM_ENDPOINT).toBe('http://127.0.0.1:8080')
     expect(plan.env.LOCAL_LLM_MODEL).toBe('qwen3-coder-30b')
+    expect(plan.env.LOCAL_LLM_PERMISSION_MODE).toBe('default')
     expect(plan.env.LOCAL_LLM_SESSION_ID).toBe('sess-abc-123')
     expect(plan.args.length).toBeGreaterThan(0)
+  })
+
+  it('plan honours explicit permissionMode', () => {
+    const plan = ad.plan({
+      sessionId: 'sess-abc-456',
+      isolationRoot: 'http://127.0.0.1:8080',
+      cwd: 'C:/some/repo',
+      transport: 'stream',
+      permissionMode: 'read-only'
+    })
+
+    expect(plan.env.LOCAL_LLM_PERMISSION_MODE).toBe('read-only')
   })
 
   it('plan supports custom argv', () => {
@@ -285,8 +298,9 @@ describe('local-llm-bridge process integration with mock OpenAI SSE endpoint', (
   })
 
   function runBridge(envOverrides: Record<string, string> = {}) {
+    const ts = join(__dirname, 'local-llm-bridge.ts')
     const compiled = join(REPO, 'out/main/local-llm-bridge.js')
-    const bridgeScript = existsSync(compiled) ? compiled : join(__dirname, 'local-llm-bridge.ts')
+    const bridgeScript = existsSync(ts) ? ts : compiled
     const args = bridgeScript.endsWith('.ts') ? ['--experimental-strip-types', bridgeScript] : [bridgeScript]
     const child = spawn(
       process.execPath,
@@ -549,5 +563,46 @@ describe('local-llm-bridge process integration with mock OpenAI SSE endpoint', (
     const errorResult = lines.find((l) => l.type === 'result' && l.status === 'ERROR')
     expect(errorResult).toBeDefined()
     expect(errorResult?.text).toContain('HTTP 500')
+  })
+
+  it('runs without tools in read-only permission mode (quality review)', async () => {
+    let receivedTools: unknown = 'initial'
+    completionsHandler = (body, res) => {
+      receivedTools = body.tools
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive'
+      })
+
+      res.write(`data: ${JSON.stringify({
+        choices: [{ delta: { content: JSON.stringify({ summary: 'LGTM', scores: { fidelity: { score: 9 } } }) } }]
+      })}\n\n`)
+      res.write('data: [DONE]\n\n')
+      res.end()
+    }
+
+    const { child, lines } = runBridge({ LOCAL_LLM_PERMISSION_MODE: 'read-only' })
+    child.stdin.write('review this diff\n')
+
+    await new Promise<void>((resolve) => {
+      const check = setInterval(() => {
+        if (lines.some((l) => l.type === 'result')) {
+          clearInterval(check)
+          resolve()
+        }
+      }, 50)
+    })
+
+    child.stdin.end()
+    await new Promise<void>((resolve) => child.on('exit', () => resolve()))
+
+    expect(receivedTools).toBeUndefined()
+    const resultRecord = lines.find((l) => l.type === 'result')
+    expect(resultRecord).toMatchObject({
+      type: 'result',
+      status: 'SUCCESS'
+    })
+    expect(resultRecord?.text).toContain('LGTM')
   })
 })

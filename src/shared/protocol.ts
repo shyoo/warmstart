@@ -763,7 +763,7 @@ export interface AdapterCapabilities {
    * away.
    *
    * ⚠️ Measured per CLI, and they disagree: `plan` on claude-code and antigravity-cli, `read-only`
-   * on codex, nothing at all on local-llm. Declarative adapters default to `null`, which is the safe
+   * on codex and local-llm. Declarative adapters default to `null`, which is the safe
    * direction — a JSON adapter is excluded until it says otherwise.
    */
   readOnlyPermissionMode: string | null
