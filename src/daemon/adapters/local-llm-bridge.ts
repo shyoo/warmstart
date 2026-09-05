@@ -17,6 +17,7 @@
  * Wire format (stdout, one JSON object per line):
  *   { "type": "init", "model": "...", "session_id": null }
  *   { "type": "assistant_text", "text": "..." }
+ *   { "type": "thinking", "chars": N }          — a reasoning model working; the count, never the words
  *   { "type": "tool_call", "name": "...", "arguments": "..." }
  *   { "type": "usage", "usage": { "input_tokens": N, "output_tokens": N, ... } }
  *   { "type": "result", "text": "...", "status": "SUCCESS"|"ERROR" }
@@ -130,7 +131,16 @@ async function chatCompletion(
   messages: ChatMessage[],
   onDelta: (text: string) => void,
   onToolCall: (calls: ToolCall[]) => void,
-  onUsage: (usage: { input_tokens: number; output_tokens: number }) => void
+  onUsage: (usage: { input_tokens: number; output_tokens: number }) => void,
+  /**
+   * The model is thinking, and this is how much of it there has been.
+   *
+   * ⛔ **A count, never the words.** A reasoning model's chain of thought is not its answer: it
+   * routinely contains draft JSON, and the caller reads the reply by finding a JSON object in it.
+   * What the daemon needs from a thinking phase is only the fact that it is happening — see
+   * `reviewStall` in `reviewer.ts`, which reads a silent stream as a dead one.
+   */
+  onThinking: (chars: number) => void
 ): Promise<{ text: string; toolCalls: ToolCall[]; finishReason: string }> {
   const url = new URL('/v1/chat/completions', ENDPOINT)
   const body = JSON.stringify({
@@ -149,6 +159,8 @@ async function chatCompletion(
     let finished = false
     let fullText = ''
     let deltaBuffer = ''
+    let thinkingChars = 0
+    let thinkingSinceEmit = 0
     const allToolCalls = new Map<number, ToolCall>()
     let usageReported = false
     let finishReason = 'stop'
@@ -218,6 +230,29 @@ async function chatCompletion(
 
               if (choice.finish_reason && typeof choice.finish_reason === 'string') {
                 finishReason = choice.finish_reason
+              }
+
+              // ⛔ **A thinking model is not a silent one, and this stream said it was.** Measured
+              // 2026-09-04 against llama.cpp b10199 serving Qwen3.8-27B: the reply arrives as
+              // `{"content":"","reasoning_content":"The"}` — every token of the thinking phase lands
+              // in `reasoning_content`, which nothing here read. At ~3.5 tok/s that is minutes of a
+              // model working while the daemon sees nothing at all, and the quality review that was
+              // watching for silence killed it twice (t217).
+              const thought =
+                typeof delta?.reasoning_content === 'string'
+                  ? delta.reasoning_content
+                  : typeof delta?.reasoning === 'string'
+                    ? delta.reasoning
+                    : ''
+              if (thought) {
+                thinkingChars += thought.length
+                thinkingSinceEmit += thought.length
+                // ⚠️ Same 60-character rung the visible deltas use: often enough that a watcher can
+                // tell working from stopped, rare enough not to write a line per token.
+                if (thinkingSinceEmit >= 60) {
+                  thinkingSinceEmit = 0
+                  onThinking(thinkingChars)
+                }
               }
 
               if (delta?.content && typeof delta.content === 'string') {
@@ -403,7 +438,10 @@ async function runConversation(prompt: string, messages: ChatMessage[]): Promise
             },
             final: true
           })
-        }
+        },
+        // ⚠️ A heartbeat, not a transcript: the count only, so a watcher can tell a model that is
+        // thinking from one that has died, and no draft reasoning reaches the answer.
+        (chars) => emit({ type: 'thinking', chars })
       )
 
       let toolCalls = result.toolCalls

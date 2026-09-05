@@ -1403,7 +1403,7 @@ export interface RpcMap {
   }
   /** Stop one pending, read-only quality review. It never changes the task's lifecycle state. */
   'review.cancel': {
-    params: { reviewId: string }
+    params: { reviewId?: string; taskId?: string }
     result: { ok: true; review: QualityReview } | { ok: false; reason: string }
   }
   'task.create': { params: TaskCreateParams; result: Task }

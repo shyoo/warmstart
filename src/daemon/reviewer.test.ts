@@ -431,4 +431,105 @@ describe('stopping a grade', () => {
       status: 'completed'
     })
   })
+
+  it('cancels a pending review by taskId as well as reviewId', async () => {
+    const reviewStore = await import('./review.js')
+    db.db()
+      .prepare(
+        `insert into runs (id, task_id, worker_id, started_at, quota_unverified, kind)
+         values ('review-run-task', ?, ?, ?, 1, 'quality_review')`
+      )
+      .run(TASK, CODEX, Date.now())
+    const pending = reviewStore.createPendingReview({
+      taskId: TASK,
+      runId: 'review-run-task',
+      reviewerWorkerId: CODEX,
+      reviewerAdapter: 'openai-compatible',
+      reviewerModel: 'gpt-5.4-mini',
+      subjectAdapter: 'claude-code',
+      subjectModel: 'claude-opus-5',
+      authorship: [],
+      mixed: false,
+      diff: null,
+      blindingLeak: false
+    })
+
+    const stopped = reviewer.cancelReview(TASK)
+
+    expect(stopped.ok).toBe(true)
+    expect(reviewStore.requireReview(pending.id).status).toBe('cancelled')
+    expect(db.db().prepare('select outcome from runs where id = ?').get('review-run-task')).toMatchObject({
+      outcome: 'cancelled'
+    })
+  })
+})
+
+describe('a grade left in flight by a restart', () => {
+  it('is settled at startup, because nothing in this process is still waiting for it', async () => {
+    const reviewStore = await import('./review.js')
+    db.db()
+      .prepare(
+        `insert into runs (id, task_id, worker_id, started_at, quota_unverified, kind)
+         values ('stranded-run', ?, ?, ?, 1, 'quality_review')`
+      )
+      .run(TASK, CODEX, Date.now())
+    const pending = reviewStore.createPendingReview({
+      taskId: TASK,
+      runId: 'stranded-run',
+      reviewerWorkerId: CODEX,
+      reviewerAdapter: 'openai-compatible',
+      reviewerModel: 'gpt-5.4-mini',
+      subjectAdapter: 'claude-code',
+      subjectModel: 'claude-opus-5',
+      authorship: [],
+      mixed: false,
+      diff: null,
+      blindingLeak: false
+    })
+
+    // ⛔ The t217 shape: the review sits on a *completed* task, which `reconcileTasks` never walks,
+    // so before this sweep existed the row said "grading…" with no process behind the word.
+    expect(reviewer.reconcileReviews()).toBe(1)
+
+    const settled = reviewStore.requireReview(pending.id)
+    expect(settled.status).toBe('failed')
+    expect(settled.failureReason).toContain('restarted')
+    // ⚠️ `failed`, not `cancelled`: a restart is not a person deciding to stop one.
+    expect(settled.status).not.toBe('cancelled')
+    expect(db.db().prepare('select outcome from runs where id = ?').get('stranded-run')).toMatchObject({
+      outcome: 'terminated'
+    })
+    // The task it was grading is untouched, and a second sweep finds nothing left to settle.
+    expect(db.db().prepare('select status from tasks where id = ?').get(TASK)).toMatchObject({
+      status: 'completed'
+    })
+    expect(reviewer.reconcileReviews()).toBe(0)
+  })
+})
+
+describe('the session’s own startup record', () => {
+  const t0 = 1_700_000_000_000
+  const min = (n: number): number => t0 + n * 60_000
+
+  it('does not count as the reviewer talking, so the first-output window survives it', () => {
+    // ⛔ The t217 regression, measured 2026-09-04 (18:50:20→18:55:26): the local bridge emits
+    // `{"type":"init"}` on spawn, 2.5s before the prompt is sent. Counted as output, it skipped the
+    // 15-minute window straight into the 5-minute silence rule — the exact death this clock exists
+    // to prevent, reported as "went quiet for 5m05s after 0 characters".
+    const progress = { askedAt: t0, lastOutputAt: t0 - 2_500, chars: 0 }
+    expect(reviewer.reviewStall(progress, min(6))).toBeNull()
+    expect(reviewer.reviewStall(progress, min(14))).toBeNull()
+  })
+
+  it('still gives up on a reviewer that never says anything of its own', () => {
+    const progress = { askedAt: t0, lastOutputAt: t0 - 2_500, chars: 0 }
+    expect(reviewer.reviewStall(progress, min(16))).toContain('nothing at all')
+  })
+
+  it('starts the silence clock at the first real output, not at the startup record', () => {
+    // Spoke at 14m (inside the first-output window), then went quiet: 5m of silence from *then*.
+    const spoke = { askedAt: t0, lastOutputAt: min(14), chars: 120 }
+    expect(reviewer.reviewStall(spoke, min(18))).toBeNull()
+    expect(reviewer.reviewStall(spoke, min(19))).toContain('quiet')
+  })
 })

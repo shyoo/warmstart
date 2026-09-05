@@ -27,6 +27,7 @@ import {
   stopScheduler
 } from './scheduler.js'
 import { reconcileConsults, startController, stopController } from './controller.js'
+import { reconcileReviews } from './reviewer.js'
 import { addMessage, creditTurn, messagesFor, runForSession } from './tasks.js'
 import { recordRateLimit } from './quota.js'
 import { TranscriptTailer, creditStreamTurn, recordCompaction, recordTurn } from './transcript.js'
@@ -76,6 +77,10 @@ async function main(): Promise<void> {
   reconcileClaims()
   reconcileTasks()
   reconcileConsults()
+  // ⛔ And the grades, which `reconcileTasks` cannot reach: a review runs on a **finished** task, so
+  // its open run and its `pending` row are invisible to a sweep that walks running work. Left alone
+  // they read as *grading…* forever, with no process behind the word (t217, 2026-09-04).
+  reconcileReviews()
   // ⛔ An image pasted into a form that was never submitted is a file nobody will ever delete, and
   // these are megabytes each. Once at startup and once a day thereafter; only ever unbound rows.
   prunePending()

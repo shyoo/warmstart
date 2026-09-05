@@ -520,7 +520,11 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
     // state rather than discover. `review.request` spends a turn.
     'review.eligibility': (p) => reviewEligibility(p.taskId),
     'review.request': (p) => requestReview(p.taskId, p.workerId),
-    'review.cancel': (p) => cancelReview(p.reviewId),
+    'review.cancel': (p) => {
+      const target = p.reviewId ?? p.taskId
+      if (!target) return { ok: false, reason: 'missing reviewId or taskId' }
+      return cancelReview(target)
+    },
 
     'task.create': (p) =>
       createTask({

@@ -851,6 +851,13 @@ export function requireReview(id: string): QualityReview {
   return toReview(r)
 }
 
+/** Every grade still in flight, oldest first. */
+export function pendingReviews(): QualityReview[] {
+  return rows<ReviewRow>(
+    db().prepare("select * from quality_reviews where status = 'pending' order by created_at").all()
+  ).map(toReview)
+}
+
 /** Every review of a task, newest first. ⛔ Kept, never replaced — see re-reviewing. */
 export function reviewsForTask(taskId: string): QualityReview[] {
   return rows<ReviewRow>(

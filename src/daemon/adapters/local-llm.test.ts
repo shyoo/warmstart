@@ -125,6 +125,15 @@ describe('local-llm adapter unit tests', () => {
       })
     })
 
+    it('carries a thinking heartbeat through as traffic, with no words in it', () => {
+      // ⛔ Load-bearing, not incidental. llama.cpp b10199 serving Qwen3.8-27B puts every token of a
+      // reasoning phase in `reasoning_content` and leaves `content` empty (measured 2026-09-04), so
+      // without this record the stream is silent while the model works — and the quality review's
+      // silence clock kills it (t217). ⚠️ A count, never the chain of thought: the reply is read by
+      // finding a JSON object in it, and draft JSON in the thinking would be picked up as an answer.
+      expect(decode({ type: 'thinking', chars: 120 })).toEqual({ kind: 'other', type: 'thinking' })
+    })
+
     it('decodes usage records with final flag', () => {
       expect(
         decode({
@@ -393,6 +402,50 @@ describe('local-llm-bridge process integration with mock OpenAI SSE endpoint', (
 
     const resultRecord = lines.find((l) => l.type === 'result')
     expect(resultRecord).toMatchObject({ type: 'result', text: 'Hello world!', status: 'SUCCESS' })
+  })
+
+  it('reports a thinking model as working, and keeps its reasoning out of the answer', async () => {
+    // ⛔ The measured shape of llama.cpp b10199 serving Qwen3.8-27B (2026-09-04): every token of the
+    // reasoning phase arrives as `reasoning_content` with `content` empty. Read by nothing, that is
+    // a stream that says nothing while the model works — which is what killed t217's review twice.
+    completionsHandler = (_body, res) => {
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive'
+      })
+      const thought = 'I should check the diff and score it against the rubric. '
+      res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: '', reasoning_content: thought } }] })}\n\n`)
+      res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: '', reasoning_content: thought } }] })}\n\n`)
+      res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: '{"ok":true}' } }] })}\n\n`)
+      res.write('data: [DONE]\n\n')
+      res.end()
+    }
+
+    const { child, lines } = runBridge()
+    child.stdin.write(JSON.stringify({ type: 'user', message: { content: 'grade this' } }) + '\n')
+    await new Promise<void>((resolve) => {
+      const check = setInterval(() => {
+        if (lines.some((l) => l.type === 'result')) {
+          clearInterval(check)
+          resolve()
+        }
+      }, 50)
+    })
+    child.stdin.end()
+    await new Promise<void>((resolve) => child.on('exit', () => resolve()))
+
+    const thinking = lines.filter((l) => l.type === 'thinking')
+    expect(thinking.length).toBeGreaterThan(0)
+    expect(thinking[0]).toMatchObject({ type: 'thinking' })
+    expect(typeof thinking[0]?.chars).toBe('number')
+
+    // ⛔ And not one word of it in the answer: the reply is read by finding a JSON object, and a
+    // model musing about JSON must not be able to be mistaken for one.
+    const said = lines.filter((l) => l.type === 'assistant_text').map((l) => l.text).join('')
+    expect(said).toBe('{"ok":true}')
+    expect(said).not.toContain('rubric')
+    expect(lines.find((l) => l.type === 'result')).toMatchObject({ text: '{"ok":true}' })
   })
 
   it('calculates fallback usage when server does not emit usage chunks', async () => {

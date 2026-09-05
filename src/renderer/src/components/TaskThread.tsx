@@ -523,18 +523,26 @@ function TaskDetail({
                 {statusLabel(task)}
                 {isWorking(task) && <Working />}
               </span>
-              {/* ⛔ `awaiting_human` excluded — that status already offers Stop via `Decide`,
-                  alongside the other resolutions a human can make, so this would be a second
-                  button doing the same thing. */}
-              {CANCELLABLE.has(task.status) && task.status !== 'awaiting_human' && (
+              {task.gradingWorkerId ? (
                 <button
                   type="button"
                   className="btn btn--danger btn--ghost"
-                  title="Stop the work and return this task to a resting state. Destroys nothing."
+                  title="Stop this quality review. The task remains at rest."
                   onClick={() => void cancel()}
                 >
                   Stop
                 </button>
+              ) : (
+                CANCELLABLE.has(task.status) && task.status !== 'awaiting_human' && (
+                  <button
+                    type="button"
+                    className="btn btn--danger btn--ghost"
+                    title="Stop the work and return this task to a resting state. Destroys nothing."
+                    onClick={() => void cancel()}
+                  >
+                    Stop
+                  </button>
+                )
               )}
             </Fact>
             {holdLine(task, now) && (
@@ -2323,7 +2331,10 @@ function QualityReviewBox({
       .catch(() => setEligibility(null))
   }, [task.id, finished, reviews.length])
 
-  if (!finished) return null
+  // ⛔ A grade in flight always has a way to stop it, whatever the task went on to do. The box used
+  // to be drawn only on a finished task, so a review still pending when its task was reopened
+  // showed *grading…* in the ledger with no control anywhere that could end it (t217/t220).
+  if (!finished && !pending) return null
 
   const request = async () => {
     setRunning(true)
@@ -2343,11 +2354,10 @@ function QualityReviewBox({
   }
 
   const stop = async () => {
-    if (!pending) return
     setStopping(true)
     setFailed(null)
     try {
-      const result = await rpc('review.cancel', { reviewId: pending.id })
+      const result = await rpc('review.cancel', { reviewId: pending?.id, taskId: task.id })
       if (!result.ok) setFailed(result.reason)
       await refresh()
     } catch (err) {
@@ -2403,10 +2413,12 @@ function QualityReviewBox({
       >
         {running ? 'grading…' : latest ? 'Review again' : 'Request review'}
       </button>
-      {pending && (
+      {(pending || task.gradingWorkerId || running) && (
+        // ⚠️ `btn--warn`, not another plain `btn`: stacked under an identical-looking Request button
+        // it read as part of the same control, which is how t220 could see a grade it could not stop.
         <button
           type="button"
-          className="btn"
+          className="btn btn--warn"
           disabled={stopping}
           onClick={() => void stop()}
           title="Stops this read-only grade. The task and any completed reviews are unchanged."
@@ -2415,7 +2427,9 @@ function QualityReviewBox({
         </button>
       )}
       <div className="side-note dim">
-        {eligibility === null
+        {pending
+          ? `Grading since ${when(pending.createdAt)}. Stop grading ends it; the task and every completed review are unchanged.`
+          : eligibility === null
           ? 'checking whether a peer can review this…'
           : eligibility.ok
             ? reviewerId === 'auto'

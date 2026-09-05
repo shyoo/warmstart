@@ -23,6 +23,7 @@ import { retireStrandedBranch } from './worktrees.js'
 import { costModel } from './costmodel.js'
 import { voidQuestionsForTask } from './questions.js'
 import { voidApprovalsForTask } from './approvals.js'
+import { cancelReview } from './reviewer.js'
 
 /**
  * Cancel is not delete.
@@ -77,10 +78,14 @@ export async function cancelTask(taskId: string, options: CancelOptions = {}): P
   const restingState: RestingState =
     options.restingState ?? (requestedBy === 'human' ? 'paused_user' : 'cancelled')
 
+  if (task.gradingWorkerId) {
+    cancelReview(taskId)
+  }
+
   if (!CANCELLABLE.has(task.status)) {
     // Already at rest or finished. Cancelling again is a no-op rather than an error, because the
     // operator pressing it twice means the same thing both times.
-    return task
+    return requireTask(taskId)
   }
 
   const record: CancelRecord = {

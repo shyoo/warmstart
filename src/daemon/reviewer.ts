@@ -18,6 +18,7 @@ import {
   createPendingReview,
   humanFollowUps,
   parseReviewReply,
+  pendingReviews,
   refuseReview,
   requireReview,
   resolveRange,
@@ -493,26 +494,63 @@ export async function requestReview(taskId: string, workerId?: string | null): P
  * Stop exactly one pending grade. A review owns no task workspace, so this kills only its read-only
  * session and records a cancelled review/run; the task remains in its finished state.
  */
-export function cancelReview(id: string): { ok: true; review: QualityReview } | { ok: false; reason: string } {
-  let review: QualityReview
+export function cancelReview(idOrTaskId: string): { ok: true; review: QualityReview } | { ok: false; reason: string } {
+  let review: QualityReview | null = null
   try {
-    review = requireReview(id)
+    review = requireReview(idOrTaskId)
   } catch {
-    return { ok: false, reason: 'no such quality review' }
+    // Maybe idOrTaskId is a taskId
   }
+  if (!review || review.status !== 'pending') {
+    const pending = pendingReviews().find((r) => r.taskId === idOrTaskId || r.id === idOrTaskId)
+    if (pending) review = pending
+  }
+  if (!review) return { ok: false, reason: 'no such quality review' }
   if (review.status !== 'pending') return { ok: false, reason: 'this quality review is no longer grading' }
-  const active = activeReviews.get(id)
+  const active = activeReviews.get(review.id)
   if (active) active.stop()
-  const cancelled = settleCancelledReview(id)
+  const cancelled = settleCancelledReview(review.id)
   finishRun(cancelled.runId, 'cancelled', cancelled.failureReason ?? undefined)
   return { ok: true, review: cancelled }
+}
+
+/**
+ * Settle every grade the previous process left in flight.
+ *
+ * ⛔ **A pending review cannot survive a restart, and until 2026-09-04 nothing said so.** The wait
+ * that owns a review lives in this process's memory — the stream listeners, the silence clock and
+ * the `activeReviews` entry all die with it — so a row still `pending` at startup has nobody left
+ * to finish it, and it is not grading: it is a sentence in the UI with no process behind it.
+ * Measured on t217: a review opened at 18:16, its session gone by 18:17, and the row still reading
+ * *grading…* twenty minutes and one daemon restart later, on a **completed** task that
+ * `reconcileTasks` does not look at — that sweep only walks `running`/`assigned`/`cancelling`,
+ * which is every task a review is never run on.
+ *
+ * ⚠️ `failed`, not `cancelled`: a restart is not a person deciding to stop, and `cancelled` is
+ * reserved for the one that is. The run is closed the way every other interrupted run is
+ * (`terminated`), so the ledger reads the same for both halves of the same event.
+ */
+export function reconcileReviews(): number {
+  const stranded = pendingReviews()
+  for (const review of stranded) {
+    const why = 'orchestratord restarted while this was grading'
+    completeReview(review.id, { ok: false, reason: why })
+    finishRun(review.runId, 'terminated', why)
+  }
+  if (stranded.length) log.warn(`settled ${stranded.length} quality review(s) interrupted by a restart`)
+  return stranded.length
 }
 
 /** What a waiting review has seen so far. ⛔ Timestamps only — nothing here reads the adapter. */
 export interface ReviewProgress {
   /** When the prompt was sent. The settling delay before it is not the reviewer's time. */
   askedAt: number
-  /** When output last arrived, or null when nothing has arrived at all. */
+  /**
+   * When output last arrived, or null when nothing has arrived at all.
+   *
+   * ⚠️ A stamp **at or before `askedAt` counts as nothing**: a session's own startup record is not
+   * the model answering a question it had not yet been given. See `reviewStall`.
+   */
   lastOutputAt: number | null
   /** How much has arrived, in characters. The only pace evidence a stream gives away for free. */
   chars: number
@@ -534,11 +572,20 @@ function mins(ms: number): string {
  */
 export function reviewStall(progress: ReviewProgress, now: number): string | null {
   const elapsed = now - progress.askedAt
-  if (progress.lastOutputAt === null) {
+  // ⛔ **Nothing that arrived before the question was asked is an answer to it.** Measured on t217
+  // (2026-09-04, 18:50:20→18:55:26): the local bridge emits `{"type":"init"}` the moment it starts,
+  // which is 2.5s *before* the prompt goes down the pipe. That one record was counted as the
+  // reviewer talking, so the 15-minute window for a slow model to read an 8.3k-token prompt was
+  // skipped and the 5-minute silence rule decided the review instead — reproducing the exact
+  // 5-minute death this clock was written to end, and reporting it as *"went quiet for 5m05s after
+  // 0 characters"*. Both halves are fixed: `ask` ignores `init`, and a stamp older than the
+  // question is treated here as no answer at all.
+  const spoke = progress.lastOutputAt !== null && progress.lastOutputAt > progress.askedAt
+  if (!spoke) {
     if (elapsed < REVIEW_FIRST_OUTPUT_MS) return null
     return `the reviewer produced nothing at all in ${mins(elapsed)}`
   }
-  const silent = now - progress.lastOutputAt
+  const silent = now - (progress.lastOutputAt ?? progress.askedAt)
   if (silent >= REVIEW_SILENCE_MS) {
     return (
       `the reviewer went quiet for ${mins(silent)} after ${progress.chars} characters ` +
@@ -575,7 +622,12 @@ function ask(sessionId: string, prompt: string, signal: AbortSignal): Promise<{ 
       // ⚠️ Any traffic counts as alive, not only the text kept: a reviewer reading a file is
       // working, and holding it to the same silence window as one that has crashed is the bug
       // this whole clock exists to avoid.
-      progress.lastOutputAt = Date.now()
+      //
+      // ⛔ **Except the session's own hello.** `init` says a process started, which is a fact about
+      // the machine and not a word from the model — and on the local bridge it arrives before the
+      // prompt is even sent (`local-llm-bridge.ts`, `emit({ type: 'init' … })`). Counting it turned
+      // the first-output window into a 5-minute one and killed t217 twice.
+      if (event.kind !== 'init') progress.lastOutputAt = Date.now()
       if (event.kind === 'assistant_text') {
         text += event.text
         progress.chars += event.text.length

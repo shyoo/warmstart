@@ -618,19 +618,34 @@ export function Tasks({
                         </button>
                         {menuTaskId === task.id && (
                           <div className="action-menu" role="menu" onClick={(e) => e.stopPropagation()}>
-                            {CANCELLABLE.has(task.status) && (
+                            {task.gradingWorkerId ? (
                               <button
                                 type="button"
                                 role="menuitem"
                                 className="action-menu-item"
-                                title="Stop the work and return this task to a resting state. Destroys nothing."
+                                title="Stop the quality review. The task remains in its finished state."
                                 onClick={() => {
                                   setMenuTaskId(null)
-                                  void act(() => rpc('task.cancel', { id: task.id }))
+                                  void act(() => rpc('review.cancel', { taskId: task.id }))
                                 }}
                               >
-                                Stop
+                                Stop grading
                               </button>
+                            ) : (
+                              CANCELLABLE.has(task.status) && (
+                                <button
+                                  type="button"
+                                  role="menuitem"
+                                  className="action-menu-item"
+                                  title="Stop the work and return this task to a resting state. Destroys nothing."
+                                  onClick={() => {
+                                    setMenuTaskId(null)
+                                    void act(() => rpc('task.cancel', { id: task.id }))
+                                  }}
+                                >
+                                  Stop
+                                </button>
+                              )
                             )}
                             {/* ⛔ `paused_quota` included. It resumes itself on the reset now, but an
                                 operator looking at a window that has visibly rolled over should not
