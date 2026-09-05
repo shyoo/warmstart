@@ -1,4 +1,4 @@
-import { sessionEnded } from '@shared/protocol'
+import { canJudge, canWork, roleOf, sessionEnded } from '@shared/protocol'
 import { Fragment, useEffect, useState } from 'react'
 import type { AdapterDetection, AdapterInfo, ModelOptions, Session, Worker } from '@shared/protocol'
 import { rpc, useDaemonEvents, useNow, type FleetEntry } from '../lib/daemon'
@@ -759,14 +759,22 @@ export function Workers({
                     </td>
                     <td>
                       <div className="worker-role-checks" aria-label={`Roles for ${worker.label}`}>
-                        <label><input type="checkbox" checked={worker.role !== 'controller'} onChange={(e) => {
-                          const next = e.target.checked ? (worker.role === 'controller' ? 'both' : worker.role) : (worker.role === 'both' ? 'controller' : 'worker')
-                          void guard(`role:${worker.id}`, () => rpc('worker.update', { id: worker.id, role: next }))
-                        }} /> Work</label>
-                        <label><input type="checkbox" checked={worker.role !== 'worker'} onChange={(e) => {
-                          const next = e.target.checked ? (worker.role === 'worker' ? 'both' : worker.role) : (worker.role === 'both' ? 'worker' : 'controller')
-                          void guard(`role:${worker.id}`, () => rpc('worker.update', { id: worker.id, role: next }))
-                        }} /> Judgment</label>
+                        {/* ⛔ Both boxes are read off the pair (work, judgment) and written back as
+                            the role that pair spells - never as an edit to the role name. Each box
+                            used to compute its own `next` by comparing the old name, so unticking
+                            the *only* ticked box mapped the role onto itself: `controller` with
+                            Judgment unticked came out `controller` again. The write succeeded, the
+                            value never moved, and the box sprang back with nothing to explain it. */}
+                        <label><input type="checkbox" checked={canWork(worker.role)} onChange={(e) =>
+                          void guard(`role:${worker.id}`, () =>
+                            rpc('worker.update', { id: worker.id, role: roleOf(e.target.checked, canJudge(worker.role)) })
+                          )
+                        } /> Work</label>
+                        <label><input type="checkbox" checked={canJudge(worker.role)} onChange={(e) =>
+                          void guard(`role:${worker.id}`, () =>
+                            rpc('worker.update', { id: worker.id, role: roleOf(canWork(worker.role), e.target.checked) })
+                          )
+                        } /> Judgment</label>
                         <label><input type="checkbox" checked={worker.gradingEnabled} onChange={() =>
                           void guard(`grading-role:${worker.id}`, () => rpc('worker.update', { id: worker.id, gradingEnabled: !worker.gradingEnabled }))
                         } /> Grading</label>

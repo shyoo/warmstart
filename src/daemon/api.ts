@@ -9,6 +9,7 @@ import type {
   Settings,
   Worker
 } from '@shared/protocol.js'
+import { canWork } from '@shared/protocol.js'
 import type { ChildDefaults, Task, TaskConstraints } from '@shared/tasks.js'
 import { resolveAutoCompact, resolveCompletionMode } from '@shared/tasks.js'
 import { existsSync } from 'node:fs'
@@ -1325,8 +1326,8 @@ export function checkConstraints(c: TaskConstraints): TaskConstraints {
   if (c.workerIds) {
     for (const id of c.workerIds) {
       const w = requireWorker(id)
-      if (w.role === 'controller') {
-        throw new Error(`${w.label} has role 'controller' and cannot be assigned to work tasks`)
+      if (!canWork(w.role)) {
+        throw new Error(`${w.label} has role '${w.role}' and cannot be assigned to work tasks`)
       }
     }
   }
@@ -1370,8 +1371,8 @@ export function checkConstraints(c: TaskConstraints): TaskConstraints {
   let worker: Worker | null = null
   if (c.workerId) {
     worker = requireWorker(c.workerId)
-    if (worker.role === 'controller') {
-      throw new Error(`${worker.label} has role 'controller' and cannot be assigned to work tasks`)
+    if (!canWork(worker.role)) {
+      throw new Error(`${worker.label} has role '${worker.role}' and cannot be assigned to work tasks`)
     }
     checked.adapterId = worker.adapterId
   }

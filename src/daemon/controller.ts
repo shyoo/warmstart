@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { Consult, ConsultKind, ConsultStatus } from '@shared/tasks.js'
 import type { ControllerReport, Worker } from '@shared/protocol.js'
+import { canJudge } from '@shared/protocol.js'
 import { db, row, rows } from './db.js'
 import { emit } from './events.js'
 import { log } from './log.js'
@@ -289,7 +290,11 @@ export interface ControllerChoice {
  * per worker, is what stops the two from ever disagreeing again.
  */
 export function controllerUnavailability(worker: Worker): string | null {
-  if (worker.role === 'worker') return `${worker.label} does work only`
+  if (!canJudge(worker.role)) {
+    return worker.role === 'none'
+      ? `${worker.label} is held out of both work and judgment`
+      : `${worker.label} does work only`
+  }
 
   // Everything true of the account regardless of what is being asked - including the quarantine
   // that this function did not have and the scheduler did. See eligibility.ts.
@@ -349,7 +354,7 @@ export function chooseController(): ControllerChoice {
   const candidates: Array<{ worker: Worker; score: number }> = []
 
   for (const worker of listWorkers()) {
-    if (worker.role === 'worker') continue
+    if (!canJudge(worker.role)) continue
     const blocked = controllerUnavailability(worker)
     if (blocked) {
       reasons.push(blocked)
@@ -616,7 +621,7 @@ export function controllerReport(limit = 40, offset = 0): ControllerReport {
   return {
     generatedAt: Date.now(),
     controllers: listWorkers()
-      .filter((w) => w.role !== 'worker')
+      .filter((w) => canJudge(w.role))
       .map((w) => {
         // ⛔ Asked of this worker, never inferred from which one won. A row that reads `ready` has
         // passed every gate the chooser applies; a row that does not says which gate stopped it.

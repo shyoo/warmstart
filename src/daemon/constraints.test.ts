@@ -62,6 +62,21 @@ describe('pinning a task to an account', () => {
     // exactly like a scheduling problem.
     expect(() => api.checkConstraints({ workerId: 'no-such-worker' })).toThrow()
   })
+
+  it('refuses to pin work to an account that does not do work, and names the role', () => {
+    // Both roles that cannot take work, checked at the door rather than at dispatch: a pin the
+    // scheduler will silently never match is a task that looks stuck for no stated reason.
+    for (const role of ['controller', 'none'] as const) {
+      const w = workers.createWorker({ adapterId: 'claude-code', label: `no-work-${role}` })
+      workers.updateWorker(w.id, { role })
+      expect(() => api.checkConstraints({ workerId: w.id })).toThrow(
+        new RegExp(`role '${role}'`)
+      )
+      expect(() => api.checkConstraints({ workerIds: [w.id] })).toThrow(
+        new RegExp(`role '${role}'`)
+      )
+    }
+  })
 })
 
 describe('choosing a model', () => {

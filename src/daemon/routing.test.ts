@@ -1209,4 +1209,22 @@ describe('a task pinned to a list of accounts', () => {
     expect(choice.worker).toBeNull()
     expect(choice.reason).toContain('controller only')
   })
+
+  /**
+   * ⛔ `none` is the role an operator lands on by unticking both boxes, and the work gate has to
+   * read it as "not a worker". Written as `role === 'controller'` the gate would have offered this
+   * account every task, because a role that does nothing is not literally `controller`.
+   */
+  it('rejects workers held out of both roles from taking work tasks', () => {
+    db.db().prepare('update workers set enabled = 0').run()
+    const idle = workers.createWorker({ adapterId: 'claude-code', label: 'Neither', enabled: true })
+    db.db().prepare('update workers set role = ? where id = ?').run('none', idle.id)
+    const workTask = tasks.createTask({
+      title: 'a work task',
+      constraints: { workerId: idle.id }
+    })
+    const choice = scheduler.chooseTarget(workTask)
+    expect(choice.worker).toBeNull()
+    expect(choice.reason).toContain('held out of both work and judgment')
+  })
 })

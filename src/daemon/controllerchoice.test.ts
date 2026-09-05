@@ -248,6 +248,23 @@ describe("the controller's own gates, on top of the account's", () => {
     expect(controller.controllerUnavailability(worker)).toContain('does work only')
     workers.retireWorker(worker.id)
   })
+
+  /**
+   * ⛔ t223: `none` is what unticking both boxes now writes, and the judgment gate reads it through
+   * `canJudge`. Spelled `role !== 'worker'` — which is how every gate here was written — an account
+   * held out of everything would have read as a controller and been offered judgment calls.
+   */
+  it('never offers an account held out of both roles, and leaves it off the panel', () => {
+    const worker = workers.updateWorker(fit('neither').id, { role: 'none' })
+    expect(controller.controllerUnavailability(worker)).toContain(
+      'held out of both work and judgment'
+    )
+    expect(controller.chooseController().worker?.id).not.toBe(worker.id)
+    // The Controller panel lists accounts that judgment can reach. This one cannot be reached, so
+    // a row saying so would be a row about a decision already taken elsewhere.
+    expect(controller.controllerReport().controllers.map((c) => c.workerId)).not.toContain(worker.id)
+    workers.retireWorker(worker.id)
+  })
 })
 
 describe('choosing between the accounts that are left', () => {

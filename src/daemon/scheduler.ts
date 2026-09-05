@@ -1,4 +1,4 @@
-import { sessionEnded } from '@shared/protocol.js'
+import { canWork, sessionEnded } from '@shared/protocol.js'
 import type {
   Attachment,
   FinishPolicy,
@@ -1092,10 +1092,14 @@ export function chooseTarget(task: Task): WorkerChoice {
     if (task.constraints.workerIds && task.constraints.workerIds.length > 0 && !task.constraints.workerIds.includes(worker.id)) continue
     if (task.constraints.adapterId && task.constraints.adapterId !== worker.adapterId) continue
 
-    // ⛔ Role gate: a worker with role 'controller' is reserved for judgment/consults only,
-    // not unattended work tasks.
-    if (worker.role === 'controller') {
-      reasons.push(`${worker.label} is controller only`)
+    // ⛔ Role gate: an account that does not do work is not offered work. `controller` is reserved
+    // for judgment/consults; `none` is held out of both, on purpose, while staying commissioned.
+    if (!canWork(worker.role)) {
+      reasons.push(
+        worker.role === 'none'
+          ? `${worker.label} is held out of both work and judgment`
+          : `${worker.label} is controller only`
+      )
       continue
     }
 

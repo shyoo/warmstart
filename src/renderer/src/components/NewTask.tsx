@@ -16,6 +16,7 @@ import {
   resolveSessionSharing
 } from '@shared/tasks'
 import type { ModelOptions, Settings } from '@shared/protocol'
+import { canWork } from '@shared/protocol'
 import { ImageChips, usePastedImages } from '../lib/pasteimages.js'
 import { rpc, type FleetEntry } from '../lib/daemon'
 import { isSubmitKey, useUiSettings } from '../lib/uisettings'
@@ -260,7 +261,7 @@ export function NewTask({
 
   // ⛔ Only accounts that could actually take work. Offering a switched-off worker or a controller-only
   // worker as a pin produces a task that waits forever on a candidate loop that will never match it.
-  const pinnable = fleet.filter((e) => e.worker.enabled && e.worker.role !== 'controller').map((e) => e.worker)
+  const pinnable = fleet.filter((e) => e.worker.enabled && canWork(e.worker.role)).map((e) => e.worker)
   const pinned = pinnable.find((w) => w.id === prefs.workerId) ?? null
   const forAdapter = pinned ? (options.find((o) => o.adapterId === pinned.adapterId) ?? null) : null
   const canSetEffort = forAdapter?.selectableEffort ?? false

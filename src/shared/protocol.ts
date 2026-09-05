@@ -281,7 +281,13 @@ export interface Worker {
   /** Quota is tracked but never spent - a person is using this account by hand. */
   humanOccupied: boolean
   /**
-   * May this account be asked for judgment, do work, or both?
+   * May this account be asked for judgment, do work, both, or neither?
+   *
+   * ⚠️ `none` is not `enabled: false`. Disabling takes the account out of service entirely — no
+   * quota polling, no rows, nothing. `none` keeps it commissioned, signed in and measured while
+   * excluding it from both dispatch and judgment, which is the only way to say "this local model is
+   * here, but I do not want it grading my work". Read it through `canWork`/`canJudge`, never by
+   * comparing against a single name.
    *
    * The controller is a worker in the fleet with its own quota, which is what makes **leadership
    * delegation** free: an account near the top of its window simply stops being chosen for the next
@@ -368,7 +374,43 @@ export interface WorkerHealth {
   subscriptionExpired?: boolean
 }
 
-export type WorkerRole = 'worker' | 'controller' | 'both'
+export type WorkerRole = 'worker' | 'controller' | 'both' | 'none'
+
+/**
+ * The two things an account can be asked to do, read off its role.
+ *
+ * ⛔ **Predicates, never a `!==` against one name.** Every gate here used to be written inline as
+ * `role !== 'worker'` (can judge) or `role === 'controller'` (cannot work). Those spellings are only
+ * correct while the role has exactly three values: the moment `none` exists, `!== 'worker'` reads an
+ * account that does nothing as a controller, which is the opposite of what it says. Asking the
+ * question by name means adding a role cannot silently re-enable it everywhere.
+ */
+export function canWork(role: WorkerRole): boolean {
+  return role === 'worker' || role === 'both'
+}
+
+/** May this account be asked for judgment — a consult, a controller turn? See `canWork`. */
+export function canJudge(role: WorkerRole): boolean {
+  return role === 'controller' || role === 'both'
+}
+
+/**
+ * The role a (work, judgment) pair spells — the inverse of `canWork`/`canJudge`.
+ *
+ * ⛔ **The whole pair, never an edit to the old name.** The Workers panel used to let each checkbox
+ * derive its own next role by comparing the current one, which mapped a single-role account onto
+ * itself when its only box was unticked: `controller` minus judgment came out `controller`. The
+ * write succeeded, nothing moved, and the box sprang back with nothing to explain it. Deriving the
+ * role from both booleans at once cannot express that.
+ *
+ * ⚠️ Neither is `none`, and it is a real answer rather than a slip — see `Worker.role`.
+ */
+export function roleOf(work: boolean, judge: boolean): WorkerRole {
+  if (work && judge) return 'both'
+  if (work) return 'worker'
+  if (judge) return 'controller'
+  return 'none'
+}
 
 export interface WorkerIdentity {
   /**

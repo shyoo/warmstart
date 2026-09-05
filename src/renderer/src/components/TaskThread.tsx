@@ -1,4 +1,4 @@
-import { sessionEnded } from '@shared/protocol'
+import { canWork, sessionEnded } from '@shared/protocol'
 import { useCallback, useEffect, useState } from 'react'
 import {
   FINISH_LABELS,
@@ -1297,7 +1297,7 @@ function PausedQuotaBanner({
             options={[
               { value: '', label: 'Auto (scheduler decides)' },
               ...fleet
-                .filter((e) => (e.worker.enabled && e.worker.role !== 'controller') || e.worker.id === selectedWorkerId)
+                .filter((e) => (e.worker.enabled && canWork(e.worker.role)) || e.worker.id === selectedWorkerId)
                 .map((e) => ({
                   value: e.worker.id,
                   label: `${e.worker.label} (${e.worker.adapterId})`
@@ -1765,7 +1765,7 @@ function Decide({
                    this task is already pinned to — if it was deactivated after assignment it stays
                    in the list, so the button reads its label instead of a bare id. */
                 ...fleet
-                  .filter((e) => (e.worker.enabled && e.worker.role !== 'controller') || e.worker.id === selectedWorkerId)
+                  .filter((e) => (e.worker.enabled && canWork(e.worker.role)) || e.worker.id === selectedWorkerId)
                   .map((e) => ({
                     value: e.worker.id,
                     label: `${e.worker.label} (${e.worker.adapterId})`
@@ -3287,7 +3287,7 @@ function WorkerPicker({
   onChanged?: () => Promise<void>
 }): React.JSX.Element {
   const [busy, setBusy] = useState(false)
-  const pinnable = fleet.filter((e) => e.worker.enabled && e.worker.role !== 'controller').map((e) => e.worker)
+  const pinnable = fleet.filter((e) => e.worker.enabled && canWork(e.worker.role)).map((e) => e.worker)
   const currentWorkerId = task.constraints.workerId ?? ''
 
   const choose = async (workerId: string): Promise<void> => {
