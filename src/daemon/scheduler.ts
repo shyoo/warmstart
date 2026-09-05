@@ -3207,9 +3207,11 @@ function planningInstruction(checkLead: string): string {
     '',
     'When the requirement is settled, call `task_split` ONCE with the whole plan. Each piece must be ' +
       'completable by an agent that has NOT read this conversation, so its instruction has to carry ' +
-      'its own context: what to change, where, and what "done" looks like. Use `depends_on` only ' +
-      'where one piece genuinely needs another’s code — an edge you did not need costs a subtask’s ' +
-      'wait for nothing.',
+      'its own context: what to change, where, and what "done" looks like. The dispatcher treats ' +
+      'pieces without dependency edges as parallel work. If your plan says pieces must run or land ' +
+      'sequentially, encode that ordering with `depends_on` even when the reason is integration or ' +
+      'risk rather than a direct code dependency. Otherwise use `depends_on` only where one piece ' +
+      'genuinely needs an earlier piece — an edge you did not need costs a subtask’s wait for nothing.',
     '',
     'The operator approves the whole split before anything is filed, so make each piece legible on a ' +
       'card. Do NOT write code, and do NOT start any of the pieces yourself. After the split ' +

@@ -70,6 +70,14 @@ describe('promptFor prompt construction', () => {
     expect(prompt).not.toContain('`checkpoint`')
   })
 
+  it('tells a planner that promised sequential work requires dependency edges', () => {
+    const task = tasks.createTask({ title: 'Plan ordered changes', kind: 'plan', status: 'ready' })
+    const prompt = promptText(task, 'claude-code', false, { markDelivered: false })
+
+    expect(prompt).toContain('pieces without dependency edges as parallel work')
+    expect(prompt).toContain('must run or land sequentially, encode that ordering with `depends_on`')
+  })
+
   it('tells a checkpointed agent to stop at each phase, and still to ask when it must', () => {
     const task = tasks.createTask({ title: 'Steer this one', status: 'ready' })
     tasks.updateTask(task.id, { completionMode: 'checkpointed' })

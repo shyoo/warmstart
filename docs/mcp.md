@@ -58,7 +58,7 @@ any way to assign work directly to another worker.
 | `checkpoint` | report a finished phase and wait for the go-ahead. `checkpointed` completion mode |
 | `task_create` | file a follow-up, inheriting a **narrowed** mandate and a share of the budget |
 | `handoff` | leave a note for whoever continues; prepended to the next run's prompt |
-| `task_split` | file a whole Plan & Split at once — 2 to N pieces with edges between them. ⛔ Raises **one** approval and blocks on it; atomic |
+| `task_split` | file a whole Plan & Split at once — 2 to N pieces with dependency edges encoding every required execution or landing order; edge-free pieces may run in parallel. ⛔ Raises **one** approval and blocks on it; atomic |
 | `task_depend` | add one edge between two pieces of **this task's own** split. ⛔ never an arbitrary task in the fleet |
 
 ⚠️ `ask_human` blocks until somebody answers **or the session's prompt cache expires**. That is

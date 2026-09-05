@@ -432,8 +432,10 @@ server.registerTool(
       'instruction. The operator approves the entire split before anything is filed, so make each ' +
       'piece legible on a card. Each piece must be completable by an agent that has NOT read this ' +
       'conversation, so its instruction has to carry its own context: what to change, where, and ' +
-      'what done looks like. Use depends_on only where one piece genuinely needs another’s code — ' +
-      'an edge you did not need costs a subtask’s wait. After this returns, STOP: the work is ' +
+      'what done looks like. Pieces without dependency edges may run in parallel. If the plan calls ' +
+      'for sequential execution or landing, encode that order with depends_on; otherwise add an ' +
+      'edge only where it is genuinely needed, because it costs a subtask’s wait. After this ' +
+      'returns, STOP: the work is ' +
       'delegated and you will be woken again when every piece has settled.',
     inputSchema: {
       pieces: z
@@ -449,7 +451,10 @@ server.registerTool(
             depends_on: z
               .array(z.number().int())
               .optional()
-              .describe('Indices of EARLIER pieces in this list, starting at 0. Must point backwards.')
+              .describe(
+                'Indices of EARLIER pieces this piece must wait for, starting at 0. Use these to ' +
+                  'encode every promised execution or landing order; omitted pieces may run in parallel.'
+              )
           })
         )
         .describe('Two or more pieces. A split of one is refused.')

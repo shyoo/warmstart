@@ -216,7 +216,9 @@ A plan task therefore routes and dispatches like any other, and takes **two** tu
 1. **Planning.** The agent reads, asks, and calls `task_split` once. Its run then ends and the task
    parks at `blocked` on one `settled` edge per piece. ⭐ The wait bills nothing and **holds nothing** —
    `retainedReservations` counts a worker slot as held by `awaiting_human` and by `running`-with-a-closed
-   -session, and by neither for `blocked`.
+   -session, and by neither for `blocked`. Pieces with no edges are independent and may dispatch in
+   parallel. If the planner describes any required execution or landing order, it must encode that
+   order with `depends_on`; prose such as “sequentially” is not scheduler state.
 2. **Resolution.** The last piece to settle re-admits the planner through `admitDependents`. It comes
    back with a table of how every piece turned out, reviews the integrated branch as a whole, and
    finishes the task normally.
