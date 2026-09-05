@@ -14,7 +14,7 @@ import { resolveAutoCompact, resolveCompletionMode } from '@shared/tasks.js'
 import { existsSync } from 'node:fs'
 import { adapter, adapters } from './adapters/index.js'
 import { reviewsForTask } from './review.js'
-import { requestReview, reviewEligibility } from './reviewer.js'
+import { cancelReview, requestReview, reviewEligibility } from './reviewer.js'
 import { attachmentBytes, createAttachment, createFolderAttachment, requireAttachment } from './attachments.js'
 import {
   createWorker,
@@ -520,6 +520,7 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
     // state rather than discover. `review.request` spends a turn.
     'review.eligibility': (p) => reviewEligibility(p.taskId),
     'review.request': (p) => requestReview(p.taskId, p.workerId),
+    'review.cancel': (p) => cancelReview(p.reviewId),
 
     'task.create': (p) =>
       createTask({

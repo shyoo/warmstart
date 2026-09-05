@@ -24,7 +24,7 @@ Everything else in the daemon goes through those two, so swapping the driver is 
 ## 2. The migration contract
 
 `MIGRATIONS` in `db.ts` is a numbered, **append-only** array. `MIGRATION_COUNT` is its length and is
-the `user_version` a current database sits at — **43** as of 2026-09-04.
+the `user_version` a current database sits at — **45** as of 2026-09-04.
 
 - ⛔ **Never edit a migration that has shipped.** Add the next one.
 - ⛔ **Every migration must survive being replayed.** `sessionstate.test.ts` rewinds `user_version`
@@ -157,7 +157,7 @@ rung is an additive key if it is ever wanted.
 | `ResourceKind` | `exclusive` · `counted` · `rate_limited` |
 | `SessionTransport` | `pty` · `stream` |
 | `RunKind` | `work` · `quality_review` — ⛔ **not descriptive.** Every query that means *work* says so, or a one-turn grade lands in the estimator's training data, in `activeMs`, and in the task's "what ran on it" |
-| `ReviewStatus` | `pending` · `complete` · `failed` · `refused` — ⚠️ `refused` means nothing was asked (no diff, no peer); `failed` means it was asked and the answer was unusable. Neither writes a score |
+| `ReviewStatus` | `pending` · `complete` · `failed` · `refused` · `cancelled` — ⚠️ `refused` means nothing was asked (no diff, no peer); `failed` means it was asked and the answer was unusable; `cancelled` means a person stopped an in-flight grade. None writes a score or changes the task's lifecycle |
 
 ## 5. Adding a column — the checklist
 

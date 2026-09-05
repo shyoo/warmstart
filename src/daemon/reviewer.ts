@@ -13,6 +13,7 @@ import {
   blind,
   collectDiff,
   buildReviewPrompt,
+  cancelReview as settleCancelledReview,
   completeReview,
   createPendingReview,
   humanFollowUps,
@@ -97,6 +98,9 @@ export const REVIEW_MODELS: Record<string, string> = {
   'openai-compatible': defaultGradingModel('openai-compatible')!,
   'local-llm': defaultGradingModel('local-llm')!
 }
+
+/** Live review sessions, keyed by their durable review row so a person can stop one precisely. */
+const activeReviews = new Map<string, { sessionId: string; stop: () => void }>()
 
 function gradingModel(worker: Worker): string | null {
   return worker.gradingModel ?? defaultGradingModel(worker.adapterId)
@@ -435,9 +439,24 @@ export async function requestReview(taskId: string, workerId?: string | null): P
     })
     reviewId = review.id
 
-    const { text, reason: why } = await ask(session.id, prompt)
+    const controller = new AbortController()
+    activeReviews.set(review.id, {
+      sessionId: session.id,
+      stop: () => {
+        controller.abort()
+        closeSession(session.id)
+      }
+    })
+    const { text, reason: why } = await ask(session.id, prompt, controller.signal)
+    activeReviews.delete(review.id)
     closeSession(session.id)
     sessionId = null
+
+    // `review.cancel` settles the row and run first, then wakes this wait. Never let its normal
+    // failure path overwrite that operator decision.
+    if (requireReview(review.id).status === 'cancelled') {
+      return { ok: true, review: requireReview(review.id) }
+    }
 
     if (text === null) {
       // ⚠️ The sentence `ask` produced, not a generic one: on a slow endpoint the difference between
@@ -460,6 +479,7 @@ export async function requestReview(taskId: string, workerId?: string | null): P
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err)
     log.warn(`quality review of t${task.seq} failed: ${reason}`)
+    if (reviewId) activeReviews.delete(reviewId)
     if (sessionId) closeSession(sessionId)
     if (runId) finishRun(runId, 'failed', reason)
     // ⛔ `refused` rather than `failed` when nothing was ever asked, so a later sweep can tell a
@@ -467,6 +487,25 @@ export async function requestReview(taskId: string, workerId?: string | null): P
     if (reviewId) return { ok: true, review: refuseReview(reviewId, reason) }
     return { ok: false, reason }
   }
+}
+
+/**
+ * Stop exactly one pending grade. A review owns no task workspace, so this kills only its read-only
+ * session and records a cancelled review/run; the task remains in its finished state.
+ */
+export function cancelReview(id: string): { ok: true; review: QualityReview } | { ok: false; reason: string } {
+  let review: QualityReview
+  try {
+    review = requireReview(id)
+  } catch {
+    return { ok: false, reason: 'no such quality review' }
+  }
+  if (review.status !== 'pending') return { ok: false, reason: 'this quality review is no longer grading' }
+  const active = activeReviews.get(id)
+  if (active) active.stop()
+  const cancelled = settleCancelledReview(id)
+  finishRun(cancelled.runId, 'cancelled', cancelled.failureReason ?? undefined)
+  return { ok: true, review: cancelled }
 }
 
 /** What a waiting review has seen so far. ⛔ Timestamps only — nothing here reads the adapter. */
@@ -517,10 +556,11 @@ export function reviewStall(progress: ReviewProgress, now: number): string | nul
  *
  * Resolves with the reply, or with `text: null` and the sentence saying why there is none.
  */
-function ask(sessionId: string, prompt: string): Promise<{ text: string | null; reason: string }> {
+function ask(sessionId: string, prompt: string, signal: AbortSignal): Promise<{ text: string | null; reason: string }> {
   return new Promise((resolve) => {
     let text = ''
     let done = false
+    let send: ReturnType<typeof setTimeout> | null = null
     const progress: ReviewProgress = { askedAt: Date.now(), lastOutputAt: null, chars: 0 }
     const finish = (value: string | null, reason: string) => {
       if (done) return
@@ -528,6 +568,7 @@ function ask(sessionId: string, prompt: string): Promise<{ text: string | null; 
       offStream()
       offEnd()
       clearInterval(watch)
+      if (send) clearTimeout(send)
       resolve({ text: value, reason })
     }
     const offStream = onSessionStream(sessionId, (event) => {
@@ -544,11 +585,12 @@ function ask(sessionId: string, prompt: string): Promise<{ text: string | null; 
     const offEnd = onSessionEnd(sessionId, () =>
       finish(text || null, 'the reviewer’s session ended before it answered')
     )
+    signal.addEventListener('abort', () => finish(null, 'cancelled by a person'), { once: true })
     const watch = setInterval(() => {
       const stall = reviewStall(progress, Date.now())
       if (stall) finish(null, stall)
     }, REVIEW_WATCH_MS)
-    setTimeout(() => {
+    send = setTimeout(() => {
       // ⛔ The clock starts here, not at spawn: the settling delay and whatever the CLI spends
       // starting up are not the reviewer failing to answer a question it had not been asked.
       progress.askedAt = Date.now()

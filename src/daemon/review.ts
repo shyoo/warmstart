@@ -769,6 +769,9 @@ export function completeReview(
   parsed: ParsedReview
 ): QualityReview {
   const existing = requireReview(id)
+  // A person may have stopped the reviewer while its final stream event was in flight. Preserve
+  // that explicit decision; a late answer is not consent to store a grade.
+  if (existing.status !== 'pending') return existing
   if (!parsed.ok) {
     db()
       .prepare(
@@ -825,6 +828,20 @@ export function refuseReview(id: string, reason: string): QualityReview {
       "update quality_reviews set status = 'refused', failure_reason = ?, completed_at = ? where id = ?"
     )
     .run(reason, Date.now(), id)
+  return requireReview(id)
+}
+
+/** Stop a pending grade without changing the task it was judging. */
+export function cancelReview(id: string, reason = 'cancelled by a person'): QualityReview {
+  const existing = requireReview(id)
+  if (existing.status !== 'pending') return existing
+  db()
+    .prepare(
+      "update quality_reviews set status = 'cancelled', failure_reason = ?, completed_at = ? where id = ?"
+    )
+    .run(reason, Date.now(), id)
+  log.info(`quality review ${id.slice(0, 8)} cancelled`)
+  emit({ type: 'task.changed', task: requireTaskRow(existing.taskId) })
   return requireReview(id)
 }
 

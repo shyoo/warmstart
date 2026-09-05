@@ -2308,10 +2308,12 @@ function QualityReviewBox({
   >(null)
   const [reviewerId, setReviewerId] = useState('auto')
   const [running, setRunning] = useState(false)
+  const [stopping, setStopping] = useState(false)
   const [failed, setFailed] = useState<string | null>(null)
   const finished = task.status === 'completed' || task.status === 'cancelled'
   const latest = reviews.find((r) => r.status === 'complete') ?? null
   const completed = reviews.filter((r) => r.status === 'complete' && r.composite !== null)
+  const pending = reviews.find((r) => r.status === 'pending') ?? null
 
   useEffect(() => {
     if (!finished) return
@@ -2337,6 +2339,21 @@ function QualityReviewBox({
       setFailed(err instanceof Error ? err.message : String(err))
     } finally {
       setRunning(false)
+    }
+  }
+
+  const stop = async () => {
+    if (!pending) return
+    setStopping(true)
+    setFailed(null)
+    try {
+      const result = await rpc('review.cancel', { reviewId: pending.id })
+      if (!result.ok) setFailed(result.reason)
+      await refresh()
+    } catch (err) {
+      setFailed(err instanceof Error ? err.message : String(err))
+    } finally {
+      setStopping(false)
     }
   }
 
@@ -2366,7 +2383,7 @@ function QualityReviewBox({
         className="reassign-select quality-review-select"
         aria-label="Quality review worker"
         value={reviewerId}
-        disabled={running || !eligibility?.ok}
+        disabled={running || stopping || Boolean(pending) || !eligibility?.ok}
         onChange={(event) => setReviewerId(event.target.value)}
       >
         <option value="auto">Auto · random available small model</option>
@@ -2381,11 +2398,22 @@ function QualityReviewBox({
       <button
         type="button"
         className="btn"
-        disabled={running || !eligibility?.ok}
+        disabled={running || stopping || Boolean(pending) || !eligibility?.ok}
         onClick={() => void request()}
       >
         {running ? 'grading…' : latest ? 'Review again' : 'Request review'}
       </button>
+      {pending && (
+        <button
+          type="button"
+          className="btn"
+          disabled={stopping}
+          onClick={() => void stop()}
+          title="Stops this read-only grade. The task and any completed reviews are unchanged."
+        >
+          {stopping ? 'stopping…' : 'Stop grading'}
+        </button>
+      )}
       <div className="side-note dim">
         {eligibility === null
           ? 'checking whether a peer can review this…'

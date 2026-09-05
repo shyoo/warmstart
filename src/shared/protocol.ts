@@ -1401,6 +1401,11 @@ export interface RpcMap {
     params: { taskId: string; workerId?: string | null }
     result: { ok: true; review: QualityReview } | { ok: false; reason: string }
   }
+  /** Stop one pending, read-only quality review. It never changes the task's lifecycle state. */
+  'review.cancel': {
+    params: { reviewId: string }
+    result: { ok: true; review: QualityReview } | { ok: false; reason: string }
+  }
   'task.create': { params: TaskCreateParams; result: Task }
   /**
    * Take one image off the operator's clipboard and put it on disk.

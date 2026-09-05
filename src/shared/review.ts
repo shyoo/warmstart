@@ -123,7 +123,8 @@ export interface DimensionScore {
   rationale: string
 }
 
-export type ReviewStatus = 'pending' | 'complete' | 'failed' | 'refused'
+/** `cancelled` is an operator stopping an in-flight grade, never a verdict on the task. */
+export type ReviewStatus = 'pending' | 'complete' | 'failed' | 'refused' | 'cancelled'
 
 /** One entry of `authorship`: an adapter that contributed non-failed work runs to the task. */
 export interface ReviewAuthor {

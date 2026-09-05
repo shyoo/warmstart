@@ -396,3 +396,39 @@ describe('how long a reviewer is given to answer', () => {
     expect(reviewer.reviewStall(progress, min(46))).toContain('as long as a review gets')
   })
 })
+
+describe('stopping a grade', () => {
+  it('cancels a stranded pending review and its run without changing the task', async () => {
+    const reviewStore = await import('./review.js')
+    db.db()
+      .prepare(
+        `insert into runs (id, task_id, worker_id, started_at, quota_unverified, kind)
+         values ('review-run', ?, ?, ?, 1, 'quality_review')`
+      )
+      .run(TASK, CODEX, Date.now())
+    const pending = reviewStore.createPendingReview({
+      taskId: TASK,
+      runId: 'review-run',
+      reviewerWorkerId: CODEX,
+      reviewerAdapter: 'openai-compatible',
+      reviewerModel: 'gpt-5.4-mini',
+      subjectAdapter: 'claude-code',
+      subjectModel: 'claude-opus-5',
+      authorship: [],
+      mixed: false,
+      diff: null,
+      blindingLeak: false
+    })
+
+    const stopped = reviewer.cancelReview(pending.id)
+
+    expect(stopped.ok).toBe(true)
+    expect(reviewStore.requireReview(pending.id).status).toBe('cancelled')
+    expect(db.db().prepare('select outcome from runs where id = ?').get('review-run')).toMatchObject({
+      outcome: 'cancelled'
+    })
+    expect(db.db().prepare('select status from tasks where id = ?').get(TASK)).toMatchObject({
+      status: 'completed'
+    })
+  })
+})
