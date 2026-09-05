@@ -610,7 +610,7 @@ body {
 
 .gauge {
   display: grid;
-  grid-template-columns: 84px 1fr 34px 44px;
+  grid-template-columns: 84px 1fr 34px 58px;
   align-items: center;
   gap: var(--sp-2);
   font-size: var(--text-meta);
@@ -654,7 +654,7 @@ body {
  * half that makes the number mean anything.
  */
 .gauge--session {
-  grid-template-columns: 84px 1fr 58px 44px;
+  grid-template-columns: 84px 1fr 58px 58px;
 }
 
 .gauge--idle {
@@ -697,6 +697,7 @@ body {
 .gauge-reset {
   text-align: right;
   color: var(--color-text-faint);
+  white-space: nowrap;
 }
 
 .wcard-sessions {
@@ -758,11 +759,11 @@ body {
    wide card's, so the numbers stay put and only the naming leaves. */
 .wcard--narrow .gauge {
   position: relative;
-  grid-template-columns: 1fr 34px 44px;
+  grid-template-columns: 1fr 34px 58px;
 }
 
 .wcard--narrow .gauge--session {
-  grid-template-columns: 1fr 58px 44px;
+  grid-template-columns: 1fr 58px 58px;
 }
 
 /*

@@ -273,6 +273,19 @@ describe('QuotaPoller.sweep', () => {
     expect(after?.windows).toHaveLength(1)
     expect(after?.windows[0]?.percent).toBe(25)
   })
+
+  it('does not record a fabricated error when an adapter reports empty windows with no error', () => {
+    db.db()
+      .prepare(
+        `insert into quota_samples (worker_id, window_id, label, percent, resets_at, source, error, sampled_at)
+         values (?,?,?,?,?,?,?,?)`
+      )
+      .run(WORKER, '', '', 0, null, 'cli', null, Date.now())
+
+    const reading = quota.lastQuotaReading(WORKER)
+    expect(reading?.windows).toEqual([])
+    expect(reading?.error).toBeUndefined()
+  })
 })
 
 /**

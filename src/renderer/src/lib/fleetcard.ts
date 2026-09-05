@@ -1,4 +1,4 @@
-import type { Session } from '@shared/protocol'
+import { sessionEnded, type Session } from '@shared/protocol'
 import { QUOTA_STALE_AFTER_MS, quotaFreshness } from '@shared/tasks'
 import type { FleetEntry } from './daemon'
 import { age } from './format'
@@ -60,7 +60,7 @@ export function cardStatus(
   now: number,
   sessions: Session[] = entry.sessions
 ): CardStatus | null {
-  const pending = sessions.find((s) => !measured(s) && s.state !== 'closed' && s.state !== 'idle')
+  const pending = sessions.find((s) => !measured(s) && !sessionEnded(s.state) && s.state !== 'idle')
   if (pending) {
     return pending.purpose === 'probe'
       ? {

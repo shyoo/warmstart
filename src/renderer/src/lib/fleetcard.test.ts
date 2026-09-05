@@ -121,6 +121,11 @@ describe('what the card corner says', () => {
     expect(cardStatus(entry({ quota: quota(), sessions: gone }), NOW)).toBeNull()
   })
 
+  it('ignores failed or abandoned sessions with no reading', () => {
+    const ended = [session({ state: 'failed' }), session({ state: 'abandoned' })]
+    expect(cardStatus(entry({ quota: quota(), sessions: ended }), NOW)).toBeNull()
+  })
+
   /**
    * ⛔ **The corner ages on its own clock, not on the one the reading arrived with.** `ageMs` and
    * `stale` are stamped onto a reading when the daemon *sends* it, so a card patched by a

@@ -343,7 +343,7 @@ function store(s: QuotaSnapshot): void {
   )
   if (s.windows.length === 0) {
     // Record the failure too. A gap in the series is indistinguishable from a healthy quiet period.
-    stmt.run(s.workerId, '', '', 0, null, s.source, s.error ?? 'no windows reported', s.sampledAt, null)
+    stmt.run(s.workerId, '', '', 0, null, s.source, s.error ?? null, s.sampledAt, null)
     return
   }
   for (const w of s.windows) {
