@@ -71,6 +71,7 @@ import {
   schedulingOrder,
   setHoldReason,
   setQuotaPreemptWarning,
+  setTaskHandoff,
   markConflictAsked,
   markResolveRetryAsked,
   markFinishAsked,
@@ -3431,6 +3432,27 @@ function planningInstruction(checkLead: string): string {
 }
 
 /**
+ * The sentence that closes the loop this project spent t226 falling into.
+ *
+ * ⛔ **An agent that stops without saying so is indistinguishable from one that is still working.**
+ * An ordinary run stays open until `task_complete` arrives — that is the whole of its contract — so
+ * a turn that ends any other way leaves the run open, the task reading `running`, the workspace held
+ * and the worker slot reserved, for as long as the daemon lives. `await_human` is the tool that says
+ * it; this is what makes the agent aware it has one, at the exact moment it would otherwise go quiet.
+ *
+ * ⭐ Measured on t226, 2026-09-05: the operator answered *"go with option C — I will close it out
+ * myself"*, the agent obeyed and stopped, and the board showed the task running for the rest of the
+ * evening because nothing it could call meant *"I have stopped"*.
+ *
+ * ⚠️ Deliberately appended to the sentence that asks for completion rather than offered beside it.
+ * Named on its own it reads as an exit, and an agent handed an exit takes it.
+ */
+const HAND_BACK_CLAUSE =
+  ' If the rest genuinely needs a person — a step only they can take, or work they have said they ' +
+  'will close out themselves — call `await_human` with the reason instead of simply stopping. ' +
+  'Ending your turn without calling one of these leaves the task reading as still running.'
+
+/**
  * What the planner is told when its pieces have all settled.
  *
  * ⛔ The table of outcomes is prepended by the caller, because "some of them failed" is the normal
@@ -3461,7 +3483,8 @@ function resolutionInstruction(task: Task, checkLead: string, commitHygiene: str
     'Work to the end without stopping between phases. ' +
       checkLead +
       'When the work is finished, call the MCP tool `task_complete` with a one-line summary. ' +
-      commitHygiene
+      commitHygiene +
+      HAND_BACK_CLAUSE
   ].join('\n')
 }
 
@@ -3642,7 +3665,7 @@ export function promptFor(
           checkLead +
           'When the work is finished, call the MCP tool `task_complete` with a one-line summary. ') +
         commitHygiene + ' If you need a decision from a person, call `ask_human` rather than guessing — offer the ' +
-        'options you are choosing between, and it waits for a real answer.'
+        'options you are choosing between, and it waits for a real answer.' + HAND_BACK_CLAUSE
     )
   } else {
     // ⛔ The options are asked for in the same breath as the question, because the operator's side
@@ -3963,6 +3986,90 @@ export async function completeTask(sessionId: string, summary: string): Promise<
     throw err
   } finally {
     completing.delete(sessionId)
+  }
+}
+
+/**
+ * The agent has gone as far as it can, and the rest is a person's to do.
+ *
+ * ⛔ **The other terminal contract, and the one that was missing.** An ordinary run stays open
+ * until `task_complete` arrives — that is the whole of its contract — so an agent that finishes its
+ * turn without calling it leaves the run open, the task reading `running`, the workspace held and the
+ * worker slot reserved, for as long as the daemon lives. `endConversationTurn` closes that gap for a
+ * conversation; nothing closed it for a task.
+ *
+ * ⭐ Measured on t226, 2026-09-05. The agent landed its work by hand, the trunk tripwire refused to
+ * close the task — correctly — and the operator answered *"go with option C: I will close it out
+ * myself."* The agent then did exactly what it was told and stopped. It had no way to **say** that it
+ * had stopped: `task_complete` would have asserted a success the tripwire had just refused, `handoff`
+ * records a note and ends nothing, and `ask_human` asks a question it did not have. So the turn ended,
+ * the session sat live and idle, and the board showed the task running for the rest of the evening.
+ *
+ * ⛔ **This is not a quieter `task_complete`, and it must never become one.** It claims nothing about
+ * the work, lands nothing, commits nothing, runs no checks and moves no branch — the task comes to
+ * rest at `awaiting_human` carrying the agent's own reason, which is the same resting place every
+ * `await-human` verdict in finish.ts already uses. What it buys is that the *stopping* is recorded
+ * rather than inferred from silence.
+ *
+ * ⚠️ The session is kept warm exactly as a completion that parks does, because the next thing to
+ * happen is a person typing, and `continueTask` turns that reply into a new run on the same thread.
+ */
+export async function parkForHuman(
+  sessionId: string,
+  reason: string,
+  state?: string
+): Promise<{ ok: boolean; reply: string }> {
+  const run = runForSession(sessionId)
+  if (!run?.taskId || run.outcome) {
+    return { ok: false, reply: 'This session has no open run, so there is nothing to hand over.' }
+  }
+  const task = getTask(run.taskId)
+  if (!task) {
+    return { ok: false, reply: 'This session is not working on a task.' }
+  }
+  // ⛔ A completion already owns this session's teardown and has not finished writing yet. Parking
+  //    underneath it would overwrite a reported completion with a hand-off, which is the t56 race in
+  //    the other direction.
+  if (completing.has(sessionId)) {
+    return {
+      ok: false,
+      reply: 'A completion for this task is still landing. Wait for it rather than handing over now.'
+    }
+  }
+
+  const why = reason.trim() || 'the agent stopped and asked for a person'
+  log.info(`t${task.seq} handed to a person by the agent: ${why.slice(0, 200)}`)
+
+  addMessage(task.id, 'agent', `Over to you: ${why}`, run.id)
+  // ⭐ Recorded as the handoff too when the agent wrote one, so a successor run does not pay to
+  //    rediscover the state of the branch. Same note, two places, one call.
+  if (state?.trim()) {
+    setTaskHandoff(task.id, state.trim())
+    addMessage(task.id, 'agent', `Where things stand:
+${state.trim()}`, run.id)
+  }
+  setStatus(task.id, 'awaiting_human', { assignee: 'human', holdReason: why })
+  // ⛔ `blocked`, never `completed`. The run did work and metered turns and is one answer away from
+  //    continuing; filing it as `failed` would say the opposite of what happened, and filing it as
+  //    `completed` would feed the estimator a job that stopped half way through as if it were a
+  //    measurement of the whole one. See `RunOutcome`.
+  finishRun(run.id, 'blocked', why)
+  void captureQuotaAfter(requireRun(run.id))
+
+  const project = task.projectId ? getProject(task.projectId) : null
+  const session = getSession(sessionId)
+  if (session && !sessionEnded(session.state)) {
+    log.info(`t${task.seq} is waiting on a person - keeping its session warm for the reply`)
+  } else {
+    await releaseWorkspaceOf(sessionId, task.id)
+  }
+  await releaseFor(run.id, task.id, project?.id ?? null)
+
+  return {
+    ok: true,
+    reply:
+      `Recorded. t${task.seq} is now waiting for a person and this run is closed. Nothing was ` +
+      'landed, committed or discarded. STOP HERE — you will be started again if they reply.'
   }
 }
 

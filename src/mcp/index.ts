@@ -23,8 +23,9 @@ import { paths } from '../daemon/paths.js'
  *
  * ⛔ **Two tiers, and the tier is set by the daemon, not asked for by the caller.** `MULTI_AGENT_CONTROLLER_TIER`
  * comes from the MCP config file the daemon wrote for that session; an agent cannot promote itself by
- * setting an environment variable it does not control. The worker tier can report completion, ask a
- * person, file a follow-up inside its own mandate, and leave a handoff. The controller tier can read
+ * setting an environment variable it does not control. The worker tier can report completion, hand
+ * the task back to a person, ask a person, file a follow-up inside its own mandate, and leave a
+ * handoff. The controller tier can read
  * the fleet and move work about, and is handed out only to the chat session, where a person is
  * watching. Unattended judgment gets **no tools at all** - it answers as JSON the daemon validates.
  *
@@ -359,6 +360,65 @@ server.registerTool(
     } catch (err) {
       return {
         content: [{ type: 'text' as const, text: `Could not report completion: ${String(err)}` }],
+        isError: true
+      }
+    }
+  }
+)
+
+/**
+ * The other way a run can end: the agent has gone as far as it can, and the rest is a person's.
+ *
+ * ⛔ **Not a quieter `task_complete`, and the description must never let it read as one.** It claims
+ * nothing about the work, lands nothing and runs no checks; the task comes to rest at
+ * `awaiting_human` carrying the agent's own reason.
+ *
+ * ⭐ The gap it closes, measured on t226 (2026-09-05): an ordinary run stays open until
+ * `task_complete` arrives, so an agent that is told *"leave it, I will close this out myself"* and
+ * obeys has nothing to call. `task_complete` would assert a success the finish path had just refused,
+ * `handoff` records a note and ends nothing, and `ask_human` asks a question it no longer has. The
+ * turn ended, the session sat live and idle, and the board showed the task running all evening.
+ */
+server.registerTool(
+  'await_human',
+  {
+    title: 'Hand the task back to a person and stop',
+    description:
+      'Call this when you have gone as far as you can and the rest genuinely needs a person: a step ' +
+      'only they can take, a decision that is theirs to make, or work they have said they will close ' +
+      'out themselves. It is NOT a way to finish early — if the work is done, call `task_complete`; ' +
+      'if you only need an answer to carry on, call `ask_human`, which waits and lets you continue. ' +
+      'This one ends the run. Nothing is landed, committed or discarded, and the task rests where a ' +
+      'person can see your reason and reply. Stopping without calling this leaves the task reading ' +
+      'as still running.',
+    inputSchema: {
+      reason: z
+        .string()
+        .describe('One line: what a person now has to decide or do. They see exactly this on the task.'),
+      state: z
+        .string()
+        .optional()
+        .describe(
+          'Where things stand — what is done, what is not, and where the work is. Recorded as the ' +
+            "handoff, so a successor does not pay to rediscover the state of the branch."
+        )
+    }
+  },
+  async (args) => {
+    const sessionId = process.env.MULTI_AGENT_CONTROLLER_SESSION_ID ?? ''
+    try {
+      const result = await rpc('agent.awaitHuman', {
+        sessionId,
+        reason: args.reason,
+        ...(args.state ? { state: args.state } : {})
+      })
+      return {
+        content: [{ type: 'text' as const, text: result.reply }],
+        ...(result.ok ? {} : { isError: true })
+      }
+    } catch (err) {
+      return {
+        content: [{ type: 'text' as const, text: `Could not hand this over: ${String(err)}` }],
         isError: true
       }
     }

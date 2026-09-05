@@ -1912,6 +1912,18 @@ export interface RpcMap {
   }
   'agent.handoff': { params: { sessionId: string; note: string }; result: { ok: true } }
   /**
+   * The agent has gone as far as it can and the rest is a person's.
+   *
+   * ⛔ **Not a quieter `agent.complete`.** It claims nothing about the work and lands nothing: the
+   * task comes to rest at `awaiting_human` carrying the agent's own reason, and the run ends
+   * `blocked`. What it buys is that an agent stopping is *recorded* rather than inferred from a
+   * session going quiet — without it, a run stays open and the task reads `running` for ever.
+   */
+  'agent.awaitHuman': {
+    params: { sessionId: string; reason: string; state?: string }
+    result: { ok: boolean; reply: string }
+  }
+  /**
    * File a whole Plan & Split at once, blocking until the operator approves or refuses it.
    *
    * ⚠️ `reply` is what the agent is shown, and it is load-bearing either way: on approval it names

@@ -316,6 +316,14 @@ left `quotaRisk` with no reachable trigger and quota vanished from routing for t
   the compacted conversation and workspace are preserved for a person to resume. Agent-initiated and
   automatic CLI compactions do not end a run; a pre-prompt resume compaction has a boundary waiter
   that continues its run, and `revive_compact` has no open run to end.
+- ⛔ **An agent has two ways to end a run, and calling neither leaves the task reading `running` for
+  ever.** `task_complete` reports success; `await_human` reports that the agent has gone as far as it
+  can and the rest is a person's. An ordinary run stays open until one of them arrives — that is the
+  whole of its contract — so a turn that merely ends holds the run, the workspace and the worker slot
+  until the daemon dies. Measured on t226, 2026-09-05, where an agent told *"I will close this out
+  myself"* obeyed, stopped, and had nothing it could call to say so. ⚠️ `await_human` ends the run
+  `blocked` and claims nothing about the work; it is not a quieter completion and the prompt names it
+  appended to the one asking for completion, never beside it.
 - ⛔ **`awaiting_human` must say what it wants and offer somewhere to answer.** Every hand-off to a
   person writes its reason onto the task, and `resolveTask()` records the answer.
 - ⛔ **Cancel is not delete.** Cancel winds a run down through the preemption protocol into a resting

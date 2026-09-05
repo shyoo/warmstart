@@ -54,12 +54,32 @@ any way to assign work directly to another worker.
 |---|---|
 | `approve` | the permission prompt tool. Called by the CLI in place of showing a card |
 | `task_complete` | ⛔ **the only signal that a task succeeded.** A process exiting cleanly says nothing |
+| `await_human` | ⛔ **the other terminal contract:** the agent has gone as far as it can and the rest is a person's. Ends the run `blocked`, rests the task at `awaiting_human`, claims nothing and lands nothing |
 | `ask_human` | put a question to the operator and **wait** (single choice, multi-checkboxes via `multi_select`, or open text) |
 | `checkpoint` | report a finished phase and wait for the go-ahead. `checkpointed` completion mode |
 | `task_create` | file a follow-up, inheriting a **narrowed** mandate and a share of the budget |
 | `handoff` | leave a note for whoever continues; prepended to the next run's prompt |
 | `task_split` | file a whole Plan & Split at once — 2 to N pieces with dependency edges encoding every required execution or landing order; edge-free pieces may run in parallel. ⛔ Raises **one** approval and blocks on it; atomic |
 | `task_depend` | add one edge between two pieces of **this task's own** split. ⛔ never an arbitrary task in the fleet |
+
+⛔ **`task_complete` and `await_human` are the only two ways a run can end, and an agent that calls
+neither leaves the task reading `running` for ever.** An ordinary run stays open until completion is
+reported — that is the whole of its contract — so a turn that simply ends leaves the run open, the
+workspace held and the worker slot reserved until the daemon dies. `endConversationTurn` closes that
+gap for a `conversation`; `await_human` is what closes it for a task.
+
+⭐ Measured on t226, 2026-09-05. The agent landed its work by hand, the trunk tripwire in `finish.ts`
+refused to close the task — correctly — and the operator replied *"go with option C: I will close it
+out myself."* The agent obeyed and stopped, and had nothing to call that meant *"I have stopped"*:
+`task_complete` would have asserted a success the tripwire had just refused, `handoff` records a note
+and ends nothing, and `ask_human` asks a question it no longer had. The session sat live and idle and
+the board showed the task running all evening.
+
+⚠️ **It is one small step from being a quieter `task_complete`, and its description is what stops
+it.** The tool says in as many words that it is not a way to finish early, and the prompt names it
+*appended to* the sentence asking for completion rather than beside it — an exit offered as an
+alternative to finishing is an exit an agent takes. The run ends `blocked`, never `completed`, so the
+estimator is never fed a job that stopped half way through as though it measured the whole one.
 
 ⚠️ `ask_human` blocks until somebody answers **or the session's prompt cache expires**. That is
 deliberate: an answer arriving while the session is warm costs a cache read, where the same answer

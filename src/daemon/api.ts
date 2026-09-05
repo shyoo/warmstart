@@ -109,6 +109,7 @@ import { activityFor } from './activity.js'
 import {
   atCapacity,
   completeTask,
+  parkForHuman,
   continueTask,
   deliverToLiveSession,
   promptFor,
@@ -1070,6 +1071,12 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
       await completeTask(p.sessionId, p.summary)
       return { ok: true as const }
     },
+    /**
+     * ⛔ The other terminal contract. It is deliberately *not* routed through `completeTask`: no
+     * finish decision is taken, nothing is landed and nothing is claimed about the work. See
+     * `parkForHuman`.
+     */
+    'agent.awaitHuman': (p) => parkForHuman(p.sessionId, p.reason, p.state),
     'agent.createTask': (p) => {
       const run = runForSession(p.sessionId)
       const parent = run?.taskId ? getTask(run.taskId) : null

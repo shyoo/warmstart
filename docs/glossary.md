@@ -499,6 +499,14 @@ a task succeeded. A clean exit code says nothing about whether the work was done
 terminal to guess is what this design refuses to do; a session that ends without it lands in
 `awaiting_human`.
 
+**`await_human`** — the worker-tier MCP call an agent makes when it has gone as far as it can and the
+rest is a person's: a step only they can take, or work they have said they will close out themselves.
+⛔ The *other* terminal contract, and **not** a quieter `task_complete` — it claims nothing about the
+work, lands nothing and runs no checks. The run ends `blocked`, the task rests at `awaiting_human`
+carrying the agent's own reason, and the session stays warm for the reply. ⭐ It exists because an
+ordinary run stays open until completion is reported, so an agent that stopped any other way left its
+task reading `running` indefinitely (t226, 2026-09-05).
+
 **Controller** — the LLM agent that makes judgment calls: decomposition, ambiguous routing, failure
 triage, risk-gating agent-created work, and naming a task whose prompt is a paragraph. It is itself a worker in the fleet with its own quota, so when
 its window runs low its next decision routes elsewhere. ⛔ It is **not** in the scheduling loop —
