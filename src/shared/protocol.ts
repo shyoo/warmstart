@@ -1,6 +1,6 @@
 import type { QualityReview } from './review.js'
 import type { GradeBatchOutcome, QualityReport, UngradedTask } from './quality.js'
-import type { RoutingDecisionPage, VelocityReport } from './routing.js'
+import type { ModelReport, RoutingDecisionPage, VelocityReport } from './routing.js'
 import type {
   Approval,
   ApprovalRule,
@@ -147,6 +147,18 @@ export interface Settings {
    * — have different answers and used to share one number.
    */
   idleProbeIntervalMinutes: number
+  /**
+   * Whether the scheduler may occasionally explore an alternative routable model on the chosen worker.
+   *
+   * ⛔ Default **off**, on the same principle as `autoRunawayStop` and `summariseTitles`. This
+   * deliberately dispatches work to a model the arithmetic did not choose: a real cost paid for
+   * information, and it should be opted into.
+   */
+  modelExploration: boolean
+  /**
+   * Probability (0..1) of exploring an alternative model on an eligible decision. Default 0.10.
+   */
+  modelExplorationRate: number
 }
 
 /** The per-agent cost scale, as the Cost screen shows it. Mirrors `estimator.ts`'s own types. */
@@ -317,6 +329,20 @@ export interface Worker {
    * When set on a multi-pool worker, the scheduler automatically balances across pools based on available budget.
    */
   defaultModels?: Record<string, string | null> | null
+  /**
+   * Every model this account may be *routed to*, beyond what it reaches for by default.
+   *
+   * ⛔ **`null` or `[]` both mean exactly what this worker uses today** —
+   * `resolveModelChoice(null, worker, false, lastQuota(worker.id)).model`, wrapped in a
+   * one-element array, or `[null]` when that itself is null ("the CLI's own choice"). That is what
+   * keeps model-aware routing inert until an operator opts a worker in: nothing reads this as
+   * "every model the adapter can price" just because it is empty.
+   *
+   * ⚠️ Validated against the cost model on write — `'model.options'` names the only models an
+   * adapter can be priced, gated and estimated for, and an id absent from that list is refused
+   * rather than stored.
+   */
+  routableModels?: string[] | null
   identity: WorkerIdentity | null
   /** What the last run on this account proved about it. `null` means nothing is known against it. */
   health: WorkerHealth | null
@@ -1227,6 +1253,7 @@ export interface RpcMap {
         | 'gradingEnabled'
         | 'defaultEffort'
         | 'defaultModels'
+        | 'routableModels'
       >
     >
     result: Worker
@@ -1652,6 +1679,8 @@ export interface RpcMap {
   }
   /** Who can take work right now, and how long each account has been measured to take. */
   'routing.velocity': { params: void; result: VelocityReport }
+  /** Every (worker, model) pair the fleet could route to, and what fed its `fitness` and `price`. */
+  'routing.models': { params: void; result: ModelReport }
   /** What peer review has measured about each agent, and how much work is still ungraded. */
   'quality.report': { params: void; result: QualityReport }
   /** The tasks nothing has graded, newest first — what the grade button would work through. */

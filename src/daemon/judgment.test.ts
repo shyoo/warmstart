@@ -10,6 +10,7 @@ import {
   MAX_TITLE_SUMMARY,
   TITLE_SUMMARY_THRESHOLD,
   titleQuestion,
+  validateRoute,
   validateTitleSummary
 } from './judgment.js'
 import { createTask, getTask, listTasks, messagesFor, updateTask } from './tasks.js'
@@ -463,3 +464,40 @@ describe('the dedicated question', () => {
     expect(question).toContain('changes a label and nothing else')
   })
 })
+
+describe('validateRoute', () => {
+  const candidates = [
+    { workerId: 'w1', model: 'claude-sonnet-5', score: 0.9 },
+    { workerId: 'w1', model: 'claude-haiku-4', score: 0.6 },
+    { workerId: 'w2', model: 'gemini-2.5-flash', score: 0.7 }
+  ]
+
+  it('a {workerId, model} answer validates', () => {
+    const res = validateRoute({ workerId: 'w1', model: 'claude-haiku-4', why: 'cheaper' }, candidates)
+    expect(res.ok).toBe(true)
+    if (res.ok) {
+      expect(res.value.workerId).toBe('w1')
+      expect(res.value.model).toBe('claude-haiku-4')
+      expect(res.value.why).toBe('cheaper')
+    }
+  })
+
+  it('an unlisted pair is rejected', () => {
+    const res = validateRoute({ workerId: 'w1', model: 'claude-opus-4', why: 'best' }, candidates)
+    expect(res.ok).toBe(false)
+    if (!res.ok) {
+      expect(res.reason).toContain('claude-opus-4')
+    }
+  })
+
+  it('a bare workerId resolves to that worker’s best pair', () => {
+    // w1 has two models: claude-sonnet-5 (0.9) and claude-haiku-4 (0.6)
+    const res = validateRoute({ workerId: 'w1', why: 'best worker' }, candidates)
+    expect(res.ok).toBe(true)
+    if (res.ok) {
+      expect(res.value.workerId).toBe('w1')
+      expect(res.value.model).toBe('claude-sonnet-5')
+    }
+  })
+})
+

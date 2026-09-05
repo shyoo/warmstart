@@ -1,10 +1,13 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync, watch, type FSWatcher } from 'node:fs'
 import { join } from 'node:path'
+import { canWork } from '@shared/protocol.js'
 import type { Worker, WorkerHealth, WorkerIdentity, WorkerRole } from '@shared/protocol.js'
+import { resolveModelChoice } from '@shared/tasks.js'
 import { db, row, rows } from './db.js'
 import { ensureDir, paths, slugify } from './paths.js'
 import { adapter, hasAdapter } from './adapters/index.js'
+import { lastQuota } from './quota.js'
 import { log } from './log.js'
 import { emit } from './events.js'
 
@@ -22,6 +25,7 @@ interface WorkerRow {
   grading_enabled: number
   default_effort: string | null
   default_models_json: string | null
+  routable_models_json: string | null
   identity_json: string | null
   health_json: string | null
   sort_order: number
@@ -44,6 +48,7 @@ function toWorker(r: WorkerRow): Worker {
     gradingEnabled: r.grading_enabled !== 0,
     defaultEffort: r.default_effort,
     defaultModels: r.default_models_json ? (JSON.parse(r.default_models_json) as Record<string, string | null>) : null,
+    routableModels: r.routable_models_json ? (JSON.parse(r.routable_models_json) as string[]) : null,
     identity: (() => {
       const ident = r.identity_json ? (JSON.parse(r.identity_json) as WorkerIdentity) : null
       const hlth = r.health_json ? (JSON.parse(r.health_json) as WorkerHealth) : null
@@ -227,6 +232,7 @@ export function updateWorker(
       | 'gradingEnabled'
       | 'defaultEffort'
       | 'defaultModels'
+      | 'routableModels'
     >
   >
 ): Worker {
@@ -239,12 +245,18 @@ export function updateWorker(
     patch.defaultModels === undefined
       ? current.defaultModels ? JSON.stringify(current.defaultModels) : null
       : patch.defaultModels ? JSON.stringify(patch.defaultModels) : null
+  const routableModelsJson =
+    patch.routableModels === undefined
+      ? current.routableModels ? JSON.stringify(current.routableModels) : null
+      : patch.routableModels && patch.routableModels.length > 0
+        ? JSON.stringify(patch.routableModels)
+        : null
 
   db()
     .prepare(
       `update workers set label = ?, enabled = ?, human_occupied = ?, max_concurrent = ?, role = ?,
                           default_model = ?, default_effort = ?, default_models_json = ?,
-                          grading_model = ?, grading_enabled = ?
+                          routable_models_json = ?, grading_model = ?, grading_enabled = ?
        where id = ?`
     )
     .run(
@@ -259,6 +271,7 @@ export function updateWorker(
       patch.defaultModel === undefined ? current.defaultModel : patch.defaultModel,
       patch.defaultEffort === undefined ? current.defaultEffort : patch.defaultEffort,
       defaultModelsJson,
+      routableModelsJson,
       patch.gradingModel === undefined ? (current.gradingModel ?? null) : patch.gradingModel,
       (patch.gradingEnabled ?? current.gradingEnabled) ? 1 : 0,
       id
@@ -272,6 +285,21 @@ export function updateWorker(
     )
   }
   return announce(requireWorker(id))
+}
+
+/**
+ * Every model this worker may be *routed to*.
+ *
+ * ⛔ **Null or empty resolves to exactly the one model this worker uses today** — what
+ * `resolveModelChoice` would answer with no task-level pin, wrapped in a one-element array, or
+ * `[null]` ("the CLI's own choice") when that itself is null. This is what keeps model-aware
+ * routing inert on every worker until an operator opts it in: an empty allowlist is read as *this
+ * worker's current single model*, never as *every model the adapter can price*.
+ */
+export function routableModelsFor(worker: Worker): Array<string | null> {
+  if (worker.routableModels && worker.routableModels.length > 0) return worker.routableModels
+  const resolved = resolveModelChoice(null, worker, false, lastQuota(worker.id)).model
+  return [resolved]
 }
 
 /** Smallest configured review rung for a built-in adapter; external adapters use their CLI default. */
@@ -546,4 +574,38 @@ export async function refreshIdentity(id: string, lift = false): Promise<Worker>
     }
   }
   return announce(requireWorker(id))
+}
+
+/**
+ * Whether any commissioned worker has actually been opted into model-aware routing.
+ *
+ * ⛔ **Fleet-global, and the switch for the `fitness` and `price` score terms.** An empty allowlist
+ * everywhere means no dispatch on this install has a model *choice* to make — `routableModelsFor`
+ * hands back the one model each worker already uses — and scoring a decision nobody is making would
+ * change routing on every existing fleet the day this landed. Which it did: two accounts whose
+ * default models differ scored 0.55 apart on a medium-complexity task and 1.04 apart on a high one,
+ * against a `ROUTE_EPSILON` of 0.10, purely from a benchmark prior nobody had validated against this
+ * fleet. The allowlist is the opt-in; until one exists, both terms sit at 0 and the arithmetic is
+ * the arithmetic that shipped before.
+ *
+ * ⚠️ **Fleet-global rather than per-worker, deliberately.** Zeroing the terms only for
+ * non-opted-in workers would put an opted-in worker carrying a real `price` penalty in the same
+ * field as one scored as though its model were free, and the free-looking one would win on a
+ * difference that measures nothing. Either the whole field is compared on model or none of it is.
+ *
+ * ⚠️ An allowlist only counts on an account that could actually be handed a turn: not retired (via
+ * `listWorkers()`), switched on, and taking work rather than reserved for judgment or held out of
+ * both (`canWork`). Widening a decommissioned, disabled or controller-only account would otherwise
+ * switch the two terms on for every *other* account while the widened one never entered a field.
+ *
+ * ⛔ Those three and no more — **durable configuration, never transient availability.** The rest of
+ * `accountUnavailability` (human-occupied, CLI missing, signed out, quarantined by a failed run)
+ * comes and goes within a tick, and gating on it would switch the terms on and off underneath the
+ * fleet, making one tick's scores incomparable with the next one's for reasons no operator asked
+ * for. An account that is merely busy is still an account the operator asked to route on model.
+ */
+export function modelRoutingActive(): boolean {
+  return listWorkers().some(
+    (w) => w.enabled && canWork(w.role) && w.routableModels && w.routableModels.length > 0
+  )
 }

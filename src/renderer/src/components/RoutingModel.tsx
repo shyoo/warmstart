@@ -1,4 +1,5 @@
 import { CostModel } from './CostModel'
+import { ModelsModel } from './ModelsModel'
 import { QualityModel } from './QualityModel'
 import { RoutingOverview } from './RoutingOverview'
 import { VelocityModel } from './VelocityModel'
@@ -15,14 +16,19 @@ import { VelocityModel } from './VelocityModel'
  * ⚠️ The Cost tab is the same `CostModel` page it has always been, moved rather than rewritten. It
  * is the cost half of this same model, and it was reachable from a sibling nav item that implied
  * otherwise.
+ *
+ * ⭐ **Models earns a tab on the same principle.** Routing now scores `(worker, model)` pairs, and
+ * two terms — `fitness` and `price` — exist only at that granularity; none of the other four tabs has
+ * anywhere to show a per-model number, because none of them is scoped below an account.
  */
-export type RoutingTab = 'overview' | 'quality' | 'cost' | 'velocity'
+export type RoutingTab = 'overview' | 'quality' | 'cost' | 'velocity' | 'models'
 
 export const ROUTING_TABS: Array<{ id: RoutingTab; label: string }> = [
   { id: 'overview', label: 'Overview' },
   { id: 'quality', label: 'Quality' },
   { id: 'cost', label: 'Cost' },
-  { id: 'velocity', label: 'Velocity' }
+  { id: 'velocity', label: 'Velocity' },
+  { id: 'models', label: 'Models' }
 ]
 
 export function RoutingModel({
@@ -64,8 +70,10 @@ export function RoutingModel({
         <QualityModel />
       ) : tab === 'cost' ? (
         <CostModel now={now} />
-      ) : (
+      ) : tab === 'velocity' ? (
         <VelocityModel />
+      ) : (
+        <ModelsModel />
       )}
     </div>
   )

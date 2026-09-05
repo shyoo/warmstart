@@ -79,6 +79,8 @@ export function FleetSettings(): React.JSX.Element {
   const autoOverrunPreempt = settings?.autoOverrunPreempt ?? true
   const autoRunawayStop = settings?.autoRunawayStop ?? false
   const summariseTitles = settings?.summariseTitles ?? false
+  const modelExploration = settings?.modelExploration ?? false
+  const modelExplorationRate = settings?.modelExplorationRate ?? 0.1
   const finishPolicy = settings?.finishPolicy ?? DEFAULT_FLEET_FINISH
   const sessionSharing = settings?.sessionSharing ?? 'off'
   const probeIntervalMinutes = settings?.probeIntervalMinutes ?? 5
@@ -277,6 +279,39 @@ export function FleetSettings(): React.JSX.Element {
             />
           }
         />
+
+        <SettingRow
+          title="Explore alternative models"
+          description={
+            modelExploration
+              ? `The scheduler occasionally dispatches tasks to an alternative routable model on the chosen worker (${Math.round(modelExplorationRate * 100)}% of eligible decisions) to measure fitness and price.`
+              : 'The scheduler always dispatches to the highest-scoring model. No turns are spent exploring.'
+          }
+          control={
+            <SettingSwitch
+              label="Explore alternative models"
+              on={modelExploration}
+              busy={disabled}
+              onToggle={() => void save({ modelExploration: !modelExploration })}
+            />
+          }
+        >
+          {modelExploration && (
+            <div className="setting-row-slider">
+              <label>Exploration rate</label>
+              <input
+                type="range"
+                min="1"
+                max="50"
+                aria-label="Model exploration rate"
+                value={Math.round(modelExplorationRate * 100)}
+                disabled={disabled}
+                onChange={(e) => void save({ modelExplorationRate: Number(e.target.value) / 100 })}
+              />
+              <span className="num">{Math.round(modelExplorationRate * 100)}%</span>
+            </div>
+          )}
+        </SettingRow>
 
         {/* ⛔ Two cadences, not one. A single interval had to serve an account spending its window
             right now and a fleet with nothing running, and it answered neither: the number said five

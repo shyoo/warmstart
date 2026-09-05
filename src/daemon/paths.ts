@@ -117,6 +117,10 @@ export const paths = {
   get costModels() {
     return join(dataDir(), 'costmodels')
   },
+  /** User-supplied benchmark priors, which take precedence over the ones shipped with the app. */
+  get benchmarks() {
+    return join(dataDir(), 'benchmarks')
+  },
   get db() {
     return join(dataDir(), `${APP_DIR}.db`)
   },

@@ -24,7 +24,7 @@ Everything else in the daemon goes through those two, so swapping the driver is 
 ## 2. The migration contract
 
 `MIGRATIONS` in `db.ts` is a numbered, **append-only** array. `MIGRATION_COUNT` is its length and is
-the `user_version` a current database sits at — **46** as of 2026-09-04.
+the `user_version` a current database sits at — **47** as of 2026-09-05.
 
 - ⛔ **Never edit a migration that has shipped.** Add the next one.
 - ⛔ **Every migration must survive being replayed.** `sessionstate.test.ts` rewinds `user_version`
@@ -51,7 +51,7 @@ the first. Both are required and `paths.test.ts` fails if either is removed.
 
 | Table | Holds | Notes |
 |---|---|---|
-| `workers` | one account = one quota bucket | `isolation_root` is absolute; `role`, `health_json`, `sort_order`, `default_model(s)`, independent `grading_model` / `grading_enabled` |
+| `workers` | one account = one quota bucket | `isolation_root` is absolute; `role`, `health_json`, `sort_order`, `default_model(s)`, independent `grading_model` / `grading_enabled`, **`routable_models_json`** — ⛔ `null`/`[]` both mean *only this worker's current default model*, never "every model the adapter can price"; see `routableModelsFor` in `workers.ts` |
 | `quota_samples` | window readings | ⛔ upsert on `(worker, window, sampled_at)`; `window_group` is the pool |
 | `spend_samples` | money-meter readings — the analogue of `quota_samples` | written by `spend.ts` off the quota poller's own pass. `direction` says whether the number falls (a credit purse) or rises (a cumulative counter); `balance` and `usd_per_unit` are nullable, and ⛔ null is *unknown*, never `0`. ⚠️ A probe that found nothing writes a row with `meter_id = ''` and an `error` — the analogue of `quota_samples`' empty `window_id`, and skipped by `price.ts` for the same reason. ⚠️ Identity is (worker, meter, the **vendor's** timestamp): re-reading one reading writes nothing |
 | `rate_limit_samples` | the vendor's live `rate_limit_event` | `rateLimitType` names the window |

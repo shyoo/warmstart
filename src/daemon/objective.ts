@@ -59,6 +59,20 @@ export interface Weights {
    * the same preference while the velocity axis paid nothing.
    */
   pace: number
+  /**
+   * How much model fitness matters.
+   *
+   * Sufficiency, not excellence: as long as the model meets the complexity band's sufficiency bar,
+   * it earns the full bonus. Exceeding the bar earns nothing more, so a dearer model cannot
+   * out-earn a sufficient cheap one on this term and price decides.
+   */
+  fitness: number
+  /**
+   * How much relative task price matters.
+   *
+   * Penalty scaling from 0 (cheapest in the field) to 1 (8x or more expensive).
+   */
+  price: number
 }
 
 /**
@@ -79,7 +93,9 @@ export const WEIGHT_FORMULAS: Record<keyof Weights, string> = {
   quotaRisk: '0.5 + 1.2×cost',
   cold: '0.8 + 2.0×cost − 0.7×velocity',
   capabilityFit: '0.7 + 1.3×quality',
-  pace: '0.3 + 1.7×velocity'
+  pace: '0.3 + 1.7×velocity',
+  fitness: '0.4 + 1.6×quality',
+  price: '0.5 + 2.0×cost'
 }
 
 export function weights(objective: Objective): Weights {
@@ -97,7 +113,9 @@ export function weights(objective: Objective): Weights {
     // Measured speed matters to everyone a little and to velocity-weighted work a lot. It is never
     // zero: a fleet that has learned one agent takes four times as long should still prefer the
     // other when nothing else separates them.
-    pace: 0.3 + 1.7 * velocity
+    pace: 0.3 + 1.7 * velocity,
+    fitness: 0.4 + 1.6 * quality,
+    price: 0.5 + 2.0 * cost
   }
 }
 

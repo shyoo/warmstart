@@ -13,7 +13,7 @@ import {
   updateTask
 } from './tasks.js'
 import { getProject } from './projects.js'
-import { listWorkers } from './workers.js'
+import { listWorkers, routableModelsFor } from './workers.js'
 import { costModel } from './costmodel.js'
 import { adapter } from './adapters/index.js'
 import { estimateTask, pessimisticOn, type Estimate } from './estimator.js'
@@ -243,17 +243,63 @@ export function validateGate(answer: Record<string, unknown>): Validated<GateVer
   return { ok: false, reason: `'${verdict}' is not one of accept, rescope, reject, human` }
 }
 
-/** ⛔ Checked against the candidates that were offered. A worker id from anywhere else is a fiction. */
+export type RouteCandidateTarget =
+  | string
+  | { workerId: string; model?: string | null; score?: number }
+  | RouteCandidate
+
+/**
+ * ⛔ Checked against the candidates that were offered.
+ * Supports `{ workerId, model }` pairs or legacy bare worker IDs.
+ * When bare `workerId` is given without model, falls back to that worker's highest-scoring pair.
+ */
 export function validateRoute(
   answer: Record<string, unknown>,
-  candidateIds: string[]
-): Validated<{ workerId: string; why: string }> {
+  candidateTargets: RouteCandidateTarget[]
+): Validated<{ workerId: string; model: string | null; why: string }> {
   const workerId = typeof answer.workerId === 'string' ? answer.workerId.trim() : ''
   if (!workerId) return { ok: false, reason: 'no workerId in the answer' }
-  if (!candidateIds.includes(workerId)) {
+
+  const normalized: Array<{ workerId: string; model: string | null; score: number }> =
+    candidateTargets.map((c) => {
+      if (typeof c === 'string') {
+        return { workerId: c, model: null, score: 0 }
+      }
+      if ('worker' in c) {
+        return {
+          workerId: c.worker.id,
+          model: c.model ?? null,
+          score: c.score ?? 0
+        }
+      }
+      return {
+        workerId: c.workerId,
+        model: c.model ?? null,
+        score: c.score ?? 0
+      }
+    })
+
+  const matching = normalized.filter((c) => c.workerId === workerId)
+  if (matching.length === 0) {
     return { ok: false, reason: `'${workerId.slice(0, 12)}' was not one of the candidates` }
   }
-  return { ok: true, value: { workerId, why: typeof answer.why === 'string' ? answer.why.trim() : '' } }
+
+  const why = typeof answer.why === 'string' ? answer.why.trim() : ''
+  const hasModel = typeof answer.model === 'string' && answer.model.trim().length > 0
+  const model = hasModel ? (answer.model as string).trim() : null
+
+  if (hasModel) {
+    const exact = matching.find((c) => c.model === model)
+    if (!exact) {
+      return { ok: false, reason: `'${workerId.slice(0, 12)}' with model '${model}' was not one of the candidate pairs` }
+    }
+    return { ok: true, value: { workerId, model: exact.model, why } }
+  }
+
+  // Fall back to worker's highest-scoring pair
+  const sorted = [...matching].sort((a, b) => b.score - a.score)
+  const best = sorted[0]!
+  return { ok: true, value: { workerId, model: best.model, why } }
 }
 
 // ---------------------------------------------------------------------------- is it still worth asking
@@ -662,6 +708,7 @@ function applyGate(task: Task, answer: Record<string, unknown>): ApplyResult {
 
 export interface RouteCandidate {
   worker: Worker
+  model?: string | null
   score: number
   warm: boolean
   note: string
@@ -716,14 +763,14 @@ export function routeQuestion(task: Task, candidates: RouteCandidate[]): string 
     'you are being asked. Each candidate lists what the arithmetic weighed for it.',
     ...candidates.flatMap((c) => [
       '',
-      `- ${c.worker.id} — ${c.worker.label}: score ${c.score.toFixed(3)}, ` +
+      `- ${c.worker.id}${c.model ? ` (${c.model})` : ''} — ${c.worker.label}: score ${c.score.toFixed(3)}, ` +
         `${c.warm ? 'already holds this task’s context' : 'cold start'}${c.note ? `, ${c.note}` : ''}`,
       ...(c.considered ? [`  weighed: ${c.considered}`] : [])
     ]),
     '',
     '# How to answer',
     '```json',
-    '{"workerId":"<one of the ids above, verbatim>","why":"...","summary":"..."}',
+    '{"workerId":"<one of the ids above, verbatim>","model":"<model if specified>","why":"...","summary":"..."}',
     '```',
     '',
     'Any id not in that list is discarded and the highest-scoring candidate is used instead.',
@@ -756,7 +803,7 @@ export function routeDetail(
     '# Candidates',
     ...candidates.flatMap((c) => [
       '',
-      `- ${c.worker.id} — ${c.worker.label}: score ${c.score.toFixed(3)}, ` +
+      `- ${c.worker.id}${c.model ? ` (${c.model})` : ''} — ${c.worker.label}: score ${c.score.toFixed(3)}, ` +
         `${c.warm ? 'already holds this task’s context' : 'cold start'}${c.note ? `, ${c.note}` : ''}`,
       // ⚠️ Indented under its own candidate rather than gathered into one table: a reader comparing
       // two candidates is comparing two of these blocks line for line.
@@ -769,13 +816,18 @@ function applyRoute(task: Task, answer: Record<string, unknown>): ApplyResult {
   // Checked twice, against two different sets, because they answer two different questions. Here:
   // is this a worker at all? In the scheduler, when the answer is read: is it still a *candidate* -
   // an account can be disabled, fill its window, or lose its sign-in between this and the next tick.
-  const checked = validateRoute(answer, listWorkers().map((w) => w.id))
+  const allCandidates: RouteCandidateTarget[] = listWorkers().flatMap((w) => {
+    const models = routableModelsFor(w)
+    return models.map((m) => ({ workerId: w.id, model: m }))
+  })
+  const checked = validateRoute(answer, allCandidates.length ? allCandidates : listWorkers().map((w) => w.id))
   if (!checked.ok) return bad(checked.reason)
   noteTitleSummary(task, answer)
-  const { workerId, why } = checked.value
+  const { workerId, model, why } = checked.value
   const label = listWorkers().find((w) => w.id === workerId)?.label ?? workerId.slice(0, 8)
-  addMessage(task.id, 'system', `Controller routed this to ${label}.${why ? ` ${why}` : ''}`)
-  return good(`t${task.seq} routed to ${label}`)
+  const modelText = model ? ` (${model})` : ''
+  addMessage(task.id, 'system', `Controller routed this to ${label}${modelText}.${why ? ` ${why}` : ''}`)
+  return good(`t${task.seq} routed to ${label}${modelText}`)
 }
 
 // ---------------------------------------------------------------------------- 5. title

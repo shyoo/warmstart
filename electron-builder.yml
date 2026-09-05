@@ -49,6 +49,10 @@ asarUnpack:
 # ⚠️ Not shipped, deliberately: `costmodels/` is compiled into the daemon bundle rather than copied
 # beside it, so a packaging slip cannot leave the scheduler unable to price anything. A user file in
 # their data directory still wins at runtime. See costmodel.ts.
+#
+# `benchmarks/` follows the identical rule for the same reason, and its loader (benchmarks.ts) is
+# built the same way costmodel.ts is: a prior that vanished in the packaged app because a directory
+# was not copied is not a failure worth having.
 
 win:
   target:

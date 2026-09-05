@@ -38,7 +38,17 @@ import {
   windowsForPool,
   windowExpired
 } from './quota.js'
-import { getWorker, listWorkers, recordDispatchFailure } from './workers.js'
+import {
+  getWorker,
+  listWorkers,
+  modelRoutingActive,
+  recordDispatchFailure,
+  routableModelsFor
+} from './workers.js'
+import { fitnessFor } from './fitness.js'
+import { qualityReport } from './quality.js'
+import { complexityOf } from './complexity.js'
+import { exploreRoute } from './exploration.js'
 import { accountUnavailability } from './eligibility.js'
 import { getProject, landingTargetFor, policyFor, reloadProject } from './projects.js'
 import {
@@ -169,7 +179,7 @@ import {
 } from './quota.js'
 import { reserveState } from './reserve.js'
 import { settings } from './settings.js'
-import { estimateTask, overrunFactor } from './estimator.js'
+import { estimateTask, overrunFactor, type Estimate } from './estimator.js'
 import type { Objective } from '@shared/tasks.js'
 import {
   DEFAULT_CACHE_TTL_MS,
@@ -350,6 +360,16 @@ export function overrunVerdict(
  */
 const ROUTE_EPSILON = 0.1
 const ROUTE_CONSULT_FLOOR_TOKENS = 150_000
+
+/**
+ * What `fitness` and `price` say for their basis while no worker has a routable-model allowlist.
+ *
+ * ⚠️ A sentence rather than an empty string, because `AGENTS.md` asks every belief to carry its
+ * basis and "0" with nothing beside it reads as *measured and bad* rather than *not asked*.
+ */
+const INERT_BASIS =
+  'model-aware routing is inert: no worker has a routable-model allowlist, so every candidate ' +
+  'offers the single model it already uses and there is no model choice to score'
 /** After this, a routing answer is about a fleet that no longer exists. */
 const ROUTE_ANSWER_MAX_AGE_MS = 5 * 60 * 1000
 
@@ -746,6 +766,8 @@ export interface WorkerChoice {
   worker: Worker | null
   /** A live, idle session already holding this task's context. Reusing it is the cheapest move here. */
   session: Session | null
+  /** A closed-but-reopenable conversation on this account for this task. */
+  resumable?: Session | null
   reason: string
   quotaUnverified: boolean
   score: number
@@ -1064,7 +1086,7 @@ function stickyWorkerFor(task: Task): string | null {
   return null
 }
 
-export function chooseTarget(task: Task): WorkerChoice {
+export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
   const reasons: string[] = []
   /**
    * When the workers held on quota get their windows back — the earliest of them.
@@ -1085,7 +1107,52 @@ export function chooseTarget(task: Task): WorkerChoice {
   // ⛔ Once per decision, not once per candidate. See `scoreCandidate`'s `pace` parameter.
   const pace = paceFactors()
 
-  const candidates: WorkerChoice[] = []
+  // ⛔ Compute task complexity once per decision, not once per candidate.
+  const complexity = complexityOf(task)
+
+  /**
+   * Whether the `fitness` and `price` terms are live at all. See `modelRoutingActive`.
+   *
+   * ⛔ Read once per decision, so every candidate in one field is scored under the same rule. A
+   * worker commissioned midway through a loop that flipped this would otherwise be compared on a
+   * model against candidates that were not.
+   */
+  const modelRouting = modelRoutingActive()
+  /**
+   * ⛔ Loaded once per decision, not once per candidate — `paceFactors()` above is hoisted for
+   * exactly this reason. `qualityReport()` reads the whole reviews table and runs four more counting
+   * queries; calling it inside the candidate loop made a fleet of five accounts with eight routable
+   * models each do forty full table scans per task per tick, and the scheduler ticks every 10s.
+   * ⚠️ Skipped entirely when the terms are inert: nothing reads it, so nothing should pay for it.
+   */
+  const qualityKeys = modelRouting ? qualityReport().keys : []
+
+  // ⚠️ Memoise estimateTask per (adapterId, model, warm) for the duration of this decision.
+  const estimateCache = new Map<string, Estimate>()
+  function cachedEstimate(adapterId: string | null, model: string | null, warm: boolean): Estimate {
+    const key = `${adapterId ?? ''}:${model ?? ''}:${warm}`
+    let est = estimateCache.get(key)
+    if (!est) {
+      est = estimateTask(task, {
+        adapterId: adapterId ?? null,
+        ...(model ? { model } : {}),
+        warm
+      })
+      estimateCache.set(key, est)
+    }
+    return est
+  }
+
+  interface RawCandidate {
+    worker: Worker
+    session: Session | null
+    resumable: Session | null
+    model: string | null
+    quotaUnverified: boolean
+    trustedWindows: QuotaWindow[]
+    estimate: Estimate
+  }
+  const rawCandidates: RawCandidate[] = []
 
   for (const worker of listWorkers()) {
     if (task.constraints.workerId && task.constraints.workerId !== worker.id) continue
@@ -1130,18 +1197,6 @@ export function chooseTarget(task: Task): WorkerChoice {
     // here would make the fleet undispatchable because somebody asked it a question.
     //
     // ⛔ **The session this task would reuse is not counted, because reusing it starts no process.**
-    // `maxConcurrent` bounds how many agents run at once; a turn sent into a session that is already
-    // open adds none. Counting it made a one-slot worker - the default - refuse the single most
-    // valuable move the cost model has: a task resting at `awaiting_human` keeps its session warm for
-    // the reply, that idle session filled the only slot, and the reply was then held at
-    // `ClaudeSecond at capacity` forever. Measured 2026-08-28 on a real fleet, trying to share a
-    // conversation; the same gate had been silently blocking every warm continuation on a one-slot
-    // worker since long before sharing existed.
-    //
-    // ⚠️ Safe because `warmSessionFor` only ever returns an **idle** session, and the lease stops two
-    // tasks being given the same one. Nothing here can produce two live agents in one conversation.
-    // ⚠️ Asked of *this* worker rather than of the fleet, so one account's warm conversation cannot
-    // stand in for — or hide — another's. `warmSessionFor` does that filtering; see its comment.
     const reuse = warmSessionFor(task, worker.id)
     const sessions = sessionsForWorker(worker.id)
     const retained = retainedReservations(worker.id, sessions)
@@ -1150,114 +1205,198 @@ export function chooseTarget(task: Task): WorkerChoice {
       continue
     }
 
-    const quota = lastQuota(worker.id)
-    // ⛔ Hoisted out of the gate below so the *score* reads the same windows the *gate* read. Two
-    // lookups would be two chances to disagree, and a fleet where the hard cut and the soft
-    // preference disagree about which pool a task draws on is worse than either alone.
-    // ⚠️ Stays empty on a stale or missing reading, which is what keeps the term at zero there.
-    let trustedWindows: QuotaWindow[] = []
-    if (quota && !quota.stale) {
-      // ⭐ **The pool this task's model would actually draw on.** Antigravity meters Gemini apart
-      // from Claude/GPT, so an account can be spent for one and untouched for the other; holding a
-      // Gemini task out because the Claude/GPT window is nearly full is a refusal with no cause.
-      // ⚠️ Only answerable since the model became knowable before the spawn — `resolveModelChoice`
-      // gives the same answer here that the dispatch will reach, from the same two tiers.
-      // ⚠️ `false` for effort: the pool follows the model, and effort has no bearing on it.
-      const choice = resolveModelChoice(task.constraints, worker, false, quota)
-      const pool = poolFor(worker, choice.model)
-      const applicable = windowsForPool(quota.windows, pool)
-      const active: QuotaWindow[] = []
-      let blockingWindow: QuotaWindow | null = null
+    const resumable = reuse ? null : reopenableFor(task, worker.id)
+    const held = reuse ?? resumable
 
-      for (const win of applicable) {
-        if (windowExpired(win)) {
-          quotaUnverified = true
-        } else {
-          active.push(win)
-          if (win.percent >= QUOTA_HIGH_WATER) {
-            if (!blockingWindow || win.percent > blockingWindow.percent) {
-              blockingWindow = win
+    // Determine candidate models for this worker:
+    // ⛔ A warm or reopenable conversation pins the model.
+    // ⛔ A task that pinned a model gets exactly one pair.
+    let candidateModels: Array<string | null>
+    if (held?.model) {
+      candidateModels = [held.model]
+    } else if (task.constraints.model) {
+      candidateModels = [task.constraints.model]
+    } else if (task.constraints.modelsByWorker && task.constraints.modelsByWorker[worker.id]) {
+      candidateModels = [task.constraints.modelsByWorker[worker.id]!]
+    } else {
+      candidateModels = routableModelsFor(worker)
+    }
+
+    // Bound the fan-out: cap candidate models per worker to 8
+    if (candidateModels.length > 8) {
+      log.info(`t${task.seq}: capping candidate models for ${worker.label} from ${candidateModels.length} to 8`)
+      candidateModels = candidateModels.slice(0, 8)
+    }
+
+    const quota = lastQuota(worker.id)
+
+    // ⭐ **The quota-pool gate is per (worker, model), not per worker.** Antigravity meters Gemini
+    // apart from Claude/GPT, so an account can be spent for one pool and untouched for the other;
+    // hoisted out here it held a Gemini pair out because the Claude window was full.
+    // ⚠️ Named in the operator's reason only when this worker is actually offering more than one
+    // model — "(claude-opus-5)" appended to every refusal on a single-model fleet is noise that says
+    // nothing, since there was never another pair it could have meant.
+    const namesModel = candidateModels.length > 1
+    for (const model of candidateModels) {
+      let trustedWindows: QuotaWindow[] = []
+      if (quota && !quota.stale) {
+        const pool = poolFor(worker, model)
+        const applicable = windowsForPool(quota.windows, pool)
+        const active: QuotaWindow[] = []
+        let blockingWindow: QuotaWindow | null = null
+
+        for (const win of applicable) {
+          if (windowExpired(win)) {
+            quotaUnverified = true
+          } else {
+            active.push(win)
+            if (win.percent >= QUOTA_HIGH_WATER) {
+              if (!blockingWindow || win.percent > blockingWindow.percent) {
+                blockingWindow = win
+              }
             }
           }
         }
-      }
-      trustedWindows = active
+        trustedWindows = active
 
-      if (blockingWindow) {
-        // ⛔ **The one gate a person may overrule**, and only because it is the one built entirely
-        // out of a number of ours. 92% is a caution, not a refusal: the vendor served every turn up
-        // to it and would very likely serve the next. An operator can see what the arithmetic
-        // cannot — that 8% of a window is more than this task needs — and until this existed a task
-        // pinned to one account had no way to say so and simply waited for the reset.
-        // ⚠️ The candidate is **not** exempted from `windowRisk`, which saturates at exactly this
-        // percentage: overruling the cliff must not also make the worker look cheap, or a fleet with
-        // a free account elsewhere would start sending work to the full one.
-        if (override) {
-          log.info(
-            `t${task.seq} dispatching to ${worker.label} at ${Math.round(blockingWindow.percent)}% of its ` +
-              `${blockingWindow.label ?? '5h'} window — a person overrode the ${QUOTA_HIGH_WATER}% gate`
-          )
-        } else {
-          // Names the window, because "at 91% of its 5h window" on a two-pool account is a sentence
-          // the operator cannot check against what the CLI's own panel shows them.
-          reasons.push(
-            `${worker.label} at ${Math.round(blockingWindow.percent)}% of its ${blockingWindow.label ?? '5h'} window`
-          )
-          // ⛔ The clock behind the sentence, kept rather than discarded. `resetsAt` on the sample
-          // that just refused this dispatch is precisely when this refusal expires, and it is the
-          // number both the operator and `expectedIdleMs` were missing.
-          const resetsAt = blockingWindow.resetsAt ?? windowResetsAt(worker.id)?.at ?? null
-          if (resetsAt && resetsAt > Date.now()) {
-            quotaHoldUntil = quotaHoldUntil === null ? resetsAt : Math.min(quotaHoldUntil, resetsAt)
+        if (blockingWindow) {
+          if (override) {
+            log.info(
+              `t${task.seq} dispatching to ${worker.label}${namesModel ? ` (${model ?? 'default'})` : ''} at ${Math.round(blockingWindow.percent)}% of its ` +
+                `${blockingWindow.label ?? '5h'} window — a person overrode the ${QUOTA_HIGH_WATER}% gate`
+            )
+          } else {
+            const modelSuffix = namesModel ? ` (${model ?? 'default'})` : ''
+            reasons.push(
+              `${worker.label}${modelSuffix} at ${Math.round(blockingWindow.percent)}% of its ${blockingWindow.label ?? '5h'} window`
+            )
+            const resetsAt = blockingWindow.resetsAt ?? windowResetsAt(worker.id)?.at ?? null
+            if (resetsAt && resetsAt > Date.now()) {
+              quotaHoldUntil = quotaHoldUntil === null ? resetsAt : Math.min(quotaHoldUntil, resetsAt)
+            }
+            continue
           }
-          continue
         }
+      } else {
+        quotaUnverified = true
       }
-    } else {
-      // ⚠️ No trustworthy reading. Dispatching anyway is a deliberate choice: refusing would make the
-      // tool useless on a CLI with no free usage probe. The run is *marked*, so M3 can find every
-      // decision made blind, and the real protection here is `maxConcurrent`, not a percentage.
-      quotaUnverified = true
-    }
 
-    // The same session the capacity gate above declined to count, and it must stay the same one:
-    // exempting a session from the cap and then dispatching into a different one would raise the
-    // real concurrency by one, quietly, on the account least able to afford it.
-    const session = reuse
-    // ⛔ Only when there is no live one, and ⛔ deliberately **not** exempted from `atCapacity`
-    // above. Reopening a closed conversation starts a process; `maxConcurrent` bounds processes.
-    // The live-reuse exemption exists because sending a prompt into a running agent starts none,
-    // and extending it to here would raise the real concurrency by one on every resumed task.
-    const resumable = reuse ? null : reopenableFor(task, worker.id)
-    // ⚠️ Resolved once and kept: the score reads it, and the decision ledger records it, and a second
-    // resolution between the two would be a second chance to name a different model.
-    const model = session?.model ?? resumable?.model ?? resolveModelChoice(task.constraints, worker, false, quota).model
-    candidates.push({
-      worker,
-      session,
-      reason: '',
-      quotaUnverified,
-      model,
-      ...(() => {
-        // One computation, used for both the ordering and the explanation.
-        const breakdown = scoreCandidate(task, worker, session, resumable, w, trustedWindows, pace, model)
-        return { score: breakdown.total, breakdown }
-      })()
-    })
+      const session = reuse
+      const estimate = cachedEstimate(worker.adapterId, model, !!held)
+      rawCandidates.push({
+        worker,
+        session,
+        resumable,
+        model,
+        quotaUnverified,
+        trustedWindows,
+        estimate
+      })
+    }
   }
 
-  if (candidates.length === 0) {
+  if (rawCandidates.length === 0) {
     return {
       worker: null,
       session: null,
-      // ⚠️ Every reason, not the first two. This string is now shown on the task row, and "at
-      // capacity" for one worker while three others are held out for three different causes is the
-      // difference between a fleet that is busy and a fleet that is broken.
       reason: reasons.length ? reasons.join('; ') : 'no eligible worker',
       quotaUnverified,
       score: 0,
       holdUntil: quotaHoldUntil
     }
+  }
+
+  // Field-wide price normalization: compare like with like
+  const allHaveUsd = rawCandidates.every(
+    (c) => c.estimate.usd !== null && c.estimate.usd > 0
+  )
+  let priceUnit: 'usd' | 'pricedTokens' | 'none' = 'none'
+  let cheapestCost = 0
+  if (allHaveUsd) {
+    priceUnit = 'usd'
+    cheapestCost = Math.min(...rawCandidates.map((c) => c.estimate.usd!))
+  } else {
+    const allHaveTokens = rawCandidates.every(
+      (c) => c.estimate.pricedTokens !== null && c.estimate.pricedTokens > 0
+    )
+    if (allHaveTokens) {
+      priceUnit = 'pricedTokens'
+      cheapestCost = Math.min(...rawCandidates.map((c) => c.estimate.pricedTokens))
+    }
+  }
+
+  const candidates: WorkerChoice[] = []
+  for (const c of rawCandidates) {
+    // Fitness term: sufficiency bar
+    const required = { low: 0.35, medium: 0.55, high: 0.75 }[complexity.band]
+    const fit = modelRouting ? fitnessFor(c.worker.adapterId, c.model, qualityKeys) : null
+    let fitnessValue: number
+    let fitnessBasis: string
+    if (!fit) {
+      // ⛔ Nobody has opted in, so there is no model *choice* here to score. See
+      // `modelRoutingActive`: every worker is offering the one model it already uses, and grading
+      // that model against a benchmark prior would silently re-rank an existing fleet on upgrade.
+      fitnessValue = 0
+      fitnessBasis = INERT_BASIS
+    } else if (fit.value === null) {
+      fitnessValue = 0
+      fitnessBasis = 'no public benchmark and no clean review covers this pair'
+    } else {
+      fitnessValue = Math.max(0, Math.min(1, 1 - Math.max(0, required - fit.value) / 0.25))
+      fitnessBasis = `${fit.value.toFixed(2)} blended fitness (required ${required.toFixed(2)} for ${complexity.band} complexity); ${fit.basis}`
+    }
+
+    // Price term: penalty relative to cheapest in field
+    const thisCost =
+      priceUnit === 'usd'
+        ? c.estimate.usd!
+        : priceUnit === 'pricedTokens'
+          ? c.estimate.pricedTokens
+          : 0
+    let priceValue: number
+    let priceBasis: string
+    if (!modelRouting) {
+      // ⛔ Same gate as `fitness`, and for the same reason: with one model per worker this term
+      // would price a choice nobody is making. `warm`, `cold`, `quotaRisk` and `projectSwitch`
+      // already carry cost on an un-opted-in fleet, exactly as they did before this landed.
+      priceValue = 0
+      priceBasis = INERT_BASIS
+    } else if (priceUnit === 'none' || cheapestCost <= 0) {
+      priceValue = 0
+      priceBasis = 'unmeasurable (neither money nor priced tokens available)'
+    } else {
+      const ratio = thisCost / cheapestCost
+      priceValue = Math.max(0, Math.min(1, Math.log(ratio) / Math.log(8)))
+      if (priceUnit === 'usd') {
+        priceBasis = `$${thisCost.toFixed(4)} estimated ($${cheapestCost.toFixed(4)} cheapest in field; 8× scale)`
+      } else {
+        priceBasis = `${Math.round(thisCost).toLocaleString()} priced tokens (${Math.round(cheapestCost).toLocaleString()} cheapest in field; money unpriceable for at least one candidate)`
+      }
+    }
+
+    const breakdown = scoreCandidate(
+      task,
+      c.worker,
+      c.session,
+      c.resumable,
+      w,
+      c.trustedWindows,
+      pace,
+      c.model,
+      { value: fitnessValue, basis: fitnessBasis },
+      { value: priceValue, basis: priceBasis }
+    )
+
+    candidates.push({
+      worker: c.worker,
+      session: c.session,
+      resumable: c.resumable,
+      reason: '',
+      quotaUnverified: c.quotaUnverified,
+      model: c.model,
+      score: breakdown.total,
+      breakdown
+    })
   }
 
   candidates.sort((a, b) => b.score - a.score)
@@ -1285,10 +1424,30 @@ export function chooseTarget(task: Task): WorkerChoice {
       warm: !!c.session,
       quotaUnverified: c.quotaUnverified,
       score: c.score,
-      chosen: (c.worker as Worker).id === winner.worker?.id,
+      chosen: (c.worker as Worker).id === winner.worker?.id && (c.model ?? null) === (winner.model ?? null),
       terms: c.breakdown?.terms ?? []
     }))
   })
+
+  function finalizeChoice(choice: WorkerChoice): WorkerChoice {
+    const res = exploreRoute({
+      task,
+      winner: choice,
+      candidates,
+      complexity,
+      settings: settings(),
+      random
+    })
+    if (res.explored) {
+      addMessage(
+        task.id,
+        'system',
+        `Model exploration: trying ${res.choice.model ?? 'default'} on ${res.choice.worker?.label} instead of ${res.originalWinner?.model ?? 'default'}, which arithmetic scored highest.`
+      )
+      return res.choice
+    }
+    return choice
+  }
 
   // ---- the routing judgment event, and every reason not to fire it -------------------------
   //
@@ -1302,31 +1461,47 @@ export function chooseTarget(task: Task): WorkerChoice {
   const sticky = stickyWorkerFor(task)
   if (sticky) {
     const stayed = candidates.find((c) => c.worker?.id === sticky)
-    if (stayed) return decided(stayed, 'sticky')
+    if (stayed) return finalizeChoice(decided(stayed, 'sticky'))
   }
 
-  if (!second || task.kind === 'plan') {
-    return decided(best, task.constraints.workerId ? 'pinned' : 'score')
+  const isPinned = Boolean(
+    task.constraints.workerId ||
+      task.constraints.model ||
+      (task.constraints.modelsByWorker && best.worker && task.constraints.modelsByWorker[best.worker.id])
+  )
+  const eligibleWorkerCount = new Set(candidates.map((c) => c.worker?.id).filter(Boolean)).size
+  if (eligibleWorkerCount <= 1 || task.kind === 'plan') {
+    return finalizeChoice(decided(best, isPinned ? 'pinned' : 'score'))
   }
   // ⚠️ For the *best* candidate, not the fleet. The floor asks "is this task big enough to be worth
   // a controller turn", and on an agent whose runs cost 12x the fleet median the same work clears a
   // floor it would not clear elsewhere — which is the honest answer to the question being asked.
-  const estimate = estimateTask(task, {
-    adapterId: best.worker?.adapterId ?? null,
-    ...(best.session?.model ? { model: best.session.model } : {}),
-    warm: !!best.session
-  }).tokens
-  const tie = Math.abs(best.score - second.score) <= ROUTE_EPSILON
-  if (!tie || estimate < ROUTE_CONSULT_FLOOR_TOKENS) return decided(best, 'score')
+  const estimate = cachedEstimate(
+    best.worker?.adapterId ?? null,
+    best.model ?? best.session?.model ?? null,
+    !!best.session
+  ).tokens
+  const tie = second !== undefined && Math.abs(best.score - second.score) <= ROUTE_EPSILON
+  if (!tie || estimate < ROUTE_CONSULT_FLOOR_TOKENS) return finalizeChoice(decided(best, 'score'))
 
   const answered = latestAnswer('route', task.id, ROUTE_ANSWER_MAX_AGE_MS) as
-    | { workerId?: string }
+    | { workerId?: string; model?: string }
     | null
   if (answered?.workerId) {
     // ⛔ Validated again, here, against the candidate set that exists *now*. The fleet the controller
     // was shown is minutes old; an account can be disabled or hit its window in between.
-    const picked = candidates.find((c) => c.worker?.id === answered.workerId)
-    if (picked) return decided(picked, 'controller')
+    const matching = candidates.filter((c) => c.worker?.id === answered.workerId)
+    if (matching.length > 0) {
+      // ⚠️ The named pair, then the worker's best pair — never nothing. `validateRoute` accepts a
+      // bare `workerId` and resolves it to the worker's highest-scoring pair; the same answer must
+      // survive here, because the field is re-derived and a pair the controller was shown can have
+      // left it since (its quota pool crossed the water mark, its model came off the allowlist).
+      // Discarding a valid account because one model of it vanished would throw away the consult
+      // that was already paid for and fall through to asking the same question again.
+      const named = answered.model ? matching.find((c) => c.model === answered.model) : undefined
+      const picked = named ?? [...matching].sort((a, b) => b.score - a.score)[0]
+      if (picked) return finalizeChoice(decided(picked, 'controller'))
+    }
   }
 
   if (hasPendingConsult('route', task.id)) {
@@ -1353,8 +1528,19 @@ export function chooseTarget(task: Task): WorkerChoice {
     }
   }
 
-  const shortlist: RouteCandidate[] = candidates.slice(0, 4).map((c) => ({
+  // Dedupe consult shortlist to one pair per worker before slicing
+  const seenWorkers = new Set<string>()
+  const dedupedByWorker: WorkerChoice[] = []
+  for (const c of candidates) {
+    const wid = c.worker?.id
+    if (wid && !seenWorkers.has(wid)) {
+      seenWorkers.add(wid)
+      dedupedByWorker.push(c)
+    }
+  }
+  const shortlist: RouteCandidate[] = dedupedByWorker.slice(0, 4).map((c) => ({
     worker: c.worker as Worker,
+    model: c.model ?? null,
     score: c.score,
     warm: !!c.session,
     note: c.quotaUnverified ? 'quota reading not trustworthy' : '',
@@ -1372,7 +1558,7 @@ export function chooseTarget(task: Task): WorkerChoice {
     // UI when they want to check the arithmetic rather than the answer.
     detail: routeDetail(task, shortlist, scoreLegend(objective))
   })
-  if (!queued) return decided(best, 'score')
+  if (!queued) return finalizeChoice(decided(best, 'score'))
   return {
     ...best,
     worker: null,
@@ -1586,7 +1772,9 @@ const SIGN_OF: Record<keyof ReturnType<typeof weights>, 1 | -1> = {
   // ⛔ `+1` with a **signed** value, which is why it is not listed as a penalty. See `paceValue`:
   // the term is positive for an agent measured faster than the fleet's centre and negative for one
   // measured slower, so a single direction here would be a lie about half of its range.
-  pace: 1
+  pace: 1,
+  fitness: 1,
+  price: -1
 }
 
 /** `score = Σ sign × weight × value`, and nothing else. */
@@ -1657,6 +1845,8 @@ const VALUE_MEANS: Record<string, string> = {
   // ⚠️ The only signed value in the table, and the only one whose 0 is a *middle* rather than a
   // floor: 0 is both "exactly the fleet's median pace" and "nothing measured yet".
   pace: '+1 = measured 4x faster than the fleet median task, -1 = 4x slower, 0 = unmeasured',
+  fitness: '1 = meets sufficiency bar for task complexity, 0 = 0.25 below bar or unmeasured',
+  price: '0 = cheapest candidate in field, 1 = 8x or more expensive than cheapest',
   unproven: '1.5 max = never probed and never worked'
 }
 
@@ -1747,7 +1937,9 @@ function scoreCandidate(
    */
   pace: PaceFactors,
   /** The model this candidate would actually run — the held conversation's, or the resolved default. */
-  paceModel: string | null
+  paceModel: string | null,
+  fitnessTerm: { value: number; basis: string },
+  priceTerm: { value: number; basis: string }
 ): ScoreBreakdown {
   const now = Date.now()
 
@@ -1905,6 +2097,22 @@ function scoreCandidate(
       paceValue(measuredPace.factor),
       1,
       measuredPace.basis
+    ],
+    [
+      'fitness',
+      w.fitness,
+      WEIGHT_FORMULAS.fitness,
+      fitnessTerm.value,
+      1,
+      fitnessTerm.basis
+    ],
+    [
+      'price',
+      w.price,
+      WEIGHT_FORMULAS.price,
+      priceTerm.value,
+      -1,
+      priceTerm.basis
     ],
     [
       'unproven',
@@ -2115,7 +2323,7 @@ function noteQuotaOverrideDispatch(task: Task, worker: Worker): void {
  * and a scheduler that refused to start work because an analytics insert threw would be trading the
  * thing that matters for the thing that watches it.
  */
-function noteRoutingDecision(task: Task, choice: WorkerChoice): void {
+export function noteRoutingDecision(task: Task, choice: WorkerChoice): void {
   if (!choice.scored || !choice.objective) return
   try {
     recordRoutingDecision({
@@ -2258,6 +2466,9 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
   // form cannot promise an inheritance the scheduler does not perform. `null` at the end is a real
   // answer: let the CLI pick, which is what every dispatch did before there was a default.
   const picked = resolveModelChoice(task.constraints, worker, canSetEffort, lastQuota(worker.id))
+  if (choice.model) {
+    picked.model = choice.model
+  }
   // ⭐ The conversation this task was already having, if it is still on disk and this is the same
   // account and the same tree. Resuming costs the read of a cache that is very likely cold by now;
   // *not* resuming costs rebuilding the whole prefix and re-discovering the branch, the files and

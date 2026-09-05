@@ -11,7 +11,7 @@ import type {
 } from '@shared/protocol.js'
 import { canWork } from '@shared/protocol.js'
 import type { ChildDefaults, Task, TaskConstraints } from '@shared/tasks.js'
-import { resolveAutoCompact, resolveCompletionMode } from '@shared/tasks.js'
+import { resolveAutoCompact, resolveCompletionMode, windowsForPool } from '@shared/tasks.js'
 import { existsSync } from 'node:fs'
 import { adapter, adapters } from './adapters/index.js'
 import { reviewsForTask } from './review.js'
@@ -25,15 +25,19 @@ import {
   reorderWorkers,
   requireWorker,
   retireWorker,
+  modelRoutingActive,
+  routableModelsFor,
   updateWorker
 } from './workers.js'
 import { accountUnavailability } from './eligibility.js'
-import { routingDecisions } from './routingdecisions.js'
-import type { VelocityReport } from '@shared/routing.js'
+import { dispatchCountsByPair, routingDecisions } from './routingdecisions.js'
+import type { ModelReport, ModelReportRow, VelocityReport } from '@shared/routing.js'
 import { paceFactors, paceFor, paceValue } from './pace.js'
 import { GRADE_BATCH_MAX, gradeUngraded, qualityReport, ungradedTasks } from './quality.js'
 import { weights, WEIGHT_FORMULAS } from './objective.js'
 import { lastQuota, lastQuotaReading, probeWorker, refreshNow } from './quota.js'
+import { benchmarkPrior } from './benchmarks.js'
+import { fitnessFor } from './fitness.js'
 import { emit } from './events.js'
 import {
   backscroll,
@@ -992,6 +996,7 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
     // reached by somebody pressing a button. Nothing in a scheduler tick calls it.
     'routing.decisions': (p) => routingDecisions(p?.limit ?? 5, p?.offset ?? 0),
     'routing.velocity': () => velocityReport(),
+    'routing.models': () => modelReport(),
     'quality.report': () => qualityReport(),
     'quality.ungraded': (p) => ungradedTasks(p?.limit ?? 25),
     'quality.grade': (p) => gradeUngraded(p?.limit ?? GRADE_BATCH_MAX),
@@ -1236,6 +1241,7 @@ export function checkWorkerDefaults(
     gradingModel?: string | null
     defaultEffort?: string | null
     defaultModels?: Record<string, string | null> | null
+    routableModels?: string[] | null
   }
 ): void {
   const info = adapter(adapterId).info
@@ -1264,6 +1270,18 @@ export function checkWorkerDefaults(
         if (spec.pool && !matchesPool) {
           throw new Error(`'${m}' does not belong to pool '${pool}'`)
         }
+      }
+    }
+  }
+
+  if (patch.routableModels) {
+    for (const m of patch.routableModels) {
+      // ⛔ The same rule `'model.options'` documents: a model that can be chosen is one that can be
+      // priced, gated and estimated for. An allowlist entry the cost model does not declare is
+      // refused on write, never stored — the ladder in `routableModelsFor` and part 2's scorer both
+      // trust that everything in this column is legal.
+      if (!cm.modelSpec(m)) {
+        throw new Error(`'${m}' is not a model ${info.label} can be priced for`)
       }
     }
   }
@@ -1476,5 +1494,94 @@ function velocityReport(): VelocityReport {
           windowLabel: window ? (window.label ?? window.id) : null
         }
       })
+  }
+}
+
+/**
+ * Every (worker, model) pair the fleet could route to, and what fed its `fitness` and `price` terms.
+ *
+ * ⛔ **Every priced model on every commissioned worker, not only its allowlist.** `routable` is what
+ * tells the two apart: an operator deciding whether to *add* a model needs to see its prior and its
+ * fitness before it has ever run a task, which is exactly the row an allowlist-only report would omit.
+ *
+ * ⚠️ `costUsd` is `estimateTask` on a fleet-neutral pseudo-task — `{ estTokens: null, projectId:
+ * null }` — the same object shape `overrunFactor` (`estimator.ts`) builds when it has a real task's
+ * numbers and nothing else. It answers "what would an average task cost on this pair", never "what
+ * would *this* task cost", because there is no task in a table of pairs.
+ */
+export function modelReport(): ModelReport {
+  const objective = settings().objective ?? DEFAULT_OBJECTIVE
+  const w = weights(objective)
+  const pace = paceFactors()
+  const dispatchCounts = dispatchCountsByPair()
+  // ⛔ One quality report for the whole table. This loop runs every priced model on every
+  // commissioned worker — a hundred-odd rows on a mixed fleet — and `fitnessFor` would otherwise
+  // reload the reviews table for each. See its `keys` parameter.
+  const qualityKeys = qualityReport().keys
+  const rows: ModelReportRow[] = []
+
+  for (const worker of listWorkers()) {
+    if (worker.retiredAt) continue
+    let ids: string[]
+    let cm: ReturnType<typeof costModel>
+    try {
+      cm = costModel(adapter(worker.adapterId).info.policy.costModelId)
+      ids = cm.modelIds()
+    } catch {
+      continue
+    }
+    const routable = new Set(routableModelsFor(worker).filter((m): m is string => m !== null))
+    const quota = lastQuota(worker.id)
+
+    for (const model of ids) {
+      const prior = benchmarkPrior(model)
+      const fit = fitnessFor(worker.adapterId, model, qualityKeys)
+      const estimate = estimateTask({ estTokens: null, projectId: null } as Task, {
+        adapterId: worker.adapterId,
+        model
+      })
+      const paced = paceFor(pace, worker.adapterId, model)
+      const pool = cm.modelSpec(model)?.pool ?? null
+      const windows = quota && !quota.stale ? windowsForPool(quota.windows, pool) : []
+      const worst = windows.reduce<(typeof windows)[number] | null>(
+        (max, win) => (!max || win.percent > max.percent ? win : max),
+        null
+      )
+      const counts = dispatchCounts.get(`${worker.id}:${model}`)
+
+      rows.push({
+        workerId: worker.id,
+        label: worker.label,
+        adapterId: worker.adapterId,
+        model,
+        routable: routable.has(model),
+        prior: prior.agentic,
+        priorBasis: prior.basis,
+        priorSource: prior.source,
+        cleanComposite: fit.measured === null ? null : fit.measured * 10,
+        cleanSamples: fit.samples,
+        fitness: fit.value,
+        fitnessBasis: fit.basis,
+        costUsd: estimate.usd,
+        costConfidence: estimate.usdConfidence,
+        paceFactor: paced.samples > 0 ? paced.factor : null,
+        paceSamples: paced.samples,
+        pool,
+        poolPercent: worst ? worst.percent : null,
+        dispatches: counts?.dispatches ?? 0,
+        explorations: counts?.explorations ?? 0
+      })
+    }
+  }
+
+  return {
+    generatedAt: Date.now(),
+    objective,
+    active: modelRoutingActive(),
+    fitnessWeight: w.fitness,
+    fitnessFormula: WEIGHT_FORMULAS.fitness,
+    priceWeight: w.price,
+    priceFormula: WEIGHT_FORMULAS.price,
+    rows
   }
 }

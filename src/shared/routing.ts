@@ -58,7 +58,7 @@ export interface RoutingCandidate {
  * keeping it was worth more than any comparison — see `stickyWorkerFor`. A decision recorded as
  * `sticky` still carries the whole ranked field, so the arithmetic it declined to use is auditable.
  */
-export type RoutingBasis = 'score' | 'controller' | 'pinned' | 'sticky'
+export type RoutingBasis = 'score' | 'controller' | 'pinned' | 'sticky' | 'explore'
 
 export interface RoutingDecision {
   id: string
@@ -87,6 +87,69 @@ export interface RoutingDecisionPage {
   total: number
   limit: number
   offset: number
+}
+
+/**
+ * One (worker, model) pair the fleet could route to, with everything that fed its `fitness` and
+ * `price` terms.
+ *
+ * ⛔ **Every priced model on every commissioned worker, not only the ones on its allowlist.** The
+ * point of the page this feeds is to answer "should I add this model", which needs the candidates
+ * an operator has *not* opted into as much as the ones they have — `routable` is what tells the two
+ * apart. `routableModelsFor` (`workers.ts`) is the same ladder `chooseTarget` climbs: an explicit
+ * allowlist entry, or — when a worker has set none — the one model it already defaults to.
+ */
+export interface ModelReportRow {
+  workerId: string
+  label: string
+  adapterId: string
+  model: string
+  /** On this worker's allowlist, or the one model it already defaults to with an empty allowlist. */
+  routable: boolean
+  /** 0..1 from `benchmarkPrior`. `null` is unknown, never a guessed 0. */
+  prior: number | null
+  priorBasis: string
+  priorSource: string | null
+  /** The clean composite, on the rubric's own 0..10 scale — never the 0..1 `fitness` blend. */
+  cleanComposite: number | null
+  /** ⚠️ The **clean** review count, never the raw sample count — see `fitness.ts`. */
+  cleanSamples: number
+  /** The blended `fitness` term's value. `null` only when neither a prior nor a clean review exists. */
+  fitness: number | null
+  fitnessBasis: string
+  /** What a task is estimated to cost on this pair. `null` renders `n/a`, never `$0.00`. */
+  costUsd: number | null
+  costConfidence: 'none' | 'low' | 'medium' | 'high'
+  /** Above 1 is slower than the fleet's centre; below 1 is faster. `null` when nothing is measured. */
+  paceFactor: number | null
+  paceSamples: number
+  /** The quota pool this model draws on, or `null` where the provider has only one. */
+  pool: string | null
+  /** That pool's current reading, or `null` where nothing trustworthy has been read. */
+  poolPercent: number | null
+  /** How many dispatches actually chose this pair, from `routing_decisions`. */
+  dispatches: number
+  /** Of those, how many were `basis: 'explore'` rather than the arithmetic's own winner. */
+  explorations: number
+}
+
+export interface ModelReport {
+  generatedAt: number
+  objective: Objective
+  /**
+   * Whether the `fitness` and `price` terms are scoring anything at all right now.
+   *
+   * ⛔ **False means every number below is shown but unused.** Both terms sit at 0 fleet-wide
+   * until some worker has a non-empty allowlist (`modelRoutingActive`), so a page that printed a
+   * fitness of 0.85 without saying so would be describing a belief nothing acts on — which is the
+   * distinction the Quality tab already has to make and the reason it makes it loudly.
+   */
+  active: boolean
+  fitnessWeight: number
+  fitnessFormula: string
+  priceWeight: number
+  priceFormula: string
+  rows: ModelReportRow[]
 }
 
 /**

@@ -225,6 +225,17 @@ export function bindAttachments(ids: string[], taskId: string, messageId: number
   return bound
 }
 
+/** How many attachments are bound to this task, across every message. One indexed count. */
+export function attachmentCountFor(taskId: string): number {
+  return (
+    (
+      db().prepare('select count(*) as n from attachments where task_id = ?').get(taskId) as
+        | { n: number }
+        | undefined
+    )?.n ?? 0
+  )
+}
+
 /** Every attachment on these messages, keyed by message id. One query, not one per message. */
 export function attachmentsFor(messageIds: number[]): Map<number, Attachment[]> {
   const byMessage = new Map<number, Attachment[]>()

@@ -221,7 +221,7 @@ function ModelFact({
 }: {
   session: Session | null
   ran: string | null
-  requested: { model: string | null; effort: string | null; source: string }
+  requested: { model: string | null; effort: string | null; source: string; undecided?: boolean }
 }): React.JSX.Element {
   const { headline, note } = modelFacts({
     observed: session ? { model: session.model ?? null, effort: session.effort ?? null } : null,
@@ -373,11 +373,23 @@ function TaskDetail({
   const taskEfforts = canSetEffort
     ? (offered.find((m) => m.id === (resolved.model ?? ''))?.effortLevels ?? [])
     : []
+  /**
+   * ⛔ **A worker with a routable-model allowlist has no single predictable model**, so this says so
+   * rather than naming one. `resolveModelChoice` answers what the *account* defaults to; once an
+   * operator widens a worker, `chooseTarget` scores each allowed model as its own candidate and the
+   * winner is not knowable until the tick that dispatches. Naming the default here would be the
+   * exact thing the comment above forbids — promising an inheritance the dispatch does not perform.
+   * ⚠️ A task-level pin still wins and is still named: a pin is a mandate the router does not touch.
+   */
+  const routerPicks =
+    resolved.modelSource !== 'task' && (assigned?.routableModels?.length ?? 0) > 0
   const requestedModel = {
-    model: resolved.model,
+    model: routerPicks ? null : resolved.model,
+    undecided: routerPicks,
     effort: resolved.effort,
-    source:
-      resolved.modelSource === 'task'
+    source: routerPicks
+      ? `chosen at dispatch from ${assigned?.routableModels?.length} routable models${assigned ? ` on ${assigned.label}` : ''}`
+      : resolved.modelSource === 'task'
         ? 'pinned on this task'
         : resolved.modelSource === 'worker'
           ? `this account’s default${assigned ? ` (${assigned.label})` : ''}`

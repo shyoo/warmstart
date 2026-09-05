@@ -129,6 +129,41 @@ export function requireRoutingDecision(id: string): RoutingDecision {
  * ⚠️ `total` is a second query rather than a length: the page is bounded and the count is not, and a
  * pager that infers "there is no more" from a short page is wrong exactly once, at the boundary.
  */
+/**
+ * How many dispatches actually chose each (worker, model) pair, and how many of those were
+ * exploration rather than the arithmetic's own winner.
+ *
+ * ⛔ **`candidates_json` is the only place a decision's model lives.** There is no `chosen_model`
+ * column — the pair is read off whichever entry in the stored ranked field carries `chosen: true`,
+ * the same way every other reader of this table treats it as the one arithmetic that produced the
+ * ordering, never a fact re-derived from a live worker's current defaults.
+ *
+ * ⚠️ A full-table scan, and deliberately not paginated: this answers one aggregate question over the
+ * whole ledger for an analytics page a person opens, not a per-tick read on the scheduler's own path.
+ */
+export function dispatchCountsByPair(): Map<string, { dispatches: number; explorations: number }> {
+  const found = rows<{ candidates_json: string; basis: string }>(
+    db().prepare('select candidates_json, basis from routing_decisions').all()
+  )
+  const counts = new Map<string, { dispatches: number; explorations: number }>()
+  for (const r of found) {
+    let candidates: RoutingCandidate[]
+    try {
+      candidates = JSON.parse(r.candidates_json) as RoutingCandidate[]
+    } catch {
+      continue
+    }
+    const chosen = candidates.find((c) => c.chosen)
+    if (!chosen?.workerId || !chosen.model) continue
+    const key = `${chosen.workerId}:${chosen.model}`
+    const entry = counts.get(key) ?? { dispatches: 0, explorations: 0 }
+    entry.dispatches += 1
+    if (r.basis === 'explore') entry.explorations += 1
+    counts.set(key, entry)
+  }
+  return counts
+}
+
 export function routingDecisions(limit = 5, offset = 0): RoutingDecisionPage {
   const bounded = Math.max(1, Math.min(50, Math.floor(limit)))
   const from = Math.max(0, Math.floor(offset))

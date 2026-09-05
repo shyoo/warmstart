@@ -279,6 +279,42 @@ at the end is an answer — the vendor picks — not a missing setting. ⛔ Effo
 read at launch and apply to the **next** run: changing them inside a live conversation discards its
 prompt cache, which `docs/cost-model.md` §11 prices.
 
+**Routable model** — *a model a worker may be dispatched on, beyond the one it defaults to.* An
+opt-in allowlist, empty by default (`Worker.routableModels`, migration 47): `null` or `[]` both
+resolve to exactly the single model that worker already uses today, never to every model its adapter
+can price. ⛔ **Inert until an operator widens it** — adding a second model is what turns routing's
+`(worker, model)` candidate expansion from a formality into a real choice. Validated against the cost
+model on write: an id nothing can price is one nothing can gate, estimate for, or reason about the
+context of.
+
+**Benchmark prior** — *what a published (or honestly inferred) leaderboard says about a model's
+agentic coding ability, before this fleet has measured anything of its own.* Checked-in, versioned
+data (`benchmarks/coding-agents.2026-09.json`), resolved exact id → longest matching family prefix →
+`null`. ⛔ **`null` means unknown and is never read as 0** — a model nobody has benchmarked is a
+missing input, not a model that scored the floor. Every entry states its `basis`: `published` (a
+leaderboard scores this exact id), `inferred` (mapped from a neighbour, with the mapping stated), or
+`unknown`.
+
+**Fitness** — *a benchmark prior blended with this fleet's own clean peer reviews*, shrunk toward the
+prior in log space with a shrinkage constant (`K=8`) deliberately larger than the estimator's cost
+factor or the pace factor, because a peer-graded composite is the least calibrated of the three. Feeds
+exactly one routing term and never a gate — see **Complexity band** for the sufficiency bar it is
+scored against. ⛔ `null` (neither a prior nor a clean review exists) is never 0 or 0.5.
+
+**Complexity band** — *`low`, `medium` or `high`, read from a task's prompt and metadata for zero
+tokens* (`complexity.ts`): word count, structure (code fences, file paths, lists, acceptance
+criteria), a whole-word verb lexicon, required capabilities, attachments and dependency fan-out. Sets
+the sufficiency bar **fitness** is measured against (0.35 / 0.55 / 0.75). ⛔ A `plan` task never scores
+`low`, however thin its prompt — planning is a reading-and-judgment job regardless of what it says.
+
+**Exploration** — *deliberately dispatching to a model the arithmetic did not pick, to buy a first
+sample.* Off by default (`modelExploration`); when on, swaps the winner for another routable model on
+the *same* worker at a configured rate, preferring a model with unmeasured fitness. Breaks the loop
+where an unmeasured model scores 0 for fitness and so never wins the run that would measure it. Never
+fires on a pin, a warm/sticky session, a `plan` task, a high-complexity task, or a worker with one
+routable model; records `basis: 'explore'` and posts a thread notice, so it is never mistaken for the
+arithmetic's own choice.
+
 **Quota pool** — *a separately metered allowance on one account.* Antigravity meters **Gemini apart
 from Claude/GPT** — two five-hour windows and two weeklies on one login — so "how full is this
 account?" has two answers and the right one depends on the model. ⛔ The dispatch gate resolves the

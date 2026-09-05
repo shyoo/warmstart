@@ -277,7 +277,21 @@ export function modelFacts(input: {
   observed: { model: string | null; effort: string | null } | null
   /** What the last run recorded, for a task whose session has since closed. */
   ran: string | null
-  requested: { model: string | null; effort: string | null; source: string }
+  requested: {
+    model: string | null
+    effort: string | null
+    source: string
+    /**
+     * The router will choose the model, so there is nothing to name yet.
+     *
+     * ⛔ **Distinct from `model: null`, which means "the CLI picks".** Both are unknown here, but
+     * they are unknown for opposite reasons and resolve at different moments — the CLI's default is
+     * whatever that vendor ships, while an allowlisted worker's model is decided by `chooseTarget`
+     * on the tick that dispatches. Collapsing the two would print "CLI default" for a fleet that has
+     * explicitly listed the models it wants scored.
+     */
+    undecided?: boolean
+  }
 }): {
   headline: { text: string; title: string }
   note: { text: string; title: string; tone: 'warn' | 'dim' } | null
@@ -286,15 +300,18 @@ export function modelFacts(input: {
   const model = observed?.model ?? ran ?? null
   const effort = observed?.effort ?? null
   // ⚠️ The CLI's own default is a real answer and reads as one. "—" would look like a broken field.
-  const asked = modelLabel(requested.model, requested.effort) ?? 'CLI default'
-  const askedTitle = `${requested.model ?? 'no model chosen'} — what the next run asks for, ${requested.source}`
+  const asked = requested.undecided
+    ? 'chosen at dispatch'
+    : (modelLabel(requested.model, requested.effort) ?? 'CLI default')
+  const askedTitle = `${requested.undecided ? 'not yet decided' : (requested.model ?? 'no model chosen')} — what the next run asks for, ${requested.source}`
 
   const seen = modelLabel(model, effort)
   if (!seen) return { headline: { text: asked, title: askedTitle }, note: null }
 
   const differs =
-    (requested.model !== null && model !== null && requested.model !== model) ||
-    (requested.effort !== null && effort !== null && requested.effort !== effort)
+    !requested.undecided &&
+    ((requested.model !== null && model !== null && requested.model !== model) ||
+      (requested.effort !== null && effort !== null && requested.effort !== effort))
   return {
     headline: {
       text: seen,

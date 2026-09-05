@@ -1,0 +1,285 @@
+{
+  "id": "coding-agents.2026-09",
+  "schema_version": 1,
+  "effective_from": "2026-09-04",
+  "scale": "0..1, higher is better",
+  "sources": [
+    {
+      "name": "vals-terminal-bench-2.1",
+      "url": "https://www.vals.ai/benchmarks/terminal-bench-2-1",
+      "retrieved": "2026-09-04"
+    },
+    {
+      "name": "anthropic-claude-haiku-4-5",
+      "url": "https://www.anthropic.com/news/claude-haiku-4-5",
+      "retrieved": "2026-09-04"
+    },
+    {
+      "name": "artificial-analysis-qwen3-coder-30b-a3b",
+      "url": "https://artificialanalysis.ai/models/qwen3-coder-30b-a3b-instruct",
+      "retrieved": "2026-09-04"
+    },
+    {
+      "name": "openai-gpt-oss-120b-model-card",
+      "url": "https://cdn.openai.com/pdf/419b6906-9da6-406c-a19d-1bb078ac7637/oai_gpt-oss_model_card.pdf",
+      "retrieved": "2026-09-04"
+    },
+    {
+      "name": "artificial-analysis-coding-agents-index",
+      "url": "https://artificialanalysis.ai/agents/coding-agents",
+      "retrieved": "2026-09-04"
+    }
+  ],
+  "models": [
+    {
+      "id": "claude-opus-5",
+      "agentic": 0.846,
+      "basis": "published",
+      "source": "vals-terminal-bench-2.1",
+      "note": "Terminal-Bench 2.1 accuracy, 84.64%, as 'Claude Opus 5' on the public leaderboard."
+    },
+    {
+      "id": "claude-sonnet-5",
+      "agentic": 0.745,
+      "basis": "published",
+      "source": "vals-terminal-bench-2.1",
+      "note": "Terminal-Bench 2.1 accuracy, 74.53%, as 'Claude Sonnet 5'."
+    },
+    {
+      "id": "claude-haiku-4-5",
+      "agentic": 0.418,
+      "basis": "published",
+      "source": "anthropic-claude-haiku-4-5",
+      "note": "Anthropic's own Terminal-Bench figure for Haiku 4.5: 41.75% averaged over 5 runs with a 32K thinking budget (Terminus 2 harness); the non-thinking variant scored 40.21% over 6 runs. The thinking figure is used because it is the higher-effort configuration."
+    },
+    {
+      "id": "gemini-3.8-flash-high",
+      "agentic": 0.813,
+      "basis": "published",
+      "source": "vals-terminal-bench-2.1",
+      "note": "Terminal-Bench 2.1 accuracy, 81.27%, as 'Gemini 3.8 Flash' — no effort tier is broken out on the leaderboard, so this is attributed to the high-reasoning configuration, which is how Google's own materials describe the benchmarked setup."
+    },
+    {
+      "id": "gemini-3.8-flash-medium",
+      "agentic": 0.813,
+      "basis": "inferred",
+      "source": "vals-terminal-bench-2.1",
+      "note": "No medium-effort Terminal-Bench figure has been published separately for Gemini 3.8 Flash; carrying the high-tier's 81.27% across effort levels of the same underlying model rather than guessing a discount."
+    },
+    {
+      "id": "gemini-3.8-flash-low",
+      "agentic": 0.813,
+      "basis": "inferred",
+      "source": "vals-terminal-bench-2.1",
+      "note": "Same as gemini-3.8-flash-medium: no low-effort figure is published, so the high-tier's 81.27% is carried across effort levels of the same model."
+    },
+    {
+      "id": "gemini-3.1-pro-high",
+      "agentic": 0.708,
+      "basis": "inferred",
+      "source": "vals-terminal-bench-2.1",
+      "note": "Terminal-Bench 2.1 lists 'Gemini 3.1 Pro Preview' at 70.79%; this fleet's id names the model with no 'preview' qualifier and no separate GA re-benchmark has been found, so the preview figure stands in for it."
+    },
+    {
+      "id": "gemini-3.1-pro-low",
+      "agentic": 0.708,
+      "basis": "inferred",
+      "source": "vals-terminal-bench-2.1",
+      "note": "No low-effort figure is published for Gemini 3.1 Pro; carrying the (already inferred) high-tier figure across effort levels of the same model, as with the Flash tiers above."
+    },
+    {
+      "id": "gemini-3.7-flash-high",
+      "agentic": 0.775,
+      "basis": "published",
+      "source": "vals-terminal-bench-2.1",
+      "note": "Terminal-Bench 2.1 accuracy, 77.53%, as 'Gemini 3.7 Flash'; attributed to the high-reasoning configuration as with 3.8 Flash above."
+    },
+    {
+      "id": "gemini-3.7-flash-medium",
+      "agentic": 0.775,
+      "basis": "inferred",
+      "source": "vals-terminal-bench-2.1",
+      "note": "No medium-effort figure published separately; carrying the high-tier's 77.53% across effort levels of the same model."
+    },
+    {
+      "id": "gemini-3.7-flash-low",
+      "agentic": 0.775,
+      "basis": "inferred",
+      "source": "vals-terminal-bench-2.1",
+      "note": "No low-effort figure published separately; carrying the high-tier's 77.53% across effort levels of the same model."
+    },
+    {
+      "id": "gemini-3.6-flash-high",
+      "agentic": 0.738,
+      "basis": "published",
+      "source": "vals-terminal-bench-2.1",
+      "note": "Terminal-Bench 2.1 accuracy, 73.78%, as 'Gemini 3.6 Flash'; attributed to the high-reasoning configuration as with the other Flash tiers."
+    },
+    {
+      "id": "gemini-3.6-flash-medium",
+      "agentic": 0.738,
+      "basis": "inferred",
+      "source": "vals-terminal-bench-2.1",
+      "note": "No medium-effort figure published separately; carrying the high-tier's 73.78% across effort levels of the same model."
+    },
+    {
+      "id": "gemini-3.6-flash-low",
+      "agentic": 0.738,
+      "basis": "inferred",
+      "source": "vals-terminal-bench-2.1",
+      "note": "No low-effort figure published separately; carrying the high-tier's 73.78% across effort levels of the same model."
+    },
+    {
+      "id": "gemini-3.5-flash-high",
+      "agentic": 0.742,
+      "basis": "published",
+      "source": "vals-terminal-bench-2.1",
+      "note": "Terminal-Bench 2.1 accuracy, 74.16%, as 'Gemini 3.5 Flash'; attributed to the high-reasoning configuration as with the other Flash tiers. Scores marginally above 3.6 Flash on this benchmark, which the leaderboard itself is not monotonic across point releases on."
+    },
+    {
+      "id": "gemini-3.5-flash-medium",
+      "agentic": 0.742,
+      "basis": "inferred",
+      "source": "vals-terminal-bench-2.1",
+      "note": "No medium-effort figure published separately; carrying the high-tier's 74.16% across effort levels of the same model."
+    },
+    {
+      "id": "gemini-3.5-flash-low",
+      "agentic": 0.742,
+      "basis": "inferred",
+      "source": "vals-terminal-bench-2.1",
+      "note": "No low-effort figure published separately; carrying the high-tier's 74.16% across effort levels of the same model."
+    },
+    {
+      "id": "claude-sonnet-4-6",
+      "agentic": 0.573,
+      "basis": "published",
+      "source": "vals-terminal-bench-2.1",
+      "note": "Terminal-Bench 2.1 accuracy, 57.30%, as 'Claude Sonnet 4.6'."
+    },
+    {
+      "id": "claude-opus-4-6-thinking",
+      "agentic": 0.685,
+      "basis": "inferred",
+      "source": "vals-terminal-bench-2.1",
+      "note": "No Opus 4.6 checkpoint appears on Terminal-Bench 2.1 or the Artificial Analysis Coding Agents index — only 4.7, 4.8 and 5 are listed. Using Claude Opus 4.7's published 68.54% as the nearest measured predecessor, since 4.6 sits immediately before it in Anthropic's numbering."
+    },
+    {
+      "id": "gpt-oss-120b-medium",
+      "agentic": 0.624,
+      "basis": "inferred",
+      "source": "openai-gpt-oss-120b-model-card",
+      "note": "62.4% SWE-bench Verified is the figure reported against OpenAI's gpt-oss-120b model card; no reasoning-effort ('medium' vs 'low'/'high') breakdown for this benchmark was found, so the general-model figure stands in for the medium tier. Not a Terminal-Bench number, so it is not directly comparable to the Anthropic/Google/OpenAI rows above."
+    },
+    {
+      "id": "gpt-5.6-sol",
+      "agentic": 0.858,
+      "basis": "published",
+      "source": "vals-terminal-bench-2.1",
+      "note": "Terminal-Bench 2.1 accuracy, 85.77%, as 'GPT-5.6 Sol'."
+    },
+    {
+      "id": "gpt-5.6-terra",
+      "agentic": 0.775,
+      "basis": "published",
+      "source": "vals-terminal-bench-2.1",
+      "note": "Terminal-Bench 2.1 accuracy, 77.53%, as 'GPT-5.6 Terra'."
+    },
+    {
+      "id": "gpt-5.6-luna",
+      "agentic": 0.790,
+      "basis": "published",
+      "source": "vals-terminal-bench-2.1",
+      "note": "Terminal-Bench 2.1 accuracy, 79.03%, as 'GPT-5.6 Luna'."
+    },
+    {
+      "id": "gpt-5.5",
+      "agentic": 0.764,
+      "basis": "published",
+      "source": "vals-terminal-bench-2.1",
+      "note": "Terminal-Bench 2.1 accuracy, 76.40%, as 'GPT-5.5'."
+    },
+    {
+      "id": "gpt-5.4-mini",
+      "agentic": 0.547,
+      "basis": "published",
+      "source": "vals-terminal-bench-2.1",
+      "note": "Terminal-Bench 2.1 accuracy, 54.68%, as 'GPT-5.4 mini'."
+    },
+    {
+      "id": "qwen3-coder-30b-a3b",
+      "agentic": 0.503,
+      "basis": "published",
+      "source": "artificial-analysis-qwen3-coder-30b-a3b",
+      "note": "50.3% SWE-bench Verified pass@1 for Qwen3-Coder-30B-A3B-Instruct. This is a different benchmark suite from the Terminal-Bench 2.1 figures used for every other row here (no Terminal-Bench score for this model was found), so it is directionally useful but not strictly comparable."
+    }
+  ],
+  "families": [
+    {
+      "match": "claude-opus",
+      "agentic": 0.846,
+      "basis": "inferred",
+      "note": "The fleet's newest and highest-scoring Opus id, claude-opus-5 (84.64% Terminal-Bench 2.1), stands in for any Opus id this file does not name exactly."
+    },
+    {
+      "match": "claude-sonnet",
+      "agentic": 0.745,
+      "basis": "inferred",
+      "note": "claude-sonnet-5's published Terminal-Bench 2.1 score (74.53%) stands in for any Sonnet id this file does not name exactly."
+    },
+    {
+      "match": "claude-haiku",
+      "agentic": 0.418,
+      "basis": "inferred",
+      "note": "claude-haiku-4-5's published Terminal-Bench score (41.75%, thinking) stands in for any Haiku id this file does not name exactly."
+    },
+    {
+      "match": "gemini-3.8-flash",
+      "agentic": 0.813,
+      "basis": "inferred",
+      "note": "The published high-tier figure for gemini-3.8-flash-high stands in for any effort suffix this file does not name exactly."
+    },
+    {
+      "match": "gemini-3.7-flash",
+      "agentic": 0.775,
+      "basis": "inferred",
+      "note": "The published high-tier figure for gemini-3.7-flash-high stands in for any effort suffix this file does not name exactly."
+    },
+    {
+      "match": "gemini-3.6-flash",
+      "agentic": 0.738,
+      "basis": "inferred",
+      "note": "The published high-tier figure for gemini-3.6-flash-high stands in for any effort suffix this file does not name exactly."
+    },
+    {
+      "match": "gemini-3.5-flash",
+      "agentic": 0.742,
+      "basis": "inferred",
+      "note": "The published high-tier figure for gemini-3.5-flash-high stands in for any effort suffix this file does not name exactly."
+    },
+    {
+      "match": "gemini-3.1-pro",
+      "agentic": 0.708,
+      "basis": "inferred",
+      "note": "The inferred high-tier figure for gemini-3.1-pro-high stands in for any effort suffix this file does not name exactly."
+    },
+    {
+      "match": "gpt-5.6",
+      "agentic": 0.808,
+      "basis": "inferred",
+      "note": "Mean of the three named GPT-5.6 variants' published Terminal-Bench 2.1 scores (Sol 85.77%, Terra 77.53%, Luna 79.03%), for a GPT-5.6 id this file does not name exactly."
+    },
+    {
+      "match": "gpt-oss",
+      "agentic": 0.624,
+      "basis": "inferred",
+      "note": "gpt-oss-120b-medium's SWE-bench figure stands in for any other gpt-oss id or effort suffix this file does not name exactly."
+    },
+    {
+      "match": "qwen3-coder",
+      "agentic": 0.503,
+      "basis": "inferred",
+      "note": "qwen3-coder-30b-a3b's published SWE-bench Verified figure stands in for any other Qwen3-Coder id this file does not name exactly."
+    }
+  ]
+}

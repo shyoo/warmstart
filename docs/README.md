@@ -24,6 +24,7 @@ correction below the wrong sentence. `AGENTS.md` is the short entry point that p
 | build, package, or hit a platform-specific failure | [`development.md`](development.md) |
 | change the renderer | [`ui.md`](ui.md) |
 | change pricing or add a provider | `../costmodels/` — data, never code. See [`cost-model.md`](cost-model.md) § *Cost models are data* |
+| check or update a model's agentic-coding prior | `../benchmarks/` — versioned data, never code, mirroring `costmodels/`. See [`routing.md`](routing.md) § *Fitness* |
 | understand *why* the design is shaped this way | `../transient_docs/implementation_plan_2026-08-24.md` — the design of record, decisions D1–D18. ⚠️ Dated, and never read for status |
 
 ## The pages

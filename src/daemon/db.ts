@@ -1509,6 +1509,23 @@ const MIGRATIONS: Migration[] = [
     if (!hasColumn(conn, 'runs', 'activity_json')) {
       conn.exec('alter table runs add column activity_json text;')
     }
+  },
+  // 47 - the routable-models allowlist: an opt-in list of models a worker may be dispatched on.
+  //
+  // ⛔ Null or empty means *only what this worker uses today* (`routableModelsFor`). That alone does
+  // not make model-aware routing inert — `routableModelsFor` resolves an empty list to the worker's
+  // current default, a real model id whose benchmark prior and price both score. What holds the two
+  // model-aware terms at zero is `modelRoutingActive()`, fleet-wide, until some worker is widened.
+  // The column still defaults to empty rather than "every model this adapter can price", which would
+  // silently hand the scorer dozens of candidates a tick the day it landed, several of which nobody
+  // chose.
+  //
+  // ⚠️ Guarded by `hasColumn`, like migrations 28/31/32/35/39/43: `versionBefore` lets a test rewind
+  // `user_version` and reopen, which replays every migration after the one it wanted.
+  (conn) => {
+    if (!hasColumn(conn, 'workers', 'routable_models_json')) {
+      conn.exec('alter table workers add column routable_models_json text;')
+    }
   }
 ]
 

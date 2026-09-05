@@ -1,9 +1,10 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Session, Worker } from '@shared/protocol.js'
 import type { Run } from '@shared/tasks.js'
+import type { WorkerChoice } from './scheduler.js'
 
 /**
  * The routing and reporting faults found in one afternoon of real use, turned into checks.
@@ -20,6 +21,7 @@ let workers: typeof import('./workers.js')
 let tasks: typeof import('./tasks.js')
 let scheduler: typeof import('./scheduler.js')
 let controller: typeof import('./controller.js')
+let complexityOf: typeof import('./complexity.js').complexityOf
 
 /**
  * A worker whose isolation root holds a vendor usage cache, exactly as Claude Code writes one.
@@ -59,6 +61,7 @@ beforeAll(async () => {
   tasks = await import('./tasks.js')
   scheduler = await import('./scheduler.js')
   controller = await import('./controller.js')
+  complexityOf = (await import('./complexity.js')).complexityOf
   const { claudeCode } = await import('./adapters/claude-code.js')
   const { antigravityCli } = await import('./adapters/antigravity-cli.js')
   origClaudeInstalled = claudeCode.isInstalled
@@ -1226,5 +1229,404 @@ describe('a task pinned to a list of accounts', () => {
     const choice = scheduler.chooseTarget(workTask)
     expect(choice.worker).toBeNull()
     expect(choice.reason).toContain('held out of both work and judgment')
+  })
+})
+
+describe('model-aware routing', () => {
+  beforeEach(() => {
+    db.db().prepare('update workers set enabled = 0').run()
+  })
+
+  it('headline: with empty allowlist, candidate set and every score are identical to single-model behavior', () => {
+    const w = workers.createWorker({ adapterId: 'claude-code', label: 'SingleModelW', enabled: true })
+    const task = tasks.createTask({ title: 'A single model task', constraints: { workerId: w.id } })
+    const choice = scheduler.chooseTarget(task)
+    expect(choice.worker?.id).toBe(w.id)
+    expect(choice.scored).toHaveLength(1)
+    expect(choice.scored?.[0]?.model).toBeNull()
+    expect(choice.model).toBeNull()
+  })
+
+  /**
+   * ⛔ **The safety property this whole feature rests on, asserted on the arithmetic rather than on
+   * the candidate list.** The test above checks that an un-opted-in worker still produces one
+   * candidate; that is necessary and it is not the claim. The claim is that *the scores do not
+   * move*, and for a while they did: `routableModelsFor` hands back the worker's current default
+   * model — a real id, not null — so `fitness` read a benchmark prior for it and `price` estimated
+   * it. Two accounts defaulting to different models then scored 0.549 apart on a medium-complexity
+   * task and 1.040 apart on a high one, against a `ROUTE_EPSILON` of 0.10, on a fleet where nobody
+   * had asked for model-aware routing at all. Both terms are pinned at exactly 0 until some worker
+   * has an allowlist — see `modelRoutingActive`.
+   */
+  it('holds both new terms at zero on a fleet where no worker has an allowlist, whatever the defaults are', () => {
+    const a = workers.createWorker({ adapterId: 'claude-code', label: 'DefaultOpus', enabled: true })
+    const b = workers.createWorker({ adapterId: 'claude-code', label: 'DefaultHaiku', enabled: true })
+    // ⚠️ Deliberately far apart in prior: opus-5 is published at 0.846 and haiku-4-5 is inferred at
+    // 0.418, the widest gap this fleet's own cost models can produce.
+    workers.updateWorker(a.id, { defaultModel: 'claude-opus-5' })
+    workers.updateWorker(b.id, { defaultModel: 'claude-haiku-4-5-20251001' })
+    expect(workers.modelRoutingActive()).toBe(false)
+
+    // ⚠️ A prompt heavy enough to clear the `low` band, where both priors clear the 0.35 bar and tie
+    // regardless — asserting there would pass vacuously and catch nothing.
+    const prompt =
+      'Refactor the authentication middleware across src/daemon/auth.ts and src/shared/session.ts, ' +
+      'migrate every caller to the new token shape, and add regression tests. Acceptance criteria: ' +
+      '1. no caller reads the legacy field 2. the suites stay green 3. the migration is replay-safe.'
+
+    // ⛔ One pinned task per worker rather than one open field: a two-worker field on identical
+    // accounts ties, and a tie defers to a controller consult that returns before any score is
+    // attached. Pinning asks the same question — what did `fitness` and `price` score for this
+    // pair — without routing the answer through a consult.
+    for (const w of [a, b]) {
+      const task = tasks.createTask({ title: prompt, constraints: { workerId: w.id } })
+      expect(complexityOf(task).band).not.toBe('low')
+      const choice = scheduler.chooseTarget(task)
+      const scored = choice.scored ?? []
+      expect(scored, `${w.label} produced a scored field`).toHaveLength(1)
+      for (const name of ['fitness', 'price']) {
+        const term = scored[0]?.terms.find((t) => t.name === name)
+        expect(term, `${w.label} has a ${name} term`).toBeDefined()
+        expect(term?.value, `${w.label} ${name} value`).toBe(0)
+        // ⚠️ `toBeCloseTo`, not `toBe`: `price` carries sign −1, so its zero contribution is −0,
+        // and `Object.is(-0, 0)` is false. The term is off either way.
+        expect(term?.contribution, `${w.label} ${name} contribution`).toBeCloseTo(0, 12)
+        // ⚠️ `AGENTS.md`: every belief carries its basis. A silent 0 reads as *measured and bad*.
+        expect(term?.basis, `${w.label} ${name} basis`).toContain('inert')
+      }
+    }
+  })
+
+  it('switches both terms on for the whole field as soon as one worker opts in', () => {
+    const a = workers.createWorker({ adapterId: 'claude-code', label: 'OptedIn', enabled: true })
+    workers.updateWorker(a.id, { routableModels: ['claude-opus-5', 'claude-haiku-4-5-20251001'] })
+    expect(workers.modelRoutingActive()).toBe(true)
+
+    const task = tasks.createTask({
+      title:
+        'Refactor the authentication middleware across src/daemon/auth.ts and src/shared/session.ts, ' +
+        'migrate every caller to the new token shape, and add regression tests. Acceptance criteria: ' +
+        '1. no caller reads the legacy field 2. the suites stay green 3. the migration is replay-safe.',
+      constraints: { workerId: a.id }
+    })
+    expect(complexityOf(task).band).not.toBe('low')
+    const scored = scheduler.chooseTarget(task).scored ?? []
+    expect(scored).toHaveLength(2)
+
+    // ⛔ Neither term may still be claiming inertness once a worker has opted in.
+    for (const cand of scored) {
+      for (const name of ['fitness', 'price']) {
+        expect(cand.terms.find((t) => t.name === name)?.basis).not.toContain('inert')
+      }
+    }
+
+    // ⭐ The prior actually separates the pair: opus clears the bar for this band and haiku does not.
+    const byModel = new Map(scored.map((c) => [c.model, c]))
+    const opus = byModel.get('claude-opus-5')?.terms.find((t) => t.name === 'fitness')
+    const haiku = byModel.get('claude-haiku-4-5-20251001')?.terms.find((t) => t.name === 'fitness')
+    expect(opus?.value).toBeGreaterThan(haiku?.value ?? 1)
+
+    // ⚠️ `price` is asserted only to be *live*, not to be non-zero. It divides by the cheapest
+    // candidate in the field, and on a database with no finished runs every pair estimates the same
+    // cold fallback — so a ratio of exactly 1, and a value of 0, is the honest answer here rather
+    // than a term that failed to fire. See `estimateTask`: `usd` comes from priced run history, and
+    // no cost model in this repo carries a per-mtok price to substitute for it.
+    for (const cand of scored) {
+      const price = cand.terms.find((t) => t.name === 'price')
+      expect(price?.value).toBeGreaterThanOrEqual(0)
+    }
+  })
+
+  /**
+   * ⚠️ An allowlist only counts on an account that could actually be handed a turn. A `controller`
+   * account is reserved for judgment and consults, `none` is held out of both (t223), and a
+   * switched-off account is skipped before it is ever scored — so widening any of the three would
+   * switch the two model-aware terms on for every *other* account while the widened one never
+   * entered a field. `modelRoutingActive` asks `enabled` and `canWork` for the same reason it
+   * excludes retired accounts.
+   */
+  it('is not switched on by an allowlist on an account that could never be handed a turn', () => {
+    const pair = ['claude-opus-5', 'claude-haiku-4-5-20251001']
+
+    const judge = workers.createWorker({ adapterId: 'claude-code', label: 'JudgeOnly', enabled: true })
+    workers.updateWorker(judge.id, { role: 'controller', routableModels: pair })
+    expect(workers.modelRoutingActive(), 'controller-only').toBe(false)
+
+    const held = workers.createWorker({ adapterId: 'claude-code', label: 'HeldOut', enabled: true })
+    workers.updateWorker(held.id, { role: 'none', routableModels: pair })
+    expect(workers.modelRoutingActive(), 'held out of both').toBe(false)
+
+    const off = workers.createWorker({ adapterId: 'claude-code', label: 'SwitchedOff', enabled: false })
+    workers.updateWorker(off.id, { routableModels: pair })
+    expect(workers.modelRoutingActive(), 'switched off').toBe(false)
+
+    // ⭐ And one account that could be handed a turn is enough, which is the other half of the claim.
+    const doer = workers.createWorker({ adapterId: 'claude-code', label: 'Doer', enabled: true })
+    workers.updateWorker(doer.id, { routableModels: ['claude-opus-5'] })
+    expect(workers.modelRoutingActive(), 'one that can work').toBe(true)
+  })
+
+  it('warm session yields 1 pair at session model', () => {
+    const w = workers.createWorker({ adapterId: 'claude-code', label: 'WarmWorker', enabled: true })
+    workers.updateWorker(w.id, { routableModels: ['claude-haiku-4-5-20251001', 'claude-sonnet-5', 'claude-opus-5'] })
+    const task = tasks.createTask({ title: 'Warm session task', constraints: { workerId: w.id } })
+
+    const sId = 'session-warm-1'
+    db.db().prepare(
+      `insert into sessions (id, worker_id, adapter_id, transport, cwd, model, state, purpose, started_at)
+       values (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(sId, w.id, 'claude-code', 'stream', w.isolationRoot, 'claude-sonnet-5', 'live', 'work', Date.now())
+    db.db().prepare(
+      `insert into runs (id, task_id, session_id, worker_id, kind, started_at, ended_at, outcome)
+       values (?, ?, ?, ?, 'work', ?, ?, 'complete')`
+    ).run('run-warm-1', task.id, sId, w.id, Date.now() - 1000, Date.now())
+
+    const choice = scheduler.chooseTarget(task)
+    expect(choice.session?.id).toBe(sId)
+    const candidates = choice.scored?.filter((s) => s.workerId === w.id)
+    expect(candidates).toHaveLength(1)
+    expect(candidates?.[0]?.model).toBe('claude-sonnet-5')
+  })
+
+  it('pinned model yields 1 pair (via constraints.model and modelsByWorker)', () => {
+    const w = workers.createWorker({ adapterId: 'claude-code', label: 'PinnedWorker', enabled: true })
+    workers.updateWorker(w.id, { routableModels: ['claude-haiku-4-5-20251001', 'claude-sonnet-5', 'claude-opus-5'] })
+
+    const task1 = tasks.createTask({
+      title: 'Pinned model task',
+      constraints: { model: 'claude-haiku-4-5-20251001', workerId: w.id }
+    })
+    const choice1 = scheduler.chooseTarget(task1)
+    const candidates1 = choice1.scored?.filter((s) => s.workerId === w.id)
+    expect(candidates1).toHaveLength(1)
+    expect(candidates1?.[0]?.model).toBe('claude-haiku-4-5-20251001')
+
+    const task2 = tasks.createTask({
+      title: 'ModelsByWorker task',
+      constraints: { modelsByWorker: { [w.id]: 'claude-opus-5' }, workerId: w.id }
+    })
+    const choice2 = scheduler.chooseTarget(task2)
+    const candidates2 = choice2.scored?.filter((s) => s.workerId === w.id)
+    expect(candidates2).toHaveLength(1)
+    expect(candidates2?.[0]?.model).toBe('claude-opus-5')
+  })
+
+  it('multiple allowlisted models yield multiple candidate pairs', () => {
+    const w = workers.createWorker({ adapterId: 'claude-code', label: 'MultiModelWorker', enabled: true })
+    workers.updateWorker(w.id, { routableModels: ['claude-haiku-4-5-20251001', 'claude-sonnet-5'] })
+    const task = tasks.createTask({ title: 'Multi model task', constraints: { workerId: w.id } })
+    const choice = scheduler.chooseTarget(task)
+    const candidates = choice.scored?.filter((s) => s.workerId === w.id)
+    expect(candidates).toHaveLength(2)
+    const models = candidates?.map((c) => c.model)
+    expect(models).toContain('claude-haiku-4-5-20251001')
+    expect(models).toContain('claude-sonnet-5')
+  })
+
+  it('antigravity account with Claude pool at 95% and Gemini pool at 20% offers Gemini pair and not Claude', () => {
+    const agy = workers.createWorker({ adapterId: 'antigravity-cli', label: 'AgyMultiPool', enabled: true })
+    workers.updateWorker(agy.id, { routableModels: ['claude-sonnet-4-6', 'gemini-3.7-flash-high'] })
+
+    const now = Date.now()
+    const sample = db.db().prepare(
+      `insert into quota_samples (worker_id, window_id, label, percent, resets_at, source, sampled_at, window_group)
+       values (?,?,?,?,?,?,?,?)`
+    )
+    sample.run(agy.id, 'session', 'Claude 5h', 95, now + 4 * 3600 * 1000, 'cli', now, 'claude-and-gpt')
+    sample.run(agy.id, 'gemini_session', 'Gemini 5h', 20, now + 4 * 3600 * 1000, 'cli', now, 'gemini')
+
+    const task = tasks.createTask({ title: 'Multi-pool quota task', constraints: { workerId: agy.id } })
+    const choice = scheduler.chooseTarget(task)
+
+    expect(choice.worker?.id).toBe(agy.id)
+    expect(choice.model).toBe('gemini-3.7-flash-high')
+    const scoredModels = choice.scored?.map((s) => s.model)
+    expect(scoredModels).toContain('gemini-3.7-flash-high')
+    expect(scoredModels).not.toContain('claude-sonnet-4-6')
+  })
+
+  it('dispatch preserves the chosen model in routing_decisions', () => {
+    const w = workers.createWorker({ adapterId: 'claude-code', label: 'DispatchWorker', enabled: true })
+    const task = tasks.createTask({ title: 'Dispatch model test' })
+    const choice: WorkerChoice = {
+      worker: w,
+      session: null,
+      reason: 'test choice',
+      quotaUnverified: false,
+      score: 1.5,
+      model: 'claude-haiku-4-5-20251001',
+      objective: { cost: 0.3, velocity: 0.3, quality: 0.4 },
+      routedBy: 'score',
+      scored: [
+        {
+          chosen: true,
+          workerId: w.id,
+          label: w.label,
+          adapterId: w.adapterId,
+          model: 'claude-haiku-4-5-20251001',
+          warm: false,
+          quotaUnverified: false,
+          score: 1.5,
+          terms: []
+        }
+      ]
+    }
+    scheduler.noteRoutingDecision(task, choice)
+    const record = db.row<{ candidates_json: string; basis: string }>(
+      db.db().prepare('select candidates_json, basis from routing_decisions where task_id = ?').get(task.id)
+    )
+    expect(record?.basis).toBe('score')
+    const parsedCandidates = JSON.parse(record?.candidates_json ?? '[]') as Array<{ chosen: boolean; model: string }>
+    expect(parsedCandidates.find((c) => c.chosen)?.model).toBe('claude-haiku-4-5-20251001')
+  })
+
+  it('model cap bounds candidate pairs to 8 per worker', () => {
+    const w = workers.createWorker({ adapterId: 'claude-code', label: 'CappedWorker', enabled: true })
+    const tenModels = ['m1', 'm2', 'm3', 'm4', 'm5', 'm6', 'm7', 'm8', 'm9', 'm10']
+    workers.updateWorker(w.id, { routableModels: tenModels })
+    const task = tasks.createTask({ title: 'Cap test task', constraints: { workerId: w.id } })
+    const choice = scheduler.chooseTarget(task)
+    const candidateCount = choice.scored?.filter((s) => s.workerId === w.id).length
+    expect(candidateCount).toBe(8)
+  })
+
+  it('low-complexity task picks cheap sufficient model over dear excellent one; high-complexity task flips it', () => {
+    const w = workers.createWorker({ adapterId: 'claude-code', label: 'ComplexityWorker', enabled: true })
+    workers.updateWorker(w.id, { routableModels: ['claude-haiku-4-5-20251001', 'claude-opus-5'] })
+
+    // Low complexity task: required = 0.35. Haiku prior 0.418 meets bar (fitness = 1.0) and is cheaper
+    const lowTask = tasks.createTask({
+      title: 'Fix typo',
+      prompt: 'Fix typo',
+      estTokens: 1_000,
+      constraints: { workerId: w.id }
+    })
+    const lowChoice = scheduler.chooseTarget(lowTask)
+    expect(lowChoice.model).toBe('claude-haiku-4-5-20251001')
+
+    // High complexity task: required = 0.75. Haiku (0.418 < 0.75) gets fitness value 0. Opus (0.846 >= 0.75) gets 1.0.
+    const highTask = tasks.createTask({
+      title: 'Architectural refactor of distributed migration engine with backwards compatibility',
+      prompt: 'Refactor database migration architecture across distributed microservices with breaking schema changes',
+      estTokens: 500_000,
+      objective: { cost: 0.1, velocity: 0.1, quality: 0.8 },
+      constraints: { workerId: w.id }
+    })
+    const highChoice = scheduler.chooseTarget(highTask)
+    expect(highChoice.model).toBe('claude-opus-5')
+  })
+
+  it('unmeasured fitness pair scores 0 for fitness with basis explaining absence and is still a candidate', () => {
+    const w = workers.createWorker({ adapterId: 'claude-code', label: 'UnmeasuredWorker', enabled: true })
+    workers.updateWorker(w.id, { routableModels: ['custom-unmeasured-model-xyz'] })
+    const task = tasks.createTask({ title: 'Unmeasured fitness task', constraints: { workerId: w.id } })
+    const choice = scheduler.chooseTarget(task)
+    expect(choice.worker?.id).toBe(w.id)
+    expect(choice.model).toBe('custom-unmeasured-model-xyz')
+    const candidate = choice.scored?.find((s) => s.model === 'custom-unmeasured-model-xyz')
+    expect(candidate).toBeDefined()
+    const fitTerm = candidate?.terms.find((t) => t.name === 'fitness')
+    expect(fitTerm).toBeDefined()
+    expect(fitTerm?.value).toBe(0)
+    expect(fitTerm?.basis).toContain('no public benchmark and no clean review')
+  })
+
+  it('price term is 0 for cheapest and saturates at 8x', () => {
+    const priceValue = (cost: number, cheapest: number): number => {
+      const ratio = cost / cheapest
+      return Math.max(0, Math.min(1, Math.log(ratio) / Math.log(8)))
+    }
+    expect(priceValue(0.05, 0.05)).toBe(0)
+    expect(priceValue(0.40, 0.05)).toBeCloseTo(1.0, 4)
+    expect(priceValue(0.80, 0.05)).toBe(1.0)
+    expect(priceValue(0.1414, 0.05)).toBeCloseTo(0.5, 2)
+  })
+
+  it('fallback to priced tokens when usd unavailable for any candidate', () => {
+    const w = workers.createWorker({ adapterId: 'claude-code', label: 'PriceTokensWorker', enabled: true })
+    workers.updateWorker(w.id, { routableModels: ['claude-haiku-4-5-20251001', 'claude-sonnet-5'] })
+    const task = tasks.createTask({ title: 'Tokens fallback task', constraints: { workerId: w.id } })
+    const choice = scheduler.chooseTarget(task)
+    const candidates = choice.scored?.filter((s) => s.workerId === w.id)
+    expect(candidates).toHaveLength(2)
+    for (const c of candidates ?? []) {
+      const pTerm = c.terms.find((t) => t.name === 'price')
+      expect(pTerm).toBeDefined()
+    }
+  })
+
+  it('memoization prevents calling estimateTask redundantly across candidates', async () => {
+    const estimator = await import('./estimator.js')
+    const spy = vi.spyOn(estimator, 'estimateTask')
+    const w1 = workers.createWorker({ adapterId: 'claude-code', label: 'MemoW1', enabled: true })
+    const w2 = workers.createWorker({ adapterId: 'claude-code', label: 'MemoW2', enabled: true })
+    workers.updateWorker(w1.id, { routableModels: ['claude-sonnet-5'] })
+    workers.updateWorker(w2.id, { routableModels: ['claude-sonnet-5'] })
+
+    const task = tasks.createTask({ title: 'Memo test task' })
+    spy.mockClear()
+    scheduler.chooseTarget(task)
+
+    const matchingCalls = spy.mock.calls.filter(
+      (call) => call[1]?.adapterId === 'claude-code' && call[1]?.model === 'claude-sonnet-5' && call[1]?.warm === false
+    )
+    expect(matchingCalls.length).toBe(1)
+    spy.mockRestore()
+  })
+
+  it('explored decision records basis: explore, keeps full ranked field, and posts thread message', async () => {
+    const w = workers.createWorker({ adapterId: 'claude-code', label: 'ExploreWorker', enabled: true })
+    workers.updateWorker(w.id, { routableModels: ['claude-haiku-4-5-20251001', 'claude-sonnet-5'] })
+    const task = tasks.createTask({ title: 'Explore decision task', constraints: { workerId: w.id } })
+
+    const { setSetting } = await import('./settings.js')
+    try {
+      setSetting('modelExploration', true)
+      setSetting('modelExplorationRate', 1.0)
+
+      const choice = scheduler.chooseTarget(task)
+      expect(choice.routedBy).toBe('explore')
+      expect(choice.scored).toHaveLength(2)
+      const chosenInScored = choice.scored?.find((s) => s.chosen)
+      expect(chosenInScored?.model).toBe(choice.model)
+
+      const messages = tasks.messagesFor(task.id)
+      const exploreMsg = messages.find((m) => m.text.includes('Model exploration: trying'))
+      expect(exploreMsg).toBeDefined()
+    } finally {
+      setSetting('modelExploration', false)
+      setSetting('modelExplorationRate', 0.10)
+    }
+  })
+
+  it('worked scenario with real numbers (docs/routing.md §5 Scenario 5)', async () => {
+    const { weights } = await import('./objective.js')
+    const obj = { cost: 0.3, velocity: 0.3, quality: 0.4 }
+    const w = weights(obj)
+
+    expect(w.fitness).toBeCloseTo(1.040, 3)
+    expect(w.price).toBeCloseTo(1.100, 3)
+    expect(w.cold).toBeCloseTo(1.190, 3)
+    expect(w.capabilityFit).toBeCloseTo(1.220, 3)
+
+    // Baseline cold + capabilityFit = -1.190 + 1.220 = +0.030
+    const baseline = -w.cold + w.capabilityFit
+    expect(baseline).toBeCloseTo(0.030, 3)
+
+    // Low complexity task: required = 0.35
+    // Model A: cheap ($0.05), fitness prior = 0.418 (Haiku). Since 0.418 >= 0.35, fitness value = 1.0
+    // Price value = 0.0 (cheapest)
+    // Score A = 0.030 + 1.040 * 1.0 - 1.100 * 0.0 = +1.070
+    const scoreA = baseline + w.fitness * 1.0 - w.price * 0.0
+    expect(scoreA).toBeCloseTo(1.070, 3)
+
+    // Model B: expensive ($0.40, 8x), fitness prior = 0.846 (Opus). Since 0.846 >= 0.35, fitness value = 1.0
+    // Price value = log(8)/log(8) = 1.0
+    // Score B = 0.030 + 1.040 * 1.0 - 1.100 * 1.0 = -0.030
+    const scoreB = baseline + w.fitness * 1.0 - w.price * 1.0
+    expect(scoreB).toBeCloseTo(-0.030, 3)
+
+    // Score gap = 1.070 - (-0.030) = 1.100 >> 0.10. Cheap model wins cleanly!
+    expect(scoreA - scoreB).toBeCloseTo(1.100, 3)
   })
 })

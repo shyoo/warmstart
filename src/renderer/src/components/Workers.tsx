@@ -5,6 +5,7 @@ import { rpc, useDaemonEvents, useNow, type FleetEntry } from '../lib/daemon'
 import { isWorkerSubscriptionExpired, QUOTA_STALE_AFTER_MS, quotaFreshness } from '@shared/tasks'
 import { age, percent, quotaGap } from '../lib/format'
 import { SettingButtonSelect, type SettingOption } from './SettingButtonSelect'
+import { Pill } from './Pill'
 import { TerminalPane } from './Terminal'
 
 /**
@@ -47,6 +48,88 @@ const MAX_HELP =
   'parallel requests against one cached prefix each pay a cache write, and both sessions spend the ' +
   'same quota window. Lowering it never interrupts work already running; it only holds later tasks ' +
   'until capacity frees.'
+
+/**
+ * The (i) beside `Routable models` — the sentence behind why an empty box is not "nothing routes
+ * here" but "routing uses this account's current default model only".
+ *
+ * ⛔ **Opt-in, and inert until touched.** Leaving this empty is not a gap in the fleet's model-aware
+ * routing — it is the honest default, because widening every worker to every model it can price
+ * would hand a scorer dozens of candidates a tick that nobody chose. Checking a model here adds it
+ * to what this account may be *routed to*; it does not change what the account reaches for by
+ * default, which is still the `Model` column beside it.
+ */
+const ROUTABLE_MODELS_HELP =
+  "Which models this account may be routed to, beyond the one it uses by default. Leave every box " +
+  "unchecked to route this worker only to its current default model — that is the safe, inert " +
+  'starting point, not a missing setting. Only models this account\'s adapter can price appear here.'
+
+/**
+ * The **Routable models** multi-select: an opt-in allowlist beside the account's default model.
+ *
+ * ⛔ **The empty state reads as what it is.** A blank pill for `Model` beside it would read as
+ * "nothing chosen yet"; here it has to read as the opposite — a deliberate, inert default — so the
+ * label is a sentence rather than a dash, matching `ROUTABLE_MODELS_HELP`.
+ */
+function RoutableModelsPill({
+  worker,
+  models,
+  disabled,
+  onChange
+}: {
+  worker: Worker
+  models: Array<{ id: string }>
+  disabled: boolean
+  onChange: (next: string[]) => void
+}): React.JSX.Element {
+  const selected = worker.routableModels ?? []
+  const label =
+    selected.length === 0
+      ? 'default model only'
+      : selected.length === 1
+        ? selected[0]!
+        : `${selected.length} models`
+
+  const toggle = (id: string): void => {
+    onChange(selected.includes(id) ? selected.filter((m) => m !== id) : [...selected, id])
+  }
+
+  return (
+    <Pill
+      ariaLabel={`Routable models for ${worker.label}`}
+      title={ROUTABLE_MODELS_HELP}
+      muted={selected.length === 0}
+      disabled={disabled || models.length === 0}
+      label={label}
+      menu={() => (
+        <div className="workers-menu">
+          <div className="workers-menu-head">
+            <span className="workers-menu-title">Routable models</span>
+            {selected.length > 0 && (
+              <button type="button" className="workers-menu-action" onClick={() => onChange([])}>
+                Reset to default model only
+              </button>
+            )}
+          </div>
+          <div className="workers-menu-list">
+            {models.map((m) => (
+              <label key={m.id} className="workers-menu-worker-row">
+                <div className="workers-menu-worker-info">
+                  <input
+                    type="checkbox"
+                    checked={selected.includes(m.id)}
+                    onChange={() => toggle(m.id)}
+                  />
+                  <span className="workers-menu-worker-name">{m.id}</span>
+                </div>
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+    />
+  )
+}
 
 /**
  * Settings → Workers, and the commissioning wizard.
@@ -322,9 +405,10 @@ export function Workers({
             <col style={{ width: '10%' }} />
             <col style={{ width: '5%' }} />
             <col style={{ width: '13%' }} />
-            <col style={{ width: '10%' }} />
-            <col style={{ width: '10%' }} />
-            <col style={{ width: '10%' }} />
+            <col style={{ width: '9%' }} />
+            <col style={{ width: '9%' }} />
+            <col style={{ width: '9%' }} />
+            <col style={{ width: '9%' }} />
           </colgroup>
           <thead>
             <tr>
@@ -346,6 +430,12 @@ export function Workers({
                 </span>
               </th>
               <th>Model</th>
+              <th>
+                <span className="th-with-info">
+                  Routable models
+                  <ColumnInfo text={ROUTABLE_MODELS_HELP} />
+                </span>
+              </th>
               <th>Grading model</th>
               <th>Role</th>
               <th className="tbl-num">Action</th>
@@ -743,6 +833,21 @@ export function Workers({
                       )}
                     </td>
                     <td>
+                      <RoutableModelsPill
+                        worker={worker}
+                        models={modelsFor(worker.adapterId)?.models ?? []}
+                        disabled={busy === `routable:${worker.id}`}
+                        onChange={(next) =>
+                          void guard(`routable:${worker.id}`, () =>
+                            rpc('worker.update', {
+                              id: worker.id,
+                              routableModels: next.length > 0 ? next : null
+                            })
+                          )
+                        }
+                      />
+                    </td>
+                    <td>
                       <SettingButtonSelect
                         className="worker-grading-select"
                         value={worker.gradingModel ?? ''}
@@ -791,7 +896,7 @@ export function Workers({
                       the time — is one an operator learns to stop reading. */}
                   {notes.length > 0 && (
                     <tr className={`tbl-row--note${worker.enabled ? '' : ' tbl-row--off'}`}>
-                       <td colSpan={11}>
+                       <td colSpan={12}>
                         {notes.map((n) => (
                           <div key={n.key} className="tbl-note">
                             <span className={`tbl-note-label ${n.tone}`}>{n.label}</span>

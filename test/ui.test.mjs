@@ -1472,7 +1472,7 @@ try {
   const routingTabs = await evaluate('[...document.querySelectorAll(".tab")].map(b => b.innerText.trim())')
   check(
     'the routing model is one page per axis, plus the overview that ties them together',
-    ['Overview', 'Quality', 'Cost', 'Velocity'].every((label) => routingTabs.includes(label)),
+    ['Overview', 'Quality', 'Cost', 'Velocity', 'Models'].every((label) => routingTabs.includes(label)),
     routingTabs.join(' | ')
   )
   const routingPanel = await evaluate('document.querySelector(".content")?.innerText ?? ""')
@@ -1546,6 +1546,52 @@ try {
     'it admits what the measurement cannot separate',
     /gets the long tasks/i.test(velocityPanel),
     'a factor presented without its confound is a confident unsourced number'
+  )
+
+  section('routing model > models')
+  await evaluate(
+    `[...document.querySelectorAll('.tab')].find(b => b.innerText.trim() === 'Models').click()`
+  )
+  await wait(1500)
+  const modelsPanel = await evaluate('document.querySelector(".content")?.innerText ?? ""')
+  check(
+    'it explains that a candidate is a (worker, model) pair, not an account',
+    /\(worker, model\) pair/i.test(modelsPanel),
+    'the reason this tab exists rather than being a column on another one'
+  )
+  check(
+    'it says the allowlist is opt-in and inert until touched',
+    /inert until touched/i.test(modelsPanel),
+    'model-aware routing must not silently widen every worker to every model it can price'
+  )
+  check(
+    'it publishes the sufficiency bar for every complexity band',
+    /low/.test(modelsPanel) && /medium/.test(modelsPanel) && /high/i.test(modelsPanel) && /0\.35/.test(modelsPanel) && /0\.75/.test(modelsPanel),
+    'a routing decision nobody can check is a routing decision nobody can trust'
+  )
+  check(
+    'it names the shrinkage constant and says why it is larger than the other two',
+    /K = 8/.test(modelsPanel) && /K=5/.test(modelsPanel) && /K=4/.test(modelsPanel),
+    'the least calibrated of the three quantities this fleet shrinks should move the slowest'
+  )
+  check(
+    'it admits a low-fitness pair is unmeasured, not bad',
+    /unmeasured/i.test(modelsPanel) && /not.*bad/i.test(modelsPanel),
+    'the same "unknown is a verdict" rule the rest of the fleet holds quota and pace readings to'
+  )
+  check(
+    'it explains exploration and says it is off by default',
+    /exploration/i.test(modelsPanel) && /off by default/i.test(modelsPanel)
+  )
+  check(
+    'the fleet table is non-empty: at least the priced models on the commissioned worker appear',
+    /claude-opus-5/.test(modelsPanel) && /claude-sonnet-5/.test(modelsPanel),
+    'the UI worker has no credentials, so this is the one part of the page that must not pass on an empty table'
+  )
+  check(
+    'an unmeasured cost renders n/a, never $0.00',
+    /n\/a/i.test(modelsPanel),
+    'nothing on this install has ever priced a run'
   )
 
   section('statistics')
@@ -2142,7 +2188,7 @@ try {
        document.querySelectorAll('.tbl-workers thead th').length
      ])`
   )
-  check('the workers card fields describe every setting the header declares', colCount === '[11,11]', colCount)
+  check('the workers card fields describe every setting the header declares', colCount === '[12,12]', colCount)
 
   // Cards have enough horizontal room to expose their three actions without a hidden menu.
   const actionRows = await evaluate(
@@ -2181,7 +2227,7 @@ try {
   {
     const seen = JSON.parse(noteCell)
     check('an account with something wrong gets a note row of its own', seen.rows >= 1, noteCell)
-    check('which spans the card rather than sitting in one field', seen.span === 11, String(seen.span))
+    check('which spans the card rather than sitting in one field', seen.span === 12, String(seen.span))
     check(
       'and carries the reason the run failed, plus what to do about it',
       /subscription expired/.test(seen.note) && /Recheck/.test(seen.note),
@@ -2405,6 +2451,44 @@ try {
   )
   // ⚠️ Closed again. An open menu is absolutely positioned over the rows underneath it, and the
   // order-arrow checks below click by position.
+  await evaluate(`document.body.click()`)
+  await wait(150)
+
+  // ⭐ Routable models: the opt-in allowlist beside the account's default model. Its whole point is
+  // that leaving it alone is inert, so the honest check is that the empty state reads as a sentence
+  // rather than a blank, and that checking one box actually reaches the daemon.
+  const routableBtn = `document.querySelector('.tbl tbody tr td:nth-child(9) .pill')`
+  const routableBtnTag = await evaluate(`${routableBtn}?.tagName`)
+  check(
+    'a routable-models control sits beside the default model',
+    routableBtnTag === 'BUTTON',
+    `tagName: ${routableBtnTag}`
+  )
+  const routableEmptyLabel = await evaluate(`${routableBtn}?.textContent.trim()`)
+  check(
+    'and its empty state reads as a deliberate default, not a blank',
+    routableEmptyLabel === 'default model only',
+    routableEmptyLabel
+  )
+  await evaluate(`${routableBtn}?.click()`)
+  await wait(200)
+  const firstCheckbox = `document.querySelector('.pill-menu .workers-menu-list input[type=checkbox]')`
+  const firstCheckboxType = await evaluate(`${firstCheckbox}?.type`)
+  check(
+    'opening it offers this account\'s priceable models as checkboxes',
+    firstCheckboxType === 'checkbox',
+    `input type: ${firstCheckboxType}`
+  )
+  await evaluate(`${firstCheckbox}?.click()`)
+  await wait(400)
+  const routableAfter = await evaluate(
+    `window.agentyard.rpc('fleet.list').then(list => JSON.stringify(list.find(e => e.worker.adapterId === 'claude-code')?.worker.routableModels))`
+  )
+  check(
+    'checking one reaches the daemon, which is the only opinion that gates dispatch',
+    routableAfter !== 'null' && JSON.parse(routableAfter)?.length === 1,
+    routableAfter
+  )
   await evaluate(`document.body.click()`)
   await wait(150)
 

@@ -141,7 +141,21 @@ export const DEFAULT_SETTINGS: Settings = {
    * ⚠️ Idle is not the same as *nothing to wait for*: a task parked on a quota window is probed at
    * its release time regardless of this number. See `QuotaPoller.nextDelayMs`.
    */
-  idleProbeIntervalMinutes: 20
+  idleProbeIntervalMinutes: 20,
+
+  /**
+   * Whether the scheduler may occasionally explore an alternative routable model on the chosen worker.
+   *
+   * ⛔ Default **off**, on the same principle as `autoRunawayStop` and `summariseTitles`. This
+   * deliberately dispatches work to a model the arithmetic did not choose: a real cost paid for
+   * information, and it should be opted into.
+   */
+  modelExploration: false,
+
+  /**
+   * Probability (0..1) of exploring an alternative model on an eligible decision. Default 0.10.
+   */
+  modelExplorationRate: 0.10
 }
 
 type SettingChangeListener = <K extends keyof Settings>(key: K, value: Settings[K]) => void
