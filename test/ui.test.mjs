@@ -1598,12 +1598,70 @@ try {
   await evaluate(
     `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim().startsWith('Statistics')).click()`
   )
-  await wait(1200)
-  const statsPanel = await evaluate('document.querySelector(".content")?.innerText ?? ""')
+  await wait(1500)
+  const statsTabs = await evaluate('[...document.querySelectorAll(".tab")].map(b => b.innerText.trim())')
   check(
-    'the statistics placeholder says what is missing and what to read instead',
-    /Not added yet/i.test(statsPanel) && /Routing Model/i.test(statsPanel),
-    statsPanel.slice(0, 200)
+    'statistics is three tabs: what a task cost, what it took, and what it scored',
+    ['Model Price per Task', 'Velocity per Task', 'Quality per Task'].every((label) =>
+      statsTabs.includes(label)
+    ),
+    statsTabs.join(' | ')
+  )
+  const pricePanel = await evaluate('document.querySelector(".content")?.innerText ?? ""')
+  check('the statistics view renders', pricePanel.includes('Statistics'))
+  check(
+    '⛔ it says out loud that it is not the number the router reads',
+    /not.*the number the router reads/i.test(pricePanel) && /shrunk/i.test(pricePanel),
+    'sitting one nav item from three pages of shrunk numbers, a descriptive page that does not say ' +
+      'so is a page whose numbers will be read as the routing ones'
+  )
+  check(
+    'it distinguishes an amortised subscription share from money billed on top',
+    /subs/i.test(pricePanel) && /API rate/i.test(pricePanel) && /mixed/i.test(pricePanel),
+    pricePanel.slice(0, 300)
+  )
+  check(
+    'an empty table says why it is empty rather than rendering nothing',
+    /completed tasks only/i.test(pricePanel) || /Agent \/ Model \/ Effort/i.test(pricePanel),
+    'this install finishes no tasks, so the empty state is the state under test'
+  )
+
+  await evaluate(
+    `[...document.querySelectorAll('.tab')].find(b => b.innerText.trim() === 'Velocity per Task').click()`
+  )
+  await wait(800)
+  const statsVelocity = await evaluate('document.querySelector(".content")?.innerText ?? ""')
+  check(
+    'velocity here is active time, and it says so before any number',
+    /active time/i.test(statsVelocity) && /wall-clock/i.test(statsVelocity),
+    statsVelocity.slice(0, 300)
+  )
+  check(
+    '⚠️ and it warns that it will not match the pace factor next door',
+    /will not match/i.test(statsVelocity) && /pace factor/i.test(statsVelocity),
+    'two velocity numbers that disagree, with nothing saying which question each answers, is worse ' +
+      'than one'
+  )
+
+  await evaluate(
+    `[...document.querySelectorAll('.tab')].find(b => b.innerText.trim() === 'Quality per Task').click()`
+  )
+  await wait(800)
+  const statsQuality = await evaluate('document.querySelector(".content")?.innerText ?? ""')
+  check(
+    'with nothing graded it offers the benchmark baseline and names it as such',
+    /baseline/i.test(statsQuality) && /benchmark/i.test(statsQuality),
+    statsQuality.slice(0, 300)
+  )
+  check(
+    '⛔ an ungraded key reads unknown, never 0 and never average',
+    /unknown/i.test(statsQuality) && /never 0/i.test(statsQuality),
+    'the same "unknown is a verdict" rule the rest of the fleet holds its readings to'
+  )
+  check(
+    'it repeats that nothing here gates a routing decision',
+    /gates? a routing decision/i.test(statsQuality),
+    'a leaderboard nobody says is inert is a leaderboard people assume is live'
   )
 
   section('controller')

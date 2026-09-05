@@ -482,6 +482,15 @@ modes and its own honest gaps. The UI is one tab per axis for that reason, not f
 | **Cost** | `estimator.ts`, `price.ts`, `spend.ts` — what runs actually cost, per (agent, model) | `warm`, `cold`, `quotaRisk`, `projectSwitch`, `affinity`, and, since 2026-09-05, **`price`** | Routing Model › Cost and › Models |
 | **Velocity** | `pace.ts` over `activetime.ts` — median active time per finished task, per (agent, model) | `pace`, plus the concurrency multiplier in `policy()` | Routing Model › Velocity |
 
+⚠️ **Analytics › Statistics reads the same three axes and is not this table.** `src/daemon/statistics.ts`
+folds the last 200 finished tasks into a measured distribution — average, p50, p99, p100 — per agent,
+then per model, then per effort, crediting each task exactly as §4.x does via the exported
+`creditedKeys` in `pace.ts` so there is one implementation of the credit rule and not two. Nothing it
+prints is shrunk, blended or clamped, so its numbers **will not match** the pace factor, the blended
+fitness or the estimator's median, and are not meant to: those exist to be acted on, these exist to be
+read. Its Quality tab falls back to the benchmark prior when a key has no clean review yet, which is
+the ordinary state of a new fleet.
+
 ⛔ **Quality feeds one term, and it is still not a gate.** `fitness` is the only routing term a peer
 review reaches, and it reaches it only after being shrunk (§3.4) toward a checked-in public
 benchmark prior — precisely *because* this fleet's own composites are uncalibrated across providers

@@ -1639,6 +1639,31 @@ body {
   text-align: right;
 }
 
+/* Analytics › Statistics: the agent → model → effort tree, drawn as indent alone.
+
+   ⛔ No expanders. The tree is three rungs deep and the whole point of the page is comparing an
+   agent against its own models, so a collapsed table hides exactly the comparison the reader came
+   for. ⚠️ The indent is padding on the first cell rather than a nested table: the columns have to
+   stay aligned across all three depths or the percentiles cannot be read down the page, which is
+   the only thing anybody does with them. */
+.stat-row--agent > td:first-child {
+  padding-left: var(--sp-2);
+}
+
+.stat-row--model > td:first-child {
+  padding-left: calc(var(--sp-2) + 18px);
+}
+
+.stat-row--effort > td:first-child {
+  padding-left: calc(var(--sp-2) + 36px);
+  color: var(--color-text-dim);
+}
+
+/* The agent rung carries the whole of its models' work, so it gets the rule that groups them. */
+.stat-row--agent > td {
+  border-top: 1px solid var(--color-border);
+}
+
 .tbl-title-cell {
   max-width: 48ch;
 }

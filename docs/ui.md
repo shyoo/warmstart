@@ -58,11 +58,24 @@ thing entirely. See [`glossary.md`](glossary.md).
 | `Overview` `Controller` `Conversations` | dashboard, the controller chat, and conversation history |
 | `Project` `ProjectSettings` `Projects` | the project routes and the policy tier |
 | `Cost` | what the scheduler chose and why |
+| `Statistics` | what finished tasks actually cost, took and scored — three tabs, one RPC |
 | `LooseEnds` | work that exists and is going nowhere → [`landing.md`](landing.md) |
 | `Doctor` | which CLIs were found, who is signed in, how old each reading is, what is unverifiable |
 | `Logs` | the daemon's log, live and filterable, ring-buffered so a late window sees the past |
 | `Terminal` | the real agent TUI over xterm.js, not a reconstruction |
 | `AppSettings` `SettingRow` `SettingButtonSelect` `SidebarResizer` | chrome |
+
+⛔ **Analytics holds two pages, and they answer different questions.** *Routing Model* explains a
+choice: every number on it is shrunk toward a prior, blended or clamped, because it is about to be
+acted on. *Statistics* (`components/Statistics.tsx`, one `statistics.report` call for all three tabs)
+describes what happened: nothing on it is smoothed. Price, Velocity and Quality each fold the last
+200 finished tasks into an agent → model → effort tree, **re-folding the raw samples at every rung**
+rather than averaging the rung below, and every table prints `n` beside its percentiles. The two
+pages will disagree — a shrunk pace factor is not a measured p50 — and the page says so rather than
+reconciling them quietly. Price additionally names its basis per row: `subs`, `API rate` or `mixed`,
+since averaging an amortised share of a flat fee together with money billed on top means nothing.
+⚠️ An `unknown` renders `n/a`, never `$0.00`, and the benchmark prior and fitness columns are drawn
+on **model** rows only — a prior is published per model, so there is no prior for `high` alone.
 
 ⛔ **Quality review has no view of its own**, and that is a decision rather than an omission. It is a
 field on a task, not a place to go: a dedicated "Quality" page would be a second board to keep in

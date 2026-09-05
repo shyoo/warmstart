@@ -36,6 +36,7 @@ import { Project as ProjectView, type ProjectTab } from './components/Project'
 import { SidebarResizer } from './components/SidebarResizer'
 import { AppSettings } from './components/AppSettings'
 import { RoutingModel, type RoutingTab } from './components/RoutingModel'
+import { Statistics, type StatisticsTab } from './components/Statistics'
 import { ProjectDot, projectWorkState } from './lib/taskview'
 
 /**
@@ -75,7 +76,7 @@ type Route =
    * lives under it, which is where it was always being read from.
    */
   | { kind: 'analytics'; page: 'routing-model'; tab: RoutingTab }
-  | { kind: 'analytics'; page: 'statistics' }
+  | { kind: 'analytics'; page: 'statistics'; tab: StatisticsTab }
   /**
    * ⚠️ `taskId` so a run in the fleet-wide conversation list has somewhere to go. It cannot route
    * into a project tab, because the conversation it came from may belong to a different project
@@ -343,10 +344,9 @@ export function App(): React.JSX.Element {
           </NavItem>
           <NavItem
             active={route.kind === 'analytics' && route.page === 'statistics'}
-            onClick={() => setRoute({ kind: 'analytics', page: 'statistics' })}
+            onClick={() => setRoute({ kind: 'analytics', page: 'statistics', tab: 'price' })}
           >
             Statistics
-            <span className="nav-count dim">(not added yet)</span>
           </NavItem>
         </nav>
 
@@ -417,23 +417,12 @@ export function App(): React.JSX.Element {
               now={now}
             />
           ) : route.kind === 'analytics' && route.page === 'statistics' ? (
-            <div className="panel">
-              <header className="panel-head">
-                <div>
-                  <h2>Statistics</h2>
-                  <p className="panel-sub">
-                    Fleet-wide throughput, spend and outcome history over time.
-                  </p>
-                </div>
-                <span className="tag">Not added yet</span>
-              </header>
-              <div className="notice">
-                Nothing here yet. The measurements this page will draw on already exist — every run is
-                metered, priced and timed — so what is missing is the presentation, not the data. Until
-                then, the Routing Model tabs answer the per-decision questions and Overview answers the
-                fleet-wide ones.
-              </div>
-            </div>
+            <Statistics
+              tab={route.tab}
+              // ⚠️ `setRouteNow`, exactly as Routing Model does: a tab is a move inside a page, and
+              // pushing every one onto history would make Back walk the tabs instead of leaving.
+              setTab={(tab) => setRouteNow({ kind: 'analytics', page: 'statistics', tab })}
+            />
           ) : route.kind === 'unassigned' ? (
             route.taskId ? (
               <TaskThread

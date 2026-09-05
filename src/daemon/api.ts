@@ -34,6 +34,7 @@ import { dispatchCountsByPair, routingDecisions } from './routingdecisions.js'
 import type { ModelReport, ModelReportRow, VelocityReport } from '@shared/routing.js'
 import { paceFactors, paceFor, paceValue } from './pace.js'
 import { GRADE_BATCH_MAX, gradeUngraded, qualityReport, ungradedTasks } from './quality.js'
+import { statisticsReport } from './statistics.js'
 import { weights, WEIGHT_FORMULAS } from './objective.js'
 import { lastQuota, lastQuotaReading, probeWorker, refreshNow } from './quota.js'
 import { benchmarkPrior } from './benchmarks.js'
@@ -999,6 +1000,7 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
     'routing.velocity': () => velocityReport(),
     'routing.models': () => modelReport(),
     'quality.report': () => qualityReport(),
+    'statistics.report': () => statisticsReport(),
     'quality.ungraded': (p) => ungradedTasks(p?.limit ?? 25),
     'quality.grade': (p) => gradeUngraded(p?.limit ?? GRADE_BATCH_MAX),
 

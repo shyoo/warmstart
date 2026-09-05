@@ -75,6 +75,22 @@ interface CreditRow {
   task_id: string
   adapter_id: string | null
   model: string | null
+  session_id: string | null
+}
+
+/**
+ * Who a finished task's work is credited to.
+ *
+ * ⚠️ `sessionId` is carried for readers that need the *effort* the work ran at, which lives on the
+ * session rather than on the run. Nothing in this file reads it — pace is keyed on (adapter, model)
+ * and always has been — but a second reader deriving the credit rule for itself is how two surfaces
+ * end up attributing the same task to two different agents.
+ */
+export interface Credit {
+  adapterId: string
+  model: string | null
+  /** The session the crediting run belonged to, or null on a run that never had one. */
+  sessionId: string | null
 }
 
 function keyId(adapterId: string, model: string | null): string {
@@ -118,9 +134,14 @@ export function shrinkPace(ratio: number, samples: number): number {
  *
  * ⛔ The same rule `review.ts` uses to decide whose work is being graded, and deliberately so — a
  * fleet that attributes speed one way and quality another cannot put the two numbers in one table.
+ *
+ * ⛔ **Exported so there is one implementation of it, not three.** `statistics.ts` needs the same
+ * attribution to say what a task cost and took per agent; a copy of this query living there would
+ * be one rename away from crediting a task to a different agent than the Velocity tab does, and the
+ * two pages would disagree about the same fleet with no way to tell which was right.
  */
-function creditedKeys(taskIds: string[]): Map<string, { adapterId: string; model: string | null }> {
-  const out = new Map<string, { adapterId: string; model: string | null }>()
+export function creditedKeys(taskIds: string[]): Map<string, Credit> {
+  const out = new Map<string, Credit>()
   if (taskIds.length === 0) return out
   for (let i = 0; i < taskIds.length; i += 400) {
     const chunk = taskIds.slice(i, i + 400)
@@ -131,7 +152,7 @@ function creditedKeys(taskIds: string[]): Map<string, { adapterId: string; model
     const found = rows<CreditRow>(
       db()
         .prepare(
-          `select task_id, adapter_id, model, max(started_at) as last_at
+          `select task_id, adapter_id, model, session_id, max(started_at) as last_at
              from runs
             where task_id in (${holes})
               and kind = 'work'
@@ -142,7 +163,9 @@ function creditedKeys(taskIds: string[]): Map<string, { adapterId: string; model
         .all(...chunk)
     )
     for (const r of found) {
-      if (r.adapter_id) out.set(r.task_id, { adapterId: r.adapter_id, model: r.model })
+      if (r.adapter_id) {
+        out.set(r.task_id, { adapterId: r.adapter_id, model: r.model, sessionId: r.session_id })
+      }
     }
   }
   return out

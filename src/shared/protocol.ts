@@ -1,5 +1,6 @@
 import type { QualityReview } from './review.js'
 import type { GradeBatchOutcome, QualityReport, UngradedTask } from './quality.js'
+import type { StatisticsReport } from './statistics.js'
 import type { ModelReport, RoutingDecisionPage, VelocityReport } from './routing.js'
 import type {
   Approval,
@@ -1683,6 +1684,21 @@ export interface RpcMap {
   'routing.models': { params: void; result: ModelReport }
   /** What peer review has measured about each agent, and how much work is still ungraded. */
   'quality.report': { params: void; result: QualityReport }
+  /**
+   * What this fleet's finished work actually cost, took and scored, per agent, model and effort.
+   *
+   * ⛔ **Descriptive, and deliberately not any of the numbers routing reads.** `routing.velocity`
+   * publishes a shrunk pace factor and `routing.models` a fitness blended toward a benchmark prior,
+   * because both exist to be acted on and a sparse key must not mint a reputation. This one
+   * publishes the measured distribution, tail included — the answer to *"what does a task cost me
+   * on that model"*, which shrinkage is by construction the wrong answer to. The two will disagree,
+   * and both are right about their own question.
+   *
+   * ⚠️ One call for all three tabs, so the price, the duration and the grade on screen are folded
+   * over the **same** window of finished tasks. Three calls would let a task land between them and
+   * leave a reader comparing columns drawn from two different sample sets.
+   */
+  'statistics.report': { params: void; result: StatisticsReport }
   /** The tasks nothing has graded, newest first — what the grade button would work through. */
   'quality.ungraded': { params: { limit?: number }; result: UngradedTask[] }
   /**
