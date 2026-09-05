@@ -100,15 +100,11 @@ Measured: session `bffdc5d2` finished t123 holding **175,626** tokens of context
 `warm 0 · affinity 0 · cold 1` and went to an account that had never seen the task. See
 `docs/routing.md` §3.2 for the routing half, which was a third independent fault.
 
-⚠️ **The stamp is the arrival of the terminal usage record, which is a response *end*.** A stream
-reports usage when the turn finishes and never says when its last request began — unlike a
-transcript, which carries `requestStartedAt` per turn. Since §1b establishes that OpenAI counts the
-30 minutes from the **request**, this stamp is optimistic by roughly one response length, and the
-error is in the unsafe direction. ⛔ It is the same trap §1 records for Anthropic, arriving by a
-different road: there the fix was to read the right field, and here there is no right field to read.
-A long codex turn will show slightly more TTL remaining than it has. Narrowing that means either
-metering codex from its rollout (HANDOFF R10, which does carry per-request timing) or emitting a
-non-final `usage` event at request start.
+⚠️ **A stream never says when its last request began** — unlike a transcript, which carries
+`requestStartedAt` per turn — and §1b establishes that OpenAI counts the 30 minutes from the
+**request**. So the stamp has to be inferred from our own side of the pipe. It was first the arrival
+of the terminal usage record (a response *end*, optimistic by one response length), then the moment
+the prompt went down the pipe. ⛔ **Both were wrong, and the second one badly** — see §1d.
 
 ⭐ **And this fleet's own rollouts corroborate the 30 minutes from §1b**, which is worth having
 because §1b is read from a vendor page and this is measured on the machine. 2026-09-02, 331
@@ -127,6 +123,45 @@ hit: the static system/tool prefix survives, the conversation body does not. ⚠
 between 5 minutes and 10 hours, so this brackets the TTL only as **(5m, 10h]** — it agrees with the
 documented 30m and does not independently measure it.
 
+
+
+## 1d. The window is a *sliding* one, and a one-shot turn hides every request but the first (2026-09-04)
+
+⛔ **The stamp landed on the wrong end of the turn.** §1c settled that a stream-metered session must
+infer its request time from our own side of the pipe, and the code settled on `promptSentAt` — the
+moment the prompt went down the pipe. The note justifying it said a multi-request turn is anchored to
+its *first* request, so later requests "are counted as older than they are — again the safe
+direction". That is only safe while a turn is shorter than the TTL.
+
+`codex exec` takes **one** prompt, works unattended for as long as the task needs, and emits its
+single `turn.completed` at the very end. So on the adapter this most matters for, the first request
+is the *only* one the fleet ever saw. A 90-minute codex run stamped an expiry 30 minutes after the
+prompt it opened with — an hour in the past — at the moment its prefix was hottest.
+
+⭐ **And the window is sliding, which is what makes that a real loss rather than a cosmetic one.**
+OpenAI's guide is explicit: *"A cached prefix remains eligible for reuse for 30 minutes after its
+most recent write or reuse"*, and reusing one *"refreshes its lifetime without another cache-write
+charge"*. `openai.codex.2026-08.json` had said so all along (`read_refreshes_ttl: true`). Every one
+of those invisible requests had been renewing the prefix for free the whole time, while the row said
+it had lapsed — so routing scored the account `warm 0` and sent the follow-up somewhere that paid
+`1.25·C` to rebuild what was sitting warm. This is §1c's own measurement (96.3% of input served from
+cache at gaps under a minute) being thrown away by the bookkeeping above it.
+
+⚠️ **The fix is to treat a mid-turn record as evidence of a request**, which is what §1c listed as
+the way out. Every stream record except `init` and the terminal `usage`/`result` pair exists only
+because a model answered, and a model answering means the prefix was read. `sessions.ts` stamps that
+moment; `touchCacheClock` in `src/daemon/transcript.ts` pushes the row's clock forward from it while
+the turn runs, and `newestRequestStart` anchors the finished turn on it instead of on the prompt.
+
+⛔ Three limits worth keeping in view. The anchor is still a *response* observed rather than the
+request behind it, so it is optimistic by the length of one model call — which is why the terminal
+pair is excluded and the last mid-turn record is used instead. It only ever pushes a clock that a
+completed turn already established, so the very first turn of a fresh session still shows no
+countdown until it ends. And it applies only where `read_refreshes_ttl` is declared and the adapter
+is metered from its stream — claude-code is metered from its transcript, which carries a real
+per-turn `requestStartedAt` and writes one every few seconds of a run, so it needs none of this.
+Narrowing the remaining error means metering codex from its rollout (HANDOFF R10), which carries
+per-request timing.
 
 ## 2. Context
 

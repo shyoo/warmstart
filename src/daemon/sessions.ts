@@ -98,9 +98,43 @@ interface Live {
    * is what `ttl_measured_from: request_start` means. See `creditStreamTurn`.
    */
   promptedAt: number | null
+  /**
+   * When this session last produced evidence that a model request was in flight.
+   *
+   * ⭐ **The mid-turn request start that `promptedAt` cannot be.** `promptedAt` is stamped once, when
+   * the prompt goes down the pipe, and `codex exec` takes exactly one prompt and then works for as
+   * long as the task needs — dozens of model requests, one turn, one usage record at the very end.
+   * So the only request start the fleet knew about was the *first* one, and a codex run longer than
+   * OpenAI's 30-minute prefix TTL ended by declaring its own cache lapsed at the moment it was
+   * warmest. See `creditStreamTurn` and `touchCacheClock`.
+   *
+   * ⚠️ Deliberately **not** stamped by the terminal `usage`/`result` pair. Those arrive when the turn
+   * is over, and a prefix's TTL runs from the request that reused it, not from the response that
+   * ended it (`ttl_measured_from: request_start`). The last *mid-turn* record is the newest evidence
+   * that errs in the safe direction; taking the terminal one would credit the whole final response
+   * as if it were part of the window. ⛔ `init` is excluded for the opposite reason: `thread.started`
+   * is printed before any request, so it is evidence of a process, not of a cache.
+   */
+  lastActivityAt: number | null
 }
 
 const live = new Map<string, Live>()
+
+/**
+ * The stream records that are *not* evidence a model request was under way.
+ *
+ * ⛔ `init` is printed before the first request — a process, not a cache. `result` and `usage` are
+ * the terminal pair, and a prefix's TTL runs from the request that reused it rather than from the
+ * response that ended it, so crediting them would count the whole final response as window.
+ * Everything else — assistant prose, an item completing, a rate-limit record riding the turn — only
+ * exists because a model answered, which means the prefix was read.
+ */
+const NO_REQUEST_EVIDENCE = new Set<StreamEvent['kind']>(['init', 'result', 'usage'])
+
+/** Does seeing this record prove a model request was under way? See `NO_REQUEST_EVIDENCE`. */
+export function isRequestEvidence(kind: StreamEvent['kind']): boolean {
+  return !NO_REQUEST_EVIDENCE.has(kind)
+}
 
 /**
  * The last screen of a session that has already exited.
@@ -322,6 +356,18 @@ export function listSessions(includeClosed = false): Session[] {
  */
 export function promptSentAt(id: string): number | null {
   return live.get(id)?.promptedAt ?? null
+}
+
+/**
+ * The newest moment this live session showed a model request was under way, or null.
+ *
+ * ⛔ Read by the two things that wind a stream-metered session's cache clock — `touchCacheClock`
+ * while the turn runs, and `creditStreamTurn` when it ends. Not persisted, for the same reason
+ * `promptSentAt` is not: it describes a turn in flight, and a turn that ended has already written
+ * the durable `last_request_started_at` it stood in for.
+ */
+export function lastRequestEvidenceAt(id: string): number | null {
+  return live.get(id)?.lastActivityAt ?? null
 }
 
 export function getSession(id: string): Session | null {
@@ -794,6 +840,10 @@ export function spawnSession(opts: SpawnOptions): Session {
     const listeners = streamListeners.get(id)
     let text = ''
     for (const event of entry.parser?.push(data) ?? []) {
+      // ⛔ Stamped **before** the event is handed on, so `creditStreamTurn` — which runs inside the
+      // `usage` callback below — reads the last *mid-turn* record rather than the terminal one it is
+      // itself processing. See `lastActivityAt` for why the terminal pair is excluded.
+      if (isRequestEvidence(event.kind)) entry.lastActivityAt = Date.now()
       events.onStream(entry.session, event)
       for (const listener of listeners ?? []) listener(event)
       text += renderForHuman(event)
@@ -899,7 +949,8 @@ export function spawnSession(opts: SpawnOptions): Session {
     parser:
       transport === 'stream' && ad.decodeStream ? new StreamParser(ad.decodeStream) : null,
     promptedOnce: false,
-    promptedAt: null
+    promptedAt: null,
+    lastActivityAt: null
   })
 
   log.info(

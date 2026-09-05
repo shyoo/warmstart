@@ -11,6 +11,7 @@ import { startServer, type DaemonServer } from './server.js'
 import { QuotaPoller } from './quota.js'
 import {
   getSession,
+  lastRequestEvidenceAt,
   noteVendorSession,
   reconcileOrphans,
   setSessionEvents,
@@ -30,7 +31,13 @@ import { reconcileConsults, startController, stopController } from './controller
 import { reconcileReviews } from './reviewer.js'
 import { creditTurn, runForSession } from './tasks.js'
 import { recordRateLimit } from './quota.js'
-import { TranscriptTailer, creditStreamTurn, recordCompaction, recordTurn } from './transcript.js'
+import {
+  TranscriptTailer,
+  creditStreamTurn,
+  recordCompaction,
+  recordTurn,
+  touchCacheClock
+} from './transcript.js'
 import { log, onLog } from './log.js'
 import { setEventSink } from './events.js'
 import { forgetStreamUsage, noteStepUsage, takeTurnUsage } from './streamusage.js'
@@ -153,6 +160,14 @@ async function main(): Promise<void> {
       // a window level — which is what drew `1.1M/1.0M` on the gauge. Where a run emitted per-call
       // usage, `takeTurnUsage` returns their sum as the turn and the last call's prompt size as the
       // context level; where it did not, it hands back the terminal record unchanged.
+      // ⛔ **A running turn keeps its own cache alive, and the row has to say so** (t224). Every
+      // record above is downstream of a model request, and on a provider whose reads refresh the TTL
+      // that request renewed the prefix for free. Without this the clock only ever moved when a turn
+      // *ended*, so a `codex exec` run longer than OpenAI's 30-minute window spent its whole second
+      // half reported as holding a lapsed cache while it was busy reusing it. No-op for anything not
+      // metered from its stream, and it can only push an existing clock forward - see the function.
+      const requestedAt = lastRequestEvidenceAt(session.id)
+      if (requestedAt !== null) touchCacheClock(session, requestedAt)
       if (event.kind === 'usage' && !event.final) noteStepUsage(session.id, event.usage)
       if (event.kind === 'usage' && event.final) {
         const turn = takeTurnUsage(session.id, event.usage)

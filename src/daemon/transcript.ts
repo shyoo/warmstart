@@ -4,7 +4,13 @@ import type { Session, Turn } from '@shared/protocol.js'
 import { db } from './db.js'
 import { costModel } from './costmodel.js'
 import { adapter } from './adapters/index.js'
-import { clearClockMove, closeSession, getSession, promptSentAt } from './sessions.js'
+import {
+  clearClockMove,
+  closeSession,
+  getSession,
+  lastRequestEvidenceAt,
+  promptSentAt
+} from './sessions.js'
 import { emit } from './events.js'
 import { addMessage, creditTurn, runForSession } from './tasks.js'
 import {
@@ -448,6 +454,91 @@ function costModelFor(adapterId: string) {
 }
 
 /**
+ * The newest moment a model request is known to have been under way, given both signals.
+ *
+ * ⛔ **The last mid-turn record beats the prompt that opened the turn.** For an adapter that reports
+ * usage once per turn, the prompt time is the *first* request of however many the turn made; for
+ * `codex exec`, which takes one prompt and then works unattended, that is the only one the fleet
+ * ever saw. `lastRequestEvidenceAt` is stamped by every mid-turn stream record, each of which only
+ * exists because a model answered — which, on a provider whose reads refresh the TTL, is the prefix
+ * being renewed for free.
+ *
+ * ⚠️ `Math.max` rather than a plain preference: a turn whose records all arrived before the prompt
+ * went down the pipe is a turn from the *previous* prompt on a reused session, and letting that
+ * stale stamp win would wind the clock backwards.
+ */
+export function newestRequestStart(
+  prompted: number | null,
+  evidence: number | null,
+  fallback: number
+): number {
+  if (prompted === null && evidence === null) return fallback
+  return Math.max(prompted ?? 0, evidence ?? 0)
+}
+
+/**
+ * Wind a live session's cache clock forward while its turn is still running.
+ *
+ * ⭐ **The half of t224 that `creditStreamTurn` cannot do.** That function is the turn's *last* word
+ * and runs once, at the end; a `codex exec` turn can outlive the 30-minute prefix it is actively
+ * reusing several times over before it gets there. In between, the row said the cache had lapsed
+ * while codex was refreshing it on every request — so the fleet strip counted down to zero on a
+ * working session, and the routing score's `warm` term read 0 for an account holding the hottest
+ * prefix in the fleet.
+ *
+ * ⛔ **Only where the provider says a read refreshes the TTL.** `read_refreshes_ttl` is the whole
+ * licence for this: it is what makes an observed request equivalent to a renewal. Anthropic declares
+ * it too, but claude-code is metered from its transcript — which carries a real `requestStartedAt`
+ * per turn and writes one every few seconds of a run — so this path is restricted to `metering:
+ * 'stream'` adapters and never races the transcript for ownership of the same column.
+ *
+ * ⛔ **Never a first write.** `coalesce`-style caution is not enough here: a session that has not yet
+ * completed a turn has no measured prefix, and inventing an expiry for one would tell routing an
+ * unproven cache is warm. The clock is only ever pushed *forward* from a value some completed turn
+ * already established — `where ... and cache_expires_at is not null and cache_expires_at < ?`.
+ *
+ * ⚠️ Throttled to `CLOCK_TOUCH_MS`. The precision that buys is far finer than the 30-minute window it
+ * describes, and it keeps a chatty stream from writing the same row hundreds of times a minute.
+ *
+ * ⚠️ `last_request_started_at` is also the fleet's *silence* signal — the stall watchdog and
+ * `finishReplyOverdue` both read it to mean "no request is in flight". Moving it here agrees with
+ * them rather than fighting them: a session emitting records is demonstrably not silent, and it was
+ * precisely this column being stuck at the run's opening prompt that `quietSince` had to work around
+ * with `runStartedAt` after t105 was accused of 947 minutes of silence ninety seconds in.
+ */
+export function touchCacheClock(session: Session, at: number): void {
+  if (adapter(session.adapterId).info.capabilities.metering !== 'stream') return
+  const model = costModelFor(session.adapterId)
+  const ttlMs = model.cacheTtlMs()
+  if (ttlMs === null || !model.readRefreshesTtl) return
+
+  const expiry = at + ttlMs
+
+  const moved = db()
+    .prepare(
+      `update sessions
+          set last_request_started_at = ?, cache_expires_at = ?
+        where id = ?
+          and cache_expires_at is not null
+          and cache_expires_at < ?`
+    )
+    .run(at, expiry, session.id, expiry - CLOCK_TOUCH_MS).changes
+
+  // ⛔ Only when the row actually moved. The throttle above means most calls change nothing, and
+  // announcing those would push a session event per stream record to every attached window.
+  if (moved > 0) announce(session.id)
+}
+
+/**
+ * How stale the stored clock must be before an observed request rewrites it.
+ *
+ * ⚠️ A minute against a 30-minute window is ~3% of the TTL — well inside the noise of not knowing
+ * exactly when the last request left — and it bounds the writes to one per session per minute
+ * however loud the stream is.
+ */
+const CLOCK_TOUCH_MS = 60 * 1000
+
+/**
  * Record a turn agentyard saw on the wire rather than in a file.
  *
  * ⛔ For adapters whose `metering` is `stream` — Antigravity has no transcript agentyard can read,
@@ -498,7 +589,7 @@ export function creditStreamTurn(session: Session, usage: StreamUsage, contextTo
   const model = costModelFor(session.adapterId)
   const ts = Date.now()
   /**
-   * ⭐ **When this request began, which is what the cache TTL is measured from.**
+   * ⭐ **When the newest request of this turn began, which is what the cache TTL is measured from.**
    *
    * ⛔ This used to be `null`, and the justification written here was that no provider metered from
    * its stream prices a steerable cache, so nothing would read it. That confused *pricing* a cache
@@ -508,12 +599,25 @@ export function creditStreamTurn(session: Session, usage: StreamUsage, contextTo
    * drew an empty countdown for every codex session and routing scored each one as holding no cache
    * at all. Nothing here spends a token; it records a fact that was being thrown away.
    *
-   * ⚠️ The prompt going down the pipe, not the moment the result came back. A four-minute turn has
-   * already spent four minutes of its window, exactly as `cacheExpiryFor` says. `ts` is the fallback
-   * for a turn credited against a session that is no longer live - a late record, where treating the
-   * prefix as fresher than it is would be the wrong way to be wrong, but is the only number left.
+   * ⛔ **And then it was `promptSentAt`, which is wrong by the length of the whole turn** (t224).
+   * The note here read *"on a multi-request turn it is the first request, so a long turn's later
+   * requests are counted as older than they are — again the safe direction"*. That is only safe while
+   * a turn is shorter than the TTL. `codex exec` takes **one** prompt, works for as long as the task
+   * needs, and reports usage once at the end, so every request after the first was invisible: a
+   * 90-minute codex run stamped an expiry 30 minutes after the prompt it opened with, i.e. an hour
+   * *in the past*, at the exact moment its prefix was hottest. OpenAI's window is a sliding one —
+   * *"a cached prefix remains eligible for reuse for 30 minutes after its most recent write or
+   * reuse"* — so each of those invisible requests had been refreshing it for free the whole time.
+   * The fleet then scored the account `warm 0 · cold 1` and sent the follow-up somewhere that had to
+   * pay `1.25·C` to rebuild what was already sitting warm. See `requestAnchor` and `touchCacheClock`.
+   *
+   * ⚠️ Still the request, not the moment the result came back. A four-minute turn has already spent
+   * four minutes of its window, exactly as `cacheExpiryFor` says, which is why the anchor is the last
+   * *mid-turn* record and never the terminal one. `ts` is the fallback for a turn credited against a
+   * session that is no longer live - a late record, where treating the prefix as fresher than it is
+   * would be the wrong way to be wrong, but is the only number left.
    */
-  const startedAt = promptSentAt(session.id) ?? ts
+  const startedAt = newestRequestStart(promptSentAt(session.id), lastRequestEvidenceAt(session.id), ts)
   // ⚠️ `contextTokens` is the fill level of the model's context window when the turn ended, which
   // is a different question from what the turn cost. A run that made several model calls spends the
   // sum of their prompts and *holds* only the last one, so `usage.input` overstates the window by a
