@@ -1031,6 +1031,63 @@ function PromptDisclosure({
 }
 
 /**
+ * Collapsible intermediate activity disclosure with step count and copy-to-clipboard.
+ */
+function ActivityDisclosure({
+  activity,
+  label = 'Intermediate activity',
+  defaultOpen = false
+}: {
+  activity: Array<{ text: string; ts: number }>
+  label?: string
+  defaultOpen?: boolean
+}): React.JSX.Element {
+  const [copied, setCopied] = useState(false)
+  const fullText = activity.map((a) => a.text).join('\n')
+  const copy = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    e.preventDefault()
+    void navigator.clipboard.writeText(fullText).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    })
+  }
+
+  return (
+    <details className="prompt-disclosure activity-disclosure" open={defaultOpen}>
+      <summary className="prompt-disclosure-summary">
+        <span className="prompt-disclosure-title">
+          <span className="prompt-disclosure-icon">⚡</span> {label}
+        </span>
+        <span className="prompt-disclosure-meta">
+          <span>
+            {activity.length} {activity.length === 1 ? 'step' : 'steps'}
+          </span>
+          <button
+            type="button"
+            className="btn btn--xs btn--ghost prompt-copy-btn"
+            onClick={copy}
+            title="Copy intermediate activity text"
+          >
+            {copied ? 'Copied' : 'Copy'}
+          </button>
+        </span>
+      </summary>
+      <div className="prompt-disclosure-body">
+        <div className="activity-disclosure-list">
+          {activity.map((line, i) => (
+            <div key={`${line.ts}-${i}`} className="activity-disclosure-line">
+              <span className="activity-disclosure-ts">{when(line.ts)}</span>
+              <span className="activity-disclosure-text">{line.text}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </details>
+  )
+}
+
+/**
  * One image that is already on a message.
  *
  * ⛔ Fetched through `attachment.read` rather than pointed at by a `file://` URL. The renderer runs
@@ -1099,6 +1156,12 @@ function Thread({
           : m.role === 'system'
             ? runs.find((r) => r.prompt && Math.abs(r.startedAt - m.ts) < 5000)
             : null
+        const isTargetMsgForRunActivity =
+          runForMsg?.activity &&
+          runForMsg.activity.length > 0 &&
+          (m.role === 'agent' ||
+            (!messages.some((other) => other.runId === runForMsg.id && other.role === 'agent') &&
+              m.role === 'system'))
         return (
           <div key={m.id} className={`msg msg--${m.role}`}>
             <span className="msg-role">
@@ -1112,6 +1175,14 @@ function Thread({
               </span>
             </span>
             <span className="msg-text">
+              {isTargetMsgForRunActivity && (
+                <div className="msg-activity-box">
+                  <ActivityDisclosure
+                    activity={runForMsg.activity!}
+                    label={`Intermediate activity (${runForMsg.activity!.length} step${runForMsg.activity!.length === 1 ? '' : 's'})`}
+                  />
+                </div>
+              )}
               {m.text}
               {m.attachments.length > 0 && (
                 <span className="msg-images">
@@ -2158,6 +2229,14 @@ function RunRow({
             <span className="side-run-key">prompt:</span>
             <span className="side-run-val">
               <PromptDisclosure prompt={run.prompt} label="link" />
+            </span>
+          </div>
+        )}
+        {run.activity && run.activity.length > 0 && (
+          <div className="side-run-fact">
+            <span className="side-run-key">activity:</span>
+            <span className="side-run-val">
+              <ActivityDisclosure activity={run.activity} label="link" />
             </span>
           </div>
         )}

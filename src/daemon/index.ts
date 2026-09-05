@@ -28,7 +28,7 @@ import {
 } from './scheduler.js'
 import { reconcileConsults, startController, stopController } from './controller.js'
 import { reconcileReviews } from './reviewer.js'
-import { addMessage, creditTurn, messagesFor, runForSession } from './tasks.js'
+import { creditTurn, runForSession } from './tasks.js'
 import { recordRateLimit } from './quota.js'
 import { TranscriptTailer, creditStreamTurn, recordCompaction, recordTurn } from './transcript.js'
 import { log, onLog } from './log.js'
@@ -165,20 +165,7 @@ async function main(): Promise<void> {
       if (event.kind === 'assistant_text') {
         const run = runForSession(session.id)
         if (run?.taskId) {
-          noteActivity(run.taskId, event.text)
-          // For multi-step stream adapters (like OpenAI / Codex), retain interim commentary updates in the thread
-          if (session.adapterId === 'openai-compatible') {
-            const trimmed = event.text.trim()
-            if (trimmed) {
-              const recent = messagesFor(run.taskId).filter(
-                (m) => m.runId === run.id && m.role === 'agent'
-              )
-              const isDuplicate = recent.some((m) => m.text.trim() === trimmed)
-              if (!isDuplicate) {
-                addMessage(run.taskId, 'agent', trimmed, run.id)
-              }
-            }
-          }
+          noteActivity(run.taskId, event.text, run.id)
         }
       }
       // ⛔ And the record that says the turn failed, which nothing was listening to. A `stream`

@@ -1503,7 +1503,13 @@ const MIGRATIONS: Migration[] = [
     decided_at       integer not null
   );
   create index if not exists routing_decisions_time on routing_decisions(decided_at desc);
-  `
+  `,
+  // 46 - runs store their intermediate streaming activity so it can be inspected after completion.
+  (conn) => {
+    if (!hasColumn(conn, 'runs', 'activity_json')) {
+      conn.exec('alter table runs add column activity_json text;')
+    }
+  }
 ]
 
 /**

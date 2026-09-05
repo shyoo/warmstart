@@ -35,6 +35,7 @@ import { emit } from './events.js'
 import { log } from './log.js'
 import { getProject } from './projects.js'
 import { branchNameFor } from './worktrees.js'
+import { consumeRunActivity } from './activity.js'
 
 /**
  * Tasks.
@@ -1395,6 +1396,7 @@ interface RunRow {
   plan_id?: string | null
   plan_raw?: string | null
   plan_source?: string | null
+  activity_json?: string | null
 }
 
 /**
@@ -1432,6 +1434,7 @@ function toRun(r: RunRow, blockedMs = 0): Run {
     adapterId: r.adapter_id ?? null,
     model: r.model ?? null,
     prompt: r.prompt ?? null,
+    activity: r.activity_json ? (JSON.parse(r.activity_json) as Array<{ text: string; ts: number }>) : null,
     // ⛔ Derived on read, never a column. A run's dollars change the moment a *later* overlapping
     // run is discovered — see daemon/price.ts. The whole pass is memoised against an epoch, so this
     // is a map lookup on every row after the first.
@@ -1596,9 +1599,13 @@ function runKey(workerId: string, sessionId: string | null): {
 }
 
 export function finishRun(id: string, outcome: RunOutcome, note?: string): Run {
+  const act = consumeRunActivity(id)
+  const activityJson = act.length > 0 ? JSON.stringify(act) : null
   db()
-    .prepare('update runs set ended_at = ?, outcome = ?, note = coalesce(?, note) where id = ?')
-    .run(Date.now(), outcome, note ?? null, id)
+    .prepare(
+      'update runs set ended_at = ?, outcome = ?, note = coalesce(?, note), activity_json = coalesce(?, activity_json) where id = ?'
+    )
+    .run(Date.now(), outcome, note ?? null, activityJson, id)
   // ⛔ Asked a second time, because the first answer was taken before the run had spoken. A session
   // learns its model from the transcript, so on every provider that names its own this is where the
   // key is actually filled in. `coalesce` never overwrites what dispatch already knew.

@@ -4248,7 +4248,7 @@ export async function onStreamResult(
       // explicit `TASK COMPLETE:` line is still honoured — that is the operator's contract with the
       // agent, and an agent that writes it has been told to.
       if (isOpenConversation(runTask) && !completion) {
-        if (openRun && runTask) await endConversationTurn(session, openRun, runTask)
+        if (openRun && runTask) await endConversationTurn(session, openRun, runTask, result.text)
         return
       }
       await completeTask(session.id, completion ?? (result.text?.trim() || 'Completed'))
@@ -4257,7 +4257,7 @@ export async function onStreamResult(
     // ⛔ The turn that has just ended on an MCP adapter, which nothing else closes. See
     // `endConversationTurn` for why the run ends here and the session does not.
     if (isOpenConversation(runTask) && openRun && runTask && !openRun.outcome) {
-      await endConversationTurn(session, openRun, runTask)
+      await endConversationTurn(session, openRun, runTask, result.text)
     }
     return
   }
@@ -4375,11 +4375,45 @@ export function taskCompletionIn(text: string | null): string | null {
  * counted (`retainedReservations`), and it is the price of the warm prefix the whole cost model is
  * built to buy.
  */
-async function endConversationTurn(session: Session, run: Run, task: Task): Promise<void> {
+async function endConversationTurn(
+  session: Session,
+  run: Run,
+  task: Task,
+  resultText?: string | null
+): Promise<void> {
   const why =
     'The agent finished this turn. Reply to carry on in the same conversation, or use Finish, Stop ' +
     'or Commit below. Nothing has been committed and nothing has been landed.'
   finishRun(run.id, 'completed', 'the turn ended; the conversation is still open')
+
+  let effectiveAnswer = (resultText ?? '').trim()
+  if (!effectiveAnswer) {
+    const recentActivity = activityFor(task.id)
+    const proseLines = recentActivity
+      .map((a) => a.text)
+      .filter(
+        (t) =>
+          t &&
+          !t.startsWith('[Tool:') &&
+          !t.startsWith('[run:') &&
+          !t.startsWith('[search:') &&
+          !t.startsWith('[find:') &&
+          !t.startsWith('[list:') &&
+          !t.startsWith('[fetch:')
+      )
+    if (proseLines.length > 0) {
+      effectiveAnswer = proseLines.slice(-3).join('\n')
+    } else {
+      effectiveAnswer = 'Completed turn'
+    }
+  }
+
+  const existing = messagesFor(task.id).filter((m) => m.runId === run.id && m.role === 'agent')
+  const alreadyAdded = existing.some((m) => m.text.trim() === effectiveAnswer.trim())
+  if (!alreadyAdded) {
+    addMessage(task.id, 'agent', effectiveAnswer, run.id)
+  }
+
   addMessage(task.id, 'system', why)
   // ⚠️ The run ends either way; the *reason* is only written over a task that was still working. A
   // conversation whose agent asked a question is already resting on that question, and replacing

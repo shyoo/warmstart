@@ -25,8 +25,10 @@ const KEEP = 40
 const MAX_LINE = 400
 
 const tails = new Map<string, Array<{ text: string; ts: number }>>()
+const runTails = new Map<string, Array<{ text: string; ts: number }>>()
+const RUN_KEEP = 200
 
-export function noteActivity(taskId: string, text: string): void {
+export function noteActivity(taskId: string, text: string, runId?: string): void {
   const trimmed = text.replace(/\s+/g, ' ').trim()
   if (!trimmed) return
   const entry = {
@@ -38,10 +40,35 @@ export function noteActivity(taskId: string, text: string): void {
   while (tail.length > KEEP) tail.shift()
   tails.set(taskId, tail)
   emit({ type: 'task.activity', taskId, text: entry.text, ts: entry.ts })
+
+  if (runId) {
+    const runTail = runTails.get(runId) ?? []
+    runTail.push(entry)
+    while (runTail.length > RUN_KEEP) runTail.shift()
+    runTails.set(runId, runTail)
+  }
 }
 
 export function activityFor(taskId: string): Array<{ text: string; ts: number }> {
   return tails.get(taskId) ?? []
+}
+
+export function runActivityFor(runId: string): Array<{ text: string; ts: number }> {
+  return runTails.get(runId) ?? []
+}
+
+/**
+ * Take accumulated intermediate activity for a run and release the memory.
+ * Called when a run is finished and about to be persisted into SQLite.
+ */
+export function consumeRunActivity(runId: string): Array<{ text: string; ts: number }> {
+  const got = runTails.get(runId) ?? []
+  runTails.delete(runId)
+  return got
+}
+
+export function clearRunActivity(runId: string): void {
+  runTails.delete(runId)
 }
 
 /**

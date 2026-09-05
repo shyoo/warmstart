@@ -288,6 +288,27 @@ describe('what ends a conversation turn', () => {
     expect(after.outcome).toBe('completed')
     expect(tasks.requireTask(task.id).status).toBe('awaiting_human')
     expect(tasks.requireTask(task.id).holdReason).toContain('finished this turn')
+
+    // The agent's final answer must be recorded as an agent message with runId
+    const msgs = tasks.messagesFor(task.id)
+    const agentMsg = msgs.find((m) => m.role === 'agent' && m.runId === runId)
+    expect(agentMsg).toBeDefined()
+    expect(agentMsg?.text).toBe('Here is what I found.')
+  })
+
+  it('persists intermediate streaming activity on the run', async () => {
+    const { task, runId, session } = talking()
+    const activity = await import('./activity.js')
+    activity.noteActivity(task.id, '[Tool: run_command git status]', runId)
+    activity.noteActivity(task.id, 'Reading configuration files...', runId)
+
+    await scheduler.onStreamResult(session, { isError: false, text: 'Done checking.', terminalReason: null })
+
+    const after = tasks.requireRun(runId)
+    expect(after.activity).toBeDefined()
+    expect(after.activity?.length).toBe(2)
+    expect(after.activity?.[0]?.text).toBe('[Tool: run_command git status]')
+    expect(after.activity?.[1]?.text).toBe('Reading configuration files...')
   })
 
   it('keeps the session alive, which is what makes the next reply warm', async () => {

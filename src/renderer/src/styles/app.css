@@ -4059,6 +4059,40 @@ select:focus-visible,
   margin: var(--sp-2) 0 var(--sp-3) 0;
 }
 
+.msg-activity-box {
+  margin-bottom: var(--sp-2);
+}
+
+.activity-disclosure-list {
+  max-height: 280px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.activity-disclosure-line {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+.activity-disclosure-ts {
+  font-size: 10px;
+  color: var(--color-text-faint);
+  flex-shrink: 0;
+  min-width: 48px;
+}
+
+.activity-disclosure-text {
+  color: var(--color-text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .draft-preview-prompt {
   margin-top: var(--sp-2);
 }

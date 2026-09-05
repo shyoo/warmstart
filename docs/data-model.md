@@ -24,7 +24,7 @@ Everything else in the daemon goes through those two, so swapping the driver is 
 ## 2. The migration contract
 
 `MIGRATIONS` in `db.ts` is a numbered, **append-only** array. `MIGRATION_COUNT` is its length and is
-the `user_version` a current database sits at — **45** as of 2026-09-04.
+the `user_version` a current database sits at — **46** as of 2026-09-04.
 
 - ⛔ **Never edit a migration that has shipped.** Add the next one.
 - ⛔ **Every migration must survive being replayed.** `sessionstate.test.ts` rewinds `user_version`
@@ -65,7 +65,7 @@ the first. Both are required and `paths.test.ts` fails if either is removed.
 | `task_deps` | prerequisite edges | cycle-checked on insert; **`require`** is what counts as met — see below |
 | `task_messages` | the thread | `delivered_at` marks what has reached a session |
 | `attachments` | image metadata; bytes under `<dataDir>/attachments/` | `attachments.ts` is the only writer |
-| `runs` | one attempt of a task on one session | ⛔ never deleted — the estimator's training data. `adapter_id`, `model`, `quota_before/after_json`, `trunk_sha_before`, `prompt`, `started_warm`, `plan_id`/`plan_raw`/`plan_source`, **`kind`**, `list_usd`/`on_overage`/`overage_status` — ⛔ the plan and the three facts a probe stated about *this run alone* are stamped; **both** money layers are derived on read by `src/daemon/price.ts`, because an attribution changes the moment a later overlapping run is found — which is why there is no `overage_usd` column. ⚠️ All three money columns are nullable and null means *not known* |
+| `runs` | one attempt of a task on one session | ⛔ never deleted — the estimator's training data. `adapter_id`, `model`, `quota_before/after_json`, `trunk_sha_before`, `prompt`, `started_warm`, `plan_id`/`plan_raw`/`plan_source`, **`kind`**, `list_usd`/`on_overage`/`overage_status`, `activity_json` (intermediate stream steps recorded on finish) — ⛔ the plan and the three facts a probe stated about *this run alone* are stamped; **both** money layers are derived on read by `src/daemon/price.ts`, because an attribution changes the moment a later overlapping run is found — which is why there is no `overage_usd` column. ⚠️ All three money columns are nullable and null means *not known* |
 | `quality_reviews` | one peer grade of one task's diff | ⛔ every review is kept with its immutable `rubric_version`; `tasks.quality_review_score` is the mean of all completed, scored reviews and `quality_review_count` states its denominator. `run_id` is the metering *and* the timeline entry |
 | `approvals` `approval_rules` | the permission gate and its remembered answers | |
 | `questions` | the third object: content answers, not allow/deny | born parked when the asker is gone |

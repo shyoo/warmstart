@@ -767,6 +767,8 @@ export interface Run {
    * Null for runs that predated this column.
    */
   prompt: string | null
+  /** Intermediate streaming activity (e.g. tool invocations, assistant thoughts) captured during the run. */
+  activity?: Array<{ text: string; ts: number }> | null
   /** The effective optimization objective vector active when this run was dispatched. */
   objective?: Objective | null
   /**
