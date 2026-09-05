@@ -361,3 +361,38 @@ describe('the run history the judge is shown', () => {
     expect(history).not.toContain('openai-compatible')
   })
 })
+
+describe('how long a reviewer is given to answer', () => {
+  const t0 = 1_700_000_000_000
+  const min = (n: number): number => t0 + n * 60_000
+
+  it('waits through a slow model reading the prompt, where a wall clock cut it off', () => {
+    // ⛔ The t217 case, measured 2026-09-04: a 27B model on the operator's own GPU at ~3.5 tok/s was
+    // handed a 33k-character prompt and killed at 300.2s having said nothing yet. Silence for six
+    // minutes is a model still reading, not a model that died.
+    expect(reviewer.reviewStall({ askedAt: t0, lastOutputAt: null, chars: 0 }, min(6))).toBeNull()
+  })
+
+  it('gives up when nothing at all has arrived, and says how long it waited', () => {
+    const stall = reviewer.reviewStall({ askedAt: t0, lastOutputAt: null, chars: 0 }, min(16))
+    expect(stall).toContain('nothing at all')
+    expect(stall).toContain('16m00s')
+  })
+
+  it('keeps waiting on a reviewer that is still talking, however slowly', () => {
+    // ⚠️ Twenty minutes in and streaming: at 3.5 tok/s that is a normal answer, not a hang.
+    const progress = { askedAt: t0, lastOutputAt: min(19), chars: 1200 }
+    expect(reviewer.reviewStall(progress, min(20))).toBeNull()
+  })
+
+  it('stops a reviewer that has gone quiet, and reports what it had written', () => {
+    const stall = reviewer.reviewStall({ askedAt: t0, lastOutputAt: min(8), chars: 412 }, min(14))
+    expect(stall).toContain('quiet')
+    expect(stall).toContain('412 characters')
+  })
+
+  it('has a ceiling, so a stream that never ends is not waited on forever', () => {
+    const progress = { askedAt: t0, lastOutputAt: min(46), chars: 90_000 }
+    expect(reviewer.reviewStall(progress, min(46))).toContain('as long as a review gets')
+  })
+})

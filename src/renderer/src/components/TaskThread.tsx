@@ -2270,6 +2270,20 @@ function RunRow({
  * ⚠️ Offered only on a task that has finished. Grading work that is still moving would score a
  * snapshot and store it as if it were the result.
  */
+/**
+ * How long this reviewer takes, as far as anybody here knows.
+ *
+ * ⛔ Says "not yet known" rather than an average of other accounts. A local endpoint's pace is a
+ * property of the operator's own machine — a 27B model on a consumer GPU answers minutes after a
+ * hosted one would have — and borrowing another agent's number would set an expectation this app
+ * has no evidence for.
+ */
+function paceNote(typicalMs: number | null): string {
+  return typicalMs === null
+    ? 'How long it takes here is not yet known: it has not finished a review on this fleet.'
+    : `Its last reviews here took about ${duration(typicalMs)}.`
+}
+
 function QualityReviewBox({
   task,
   reviews,
@@ -2282,7 +2296,13 @@ function QualityReviewBox({
   const [eligibility, setEligibility] = useState<
     {
       ok: boolean
-      reviewers: Array<{ workerId: string; label: string; model: string | null }>
+      reviewers: Array<{
+        workerId: string
+        label: string
+        model: string | null
+        /** The median review this account has actually completed here, or null for never. */
+        typicalMs: number | null
+      }>
       reason: string
     } | null
   >(null)
@@ -2354,6 +2374,7 @@ function QualityReviewBox({
           <option key={reviewer.workerId} value={reviewer.workerId}>
             {reviewer.label}
             {reviewer.model ? ` · ${modelLabel(reviewer.model)}` : ' · CLI default'}
+            {reviewer.typicalMs === null ? '' : ` · ~${duration(reviewer.typicalMs)}`}
           </option>
         ))}
       </select>
@@ -2371,7 +2392,7 @@ function QualityReviewBox({
           : eligibility.ok
             ? reviewerId === 'auto'
               ? 'Auto chooses randomly from the currently available routable peers; each uses its small review model'
-              : 'The selected peer will be checked for current availability, then grade this using its small review model'
+              : `The selected peer will be checked for current availability, then grade this using its small review model. ${paceNote(eligibility.reviewers.find((r) => r.workerId === reviewerId)?.typicalMs ?? null)}`
             : eligibility.reason}
       </div>
       {failed && <div className="side-note warn">{failed}</div>}

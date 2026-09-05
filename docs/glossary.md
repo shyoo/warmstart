@@ -396,6 +396,12 @@ configured model. Eligibility excludes workers whose Grading role is off and eve
 the work, not merely the worker account, and is enforced again when the review starts.
 **Grading** is a display overlay while that read-only run is pending, not a task status: completed
 work remains completed and the review owns no pooled workspace.
+⛔ **A review is given up on for going silent, never for taking long** (`reviewStall` in
+`src/daemon/reviewer.ts`): 15 minutes for the first output, 5 minutes of silence after it has started
+talking, 45 minutes in total. A fixed wall clock was a claim about inference speed and it failed on
+the first local model — t217, 2026-09-04, killed at 300.2s of a 300s budget at ~3.5 tok/s, before it
+had finished reading an 8.3k-token prompt. The picker shows each reviewer's **median completed
+review** beside it, and says the pace is unknown rather than borrowing another account's.
 
 **Rubric** — a versioned definition of the seven dimensions a review scores 0–10, with **written anchors at 2/4/6/8/10** so a 7
 means the same thing twice. Requirement fidelity and correctness carry 40% between them; codebase fit

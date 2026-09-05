@@ -1376,7 +1376,17 @@ export interface RpcMap {
     params: { taskId: string }
     result: {
       ok: boolean
-      reviewers: Array<{ workerId: string; label: string; model: string | null }>
+      reviewers: Array<{
+        workerId: string
+        label: string
+        model: string | null
+        /**
+         * How long a review has actually taken on this account, or null when it has never finished
+         * one. ⚠️ Measured, never modelled — the pace of a local endpoint belongs to the operator's
+         * own machine, and this app can only report what it has seen there.
+         */
+        typicalMs: number | null
+      }>
       reason: string
     }
   }

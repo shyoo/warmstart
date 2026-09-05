@@ -5,6 +5,7 @@ import { WINDOW_HIGH_WATER } from '@shared/tasks.js'
 import { adapter } from './adapters/index.js'
 import { accountUnavailability } from './eligibility.js'
 import { extractJson } from './controller.js'
+import { db, rows } from './db.js'
 import { landingTargetFor, getProject } from './projects.js'
 import { lastQuota } from './quota.js'
 import {
@@ -50,8 +51,41 @@ import { log } from './log.js'
  * capability, the quota gate is a reading, and the author gate is a set difference on ids.
  */
 
-/** A review is a single read-only pass. Longer than a consult, because it reads a diff. */
-const REVIEW_TIMEOUT_MS = 5 * 60 * 1000
+/**
+ * A review's clock measures **silence, not elapsed time**.
+ *
+ * ⛔ **A fixed wall-clock deadline is a claim about how fast inference is, and it was wrong the
+ * first time a model ran on the operator's own GPU.** Measured on t217 (2026-09-04): a review by a
+ * 27B local model was cut off at exactly 300.2s of a 300s budget with *the reviewer did not answer
+ * in time*, having been handed a 33,151-character prompt (~8.3k tokens) and generating at ~3.5
+ * tok/s. At that pace reading the prompt alone outlasts the whole budget before the first token of
+ * the answer exists — so the deadline fired on a reviewer that was working, not on one that was
+ * stuck, and the review was billed as a failure the model never had a chance to avoid.
+ *
+ * ⛔ Raising the number would only move the cliff to the next machine. What this actually needs to
+ * detect is *a reviewer that has stopped talking*, which is adapter-agnostic and cheap to observe:
+ * every stream carries assistant text as it is produced (the local bridge flushes a delta every ~60
+ * characters, which at 3.5 tok/s is one every ~4s), so a working reviewer says something on a scale
+ * of seconds at **any** pace and a dead one says nothing at all. Hence three windows and no
+ * per-adapter table — see `reviewStall`.
+ */
+
+/**
+ * How long to wait for the **first** output. This is prompt-reading time, and it is the window a
+ * slow local model actually needs: ~8k tokens of prompt at the prefill rates a partially offloaded
+ * 27B reaches on a consumer GPU is minutes, not seconds. ⚠️ Costs a hosted reviewer nothing — a CLI
+ * that dies exits, and `onSessionEnd` resolves the wait long before this.
+ */
+const REVIEW_FIRST_OUTPUT_MS = 15 * 60 * 1000
+
+/** How long a reviewer that *has* been talking may go quiet before it counts as stuck. */
+const REVIEW_SILENCE_MS = 5 * 60 * 1000
+
+/** The backstop, for a stream that emits forever without ever ending its turn. */
+const REVIEW_CEILING_MS = 45 * 60 * 1000
+
+/** How often the windows above are checked. Cheap: one timestamp comparison. */
+const REVIEW_WATCH_MS = 5_000
 
 /** The same settling delay a consult uses: a freshly spawned CLI swallows what arrives too early. */
 const PROMPT_DELAY_MS = 2500
@@ -91,6 +125,38 @@ export interface ReviewCandidate {
   workerId: string
   label: string
   model: string | null
+  /**
+   * How long a review has actually taken on this account, in milliseconds — the median of its own
+   * completed review runs, or null when it has never finished one.
+   *
+   * ⛔ **Measured, never modelled.** The honest answer to "how long will this take" on an endpoint
+   * whose speed is a property of somebody's GPU is *what it took here last time*, and until there
+   * is a last time the answer is that nobody knows. A number derived from a token count and an
+   * assumed rate would look like knowledge and be a guess about a machine this app cannot see.
+   */
+  typicalMs: number | null
+}
+
+/**
+ * The median completed review on one account.
+ *
+ * ⚠️ Completed only. A review that timed out measures this fleet's patience rather than the
+ * reviewer's pace, and folding those in would drag the figure towards whatever the deadline was.
+ */
+export function typicalReviewMs(workerId: string): number | null {
+  const durations = rows<{ ms: number }>(
+    db()
+      .prepare(
+        `select ended_at - started_at as ms from runs
+          where worker_id = ? and kind = 'quality_review' and outcome = 'completed'
+            and ended_at is not null and ended_at > started_at
+          order by started_at desc limit 20`
+      )
+      .all(workerId)
+  ).map((r) => r.ms)
+  if (durations.length === 0) return null
+  durations.sort((a, b) => a - b)
+  return durations[Math.floor((durations.length - 1) / 2)] ?? null
 }
 
 /** The 5h window this fleet gates on, or null when nothing fresh enough to trust says. */
@@ -193,7 +259,8 @@ export function reviewCandidateOptions(task: Task): ReviewCandidate[] {
   return reviewCandidates(task, false).candidates.map((worker) => ({
     workerId: worker.id,
     label: worker.label,
-    model: gradingModel(worker)
+    model: gradingModel(worker),
+    typicalMs: typicalReviewMs(worker.id)
   }))
 }
 
@@ -368,13 +435,16 @@ export async function requestReview(taskId: string, workerId?: string | null): P
     })
     reviewId = review.id
 
-    const text = await ask(session.id, prompt)
+    const { text, reason: why } = await ask(session.id, prompt)
     closeSession(session.id)
     sessionId = null
 
     if (text === null) {
-      finishRun(run.id, 'failed', 'the reviewer did not answer in time')
-      return { ok: true, review: completeReview(review.id, { ok: false, reason: 'the reviewer did not answer in time' }) }
+      // ⚠️ The sentence `ask` produced, not a generic one: on a slow endpoint the difference between
+      // "produced nothing at all in 15m00s" and "went quiet after 412 characters" is the difference
+      // between a model that needs a smaller prompt and one that fell over.
+      finishRun(run.id, 'failed', why)
+      return { ok: true, review: completeReview(review.id, { ok: false, reason: why }) }
     }
     const json = extractJson(text)
     if (!json) {
@@ -399,31 +469,94 @@ export async function requestReview(taskId: string, workerId?: string | null): P
   }
 }
 
-/** Send the prompt and wait for the turn to end. Resolves to null on timeout or a dead session. */
-function ask(sessionId: string, prompt: string): Promise<string | null> {
+/** What a waiting review has seen so far. ⛔ Timestamps only — nothing here reads the adapter. */
+export interface ReviewProgress {
+  /** When the prompt was sent. The settling delay before it is not the reviewer's time. */
+  askedAt: number
+  /** When output last arrived, or null when nothing has arrived at all. */
+  lastOutputAt: number | null
+  /** How much has arrived, in characters. The only pace evidence a stream gives away for free. */
+  chars: number
+}
+
+function mins(ms: number): string {
+  const total = Math.round(ms / 1000)
+  return total < 90 ? `${total}s` : `${Math.floor(total / 60)}m${String(total % 60).padStart(2, '0')}s`
+}
+
+/**
+ * Has this reviewer stopped? The sentence to record, or null to keep waiting.
+ *
+ * ⛔ **Every reason it can return names the numbers it decided on**, because a review that failed on
+ * a clock is the one case where the operator has to be able to tell "the model is slower than this
+ * fleet expects" from "the model died" — and on a local endpoint the first is a setting they can
+ * change. The pace it reports is characters, not tokens: the stream is text, and inventing a token
+ * count from it would be a number with no measurement behind it.
+ */
+export function reviewStall(progress: ReviewProgress, now: number): string | null {
+  const elapsed = now - progress.askedAt
+  if (progress.lastOutputAt === null) {
+    if (elapsed < REVIEW_FIRST_OUTPUT_MS) return null
+    return `the reviewer produced nothing at all in ${mins(elapsed)}`
+  }
+  const silent = now - progress.lastOutputAt
+  if (silent >= REVIEW_SILENCE_MS) {
+    return (
+      `the reviewer went quiet for ${mins(silent)} after ${progress.chars} characters ` +
+      `in ${mins(elapsed)}`
+    )
+  }
+  if (elapsed >= REVIEW_CEILING_MS) {
+    return `the reviewer was still writing after ${mins(elapsed)}, which is as long as a review gets`
+  }
+  return null
+}
+
+/**
+ * Send the prompt and wait for the turn to end.
+ *
+ * Resolves with the reply, or with `text: null` and the sentence saying why there is none.
+ */
+function ask(sessionId: string, prompt: string): Promise<{ text: string | null; reason: string }> {
   return new Promise((resolve) => {
     let text = ''
     let done = false
-    const finish = (value: string | null) => {
+    const progress: ReviewProgress = { askedAt: Date.now(), lastOutputAt: null, chars: 0 }
+    const finish = (value: string | null, reason: string) => {
       if (done) return
       done = true
       offStream()
       offEnd()
-      clearTimeout(timer)
-      resolve(value)
+      clearInterval(watch)
+      resolve({ text: value, reason })
     }
     const offStream = onSessionStream(sessionId, (event) => {
-      if (event.kind === 'assistant_text') text += event.text
-      if (event.kind === 'result') finish(event.text ?? text ?? null)
+      // ⚠️ Any traffic counts as alive, not only the text kept: a reviewer reading a file is
+      // working, and holding it to the same silence window as one that has crashed is the bug
+      // this whole clock exists to avoid.
+      progress.lastOutputAt = Date.now()
+      if (event.kind === 'assistant_text') {
+        text += event.text
+        progress.chars += event.text.length
+      }
+      if (event.kind === 'result') finish(event.text ?? text ?? null, 'the turn ended')
     })
-    const offEnd = onSessionEnd(sessionId, () => finish(text || null))
-    const timer = setTimeout(() => finish(null), REVIEW_TIMEOUT_MS)
+    const offEnd = onSessionEnd(sessionId, () =>
+      finish(text || null, 'the reviewer’s session ended before it answered')
+    )
+    const watch = setInterval(() => {
+      const stall = reviewStall(progress, Date.now())
+      if (stall) finish(null, stall)
+    }, REVIEW_WATCH_MS)
     setTimeout(() => {
+      // ⛔ The clock starts here, not at spawn: the settling delay and whatever the CLI spends
+      // starting up are not the reviewer failing to answer a question it had not been asked.
+      progress.askedAt = Date.now()
       try {
         sendPrompt(sessionId, prompt)
       } catch (err) {
         log.warn('could not send a review prompt:', err)
-        finish(null)
+        finish(null, err instanceof Error ? err.message : 'the review prompt could not be sent')
       }
     }, PROMPT_DELAY_MS)
   })

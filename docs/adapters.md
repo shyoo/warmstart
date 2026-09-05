@@ -56,6 +56,12 @@ each adapter's own declaration; `external.ts` defaults it to `null`, which is th
 `local-llm` declares `read-only` (with `qwen3-coder-30b-a3b` as its review model) as local inference
 has no filesystem or shell write tools and runs non-interactively via its bridge.
 
+⚠️ **A local endpoint's pace is a property of somebody's GPU, and no timeout may assume otherwise.**
+Measured 2026-09-04 on a 27B model at ~3.5 tok/s: an 8.3k-token review prompt is minutes of reading
+before the first token of the answer exists, and answers arrive over tens of minutes. Nothing here
+waits on a wall clock for that reason — the review deadline watches for *silence* (`reviewStall`,
+`src/daemon/reviewer.ts`), which is the same question at any speed.
+
 **Read the ⛔ column-by-column, not row-by-row.** Two of these three CLIs have no classifier and no
 approval callback, and yet only one of them can hold a fleet. That difference is invisible in a
 feature comparison and decisive in a scheduler.
