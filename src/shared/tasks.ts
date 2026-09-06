@@ -689,6 +689,15 @@ export interface Task {
    * tokens it spent.
    */
   excludedFromStats: boolean
+  /**
+   * This task cannot and should not be peer-reviewed.
+   *
+   * ⛔ **Set by a human when a task's work is not gradable** — database-only changes, configuration
+   * updates, or other valid work that produces no commits to review. A task marked non-gradable is
+   * excluded from batch grading runs and ineligible for peer review. It is not a quality judgment;
+   * it is a statement that quality review does not apply to this work.
+   */
+  nonGradable: boolean
   deletedAt: number | null
   createdAt: number
   updatedAt: number

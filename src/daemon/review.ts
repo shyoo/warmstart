@@ -512,6 +512,12 @@ export function buildReviewPrompt(input: PromptInputs): string {
     'file, and do not run any command that writes. You may read files to understand the code around',
     'the change.',
     '',
+    'IMPORTANT: Some tasks produce no code changes. A task may accomplish its goal through database',
+    'migrations, configuration updates, or other non-code work that leaves no commit to review. If the',
+    'task has no commits or no reviewable diff, return "n/a" for the summary and null for all dimension',
+    'scores - this is a valid result, not a failure. Focus on what the task actually did, not just',
+    'what appears in the diff.',
+    '',
     'KEEP THIS TO A SINGLE PASS. Read the diff, open at most a handful of files you actually need in',
     'order to judge whether the change fits the code around it, and answer. Do not explore the',
     'repository, do not run the test suite, do not attempt to reproduce anything. A thorough review',
@@ -568,7 +574,7 @@ export function buildReviewPrompt(input: PromptInputs): string {
       (d) => `    "${d}": { "score": 0-10 or null, "rationale": "one or two sentences citing file:line" }`
     ).join(',\n'),
     '  },',
-    '  "summary": "one or two sentences",',
+    '  "summary": "one or two sentences, or \\"n/a\\" if the task has no reviewable code changes",',
     '  "notable": ["at most three specific observations, each citing file:line"]',
     '}',
     'Do not include an overall score: it is computed from the dimensions above.'
@@ -604,6 +610,30 @@ export function parseReviewReply(reply: Record<string, unknown>): ParsedReview {
   if (!raw || typeof raw !== 'object') return { ok: false, reason: 'the reply carried no `scores` object' }
   const source = raw as Record<string, unknown>
 
+  const summary = typeof reply.summary === 'string' ? reply.summary.trim() : ''
+  if (!summary) return { ok: false, reason: 'the reply carried no summary' }
+
+  // Special case: "n/a" means this task has no reviewable code changes (database-only, config-only, etc.).
+  // All scores must be null and it will not be counted as a grade.
+  if (summary === 'n/a') {
+    const scores = {} as Record<RubricDimension, DimensionScore>
+    for (const dimension of RUBRIC_DIMENSIONS) {
+      const entry = source[dimension]
+      if (!entry || typeof entry !== 'object') {
+        return { ok: false, reason: `the reply had no score for \`${dimension}\`` }
+      }
+      const { score } = entry as { score?: unknown }
+      if (score !== null) {
+        return {
+          ok: false,
+          reason: `the reply used summary "n/a" but \`${dimension}\` scored ${JSON.stringify(score)}; when returning n/a, all scores must be null`
+        }
+      }
+      scores[dimension] = { score: null, rationale: 'n/a' }
+    }
+    return { ok: true, scores, summary: 'n/a', notable: [] }
+  }
+
   const scores = {} as Record<RubricDimension, DimensionScore>
   for (const dimension of RUBRIC_DIMENSIONS) {
     const entry = source[dimension]
@@ -619,9 +649,6 @@ export function parseReviewReply(reply: Record<string, unknown>): ParsedReview {
     }
     scores[dimension] = { score, rationale: rationale.trim().slice(0, MAX_RATIONALE) }
   }
-
-  const summary = typeof reply.summary === 'string' ? reply.summary.trim() : ''
-  if (!summary) return { ok: false, reason: 'the reply carried no summary' }
 
   const notable = Array.isArray(reply.notable)
     ? reply.notable.filter((n): n is string => typeof n === 'string' && n.trim().length > 0).slice(0, 3)

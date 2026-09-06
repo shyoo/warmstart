@@ -474,6 +474,9 @@ function gradersByTask(taskIds: string[]): Map<string, ReviewCredit[]> {
 }
 
 export async function isTaskGradable(task: Task): Promise<{ ok: boolean; reason: string }> {
+  if (task.nonGradable) {
+    return { ok: false, reason: 'marked non-gradable by operator' }
+  }
   const peers = reviewerAvailability(task)
   if (!peers.eligible) {
     return { ok: false, reason: peers.reason }

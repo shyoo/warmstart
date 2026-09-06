@@ -113,6 +113,7 @@ function makeTask(overrides: Partial<Task> = {}): Task {
     ranOn: overrides.ranOn ?? null,
     ranModel: overrides.ranModel ?? null,
     excludedFromStats: overrides.excludedFromStats ?? false,
+    nonGradable: overrides.nonGradable ?? false,
     deletedAt: overrides.deletedAt ?? null,
     createdAt: overrides.createdAt ?? Date.now(),
     updatedAt: overrides.updatedAt ?? Date.now()

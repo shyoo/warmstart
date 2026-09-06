@@ -72,6 +72,7 @@ function mockTask(over: Partial<Task> = {}): Task {
     createdAt: 1000,
     updatedAt: 1000,
     excludedFromStats: false,
+    nonGradable: false,
     deletedAt: null,
     ...over
   }

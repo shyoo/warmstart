@@ -1603,6 +1603,20 @@ const MIGRATIONS: Migration[] = [
       .all() as Array<{ id: string; prompt: string }>
     const update = conn.prepare('update quality_reviews set blinding_leak = ? where id = ?')
     for (const r of found) update.run(namesAnAuthor(r.prompt) ? 1 : 0, r.id)
+  },
+  // 51 - allow marking tasks as non-gradable by human when they have no commits to review.
+  //
+  // ⛔ **Some tasks complete valid work with no commits** — database-only changes, configuration
+  // updates, or other work that doesn't produce code diffs. t203 was wrongly graded as a quality
+  // failure when the task never asked for commits. An operator can now mark such tasks as
+  // `non_gradable`, and they are excluded from batch grading runs.
+  //
+  // ⚠️ Existing tasks default to false: a task with no commits is already ungradable by virtue
+  // of resolveRange failing, so this column is about *deliberate* exclusion of gradable tasks.
+  (conn) => {
+    if (!hasColumn(conn, 'tasks', 'non_gradable')) {
+      conn.exec('alter table tasks add column non_gradable integer not null default 0;')
+    }
   }
 ]
 

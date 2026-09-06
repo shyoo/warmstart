@@ -104,6 +104,7 @@ interface TaskRow {
   quality_review_at: number | null
   quality_reviewer: string | null
   stats_excluded: number | null
+  non_gradable: number | null
   deleted_at: number | null
   created_at: number
   updated_at: number
@@ -247,6 +248,7 @@ function toTask(r: TaskRow, timing: ActiveTiming = ZERO_TIMING): Task {
     qualityReviewer: r.quality_reviewer ?? null,
     gradingWorkerId: r.grading_worker_id ?? null,
     excludedFromStats: r.stats_excluded === 1,
+    nonGradable: r.non_gradable === 1,
     firstRunAt: r.first_run_at,
     lastRunEndedAt: r.last_run_ended_at,
     activeMs: timing.activeMs,
