@@ -204,6 +204,14 @@ describe('the prompt', () => {
     expect(prompt.indexOf('KEEP THIS TO A SINGLE PASS')).toBeLessThan(prompt.indexOf('=== RUBRIC ==='))
   })
 
+  it('makes the reviewer seek concrete issues before giving an exceptional score', () => {
+    const prompt = build()
+    expect(prompt).toContain('REVIEW SKEPTICALLY')
+    expect(prompt).toContain('find-issues-first pass')
+    expect(prompt).toContain('only when concrete evidence supports every applicable 10-anchor')
+    expect(prompt).toContain('not evidence for a 9 or 10')
+  })
+
   it('never asks for a holistic score — the composite is the daemon’s, not the judge’s', () => {
     expect(build()).toContain('Do not include an overall score')
   })
