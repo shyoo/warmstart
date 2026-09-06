@@ -10,7 +10,7 @@ import {
  * What the new-task composer was left set to.
  *
  * ⛔ **Last-selected, not inherited.** The old form recomputed `inherit (commit, verify and merge
- * locally)` from the project on every open, so an operator who overrode the finish policy on one
+ * into main)` from the project on every open, so an operator who overrode the finish policy on one
  * task had to override it again on the next one, and again on the one after that — the fleet's
  * answer to *what do you usually want* was "whatever the project says", which is the one answer that
  * is never about the person typing. Inheritance still supplies the **first** value each control

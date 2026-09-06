@@ -1522,7 +1522,7 @@ export const FINISH_LABELS: Record<FinishPolicy, string> = {
   'await-human': 'await human',
   'commit-only': 'commit only',
   'commit-and-verify': 'commit, then verify',
-  'commit-and-merge': 'commit, verify and merge locally',
+  'commit-and-merge': 'commit, verify and merge into main',
   'commit-and-push': 'commit, verify, merge and push',
   'pull-request': 'open a pull request',
   'custom': 'this project’s own policy'

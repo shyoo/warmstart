@@ -198,7 +198,7 @@ export function NewTask({
    * nothing about it.
    */
   const [dependsOn, setDependsOn] = useState<string[]>([])
-  const [plannerFinishPolicy, setPlannerFinishPolicy] = useState<FinishPolicyChoice>('commit-only')
+  const [plannerFinishPolicy, setPlannerFinishPolicy] = useState<FinishPolicyChoice>('commit-and-merge')
   const [piecePriority, setPiecePriority] = useState<ComposerPrefs['priority']>('P2')
   const [pieceLimit, setPieceLimit] = useState<number>(5)
   const [pieceSessionSharing, setPieceSessionSharing] = useState<SessionSharingChoice>('on')
@@ -606,8 +606,8 @@ export function NewTask({
                 dependsOn.length === 0
                   ? 'Depends on'
                   : dependsOn.length === 1
-                    ? `Dep t${depTasks[0]?.seq ?? '?'}`
-                    : `Dep ×${dependsOn.length}`
+                    ? `Depends on t${depTasks[0]?.seq ?? '?'}`
+                    : `Depends on [${dependsOn.length}] tasks`
               }
               menu={() => (
                 <DependencyMenu
@@ -837,8 +837,8 @@ export function NewTask({
                           dependsOn.length === 0
                             ? 'Depends on'
                             : dependsOn.length === 1
-                              ? `Dep t${depTasks[0]?.seq ?? '?'}`
-                              : `Dep ×${dependsOn.length}`
+                              ? `Depends on t${depTasks[0]?.seq ?? '?'}`
+                              : `Depends on [${dependsOn.length}] tasks`
                         }
                         menu={() => (
                           <DependencyMenu
@@ -892,14 +892,12 @@ export function NewTask({
                     <PillSelect
                       ariaLabel="Finish policy"
                       title="What happens when the agent says it is done."
-                      muted={plannerFinishPolicy === 'commit-only'}
+                      muted={plannerFinishPolicy === 'commit-and-merge'}
                       value={plannerFinishPolicy}
                       label={
-                        plannerFinishPolicy === 'commit-only'
-                          ? 'Commit'
-                          : plannerFinishPolicy === 'inherit'
-                            ? inheritedFinishShort
-                            : (FINISH_SHORT[plannerFinishPolicy] ?? plannerFinishPolicy)
+                        plannerFinishPolicy === 'inherit'
+                          ? inheritedFinishShort
+                          : (FINISH_SHORT[plannerFinishPolicy] ?? plannerFinishPolicy)
                       }
                       options={[
                         { value: 'commit-only', label: 'Commit' },

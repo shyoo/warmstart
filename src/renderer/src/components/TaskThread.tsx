@@ -2719,7 +2719,7 @@ function CompactionRow({
       </div>
       <div className="side-run-facts">
         <div className="side-run-fact">
-          <span className="side-run-key">run_id:</span>
+          <span className="side-run-key">session:</span>
           <span className="side-run-val mono" title={`Session ${c.sessionId}`}>
             {worker ? `${worker}/` : ''}{c.sessionId.slice(0, 8)}
           </span>
