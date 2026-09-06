@@ -81,6 +81,16 @@ it.** The tool says in as many words that it is not a way to finish early, and t
 alternative to finishing is an exit an agent takes. The run ends `blocked`, never `completed`, so the
 estimator is never fed a job that stopped half way through as though it measured the whole one.
 
+⛔ **And the daemon no longer relies on the agent reaching for either one.** An agent that ends its
+turn having called nothing is now noticed: the `result` record is written down and, once `quietSince`
+proves nothing has happened for `IDLE_TURN_AFTER_MS` (3m), `runWatchdogs` performs the `await_human`
+verdict on the agent's behalf — run `blocked`, task at `awaiting_human` carrying the agent's own last
+words, session warm, nothing landed or committed. ⚠️ It is a **safety net, not a third contract**: the
+prompt still asks for `task_complete`, this still refuses to read a completion out of prose, and an
+agent that stops without saying so still costs three minutes and a person's attention. Measured on
+t249 and t254, 2026-09-06 — the same run left open for forty-five minutes, twice. See
+`idleturn.test.ts` and [`architecture.md`](architecture.md) §"An agent has two ways to end a run".
+
 ⚠️ `ask_human` blocks until somebody answers **or the session's prompt cache expires**. That is
 deliberate: an answer arriving while the session is warm costs a cache read, where the same answer
 after a restart costs a full rebuild. ⛔ It replaced `request_human`, which routed through the approval

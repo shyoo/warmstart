@@ -3117,6 +3117,59 @@ async function runWatchdogs(): Promise<void> {
       }
     }
 
+    // 0b. The turn ended, nothing terminal was said, and nothing has happened since.
+    //
+    // ⛔ **This is the t249/t254 hole, and it is closed here rather than in `onStreamResult`**
+    // because the `result` record alone does not prove the session is finished being useful — the
+    // daemon may write the next prompt into it. What proves it is the same silence check the finish
+    // fallback above uses, applied to a turn we *know* ended. See `idleTurns`.
+    //
+    // ⛔ **It claims nothing about the work.** `parkForHuman` is the `await_human` verdict the agent
+    // should have reached for itself: the run closes as `blocked` — it did work and metered turns
+    // and is one answer away from carrying on — the task comes to rest at `awaiting_human` carrying
+    // the agent's own last words, and nothing is landed, committed, discarded or graded. The session
+    // stays warm, so a person's reply is a `continueTask` into the same thread.
+    //
+    // ⚠️ Skipped while a completion is still landing, for the t56 reason: `completeTask` owns this
+    // session's teardown and parking underneath it would overwrite a reported completion. If that
+    // completion then throws and leaves the run open, this is what eventually notices.
+    const idle = idleTurnFor(session.id)
+    if (idle && idle.runId === run.id && !compacting && !completing.has(session.id)) {
+      const quiet = quietSince({
+        lastRequestStartedAt: session.lastRequestStartedAt,
+        sessionStartedAt: session.startedAt,
+        runStartedAt: run.startedAt,
+        compactionLandedAt: lastCompactionLandedAt(session.id)
+      })
+      if (idleTurnOverdue(idle.at, quiet)) {
+        const minutes = Math.round((Date.now() - idle.at) / 60000)
+        log.warn(
+          `t${task.seq} ended its turn ${minutes}m ago without reporting completion and nothing has ` +
+            'happened since; handing it to a person rather than leaving the run open'
+        )
+        forgetIdleTurn(session.id)
+        // ⭐ The CLI's own `needs_action` sentence where the turn carried one, for the same reason
+        // `onSessionExit` prefers it: "it is waiting for you to choose between OAuth and session
+        // cookies" is a better thing to read than "something happened, over to you".
+        // ⚠️ Taken, not merely read: the sentence has now been reported once, and a later turn on
+        // this same session that stops for a different reason must not inherit it.
+        const waiting = blockedOn.get(session.id)
+        blockedOn.delete(session.id)
+        await parkForHuman(
+          session.id,
+          'The agent finished its turn without calling `task_complete`, `await_human` or ' +
+            `\`ask_human\`, and has done nothing for ${minutes} minutes since. Nothing has been ` +
+            'landed, committed or discarded — the work is exactly as the agent left it. ' +
+            (waiting
+              ? `It stopped to ask you something: "${waiting.slice(0, 400)}"`
+              : idle.said
+                ? `The last thing it said was: "${idle.said.slice(0, 400)}"`
+                : 'It said nothing on the way out.')
+        )
+        continue
+      }
+    }
+
     // 1. The window boundary. This is the case the whole tool was built for.
     const reset = windowResetsAt(run.workerId)
     const project = task.projectId ? getProject(task.projectId) : null
@@ -4441,6 +4494,75 @@ async function landCompletion(
  */
 const blockedOn = new Map<string, string>()
 
+/**
+ * The turn a work run ended on without saying anything terminal, per session.
+ *
+ * ⛔ **The hole t249 and t254 both fell through, twice each.** An ordinary run stays open until
+ * `task_complete` arrives — that is the whole of its contract — and an agent on a `streamPrompts`
+ * transport does not exit when its turn ends: the process sits live and idle waiting for a prompt
+ * nobody is going to write. So a turn that finished the work and forgot to report it, or one that
+ * stopped for any reason `await_human`, `ask_human` and the error paths do not cover, left the run
+ * open, the task reading `running`, its clock counting, its workspace held and its worker slot
+ * reserved — for as long as the daemon lived. Measured on t254, 2026-09-06: last request 21:08:10,
+ * the agent's closing summary at 21:08:16, and the task still `running` forty-five minutes later
+ * when the daemon was restarted out from under it. The only thing that ever cleared one was a
+ * restart, and a restart is not a mechanism.
+ *
+ * ⛔ **Written down, not acted on here.** The `result` record proves the turn is over; it does not
+ * prove the session is done being useful, because the daemon itself may write the next prompt into
+ * it — a wrap-up, a `/compact`, a person's reply. So this is a note with a timestamp, and
+ * `runWatchdogs` is what decides, once nothing has happened since. See `idleTurnOverdue`.
+ *
+ * ⚠️ Keyed by session and holding the run, so a note cannot outlive what it describes: a new run in
+ * the same session, or a session that ends, makes it stale rather than wrong.
+ */
+const idleTurns = new Map<string, { runId: string; at: number; said: string | null }>()
+
+/**
+ * How long a work run may sit on a finished turn before it is handed to a person.
+ *
+ * ⚠️ Generous on purpose, and for one reason: everything the daemon does *to* an idle session — the
+ * wrap-up prompt, the cache clock's `/compact`, a completion still landing — happens within seconds
+ * of the turn ending, and each of them clears the note by starting a request. Three minutes is the
+ * same patience `FINISH_REPLY_AFTER_MS` gives an agent asked to commit, and it is far short of the
+ * twelve a stall is given because unlike a stall this cannot be wrong about whether work is in
+ * flight: it has the vendor's own record that the turn is over.
+ */
+export const IDLE_TURN_AFTER_MS = 3 * 60 * 1000
+
+/** Record that this run's turn ended and nothing terminal was said. Exported for its test. */
+export function noteIdleTurn(session: Session, run: Run, said: string | null): void {
+  idleTurns.set(session.id, { runId: run.id, at: Date.now(), said: (said ?? '').trim() || null })
+}
+
+/** What a session's last unreported turn ending was, if it has one. Exported for its test. */
+export function idleTurnFor(sessionId: string): { runId: string; at: number; said: string | null } | null {
+  return idleTurns.get(sessionId) ?? null
+}
+
+export function forgetIdleTurn(sessionId: string): void {
+  idleTurns.delete(sessionId)
+}
+
+/**
+ * Has this run been sitting on a finished turn long enough to hand back?
+ *
+ * ⛔ **Both clocks, and `quietSince` is the one that matters.** Elapsed time since the turn ended
+ * says only that a while has passed. `quietSince` — the last request started, the run's own start,
+ * the last compaction that landed — says *nothing has happened since*, which is the difference
+ * between a session the daemon has already re-prompted and one nobody is ever going to prompt again.
+ * A `/compact` that landed after the note, or a reply typed into the thread, moves that clock past
+ * the note and this returns false.
+ */
+export function idleTurnOverdue(
+  noteAt: number,
+  quietSince: number,
+  now = Date.now(),
+  after = IDLE_TURN_AFTER_MS
+): boolean {
+  return quietSince <= noteAt && now - noteAt > after
+}
+
 /** Exported for its test. Sessions are cleaned up by `onSessionExit`, which always runs on exit. */
 export function noteTurnStatus(sessionId: string, event: { category: string; detail: string | null; needsAction: string | null }): void {
   const said = (event.needsAction ?? event.detail ?? '').trim()
@@ -4466,6 +4588,10 @@ export async function onSessionExit(session: Session, exitCode: number | null): 
   const parked = parkQuestionsForSession(session.id)
   const waiting = blockedOn.get(session.id)
   blockedOn.delete(session.id)
+  // ⛔ The process is gone, so whatever this session's last turn left open is this function's to
+  // decide, not the idle-turn watchdog's. Leaving the note behind would let it fire against a run
+  // that has already been wound up here.
+  forgetIdleTurn(session.id)
 
   // ⛔ A completion already owns this session's teardown - the run, the workspace and the
   // status - and it has not finished writing yet. Ending the run here would overwrite a reported
@@ -4627,7 +4753,13 @@ export async function onStreamResult(
     // `endConversationTurn` for why the run ends here and the session does not.
     if (isOpenConversation(runTask) && openRun && runTask && !openRun.outcome) {
       await endConversationTurn(session, openRun, runTask, result.text)
+      return
     }
+    // ⛔ **A work run whose turn ended without a completion signal is not left to be noticed.** The
+    // run stays open here — that is still the contract, and `task_complete` is still the only thing
+    // that may claim the work is done — but the *fact* that the agent went idle is now written down,
+    // and `runWatchdogs` reads it. See `noteIdleTurn`.
+    if (openRun && runTask && !openRun.outcome) noteIdleTurn(session, openRun, result.text)
     return
   }
   if (completion) {
