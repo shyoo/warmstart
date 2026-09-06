@@ -208,6 +208,38 @@ body {
   padding: var(--sp-2) var(--sp-2) var(--sp-1);
 }
 
+/* A group label with a control on it. The heading keeps its own padding so the label stays on the
+   same baseline as every other group's; only the button is new. */
+.nav-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+}
+
+.nav-add {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin-right: var(--sp-2);
+  display: grid;
+  place-items: center;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-faint);
+  font: inherit;
+  font-size: var(--text-section);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.nav-add:hover {
+  background: var(--color-surface-2);
+  border-color: var(--color-border);
+  color: var(--color-text);
+}
+
 .nav-empty {
   font-size: var(--text-meta);
   color: var(--color-text-faint);
@@ -2026,6 +2058,170 @@ body {
   gap: var(--sp-2);
   margin-top: var(--sp-4);
 }
+
+/* ---- the add-project wizard --------------------------------------------
+   Shares `.confirm-shade` with the delete confirmations, because it is the same thing: modal over
+   the whole window with the rest of the app inert behind it. ⛔ It is bounded at 88vh and the body
+   scrolls, not the dialog — the step rail and the footer with the blockers on it have to stay
+   visible, and a Next button that scrolls off the bottom is a Next button nobody presses. */
+.wizard {
+  display: flex;
+  flex-direction: column;
+  width: min(760px, 100%);
+  max-height: 88vh;
+  padding: var(--sp-4);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  box-shadow: 0 12px 36px rgb(0 0 0 / 0.48);
+}
+
+.wizard-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--sp-3);
+}
+
+.wizard-head h3 {
+  margin: 0 0 var(--sp-1);
+  font-size: var(--text-section);
+}
+
+.wizard-sub {
+  margin: 0;
+  font-size: var(--text-dense);
+  color: var(--color-text-muted);
+}
+
+.wizard-steps {
+  display: flex;
+  gap: var(--sp-3);
+  list-style: none;
+  margin: var(--sp-3) 0 0;
+  padding: 0 0 var(--sp-3);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.wizard-step {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--text-dense);
+  color: var(--color-text-faint);
+}
+
+.wizard-step--active { color: var(--color-text); }
+.wizard-step--done { color: var(--color-text-dim); }
+
+.wizard-step-num {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border: 1px solid var(--color-border);
+  border-radius: 50%;
+  font-size: var(--text-meta);
+}
+
+.wizard-step--active .wizard-step-num {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.wizard-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--sp-4) 2px;
+}
+
+.wizard-section { display: flex; flex-direction: column; gap: var(--sp-2); }
+
+.wizard-section h4 {
+  margin: 0;
+  font-size: var(--text-body);
+  font-weight: 600;
+}
+
+.wizard-field { display: flex; flex-direction: column; gap: var(--sp-1); }
+
+.wizard-label {
+  font-size: var(--text-meta);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-faint);
+}
+
+.wizard-path { display: flex; gap: var(--sp-2); }
+.wizard-path .text-input { flex: 1; min-width: 0; }
+
+/* What was found in the directory. A findings box rather than prose: six facts an eye runs down. */
+.wizard-findings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-2);
+}
+
+.wizard-findings h4 {
+  margin: 0;
+  font-size: var(--text-meta);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-faint);
+}
+
+.wizard-facts { display: grid; gap: var(--sp-1); margin: 0; }
+.wizard-facts > div { display: grid; grid-template-columns: 130px minmax(0, 1fr); gap: var(--sp-2); }
+.wizard-facts dt { font-size: var(--text-dense); color: var(--color-text-faint); }
+.wizard-facts dd { margin: 0; font-size: var(--text-dense); overflow-wrap: anywhere; }
+
+.wizard-check {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-2);
+  font-size: var(--text-dense);
+  cursor: pointer;
+}
+
+.wizard-check input { margin-top: 2px; }
+.wizard-check-label { display: block; color: var(--color-text); }
+.wizard-check-hint { display: block; color: var(--color-text-faint); font-size: var(--text-meta); }
+
+.wizard-doc {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--sp-2) var(--sp-3);
+}
+
+.wizard-doc-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); }
+.wizard-doc-text { width: 100%; margin-top: var(--sp-2); font-size: var(--text-dense); }
+
+.wizard-plan { margin: 0; padding-left: var(--sp-4); font-size: var(--text-dense); }
+.wizard-plan li { margin-bottom: var(--sp-1); color: var(--color-text-dim); }
+
+.wizard-warnings { font-size: var(--text-dense); }
+.wizard-warnings ul { margin: var(--sp-1) 0 0; padding-left: var(--sp-4); color: var(--color-text-muted); }
+
+/* ⛔ The blockers sit in the footer beside the button they disable. A disabled Next with its reason
+   scrolled out of sight above it is the whole failure this wizard's step validation exists to
+   avoid. */
+.wizard-foot {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--color-border);
+}
+
+.wizard-blockers { flex: 1; min-width: 0; font-size: var(--text-dense); }
+.wizard-blockers p { margin: 0; }
+.wizard-foot .confirm-actions { margin-top: 0; flex: none; }
 
 /* ⚠️ Quota can widen a lot per-adapter — Antigravity's several windows read as one long joined
    string — while Role is one word behind a <select> that was inheriting the 220px form-field

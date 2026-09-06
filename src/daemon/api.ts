@@ -61,13 +61,19 @@ import {
   getProject,
   listProjects,
   policyFor,
-  proposeChecks,
   reloadProject,
   requireProject,
   setProjectChecks,
   setProjectPolicy,
   writeStarterConfig
 } from './projects.js'
+import { proposeChecks } from './projectstack.js'
+import {
+  createProject,
+  inspectProjectDirectory,
+  proposeProjectDocs,
+  workspaceRootReport
+} from './projectsetup.js'
 import { flowWorkspaces } from './flow.js'
 import { ensurePool, retireStrandedBranch } from './worktrees.js'
 import {
@@ -441,6 +447,10 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
     // ---- projects ----------------------------------------------------------------------
     'project.list': () => listProjects(),
     'project.add': (p) => addProject(p),
+    'project.inspect': (p) => inspectProjectDirectory(p),
+    'project.workspaceRoot': (p) => workspaceRootReport(p.root, p.workspaceRoot),
+    'project.docTemplates': (p) => ({ docs: proposeProjectDocs(p) }),
+    'project.create': (p) => createProject(p),
     'project.reload': (p) => reloadProject(p.id),
     'project.archive': (p) => archiveProject(p.id),
     'project.writeConfig': (p) => ({ path: writeStarterConfig(p.id) }),

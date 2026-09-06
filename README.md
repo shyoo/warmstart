@@ -100,6 +100,16 @@ You need **one**. Having several is the point — see *Multiple accounts* below.
   subscribed. A switch on each row holds an account out of dispatch without decommissioning it,
   and an account a run has proved unusable says so and stops being offered work, judgment, or a
   background usage probe until you fix it.
+- **Add a project in one dialog.** The `+` beside **Projects** in the sidebar opens a three-step
+  setup: pick the directory with your OS file picker, and Multi Agent Controller tells you what it
+  found there — a repository or not, what it is built with, which of `README.md`, `AGENTS.md` and
+  `HANDOFF.md` are missing, and whether the workspace directory it recommends is free. Then set the
+  workspace directory, the finish policy, the landing branch, session sharing, the completion mode
+  and the workspace pool size, and accept or edit the check commands it proposes from the project's
+  own manifests. For an empty or undocumented project it offers to write starter `README.md`,
+  `AGENTS.md` and `HANDOFF.md` files — editable before they land, and ⛔ it never overwrites one that
+  already exists. The last step lists every write before it happens; nothing touches your disk until
+  you press Create.
 - **File a task and walk away.** It gets a worktree from the project's pool, a branch named after the
   task, and an agent on an account that can take it. When the agent reports done, what happens next is
   your **finish policy** — land it unattended, wait for you, open a pull request, or run the project's

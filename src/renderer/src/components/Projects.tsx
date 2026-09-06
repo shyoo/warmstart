@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import type { Project, ResourceAvailability } from '@shared/tasks'
 import { rpc } from '../lib/daemon'
 
@@ -15,6 +14,12 @@ import { rpc } from '../lib/daemon'
  * Settings tab already draws next to the policy those numbers exist to serve, and sitting under a
  * heading that says Settings it read as something an operator could change. Removed 2026-08-31.
  *
+ * ⛔ **Adding one is a wizard, not a text box.** This page used to carry the only Add control in the
+ * app: one input, whose entire validation was that the directory existed, on a fleet-settings page
+ * three clicks from where projects are listed. The workspace directory, all five policies and the
+ * check list were things you found out about afterwards on other screens. `NewProject` asks for them
+ * in the order somebody setting up a project has them, and the sidebar's `+` opens the same one.
+ *
  * ⚠️ `resources` stays a prop, for the **Workspaces** column below. That is the one number from the
  * broker anybody scanning this list wants — how much of each project's pool is free — and it is
  * useful precisely because it sits on the project's own row rather than in a table of its own.
@@ -22,31 +27,15 @@ import { rpc } from '../lib/daemon'
 export function Projects({
   projects,
   resources,
-  refresh
+  refresh,
+  onAdd
 }: {
   projects: Project[]
   resources: ResourceAvailability[]
   refresh: () => Promise<void>
+  /** ⛔ Opens the shell's one wizard rather than a second copy of it. See `App.tsx`. */
+  onAdd: () => void
 }): React.JSX.Element {
-  const [root, setRoot] = useState('')
-  const [error, setError] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
-
-  const add = async () => {
-    if (!root.trim()) return
-    setBusy(true)
-    setError(null)
-    try {
-      await rpc('project.add', { root: root.trim() })
-      setRoot('')
-      await refresh()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setBusy(false)
-    }
-  }
-
   return (
     <div className="panel">
       <header className="panel-head">
@@ -58,35 +47,18 @@ export function Projects({
             <strong>Settings</strong> tab.
           </p>
         </div>
+        <button className="btn btn--primary" onClick={onAdd}>
+          Add project
+        </button>
       </header>
-
-      {error && <div className="alert">{error}</div>}
-
-      <div className="form">
-        <div className="form-row">
-          <label>Add</label>
-          <input
-            className="form-wide mono"
-            value={root}
-            placeholder="path to a project directory"
-            onChange={(e) => setRoot(e.target.value)}
-          />
-          <span className="form-hint">
-            Multi Agent Controller reads <span className="mono">.multi_agent_controller/project.json</span> if it is there, and
-            runs on defaults if it is not.
-          </span>
-        </div>
-        <div className="form-actions">
-          <button className="btn btn--primary" disabled={busy} onClick={() => void add()}>
-            Add project
-          </button>
-        </div>
-      </div>
 
       {projects.length === 0 ? (
         <div className="empty-inline">
           <p>No projects yet.</p>
           <p className="dim">Tasks can run without one, but they get no workspace and no branch.</p>
+          <button className="btn btn--primary" onClick={onAdd}>
+            Add a project
+          </button>
         </div>
       ) : (
         <table className="tbl">

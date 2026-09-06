@@ -59,6 +59,20 @@ export interface ProjectPolicyPatch {
   completion?: CompletionModeChoice
   poolSize?: number
   prepare?: string[]
+  /**
+   * Where this project's pooled worktrees go.
+   *
+   * ⛔ **Written to the committed file as a path *relative to the project root*, never absolute.**
+   * `project.json` is pulled by every clone and by every machine, and an absolute path is a fact
+   * about one disk — the one rule that file has is that nothing machine-specific goes in it. The
+   * resolver already reads it relatively (`policyFor` does `resolve(project.root, …)`), so the
+   * only thing that had to change was the writer.
+   *
+   * ⚠️ An empty string means *go back to the derived default* — `<root>_workspaces` — which is an
+   * absent key, not a stored copy of the default. A clone in a directory with a different name
+   * then derives its own sibling rather than inheriting somebody else's.
+   */
+  workspaceRoot?: string
 }
 
 export interface Project {
@@ -72,6 +86,130 @@ export interface Project {
   configPath: string | null
   createdAt: number
   archivedAt: number | null
+}
+
+// ------------------------------------------------------------------- adding a project
+
+/**
+ * What the tool found in a directory somebody is about to add.
+ *
+ * ⛔ **Every field is something read off the disk, and nothing here changes it.** The add wizard
+ * shows a person what is there before they commit to it, which is the whole difference between
+ * "type a path and hope" and a setup step — a directory that is already a project, a workspace
+ * sibling another project has claimed, and a repo with no `AGENTS.md` are three different situations
+ * with three different next moves, and none of them is visible from a text box.
+ */
+export interface ProjectInspection {
+  /** Canonical, because this is the spelling that would be stored. See `canonicalPath`. */
+  root: string
+  exists: boolean
+  isDirectory: boolean
+  /**
+   * Nothing in it but entries that carry no project — `.git`, `.DS_Store`, `Thumbs.db`, `desktop.ini`.
+   * ⚠️ A fresh `git init` is still an *empty* project, which is exactly the case the scaffolding is for.
+   */
+  empty: boolean
+  vcs: Vcs
+  /** The project already registered at this root, if there is one. Adding it again is refused. */
+  alreadyAdded: { id: string; name: string } | null
+  /** From the committed config, then `package.json`, then the directory's own name. */
+  suggestedName: string
+  hasConfig: boolean
+  /** The committed config if there is one, so the wizard opens on what the repo already says. */
+  config: ProjectConfig | null
+  /** Which of the three orientation docs are already there. */
+  docs: Record<ProjectDocName, boolean>
+  /** What this project appears to be built with, in the order the detectors ran. */
+  stack: string[]
+  proposedChecks: string[]
+  workspace: WorkspaceRootReport
+}
+
+/**
+ * What is at the workspace directory, and whether that is a problem.
+ *
+ * ⚠️ Only two of these states refuse. The rest are things to *say*: a directory that already holds
+ * something is usually a pool from a previous install, which is fine, and a person who is told what
+ * is in there can decide that for themselves.
+ */
+export type WorkspaceRootState =
+  /** Does not exist. The pool creates it on first dispatch. */
+  | 'free'
+  /** Exists and holds nothing. */
+  | 'empty'
+  /** Exists and holds something. Named, not refused — an existing pool looks exactly like this. */
+  | 'occupied'
+  /** ⛔ Another project's workspace root. Two pools in one directory is two projects' worktrees. */
+  | 'taken'
+  /** ⛔ Inside the project itself, so every worktree would be a subdirectory of the repo. */
+  | 'inside-project'
+  /** ⛔ On another drive, so it cannot be written to the committed file as a relative path. */
+  | 'other-drive'
+
+export interface WorkspaceRootReport {
+  /** Canonical and absolute — what the pool would actually use. */
+  path: string
+  state: WorkspaceRootState
+  /** ⛔ A `taken` report names the project that has it. A refusal with no name is unactionable. */
+  takenBy: string | null
+  /** May the project be created with this? False for `taken`, `inside-project` and `other-drive`. */
+  usable: boolean
+  /** What to tell the operator, or null when there is nothing worth saying. */
+  note: string | null
+  /**
+   * How it would be written into `project.json`, forward-slashed — or null when it is the derived
+   * default and therefore written as no key at all.
+   */
+  relative: string | null
+}
+
+/** The three orientation files, and the only names the scaffolder will write. */
+export type ProjectDocName = 'README.md' | 'AGENTS.md' | 'HANDOFF.md'
+
+export const PROJECT_DOC_NAMES: ProjectDocName[] = ['README.md', 'AGENTS.md', 'HANDOFF.md']
+
+/**
+ * A starter file, as proposed and as the operator edited it.
+ *
+ * ⛔ The content travels with the request. The template is generated in the daemon, shown in an
+ * editable box, and sent back — so what lands on disk is what the person read and approved, and
+ * there is no second generation step that could produce something they never saw.
+ */
+export interface ProjectDocDraft {
+  name: ProjectDocName
+  content: string
+}
+
+/**
+ * Everything the add wizard decided, in one call.
+ *
+ * ⛔ **One RPC, not six.** Creating a project is `mkdir` → `git init` → register → write the config →
+ * write the checks → write the docs, and a renderer driving that as six calls has six places to fail
+ * halfway and leave a project that is registered but unconfigured. The daemon does the sequence and
+ * reports what it could not do in `warnings` rather than failing the whole thing over a scaffold file.
+ */
+export interface ProjectCreateRequest {
+  root: string
+  name?: string
+  /** ⚠️ Off unless asked. Creating a directory somebody mistyped is worse than refusing. */
+  createDirectory?: boolean
+  /** `git init -b <landing target>`. Without a repo a project gets one workspace and no branches. */
+  gitInit?: boolean
+  /** Empty or absent keeps the derived `<root>_workspaces`. */
+  workspaceRoot?: string
+  policy?: ProjectPolicyPatch
+  /** ⚠️ Absent leaves whatever the repo already declared; `[]` is an operator clearing the list. */
+  checks?: string[]
+  docs?: ProjectDocDraft[]
+}
+
+export interface ProjectCreateResult {
+  project: Project
+  /** Where the policy was written. ⛔ Always written — that is what the wizard's answers *are*. */
+  configPath: string | null
+  docsWritten: ProjectDocName[]
+  /** ⛔ Asked for and did not happen. Never silent, never a thrown error over a scaffold file. */
+  warnings: string[]
 }
 
 // ---------------------------------------------------------------------------- task

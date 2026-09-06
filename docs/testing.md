@@ -86,6 +86,16 @@ count or a quota delta will report **PASS against an empty list**.
 
 Assert the collection is non-empty as half the claim, or test the logic as a pure function instead.
 
+### A textarea has no text, so reading it as text passes against a blank
+
+⛔ **`element.innerText` never includes a textarea's value.** The add-project wizard's L3 section
+asserted that the check-command box opened on the proposals read off the project's manifest, by
+matching against the step's `innerText` — which would have passed identically had the box been empty,
+because the value was never in the string either way. Caught 2026-09-06 only because the proposal
+happened to be missing from that reading while being demonstrably present in the file the wizard
+wrote. ⚠️ Read a form control's **`.value`**; `innerText` answers a question about a *rendering* and a
+control's content is not rendered into its own subtree.
+
 ### A suite that never reaches your change
 
 ⛔ **`test/ui.test.mjs` never opens a project.** Every task it files has `projectId: null`, so it

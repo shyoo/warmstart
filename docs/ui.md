@@ -57,6 +57,7 @@ thing entirely. See [`glossary.md`](glossary.md).
 | `Attention` `Questions` | the approvals/questions bar — one keystroke above the operator's work |
 | `Overview` `Controller` `Conversations` | dashboard, the controller chat, and conversation history |
 | `Project` `ProjectSettings` `Projects` | the project routes and the policy tier |
+| `NewProject` | the add-project wizard: three steps, one modal, `lib/newproject.ts` holds its rules |
 | `Cost` | what the scheduler chose and why |
 | `Statistics` | what finished tasks actually cost, took and scored — three tabs, one RPC |
 | `LooseEnds` | work that exists and is going nowhere → [`landing.md`](landing.md) |
@@ -64,6 +65,25 @@ thing entirely. See [`glossary.md`](glossary.md).
 | `Logs` | the daemon's log, live and filterable, ring-buffered so a late window sees the past |
 | `Terminal` | the real agent TUI over xterm.js, not a reconstruction |
 | `AppSettings` `SettingRow` `SettingButtonSelect` `SidebarResizer` | chrome |
+
+⛔ **Adding a project is a wizard, and it is chrome rather than a route.** (`components/NewProject.tsx`;
+its rules are pure functions in `lib/newproject.ts`.) The sidebar's Projects group carries a `+`, and
+both it and the Projects panel's button open the same modal — the state lives in `App.tsx` so it
+cannot be opened twice. Three steps: the **directory** and what `project.inspect` found in it, then the
+**workspace directory, the five policy tiers and the check list**, then the **starter files and a plain
+list of every write**. ⛔ **Nothing touches a disk until Create**: `project.inspect` and
+`project.docTemplates` are read-only, and `project.create` performs the whole sequence in the daemon,
+so *registered but unconfigured* is not a state the renderer can produce. ⚠️ Every refusal is the
+daemon's — already a project, a workspace directory another project owns, one inside the repository —
+because deciding them needs a filesystem and the list of every other project's pool; `stepBlockers`
+repeats the sentence rather than re-deriving it, and prints it in the footer beside the button it
+disables. ⛔ The directory fields use `window.agentyard.pickFolders()`, the same bridge the composer's
+*Add folder* uses, and typing a path still works.
+
+⚠️ **A starter template is regenerated when what it quotes changes, and never over text somebody
+typed.** The three docs name the project, the landing target and the check list, so going Back and
+changing any of them has to leave them agreeing with it — but `DocDraftState.edited` freezes a doc the
+operator has opened and written in, because rewriting it would discard their work with no undo.
 
 ⛔ **A thread message renders inline code spans, and nothing else of markdown.** Every message this
 codebase writes names refs, branches, shas and files in backticks — *"Landed as `98f200ab` onto
@@ -300,6 +320,7 @@ list. Logic extracted into a pure function under `lib/` is provable at L1 instea
 | `format.ts` `modelname.ts` `agenticon.ts` | display formatting |
 | `live.ts` | `showsLiveOutput(status)` — which statuses get a peephole |
 | `menuposition.ts` | where a pill's portalled menu goes: flip above, clamp to the window, never clip |
+| `newproject.ts` | the add-project wizard's step blockers, its creation plan, and the template signature |
 | `prefs.ts` | saved views, fleet collapse and density, page size (localStorage) |
 | `uisettings.ts` `zoom.ts` | tray/Enter behaviour and zoom, mirrored from main's `ui-settings.json` |
 | `pasteimages.tsx` | paste-to-attach; downscales to 1568px and uploads one image per call |

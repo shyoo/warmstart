@@ -28,6 +28,7 @@ import { FleetSettings } from './components/FleetSettings'
 import { Doctor } from './components/Doctor'
 import { Attention } from './components/Attention'
 import { Projects } from './components/Projects'
+import { NewProject } from './components/NewProject'
 import { Tasks } from './components/Tasks'
 import { TaskThread } from './components/TaskThread'
 import { Overview } from './components/Overview'
@@ -146,6 +147,14 @@ export function App(): React.JSX.Element {
   const [resources, setResources] = useState<ResourceAvailability[]>([])
   const [tasks, setTasks] = useState<Task[]>([])
   const [orphanTasks, setOrphanTasks] = useState(0)
+  /**
+   * The add-project wizard, which is chrome rather than a route.
+   *
+   * ⚠️ Held here rather than in the sidebar because both the sidebar's `+` and the Projects panel's
+   * button open the same one, and a modal that two places can open needs one piece of state or it
+   * can be opened twice.
+   */
+  const [addingProject, setAddingProject] = useState(false)
 
   const refreshProjects = useCallback(async () => {
     if (!connected) return
@@ -303,15 +312,26 @@ export function App(): React.JSX.Element {
         </nav>
 
         <nav className="nav-group">
-          <h2>Projects</h2>
+          {/* ⛔ The one control that adds a project sits where the projects are, not three clicks
+              away under Settings › Global. Adding a project is the first thing a new install has to
+              do and the thing an operator does again every time they start something — putting it
+              on a fleet-settings page made it a setting, which it is not. */}
+          <div className="nav-group-head">
+            <h2>Projects</h2>
+            <button
+              className="nav-add"
+              title="Add a project"
+              aria-label="Add a project"
+              onClick={() => setAddingProject(true)}
+            >
+              +
+            </button>
+          </div>
           {projects.length === 0 ? (
             // ⛔ Not a bare heading. A stranger's first launch has no projects, and a group label
             // with nothing under it reads as something that failed to load.
-            <button
-              className="nav-item nav-item--ghost"
-              onClick={() => setRoute({ kind: 'settings', page: 'global' })}
-            >
-              No projects yet
+            <button className="nav-item nav-item--ghost" onClick={() => setAddingProject(true)}>
+              No projects yet — add one
             </button>
           ) : (
             projects.map((project) => {
@@ -405,6 +425,20 @@ export function App(): React.JSX.Element {
       </aside>
 
       <SidebarResizer />
+
+      {/* ⛔ Rendered at the shell, not inside whichever panel opened it. It is modal over the whole
+          window, and a project created from the sidebar has to land the operator in the new project
+          whatever they were looking at when they pressed `+`. */}
+      {addingProject && (
+        <NewProject
+          onClose={() => setAddingProject(false)}
+          onCreated={(project) => {
+            setAddingProject(false)
+            void refreshProjects()
+            setRoute({ kind: 'project', id: project.id, tab: 'tasks' })
+          }}
+        />
+      )}
 
       <main className="main">
         {/* ⛔ The strip stays presentation-only — it is drawn from `fleet` and a clock and nothing
@@ -519,7 +553,12 @@ export function App(): React.JSX.Element {
                   you could change when it was purely informational. Removed 2026-08-31 on the
                   operator's call — the free/capacity number survives as the Workspaces column on
                   each project's own row. */}
-              <Projects projects={projects} resources={resources} refresh={refreshProjects} />
+              <Projects
+                projects={projects}
+                resources={resources}
+                refresh={refreshProjects}
+                onAdd={() => setAddingProject(true)}
+              />
             </>
           ) : route.kind === 'project' ? (
             <ProjectRoute

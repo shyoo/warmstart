@@ -24,7 +24,12 @@ import type {
   ObjectiveChoice,
   Priority,
   Project,
+  ProjectCreateRequest,
+  ProjectCreateResult,
+  ProjectDocDraft,
+  ProjectInspection,
   ProjectPolicyPatch,
+  WorkspaceRootReport,
   PendingWork,
   Question,
   QuestionKind,
@@ -1338,6 +1343,49 @@ export interface RpcMap {
   // ---- M2: projects, tasks, approvals, resources ----------------------------------------
   'project.list': { params: void; result: Project[] }
   'project.add': { params: { root: string; name?: string }; result: Project }
+  /**
+   * What is in a directory somebody is about to add: is it already a project, does it have a repo,
+   * is it empty, which orientation docs are missing, what would verify it, and what is at the
+   * workspace root the pool would derive.
+   *
+   * ⛔ **Read-only, and it is the reason the add form is a setup step rather than a text box.** Every
+   * refusal the wizard makes — already added, workspace directory taken — is decided here, on the
+   * daemon side, because the renderer cannot see a disk and `project.add`'s only validation was
+   * `existsSync`.
+   *
+   * ⚠️ Called on every change to either path field, so it does no work a keystroke cannot afford:
+   * a handful of `existsSync` calls, one directory listing, and one `git rev-parse`.
+   */
+  'project.inspect': {
+    params: { root: string; workspaceRoot?: string }
+    result: ProjectInspection
+  }
+  /** Just the workspace half of `project.inspect`, for the field that changes on its own. */
+  'project.workspaceRoot': {
+    params: { root: string; workspaceRoot?: string }
+    result: WorkspaceRootReport
+  }
+  /**
+   * Starter text for whichever of `README.md`, `AGENTS.md` and `HANDOFF.md` this directory lacks.
+   *
+   * ⛔ Generated here and edited in the form, and the edited text travels back on `project.create` —
+   * so what lands on disk is what a person read. Regenerating at write time would make the file
+   * something nobody had seen.
+   */
+  'project.docTemplates': {
+    params: { root: string; name?: string; checks?: string[]; landingTarget?: string }
+    result: { docs: ProjectDocDraft[] }
+  }
+  /**
+   * Everything the add wizard decided, in one call: the directory, the repo, the registration, the
+   * policy, the checks and the orientation docs.
+   *
+   * ⛔ **One method, not six.** Driving that sequence from the renderer has five places to stop
+   * halfway and leave a project that is registered and unconfigured. ⚠️ It fails for anything that
+   * would make the project *wrong* and warns for anything that merely leaves it *incomplete* — see
+   * `createProject`.
+   */
+  'project.create': { params: ProjectCreateRequest; result: ProjectCreateResult }
   'project.reload': { params: { id: string }; result: Project }
   'project.archive': { params: { id: string }; result: Project }
   'project.writeConfig': { params: { id: string }; result: { path: string } }
@@ -1631,7 +1679,7 @@ export interface RpcMap {
   //
   // ⛔ The check list is what the verifying finish policies trust when they say work is
   // verified, so it is proposed and edited, never inferred silently. See daemon/projects.ts.
-  /** What this project's `package.json` suggests. A proposal for a person, not a change. */
+  /** What this project's own manifests suggest. A proposal for a person, not a change. */
   'project.proposeChecks': { params: { id: string }; result: { checks: string[] } }
   /** Write the check list into the project's committed `project.json`. */
   'project.setChecks': { params: { id: string; checks: string[] }; result: Project }

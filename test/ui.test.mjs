@@ -1,6 +1,6 @@
 import { execFileSync, spawn } from 'node:child_process'
 import { DatabaseSync } from 'node:sqlite'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createRequire } from 'node:module'
@@ -41,6 +41,9 @@ let app = null
 // ⚠️ A real directory with a real repo in it: `project.add` refuses a root that does not exist, and
 // the workspace-pool control is a git capability. Cleaned up beside the data dir.
 let projectRoot = null
+// ⚠️ A second real directory: the add-project wizard is driven end to end against one, and it writes
+// a committed config and three starter files into whatever it is pointed at. Cleaned up beside the rest.
+let wizardRoot = null
 // ⚠️ Runs in about two minutes on this machine; ten is the ceiling, not the expectation.
 const budget = startDeadline(10 * 60 * 1000, 'ui', () => killTree(app?.pid, 'electron'))
 let socket = null
@@ -2971,6 +2974,167 @@ try {
     'Other plus a choice would hand the agent both, which is not what the word means'
   )
 
+  section('adding a project')
+  // ⛔ **Driven from the sidebar, because that is where the control now is.** Adding a project was a
+  // one-input form on Settings › Global whose entire validation was that the directory existed; the
+  // workspace directory, the five policies and the check list were discovered afterwards on three
+  // other screens. This drives the whole wizard against a real directory and reads back the two
+  // things a unit test cannot see: that the daemon's findings reached the screen, and that the files
+  // it said it would write are on disk.
+  wizardRoot = mkdtempSync(join(tmpdir(), 'agentyard-ui-wizard-'))
+  execFileSync('git', ['init', '--initial-branch=main'], { cwd: wizardRoot, stdio: 'ignore' })
+  writeFileSync(
+    join(wizardRoot, 'package.json'),
+    JSON.stringify({ name: 'wizard-fixture', scripts: { lint: 'x', test: 'x' } })
+  )
+
+  await evaluate(`document.querySelector('.nav-add')?.click()`)
+  await waitFor(async () => await evaluate(`!!document.querySelector('.wizard')`), 'the add-project wizard to open')
+  const wizardSteps = await evaluate(
+    `JSON.stringify([...document.querySelectorAll('.wizard-step')].map(s => s.innerText.trim()))`
+  )
+  check(
+    'the sidebar’s + opens a three-step wizard rather than a text box',
+    JSON.parse(wizardSteps).length === 3,
+    wizardSteps
+  )
+  check(
+    'and it offers the OS directory picker beside the path field',
+    await evaluate(
+      `[...document.querySelectorAll('.wizard-path button')].some(b => b.innerText.trim().startsWith('Choose'))`
+    ),
+    'a person should not have to paste an absolute path in by hand'
+  )
+
+  await evaluate(`(() => {
+    const input = document.querySelector('.wizard-path input');
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+    setter?.call(input, ${JSON.stringify(wizardRoot)});
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  })()`)
+  await waitFor(
+    async () => await evaluate(`!!document.querySelector('.wizard-facts')`),
+    'the wizard to report what is in the directory'
+  )
+  const findings = await evaluate(`document.querySelector('.wizard-findings').innerText`)
+  // ⛔ Non-empty assertions, per this suite's own rule: a findings box that rendered its labels and
+  // none of its answers would pass a "does it contain the word Repository" check.
+  check(
+    'it says what is in the directory before anything is created',
+    /git/i.test(findings) && /node/.test(findings) && /missing README\.md, AGENTS\.md, HANDOFF\.md/.test(findings),
+    findings.replace(/\n+/g, ' | ')
+  )
+  check(
+    'and Next is available once the directory checks out',
+    await evaluate(
+      `!([...document.querySelectorAll('.wizard-foot button')].find(b => b.innerText.trim() === 'Next')?.disabled)`
+    ),
+    await evaluate(`document.querySelector('.wizard-blockers')?.innerText ?? ''`)
+  )
+
+  await evaluate(
+    `[...document.querySelectorAll('.wizard-foot button')].find(b => b.innerText.trim() === 'Next')?.click()`
+  )
+  await waitFor(
+    async () => await evaluate(`!!document.querySelector('.wizard-body .setting-list')`),
+    'the policy step to render'
+  )
+  const setupStep = await evaluate(`document.querySelector('.wizard-body').innerText`)
+  check(
+    'the policy step recommends a workspace directory beside the project and names it',
+    setupStep.includes(`${wizardRoot}_workspaces`),
+    setupStep.split('\n').find((l) => l.includes('_workspaces')) ?? setupStep.slice(0, 200)
+  )
+  check(
+    'and it offers every policy tier that resolves task → project → fleet',
+    ['Finish policy', 'Landing target', 'Session sharing', 'Completion mode', 'Workspace pool'].every(
+      (t) => setupStep.includes(t)
+    ),
+    setupStep.replace(/\n+/g, ' | ').slice(0, 300)
+  )
+  // ⚠️ `.value`, not `innerText`. A textarea's text is its value and never its rendered content, so
+  // reading it the way every other check on this page reads a panel would pass against a blank box.
+  const proposedChecks = await evaluate(
+    `document.querySelector('.wizard-body .checks-input')?.value ?? ''`
+  )
+  check(
+    'and it proposes the check commands this project’s own manifest declares',
+    /npm run lint/.test(proposedChecks) && /npm run test/.test(proposedChecks),
+    JSON.stringify(proposedChecks)
+  )
+
+  // ⛔ Geometry, because this dialog is the tallest thing in the app and its footer carries the only
+  // way forward. A wizard whose Create button is below the fold is a wizard nobody finishes, and
+  // nothing but a rendered measurement can say whether that is true.
+  const wizardBox = await evaluate(`
+    JSON.stringify((() => {
+      const w = document.querySelector('.wizard');
+      const foot = w.querySelector('.wizard-foot');
+      const body = w.querySelector('.wizard-body');
+      const wr = w.getBoundingClientRect(), fr = foot.getBoundingClientRect();
+      return {
+        fitsWindow: wr.bottom <= window.innerHeight + 1 && wr.top >= -1,
+        footVisible: fr.bottom <= wr.bottom + 1 && fr.top >= wr.top,
+        bodyScrolls: getComputedStyle(body).overflowY === 'auto',
+        dialogClips: getComputedStyle(w).overflowY === 'visible'
+      };
+    })())
+  `)
+  const wb = JSON.parse(wizardBox)
+  check('the wizard fits the window rather than running off the bottom of it', wb.fitsWindow === true, wizardBox)
+  check('⛔ and its footer — the only way forward — is always on screen', wb.footVisible === true, wizardBox)
+  check('because the body scrolls and the dialog does not', wb.bodyScrolls === true && wb.dialogClips === true, wizardBox)
+
+  await evaluate(
+    `[...document.querySelectorAll('.wizard-foot button')].find(b => b.innerText.trim() === 'Next')?.click()`
+  )
+  await waitFor(
+    async () => await evaluate(`document.querySelectorAll('.wizard-doc').length === 3`),
+    'the starter files to be proposed'
+  )
+  const plan = await evaluate(`document.querySelector('.wizard-plan').innerText`)
+  check(
+    'the last step says exactly what pressing Create will write',
+    /project\.json/.test(plan) && /README\.md, AGENTS\.md, HANDOFF\.md/.test(plan),
+    plan.replace(/\n+/g, ' | ')
+  )
+
+  await evaluate(
+    `[...document.querySelectorAll('.wizard-foot button')].find(b => b.innerText.trim() === 'Create project')?.click()`
+  )
+  await waitFor(
+    async () => await evaluate(`!document.querySelector('.wizard')`),
+    'the wizard to create the project and close'
+  )
+  check(
+    'creating writes the committed policy file',
+    existsSync(join(wizardRoot, '.multi_agent_controller', 'project.json')),
+    join(wizardRoot, '.multi_agent_controller', 'project.json')
+  )
+  const wizardConfig = JSON.parse(
+    readFileSync(join(wizardRoot, '.multi_agent_controller', 'project.json'), 'utf8')
+  )
+  check(
+    'and the check commands the wizard proposed are in it',
+    Array.isArray(wizardConfig.check) && wizardConfig.check.join(',') === 'npm run lint,npm run test',
+    JSON.stringify(wizardConfig.check)
+  )
+  check(
+    'and the three orientation docs are on disk, named for the project',
+    ['README.md', 'AGENTS.md', 'HANDOFF.md'].every((f) => existsSync(join(wizardRoot, f))) &&
+      readFileSync(join(wizardRoot, 'AGENTS.md'), 'utf8').includes('never directly on `main`'),
+    'README.md, AGENTS.md, HANDOFF.md'
+  )
+  check(
+    'and the sidebar opens the project it just made',
+    await until(async () =>
+      (await evaluate(`document.querySelector('.nav-item--active')?.innerText.trim() ?? ''`)).startsWith(
+        'wizard-fixture'
+      )
+    ),
+    await evaluate(`document.querySelector('.nav-item--active')?.innerText.trim() ?? '(none)'`)
+  )
+
   section('project settings')
   // ⛔ The one tab in this app that writes into somebody's **repository**. Its policy tier — finish,
   // sharing, completion — resolved through the project since M2 and could only be *set* by hand-
@@ -3487,6 +3651,8 @@ try {
   try {
     rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
     if (projectRoot) rmSync(projectRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+    if (wizardRoot) rmSync(wizardRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+    if (wizardRoot) rmSync(`${wizardRoot}_workspaces`, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
   } catch {
     // A locked profile directory is not worth failing a passing test over.
   }

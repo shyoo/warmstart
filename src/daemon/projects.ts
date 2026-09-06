@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs'
-import { basename, join, resolve } from 'node:path'
-import { canonicalPath } from './fspath.js'
+import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { canonicalPath, samePath } from './fspath.js'
+import { proposeChecks } from './projectstack.js'
 import { execFileSync } from 'node:child_process'
 import type { LandingStrategyId, Project, ProjectConfig, Task, Vcs } from '@shared/tasks.js'
 import type { ProjectPolicyPatch } from '@shared/tasks.js'
@@ -186,33 +187,6 @@ export function writeStarterConfig(id: string): string {
 }
 
 /**
- * Check commands worth proposing for a project, read from its `package.json`.
- *
- * ⛔ **Proposed, never written.** The check list is what `commit-and-verify` and `commit-and-merge`
- * are trusting when they say work is verified, so it is not something to infer behind somebody's
- * back. This returns a suggestion for a person to accept, edit or ignore.
- *
- * ⚠️ Order matters and is not alphabetical: the cheap, fast checks come first so a red one stops the
- * run before the slow ones start. That is the same order `runChecks` executes in.
- */
-const CHECK_ORDER = ['typecheck', 'lint', 'test', 'build']
-
-export function proposeChecks(root: string): string[] {
-  try {
-    const raw = readFileSync(join(root, 'package.json'), 'utf8')
-    const parsed = JSON.parse(raw) as { scripts?: Record<string, unknown> }
-    const scripts = parsed.scripts ?? {}
-    return CHECK_ORDER.filter((name) => typeof scripts[name] === 'string').map(
-      (name) => `npm run ${name}`
-    )
-  } catch {
-    // ⚠️ No package.json, or one this cannot read, is not an error. It means there is nothing to
-    // propose, and the operator writes the list themselves.
-    return []
-  }
-}
-
-/**
  * Write a project's check commands into its `project.json`.
  *
  * ⛔ The first write path this app has ever had into that file, so it is deliberately narrow: it
@@ -331,11 +305,62 @@ export function setProjectPolicy(id: string, patch: ProjectPolicyPatch): Project
       }
       config.workspaces = { ...config.workspaces, poolSize: size }
     }
+    if (patch.workspaceRoot !== undefined) {
+      const rel = relativeWorkspaceRoot(project.root, patch.workspaceRoot)
+      config.workspaces = { ...config.workspaces, root: rel ?? undefined }
+      // ⛔ The derived default is written as *no key*, not as a stored copy of itself. A clone in a
+      // directory with a different name then derives its own sibling, which is the whole reason
+      // `policyFor` derives it rather than storing it.
+      if (rel === null) delete config.workspaces.root
+    }
     if (patch.prepare !== undefined) {
       config.prepare = patch.prepare.map((c) => c.trim()).filter(Boolean)
     }
     log.info(`project ${project.name}: policy updated (${Object.keys(patch).join(', ')})`)
   })
+}
+
+// ------------------------------------------------------------------ the workspace root
+
+/**
+ * Where a project's pooled worktrees go when nothing says otherwise.
+ *
+ * ⛔ **One derivation, and both the resolver and the wizard read it.** `policyFor` had this inline
+ * and the add form needs the same answer *before* a project exists, so a second copy in the
+ * renderer would be a second definition of where the worktrees are — the kind of split that put the
+ * same directory into `sessions.cwd` under two spellings once already.
+ */
+export function defaultWorkspaceRoot(root: string): string {
+  return canonicalPath(`${canonicalPath(root)}_workspaces`)
+}
+
+/**
+ * The chosen workspace root as it would be written into the committed file: relative, forward
+ * slashed, or `null` for *this is the default, write no key*.
+ *
+ * ⛔ **Never absolute.** `project.json` is pulled by every clone and every machine; an absolute path
+ * in it is a fact about one disk. On win32 a location on another drive has no relative spelling at
+ * all, and this refuses rather than falling back to the absolute one.
+ */
+export function relativeWorkspaceRoot(projectRoot: string, chosen: string): string | null {
+  const trimmed = chosen.trim()
+  if (!trimmed) return null
+
+  const base = canonicalPath(projectRoot)
+  const absolute = canonicalPath(resolve(base, trimmed))
+  if (samePath(absolute, defaultWorkspaceRoot(base))) return null
+  if (samePath(absolute, base)) {
+    throw new Error('the workspace directory cannot be the project directory itself')
+  }
+
+  const rel = relative(base, absolute)
+  if (!rel || isAbsolute(rel)) {
+    throw new Error(
+      `the workspace directory must be on the same drive as the project, so it can be recorded ` +
+        `relatively in project.json: ${absolute}`
+    )
+  }
+  return rel.split(sep).join('/')
 }
 
 // ------------------------------------------------------------------ resolved policy
@@ -396,9 +421,9 @@ export function policyFor(project: Project): ProjectPolicy {
     // case that was stored — so adding a `workspaces.root` to a project.json silently changed the
     // spelling of every worktree path, and this install ended up with the same directory recorded
     // both ways in `sessions.cwd`.
-    workspaceRoot: canonicalPath(
-      c.workspaces?.root ? resolve(project.root, c.workspaces.root) : `${project.root}_workspaces`
-    ),
+    workspaceRoot: c.workspaces?.root
+      ? canonicalPath(resolve(project.root, c.workspaces.root))
+      : defaultWorkspaceRoot(project.root),
     prepare: c.prepare ?? [],
     check: c.check ?? [],
     landingStrategy: c.landing?.strategy ?? DEFAULTS.landingStrategy,

@@ -72,6 +72,14 @@ tree — the hold is re-decided against `schedulingOrder` every tick, so a P0 fi
 next free workspace. ⚠️ `workspaces.poolSize` (default 3) is the operator's cap and nothing grows it
 automatically; when the fleet can run more sessions than the pool has trees, the hold says so.
 
+⚠️ The pool lives at **`<root>_workspaces`** — a *sibling* of the project, never inside it, so nothing
+an agent does can show up as an untracked directory in your repository. A project may override it with
+`workspaces.root`, which the add-project wizard writes; ⛔ it is recorded **relative to the project
+root**, because `project.json` is pulled by every clone and an absolute path in it is a fact about one
+disk. The derived default is written as *no key at all*, so a clone in a differently-named directory
+derives its own. `defaultWorkspaceRoot` and `relativeWorkspaceRoot` in `daemon/projects.ts` are the
+only two definitions of either half.
+
 **Trunk** — the project's main checkout. Used for integration and landing. ⛔ **Agents never work
 here.** The task branch is created inside the claimed worktree, never in the trunk.
 
