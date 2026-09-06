@@ -1617,6 +1617,26 @@ const MIGRATIONS: Migration[] = [
     if (!hasColumn(conn, 'tasks', 'non_gradable')) {
       conn.exec('alter table tasks add column non_gradable integer not null default 0;')
     }
+  },
+  // 52 - close orphaned runs on settled tasks.
+  //
+  // ⛔ Measured on t255: t249 completed on ClaudeSecond while an earlier run on ClaudeFirst was left
+  // with ended_at = null, causing runningTaskReservations on ClaudeFirst to permanently report 1,
+  // blocking any future dispatch with "ClaudeFirst at capacity".
+  // Re-run safe: replaying this simply updates runs that are still open for settled tasks.
+  (conn) => {
+    conn.exec(`
+      update runs
+         set ended_at = (select coalesce(updated_at, started_at) from tasks where tasks.id = runs.task_id),
+             outcome = case
+               when (select status from tasks where tasks.id = runs.task_id) = 'completed' then 'completed'
+               when (select status from tasks where tasks.id = runs.task_id) = 'cancelled' then 'cancelled'
+               else 'failed'
+             end,
+             note = coalesce(note, 'orphaned run closed by migration 52')
+       where ended_at is null
+         and task_id in (select id from tasks where status in ('completed', 'failed', 'cancelled'));
+    `)
   }
 ]
 

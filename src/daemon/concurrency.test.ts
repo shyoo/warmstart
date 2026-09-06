@@ -227,6 +227,116 @@ describe('the capacity gate above one slot', () => {
       expect((err as Error).message).not.toMatch(/is at its concurrency limit/)
     }
   })
+
+  it('spawnSession does not throw concurrency limit when open run belongs to a settled task', () => {
+    // ⛔ Measured on t255: an orphaned open run on a completed task must never block
+    // spawnSession from spawning a new session on an idle worker.
+    const worker = add(1)
+    const settledTask = tasks.createTask({ title: 'task already settled' })
+    tasks.startRun({
+      taskId: settledTask.id,
+      workerId: worker.id,
+      sessionId: 'orphaned-session',
+      projectId: null,
+      quotaUnverified: false,
+      costModelId: null
+    })
+    // Leave ended_at as null directly in db to simulate orphaned run
+    tasks.setStatus(settledTask.id, 'completed')
+
+    try {
+      sessions.spawnSession({ workerId: worker.id, purpose: 'work' })
+    } catch (err: unknown) {
+      expect((err as Error).message).not.toMatch(/is at its concurrency limit/)
+    }
+  })
+
+  it('runningTaskReservations ignores unclosed runs on non-running tasks', () => {
+    const worker = add(1)
+    const task = tasks.createTask({ title: 'resting task' })
+    // Directly insert an unclosed run for this task on worker
+    db.db()
+      .prepare(
+        `insert into runs (id, task_id, worker_id, session_id, started_at, quota_unverified)
+         values (?, ?, ?, 'lingering-session', 1000, 0)`
+      )
+      .run('lingering-run-1', task.id, worker.id)
+
+    // For any non-running/assigned status, runningTaskReservations must return 0
+    const nonRunningStatuses: Array<import('@shared/tasks.js').TaskStatus> = [
+      'completed',
+      'failed',
+      'cancelled',
+      'awaiting_human',
+      'ready',
+      'draft',
+      'blocked',
+      'paused_user',
+      'paused_quota'
+    ]
+
+    for (const st of nonRunningStatuses) {
+      db.db().prepare('update tasks set status = ?, assignee = null where id = ?').run(st, task.id)
+      expect(scheduler.runningTaskReservations(worker.id, [])).toBe(0)
+    }
+
+    // If task is in 'running' status assigned to this worker, it reports 1
+    db.db().prepare('update tasks set status = ?, assignee = ? where id = ?').run('running', worker.id, task.id)
+    expect(scheduler.runningTaskReservations(worker.id, [])).toBe(1)
+
+    // If task is in 'running' status assigned to ANOTHER worker, it reports 0
+    db.db().prepare('update tasks set status = ?, assignee = ? where id = ?').run('running', 'other-worker', task.id)
+    expect(scheduler.runningTaskReservations(worker.id, [])).toBe(0)
+  })
+
+  it('setStatus automatically closes open runs when task settles', () => {
+    const worker = add(1)
+    const task = tasks.createTask({ title: 'task settling' })
+    const run = tasks.startRun({
+      taskId: task.id,
+      workerId: worker.id,
+      sessionId: 'open-sess',
+      projectId: null,
+      quotaUnverified: false,
+      costModelId: null
+    })
+    tasks.setStatus(task.id, 'running', { assignee: worker.id })
+    expect(tasks.requireRun(run.id).endedAt).toBeNull()
+
+    // Completing the task must close the open run
+    tasks.setStatus(task.id, 'completed')
+    const finishedRun = tasks.requireRun(run.id)
+    expect(finishedRun.endedAt).not.toBeNull()
+    expect(finishedRun.outcome).toBe('completed')
+  })
+
+  it('startRun automatically finishes prior open runs on the same task', () => {
+    const worker1 = add(1)
+    const worker2 = add(1)
+    const task = tasks.createTask({ title: 'task run sequence' })
+    const run1 = tasks.startRun({
+      taskId: task.id,
+      workerId: worker1.id,
+      sessionId: 'sess-1',
+      projectId: null,
+      quotaUnverified: false,
+      costModelId: null
+    })
+    expect(tasks.requireRun(run1.id).endedAt).toBeNull()
+
+    // Starting a new run on worker 2 terminates run 1
+    const run2 = tasks.startRun({
+      taskId: task.id,
+      workerId: worker2.id,
+      sessionId: 'sess-2',
+      projectId: null,
+      quotaUnverified: false,
+      costModelId: null
+    })
+    expect(tasks.requireRun(run1.id).endedAt).not.toBeNull()
+    expect(tasks.requireRun(run1.id).outcome).toBe('terminated')
+    expect(tasks.requireRun(run2.id).endedAt).toBeNull()
+  })
 })
 
 /**

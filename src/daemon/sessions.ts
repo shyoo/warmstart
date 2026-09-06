@@ -740,7 +740,11 @@ export function spawnSession(opts: SpawnOptions): Session {
     const uncountedOpenRuns = rows<{ id: string; session_id: string | null }>(
       db()
         .prepare(
-          "select id, session_id from runs where worker_id = ? and ended_at is null and coalesce(kind, 'work') = 'work'"
+          `select r.id, r.session_id from runs r
+           join tasks t on r.task_id = t.id
+           where r.worker_id = ? and r.ended_at is null
+             and coalesce(r.kind, 'work') = 'work'
+             and t.status in ('running', 'assigned')`
         )
         .all(worker.id)
     ).filter((r) => !r.session_id || !liveIds.has(r.session_id)).length

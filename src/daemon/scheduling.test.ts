@@ -273,6 +273,40 @@ describe('scheduler tick: end-to-end FIFO dispatch', () => {
     // Worker is now free, runningTaskReservations is 0:
     expect(scheduler.retainedReservations(w.id, [])).toBe(0)
   })
+
+  it('does not hold a queued task at capacity when a previous task completed with an unclosed run', async () => {
+    // ⛔ t255: a task completing on another worker (or having an unclosed run) must not hold
+    // a 1-slot worker at capacity.
+    const w = workers.createWorker({ adapterId: 'claude-code', label: 'ClaudeFirst', maxConcurrent: 1 })
+    workers.updateWorker(w.id, { enabled: true })
+    db.db()
+      .prepare('update workers set identity_json = ? where id = ?')
+      .run(JSON.stringify({ loggedIn: true, account: 'test@example.com' }), w.id)
+
+    // Task 1 had run on ClaudeFirst, but completed
+    const task1 = tasks.createTask({ title: 'Task 1 Settled', projectId })
+    const run1 = tasks.startRun({
+      taskId: task1.id,
+      workerId: w.id,
+      sessionId: 'closed-session',
+      projectId,
+      quotaUnverified: false,
+      costModelId: null
+    })
+    tasks.setStatus(task1.id, 'completed')
+    // Manually ensure ended_at is null to test resilience against orphaned run rows
+    db.db().prepare('update runs set ended_at = null, outcome = null where id = ?').run(run1.id)
+
+    // Task 2 is queued on ClaudeFirst
+    const task2 = tasks.createTask({ title: 'Task 2 Queued', projectId, constraints: { workerId: w.id } })
+
+    // ClaudeFirst has capacity, so task2 must not be held with "ClaudeFirst at capacity"
+    expect(scheduler.retainedReservations(w.id, [])).toBe(0)
+    const choice = scheduler.chooseTarget(task2)
+    expect(choice.worker).not.toBeNull()
+    expect(choice.worker?.id).toBe(w.id)
+    expect(choice.reason).not.toMatch(/ClaudeFirst at capacity/)
+  })
 })
 
 describe('automatic resolve and retry', () => {

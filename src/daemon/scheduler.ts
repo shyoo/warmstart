@@ -3979,8 +3979,13 @@ export function continueTask(taskId: string): 'delivered' | 'requeued' | 'queued
       'session that still holds its context where there is one, and starts a fresh one where there ' +
       'is not.'
   )
-  // ⛔ `not_before` is cleared. A task parked by preemption carries a resume time, and a person
-  // asking for something now should not be told to come back after the window resets.
+  // ⛔ Requeuing this task for continuation starts a fresh run. Any lingering open run from an
+  // earlier attempt (e.g. after approval escalation or process interruption) must be finished.
+  for (const run of runsFor(task.id)) {
+    if (!run.endedAt) {
+      finishRun(run.id, 'terminated', 'task requeued for continuation')
+    }
+  }
   db().prepare('update tasks set not_before = null where id = ?').run(task.id)
   setStatus(task.id, 'ready', { assignee: null })
   return 'requeued'
@@ -5311,8 +5316,14 @@ export function awaitingHumanReservations(workerId: string, sessions: Session[])
 export function runningTaskReservations(workerId: string, sessions: Session[]): number {
   const liveSessionIds = new Set(sessions.map((session) => session.id))
   return listTasks().filter((task) => {
+    // ⛔ Only tasks actively in flight ('running' or 'assigned') can reserve a running slot.
+    // Settled tasks (completed, failed, cancelled) and resting/queued tasks (ready, draft,
+    // awaiting_human, paused_user, paused_quota, blocked) are not running and must never reserve a running slot.
+    if (task.status !== 'running' && task.status !== 'assigned') return false
+    // If the task is actively assigned to another worker, it belongs to that worker, not this one.
+    if (task.assignee && task.assignee !== workerId) return false
     const isRunningOnWorker =
-      task.status === 'running' && (task.assignee === workerId || task.ranOn === workerId)
+      task.assignee === workerId || (!task.assignee && task.ranOn === workerId)
     const hasOpenRunOnWorker = runsFor(task.id).some(
       (run) => run.workerId === workerId && run.endedAt === null && (run.kind === 'work' || !run.kind)
     )
@@ -5461,6 +5472,24 @@ export function reconcileTasks(): number {
       setStatus(task.id, 'awaiting_human', { assignee: 'human', holdReason: why })
     }
   }
+
+  // ⛔ Also reap any orphaned runs on tasks that were NOT in stuck (e.g. completed, failed, cancelled,
+  // or awaiting_human tasks where an old run was left open). Across a restart, no supervisor is running
+  // any prior process, so no run may remain open.
+  const stuckIds = new Set(stuck.map((t) => t.id))
+  for (const task of listTasks()) {
+    if (stuckIds.has(task.id)) continue
+    for (const run of runsFor(task.id)) {
+      if (!run.endedAt) {
+        const outcome =
+          task.status === 'completed' ? 'completed' : task.status === 'cancelled' ? 'cancelled' : 'terminated'
+        finishRun(run.id, outcome, RESTART_REAP_NOTE)
+        releaseAllFor(run.id)
+        if (run.sessionId) releaseAllFor(run.sessionId)
+      }
+    }
+  }
+
   if (stuck.length) log.warn(`recovered ${stuck.length} task(s) interrupted by a restart`)
   return stuck.length
 }

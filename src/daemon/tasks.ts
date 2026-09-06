@@ -1157,6 +1157,15 @@ export function setStatus(taskId: string, status: TaskStatus, extra: Partial<Tas
   // a planner waiting on its pieces has to be woken by the ones that failed. `admit()` still decides
   // per edge, so an ordinary `completed` edge is unmoved by a failure.
   if (current.status !== status && SETTLED_STATUSES.includes(status)) {
+    // ⛔ When a task settles, ensure all of its runs are closed. A completed, failed or cancelled
+    // task must never leave open runs dangling in the database.
+    for (const run of runsFor(taskId)) {
+      if (!run.endedAt) {
+        const outcome: RunOutcome =
+          status === 'completed' ? 'completed' : status === 'cancelled' ? 'cancelled' : 'failed'
+        finishRun(run.id, outcome, `task settled as ${status}`)
+      }
+    }
     admitDependents(taskId)
     for (const fn of settledListeners) fn(taskId, status)
   }
@@ -1625,6 +1634,13 @@ export function startRun(input: {
    */
   kind?: RunKind | undefined
 }): Run {
+  // ⛔ A task executes sequentially. If an earlier run on this task was left open
+  // (e.g. interrupted, reassigned, or exited without terminal report), finish it now.
+  for (const existing of runsFor(input.taskId)) {
+    if (!existing.endedAt) {
+      finishRun(existing.id, 'terminated', 'interrupted by a new run on this task')
+    }
+  }
   const id = randomUUID()
   const key = runKey(input.workerId, input.sessionId)
   db()
