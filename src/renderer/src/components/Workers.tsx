@@ -75,11 +75,13 @@ function RoutableModelsPill({
   worker,
   models,
   disabled,
+  busy,
   onChange
 }: {
   worker: Worker
   models: Array<{ id: string }>
   disabled: boolean
+  busy: boolean
   onChange: (next: string[]) => void
 }): React.JSX.Element {
   const selected = worker.routableModels ?? []
@@ -106,7 +108,7 @@ function RoutableModelsPill({
           <div className="workers-menu-head">
             <span className="workers-menu-title">Routable models</span>
             {selected.length > 0 && (
-              <button type="button" className="workers-menu-action" onClick={() => onChange([])}>
+              <button type="button" className="workers-menu-action" onClick={() => onChange([])} disabled={busy}>
                 Reset to default model only
               </button>
             )}
@@ -119,6 +121,7 @@ function RoutableModelsPill({
                     type="checkbox"
                     checked={selected.includes(m.id)}
                     onChange={() => toggle(m.id)}
+                    disabled={busy}
                   />
                   <span className="workers-menu-worker-name">{m.id}</span>
                 </div>
@@ -841,7 +844,8 @@ export function Workers({
                       <RoutableModelsPill
                         worker={worker}
                         models={modelsFor(worker.adapterId)?.models ?? []}
-                        disabled={busy === `routable:${worker.id}`}
+                        disabled={false}
+                        busy={busy === `routable:${worker.id}`}
                         onChange={(next) =>
                           void guard(`routable:${worker.id}`, () =>
                             rpc('worker.update', {
