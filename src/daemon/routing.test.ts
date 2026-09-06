@@ -1436,6 +1436,206 @@ describe('model-aware routing', () => {
     expect(candidates?.[0]?.model).toBe('claude-sonnet-5')
   })
 
+  describe('reassign routing scenarios and model constraints (t254 bug fix)', () => {
+    it('reassigning to a worker with account default (modelPolicy inherit) chooses default model alone, ignoring cheaper routable models', () => {
+      db.db().prepare('update workers set enabled = 0').run()
+      const w = workers.createWorker({ adapterId: 'claude-code', label: 'ClaudeFirst-OpusDefault', enabled: true })
+      workers.updateWorker(w.id, {
+        defaultModel: 'claude-opus-5',
+        routableModels: ['claude-haiku-4-5-20251001', 'claude-sonnet-5', 'claude-opus-5']
+      })
+
+      // Task reassigned with modelPolicy: 'inherit' (as done when selecting account default in UI)
+      const task = tasks.createTask({
+        title: 'Reassigned task',
+        constraints: { workerId: w.id, modelPolicy: 'inherit' }
+      })
+
+      const choice = scheduler.chooseTarget(task)
+      const candidates = choice.scored?.filter((s) => s.workerId === w.id)
+      expect(candidates).toHaveLength(1)
+      expect(candidates?.[0]?.model).toBe('claude-opus-5')
+      expect(choice.worker?.id).toBe(w.id)
+      expect(choice.model).toBe('claude-opus-5')
+    })
+
+    it('prior session on a different model (Haiku) cannot override task.constraints.model (Opus)', () => {
+      db.db().prepare('update workers set enabled = 0').run()
+      const w = workers.createWorker({ adapterId: 'claude-code', label: 'ClaudeFirst-PriorSession', enabled: true })
+      workers.updateWorker(w.id, {
+        defaultModel: 'claude-opus-5',
+        routableModels: ['claude-haiku-4-5-20251001', 'claude-opus-5']
+      })
+
+      const task = tasks.createTask({
+        title: 'Task with past Haiku session',
+        constraints: { workerId: w.id, model: 'claude-opus-5' }
+      })
+
+      // Seed a closed past session that ran on haiku
+      const now = Date.now()
+      db.db()
+        .prepare(
+          `insert into sessions (id, worker_id, adapter_id, transport, cwd, model, state, started_at,
+                                 closed_at, tokens_since_compact, purpose, context_tokens,
+                                 last_request_started_at, cache_expires_at, vendor_session_id)
+           values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+        )
+        .run(
+          'sess-haiku-past',
+          w.id,
+          'claude-code',
+          'stream',
+          dir,
+          'claude-haiku-4-5-20251001',
+          'closed',
+          now - 600_000,
+          now - 300_000,
+          0,
+          'work',
+          10_000,
+          now - 300_000,
+          now + 600_000,
+          'vendor-haiku'
+        )
+      db.db()
+        .prepare('insert into turns (session_id, request_id, ts, input_tokens) values (?,?,?,?)')
+        .run('sess-haiku-past', 'req-haiku', now - 300_000, 10)
+      db.db()
+        .prepare(
+          `insert into runs (id, task_id, session_id, worker_id, started_at, ended_at, outcome, model)
+           values (?,?,?,?,?,?,?,?)`
+        )
+        .run('run-haiku-past', task.id, 'sess-haiku-past', w.id, now - 600_000, now - 300_000, 'success', 'claude-haiku-4-5-20251001')
+
+      const choice = scheduler.chooseTarget(task)
+      const candidates = choice.scored?.filter((s) => s.workerId === w.id)
+      expect(candidates).toHaveLength(1)
+      expect(candidates?.[0]?.model).toBe('claude-opus-5')
+      expect(choice.model).toBe('claude-opus-5')
+    })
+
+    it('prior session on a different model (Haiku) cannot override modelPolicy inherit (Opus)', () => {
+      db.db().prepare('update workers set enabled = 0').run()
+      const w = workers.createWorker({ adapterId: 'claude-code', label: 'ClaudeFirst-InheritPrior', enabled: true })
+      workers.updateWorker(w.id, {
+        defaultModel: 'claude-opus-5',
+        routableModels: ['claude-haiku-4-5-20251001', 'claude-opus-5']
+      })
+
+      const task = tasks.createTask({
+        title: 'Task with past Haiku session and inherit policy',
+        constraints: { workerId: w.id, modelPolicy: 'inherit' }
+      })
+
+      const now = Date.now()
+      db.db()
+        .prepare(
+          `insert into sessions (id, worker_id, adapter_id, transport, cwd, model, state, started_at,
+                                 closed_at, tokens_since_compact, purpose, context_tokens,
+                                 last_request_started_at, cache_expires_at, vendor_session_id)
+           values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+        )
+        .run(
+          'sess-haiku-past-2',
+          w.id,
+          'claude-code',
+          'stream',
+          dir,
+          'claude-haiku-4-5-20251001',
+          'closed',
+          now - 600_000,
+          now - 300_000,
+          0,
+          'work',
+          10_000,
+          now - 300_000,
+          now + 600_000,
+          'vendor-haiku-2'
+        )
+      db.db()
+        .prepare('insert into turns (session_id, request_id, ts, input_tokens) values (?,?,?,?)')
+        .run('sess-haiku-past-2', 'req-haiku-2', now - 300_000, 10)
+      db.db()
+        .prepare(
+          `insert into runs (id, task_id, session_id, worker_id, started_at, ended_at, outcome, model)
+           values (?,?,?,?,?,?,?,?)`
+        )
+        .run('run-haiku-past-2', task.id, 'sess-haiku-past-2', w.id, now - 600_000, now - 300_000, 'success', 'claude-haiku-4-5-20251001')
+
+      const choice = scheduler.chooseTarget(task)
+      const candidates = choice.scored?.filter((s) => s.workerId === w.id)
+      expect(candidates).toHaveLength(1)
+      expect(candidates?.[0]?.model).toBe('claude-opus-5')
+      expect(choice.model).toBe('claude-opus-5')
+    })
+
+    it('live warm session on Haiku is rejected by warmSessionFor when task specifies modelPolicy inherit (Opus default)', () => {
+      const w = workers.createWorker({ adapterId: 'claude-code', label: 'ClaudeFirst-LiveHaiku', enabled: true })
+      workers.updateWorker(w.id, {
+        defaultModel: 'claude-opus-5',
+        routableModels: ['claude-haiku-4-5-20251001', 'claude-opus-5']
+      })
+
+      const task = tasks.createTask({
+        title: 'Task wanting Opus default',
+        constraints: { workerId: w.id, modelPolicy: 'inherit' }
+      })
+
+      const now = Date.now()
+      db.db()
+        .prepare(
+          `insert into sessions (id, worker_id, adapter_id, transport, cwd, model, state, started_at,
+                                 closed_at, tokens_since_compact, purpose, context_tokens,
+                                 last_request_started_at, cache_expires_at, vendor_session_id)
+           values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+        )
+        .run(
+          'sess-live-haiku',
+          w.id,
+          'claude-code',
+          'stream',
+          dir,
+          'claude-haiku-4-5-20251001',
+          'idle',
+          now - 60_000,
+          null,
+          0,
+          'work',
+          10_000,
+          now - 10_000,
+          now + 600_000,
+          'vendor-live-haiku'
+        )
+      db.db()
+        .prepare(
+          `insert into runs (id, task_id, session_id, worker_id, started_at, ended_at, outcome, model)
+           values (?,?,?,?,?,?,?,?)`
+        )
+        .run('run-live-haiku', task.id, 'sess-live-haiku', w.id, now - 60_000, null, null, 'claude-haiku-4-5-20251001')
+
+      // Since session is running Haiku but task asks for Opus via inherit policy, warmSessionFor must refuse
+      expect(scheduler.warmSessionFor(task, w.id)).toBeNull()
+    })
+
+    it('explicit modelPolicy auto evaluates all routable models for the worker', () => {
+      const w = workers.createWorker({ adapterId: 'claude-code', label: 'ClaudeFirst-Auto', enabled: true })
+      workers.updateWorker(w.id, {
+        defaultModel: 'claude-opus-5',
+        routableModels: ['claude-haiku-4-5-20251001', 'claude-sonnet-5', 'claude-opus-5']
+      })
+
+      const task = tasks.createTask({
+        title: 'Auto model task',
+        constraints: { workerId: w.id, modelPolicy: 'auto' }
+      })
+
+      const choice = scheduler.chooseTarget(task)
+      const candidates = choice.scored?.filter((s) => s.workerId === w.id)
+      expect(candidates).toHaveLength(3)
+    })
+  })
+
   it('multiple allowlisted models yield multiple candidate pairs', () => {
     const w = workers.createWorker({ adapterId: 'claude-code', label: 'MultiModelWorker', enabled: true })
     workers.updateWorker(w.id, { routableModels: ['claude-haiku-4-5-20251001', 'claude-sonnet-5'] })

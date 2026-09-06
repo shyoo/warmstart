@@ -631,20 +631,56 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
      */
     'task.setModel': (p) => {
       const task = requireTask(p.id)
+      let model: string | undefined
+      let modelPolicy: 'auto' | 'inherit' | undefined
+
+      if (p.modelPolicy !== undefined) {
+        modelPolicy = p.modelPolicy ?? undefined
+      }
+
+      if (p.model !== undefined) {
+        if (p.model === '__inherit__' || p.model === 'policy:inherit') {
+          model = undefined
+          modelPolicy = 'inherit'
+        } else if (p.model === '__auto__' || p.model === 'policy:auto') {
+          model = undefined
+          modelPolicy = 'auto'
+        } else if (p.model) {
+          model = p.model
+          if (p.modelPolicy === undefined) {
+            modelPolicy = undefined
+          }
+        } else {
+          model = undefined
+          if (p.modelPolicy === undefined) {
+            modelPolicy = 'inherit'
+          }
+        }
+      } else {
+        model = task.constraints.model
+        if (p.modelPolicy === undefined) {
+          modelPolicy = task.constraints.modelPolicy
+        }
+      }
+
       // ⛔ Through the same door a filing goes through. The adapter has to be known before a model
       // can be checked, and `checkConstraints` is where that argument already lives.
       const constraints = checkConstraints({
         ...task.constraints,
-        ...(p.model ? { model: p.model } : { model: undefined }),
-        ...(p.effort ? { effort: p.effort } : { effort: undefined })
+        model,
+        modelPolicy,
+        ...(p.effort !== undefined ? (p.effort ? { effort: p.effort } : { effort: undefined }) : {})
       })
+      if (!model) delete constraints.model
+      if (!modelPolicy) delete constraints.modelPolicy
+      if (p.effort !== undefined && !p.effort) delete constraints.effort
       return updateTask(p.id, { constraints })
     },
     'task.setWorker': (p) => {
       const task = requireTask(p.id)
       if (!p.workerId) {
-        // Reassigned to auto / scheduler choice: clear workerId, adapterId, model, effort
-        const { workerId, adapterId, model, effort, ...rest } = task.constraints
+        // Reassigned to auto / scheduler choice: clear workerId, adapterId, model, effort, modelPolicy
+        const { workerId, adapterId, model, effort, modelPolicy, ...rest } = task.constraints
         const isResting = !['running', 'assigned'].includes(task.status)
         voidQuestionsForTask(task.id, 'task reassigned')
         return updateTask(p.id, {
@@ -658,13 +694,22 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
       }
       // If the adapter changed, clear model and effort because they belong to the previous adapter
       const adapterChanged = task.constraints.adapterId && task.constraints.adapterId !== worker.adapterId
+      const modelPolicy = adapterChanged
+        ? 'inherit'
+        : (task.constraints.modelPolicy ?? (task.constraints.model ? undefined : 'inherit'))
       const constraints = checkConstraints({
         ...task.constraints,
         workerId: worker.id,
         adapterId: worker.adapterId,
         model: adapterChanged ? undefined : task.constraints.model,
-        effort: adapterChanged ? undefined : task.constraints.effort
+        effort: adapterChanged ? undefined : task.constraints.effort,
+        modelPolicy
       })
+      if (adapterChanged) {
+        delete constraints.model
+        delete constraints.effort
+      }
+      if (!constraints.modelPolicy) delete constraints.modelPolicy
       const isResting = !['running', 'assigned'].includes(task.status)
       return updateTask(p.id, {
         constraints,

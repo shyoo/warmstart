@@ -824,7 +824,7 @@ export interface WorkerChoice {
  * borrowed conversation is a real saving and a real disclosure, which is why it is a setting and the
  * task's own session is not.
  */
-function warmSessionFor(task: Task, workerId?: string): Session | null {
+export function warmSessionFor(task: Task, workerId?: string): Session | null {
   const idle = (session: Session | null): Session | null => {
     if (!session || sessionEnded(session.state)) return null
     // ⛔ Asked per worker, because a conversation belongs to exactly one account and the answer
@@ -837,7 +837,8 @@ function warmSessionFor(task: Task, workerId?: string): Session | null {
     // A prompt sent into a live conversation is served by the process already running it: the model
     // was fixed at spawn and `dispatchIntoWarmSession` cannot change it. Continuing here would run
     // the task on the model it was started with and record the one it now asks for.
-    if (mismatch(pinned(task), session)) return null
+    const worker = session.workerId ? getWorker(session.workerId) : null
+    if (mismatch(pinned(task, worker), session)) return null
     // ⛔ A `streamPrompts: 'once'` session is never warm, whatever its state says. Its CLI reads
     // one prompt from stdin, runs that turn and exits - there is no conversation still sitting there
     // to continue, and handing it a second prompt is a write into a pipe that closed when the first
@@ -863,8 +864,14 @@ function warmSessionFor(task: Task, workerId?: string): Session | null {
  * person typed into the model box is a different kind of statement, and it is the only one strong
  * enough to throw away a warm prefix over.
  */
-function pinned(task: Task): ShareIntent {
-  return { model: task.constraints.model ?? null, effort: task.constraints.effort ?? null }
+function pinned(task: Task, worker?: Worker | null): ShareIntent {
+  let model = task.constraints.model ?? null
+  if (!model && worker && task.constraints.modelsByWorker?.[worker.id]) {
+    model = task.constraints.modelsByWorker[worker.id]!
+  } else if (!model && task.constraints.modelPolicy === 'inherit' && worker) {
+    model = inheritedModelFor(worker)[0] ?? null
+  }
+  return { model, effort: task.constraints.effort ?? null }
 }
 
 /**
@@ -1213,12 +1220,12 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
     const held = reuse ?? resumable
 
     // Determine candidate models for this worker:
-    // ⛔ A warm or reopenable conversation pins the model.
     // ⛔ A task that pinned a model gets exactly one pair.
+    // ⛔ An explicit inherit policy takes the account's own default and routes nothing else.
+    // ⛔ A live warm conversation pins the model (its process is already running it).
+    // ⛔ A reopenable conversation preserves its model when no explicit policy is given.
     let candidateModels: Array<string | null>
-    if (held?.model) {
-      candidateModels = [held.model]
-    } else if (task.constraints.model) {
+    if (task.constraints.model) {
       candidateModels = [task.constraints.model]
     } else if (task.constraints.modelsByWorker && task.constraints.modelsByWorker[worker.id]) {
       candidateModels = [task.constraints.modelsByWorker[worker.id]!]
@@ -1227,6 +1234,15 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
       // the model the account uses, which is a different answer from *any of the models it may be
       // routed to* the moment somebody widens the worker's allowlist.
       candidateModels = inheritedModelFor(worker)
+    } else if (reuse?.model) {
+      // A live conversation is served by the process already running it: the model was fixed at spawn
+      // and dispatchIntoWarmSession cannot change it.
+      candidateModels = [reuse.model]
+    } else if (task.constraints.modelPolicy === 'auto') {
+      candidateModels = routableModelsFor(worker)
+    } else if (held?.model) {
+      // For tasks with no explicit model or policy, preserve conversational continuity on resume.
+      candidateModels = [held.model]
     } else {
       candidateModels = routableModelsFor(worker)
     }

@@ -1797,7 +1797,7 @@ export interface RpcMap {
    * refused here rather than at 3am when the task is finally dispatched.
    */
   'task.setModel': {
-    params: { id: string; model: string | null; effort: string | null }
+    params: { id: string; model: string | null; effort: string | null; modelPolicy?: 'auto' | 'inherit' | null }
     result: Task
   }
   /**

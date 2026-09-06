@@ -287,6 +287,58 @@ describe('task.setWorker RPC', () => {
     expect(unpinned.constraints.workerId).toBeUndefined()
     expect(unpinned.constraints.adapterId).toBeUndefined()
     expect(unpinned.constraints.model).toBeUndefined()
+    expect(unpinned.constraints.modelPolicy).toBeUndefined()
+  })
+
+  it('task.setModel and task.setWorker correctly maintain modelPolicy', async () => {
+    const tasks = await import('./tasks.js')
+    const handlers = api.buildApi({
+      version: '1.0.0',
+      startedAt: Date.now(),
+      port: 8080
+    })
+
+    const task = tasks.createTask({ title: 'modelPolicy test' })
+
+    // 1. Assign worker without specifying model -> defaults modelPolicy to 'inherit'
+    const assigned = await handlers['task.setWorker']({ id: task.id, workerId: claude.id })
+    expect(assigned.constraints.workerId).toBe(claude.id)
+    expect(assigned.constraints.model).toBeUndefined()
+    expect(assigned.constraints.modelPolicy).toBe('inherit')
+
+    // 2. Set concrete model -> model is set, modelPolicy is cleared
+    const withModel = await handlers['task.setModel']({ id: task.id, model: 'claude-opus-5', effort: null })
+    expect(withModel.constraints.model).toBe('claude-opus-5')
+    expect(withModel.constraints.modelPolicy).toBeUndefined()
+
+    // 3. Clear model (account default) -> model cleared, modelPolicy becomes 'inherit'
+    const clearedToInherit = await handlers['task.setModel']({ id: task.id, model: null, effort: null })
+    expect(clearedToInherit.constraints.model).toBeUndefined()
+    expect(clearedToInherit.constraints.modelPolicy).toBe('inherit')
+
+    // 4. Explicitly choose Auto model -> modelPolicy becomes 'auto'
+    const autoModel = await handlers['task.setModel']({ id: task.id, model: null, modelPolicy: 'auto', effort: null })
+    expect(autoModel.constraints.model).toBeUndefined()
+    expect(autoModel.constraints.modelPolicy).toBe('auto')
+
+    // 5. Explicitly choose inherit -> modelPolicy becomes 'inherit'
+    const inheritModel = await handlers['task.setModel']({ id: task.id, model: null, modelPolicy: 'inherit', effort: null })
+    expect(inheritModel.constraints.model).toBeUndefined()
+    expect(inheritModel.constraints.modelPolicy).toBe('inherit')
+
+    // 6. Magic strings __auto__ and __inherit__ work as expected
+    const viaAutoString = await handlers['task.setModel']({ id: task.id, model: '__auto__', effort: null })
+    expect(viaAutoString.constraints.model).toBeUndefined()
+    expect(viaAutoString.constraints.modelPolicy).toBe('auto')
+
+    const viaInheritString = await handlers['task.setModel']({ id: task.id, model: '__inherit__', effort: null })
+    expect(viaInheritString.constraints.model).toBeUndefined()
+    expect(viaInheritString.constraints.modelPolicy).toBe('inherit')
+
+    // 7. Unpinning worker clears modelPolicy
+    const unpinned = await handlers['task.setWorker']({ id: task.id, workerId: null })
+    expect(unpinned.constraints.workerId).toBeUndefined()
+    expect(unpinned.constraints.modelPolicy).toBeUndefined()
   })
 })
 

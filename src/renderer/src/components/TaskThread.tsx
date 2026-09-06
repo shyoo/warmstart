@@ -703,8 +703,14 @@ function TaskDetail({
               {offered.length > 0 && (
                 <SettingButtonSelect
                   style={{ marginTop: 'var(--sp-1)' }}
-                  value={task.constraints.model ?? ''}
+                  value={
+                    task.constraints.model ??
+                    (task.constraints.modelPolicy === 'auto' ? '__auto__' : '')
+                  }
                   options={[
+                    ...(offered.length > 1
+                      ? [{ value: '__auto__', label: 'Auto Model (scheduler decides)' }]
+                      : []),
                     {
                       value: '',
                       label:
@@ -723,18 +729,23 @@ function TaskDetail({
                     'the cached context away.'
                   }
                   displayLabel={
-                    !(task.constraints.model)
-                      ? assigned?.defaultModels && Object.values(assigned.defaultModels).filter(Boolean).length > 1
-                        ? 'Auto-balance across pools'
-                        : assigned?.defaultModel
-                          ? (modelLabel(assigned.defaultModel) ?? assigned.defaultModel)
-                          : 'CLI default'
-                      : undefined
+                    task.constraints.modelPolicy === 'auto'
+                      ? 'Auto Model'
+                      : !task.constraints.model
+                        ? assigned?.defaultModels && Object.values(assigned.defaultModels).filter(Boolean).length > 1
+                          ? 'Auto-balance across pools'
+                          : assigned?.defaultModel
+                            ? (modelLabel(assigned.defaultModel) ?? assigned.defaultModel)
+                            : 'CLI default'
+                        : undefined
                   }
                   onChange={(val) => {
+                    const modelPolicy = val === '__auto__' ? 'auto' : !val ? 'inherit' : null
+                    const model = val === '__auto__' || !val ? null : val
                     void rpc('task.setModel', {
                       id: task.id,
-                      model: val || null,
+                      model,
+                      modelPolicy,
                       // ⛔ Cleared with the model. A level legal for the old model need not be legal
                       // for the new one, and the daemon refuses the pair rather than storing it.
                       effort: null
@@ -768,6 +779,7 @@ function TaskDetail({
                     void rpc('task.setModel', {
                       id: task.id,
                       model: task.constraints.model ?? null,
+                      modelPolicy: task.constraints.modelPolicy ?? null,
                       effort: val || null
                     }).then(refresh)
                   }}
@@ -1341,15 +1353,17 @@ function PausedQuotaBanner({
   onRefresh: () => Promise<void>
 }): React.JSX.Element {
   const [selectedWorkerId, setSelectedWorkerId] = useState<string>(task.constraints.workerId ?? '')
-  const [selectedModel, setSelectedModel] = useState<string>(task.constraints.model ?? '')
+  const [selectedModel, setSelectedModel] = useState<string>(
+    task.constraints.model ?? (task.constraints.modelPolicy === 'auto' ? '__auto__' : '')
+  )
   const [selectedEffort, setSelectedEffort] = useState<string>(task.constraints.effort ?? '')
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
     setSelectedWorkerId(task.constraints.workerId ?? '')
-    setSelectedModel(task.constraints.model ?? '')
+    setSelectedModel(task.constraints.model ?? (task.constraints.modelPolicy === 'auto' ? '__auto__' : ''))
     setSelectedEffort(task.constraints.effort ?? '')
-  }, [task.constraints.workerId, task.constraints.model, task.constraints.effort])
+  }, [task.constraints.workerId, task.constraints.model, task.constraints.modelPolicy, task.constraints.effort])
 
   const selectedWorker = fleet.find((e) => e.worker.id === selectedWorkerId)?.worker ?? null
   const selectedEntry = fleet.find((e) => e.worker.id === selectedWorkerId) ?? null
@@ -1386,9 +1400,14 @@ function PausedQuotaBanner({
     try {
       await rpc('task.setWorker', { id: task.id, workerId: selectedWorkerId || null })
       if (selectedWorkerId) {
+        const modelPolicy =
+          selectedModel === '__auto__' ? 'auto' : !selectedModel || selectedModel === '__inherit__' ? 'inherit' : null
+        const model =
+          selectedModel === '__auto__' || selectedModel === '__inherit__' ? null : selectedModel || null
         await rpc('task.setModel', {
           id: task.id,
-          model: selectedModel || null,
+          model,
+          modelPolicy,
           effort: selectedEffort || null
         })
       }
@@ -1463,7 +1482,12 @@ function PausedQuotaBanner({
               } else {
                 const w = fleet.find((entry) => entry.worker.id === nextWorkerId)?.worker
                 const offered = modelOptions.find((o) => o.adapterId === w?.adapterId)?.models ?? []
-                if (selectedModel && !offered.some((m) => m.id === selectedModel)) {
+                if (
+                  selectedModel &&
+                  selectedModel !== '__auto__' &&
+                  selectedModel !== '__inherit__' &&
+                  !offered.some((m) => m.id === selectedModel)
+                ) {
                   setSelectedModel(reassignmentModel(selectedModel, offered))
                   setSelectedEffort('')
                 }
@@ -1478,6 +1502,9 @@ function PausedQuotaBanner({
               disabled={busy}
               ariaLabel="Reassign model"
               options={[
+                ...(offeredModels.length > 1
+                  ? [{ value: '__auto__', label: 'Auto Model (scheduler decides)' }]
+                  : []),
                 {
                   value: '',
                   label: inheritedModel
@@ -1486,6 +1513,15 @@ function PausedQuotaBanner({
                 },
                 ...offeredModels.map((m) => ({ value: m.id, label: modelLabel(m.id) ?? m.id }))
               ]}
+              displayLabel={
+                selectedModel === '__auto__'
+                  ? 'Auto Model'
+                  : !selectedModel || selectedModel === '__inherit__'
+                    ? inheritedModel
+                      ? (modelLabel(inheritedModel) ?? inheritedModel)
+                      : 'CLI default model'
+                    : undefined
+              }
               onChange={(val) => {
                 setSelectedModel(val)
                 setSelectedEffort('')
@@ -1565,15 +1601,17 @@ function Decide({
   onRefresh: () => Promise<void>
 }): React.JSX.Element {
   const [selectedWorkerId, setSelectedWorkerId] = useState<string>(task.constraints.workerId ?? '')
-  const [selectedModel, setSelectedModel] = useState<string>(task.constraints.model ?? '')
+  const [selectedModel, setSelectedModel] = useState<string>(
+    task.constraints.model ?? (task.constraints.modelPolicy === 'auto' ? '__auto__' : '')
+  )
   const [selectedEffort, setSelectedEffort] = useState<string>(task.constraints.effort ?? '')
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
     setSelectedWorkerId(task.constraints.workerId ?? '')
-    setSelectedModel(task.constraints.model ?? '')
+    setSelectedModel(task.constraints.model ?? (task.constraints.modelPolicy === 'auto' ? '__auto__' : ''))
     setSelectedEffort(task.constraints.effort ?? '')
-  }, [task.constraints.workerId, task.constraints.model, task.constraints.effort])
+  }, [task.constraints.workerId, task.constraints.model, task.constraints.modelPolicy, task.constraints.effort])
 
   const selectedWorker = fleet.find((e) => e.worker.id === selectedWorkerId)?.worker ?? null
   const selectedEntry = fleet.find((e) => e.worker.id === selectedWorkerId) ?? null
@@ -1688,9 +1726,14 @@ function Decide({
     try {
       await rpc('task.setWorker', { id: task.id, workerId: selectedWorkerId || null })
       if (selectedWorkerId) {
+        const modelPolicy =
+          selectedModel === '__auto__' ? 'auto' : !selectedModel || selectedModel === '__inherit__' ? 'inherit' : null
+        const model =
+          selectedModel === '__auto__' || selectedModel === '__inherit__' ? null : selectedModel || null
         await rpc('task.setModel', {
           id: task.id,
-          model: selectedModel || null,
+          model,
+          modelPolicy,
           effort: selectedEffort || null
         })
       }
@@ -1931,7 +1974,12 @@ function Decide({
                 } else {
                   const w = fleet.find((entry) => entry.worker.id === nextWorkerId)?.worker
                   const offered = modelOptions.find((o) => o.adapterId === w?.adapterId)?.models ?? []
-                  if (selectedModel && !offered.some((m) => m.id === selectedModel)) {
+                  if (
+                    selectedModel &&
+                    selectedModel !== '__auto__' &&
+                    selectedModel !== '__inherit__' &&
+                    !offered.some((m) => m.id === selectedModel)
+                  ) {
                     setSelectedModel(reassignmentModel(selectedModel, offered))
                     setSelectedEffort('')
                   }
@@ -1946,6 +1994,9 @@ function Decide({
                 disabled={busy}
                 ariaLabel="Reassign model"
                 options={[
+                  ...(offeredModels.length > 1
+                    ? [{ value: '__auto__', label: 'Auto Model (scheduler decides)' }]
+                    : []),
                   {
                     value: '',
                     label: inheritedModel
@@ -1957,11 +2008,13 @@ function Decide({
                   ...offeredModels.map((m) => ({ value: m.id, label: modelLabel(m.id) ?? m.id }))
                 ]}
                 displayLabel={
-                  !selectedModel
-                    ? inheritedModel
-                      ? (modelLabel(inheritedModel) ?? inheritedModel)
-                      : 'CLI default model'
-                    : undefined
+                  selectedModel === '__auto__'
+                    ? 'Auto Model'
+                    : !selectedModel || selectedModel === '__inherit__'
+                      ? inheritedModel
+                        ? (modelLabel(inheritedModel) ?? inheritedModel)
+                        : 'CLI default model'
+                      : undefined
                 }
                 onChange={(val) => {
                   setSelectedModel(val)
