@@ -328,19 +328,53 @@ session in a worktree another task may since have claimed. ⚠️ `post_tokens` 
 this move — the size a compaction leaves behind is only knowable from a *later* turn, and buying one
 would mean paying for a turn to learn a number nothing acts on.
 
-⚠️ **`compactOnResume()` remains, as the last resort.** It applies the same `worthCompactingNow` test
-at the moment a conversation is revived for work — for the cases the early move cannot reach: a
-daemon that was not running, a prefix that had already lapsed, a task with no clock on it. `/compact`
-goes in first and the task's own prompt waits for the `compact_boundary`. Late is more expensive than
-early; it is not more expensive than reading 84k tokens on every turn of a twenty-minute run.
+⚠️ **`compactOnResume()` remains, for one window only.** It applies the same `worthCompactingNow`
+test at the moment a conversation is revived for work, for the cases the early move cannot reach: a
+daemon that was not running, a task with no clock on it, a prefix inside its last quarter that
+nothing woke. `/compact` goes in first and the task's own prompt waits for the `compact_boundary`.
 
 ⛔ **Warm resumes are declined (2026-09-02, t134).** A conversation resumed while its prefix is still
 comfortably warm (> `decideBeforeExpiryMs(ttl)`, >15m on a 1h TTL) is not compacted at resume: the
 prompt going in reads the warm cache prefix at **0.1·C** and refreshes the vendor's cache TTL for
 free. Compacting a warm prefix discards a valid cache entry, pays ~**2.0·C** to write a new summary, and
 stalls the operator ~2 minutes for context that regrows within minutes (measured t130, 2026-09-02:
-121k shrunk to 30k was back to 88k in 6m). Inside the last quarter of the TTL, or when the prefix has
-lapsed, compaction proceeds.
+121k shrunk to 30k was back to 88k in 6m).
+
+⛔ **And lapsed resumes are declined too (2026-09-05, t231).** The gate above had two regions where
+the economics have three, and its second branch folded *the cheapest moment a compaction ever has*
+together with *the dearest*. There are three:
+
+```
+prefix warm, >15m of TTL left   decline — the prompt reads it at 0.1·C and refreshes the TTL free
+prefix inside its last quarter  COMPACT — it is going anyway, and the read is still 0.1·C
+prefix lapsed                   decline — the read is a ~1.25·C cold rebuild of what is discarded
+```
+
+⭐ **Measured on t231.** Run 1 failed at 10:46 and its process exited. The conversation sat closed for
+six hours — its prefix lapsed at ~11:46, unattended, with not one `clock_events` row in the gap — and
+run 2 revived it at 16:44:24. Two seconds later `compactOnResume` asked to compact **306,801** tokens;
+the boundary arrived at 16:47:06, leaving **38,235** behind. That is **2m40s of the operator's wall
+clock spent before the run's own prompt was allowed in**, buying a cold rebuild of the whole 306k
+prefix *in order to throw it away*, after which the agent re-read the files it had been holding.
+Declining pays that same rebuild exactly once, on the run's first prompt, and reads it warm at 0.1·C
+for every turn after.
+
+⚠️ **The counter-argument, and why it loses.** Over a long run a smaller prefix does win on
+arithmetic alone — at 306k → 38k the crossover is around ten turns. It is refused anyway, because the
+arithmetic assumes the summary holds and the t130 regrowth says it does not: the fleet pays the
+rebuild, the summary and the re-reading, and arrives near where it started. The cheap moment to
+compact t231 was ~11:31, while the prefix was warm and nobody was waiting; `decideRevive` owns that
+moment, and missing it is a reason to fix the clock rather than to make the same purchase later at
+ten times the price.
+
+⚠️ **A `null` `cache_expires_at` is not a lapse.** It is an unmeasured prefix, and reading unknown as
+expired would switch this path off for a whole provider in silence. Only a reading that says the
+prefix is gone is treated as one.
+
+⭐ **A side effect worth naming:** `costOfCompact()` prices a compaction as a **warm** read
+(`read_multiplier · contextTokens`) and has no term for rebuilding a lapsed prefix, so on this path it
+was understating the true cost by roughly an order of magnitude. Now that a lapsed prefix is never
+compacted here, every estimate the function returns is one the warm price is correct for.
 
 ⛔ **The two cannot both fire.** A landed compaction zeroes `tokens_since_compact`, which is the growth
 half of `worthCompactingNow`, so a conversation shrunk before its prefix lapsed is left alone at resume.

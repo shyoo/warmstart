@@ -653,17 +653,18 @@ describe('openConversation on a warm continuation', () => {
     }
   })
 
-  it('compacts first when resuming a lapsed prefix', () => {
-    seed({ id: 's-lapsed-conv' })
-    const s = load('s-lapsed-conv')
+  it('compacts first when resuming inside the last quarter of the TTL', () => {
+    seed({ id: 's-expiring-conv' })
+    const s = load('s-expiring-conv')
     const t = tasks.createTask({ title: 'do work' })
-    const lapsedRevive = {
+    // 8 minutes left of an hour: the prefix is going anyway, and the compaction still reads it warm.
+    const expiringRevive = {
       ...s,
       contextTokens: 121_839,
       tokensSinceCompact: 121_839,
-      cacheExpiresAt: Date.now() - 60 * 1000
+      cacheExpiresAt: Date.now() + 8 * 60 * 1000
     }
-    const plan = clock.compactOnResume(lapsedRevive, settings.DEFAULT_SETTINGS)
+    const plan = clock.compactOnResume(expiringRevive, settings.DEFAULT_SETTINGS)
     expect(plan.compact).toBe(true)
 
     const sent: string[] = []
@@ -674,6 +675,41 @@ describe('openConversation on a warm continuation', () => {
       scheduler.openConversation(s, t, 'do work', plan)
       expect(sent).toContain('/compact')
       expect(sent).not.toContain('do work')
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  /**
+   * ⭐ **t231, end to end: the run gets its prompt and not a stall.** The unit gate is pinned in
+   * `cacheclock.test.ts`; what matters here is the consequence one layer up. A lapsed prefix used to
+   * put `/compact` into the session and hold the task's own prompt behind a boundary that took
+   * 2m40s to arrive. The prompt now goes straight in, and the cold rebuild everyone was going to
+   * pay for anyway is paid once, by the work itself.
+   */
+  it('⭐ sends the prompt straight into a lapsed conversation instead of compacting it first', () => {
+    seed({ id: 's-lapsed-conv' })
+    const s = load('s-lapsed-conv')
+    const t = tasks.createTask({ title: 'do work' })
+    const lapsedRevive = {
+      ...s,
+      contextTokens: 306_801,
+      tokensSinceCompact: 407_612,
+      // Five hours past a one-hour prefix, which is the t231 gap exactly.
+      cacheExpiresAt: Date.now() - 5 * 60 * 60 * 1000
+    }
+    const plan = clock.compactOnResume(lapsedRevive, settings.DEFAULT_SETTINGS)
+    expect(plan.compact).toBe(false)
+    expect(plan.reason).toContain('lapsed')
+
+    const sent: string[] = []
+    const spy = vi.spyOn(sessions, 'sendPrompt').mockImplementation((_id, text) => {
+      sent.push(text)
+    })
+    try {
+      scheduler.openConversation(s, t, 'do work', plan)
+      expect(sent).toEqual(['do work'])
+      expect(sent).not.toContain('/compact')
     } finally {
       spy.mockRestore()
     }

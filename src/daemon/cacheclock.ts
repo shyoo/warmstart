@@ -410,8 +410,36 @@ export interface ResumeCompaction {
  * warm (> `decideBeforeExpiryMs(ttl)`, >15m on a 1h TTL) discards an asset readable at 0.1·C, pays
  * ~2.0·C to write a new summary, and stalls the operator ~2 minutes for context that regrows within
  * minutes (measured t130, 2026-09-02: 121k shrunk to 30k was back to 88k in 6m). The prompt going
- * in will read the warm prefix and refresh the TTL for free. Inside the last quarter of the TTL, or
- * when the prefix has lapsed, compaction proceeds.
+ * in will read the warm prefix and refresh the TTL for free.
+ *
+ * ⛔ **And lapsed resumes are declined, which is the correction of 2026-09-05.** The gate above used
+ * to have two regions and needed three: it declined a warm prefix, and let *everything else* through
+ * — folding "inside the last quarter of the TTL", which is the cheapest moment a compaction ever has,
+ * together with "lapsed hours ago", which is the dearest. `decideRevive` already says so in as many
+ * words, and `REVIVE_COMPACT_FLOOR_MS` already refuses to *start* a compaction that would land after
+ * the lapse for exactly this reason; this path simply never asked.
+ *
+ * ⭐ **Measured on t231, 2026-09-05.** Run 1 failed at 10:46 and the process exited. The
+ * conversation sat closed for six hours — its prefix lapsed at ~11:46, unattended — and run 2 resumed
+ * it at 16:44:24. Two seconds later this function asked for a compaction of 306,801 tokens, which
+ * landed at 16:47:06: **2m40s of the operator's wall clock, spent before the run's own prompt was
+ * allowed in**, to leave 38,235 tokens behind. What that bought was a cold rebuild of the entire
+ * 306k prefix at ~1.25·C — paid *in order to discard it* — followed by an agent with no context that
+ * had to re-read the files it had just been holding. Not compacting pays that same cold rebuild
+ * exactly once, on the run's own first prompt, and then reads it warm at 0.1·C for every turn after.
+ *
+ * ⚠️ **The counter-argument, stated rather than hidden.** Over a *long* run a smaller prefix does win
+ * on arithmetic alone: at 306k → 38k the crossover is around ten turns. It is refused anyway, because
+ * the arithmetic assumes the summary holds — and the regrowth measured on t130 says it does not. The
+ * agent buys the context back within minutes, so the fleet pays the cold rebuild, the summary, and
+ * the re-reading, and arrives where it started. The cheap moment to compact this conversation was
+ * ~11:31, while the prefix was still warm and nobody was waiting; `decideRevive` owns that moment.
+ * When it is missed, the honest answer is to run on the context we have, not to buy a small one at
+ * the worst price on the operator's time.
+ *
+ * ⚠️ **A `null` `cacheExpiresAt` is not a lapse.** It is an unmeasured prefix — an adapter that never
+ * reported one — and reading unknown as expired would silently switch this path off for a whole
+ * provider. Only a reading that says the prefix is gone is treated as one.
  */
 export function compactOnResume(
   session: Session,
@@ -444,13 +472,21 @@ export function compactOnResume(
 
   // ⭐ Warmth gate: if the prefix is still comfortably warm, declining compaction allows the upcoming
   // prompt to read the warm prefix at 0.1·C and refresh the TTL for free, avoiding a costly ~2.0·C
-  // rebuild and a 2-minute stall. Inside the last quarter of the TTL (or when lapsed), compaction proceeds.
+  // rebuild and a 2-minute stall. Inside the last quarter of the TTL, compaction proceeds.
   const ttlMs = model.cacheTtlMs()
   const untilExpiry = (session.cacheExpiresAt ?? 0) - now
   if (session.cacheExpiresAt !== null && untilExpiry > decideBeforeExpiryMs(ttlMs)) {
     return no(
       `prefix is still warm (${Math.round(untilExpiry / 60000)}m of TTL left) - ` +
         'the prompt will refresh it for free'
+    )
+  }
+  // ⛔ **And a lapsed prefix is declined too, which is the other end of the same gate.** See the
+  //    header note above for the argument; this is the branch that enforces it.
+  if (session.cacheExpiresAt !== null && untilExpiry <= 0) {
+    return no(
+      `prefix lapsed ${Math.round(-untilExpiry / 60000)}m ago - compacting now would pay a cold ` +
+        'rebuild of the whole context in order to throw that context away'
     )
   }
 

@@ -522,14 +522,53 @@ export function taskLabelShort(task: Pick<Task, 'title' | 'titleSummary'>, max =
 }
 
 /**
+ * **The one ordering rule for everything in the thread: when it finished, then when it started.**
+ *
+ * ⛔ **Sorting by start time reads the timeline wrong whenever two things overlap**, and in this
+ * thread they overlap constantly — a compaction happens *inside* the run that asked for it, so the
+ * two always share a start and never share an end. Measured on t231, 2026-09-05: run 2 ran
+ * 16:44:24–16:55:19 and its compaction ran 16:44:26–16:47:06. Ordered on `startedAt` the run came
+ * first by two seconds, so the operator read a compaction that had visibly finished at 16:47 printed
+ * *below* a run still going at 16:55. Ordered on the end, the compaction lands above the run that
+ * outlived it, which is the order the events actually concluded in and the order a person reading
+ * top-to-bottom expects.
+ *
+ * ⚠️ **Unfinished sorts last, and that is not a fallback — it is the answer.** Something still
+ * running has not ended yet, so it will end after everything that already has. `Infinity` says
+ * exactly that; `0` or `Date.now()` would each be a guess at a fact nobody has.
+ *
+ * ⚠️ The start time breaks ties rather than being ignored: two entries that ended in the same
+ * millisecond — or two that are both still open — still have an order, and it is a stable one.
+ */
+export function byEndThenStart(
+  a: { end: number | null; start: number },
+  b: { end: number | null; start: number }
+): number {
+  const ended = (a.end ?? Number.POSITIVE_INFINITY) - (b.end ?? Number.POSITIVE_INFINITY)
+  // ⛔ `Infinity - Infinity` is `NaN`, and a comparator that returns `NaN` orders nothing. Two open
+  //    entries are tied on the end and fall through to the start, which is what the guard is for.
+  if (ended !== 0 && !Number.isNaN(ended)) return ended
+  return a.start - b.start
+}
+
+/**
  * Sorts runs into chronological order (oldest first, newest last) for display in the thread.
  *
  * ⛔ **Old top, new bottom.** The backend stores and returns runs newest-first (`order by started_at desc`)
  * so that `runs[0]` is the latest attempt for session resolution. The UI thread reads top-to-bottom
  * in time order — attempt 1 first, attempt 2 next — matching how a person reads a timeline.
+ *
+ * ⚠️ Ordered on the end, like everything else in the thread — see `byEndThenStart`. Attempts rarely
+ * overlap, so this usually agrees with `startedAt`; it is held to the one rule anyway, because an
+ * ordering that is right for a different reason is one refactor away from being wrong.
  */
-export function chronologicalRuns<T extends Pick<Run, 'startedAt'>>(runs: T[]): T[] {
-  return [...runs].sort((a, b) => a.startedAt - b.startedAt)
+export function chronologicalRuns<T extends Pick<Run, 'startedAt' | 'endedAt'>>(runs: T[]): T[] {
+  return [...runs].sort((a, b) =>
+    byEndThenStart(
+      { end: a.endedAt ?? null, start: a.startedAt },
+      { end: b.endedAt ?? null, start: b.startedAt }
+    )
+  )
 }
 
 /**
@@ -552,10 +591,11 @@ export function dependencyTooltip(
   return `Depends on:\n${lines.join('\n')}`
 }
 
-export type TimelineItem =
-  | { kind: 'run'; run: Run; ts: number }
-  | { kind: 'compaction'; compaction: Compaction; ts: number }
-  | { kind: 'review'; review: QualityReview; ts: number }
+export type TimelineItem = { ts: number; endTs: number | null } & (
+  | { kind: 'run'; run: Run }
+  | { kind: 'compaction'; compaction: Compaction }
+  | { kind: 'review'; review: QualityReview }
+)
 
 /**
  * Merges runs, compactions and quality reviews into one chronological timeline (oldest first).
@@ -564,6 +604,15 @@ export type TimelineItem =
  * and how it earns a number in this list — so the run half is filtered out here and the review half
  * rendered instead. Without the filter every review would appear twice, once as `#N Run` with a
  * reviewer's model on somebody else's task.
+ *
+ * ⛔ **Ordered on when each entry finished** — `byEndThenStart`, which carries the argument. A
+ * compaction runs *inside* the run that asked for it, so start times separate the two by seconds
+ * while end times separate them by minutes, and only the end puts them in the order they concluded.
+ *
+ * ⚠️ Every kind reports both ends, and each one's `null` means the same thing: still open. A run
+ * has no `endedAt` until it stops; a compaction has no `landedAt` until its boundary arrives, which
+ * is the asked-and-never-landed case `compaction.ts` exists to keep on the record; a review has no
+ * `completedAt` until it is graded.
  */
 export function chronologicalTimeline(
   runs: Run[] = [],
@@ -573,15 +622,23 @@ export function chronologicalTimeline(
   const items: TimelineItem[] = [
     ...runs
       .filter((r) => r.kind === 'work')
-      .map((r) => ({ kind: 'run' as const, run: r, ts: r.startedAt })),
+      .map((r) => ({ kind: 'run' as const, run: r, ts: r.startedAt, endTs: r.endedAt ?? null })),
     ...compactions.map((c) => ({
       kind: 'compaction' as const,
       compaction: c,
-      ts: c.askedAt ?? c.ts
+      ts: c.askedAt ?? c.ts,
+      endTs: c.landedAt ?? null
     })),
-    ...reviews.map((r) => ({ kind: 'review' as const, review: r, ts: r.createdAt }))
+    ...reviews.map((r) => ({
+      kind: 'review' as const,
+      review: r,
+      ts: r.createdAt,
+      endTs: r.completedAt ?? null
+    }))
   ]
-  return items.sort((a, b) => a.ts - b.ts)
+  return items.sort((a, b) =>
+    byEndThenStart({ end: a.endTs, start: a.ts }, { end: b.endTs, start: b.ts })
+  )
 }
 
 /** Whether the task stopped because of a merge or rebase conflict. */

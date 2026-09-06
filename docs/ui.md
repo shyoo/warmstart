@@ -65,6 +65,15 @@ thing entirely. See [`glossary.md`](glossary.md).
 | `Terminal` | the real agent TUI over xterm.js, not a reconstruction |
 | `AppSettings` `SettingRow` `SettingButtonSelect` `SidebarResizer` | chrome |
 
+⛔ **The thread's timeline is ordered on when each entry *finished*, not when it started**
+(`byEndThenStart` in `lib/taskview.tsx`). Runs, compactions and reviews nest rather than queue — a
+compaction happens *inside* the run that asked for it — so the two always share a start and never
+share an end. Measured on t231, 2026-09-05: run 2 ran 16:44:24–16:55:19 and its compaction ran
+16:44:26–16:47:06, so start-time order printed a compaction that had visibly finished at 16:47
+*below* a run still going at 16:55. ⚠️ An entry that has not finished sorts last, which is not a
+fallback but the answer — it has not ended, so it ends after everything that has. The start time
+breaks ties, so two open entries still have a stable order.
+
 ⛔ **Analytics holds two pages, and they answer different questions.** *Routing Model* explains a
 choice: every number on it is shrunk toward a prior, blended or clamped, because it is about to be
 acted on. *Statistics* (`components/Statistics.tsx`, one `statistics.report` call for all three tabs)

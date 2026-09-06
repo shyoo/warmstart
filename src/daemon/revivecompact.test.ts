@@ -429,10 +429,35 @@ describe('and the resume path, which is what is left when this cannot act', () =
     expect(clock.compactOnResume(compacted, settings.DEFAULT_SETTINGS).compact).toBe(false)
   })
 
-  it('⭐ still compacts at resume what nothing reached in time', () => {
-    // The t92 case as it actually happened: nobody looked at it, the prefix lapsed, and the run
-    // resumed into the whole thing. Late is more expensive than early. It is not more expensive than
-    // reading 84k on every turn of a twenty-minute run.
-    expect(clock.compactOnResume(session(), settings.DEFAULT_SETTINGS).compact).toBe(true)
+  /**
+   * ⛔ **The reversal of 2026-09-05, and the sentence it replaces.** This check used to assert the
+   * opposite, on the argument that *"late is more expensive than early, but it is not more expensive
+   * than reading 84k on every turn of a twenty-minute run."* That trade is real and it is still not
+   * taken, for two reasons the arithmetic left out.
+   *
+   * ⚠️ First, the compaction does not avoid the cold rebuild — it *performs* one. Reading a lapsed
+   * 306k prefix costs ~1.25·C whoever reads it, and the compaction pays that in order to throw the
+   * result away, leaving the run to start from nothing. Declining pays the same rebuild once, on the
+   * run's own first prompt, and reads it warm for every turn after.
+   *
+   * ⚠️ Second, the summary does not hold: measured on t130, 121k shrunk to 30k was back to 88k six
+   * minutes later. So the fleet pays the rebuild, the summary and the re-reading, and arrives roughly
+   * where it started — having also spent 2m40s of the operator's wall clock first (t231, 2026-09-05).
+   *
+   * ⭐ The moment worth buying is the one this file's own move exists to catch, while the prefix is
+   * still warm and nobody is waiting. Missing it is a reason to fix the clock, not a reason to make
+   * the same purchase later at ten times the price.
+   */
+  it('⭐ does not compact at resume what nothing reached in time, because that moment has passed', () => {
+    const plan = clock.compactOnResume(session(), settings.DEFAULT_SETTINGS)
+    expect(plan.compact).toBe(false)
+    expect(plan.reason).toContain('lapsed')
+  })
+
+  it('⚠️ and the one it can still catch is the prefix that has not gone yet', () => {
+    // ⛔ Non-vacuity for the check above: the refusal is about the lapse and nothing else. The same
+    //    conversation, revived eight minutes before its prefix goes, is compacted.
+    const nearlyGone = session({ cacheExpiresAt: Date.now() + 8 * 60 * 1000 })
+    expect(clock.compactOnResume(nearlyGone, settings.DEFAULT_SETTINGS).compact).toBe(true)
   })
 })

@@ -495,7 +495,9 @@ describe('a conversation carried across runs is compacted before the next one sp
     session({ contextTokens: 84_254, tokensSinceCompact: 345_708, state: 'closed', ...patch })
 
   it('⭐ compacts the conversation t92 resumed, which nothing did', () => {
-    const plan = clock.compactOnResume(t92(), settings.DEFAULT_SETTINGS)
+    // ⚠️ Caught in the window this path is for: revived with 12m of its hour left, so the prefix is
+    //    on its way out and the compaction still reads it at 0.1·C rather than rebuilding it.
+    const plan = clock.compactOnResume(t92({ cacheExpiresAt: NOW + 12 * 60 * 1000 }), settings.DEFAULT_SETTINGS, NOW)
     expect(plan.compact).toBe(true)
     expect(plan.estimatedCost).toBeGreaterThan(0)
     expect(plan.reason).toContain('84254')
@@ -522,14 +524,27 @@ describe('a conversation carried across runs is compacted before the next one sp
     expect(plan.estimatedCost).toBeGreaterThan(0)
   })
 
-  it('⭐ compacts when the prefix has already lapsed', () => {
-    // The t92 case: closed for 2h, prefix expired.
-    const lapsed = t92({ cacheExpiresAt: NOW - 10 * 60 * 1000 })
+  it('⭐ refuses once the prefix has lapsed, however large the context is', () => {
+    // ⛔ The correction of 2026-09-05, and the inversion of what this used to assert. t92 as it
+    //    really stood at 23:40 — closed two hours, prefix gone for one — is **not** compacted here.
+    //    Its cheap moment was ~22:20 and `decideRevive` owns it; buying a small context at a cold
+    //    rebuild's price, two minutes before the operator's work may start, is not a second chance
+    //    at that moment. It is the same purchase at ten times the price.
+    const lapsed = t92({ cacheExpiresAt: NOW - 65 * 60 * 1000 })
     const plan = clock.compactOnResume(lapsed, settings.DEFAULT_SETTINGS, NOW)
-    expect(plan.compact).toBe(true)
+    expect(plan.compact).toBe(false)
+    expect(plan.reason).toContain('lapsed')
+    expect(plan.estimatedCost).toBeNull()
   })
 
-  it('compacts when cache expiry is unknown (null)', () => {
+  it('says how long ago the prefix went, because "lapsed" alone does not size the mistake', () => {
+    const plan = clock.compactOnResume(t92({ cacheExpiresAt: NOW - 65 * 60 * 1000 }), settings.DEFAULT_SETTINGS, NOW)
+    expect(plan.reason).toContain('65m ago')
+  })
+
+  it('⛔ an unknown expiry is not a lapse: unknown is a verdict, and it is not this one', () => {
+    // A `null` reading means no adapter ever reported a prefix for this session — not that one
+    // expired. Reading it as expired would switch this path off for a whole provider silently.
     const unknownExpiry = t92({ cacheExpiresAt: null })
     const plan = clock.compactOnResume(unknownExpiry, settings.DEFAULT_SETTINGS, NOW)
     expect(plan.compact).toBe(true)
@@ -562,6 +577,125 @@ describe('a conversation carried across runs is compacted before the next one sp
     // ⚠️ Whether `/compact` is honoured on the stream transport is still unmeasured (R6), so the
     // prompt must have a way out that does not depend on it arriving.
     expect(clock.RESUME_COMPACT_WAIT_MS).toBe(clock.COMPACT_SETTLE_MS)
+  })
+})
+
+/**
+ * ⛔ **t231: the 2m40s a resumed run spent buying a small context at the worst possible price.**
+ *
+ * Read out of this install's own database, 2026-09-05. Run 1 of t231 failed at 10:46:17 and its
+ * process exited. The conversation then sat closed for **six hours** — its one-hour prefix lapsed
+ * around 11:46, unattended, with not one `clock_events` row in the whole gap — and run 2 revived it
+ * at 16:44:24. Two seconds later `compactOnResume` asked for a compaction of **306,801** tokens,
+ * which landed at 16:47:06 and left **38,235** behind.
+ *
+ * ⚠️ Every part of that purchase was the expensive version of itself. The compaction had to read a
+ * 306k prefix the vendor no longer held, so it paid a full cold rebuild (~1.25·C) — *in order to
+ * throw the rebuilt context away*. It then spent 2m40s of the operator's wall clock before the run's
+ * own prompt was allowed in. And the agent it handed control back to had no context left, so it
+ * re-read the files it had been holding minutes earlier. Declining costs the fleet the same cold
+ * rebuild exactly once, on the run's first prompt, and reads it warm for every turn after.
+ *
+ * ⛔ **This is a policy hole, not a broken condition.** Nothing miscomputed. The warmth gate had two
+ * regions where the economics have three, and folded *the cheapest moment a compaction ever has*
+ * together with *the dearest* into one branch called "not warm".
+ */
+describe('t231: a prefix that lapsed hours ago is not a reason to compact', () => {
+  /** Session 3984f7e5 as it stood at 16:44:24, the moment run 2 revived it. */
+  const t231 = (patch: Partial<Session> = {}): Session =>
+    session({
+      contextTokens: 306_801,
+      tokensSinceCompact: 407_612,
+      state: 'closed',
+      // Last turn of run 1 was 10:46; a one-hour prefix, five hours gone by 16:44.
+      cacheExpiresAt: NOW - 5 * 60 * 60 * 1000,
+      ...patch
+    })
+
+  it('⭐ declines the compaction that actually ran, which is the whole of the bug', () => {
+    const plan = clock.compactOnResume(t231(), settings.DEFAULT_SETTINGS, NOW)
+    expect(plan.compact).toBe(false)
+  })
+
+  it('⛔ a very large context does not buy its way past the gate', () => {
+    // The tempting exception, refused on purpose. 306k tokens is exactly the size that makes a
+    // smaller prefix look worth any price — and it is also what makes the cold rebuild ruinous,
+    // because the rebuild is priced on the context being discarded, not on the summary.
+    for (const tokens of [306_801, 500_000, 1_000_000]) {
+      expect(clock.compactOnResume(t231({ contextTokens: tokens }), settings.DEFAULT_SETTINGS, NOW).compact)
+        .toBe(false)
+    }
+  })
+
+  it('prices nothing, because a refused purchase has no estimate', () => {
+    // ⚠️ `costOfCompact` prices a compaction as a **warm** read (`read_multiplier · contextTokens`)
+    //    and has no term for rebuilding a lapsed prefix. On this path it was therefore understating
+    //    the true cost by roughly an order of magnitude. Now that a lapsed prefix is never compacted
+    //    here, every estimate this function returns is one the warm price is correct for.
+    expect(clock.compactOnResume(t231(), settings.DEFAULT_SETTINGS, NOW).estimatedCost).toBeNull()
+  })
+
+  it('the refusal names the lapse, so the ledger says which gate said no', () => {
+    const plan = clock.compactOnResume(t231(), settings.DEFAULT_SETTINGS, NOW)
+    expect(plan.reason).toMatch(/lapsed/)
+    expect(plan.reason).toMatch(/300m ago/)
+  })
+
+  it('⛔ the boundary is the lapse itself, not a grace period after it', () => {
+    // One second past expiry is past expiry. A tolerance here would be a second, softer policy
+    // nobody could find, and the cheap window already has its own name: decideBeforeExpiryMs.
+    expect(clock.compactOnResume(t231({ cacheExpiresAt: NOW + 1_000 }), settings.DEFAULT_SETTINGS, NOW).compact)
+      .toBe(true)
+    expect(clock.compactOnResume(t231({ cacheExpiresAt: NOW - 1_000 }), settings.DEFAULT_SETTINGS, NOW).compact)
+      .toBe(false)
+    // ⚠️ Exactly at expiry there is nothing left to read, so it is a lapse.
+    expect(clock.compactOnResume(t231({ cacheExpiresAt: NOW }), settings.DEFAULT_SETTINGS, NOW).compact)
+      .toBe(false)
+  })
+
+  it('⭐ leaves the cheap window untouched, which is what this path still exists for', () => {
+    // The gate must not have swallowed the middle region on its way to closing the far one.
+    for (const minutes of [1, 5, 10, 14]) {
+      const plan = clock.compactOnResume(
+        t231({ cacheExpiresAt: NOW + minutes * 60 * 1000 }),
+        settings.DEFAULT_SETTINGS,
+        NOW
+      )
+      expect(plan.compact, `${minutes}m of TTL left`).toBe(true)
+      expect(plan.estimatedCost).toBeGreaterThan(0)
+    }
+  })
+
+  it('and still declines a comfortably warm one, which is the near end of the same gate', () => {
+    const plan = clock.compactOnResume(t231({ cacheExpiresAt: NOW + 40 * 60 * 1000 }), settings.DEFAULT_SETTINGS, NOW)
+    expect(plan.compact).toBe(false)
+    expect(plan.reason).toContain('still warm')
+  })
+
+  it('⚠️ the three regions are exhaustive: every prefix age gets exactly one verdict', () => {
+    // ⛔ The property the bug violated. Sweeping the whole life of a prefix, from an hour of TTL
+    //    left to six hours gone, the answer must be compact exactly once — in the last quarter — and
+    //    refuse on both sides of it, with no gap and no second window.
+    const verdicts: boolean[] = []
+    for (let m = 60; m >= -360; m -= 1) {
+      verdicts.push(
+        clock.compactOnResume(t231({ cacheExpiresAt: NOW + m * 60 * 1000 }), settings.DEFAULT_SETTINGS, NOW).compact
+      )
+    }
+    const first = verdicts.indexOf(true)
+    const last = verdicts.lastIndexOf(true)
+    expect(first).toBeGreaterThan(0)
+    // One contiguous run of `true`, and nothing after it.
+    expect(verdicts.slice(first, last + 1).every(Boolean)).toBe(true)
+    expect(verdicts.slice(last + 1).some(Boolean)).toBe(false)
+    // ⭐ And it really does close: the tail of the sweep — the t231 case — is all refusals.
+    expect(verdicts.at(-1)).toBe(false)
+  })
+
+  it('does not reach for the switch: this is the economics gate, not the permission gate', () => {
+    // ⚠️ A lapsed prefix is refused on its own terms. If the refusal only happened to hold because
+    //    compaction was off, the test above would pass for the wrong reason forever.
+    expect(settings.DEFAULT_SETTINGS.autoCompact).toBe(true)
   })
 })
 

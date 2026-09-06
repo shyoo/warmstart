@@ -494,8 +494,17 @@ describe('move 7: waking a closed conversation to compact it', () => {
 // ---------------------------------------------------------------------------- resume
 
 describe('compacting at the moment a run resumes into a conversation', () => {
+  // ⚠️ Pinned inside the last quarter of the TTL, which is the window this path still acts in. These
+  //    checks are about the permission switch, and a fixture whose prefix had lapsed would refuse for
+  //    an unrelated reason and stop testing the switch at all.
   const carried = (patch: Partial<Session> = {}): Session =>
-    session({ state: 'closed', contextTokens: 84_254, tokensSinceCompact: 345_708, ...patch })
+    session({
+      state: 'closed',
+      contextTokens: 84_254,
+      tokensSinceCompact: 345_708,
+      cacheExpiresAt: Date.now() + 8 * 60 * 1000,
+      ...patch
+    })
 
   it('⭐ compacts for a task switched on, on a fleet switched off', () => {
     owner('on')

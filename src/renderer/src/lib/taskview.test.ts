@@ -543,9 +543,9 @@ describe('the duration beside a task', () => {
 
 describe('runs ordering for thread display', () => {
   it('orders runs from oldest to newest (old top, new bottom)', () => {
-    const run1 = { id: 'run-1', startedAt: 1000 }
-    const run2 = { id: 'run-2', startedAt: 2000 }
-    const run3 = { id: 'run-3', startedAt: 3000 }
+    const run1 = { id: 'run-1', startedAt: 1000, endedAt: 1500 }
+    const run2 = { id: 'run-2', startedAt: 2000, endedAt: 2500 }
+    const run3 = { id: 'run-3', startedAt: 3000, endedAt: 3500 }
     // Backend returns newest first
     const newestFirst = [run3, run2, run1]
     expect(chronologicalRuns(newestFirst)).toEqual([run1, run2, run3])
@@ -553,7 +553,7 @@ describe('runs ordering for thread display', () => {
 
   it('handles empty or single-run arrays', () => {
     expect(chronologicalRuns([])).toEqual([])
-    const single = [{ id: 'r1', startedAt: 1000 }]
+    const single = [{ id: 'r1', startedAt: 1000, endedAt: null }]
     expect(chronologicalRuns(single)).toEqual(single)
   })
 })
@@ -735,19 +735,85 @@ describe('model reassignment', () => {
 })
 
 describe('timeline ordering for runs and compactions', () => {
-  it('merges and sorts runs and compactions chronologically by timestamp', () => {
-    const run1 = { id: 'r1', startedAt: 1000, kind: 'work' } as unknown as Run
-    const run2 = { id: 'r2', startedAt: 3000, kind: 'work' } as unknown as Run
-    const c1 = { id: 'c1', ts: 2000, askedAt: 2000 } as unknown as Compaction
-    const c2 = { id: 'c2', ts: 4000, askedAt: 4000 } as unknown as Compaction
+  it('merges and sorts runs and compactions chronologically, by when each one ended', () => {
+    const run1 = { id: 'r1', startedAt: 1000, endedAt: 1500, kind: 'work' } as unknown as Run
+    const run2 = { id: 'r2', startedAt: 3000, endedAt: 3500, kind: 'work' } as unknown as Run
+    const c1 = { id: 'c1', ts: 2000, askedAt: 2000, landedAt: 2500 } as unknown as Compaction
+    const c2 = { id: 'c2', ts: 4000, askedAt: 4000, landedAt: 4500 } as unknown as Compaction
 
     const timeline = chronologicalTimeline([run2, run1], [c2, c1])
     expect(timeline).toEqual([
-      { kind: 'run', run: run1, ts: 1000 },
-      { kind: 'compaction', compaction: c1, ts: 2000 },
-      { kind: 'run', run: run2, ts: 3000 },
-      { kind: 'compaction', compaction: c2, ts: 4000 }
+      { kind: 'run', run: run1, ts: 1000, endTs: 1500 },
+      { kind: 'compaction', compaction: c1, ts: 2000, endTs: 2500 },
+      { kind: 'run', run: run2, ts: 3000, endTs: 3500 },
+      { kind: 'compaction', compaction: c2, ts: 4000, endTs: 4500 }
     ])
+  })
+
+  /**
+   * ⭐ **The t231 shape, in the real numbers the operator read.** Run 2 ran 16:44:24–16:55:19 and
+   * the compaction it triggered ran 16:44:26–16:47:06 — wholly inside it. Sorted on `startedAt` the
+   * run won by two seconds, so the thread printed a compaction that had finished at 16:47 *below* a
+   * run that was still going at 16:55.
+   *
+   * ⛔ This is not a tie-break preference. Nesting is the normal case here — a compaction always
+   * happens inside the run that asked for it — so start-time ordering is wrong for this pairing
+   * every single time it occurs, not occasionally.
+   */
+  it('⭐ puts a compaction above the longer run it happened inside, which start times invert', () => {
+    const at = (h: number, m: number, sec: number): number => Date.UTC(2026, 8, 5, h, m, sec)
+    const run = {
+      id: 'run-2',
+      startedAt: at(16, 44, 24),
+      endedAt: at(16, 55, 19),
+      kind: 'work'
+    } as unknown as Run
+    const compaction = {
+      id: 58,
+      ts: at(16, 44, 26),
+      askedAt: at(16, 44, 26),
+      landedAt: at(16, 47, 6)
+    } as unknown as Compaction
+
+    const timeline = chronologicalTimeline([run], [compaction])
+    expect(timeline.map((i) => i.kind)).toEqual(['compaction', 'run'])
+    // ⚠️ And the start times really are the other way round, so the check is not vacuous.
+    expect(compaction.askedAt as number).toBeGreaterThan(run.startedAt)
+  })
+
+  it('⚠️ puts what has not finished last, because it has not finished', () => {
+    const done = { id: 'r1', startedAt: 1000, endedAt: 9000, kind: 'work' } as unknown as Run
+    const running = { id: 'r2', startedAt: 2000, endedAt: null, kind: 'work' } as unknown as Run
+    const asked = { id: 'c1', ts: 500, askedAt: 500, landedAt: null } as unknown as Compaction
+
+    const timeline = chronologicalTimeline([running, done], [asked])
+    // The finished run first; then the two open entries, ordered among themselves by when they began.
+    expect(timeline.map((i) => i.kind)).toEqual(['run', 'compaction', 'run'])
+    expect(timeline[1]).toMatchObject({ kind: 'compaction', endTs: null })
+    expect(timeline[2]).toMatchObject({ kind: 'run', endTs: null })
+  })
+
+  it('⛔ orders two open entries rather than returning NaN from Infinity minus Infinity', () => {
+    // A comparator that returns NaN leaves the array in whatever order it arrived in, which reads
+    // as "sometimes right". Both of these are open; the start time has to decide.
+    const later = { id: 'r1', startedAt: 5000, endedAt: null, kind: 'work' } as unknown as Run
+    const earlier = { id: 'r2', startedAt: 1000, endedAt: null, kind: 'work' } as unknown as Run
+    const timeline = chronologicalTimeline([later, earlier])
+    expect(timeline.map((i) => (i.kind === 'run' ? i.run.id : ''))).toEqual(['r2', 'r1'])
+  })
+
+  it('falls back to the start when two entries ended in the same millisecond', () => {
+    const first = { id: 'r1', startedAt: 1000, endedAt: 5000, kind: 'work' } as unknown as Run
+    const second = { id: 'r2', startedAt: 2000, endedAt: 5000, kind: 'work' } as unknown as Run
+    const timeline = chronologicalTimeline([second, first])
+    expect(timeline.map((i) => (i.kind === 'run' ? i.run.id : ''))).toEqual(['r1', 'r2'])
+  })
+
+  it('holds the same rule for a review, whose end is when it was graded', () => {
+    const run = { id: 'r1', startedAt: 1000, endedAt: 8000, kind: 'work' } as unknown as Run
+    const review = { id: 'q1', runId: 'rq', createdAt: 2000, completedAt: 3000 } as unknown as QualityReview
+    const timeline = chronologicalTimeline([run], [], [review])
+    expect(timeline.map((i) => i.kind)).toEqual(['review', 'run'])
   })
 
   it('handles empty runs and compactions', () => {
@@ -761,14 +827,14 @@ describe('timeline ordering for runs and compactions', () => {
    * prevent one layer down.
    */
   it('draws a review once, from the review and never from its run', () => {
-    const work = { id: 'r1', startedAt: 1000, kind: 'work' } as unknown as Run
-    const reviewRun = { id: 'r2', startedAt: 2000, kind: 'quality_review' } as unknown as Run
-    const review = { id: 'q1', runId: 'r2', createdAt: 2000 } as unknown as QualityReview
+    const work = { id: 'r1', startedAt: 1000, endedAt: 1500, kind: 'work' } as unknown as Run
+    const reviewRun = { id: 'r2', startedAt: 2000, endedAt: 2500, kind: 'quality_review' } as unknown as Run
+    const review = { id: 'q1', runId: 'r2', createdAt: 2000, completedAt: 2500 } as unknown as QualityReview
 
     const timeline = chronologicalTimeline([work, reviewRun], [], [review])
     expect(timeline).toEqual([
-      { kind: 'run', run: work, ts: 1000 },
-      { kind: 'review', review, ts: 2000 }
+      { kind: 'run', run: work, ts: 1000, endTs: 1500 },
+      { kind: 'review', review, ts: 2000, endTs: 2500 }
     ])
   })
 })
