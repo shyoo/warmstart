@@ -634,22 +634,27 @@ export function Workers({
                         account is usually an email, an email has no spaces to wrap at, and under a
                         fixed layout an unbreakable word does not widen its column — it is painted
                         past the edge, straight across the quota reading beside it. */}
+                    {/* ⛔ One grid item, not two. Each <td> in this card layout is a
+                        `label | value` grid, so a second child after the account div was laid into
+                        the *label* column of the next row — `pro` printed under the word `Account`
+                        rather than under the address it qualifies. Account and plan are one fact
+                        read together, so they are one line: the id, then the plan beside it. */}
                     <td>
-                      <div className="tbl-account" title={worker.identity?.account ?? undefined}>
-                        {worker.identity?.account ?? (
-                          <span className={loggedIn ? 'dim' : 'warn'}>
-                            {loggedIn ? 'signed in' : signInUnknown ? 'unknown' : 'not signed in'}
-                          </span>
+                      <div className="worker-account">
+                        <span className="tbl-account" title={worker.identity?.account ?? undefined}>
+                          {worker.identity?.account ?? (
+                            <span className={loggedIn ? 'dim' : 'warn'}>
+                              {loggedIn ? 'signed in' : signInUnknown ? 'unknown' : 'not signed in'}
+                            </span>
+                          )}
+                        </span>
+                        {/* ⚠️ Shown verbatim, and nothing branches on it. It is the only thing the CLI
+                            says for free about *which plan* this worker is spending — and an account
+                            whose plan has lapsed previously had nowhere at all to say so. */}
+                        {worker.identity?.subscriptionType && (
+                          <span className="dim worker-account-plan">{worker.identity.subscriptionType}</span>
                         )}
                       </div>
-                      {/* ⚠️ Shown verbatim, and nothing branches on it. It is the only thing the CLI
-                          says for free about *which plan* this worker is spending — and an account
-                          whose plan has lapsed previously had nowhere at all to say so. */}
-                      {worker.identity?.subscriptionType && (
-                        <div className="dim tbl-sub tbl-account">
-                          {worker.identity.subscriptionType}
-                        </div>
-                      )}
                       {/* ⛔ The labels are gone from here, deliberately. `setup unfinished · held
                           out of dispatch` was printed in this cell and then again, word for word,
                           as the label of the note row directly underneath — so the one account with
@@ -885,10 +890,17 @@ export function Workers({
                         } /> Grading</label>
                       </div>
                     </td>
-                    <td className="tbl-action-cell worker-actions">
-                      <button className="btn" disabled={busy === `login:${worker.id}`} onClick={() => void startLogin(worker.id, worker.adapterId)}>Sign in</button>
-                      <button className="btn" disabled={busy === `probe:${worker.id}`} onClick={() => void probe(worker.id, worker.label)}>{suspect ? 'Recheck' : 'Probe'}</button>
-                      <button className="btn btn--danger" disabled={busy === `ret:${worker.id}`} onClick={() => void guard(`ret:${worker.id}`, () => rpc('worker.retire', { id: worker.id }))}>Retire</button>
+                    {/* ⛔ The buttons live in a div, never directly in the <td>. The cell is a
+                        `label | value` grid, so three loose buttons were laid out as grid items:
+                        Sign in in the label column, Probe stretched across the whole value column,
+                        Retire wrapped onto a line of its own. One flex row in the value column
+                        keeps all three together, each only as wide as its own word. */}
+                    <td className="tbl-action-cell">
+                      <div className="worker-actions">
+                        <button className="btn" disabled={busy === `login:${worker.id}`} onClick={() => void startLogin(worker.id, worker.adapterId)}>Sign in</button>
+                        <button className="btn" disabled={busy === `probe:${worker.id}`} onClick={() => void probe(worker.id, worker.label)}>{suspect ? 'Recheck' : 'Probe'}</button>
+                        <button className="btn btn--danger" disabled={busy === `ret:${worker.id}`} onClick={() => void guard(`ret:${worker.id}`, () => rpc('worker.retire', { id: worker.id }))}>Retire</button>
+                      </div>
                     </td>
                   </tr>
                   {/* ⚠️ One row per account, however many things are wrong with it, and it draws
