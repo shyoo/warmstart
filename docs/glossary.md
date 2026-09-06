@@ -428,8 +428,12 @@ review run. It is an *instrument*. A review is a `runs` row with `kind: 'quality
 how its tokens are metered and how it earns its `#N Quality Review` line in the thread.
 The operator may choose **Auto** (a random eligible account) or a named eligible account; either way
 the reviewer uses the grading model stored on that worker, initially the adapter's smallest
-configured model. Eligibility excludes workers whose Grading role is off and every adapter that authored
-the work, not merely the worker account, and is enforced again when the review starts.
+configured model. Eligibility excludes workers whose Grading role is off, every adapter that authored
+the work, and ⛔ **every adapter that has already produced a score for this task** — a second grade
+from a judge that has already answered costs a turn to reproduce a number that is already stored.
+All three are by *adapter* rather than by worker account, and all three are enforced again when the
+review starts. ⚠️ Only a review that produced a number burns its adapter: one that timed out or came
+back unparseable never answered, and its adapter is asked again.
 **Grading** is a display overlay while that read-only run is pending, not a task status: completed
 work remains completed and the review owns no pooled workspace.
 ⛔ **A review is given up on for going silent, never for taking long** (`reviewStall` in

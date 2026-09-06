@@ -225,7 +225,4 @@ describe('ungraded work', () => {
     expect(next?.model).toBe('claude-sonnet-5')
   })
 
-  it('caps what one press may grade, because each one spends a real turn', () => {
-    expect(quality.GRADE_BATCH_MAX).toBe(5)
-  })
 })

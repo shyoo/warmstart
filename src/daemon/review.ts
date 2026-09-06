@@ -882,3 +882,32 @@ export function humanFollowUps(messages: TaskMessage[]): string[] {
     .filter((m) => m.role === 'human' && m.text.trim().length > 0)
     .map((m) => m.text.trim())
 }
+
+/**
+ * The adapters that have already produced a *stored grade* for this task.
+ *
+ * ⛔ **`complete` only, and by adapter rather than by account.** The exclusion this feeds
+ * (`reviewCandidates`) exists to stop a batch spending a turn re-asking a question that has an
+ * answer: if Antigravity has graded t3, a second Antigravity grade of t3 buys nothing but a bill.
+ * A review that *failed* — a reviewer that timed out, refused, or answered with no JSON — produced
+ * no answer at all, so the adapter that failed it has not been asked and is asked again. ⚠️ And a
+ * `complete` review that scored *nothing* — every dimension inapplicable, so `composite` is null —
+ * is the same statement: it is not counted by `tasks.quality_review_count` either, and the two
+ * numbers have to mean the same thing or the table shows an ungraded task with nobody left to ask.
+ *
+ * ⚠️ Adapter, not worker, for the same reason authorship is: two Claude accounts grading the same
+ * diff are one judge with two logins, and treating them as two would smuggle the self-preference
+ * this whole feature is built to avoid back in through the batch.
+ */
+export function gradedAdaptersOf(taskId: string): Set<string> {
+  return new Set(
+    rows<{ reviewer_adapter: string }>(
+      db()
+        .prepare(
+          `select distinct reviewer_adapter from quality_reviews
+             where task_id = ? and status = 'complete' and composite is not null`
+        )
+        .all(taskId)
+    ).map((r) => r.reviewer_adapter)
+  )
+}

@@ -215,7 +215,7 @@ try {
   // rewrite that removed Cost and Controller as destinations.
   check(
     'the fixed destinations are reachable',
-    ['Dashboard', 'Controller', 'Routing Model', 'Statistics', 'Conversations', 'Logs', 'Workers', 'Global'].every((label) =>
+    ['Dashboard', 'Controller', 'Routing Model', 'Statistics', 'Quality Review', 'Conversations', 'Logs', 'Workers', 'Global'].every((label) =>
       nav.some((n) => n.startsWith(label))
     ),
     nav.join(' | ')
@@ -1512,14 +1512,15 @@ try {
     /Requirement fidelity/i.test(qualityPanel) && /Self-sufficiency/i.test(qualityPanel) && /0\.20/.test(qualityPanel)
   )
   check(
-    'it says how much finished work has no grade, and offers to grade some',
-    /ungraded/i.test(qualityPanel) && /Grade up to 5/.test(qualityPanel),
-    'the count without the button is a complaint; the button without the count is a gamble'
+    'it says how much finished work has no grade',
+    /ungraded/i.test(qualityPanel),
+    'a page about scores that never says how much work carries none is a page with a blind spot'
   )
   check(
-    'it says the button spends real turns',
-    /spends one real turn/i.test(qualityPanel),
-    'a button that costs money has to say so before it is pressed'
+    '⛔ it no longer spends turns itself, and sends you to the one page that does',
+    !/Grade up to 5/.test(qualityPanel) && /Quality Review/i.test(qualityPanel),
+    'two buttons spending turns on the same accounts under different caps is a way to empty a ' +
+      'quota window by pressing the wrong one'
   )
 
   section('routing model > velocity')
@@ -1662,6 +1663,46 @@ try {
     'it repeats that nothing here gates a routing decision',
     /gates? a routing decision/i.test(statsQuality),
     'a leaderboard nobody says is inert is a leaderboard people assume is live'
+  )
+
+  section('quality review')
+  await evaluate(
+    `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim().startsWith('Quality Review')).click()`
+  )
+  await wait(1500)
+  const reviewPanel = await evaluate('document.querySelector(".content")?.innerText ?? ""')
+  check('the quality review view renders', reviewPanel.includes('Quality Review'))
+  check(
+    'it counts finished work by how many grades it carries',
+    /no review/i.test(reviewPanel) &&
+      /1 review/i.test(reviewPanel) &&
+      /2 or more/i.test(reviewPanel),
+    reviewPanel.slice(0, 400)
+  )
+  check(
+    '⛔ it says an agent is never asked to grade the same task twice',
+    /grade a task twice|asked to grade a task twice|graded a task twice/i.test(reviewPanel) ||
+      /No agent is asked to grade a task twice/i.test(reviewPanel),
+    'the rule that stops a batch of fifty paying twice for an answer it already has'
+  )
+  check(
+    '⚠️ and that each review spends a real turn, before anything is pressed',
+    /real turn/i.test(reviewPanel) && /ALL/.test(reviewPanel),
+    'ALL is unbounded work on real accounts and has to say so'
+  )
+  const batchControls = await evaluate(
+    '[...document.querySelectorAll(".content select")].map(s => [...s.options].map(o => o.text).join(","))'
+  )
+  check(
+    'the batch offers a size and a threshold, both in plain words',
+    batchControls.some((opts) => opts.includes('ALL')) &&
+      batchControls.some((opts) => /no reviews/.test(opts) && /fewer than 2 reviews/.test(opts)),
+    batchControls.join(' | ')
+  )
+  check(
+    'an empty bucket says why it is empty rather than rendering nothing',
+    /Nothing in this bucket/i.test(reviewPanel) || /Can still be graded/i.test(reviewPanel),
+    'this install grades nothing, so the empty state is the state under test'
   )
 
   section('controller')

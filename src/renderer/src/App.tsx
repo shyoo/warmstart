@@ -37,6 +37,7 @@ import { SidebarResizer } from './components/SidebarResizer'
 import { AppSettings } from './components/AppSettings'
 import { RoutingModel, type RoutingTab } from './components/RoutingModel'
 import { Statistics, type StatisticsTab } from './components/Statistics'
+import { QualityReview } from './components/QualityReview'
 import { ProjectDot, projectWorkState } from './lib/taskview'
 
 /**
@@ -77,6 +78,12 @@ type Route =
    */
   | { kind: 'analytics'; page: 'routing-model'; tab: RoutingTab }
   | { kind: 'analytics'; page: 'statistics'; tab: StatisticsTab }
+  /**
+   * ⚠️ `taskId` for the same reason the project route carries one: every row of this page is a task,
+   * and a page whose rows cannot be opened is a report rather than a control surface. It has no tab
+   * of its own — the buckets are a filter over one table, not four destinations.
+   */
+  | { kind: 'analytics'; page: 'quality-review'; taskId?: string }
   /**
    * ⚠️ `taskId` so a run in the fleet-wide conversation list has somewhere to go. It cannot route
    * into a project tab, because the conversation it came from may belong to a different project
@@ -348,6 +355,12 @@ export function App(): React.JSX.Element {
           >
             Statistics
           </NavItem>
+          <NavItem
+            active={route.kind === 'analytics' && route.page === 'quality-review'}
+            onClick={() => setRoute({ kind: 'analytics', page: 'quality-review' })}
+          >
+            Quality Review
+          </NavItem>
         </nav>
 
         <nav className="nav-group">
@@ -415,6 +428,7 @@ export function App(): React.JSX.Element {
               // every one onto history would make Back walk the tabs instead of leaving the page.
               setTab={(tab) => setRouteNow({ kind: 'analytics', page: 'routing-model', tab })}
               now={now}
+              onOpenQualityReview={() => setRoute({ kind: 'analytics', page: 'quality-review' })}
             />
           ) : route.kind === 'analytics' && route.page === 'statistics' ? (
             <Statistics
@@ -422,7 +436,26 @@ export function App(): React.JSX.Element {
               // ⚠️ `setRouteNow`, exactly as Routing Model does: a tab is a move inside a page, and
               // pushing every one onto history would make Back walk the tabs instead of leaving.
               setTab={(tab) => setRouteNow({ kind: 'analytics', page: 'statistics', tab })}
+              onOpenQualityReview={() => setRoute({ kind: 'analytics', page: 'quality-review' })}
             />
+          ) : route.kind === 'analytics' && route.page === 'quality-review' ? (
+            route.taskId ? (
+              <TaskThread
+                taskId={route.taskId}
+                fleet={fleet}
+                onBack={() => setRoute({ kind: 'analytics', page: 'quality-review' })}
+                backLabel="Quality Review"
+                onOpenTask={(taskId) => setRoute({ kind: 'analytics', page: 'quality-review', taskId })}
+              />
+            ) : (
+              <QualityReview
+                projects={projects}
+                onOpenTask={(taskId) => setRoute({ kind: 'analytics', page: 'quality-review', taskId })}
+                onOpenStatistics={() =>
+                  setRoute({ kind: 'analytics', page: 'statistics', tab: 'quality' })
+                }
+              />
+            )
           ) : route.kind === 'unassigned' ? (
             route.taskId ? (
               <TaskThread

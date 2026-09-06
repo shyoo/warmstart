@@ -1,5 +1,11 @@
 import type { QualityReview } from './review.js'
-import type { GradeBatchOutcome, QualityReport, UngradedTask } from './quality.js'
+import type {
+  GradeBatch,
+  QualityReport,
+  ReviewFilter,
+  ReviewQueuePage,
+  UngradedTask
+} from './quality.js'
 import type { StatisticsReport } from './statistics.js'
 import type { ModelReport, RoutingDecisionPage, VelocityReport } from './routing.js'
 import type {
@@ -1702,14 +1708,34 @@ export interface RpcMap {
   /** The tasks nothing has graded, newest first — what the grade button would work through. */
   'quality.ungraded': { params: { limit?: number }; result: UngradedTask[] }
   /**
-   * Grade up to five ungraded tasks.
-   *
-   * ⚠️ **Spends a real turn on a real account for each one**, sequentially, and resolves when the
-   * last is stored. Capped in the daemon at `GRADE_BATCH_MAX`, not by this parameter.
+   * One page of Analytics › Quality Review: finished tasks in one grade-count bucket, with the
+   * counts the bucket tabs print and, per row, whether any peer could still grade it.
    */
-  'quality.grade': {
-    params: { limit?: number }
-    result: { results: GradeBatchOutcome[]; graded: number; skipped: number }
+  'quality.queue': {
+    params: { filter?: ReviewFilter; limit?: number; offset?: number } | void
+    result: ReviewQueuePage
+  }
+  /**
+   * Commission many reviews at once.
+   *
+   * ⛔ **Returns as soon as the queue exists, not when the reviews are done.** Each entry spends a
+   * real turn on a real account; ALL over a fleet's backlog is hours of work, and an RPC that stayed
+   * open for it would be lost by the first window reload. Progress comes back from `quality.batch`,
+   * and the reviews themselves show up as runs on their own tasks.
+   *
+   * `count` is how many tasks are **attempted** (null = every match); `threshold` is a strict
+   * `quality_review_count < threshold`.
+   */
+  'quality.batch.start': {
+    params: { count: number | null; threshold: number }
+    result: { ok: true; batch: GradeBatch } | { ok: false; reason: string }
+  }
+  /** The batch on screen, or null when none has been started since the daemon came up. */
+  'quality.batch': { params: void; result: GradeBatch | null }
+  /** Stop the queue. ⛔ Never stops a review already in flight — that is `review.cancel`. */
+  'quality.batch.cancel': {
+    params: void
+    result: { ok: true; batch: GradeBatch } | { ok: false; reason: string }
   }
   /**
    * The recent past of the daemon's log, for a panel that has just opened.

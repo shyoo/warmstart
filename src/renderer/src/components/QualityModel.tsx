@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { GradeBatchOutcome, QualityReport, UngradedTask } from '@shared/quality'
+import type { QualityReport, UngradedTask } from '@shared/quality'
 import { RUBRIC_DIMENSIONS, type RubricDimension } from '@shared/review'
 import { rpc, useDaemonEvents } from '../lib/daemon'
 import { when } from '../lib/format'
@@ -13,17 +13,20 @@ import { when } from '../lib/format'
  * assumes the number must be doing something. It is an instrument. Wiring it into routing before it
  * has been shown to measure anything is a mistake this project has already made once.
  *
- * ⚠️ The one button here spends real turns on real accounts. It says so, it is capped at five, and
- * it reports what each one produced.
+ * ⛔ **Nothing on this page commissions a review any more.** The button that used to live here
+ * graded up to five ungraded tasks inside its own RPC call; grading is now asked for on Analytics
+ * &rsaquo; Quality Review, which can filter by how many grades a task already has, run more than
+ * five, and report what happened to each one. Two buttons that both spend turns on the same accounts
+ * with different caps is a way to spend a quota window by pressing the wrong one.
  */
 
-const GRADE_BATCH = 5
-
-export function QualityModel(): React.JSX.Element {
+export function QualityModel({
+  onOpenQualityReview
+}: {
+  onOpenQualityReview: () => void
+}): React.JSX.Element {
   const [report, setReport] = useState<QualityReport | null>(null)
   const [ungraded, setUngraded] = useState<UngradedTask[]>([])
-  const [grading, setGrading] = useState(false)
-  const [outcomes, setOutcomes] = useState<GradeBatchOutcome[] | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
@@ -47,20 +50,6 @@ export function QualityModel(): React.JSX.Element {
   useDaemonEvents((event) => {
     if (event.type === 'task.changed') void refresh()
   })
-
-  const grade = useCallback(async () => {
-    setGrading(true)
-    setOutcomes(null)
-    try {
-      const result = await rpc('quality.grade', { limit: GRADE_BATCH })
-      setOutcomes(result.results)
-      await refresh()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setGrading(false)
-    }
-  }, [refresh])
 
   if (error) return <div className="alert">{error}</div>
   if (!report) return <p className="dim">Reading what peer review has measured…</p>
@@ -302,35 +291,14 @@ export function QualityModel(): React.JSX.Element {
         </div>
 
         <div className="row-actions">
-          <button className="btn" disabled={grading || report.ungradedTasks === 0} onClick={() => void grade()}>
-            {grading ? `Grading up to ${GRADE_BATCH}…` : `Grade up to ${GRADE_BATCH} ungraded tasks`}
+          <button className="btn" onClick={onOpenQualityReview}>
+            Grade finished work on Quality Review →
           </button>
           <span className="dim">
-            ⚠️ Spends one real turn on a peer account per task, one after another, and can take a few
-            minutes. Capped at {GRADE_BATCH} per press.
+            ⚠️ Grading is commissioned in one place, so there is one cap and one queue to watch. That
+            page filters by how many grades a task already has and reports what each review produced.
           </span>
         </div>
-
-        {outcomes && (
-          <table className="tbl" style={{ marginTop: 'var(--sp-3)' }}>
-            <thead>
-              <tr>
-                <th>Task</th>
-                <th className="tbl-num">Score</th>
-                <th>What happened</th>
-              </tr>
-            </thead>
-            <tbody>
-              {outcomes.map((o) => (
-                <tr key={o.taskId}>
-                  <td className="tbl-strong">t{o.seq}</td>
-                  <td className="tbl-num num">{o.ok ? fmt(o.composite) : '—'}</td>
-                  <td className={o.ok ? 'dim' : 'warn'}>{o.reason || (o.ok ? 'graded' : 'no reason given')}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
 
         {ungraded.length > 0 && (
           <>

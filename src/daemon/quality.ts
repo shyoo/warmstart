@@ -5,12 +5,21 @@ import {
   type DimensionScore,
   type RubricDimension
 } from '@shared/review.js'
-import type { QualityKey, QualityReport, QualityReviewerTally, UngradedTask } from '@shared/quality.js'
+import type {
+  QualityKey,
+  QualityReport,
+  QualityReviewerTally,
+  ReviewCounts,
+  ReviewFilter,
+  ReviewQueuePage,
+  UngradedTask
+} from '@shared/quality.js'
 import { db, rows } from './db.js'
 import { adapter } from './adapters/index.js'
+import { pendingReviews } from './review.js'
+import { getTask } from './tasks.js'
 import { defaultGradingModel, listWorkers } from './workers.js'
-import { requestReview, reviewEligibility } from './reviewer.js'
-import { log } from './log.js'
+import { reviewerAvailability } from './reviewer.js'
 
 /**
  * What the fleet has actually measured about *quality*, aggregated from stored peer reviews.
@@ -18,8 +27,9 @@ import { log } from './log.js'
  * ⛔ **A read, and only a read.** Nothing here grades anything, nothing here changes a task, and — as
  * `@shared/review.ts` says at the top — no routing decision reads the number this produces. It is an
  * instrument for a person: "is this agent worse at this repository's UI code, or did it just draw the
- * hard tasks?" The one *action* in this file is `gradeUngraded`, and it is only ever reached by
- * somebody pressing a button.
+ * hard tasks?" ⛔ **Nothing in this file grades anything at all any more** — commissioning a review
+ * is `gradebatch.ts`, reached only by somebody pressing Batch, and the reads here are what that page
+ * and the Routing Model tab render.
  *
  * ⛔ **Every aggregate is computed from the reviews' own stored rubric version.** A weight change
  * must not reinterpret a score produced under the old weights, so a key's composite is the mean of
@@ -291,91 +301,181 @@ export function qualityReport(): QualityReport {
   }
 }
 
-/**
- * How many tasks one press of the button may grade.
- *
- * ⛔ A hard cap, not a default. Each of these spends a real turn on a real account, and a button that
- * could quietly commission forty of them on a fleet with a hundred ungraded tasks is a button that
- * empties a quota window by accident.
- */
-export const GRADE_BATCH_MAX = 5
+// ---------------------------------------------------------------------------- the review queue
 
-export interface GradeBatchResult {
-  taskId: string
+/**
+ * The universe the Quality Review page pages through, and the one the batch draws from.
+ *
+ * ⛔ **Completed tasks that something actually ran on.** A cancelled or failed task has no result to
+ * judge, a running one has not produced its diff yet, and a task somebody completed by hand has no
+ * agent work to grade — offering to spend a reviewer's turn on it would buy a score about nobody.
+ * The same three conditions `ungradedTasks` has always used, lifted out so the counts, the table and
+ * the batch cannot drift into disagreeing about which tasks exist.
+ */
+const FINISHED = `from tasks t
+   where t.status = 'completed' and t.deleted_at is null
+     and exists (select 1 from runs r where r.task_id = t.id and r.kind = 'work')`
+
+/** The `where` fragment for one bucket. ⚠️ `many` is two *or more*, so exactly two is in it. */
+function filterClause(filter: ReviewFilter): string {
+  if (filter === 'none') return ' and t.quality_review_count = 0'
+  if (filter === 'one') return ' and t.quality_review_count = 1'
+  if (filter === 'many') return ' and t.quality_review_count >= 2'
+  return ''
+}
+
+function scalar(sql: string): number {
+  return ((db().prepare(sql).get() as { n: number } | undefined)?.n ?? 0)
+}
+
+export function reviewCounts(): ReviewCounts {
+  const none = scalar(`select count(*) as n ${FINISHED} and t.quality_review_count = 0`)
+  const one = scalar(`select count(*) as n ${FINISHED} and t.quality_review_count = 1`)
+  const many = scalar(`select count(*) as n ${FINISHED} and t.quality_review_count >= 2`)
+  return { none, one, many, total: none + one + many }
+}
+
+interface QueueRow {
+  id: string
   seq: number
-  ok: boolean
-  /** The stored score, where one was produced. Null on any outcome that is not a complete review. */
-  composite: number | null
-  reason: string
+  title: string
+  project_id: string | null
+  updated_at: number
+  quality_review_count: number
+  quality_review_score: number | null
+  adapter_id: string | null
+  model: string | null
 }
 
 /**
- * Grade up to `GRADE_BATCH_MAX` ungraded tasks, one after another.
+ * The tasks in one bucket, newest first.
  *
- * ⛔ **Sequential, deliberately.** Five reviews in parallel is five agent processes spawned at once
- * on a machine that is probably already running work, and `pickReviewer` would hand several of them
- * the same account — it excludes a worker that is *already* reviewing, and three simultaneous calls
- * all read "not reviewing" before any of them spawns.
- *
- * ⚠️ Every task is checked with `reviewEligibility` first, so a task with no resolvable commit range
- * or no peer to grade it is *skipped with its reason* rather than costing a spawn to discover the
- * same thing. The reasons come back to the caller and are shown; a batch that graded two of five is
- * a useful answer, not a failure.
+ * ⚠️ Newest first for the reason `ungradedTasks` is: a review reads a commit range, and
+ * `resolveRange` gets less able to answer the further back it reaches. A page of the oldest work is
+ * a page of tasks that will mostly refuse.
  */
-export async function gradeUngraded(limit = GRADE_BATCH_MAX): Promise<{
-  results: GradeBatchResult[]
-  graded: number
-  skipped: number
-}> {
-  const wanted = Math.max(1, Math.min(GRADE_BATCH_MAX, Math.floor(limit)))
-  // ⚠️ A wider slice than `wanted`: tasks are skipped for reasons only `reviewEligibility` knows, and
-  // taking exactly five candidates would return "graded 0 of 5" on a fleet where the sixth was fine.
-  const candidates = ungradedTasks(wanted * 4)
-  const results: GradeBatchResult[] = []
-  let graded = 0
+function queueRows(filter: ReviewFilter, limit: number, offset: number): QueueRow[] {
+  return rows<QueueRow>(
+    db()
+      .prepare(
+        `select t.id, t.seq, t.title, t.project_id, t.updated_at, t.quality_review_count,
+                t.quality_review_score,
+                (select r.adapter_id from runs r
+                  where r.task_id = t.id and r.kind = 'work'
+                    and coalesce(r.outcome, '') <> 'failed'
+                  order by r.started_at desc limit 1) as adapter_id,
+                (select r.model from runs r
+                  where r.task_id = t.id and r.kind = 'work'
+                    and coalesce(r.outcome, '') <> 'failed'
+                  order by r.started_at desc limit 1) as model
+           ${FINISHED}${filterClause(filter)}
+          order by t.updated_at desc
+          limit ? offset ?`
+      )
+      .all(limit, offset)
+  )
+}
 
-  for (const candidate of candidates) {
-    if (graded >= wanted) break
-    const eligible = await reviewEligibility(candidate.taskId)
-    if (!eligible.ok) {
-      results.push({
-        taskId: candidate.taskId,
-        seq: candidate.seq,
-        ok: false,
-        composite: null,
-        reason: eligible.reason
-      })
-      continue
-    }
-    const outcome = await requestReview(candidate.taskId)
-    if (!outcome.ok) {
-      results.push({
-        taskId: candidate.taskId,
-        seq: candidate.seq,
-        ok: false,
-        composite: null,
-        reason: outcome.reason
-      })
-      continue
-    }
-    graded += 1
-    const review = outcome.review
-    results.push({
-      taskId: candidate.taskId,
-      seq: candidate.seq,
-      // ⛔ `status`, not the presence of the row. A review that was asked for and came back
-      // unparseable is stored, is a real fact about that model, and is not a grade.
-      ok: review.status === 'complete' && review.composite !== null,
-      composite: review.composite,
-      reason:
-        review.status === 'complete'
-          ? review.summary ?? ''
-          : (review.failureReason ?? `the review ended ${review.status}`)
-    })
-    log.info(
-      `graded t${candidate.seq}: ${review.composite ?? 'no score'} (${review.status}) by ${review.reviewerAdapter}`
-    )
+/** Who has already graded each of these tasks, in one read rather than one per row. */
+function gradersByTask(taskIds: string[]): Map<string, string[]> {
+  const out = new Map<string, string[]>()
+  if (taskIds.length === 0) return out
+  const marks = taskIds.map(() => '?').join(', ')
+  for (const r of rows<{ task_id: string; reviewer_adapter: string }>(
+    db()
+      .prepare(
+        `select distinct task_id, reviewer_adapter from quality_reviews
+          where status = 'complete' and composite is not null and task_id in (${marks})
+          order by task_id, reviewer_adapter`
+      )
+      .all(...taskIds)
+  )) {
+    out.set(r.task_id, [...(out.get(r.task_id) ?? []), r.reviewer_adapter])
   }
+  return out
+}
 
-  return { results, graded, skipped: results.length - graded }
+/** One page of the Quality Review table, with the bucket counts the tabs above it print. */
+export function reviewQueue(
+  filter: ReviewFilter = 'none',
+  limit = 25,
+  offset = 0
+): ReviewQueuePage {
+  const take = Math.max(1, Math.min(200, Math.floor(limit)))
+  const skip = Math.max(0, Math.floor(offset))
+  const found = queueRows(filter, take, skip)
+  const graders = gradersByTask(found.map((r) => r.id))
+  const grading = new Set(pendingReviews().map((r) => r.taskId))
+  const counts = reviewCounts()
+  const total =
+    filter === 'none' ? counts.none : filter === 'one' ? counts.one : filter === 'many' ? counts.many : counts.total
+
+  return {
+    counts,
+    total,
+    rows: found.map((r) => {
+      const task = getTask(r.id)
+      // ⚠️ A row whose task vanished between the two reads is not an eligibility answer, and saying
+      // "no eligible reviewer" about it would be a claim this code cannot support.
+      const availability = task
+        ? reviewerAvailability(task)
+        : { eligible: false, reason: 'this task is no longer readable', count: 0 }
+      return {
+        taskId: r.id,
+        seq: r.seq,
+        title: r.title.slice(0, 400),
+        projectId: r.project_id,
+        finishedAt: r.updated_at,
+        adapterId: r.adapter_id,
+        model: r.model,
+        reviewCount: r.quality_review_count,
+        score: r.quality_review_score,
+        gradedBy: graders.get(r.id) ?? [],
+        eligible: availability.eligible,
+        ineligibleReason: availability.eligible ? '' : availability.reason,
+        grading: grading.has(r.id)
+      }
+    })
+  }
+}
+
+/**
+ * The tasks a batch would grade: fewer than `threshold` stored grades, newest first.
+ *
+ * ⛔ `count` is what will be **attempted**, not what will be graded. The batch this replaced took a
+ * wider slice and kept going until it had graded its number, which is right for a button that says
+ * *grade five* and wrong for a queue an operator is watching: a row that was skipped has to stay
+ * visible as a skip with its reason, and silently substituting the next task for it hides exactly
+ * the fleet fact — no peer left, no resolvable range — the page was opened to find.
+ */
+export function batchCandidates(threshold: number, count: number | null): UngradedTask[] {
+  const under = Math.max(1, Math.floor(threshold))
+  const take = count === null ? 500 : Math.max(1, Math.min(500, Math.floor(count)))
+  return rows<QueueRow>(
+    db()
+      .prepare(
+        `select t.id, t.seq, t.title, t.project_id, t.updated_at, t.quality_review_count,
+                t.quality_review_score,
+                (select r.adapter_id from runs r
+                  where r.task_id = t.id and r.kind = 'work'
+                    and coalesce(r.outcome, '') <> 'failed'
+                  order by r.started_at desc limit 1) as adapter_id,
+                (select r.model from runs r
+                  where r.task_id = t.id and r.kind = 'work'
+                    and coalesce(r.outcome, '') <> 'failed'
+                  order by r.started_at desc limit 1) as model
+           ${FINISHED} and t.quality_review_count < ?
+          order by t.updated_at desc
+          limit ?`
+      )
+      .all(under, take)
+  ).map((r) => ({
+    taskId: r.id,
+    seq: r.seq,
+    title: r.title.slice(0, 400),
+    projectId: r.project_id,
+    finishedAt: r.updated_at,
+    adapterId: r.adapter_id,
+    model: r.model
+  }))
 }

@@ -74,7 +74,7 @@ share an end. Measured on t231, 2026-09-05: run 2 ran 16:44:24–16:55:19 and it
 fallback but the answer — it has not ended, so it ends after everything that has. The start time
 breaks ties, so two open entries still have a stable order.
 
-⛔ **Analytics holds two pages, and they answer different questions.** *Routing Model* explains a
+⛔ **Analytics holds three pages, and they answer different questions.** *Routing Model* explains a
 choice: every number on it is shrunk toward a prior, blended or clamped, because it is about to be
 acted on. *Statistics* (`components/Statistics.tsx`, one `statistics.report` call for all three tabs)
 describes what happened: nothing on it is smoothed. Price, Velocity and Quality each fold the last
@@ -86,11 +86,40 @@ since averaging an amortised share of a flat fee together with money billed on t
 ⚠️ An `unknown` renders `n/a`, never `$0.00`, and the benchmark prior and fitness columns are drawn
 on **model** rows only — a prior is published per model, so there is no prior for `high` alone.
 
-⛔ **Quality review has no view of its own**, and that is a decision rather than an omission. It is a
-field on a task, not a place to go: a dedicated "Quality" page would be a second board to keep in
-step with the first, and the cross-agent comparison the feature exists to enable is a *query* over
-stored rows — a thing to run when there is something to compare, not a screen to build before there
-is. It appears in three places only: a `Quality` column in `Tasks`, a `#N Quality Review` row in
+⛔ **Quality Review is the coverage page, and it is not a second scoreboard.**
+(`components/QualityReview.tsx`.) *Statistics › Quality per Task* holds the distribution — how each
+agent and model scores — and duplicating it here would leave two tables of the same numbers folded
+two ways and no way to tell which was authoritative. This page answers what that one cannot: which
+finished work carries **no** grade, exactly one, or two or more; who has already graded each task;
+and whether any peer is left who could still grade it. The two link to each other in both directions
+rather than repeating each other. ⛔ **It is also the only place a review is commissioned in bulk** —
+the *Grade up to five* button that used to sit on Routing Model › Quality is gone and links here,
+because two buttons spending turns on the same accounts under different caps is a way to empty a
+quota window by pressing the wrong one.
+
+⛔ **Batching is a queue, not a call.** `quality.batch.start` returns as soon as the queue exists and
+the reviews run in the background (`daemon/gradebatch.ts`), because ALL over a backlog is hours of
+grading and an RPC held open for it would be lost by the first window reload. Progress is read back
+from `quality.batch`, and the reviews themselves are ordinary runs on ordinary tasks — the Tasks
+table and the task threads are where they are watched. ⚠️ **Concurrency is not a number written
+anywhere**: the driver starts everything that can start and `reviewCandidates` refuses an account
+that is already reviewing, so a two-account fleet grades two tasks at once and a one-account fleet
+grades one. ⛔ **The count is what is *attempted*, not what is graded** — a task that is skipped stays
+visible as a skip with its own reason rather than being silently replaced by the next one, because
+*no peer left* and *the branch is gone so there is nothing to diff* are the fleet facts the page was
+opened to find. Stopping a batch stops the queue and never a review already in flight; that one is
+stopped by name on its own task.
+
+⛔ **No agent grades the same task twice.** Once an adapter has produced a *scored* grade for a task
+it stops being a candidate for it, everywhere — the batch, the per-task Review button and the
+reviewer picker alike (`gradedAdaptersOf`, `reviewCandidates`). ⚠️ By adapter, like authorship: two
+Claude accounts are one judge. ⚠️ Only a grade that produced a number burns an adapter — a review
+that timed out, refused, or answered with no JSON never answered, so its adapter is asked again, and
+that is the same rule `tasks.quality_review_count` counts by. A task with nobody left reads *no
+eligible review agent* with every candidate and its reason on hover, and a batch skips it.
+
+Quality review is otherwise a field on a task rather than a place to go. It appears in three further
+places: a `Quality` column in `Tasks`, a `#N Quality Review` row in
 `TaskThread`'s timeline (⚠️ the underlying run is filtered out so it draws once, not twice), and the
 request box in that thread's facts column, whose every disabled state names its reason. The request
 box offers **Auto**, which randomly chooses an available account and uses that adapter's small review

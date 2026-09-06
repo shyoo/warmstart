@@ -1,6 +1,6 @@
 import type { QualityReview } from '@shared/review.js'
 import type { Worker } from '@shared/protocol.js'
-import type { Task } from '@shared/tasks.js'
+import type { Project, Task } from '@shared/tasks.js'
 import { WINDOW_HIGH_WATER } from '@shared/tasks.js'
 import { adapter } from './adapters/index.js'
 import { accountUnavailability } from './eligibility.js'
@@ -11,6 +11,7 @@ import { lastQuota } from './quota.js'
 import {
   authorshipOf,
   blind,
+  gradedAdaptersOf,
   collectDiff,
   buildReviewPrompt,
   cancelReview as settleCancelledReview,
@@ -22,7 +23,8 @@ import {
   refuseReview,
   requireReview,
   resolveRange,
-  runHistoryText
+  runHistoryText,
+  type RangeResolution
 } from './review.js'
 import {
   closeSession,
@@ -103,6 +105,22 @@ export const REVIEW_MODELS: Record<string, string> = {
 /** Live review sessions, keyed by their durable review row so a person can stop one precisely. */
 const activeReviews = new Map<string, { sessionId: string; stop: () => void }>()
 
+/**
+ * Accounts a caller has picked but not yet spawned on.
+ *
+ * ⛔ **`sessionsForWorker` is not enough once two reviews are started in the same tick.** The
+ * "already reviewing" gate reads a session that does not exist until `spawnSession`, and
+ * `requestReview` does two `await`s between choosing an account and spawning on it (the diff and the
+ * range walk git). Two batch drivers starting together therefore both read *not reviewing*, both
+ * pick the same account, and the second one's spawn lands on an account already holding a review —
+ * which is exactly the collision `gradeUngraded` avoided by refusing to run anything in parallel at
+ * all. This set closes the window instead: `pickReviewer` chooses and `requestReview` claims with no
+ * `await` between them, so on a single-threaded runtime the pair is atomic.
+ *
+ * ⚠️ Released in a `finally`. A claim that outlives its review would retire an account silently.
+ */
+const claimedReviewers = new Set<string>()
+
 function gradingModel(worker: Worker): string | null {
   return worker.gradingModel ?? defaultGradingModel(worker.adapterId)
 }
@@ -182,6 +200,11 @@ function window5h(workerId: string): { percent: number } | null {
 function reviewCandidates(task: Task, requireAvailable: boolean): { candidates: Worker[]; reason: string } {
   const { authors } = authorshipOf(task.id)
   const authorAdapters = new Set(authors.map((a) => a.adapterId))
+  // ⛔ **An adapter is asked at most once.** A second grade from a judge that has already answered
+  // is a turn spent re-reading a diff to reproduce a number that is already stored, and on a batch
+  // of fifty that is the difference between measuring the fleet and emptying a quota window. See
+  // `gradedAdaptersOf` for why this is by adapter and why only `complete` counts.
+  const gradedAdapters = gradedAdaptersOf(task.id)
   const rejected: string[] = []
   /** ⚠️ Counted apart from the rest: "everybody here wrote it" is a different sentence. */
   let rejectedAsAuthor = 0
@@ -192,6 +215,10 @@ function reviewCandidates(task: Task, requireAvailable: boolean): { candidates: 
     if (authorAdapters.has(worker.adapterId)) {
       rejected.push(`${worker.label} did this work`)
       rejectedAsAuthor += 1
+      continue
+    }
+    if (gradedAdapters.has(worker.adapterId)) {
+      rejected.push(`${worker.label} has already graded this task`)
       continue
     }
     if (worker.gradingEnabled === false) {
@@ -231,7 +258,9 @@ function reviewCandidates(task: Task, requireAvailable: boolean): { candidates: 
       rejected.push(`${worker.label} is at ${Math.round(win.percent)}% of its 5h window`)
       continue
     }
-    if (sessionsForWorker(worker.id).some((s) => s.purpose === 'review')) {
+    // ⚠️ Two spellings of one fact, because a review has two phases: `claimedReviewers` covers the
+    // gap between being picked and being spawned on, the session covers everything after.
+    if (claimedReviewers.has(worker.id) || sessionsForWorker(worker.id).some((s) => s.purpose === 'review')) {
       rejected.push(`${worker.label} is already reviewing`)
       continue
     }
@@ -257,6 +286,25 @@ function reviewCandidates(task: Task, requireAvailable: boolean): { candidates: 
   }
 
   return { candidates, reason: '' }
+}
+
+/**
+ * Could *anybody* still grade this task, and if not, why not.
+ *
+ * ⚠️ The durable gates only (`requireAvailable: false`), which is what a table of a hundred rows can
+ * afford and what it should say: quota and login change by the minute, and a row that read *no
+ * eligible review agent* because an account was briefly at 92% of its window would be telling an
+ * operator something permanent about a condition that clears itself. Authorship and "has already
+ * graded this" do not clear, and those are the two this column is for.
+ */
+export function reviewerAvailability(
+  task: Task,
+  /** ⚠️ `true` additionally asks whether an account could start *this instant*. The batch driver's
+   *  question, and the only caller that may treat a `false` as something that will clear. */
+  requireAvailable = false
+): { eligible: boolean; reason: string; count: number } {
+  const { candidates, reason } = reviewCandidates(task, requireAvailable)
+  return { eligible: candidates.length > 0, reason, count: candidates.length }
 }
 
 /** Routable peers shown in the reviewer picker; transient availability is checked on request. */
@@ -356,13 +404,34 @@ export async function requestReview(taskId: string, workerId?: string | null): P
   const project = task.projectId ? getProject(task.projectId) : null
   if (!project) return { ok: false, reason: 'this task has no project to read' }
 
-  const range = await resolveRange(task, project, landingTargetFor(task, project))
-  if (!range.ok) return { ok: false, reason: range.reason }
-
+  // ⛔ **The reviewer is chosen and claimed before the first `await`, not after it.** Resolving the
+  // range walks git, so picking on the far side of it would leave a window in which a second caller
+  // — a batch grading two tasks at once — reads the same account as free and picks it too. Nothing
+  // above this line yields, so a caller that has started this call has already taken its account by
+  // the time the promise is handed back, and the ordering is what makes that true rather than a
+  // comment saying it is. ⚠️ The cost is that a task with both no peer and no resolvable range now
+  // reports the peer; both sentences are true and `reviewEligibility` reports the range first.
   const choice = pickReviewer(task, workerId)
   if (!choice.worker) return { ok: false, reason: choice.reason }
   const worker = choice.worker
+  claimedReviewers.add(worker.id)
+  try {
+    const range = await resolveRange(task, project, landingTargetFor(task, project))
+    if (!range.ok) return { ok: false, reason: range.reason }
+    return await runReview(taskId, task, project, range, worker)
+  } finally {
+    claimedReviewers.delete(worker.id)
+  }
+}
 
+/** The body of one review, on an account that has already been chosen and claimed. */
+async function runReview(
+  taskId: string,
+  task: Task,
+  project: Project,
+  range: Extract<RangeResolution, { ok: true }>,
+  worker: Worker
+): Promise<{ ok: true; review: QualityReview } | { ok: false; reason: string }> {
   const { authors, subjectAdapter, subjectModel, mixed } = authorshipOf(taskId)
   if (!subjectAdapter) {
     return { ok: false, reason: 'nothing has run on this task yet, so there is no work to grade' }

@@ -167,10 +167,14 @@ function DistributionTable({
 
 export function Statistics({
   tab,
-  setTab
+  setTab,
+  onOpenQualityReview
 }: {
   tab: StatisticsTab
   setTab: (tab: StatisticsTab) => void
+  /** ⚠️ *Which* work has been graded is a different question from *how* it scored, and it has its
+   *  own page. This tab is the distribution; the coverage and the batch button are over there. */
+  onOpenQualityReview: () => void
 }): React.JSX.Element {
   const [report, setReport] = useState<StatisticsReport | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -238,7 +242,7 @@ export function Statistics({
       ) : tab === 'velocity' ? (
         <VelocityTab report={report} />
       ) : (
-        <QualityTab report={report} />
+        <QualityTab report={report} onOpenQualityReview={onOpenQualityReview} />
       )}
     </div>
   )
@@ -355,7 +359,13 @@ function VelocityTab({ report }: { report: StatisticsReport }): React.JSX.Elemen
   )
 }
 
-function QualityTab({ report }: { report: StatisticsReport }): React.JSX.Element {
+function QualityTab({
+  report,
+  onOpenQualityReview
+}: {
+  report: StatisticsReport
+  onOpenQualityReview: () => void
+}): React.JSX.Element {
   const { quality } = report
   return (
     <div className="stack">
@@ -369,8 +379,11 @@ function QualityTab({ report }: { report: StatisticsReport }): React.JSX.Element
             scale — it is what the fleet believes before it has seen this model do anything, and it
             is deliberately the whole answer rather than a placeholder. ⛔ A key with no prior and no
             review reads <em>unknown</em>, never 0 and never 0.5: an ungraded model must not be able
-            to look average. Commission a grader and grade some finished tasks from Routing Model
-            &rsaquo; Quality, and the measured column fills in beside it.
+            to look average. Commission a grader and grade some finished tasks from{' '}
+            <button className="linkish" onClick={onOpenQualityReview}>
+              Analytics &rsaquo; Quality Review
+            </button>
+            , and the measured column fills in beside it.
           </div>
         ) : (
           <p className="panel-sub">
@@ -389,6 +402,14 @@ function QualityTab({ report }: { report: StatisticsReport }): React.JSX.Element
           {quality.totalReviews === 1 ? '' : 's'} · {quality.ungraded} finished task
           {quality.ungraded === 1 ? '' : 's'} still ungraded. ⛔ Nothing here gates a routing
           decision; no score is read by the scheduler.
+        </p>
+        <p className="dim">
+          This tab is the <strong>distribution</strong> of the grades.{' '}
+          <button className="linkish" onClick={onOpenQualityReview}>
+            Quality Review
+          </button>{' '}
+          is the other half of the same question: which tasks those grades cover, which have none,
+          and who is left who could still grade them.
         </p>
       </section>
 

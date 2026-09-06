@@ -34,11 +34,14 @@ export const ROUTING_TABS: Array<{ id: RoutingTab; label: string }> = [
 export function RoutingModel({
   tab,
   setTab,
-  now
+  now,
+  onOpenQualityReview
 }: {
   tab: RoutingTab
   setTab: (tab: RoutingTab) => void
   now: number
+  /** ⛔ Grading is commissioned from one place now. The Quality tab explains and links; see below. */
+  onOpenQualityReview: () => void
 }): React.JSX.Element {
   return (
     <div className="panel">
@@ -67,7 +70,7 @@ export function RoutingModel({
       {tab === 'overview' ? (
         <RoutingOverview />
       ) : tab === 'quality' ? (
-        <QualityModel />
+        <QualityModel onOpenQualityReview={onOpenQualityReview} />
       ) : tab === 'cost' ? (
         <CostModel now={now} />
       ) : tab === 'velocity' ? (

@@ -33,7 +33,8 @@ import { accountUnavailability } from './eligibility.js'
 import { dispatchCountsByPair, routingDecisions } from './routingdecisions.js'
 import type { ModelReport, ModelReportRow, VelocityReport } from '@shared/routing.js'
 import { paceFactors, paceFor, paceValue } from './pace.js'
-import { GRADE_BATCH_MAX, gradeUngraded, qualityReport, ungradedTasks } from './quality.js'
+import { qualityReport, reviewQueue, ungradedTasks } from './quality.js'
+import { cancelBatch, currentBatch, startBatch } from './gradebatch.js'
 import { statisticsReport } from './statistics.js'
 import { weights, WEIGHT_FORMULAS } from './objective.js'
 import { lastQuota, lastQuotaReading, probeWorker, refreshNow } from './quota.js'
@@ -994,7 +995,7 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
       }
     },
     // ---- analytics -----------------------------------------------------------------------
-    // ⛔ Reads, all of them, with one exception: `quality.grade` spends turns and is only ever
+    // ⛔ Reads, all of them, with one exception: `quality.batch.start` spends turns and is only ever
     // reached by somebody pressing a button. Nothing in a scheduler tick calls it.
     'routing.decisions': (p) => routingDecisions(p?.limit ?? 5, p?.offset ?? 0),
     'routing.velocity': () => velocityReport(),
@@ -1002,7 +1003,11 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
     'quality.report': () => qualityReport(),
     'statistics.report': () => statisticsReport(),
     'quality.ungraded': (p) => ungradedTasks(p?.limit ?? 25),
-    'quality.grade': (p) => gradeUngraded(p?.limit ?? GRADE_BATCH_MAX),
+    'quality.queue': (p) => reviewQueue(p?.filter ?? 'none', p?.limit ?? 25, p?.offset ?? 0),
+    // ⛔ Starts a queue and answers; it does not wait for the grades. See `quality.batch.start`.
+    'quality.batch.start': (p) => startBatch(p.count, p.threshold),
+    'quality.batch': () => currentBatch(),
+    'quality.batch.cancel': () => cancelBatch(),
 
     'scheduler.tick': () => tick(),
 
