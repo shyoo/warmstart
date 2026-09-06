@@ -3,6 +3,8 @@ import type { QualityReport, UngradedTask } from '@shared/quality'
 import { RUBRIC_DIMENSIONS, type RubricDimension } from '@shared/review'
 import { rpc, useDaemonEvents } from '../lib/daemon'
 import { when } from '../lib/format'
+import { modelLabel } from '../lib/modelname'
+import { AgentLabel } from './AgentLabel'
 
 /**
  * Analytics > Routing Model > Quality.
@@ -198,7 +200,7 @@ export function QualityModel({
             <table className="tbl">
               <thead>
                 <tr>
-                  <th>Agent / model</th>
+                  <th>Model / agent</th>
                   <th className="tbl-num">Clean mean</th>
                   <th className="tbl-num">All</th>
                   <th className="tbl-num">n (clean/all)</th>
@@ -214,9 +216,15 @@ export function QualityModel({
               <tbody>
                 {report.keys.map((key) => (
                   <tr key={`${key.adapterId}/${key.model ?? '?'}`}>
+                    {/* ⛔ The model leads. `openai-compatible` is a transport, and the two things
+                        it reaches here — Codex CLI and a local endpoint — are not one agent whose
+                        quality can be averaged into a single row's worth of number. */}
                     <td className="tbl-strong">
-                      {key.adapterId}
-                      {key.model ? <span className="dim">/{key.model}</span> : null}
+                      <AgentLabel
+                        adapterId={key.adapterId}
+                        model={key.model}
+                        labels={report.adapterLabels}
+                      />
                     </td>
                     <td className="tbl-num num">{fmt(key.cleanComposite)}</td>
                     <td className="tbl-num num dim">{fmt(key.composite)}</td>
@@ -253,7 +261,7 @@ export function QualityModel({
             <thead>
               <tr>
                 <th>Reviewer</th>
-                <th>Grading model</th>
+                <th>Graded on</th>
                 <th className="tbl-num">Reviews given</th>
                 <th className="tbl-num">Mean score given</th>
               </tr>
@@ -262,7 +270,23 @@ export function QualityModel({
               {report.reviewers.map((r) => (
                 <tr key={r.adapterId}>
                   <td className="tbl-strong">{r.label}</td>
-                  <td className="mono dim">{r.gradingModel ?? 'the CLI default'}</td>
+                  {/* ⚠️ What actually produced these reviews, not what Settings would pick for the
+                      next one. A judge's generosity is a fact about the model that graded. */}
+                  <td
+                    className="dim"
+                    title={
+                      r.modelsUsed.length > 0
+                        ? r.modelsUsed.join(', ')
+                        : 'no review recorded which model it ran on'
+                    }
+                  >
+                    {r.modelsUsed.length > 0
+                      ? r.modelsUsed.map((m) => modelLabel(m) ?? m).join(', ')
+                      : 'not recorded'}
+                    {r.gradingModel && !r.modelsUsed.includes(r.gradingModel) ? (
+                      <span className="dim"> · now set to {modelLabel(r.gradingModel) ?? r.gradingModel}</span>
+                    ) : null}
+                  </td>
                   <td className="tbl-num num">{r.reviews}</td>
                   <td className="tbl-num num">{fmt(r.meanGiven)}</td>
                 </tr>
@@ -320,8 +344,7 @@ export function QualityModel({
                       </div>
                     </td>
                     <td className="dim">
-                      {t.adapterId ?? 'unknown'}
-                      {t.model ? `/${t.model}` : ''}
+                      <AgentLabel adapterId={t.adapterId} model={t.model} labels={report.adapterLabels} />
                     </td>
                     <td className="tbl-when">{when(t.finishedAt)}</td>
                   </tr>

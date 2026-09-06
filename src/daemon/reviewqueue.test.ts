@@ -45,7 +45,13 @@ function task(input: { adapter?: string; grades?: number } = {}): string {
 }
 
 /** One stored review. `composite: null` is the shape a review that answered with nothing has. */
-function grade(taskId: string, reviewerAdapter: string, status: string, composite: number | null): void {
+function grade(
+  taskId: string,
+  reviewerAdapter: string,
+  status: string,
+  composite: number | null,
+  reviewerModel: string | null = 'm'
+): void {
   seq += 1
   db.db()
     .prepare(
@@ -54,9 +60,20 @@ function grade(taskId: string, reviewerAdapter: string, status: string, composit
           subject_adapter, subject_model, mixed_authorship, authorship_json, notable_json,
           scores_json, composite, status, rubric_version, blinded, blinding_leak,
           created_at, completed_at)
-       values (?,?,?,?,?,'m','claude-code','claude-sonnet-5',0,'[]','[]','{}',?,?,'1.0',1,0,?,?)`
+       values (?,?,?,?,?,?,'claude-code','claude-sonnet-5',0,'[]','[]','{}',?,?,'1.0',1,0,?,?)`
     )
-    .run(`q-${seq}`, taskId, `run-${seq}`, `w-${reviewerAdapter}`, reviewerAdapter, composite, status, seq, seq)
+    .run(
+      `q-${seq}`,
+      taskId,
+      `run-${seq}`,
+      `w-${reviewerAdapter}`,
+      reviewerAdapter,
+      reviewerModel,
+      composite,
+      status,
+      seq,
+      seq
+    )
 }
 
 /** A task whose stored grade count matches its stored grades — what `completeReview` maintains. */
@@ -146,8 +163,44 @@ describe('which finished work has been graded', () => {
     const id = graded('antigravity-cli')
     const [row] = (await quality.reviewQueue('one')).rows
     expect(row?.taskId).toBe(id)
-    expect(row?.gradedBy).toEqual(['antigravity-cli'])
+    expect(row?.gradedBy).toEqual([{ adapterId: 'antigravity-cli', model: 'm' }])
     expect(row?.reviewCount).toBe(1)
+  })
+
+  /**
+   * ⛔ The reason a grade is credited to a model and not to an adapter id: `openai-compatible` is
+   * Codex on one account and a small model on a local endpoint on another, and *graded by
+   * openai-compatible* names neither of them.
+   */
+  it('credits the model that graded, not just the adapter it was reached through', async () => {
+    const id = task()
+    grade(id, 'openai-compatible', 'complete', 8, 'gpt-5.6-terra')
+    grade(id, 'openai-compatible', 'complete', 4, 'qwen3-coder-30b-a3b')
+    db.db().prepare('update tasks set quality_review_count = 2 where id = ?').run(id)
+    const [row] = (await quality.reviewQueue('many')).rows
+    expect(row?.gradedBy).toEqual([
+      { adapterId: 'openai-compatible', model: 'gpt-5.6-terra' },
+      { adapterId: 'openai-compatible', model: 'qwen3-coder-30b-a3b' }
+    ])
+  })
+
+  it('says a review that never recorded its model recorded none, rather than guessing one', async () => {
+    const id = task()
+    grade(id, 'antigravity-cli', 'complete', 7, null)
+    db.db().prepare('update tasks set quality_review_count = 1 where id = ?').run(id)
+    expect((await quality.reviewQueue('one')).rows[0]?.gradedBy).toEqual([
+      { adapterId: 'antigravity-cli', model: null }
+    ])
+  })
+
+  it("carries the adapters' own display names, so no table in the renderer has to know them", async () => {
+    const page = await quality.reviewQueue('none')
+    // ⚠️ Whatever this build loaded — the assertion is that they are *sent*, not which exist.
+    expect(typeof page.adapterLabels).toBe('object')
+    for (const [id, label] of Object.entries<string>(page.adapterLabels)) {
+      expect(id.length).toBeGreaterThan(0)
+      expect(label.length).toBeGreaterThan(0)
+    }
   })
 })
 

@@ -82,6 +82,7 @@ export function startBatch(
       state: 'queued' as const,
       composite: null,
       reviewer: null,
+      reviewerModel: null,
       reason: ''
     })),
     graded: 0,
@@ -209,11 +210,12 @@ async function grade(entry: BatchEntry): Promise<void> {
     entry.state = scored ? 'graded' : 'skipped'
     entry.composite = review.composite
     entry.reviewer = review.reviewerAdapter
+    entry.reviewerModel = review.reviewerModel
     entry.reason = scored
       ? (review.summary ?? '')
       : (review.failureReason ?? `the review ended ${review.status}`)
     log.info(
-      `batch graded t${entry.seq}: ${review.composite ?? 'no score'} (${review.status}) by ${review.reviewerAdapter}`
+      `batch graded t${entry.seq}: ${review.composite ?? 'no score'} (${review.status}) by ${review.reviewerAdapter}/${review.reviewerModel ?? 'unrecorded model'}`
     )
   } catch (err) {
     entry.state = 'skipped'

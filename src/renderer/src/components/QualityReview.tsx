@@ -4,7 +4,8 @@ import { BATCH_SIZES, BATCH_THRESHOLDS, thresholdLabel } from '@shared/quality'
 import type { Project } from '@shared/tasks'
 import { rpc, useDaemonEvents } from '../lib/daemon'
 import { when } from '../lib/format'
-import { modelLabel } from '../lib/modelname'
+import { agentNames } from '../lib/agentname'
+import { AgentLabel } from './AgentLabel'
 
 /**
  * Analytics › Quality Review.
@@ -118,6 +119,7 @@ export function QualityReview({
   }, [refresh])
 
   const counts = page?.counts
+  const labels = page?.adapterLabels ?? {}
   const running = batch?.state === 'running'
   const pages = page ? Math.max(1, Math.ceil(page.total / PAGE_SIZE)) : 1
   const current = Math.floor(offset / PAGE_SIZE)
@@ -198,7 +200,7 @@ export function QualityReview({
           quietly substituting the next one.
         </p>
 
-        {batch && <BatchProgress batch={batch} onOpenTask={onOpenTask} />}
+        {batch && <BatchProgress batch={batch} labels={labels} onOpenTask={onOpenTask} />}
       </section>
 
       <div className="tabs">
@@ -260,14 +262,15 @@ export function QualityReview({
                 <td className="dim">
                   {projects.find((p) => p.id === row.projectId)?.name ?? 'unassigned'}
                 </td>
-                <td className="dim" title={row.model ?? undefined}>
-                  {row.adapterId ?? 'not recorded'}
-                  {row.model ? <span className="dim">/{modelLabel(row.model) ?? row.model}</span> : null}
-                </td>
+                <Agent adapterId={row.adapterId} model={row.model} labels={labels} />
                 <td className="tbl-num num">{row.reviewCount}</td>
                 {/* ⛔ `n/a`, never 0.0. An ungraded task has no score; 0 is a real grade. */}
                 <td className="tbl-num num">{row.score === null ? 'n/a' : row.score.toFixed(1)}</td>
-                <td className="dim">{row.gradedBy.length === 0 ? '—' : row.gradedBy.join(', ')}</td>
+                {/* ⛔ The models, not the adapter ids: two `openai-compatible` grades can be two
+                    completely different judges, and this is the cell that says which are used up. */}
+                <td className="dim" title={agentNames(row.gradedBy, labels)?.title}>
+                  {agentNames(row.gradedBy, labels)?.text ?? '—'}
+                </td>
                 <td className={row.eligible ? 'dim' : 'warn'}>
                   {row.grading ? 'grading now' : row.eligible ? 'yes' : `no — ${row.ineligibleReason}`}
                 </td>
@@ -314,9 +317,11 @@ export function QualityReview({
  */
 function BatchProgress({
   batch,
+  labels,
   onOpenTask
 }: {
   batch: GradeBatch
+  labels: Record<string, string>
   onOpenTask: (taskId: string) => void
 }): React.JSX.Element {
   const shown = batch.entries.filter((e) => e.state !== 'queued').slice(0, 50)
@@ -357,7 +362,11 @@ function BatchProgress({
                 <td className="tbl-num num">
                   {entry.composite === null ? '—' : entry.composite.toFixed(1)}
                 </td>
-                <td className="dim">{entry.reviewer ?? '—'}</td>
+                {entry.reviewer === null ? (
+                  <td className="dim">—</td>
+                ) : (
+                  <Agent adapterId={entry.reviewer} model={entry.reviewerModel} labels={labels} />
+                )}
                 <td className={entry.state === 'skipped' ? 'warn' : 'dim'}>{entry.reason || '—'}</td>
               </tr>
             ))}
@@ -365,6 +374,25 @@ function BatchProgress({
         </table>
       )}
     </>
+  )
+}
+
+/**
+ * One agent in a table cell. ⛔ Never the adapter id alone — see `AgentLabel`, which says why.
+ */
+function Agent({
+  adapterId,
+  model,
+  labels
+}: {
+  adapterId: string | null
+  model: string | null
+  labels: Record<string, string>
+}): React.JSX.Element {
+  return (
+    <td className="dim">
+      <AgentLabel adapterId={adapterId} model={model} labels={labels} />
+    </td>
   )
 }
 

@@ -121,6 +121,20 @@ that timed out, refused, or answered with no JSON never answered, so its adapter
 that is the same rule `tasks.quality_review_count` counts by. A task with nobody left reads *no
 eligible review agent* with every candidate and its reason on hover, and a batch skips it.
 
+⛔ **Every agent on the quality pages is named by its *model*, never by its adapter id alone.**
+(`lib/agentname.ts`, `components/AgentLabel.tsx`.) `openai-compatible` is a transport, not a judge:
+it is Codex CLI on one account and whatever a local endpoint is serving on another, and *graded by
+openai-compatible* names neither. So *Work by*, *Graded by*, the batch's *Reviewer* column and the
+*Model / agent* and *Graded on* tables on Routing Model › Quality all lead with the model and put the
+adapter's own label beside it — *GPT 5.6 Terra · Codex CLI*. ⚠️ The labels come from the adapters
+themselves (`ReviewQueuePage.adapterLabels`), not from a vendor table in the renderer that would go
+stale the day one shipped, and the exact `adapter/model` slugs are in every `title`, because the
+operator who needs the id is the one debugging a routing mistake. ⛔ A review that never recorded its
+model reads *not recorded* rather than borrowing whatever Settings would pick today — the default now
+is not evidence about a run that is over. ⚠️ *Graded by* names both halves while eligibility is still
+burned by **adapter**: seeing that two different models graded does not mean a third behind the same
+adapter may.
+
 Quality review is otherwise a field on a task rather than a place to go. It appears in three further
 places: a `Quality` column in `Tasks`, a `#N Quality Review` row in
 `TaskThread`'s timeline (⚠️ the underlying run is filtered out so it draws once, not twice), and the

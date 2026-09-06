@@ -36,6 +36,7 @@ function review(input: {
   mixed?: boolean
   leak?: boolean
   reviewer?: string
+  reviewerModel?: string | null
   scoresJson?: string
   status?: string
 }): void {
@@ -64,7 +65,7 @@ function review(input: {
       `run-${seq}`,
       'worker-1',
       input.reviewer ?? 'openai-compatible',
-      'gpt-5.4-mini',
+      input.reviewerModel === undefined ? 'gpt-5.4-mini' : input.reviewerModel,
       input.adapter,
       input.model,
       input.mixed ? 1 : 0,
@@ -186,6 +187,43 @@ describe('per-model quality', () => {
     const reviewers = quality.qualityReport().reviewers
     expect(reviewers).toHaveLength(2)
     expect(reviewers.find((r) => r.adapterId === 'openai-compatible')?.meanGiven).toBe(9)
+  })
+
+  /**
+   * ⛔ The adapter id is a transport. Two reviews filed under `openai-compatible` can be Codex and a
+   * 4B model on a local endpoint, whose means are not a calibration check on one judge — so the
+   * models that actually graded are published beside the mean.
+   */
+  it('names the models that actually graded, not the one Settings would pick next', () => {
+    review({
+      adapter: 'claude-code',
+      model: 'claude-sonnet-5',
+      composite: 8,
+      reviewer: 'local-llm',
+      reviewerModel: 'qwen3-coder-30b-a3b'
+    })
+    review({
+      adapter: 'claude-code',
+      model: 'claude-sonnet-5',
+      composite: 3,
+      reviewer: 'local-llm',
+      reviewerModel: 'gpt-oss-120b-medium'
+    })
+    const tally = quality.qualityReport().reviewers.find((r) => r.adapterId === 'local-llm')
+    expect(tally?.modelsUsed).toEqual(['gpt-oss-120b-medium', 'qwen3-coder-30b-a3b'])
+  })
+
+  it('⛔ leaves the models empty when no review recorded one, rather than filling in a default', () => {
+    review({
+      adapter: 'claude-code',
+      model: 'claude-sonnet-5',
+      composite: 6,
+      reviewer: 'some-unrecorded-cli',
+      reviewerModel: null
+    })
+    const tally = quality.qualityReport().reviewers.find((r) => r.adapterId === 'some-unrecorded-cli')
+    expect(tally?.modelsUsed).toEqual([])
+    expect(tally?.reviews).toBe(1)
   })
 
   it('publishes the rubric it aggregated under, so a weight change cannot reinterpret history', () => {

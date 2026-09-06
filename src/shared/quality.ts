@@ -42,7 +42,17 @@ export interface QualityKey {
 export interface QualityReviewerTally {
   adapterId: string
   label: string
+  /** What Settings has this adapter's accounts *configured* to grade on. ⚠️ Not what actually did. */
   gradingModel: string | null
+  /**
+   * The models that actually produced these reviews, newest configuration or not.
+   *
+   * ⛔ The adapter id is a transport, not a judge: `openai-compatible` is Codex on one account and a
+   * 4B model on a local endpoint on another, and their scores are not the same measurement. A
+   * reviewer row that names only the adapter cannot be read as a calibration check at all. Empty
+   * when no review recorded its model — an old row, never a claim that the CLI default was used.
+   */
+  modelsUsed: string[]
   reviews: number
   /** ⚠️ Published as a calibration check, never applied as a correction. */
   meanGiven: number | null
@@ -74,6 +84,8 @@ export interface QualityReport {
     model: string | null
     enabled: boolean
   }>
+  /** `openai-compatible` → `Codex CLI`. ⚠️ Resolved by the daemon; see `ReviewQueuePage`. */
+  adapterLabels: Record<string, string>
   totalReviews: number
   gradedTasks: number
   ungradedTasks: number
@@ -101,6 +113,24 @@ export interface ReviewCounts {
   total: number
 }
 
+/**
+ * One agent as this page has to name it: the adapter it was reached through, and the model that
+ * actually did the work.
+ *
+ * ⛔ **The model is the thing being measured, and the adapter id alone does not identify it.**
+ * `openai-compatible` is Codex CLI on one account and a local endpoint serving a 4B model on
+ * another; `local-llm` is whatever is loaded. Two grades filed under one adapter id can be two
+ * completely different judges, so both halves are carried and the model is the one rendered first.
+ *
+ * ⚠️ `model` is null for work run before the model was recorded, and that is said out loud rather
+ * than filled in with the adapter's current default — the default today is not evidence about what
+ * ran months ago.
+ */
+export interface ReviewCredit {
+  adapterId: string
+  model: string | null
+}
+
 /** One row of the Quality Review table. */
 export interface ReviewQueueRow {
   taskId: string
@@ -114,8 +144,8 @@ export interface ReviewQueueRow {
   reviewCount: number
   /** The mean of the stored grades, or null when there are none. ⚠️ Never 0 for "ungraded". */
   score: number | null
-  /** The adapters that have already produced a grade — and are therefore no longer candidates. */
-  gradedBy: string[]
+  /** The judges that have already produced a grade — and are therefore no longer candidates. */
+  gradedBy: ReviewCredit[]
   /**
    * Whether any commissioned peer could still grade this task at all.
    *
@@ -135,6 +165,14 @@ export interface ReviewQueuePage {
   /** Rows matching the filter, before paging. */
   total: number
   counts: ReviewCounts
+  /**
+   * `openai-compatible` → `Codex CLI`, for every adapter this build has loaded.
+   *
+   * ⚠️ Sent once per page rather than per row, and resolved by the daemon rather than by a table in
+   * the renderer: the adapters are what they say they are, and a second list of their names over
+   * here would go stale the day one was added. An id with no entry is rendered as itself.
+   */
+  adapterLabels: Record<string, string>
 }
 
 /** How many reviews one press may commission. ⚠️ `null` is ALL, and the UI says what ALL costs. */
@@ -161,8 +199,10 @@ export interface BatchEntry {
   title: string
   state: 'queued' | 'grading' | 'graded' | 'skipped'
   composite: number | null
-  /** The account that graded it, where one did. */
+  /** The adapter that graded it, where one did. */
   reviewer: string | null
+  /** ⚠️ The model behind that adapter — the half of the judge's identity that is the judge. */
+  reviewerModel: string | null
   /** Why it was skipped, or the review's own summary when it was graded. */
   reason: string
 }

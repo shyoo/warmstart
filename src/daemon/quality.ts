@@ -10,12 +10,13 @@ import type {
   QualityReport,
   QualityReviewerTally,
   ReviewCounts,
+  ReviewCredit,
   ReviewFilter,
   ReviewQueuePage,
   UngradedTask
 } from '@shared/quality.js'
 import { db, rows } from './db.js'
-import { adapter } from './adapters/index.js'
+import { adapter, adapters } from './adapters/index.js'
 import { pendingReviews } from './review.js'
 import { getTask } from './tasks.js'
 import { defaultGradingModel, listWorkers } from './workers.js'
@@ -49,6 +50,7 @@ interface ReviewAggRow {
   mixed_authorship: number
   blinding_leak: number
   reviewer_adapter: string
+  reviewer_model: string | null
   completed_at: number | null
 }
 
@@ -89,7 +91,7 @@ function loadReviews(): ReviewAggRow[] {
     db()
       .prepare(
         `select subject_adapter, subject_model, composite, scores_json, mixed_authorship,
-                blinding_leak, reviewer_adapter, completed_at
+                blinding_leak, reviewer_adapter, reviewer_model, completed_at
            from quality_reviews
           where status = 'complete' and composite is not null
           order by completed_at desc`
@@ -153,21 +155,38 @@ function qualityKeys(reviews: ReviewAggRow[]): QualityKey[] {
  * measurement on this fleet that would justify choosing a scale factor.
  */
 function reviewerTallies(reviews: ReviewAggRow[]): QualityReviewerTally[] {
-  const buckets = new Map<string, number[]>()
+  const buckets = new Map<string, { scores: number[]; models: Set<string> }>()
   for (const r of reviews) {
-    const list = buckets.get(r.reviewer_adapter) ?? []
-    list.push(r.composite as number)
-    buckets.set(r.reviewer_adapter, list)
+    const bucket = buckets.get(r.reviewer_adapter) ?? { scores: [], models: new Set<string>() }
+    bucket.scores.push(r.composite as number)
+    // ⛔ Only what was stored. A review whose model was never recorded contributes no name here
+    // rather than the adapter's current default, which is a guess about a run that is over.
+    if (r.reviewer_model) bucket.models.add(r.reviewer_model)
+    buckets.set(r.reviewer_adapter, bucket)
   }
   return [...buckets.entries()]
-    .map(([adapterId, values]) => ({
+    .map(([adapterId, bucket]) => ({
       adapterId,
       label: labelFor(adapterId),
       gradingModel: defaultGradingModel(adapterId),
-      reviews: values.length,
-      meanGiven: mean(values)
+      modelsUsed: [...bucket.models].sort(),
+      reviews: bucket.scores.length,
+      meanGiven: mean(bucket.scores)
     }))
     .sort((a, b) => b.reviews - a.reviews)
+}
+
+/**
+ * Every loaded adapter's display name, for the renderer to look ids up in.
+ *
+ * ⚠️ Built from the adapters themselves rather than from a table anywhere else, for the reason
+ * `@shared/quality.ts` gives: a second list of adapter names is a second thing to keep true. An
+ * adapter this build no longer loads is simply absent, and the id it left behind renders as itself.
+ */
+function adapterLabels(): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const a of adapters()) out[a.info.id] = a.info.label
+  return out
 }
 
 function labelFor(adapterId: string): string {
@@ -294,6 +313,7 @@ export function qualityReport(): QualityReport {
         model: w.gradingModel ?? defaultGradingModel(w.adapterId),
         enabled: w.gradingEnabled !== false
       })),
+    adapterLabels: adapterLabels(),
     totalReviews: reviews.length,
     gradedTasks: gradedCount(),
     ungradedTasks: ungradedCount(),
@@ -376,21 +396,33 @@ function queueRows(filter: ReviewFilter, limit: number, offset: number): QueueRo
   )
 }
 
-/** Who has already graded each of these tasks, in one read rather than one per row. */
-function gradersByTask(taskIds: string[]): Map<string, string[]> {
-  const out = new Map<string, string[]>()
+/**
+ * Who has already graded each of these tasks, in one read rather than one per row.
+ *
+ * ⚠️ **Adapter *and* model**, distinct on both. Two grades from `openai-compatible` may be two
+ * different judges — Codex on one account, a small local model on another — and the row that says
+ * why nobody else may grade this task is the row where that difference is worth seeing.
+ *
+ * ⛔ Eligibility is still burned per *adapter*, and that is `reviewer.ts`'s rule, not this read's to
+ * restate: naming both models here does not mean a second model behind the same adapter may grade.
+ */
+function gradersByTask(taskIds: string[]): Map<string, ReviewCredit[]> {
+  const out = new Map<string, ReviewCredit[]>()
   if (taskIds.length === 0) return out
   const marks = taskIds.map(() => '?').join(', ')
-  for (const r of rows<{ task_id: string; reviewer_adapter: string }>(
+  for (const r of rows<{ task_id: string; reviewer_adapter: string; reviewer_model: string | null }>(
     db()
       .prepare(
-        `select distinct task_id, reviewer_adapter from quality_reviews
+        `select distinct task_id, reviewer_adapter, reviewer_model from quality_reviews
           where status = 'complete' and composite is not null and task_id in (${marks})
-          order by task_id, reviewer_adapter`
+          order by task_id, reviewer_adapter, reviewer_model`
       )
       .all(...taskIds)
   )) {
-    out.set(r.task_id, [...(out.get(r.task_id) ?? []), r.reviewer_adapter])
+    out.set(r.task_id, [
+      ...(out.get(r.task_id) ?? []),
+      { adapterId: r.reviewer_adapter, model: r.reviewer_model }
+    ])
   }
   return out
 }
@@ -413,6 +445,7 @@ export async function reviewQueue(
   return {
     counts,
     total,
+    adapterLabels: adapterLabels(),
     rows: await Promise.all(found.map(async (r) => {
       const task = getTask(r.id)
       // ⚠️ A row whose task vanished between the two reads is not an eligibility answer, and saying
