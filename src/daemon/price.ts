@@ -483,7 +483,7 @@ function build(out: Map<string, RunPrice>, taskOut: Map<string, TaskPrice>): voi
         `select id, task_id, worker_id, started_at, ended_at, cost_model_id, model,
                 plan_id, plan_source, quota_before_json, quota_after_json,
                 list_usd, on_overage
-           from runs order by started_at asc`
+           from runs where kind = 'work' order by started_at asc`
       )
       .all()
   )
