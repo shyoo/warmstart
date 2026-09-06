@@ -1072,36 +1072,232 @@ export function cleanQuestionText(text: string): string {
 }
 
 /**
- * Extract embedded XML parameters (e.g. from models that output `<parameter name="header">...`
- * or `</question>` in their tool arguments, as measured on claude-code in t191).
+ * Recover tool-call parameters that leaked into the question **text**.
+ *
+ * ⛔ **This is not prose parsing, and the difference is the whole justification.** What it reads is
+ * the vendor's own serialisation of a tool call the CLI failed to finish parsing: a literal
+ * `<parameter name="options">[…]` block sitting inside the `question` string, in the exact syntax
+ * the model was made to emit. Reading choices out of an agent's *sentences* is the inference this
+ * project refuses to make (see `needsDecisionIn`); reading them out of a half-parsed argument list
+ * is recovering an argument the model did send.
+ *
+ * ⛔ **Measured, on t235, 2026-09-06, claude-code.** Three `ask_human` calls in a row arrived with
+ * `header` intact, `options` empty, and the question text ending in
+ * `</parameter>` + `<parameter name="options">["A - …", "B - …", "C - …"]`. Each had been offered by
+ * the agent as a three-way choice and reached the operator as **an open text box with the XML still
+ * in it**; the answers came back as the letters `B`, `A`, `A` typed by hand, and `options_json` was
+ * `null` on all three. `kind` is derived from whether there are options, so one lost argument turns
+ * a multiple-choice question into an answer-in-a-sentence one.
+ *
+ * ⚠️ The block may be unterminated — none of the three carried a closing `</parameter>` — so every
+ * pattern here ends at `</parameter>` *or* at the end of the string, and the JSON is parsed
+ * tolerantly. ⚠️ What is recovered is only ever a *default*: an asker that passed real arguments
+ * wins, because those are what it meant to send.
  */
 export function extractEmbeddedParameters(rawQuestion: string): {
   question: string
   header?: string
   multiSelect?: boolean
+  options?: QuestionOption[]
 } {
   let question = rawQuestion
   let header: string | undefined
   let multiSelect: boolean | undefined
+  let options: QuestionOption[] | undefined
 
-  const headerMatch = /<parameter\s+name=["']header["']>([^<]+)(?:<\/parameter>|$)/i.exec(question)
-  if (headerMatch?.[1]) {
-    header = headerMatch[1].trim()
-    question = question.replace(headerMatch[0], '').trim()
+  // ⚠️ The question's own block first, and its *content* is the question. A call serialised whole
+  // leaves the prose wrapped in one of these, and stripping the wrapper without keeping the inside
+  // would throw away the only thing the operator actually has to read.
+  const questionMatch = parameterBlock(question, 'question')
+  if (questionMatch && questionMatch.body.trim()) {
+    // ⚠️ A function replacement, because the body is somebody's prose: a question mentioning `$&` or
+    // `$1` would otherwise have the match spliced into it by `String.replace`'s own syntax.
+    question = question.replace(questionMatch.matched, () => questionMatch.body).trim()
   }
 
-  const multiMatch =
-    /<parameter\s+name=["'](?:multi_select|multiSelect|is_multi_select|multiple)["']>([^<]+)(?:<\/parameter>|$)/i.exec(
-      question
-    )
-  if (multiMatch?.[1]) {
-    multiSelect = /^(true|1|yes)$/i.test(multiMatch[1].trim())
-    question = question.replace(multiMatch[0], '').trim()
+  const headerMatch = parameterBlock(question, 'header')
+  if (headerMatch?.body.trim()) {
+    header = headerMatch.body.trim()
+    question = question.replace(headerMatch.matched, '').trim()
   }
 
-  question = question.replace(/<\/?question>/gi, '').trim()
+  const multiMatch = parameterBlock(question, 'multi_select|multiSelect|is_multi_select|multiple')
+  if (multiMatch?.body.trim()) {
+    multiSelect = /^(true|1|yes)$/i.test(multiMatch.body.trim())
+    question = question.replace(multiMatch.matched, '').trim()
+  }
 
-  return { question, header, multiSelect }
+  const optionsMatch = parameterBlock(question, 'options|choices')
+  if (optionsMatch?.body.trim()) {
+    const parsed = parseOptionList(optionsMatch.body)
+    // ⛔ The block goes either way. Text nobody could read as choices is not question prose either,
+    // and leaving it in puts raw XML in front of the operator — which is what t235 looked like.
+    if (parsed.length > 0) options = parsed
+    question = question.replace(optionsMatch.matched, '').trim()
+  }
+
+  return { question: stripCallSyntax(question), header, multiSelect, ...(options ? { options } : {}) }
+}
+
+/** One `<parameter name="…">…` block, ended by its closing tag **or by the end of the string**. */
+function parameterBlock(text: string, names: string): { matched: string; body: string } | null {
+  const found = new RegExp(
+    `<parameter\\s+name=["']?(?:${names})["']?\\s*>([\\s\\S]*?)(?:</parameter>|$)`,
+    'i'
+  ).exec(text)
+  return found ? { matched: found[0], body: found[1] ?? '' } : null
+}
+
+/**
+ * The leftovers of a tool call that was serialised into prose.
+ *
+ * ⚠️ Tags only, never content: an unrecognised `<parameter name="foo">` opener and a stray
+ * `</parameter>` are punctuation from a machine, and whatever sits between them is still the
+ * asker's own words.
+ */
+function stripCallSyntax(text: string): string {
+  return text
+    .replace(/<\/?parameter(?:\s+name=["']?[^>]*)?>/gi, '')
+    .replace(/<\/?(?:question|invoke|antml:parameter|antml:invoke)[^>]*>/gi, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+/**
+ * The options as the model wrote them: a JSON array, or one choice per line.
+ *
+ * ⚠️ Exported because the same text arrives two ways — inside a leaked `<parameter>` block, and as a
+ * bare string where the schema asked for an array. Both are a model writing a list; one parser.
+ *
+ * ⚠️ Tolerant of an array that was cut off, because the block carrying it was cut off too — a list
+ * whose last entry is truncated still names the choices before it, and refusing the whole thing puts
+ * the operator back in front of a text box. ⛔ Capped at eight, the ceiling `needsDecisionIn` uses:
+ * a card of twenty buttons is not a decision anybody makes by clicking.
+ */
+export function parseOptionList(body: string): QuestionOption[] {
+  const text = body.trim()
+  const raw: Array<
+    string | { label?: unknown; text?: unknown; detail?: unknown; description?: unknown }
+  > = []
+
+  if (text.startsWith('[')) {
+    const parsed = parseTolerantJsonArray(text)
+    if (parsed) raw.push(...(parsed as typeof raw))
+  }
+
+  if (raw.length === 0) {
+    for (const line of text.split(/\r?\n/)) {
+      const bullet = /^[ \t]*(?:[-*•]|\d+[.)])?[ \t]*(.+?)[ \t]*,?$/.exec(line)
+      const value = bullet?.[1]?.replace(/^["']|["']$/g, '').trim()
+      if (value) raw.push(value)
+    }
+  }
+
+  const options: QuestionOption[] = []
+  for (const entry of raw) {
+    const label =
+      typeof entry === 'string'
+        ? entry
+        : typeof entry.label === 'string'
+          ? entry.label
+          : typeof entry.text === 'string'
+            ? entry.text
+            : null
+    if (!label?.trim()) continue
+    const detail =
+      typeof entry === 'string'
+        ? null
+        : typeof entry.detail === 'string'
+          ? entry.detail
+          : typeof entry.description === 'string'
+            ? entry.description
+            : null
+    options.push({
+      id: `opt${options.length + 1}`,
+      label: label.trim().slice(0, 200),
+      ...(detail?.trim() ? { detail: detail.trim().slice(0, 500) } : {})
+    })
+    if (options.length === 8) break
+  }
+  return options
+}
+
+/**
+ * `["a", "b"` — a JSON array that lost its tail. Read as far as it is readable.
+ *
+ * ⛔ **A half-written entry is dropped, never completed.** Closing the quote on `"Someth` would put
+ * the word *Someth* on a button and let an operator choose it; the choices before it are real and
+ * the one that was cut off is not. For an array of plain strings that falls out of the syntax — a
+ * complete string literal has both its quotes — and for objects the last element is dropped when the
+ * array did not close.
+ */
+function parseTolerantJsonArray(text: string): unknown[] | null {
+  try {
+    const parsed: unknown = JSON.parse(text)
+    if (Array.isArray(parsed)) return [...(parsed as unknown[])]
+  } catch {
+    // Cut off somewhere. ⚠️ Never throws: a question whose options cannot be read is still a
+    // question, and losing its text along with them would be the worse failure.
+  }
+
+  if (!text.includes('{')) {
+    const quoted = text.match(/"(?:[^"\\]|\\.)*"/g) ?? []
+    const values: unknown[] = []
+    for (const entry of quoted) {
+      try {
+        values.push(JSON.parse(entry))
+      } catch {
+        // Not a complete string literal.
+      }
+    }
+    return values.length > 0 ? values : null
+  }
+
+  for (const candidate of [`${text}]`, `${text}}]`, `${text}"}]`]) {
+    try {
+      const parsed: unknown = JSON.parse(candidate)
+      // The last object was closed by this repair rather than by the model, so it is the truncated
+      // one and goes with the rest of the tail.
+      if (Array.isArray(parsed)) return (parsed as unknown[]).slice(0, -1)
+    } catch {
+      // Try the next repair.
+    }
+  }
+  return null
+}
+
+/**
+ * Everything a question needs, after recovering whatever the tool call mangled.
+ *
+ * ⛔ **The one place `kind` is decided.** It arrives as a claim about what the asker *sent*; this
+ * makes it a fact about what the question *has*, which is the only thing the card can render. No
+ * asker can hand the operator a text box for a question that came with choices, and none can hand
+ * them buttons for a question that has none.
+ *
+ * ⚠️ Supplied options always beat recovered ones, and an explicit `multi` is never downgraded to a
+ * single choice because a phrase match failed to fire.
+ */
+export function normaliseAsk(input: {
+  question: string
+  header?: string | null
+  kind: QuestionKind
+  options?: QuestionOption[] | null
+}): { question: string; header: string | null; kind: QuestionKind; options: QuestionOption[] } {
+  const embedded = extractEmbeddedParameters(input.question)
+  const question = cleanQuestionText(embedded.question)
+  const header = stripCallSyntax(input.header?.trim() || embedded.header || '') || null
+  const supplied = (input.options ?? []).filter((option) => option.label?.trim())
+  const options = supplied.length > 0 ? supplied : (embedded.options ?? [])
+  const multi =
+    input.kind === 'multi' ||
+    embedded.multiSelect === true ||
+    isMultiSelectQuestion(question, options, header ?? undefined)
+  return {
+    question,
+    header,
+    kind: options.length === 0 ? 'text' : multi ? 'multi' : 'choice',
+    options
+  }
 }
 
 /** A remembered answer. `Bash(npm test)`-shaped, matched by tool plus a glob over the target. */

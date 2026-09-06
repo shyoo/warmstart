@@ -3447,6 +3447,23 @@ function planningInstruction(checkLead: string): string {
  * ⚠️ Deliberately appended to the sentence that asks for completion rather than offered beside it.
  * Named on its own it reads as an exit, and an agent handed an exit takes it.
  */
+/**
+ * How to ask, in the one wording every prompt uses.
+ *
+ * ⛔ **The choices go in `options`, and the sentence says so.** "Offer the options you are choosing
+ * between" was all this used to say, and on t235 an agent obliged by writing `A) … B) … C)` into the
+ * question *as well as* passing `options` — so when the tool call was mangled on the way out and the
+ * options argument was lost, what reached the operator was a wall of prose with a text box under it,
+ * answered by hand with the letter `B`. The argument is the part that becomes buttons; the question
+ * is the part that becomes prose. Naming which is which costs a clause and is checked by the daemon
+ * anyway (see `normaliseAsk`), because a prompt is guidance and the repair has to hold regardless.
+ */
+const ASK_HUMAN_CLAUSE =
+  'If you need a decision from a person, call `ask_human` rather than guessing — pass each choice ' +
+  'you are deciding between as an entry in its `options` argument, rather than lettering them out ' +
+  'inside the question text, because that argument is what the operator answers in one click. It ' +
+  'waits for a real answer.'
+
 const HAND_BACK_CLAUSE =
   ' If the rest genuinely needs a person — a step only they can take, or work they have said they ' +
   'will close out themselves — call `await_human` with the reason instead of simply stopping. ' +
@@ -3529,8 +3546,8 @@ function conversationInstruction(mcpLess: boolean): string {
         'specific options, put each one on its own line directly under it as ' +
         '`- <the option> — <what choosing it means>`, so they can be offered as buttons.'
       : 'Do not call `task_complete` on your own judgement — call it only if you are told the work ' +
-        'is done. If you need a decision from a person, call `ask_human` rather than guessing — ' +
-        'offer the options you are choosing between, and it waits for a real answer.')
+        'is done. ' +
+        ASK_HUMAN_CLAUSE)
   )
 }
 
@@ -3664,8 +3681,7 @@ export function promptFor(
         : 'Work to the end without stopping between phases. ' +
           checkLead +
           'When the work is finished, call the MCP tool `task_complete` with a one-line summary. ') +
-        commitHygiene + ' If you need a decision from a person, call `ask_human` rather than guessing — offer the ' +
-        'options you are choosing between, and it waits for a real answer.' + HAND_BACK_CLAUSE
+        commitHygiene + ' ' + ASK_HUMAN_CLAUSE + HAND_BACK_CLAUSE
     )
   } else {
     // ⛔ The options are asked for in the same breath as the question, because the operator's side

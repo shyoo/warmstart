@@ -7,6 +7,7 @@ import type {
   QuestionOrigin,
   QuestionResolution
 } from '@shared/tasks.js'
+import { normaliseAsk } from '@shared/tasks.js'
 import { db, row, rows } from './db.js'
 import { emit } from './events.js'
 import { log } from './log.js'
@@ -156,6 +157,8 @@ export async function askQuestion(request: QuestionRequest): Promise<QuestionRes
 
   const now = Date.now()
   const question = insertQuestion(request, { deadlineAt, parkedAt: null })
+  // ⚠️ The stored question, not the raw argument: `insertQuestion` is where a mangled tool call is
+  // repaired, and the operator's hold reason has to read the way the card does.
 
   // ⛔ **And the task says so.** A question is the one moment the work cannot proceed without a
   // person, and the status is where anybody looks to find that out. It read `running` throughout —
@@ -173,11 +176,11 @@ export async function askQuestion(request: QuestionRequest): Promise<QuestionRes
   if (task && task.status === 'running') {
     setStatus(task.id, 'awaiting_human', {
       assignee: 'human',
-      holdReason: `the agent asked and is waiting on you: ${request.question.slice(0, 300)}`
+      holdReason: `the agent asked and is waiting on you: ${question.question.slice(0, 300)}`
     })
   }
   log.info(
-    `question ${question.id.slice(0, 8)}: ${request.question.slice(0, 120)} — waiting for a person`
+    `question ${question.id.slice(0, 8)}: ${question.question.slice(0, 120)} — waiting for a person`
   )
 
   return await waitFor(question.id, waitMsFor(deadlineAt, now))
@@ -198,7 +201,14 @@ function insertQuestion(
   const run = runForSession(request.sessionId)
   const task = run?.taskId ? getTask(run.taskId) : null
   const id = randomUUID()
-  const options = normaliseOptions(request.kind, request.options ?? [])
+  // ⛔ **Here, and not in each asker.** `kind` and `options` decide whether the operator gets buttons
+  // or a text box, and an asker whose tool call was mangled on the way out cannot be trusted to
+  // report either — on t235 three multiple-choice questions arrived as `text` with their options
+  // still sitting in the question string, and were answered by hand with the letters `A`, `B`, `A`.
+  // Every path in — the MCP tools, a bridge, a future one — passes through this function, so this is
+  // the only place the repair covers all of them. See `normaliseAsk`.
+  const asked = normaliseAsk(request)
+  const options = normaliseOptions(asked.kind, asked.options)
 
   db()
     .prepare(
@@ -214,9 +224,9 @@ function insertQuestion(
       task?.id ?? null,
       task?.projectId ?? null,
       request.origin,
-      request.kind,
-      request.question,
-      request.header ?? null,
+      asked.kind,
+      asked.question,
+      asked.header,
       options.length > 0 ? JSON.stringify(options) : null,
       Date.now(),
       timing.deadlineAt,
@@ -234,7 +244,7 @@ function insertQuestion(
   // ⚠️ Role `agent`, which is both true and load-bearing: `buildPrompt` re-delivers
   // outstanding *human* messages, and takes an `agent` message only when it is first in the thread.
   // So this is visible to a person and is never re-sent to an agent.
-  if (task) addMessage(task.id, 'agent', renderAsk(request), run?.id ?? null)
+  if (task) addMessage(task.id, 'agent', renderAsk(asked), run?.id ?? null)
   return question
 }
 
@@ -259,7 +269,7 @@ export function fileParkedQuestion(request: QuestionRequest): Question {
   emit({ type: 'question.parked', question })
   log.info(
     `question ${question.id.slice(0, 8)} filed already parked (the asker has no way to be answered): ` +
-      request.question.slice(0, 120)
+      question.question.slice(0, 120)
   )
   return question
 }
@@ -366,9 +376,13 @@ export function answerQuestion(id: string, answer: QuestionAnswer, by: 'human' =
  * ⚠️ The options are listed, because a decision recorded without the alternatives it was
  * chosen over is half a record. Somebody reading it in a month needs to see what was *not* picked.
  */
-function renderAsk(request: QuestionRequest): string {
-  const lines = [request.header ? `${request.header}: ${request.question}` : request.question]
-  for (const option of request.options ?? []) {
+function renderAsk(asked: {
+  question: string
+  header?: string | null
+  options?: QuestionOption[]
+}): string {
+  const lines = [asked.header ? `${asked.header}: ${asked.question}` : asked.question]
+  for (const option of asked.options ?? []) {
     lines.push(`  - ${option.label}${option.detail ? ` - ${option.detail}` : ''}`)
   }
   return lines.join('\n')

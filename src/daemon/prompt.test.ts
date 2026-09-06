@@ -59,6 +59,9 @@ describe('promptFor prompt construction', () => {
     expect(prompt).toContain('Please inspect auth.ts and fix the login redirect.')
     expect(prompt).toContain('call the MCP tool `task_complete` with a one-line summary')
     expect(prompt).toContain('call `ask_human` rather than guessing')
+    // ⛔ And where the choices go. On t235 an agent lettered them into the question as well, so when
+    // the tool call lost its `options` argument the operator got prose and a text box.
+    expect(prompt).toContain('as an entry in its `options` argument')
   })
 
   it('tells an autonomous agent to run to the end', () => {

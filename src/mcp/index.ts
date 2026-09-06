@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { readFileSync } from 'node:fs'
 import http from 'node:http'
 import type { DaemonEndpoint, RpcMethod, RpcParams, RpcResponse, RpcResult } from '@shared/protocol.js'
-import { cleanQuestionText, extractEmbeddedParameters, isMultiSelectQuestion } from '@shared/tasks.js'
+import { normaliseAsk, parseOptionList } from '@shared/tasks.js'
 import { paths } from '../daemon/paths.js'
 
 /**
@@ -210,22 +210,36 @@ server.registerTool(
     description:
       'Put a question to the operator and wait for a real answer. Use this instead of guessing ' +
       'whenever the answer changes what you build. Offer options when there is a fixed set of ' +
-      'sensible ones — the operator answers those in one click. Set `multi_select` to true ' +
+      'sensible ones — the operator answers those in one click. Put each one in `options`, one per ' +
+      'entry, rather than lettering them out inside `question`: only `options` becomes buttons, and ' +
+      'a question that also lists them in its prose is answered twice over. Set `multi_select` to true ' +
       '(or `multiSelect`) if the operator can choose more than one option (checkboxes). ' +
       'Leave options empty for an open question. If nobody answers in time you are told so plainly; stop rather than guessing.',
     inputSchema: {
-      question: z.string().describe('The question, in full. The operator sees exactly this text.'),
+      question: z
+        .string()
+        .describe(
+          'The question, in full. The operator sees exactly this text. State the decision and the ' +
+            'context for it; leave the choices themselves to `options`.'
+        ),
       header: z.string().optional().describe('A few words naming the decision, e.g. "Auth approach"'),
+      // ⛔ A bare string is accepted as well as an array, and that is not laziness. A schema that
+      // *rejects* `options: "[\"A\", \"B\"]"` does not get a better-formed retry — it gets the call
+      // failing, and the model asking again with the choices flattened into the question text, which
+      // is how a three-way decision reaches the operator as a text box (t235).
       options: z
-        .array(
-          z.union([
-            z.string(),
-            z.object({
-              label: z.string().describe('The choice, as the operator will see it on a button'),
-              detail: z.string().optional().describe('What choosing this means, and what it costs')
-            })
-          ])
-        )
+        .union([
+          z.array(
+            z.union([
+              z.string(),
+              z.object({
+                label: z.string().describe('The choice, as the operator will see it on a button'),
+                detail: z.string().optional().describe('What choosing this means, and what it costs')
+              })
+            ])
+          ),
+          z.string()
+        ])
         .optional()
         .describe('Leave empty for an open question'),
       multi_select: z
@@ -239,40 +253,38 @@ server.registerTool(
   },
   async (args) => {
     const sessionId = process.env.MULTI_AGENT_CONTROLLER_SESSION_ID ?? ''
-    const rawQuestion = args.question
-    const embedded = extractEmbeddedParameters(rawQuestion)
-    const questionText = cleanQuestionText(embedded.question)
-    const header = args.header || embedded.header
-
-    const rawOptions = args.options ?? []
-    const options = rawOptions.map((o) => (typeof o === 'string' ? { label: o } : o))
-
+    const rawOptions = typeof args.options === 'string' ? parseOptionList(args.options) : (args.options ?? [])
     const explicitMulti =
       args.multi_select === true ||
       args.multiSelect === true ||
       args.is_multi_select === true ||
-      args.multiple === true ||
-      embedded.multiSelect === true
-    const isMulti = explicitMulti || isMultiSelectQuestion(questionText, options, header)
+      args.multiple === true
 
-    // ⛔ The kind is derived from what was actually supplied or inferred, not asked for separately.
-    const kind = options.length === 0 ? 'text' : isMulti ? 'multi' : 'choice'
+    // ⛔ One repair, shared with the daemon and with the native-tool path: whatever the CLI
+    // serialised into the question text is pulled back out, and the kind is decided from what the
+    // question *has* rather than from which arguments survived the trip. See `normaliseAsk`.
+    const asked = normaliseAsk({
+      question: args.question,
+      header: args.header ?? null,
+      kind: explicitMulti ? 'multi' : rawOptions.length > 0 ? 'choice' : 'text',
+      options: rawOptions.map((option, index) =>
+        typeof option === 'string'
+          ? { id: `opt${index + 1}`, label: option }
+          : {
+              id: `opt${index + 1}`,
+              label: option.label,
+              ...(option.detail ? { detail: option.detail } : {})
+            }
+      )
+    })
     try {
       const resolution = await rpc('question.ask', {
         sessionId,
         origin: 'ask_human',
-        kind,
-        question: questionText,
-        ...(header ? { header } : {}),
-        ...(options.length > 0
-          ? {
-              options: options.map((option, index) => ({
-                id: `opt${index + 1}`,
-                label: option.label,
-                ...(option.detail ? { detail: option.detail } : {})
-              }))
-            }
-          : {})
+        kind: asked.kind,
+        question: asked.question,
+        ...(asked.header ? { header: asked.header } : {}),
+        ...(asked.options.length > 0 ? { options: asked.options } : {})
       })
       return { content: [{ type: 'text' as const, text: resolution.reply }] }
     } catch (err) {
@@ -871,53 +883,52 @@ function questionsFrom(input: unknown): NativeQuestion[] {
     const record = item as Record<string, unknown>
     const rawQuestion = typeof record.question === 'string' ? record.question : null
     if (!rawQuestion) continue
-    const embedded = extractEmbeddedParameters(rawQuestion)
-    const question = cleanQuestionText(embedded.question)
-    const header =
-      typeof record.header === 'string' && record.header ? record.header : embedded.header
     const rawOptions = Array.isArray(record.options) ? record.options : []
     const explicitMulti =
       record.multiSelect === true ||
       record.multi_select === true ||
       record.is_multi_select === true ||
-      record.multiple === true ||
-      embedded.multiSelect === true
-    const isMulti =
-      explicitMulti ||
-      isMultiSelectQuestion(
-        question,
-        rawOptions as Array<{ label?: string; detail?: string } | string>,
-        header
-      )
+      record.multiple === true
+
+    // ⚠️ `description` is what the vendor's own `AskUserQuestion` calls the per-option prose, and
+    // `detail` is what this app calls it. Mapped here, once, before anything else reads an option.
+    const supplied = rawOptions
+      .map((entry, index) => {
+        if (typeof entry === 'string') return { id: `opt${index + 1}`, label: entry }
+        const option = entry as Record<string, unknown>
+        const label =
+          typeof option.label === 'string'
+            ? option.label
+            : typeof option.text === 'string'
+              ? option.text
+              : null
+        if (!label) return null
+        return {
+          id: typeof option.id === 'string' && option.id.trim() ? option.id.trim() : `opt${index + 1}`,
+          label,
+          ...(typeof option.description === 'string' && option.description
+            ? { detail: option.description }
+            : typeof option.detail === 'string' && option.detail
+              ? { detail: option.detail }
+              : {})
+        }
+      })
+      .filter((option): option is { id: string; label: string; detail?: string } => option !== null)
+
+    // ⛔ The same repair the agent's own `ask_human` gets. A question the CLI half-serialised is
+    // half-serialised whichever tool it came from.
+    const asked = normaliseAsk({
+      question: rawQuestion,
+      header: typeof record.header === 'string' ? record.header : null,
+      kind: explicitMulti ? 'multi' : supplied.length > 0 ? 'choice' : 'text',
+      options: supplied
+    })
 
     result.push({
-      question,
-      ...(header ? { header } : {}),
-      multiSelect: isMulti,
-      options: rawOptions
-        .map((o, index) => {
-          if (typeof o === 'string') {
-            return { id: `opt${index + 1}`, label: o }
-          }
-          const option = o as Record<string, unknown>
-          const label =
-            typeof option.label === 'string'
-              ? option.label
-              : typeof option.text === 'string'
-                ? option.text
-                : null
-          if (!label) return null
-          return {
-            id: typeof option.id === 'string' && option.id.trim() ? option.id.trim() : `opt${index + 1}`,
-            label,
-            ...(typeof option.description === 'string' && option.description
-              ? { detail: option.description }
-              : typeof option.detail === 'string' && option.detail
-                ? { detail: option.detail }
-                : {})
-          }
-        })
-        .filter((o): o is { id: string; label: string; detail?: string } => o !== null)
+      question: asked.question,
+      ...(asked.header ? { header: asked.header } : {}),
+      multiSelect: asked.kind === 'multi',
+      options: asked.options
     })
   }
   return result

@@ -88,6 +88,19 @@ path — an agent asking *"OAuth, session cookies, or magic link?"* got back `Th
 It supports multiple selection via `multi_select: true` (or `multiSelect`), extracts embedded XML
 attributes, and detects multi-select intent from phrasing.
 
+⛔ **Whether a question gets buttons or a text box is decided from what it *has*, not from what the
+asker claimed.** `normaliseAsk` (shared/tasks.ts) runs inside `insertQuestion`, so every path in —
+the MCP tools, the `NEEDS DECISION:` contract, the CLI's own `AskUserQuestion` — is repaired once:
+a `choice` with no options becomes `text`, and options that arrived become `choice` even if the call
+said otherwise. ⭐ Measured on t235, 2026-09-06: three `ask_human` calls in a row reached the daemon
+with `header` intact, `options_json` null, and their choices still sitting in the question string as
+a literal `<parameter name="options">["A - …", …]` block. Each was a three-way decision the agent had
+made properly; each reached the operator as a text box full of XML and was answered by typing a
+letter. So a leaked `<parameter>` block is now read back out of the question text — that is
+recovering an argument the model demonstrably sent, not guessing choices out of prose, which is
+still refused (see `needsDecisionIn`) — and `options` accepts a bare JSON string as well as an array,
+because rejecting the call only teaches the model to flatten its choices into the question instead.
+
 ⚠️ **An adapter with no MCP has no `ask_human`.** Its prompt asks it to end with a `NEEDS DECISION:`
 line plus one `- option — detail` bullet per choice, and the daemon files a real `Question` row from
 it. Multiple choices are indicated with `NEEDS DECISION: [multi] <question>` or `(select all that apply)`.

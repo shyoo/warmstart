@@ -3,7 +3,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { Session } from '@shared/protocol.js'
-import { isMultiSelectQuestion, cleanQuestionText, extractEmbeddedParameters } from '@shared/tasks.js'
+import {
+  isMultiSelectQuestion,
+  cleanQuestionText,
+  extractEmbeddedParameters,
+  normaliseAsk,
+  parseOptionList
+} from '@shared/tasks.js'
 
 /**
  * The third object.
@@ -139,7 +145,28 @@ describe('a question carries an answer set the asker wrote', () => {
     expect(open?.options.map((o) => o.id)).toEqual(['opt1', 'opt2'])
   })
 
-  it('carries no options for a free-text question', async () => {
+  it('carries no options for a question that was asked without any', async () => {
+    const { session } = seedAsker()
+    void questions.askQuestion({
+      sessionId: session.id,
+      origin: 'ask_human',
+      kind: 'choice',
+      question: 'What should the retry budget be?'
+    })
+    // ⛔ A `choice` with nothing to choose from is a text question. The kind claims; the options are
+    // the evidence, and the card can only render what is there.
+    expect(questions.openQuestions()[0]?.options).toEqual([])
+    expect(questions.openQuestions()[0]?.kind).toBe('text')
+  })
+
+  /**
+   * ⛔ **The options win, and the kind loses.** This used to go the other way — an asker that said
+   * `text` and sent three options had its options dropped as a contradiction. t235 is what that
+   * costs: `kind` is derived by whichever caller assembled the tool call and is the first thing a
+   * mangled call gets wrong, while options are three labels the asker demonstrably wrote. Showing
+   * them takes nothing away, because the card carries a text box either way.
+   */
+  it('shows the options even when the asker called it a text question', async () => {
     const { session } = seedAsker()
     void questions.askQuestion({
       sessionId: session.id,
@@ -148,8 +175,8 @@ describe('a question carries an answer set the asker wrote', () => {
       question: 'What should the retry budget be?',
       options: THREE_WAYS
     })
-    // A text question with three options is a question whose asker contradicted itself; the kind wins.
-    expect(questions.openQuestions()[0]?.options).toEqual([])
+    expect(questions.openQuestions()[0]?.kind).toBe('choice')
+    expect(questions.openQuestions()[0]?.options).toEqual(THREE_WAYS)
   })
 })
 
@@ -367,10 +394,150 @@ describe('answering', () => {
     expect(isMultiSelectQuestion('Which single option do you want?')).toBe(false)
   })
 
+  /**
+   * ⛔ The t235 case, verbatim from `questions.options_json = null` on 2026-09-06: the agent offered
+   * three choices, claude-code serialised `options` into the question string instead of sending it,
+   * and the operator got a text box and typed the letter `B`.
+   */
+  it('recovers options the CLI serialised into the question text (t235 case)', () => {
+    const rawQuestion =
+      'How should a batch of quality reviews run once I press Batch?\n\n' +
+      'A) Background queue, one review at a time\n' +
+      'B) Background queue, parallel across distinct eligible accounts (Recommended)\n' +
+      'C) Background queue, with a concurrency cap I choose\n' +
+      '<parameter name="options">["A - background, strictly sequential", ' +
+      '"B - background, one in flight per account (Recommended)", ' +
+      '"C - background, fixed concurrency cap"]'
+    const embedded = extractEmbeddedParameters(rawQuestion)
+    expect(embedded.options?.map((o) => o.label)).toEqual([
+      'A - background, strictly sequential',
+      'B - background, one in flight per account (Recommended)',
+      'C - background, fixed concurrency cap'
+    ])
+    // ⛔ And the XML never reaches the operator, whichever way the options were read.
+    expect(embedded.question).not.toContain('<parameter')
+    expect(embedded.question).toContain('How should a batch of quality reviews run')
+  })
+
+  it('keeps the prose when the whole call was serialised, tags and all', () => {
+    const embedded = extractEmbeddedParameters(
+      '<parameter name="question">Which scope?</parameter>\n' +
+        '<parameter name="header">Reviewer exclusion scope</parameter>\n' +
+        '<parameter name="options">["A - all paths", "B - batch only"]</parameter>'
+    )
+    expect(embedded.question).toBe('Which scope?')
+    expect(embedded.header).toBe('Reviewer exclusion scope')
+    expect(embedded.options?.map((o) => o.label)).toEqual(['A - all paths', 'B - batch only'])
+  })
+
+  /** ⚠️ `$&` and `$1` are `String.replace` syntax, and an agent writing about a regex will use them. */
+  it('keeps a question that reads like a replacement pattern intact', () => {
+    const embedded = extractEmbeddedParameters(
+      '<parameter name="question">Should the rule capture `$1` or splice `$&` into the line?</parameter>'
+    )
+    expect(embedded.question).toBe('Should the rule capture `$1` or splice `$&` into the line?')
+  })
+
+  it('reads an options array that was cut off, rather than dropping every choice in it', () => {
+    const embedded = extractEmbeddedParameters(
+      'Pick one.\n<parameter name="options">["Keep both buttons", "Remove the old one", "Someth'
+    )
+    expect(embedded.options?.map((o) => o.label)).toEqual(['Keep both buttons', 'Remove the old one'])
+  })
+
+  it('carries per-option prose through under either name the vendors use', () => {
+    const embedded = extractEmbeddedParameters(
+      'Which one?<parameter name="options">[{"label":"OAuth","description":"No password storage"},' +
+        '{"label":"Cookies","detail":"Server-side"}]</parameter>'
+    )
+    expect(embedded.options).toEqual([
+      { id: 'opt1', label: 'OAuth', detail: 'No password storage' },
+      { id: 'opt2', label: 'Cookies', detail: 'Server-side' }
+    ])
+  })
+
+  it('⛔ invents no options for a question that genuinely has none', () => {
+    const embedded = extractEmbeddedParameters(
+      'Which of A) this, B) that or C) the other should I build?'
+    )
+    expect(embedded.options).toBeUndefined()
+    expect(normaliseAsk({ question: 'A) this B) that', kind: 'text' }).kind).toBe('text')
+  })
+
+  it('decides the kind from what the question has, not from what the asker claimed', () => {
+    const recovered = normaliseAsk({
+      question: 'Pick one.<parameter name="options">["Yes", "No"]',
+      kind: 'text'
+    })
+    expect(recovered.kind).toBe('choice')
+    expect(recovered.options.map((o) => o.label)).toEqual(['Yes', 'No'])
+
+    // ⚠️ And the other way: a `choice` with nothing to choose from is a text question.
+    expect(normaliseAsk({ question: 'What should I call it?', kind: 'choice' }).kind).toBe('text')
+    // ⚠️ Options the asker actually sent are never replaced by recovered ones.
+    const supplied = normaliseAsk({
+      question: 'Pick one.<parameter name="options">["Yes", "No"]',
+      kind: 'choice',
+      options: THREE_WAYS
+    })
+    expect(supplied.options).toEqual(THREE_WAYS)
+  })
+
+  /**
+   * ⚠️ The neighbouring failure, and the reason the tool's schema accepts a bare string: a model
+   * that sends its list as JSON *text* is offering choices, and rejecting the call teaches it to put
+   * them in the question instead.
+   */
+  it('reads an options list a model sent as a string where an array was asked for', () => {
+    expect(parseOptionList('["Keep both", "Remove the old one"]').map((o) => o.label)).toEqual([
+      'Keep both',
+      'Remove the old one'
+    ])
+    expect(parseOptionList('- Keep both\n- Remove the old one').map((o) => o.label)).toEqual([
+      'Keep both',
+      'Remove the old one'
+    ])
+  })
+
   it('cleans bracketed multi markers from question text', () => {
     expect(cleanQuestionText('[multi] Which tools to install?')).toBe('Which tools to install?')
     expect(cleanQuestionText('[checkbox] Which tools to install?')).toBe('Which tools to install?')
     expect(cleanQuestionText('Which tools to install? (multi-select)')).toBe('Which tools to install?')
+  })
+
+  /**
+   * ⛔ The repair belongs to the *question*, not to whichever tool asked. Every asker — the MCP
+   * tools, a bridge, the prompt contract — goes through `insertQuestion`, so a mangled call is
+   * repaired once for all of them and the row that is stored is the one the card renders.
+   */
+  it('stores a mangled choice question as a choice, with its options and no XML (t235)', async () => {
+    const { task, session } = seedAsker()
+    void questions.askQuestion({
+      sessionId: session.id,
+      origin: 'ask_human',
+      kind: 'text',
+      question:
+        'How should a batch of quality reviews run?</parameter>\n' +
+        '<parameter name="options">["A - strictly sequential", "B - one per account", "C - fixed cap"]',
+      header: 'Batch execution model'
+    })
+
+    const [open] = questions.openQuestions()
+    expect(open?.kind).toBe('choice')
+    expect(open?.options.map((o) => o.label)).toEqual([
+      'A - strictly sequential',
+      'B - one per account',
+      'C - fixed cap'
+    ])
+    expect(open?.question).not.toContain('parameter')
+    expect(open?.header).toBe('Batch execution model')
+
+    // ⚠️ The thread and the operator's hold reason read the repaired question too — the raw XML was
+    // on the task row as well, which is where an operator scanning the board actually sees it.
+    const asked = tasks.messagesFor(task.id).find((m) => m.role === 'agent')
+    expect(asked?.text).toContain('A - strictly sequential')
+    expect(asked?.text).not.toContain('<parameter')
+    expect(tasks.getTask(task.id)?.holdReason ?? '').not.toContain('<parameter')
   })
 
   it('finds the questions asked against one task', () => {
