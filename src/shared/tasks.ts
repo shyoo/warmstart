@@ -2223,6 +2223,31 @@ export interface LandingResult {
    * alone and the finish is still a success; see `retireBranch`.
    */
   branchDeleted?: boolean
+  /**
+   * How many of the project's own check commands ran and passed before anything was moved.
+   *
+   * ⛔ **`0` and `undefined` are different verdicts and the message says so.** `0` is *this project
+   * declares no checks*, which is a real answer and the first day of every project — it must never
+   * read as a clean verification. `undefined` is *this strategy does not verify at all*, which is
+   * true of `open-pr` on purpose: a pull request exists so that CI and a person do that.
+   */
+  checksPassed?: number
+  /**
+   * How many commits this landing put on the target, counted from the target's own history.
+   *
+   * ⚠️ Filled in by `landTask` after `recordLandedCommits` has enumerated them, not by the strategy:
+   * the strategy knows the tip it produced, and only a `git log` against the target knows how many
+   * commits sit behind it.
+   */
+  commitsLanded?: number
+  /**
+   * The work reached a remote.
+   *
+   * ⚠️ `false` is *landed locally and deliberately not pushed*, which is what `merge-local` does and
+   * what an operator needs told — the trunk in front of them has the commit and `origin` does not.
+   * `undefined` is a strategy for which the question does not arise.
+   */
+  pushed?: boolean
 }
 
 /** Where a resolved model or effort came from, so the UI can say rather than just show. */

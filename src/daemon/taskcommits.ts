@@ -203,8 +203,16 @@ export async function landedCommits(
 
 // ---------------------------------------------------------------------------- salvage
 
-/** `Landed as 98f200ab onto main.` — written by the one path every successful landing goes through. */
-const LANDED_AS = /Landed as ([0-9a-f]{7,40}) onto ([^\s.]+)/i
+/**
+ * The headline of every successful landing, written by the one path they all go through:
+ * *Landed as `98f200ab` onto `main`.*
+ *
+ * ⚠️ **Both spellings, because the message gained backticks after these rows were written.** The
+ * sha and the target are now rendered as code in the thread, and a parser that demanded the old
+ * bare form would silently stop salvaging every task landed since — silently being the whole
+ * problem, since salvage reports what it found and cannot report what it did not recognise.
+ */
+const LANDED_AS = /Landed as `?([0-9a-f]{7,40})`? onto `?([^\s.`]+)`?/i
 
 export interface SalvageReport {
   /** Tasks that gained at least one commit row. */

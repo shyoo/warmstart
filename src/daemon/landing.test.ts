@@ -151,6 +151,42 @@ describe('landing without a remote', () => {
     expect(git(root, 'branch', '--list', branch)).toBe('')
   }, 20_000)
 
+  /**
+   * ⛔ **What the operator is told, against what actually happened.** The message used to be
+   * *"Landed as a166a6a onto main."* and nothing else: four things the landing had just done — it
+   * checked, it fast-forwarded, it did not push, it deleted a branch it had proved was empty — were
+   * known at the moment they were worth saying and thrown away. These assert the facts reach the
+   * result, so the sentence cannot go back to being a claim nobody can check.
+   */
+  it('carries what it verified, whether it pushed, and what became of the branch', async () => {
+    const branch = 'multi-agent-controller/t81-told'
+    const { project, taskId, root, ws } = seedLocal(branch)
+    // ⚠️ Two commands, so `checksPassed` is a count that could be wrong rather than a boolean that
+    // could not. Both are read-only git invocations that exit 0 on every platform this runs on.
+    const checked = projects.setProjectChecks(project.id, [
+      'git --version',
+      'git status --porcelain'
+    ])
+    // ⛔ Committed, not left in the working tree: `setProjectChecks` writes `project.json` into the
+    // trunk, and `merge-local` refuses to merge into a trunk with uncommitted files in it — which
+    // is the correct behaviour and would make this a test of the fixture instead of the message.
+    git(root, 'add', '-A')
+    git(root, 'commit', '-m', 'declare the project checks')
+
+    const result = await land(checked, taskId, ws, branch, 'commit-and-merge')
+
+    expect(result.ok, result.reason).toBe(true)
+    expect(result.checksPassed).toBe(2)
+    expect(result.pushed).toBe(false)
+    expect(result.branchDeleted).toBe(true)
+
+    const said = tasks.messagesFor(taskId).map((m) => m.text).join('\n')
+    expect(said).toContain('Landed as')
+    expect(said).toContain('2 project checks passed')
+    expect(said).toContain('not pushed')
+    expect(said).toContain('deleted')
+  }, 30_000)
+
   it('merges split work into the planner branch and leaves main untouched', async () => {
     seq += 1
     const root = makeRepo(`local${seq}`)
@@ -1005,5 +1041,74 @@ describe('two tasks landing at once', () => {
     expect(result.contendedWith).toBeUndefined()
     expect(tasks.requireTask(race.aTask).dependsOn).toHaveLength(0)
     expect(said(race.aTask)).not.toContain('Waiting to land')
+  })
+})
+
+/**
+ * The sentence itself, without a repository behind it.
+ *
+ * ⛔ **Each clause is written only when the fact behind it is known**, and that is the property
+ * worth pinning: a strategy that does not verify must say nothing about verification rather than
+ * leave the reader to assume it happened, and a count of zero checks is the *opposite* of verified
+ * rather than a smaller amount of it.
+ */
+describe('what a landing tells the operator it did', () => {
+  const base = {
+    strategy: 'merge-local' as const,
+    ok: true as const,
+    commit: '98f200abcdef1234',
+    branch: 'multi-agent-controller/t239-thing'
+  }
+
+  it('keeps the headline shape the salvage parser reads back off the thread', () => {
+    // ⛔ `taskcommits.ts` recovers the commits of every task that landed before `task_commits`
+    //    existed by matching this opening. Reword it and 200 tasks quietly stop being reviewable.
+    const said = landing.landedMessage(base, 'main', null)
+    expect(said.startsWith('Landed as `98f200ab` onto `main`.')).toBe(true)
+  })
+
+  it('says what it verified, how far the work went, and what became of the branch', () => {
+    const said = landing.landedMessage(
+      { ...base, checksPassed: 4, pushed: false, branchDeleted: true },
+      'main',
+      null
+    )
+    expect(said).toContain('4 project checks passed')
+    expect(said).toContain('**not pushed**')
+    expect(said).toContain('`multi-agent-controller/t239-thing` held nothing `main` does not now have')
+  })
+
+  it('calls a project with no check commands unverified, which is not a smaller kind of verified', () => {
+    const said = landing.landedMessage({ ...base, checksPassed: 0 }, 'main', null)
+    expect(said).toContain('Nothing was verified')
+    expect(said).not.toContain('passed')
+  })
+
+  it('says nothing at all about verification for a strategy that does not verify', () => {
+    // ⚠️ `open-pr` deliberately runs no checks locally — a pull request exists so that CI and a
+    //    person do that — so the honest report is silence, not a claim in either direction.
+    const said = landing.landedMessage(base, 'main', null)
+    expect(said).not.toContain('verified')
+    expect(said).not.toContain('Verified')
+  })
+
+  it('says a branch was kept rather than pretending it was tidied', () => {
+    const said = landing.landedMessage({ ...base, branchDeleted: false }, 'main', null)
+    expect(said).toContain('was kept')
+  })
+
+  it('names the remote when the work was pushed, and only then', () => {
+    expect(landing.landedMessage({ ...base, pushed: true }, 'main', null)).toContain('`origin/main`')
+    expect(landing.landedMessage(base, 'main', null)).not.toContain('origin/')
+  })
+
+  it('counts the commits only when there is more than one to count', () => {
+    // ⚠️ "1 commit, tipped by that one" is the headline again in more words.
+    expect(landing.landedMessage({ ...base, commitsLanded: 3 }, 'main', null)).toContain('3 commits')
+    expect(landing.landedMessage({ ...base, commitsLanded: 1 }, 'main', null)).not.toContain('commits,')
+  })
+
+  it('still says it queued, which is the only evidence the land queue ran', () => {
+    expect(landing.landedMessage(base, 'main', { seq: 26 })).toContain('queued behind t26')
   })
 })

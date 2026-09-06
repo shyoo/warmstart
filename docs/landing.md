@@ -387,6 +387,23 @@ means grading five other tasks' commits as t124's. `resolveRange` therefore asks
 first and only falls back to the range; where the recorded commits are not exactly what `base..head`
 contains, the diff is taken as one `<sha>^!` patch per commit instead.
 
+⛔ **The message says what the landing did, one clause per fact it actually knows.** For most of
+this tool's life it said *"Landed as a166a6a onto main."* and nothing else — while the landing had
+just rebased the branch onto the trunk, run every check the project declares and waited for them,
+fast-forwarded the trunk without pushing, and deleted a branch it had proved held nothing new. Four
+facts, known at the moment they were worth stating, discarded; and the one thing the sentence did say
+is the one thing a person cannot check by looking. `landedMessage` in `landing.ts` composes it from
+`LandingResult`, and a clause is written **only** when the fact behind it is known: a strategy that
+does not verify says nothing about verification rather than implying it happened, and `checksPassed:
+0` reads *"nothing was verified — this project declares no check commands"*, which is the opposite of
+verified rather than a smaller amount of it.
+
+⛔ **The headline keeps its exact shape** — sha, `onto`, target — because `salvageLandedCommits`
+reads it back off the thread. The sha and the target are now fenced as code (the thread renders
+inline code spans; see `lib/codespans.ts`), and that parser was taught both spellings in the same
+change: a wording change it did not know about would have stopped it recovering commits **silently**,
+since salvage reports what it recognised and has no way to report what it did not.
+
 ⭐ **Everything that landed before any of this existed was recovered from its own thread.** The
 *"Landed as `<sha>` onto `<target>`"* message above outlives the branch, the workspace and the
 columns, and `salvageLandedCommits` parses it back on daemon start. It is idempotent and additive:
@@ -412,7 +429,10 @@ You see it as one extra message, then the ordinary one:
 > rebases cannot race for the trunk. This one is queued behind it and now depends on it, and will
 > land by itself.
 >
-> Landed as `a41f9c2` onto `main`. It queued behind t26 and landed once that finished.
+> Landed as `a41f9c2` onto `main`. Verified first: 4 project checks passed on the rebased branch,
+> before anything moved. Fast-forwarded your local `main` — **not pushed**.
+> `multi-agent-controller/t27-…` held nothing `main` does not now have, so it was deleted. It queued
+> behind t26 and landed once that finished.
 
 ⭐ **The queued task gains a dependency on the one it waited for**, so "t27 landed after t26" is still
 answerable tomorrow. ⚠️ The edge is a *record*, not an instruction: the task is deliberately **not**

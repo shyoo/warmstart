@@ -69,8 +69,18 @@ function commit(root: string, message: string): string {
 
 let taskSeq = 0
 
-/** A task row with the thread message a successful landing writes, and nothing else. */
-function landedTask(projectId: string, announcements: Array<{ sha: string; target?: string }>) {
+/**
+ * A task row with the thread message a successful landing writes, and nothing else.
+ *
+ * ⚠️ `fenced` writes the sha and the target in backticks, which is how the message has read since
+ * the thread began rendering inline code. Both spellings exist in every fleet's history, and the
+ * parser has to read the two of them.
+ */
+function landedTask(
+  projectId: string,
+  announcements: Array<{ sha: string; target?: string }>,
+  fenced = false
+) {
   taskSeq += 1
   const id = `task-${taskSeq}`
   const now = Date.now()
@@ -89,7 +99,15 @@ function landedTask(projectId: string, announcements: Array<{ sha: string; targe
   announcements.forEach((a, i) => {
     // ⚠️ The abbreviated spelling the landing actually writes, not the full sha: resolving those
     // seven characters back to a commit is the part of the salvage that can be wrong.
-    insert.run(id, `Landed as ${a.sha.slice(0, 8)} onto ${a.target ?? 'main'}.`, now + i)
+    const sha = a.sha.slice(0, 8)
+    const target = a.target ?? 'main'
+    insert.run(
+      id,
+      fenced
+        ? `Landed as \`${sha}\` onto \`${target}\`. Verified first: 4 project checks passed.`
+        : `Landed as ${sha} onto ${target}.`,
+      now + i
+    )
   })
   return id
 }
@@ -132,6 +150,20 @@ describe('salvaging landed commits from the thread', () => {
     expect(commits.taskCommitShas(once)).toEqual([other])
     expect(commits.taskCommits(once)[0]?.source).toBe('salvage')
     expect(commits.taskCommits(once)[0]?.target).toBe('main')
+  })
+
+  it('reads the message in its fenced spelling too, which is the one being written now', async () => {
+    // ⛔ The failure this guards is silent by construction: salvage reports what it recognised and
+    //    has no way to report what it did not, so a parser left behind by a wording change simply
+    //    stops recovering commits and says nothing about it.
+    const project = makeProject()
+    const landed = commit(project.root, 'a landing announced in backticks')
+    const task = landedTask(project.id, [{ sha: landed }], true)
+
+    const report = await commits.salvageLandedCommits()
+    expect(report.unresolved).toBe(0)
+    expect(commits.taskCommitShas(task)).toEqual([landed])
+    expect(commits.taskCommits(task)[0]?.target).toBe('main')
   })
 
   it('fills a range for a single landing and refuses to invent one for two', async () => {

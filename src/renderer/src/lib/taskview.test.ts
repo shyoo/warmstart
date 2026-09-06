@@ -475,10 +475,21 @@ describe('what a task is called on screen', () => {
   })
 
   it('does not truncate a label, because a label already fits', () => {
-    // ⚠️ `MAX_TITLE_SUMMARY` is 80 and the cell allows 70, so this is the one case where truncation
-    // could still bite. It bites the *label*, not the prompt, which is the right thing to shorten.
+    // ⚠️ `MAX_TITLE_SUMMARY` is 80 and the default allows 70, so this is the one case where
+    // truncation could still bite. It bites the *label*, not the prompt, which is the right thing
+    // to shorten.
     const label = 'y'.repeat(40)
     expect(taskLabelShort({ title: 'x'.repeat(500), titleSummary: label })).toBe(label)
+  })
+
+  it('cuts at the width the caller asked for, which the task table sets past its own column', () => {
+    // ⛔ The bug the explicit width fixes: the cell ellipsises at the column's real edge, so a cut
+    //    made *here* first shows an `…` with empty space after it. The table now passes a bound on
+    //    the payload rather than a guess at the column, and this is what makes that a caller's
+    //    decision rather than a constant nobody can see from the component.
+    const long = 'x'.repeat(400)
+    expect(taskLabelShort({ title: long, titleSummary: null }, 240)).toHaveLength(241)
+    expect(taskLabelShort({ title: 'x'.repeat(120), titleSummary: null }, 240)).toHaveLength(120)
   })
 })
 

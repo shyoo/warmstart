@@ -81,6 +81,18 @@ function SortHead({
 const OPENS_ASCENDING: ReadonlySet<TaskSort> = new Set<TaskSort>(['title', 'from', 'worker', 'status'])
 
 /**
+ * How much of a title reaches the DOM, in characters.
+ *
+ * ⛔ **A bound on the payload, not the display.** `Task.title` *is* the prompt — routinely a
+ * paragraph, occasionally pages — and fifty of them per page is a real cost for text nobody will
+ * see. The column's own `max-width` decides where the line ends and draws the `…`, so this only has
+ * to stay comfortably past the widest that column can ever be (`min(120ch, 46vw)` in `app.css`).
+ * ⚠️ Anything at or below that width puts an ellipsis on screen while the column still has room,
+ * which is the bug this number replaced: it was **70**.
+ */
+const TITLE_CHARS = 240
+
+/**
  * The task table.
  *
  * Tabular and dense on purpose — this is a control surface, not a board. The columns are what an
@@ -422,7 +434,13 @@ export function Tasks({
           )}
         </div>
       ) : (
-        <table className="tbl">
+        <table className="tbl tbl--tasks">
+          {/* ⛔ `tbl--tasks` exists for one rule: **the title column takes the slack.**
+              `.tbl-title-cell` is shared with three narrower tables and caps the title at 48ch, and
+              an automatic table layout hands out spare width in proportion to what each column
+              *asked* for — so a title that had stopped asking at 48ch was given an even share of a
+              stretched window alongside `Dep` and `From`, which need none of it. The rule, and the
+              two bounds on it, are in `app.css`. */}
           <thead>
             <tr>
               <SortHead label="#" column="seq" sort={sort} asc={asc} onSort={sortBy} numeric />
@@ -565,7 +583,15 @@ export function Tasks({
                               ➥{' '}
                             </span>
                           )}
-                          {taskLabelShort(task)}
+                          {/* ⛔ **Two truncations were fighting, and the wrong one won.** The cell
+                              already ellipsises at whatever width the column actually has; this call
+                              cut the string at 70 characters *first*, so a wide window showed `…`
+                              with empty space after it — a truncation mark that was not telling the
+                              truth about the space available. The cap stays, because `title` is the
+                              whole prompt and can be paragraphs, but it is now well past what the
+                              widest column can draw, which leaves CSS to decide where the text ends
+                              and the `…` to mean what it says. */}
+                          {taskLabelShort(task, TITLE_CHARS)}
                         </span>
                       </div>
                       {task.branch && <div className="tbl-path mono">{task.branch}</div>}

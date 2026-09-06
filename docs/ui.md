@@ -65,6 +65,15 @@ thing entirely. See [`glossary.md`](glossary.md).
 | `Terminal` | the real agent TUI over xterm.js, not a reconstruction |
 | `AppSettings` `SettingRow` `SettingButtonSelect` `SidebarResizer` | chrome |
 
+⛔ **A thread message renders inline code spans, and nothing else of markdown.** Every message this
+codebase writes names refs, branches, shas and files in backticks — *"Landed as `98f200ab` onto
+`main`"* — and `{m.text}` printed the backticks, which is the worst of both readings: punctuation to
+ignore, and no distinction between `main` the branch and main the adjective. `lib/codespans.ts`
+splits the text and `.msg-code` sets the fenced runs in the mono face. ⚠️ Headings, links and
+emphasis are deliberately **not** rendered: those are a different feature with a different risk — an
+agent's own prose reaching this path — and nothing here needs them. A span never crosses a newline,
+so the worst an unmatched backtick can do is print itself.
+
 ⛔ **The thread's timeline is ordered on when each entry *finished*, not when it started**
 (`byEndThenStart` in `lib/taskview.tsx`). Runs, compactions and reviews nest rather than queue — a
 compaction happens *inside* the run that asked for it — so the two always share a start and never
@@ -217,6 +226,18 @@ means; `parent`, for a piece of a split — ⛔ **lineage is not a dependency**,
 way, so neither the `depends on` nor the `blocks` list can ever name it; `pieces`, with how each one
 turned out, failures included; and `each piece`, which reads back the accounts and models the Pieces row
 set, resolved exactly as `applySplit` resolves them.
+
+⛔ **The title column takes the slack when the window is stretched.** An automatic table layout
+hands out spare width in proportion to what each column *asked* for, and a column asks for as much as
+its widest content wants — capped by `max-width`. At 48ch the title stopped asking, so a wider window
+was shared evenly between the one column that is text and the eleven that are numbers, dates and
+chips. `.tbl--tasks` raises the cap to `min(120ch, 46vw)`: still definite, because that is what
+`text-overflow: ellipsis` needs to draw at the column edge, and still bounded at both ends.
+⚠️ **And two truncations were fighting.** `taskLabelShort` cut the string at 70 characters *before*
+the cell ever measured anything, so a wide window drew an `…` with empty space after it — a
+truncation mark that was not telling the truth. The table now passes `TITLE_CHARS`, a bound on the
+payload (a title *is* the prompt, and can be paragraphs) set well past the widest the column can be,
+which leaves CSS to decide where the line ends.
 
 ⛔ **Every column of the task table sorts, and two kinds of column sort in two different places.**
 `seq`, `title`, `status`, `quality`, `created` and `updated` are real columns: SQLite orders them and

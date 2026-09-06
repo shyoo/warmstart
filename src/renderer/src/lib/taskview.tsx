@@ -515,6 +515,12 @@ export function taskLabel(task: Pick<Task, 'title' | 'titleSummary'>): string {
  * ⚠️ Truncation is the *second* line of defence and is expected to do nothing on a labelled task —
  * `MAX_TITLE_SUMMARY` is 80, so a summary always fits. It still exists because an unlabelled task
  * falls back to a prompt of any length at all, and a table has to hold its shape either way.
+ *
+ * ⛔ **`max` bounds the payload; CSS decides where the line ends.** Every cell that renders this is
+ * `text-overflow: ellipsis` against a real column width, so a `max` at or below what the column can
+ * draw puts an `…` on screen while there is still room beside it — a truncation mark that is not
+ * telling the truth. The task table passes `TITLE_CHARS`, deliberately well past its widest column;
+ * the default is for callers with no column at all, such as the delete confirmation.
  */
 export function taskLabelShort(task: Pick<Task, 'title' | 'titleSummary'>, max = 70): string {
   const label = taskLabel(task)

@@ -3224,6 +3224,46 @@ try {
     JSON.stringify(cleared)
   )
 
+  section('identifiers in a thread message read as identifiers')
+  // ⛔ Every message this codebase writes names refs, branches, shas and files in backticks —
+  // *"Landed as `98f200ab` onto `main`"* — and the thread printed the backticks. The reader got the
+  // punctuation and none of the distinction it was there to make. ⚠️ Inline code only; this is not
+  // a markdown renderer and `lib/codespans.ts` says why it must not become one.
+  await evaluate(`
+    (async () => {
+      const id = await window.agentyard.rpc('task.page', { limit: 100 })
+        .then(p => p.tasks.find(t => t.title === 'ui dependent task')?.id);
+      await window.agentyard.rpc('task.message', { id, text: 'Landed as \`98f200ab\` onto \`main\`.' });
+      return id;
+    })()
+  `)
+  let fenced = null
+  await waitFor(async () => {
+    const got = await evaluate(`
+      JSON.stringify((() => {
+        const codes = [...document.querySelectorAll('.thread--task .msg-text code.msg-code')]
+          .map(c => c.innerText);
+        if (codes.length === 0) return null;
+        const said = [...document.querySelectorAll('.thread--task .msg-text')]
+          .map(t => t.innerText).join(' ');
+        return { codes, backticks: said.includes('\`') };
+      })())
+    `)
+    fenced = got === 'null' || got == null ? null : JSON.parse(got)
+    return fenced !== null
+  }, 'a fenced identifier in the thread')
+
+  check(
+    'a branch, a ref or a sha is set apart from the sentence around it',
+    fenced.codes.includes('98f200ab') && fenced.codes.includes('main'),
+    JSON.stringify(fenced)
+  )
+  check(
+    '⛔ and the fences themselves are gone, not printed as punctuation',
+    fenced.backticks === false,
+    JSON.stringify(fenced)
+  )
+
   section('what the thread ledger says a task cost')
   // ⭐ The right pane's two money-adjacent rows, read back from the built app. Price and tokens are
   // two measurements docs/cost-model.md §5 never reconciles, and they were drawn as one number with
@@ -3292,6 +3332,59 @@ try {
     widths.plain === '1100px',
     JSON.stringify(widths)
   )
+
+  section('how much of a title the task table will show')
+  // ⛔ Two truncations were fighting and the wrong one won. The cell ellipsises at the column's real
+  // edge; the renderer *also* cut the string at 70 characters first, so a stretched window drew an
+  // `…` with empty space after it — a truncation mark that was not telling the truth. The cut is now
+  // a bound on the payload (240) well past the widest the column can be, which leaves CSS to decide.
+  const LONG_TITLE = 'Please make the landing message self explanatory and let the title column '
+    + 'take the slack when the window is stretched, because it is the only text-heavy column here'
+  const titleShown = JSON.parse(
+    await evaluate(`
+      (async () => {
+        const t = await window.agentyard.rpc('task.create', { title: ${JSON.stringify(LONG_TITLE)} });
+        return JSON.stringify({ id: t.id });
+      })()
+    `)
+  )
+  // ⚠️ `waitFor` reports only that the condition held, so the reading is kept as it is taken. The
+  // table re-fetches on the daemon's own event, which arrives after `task.create` returns.
+  let shown = null
+  await waitFor(async () => {
+    const got = await evaluate(`
+      JSON.stringify((() => {
+        const cells = [...document.querySelectorAll('.tbl--tasks .tbl-title .tbl-strong')];
+        const hit = cells.map(c => c.innerText.trim()).find(t => t.startsWith('Please make the landing'));
+        if (!hit) return null;
+        const cell = document.querySelector('.tbl--tasks .tbl-title-cell');
+        const num = document.querySelector('.tbl--tasks tbody tr td.tbl-num');
+        return { text: hit, cell: cell?.offsetWidth ?? 0, num: num?.offsetWidth ?? 0 };
+      })())
+    `)
+    shown = got === 'null' || got == null ? null : JSON.parse(got)
+    return shown !== null
+  }, 'the long-titled task in the table')
+
+  check(
+    'the row shows more of a long title than the 70 characters it used to stop at',
+    shown.text.length > 70,
+    JSON.stringify({ length: shown.text.length, text: shown.text.slice(0, 90) })
+  )
+  check(
+    '⚠️ and the ellipsis, when there is one, is drawn by the column rather than by the string',
+    !shown.text.slice(0, -1).includes('…'),
+    JSON.stringify({ text: shown.text.slice(-40) })
+  )
+  check(
+    '⛔ the title column is the one that takes the slack, not an equal share of it',
+    shown.cell > shown.num * 4,
+    JSON.stringify({ title: shown.cell, numeric: shown.num })
+  )
+  // ⚠️ Left in place rather than deleted: `task.delete` refuses a `ready` task by design — cancel
+  // comes first — and cancelling one to tidy a fixture would be spending two RPCs to assert nothing.
+  // The whole data directory goes in `finally`.
+  void titleShown
 
   const errors = await evaluate('window.__agentyardErrors?.length ?? 0')
   check('no uncaught renderer errors', errors === 0)

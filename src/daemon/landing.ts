@@ -442,13 +442,21 @@ async function commitsAhead(cwd: string, branch: string, base: string): Promise<
   }
 }
 
-/** Run the project's own checks. A project that declares none has consented to landing unchecked. */
+/**
+ * Run the project's own checks. A project that declares none has consented to landing unchecked.
+ *
+ * ⚠️ `passed` is how many commands were run **and** succeeded, and it is what the landing message
+ * turns into the word *verified*. ⛔ Zero commands is `passed: 0` and never a clean bill: an empty
+ * check list is the state every project starts in, and a message calling that verified would be
+ * making a claim nobody measured.
+ */
 async function runChecks(
   project: Project,
   cwd: string
-): Promise<{ ok: boolean; output: string }> {
+): Promise<{ ok: boolean; output: string; passed: number }> {
   const commands = policyFor(project).check
   let output = ''
+  let passed = 0
   for (const command of commands) {
     try {
       const result = await run(command, {
@@ -458,13 +466,14 @@ async function runChecks(
         timeout: 30 * 60 * 1000
       } as never)
       output += `$ ${command}\n${result.stdout}${result.stderr}\n`
+      passed += 1
     } catch (err) {
       const e = err as { stdout?: string; stderr?: string; message?: string }
       output += `$ ${command}\n${e.stdout ?? ''}${e.stderr ?? ''}${e.message ?? ''}\n`
-      return { ok: false, output: output.slice(-8000) }
+      return { ok: false, output: output.slice(-8000), passed }
     }
   }
-  return { ok: true, output: output.slice(-8000) }
+  return { ok: true, output: output.slice(-8000), passed }
 }
 
 /**
@@ -494,6 +503,7 @@ export const verifyOnly: LandingStrategy = {
         strategy: 'verify-only',
         ok: true,
         branch: ctx.branch,
+        checksPassed: 0,
         reason:
           `committed on \`${ctx.branch}\` — **nothing was verified**: this project declares no ` +
           'check commands. Add them in Project settings.'
@@ -505,6 +515,7 @@ export const verifyOnly: LandingStrategy = {
           strategy: 'verify-only',
           ok: true,
           branch: ctx.branch,
+          checksPassed: checks.passed,
           reason: `committed on \`${ctx.branch}\` and the project checks passed`
         }
       : {
@@ -661,7 +672,9 @@ export const mergeLocal: LandingStrategy = {
 
       // The fast-forward above is the proof `retireBranch` requires: every commit on the branch is
       // now on the target.
-      await retireBranch(ctx.workspacePath, ctx.branch)
+      // ⚠️ The answer is kept rather than discarded: a branch another worktree still holds is left
+      // alone, and *"the branch was deleted"* is a claim the landing message makes out loud.
+      const branchDeleted = await retireBranch(ctx.workspacePath, ctx.branch)
       log.info(`merged t${ctx.task.seq} (${commit.slice(0, 8)}) into ${target}, not pushed`)
       return {
         strategy: 'merge-local',
@@ -669,6 +682,9 @@ export const mergeLocal: LandingStrategy = {
         commit,
         ...(baseSha ? { base: baseSha } : {}),
         branch: ctx.branch,
+        branchDeleted,
+        checksPassed: checks.passed,
+        pushed: false,
         reason:
           target === policyFor(ctx.project).landingTarget
             ? `merged into local \`${target}\` as ${commit.slice(0, 8)}. Not pushed.`
@@ -844,7 +860,7 @@ export const mergeBranch: LandingStrategy = {
         }
       }
 
-      await retireBranch(ctx.workspacePath, ctx.branch)
+      const branchDeleted = await retireBranch(ctx.workspacePath, ctx.branch)
       log.info(`merged t${ctx.task.seq} (${commit.slice(0, 8)}) into ${target} by ref, not pushed`)
       return {
         strategy: 'merge-branch',
@@ -852,6 +868,9 @@ export const mergeBranch: LandingStrategy = {
         commit,
         ...(baseSha ? { base: baseSha } : {}),
         branch: ctx.branch,
+        branchDeleted,
+        checksPassed: checks.passed,
+        pushed: false,
         reason: `merged into \`${target}\` as ${commit.slice(0, 8)}. Not pushed.`
       }
     } finally {
@@ -1119,7 +1138,7 @@ export const autoLand: LandingStrategy = {
       // The push above is the proof `retireBranch` requires: every commit on the branch is now on
       // the target. ⚠️ HEAD is the landed commit here, so this detaches exactly where the two
       // hand-written lines it replaced did.
-      await retireBranch(ctx.workspacePath, ctx.branch)
+      const branchDeleted = await retireBranch(ctx.workspacePath, ctx.branch)
 
       log.info(`landed t${ctx.task.seq} (${commit.slice(0, 8)}) onto ${target}`)
       return {
@@ -1127,6 +1146,10 @@ export const autoLand: LandingStrategy = {
         ok: true,
         commit,
         ...(baseSha ? { base: baseSha } : {}),
+        branch: ctx.branch,
+        branchDeleted,
+        checksPassed: checks.passed,
+        pushed: !!remote,
         checkOutput: checks.output,
         // ⚠️ Carried on the *success* too, because "it landed, after waiting for t26" is the sentence
         // the operator who started both tasks needs, and it is the only evidence that the queue ran.
@@ -1432,18 +1455,86 @@ export async function landTask(ctx: LandingContext): Promise<LandingResult> {
     // landing's base is wherever the trunk had got to, so `base..head` across the pair contains
     // every other task that landed in between. `task_commits` names what this task put on the
     // target and nothing else, and `resolveRange` prefers it. See `taskcommits.ts`.
-    await recordLandedCommits(ctx, result)
+    const landed = await recordLandedCommits(ctx, result)
     addMessage(
       ctx.task.id,
       'system',
-      `Landed as ${result.commit?.slice(0, 8)} onto ${landingTargetFor(ctx.task, ctx.project)}.` +
-        (behind ? ` It queued behind t${behind.seq} and landed once that finished.` : '')
+      landedMessage(
+        { ...result, ...(landed === null ? {} : { commitsLanded: landed }) },
+        landingTargetFor(ctx.task, ctx.project),
+        behind
+      )
     )
   }
     return result
   } finally {
     activeLandings.delete(ctx.task.id)
   }
+}
+
+/**
+ * What a successful landing said it did, in the words of somebody who did not watch it happen.
+ *
+ * ⛔ **The one sentence this used to be was true and told nobody anything.** *"Landed as a166a6a
+ * onto main."* is the whole of what an operator saw for a landing that had rebased the branch onto
+ * the trunk, run every check the project declares and waited for them, fast-forwarded the trunk, and
+ * deleted a branch it had just proved held nothing new. Four facts the daemon knew, discarded at the
+ * moment they were worth stating — and the one thing the sentence *did* say, a bare sha, is the
+ * thing a person is least able to check. Each clause below is written only when the fact behind it
+ * is known, so a strategy that does not verify says nothing about verification rather than implying
+ * it happened.
+ *
+ * ⛔ **The headline keeps its exact shape**, sha then `onto` then target: `taskcommits.ts` reads it
+ * back off the thread to salvage the commits of every task that landed before `task_commits`
+ * existed, matching on the message's opening words. The backticks are new and that parser was
+ * taught both spellings in the same change.
+ *
+ * ⚠️ Pure and exported for the tests. Composing prose inside `landTask` is what let the old sentence
+ * go five months without anybody being able to assert what it says.
+ */
+export function landedMessage(
+  result: LandingResult,
+  target: string,
+  behind: { seq: number } | null
+): string {
+  const parts: string[] = [
+    `Landed as \`${result.commit?.slice(0, 8)}\` onto \`${target}\`.`
+  ]
+
+  if (result.commitsLanded && result.commitsLanded > 1) {
+    parts.push(`${result.commitsLanded} commits, tipped by that one.`)
+  }
+
+  // ⛔ `undefined` says nothing; `0` says the opposite of verified. See `LandingResult.checksPassed`.
+  if (result.checksPassed !== undefined) {
+    parts.push(
+      result.checksPassed === 0
+        ? '⚠️ **Nothing was verified** — this project declares no check commands. Add them in ' +
+          'Project settings.'
+        : `Verified first: ${result.checksPassed} project check${result.checksPassed === 1 ? '' : 's'} ` +
+          `passed on the rebased branch, before anything moved.`
+    )
+  }
+
+  if (result.pushed === true) {
+    parts.push(`Pushed to \`origin/${target}\`.`)
+  } else if (result.pushed === false) {
+    // ⚠️ Said out loud, because the operator's own checkout is now ahead of the remote and nothing
+    // else will tell them. `merge-local` is the default policy here.
+    parts.push(`Fast-forwarded your local \`${target}\` — **not pushed**.`)
+  }
+
+  if (result.branchDeleted === true && result.branch) {
+    parts.push(
+      `\`${result.branch}\` held nothing \`${target}\` does not now have, so it was deleted.`
+    )
+  } else if (result.branchDeleted === false && result.branch) {
+    // ⚠️ Untidy, not a failure — `retireBranch` declines a branch another worktree still holds.
+    parts.push(`⚠️ \`${result.branch}\` was kept: something still has it checked out.`)
+  }
+
+  if (behind) parts.push(`It queued behind t${behind.seq} and landed once that finished.`)
+  return parts.join(' ')
 }
 
 /**
@@ -1454,16 +1545,24 @@ export async function landTask(ctx: LandingContext): Promise<LandingResult> {
  * throws — a landing that succeeded must not be reported as failed because a `git log` afterwards
  * did not run, and what this cannot enumerate `salvageLandedCommits` recovers later from the
  * *"Landed as …"* message written immediately after it.
+ *
+ * ⚠️ Returns how many commits it recorded, or `null` when it could not count — which the message
+ * treats as *say nothing* rather than as *one*.
  */
-async function recordLandedCommits(ctx: LandingContext, result: LandingResult): Promise<void> {
-  if (!result.commit) return
+async function recordLandedCommits(
+  ctx: LandingContext,
+  result: LandingResult
+): Promise<number | null> {
+  if (!result.commit) return null
   const target = landingTargetFor(ctx.task, ctx.project)
   try {
     const commits = await landedCommits(ctx.project.root, result.base ?? null, result.commit)
     // ⚠️ The tip alone when the enumeration came back empty. A landing whose recorded base is not
     // an ancestor of its head produces no log output, and one commit recorded beats none.
     recordTaskCommits(ctx.task.id, commits.length > 0 ? commits : [{ sha: result.commit }], target)
+    return commits.length > 0 ? commits.length : null
   } catch (err) {
     log.warn(`could not record t${ctx.task.seq}'s landed commits: ${String(err)}`)
+    return null
   }
 }

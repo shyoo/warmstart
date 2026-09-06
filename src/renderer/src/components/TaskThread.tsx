@@ -1,5 +1,5 @@
 import { canWork, sessionEnded } from '@shared/protocol'
-import { useCallback, useEffect, useState } from 'react'
+import { Fragment, useCallback, useEffect, useState } from 'react'
 import {
   FINISH_LABELS,
   FINISH_ORDER,
@@ -43,6 +43,7 @@ import { SettingButtonSelect, type SettingOption } from './SettingButtonSelect'
 import { TaskQuestions } from './Questions'
 import { AddDependency, candidatesFor, DependencyList, useTaskCandidates } from './Dependencies'
 import { showsLiveOutput } from '../lib/live'
+import { codeSpans } from '../lib/codespans'
 import { duration, quotaWindowDeltas, timeRange, tokens, when } from '../lib/format'
 import { Money, runPriceTitle, taskPriceTitle } from './Price'
 import { effortLabel, modelLabel } from '../lib/modelname'
@@ -1158,6 +1159,29 @@ function MessageImage({ attachment }: { attachment: Attachment }): React.JSX.Ele
   )
 }
 
+/**
+ * One message's text, with the identifiers in it set as code.
+ *
+ * ⚠️ `.msg-text` is `white-space: pre-wrap`, so every run has to be emitted as a plain string — a
+ * wrapper element around the plain runs would be harmless, but the fenced ones must not swallow the
+ * whitespace either side of them, which is what carries the line breaks the daemon wrote.
+ */
+function MessageText({ text }: { text: string }): React.JSX.Element {
+  return (
+    <>
+      {codeSpans(text).map((span, i) =>
+        span.code ? (
+          <code className="msg-code" key={i}>
+            {span.text}
+          </code>
+        ) : (
+          <Fragment key={i}>{span.text}</Fragment>
+        )
+      )}
+    </>
+  )
+}
+
 function Thread({
   messages,
   runs,
@@ -1216,7 +1240,12 @@ function Thread({
                   />
                 </div>
               )}
-              {m.text}
+              {/* ⛔ The backticks were being printed. Every message this codebase writes names refs,
+                  branches, shas and files in them — *"Landed as `98f200ab` onto `main`"* — and until
+                  now the reader got the punctuation and none of the distinction it was there to
+                  make. ⚠️ Inline code only; see `lib/codespans.ts` for why this is not a markdown
+                  renderer and must not become one. */}
+              <MessageText text={m.text} />
               {m.attachments.length > 0 && (
                 <span className="msg-images">
                   {m.attachments.map((a) =>

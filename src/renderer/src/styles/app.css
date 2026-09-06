@@ -1676,6 +1676,29 @@ body {
   white-space: nowrap;
 }
 
+/* The task table's title column takes the slack, and the slack is most of a stretched window.
+
+   ⛔ **An automatic table layout hands out spare width in proportion to what each column asked
+   for**, and a column asks for as much as its widest content wants — capped by `max-width`. At 48ch
+   the title stopped asking, so widening the window shared the extra evenly between the one column
+   that is text and the eleven that are numbers, dates and chips. Raising the cap is the whole fix:
+   the title now asks for more than every other column combined and is given it.
+
+   ⚠️ Still a `max-width` rather than none, and still definite, because that is what `text-overflow:
+   ellipsis` needs in order to draw at the column edge instead of overflowing the row. `min()` keeps
+   both ends honest: `46vw` so a stretched window is what widens it, `120ch` so a very wide monitor
+   does not hand one column three quarters of the table. ⚠️ Scoped to `.tbl--tasks`; the three other
+   tables that share `.tbl-title-cell` are narrower and keep the 48ch above. */
+.tbl--tasks .tbl-title-cell,
+.tbl--tasks .tbl-title {
+  max-width: min(120ch, 46vw);
+}
+
+/* The branch under the title, held to two-thirds of it for the same reason it was held before. */
+.tbl--tasks .tbl-path {
+  max-width: min(80ch, 30vw);
+}
+
 .tbl-title .tbl-strong {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -4028,6 +4051,26 @@ select:focus-visible,
 .msg-text {
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/* An identifier inside a message: a branch, a ref, a sha, a path.
+
+   ⛔ **A different face, not a different colour.** These sit inside sentences the operator is
+   reading for meaning — *"Landed as `98f200ab` onto `main`"* — and the job of the treatment is to
+   say *this is a name you could type*, which a monospace face does at a glance and a colour does
+   only once somebody has learned the colour. The faint background is what keeps it legible against
+   the surrounding prose without adding a second signal to decode.
+
+   ⚠️ `white-space: inherit` so the `pre-wrap` above survives: a ref never contains a newline, but a
+   path with a space in it must not be re-flowed differently from the sentence around it. */
+.msg-code {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  white-space: inherit;
+  padding: 0 3px;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-2);
+  color: var(--color-text);
 }
 
 .msg-prompt-box {
