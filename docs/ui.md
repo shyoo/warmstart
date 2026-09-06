@@ -121,6 +121,12 @@ the *Grade up to five* button that used to sit on Routing Model › Quality is g
 because two buttons spending turns on the same accounts under different caps is a way to empty a
 quota window by pressing the wrong one.
 
+⚠️ **One steady progress mark, beside Refresh, and it tracks the grading rather than the fetch.**
+While a batch runs the page polls every three seconds; a spinner bound to the fetch therefore blinked
+on and off across both the Refresh button and the "Filter out cannot be graded" label, at a cadence
+that described the poll and nothing an operator cares about. The mark is drawn for as long as
+`batch.state === 'running'` and the button keeps its label and stays clickable throughout.
+
 ⛔ **Batching is a queue, not a call.** `quality.batch.start` returns as soon as the queue exists and
 the reviews run in the background (`daemon/gradebatch.ts`), because ALL over a backlog is hours of
 grading and an RPC held open for it would be lost by the first window reload. Progress is read back
@@ -193,6 +199,28 @@ than scored lower. Measured on t197: the row was sent, stored and validated, and
 the singular `workerId` beside it — so every piece was filed with no constraint at all, went through the
 ordinary dispatcher, and was handed the largest model in the fleet for work whose whole point was that it
 was small. A setting that is displayed and then not read is worse than one never offered.
+
+⛔ **The Model pill offers two answers that are not models, and it is never disabled.** *Auto Model*
+hands the choice to the router, which scores every model on the chosen account's `routableModels`
+allowlist as its own candidate; *Inherit — <model>* files `constraints.modelPolicy: 'inherit'`, and
+the scheduler then takes that account's own default and scores nothing. Both used to be the same
+empty string, so an operator who pinned CodexFirst, read *Inherit — GPT 5.6 Sol* and pressed Send got
+whatever the router scored best — GPT 5.6 Terra, measured — with no screen anywhere having said so.
+The two are answerable with no account pinned (each account then uses *its* default), which is why
+the pill stays live on **Auto Worker** where it used to be locked; only the list of models by name
+needs a CLI, and that appears once one is pinned.
+
+⚠️ **An effort is not drawn beside a model that has no levels.** `resolveModelChoice` inherits the
+account's default effort independently of the model — right, and on `claude-haiku-4-5`, whose cost
+model declares `effort_levels: []`, it rendered *Haiku 4.5 Med* for a flag the CLI takes and that
+model ignores. The thread, the Tasks column and the dispatch itself all drop it now, and all three
+drop it only where the cost model actually describes the model: an unpriced id says nothing about its
+levels.
+
+⛔ **A draft's thread can delete it.** The banner's *Delete draft* asks with the same confirmation the
+Tasks row action uses and then leaves for the list, because a deleted task's thread can re-fetch
+itself into nothing but *that task is no longer here*. Filing was previously the only way out of a
+draft from the one screen somebody reading it was on.
 
 ⛔ **The Conversation kind hides two pills, and hiding them is what it means.** A conversation is
 `Reuse` + `await human`, and both come from the kind rather than from the row: `resolveFinishPolicy`

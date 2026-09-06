@@ -742,6 +742,19 @@ export interface TaskConstraints {
   adapterId?: string
   model?: string
   /**
+   * How the model is chosen on a task that does not pin one.
+   *
+   * ⛔ **`auto` is the absence of this field and the behaviour every task filed before it had.**
+   * The scheduler scores each of the chosen worker's routable models as its own candidate and the
+   * winner is not knowable until the tick that dispatches. `inherit` says the opposite out loud:
+   * take the account's own default model and route nothing — what `resolveModelChoice` answers with
+   * no pin, which on a multi-pool account is still the emptier pool's default.
+   *
+   * ⚠️ Only meaningful while `model` is unset. A pinned model is a mandate, and a pin plus a policy
+   * is one instruction, not two.
+   */
+  modelPolicy?: 'auto' | 'inherit'
+  /**
    * How hard the model should think, where the CLI can be told.
    *
    * ⛔ Only ever sent to an adapter that declares `selectableEffort`. Effort is otherwise an

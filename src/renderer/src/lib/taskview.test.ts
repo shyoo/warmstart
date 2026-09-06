@@ -644,6 +644,28 @@ describe('the model under the account, in the Worker column', () => {
     expect(modelLine(routed(), fleet(agy), options)?.label).toBe('Gemini 3.7 Flash Med')
   })
 
+  it('⛔ shows no effort beside a model the cost model gives no levels', () => {
+    // `claude-haiku-4-5` declares `effort_levels: []` — claude-code takes the flag, and this model
+    // takes no level at all. The account's default effort is still `medium` and still inherited for
+    // every other model, so the cell used to read *Haiku 4.5 Med* for a flag nothing sends.
+    const priced: ModelOptions[] = [
+      {
+        adapterId: 'claude-code',
+        costModelId: 'anthropic.subscription.2026-08',
+        selectableEffort: true,
+        models: [
+          { id: 'claude-haiku-4-5', contextWindow: 200000, effortLevels: [] },
+          { id: 'claude-sonnet-5', contextWindow: 1000000, effortLevels: ['low', 'medium', 'high'] }
+        ]
+      }
+    ]
+    expect(modelLine(routed(), fleet(worker({ defaultModel: 'claude-haiku-4-5' })), priced)?.label).toBe(
+      'Haiku 4.5'
+    )
+    // ⚠️ The other half of the claim: a model that *does* have levels still shows the inherited one.
+    expect(modelLine(routed(), fleet(), priced)?.label).toBe('Sonnet 5 Med')
+  })
+
   it('says nothing where no model has been chosen and none has run', () => {
     // ⚠️ Not a placeholder. "The CLI picks" is the true answer, and the cell shows the account alone.
     expect(modelLine(routed(), fleet(worker({ defaultModel: null })), options)).toBeNull()

@@ -32,7 +32,8 @@ import {
   rememberModelChoice,
   writeComposerPrefs,
   type ComposerKind,
-  type ComposerPrefs
+  type ComposerPrefs,
+  type ModelPolicy
 } from '../lib/composerprefs'
 
 /**
@@ -94,6 +95,21 @@ const FANOUT_OPTIONS: PillOption[] = Array.from({ length: MAX_PIECES - MIN_PIECE
   value: String(MIN_PIECES + i),
   label: `Up to ${MIN_PIECES + i} pieces`
 }))
+
+/**
+ * The two answers on the model pill that are not a model.
+ *
+ * ⛔ **Both used to be the same empty string, and an operator could not tell which they had asked
+ * for.** Filing with no model hands the choice to the router, which on an account with a
+ * routable-model allowlist dispatches a model nobody on this screen ever saw — measured on a
+ * CodexFirst pin that read *Inherit — GPT 5.6 Sol* and ran GPT 5.6 Terra. Neither answer was wrong;
+ * the pill was offering one word for two of them.
+ *
+ * ⚠️ Prefixed rather than bare, because every other value on this control is a model id sent to a
+ * CLI verbatim, and `auto` is a plausible name for one.
+ */
+const MODEL_AUTO = 'policy:auto'
+const MODEL_INHERIT = 'policy:inherit'
 
 const ATTACH_OPTIONS: PillOption[] = [
   { value: 'file', label: 'Add a file or photo' },
@@ -277,6 +293,13 @@ export function NewTask({
   const remembered = modelChoiceFor(prefs, prefs.workerId)
   const model =
     forAdapter && forAdapter.models.some((m) => m.id === remembered.model) ? remembered.model : ''
+  /**
+   * What to do when no model is named — the router's choice, or the account's own default.
+   *
+   * ⚠️ Only asked while `model` is empty. A pin answers the question, and a pill showing a policy
+   * beside a pinned model would be reporting a setting that changes nothing.
+   */
+  const modelPolicy: ModelPolicy = model ? 'auto' : remembered.policy
   const resolved = resolveModelChoice({ model: model || undefined }, pinned, canSetEffort)
   const effectiveModel = forAdapter?.models.find((m) => m.id === (resolved.model ?? '')) ?? null
   const efforts = canSetEffort ? (effectiveModel?.effortLevels ?? []) : []
@@ -284,10 +307,50 @@ export function NewTask({
 
   const hasMultiPoolDefaults =
     pinned?.defaultModels && Object.values(pinned.defaultModels).filter(Boolean).length > 1
-  const inheritedModelLabel = hasMultiPoolDefaults
-    ? 'Auto-balance'
-    : (modelLabel(pinned?.defaultModel) ?? 'CLI default')
+  // ⚠️ With no account pinned there is no one default to name, and "CLI default" would name the
+  // wrong thing — each account has its own. The pill says whose default it means instead.
+  const inheritedModelLabel = !pinned
+    ? 'Account default'
+    : hasMultiPoolDefaults
+      ? 'Auto-balance'
+      : (modelLabel(pinned.defaultModel) ?? 'CLI default')
   const inheritedEffortLabel = effortLabel(pinned?.defaultEffort) ?? 'CLI default'
+
+  /**
+   * The model control's three kinds of answer, in one list both rows draw from.
+   *
+   * ⛔ The planner row and the ordinary row share `model`, `modelPolicy` and `chooseModel`, so they
+   * have to offer the same options. They did not: the plan row offered `''` for inherit, which is
+   * not a value this control has any more, and picking the account's default there was unreachable.
+   */
+  const modelPillValue = model || (modelPolicy === 'inherit' ? MODEL_INHERIT : MODEL_AUTO)
+  const modelPillLabel = model
+    ? (modelLabel(model) ?? model)
+    : modelPolicy === 'inherit'
+      ? inheritedModelLabel
+      : 'Auto Model'
+  const modelPillOptions: PillOption[] = [
+    {
+      value: MODEL_AUTO,
+      label: 'Auto Model',
+      hint: pinned
+        ? `the scheduler scores each of ${pinned.label}’s routable models and dispatches the winner`
+        : 'the scheduler picks the account, then scores that account’s routable models'
+    },
+    {
+      value: MODEL_INHERIT,
+      label: `Inherit — ${inheritedModelLabel}`,
+      hint: pinned
+        ? 'this account’s own default model; the router is not asked'
+        : 'whichever account is chosen uses its own default model'
+    },
+    // ⚠️ Named for reading, valued by id — what is sent is the exact string the CLI takes.
+    ...(forAdapter?.models ?? []).map((m) => ({
+      value: m.id,
+      label: modelLabel(m.id) ?? m.id,
+      hint: m.id
+    }))
+  ]
 
   const kind = prefs.kind
   const isPlan = kind === 'plan'
@@ -314,15 +377,28 @@ export function NewTask({
   }
 
   const chooseModel = (next: string): void => {
+    // ⚠️ Two of the options on this pill are not models. Picking one clears the pin and records
+    // *which* of the two answers was meant, which is the whole point of them being separate.
+    if (next === MODEL_AUTO || next === MODEL_INHERIT) {
+      const policy: ModelPolicy = next === MODEL_INHERIT ? 'inherit' : 'auto'
+      setPrefs(rememberModelChoice(prefs, prefs.workerId, { model: '', effort, policy }))
+      return
+    }
     const levels = forAdapter?.models.find((m) => m.id === next)?.effortLevels ?? []
     // ⚠️ The effort survives a model change only where the new model has that level. Anything else
     // would send a level the CLI would refuse, or silently keep one the pill has stopped showing.
     const keptEffort = canSetEffort && levels.includes(effort) ? effort : ''
-    setPrefs(rememberModelChoice(prefs, prefs.workerId, { model: next, effort: keptEffort }))
+    setPrefs(
+      rememberModelChoice(prefs, prefs.workerId, {
+        model: next,
+        effort: keptEffort,
+        policy: modelPolicy
+      })
+    )
   }
 
   const chooseEffort = (next: string): void => {
-    setPrefs(rememberModelChoice(prefs, prefs.workerId, { model, effort: next }))
+    setPrefs(rememberModelChoice(prefs, prefs.workerId, { model, effort: next, policy: modelPolicy }))
   }
 
   const submit = async (targetStatus: 'draft' | 'ready'): Promise<void> => {
@@ -362,6 +438,7 @@ export function NewTask({
           constraints: {
             ...(prefs.workerId ? { workerId: prefs.workerId } : {}),
             ...(model ? { model } : {}),
+            ...(modelPolicy === 'inherit' && !model ? { modelPolicy: 'inherit' as const } : {}),
             ...(effort ? { effort } : {}),
             piecePriority,
             pieceLimit,
@@ -397,11 +474,14 @@ export function NewTask({
           // ⚠️ Absent, not empty. The daemon reads a *present* `constraints` as an instruction to
           // validate one, and an object of empty strings would be three constraints that name
           // nothing rather than three questions left to the scheduler.
-          ...(prefs.workerId || model || effort
+          // ⚠️ `modelPolicy: 'inherit'` counts as a constraint on its own — it is the one answer on
+          // that pill the daemon cannot infer from silence, since silence is what `auto` means.
+          ...(prefs.workerId || model || effort || modelPolicy === 'inherit'
             ? {
                 constraints: {
                   ...(prefs.workerId ? { workerId: prefs.workerId } : {}),
                   ...(model ? { model } : {}),
+                  ...(modelPolicy === 'inherit' && !model ? { modelPolicy: 'inherit' as const } : {}),
                   ...(effort ? { effort } : {})
                 }
               }
@@ -482,7 +562,7 @@ export function NewTask({
               title="File it without dispatching. A draft sits still until you promote it."
               onClick={() => void submit('draft')}
             >
-              {saving === 'draft' ? '…' : 'Draft'}
+              {saving === 'draft' ? '…' : 'Save as Draft'}
             </button>
           )}
           <button className="btn btn--primary" disabled={!canSend} onClick={() => void submit('ready')}>
@@ -714,37 +794,28 @@ export function NewTask({
               onChange={chooseWorker}
             />
 
+            {/*
+              ⛔ **Never disabled, including on Auto Worker.** It used to be, on the reasoning that a
+              model list belongs to one CLI and there is none to draw until an account is pinned.
+              That is true of the *list* and false of the control: *let the router choose* and *use
+              whatever the account defaults to* are answerable without knowing which account, and
+              locking the pill said the opposite — that nothing about the model was decidable yet.
+            */}
             <PillSelect
               ariaLabel="Model"
               align="right"
-              // ⛔ Disabled rather than absent. A model list belongs to one CLI, so until an account
-              // is pinned there is genuinely nothing to draw — and a pill that vanished would take
-              // the row's shape with it every time somebody moved back to Auto.
-              disabled={!forAdapter}
               title={
                 forAdapter
                   ? 'Only models this account’s cost model can price are offered — one it cannot ' +
                     'price is one that cannot be gated, estimated for, or reasoned about the ' +
                     'context window of.'
-                  : 'Pin an account first. A model list belongs to one CLI, so there is nothing to ' +
-                    'offer until one is chosen.'
+                  : 'Pin an account to choose a model by name — a model list belongs to one CLI. ' +
+                    'Auto and the account default are answerable either way.'
               }
               muted={!model}
-              value={model}
-              label={model ? (modelLabel(model) ?? model) : inheritedModelLabel}
-              options={[
-                {
-                  value: '',
-                  label: `Inherit — ${inheritedModelLabel}`,
-                  hint: pinned ? 'whatever this account reaches for' : undefined
-                },
-                // ⚠️ Named for reading, valued by id — what is sent is the exact string the CLI takes.
-                ...(forAdapter?.models ?? []).map((m) => ({
-                  value: m.id,
-                  label: modelLabel(m.id) ?? m.id,
-                  hint: m.id
-                }))
-              ]}
+              value={modelPillValue}
+              label={modelPillLabel}
+              options={modelPillOptions}
               onChange={chooseModel}
             />
 
@@ -926,22 +997,10 @@ export function NewTask({
                       <PillSelect
                         ariaLabel="Model"
                         align="right"
-                        disabled={!forAdapter}
                         muted={!model}
-                        value={model}
-                        label={model ? (modelLabel(model) ?? model) : inheritedModelLabel}
-                        options={[
-                          {
-                            value: '',
-                            label: `Inherit — ${inheritedModelLabel}`,
-                            hint: pinned ? 'whatever this account reaches for' : undefined
-                          },
-                          ...(forAdapter?.models ?? []).map((m) => ({
-                            value: m.id,
-                            label: modelLabel(m.id) ?? m.id,
-                            hint: m.id
-                          }))
-                        ]}
+                        value={modelPillValue}
+                        label={modelPillLabel}
+                        options={modelPillOptions}
                         onChange={chooseModel}
                       />
                       {efforts.length > 0 && (

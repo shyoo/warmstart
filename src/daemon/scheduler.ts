@@ -40,6 +40,7 @@ import {
 } from './quota.js'
 import {
   getWorker,
+  inheritedModelFor,
   listWorkers,
   modelRoutingActive,
   recordDispatchFailure,
@@ -1221,6 +1222,11 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
       candidateModels = [task.constraints.model]
     } else if (task.constraints.modelsByWorker && task.constraints.modelsByWorker[worker.id]) {
       candidateModels = [task.constraints.modelsByWorker[worker.id]!]
+    } else if (task.constraints.modelPolicy === 'inherit') {
+      // ⛔ The account's own default, and nothing scored against it. A task filed this way asked for
+      // the model the account uses, which is a different answer from *any of the models it may be
+      // routed to* the moment somebody widens the worker's allowlist.
+      candidateModels = inheritedModelFor(worker)
     } else {
       candidateModels = routableModelsFor(worker)
     }
@@ -2471,6 +2477,18 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
   const picked = resolveModelChoice(task.constraints, worker, canSetEffort, lastQuota(worker.id))
   if (choice.model) {
     picked.model = choice.model
+  }
+  // ⛔ An effort the *model* has no levels for is dropped here, the same way one the *adapter* cannot
+  // take is dropped above. claude-code takes the flag and haiku-4.5 takes no effort at all (measured
+  // 2026-08-29), so an account whose default effort is `medium` sent `--effort medium` on every haiku
+  // dispatch and the thread reported the run as "Haiku 4.5 Med" — a setting nothing applied.
+  // ⚠️ Only where the cost model actually declares the model. An id it cannot price says nothing
+  // about which levels exist, and dropping there would throw away a level the CLI would have honoured.
+  if (picked.effort && picked.model) {
+    const spec = costModel(adapter(worker.adapterId).info.policy.costModelId).modelSpec(picked.model)
+    if (spec && Array.isArray(spec.effort_levels) && spec.effort_levels.length === 0) {
+      picked.effort = null
+    }
   }
   // ⭐ The conversation this task was already having, if it is still on disk and this is the same
   // account and the same tree. Resuming costs the read of a cache that is very likely cold by now;

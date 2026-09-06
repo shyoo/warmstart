@@ -1370,6 +1370,20 @@ body {
   margin-bottom: var(--sp-4);
 }
 
+/**
+ * The head's right-hand controls, and whatever is reporting on them.
+ *
+ * ⚠️ A row rather than a bare block, so a progress mark can sit beside the button it describes
+ * without either of them moving when it appears. `flex-shrink: 0` keeps the button off a second
+ * line when the panel's prose is long.
+ */
+.panel-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-shrink: 0;
+}
+
 .panel-head h2 {
   font-size: var(--text-title);
   font-weight: 600;

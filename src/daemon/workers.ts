@@ -298,8 +298,18 @@ export function updateWorker(
  */
 export function routableModelsFor(worker: Worker): Array<string | null> {
   if (worker.routableModels && worker.routableModels.length > 0) return worker.routableModels
-  const resolved = resolveModelChoice(null, worker, false, lastQuota(worker.id)).model
-  return [resolved]
+  return inheritedModelFor(worker)
+}
+
+/**
+ * The one model this worker reaches for on its own, as a one-element candidate list.
+ *
+ * ⛔ **Not the allowlist, on purpose.** This is what a task filed with `modelPolicy: 'inherit'`
+ * gets: the account's own default, resolved against its live quota so a multi-pool account still
+ * balances between its pools, and no scoring across the models an operator widened it to.
+ */
+export function inheritedModelFor(worker: Worker): Array<string | null> {
+  return [resolveModelChoice(null, worker, false, lastQuota(worker.id)).model]
 }
 
 /** Smallest configured review rung for a built-in adapter; external adapters use their CLI default. */

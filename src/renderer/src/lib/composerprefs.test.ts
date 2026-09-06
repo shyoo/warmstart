@@ -91,7 +91,7 @@ describe('what the new-task composer was left set to', () => {
       sessionSharing: 'on',
       pieces: { ...DEFAULT_COMPOSER_PREFS.pieces },
       workerId: 'w-claude',
-      byWorker: { 'w-claude': { model: 'claude-opus-5', effort: 'high' } }
+      byWorker: { 'w-claude': { model: 'claude-opus-5', effort: 'high', policy: 'auto' } }
     })
     const back = readComposerPrefs()
     expect(back.priority).toBe('P0')
@@ -99,7 +99,27 @@ describe('what the new-task composer was left set to', () => {
     expect(back.finishPolicy).toBe('commit-only')
     expect(back.sessionSharing).toBe('on')
     expect(back.workerId).toBe('w-claude')
-    expect(modelChoiceFor(back, 'w-claude')).toEqual({ model: 'claude-opus-5', effort: 'high' })
+    expect(modelChoiceFor(back, 'w-claude')).toEqual({
+      model: 'claude-opus-5',
+      effort: 'high',
+      policy: 'auto'
+    })
+  })
+
+  it('⛔ remembers *which* answer was given when no model was named', () => {
+    // Auto and the account's own default are both "no model", and they are not the same
+    // instruction: with a routable-model allowlist on the account, one hands the choice to the
+    // router and the other does not. A composer that forgot which was picked would file the wrong
+    // one every time it reopened.
+    const store: Record<string, string> = {}
+    stub(store)
+    const prefs = rememberModelChoice(DEFAULT_COMPOSER_PREFS, 'w-codex', {
+      model: '',
+      effort: '',
+      policy: 'inherit'
+    })
+    writeComposerPrefs(prefs)
+    expect(modelChoiceFor(readComposerPrefs(), 'w-codex').policy).toBe('inherit')
   })
 
   it('reads a finish policy written under its old name', () => {
@@ -139,19 +159,30 @@ describe('what the new-task composer was left set to', () => {
     // ⭐ The half that survived is the point: an aged-out policy must not cost somebody their
     // pinned account and its model.
     expect(back.workerId).toBe('w-codex')
-    expect(modelChoiceFor(back, 'w-codex')).toEqual({ model: 'gpt-5.6-terra', effort: 'medium' })
+    // ⚠️ `policy` back as `auto`: this record was written before the field existed, and `auto` is
+    // what it did.
+    expect(modelChoiceFor(back, 'w-codex')).toEqual({
+      model: 'gpt-5.6-terra',
+      effort: 'medium',
+      policy: 'auto'
+    })
   })
 
   it('keeps a model against the account it was chosen for, and offers none for any other', () => {
     const prefs = rememberModelChoice(DEFAULT_COMPOSER_PREFS, 'w-claude', {
       model: 'claude-opus-5',
-      effort: 'high'
+      effort: 'high',
+      policy: 'auto'
     })
-    expect(modelChoiceFor(prefs, 'w-claude')).toEqual({ model: 'claude-opus-5', effort: 'high' })
+    expect(modelChoiceFor(prefs, 'w-claude')).toEqual({
+      model: 'claude-opus-5',
+      effort: 'high',
+      policy: 'auto'
+    })
     // ⛔ A model id belongs to one CLI. An account nobody has chosen a model for inherits, and never
     // borrows the last one somebody picked somewhere else.
-    expect(modelChoiceFor(prefs, 'w-agy')).toEqual({ model: '', effort: '' })
-    expect(modelChoiceFor(prefs, '')).toEqual({ model: '', effort: '' })
+    expect(modelChoiceFor(prefs, 'w-agy')).toEqual({ model: '', effort: '', policy: 'auto' })
+    expect(modelChoiceFor(prefs, '')).toEqual({ model: '', effort: '', policy: 'auto' })
     // Pure: the record it was given is untouched.
     expect(DEFAULT_COMPOSER_PREFS.byWorker).toEqual({})
   })

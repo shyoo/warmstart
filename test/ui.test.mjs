@@ -711,6 +711,66 @@ try {
   `)
   check('only choosing Yes deletes the task', acceptedDelete === true)
 
+  // ⛔ **And the same way out from inside the draft.** A draft opened from the table could be edited
+  // and filed and nothing else: every route to delete was a row action on a page the reader had
+  // already left. The banner asks with the same dialog, and the pane goes back to the list rather
+  // than re-reading a task that no longer exists.
+  const draftThreadTitle = 'Delete a draft from its own thread'
+  await evaluate(`
+    window.agentyard.rpc('task.create', {
+      title: ${JSON.stringify(draftThreadTitle)}, status: 'draft'
+    })
+  `)
+  await wait(600)
+  await evaluate(`
+    [...document.querySelectorAll('.tbl tbody tr')]
+      .find(r => r.innerText.includes(${JSON.stringify(draftThreadTitle)}))?.click()
+  `)
+  await waitFor(
+    async () => await evaluate(`!!document.querySelector('.draft-banner')`),
+    'the draft banner in the task thread'
+  )
+  check(
+    'a draft thread offers to delete the draft',
+    await evaluate(`
+      [...document.querySelectorAll('.draft-banner-actions button')]
+        .some(b => b.innerText.trim() === 'Delete draft')
+    `),
+    'the only way out of a draft used to be filing it'
+  )
+  await evaluate(`
+    [...document.querySelectorAll('.draft-banner-actions button')]
+      .find(b => b.innerText.trim() === 'Delete draft')?.click()
+  `)
+  await waitFor(
+    async () => await evaluate(`!!document.querySelector('[role="alertdialog"]')`),
+    'the delete confirmation over the draft'
+  )
+  await evaluate(`
+    [...document.querySelectorAll('[role="alertdialog"] button')]
+      .find(b => b.innerText.trim() === 'Yes, delete')?.click()
+  `)
+  await wait(600)
+  const draftGone = JSON.parse(await evaluate(`
+    (async () => {
+      const page = await window.agentyard.rpc('task.page', {
+        views: [], sort: 'updated', asc: false, limit: 10, offset: 0,
+        query: ${JSON.stringify(draftThreadTitle)}
+      });
+      return JSON.stringify({
+        listed: page.total,
+        banner: !!document.querySelector('.draft-banner'),
+        onList: !!document.querySelector('.tbl tbody tr')
+      });
+    })()
+  `))
+  // ⚠️ Both halves: the task is gone, and the pane left rather than sitting on its own tombstone.
+  check(
+    'deleting it removes the task and returns to the list',
+    draftGone.listed === 0 && draftGone.banner === false && draftGone.onList === true,
+    JSON.stringify(draftGone)
+  )
+
   // Verify First and End pager navigation
   await evaluate(`(() => {
     const sel = document.querySelector('select[aria-label="Tasks per page"]');
@@ -836,6 +896,13 @@ try {
   check(
     'draft, send and the scheduled send sit together inside the box',
     f.sendsInsideTheBox === true && f.clock === true && f.buttons?.includes('Send'),
+    filing
+  )
+  // ⚠️ The verb, not the noun. `Draft` beside `Send` reads as a second kind of thing to file rather
+  // than as what it does to the one being written.
+  check(
+    'and the draft button says what pressing it does',
+    f.buttons?.includes('Save as Draft'),
     filing
   )
   // ⚠️ A textarea because what goes in it is sent to an agent verbatim, and a prompt worth writing
@@ -1092,14 +1159,26 @@ try {
   const s = JSON.parse(sizing)
   check('the prompt textarea dynamically resizes with content and wrap', s.grew && s.wrapped && s.shrunk, sizing)
 
-  // ⛔ Disabled, not absent. A model list belongs to one CLI, so until an account is pinned there is
-  // genuinely nothing to draw — and a pill that vanished would take the row's shape with it every
-  // time somebody moved back to Auto.
+  // ⛔ Never disabled, and never absent. A model list belongs to one CLI, so until an account is
+  // pinned there is no list to draw — but *let the router choose* and *use whatever the account
+  // defaults to* are answerable without knowing which account, and a locked pill said the opposite.
+  const unpinnedModel = (f.pills ?? []).find((p) => p.name === 'Model')
   check(
-    'no model can be chosen until an account is pinned',
-    (f.pills ?? []).find((p) => p.name === 'Model')?.disabled === true,
+    'the model pill is answerable before an account is pinned',
+    unpinnedModel?.disabled === false && unpinnedModel?.label === 'Auto Model',
     filing
   )
+  await openPill('Model')
+  const unpinnedModelValues = (await menuValues('Model')).filter(Boolean)
+  check(
+    // ⚠️ Two, and no model ids: an id belongs to one CLI, so there is genuinely nothing to name yet.
+    'and offers exactly the two answers that are not a model',
+    unpinnedModelValues.length === 2 &&
+      unpinnedModelValues.includes('policy:auto') &&
+      unpinnedModelValues.includes('policy:inherit'),
+    JSON.stringify(unpinnedModelValues)
+  )
+  await closeMenus()
 
   // Pin the account this suite commissioned, and the models its cost model can price appear.
   await openPill('Worker')
@@ -1112,11 +1191,19 @@ try {
   )
   await pickInMenu('Worker', firstWorker ?? '')
   await openPill('Model')
-  const modelValues = (await menuValues('Model')).filter(Boolean)
+  const modelPillValues = (await menuValues('Model')).filter(Boolean)
+  // ⚠️ The two policy answers are on this pill too, and they are not model ids. They are dropped
+  // here rather than being asked to price, which is the one thing they cannot be.
+  const modelValues = modelPillValues.filter((v) => !v.startsWith('policy:'))
   check(
     'pinning an account offers the models its cost model can price',
     modelValues.length > 0,
-    JSON.stringify(modelValues)
+    JSON.stringify(modelPillValues)
+  )
+  check(
+    'and keeps both policy answers beside them, so neither has to be inferred from a blank',
+    modelPillValues.includes('policy:auto') && modelPillValues.includes('policy:inherit'),
+    JSON.stringify(modelPillValues)
   )
   check(
     'every offered model is one the daemon will accept',

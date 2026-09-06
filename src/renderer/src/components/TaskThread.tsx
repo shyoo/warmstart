@@ -198,6 +198,7 @@ export function TaskThread({
       detail={detail}
       activity={activity[detail.task.id] ?? []}
       fleet={fleet}
+      onDeleted={onBack}
       blocking={detail.blocking}
       now={now}
       refresh={refresh}
@@ -304,6 +305,7 @@ function TaskDetail({
   now,
   refresh,
   back,
+  onDeleted,
   onOpenTask
 }: {
   detail: TaskDetailData
@@ -316,6 +318,13 @@ function TaskDetail({
   refresh: () => Promise<void>
   /** The way back to the list. Passed in, because what "back" means depends on where you came from. */
   back: React.ReactNode
+  /**
+   * Leave, because the task being read no longer exists.
+   *
+   * ⚠️ Not `refresh`. A deleted task's thread cannot re-fetch itself into anything but *That task is
+   * no longer here*, so the pane that deleted it goes back to the list that still has rows in it.
+   */
+  onDeleted: () => void
   onOpenTask?: (taskId: string) => void
 }): React.JSX.Element {
   const {
@@ -381,10 +390,9 @@ function TaskDetail({
     fleet.find((e) => e.worker.id === assigned?.id)?.quota
   )
   const offered = modelOptions.find((o) => o.adapterId === assigned?.adapterId)?.models ?? []
+  const resolvedSpec = offered.find((m) => m.id === (resolved.model ?? '')) ?? null
   // Effort needs both halves: a CLI that takes the flag, and a chosen model that has levels.
-  const taskEfforts = canSetEffort
-    ? (offered.find((m) => m.id === (resolved.model ?? ''))?.effortLevels ?? [])
-    : []
+  const taskEfforts = canSetEffort ? (resolvedSpec?.effortLevels ?? []) : []
   /**
    * ⛔ **A worker with a routable-model allowlist has no single predictable model**, so this says so
    * rather than naming one. `resolveModelChoice` answers what the *account* defaults to; once an
@@ -393,12 +401,22 @@ function TaskDetail({
    * exact thing the comment above forbids — promising an inheritance the dispatch does not perform.
    * ⚠️ A task-level pin still wins and is still named: a pin is a mandate the router does not touch.
    */
+  // ⚠️ `modelPolicy: 'inherit'` is a task-level answer too, even though it names no model: the
+  // scheduler is told to take the account's default and score nothing, so the default *is* what the
+  // next run asks for and saying "chosen at dispatch" would be reporting a decision nobody makes.
   const routerPicks =
-    resolved.modelSource !== 'task' && (assigned?.routableModels?.length ?? 0) > 0
+    resolved.modelSource !== 'task' &&
+    task.constraints.modelPolicy !== 'inherit' &&
+    (assigned?.routableModels?.length ?? 0) > 0
   const requestedModel = {
     model: routerPicks ? null : resolved.model,
     undecided: routerPicks,
-    effort: resolved.effort,
+    // ⛔ Dropped where the model in effect declares no levels, matching what the dispatch sends: an
+    // account defaulting to `medium` inherits that level onto `claude-haiku-4-5`, which takes no
+    // effort at all, and this row read *Haiku 4.5 Med* for a flag nothing applied.
+    // ⚠️ Only where the model list actually describes it — an unlisted model says nothing about
+    // its levels, and dropping there would hide one the CLI is really being sent.
+    effort: resolvedSpec && resolvedSpec.effortLevels.length === 0 ? null : resolved.effort,
     source: routerPicks
       ? `chosen at dispatch from ${assigned?.routableModels?.length} routable models${assigned ? ` on ${assigned.label}` : ''}`
       : resolved.modelSource === 'task'
@@ -437,6 +455,7 @@ function TaskDetail({
                 await rpc('task.update', { id: task.id, title, prompt })
                 await refresh()
               }}
+              onDelete={onDeleted}
             />
           )}
 
@@ -3654,18 +3673,86 @@ function DraftControls({
   initialPrompt,
   previewPrompt,
   onPromote,
-  onUpdate
+  onUpdate,
+  onDelete
 }: {
   task: Task
   initialPrompt: string
   previewPrompt?: string
   onPromote: () => Promise<void>
   onUpdate: (title: string, prompt: string) => Promise<void>
+  /** Called once the task is gone, so the pane leaves rather than re-reading a deleted row. */
+  onDelete: () => void
 }): React.JSX.Element {
   const [editing, setEditing] = useState(false)
   const [title, setTitle] = useState(task.title)
   const [prompt, setPrompt] = useState(initialPrompt)
   const [busy, setBusy] = useState(false)
+  /**
+   * ⛔ **The one way out of a draft, and it was missing.** A draft filed by mistake could be edited
+   * and filed, and nothing else — every other route to delete is on the Tasks table, which is not
+   * where somebody who has just opened the draft is. Confirmed like the table's own delete, and
+   * checked with `task.deleteCheck` first so a refusal is a sentence rather than a thrown RPC.
+   */
+  const [confirming, setConfirming] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+
+  const askDelete = async () => {
+    setDeleteError(null)
+    setBusy(true)
+    try {
+      const blockers = await rpc('task.deleteCheck', { id: task.id })
+      if (!blockers.ok) {
+        setDeleteError(blockers.reasons.map((r) => `• ${r}`).join('\n'))
+        return
+      }
+      setConfirming(true)
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const remove = async () => {
+    setBusy(true)
+    try {
+      await rpc('task.delete', { id: task.id })
+      setConfirming(false)
+      onDelete()
+    } catch (err) {
+      setConfirming(false)
+      setDeleteError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const confirmDialog = confirming ? (
+    <div className="confirm-shade" role="presentation">
+      <div
+        className="confirm-dialog"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="delete-draft-title"
+        aria-describedby="delete-draft-copy"
+      >
+        <h3 id="delete-draft-title">Delete t{task.seq}?</h3>
+        <p id="delete-draft-copy">
+          This draft has not been dispatched, so nothing has run on it and there is nothing to keep.
+          It is removed from your task list.
+        </p>
+        <div className="confirm-actions">
+          <button type="button" className="btn" disabled={busy} onClick={() => setConfirming(false)}>
+            No
+          </button>
+          <button type="button" className="btn btn--danger" disabled={busy} onClick={() => void remove()}>
+            {busy ? 'Deleting…' : 'Yes, delete'}
+          </button>
+        </div>
+      </div>
+    </div>
+  ) : null
 
   useEffect(() => {
     setTitle(task.title)
@@ -3717,11 +3804,21 @@ function DraftControls({
             placeholder="Describe the work as you would to a colleague. You can paste an image in here as well."
           />
         </div>
+        {deleteError && <div className="alert">{deleteError}</div>}
+        {confirmDialog}
         <div className="draft-card-foot">
           <button className="btn" disabled={busy} onClick={() => setEditing(false)}>
             Cancel
           </button>
           <div className="ask-actions">
+            <button
+              className="btn btn--danger"
+              disabled={busy}
+              title="Delete this draft. Nothing has run on it."
+              onClick={() => void askDelete()}
+            >
+              Delete draft
+            </button>
             <button className="btn" disabled={busy || !title.trim()} onClick={() => void save()}>
               {busy ? 'Saving…' : 'Save draft'}
             </button>
@@ -3747,6 +3844,7 @@ function DraftControls({
         <div className="draft-banner-sub">
           You can edit the prompt or change policies in the sidebar, and file the task when ready.
         </div>
+        {deleteError && <div className="alert">{deleteError}</div>}
         {previewPrompt && (
           <div className="draft-preview-prompt">
             <PromptDisclosure
@@ -3757,13 +3855,22 @@ function DraftControls({
         )}
       </div>
       <div className="draft-banner-actions">
-        <button className="btn" onClick={() => setEditing(true)}>
+        <button className="btn" disabled={busy} onClick={() => setEditing(true)}>
           Edit draft
+        </button>
+        <button
+          className="btn btn--danger"
+          disabled={busy}
+          title="Delete this draft. Nothing has run on it, so there is nothing to keep."
+          onClick={() => void askDelete()}
+        >
+          Delete draft
         </button>
         <button className="btn btn--primary" disabled={busy} onClick={() => void fileTask()}>
           {busy ? 'Filing…' : 'File task'}
         </button>
       </div>
+      {confirmDialog}
     </div>
   )
 }

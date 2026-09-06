@@ -56,7 +56,6 @@ export function QualityReview({
   const [size, setSize] = useState<number | null>(5)
   const [threshold, setThreshold] = useState<number>(1)
   const [gradableOnly, setGradableOnlyState] = useState<boolean>(readQualityGradableOnly)
-  const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -65,8 +64,10 @@ export function QualityReview({
     writeQualityGradableOnly(value)
   }, [])
 
+  // ⚠️ No in-flight flag. The one thing this page has to say about being busy is whether a *batch*
+  // is grading, and the fetch that answers that question is over in well under the three seconds
+  // between polls — a flag for it only ever described the poll to itself.
   const refresh = useCallback(async () => {
-    setRefreshing(true)
     try {
       const [queue, running] = await Promise.all([
         rpc('quality.queue', { filter, limit: PAGE_SIZE, offset, gradableOnly }),
@@ -77,8 +78,6 @@ export function QualityReview({
       setError(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setRefreshing(false)
     }
   }, [filter, offset, gradableOnly])
 
@@ -149,18 +148,26 @@ export function QualityReview({
             .
           </p>
         </div>
+        {/*
+          ⛔ **The indicator tracks the grading, not the fetch.** While a batch runs this page polls
+          every three seconds, and a spinner bound to `refreshing` therefore blinked on and off once
+          a second across two controls — motion that says *something is happening* at a cadence that
+          has nothing to do with what is happening. It is one steady mark beside Refresh for as long
+          as the batch is grading, and the button keeps its word and stays clickable throughout.
+        */}
         <div className="panel-actions">
-          <button className="btn btn--secondary" disabled={refreshing} onClick={() => void refresh()}>
-            {refreshing ? (
-              <>
-                Refreshing
-                <span className="working" aria-hidden>
-                  <i /><i /><i />
-                </span>
-              </>
-            ) : (
-              'Refresh'
-            )}
+          {running && (
+            <span
+              className="working"
+              role="status"
+              aria-label="Grading in progress"
+              title="A quality review batch is grading."
+            >
+              <i /><i /><i />
+            </span>
+          )}
+          <button className="btn btn--secondary" onClick={() => void refresh()}>
+            Refresh
           </button>
         </div>
       </header>
@@ -265,11 +272,6 @@ export function QualityReview({
             }}
           />
           <span>Filter out cannot be graded</span>
-          {refreshing && (
-            <span className="working" aria-hidden style={{ marginLeft: '4px' }}>
-              <i /><i /><i />
-            </span>
-          )}
         </label>
       </div>
 

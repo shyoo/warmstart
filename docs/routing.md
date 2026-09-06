@@ -102,6 +102,7 @@ export function atCapacity(
 - **Model pinning:**
   - A warm or reopenable session pins the candidate model (`held.model`).
   - A task constraint (`constraints.model` or `constraints.modelsByWorker`) pins the candidate model.
+  - `constraints.modelPolicy: 'inherit'` names no model and still yields exactly one pair: `inheritedModelFor(worker)`, the account's own default resolved against its live quota. ⛔ This is *not* the same as naming nothing — an absent policy (`auto`) is what expands across the allowlist. The New Task composer offers the two as separate answers because they were previously the same blank, and a worker with an allowlist dispatched a model the operator had never seen after picking *Inherit*.
 - **Fan-out cap:** To bound scoring time and ledger storage, candidates are capped to 8 models per worker with an informational log.
 - **Per-pair quota evaluation:** The quota pool gate evaluates inside the model loop per pair, so a multi-pool worker (e.g. Antigravity) with an exhausted Claude pool (95%) still offers its Gemini candidate pairs.
 

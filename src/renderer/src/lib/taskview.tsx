@@ -248,7 +248,13 @@ export function modelLine(
   )
   const id = task.ranModel ?? resolved.model
   if (!id) return null
-  const label = modelLabel(id, resolved.effort)
+  // ⛔ No effort beside a model that has no levels. `resolveModelChoice` inherits the account's
+  // default effort independently of the model — which is right, and which on `claude-haiku-4-5`
+  // (no levels at all) rendered *Haiku 4.5 Med* for a level the dispatch does not send.
+  // ⚠️ Only where the options actually describe this model. A list that has not arrived, or one
+  // whose adapter failed to price, knows nothing about its levels — and silence there is not zero.
+  const spec = options?.models.find((m) => m.id === id) ?? null
+  const label = modelLabel(id, spec && spec.effortLevels.length === 0 ? null : resolved.effort)
   if (!label) return null
   return { label, id, ran: task.ranModel !== null }
 }

@@ -1411,6 +1411,31 @@ describe('model-aware routing', () => {
     expect(candidates2?.[0]?.model).toBe('claude-opus-5')
   })
 
+  /**
+   * ⭐ The composer's *Inherit — <model>* answer, which used to be the same silence as *Auto* and
+   * therefore was not an answer at all: a CodexFirst pin reading `Inherit — GPT 5.6 Sol` dispatched
+   * whatever the router scored best out of the account's allowlist, and the thread reported a model
+   * nobody had picked. `modelPolicy: 'inherit'` is that choice said out loud.
+   */
+  it('modelPolicy inherit yields the account default alone, not the allowlist', () => {
+    const w = workers.createWorker({ adapterId: 'claude-code', label: 'InheritWorker', enabled: true })
+    workers.updateWorker(w.id, {
+      defaultModel: 'claude-sonnet-5',
+      routableModels: ['claude-haiku-4-5-20251001', 'claude-sonnet-5', 'claude-opus-5']
+    })
+
+    const auto = tasks.createTask({ title: 'Auto model task', constraints: { workerId: w.id } })
+    expect(scheduler.chooseTarget(auto).scored?.filter((s) => s.workerId === w.id)).toHaveLength(3)
+
+    const inherit = tasks.createTask({
+      title: 'Inherited model task',
+      constraints: { workerId: w.id, modelPolicy: 'inherit' }
+    })
+    const candidates = scheduler.chooseTarget(inherit).scored?.filter((s) => s.workerId === w.id)
+    expect(candidates).toHaveLength(1)
+    expect(candidates?.[0]?.model).toBe('claude-sonnet-5')
+  })
+
   it('multiple allowlisted models yield multiple candidate pairs', () => {
     const w = workers.createWorker({ adapterId: 'claude-code', label: 'MultiModelWorker', enabled: true })
     workers.updateWorker(w.id, { routableModels: ['claude-haiku-4-5-20251001', 'claude-sonnet-5'] })

@@ -42,7 +42,22 @@ export type ComposerKind = 'task' | 'plan' | 'conversation'
 export interface ModelChoice {
   model: string
   effort: string
+  /**
+   * What to do when no model is named, said out loud rather than inferred from the empty string.
+   *
+   * ⛔ **`auto` and `inherit` were the same blank before, and they are not the same instruction.**
+   * With a routable-model allowlist on the account, filing with no model hands the choice to the
+   * router — which is what an operator who picked *the account's default* off this pill did not ask
+   * for, and the thread then reported a model they had never seen. `auto` is the default because it
+   * is what every previously filed task did.
+   *
+   * ⚠️ Ignored while `model` is set: a pin is a mandate, and there is nothing left to police.
+   */
+  policy: ModelPolicy
 }
+
+/** `auto` — the scheduler scores the routable models. `inherit` — the account's own default. */
+export type ModelPolicy = 'auto' | 'inherit'
 
 export interface ComposerPrefs {
   priority: Priority
@@ -126,10 +141,13 @@ function readByWorker(raw: unknown): Record<string, ModelChoice> {
   const out: Record<string, ModelChoice> = {}
   for (const [workerId, value] of Object.entries(raw as Record<string, unknown>)) {
     if (!value || typeof value !== 'object') continue
-    const { model, effort } = value as { model?: unknown; effort?: unknown }
+    const { model, effort, policy } = value as { model?: unknown; effort?: unknown; policy?: unknown }
     out[workerId] = {
       model: typeof model === 'string' ? model : '',
-      effort: typeof effort === 'string' ? effort : ''
+      effort: typeof effort === 'string' ? effort : '',
+      // ⚠️ Anything unreadable — including every choice stored before this field existed — is `auto`,
+      // which is what those choices did.
+      policy: policy === 'inherit' ? 'inherit' : 'auto'
     }
   }
   return out
@@ -205,12 +223,12 @@ export function writeComposerPrefs(prefs: ComposerPrefs): void {
   }
 }
 
-/** What this account was last run with. Absent is `{ model: '', effort: '' }` — inherit both. */
+/** What this account was last run with. Absent is no model, no effort, and the router's choice. */
 export function modelChoiceFor(
   prefs: Pick<ComposerPrefs, 'byWorker'>,
   workerId: string
 ): ModelChoice {
-  return prefs.byWorker[workerId] ?? { model: '', effort: '' }
+  return prefs.byWorker[workerId] ?? { model: '', effort: '', policy: 'auto' }
 }
 
 /** The pieces row's own per-account model memory. ⚠️ Same rule, separate store — see `PiecePrefs`. */
