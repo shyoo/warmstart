@@ -1348,7 +1348,7 @@ across them.
 |---|---|---|---|
 | `anthropic.subscription` | `weekly_all` | Pro $20 · Max 5× $100 · Max 20× $200 · Free (unpriced) | one |
 | `openai.codex` | `7d` | Plus $20 · Pro $200 · Free (unpriced) | one |
-| `google.antigravity` | `weekly:*` | AI Pro $20 · AI Ultra $250 · Free (unpriced) | Gemini 0.8 · Claude/GPT 0.2 |
+| `google.antigravity` | `weekly:*` | AI Pro $20 · AI Ultra $250 · Free (unpriced) | Gemini 0.9 · Claude/GPT 0.1 |
 | `local.llm` | none | self-hosted, `priced: false` | — |
 
 ⛔ **`billing_window.match` is matched against the ids the *adapter emits*, never against the ids in
@@ -1357,10 +1357,17 @@ emits `session`/`weekly_all`; antigravity declares `weekly:claude-gpt` and emits
 `weekly:claude-and-gpt`. Matching declared ids would have priced no run on either provider, silently
 — every figure would simply have read `n/a` and nothing would have thrown.
 
-⚠️ **The 80:20 antigravity split is a judgement call, not a published figure.** Claude/GPT draws its
-window far faster than Gemini does, so the operator chose to attribute 80% of the one $20 to the
-Gemini pool and 20% to Claude/GPT ($16 and $4). The shares sum to 1, which is what keeps a week that
+⚠️ **The 90:10 antigravity split is a judgement call, not a published figure.** Claude/GPT draws its
+window far faster than Gemini does, so the operator chose to attribute 90% of the one $20 to the
+Gemini pool and 10% to Claude/GPT ($18 and $2). The shares sum to 1, which is what keeps a week that
 filled *both* pools reporting one week of subscription rather than two.
+
+⛔ **It was 80:20 until 2026-09-06, and nothing but the operator's judgement moved it.** At 80:20,
+Analytics › Statistics › *Model Price per Task* priced a Claude/GPT task on this provider at several
+times a Gemini one, because $4 of the $20 was being divided over a pool that serves a small minority
+of the runs on this fleet. ⚠️ Because the share is derived on read and never stored (see *the plan is
+stored; the subscription share is not*, below), the edit re-priced **every** antigravity run in the
+history at once — there was no backfill to run and no old number left behind.
 
 ⛔ **`priced: false` is the `n/a` state, and it is not `monthly_usd: 0`.** A free account reading 5%
 of its window spent 5% of nothing; `$0.00` would claim it spent nothing at all.

@@ -169,6 +169,7 @@ import {
 import { stripAnsi } from './stream.js'
 import { activityFor, clearActivity } from './activity.js'
 import { log } from './log.js'
+import { RESTART_REAP_NOTE } from './activetime.js'
 import { db } from './db.js'
 import {
   freshRateLimit,
@@ -5418,7 +5419,7 @@ export function reconcileTasks(): number {
   )
   for (const task of stuck) {
     for (const run of runsFor(task.id)) {
-      if (!run.endedAt) finishRun(run.id, 'terminated', 'orchestratord restarted')
+      if (!run.endedAt) finishRun(run.id, 'terminated', RESTART_REAP_NOTE)
       releaseAllFor(run.id)
       if (run.sessionId) releaseAllFor(run.sessionId)
     }

@@ -22,6 +22,7 @@ import {
   type TaskKind,
   type TaskMessage,
   type TaskPage,
+  DERIVED_TASK_SORTS,
   type TaskSort,
   type TaskStatus,
   type TaskView
@@ -102,6 +103,7 @@ interface TaskRow {
   quality_review_count: number
   quality_review_at: number | null
   quality_reviewer: string | null
+  stats_excluded: number | null
   deleted_at: number | null
   created_at: number
   updated_at: number
@@ -244,6 +246,7 @@ function toTask(r: TaskRow, timing: ActiveTiming = ZERO_TIMING): Task {
     qualityReviewedAt: r.quality_review_at ?? null,
     qualityReviewer: r.quality_reviewer ?? null,
     gradingWorkerId: r.grading_worker_id ?? null,
+    excludedFromStats: r.stats_excluded === 1,
     firstRunAt: r.first_run_at,
     lastRunEndedAt: r.last_run_ended_at,
     activeMs: timing.activeMs,
@@ -310,6 +313,39 @@ export function taskPageSize(asked?: number): number {
 }
 
 /**
+ * Order the five columns SQLite cannot see.
+ *
+ * ⛔ **`null` sorts last in both directions, and that is not the same as sorting as zero.** A task
+ * with no price was not free and one with no active time was not instant — `AGENTS.md` says this
+ * about every absent number, and a sort is the one place where treating an unknown as a zero puts it
+ * confidently at one end of the list. ⚠️ `seq` breaks every tie, in the same direction as the
+ * column, so a page over an unchanged set comes back in the same order twice.
+ */
+function sortDerived(tasks: Task[], sort: TaskSort, asc: boolean): Task[] {
+  const value = (t: Task): number | string | null => {
+    if (sort === 'took') return t.activeMs > 0 ? t.activeMs : null
+    if (sort === 'price') return t.budget.spentUsd ?? null
+    if (sort === 'dep') return t.dependsOn.length
+    if (sort === 'worker') return t.ranOn ?? t.assignee ?? null
+    // `from`: who filed it. The table prints three words for this, and they are what it sorts by.
+    return t.createdBy.kind
+  }
+  const sign = asc ? 1 : -1
+  return [...tasks].sort((a, b) => {
+    const x = value(a)
+    const y = value(b)
+    if (x === null && y === null) return (a.seq - b.seq) * sign
+    if (x === null) return 1
+    if (y === null) return -1
+    const diff =
+      typeof x === 'string' && typeof y === 'string'
+        ? x.localeCompare(y)
+        : (x as number) - (y as number)
+    return diff !== 0 ? diff * sign : (a.seq - b.seq) * sign
+  })
+}
+
+/**
  * One page of tasks, filtered by bucket.
  *
  * ⛔ Filtered and paged **here**, not in the renderer. The list re-fetches on every `task.changed`
@@ -370,24 +406,55 @@ export function pageTasks(
   // millisecond - which the plan decomposer does routinely - would otherwise come back in whatever
   // order SQLite felt like, and a pager over an unstable order silently drops and repeats rows
   // between pages.
-  const column: Record<TaskSort, string> = {
+  const column: Partial<Record<TaskSort, string>> = {
     seq: 't.seq',
+    // ⚠️ `nocase`, because a table sorted by title otherwise puts every capitalised prompt above
+    // every lower-case one, which reads as two lists rather than one.
+    title: 't.title collate nocase',
+    status: 't.status',
+    // ⛔ Nulls last in both directions. An ungraded task is not a task that scored zero, and letting
+    // 200 of them head the descending sort would bury the column's whole purpose.
+    quality: 't.quality_review_score',
     created: 't.created_at',
     updated: 't.updated_at'
   }
+  // ⛔ Validated, not trusted. These params arrive over the RPC and nothing between here and the
+  //    socket checks them; an unrecognised value would otherwise fall through to the derived branch
+  //    and be ordered by whatever its last `else` happened to be.
+  const asked = opts.sort ?? 'updated'
+  const sort: TaskSort =
+    asked in column || DERIVED_TASK_SORTS.includes(asked) ? asked : 'updated'
   const dir = opts.asc ? 'asc' : 'desc'
-  const order = `order by ${column[opts.sort ?? 'updated']} ${dir}, t.seq ${dir}`
+  const sql = column[sort]
+  // ⛔ `seq` is the tie-break in the same direction as the column, never the clock alone — see above.
+  const order = sql
+    ? `order by ${sql} ${dir}${sort === 'quality' ? ' nulls last' : ''}, t.seq ${dir}`
+    : ''
   const limit = taskPageSize(opts.limit)
   // ⚠️ Clamped although SQLite already tolerates a negative OFFSET by ignoring it. That tolerance is
   // not something to build on, and no test can pin it — a test for this passed with the clamp
   // deleted, so it was removed rather than left standing as coverage nobody had.
   const offset = Math.max(opts.offset ?? 0, 0)
 
-  const tasks = toTasks(
-    rows<TaskRow>(
-      db().prepare(`${TASK_SELECT} ${where} ${order} limit ? offset ?`).all(...args, limit, offset)
-    )
-  )
+  /**
+   * ⛔ **The derived columns are sorted after the rows are built, not by SQLite.** Active time, a
+   * price, the dependency count and the account a task last ran on are all computed by `toTasks`
+   * from other tables; there is no expression an `order by` could name. So the whole filtered set is
+   * loaded, ordered, and sliced here. ⚠️ Bounded by the filter the operator is already looking at
+   * (242 tasks on this install, one batched timing query and one memoised pricing pass between
+   * them), and paid only while one of those five headers is the chosen sort.
+   */
+  const tasks = sql
+    ? toTasks(
+        rows<TaskRow>(
+          db().prepare(`${TASK_SELECT} ${where} ${order} limit ? offset ?`).all(...args, limit, offset)
+        )
+      )
+    : sortDerived(
+        toTasks(rows<TaskRow>(db().prepare(`${TASK_SELECT} ${where}`).all(...args))),
+        sort,
+        opts.asc === true
+      ).slice(offset, offset + limit)
 
   const counts: Record<TaskView, number> = { active: 0, needs_you: 0, blocked: 0, done: 0, failed: 0 }
   const grouped = rows<{ status: TaskStatus; n: number }>(
@@ -1281,6 +1348,24 @@ export function recordLandedRange(taskId: string, base: string | null, head: str
         where id = ?`
     )
     .run(base, head, Date.now(), taskId)
+}
+
+/**
+ * Take a task out of the fleet's own statistics, or put it back.
+ *
+ * ⛔ **Its own writer rather than a field on `updateTask`.** That function re-admits the task —
+ * `admit(id)` re-runs eligibility and can move its status — and a display-only flag has no business
+ * being able to do that. ⚠️ It does bump `updated_at`, which is what the statistics window orders
+ * by, so a task toggled here moves to the front of the sample: it is out of the numbers either way,
+ * and a flag whose write was invisible to the reader would be worse.
+ */
+export function setTaskStatsExcluded(taskId: string, excluded: boolean): Task {
+  db()
+    .prepare('update tasks set stats_excluded = ?, updated_at = ? where id = ?')
+    .run(excluded ? 1 : 0, Date.now(), taskId)
+  const task = requireTask(taskId)
+  emit({ type: 'task.changed', task })
+  return task
 }
 
 export function setTaskHandoff(taskId: string, note: string): void {

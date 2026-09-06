@@ -71,6 +71,7 @@ function mockTask(over: Partial<Task> = {}): Task {
     ranModel: null,
     createdAt: 1000,
     updatedAt: 1000,
+    excludedFromStats: false,
     deletedAt: null,
     ...over
   }

@@ -51,14 +51,17 @@ describe('the money a subscription is worth per window', () => {
   })
 
   /**
-   * ⚠️ The 80:20 heuristic the operator chose on 2026-09-02: Claude/GPT draws its window far faster
-   * than Gemini does, so the one $20 is charged 80% against Gemini and 20% against Claude/GPT.
+   * ⚠️ The 90:10 heuristic, revised by the operator on 2026-09-06 from the 80:20 it was written at
+   * on 2026-09-02: Claude/GPT draws its window far faster than Gemini does, so the one $20 is
+   * charged 90% against Gemini and 10% against Claude/GPT. ⛔ Neither figure is published; what
+   * moved it was that at 80:20 a Claude/GPT task on this provider priced several times a Gemini one
+   * on Statistics, on a pool that serves a small minority of the runs here.
    */
-  it('charges the antigravity pools 80:20 — Gemini $16, Claude/GPT $4', () => {
+  it('charges the antigravity pools 90:10 — Gemini $18, Claude/GPT $2', () => {
     const cm = costModel('google.antigravity.2026-08')
-    expect(cm.priceOfWindowPercent('pro', 5, 'gemini')!.usd).toBeCloseTo(0.184, 3)
-    expect(cm.priceOfWindowPercent('pro', 5, 'claude')!.usd).toBeCloseTo(0.046, 3)
-    expect(cm.priceOfWindowPercent('pro', 5, 'gpt')!.usd).toBeCloseTo(0.046, 3)
+    expect(cm.priceOfWindowPercent('pro', 5, 'gemini')!.usd).toBeCloseTo(0.207, 3)
+    expect(cm.priceOfWindowPercent('pro', 5, 'claude')!.usd).toBeCloseTo(0.023, 3)
+    expect(cm.priceOfWindowPercent('pro', 5, 'gpt')!.usd).toBeCloseTo(0.023, 3)
   })
 
   /**
@@ -87,7 +90,7 @@ describe('the money a subscription is worth per window', () => {
     const cm = costModel('google.antigravity.2026-08')
     const gemini = cm.billingWindowsFor(EMITTED['google.antigravity.2026-08']!, 'gemini')
     expect(gemini.map((w) => w.id)).toEqual(['weekly:gemini'])
-    expect(gemini[0]!.share).toBeCloseTo(0.8, 9)
+    expect(gemini[0]!.share).toBeCloseTo(0.9, 9)
   })
 
   /**

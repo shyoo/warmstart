@@ -894,6 +894,13 @@ function TaskDetail({
                 </span>
               </Fact>
             )}
+            {/* ⛔ Sits under the two durations because that is where it will be read: an operator
+                who has just noticed a "took" that cannot be true is looking at exactly these rows.
+                ⚠️ Deliberately not a delete and not a hide — the task keeps its thread, its runs and
+                its price, and only the fleet-wide aggregates stop counting it. */}
+            <Fact label="statistics">
+              <StatsExclusionToggle task={task} onChanged={refresh} />
+            </Fact>
             {/* ⛔ Money over tokens, and the money first. The two are different measurements of
                 the same work — the price is this task's share of the account's own window, the
                 token count is metered from the agent's transcript — and docs/cost-model.md §5 is
@@ -3392,6 +3399,70 @@ function CompactionPicker({
         displayLabel={task.autoCompact === 'inherit' ? inheritedLabel : undefined}
         onChange={(val) => void choose(val as AutoCompactChoice)}
       />
+      {note && <div className="note">{note}</div>}
+    </>
+  )
+}
+
+/**
+ * Take this task out of the fleet's own statistics, or put it back.
+ *
+ * ⛔ **For a measurement that is wrong, not for a result somebody dislikes**, and the tooltip says
+ * so because nothing else can stop it being used the other way. The case it was built for: t52
+ * reported 639 minutes of agent time against a 9.8-minute median for the same model, because a run
+ * reaped with *"orchestratord restarted"* carried ten and a half hours of daemon downtime inside its
+ * span. That reading is now clamped at source; this is for the next one nobody has thought of yet.
+ *
+ * ⚠️ **Not a delete and not a hide.** The task keeps its thread, its runs, its price and its place
+ * in every list. What stops is its contribution to Statistics, to the pace factor the router reads,
+ * and to every quality aggregate.
+ */
+function StatsExclusionToggle({
+  task,
+  onChanged
+}: {
+  task: Task
+  onChanged?: () => Promise<void>
+}): React.JSX.Element {
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState<string | null>(null)
+  const excluded = task.excludedFromStats
+
+  const toggle = async (): Promise<void> => {
+    setBusy(true)
+    setNote(null)
+    try {
+      await rpc('task.setStatsExcluded', { id: task.id, excluded: !excluded })
+      if (onChanged) await onChanged()
+    } catch (err) {
+      setNote(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        className={`btn btn--xs ${excluded ? 'btn--primary' : 'btn--secondary'}`}
+        disabled={busy}
+        aria-pressed={excluded}
+        onClick={() => void toggle()}
+        title={
+          excluded
+            ? 'This task is being left out of Statistics, out of the pace factor the router reads, ' +
+              'and out of every quality aggregate. Nothing else about it changed — the thread, the ' +
+              'runs and the price are all still here. Press to count it again.'
+            : 'Leave this task out of Statistics, out of the pace factor the router reads, and out ' +
+              'of every quality aggregate. ⛔ For a measurement that is wrong — an active time no ' +
+              'agent could have spent, a price attributed to the wrong window — and not for a ' +
+              'result you would rather not see. The estimator still reads its tokens either way: a ' +
+              'task excluded for an impossible duration still spent exactly what it spent.'
+        }
+      >
+        {excluded ? 'excluded from stats' : 'counted'}
+      </button>
       {note && <div className="note">{note}</div>}
     </>
   )

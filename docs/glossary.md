@@ -466,6 +466,17 @@ vendor-specific bug cannot be redacted without destroying its meaning, so `blind
 and a comparison that has not excluded leaked reviews is not a clean one. Measured 2026-09-03 on this
 repository: 37 of the last 60 commits carry an agent trailer and 20 name an agent in prose.
 
+> ⛔ **A leak is an *attribution*, not a vendor word.** Until 2026-09-06 `blindingLeak` was set by
+> "does the blinded text contain `claude|codex|gemini|…` anywhere", and on a repository whose subject
+> matter is coding agents that is true of nearly every diff. Measured over this fleet's 32 completed
+> reviews: **30** flagged — and since `statistics.ts` averages *clean* reviews only, Quality per Task
+> read `ungraded` for every key but one while the grades sat in the table. `namesAnAuthor`
+> (`src/daemon/blinding.ts`) now looks for the shape of an attribution instead: a `…-by:` trailer, a
+> *generated with/by*, an `agent`/`worker`/`model`/`author` label pointing at a vendor, or a vendor as
+> the subject of a writing verb. ⚠️ Measured on the same 32 prompts: **0**. That is a weaker
+> guarantee stated honestly, not a stronger one — migration 50 re-decided the stored flag from
+> `runs.prompt`, and left alone every row whose prompt was gone.
+
 ---
 
 **Adapter** — the integration for one agent CLI (`claude-code`, `antigravity-cli`,

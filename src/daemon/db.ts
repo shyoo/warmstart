@@ -3,6 +3,7 @@ import { dataDir, ensureDir, legacyDataDir, paths } from './paths.js'
 import { dirname, join, sep } from 'node:path'
 import { log } from './log.js'
 import { costModel } from './costmodel.js'
+import { namesAnAuthor } from './blinding.js'
 
 /**
  * Storage.
@@ -1561,7 +1562,48 @@ const MIGRATIONS: Migration[] = [
   );
   create index if not exists task_commits_task on task_commits(task_id, authored_at);
   create index if not exists task_commits_sha on task_commits(sha);
-  `
+  `,
+  // 49 - a task an operator has taken out of the fleet's own statistics.
+  //
+  // ⛔ **An escape hatch for a measurement that is wrong, not for a result somebody dislikes.** The
+  // case it was added for, measured 2026-09-06: t52 reported **639 minutes** of active time against
+  // a median of 9.8 for the same model, because a run reaped with *"orchestratord restarted"* had
+  // its `ended_at` written at the restart - ten and a half hours after anything was working. That
+  // particular reading is now clamped in `activetime.ts`, and this column is for the next one
+  // nobody has thought of yet.
+  //
+  // ⚠️ **Descriptive surfaces only.** `statistics.ts`, `pace.ts` and `quality.ts` skip an excluded
+  // task; `estimator.ts` does not, because its samples are token counts and a task excluded for
+  // reporting an impossible *duration* still spent exactly the tokens it spent.
+  (conn) => {
+    if (!hasColumn(conn, 'tasks', 'stats_excluded')) {
+      conn.exec('alter table tasks add column stats_excluded integer not null default 0;')
+    }
+  },
+  // 50 - re-decide `blinding_leak` under the definition that replaced bare vendor mentions.
+  //
+  // ⛔ **30 of this fleet's 32 completed reviews were flagged as leaked, and the flag was wrong
+  // about all but a handful.** `statistics.ts` averages *clean* reviews only, so Quality per Task
+  // read `ungraded` for every key but one while the grades sat in the table. The old test asked
+  // whether the blinded text contained a vendor word anywhere; this repository is *about* coding
+  // agents, so `antigravity`, `gemini` and `claude` are ordinary nouns in its diffs.
+  // `namesAnAuthor` now looks for the shape of an attribution instead - see `blinding.ts`.
+  //
+  // ⛔ **Recomputed from the prompt the reviewer was actually given**, which `runs.prompt` still
+  // holds, rather than assumed to be false. A row whose run or prompt is gone keeps the flag it
+  // has: this migration re-measures where the evidence survives and leaves the rest alone, because
+  // clearing a flag nobody could re-check would be inventing a clean review.
+  (conn) => {
+    const found = conn
+      .prepare(
+        `select q.id as id, r.prompt as prompt
+           from quality_reviews q join runs r on r.id = q.run_id
+          where r.prompt is not null`
+      )
+      .all() as Array<{ id: string; prompt: string }>
+    const update = conn.prepare('update quality_reviews set blinding_leak = ? where id = ?')
+    for (const r of found) update.run(namesAnAuthor(r.prompt) ? 1 : 0, r.id)
+  }
 ]
 
 /**

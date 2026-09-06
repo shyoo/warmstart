@@ -141,6 +141,16 @@ expressed as a ratio against the geometric mean of the fleet's task durations, s
   subtraction is done, and this reads it rather than repeating it.
 - ⛔ An unmeasured key scores **0**, never a guess — the same rule an untrustworthy quota reading
   follows.
+- ⛔ **A run reaped by a daemon restart is not a measurement, and is clamped at source.**
+  `finishRun(run.id, 'terminated', 'orchestratord restarted')` writes `ended_at` at the moment
+  orchestratord came *back*, so a run alive when the machine slept records the downtime as work.
+  Measured on this install 2026-09-06: 8 such runs, **875 minutes** between them, one of them 635
+  minutes alone — which is why t52 reported 639 minutes against a 9.8-minute median on the same
+  model. `activetime.ts` stops the clock at the last turn observed inside the run's own span, and
+  contributes **nothing** where no turn exists at all (an antigravity run leaves none by
+  construction). ⚠️ That makes such a task read as *untimed*, not as fast.
+- ⚠️ A task an operator has marked `stats_excluded` is out of this median as well as out of
+  Statistics. See `Task.excludedFromStats`.
 - ⛔ The measurement **cannot separate** *"that agent is slow"* from *"that agent gets the long
   tasks"*: no task on this fleet has been completed twice on two different keys. That is why the
   factor is shrunk, why the weight is modest, and why the basis is printed beside every number in

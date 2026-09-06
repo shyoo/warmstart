@@ -70,13 +70,30 @@ describe('what blinding removes exactly', () => {
   })
 })
 
+/**
+ * What the leak flag means, and what it stopped meaning on 2026-09-06.
+ *
+ * ⛔ **It used to be `any vendor word, anywhere`, and on this repository that was true of almost
+ * everything.** Measured over the 32 completed reviews on this install, against the prompts their
+ * reviewers were actually given: the old test flagged **30**. `statistics.ts` averages *clean*
+ * reviews only, so Quality per Task read `ungraded` for every key but one while the grades sat in
+ * the table — a flag that is true 94% of the time distinguishes nothing.
+ *
+ * The cause was never a blinding failure. This codebase is *about* coding agents: `antigravity`,
+ * `gemini` and `claude` are ordinary nouns in its diffs, its file names and its commit subjects. A
+ * reviewer who reads *"the subcommand that lets codex go home"* learns what the change is **about**.
+ * What would un-blind them is an attribution — a trailer, a footer, a label, a writing verb — and
+ * that is the shape the flag now looks for. ⚠️ Measured on the same 32 prompts: **0** flagged. That
+ * is a weaker guarantee stated honestly, not a stronger one; the structured identifiers still come
+ * out exactly, and this only decides what to say about what could not.
+ */
 describe('what blinding cannot remove, and says so', () => {
-  it('reports a leak when an agent is named in prose, rather than mangling the sentence', () => {
-    // A real one: redacting this would leave a paragraph that no longer explains anything, and the
-    // reviewer would score the redaction instead of the work.
+  it('does not call a vendor named as the subject of the change a leak', () => {
+    // A real commit subject from this repository. It says what the change is *about*; it says
+    // nothing about who wrote it, and redacting it would leave a sentence explaining nothing.
     const body = 'The subcommand that lets codex go home: --sandbox workspace-write forbids the trunk’s .git.'
     const { text, leaked } = blind(body, VOCAB)
-    expect(leaked).toBe(true)
+    expect(leaked).toBe(false)
     expect(text).toContain('codex')
   })
 
@@ -94,11 +111,25 @@ describe('what blinding cannot remove, and says so', () => {
     expect(leaked).toBe(false)
   })
 
-  it('still reports a leak when a model family survives in prose the vocabulary did not cover', () => {
-    // ⚠️ The vocabulary is built from what is *commissioned*. A commit that discusses a model this
-    // machine has never run is exactly the case a name list cannot catch, and the flag is what makes
-    // that visible rather than assumed.
-    const { leaked } = blind('This works around a Gemini tokenizer quirk.', { names: [] })
+  it('reports a leak when a trailer the strip did not match still attributes the work', () => {
+    // ⚠️ `TRAILER` covers the three trailers this repository writes. A vendor's own footer wording
+    // — or a fourth trailer nobody has seen yet — is exactly what the flag is for.
+    const { leaked } = blind('Body.\nGenerated-By: Gemini 3.8 Flash', { names: [] })
     expect(leaked).toBe(true)
+  })
+
+  it('reports a leak when a label points at a vendor', () => {
+    expect(blind('The task ran on Gemini at medium effort.', { names: [] }).leaked).toBe(true)
+    expect(blind('agent: antigravity-cli', { names: [] }).leaked).toBe(true)
+  })
+
+  it('reports a leak when a vendor is the subject of a writing verb', () => {
+    expect(blind('Claude wrote the first half of this and stopped.', { names: [] }).leaked).toBe(true)
+  })
+
+  it('does not flag a model family that is merely being worked on', () => {
+    // ⚠️ The case that made the old flag useless here: a change *to* a model's cost model.
+    const { leaked } = blind('This works around a Gemini tokenizer quirk.', { names: [] })
+    expect(leaked).toBe(false)
   })
 })

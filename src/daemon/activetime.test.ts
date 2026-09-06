@@ -113,6 +113,48 @@ describe('a task that is still running', () => {
   })
 })
 
+/**
+ * A run the daemon reaped at startup, whose recorded end is when *orchestratord* came back.
+ *
+ * ⛔ **The 875 minutes this fleet had recorded as work.** `finishRun(run.id, 'terminated',
+ * 'orchestratord restarted')` closes a run that was alive when the machine stopped, and it writes
+ * `ended_at` at the restart — so every hour the daemon was down sits inside the span. Measured on
+ * this install 2026-09-06: 8 such runs, 875 minutes between them, one of them 635 minutes on its
+ * own, which is why t52 reported 639 minutes of agent time against a 9.8-minute median for the same
+ * model. Nothing about that number was a percentile artefact; it was the operator's night.
+ */
+describe('a run reaped by a daemon restart', () => {
+  it('stops the clock at the last turn anybody observed, not at the restart', () => {
+    const run: RunSpan = { ...span('r1', 0, 600), lastSignAt: at(12) }
+    expect(timingFor([run], new Map(), at(600)).activeMs).toBe(12 * MIN)
+  })
+
+  it('still subtracts a wait served before that last turn', () => {
+    const run: RunSpan = { ...span('r1', 0, 600), lastSignAt: at(12) }
+    const waits = new Map([['r1', [wait(2, 7)]]])
+    expect(timingFor([run], waits, at(600)).activeMs).toBe(7 * MIN)
+  })
+
+  it('contributes nothing at all when no turn was ever written', () => {
+    // ⛔ Zero, not the recorded span. An antigravity run leaves no turns by construction — agy keeps
+    //    its conversation in its own SQLite — so there is no evidence of when work stopped, and the
+    //    recorded end is known to be the wrong answer. `velocityStats` publishes the untimed count.
+    const run: RunSpan = { ...span('r1', 0, 600), lastSignAt: null }
+    expect(timingFor([run], new Map(), at(600)).activeMs).toBe(0)
+  })
+
+  it('leaves an ordinary run alone, which is every run without the note', () => {
+    // ⚠️ `lastSignAt` absent means *the recorded end is the end*. It is not defaulted to null.
+    expect(timingFor([span('r1', 0, 600)], new Map(), at(600)).activeMs).toBe(600 * MIN)
+  })
+
+  it('does not clamp a run that is still open, because a reaped run is closed', () => {
+    const run: RunSpan = { ...span('r1', 0, null), lastSignAt: at(3) }
+    expect(timingFor([run], new Map(), at(20)).activeMs).toBe(0)
+    expect(timingFor([run], new Map(), at(20)).activeSince).toBe(at(0))
+  })
+})
+
 describe('a task nothing has run', () => {
   it('reports zero rather than inventing a span from when it was filed', () => {
     const t = timingFor([], new Map(), at(600))

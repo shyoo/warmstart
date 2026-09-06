@@ -285,4 +285,23 @@ describe('ungraded work', () => {
     expect(next?.model).toBe('claude-sonnet-5')
   })
 
+  it('neither counts nor offers a task an operator has excluded from the statistics', () => {
+    // ⛔ Both halves, and for the same reason. A task whose measurement an operator has judged wrong
+    //    should not sit in the ungraded count as work owed, and spending a reviewer's turn on it
+    //    would buy a score that no aggregate is going to read.
+    completedTask({ graded: false })
+    completedTask({ graded: false })
+    db.db().prepare('update tasks set stats_excluded = 1 where seq = 1').run()
+    expect(quality.qualityReport().ungradedTasks).toBe(1)
+    expect(quality.ungradedTasks().map((t: { seq: number }) => t.seq)).toEqual([2])
+  })
+
+  it('drops the grades of an excluded task from the per-model aggregate', () => {
+    review({ adapter: 'claude-code', model: 'claude-sonnet-5', composite: 9 })
+    review({ adapter: 'claude-code', model: 'claude-sonnet-5', composite: 3 })
+    db.db().prepare('update tasks set stats_excluded = 1 where id = ?').run('task-2')
+    const [key] = quality.qualityReport().keys
+    expect(key?.clean).toBe(1)
+    expect(key?.cleanComposite).toBe(9)
+  })
 })

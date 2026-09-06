@@ -243,6 +243,16 @@ describe('the sample set', () => {
     expect(stats.samples()[0]?.adapterId).toBe('openai-compatible')
   })
 
+  it('leaves out a task an operator has excluded from the fleet’s statistics', () => {
+    // ⛔ The escape hatch for a measurement that is wrong. It has to reach all three tabs from one
+    //    place: price, duration and grade are folded over the same sample set precisely so they
+    //    cannot disagree about which tasks exist.
+    const kept = finishedTask({ adapter: 'claude-code', model: 'opus', activeMs: 5 * MIN })
+    const dropped = finishedTask({ adapter: 'claude-code', model: 'opus', activeMs: 900 * MIN })
+    db.db().prepare('update tasks set stats_excluded = 1 where id = ?').run(dropped)
+    expect(stats.samples().map((s: { taskId: string }) => s.taskId)).toEqual([kept])
+  })
+
   it('carries the effort off the crediting run’s session, which is where effort lives', () => {
     finishedTask({ adapter: 'claude-code', model: 'opus', effort: 'high', activeMs: 5 * MIN })
     expect(stats.samples()[0]?.effort).toBe('high')

@@ -163,8 +163,11 @@ export function samples(now = Date.now()): Sample[] {
   const finished = rows<{ id: string }>(
     db()
       .prepare(
+        // ⛔ `stats_excluded = 0`. A task an operator has taken out of the numbers is out of all
+        //    three tabs at once — the price, the duration and the grade are folded from one sample
+        //    set precisely so that they cannot disagree about which tasks exist.
         `select id from tasks
-          where status = 'completed' and deleted_at is null
+          where status = 'completed' and deleted_at is null and coalesce(stats_excluded, 0) = 0
           order by updated_at desc
           limit ?`
       )

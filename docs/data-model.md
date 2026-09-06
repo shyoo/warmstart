@@ -24,7 +24,7 @@ Everything else in the daemon goes through those two, so swapping the driver is 
 ## 2. The migration contract
 
 `MIGRATIONS` in `db.ts` is a numbered, **append-only** array. `MIGRATION_COUNT` is its length and is
-the `user_version` a current database sits at — **47** as of 2026-09-05.
+the `user_version` a current database sits at — **50** as of 2026-09-06.
 
 - ⛔ **Never edit a migration that has shipped.** Add the next one.
 - ⛔ **Every migration must survive being replayed.** `sessionstate.test.ts` rewinds `user_version`
@@ -61,13 +61,13 @@ the first. Both are required and `paths.test.ts` fails if either is removed.
 | `clock_events` | every cache-clock decision, including the no-ops | |
 | `compactions` | a compaction as an **ask** with a before and an after | a row that never landed stays visible |
 | `projects` | a directory plus policy | policy is committed in `.multi_agent_controller/project.json`; state is private |
-| `tasks` | the DAG | `status`, `kind`, `priority`, mandate, budget, the three inherited policies, `auto_compact`, `hold_until`, `quota_override_until`, **`quota_preempt_json`**, `title_summary`, `resolve_retry_asked_at`, `landed_base_sha`/`landed_head_sha`, `quality_review_*`, **`landing_target`**, **`child_defaults_json`** |
+| `tasks` | the DAG | `status`, `kind`, `priority`, mandate, budget, the three inherited policies, `auto_compact`, `hold_until`, `quota_override_until`, **`quota_preempt_json`**, `title_summary`, `resolve_retry_asked_at`, `landed_base_sha`/`landed_head_sha`, `quality_review_*`, **`landing_target`**, **`child_defaults_json`**, **`stats_excluded`** — ⛔ an operator's judgement that a *measurement* on this task is wrong, set from the thread's `statistics` row. `statistics.ts`, `pace.ts` and `quality.ts` skip it; `estimator.ts` deliberately does not, because a task excluded for an impossible duration still spent exactly the tokens it spent |
 | `task_commits` | the commits a task actually landed | ⛔ the answer to *what did this task write*, and the one the quality review asks first. `(task_id, sha)` is the key and writes are `insert or ignore`, so a task that lands twice adds a row rather than replacing one. ⛔ `landed_base_sha`/`landed_head_sha` describe a **range**, which is exact for one landing and wrong for two — seven tasks on this fleet landed twice and t124's pair has five other tasks' commits between them. `source` is `landing` when the landing recorded it and `salvage` when `salvageLandedCommits` read it back out of the thread's *"Landed as `<sha>` onto `<target>`"* message |
 | `task_deps` | prerequisite edges | cycle-checked on insert; **`require`** is what counts as met — see below |
 | `task_messages` | the thread | `delivered_at` marks what has reached a session |
 | `attachments` | image metadata; bytes under `<dataDir>/attachments/` | `attachments.ts` is the only writer |
 | `runs` | one attempt of a task on one session | ⛔ never deleted — the estimator's training data. `adapter_id`, `model`, `quota_before/after_json`, `trunk_sha_before`, `prompt`, `started_warm`, `plan_id`/`plan_raw`/`plan_source`, **`kind`**, `list_usd`/`on_overage`/`overage_status`, `activity_json` (intermediate stream steps recorded on finish) — ⛔ the plan and the three facts a probe stated about *this run alone* are stamped; **both** money layers are derived on read by `src/daemon/price.ts`, because an attribution changes the moment a later overlapping run is found — which is why there is no `overage_usd` column. ⚠️ All three money columns are nullable and null means *not known* |
-| `quality_reviews` | one peer grade of one task's diff | ⛔ every review is kept with its immutable `rubric_version`; `tasks.quality_review_score` is the mean of all completed, scored reviews and `quality_review_count` states its denominator. `run_id` is the metering *and* the timeline entry |
+| `quality_reviews` | one peer grade of one task's diff | ⛔ every review is kept with its immutable `rubric_version`; `tasks.quality_review_score` is the mean of all completed, scored reviews and `quality_review_count` states its denominator. `run_id` is the metering *and* the timeline entry. ⚠️ `blinding_leak` means an **attribution** survived blinding, not that a vendor was named — migration 50 re-decided every stored flag from `runs.prompt` after the old any-mention test turned out to be true of 30 of this fleet's 32 reviews; see *Blinding* in the glossary |
 | `approvals` `approval_rules` | the permission gate and its remembered answers | |
 | `questions` | the third object: content answers, not allow/deny | born parked when the asker is gone |
 | `resources` `resource_claims` | the broker | claims are reconciled at startup |

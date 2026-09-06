@@ -86,6 +86,19 @@ since averaging an amortised share of a flat fee together with money billed on t
 ⚠️ An `unknown` renders `n/a`, never `$0.00`, and the benchmark prior and fitness columns are drawn
 on **model** rows only — a prior is published per model, so there is no prior for `high` alone.
 
+⛔ **The chart names the harness as well as the model, and the table does not have to.** Its bars are
+model rows, which in a table are indented under the agent row that owns them; a chart has no such
+parent, and `claude-sonnet-4-6` is served both by Claude Code and by Antigravity out of different
+subscriptions at different prices. So `graphLabel` prints *Antigravity · Sonnet 4.6*, read off the
+agent rows in the same report rather than off the adapter registry — the chart names only what the
+table beneath it is folding.
+
+⚠️ **A task can be taken out of all of it, from its own thread.** The `statistics` row in the thread's
+right pane toggles `Task.excludedFromStats`, and an excluded task leaves Statistics, the pace factor
+the router reads, and every quality aggregate at once. ⛔ It is for a *measurement* that is wrong, not
+a result somebody dislikes, and the estimator deliberately still reads its tokens: a task excluded
+for an impossible duration spent exactly what it spent.
+
 ⛔ **Quality Review is the coverage page, and it is not a second scoreboard.**
 (`components/QualityReview.tsx`.) *Statistics › Quality per Task* holds the distribution — how each
 agent and model scores — and duplicating it here would leave two tables of the same numbers folded
@@ -204,6 +217,16 @@ means; `parent`, for a piece of a split — ⛔ **lineage is not a dependency**,
 way, so neither the `depends on` nor the `blocks` list can ever name it; `pieces`, with how each one
 turned out, failures included; and `each piece`, which reads back the accounts and models the Pieces row
 set, resolved exactly as `applySplit` resolves them.
+
+⛔ **Every column of the task table sorts, and two kinds of column sort in two different places.**
+`seq`, `title`, `status`, `quality`, `created` and `updated` are real columns: SQLite orders them and
+the pager slices the result. `from`, `worker`, `dep`, `took` and `price` are **derived on read** —
+active time is folded from a task's runs minus every stretch spent waiting on a person, a price is
+this task's share of an account's billing window — so no `order by` can name them, and `pageTasks`
+loads the whole filtered set, orders it and slices afterwards (`DERIVED_TASK_SORTS`). ⚠️ Ordering a
+page by a number the database could not see would drop and repeat rows between pages, which looks
+exactly like data loss. A name column opens A→Z and a measurement opens biggest-first; `null` sorts
+last in **both** directions, because unpriced is not free and ungraded is not zero.
 
 ⚠️ A subtask is marked in the task table with **➥**, not a `└`. A box-drawing corner claims to join the
 row above it, and this table is sorted by whatever column the operator picked — one click on Updated and

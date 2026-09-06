@@ -45,80 +45,11 @@ async function git(cwd: string, args: string[]): Promise<string> {
 // ---------------------------------------------------------------------------- blinding
 
 /**
- * Names of the things that identify an agent in structured text, built from what is actually
- * installed rather than from a list written here.
- *
- * ⚠️ The adapter and model vocabulary is passed in by the caller: `review.ts` must not import the
- * adapter registry to do string surgery, and a hard-coded list of vendor names would go stale the
- * first time a model id changed.
+ * ⛔ Re-exported, not defined here. `blind` moved to `blinding.ts` when migration 50 needed to
+ * re-decide the leak flag on already-graded rows: `db.ts` cannot import this file, which reads the
+ * database. Every existing caller and `blinding.test.ts` still name it here.
  */
-export interface BlindVocabulary {
-  /** Adapter ids, adapter labels, worker labels and model ids — anything that names who ran. */
-  names: string[]
-}
-
-/** Every commit trailer that names the agent that wrote the commit. */
-const TRAILER = /^[ \t]*(?:co-authored-by|assisted-by|signed-off-by)\b.*$/gim
-
-/**
- * The tool footer, which is not a trailer and does not start at the margin.
- *
- * ⚠️ Its real form in this repository is `🤖 Generated with [Claude Code](https://claude.com/…)` —
- * an emoji, then the phrase, then a URL naming the vendor twice more. A rule anchored to the start
- * of the line, which is the right shape for a trailer, missed every one of them.
- */
-const TOOL_FOOTER = /^.*\bgenerated with\b.*$/gim
-
-/**
- * ⚠️ Measured on this repository 2026-09-03, over the last 60 commits: **37** carry a
- * `Co-Authored-By:` trailer naming the model and **20** name an agent (*"codex"*, *"Claude"*,
- * *"antigravity"*) in the message **body**, outside any trailer.
- */
-const PROSE_AGENT = /\b(claude|codex|antigravity|gemini|opus|sonnet|haiku|gpt-\d|qwen)\b/i
-
-/**
- * Strip what identifies the author, and say honestly what could not be stripped.
- *
- * ⛔ **Exact on structured fields, best-effort on prose, and the difference is recorded rather than
- * papered over.** Trailers, model ids, worker labels and vendor dotfile directories come out
- * mechanically and completely. A commit body that explains a codex-specific sandbox bug does not:
- * replacing *"codex"* with *"AGENT-A"* throughout produces a paragraph that no longer means
- * anything, and a reviewer reading it would score the redaction rather than the work.
- *
- * So `leaked` is stored on the review, and a comparison across agents that has not excluded leaked
- * reviews is not a clean comparison. ⚠️ The field exists so that can be *checked* rather than
- * assumed — which is the whole difference between this and claiming a guarantee it cannot keep.
- *
- * ⭐ A pure function over strings, which is what makes it cheap to keep honest: `blinding.test.ts`
- * uses real trailers and real leak cases from this repository's own history as fixtures.
- */
-export function blind(text: string, vocabulary: BlindVocabulary = { names: [] }): {
-  text: string
-  leaked: boolean
-} {
-  let out = text.replace(TRAILER, '').replace(TOOL_FOOTER, '')
-
-  // ⛔ Longest first. `claude-opus-5` must not be half-replaced by a rule for `claude`, which would
-  // leave `AGENT-opus-5` on the page — a redaction that names the thing it removed.
-  const names = [...vocabulary.names]
-    .filter((n) => n.trim().length >= 3)
-    .sort((a, b) => b.length - a.length)
-  for (const name of names) {
-    out = out.replace(new RegExp(escapeRegExp(name), 'gi'), 'AGENT')
-  }
-
-  // ⚠️ The path is kept and the vendor directory generalised: *which* dotfile directory a task
-  // touched names the agent as surely as a trailer does, while the fact that it touched agent
-  // configuration at all is part of the change being judged.
-  out = out.replace(/\.(claude|gemini|codex|agy)\//gi, '.agent-config/')
-
-  out = out.replace(/\n{3,}/g, '\n\n')
-  return { text: out, leaked: PROSE_AGENT.test(out) }
-}
-
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-}
+export { blind, namesAnAuthor, type BlindVocabulary } from './blinding.js'
 
 // ---------------------------------------------------------------------------- the diff
 

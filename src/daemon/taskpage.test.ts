@@ -318,6 +318,94 @@ describe('what order they come back in', () => {
     expect(tasks.pageTasks({}).tasks.map((t) => t.seq)).toEqual([4, 3, 2, 1])
     expect(tasks.pageTasks({ asc: true }).tasks.map((t) => t.seq)).toEqual([1, 2, 3, 4])
   })
+
+  it('orders by title without splitting the list at the case boundary', () => {
+    // ⚠️ Without `collate nocase` this reads as two lists: every capitalised prompt above every
+    // lower-case one, which is not what anybody clicking a Title header is asking for.
+    at('beta', 'running')
+    at('Alpha', 'running')
+    at('gamma', 'running')
+    expect(tasks.pageTasks({ sort: 'title', asc: true }).tasks.map((t) => t.title)).toEqual([
+      'Alpha',
+      'beta',
+      'gamma'
+    ])
+  })
+
+  it('sorts an ungraded task last whichever way the quality column points', () => {
+    // ⛔ Ungraded is not zero. 200 tasks nobody has reviewed at the head of the descending sort is
+    //    the column's whole purpose buried under its own absence.
+    const graded = at('graded', 'completed')
+    at('never reviewed', 'completed')
+    db.db().prepare('update tasks set quality_review_score = 7.5 where id = ?').run(graded)
+    expect(tasks.pageTasks({ sort: 'quality' }).tasks.map((t) => t.title)[0]).toBe('graded')
+    expect(tasks.pageTasks({ sort: 'quality', asc: true }).tasks.map((t) => t.title)[0]).toBe(
+      'graded'
+    )
+  })
+})
+
+/**
+ * The five columns SQLite cannot order.
+ *
+ * ⛔ **Active time and a price are computed after the row is read** — the first from the task's runs
+ * minus every stretch spent waiting on a person, the second from an account's billing window — so
+ * there is no expression an `order by` could name. `pageTasks` loads the whole filtered set and
+ * slices it afterwards, and these pin that the slice is still a page: ordered, total, and tie-broken
+ * on `seq` exactly as the SQL path is.
+ */
+describe('ordering by a column the database cannot see', () => {
+  const withDeps = (title: string, deps: number): string => {
+    const id = at(title, 'running')
+    for (let i = 0; i < deps; i++) {
+      const other = at(`${title} dep ${i}`, 'running')
+      tasks.addDependency(id, other)
+    }
+    return id
+  }
+
+  it('orders by how many tasks a task waits on, in both directions', () => {
+    withDeps('two deps', 2)
+    withDeps('one dep', 1)
+    const most = tasks.pageTasks({ sort: 'dep' }).tasks[0]
+    expect(most?.title).toBe('two deps')
+    expect(tasks.pageTasks({ sort: 'dep', asc: true }).tasks[0]?.dependsOn.length).toBe(0)
+  })
+
+  it('pages a derived sort without dropping or repeating a row', () => {
+    // ⭐ The failure paging exists to avoid, and the one a slice can reintroduce: every page renders
+    //    and one task is simply never seen. Five tasks, three pages of two.
+    for (let i = 0; i < 5; i++) at(`derived ${i}`, 'running')
+    const seen: string[] = []
+    for (let offset = 0; offset < 5; offset += 2) {
+      seen.push(...tasks.pageTasks({ sort: 'took', limit: 2, offset }).tasks.map((t) => t.id))
+    }
+    expect(seen).toHaveLength(5)
+    expect(new Set(seen).size).toBe(5)
+  })
+
+  it('still reports the total over the whole filtered set, not over the slice', () => {
+    for (let i = 0; i < 5; i++) at(`derived ${i}`, 'running')
+    expect(tasks.pageTasks({ sort: 'price', limit: 2 }).total).toBe(5)
+  })
+
+  it('falls back to the default order when asked for a column that does not exist', () => {
+    // ⛔ These params arrive over the RPC. An unrecognised value must not fall through to whatever
+    //    the derived comparator's last branch happens to be.
+    for (let i = 0; i < 3; i++) at(`unknown sort ${i}`, 'running')
+    const bogus = { sort: 'whatever' } as unknown as Parameters<typeof tasks.pageTasks>[0]
+    expect(tasks.pageTasks(bogus).tasks.map((t) => t.seq)).toEqual(
+      tasks.pageTasks({ sort: 'updated' }).tasks.map((t) => t.seq)
+    )
+  })
+
+  it('sorts a task nobody could price last in both directions', () => {
+    // ⛔ Unpriced is not free, so it does not sort as $0.00 — see AGENTS.md on absent numbers.
+    for (let i = 0; i < 3; i++) at(`unpriced ${i}`, 'running')
+    // ⚠️ Nothing here has a price at all, so the whole page is the null case and `seq` decides it.
+    expect(tasks.pageTasks({ sort: 'price' }).tasks.map((t) => t.seq)).toEqual([3, 2, 1])
+    expect(tasks.pageTasks({ sort: 'price', asc: true }).tasks.map((t) => t.seq)).toEqual([1, 2, 3])
+  })
 })
 
 // ---------------------------------------------------------------------------- searching

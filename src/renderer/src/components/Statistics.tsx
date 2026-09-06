@@ -86,6 +86,25 @@ function rowLabel(row: { level: StatRow['level']; label: string; model: string |
 }
 
 /**
+ * The same label, with the harness that ran it in front of it.
+ *
+ * ⛔ **A model id does not name a runner, and on this fleet two of them run the same model.**
+ * `claude-sonnet-4-6` is served both by Claude Code and by Antigravity, at different prices out of
+ * different subscriptions — so a bar labelled *Sonnet 4.6* in a chart with no parent row to indent
+ * under is a comparison between two things the reader cannot tell apart. The table carries the
+ * harness in the agent row above each model; a chart has no such row, so it carries it inline.
+ */
+function graphLabel(
+  row: { level: StatRow['level']; label: string; model: string | null; adapterId: string },
+  agents: Map<string, string>
+): string {
+  const own = rowLabel(row)
+  if (row.level === 'agent') return own
+  const agent = agents.get(row.adapterId)
+  return agent ? `${agent} · ${own}` : own
+}
+
+/**
  * ⛔ `n/a`, never a dash and never `$0.00`. `money()` and `duration()` already draw that line for
  * their own units; this is the one place a whole distribution can be absent.
  */
@@ -128,6 +147,10 @@ function StatGraph({
   const modelRows = rows.filter((r) => r.level === 'model' && r.distribution.samples > 0)
   const targetRows = modelRows.length > 0 ? modelRows : rows.filter((r) => r.distribution.samples > 0)
 
+  // ⚠️ Read off the agent rows rather than off the adapter registry: the registry knows every
+  // adapter ever compiled in, and this chart must name only the ones the table above it is folding.
+  const agentLabels = new Map(rows.filter((r) => r.level === 'agent').map((r) => [r.adapterId, r.label]))
+
   if (targetRows.length === 0) return null
 
   const maxVal = Math.max(
@@ -140,8 +163,9 @@ function StatGraph({
     ])
   )
 
-  const labelWidth = 190
-  const chartWidth = 520
+  // ⚠️ Wider than the model name alone needs, because the harness now sits in front of it.
+  const labelWidth = 250
+  const chartWidth = 470
   const totalWidth = labelWidth + chartWidth + 30
   const rowHeight = mode === 'whisker' ? 34 : 48
   const headerHeight = 32
@@ -310,7 +334,7 @@ function StatGraph({
             const xP100 = scale(d.p100)
             const isHovered = hoveredIdx === idx
 
-            const label = rowLabel(row)
+            const label = graphLabel(row, agentLabels)
 
             return (
               <g
@@ -340,7 +364,7 @@ function StatGraph({
                   fontSize="12"
                   fontWeight={row.level === 'agent' ? '600' : '400'}
                 >
-                  {label.length > 24 ? label.slice(0, 23) + '…' : label}
+                  {label.length > 34 ? label.slice(0, 33) + '…' : label}
                 </text>
 
                 {mode === 'whisker' ? (
@@ -428,7 +452,7 @@ function StatGraph({
             flexWrap: 'wrap'
           }}
         >
-          <strong>{rowLabel(targetRows[hoveredIdx])}</strong>
+          <strong>{graphLabel(targetRows[hoveredIdx], agentLabels)}</strong>
           <span className="dim">n={targetRows[hoveredIdx].distribution.samples}</span>
           <span>
             Avg:{' '}

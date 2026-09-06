@@ -112,6 +112,7 @@ function makeTask(overrides: Partial<Task> = {}): Task {
     activeSince: overrides.activeSince ?? null,
     ranOn: overrides.ranOn ?? null,
     ranModel: overrides.ranModel ?? null,
+    excludedFromStats: overrides.excludedFromStats ?? false,
     deletedAt: overrides.deletedAt ?? null,
     createdAt: overrides.createdAt ?? Date.now(),
     updatedAt: overrides.updatedAt ?? Date.now()

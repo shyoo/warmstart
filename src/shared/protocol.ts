@@ -1815,6 +1815,13 @@ export interface RpcMap {
    * silently does nothing.
    */
   'task.setAutoCompact': { params: { id: string; autoCompact: AutoCompactChoice }; result: Task }
+  /**
+   * Leave this task out of Statistics, the pace factor and every quality aggregate — or put it back.
+   *
+   * ⛔ For a *measurement* that is wrong, not for a result somebody dislikes. See
+   * `Task.excludedFromStats` for the boundary, and for why the estimator is deliberately not in it.
+   */
+  'task.setStatsExcluded': { params: { id: string; excluded: boolean }; result: Task }
   /** ⚠️ Takes effect on the task's **next** run: it changes the prompt, and a prompt is sent once. */
   'task.setCompletionMode': {
     params: { id: string; completionMode: CompletionModeChoice }

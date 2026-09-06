@@ -184,8 +184,10 @@ export function paceFactors(now = Date.now()): PaceFactors {
         // ⛔ Completed only. A cancelled or failed task stopped for a reason that has nothing to do
         // with how fast its agent works, and counting it would make the agent that gets interrupted
         // most look like the agent that finishes fastest.
+        // ⚠️ And `stats_excluded = 0`, the same filter `statistics.ts` reads: a task whose active
+        // time an operator has judged unmeasurable must not move the router either.
         `select id from tasks
-          where status = 'completed' and deleted_at is null
+          where status = 'completed' and deleted_at is null and coalesce(stats_excluded, 0) = 0
           order by updated_at desc
           limit ?`
       )

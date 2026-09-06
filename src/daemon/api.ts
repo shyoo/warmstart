@@ -88,6 +88,7 @@ import {
   runForSession,
   runsFor,
   setTaskHandoff,
+  setTaskStatsExcluded,
   updateTask
 } from './tasks.js'
 import { taskCommits } from './taskcommits.js'
@@ -622,6 +623,7 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
      * decides on its own terms; see the note on the protocol type.
      */
     'task.setAutoCompact': (p) => updateTask(p.id, { autoCompact: p.autoCompact }),
+    'task.setStatsExcluded': (p) => setTaskStatsExcluded(p.id, p.excluded),
     'task.setObjective': (p) => updateTask(p.id, { objective: p.objective }),
     /**
      * ⚠️ Next run only. Nothing is sent into a session that is already talking — see the note on the

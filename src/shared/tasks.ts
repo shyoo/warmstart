@@ -243,8 +243,41 @@ export interface TaskPage {
   counts: Record<TaskView, number>
 }
 
-/** What the table can be ordered by. ⚠️ Every one of these is a real column, never a computed one. */
-export type TaskSort = 'seq' | 'created' | 'updated'
+/**
+ * What the table can be ordered by — one value per column it has.
+ *
+ * ⛔ **Two kinds, and the split is not cosmetic.** `seq`, `title`, `status`, `quality`, `created`
+ * and `updated` are real columns: SQLite orders them and the pager slices the result, which is what
+ * keeps a page stable while the fleet writes underneath it. The rest — `from`, `worker`, `dep`,
+ * `took`, `price` — are **derived on read** and the database cannot see them: active time is folded
+ * from a task's runs minus every stretch spent waiting on a person, and a price is this task's share
+ * of an account's billing window, recomputed whenever a later overlapping run is discovered. Sorting
+ * those means loading the whole filtered set and slicing afterwards, which `pageTasks` does; ordering
+ * a page by a number the `order by` could not see would quietly drop and repeat rows between pages.
+ *
+ * ⚠️ `worker` orders by the account's **id**, not by the label the cell prints. The point of the
+ * column is to bring one account's tasks together, and the daemon does not carry the display names.
+ */
+export type TaskSort =
+  | 'seq'
+  | 'title'
+  | 'from'
+  | 'worker'
+  | 'dep'
+  | 'took'
+  | 'price'
+  | 'quality'
+  | 'created'
+  | 'updated'
+  | 'status'
+
+/**
+ * The sorts SQLite cannot express, because the value is computed after the row is read.
+ *
+ * ⛔ Exported so `pageTasks` and its test name the same set: a sort that is derived but missing from
+ * this list is one that silently orders a page by nothing at all.
+ */
+export const DERIVED_TASK_SORTS: readonly TaskSort[] = ['from', 'worker', 'dep', 'took', 'price']
 
 /** Where a cancelled task comes to rest. Cancel is not delete: none of these destroy anything. */
 export type RestingState = 'paused_user' | 'draft' | 'cancelled'
@@ -640,6 +673,22 @@ export interface Task {
   qualityReviewer: string | null
   /** Reviewer account while a peer grade is in flight; display state, not task lifecycle state. */
   gradingWorkerId?: string | null
+  /**
+   * Leave this task out of the fleet's own statistics.
+   *
+   * ⛔ **An escape hatch for a measurement that is wrong, not for a result somebody dislikes.** The
+   * case it exists for, measured 2026-09-06: t52 reported 639 minutes of active time against a 9.8
+   * minute median for the same model, because a run reaped with *"orchestratord restarted"* carried
+   * ten and a half hours of daemon downtime inside its span. That particular reading is now clamped
+   * at source in `activetime.ts`; this is for the next one nobody has thought of yet, and the thread
+   * pane that sets it says so.
+   *
+   * ⚠️ **Descriptive surfaces only, and the boundary is deliberate.** Statistics, the pace factor
+   * and every quality aggregate skip an excluded task. The **estimator** does not: its samples are
+   * token counts, and a task excluded for reporting an impossible duration still spent exactly the
+   * tokens it spent.
+   */
+  excludedFromStats: boolean
   deletedAt: number | null
   createdAt: number
   updatedAt: number

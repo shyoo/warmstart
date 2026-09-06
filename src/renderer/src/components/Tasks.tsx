@@ -42,7 +42,8 @@ function SortHead({
   sort,
   asc,
   onSort,
-  numeric
+  numeric,
+  title
 }: {
   label: string
   column: TaskSort
@@ -50,6 +51,8 @@ function SortHead({
   asc: boolean
   onSort: (column: TaskSort) => void
   numeric?: boolean
+  /** ⚠️ The column's own explanation, which several of these carry and none of them may lose. */
+  title?: string
 }): React.JSX.Element {
   const on = sort === column
   return (
@@ -58,6 +61,7 @@ function SortHead({
         className={`sort-head${on ? ' sort-head--on' : ''}`}
         onClick={() => onSort(column)}
         aria-sort={on ? (asc ? 'ascending' : 'descending') : 'none'}
+        title={title}
       >
         {label}
         {on && <span aria-hidden>{asc ? ' ↑' : ' ↓'}</span>}
@@ -65,6 +69,16 @@ function SortHead({
     </th>
   )
 }
+
+/**
+ * Which way a column opens when it is first clicked.
+ *
+ * ⛔ **A name opens A→Z and a measurement opens biggest-first**, because those are the ends people
+ * are looking for. One rule for all of them would make either *Title* start at Z or *Took* start at
+ * the fastest task in the fleet, and a second click is a poor answer to a default that is wrong for
+ * half the table.
+ */
+const OPENS_ASCENDING: ReadonlySet<TaskSort> = new Set<TaskSort>(['title', 'from', 'worker', 'status'])
 
 /**
  * The task table.
@@ -219,9 +233,7 @@ export function Tasks({
       return
     }
     setSort(column)
-    // ⚠️ A fresh column starts newest-first. Every column here is a clock or a counter, and the
-    // interesting end of all three is the recent one.
-    setAsc(false)
+    setAsc(OPENS_ASCENDING.has(column))
   }
 
   const pages = Math.max(1, Math.ceil(total / pageSize))
@@ -414,8 +426,15 @@ export function Tasks({
           <thead>
             <tr>
               <SortHead label="#" column="seq" sort={sort} asc={asc} onSort={sortBy} numeric />
-              <th>Title</th>
-              <th>From</th>
+              <SortHead label="Title" column="title" sort={sort} asc={asc} onSort={sortBy} />
+              <SortHead
+                label="From"
+                column="from"
+                sort={sort}
+                asc={asc}
+                onSort={sortBy}
+                title="Who filed the task: you, the controller, or an agent."
+              />
               {/* ⛔ On the table, not only in the detail pane. Which account is spending on a task is
                   the first thing an operator checks and the last thing that should need a click —
                   and a routing mistake is invisible until it is shown here.
@@ -425,8 +444,22 @@ export function Tasks({
                   ordinary. Two columns apart, that pairing is a join the reader has to do by eye on
                   every row; stacked, the wrong one stands out — and the row stays one line of text
                   wide, which a table of a hundred tasks needs more than it needs a header. */}
-              <th>Worker</th>
-              <th>Dep</th>
+              <SortHead
+                label="Worker"
+                column="worker"
+                sort={sort}
+                asc={asc}
+                onSort={sortBy}
+                title="The account this task last ran on. ⚠️ Sorted by the account's id rather than the label printed here, which groups one account's tasks together without the daemon having to carry display names."
+              />
+              <SortHead
+                label="Dep"
+                column="dep"
+                sort={sort}
+                asc={asc}
+                onSort={sortBy}
+                title="How many other tasks this one waits on."
+              />
               {/* ⛔ How long, beside how much. A task showing only a token count answers "what did
                   this cost" and not "is this taking too long", and the second is the question
                   somebody watching a run actually has.
@@ -434,32 +467,49 @@ export function Tasks({
                   first-dispatch, which counts queueing, quota parks and every minute a question sat
                   waiting on a person — so a four-minute task filed before dinner reported nine
                   hours. The gap is in the tooltip, where it belongs. */}
-              <th className="tbl-num" title="Time an agent was actually working, excluding time queued, held, or waiting on you.">
-                Took
-              </th>
+              <SortHead
+                label="Took"
+                column="took"
+                sort={sort}
+                asc={asc}
+                onSort={sortBy}
+                numeric
+                title="Time an agent was actually working, excluding time queued, held, or waiting on you."
+              />
               {/* ⛔ Money over tokens, stacked, because they answer the same question at two
                   different altitudes: what this task cost, and how much conversation it took to get
                   there. The header used to read "Tokens" only because a column headed "Spent" was
                   read as money by everybody who saw it — now it *is* money, with the tokens kept
                   underneath in the same quiet treatment the model line uses. */}
-              <th className="tbl-num">Price</th>
+              <SortHead
+                label="Price"
+                column="price"
+                sort={sort}
+                asc={asc}
+                onSort={sortBy}
+                numeric
+                title="What this task has cost. ⚠️ A task nobody could price sorts last in both directions — unpriced is not free."
+              />
               {/* ⛔ A grade, and nothing gates on it. It sits beside Price because both are
                   after-the-fact measurements of one attempt — what it cost, and whether it was any
                   good — and because the comparison this column exists for is between agents, which
                   is a query over these rows rather than a screen of its own. */}
-              <th
-                className="tbl-num"
-                title="Peer quality review: a different agent's weighted score out of 10, against the published rubric. Nothing in the fleet gates on it."
-              >
-                Quality
-              </th>
+              <SortHead
+                label="Quality"
+                column="quality"
+                sort={sort}
+                asc={asc}
+                onSort={sortBy}
+                numeric
+                title="Peer quality review: a different agent's weighted score out of 10, against the published rubric. Nothing in the fleet gates on it. ⚠️ Ungraded tasks sort last in both directions."
+              />
               {/* ⛔ Both dates, not one. When a task was filed and when it last moved answer
                   different questions — "how long has this been sitting here" and "is anything still
                   happening" — and a task filed weeks ago that ran an hour ago looks identical to a
                   fresh one under either column alone. */}
               <SortHead label="Created" column="created" sort={sort} asc={asc} onSort={sortBy} />
               <SortHead label="Updated" column="updated" sort={sort} asc={asc} onSort={sortBy} />
-              <th>Status</th>
+              <SortHead label="Status" column="status" sort={sort} asc={asc} onSort={sortBy} />
               <th className="tbl-num tbl-col-action">Action</th>
             </tr>
           </thead>

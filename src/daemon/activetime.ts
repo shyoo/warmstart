@@ -27,6 +27,14 @@ import { db, rows } from './db.js'
  * ⚠️ What it cannot see is time the agent spent blocked on something that never became a row: a
  * vendor-side rate limit inside a turn, a `run_command` waiting on a network, a controller consult.
  * Those read as active, which is the honest answer — the fleet *was* holding the session open.
+ *
+ * ⛔ **And a run the daemon reaped at startup is not a measurement at all.** `finishRun(run.id,
+ * 'terminated', 'orchestratord restarted')` writes `ended_at` at the moment orchestratord came
+ * *back*, so a run that was alive when the machine went to sleep records every hour it was off as
+ * work. Measured on this install 2026-09-06: **8** such runs, carrying **875 minutes** between
+ * them, one of them 635 minutes on its own — which is why t52 reported 639 minutes of active time
+ * against a 9.8-minute median for the same model. `clampToLastSign` is what stops that number
+ * existing; see it for what the end is clamped to and what happens when nothing can clamp it.
  */
 
 /** A run's span. `endedAt` null means the attempt is still open. */
@@ -34,6 +42,41 @@ export interface RunSpan {
   id: string
   startedAt: number
   endedAt: number | null
+  /**
+   * The last moment anything was observed on this run, when its recorded end cannot be trusted.
+   *
+   * ⛔ Set only for a run reaped by `orchestratord restarted`; `null` everywhere else, which means
+   * *the recorded end is the end*. Not `endedAt` already clamped, because the two answer different
+   * questions: `endedAt` is when the row was closed, which the thread still shows.
+   */
+  lastSignAt?: number | null
+}
+
+/** The note `scheduler.ts` writes on a run it reaps at startup. ⛔ Matched exactly, in one place. */
+export const RESTART_REAP_NOTE = 'orchestratord restarted'
+
+/**
+ * Where a restart-reaped run's active time actually stops.
+ *
+ * ⛔ **The recorded end is when orchestratord came back, not when the agent stopped.** The last
+ * turn written on the run's session is the last moment anything was observed, so that is where the
+ * clock is stopped — a measurement, not an estimate.
+ *
+ * ⛔ **And with no turn at all, the run contributes nothing.** An antigravity run leaves no turns by
+ * construction (`capabilities.meteredFromTranscript` is false — agy keeps its conversation in its
+ * own SQLite), so for those there is no evidence of when work ended. Zero is the honest fold: this
+ * file already refuses to let an unmeasurable run set a duration, and counting the daemon's
+ * downtime instead would be the one number it exists to stop reporting. ⚠️ It does mean a task
+ * whose only run was reaped this way reads as untimed rather than as fast — `velocityStats`
+ * publishes that count.
+ */
+function clampToLastSign(run: RunSpan): number | null {
+  // ⛔ `undefined` and `null` are different answers here, and the distinction is the whole point.
+  //    Absent means *this run was not reaped* — the recorded end stands. Present-and-null means it
+  //    was reaped and nothing was ever observed on it, which is not a duration anybody can defend.
+  if (run.lastSignAt === undefined) return run.endedAt
+  if (run.lastSignAt === null) return null
+  return run.lastSignAt > run.startedAt ? run.lastSignAt : null
 }
 
 /** A stretch in which a person was being waited on. `to` null means nobody has answered yet. */
@@ -130,7 +173,11 @@ export function timingFor(
   // that owns `activeSince`. A task holds one run at a time; ordering makes that assumption visible
   // instead of load-bearing.
   for (const run of [...runs].sort((a, b) => a.startedAt - b.startedAt)) {
-    const end = run.endedAt ?? now
+    // ⚠️ An open run still ends at `now`: `clampToLastSign` speaks only about a run that was
+    // reaped, and a reaped run is by definition closed.
+    const endedAt = run.endedAt === null ? null : clampToLastSign(run)
+    if (run.endedAt !== null && endedAt === null) continue
+    const end = endedAt ?? now
     if (end <= run.startedAt) continue
 
     const raw = waitsByRun.get(run.id) ?? []
@@ -138,7 +185,7 @@ export function timingFor(
     const served = merged.reduce((sum, w) => sum + (w.to - w.from), 0)
     blockedMs += served
 
-    if (run.endedAt !== null) {
+    if (endedAt !== null) {
       activeMs += end - run.startedAt - served
       continue
     }
@@ -245,20 +292,43 @@ export function timingForTasks(taskIds: string[], now = Date.now()): Map<string,
   for (let i = 0; i < taskIds.length; i += 400) {
     const chunk = taskIds.slice(i, i + 400)
     const holes = chunk.map(() => '?').join(',')
-    const found = rows<{ id: string; task_id: string; started_at: number; ended_at: number | null }>(
+    const found = rows<{
+      id: string
+      task_id: string
+      started_at: number
+      ended_at: number | null
+      note: string | null
+      last_sign_at: number | null
+    }>(
       db()
         .prepare(
           // ⛔ `kind = 'work'`. `activeMs` is *how long an agent worked on this task*, and grading
           // the work is not working on it — a five-minute review would otherwise be added to the
           // duration of the task it graded, on every per-agent and per-model number derived from it.
-          `select id, task_id, started_at, ended_at from runs
-             where task_id in (${holes}) and kind = 'work'`
+          //
+          // ⚠️ `last_sign_at` is read **only** for a restart-reaped run, and it is the newest turn
+          // inside the run's own span rather than the newest turn of the session: a session serves
+          // several runs, and the last turn of a later one is not evidence about this one.
+          `select r.id, r.task_id, r.started_at, r.ended_at, r.note,
+                  case when r.note = ? then (
+                    select max(t.ts) from turns t
+                     where t.session_id = r.session_id
+                       and t.ts >= r.started_at
+                       and (r.ended_at is null or t.ts <= r.ended_at)
+                  ) end as last_sign_at
+             from runs r
+            where r.task_id in (${holes}) and r.kind = 'work'`
         )
-        .all(...chunk)
+        .all(RESTART_REAP_NOTE, ...chunk)
     )
     for (const r of found) {
       const list = spans.get(r.task_id) ?? []
-      list.push({ id: r.id, startedAt: r.started_at, endedAt: r.ended_at })
+      list.push({
+        id: r.id,
+        startedAt: r.started_at,
+        endedAt: r.ended_at,
+        ...(r.note === RESTART_REAP_NOTE ? { lastSignAt: r.last_sign_at } : {})
+      })
       spans.set(r.task_id, list)
       allRunIds.push(r.id)
     }

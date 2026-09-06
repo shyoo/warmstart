@@ -91,11 +91,15 @@ function loadReviews(): ReviewAggRow[] {
   return rows<ReviewAggRow>(
     db()
       .prepare(
-        `select subject_adapter, subject_model, composite, scores_json, mixed_authorship,
-                blinding_leak, reviewer_adapter, reviewer_model, completed_at
-           from quality_reviews
-          where status = 'complete' and composite is not null
-          order by completed_at desc`
+        // ⚠️ Joined to `tasks` for one reason: a task an operator has excluded from the fleet's
+        // statistics is excluded from its grades too. The join is inner, so a review whose task has
+        // been hard-deleted drops out as well — which it already did everywhere else.
+        `select q.subject_adapter, q.subject_model, q.composite, q.scores_json, q.mixed_authorship,
+                q.blinding_leak, q.reviewer_adapter, q.reviewer_model, q.completed_at
+           from quality_reviews q join tasks t on t.id = q.task_id
+          where q.status = 'complete' and q.composite is not null
+            and coalesce(t.stats_excluded, 0) = 0
+          order by q.completed_at desc`
       )
       .all()
   )
@@ -266,6 +270,7 @@ export function ungradedTasks(limit = 50): UngradedTask[] {
            from tasks t
           where t.status = 'completed'
             and t.deleted_at is null
+            and coalesce(t.stats_excluded, 0) = 0
             and t.quality_review_count = 0
             -- ⛔ Something must have run on it. A task completed by hand has no agent work to grade,
             -- and offering to spend a reviewer's turn on it would buy a score about nobody.
@@ -292,6 +297,7 @@ function ungradedCount(): number {
         .prepare(
           `select count(*) as n from tasks t
             where t.status = 'completed' and t.deleted_at is null and t.quality_review_count = 0
+              and coalesce(t.stats_excluded, 0) = 0
               and exists (select 1 from runs r where r.task_id = t.id and r.kind = 'work')`
         )
         .get() as { n: number } | undefined
@@ -305,7 +311,8 @@ function gradedCount(): number {
       db()
         .prepare(
           `select count(*) as n from tasks
-            where status = 'completed' and deleted_at is null and quality_review_count > 0`
+            where status = 'completed' and deleted_at is null and quality_review_count > 0
+              and coalesce(stats_excluded, 0) = 0`
         )
         .get() as { n: number } | undefined
     )?.n ?? 0
@@ -372,6 +379,7 @@ export function qualityReport(): QualityReport {
  */
 const FINISHED = `from tasks t
    where t.status = 'completed' and t.deleted_at is null
+     and coalesce(t.stats_excluded, 0) = 0
      and exists (select 1 from runs r where r.task_id = t.id and r.kind = 'work')`
 
 /** The `where` fragment for one bucket. ⚠️ `many` is two *or more*, so exactly two is in it. */
