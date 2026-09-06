@@ -91,8 +91,9 @@ on **model** rows only — a prior is published per model, so there is no prior 
 agent and model scores — and duplicating it here would leave two tables of the same numbers folded
 two ways and no way to tell which was authoritative. This page answers what that one cannot: which
 finished work carries **no** grade, exactly one, or two or more; who has already graded each task;
-and whether any peer is left who could still grade it. The two link to each other in both directions
-rather than repeating each other. ⛔ **It is also the only place a review is commissioned in bulk** —
+and whether both an exact diff and a peer remain so it can still be graded. A permanent refusal is
+printed beside **no**, not deferred until a batch skips it. The two link to each other in both
+directions rather than repeating each other. ⛔ **It is also the only place a review is commissioned in bulk** —
 the *Grade up to five* button that used to sit on Routing Model › Quality is gone and links here,
 because two buttons spending turns on the same accounts under different caps is a way to empty a
 quota window by pressing the wrong one.
@@ -102,12 +103,14 @@ the reviews run in the background (`daemon/gradebatch.ts`), because ALL over a b
 grading and an RPC held open for it would be lost by the first window reload. Progress is read back
 from `quality.batch`, and the reviews themselves are ordinary runs on ordinary tasks — the Tasks
 table and the task threads are where they are watched. ⚠️ **Concurrency is not a number written
-anywhere**: the driver starts everything that can start and `reviewCandidates` refuses an account
+anywhere**: `requestReview` synchronously claims an account before its first await, the driver starts
+everything that can start, and `reviewCandidates` refuses an account
 that is already reviewing, so a two-account fleet grades two tasks at once and a one-account fleet
 grades one. ⛔ **The count is what is *attempted*, not what is graded** — a task that is skipped stays
 visible as a skip with its own reason rather than being silently replaced by the next one, because
 *no peer left* and *the branch is gone so there is nothing to diff* are the fleet facts the page was
-opened to find. Stopping a batch stops the queue and never a review already in flight; that one is
+opened to find. A split child's recorded range remains valid after its planner branch is retired by
+proving the commits reached the project's trunk. Stopping a batch stops the queue and never a review already in flight; that one is
 stopped by name on its own task.
 
 ⛔ **No agent grades the same task twice.** Once an adapter has produced a *scored* grade for a task

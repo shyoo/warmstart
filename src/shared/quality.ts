@@ -119,9 +119,9 @@ export interface ReviewQueueRow {
   /**
    * Whether any commissioned peer could still grade this task at all.
    *
-   * ⛔ Answered from the durable gates only — authorship, prior grades, grading enabled, read-only
-   * capability. Login, health and quota are transient and are re-asked at spawn; hiding a
-   * configured reviewer whenever one flickered is the bug `reviewCandidates` documents.
+   * ⛔ Requires both a durable peer and an exact, resolvable commit range. Login, health and quota
+   * are transient and are re-asked at spawn; hiding a configured reviewer whenever one flickered
+   * is the bug `reviewCandidates` documents.
    */
   eligible: boolean
   /** ⛔ Never a bare "unavailable": names every candidate considered and why each was rejected. */

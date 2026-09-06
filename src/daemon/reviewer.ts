@@ -6,7 +6,7 @@ import { adapter } from './adapters/index.js'
 import { accountUnavailability } from './eligibility.js'
 import { extractJson } from './controller.js'
 import { db, rows } from './db.js'
-import { landingTargetFor, getProject } from './projects.js'
+import { landingTargetFor, getProject, policyFor } from './projects.js'
 import { lastQuota } from './quota.js'
 import {
   authorshipOf,
@@ -374,7 +374,12 @@ export async function reviewEligibility(taskId: string): Promise<{
   // putting the planner's commits and every earlier sibling's work inside the range this child is
   // graded on. `resolveRange` refuses to review the wrong commits by name; this is the reference
   // point that keeps it able to tell.
-  const range = await resolveRange(task, project, landingTargetFor(task, project))
+  const range = await resolveRange(
+    task,
+    project,
+    landingTargetFor(task, project),
+    policyFor(project).landingTarget
+  )
   if (!range.ok) return { ok: false, reviewers: [], reason: range.reason }
 
   const reviewers = reviewCandidateOptions(task)
@@ -416,7 +421,12 @@ export async function requestReview(taskId: string, workerId?: string | null): P
   const worker = choice.worker
   claimedReviewers.add(worker.id)
   try {
-    const range = await resolveRange(task, project, landingTargetFor(task, project))
+    const range = await resolveRange(
+      task,
+      project,
+      landingTargetFor(task, project),
+      policyFor(project).landingTarget
+    )
     if (!range.ok) return { ok: false, reason: range.reason }
     return await runReview(taskId, task, project, range, worker)
   } finally {

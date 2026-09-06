@@ -131,6 +131,25 @@ describe('the resolution ladder', () => {
     expect(diff.files).toBe(1)
   })
 
+  it('rung 1: a split child remains reviewable after its planner branch lands and is retired', async () => {
+    const project = makeRepo()
+    const { base, head } = branchWithWork(project, 'planner')
+    git(project.root, 'merge', '--ff-only', 'planner')
+    git(project.root, 'branch', '-D', 'planner')
+
+    const range = await review.resolveRange(
+      task({ landedBaseSha: base, landedHeadSha: head, branch: 'child' }),
+      project,
+      'planner',
+      'main'
+    )
+    expect(range.ok).toBe(true)
+    if (!range.ok) return
+    expect(range.from).toBe('landed')
+    expect(range.base).toBe(base)
+    expect(range.head).toBe(head)
+  })
+
   it('rung 3: a landed task with no recorded range and no branch is refused, never guessed', async () => {
     const project = makeRepo()
     branchWithWork(project, 'feature')

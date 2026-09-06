@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { BatchEntry, GradeBatch } from '@shared/quality.js'
 import { batchCandidates } from './quality.js'
-import { requestReview, reviewEligibility, reviewerAvailability } from './reviewer.js'
+import { requestReview, reviewerAvailability } from './reviewer.js'
 import { getTask } from './tasks.js'
 import { log } from './log.js'
 
@@ -190,15 +190,12 @@ async function drive(batch: GradeBatch): Promise<void> {
 /** One task, start to finish. ⛔ Never throws: a driver that died would strand the whole queue. */
 async function grade(entry: BatchEntry): Promise<void> {
   try {
-    // ⚠️ Asked before spending a spawn, exactly as `gradeUngraded` does: a task with no resolvable
-    // commit range is an irreversible fact about that task, not a passing condition, and finding it
-    // out after the CLI has started costs a process for an answer that was free.
-    const eligible = await reviewEligibility(entry.taskId)
-    if (!eligible.ok) {
-      entry.state = 'skipped'
-      entry.reason = eligible.reason
-      return
-    }
+    // ⛔ `requestReview` must be the first async operation here. It chooses and claims an account
+    // synchronously before resolving the git range. The former preflight awaited the same range
+    // first, so one queue pass marked every row `grading` before any account was claimed; all but
+    // the fleet-width first wave then lost the race and were skipped as "already reviewing".
+    // `requestReview` still resolves the range before it spawns, so an unreviewable task costs no
+    // process or turn.
     const outcome = await requestReview(entry.taskId)
     if (!outcome.ok) {
       entry.state = 'skipped'

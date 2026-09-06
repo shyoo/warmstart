@@ -268,8 +268,8 @@ export function QualityReview({
                 {/* ⛔ `n/a`, never 0.0. An ungraded task has no score; 0 is a real grade. */}
                 <td className="tbl-num num">{row.score === null ? 'n/a' : row.score.toFixed(1)}</td>
                 <td className="dim">{row.gradedBy.length === 0 ? '—' : row.gradedBy.join(', ')}</td>
-                <td className={row.eligible ? 'dim' : 'warn'} title={row.ineligibleReason || undefined}>
-                  {row.grading ? 'grading now' : row.eligible ? 'yes' : 'no eligible review agent'}
+                <td className={row.eligible ? 'dim' : 'warn'}>
+                  {row.grading ? 'grading now' : row.eligible ? 'yes' : `no — ${row.ineligibleReason}`}
                 </td>
                 <td className="tbl-when">{when(row.finishedAt)}</td>
               </tr>

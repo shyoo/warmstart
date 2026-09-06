@@ -163,20 +163,26 @@ export type RangeResolution =
 export async function resolveRange(
   task: Pick<Task, 'landedBaseSha' | 'landedHeadSha' | 'branch'>,
   project: Project,
-  target: string
+  target: string,
+  projectTarget = target
 ): Promise<RangeResolution> {
   const cwd = project.root
   const trunkSha = await resolves(cwd, target)
-  if (!trunkSha) return { ok: false, reason: `the landing target '${target}' does not resolve` }
   if (task.landedBaseSha && task.landedHeadSha) {
     const base = await resolves(cwd, task.landedBaseSha)
     const head = await resolves(cwd, task.landedHeadSha)
     const baseBeforeHead = base && head ? await isAncestor(cwd, base, head) : false
-    const headOnTrunk = head ? await isAncestor(cwd, head, trunkSha) : false
-    if (base && head && baseBeforeHead && headOnTrunk) {
-      return { ok: true, base, head, trunkSha, cwd, from: 'landed' }
+    // A split child lands onto its planner's branch. Once the planner lands, that branch is retired
+    // but the child's recorded commits remain reachable from the project's configured trunk. The
+    // range is still exact; validate it against either place it can legitimately have landed.
+    const projectTrunkSha = target === projectTarget ? trunkSha : await resolves(cwd, projectTarget)
+    const landedOnTarget = head && trunkSha ? await isAncestor(cwd, head, trunkSha) : false
+    const landedOnProject = head && projectTrunkSha ? await isAncestor(cwd, head, projectTrunkSha) : false
+    if (base && head && baseBeforeHead && (landedOnTarget || landedOnProject)) {
+      return { ok: true, base, head, trunkSha: (landedOnTarget ? trunkSha : projectTrunkSha) as string, cwd, from: 'landed' }
     }
   }
+  if (!trunkSha) return { ok: false, reason: `the landing target '${target}' does not resolve` }
   if (task.branch) {
     const branch = await resolves(cwd, task.branch)
     if (branch) {

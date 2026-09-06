@@ -19,7 +19,7 @@ import { adapter } from './adapters/index.js'
 import { pendingReviews } from './review.js'
 import { getTask } from './tasks.js'
 import { defaultGradingModel, listWorkers } from './workers.js'
-import { reviewerAvailability } from './reviewer.js'
+import { reviewEligibility, reviewerAvailability } from './reviewer.js'
 
 /**
  * What the fleet has actually measured about *quality*, aggregated from stored peer reviews.
@@ -396,11 +396,11 @@ function gradersByTask(taskIds: string[]): Map<string, string[]> {
 }
 
 /** One page of the Quality Review table, with the bucket counts the tabs above it print. */
-export function reviewQueue(
+export async function reviewQueue(
   filter: ReviewFilter = 'none',
   limit = 25,
   offset = 0
-): ReviewQueuePage {
+): Promise<ReviewQueuePage> {
   const take = Math.max(1, Math.min(200, Math.floor(limit)))
   const skip = Math.max(0, Math.floor(offset))
   const found = queueRows(filter, take, skip)
@@ -413,13 +413,18 @@ export function reviewQueue(
   return {
     counts,
     total,
-    rows: found.map((r) => {
+    rows: await Promise.all(found.map(async (r) => {
       const task = getTask(r.id)
       // ⚠️ A row whose task vanished between the two reads is not an eligibility answer, and saying
       // "no eligible reviewer" about it would be a claim this code cannot support.
-      const availability = task
-        ? reviewerAvailability(task)
-        : { eligible: false, reason: 'this task is no longer readable', count: 0 }
+      // The column promises whether the task can be graded, not merely whether a peer exists. A
+      // missing commit range is permanent and belongs here before a batch discovers it by skipping.
+      const peers = task ? reviewerAvailability(task) : null
+      const eligibility = !task
+        ? { ok: false, reason: 'this task is no longer readable' }
+        : peers && !peers.eligible
+          ? { ok: false, reason: peers.reason }
+          : await reviewEligibility(task.id)
       return {
         taskId: r.id,
         seq: r.seq,
@@ -431,11 +436,11 @@ export function reviewQueue(
         reviewCount: r.quality_review_count,
         score: r.quality_review_score,
         gradedBy: graders.get(r.id) ?? [],
-        eligible: availability.eligible,
-        ineligibleReason: availability.eligible ? '' : availability.reason,
+        eligible: eligibility.ok,
+        ineligibleReason: eligibility.ok ? '' : eligibility.reason,
         grading: grading.has(r.id)
       }
-    })
+    }))
   }
 }
 

@@ -132,19 +132,19 @@ describe('which finished work has been graded', () => {
     expect(quality.reviewCounts()).toEqual({ none: 0, one: 0, many: 0, total: 0 })
   })
 
-  it('pages one bucket and reports the total behind it', () => {
+  it('pages one bucket and reports the total behind it', async () => {
     task()
     task()
     graded('antigravity-cli')
-    const page = quality.reviewQueue('none', 1, 0)
+    const page = await quality.reviewQueue('none', 1, 0)
     expect(page.rows).toHaveLength(1)
     expect(page.total).toBe(2)
     expect(page.counts.one).toBe(1)
   })
 
-  it('names who has already graded a task, so the row says why nobody else may', () => {
+  it('names who has already graded a task, so the row says why nobody else may', async () => {
     const id = graded('antigravity-cli')
-    const [row] = quality.reviewQueue('one').rows
+    const [row] = (await quality.reviewQueue('one')).rows
     expect(row?.taskId).toBe(id)
     expect(row?.gradedBy).toEqual(['antigravity-cli'])
     expect(row?.reviewCount).toBe(1)
@@ -176,7 +176,7 @@ describe('an agent is asked about a task at most once', () => {
     expect(reviewer.reviewerAvailability(taskRow(id)).eligible).toBe(true)
   })
 
-  it('⛔ reports no eligible review agent once the only peer has graded it, and says why', () => {
+  it('⛔ reports no eligible review agent once the only peer has graded it, and says why', async () => {
     const id = graded('antigravity-cli')
     const availability = reviewer.reviewerAvailability(taskRow(id))
     expect(availability.eligible).toBe(false)
@@ -185,7 +185,7 @@ describe('an agent is asked about a task at most once', () => {
     expect(availability.reason).toContain('did this work')
     expect(availability.reason).toContain('already graded this task')
 
-    const [row] = quality.reviewQueue('one').rows
+    const [row] = (await quality.reviewQueue('one')).rows
     expect(row?.eligible).toBe(false)
     expect(row?.ineligibleReason).toContain('already graded this task')
   })
