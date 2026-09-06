@@ -4633,9 +4633,14 @@ export async function onStreamResult(
   if (!run) return
 
   const said = stripAnsi(result.text ?? '').replace(/\s+/g, ' ').trim()
+  const backscrollText = stripAnsi(backscroll(session.id)).replace(/\s+/g, ' ').trim()
+  // ⛔ If the stream result has no text but the session backscroll has content, use that. The error
+  // message from the CLI is the only thing a person can act on, and losing it to an empty result
+  // means losing the fact that the account's quota is the reason the turn failed.
+  const errorDetails = said || backscrollText.slice(-400)
   const why =
     `The agent reported a failure${result.terminalReason ? ` (${result.terminalReason})` : ''}` +
-    (said ? `: ${said.slice(0, 400)}` : ' and said nothing about it.')
+    (errorDetails ? `: ${errorDetails}` : ' and said nothing about it.')
 
   await endUnfinishedRun(session, run, why, 'failed')
   // ⛔ Closed here, and this is not tidiness. The process does not exit on an `api_error`; leaving it
