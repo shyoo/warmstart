@@ -61,11 +61,26 @@ const info: AdapterInfo = {
     maxAccounts: null
   },
   policy: {
-    // Plan §9.1. ⚠️ `auto` is the built-in start mode only for a terminal session on Pro/Max/Team.
-    // `-p` and the SDK start in `default`, and an "auto" defaultMode in a project settings file is
-    // ignored outright - so it has to be passed on every spawn or scheduled runs silently run Manual
-    // and stall on their first shell command with nobody watching.
+    // Plan §9.1. ⚠️ `auto` is the built-in start mode only for a terminal session on Pro/Max/Team,
+    // so it has to be passed on every spawn or an interactive session silently runs Manual.
     defaultPermissionMode: 'auto',
+    // ⛔ **`auto` does not survive `-p`, and passing it there was doing nothing.** The note above
+    // used to end "so it has to be passed on every spawn", and it was — `--permission-mode auto`
+    // went onto every headless dispatch and the CLI dropped it on the floor. Measured 2026-09-06 on
+    // 2.1.263: the flag is a valid choice, the process starts without a word of complaint, and the
+    // `init` record it prints says `"permissionMode":"default"`. `acceptEdits`, `plan`, `dontAsk`
+    // and `bypassPermissions` all come back as themselves; `auto` alone does not — not by flag, and
+    // not by a `permissions.defaultMode` in `--settings` either. t250 is what that cost: nine
+    // approvals in one hour for `git log`, `npm test` and the project's own checks, two of them left
+    // to time out into a deny, because the classifier this fleet was relying on had never run.
+    //
+    // ⚠️ `dontAsk` is not the substitute it sounds like. Measured the same day, it *denies* what it
+    // will not ask about ("I don't have permission to run shell commands"), which is the stall again
+    // with nobody there to end it. The mode named here is the only headless one that lets a worker
+    // finish, and it is the call this project already made for antigravity (`docs/adapters.md`):
+    // quarantined inside an isolated pooled worktree, gated by the mandate and by the landing
+    // checks, on a branch nobody has to keep.
+    headlessPermissionMode: 'bypassPermissions',
     // ESC is the CLI's own interrupt. ⛔ Not a process kill: a killed agent leaves its work
     // uncommitted and its claims held, which is the expensive half of a cancel.
     interruptSequence: '\x1b',

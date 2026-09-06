@@ -997,6 +997,19 @@ export interface AdapterVerification {
 
 export interface AdapterPolicy {
   defaultPermissionMode: string
+  /**
+   * The mode unattended work runs in, when `defaultPermissionMode` is not available to it.
+   *
+   * ⛔ **Not a preference — a fact about the CLI.** Claude Code accepts `--permission-mode auto`
+   * under `-p` without complaint and then runs `default` anyway; measured 2026-09-06 on 2.1.263, its
+   * own `init` record reports `"permissionMode":"default"` while `acceptEdits`, `plan`, `dontAsk`
+   * and `bypassPermissions` all stick. An adapter whose auto mode survives headless leaves this
+   * unset and unattended work keeps `defaultPermissionMode`.
+   *
+   * ⚠️ Read only for a **`work`** session on the **`stream`** transport - the unattended case. A chat,
+   * a consult or a review passes its own mode and is never touched by this.
+   */
+  headlessPermissionMode?: string | null
   /** What "stop what you are doing" is, as bytes. ESC for a TUI; adapters may differ. */
   interruptSequence: string
   costModelId: string

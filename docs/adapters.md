@@ -26,7 +26,7 @@ first spawn.** That is the whole reason `AdapterInfo.verification` exists.
 | Credential lives in | a directory | ⛔ the OS keyring | a directory | ⛔ none (local HTTP) |
 | Metered from | ⛔ transcript, **by choice** (exact, survives a restart; its stream carries usage too) | **its live stream** | **its live stream** | **its live stream** |
 | Can compact | ✔ | ⛔ | ⛔ *(conservative)* | ⛔ |
-| Classifier reviews actions | ✔ `auto` | ⛔ | ⛔ | ⛔ |
+| Classifier reviews actions | ⚠️ `auto`, **interactive only** — unattended work runs `bypassPermissions` | ⛔ | ⛔ | ⛔ |
 | Approvals | `permission_prompt_tool` | settings rules | settings rules | ⛔ none |
 | Raises its own questions | ✔ **`AskUserQuestion` / `ask_human` (single & multi-checkboxes)** | ✔ **`NEEDS DECISION: [multi]` contract** | ✔ **`NEEDS DECISION: [multi]` contract** | ✔ via `ask_human` tool |
 | Says why a turn stopped | ✔ **`post_turn_summary`** carries `status_category` + `needs_action` | ⛔ none seen | ⛔ none seen | ⛔ none seen |
@@ -120,6 +120,7 @@ Written from documentation, then run. Each of these was wrong:
 | `claude-code` | only a sandboxed CLI needs telling what its workspace reaches | ⚠️ **Unmeasured here and granted anyway, which is a choice rather than an oversight.** `claude-code` now passes the same `workspaceGrants` as codex — the worktree's git directories, plus any link that leaves it — so one pooled worktree does not behave differently depending on which account drew it. ⛔ **Never the trunk's working tree.** That is what *"allow the project directory"* would mean, and it would hand a worker the one directory the invariants say no agent may work in; the mechanics need `<trunk>/.git` and whatever the workspace links to, and nothing else |
 | `antigravity-cli` | default print mode timeout allows long tasks | ⛔ **it times out at 5m.** `agy` defaults to `--print-timeout 5m0s` (1497 poll ticks); long tasks running multiple file edits/tests abort with `Print mode: timed out after 1497 polls` and exit with `ERROR`. Work sessions pass `--print-timeout 24h` |
 | `antigravity-cli` | an `ERROR` terminal status is enough to explain a failed task | ⛔ **the explanation may be a separate `error` field.** t163's conflict-resolution turn returned `ERROR`; the decoder read only response-like fields, so the retained task record said *"and said nothing about it."* The raw record was not retained, but the CLI's measured image-input error has that field; it now reaches the run reason. Its earlier 5m print timeout likewise reports `Print mode: timed out after 1497 polls` beside `ERROR`; work sessions pass `--print-timeout 24h` |
+| `claude-code` | `--permission-mode auto` puts a headless session in auto mode | ⛔ **The flag is accepted and ignored.** Measured 2026-09-06 on 2.1.263: spawn with `--permission-mode auto -p` and the CLI's own `init` record answers `"permissionMode":"default"`. `acceptEdits`, `plan`, `dontAsk` and `bypassPermissions` all come back as themselves; `auto` alone does not, and neither a `permissions.defaultMode` in `--settings` nor the flag changes it. Because the adapter also declares `classifierBackedAuto`, no allowlist was written either — so dispatched work had **no classifier and no rules**, and every command became an approval. t250 paid nine of them in one hour for `git log`, `npm test` and the project's own checks, two left to time out into a deny. ⚠️ `dontAsk` is not the substitute it sounds like: measured the same day it *denies* what it will not ask about. Adapters now declare a `headlessPermissionMode`, used only for a `work` session on `stream`; `claude-code` names `bypassPermissions`, the same call already made for antigravity above and for the same reason — an isolated pooled worktree, gated by the mandate and the landing checks |
 | `openai-compatible` | Codex usage limit failure halts task awaiting human | ⛔ **It is a quota exhaustion, not an unhandled error.** Measured 2026-09-03 on t168: Codex answered *"The agent reported a failure (error): You've hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 12:03 PM."* Because `openai-compatible` lacked `outOfQuota`, the refusal routed to `awaiting_human`. With `outOfQuota` and `parseQuotaResetTime`, the task parks at `paused_quota` with `notBefore` set to the reset time and auto-resumes once the window recovers |
 
 
@@ -187,6 +188,12 @@ behaviour falls out of it:
   caches server-side with no client-controlled TTL. Neither is a lever of the shape the clock pulls.
 - **`classifierBackedAuto: false`** → Multi Agent Controller writes a narrower allowlist into the worker's own
   configuration before each spawn, and expects a higher refusal rate.
+- **`headlessPermissionMode` set** → a **`work`** session on the **`stream`** transport starts in that
+  mode instead of `defaultPermissionMode`, because the default one does not reach it. ⚠️ Only the
+  unattended case: a chat, a consult and a review each name their own mode and are never rewritten,
+  and a `pty` session keeps the default, which is where a person is watching and where Claude Code's
+  `auto` actually works. ⛔ A declaration about **the CLI**, not a preference — see the corrected
+  assumption below.
 - **`mintsSessionId: false`** → the transcript is discovered after the fact instead of predicted,
   and ⛔ **orphaned processes are never killed**, because identity cannot be proved. Leaving an orphan
   running costs quota; killing the wrong process costs somebody their work.

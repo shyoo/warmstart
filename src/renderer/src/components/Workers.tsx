@@ -1024,10 +1024,17 @@ function AdapterFacts({ adapter }: { adapter: AdapterInfo }): React.JSX.Element 
         : 'Cannot compact — a session near its limit is handed off and closed instead'
     },
     {
-      ok: c.classifierBackedAuto,
-      text: c.classifierBackedAuto
-        ? 'A classifier reviews each action, so unattended work needs fewer approvals'
-        : 'Nothing reviews but you — this app writes an allowlist and expects more refusals'
+      // ⚠️ The headless mode is the one that decides this sentence where an adapter declares one.
+      // Claude Code's classifier is real and reviews an interactive session; it is simply not
+      // reachable under `-p`, and saying "a classifier reviews each action" of a dispatched task
+      // that runs without one is how t250 came to cost nine approvals nobody expected.
+      ok: c.classifierBackedAuto && !adapter.policy.headlessPermissionMode,
+      text: adapter.policy.headlessPermissionMode
+        ? `Its classifier is interactive-only, so unattended work runs ` +
+          `${adapter.policy.headlessPermissionMode} inside a throwaway worktree instead`
+        : c.classifierBackedAuto
+          ? 'A classifier reviews each action, so unattended work needs fewer approvals'
+          : 'Nothing reviews but you — this app writes an allowlist and expects more refusals'
     },
     {
       ok: c.quotaProbe !== 'none',

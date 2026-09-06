@@ -4,6 +4,7 @@ import { homedir } from 'node:os'
 import * as pty from '@lydell/node-pty'
 import { execFileSync, spawn as spawnChild } from 'node:child_process'
 import type {
+  AdapterInfo,
   Session,
   SessionPurpose,
   SessionState,
@@ -700,6 +701,32 @@ export function whyNoSession(worker: Worker, purpose: SessionPurpose): string | 
   return null
 }
 
+/**
+ * The permission mode this session actually starts in.
+ *
+ * ⛔ **Unattended work is the only case that gets moved**, and it is moved because its CLI's default
+ * mode does not reach it. Claude Code's `auto` is accepted under `-p` and silently ignored (see
+ * `AdapterPolicy.headlessPermissionMode`), so a dispatched task ran with no classifier and no
+ * allowlist — every command it tried became an approval on somebody's screen, and the two nobody
+ * saw in ten minutes timed out into a deny. `headlessPermissionMode` is the adapter saying what its
+ * CLI will honour instead.
+ *
+ * ⚠️ A caller's own mode always wins, and three callers have one: chat and the reviewer name theirs
+ * deliberately, and a consult runs toolless in a scratch directory. This is why the substitution is
+ * pinned to `work` on `stream` rather than to the transport alone — a `pty` session is a person at a
+ * keyboard, where the real `auto` works and where they can answer for themselves.
+ */
+export function permissionModeFor(
+  info: AdapterInfo,
+  purpose: SessionPurpose,
+  transport: SessionTransport,
+  requested: string | undefined
+): string | undefined {
+  if (requested) return requested
+  if (purpose !== 'work' || transport !== 'stream') return undefined
+  return info.policy.headlessPermissionMode ?? undefined
+}
+
 export function spawnSession(opts: SpawnOptions): Session {
   const worker = requireWorker(opts.workerId)
   const purpose = opts.purpose ?? 'work'
@@ -798,7 +825,7 @@ export function spawnSession(opts: SpawnOptions): Session {
     transport,
     model: opts.model,
     effort: opts.effort,
-    permissionMode: opts.permissionMode,
+    permissionMode: permissionModeFor(ad.info, purpose, transport, opts.permissionMode),
     mcpConfig,
     argv: opts.argv,
     attachments: opts.attachments,

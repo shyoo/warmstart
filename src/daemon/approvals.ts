@@ -13,6 +13,7 @@ import { getSession } from './sessions.js'
 import { costModel } from './costmodel.js'
 import { adapter } from './adapters/index.js'
 import { getProject, policyFor } from './projects.js'
+import { canonicalPath } from './fspath.js'
 import { addMessage, getTask, runForSession, setStatus } from './tasks.js'
 
 /**
@@ -117,6 +118,44 @@ export function matchesPattern(pattern: string, target: string): boolean {
   return new RegExp(`^${escaped}$`).test(target)
 }
 
+/** What a pooled worktree is called inside a remembered rule. Never a real directory. */
+export const WORKSPACE_TOKEN = '<workspace>'
+
+/**
+ * Rewrite the pooled worktree a command happens to be running in as `<workspace>`.
+ *
+ * ⛔ **This is what makes "Always" mean always.** The rule an "Always" answer wrote was the literal
+ * target, worktree path and all — `Bash(cd "C:\…\ws1" && npm run typecheck 2>&1 | head -50)`. The
+ * pool has four members and a task lands in whichever is free, so that rule could not match the next
+ * run of the same command and never did: this install had `npm run typecheck`, `npm test`, `npm run
+ * lint` and `npm run build` each remembered **twice** by 2026-09-06, from ws1 alone, and the
+ * operator was asked all four again. The queue was supposed to empty itself and was instead
+ * accumulating rules that could never fire.
+ *
+ * ⛔ **A token, deliberately, and not a `*`.** Widening the path to a wildcard would have been one
+ * character and would have let `cd "x" && rm -rf y && cd "z" && npm test` match a rule about `npm
+ * test` — `matchesPattern` globs over the whole string and a `*` in the middle of a shell command
+ * spans the `&&`. Substituting a fixed token on **both** sides instead leaves the rule an exact
+ * match; all that changes is which directory the two sides agree not to mention.
+ *
+ * ⚠️ Only the pool members under this project's `workspaceRoot`, and only a whole path segment of
+ * one: `withinPath`'s reason applies here too — `ws1` must not swallow `ws10`. A command naming a
+ * path outside the pool is left exactly as it was, because a rule about *that* path is a rule the
+ * operator meant to be about that path.
+ */
+export function normalizeTarget(projectId: string | null, target: string): string {
+  const project = projectId ? getProject(projectId) : null
+  if (!project || !target) return target
+  const root = canonicalPath(policyFor(project).workspaceRoot)
+  // Either separator on either side: these strings arrive from a shell, a config file and this app's
+  // own path handling, and this install has the same root recorded as both `C:/Dev/…` and `C:\Dev\…`.
+  const rootPattern = root
+    .split(/[\\/]/)
+    .map((segment) => segment.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('[\\\\/]')
+  return target.replace(new RegExp(`${rootPattern}[\\\\/][^\\\\/"'\\s]+`, 'gi'), WORKSPACE_TOKEN)
+}
+
 export function listRules(projectId: string | null): ApprovalRule[] {
   return rows<{
     id: string
@@ -147,8 +186,13 @@ export function addRule(input: {
   effect: 'allow' | 'deny'
   createdBy?: ApprovalRule['createdBy']
 }): ApprovalRule {
-  const parsed = parseRule(input.text)
-  if (!parsed) throw new Error(`'${input.text}' is not a rule — expected e.g. Bash(npm test)`)
+  const raw = parseRule(input.text)
+  if (!raw) throw new Error(`'${input.text}' is not a rule — expected e.g. Bash(npm test)`)
+  // ⛔ Here rather than at the one call site that prompted it, because this is the only door a
+  // learned rule comes through — the Approvals bar's "Always", the MCP `approve` tool and the
+  // project settings pane all arrive at this line, and a rule that pins a pooled worktree is dead on
+  // arrival whichever of them wrote it.
+  const parsed = { ...raw, pattern: normalizeTarget(input.projectId, raw.pattern) }
   const id = randomUUID()
   db()
     .prepare(
@@ -208,9 +252,14 @@ export function evaluate(
     ...learned.filter((r) => r.effect === 'allow')
   ]
 
+  // ⚠️ Both spellings are offered, and a rule matching either wins. `normalizeTarget` is what lets a
+  // remembered rule survive the pool; the raw target is still tried so that a hand-written
+  // `project.json` rule naming a real path goes on meaning what its author wrote.
+  const normalized = normalizeTarget(projectId, target)
+
   for (const rule of all) {
     if (rule.tool !== tool) continue
-    if (!matchesPattern(rule.pattern, target)) continue
+    if (!matchesPattern(rule.pattern, target) && !matchesPattern(rule.pattern, normalized)) continue
     return { result: rule.effect === 'deny' ? 'auto_deny' : 'auto_allow', rule: rule.source }
   }
   return { result: 'escalate', rule: null }
@@ -320,6 +369,8 @@ export function answerApproval(
   if (decision === 'allow_always') {
     // The remember offer is the important half: it turns a recurring interruption into a rule, which
     // is how this queue empties itself over time rather than growing.
+    // ⚠️ The literal target, pooled worktree and all — `addRule` is what turns it into a rule that
+    // can fire from another member of the pool. See `normalizeTarget`.
     addRule({
       projectId: approval.projectId,
       text: `${approval.tool}(${approval.target ?? '*'})`,
