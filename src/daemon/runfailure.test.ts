@@ -1463,3 +1463,118 @@ describe('a turn failed because the remote provider is overloaded (529)', () => 
     expect(workers.requireWorker(seeded.worker.id).health).toBeNull()
   })
 })
+
+describe('resolveTask when a person marks a task as complete', () => {
+  it('finishes any open run so the clock stops', () => {
+    // t249 bug: when a person resolved a task with an open run, the run was left open,
+    // so activeSince remained set and the runtime clock kept ticking.
+    const { task, run } = seedRunningTask({ metered: 500 })
+    expect(tasks.requireRun(run.id).endedAt).toBeNull()
+    expect(tasks.requireTask(task.id).status).toBe('running')
+
+    scheduler.resolveTask(task.id, 'all complete')
+
+    // The run must be finished when the task is resolved by hand.
+    const finished = tasks.requireRun(run.id)
+    expect(finished.endedAt).not.toBeNull()
+    expect(finished.outcome).toBe('completed')
+    expect(finished.note).toBe('task resolved by hand while run was still open')
+
+    // The task must be marked as completed.
+    const completed = tasks.requireTask(task.id)
+    expect(completed.status).toBe('completed')
+    expect(completed.activeSince).toBeNull()
+  })
+
+  it('closes the session when resolving a task with an open run', () => {
+    const { task, session } = seedRunningTask({ metered: 500 })
+    const sessionBefore = sessions.getSession(session.id)
+    expect(sessionBefore?.state).toBe('live')
+
+    scheduler.resolveTask(task.id, 'done')
+
+    // Session must be closed.
+    const sessionAfter = sessions.getSession(session.id)
+    expect(sessionAfter?.state).toBe('closed')
+  })
+
+  it('handles resolving a task with no open run', () => {
+    // A task that completed normally (not by hand) has no open run.
+    seq += 1
+    const adapterId = 'openai-compatible'
+    const worker = workers.createWorker({ adapterId, label: `w${seq}`, enabled: false })
+    const task = tasks.createTask({ title: `t${seq}`, createdBy: { kind: 'human' } })
+    tasks.setStatus(task.id, 'running', { assignee: worker.id })
+
+    // Don't start a run. This is a valid state for a task.
+    scheduler.resolveTask(task.id, 'quick resolution')
+
+    const resolved = tasks.requireTask(task.id)
+    expect(resolved.status).toBe('completed')
+  })
+
+  it('records a message on the task explaining the resolution', () => {
+    const { task } = seedRunningTask()
+    const note = 'Everything looks good'
+
+    scheduler.resolveTask(task.id, note)
+
+    const messages = tasks.messagesFor(task.id)
+    const resolution = messages.find((m) => m.role === 'system')
+    expect(resolution?.text).toContain(note)
+    expect(resolution?.text).toContain('Marked done by you')
+  })
+
+  it('does not re-finish a task that is already completed', () => {
+    const { task } = seedRunningTask()
+    scheduler.resolveTask(task.id, 'first resolution')
+    const firstMessages = tasks.messagesFor(task.id)
+
+    scheduler.resolveTask(task.id, 'second attempt')
+    const secondMessages = tasks.messagesFor(task.id)
+
+    // Should return without adding a message.
+    expect(secondMessages.length).toBe(firstMessages.length)
+  })
+
+  it('sets the assignee to the account that ran the work', () => {
+    const { task, worker } = seedRunningTask()
+    expect(tasks.requireTask(task.id).ranOn).toBe(worker.id)
+
+    scheduler.resolveTask(task.id)
+
+    const resolved = tasks.requireTask(task.id)
+    expect(resolved.assignee).toBe(worker.id)
+  })
+
+  it('sets assignee to null if nothing ever ran', () => {
+    seq += 1
+    const adapterId = 'openai-compatible'
+    const worker = workers.createWorker({ adapterId, label: `w${seq}`, enabled: false })
+    const task = tasks.createTask({ title: `t${seq}`, createdBy: { kind: 'human' } })
+    tasks.setStatus(task.id, 'running', { assignee: worker.id })
+
+    scheduler.resolveTask(task.id)
+
+    const resolved = tasks.requireTask(task.id)
+    expect(resolved.assignee).toBeNull()
+  })
+
+  it('admits dependents waiting on this task', () => {
+    const { task: parent } = seedRunningTask()
+    const child = tasks.createTask({
+      title: 'child task',
+      createdBy: { kind: 'human' },
+      dependsOn: [parent.id]
+    })
+    tasks.setStatus(child.id, 'blocked')
+
+    const before = tasks.requireTask(child.id)
+    expect(before.status).toBe('blocked')
+
+    scheduler.resolveTask(parent.id)
+
+    const after = tasks.requireTask(child.id)
+    expect(after.status).not.toBe('blocked')
+  })
+})

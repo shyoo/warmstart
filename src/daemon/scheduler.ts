@@ -3959,6 +3959,19 @@ export function resolveTask(taskId: string, note?: string): Task {
       ? `Marked done by you: ${note.trim()}`
       : 'Marked done by you. ⚠️ Nothing here verified the work — this records your judgement, not a check.'
   )
+
+  // ⛔ Finish any open run BEFORE calling setStatus. If a run was still open when the task was
+  // resolved by hand, it must be closed with the specific note about hand resolution or the clock
+  // will keep ticking. This was t249's bug. setStatus will try to finish runs when the task
+  // settles, so we need to do this first with the correct note.
+  const session = sessionOf(task.id)
+  if (session) {
+    const run = runForSession(session.id)
+    if (run && run.endedAt === null) {
+      finishRun(run.id, 'completed', 'task resolved by hand while run was still open')
+    }
+  }
+
   // ⛔ The assignee goes back to the account that did the work, not to the person who signed off.
   // It used to be set to `human` here, which put **you** in the Worker column of a task ClaudeSecond
   // had run — and that column exists so which account is spending is visible without a click.
@@ -3971,8 +3984,9 @@ export function resolveTask(taskId: string, note?: string): Task {
 
   // The session was being kept warm for a reply that is now not coming. Holding it any longer costs
   // this worker its only work slot for a conversation that is over.
-  const session = sessionOf(task.id)
-  if (session) closeSession(session.id)
+  if (session) {
+    closeSession(session.id)
+  }
 
   // ⚠️ Dependents are admitted by the `setStatus` above, for every path that completes a task. The
   // explicit call that used to sit here was one of three, and the four paths without one is how
