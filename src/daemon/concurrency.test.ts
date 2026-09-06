@@ -284,4 +284,45 @@ describe('a planner blocked on its own pieces', () => {
     tasks.setStatus(plan.id, 'awaiting_human', { assignee: worker.id })
     expect(scheduler.awaitingHumanReservations(worker.id, [])).toBe(1)
   })
+
+  it('does not count a task as retained when it has moved to another worker with a live session', () => {
+    // ⭐ Measured on t251: a task reassigned from one worker to another should not be counted
+    // as retained on the original worker if it now has an active run on the new worker.
+    const workerA = add(1)
+    const workerB = add(1)
+    const task = tasks.createTask({ title: 'task reassigned' })
+
+    // Task was running on Worker A with a closed session
+    const runA = tasks.startRun({
+      taskId: task.id,
+      workerId: workerA.id,
+      sessionId: 'closed-session-a',
+      projectId: null,
+      quotaUnverified: false,
+      costModelId: null
+    })
+    tasks.setStatus(task.id, 'running', { assignee: workerA.id })
+    tasks.finishRun(runA.id, 'completed')
+
+    // Task is now running on Worker B with a live session
+    const runB = tasks.startRun({
+      taskId: task.id,
+      workerId: workerB.id,
+      sessionId: 'live-session-b',
+      projectId: null,
+      quotaUnverified: false,
+      costModelId: null
+    })
+    tasks.setStatus(task.id, 'running', { assignee: workerB.id })
+    const liveSessionB = session('live-session-b')
+
+    // Worker A should not count the task as retained, since it's now on Worker B with a live session
+    expect(scheduler.runningTaskReservations(workerA.id, [])).toBe(0)
+    expect(scheduler.runningTaskReservations(workerB.id, [liveSessionB])).toBe(0)
+
+    // Verify the task is correctly counted as retained on Worker B if its session closes
+    tasks.finishRun(runB.id, 'completed')
+    tasks.setStatus(task.id, 'running', { assignee: workerB.id })
+    expect(scheduler.runningTaskReservations(workerB.id, [])).toBe(1)
+  })
 })

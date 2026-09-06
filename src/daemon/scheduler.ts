@@ -5312,7 +5312,7 @@ export function runningTaskReservations(workerId: string, sessions: Session[]): 
       (run) => run.workerId === workerId && run.endedAt === null && (run.kind === 'work' || !run.kind)
     )
     if (!isRunningOnWorker && !hasOpenRunOnWorker) return false
-    return !runsFor(task.id).some((run) => run.sessionId && liveSessionIds.has(run.sessionId))
+    return !runsFor(task.id).some((run) => run.workerId === workerId && run.sessionId && liveSessionIds.has(run.sessionId))
   }).length
 }
 
