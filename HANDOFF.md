@@ -7,7 +7,7 @@ started in CI, never run against a real agent CLI.
 **Current state + what to do next, not a changelog.** **Under 200 lines** — adding one means cutting
 the line it obsoletes. Where every other fact goes: [`docs/README.md`](docs/README.md).
 
-**Baseline (2026-09-06, measured):** typecheck · lint · build clean · `npm test` **2249/2251** across 113 files (2 POSIX-only skipped). The balanced objective is **quality 0.40 · cost 0.30 · velocity 0.30**, routing targets (worker, model) candidate pairs with sufficiency-bar fitness, logarithmic price, and optional ε-greedy exploration, with an operator-facing Models report over every pair.
+**Baseline (2026-09-06, measured):** typecheck · lint · build clean · `npm test` **2250/2252** across 113 files (2 POSIX-only skipped). The balanced objective is **quality 0.40 · cost 0.30 · velocity 0.30**, routing targets (worker, model) candidate pairs with sufficiency-bar fitness, logarithmic price, and optional ε-greedy exploration, with an operator-facing Models report over every pair.
 `test:daemon` **155/155**, `test:ui` **311/311** — measured, not carried forward; `test:pack` **19/19** carried forward. ⚠️ `test:pack` fails every check but its first if `release/` predates `src/`; its first check says so — run `npm run pack` and re-run rather than reading the rest.
 CLIs here: claude 2.1.252 · agy 1.1.25 · codex 0.151.0 · local-llm 1.0.0 (qwen3-coder live tested). ⚠️ With none installed — the CI state — the daemon suite skips 5 checks, each with a stated reason.
 ⭐ **`scripts/build-win.ps1` runs all of the above** (`-Help` for options, `-Restart` for the inner

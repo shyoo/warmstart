@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ControllerReport } from '@shared/protocol'
+import type { RoutingDecision } from '@shared/routing'
 import type { ChatMessage, Consult, ConsultKind } from '@shared/tasks'
 import { rpc, useDaemonEvents } from '../lib/daemon'
 import { isSubmitKey, useUiSettings } from '../lib/uisettings'
@@ -17,6 +18,36 @@ import { Working } from '../lib/taskview'
  * the deterministic answer fired because nothing better was available. A fleet whose every consult
  * falls back still makes progress — it just makes it with less judgment.
  */
+
+/**
+ * A row in the unified judgment-call ledger.
+ *
+ * ⚠️ Two kinds of event belong here: controller consults (LLM-backed judgment calls) and
+ * tool-dispatched routing decisions (where the scoring arithmetic decided without asking a
+ * controller). The user asked for both, so they can see every routing choice — scored and
+ * explained — not only the ones that spent tokens.
+ *
+ * ⛔ `controller` basis routing decisions are already shown as `route` consult rows. We therefore
+ * skip them here: showing both would double-count the same event.
+ */
+type JudgmentRow =
+  | { kind: 'consult'; id: string; ts: number; data: Consult }
+  | { kind: 'tool-dispatch'; id: string; ts: number; data: RoutingDecision }
+
+function toRows(consults: Consult[], toolDispatches: RoutingDecision[]): JudgmentRow[] {
+  const rows: JudgmentRow[] = [
+    ...consults.map((c): JudgmentRow => ({ kind: 'consult', id: c.id, ts: c.createdAt, data: c })),
+    // ⛔ Skip controller-basis decisions — those are already in the consults table as `route` rows.
+    ...toolDispatches
+      .filter((d) => d.basis !== 'controller')
+      .map((d): JudgmentRow => ({ kind: 'tool-dispatch', id: d.id, ts: d.decidedAt, data: d }))
+  ]
+  rows.sort((a, b) => b.ts - a.ts)
+  return rows
+}
+
+const TOOL_DISPATCH_FETCH = 40
+
 export function Controller(_props: { now: number }): React.JSX.Element {
   const { settings } = useUiSettings()
   const [report, setReport] = useState<ControllerReport | null>(null)
@@ -24,19 +55,25 @@ export function Controller(_props: { now: number }): React.JSX.Element {
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [openConsultId, setOpenConsultId] = useState<string | null>(null)
+  const [openRowId, setOpenRowId] = useState<string | null>(null)
   const [page, setPage] = useState(0)
   const [pageSize, setPageSize] = useState(20)
+  const [toolDispatches, setToolDispatches] = useState<RoutingDecision[]>([])
   const threadEnd = useRef<HTMLDivElement>(null)
 
   const refresh = useCallback(async () => {
     try {
-      const [next, history] = await Promise.all([
+      const [next, history, routingPage] = await Promise.all([
         rpc('controller.report', { limit: pageSize, offset: page * pageSize }),
-        rpc('chat.history', {})
+        rpc('chat.history', {}),
+        // ⚠️ Fetch enough routing decisions to give the merged view enough to paginate. We fetch a
+        // fixed-size window rather than paginating separately, because the merge sorts by time and
+        // a separately-paginated pair would interleave in ways that confuse a pager.
+        rpc('routing.decisions', { limit: TOOL_DISPATCH_FETCH, offset: 0 })
       ])
       setReport(next)
       setMessages(history)
+      setToolDispatches(routingPage.decisions)
       setError(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
@@ -57,6 +94,7 @@ export function Controller(_props: { now: number }): React.JSX.Element {
       setBusy(false)
     }
     if (event.type === 'consult.changed') void refresh()
+    if (event.type === 'task.changed') void refresh()
   })
 
   useEffect(() => {
@@ -81,6 +119,9 @@ export function Controller(_props: { now: number }): React.JSX.Element {
   }
 
   const available = report?.controllers.some((c) => c.available) ?? false
+
+  // ⚠️ Merge consult rows with tool-dispatched routing rows, then paginate the merged list.
+  const allRows = report ? toRows(report.recent, toolDispatches) : []
 
   return (
     <div className="panel">
@@ -183,7 +224,7 @@ export function Controller(_props: { now: number }): React.JSX.Element {
           </div>
           <p className="compose-hint">
             {available
-              ? 'Enter sends. Its tool use goes through the Attention bar, the same as an agent’s.'
+              ? "Enter sends. Its tool use goes through the Attention bar, the same as an agent\u2019s."
               : 'Every controller account is out of window or not designated. Judgment calls take ' +
                 'their deterministic answer until one is back — nothing stalls, it just waits.'}
           </p>
@@ -192,7 +233,7 @@ export function Controller(_props: { now: number }): React.JSX.Element {
 
       <section className="doc-section">
         <h3>Judgment calls</h3>
-        {!report || report.recent.length === 0 ? (
+        {!report || allRows.length === 0 ? (
           <p className="dim">Nothing has needed judgment yet.</p>
         ) : (
           <>
@@ -210,14 +251,24 @@ export function Controller(_props: { now: number }): React.JSX.Element {
                 </tr>
               </thead>
               <tbody>
-                {report.recent.map((c) => {
-                  const isOpen = openConsultId === c.id
+                {allRows.map((row) => {
+                  const isOpen = openRowId === row.id
+                  if (row.kind === 'consult') {
+                    return (
+                      <ConsultRowItem
+                        key={row.id}
+                        consult={row.data}
+                        isOpen={isOpen}
+                        onToggle={() => setOpenRowId(isOpen ? null : row.id)}
+                      />
+                    )
+                  }
                   return (
-                    <ConsultRowItem
-                      key={c.id}
-                      consult={c}
+                    <ToolDispatchRow
+                      key={row.id}
+                      decision={row.data}
                       isOpen={isOpen}
-                      onToggle={() => setOpenConsultId(isOpen ? null : c.id)}
+                      onToggle={() => setOpenRowId(isOpen ? null : row.id)}
                     />
                   )
                 })}
@@ -248,6 +299,7 @@ export function Controller(_props: { now: number }): React.JSX.Element {
               <strong>{tokens(report.spentTokens)}</strong> spent on judgment across these{' '}
               {report.recent.length}, {report.fallbacks} of which took the deterministic answer. Click
               any judgment call to inspect the full decision rationale, subtasks, or prompt telemetry.
+              Tool-dispatched rows show scoring arithmetic and cost no tokens.
             </p>
           </>
         )}
@@ -283,6 +335,8 @@ export function Controller(_props: { now: number }): React.JSX.Element {
     </div>
   )
 }
+
+// ---------------------------------------------------------------------------- consult row (controller-backed)
 
 function ConsultRowItem({
   consult: c,
@@ -346,9 +400,198 @@ function ConsultRowItem({
   )
 }
 
+// ---------------------------------------------------------------------------- tool-dispatch row
+
+/**
+ * A routing decision made by the scoring arithmetic, with no controller consulted.
+ *
+ * ⚠️ The evaluator is "Tool" because the tool itself picked the winner — no LLM was asked.
+ * The decision rationale shows the winning score and candidate count, and on expand shows the full
+ * ranked candidate table with every term available, exactly as in the Analytics › Routing overview.
+ *
+ * ⛔ `controller` basis decisions are deliberately skipped from this component's callers; those
+ * events already appear as `route` consult rows elsewhere in the same table.
+ */
+function ToolDispatchRow({
+  decision: d,
+  isOpen,
+  onToggle
+}: {
+  decision: RoutingDecision
+  isOpen: boolean
+  onToggle: () => void
+}): React.JSX.Element {
+  const ranked = [...d.candidates].sort((a, b) => b.score - a.score)
+  const winner = ranked.find((c) => c.chosen) ?? ranked[0]
+  const subjectDisplay = d.taskSeq !== null && d.taskSeq !== undefined
+    ? `t${d.taskSeq}${d.taskTitle ? ` · ${truncate(d.taskTitle, 40)}` : ''}`
+    : '—'
+  const rationale = winner
+    ? `${d.chosenLabel ?? winner.workerId.slice(0, 8)} · score ${winner.score.toFixed(3)} · ${d.candidates.length} candidate${d.candidates.length === 1 ? '' : 's'}`
+    : '—'
+
+  return (
+    <>
+      <tr
+        className={`consult-row ${isOpen ? 'consult-row--open' : ''}`}
+        onClick={onToggle}
+        title="Click to view full candidate scoring breakdown"
+      >
+        <td className="dim num tbl-when" title={new Date(d.decidedAt).toLocaleString()}>
+          {new Date(d.decidedAt).toLocaleString()}
+        </td>
+        <td>
+          <span className="consult-kind-tag">Route</span>
+        </td>
+        <td className="mono" title={d.taskTitle}>
+          {subjectDisplay}
+        </td>
+        <td className="dim">Tool</td>
+        <td>
+          <span className="status state-ok">
+            {BASIS_LABEL[d.basis] ?? d.basis}
+          </span>
+        </td>
+        <td className="num tbl-num dim">—</td>
+        <td>
+          <span className="tbl-strong">{rationale}</span>
+        </td>
+        <td className="dim text-center">
+          {isOpen ? '▼' : '▶'}
+        </td>
+      </tr>
+      {isOpen && (
+        <tr>
+          <td colSpan={8} className="consult-detail-cell">
+            <ToolDispatchDetailPane decision={d} ranked={ranked} />
+          </td>
+        </tr>
+      )}
+    </>
+  )
+}
+
+function ToolDispatchDetailPane({
+  decision: d,
+  ranked
+}: {
+  decision: RoutingDecision
+  ranked: RoutingDecision['candidates']
+}): React.JSX.Element {
+  return (
+    <div className="consult-detail-pane">
+      <div className="consult-meta-bar">
+        {d.taskSeq !== null && d.taskSeq !== undefined && (
+          <div className="consult-meta-item">
+            Subject: <strong>t{d.taskSeq}{d.taskTitle ? ` ${truncate(d.taskTitle, 60)}` : ''}</strong>
+          </div>
+        )}
+        <div className="consult-meta-item">
+          Evaluator: <strong>Tool (scoring arithmetic — no LLM consulted)</strong>
+        </div>
+        <div className="consult-meta-item">
+          Basis: <strong>{BASIS_LABEL[d.basis] ?? d.basis}</strong>
+        </div>
+        <div className="consult-meta-item">
+          Objective:{' '}
+          <span className="num">
+            quality {d.objective.quality.toFixed(2)} · cost {d.objective.cost.toFixed(2)} · velocity{' '}
+            {d.objective.velocity.toFixed(2)}
+          </span>
+        </div>
+        <div className="consult-meta-item">
+          Spent: <span className="dim">0 tokens (tool decision)</span>
+        </div>
+        <div className="consult-meta-item">
+          Recorded: <span className="dim">{when(d.decidedAt)}</span>
+        </div>
+      </div>
+
+      <div className="consult-decision-block">
+        <div className="consult-why-box">
+          <div className="consult-why-title">
+            Routing Decision — {BASIS_LABEL[d.basis] ?? d.basis}
+          </div>
+          <div>
+            <strong>Winner:</strong>{' '}
+            {d.chosenLabel ?? d.chosenWorkerId?.slice(0, 8) ?? '—'}
+            {d.warm && <span className="tag tag--ok" style={{ marginLeft: 'var(--sp-1)' }}>warm</span>}
+          </div>
+          <div style={{ marginTop: '4px' }} className="dim">
+            {BASIS_DETAIL[d.basis] ?? ''}
+          </div>
+        </div>
+      </div>
+
+      {/* Full candidate table, identical to what RoutingOverview shows on expand */}
+      <div style={{ marginTop: 'var(--sp-2)' }}>
+        <div className="side-label">
+          Candidate scores ({ranked.length} evaluated, higher wins):
+        </div>
+        {ranked.map((candidate) => (
+          <div key={candidate.workerId} style={{ marginTop: 'var(--sp-2)' }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 'var(--sp-1)', marginBottom: 'var(--sp-1)' }}>
+              <strong>{candidate.chosen ? '★ ' : ''}{candidate.label}</strong>
+              <span className="dim">
+                — {candidate.adapterId}
+                {candidate.model ? `/${candidate.model}` : ''} ·{' '}
+                {candidate.warm ? 'warm' : 'cold'}
+                {candidate.quotaUnverified ? ' · quota unverified' : ''}
+              </span>
+              <span className="num" style={{ marginLeft: 'auto' }}>
+                {candidate.score >= 0 ? '+' : ''}{candidate.score.toFixed(3)}
+              </span>
+            </div>
+            {candidate.terms.length > 0 && (
+              <table className="tbl" style={{ fontSize: '0.85em' }}>
+                <thead>
+                  <tr>
+                    <th>Term</th>
+                    <th className="tbl-num">value</th>
+                    <th className="tbl-num">× weight</th>
+                    <th className="tbl-num">= contrib</th>
+                    <th>basis</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {candidate.terms.map((term) => (
+                    <tr key={term.name}>
+                      <td className="tbl-strong">{term.name}</td>
+                      <td className="tbl-num num">{term.value.toFixed(2)}</td>
+                      <td className="tbl-num num">
+                        {term.sign < 0 ? '−' : '+'}{term.weight.toFixed(3)}
+                      </td>
+                      <td className="tbl-num num">
+                        {term.contribution >= 0 ? '+' : '−'}{Math.abs(term.contribution).toFixed(3)}
+                      </td>
+                      <td className="dim">{term.basis}</td>
+                    </tr>
+                  ))}
+                  <tr>
+                    <td className="tbl-strong">TOTAL</td>
+                    <td /><td />
+                    <td className="tbl-num num tbl-strong">
+                      {candidate.score >= 0 ? '+' : '−'}{Math.abs(candidate.score).toFixed(3)}
+                    </td>
+                    <td />
+                  </tr>
+                </tbody>
+              </table>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------- shared helpers
+
 function truncate(text: string, maxLength: number): string {
   return text.length > maxLength ? `${text.slice(0, maxLength - 1)}…` : text
 }
+
+// ---------------------------------------------------------------------------- consult detail
 
 function ConsultDetailPane({ consult: c }: { consult: Consult }): React.JSX.Element {
   const durationMs = c.startedAt && c.endedAt ? c.endedAt - c.startedAt : null
@@ -616,4 +859,25 @@ const STATUS_TONE: Record<string, string> = {
   answered: 'state-ok',
   fallback: 'state-idle',
   failed: 'state-warn'
+}
+
+/**
+ * Human-readable name for each routing basis — what the tool used to decide.
+ *
+ * ⚠️ `controller` is not in this map on purpose; controller-basis decisions show up as `route`
+ * consult rows and are not rendered by ToolDispatchRow at all.
+ */
+const BASIS_LABEL: Record<string, string> = {
+  score: 'dispatched',
+  pinned: 'dispatched',
+  sticky: 'dispatched',
+  explore: 'explore'
+}
+
+/** One line explaining what the basis means, shown in the expanded detail pane. */
+const BASIS_DETAIL: Record<string, string> = {
+  score: 'The scoring arithmetic separated the candidates clearly; the highest score won.',
+  pinned: 'The task named its worker or model explicitly; one candidate, no comparison.',
+  sticky: 'The task already had a live conversation on this account; keeping it beat any comparison.',
+  explore: 'ε-greedy exploration: the scheduler tried a non-top-scoring candidate to gather data.'
 }
