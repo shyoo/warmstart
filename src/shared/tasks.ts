@@ -645,6 +645,39 @@ export interface Task {
   updatedAt: number
 }
 
+/**
+ * One commit a task put on its landing target.
+ *
+ * ⛔ **The record that survives the branch, and the only one that is exact.** `landedBaseSha` /
+ * `landedHeadSha` describe a *range*, which is exact for the ordinary task — one landing, one
+ * commit — and wrong for a task that landed twice with somebody else's work in between. These
+ * rows name the commits themselves, so nothing has to be interpolated from adjacency.
+ *
+ * ⚠️ `subject` and `authoredAt` are copied at the moment the commit is recorded rather than read
+ * back from git on every render. A commit that later leaves the target's history keeps its row and
+ * stops resolving; `review.ts` checks reachability before it grades, and the pane says what it has.
+ */
+export interface TaskCommit {
+  /** The full 40-character SHA. Abbreviations are resolved before anything is stored. */
+  sha: string
+  /** The commit's first line, as it read when the commit was recorded. */
+  subject: string | null
+  /** The author date in epoch milliseconds — preserved across a rebase, unlike the commit date. */
+  authoredAt: number | null
+  /** The branch it landed onto, which is not always the project's trunk under Plan & Split. */
+  target: string | null
+  /** When this row was written, which for a salvaged row is long after the commit was made. */
+  recordedAt: number
+  /**
+   * How this row came to exist.
+   *
+   * ⛔ `landing` was recorded by the landing that made it, `salvage` was read back out of the
+   * task's own *"Landed as …"* thread message afterwards. The difference is worth keeping: a
+   * salvaged row names the tip of a landing and cannot name a second commit under the same one.
+   */
+  source: 'landing' | 'salvage'
+}
+
 export interface TaskConstraints {
   /**
    * Pin this task to one account.

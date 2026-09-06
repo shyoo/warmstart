@@ -1526,7 +1526,42 @@ const MIGRATIONS: Migration[] = [
     if (!hasColumn(conn, 'workers', 'routable_models_json')) {
       conn.exec('alter table workers add column routable_models_json text;')
     }
-  }
+  },
+  // 48 - the commits a task landed, one row each.
+  //
+  // ⛔ **`landed_base_sha`/`landed_head_sha` are a range, and a task is not always a range.** A
+  // task that lands twice - work, then a fix asked for on the same thread - puts two commits on the
+  // trunk with somebody else's commits between them, and no single `base..head` names the pair
+  // without swallowing the ones in between. Measured on this fleet 2026-09-05: **7** tasks landed
+  // more than once, and t124's two landings have five foreign commits between them. The pair of
+  // columns stays (every reader of it keeps working, and it is exact for the contiguous case) and
+  // this table is what says *which commits*, exactly, with no interpolation.
+  //
+  // ⛔ **Migration 39 said no backfill was possible, and it was wrong about where the evidence
+  // was.** It looked at `runs.trunk_sha_before` - read at dispatch, before the rebase, so not a
+  // parent of what landed - and concluded the record was gone. It is not: every successful landing
+  // writes ***"Landed as <sha> onto <target>"*** onto the task's own thread, and that message
+  // survives the branch, the workspace and the range columns. `salvageLandedCommits` in
+  // `taskcommits.ts` reads it back. ⚠️ It attributes the named commit and nothing around it -
+  // a landing that put two commits on the target names only its tip, and inventing the rest from
+  // adjacency would attribute the 141 commits on `main` that no task landed at all.
+  //
+  // ⚠️ `if not exists` like migrations 39 and 45: `versionBefore` rewinds `user_version` and
+  // reopens, replaying every migration after the one it wanted, so this has to survive running twice.
+  `
+  create table if not exists task_commits (
+    task_id     text not null references tasks(id) on delete cascade,
+    sha         text not null,
+    subject     text,
+    authored_at integer,
+    target      text,
+    recorded_at integer not null,
+    source      text not null default 'landing',
+    primary key (task_id, sha)
+  );
+  create index if not exists task_commits_task on task_commits(task_id, authored_at);
+  create index if not exists task_commits_sha on task_commits(sha);
+  `
 ]
 
 /**

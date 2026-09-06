@@ -3724,6 +3724,15 @@ select:focus-visible,
   color: var(--color-text);
 }
 
+/* A landed commit's subject, under its SHA. Wraps rather than truncating: the subject line is the
+   one thing in this box that says what the commit was, and half of it says nothing. */
+.side-commit-subject {
+  margin-top: 2px;
+  font-size: var(--text-meta);
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+
 /* Quality review: the request box in the facts column, and the dimension disclosure in a row. */
 .quality-review-select {
   width: 100%;

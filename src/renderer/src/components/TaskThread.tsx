@@ -26,6 +26,7 @@ import {
   type Run,
   type SessionSharingChoice,
   type Task,
+  type TaskCommit,
   type TaskMessage
 } from '@shared/tasks'
 import type { ModelOptions, Session } from '@shared/protocol'
@@ -79,6 +80,15 @@ export interface TaskDetailData {
   compactions?: Compaction[]
   /** Every quality review of this task, newest first. Optional for the same reason as above. */
   reviews?: QualityReview[]
+  /**
+   * Every commit this task landed, oldest first.
+   *
+   * ⛔ **The branch is gone and this is what is left.** A landed task's workspace is released and
+   * its branch retired within seconds of finishing, so *"where did this work go"* has no answer
+   * anywhere else in the pane. Optional for the same reason the two above are: a detail cached by
+   * an older build has no such field and must still render.
+   */
+  commits?: TaskCommit[]
   activity: Array<{ text: string; ts: number }>
   /** How many tasks are held at `blocked` waiting on this one. Counted by the daemon. */
   blocking: number
@@ -317,7 +327,8 @@ function TaskDetail({
     dependents = [],
     parent = null,
     children = [],
-    reviews = []
+    reviews = [],
+    commits = []
   } = detail
   const timeline = chronologicalTimeline(runs, compactions, reviews)
   // ⛔ Served, never compiled in — the renderer holds no cost models, and the capability flags that
@@ -930,6 +941,8 @@ function TaskDetail({
               {task.mandate.maxLineageDepth}
             </Fact>
           </div>
+
+          {commits.length > 0 && <CommitsBox commits={commits} />}
 
           <QualityReviewBox task={task} reviews={reviews} refresh={refresh} />
 
@@ -2370,6 +2383,61 @@ function RunRow({
  * ⚠️ Offered only on a task that has finished. Grading work that is still moving would score a
  * snapshot and store it as if it were the result.
  */
+/**
+ * What this task put on the trunk, one row per commit.
+ *
+ * ⛔ **The only durable answer to "where did this work go".** The workspace is released and the
+ * branch retired within seconds of a landing, so by the time anybody opens a finished task there is
+ * no branch to look at — `branch` above names one that no longer exists. These are the commits
+ * themselves, and they stay reachable from the target for as long as the history does.
+ *
+ * ⛔ **A list, never a range.** A task that landed twice — work, then a fix asked for on the same
+ * thread — put two commits on the trunk with other tasks' work in between, and printing
+ * `base..head` for that pair would claim the lot. Each row is one commit that was actually recorded.
+ *
+ * ⚠️ A row's SHA and subject are what was true when it was recorded, and a rewritten history would
+ * leave them naming a commit that no longer resolves. That is not corrected here: this pane reports
+ * the record, and `review.ts` is where reachability is checked before anything is graded on it.
+ */
+function CommitsBox({ commits }: { commits: TaskCommit[] }): React.JSX.Element {
+  return (
+    <div className="detail-side-box">
+      <div
+        className="side-label"
+        title={
+          'Every commit this task landed on its target, oldest first. The branch is deleted when a ' +
+          'task lands, so these SHAs are what identifies the work afterwards.'
+        }
+      >
+        commits in this task · {commits.length}
+      </div>
+      {commits.map((commit) => (
+        <div className="side-run" key={commit.sha}>
+          <div className="side-run-head">
+            <span
+              className="side-run-seq mono"
+              title={
+                `${commit.sha}\n` +
+                (commit.target ? `landed onto ${commit.target}\n` : '') +
+                (commit.source === 'salvage'
+                  ? 'Recovered from this task’s own “Landed as …” message — it landed before ' +
+                    'commits were recorded.'
+                  : 'Recorded by the landing that made it.')
+              }
+            >
+              {commit.sha.slice(0, 8)}
+            </span>
+            {commit.authoredAt !== null && (
+              <span className="num dim">{when(commit.authoredAt)}</span>
+            )}
+          </div>
+          {commit.subject && <div className="side-commit-subject">{commit.subject}</div>}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 /**
  * How long this reviewer takes, as far as anybody here knows.
  *

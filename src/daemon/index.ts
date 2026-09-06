@@ -29,6 +29,7 @@ import {
 } from './scheduler.js'
 import { reconcileConsults, startController, stopController } from './controller.js'
 import { reconcileReviews } from './reviewer.js'
+import { salvageLandedCommits } from './taskcommits.js'
 import { creditTurn, runForSession } from './tasks.js'
 import { recordRateLimit } from './quota.js'
 import {
@@ -96,6 +97,15 @@ async function main(): Promise<void> {
 
   const token = randomBytes(32).toString('hex')
   const server: DaemonServer = await startServer(token, { version: VERSION, startedAt })
+
+  // ⛔ **Not awaited, and it must not be.** Reading every project's history is one `git log` per
+  // project, and the endpoint below is what the UI connects to — a repository on a slow or
+  // disconnected volume would otherwise delay the whole app for something no caller is waiting on.
+  // ⚠️ Idempotent and additive by construction, so running it on every boot costs one git call and
+  // writes nothing once a fleet is salvaged. See `taskcommits.ts`.
+  void salvageLandedCommits().catch((err) =>
+    log.warn(`could not salvage landed commits: ${String(err)}`)
+  )
 
   publishEndpoint({ pid: process.pid, port: server.port, token, version: VERSION, startedAt })
 

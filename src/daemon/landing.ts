@@ -21,6 +21,7 @@ import {
   recordLandedRange,
   setStatus
 } from './tasks.js'
+import { landedCommits, recordTaskCommits } from './taskcommits.js'
 import { landedRef, parkOtherHolders, parkPooledHolders, rescueAtTip } from './worktrees.js'
 import { launchArgs, which } from './which.js'
 import { log } from './log.js'
@@ -1426,6 +1427,12 @@ export async function landTask(ctx: LandingContext): Promise<LandingResult> {
     // the system can say which commits on the trunk were this task's. A task that lands without
     // this recorded is permanently unreviewable — there is no backfill, only a refusal later.
     recordLandedRange(ctx.task.id, result.base ?? null, result.commit ?? null)
+    // ⛔ **And the commits themselves, one row each.** The range above is exact for the ordinary
+    // task — one landing, one commit — and cannot describe a task that lands twice: the second
+    // landing's base is wherever the trunk had got to, so `base..head` across the pair contains
+    // every other task that landed in between. `task_commits` names what this task put on the
+    // target and nothing else, and `resolveRange` prefers it. See `taskcommits.ts`.
+    await recordLandedCommits(ctx, result)
     addMessage(
       ctx.task.id,
       'system',
@@ -1436,5 +1443,27 @@ export async function landTask(ctx: LandingContext): Promise<LandingResult> {
     return result
   } finally {
     activeLandings.delete(ctx.task.id)
+  }
+}
+
+/**
+ * Enumerate what a successful landing put on the target, and record it.
+ *
+ * ⚠️ Read from the **project root**, not the workspace: `retireBranch` has already deleted the
+ * branch by the time this runs, and the commits are only reachable from the target now. ⚠️ Never
+ * throws — a landing that succeeded must not be reported as failed because a `git log` afterwards
+ * did not run, and what this cannot enumerate `salvageLandedCommits` recovers later from the
+ * *"Landed as …"* message written immediately after it.
+ */
+async function recordLandedCommits(ctx: LandingContext, result: LandingResult): Promise<void> {
+  if (!result.commit) return
+  const target = landingTargetFor(ctx.task, ctx.project)
+  try {
+    const commits = await landedCommits(ctx.project.root, result.base ?? null, result.commit)
+    // ⚠️ The tip alone when the enumeration came back empty. A landing whose recorded base is not
+    // an ancestor of its head produces no log output, and one commit recorded beats none.
+    recordTaskCommits(ctx.task.id, commits.length > 0 ? commits : [{ sha: result.commit }], target)
+  } catch (err) {
+    log.warn(`could not record t${ctx.task.seq}'s landed commits: ${String(err)}`)
   }
 }

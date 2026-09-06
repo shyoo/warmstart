@@ -13,6 +13,7 @@ import {
   type RubricDimension
 } from '@shared/review.js'
 import { db, row, rows } from './db.js'
+import { taskCommits } from './taskcommits.js'
 import { requireTask } from './tasks.js'
 import { emit } from './events.js'
 import { log } from './log.js'
@@ -144,21 +145,43 @@ export const DIFF_BUDGET_CHARS = 120_000
 const GENERATED = /(^|\/)(package-lock\.json|pnpm-lock\.yaml|yarn\.lock|dist|out|release|node_modules)(\/|$)/
 
 export type RangeResolution =
-  | { ok: true; base: string; head: string; trunkSha: string; cwd: string; from: 'landed' | 'branch' }
+  | {
+      ok: true
+      base: string
+      head: string
+      trunkSha: string
+      cwd: string
+      from: 'commits' | 'landed' | 'branch'
+      /**
+       * The exact commits to grade, oldest first — set only when the ladder answered from
+       * `task_commits`, where they are a recorded fact rather than everything in a range.
+       *
+       * ⛔ `base`/`head` still bracket them so a review row can say where it looked, but for a task
+       * that landed twice the bracket contains other tasks' work and **the list is what is graded**.
+       * `collectDiff` patches each commit separately in that case.
+       */
+      commits?: string[]
+    }
   | { ok: false; reason: string }
 
 /**
  * Find the commits to review — and refuse rather than guess.
  *
  * The ladder, in order:
- *  1. `landedBaseSha`/`landedHeadSha`, when both still resolve in the trunk. After a fast-forward
+ *  1. The commits recorded in `task_commits`, when they still resolve and are reachable from the
+ *     target. ⭐ **The only rung that is exact for a task that landed more than once** — it names
+ *     the commits instead of bracketing them, so the five foreign commits between t124's two
+ *     landings are not graded as t124's work.
+ *  2. `landedBaseSha`/`landedHeadSha`, when both still resolve in the trunk. After a fast-forward
  *     merge both are reachable from the trunk forever, so this answers long after the branch is gone.
- *  2. The task's branch, when it still exists: `merge-base(target, branch)..branch`.
- *  3. Neither → refuse, in one sentence that says why.
+ *  3. The task's branch, when it still exists: `merge-base(target, branch)..branch`.
+ *  4. None of those → refuse, in one sentence that says why.
  *
- * ⛔ **Rung 3 is the honest answer for every task that landed before the range was recorded**, and
- * there is no fourth rung. A review of the wrong commits is worse than no review, because it
- * produces a number that looks exactly like a real one and is indistinguishable from one later.
+ * ⛔ **Rung 4 refuses rather than guesses, and that has not changed.** What changed is how much
+ * reaches it: `salvageLandedCommits` reads *"Landed as `<sha>` onto `<target>`"* back off each
+ * task's own thread, so a task that landed before migration 39 existed now answers on rung 1. A
+ * review of the wrong commits is still worse than no review, because it produces a number that
+ * looks exactly like a real one and is indistinguishable from one later.
  */
 const rangeCache = new Map<string, RangeResolution>()
 
@@ -172,13 +195,57 @@ export async function resolveRange(
   target: string,
   projectTarget = target
 ): Promise<RangeResolution> {
-  const cacheKey = task.id ? `${task.id}:${target}:${projectTarget}:${task.landedHeadSha ?? ''}:${task.branch ?? ''}` : null
+  const cacheKey = task.id
+    ? `${task.id}:${target}:${projectTarget}:${task.landedHeadSha ?? ''}:${task.branch ?? ''}:` +
+      taskCommits(task.id).length
+    : null
   if (cacheKey && rangeCache.has(cacheKey)) {
     return rangeCache.get(cacheKey)!
   }
 
   const cwd = project.root
   const trunkSha = await resolves(cwd, target)
+
+  // ---- rung 1: the recorded commits, which are exact even when no single range is.
+  const recorded = task.id ? taskCommits(task.id).map((c) => c.sha) : []
+  if (recorded.length > 0) {
+    const projectTrunk = target === projectTarget ? trunkSha : await resolves(cwd, projectTarget)
+    const reachable: string[] = []
+    for (const sha of recorded) {
+      if (!(await resolves(cwd, sha))) continue
+      const onTarget = trunkSha ? await isAncestor(cwd, sha, trunkSha) : false
+      const onProject = !onTarget && projectTrunk ? await isAncestor(cwd, sha, projectTrunk) : false
+      if (onTarget || onProject) reachable.push(sha)
+    }
+    // ⚠️ **All of them or none.** A partially reachable list means history was rewritten under
+    // these rows, and grading the surviving half would silently review part of the work as if it
+    // were the whole — the failure `truncated` exists to make visible, arriving invisibly.
+    const ordered = await orderByAncestry(cwd, reachable)
+    const oldest = ordered[0]
+    const head = ordered[ordered.length - 1]
+    if (oldest && head && ordered.length === recorded.length) {
+      // ⚠️ The oldest commit's own parent, so `base..head` brackets every recorded commit. A root
+      // commit has no parent and brackets itself; `diffSpecs` falls back to per-commit patches.
+      const base = (await tryGit(cwd, ['rev-parse', `${oldest}^{commit}^`])) ?? oldest
+      const anchor =
+        trunkSha && (await isAncestor(cwd, head, trunkSha)) ? trunkSha : (projectTrunk ?? trunkSha)
+      if (anchor) {
+        const res: RangeResolution = {
+          ok: true,
+          base,
+          head,
+          commits: ordered,
+          trunkSha: anchor,
+          cwd,
+          from: 'commits'
+        }
+        if (cacheKey) rangeCache.set(cacheKey, res)
+        return res
+      }
+    }
+  }
+
+  // ---- rung 2: the recorded range.
   if (task.landedBaseSha && task.landedHeadSha) {
     const base = await resolves(cwd, task.landedBaseSha)
     const head = await resolves(cwd, task.landedHeadSha)
@@ -196,6 +263,7 @@ export async function resolveRange(
     }
   }
   if (!trunkSha) return { ok: false, reason: `the landing target '${target}' does not resolve` }
+  // ---- rung 3: the branch, when it is still there.
   if (task.branch) {
     const branch = await resolves(cwd, task.branch)
     if (branch) {
@@ -206,14 +274,44 @@ export async function resolveRange(
   const failed: RangeResolution = {
     ok: false,
     reason:
-      task.landedBaseSha || task.landedHeadSha
-        ? 'this task recorded a commit range that no longer resolves in the trunk, so there is no ' +
-          'diff to review'
-        : 'this task landed before its commit range was recorded and its branch has been retired, ' +
-          'so there is no diff to review'
+      recorded.length > 0
+        ? `the ${recorded.length} commit${recorded.length === 1 ? '' : 's'} recorded for this task ` +
+          `${recorded.length === 1 ? 'is' : 'are'} no longer reachable from '${target}', so there ` +
+          'is no diff to review'
+        : task.landedBaseSha || task.landedHeadSha
+          ? 'this task recorded a commit range that no longer resolves in the trunk, so there is ' +
+            'no diff to review'
+          : 'this task landed nothing that can still be identified — no commits were recorded for ' +
+            'it, no landing was ever announced on its thread, and its branch has been retired'
   }
   if (cacheKey) rangeCache.set(cacheKey, failed)
   return failed
+}
+
+/**
+ * The recorded commits in history order, oldest first.
+ *
+ * ⚠️ `task_commits` reads back in authored-time order, and authored time is not history: a rebase
+ * carries the original timestamp, and a landing that could only record a bare sha has no timestamp
+ * at all, leaving the tie broken by the sha's own hex. `base..head` only means anything if `base`
+ * really is the oldest, so ask git about ancestry rather than trusting the clock. Insertion sort
+ * because these lists are one to three commits long: of the 60 tasks that had a recorded range on
+ * 2026-09-05, 58 spanned exactly one commit, and only 7 tasks in the fleet ever landed twice.
+ */
+async function orderByAncestry(cwd: string, shas: string[]): Promise<string[]> {
+  const sorted: string[] = []
+  for (const sha of shas) {
+    let at = sorted.length
+    for (let i = 0; i < sorted.length; i += 1) {
+      const other = sorted[i]
+      if (other && (await isAncestor(cwd, sha, other))) {
+        at = i
+        break
+      }
+    }
+    sorted.splice(at, 0, sha)
+  }
+  return sorted
 }
 
 async function isAncestor(cwd: string, ancestor: string, descendant: string): Promise<boolean> {
@@ -238,32 +336,75 @@ async function tryGit(cwd: string, args: string[]): Promise<string | null> {
 }
 
 /**
+ * What to hand `git diff` — one range, or one spec per commit.
+ *
+ * ⛔ **A range when the recorded commits are exactly what `base..head` contains, and never
+ * otherwise.** For the ordinary task the two say the same thing and the range is cheaper and reads
+ * better. For a task that landed twice they do not: `base..head` also contains whatever landed in
+ * between, which on this fleet is five other tasks' commits for t124. `<sha>^!` is git's own
+ * spelling for *this commit against its parent*, so the per-commit form grades what was recorded
+ * and nothing adjacent to it.
+ */
+async function diffSpecs(
+  cwd: string,
+  base: string,
+  head: string,
+  commits?: string[]
+): Promise<string[]> {
+  const range = `${base}..${head}`
+  if (!commits || commits.length === 0) return [range]
+  const inRange = (await tryGit(cwd, ['rev-list', range])) ?? ''
+  const contained = new Set(inRange.split(/\r?\n/).filter((l) => l.trim().length > 0))
+  const sameSet = contained.size === commits.length && commits.every((sha) => contained.has(sha))
+  return sameSet ? [range] : commits.map((sha) => `${sha}^!`)
+}
+
+/**
  * Assemble the diff, biggest change first, and stop at the budget.
  *
  * ⚠️ Descending change density rather than alphabetical: a truncated review should have seen the
  * files where the work happened, not the first ones in the tree.
  */
-export async function collectDiff(cwd: string, base: string, head: string): Promise<ReviewDiff> {
-  const range = `${base}..${head}`
-  const numstat = await git(cwd, ['diff', '--numstat', range])
-  const entries = numstat
-    .split(/\r?\n/)
-    .filter((line) => line.trim().length > 0)
-    .map((line) => {
+export async function collectDiff(
+  cwd: string,
+  base: string,
+  head: string,
+  commits?: string[]
+): Promise<ReviewDiff> {
+  const specs = await diffSpecs(cwd, base, head, commits)
+  const entriesByPath = new Map<
+    string,
+    { path: string; added: number; removed: number; binary: boolean }
+  >()
+  for (const spec of specs) {
+    const numstat = await git(cwd, ['diff', '--numstat', spec])
+    for (const line of numstat.split(/\r?\n/).filter((l) => l.trim().length > 0)) {
       const [added, removed, ...rest] = line.split('\t')
       const path = rest.join('\t')
-      return {
+      const prior = entriesByPath.get(path)
+      entriesByPath.set(path, {
         path,
         // `-` is git's way of saying binary. Counted as changed, never inlined.
-        added: added === '-' ? 0 : Number.parseInt(added ?? '0', 10) || 0,
-        removed: removed === '-' ? 0 : Number.parseInt(removed ?? '0', 10) || 0,
-        binary: added === '-'
-      }
-    })
+        added: (prior?.added ?? 0) + (added === '-' ? 0 : Number.parseInt(added ?? '0', 10) || 0),
+        removed:
+          (prior?.removed ?? 0) + (removed === '-' ? 0 : Number.parseInt(removed ?? '0', 10) || 0),
+        binary: (prior?.binary ?? false) || added === '-'
+      })
+    }
+  }
+  const entries = [...entriesByPath.values()]
 
   const insertions = entries.reduce((n, e) => n + e.added, 0)
   const deletions = entries.reduce((n, e) => n + e.removed, 0)
-  const stat = await git(cwd, ['diff', '--stat', range])
+  const stats: string[] = []
+  for (const spec of specs) stats.push(await git(cwd, ['diff', '--stat', spec]))
+  const stat =
+    specs.length === 1
+      ? (stats[0] ?? '')
+      : // ⛔ Said out loud. A reviewer that believes it is reading one contiguous change scores
+        // whatever fell in the gaps between these commits as though this task had written it.
+        `This task landed ${specs.length} separate commits, with other tasks' work between them. ` +
+        `Each is counted and shown on its own.\n\n${stats.join('\n\n')}`
 
   const ordered = [...entries].sort((a, b) => b.added + b.removed - (a.added + a.removed))
   const parts: string[] = [stat]
@@ -279,7 +420,11 @@ export async function collectDiff(cwd: string, base: string, head: string): Prom
       omitted.push(`${entry.path} | +${entry.added}/-${entry.removed} (not shown)`)
       continue
     }
-    const hunks = (await tryGit(cwd, ['diff', range, '--', entry.path])) ?? ''
+    const hunks = (
+      await Promise.all(specs.map((spec) => tryGit(cwd, ['diff', spec, '--', entry.path])))
+    )
+      .filter((h): h is string => !!h && h.trim().length > 0)
+      .join('\n')
     if (used + hunks.length > DIFF_BUDGET_CHARS && parts.length > 1) {
       omitted.push(`${entry.path} | +${entry.added}/-${entry.removed} (not shown)`)
       continue

@@ -80,6 +80,7 @@ import {
   startRun,
   updateTask
 } from './tasks.js'
+import { taskCommitShas } from './taskcommits.js'
 import { childrenOf as splitChildrenOf } from './split.js'
 import { enqueueConsult, hasPendingConsult, latestAnswer } from './controller.js'
 import {
@@ -3803,10 +3804,18 @@ function siblingLandedShas(task: Task): string[] {
       (other) =>
         other.id !== task.id &&
         other.parentTaskId === task.parentTaskId &&
-        other.landingTarget === task.landingTarget &&
-        !!other.landedHeadSha
+        other.landingTarget === task.landingTarget
     )
-    .map((other) => other.landedHeadSha as string)
+    .flatMap((other) => {
+      // ⚠️ Every commit a sibling landed, not just the tip of its last landing. `landedHeadSha` is
+      // one SHA, so a sibling that landed twice — or landed a branch with two commits on it — left
+      // commits on the shared target that this subtraction did not account for, and the tripwire
+      // then blamed *this* task for them. `taskCommitShas` names the whole set; the head is the
+      // fallback for a sibling that landed before those rows existed and could not be salvaged.
+      const commits = taskCommitShas(other.id)
+      if (commits.length > 0) return commits
+      return other.landedHeadSha ? [other.landedHeadSha] : []
+    })
 }
 
 /**

@@ -373,6 +373,31 @@ so a resumed task opens on top of the work that landed rather than behind it. Th
 task's name — every log line and every loose end reads it — so it comes back as itself, not as
 `-2`.
 
+## What the landing remembers
+
+⛔ **A successful landing writes the commits it made into `task_commits` before the branch is
+retired.** `retireBranch` deletes the branch seconds later, so the sha is only knowable at that
+moment; the row is the task's own answer to *what did I write*, and the quality review's first
+question. Multiple commits are all recorded, oldest first — `git log base..head`, or the tip alone
+when the strategy could not name a base — and a task that lands a second time **adds** to its list.
+
+⛔ **A range is not a list, and for a task that landed twice the range is wrong.** The older
+`landed_base_sha`/`landed_head_sha` pair spans everything between two landings, which on this fleet
+means grading five other tasks' commits as t124's. `resolveRange` therefore asks `task_commits`
+first and only falls back to the range; where the recorded commits are not exactly what `base..head`
+contains, the diff is taken as one `<sha>^!` patch per commit instead.
+
+⭐ **Everything that landed before any of this existed was recovered from its own thread.** The
+*"Landed as `<sha>` onto `<target>`"* message above outlives the branch, the workspace and the
+columns, and `salvageLandedCommits` parses it back on daemon start. It is idempotent and additive:
+commit rows are `insert or ignore` and the range columns are only filled where they are null, so a
+second run costs one `git log` per project and writes nothing. ⚠️ It attributes **only the commit the
+message named** — a landing that put two commits on the target announced only its tip, and walking
+back from that tip would be a guess: 141 of the 347 commits on this repository's `main` were landed
+by no task at all. Measured against a copy of this fleet's database on 2026-09-05: **207 commits
+across 200 tasks**, **148** ranges filled in, **8** shas that no longer resolve, and the gradable
+count moving from **51 of 233 tasks to 199**.
+
 ## Two tasks finishing at once
 
 ⭐ **They queue, and both land.** Landing is serialised per project — two rebases onto a target that

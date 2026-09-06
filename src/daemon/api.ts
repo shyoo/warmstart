@@ -90,6 +90,7 @@ import {
   setTaskHandoff,
   updateTask
 } from './tasks.js'
+import { taskCommits } from './taskcommits.js'
 import { cancelTask, deleteBlockers, deleteTask, restoreTask, resumeTask } from './cancel.js'
 import {
   addRule,
@@ -487,6 +488,10 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
         runs,
         sessions,
         compactions: compactionsForTask(p.id),
+        // ⛔ **What this task actually put on the trunk**, one row per commit. The task's branch is
+        // gone the moment it lands and `landedBaseSha`/`landedHeadSha` are a range, which cannot
+        // describe a task that landed twice; these are the commits themselves. See `taskcommits.ts`.
+        commits: taskCommits(p.id),
         activity: activityFor(p.id),
         // ⛔ Every review, not just the latest. A second review never sees the first (anchoring), so
         // two independent scores that disagree are the most interesting rows in this dataset — they

@@ -7,7 +7,7 @@ started in CI, never run against a real agent CLI.
 **Current state + what to do next, not a changelog.** **Under 200 lines** — adding one means cutting
 the line it obsoletes. Where every other fact goes: [`docs/README.md`](docs/README.md).
 
-**Baseline (2026-09-06, measured):** typecheck · lint · build clean · `npm test` **2220/2222** across 111 files (2 POSIX-only skipped). The balanced objective is **quality 0.40 · cost 0.30 · velocity 0.30**, routing targets (worker, model) candidate pairs with sufficiency-bar fitness, logarithmic price, and optional ε-greedy exploration, with an operator-facing Models report over every pair.
+**Baseline (2026-09-06, measured):** typecheck · lint · build clean · `npm test` **2230/2232** across 112 files (2 POSIX-only skipped). The balanced objective is **quality 0.40 · cost 0.30 · velocity 0.30**, routing targets (worker, model) candidate pairs with sufficiency-bar fitness, logarithmic price, and optional ε-greedy exploration, with an operator-facing Models report over every pair.
 `test:daemon` **155/155**, `test:ui` **311/311** — measured, not carried forward; `test:pack` **19/19** carried forward. ⚠️ `test:pack` fails every check but its first if `release/` predates `src/`; its first check says so — run `npm run pack` and re-run rather than reading the rest.
 CLIs here: claude 2.1.252 · agy 1.1.25 · codex 0.151.0 · local-llm 1.0.0 (qwen3-coder live tested). ⚠️ With none installed — the CI state — the daemon suite skips 5 checks, each with a stated reason.
 ⭐ **`scripts/build-win.ps1` runs all of the above** (`-Help` for options, `-Restart` for the inner
@@ -28,7 +28,7 @@ gaps are below. Scope: `transient_docs/implementation_plan_2026-08-24.md` §14, 
 src/daemon/            orchestratord. Runs as Electron-with-ELECTRON_RUN_AS_NODE, detached.
   index.ts             entry: lock, db, server, poller, scheduler, tailer wiring, shutdown
   server.ts  api.ts    HTTP+WS on 127.0.0.1:<random>, bearer token, typed RPC
-  db.ts                node:sqlite + numbered migrations (v46), each of which must survive a replay
+  db.ts                node:sqlite + numbered migrations (v48), each of which must survive a replay
   costmodel.ts         the plan catalogue; price.ts turns a window delta into $; spend.ts is the
                        money-meter store an adapter's probeSpend fills  (+ spend.test.ts)
   workers.ts           registry, isolation roots, retire-keeps-credentials, display order only
@@ -50,9 +50,9 @@ src/daemon/            orchestratord. Runs as Electron-with-ELECTRON_RUN_AS_NODE
                        each kept their own until 2026-08-27 and the copies drifted
   activetime.ts        how long an agent actually worked - runs summed, minus every stretch spent
                        waiting on a person. ⛔ Never wall-clock (+ .test.ts)
-  activity.ts          the live peephole: a bounded tail of what a run is saying, rendered
-                       ⚠️ *inside* the task thread, not in a pane below it
-  landing.ts           auto-land, serialised by an exclusive land: resource (+ landing.test.ts)
+  activity.ts          the live peephole: a bounded tail of a run, ⚠️ *inside* the task thread
+  landing.ts           auto-land, serialised by an exclusive land: resource (+ landing.test.ts);
+                       taskcommits.ts records what it landed and salvages what it did not (+ .test.ts)
   conversations.ts     which **runs** a conversation served, in order, under their task; never
                        stored. `conversationOutcome` is the *work*, not `state` (+ .test.ts)
   sharing.ts           who may borrow whose conversation: same project, account, model, effort;
@@ -168,7 +168,7 @@ M0–M6 are done. What is left is not a milestone but a list, in the order it wo
 7. **Put human-in-the-loop and `commit-and-merge` in front of a real agent.** Both built, neither
    used by one: dispatch a design task, answer what it asks, watch it merge — what L1–L3 cannot prove.
 8. **Meter codex off its rollout** — R10 is answered (§5), but `metering` stays `'stream'`, so a PTY-hosted codex run is unmetered, and the estimator never sees it.
-9. **Calibrate quality review across model sizes (R17).** Four live grades now prove the path runs, but not that the small grading model discriminates quality: review the same five tasks on the small and large model of one provider and compare the spread (⭐ every quality table now names the judging *model*, not the adapter — `openai-compatible` is Codex on one account and a local 4B on another, so R17 is legible in the UI as it runs). If the small model clusters everything at 7–8 it is not a judge and its configured grading model moves up a rung. ⚠️ Tasks with neither a recorded commit range nor a surviving branch remain permanently unreviewable; the page now says so before a batch is run.
+9. **Calibrate quality review across model sizes (R17).** Four live grades now prove the path runs, but not that the small grading model discriminates quality: review the same five tasks on the small and large model of one provider and compare the spread (⭐ every quality table now names the judging *model*, not the adapter — `openai-compatible` is Codex on one account and a local 4B on another, so R17 is legible in the UI as it runs). If the small model clusters everything at 7–8 it is not a judge and its configured grading model moves up a rung. ⭐ The ungradable population was **salvaged** (2026-09-05): every landing announces *"Landed as `<sha>` onto `<target>`"* on its own thread, which outlives the branch and the columns, so `task_commits` now holds 207 commits across 200 tasks and gradable went **51 of 233 to 199**. ⚠️ The 34 that remain never landed at all, or named a sha that no longer resolves (8 of those); the page still says so before a batch is run.
 10. **Probe a live account for a money meter, and read one figure against a real invoice.** `overrunFactor` divides in dollars now, but the pipeline is L1-only: no real balance, `total_cost_usd` or overage flag has been seen in flight, so every `medianUsd` is honestly empty. ⚠️ Still owed beside it: let preempted runs feed `estimateTask` — 92–98% of a run's tokens are cache reads, so overrun fires on long work, which is why `autoRunawayStop` ships off.
 
 ## Open questions

@@ -10,15 +10,22 @@ import type { Project, Task } from '@shared/tasks.js'
  *
  * ⛔ **Real git in a temporary repository.** The whole question here is what survives `git branch -D`
  * after a fast-forward merge, so a test that stubbed git would pass against a version that cannot
- * answer at all. Rung 1 exists precisely because rung 2 stops working the moment a task lands.
+ * answer at all. Rungs 1 and 2 exist precisely because rung 3 stops working the moment a task lands.
  *
- * ⛔ **Rung 3 is a refusal, not a fallback.** A review of the wrong commits produces a number that
+ * ⛔ **Rung 4 is a refusal, not a fallback.** A review of the wrong commits produces a number that
  * looks exactly like a real one and is indistinguishable from one later, so there is no rung that
- * guesses. Every task that landed before the range was recorded gets this answer, permanently.
+ * guesses.
+ *
+ * ⛔ **Rung 1 is the one that can be exact for a task that landed twice.** A range cannot be: the
+ * second landing's base is wherever the trunk had got to, so `base..head` across the pair contains
+ * whatever landed in between. The last test in the ladder below is that case, built commit by
+ * commit, and it fails against any version that answers it with a range.
  */
 
 let dir: string
 let review: typeof import('./review.js')
+let store: typeof import('./db.js')
+let commitStore: typeof import('./taskcommits.js')
 
 const git = (cwd: string, ...args: string[]): string =>
   execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
@@ -67,12 +74,44 @@ const task = (over: Partial<Task>): Pick<Task, 'landedBaseSha' | 'landedHeadSha'
   ...over
 })
 
+/**
+ * A task row with commits recorded against it, which is what rung 1 reads.
+ *
+ * ⚠️ A real row rather than a stub object: `task_commits.task_id` is a foreign key with
+ * `on delete cascade`, and `pragma foreign_keys` is on, so a stub would be rejected by the schema
+ * this feature actually ships. The columns set here are exactly the not-null ones.
+ */
+let taskSeq = 0
+function taskWithCommits(
+  shas: string[],
+  over: Partial<Task> = {}
+): Pick<Task, 'landedBaseSha' | 'landedHeadSha' | 'branch'> & { id: string } {
+  taskSeq += 1
+  const id = `task-${taskSeq}`
+  const now = Date.now()
+  store
+    .db()
+    .prepare(
+      `insert into tasks
+         (id, seq, title, status, created_by_json, mandate_json, budget_json, created_at, updated_at)
+       values (?, ?, 'a task', 'completed', '{}', '{}', '{}', ?, ?)`
+    )
+    .run(id, taskSeq, now, now)
+  commitStore.recordTaskCommits(
+    id,
+    shas.map((sha) => ({ sha })),
+    'main'
+  )
+  return { id, ...task(over) }
+}
+
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'agentyard-reviewdiff-'))
   process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
-  const db = await import('./db.js')
-  db.openDb(join(dir, 'reviewdiff.db'))
+  store = await import('./db.js')
+  store.openDb(join(dir, 'reviewdiff.db'))
   review = await import('./review.js')
+  commitStore = await import('./taskcommits.js')
 })
 
 afterAll(() => {
@@ -84,7 +123,83 @@ afterAll(() => {
 })
 
 describe('the resolution ladder', () => {
-  it('rung 1: a recorded range still answers after the branch has been deleted', () => {
+  it('rung 1: recorded commits answer after the branch is gone, and outrank the range', async () => {
+    const project = makeRepo()
+    const { base, head } = branchWithWork(project, 'feature')
+    git(project.root, 'merge', '--ff-only', 'feature')
+    git(project.root, 'branch', '-D', 'feature')
+
+    // ⛔ A range that would review the wrong thing is recorded alongside the commits, and the
+    // commits win. That ordering is the whole reason rung 1 sits above rung 2: t192 has a base 39
+    // commits behind its head, written by a second landing overwriting the first landing's base.
+    const subject = taskWithCommits([head], {
+      landedBaseSha: 'f'.repeat(40),
+      landedHeadSha: 'e'.repeat(40),
+      branch: 'feature'
+    })
+    const range = await review.resolveRange(subject, project, 'main')
+    expect(range.ok).toBe(true)
+    if (!range.ok) return
+    expect(range.from).toBe('commits')
+    expect(range.commits).toEqual([head])
+    expect(range.base).toBe(base)
+    expect(range.head).toBe(head)
+  })
+
+  it('rung 1: two landings with someone else’s work between them grade only their own commits', async () => {
+    const project = makeRepo()
+    const root = project.root
+    // The task's first landing.
+    writeFileSync(join(root, 'mine-one.ts'), 'export const one = 1\n')
+    git(root, 'add', '-A')
+    git(root, 'commit', '-m', 'my first landing')
+    const first = git(root, 'rev-parse', 'HEAD')
+    // Another task lands between the two, which is the case a range cannot describe.
+    writeFileSync(join(root, 'theirs.ts'), 'export const theirs = true\n')
+    git(root, 'add', '-A')
+    git(root, 'commit', '-m', 'somebody else entirely')
+    // And the fix this task was asked for on the same thread.
+    writeFileSync(join(root, 'mine-two.ts'), 'export const two = 2\n')
+    git(root, 'add', '-A')
+    git(root, 'commit', '-m', 'my second landing')
+    const second = git(root, 'rev-parse', 'HEAD')
+
+    const subject = taskWithCommits([first, second])
+    const range = await review.resolveRange(subject, project, 'main')
+    expect(range.ok).toBe(true)
+    if (!range.ok) return
+    expect(range.from).toBe('commits')
+    expect(range.commits).toEqual([first, second])
+
+    const diff = await review.collectDiff(range.cwd, range.base, range.head, range.commits)
+    // ⛔ Two files, not three. `base..head` here spans all three commits; the recorded list does not,
+    // and grading `theirs.ts` as this task's work is the failure the whole ladder exists to refuse.
+    expect(diff.files).toBe(2)
+    expect(diff.text).toContain('mine-one.ts')
+    expect(diff.text).toContain('mine-two.ts')
+    expect(diff.text).not.toContain('theirs.ts')
+    expect(diff.text).toContain('landed 2 separate commits')
+  })
+
+  it('rung 1 falls through when a recorded commit no longer reaches the trunk', async () => {
+    const project = makeRepo()
+    const { base, head } = branchWithWork(project, 'feature')
+    git(project.root, 'merge', '--ff-only', 'feature')
+    git(project.root, 'branch', '-D', 'feature')
+
+    // ⚠️ One reachable commit and one that never existed. Half a task's commits is not half a
+    // review — it is a whole review of part of the work, arriving with no sign that it is partial.
+    const subject = taskWithCommits([head, 'a'.repeat(40)], {
+      landedBaseSha: base,
+      landedHeadSha: head
+    })
+    const range = await review.resolveRange(subject, project, 'main')
+    expect(range.ok).toBe(true)
+    if (!range.ok) return
+    expect(range.from).toBe('landed')
+  })
+
+  it('rung 2: a recorded range still answers after the branch has been deleted', () => {
     const project = makeRepo()
     const { base, head } = branchWithWork(project, 'feature')
     // Exactly what landing does: fast-forward, then destroy the branch.
@@ -102,7 +217,7 @@ describe('the resolution ladder', () => {
       })
   })
 
-  it('rung 2: an unlanded task is reviewed from its branch against the landing target', async () => {
+  it('rung 3: an unlanded task is reviewed from its branch against the landing target', async () => {
     const project = makeRepo()
     const { base, head } = branchWithWork(project, 'feature')
     const range = await review.resolveRange(task({ branch: 'feature' }), project, 'main')
@@ -113,7 +228,7 @@ describe('the resolution ladder', () => {
     expect(range.head).toBe(head)
   })
 
-  it('rung 2 measures from the merge base, so a trunk that moved on is not counted as the task’s', async () => {
+  it('rung 3 measures from the merge base, so a trunk that moved on is not counted as the task’s', async () => {
     const project = makeRepo()
     const { base } = branchWithWork(project, 'feature')
     // Somebody else lands on main after this branch was cut.
@@ -131,7 +246,7 @@ describe('the resolution ladder', () => {
     expect(diff.files).toBe(1)
   })
 
-  it('rung 1: a split child remains reviewable after its planner branch lands and is retired', async () => {
+  it('rung 2: a split child remains reviewable after its planner branch lands and is retired', async () => {
     const project = makeRepo()
     const { base, head } = branchWithWork(project, 'planner')
     git(project.root, 'merge', '--ff-only', 'planner')
@@ -150,7 +265,7 @@ describe('the resolution ladder', () => {
     expect(range.head).toBe(head)
   })
 
-  it('rung 3: a landed task with no recorded range and no branch is refused, never guessed', async () => {
+  it('rung 4: a landed task with nothing recorded and no branch is refused, never guessed', async () => {
     const project = makeRepo()
     branchWithWork(project, 'feature')
     git(project.root, 'merge', '--ff-only', 'feature')
@@ -159,10 +274,10 @@ describe('the resolution ladder', () => {
     const range = await review.resolveRange(task({ branch: 'feature' }), project, 'main')
     expect(range.ok).toBe(false)
     if (range.ok) return
-    expect(range.reason).toContain('landed before its commit range was recorded')
+    expect(range.reason).toContain('landed nothing that can still be identified')
   })
 
-  it('rung 3: a recorded range that no longer resolves says so, rather than falling back', async () => {
+  it('rung 4: a recorded range that no longer resolves says so, rather than falling back', async () => {
     const project = makeRepo()
     const range = await review.resolveRange(
       task({ landedBaseSha: 'f'.repeat(40), landedHeadSha: 'e'.repeat(40) }),

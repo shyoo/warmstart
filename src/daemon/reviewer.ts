@@ -474,7 +474,9 @@ async function runReview(
     return { ok: false, reason: 'nothing has run on this task yet, so there is no work to grade' }
   }
 
-  const diff = await collectDiff(range.cwd, range.base, range.head)
+  // ⚠️ `range.commits` when the ladder answered from the recorded commits, which is the only thing
+  // that keeps a task that landed twice from being graded on the work that landed between them.
+  const diff = await collectDiff(range.cwd, range.base, range.head, range.commits)
 
   // ⛔ Everything the reviewer reads goes through `blind`, and the vocabulary is built from what is
   // actually commissioned rather than from a list of vendor names written here.

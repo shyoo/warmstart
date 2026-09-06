@@ -38,6 +38,7 @@ import type {
   RunKind,
   Run,
   Task,
+  TaskCommit,
   TaskConstraints,
   TaskKind,
   TaskMessage,
@@ -1387,6 +1388,16 @@ export interface RpcMap {
        * A pane that showed runs and hid compactions was showing the spending and not the saving.
        */
       compactions: Compaction[]
+      /**
+       * Every commit this task landed, oldest first.
+       *
+       * ⛔ **The pane's only way to say what the task actually shipped.** The branch is retired the
+       * moment the work lands, and `landedBaseSha`/`landedHeadSha` are a range — exact for the
+       * ordinary task and unable to describe one that landed twice with other work in between. A
+       * task that landed before these rows existed has them salvaged from its own *"Landed as …"*
+       * thread message; a task that never landed has an empty list, which is a fact and not a gap.
+       */
+      commits: TaskCommit[]
       /** The live tail for this task, if anything is running. Same content as `task.activity`. */
       activity: Array<{ text: string; ts: number }>
       /** Every quality review of this task, newest first. ⛔ Kept, never replaced. */
