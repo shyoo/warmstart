@@ -5,6 +5,7 @@ import type { Project } from '@shared/tasks'
 import { rpc, useDaemonEvents } from '../lib/daemon'
 import { when } from '../lib/format'
 import { agentNames } from '../lib/agentname'
+import { readQualityGradableOnly, writeQualityGradableOnly } from '../lib/prefs'
 import { AgentLabel } from './AgentLabel'
 
 /**
@@ -54,11 +55,18 @@ export function QualityReview({
   const [batch, setBatch] = useState<GradeBatch | null>(null)
   const [size, setSize] = useState<number | null>(5)
   const [threshold, setThreshold] = useState<number>(1)
-  const [gradableOnly, setGradableOnly] = useState(false)
+  const [gradableOnly, setGradableOnlyState] = useState<boolean>(readQualityGradableOnly)
+  const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
+  const setGradableOnly = useCallback((value: boolean) => {
+    setGradableOnlyState(value)
+    writeQualityGradableOnly(value)
+  }, [])
+
   const refresh = useCallback(async () => {
+    setRefreshing(true)
     try {
       const [queue, running] = await Promise.all([
         rpc('quality.queue', { filter, limit: PAGE_SIZE, offset, gradableOnly }),
@@ -69,6 +77,8 @@ export function QualityReview({
       setError(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setRefreshing(false)
     }
   }, [filter, offset, gradableOnly])
 
@@ -140,8 +150,17 @@ export function QualityReview({
           </p>
         </div>
         <div className="panel-actions">
-          <button className="btn btn--secondary" onClick={() => void refresh()}>
-            Refresh
+          <button className="btn btn--secondary" disabled={refreshing} onClick={() => void refresh()}>
+            {refreshing ? (
+              <>
+                Refreshing
+                <span className="working" aria-hidden>
+                  <i /><i /><i />
+                </span>
+              </>
+            ) : (
+              'Refresh'
+            )}
           </button>
         </div>
       </header>
@@ -152,6 +171,7 @@ export function QualityReview({
         <Tile value={counts ? String(counts.none) : '—'} label="finished tasks with no review" />
         <Tile value={counts ? String(counts.one) : '—'} label="with exactly 1 review" />
         <Tile value={counts ? String(counts.many) : '—'} label="with 2 or more reviews" />
+        <Tile value={counts && counts.ungradable !== undefined ? String(counts.ungradable) : '—'} label="cannot be graded" />
       </div>
 
       <section className="doc-section">
@@ -244,7 +264,12 @@ export function QualityReview({
               setOffset(0)
             }}
           />
-          Filter out cannot be graded
+          <span>Filter out cannot be graded</span>
+          {refreshing && (
+            <span className="working" aria-hidden style={{ marginLeft: '4px' }}>
+              <i /><i /><i />
+            </span>
+          )}
         </label>
       </div>
 

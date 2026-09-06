@@ -166,7 +166,25 @@ async function drive(batch: GradeBatch): Promise<void> {
         const running = grade(entry).finally(() => inflight.delete(running))
         inflight.add(running)
       }
-      if (inflight.size === 0) break
+      if (inflight.size === 0) {
+        const remainingQueued = batch.entries.filter((e) => e.state === 'queued')
+        if (remainingQueued.length === 0) break
+        // If there are still queued entries, wait briefly (500ms) for any just-exited sessions
+        // to settle and re-check if any peer became available before giving up.
+        await new Promise((resolve) => setTimeout(resolve, 500))
+        let anyCanStart = false
+        for (const entry of remainingQueued) {
+          const task = getTask(entry.taskId)
+          if (!task) continue
+          const now = reviewerAvailability(task, true)
+          if (now.eligible) {
+            anyCanStart = true
+            break
+          }
+        }
+        if (!anyCanStart) break
+        continue
+      }
       await Promise.race(inflight)
     }
     await Promise.allSettled([...inflight])

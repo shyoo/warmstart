@@ -27,6 +27,7 @@ import {
   type RangeResolution
 } from './review.js'
 import {
+  closeAndWait,
   closeSession,
   onSessionEnd,
   onSessionStream,
@@ -307,6 +308,32 @@ export function reviewerAvailability(
   return { eligible: candidates.length > 0, reason, count: candidates.length }
 }
 
+/**
+ * Does this task have at least one eligible peer capable of reviewing it during a batch?
+ * A worker is viable for a batch if it is not an author, not already graded, grading-enabled,
+ * enabled, capable, and its quota is not permanently over WINDOW_HIGH_WATER (unless actively reviewing).
+ */
+export function hasBatchReviewer(task: Task): boolean {
+  const { authors } = authorshipOf(task.id)
+  const authorAdapters = new Set(authors.map((a) => a.adapterId))
+  const gradedAdapters = gradedAdaptersOf(task.id)
+
+  for (const worker of listWorkers()) {
+    if (worker.retiredAt || !worker.enabled || worker.gradingEnabled === false) continue
+    if (authorAdapters.has(worker.adapterId) || gradedAdapters.has(worker.adapterId)) continue
+    const info = adapter(worker.adapterId).info
+    if (!info.capabilities.readOnlyPermissionMode || !info.capabilities.transports.includes('stream')) continue
+    if (accountUnavailability(worker)) continue
+    const win = window5h(worker.id)
+    if (win && win.percent >= WINDOW_HIGH_WATER) {
+      const isBusy = claimedReviewers.has(worker.id) || sessionsForWorker(worker.id).some((s) => s.purpose === 'review')
+      if (!isBusy) continue
+    }
+    return true
+  }
+  return false
+}
+
 /** Routable peers shown in the reviewer picker; transient availability is checked on request. */
 export function reviewCandidateOptions(task: Task): ReviewCandidate[] {
   return reviewCandidates(task, false).candidates.map((worker) => ({
@@ -529,7 +556,7 @@ async function runReview(
     })
     const { text, reason: why } = await ask(session.id, prompt, controller.signal)
     activeReviews.delete(review.id)
-    closeSession(session.id)
+    await closeAndWait(session.id)
     sessionId = null
 
     // `review.cancel` settles the row and run first, then wakes this wait. Never let its normal
@@ -560,7 +587,7 @@ async function runReview(
     const reason = err instanceof Error ? err.message : String(err)
     log.warn(`quality review of t${task.seq} failed: ${reason}`)
     if (reviewId) activeReviews.delete(reviewId)
-    if (sessionId) closeSession(sessionId)
+    if (sessionId) await closeAndWait(sessionId)
     if (runId) finishRun(runId, 'failed', reason)
     // ⛔ `refused` rather than `failed` when nothing was ever asked, so a later sweep can tell a
     // model that could not answer from a machine that could not ask.

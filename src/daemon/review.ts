@@ -160,12 +160,23 @@ export type RangeResolution =
  * there is no fourth rung. A review of the wrong commits is worse than no review, because it
  * produces a number that looks exactly like a real one and is indistinguishable from one later.
  */
+const rangeCache = new Map<string, RangeResolution>()
+
+export function clearRangeCache(): void {
+  rangeCache.clear()
+}
+
 export async function resolveRange(
-  task: Pick<Task, 'landedBaseSha' | 'landedHeadSha' | 'branch'>,
+  task: Pick<Task, 'landedBaseSha' | 'landedHeadSha' | 'branch'> & { id?: string },
   project: Project,
   target: string,
   projectTarget = target
 ): Promise<RangeResolution> {
+  const cacheKey = task.id ? `${task.id}:${target}:${projectTarget}:${task.landedHeadSha ?? ''}:${task.branch ?? ''}` : null
+  if (cacheKey && rangeCache.has(cacheKey)) {
+    return rangeCache.get(cacheKey)!
+  }
+
   const cwd = project.root
   const trunkSha = await resolves(cwd, target)
   if (task.landedBaseSha && task.landedHeadSha) {
@@ -179,7 +190,9 @@ export async function resolveRange(
     const landedOnTarget = head && trunkSha ? await isAncestor(cwd, head, trunkSha) : false
     const landedOnProject = head && projectTrunkSha ? await isAncestor(cwd, head, projectTrunkSha) : false
     if (base && head && baseBeforeHead && (landedOnTarget || landedOnProject)) {
-      return { ok: true, base, head, trunkSha: (landedOnTarget ? trunkSha : projectTrunkSha) as string, cwd, from: 'landed' }
+      const res: RangeResolution = { ok: true, base, head, trunkSha: (landedOnTarget ? trunkSha : projectTrunkSha) as string, cwd, from: 'landed' }
+      if (cacheKey) rangeCache.set(cacheKey, res)
+      return res
     }
   }
   if (!trunkSha) return { ok: false, reason: `the landing target '${target}' does not resolve` }
@@ -190,7 +203,7 @@ export async function resolveRange(
       if (base) return { ok: true, base, head: branch, trunkSha, cwd, from: 'branch' }
     }
   }
-  return {
+  const failed: RangeResolution = {
     ok: false,
     reason:
       task.landedBaseSha || task.landedHeadSha
@@ -199,6 +212,8 @@ export async function resolveRange(
         : 'this task landed before its commit range was recorded and its branch has been retired, ' +
           'so there is no diff to review'
   }
+  if (cacheKey) rangeCache.set(cacheKey, failed)
+  return failed
 }
 
 async function isAncestor(cwd: string, ancestor: string, descendant: string): Promise<boolean> {

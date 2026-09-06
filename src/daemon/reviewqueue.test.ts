@@ -245,6 +245,7 @@ describe('an agent is asked about a task at most once', () => {
     const filtered = await quality.reviewQueue('one', 25, 0, true)
     expect(filtered.rows).toHaveLength(0)
     expect(filtered.total).toBe(0)
+    expect(filtered.counts.ungradable).toBe(1)
   })
 })
 
@@ -282,6 +283,29 @@ describe('what a batch would attempt', () => {
     // threshold 2 would match it if not checking eligibility
     const candidates = await quality.batchCandidates(2, null)
     expect(candidates.map((c) => c.taskId)).not.toContain(t)
+  })
+
+  it('skips tasks whose only peer is at 100% quota', async () => {
+    worker('w-openai-quota', 'openai-compatible')
+    try {
+      // Record 100% 5h quota for the only other worker
+      const now = Date.now()
+      db.db()
+        .prepare(
+          `insert into quota_samples (worker_id, window_id, label, percent, resets_at, source, sampled_at)
+           values (?, '5h', '5h', 100, null, 'probe', ?)`
+        )
+        .run('w-openai-quota', now)
+
+      const t = task()
+      grade(t, 'antigravity-cli', 'complete', 8.5)
+      // w-openai-quota is the only peer, but at 100% quota
+      const candidates = await quality.batchCandidates(2, null)
+      expect(candidates.map((c) => c.taskId)).not.toContain(t)
+    } finally {
+      db.db().exec("delete from workers where id = 'w-openai-quota'")
+      db.db().exec("delete from quota_samples where worker_id = 'w-openai-quota'")
+    }
   })
 })
 

@@ -21,7 +21,7 @@ import { pendingReviews } from './review.js'
 import { getTask } from './tasks.js'
 import type { Task } from '@shared/tasks.js'
 import { defaultGradingModel, listWorkers } from './workers.js'
-import { reviewEligibility, reviewerAvailability } from './reviewer.js'
+import { hasBatchReviewer, reviewEligibility, reviewerAvailability } from './reviewer.js'
 
 /**
  * What the fleet has actually measured about *quality*, aggregated from stored peer reviews.
@@ -488,38 +488,43 @@ export async function reviewQueue(
   const skip = Math.max(0, Math.floor(offset))
   const counts = reviewCounts()
 
-  let found: QueueRow[]
-  let total: number
+  const allFinished = queueRows('all', 1000, 0)
+  const gradableMap = new Map<string, { ok: boolean; reason: string }>()
+
+  await Promise.all(
+    allFinished.map(async (r) => {
+      const task = getTask(r.id)
+      const gradable = task
+        ? await isTaskGradable(task)
+        : { ok: false, reason: 'this task is no longer readable' }
+      gradableMap.set(r.id, gradable)
+    })
+  )
+
+  const ungradable = allFinished.filter((r) => !gradableMap.get(r.id)?.ok).length
+  const fullCounts: ReviewCounts = { ...counts, ungradable }
+
+  let filtered = allFinished
+  if (filter === 'none') filtered = filtered.filter((r) => r.quality_review_count === 0)
+  else if (filter === 'one') filtered = filtered.filter((r) => r.quality_review_count === 1)
+  else if (filter === 'many') filtered = filtered.filter((r) => r.quality_review_count >= 2)
 
   if (gradableOnly) {
-    const allCandidates = queueRows(filter, 500, 0)
-    const gradableRows: QueueRow[] = []
-    for (const r of allCandidates) {
-      const task = getTask(r.id)
-      if (!task) continue
-      const gradable = await isTaskGradable(task)
-      if (gradable.ok) gradableRows.push(r)
-    }
-    total = gradableRows.length
-    found = gradableRows.slice(skip, skip + take)
-  } else {
-    found = queueRows(filter, take, skip)
-    total =
-      filter === 'none' ? counts.none : filter === 'one' ? counts.one : filter === 'many' ? counts.many : counts.total
+    filtered = filtered.filter((r) => gradableMap.get(r.id)?.ok)
   }
+
+  const total = filtered.length
+  const found = filtered.slice(skip, skip + take)
 
   const graders = gradersByTask(found.map((r) => r.id))
   const grading = new Set(pendingReviews().map((r) => r.taskId))
 
   return {
-    counts,
+    counts: fullCounts,
     total,
     adapterLabels: adapterLabels(),
-    rows: await Promise.all(found.map(async (r) => {
-      const task = getTask(r.id)
-      const gradable = task
-        ? await isTaskGradable(task)
-        : { ok: false, reason: 'this task is no longer readable' }
+    rows: found.map((r) => {
+      const gradable = gradableMap.get(r.id) ?? { ok: false, reason: 'unknown' }
       return {
         taskId: r.id,
         seq: r.seq,
@@ -535,7 +540,7 @@ export async function reviewQueue(
         ineligibleReason: gradable.ok ? '' : gradable.reason,
         grading: grading.has(r.id)
       }
-    }))
+    })
   }
 }
 
@@ -574,6 +579,7 @@ export async function batchCandidates(threshold: number, count: number | null): 
     if (!task) continue
     const gradable = await isTaskGradable(task)
     if (!gradable.ok) continue
+    if (!hasBatchReviewer(task)) continue
     result.push({
       taskId: r.id,
       seq: r.seq,

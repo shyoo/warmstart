@@ -141,5 +141,30 @@ export function writeTaskPageSize(size: number): void {
   }
 }
 
+const QUALITY_GRADABLE_ONLY_KEY = 'multi_agent_controller.qualityGradableOnly'
+
+/**
+ * Whether the Quality Review page filters out tasks that cannot be graded.
+ *
+ * ⛔ Per-display preference stored in `localStorage`, consistent with task view filters and sidebar width.
+ */
+export function readQualityGradableOnly(): boolean {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return false
+    return window.localStorage.getItem(QUALITY_GRADABLE_ONLY_KEY) === 'true'
+  } catch {
+    return false
+  }
+}
+
+export function writeQualityGradableOnly(gradableOnly: boolean): void {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return
+    window.localStorage.setItem(QUALITY_GRADABLE_ONLY_KEY, String(gradableOnly))
+  } catch {
+    // A preference that cannot be saved is not an error worth showing anybody.
+  }
+}
+
 
 

@@ -90,9 +90,10 @@ on **model** rows only — a prior is published per model, so there is no prior 
 (`components/QualityReview.tsx`.) *Statistics › Quality per Task* holds the distribution — how each
 agent and model scores — and duplicating it here would leave two tables of the same numbers folded
 two ways and no way to tell which was authoritative. This page answers what that one cannot: which
-finished work carries **no** grade, exactly one, or two or more; who has already graded each task;
-and whether both an exact diff and a peer remain so it can still be graded. A permanent refusal is
-printed beside **no**, not deferred until a batch skips it. The two link to each other in both
+finished work carries **no** grade, exactly one, two or more, or **cannot be graded**; who has already graded each task;
+and whether both an exact diff and a peer remain so it can still be graded. A "Filter out cannot be graded" toggle
+persists in operator preferences, and permanent refusals are printed beside **no**, not deferred until a batch skips it.
+The two link to each other in both
 directions rather than repeating each other. ⛔ **It is also the only place a review is commissioned in bulk** —
 the *Grade up to five* button that used to sit on Routing Model › Quality is gone and links here,
 because two buttons spending turns on the same accounts under different caps is a way to empty a

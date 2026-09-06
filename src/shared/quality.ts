@@ -124,6 +124,7 @@ export interface ReviewCounts {
   /** Two or more. The spec's `>2` bucket, and it includes exactly two. */
   many: number
   total: number
+  ungradable?: number
 }
 
 /**
