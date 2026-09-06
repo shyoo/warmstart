@@ -453,3 +453,27 @@ describe('quality', () => {
     expect(model?.samples).toBe(2)
   })
 })
+
+describe('ordering by power in statistics tree', () => {
+  it('orders models from most powerful to least powerful', () => {
+    const list = [
+      'gemini-3.7-flash-high',
+      'gemini-3.8-flash-high',
+      'gemini-3.8-flash-medium',
+      'gemini-3.8-pro'
+    ]
+    const sorted = [...list].sort(stats.compareModelPower)
+    expect(sorted).toEqual([
+      'gemini-3.8-pro',
+      'gemini-3.8-flash-high',
+      'gemini-3.8-flash-medium',
+      'gemini-3.7-flash-high'
+    ])
+  })
+
+  it('orders efforts from highest to lowest', () => {
+    const efforts = ['low', 'max', 'medium', 'high', 'xhigh', 'min']
+    const sorted = [...efforts].sort(stats.compareEffortPower)
+    expect(sorted).toEqual(['max', 'xhigh', 'high', 'medium', 'low', 'min'])
+  })
+})

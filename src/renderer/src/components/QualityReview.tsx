@@ -54,13 +54,14 @@ export function QualityReview({
   const [batch, setBatch] = useState<GradeBatch | null>(null)
   const [size, setSize] = useState<number | null>(5)
   const [threshold, setThreshold] = useState<number>(1)
+  const [gradableOnly, setGradableOnly] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
   const refresh = useCallback(async () => {
     try {
       const [queue, running] = await Promise.all([
-        rpc('quality.queue', { filter, limit: PAGE_SIZE, offset }),
+        rpc('quality.queue', { filter, limit: PAGE_SIZE, offset, gradableOnly }),
         rpc('quality.batch')
       ])
       setPage(queue)
@@ -69,7 +70,7 @@ export function QualityReview({
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     }
-  }, [filter, offset])
+  }, [filter, offset, gradableOnly])
 
   useEffect(() => {
     void refresh()
@@ -138,6 +139,11 @@ export function QualityReview({
             .
           </p>
         </div>
+        <div className="panel-actions">
+          <button className="btn btn--secondary" onClick={() => void refresh()}>
+            Refresh
+          </button>
+        </div>
       </header>
 
       {error && <div className="alert">{error}</div>}
@@ -203,30 +209,43 @@ export function QualityReview({
         {batch && <BatchProgress batch={batch} labels={labels} onOpenTask={onOpenTask} />}
       </section>
 
-      <div className="tabs">
-        {FILTERS.map((f) => (
-          <button
-            key={f.id}
-            className={`tab${filter === f.id ? ' tab--active' : ''}`}
-            onClick={() => {
-              setFilter(f.id)
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+        <div className="tabs" style={{ marginBottom: 0 }}>
+          {FILTERS.map((f) => (
+            <button
+              key={f.id}
+              className={`tab${filter === f.id ? ' tab--active' : ''}`}
+              onClick={() => {
+                setFilter(f.id)
+                setOffset(0)
+              }}
+            >
+              {f.label}
+              {counts && (
+                <span className="nav-count num">
+                  {f.id === 'none'
+                    ? counts.none
+                    : f.id === 'one'
+                      ? counts.one
+                      : f.id === 'many'
+                        ? counts.many
+                        : counts.total}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.85rem', userSelect: 'none' }}>
+          <input
+            type="checkbox"
+            checked={gradableOnly}
+            onChange={(e) => {
+              setGradableOnly(e.target.checked)
               setOffset(0)
             }}
-          >
-            {f.label}
-            {counts && (
-              <span className="nav-count num">
-                {f.id === 'none'
-                  ? counts.none
-                  : f.id === 'one'
-                    ? counts.one
-                    : f.id === 'many'
-                      ? counts.many
-                      : counts.total}
-              </span>
-            )}
-          </button>
-        ))}
+          />
+          Filter out cannot be graded
+        </label>
       </div>
 
       {!page ? (

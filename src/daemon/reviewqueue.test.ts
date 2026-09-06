@@ -241,29 +241,47 @@ describe('an agent is asked about a task at most once', () => {
     const [row] = (await quality.reviewQueue('one')).rows
     expect(row?.eligible).toBe(false)
     expect(row?.ineligibleReason).toContain('already graded this task')
+
+    const filtered = await quality.reviewQueue('one', 25, 0, true)
+    expect(filtered.rows).toHaveLength(0)
+    expect(filtered.total).toBe(0)
   })
 })
 
 describe('what a batch would attempt', () => {
-  it('takes only tasks under the threshold, strictly', () => {
-    const none = task()
-    graded('antigravity-cli')
-    expect(quality.batchCandidates(1, null).map((c) => c.taskId)).toEqual([none])
-    expect(quality.batchCandidates(2, null).map((c) => c.taskId).sort()).toHaveLength(2)
+  it('takes only tasks under the threshold, strictly', async () => {
+    worker('w-openai', 'openai-compatible')
+    try {
+      const none = task()
+      graded('antigravity-cli')
+      expect((await quality.batchCandidates(1, null)).map((c) => c.taskId)).toEqual([none])
+      expect((await quality.batchCandidates(2, null)).map((c) => c.taskId).sort()).toHaveLength(2)
+    } finally {
+      db.db().exec("delete from workers where id = 'w-openai'")
+    }
   })
 
-  it('takes the newest first, because an old commit range is the one that will not resolve', () => {
+  it('takes the newest first, because an old commit range is the one that will not resolve', async () => {
     const older = task()
     const newer = task()
     void older
-    expect(quality.batchCandidates(1, 1).map((c) => c.taskId)).toEqual([newer])
+    expect((await quality.batchCandidates(1, 1)).map((c) => c.taskId)).toEqual([newer])
   })
 
-  it('caps ALL rather than letting it be unbounded', () => {
+  it('caps ALL rather than letting it be unbounded', async () => {
     for (let i = 0; i < 3; i += 1) task()
     // ⚠️ ALL is `null`, and it is still bounded — 500 — because an unbounded queue on a fleet with a
     // year of history is a request nobody meant to make.
-    expect(quality.batchCandidates(1, null)).toHaveLength(3)
+    expect(await quality.batchCandidates(1, null)).toHaveLength(3)
+  })
+
+  it('skips tasks that cannot be graded', async () => {
+    // A task authored by claude-code that was already graded by antigravity-cli has no eligible peers left
+    const t = task()
+    grade(t, 'antigravity-cli', 'complete', 8.5)
+    // threshold 2 would match it if not checking eligibility
+    const candidates = await quality.batchCandidates(2, null)
+    expect(candidates.map((c) => c.taskId)).not.toContain(t)
   })
 })
 

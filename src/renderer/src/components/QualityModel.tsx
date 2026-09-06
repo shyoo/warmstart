@@ -263,34 +263,56 @@ export function QualityModel({
                 <th>Reviewer</th>
                 <th>Graded on</th>
                 <th className="tbl-num">Reviews given</th>
-                <th className="tbl-num">Mean score given</th>
+                <th className="tbl-num">Average</th>
+                <th className="tbl-num">Median</th>
+                <th className="tbl-num">Range</th>
               </tr>
             </thead>
             <tbody>
-              {report.reviewers.map((r) => (
-                <tr key={r.adapterId}>
-                  <td className="tbl-strong">{r.label}</td>
-                  {/* ⚠️ What actually produced these reviews, not what Settings would pick for the
-                      next one. A judge's generosity is a fact about the model that graded. */}
-                  <td
-                    className="dim"
-                    title={
-                      r.modelsUsed.length > 0
-                        ? r.modelsUsed.join(', ')
-                        : 'no review recorded which model it ran on'
-                    }
-                  >
-                    {r.modelsUsed.length > 0
-                      ? r.modelsUsed.map((m) => modelLabel(m) ?? m).join(', ')
-                      : 'not recorded'}
-                    {r.gradingModel && !r.modelsUsed.includes(r.gradingModel) ? (
-                      <span className="dim"> · now set to {modelLabel(r.gradingModel) ?? r.gradingModel}</span>
-                    ) : null}
-                  </td>
-                  <td className="tbl-num num">{r.reviews}</td>
-                  <td className="tbl-num num">{fmt(r.meanGiven)}</td>
-                </tr>
-              ))}
+              {report.reviewers.flatMap((r) => {
+                const mainRow = (
+                  <tr key={r.adapterId}>
+                    <td className="tbl-strong">{r.label}</td>
+                    {/* ⚠️ What actually produced these reviews, not what Settings would pick for the
+                        next one. A judge's generosity is a fact about the model that graded. */}
+                    <td
+                      className="dim"
+                      title={
+                        r.modelsUsed.length > 0
+                          ? r.modelsUsed.join(', ')
+                          : 'no review recorded which model it ran on'
+                      }
+                    >
+                      {r.modelsUsed.length > 0
+                        ? r.modelsUsed.map((m) => modelLabel(m) ?? m).join(', ')
+                        : 'not recorded'}
+                      {r.gradingModel && !r.modelsUsed.includes(r.gradingModel) ? (
+                        <span className="dim"> · now set to {modelLabel(r.gradingModel) ?? r.gradingModel}</span>
+                      ) : null}
+                    </td>
+                    <td className="tbl-num num">{r.reviews}</td>
+                    <td className="tbl-num num">{fmt(r.meanGiven)}</td>
+                    <td className="tbl-num num">{fmt(r.medianGiven)}</td>
+                    <td className="tbl-num num">{fmtRange(r.minGiven, r.maxGiven)}</td>
+                  </tr>
+                )
+                const modelRows =
+                  r.byModel && r.byModel.length > 1
+                    ? r.byModel.map((m) => (
+                        <tr key={`${r.adapterId}-${m.model ?? 'unknown'}`} className="sub-row">
+                          <td style={{ paddingLeft: '1.5rem' }} className="dim">
+                            ↳ {m.model ? (modelLabel(m.model) ?? m.model) : 'unrecorded'}
+                          </td>
+                          <td className="dim"><code>{m.model ?? 'unrecorded'}</code></td>
+                          <td className="tbl-num num dim">{m.reviews}</td>
+                          <td className="tbl-num num dim">{fmt(m.meanGiven)}</td>
+                          <td className="tbl-num num dim">{fmt(m.medianGiven)}</td>
+                          <td className="tbl-num num dim">{fmtRange(m.minGiven, m.maxGiven)}</td>
+                        </tr>
+                      ))
+                    : []
+                return [mainRow, ...modelRows]
+              })}
             </tbody>
           </table>
           <p className="dim">
@@ -373,6 +395,12 @@ function Tile({ value, label }: { value: string; label: string }): React.JSX.Ele
 /** ⛔ `n/a`, never `0.0`. A dimension nothing scored is an absence, and 0 is a real grade. */
 function fmt(value: number | null): string {
   return value === null ? 'n/a' : value.toFixed(1)
+}
+
+function fmtRange(min: number | null, max: number | null): string {
+  if (min === null || max === null) return '—'
+  if (min === max) return min.toFixed(1)
+  return `${min.toFixed(1)}–${max.toFixed(1)}`
 }
 
 const SHORT: Record<RubricDimension, string> = {

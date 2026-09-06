@@ -969,6 +969,7 @@ function TaskDetail({
                     runs={runs}
                     fleet={fleet}
                     now={now}
+                    refresh={refresh}
                   />
                 )
               )}
@@ -2545,15 +2546,18 @@ function ReviewRow({
   review,
   runs,
   fleet,
-  now
+  now,
+  refresh
 }: {
   index: number
   review: QualityReview
   runs: Run[]
   fleet: FleetEntry[]
   now: number
+  refresh?: () => Promise<void>
 }): React.JSX.Element {
   const [open, setOpen] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   const reviewer = fleet.find((f) => f.worker.id === review.reviewerWorkerId)?.worker.label
   const run = runs.find((r) => r.id === review.runId)
   const spent = run
@@ -2561,11 +2565,34 @@ function ReviewRow({
     : null
   const rubric = rubricFor(review.rubricVersion)
 
+  const removeReview = async () => {
+    if (!confirm('Remove this quality review record?')) return
+    setDeleting(true)
+    try {
+      await rpc('review.delete', { reviewId: review.id })
+      await refresh?.()
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   return (
     <div className="side-run">
       <div className="side-run-head">
         <span className="side-run-seq">#{index} Quality Review</span>
-        <span className="num dim">{timeRange(review.createdAt, review.completedAt, now)}</span>
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
+          <span className="num dim">{timeRange(review.createdAt, review.completedAt, now)}</span>
+          <button
+            type="button"
+            className="linkish dim"
+            title="Remove this quality review record"
+            disabled={deleting}
+            onClick={() => void removeReview()}
+            style={{ fontSize: '0.8rem' }}
+          >
+            {deleting ? 'removing…' : '✕ Remove'}
+          </button>
+        </div>
       </div>
       <div className="side-run-facts">
         <div className="side-run-fact">

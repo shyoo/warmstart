@@ -56,6 +56,19 @@ export interface QualityReviewerTally {
   reviews: number
   /** ⚠️ Published as a calibration check, never applied as a correction. */
   meanGiven: number | null
+  medianGiven: number | null
+  minGiven: number | null
+  maxGiven: number | null
+  byModel?: QualityReviewerModelTally[]
+}
+
+export interface QualityReviewerModelTally {
+  model: string | null
+  reviews: number
+  meanGiven: number | null
+  medianGiven: number | null
+  minGiven: number | null
+  maxGiven: number | null
 }
 
 export interface UngradedTask {

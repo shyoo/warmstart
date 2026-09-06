@@ -851,6 +851,39 @@ export function cancelReview(id: string, reason = 'cancelled by a person'): Qual
   return requireReview(id)
 }
 
+/**
+ * Remove a quality review result (cancelled, failed, or completed).
+ *
+ * Recomputes the task's quality review score and count, and emits task.changed.
+ */
+export function deleteReview(id: string): { ok: true } | { ok: false; reason: string } {
+  const existing = row<ReviewRow>(db().prepare('select * from quality_reviews where id = ?').get(id))
+  if (!existing) return { ok: false, reason: `no quality review '${id}'` }
+
+  if (existing.status === 'pending') {
+    cancelReview(id, 'cancelled before deletion')
+  }
+
+  db().prepare('delete from quality_reviews where id = ?').run(id)
+
+  db().prepare(`
+    update tasks
+       set quality_review_score = (
+             select round(avg(q.composite), 1) from quality_reviews q
+              where q.task_id = tasks.id and q.status = 'complete' and q.composite is not null
+           ),
+           quality_review_count = (
+             select count(q.composite) from quality_reviews q
+              where q.task_id = tasks.id and q.status = 'complete' and q.composite is not null
+           )
+     where id = ?
+  `).run(existing.task_id)
+
+  log.info(`quality review ${id.slice(0, 8)} deleted`)
+  emit({ type: 'task.changed', task: requireTaskRow(existing.task_id) })
+  return { ok: true }
+}
+
 export function requireReview(id: string): QualityReview {
   const r = row<ReviewRow>(db().prepare('select * from quality_reviews where id = ?').get(id))
   if (!r) throw new Error(`no quality review '${id}'`)

@@ -5482,3 +5482,11 @@ select:focus-visible,
   flex-wrap: wrap;
   font-size: var(--text-dense);
 }
+
+/* Statistics tables: center all columns except the first (which preserves tree indent) */
+.stat-tbl th:not(:first-child),
+.stat-tbl td:not(:first-child),
+.stat-tbl th.tbl-num:not(:first-child),
+.stat-tbl td.tbl-num:not(:first-child) {
+  text-align: center;
+}

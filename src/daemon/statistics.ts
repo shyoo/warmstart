@@ -206,6 +206,85 @@ export function samples(now = Date.now()): Sample[] {
 
 // ---------------------------------------------------------------------------- the tree
 
+const EFFORT_POWER: Record<string, number> = {
+  max: 60,
+  xhigh: 50,
+  high: 40,
+  medium: 30,
+  med: 30,
+  low: 20,
+  minimal: 10,
+  min: 10
+}
+
+export function effortPowerScore(effort: string): number {
+  const key = effort.trim().toLowerCase()
+  return EFFORT_POWER[key] ?? 0
+}
+
+export function compareEffortPower(a: string, b: string): number {
+  const diff = effortPowerScore(b) - effortPowerScore(a)
+  if (diff !== 0) return diff
+  return a.localeCompare(b)
+}
+
+export function modelPowerScore(modelId: string): number {
+  if (!modelId || modelId === NO_MODEL) return -1
+  const lower = modelId.toLowerCase()
+
+  let score = 0
+  let effortScore = 0
+
+  // 1. Check & strip embedded effort in model ID (e.g. gemini-3.8-flash-high, gemini-3.8-flash-medium)
+  let baseModel = lower
+  for (const [eff, val] of Object.entries(EFFORT_POWER)) {
+    if (lower.endsWith(`-${eff}`) || lower.endsWith(`_${eff}`)) {
+      effortScore = val
+      baseModel = lower.slice(0, -(eff.length + 1))
+      break
+    }
+  }
+  score += effortScore
+
+  // 2. Version extraction (e.g. 3.8, 3.7, 3-7, 3.5, 5.6, 5.4, 4.5, etc.)
+  const vMatch = baseModel.match(/(?:gemini|claude|gpt|llama|qwen|sonnet|haiku|opus)?[-_]?(\d+)(?:[._-](\d+))?/)
+  if (vMatch) {
+    const major = Number.parseInt(vMatch[1] ?? '0', 10) || 0
+    const minor = Number.parseInt(vMatch[2] ?? '0', 10) || 0
+    score += major * 10000 + minor * 1000
+  }
+
+  // 3. Parameter size (e.g. 120b, 70b, 32b, 8b)
+  const pMatch = baseModel.match(/(\d+)b\b/)
+  if (pMatch) {
+    score += (Number.parseInt(pMatch[1] ?? '0', 10) || 0) * 50
+  }
+
+  // 4. Tier keyword adjustments on baseModel
+  if (baseModel.includes('opus')) score += 900
+  else if (baseModel.includes('pro') || baseModel.includes('ultra')) score += 800
+  else if (baseModel.includes('plus') || baseModel.includes('terra')) score += 700
+  else if (baseModel.includes('sonnet')) score += 600
+  else if (baseModel.includes('flash')) score += 500
+  else if (baseModel.includes('medium')) score += 350
+  else if (baseModel.includes('haiku')) score += 200
+  else if (baseModel.includes('mini')) score += 150
+  else if (baseModel.includes('lite') || baseModel.includes('nano')) score += 100
+
+  // 5. Reasoning / Thinking models
+  if (baseModel.includes('thinking') || baseModel.includes('reasoning') || baseModel.startsWith('o1') || baseModel.startsWith('o3')) {
+    score += 500
+  }
+
+  return score
+}
+
+export function compareModelPower(a: string, b: string): number {
+  const diff = modelPowerScore(b) - modelPowerScore(a)
+  if (diff !== 0) return diff
+  return a.localeCompare(b)
+}
+
 /**
  * The three rungs every table on this page has, in order.
  *
@@ -237,7 +316,7 @@ function tree<T extends Sample, R>(
       list.push(s)
       byModel.set(k, list)
     }
-    for (const [model, modelGroup] of [...byModel.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+    for (const [model, modelGroup] of [...byModel.entries()].sort((a, b) => compareModelPower(a[0], b[0]))) {
       out.push(fold('model', model, `${adapterId}/${model}`, modelGroup))
 
       const byEffort = new Map<string, T[]>()
@@ -254,7 +333,7 @@ function tree<T extends Sample, R>(
       //    parent's numbers is a row that costs a line and says nothing.
       if (byEffort.size < 2) continue
       for (const [effort, effortGroup] of [...byEffort.entries()].sort((a, b) =>
-        a[0].localeCompare(b[0])
+        compareEffortPower(a[0], b[0])
       )) {
         out.push(fold('effort', effort, `${adapterId}/${model}/${effort}`, effortGroup))
       }

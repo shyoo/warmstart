@@ -19,6 +19,7 @@ import { db, rows } from './db.js'
 import { adapter, adapters } from './adapters/index.js'
 import { pendingReviews } from './review.js'
 import { getTask } from './tasks.js'
+import type { Task } from '@shared/tasks.js'
 import { defaultGradingModel, listWorkers } from './workers.js'
 import { reviewEligibility, reviewerAvailability } from './reviewer.js'
 
@@ -154,6 +155,18 @@ function qualityKeys(reviews: ReviewAggRow[]): QualityKey[] {
  * correction: nothing here rescales a score by its reviewer's generosity, because there is no
  * measurement on this fleet that would justify choosing a scale factor.
  */
+function median(values: number[]): number | null {
+  if (values.length === 0) return null
+  const sorted = [...values].sort((a, b) => a - b)
+  const mid = Math.floor(sorted.length / 2)
+  if (sorted.length % 2 === 0) {
+    const a = sorted[mid - 1]
+    const b = sorted[mid]
+    return a !== undefined && b !== undefined ? (a + b) / 2 : null
+  }
+  return sorted[mid] ?? null
+}
+
 function reviewerTallies(reviews: ReviewAggRow[]): QualityReviewerTally[] {
   const buckets = new Map<string, { scores: number[]; models: Set<string> }>()
   for (const r of reviews) {
@@ -165,14 +178,39 @@ function reviewerTallies(reviews: ReviewAggRow[]): QualityReviewerTally[] {
     buckets.set(r.reviewer_adapter, bucket)
   }
   return [...buckets.entries()]
-    .map(([adapterId, bucket]) => ({
-      adapterId,
-      label: labelFor(adapterId),
-      gradingModel: defaultGradingModel(adapterId),
-      modelsUsed: [...bucket.models].sort(),
-      reviews: bucket.scores.length,
-      meanGiven: mean(bucket.scores)
-    }))
+    .map(([adapterId, bucket]) => {
+      const modelBuckets = new Map<string | null, number[]>()
+      for (const r of reviews) {
+        if (r.reviewer_adapter !== adapterId) continue
+        const m = r.reviewer_model ?? null
+        const list = modelBuckets.get(m) ?? []
+        list.push(r.composite as number)
+        modelBuckets.set(m, list)
+      }
+      const byModel = [...modelBuckets.entries()]
+        .map(([model, scores]) => ({
+          model,
+          reviews: scores.length,
+          meanGiven: mean(scores),
+          medianGiven: median(scores),
+          minGiven: scores.length ? Math.min(...scores) : null,
+          maxGiven: scores.length ? Math.max(...scores) : null
+        }))
+        .sort((a, b) => b.reviews - a.reviews)
+
+      return {
+        adapterId,
+        label: labelFor(adapterId),
+        gradingModel: defaultGradingModel(adapterId),
+        modelsUsed: [...bucket.models].sort(),
+        reviews: bucket.scores.length,
+        meanGiven: mean(bucket.scores),
+        medianGiven: median(bucket.scores),
+        minGiven: bucket.scores.length ? Math.min(...bucket.scores) : null,
+        maxGiven: bucket.scores.length ? Math.max(...bucket.scores) : null,
+        byModel
+      }
+    })
     .sort((a, b) => b.reviews - a.reviews)
 }
 
@@ -427,20 +465,51 @@ function gradersByTask(taskIds: string[]): Map<string, ReviewCredit[]> {
   return out
 }
 
+export async function isTaskGradable(task: Task): Promise<{ ok: boolean; reason: string }> {
+  const peers = reviewerAvailability(task)
+  if (!peers.eligible) {
+    return { ok: false, reason: peers.reason }
+  }
+  if (task.projectId) {
+    const el = await reviewEligibility(task.id)
+    if (!el.ok) return { ok: false, reason: el.reason }
+  }
+  return { ok: true, reason: '' }
+}
+
 /** One page of the Quality Review table, with the bucket counts the tabs above it print. */
 export async function reviewQueue(
   filter: ReviewFilter = 'none',
   limit = 25,
-  offset = 0
+  offset = 0,
+  gradableOnly = false
 ): Promise<ReviewQueuePage> {
   const take = Math.max(1, Math.min(200, Math.floor(limit)))
   const skip = Math.max(0, Math.floor(offset))
-  const found = queueRows(filter, take, skip)
+  const counts = reviewCounts()
+
+  let found: QueueRow[]
+  let total: number
+
+  if (gradableOnly) {
+    const allCandidates = queueRows(filter, 500, 0)
+    const gradableRows: QueueRow[] = []
+    for (const r of allCandidates) {
+      const task = getTask(r.id)
+      if (!task) continue
+      const gradable = await isTaskGradable(task)
+      if (gradable.ok) gradableRows.push(r)
+    }
+    total = gradableRows.length
+    found = gradableRows.slice(skip, skip + take)
+  } else {
+    found = queueRows(filter, take, skip)
+    total =
+      filter === 'none' ? counts.none : filter === 'one' ? counts.one : filter === 'many' ? counts.many : counts.total
+  }
+
   const graders = gradersByTask(found.map((r) => r.id))
   const grading = new Set(pendingReviews().map((r) => r.taskId))
-  const counts = reviewCounts()
-  const total =
-    filter === 'none' ? counts.none : filter === 'one' ? counts.one : filter === 'many' ? counts.many : counts.total
 
   return {
     counts,
@@ -448,16 +517,9 @@ export async function reviewQueue(
     adapterLabels: adapterLabels(),
     rows: await Promise.all(found.map(async (r) => {
       const task = getTask(r.id)
-      // ⚠️ A row whose task vanished between the two reads is not an eligibility answer, and saying
-      // "no eligible reviewer" about it would be a claim this code cannot support.
-      // The column promises whether the task can be graded, not merely whether a peer exists. A
-      // missing commit range is permanent and belongs here before a batch discovers it by skipping.
-      const peers = task ? reviewerAvailability(task) : null
-      const eligibility = !task
-        ? { ok: false, reason: 'this task is no longer readable' }
-        : peers && !peers.eligible
-          ? { ok: false, reason: peers.reason }
-          : await reviewEligibility(task.id)
+      const gradable = task
+        ? await isTaskGradable(task)
+        : { ok: false, reason: 'this task is no longer readable' }
       return {
         taskId: r.id,
         seq: r.seq,
@@ -469,8 +531,8 @@ export async function reviewQueue(
         reviewCount: r.quality_review_count,
         score: r.quality_review_score,
         gradedBy: graders.get(r.id) ?? [],
-        eligible: eligibility.ok,
-        ineligibleReason: eligibility.ok ? '' : eligibility.reason,
+        eligible: gradable.ok,
+        ineligibleReason: gradable.ok ? '' : gradable.reason,
         grading: grading.has(r.id)
       }
     }))
@@ -480,16 +542,13 @@ export async function reviewQueue(
 /**
  * The tasks a batch would grade: fewer than `threshold` stored grades, newest first.
  *
- * ⛔ `count` is what will be **attempted**, not what will be graded. The batch this replaced took a
- * wider slice and kept going until it had graded its number, which is right for a button that says
- * *grade five* and wrong for a queue an operator is watching: a row that was skipped has to stay
- * visible as a skip with its reason, and silently substituting the next task for it hides exactly
- * the fleet fact — no peer left, no resolvable range — the page was opened to find.
+ * ⛔ **Skips ungradable tasks** (e.g. missing commit range or no peer). `count` is what will be
+ * **attempted**, or null for all matching.
  */
-export function batchCandidates(threshold: number, count: number | null): UngradedTask[] {
+export async function batchCandidates(threshold: number, count: number | null): Promise<UngradedTask[]> {
   const under = Math.max(1, Math.floor(threshold))
-  const take = count === null ? 500 : Math.max(1, Math.min(500, Math.floor(count)))
-  return rows<QueueRow>(
+  const targetCount = count === null ? 500 : Math.max(1, Math.min(500, Math.floor(count)))
+  const candidateRows = rows<QueueRow>(
     db()
       .prepare(
         `select t.id, t.seq, t.title, t.project_id, t.updated_at, t.quality_review_count,
@@ -503,17 +562,27 @@ export function batchCandidates(threshold: number, count: number | null): Ungrad
                     and coalesce(r.outcome, '') <> 'failed'
                   order by r.started_at desc limit 1) as model
            ${FINISHED} and t.quality_review_count < ?
-          order by t.updated_at desc
-          limit ?`
+          order by t.updated_at desc`
       )
-      .all(under, take)
-  ).map((r) => ({
-    taskId: r.id,
-    seq: r.seq,
-    title: r.title.slice(0, 400),
-    projectId: r.project_id,
-    finishedAt: r.updated_at,
-    adapterId: r.adapter_id,
-    model: r.model
-  }))
+      .all(under)
+  )
+
+  const result: UngradedTask[] = []
+  for (const r of candidateRows) {
+    if (result.length >= targetCount) break
+    const task = getTask(r.id)
+    if (!task) continue
+    const gradable = await isTaskGradable(task)
+    if (!gradable.ok) continue
+    result.push({
+      taskId: r.id,
+      seq: r.seq,
+      title: r.title.slice(0, 400),
+      projectId: r.project_id,
+      finishedAt: r.updated_at,
+      adapterId: r.adapter_id,
+      model: r.model
+    })
+  }
+  return result
 }

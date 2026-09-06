@@ -56,14 +56,14 @@ export function batchRunning(): boolean {
  * `count` is how many tasks will be **attempted**, or null for every one that matches. `threshold`
  * is a strict `quality_review_count < threshold`, so 1 means "has no grade at all".
  */
-export function startBatch(
+export async function startBatch(
   count: number | null,
   threshold: number
-): { ok: true; batch: GradeBatch } | { ok: false; reason: string } {
+): Promise<{ ok: true; batch: GradeBatch } | { ok: false; reason: string }> {
   if (batchRunning()) {
     return { ok: false, reason: 'a batch is already running — wait for it or stop it first' }
   }
-  const candidates = batchCandidates(threshold, count)
+  const candidates = await batchCandidates(threshold, count)
   if (candidates.length === 0) {
     return { ok: false, reason: 'no finished task matches that filter, so there is nothing to grade' }
   }

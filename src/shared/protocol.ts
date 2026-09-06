@@ -1482,6 +1482,11 @@ export interface RpcMap {
     params: { reviewId?: string; taskId?: string }
     result: { ok: true; review: QualityReview } | { ok: false; reason: string }
   }
+  /** Remove one quality review result (cancelled, failed, or unwanted). */
+  'review.delete': {
+    params: { reviewId: string }
+    result: { ok: true } | { ok: false; reason: string }
+  }
   'task.create': { params: TaskCreateParams; result: Task }
   /**
    * Take one image off the operator's clipboard and put it on disk.
@@ -1712,7 +1717,7 @@ export interface RpcMap {
    * counts the bucket tabs print and, per row, whether any peer could still grade it.
    */
   'quality.queue': {
-    params: { filter?: ReviewFilter; limit?: number; offset?: number } | void
+    params: { filter?: ReviewFilter; limit?: number; offset?: number; gradableOnly?: boolean } | void
     result: ReviewQueuePage
   }
   /**

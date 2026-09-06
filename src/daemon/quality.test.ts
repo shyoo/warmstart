@@ -226,6 +226,28 @@ describe('per-model quality', () => {
     expect(tally?.reviews).toBe(1)
   })
 
+  it('publishes median, range, and byModel breakdowns for reviewers', () => {
+    review({ adapter: 'claude-code', model: 'claude-sonnet-5', composite: 5, reviewer: 'antigravity-cli', reviewerModel: 'gemini-3.8-flash' })
+    review({ adapter: 'claude-code', model: 'claude-sonnet-5', composite: 7, reviewer: 'antigravity-cli', reviewerModel: 'gemini-3.8-flash' })
+    review({ adapter: 'claude-code', model: 'claude-sonnet-5', composite: 9, reviewer: 'antigravity-cli', reviewerModel: 'gemini-3.8-pro' })
+
+    const tally = quality.qualityReport().reviewers.find((r) => r.adapterId === 'antigravity-cli')
+    expect(tally).toBeDefined()
+    expect(tally?.reviews).toBe(3)
+    expect(tally?.meanGiven).toBe(7)
+    expect(tally?.medianGiven).toBe(7)
+    expect(tally?.minGiven).toBe(5)
+    expect(tally?.maxGiven).toBe(9)
+
+    expect(tally?.byModel).toHaveLength(2)
+    const flash = tally?.byModel?.find((m) => m.model === 'gemini-3.8-flash')
+    expect(flash?.reviews).toBe(2)
+    expect(flash?.meanGiven).toBe(6)
+    expect(flash?.medianGiven).toBe(6)
+    expect(flash?.minGiven).toBe(5)
+    expect(flash?.maxGiven).toBe(7)
+  })
+
   it('publishes the rubric it aggregated under, so a weight change cannot reinterpret history', () => {
     const report = quality.qualityReport()
     expect(report.rubricVersion).toBe('1.0')

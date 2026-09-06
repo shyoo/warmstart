@@ -14,7 +14,7 @@ import type { ChildDefaults, Task, TaskConstraints } from '@shared/tasks.js'
 import { resolveAutoCompact, resolveCompletionMode, windowsForPool } from '@shared/tasks.js'
 import { existsSync } from 'node:fs'
 import { adapter, adapters } from './adapters/index.js'
-import { reviewsForTask } from './review.js'
+import { deleteReview, reviewsForTask } from './review.js'
 import { cancelReview, requestReview, reviewEligibility } from './reviewer.js'
 import { attachmentBytes, createAttachment, createFolderAttachment, requireAttachment } from './attachments.js'
 import {
@@ -533,6 +533,10 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
       if (!target) return { ok: false, reason: 'missing reviewId or taskId' }
       return cancelReview(target)
     },
+    'review.delete': (p) => {
+      if (!p.reviewId) return { ok: false, reason: 'missing reviewId' }
+      return deleteReview(p.reviewId)
+    },
 
     'task.create': (p) =>
       createTask({
@@ -1003,7 +1007,8 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
     'quality.report': () => qualityReport(),
     'statistics.report': () => statisticsReport(),
     'quality.ungraded': (p) => ungradedTasks(p?.limit ?? 25),
-    'quality.queue': (p) => reviewQueue(p?.filter ?? 'none', p?.limit ?? 25, p?.offset ?? 0),
+    'quality.queue': (p) =>
+      reviewQueue(p?.filter ?? 'none', p?.limit ?? 25, p?.offset ?? 0, p?.gradableOnly ?? false),
     // ⛔ Starts a queue and answers; it does not wait for the grades. See `quality.batch.start`.
     'quality.batch.start': (p) => startBatch(p.count, p.threshold),
     'quality.batch': () => currentBatch(),

@@ -112,6 +112,362 @@ function thin(samples: number): boolean {
   return samples < 5
 }
 
+function StatGraph({
+  rows,
+  unit,
+  render
+}: {
+  rows: Array<StatRow & { basis?: PriceBasis; unpriced?: number }>
+  unit: 'price' | 'velocity'
+  render: (value: number) => string
+}): React.JSX.Element | null {
+  const [mode, setMode] = useState<'whisker' | 'grouped'>('whisker')
+  const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
+
+  // Prefer model-level rows; fallback to agent-level if no model rows exist
+  const modelRows = rows.filter((r) => r.level === 'model' && r.distribution.samples > 0)
+  const targetRows = modelRows.length > 0 ? modelRows : rows.filter((r) => r.distribution.samples > 0)
+
+  if (targetRows.length === 0) return null
+
+  const maxVal = Math.max(
+    1,
+    ...targetRows.flatMap((r) => [
+      r.distribution.p100 ?? 0,
+      r.distribution.p99 ?? 0,
+      r.distribution.average ?? 0,
+      r.distribution.p50 ?? 0
+    ])
+  )
+
+  const labelWidth = 190
+  const chartWidth = 520
+  const totalWidth = labelWidth + chartWidth + 30
+  const rowHeight = mode === 'whisker' ? 34 : 48
+  const headerHeight = 32
+  const totalHeight = headerHeight + targetRows.length * rowHeight + 20
+
+  const scale = (val: number | null) => {
+    if (val === null || val <= 0) return 0
+    return Math.min(chartWidth, (val / maxVal) * chartWidth)
+  }
+
+  // Ticks for axis
+  const tickCount = 5
+  const ticks = Array.from({ length: tickCount + 1 }, (_, i) => (maxVal / tickCount) * i)
+
+  return (
+    <div
+      className="stat-graph-box"
+      style={{
+        marginBottom: 'var(--sp-4)',
+        padding: 'var(--sp-3)',
+        border: '1px solid var(--color-border)',
+        borderRadius: 'var(--radius-sm)',
+        background: 'var(--color-surface)'
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginBottom: 'var(--sp-2)',
+          flexWrap: 'wrap',
+          gap: 'var(--sp-2)'
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-3)' }}>
+          <span style={{ fontWeight: 600, fontSize: 'var(--text-body)' }}>
+            {unit === 'price' ? 'Price' : 'Active Time'} Distribution Comparison
+          </span>
+          <div
+            className="btn-group"
+            style={{
+              display: 'inline-flex',
+              borderRadius: 'var(--radius-sm)',
+              overflow: 'hidden',
+              border: '1px solid var(--color-border)'
+            }}
+          >
+            <button
+              type="button"
+              className={`btn btn--xs ${mode === 'whisker' ? 'btn--primary' : 'btn--secondary'}`}
+              style={{ borderRadius: 0, padding: '2px 8px', fontSize: '11px' }}
+              onClick={() => setMode('whisker')}
+            >
+              Range &amp; Whisker
+            </button>
+            <button
+              type="button"
+              className={`btn btn--xs ${mode === 'grouped' ? 'btn--primary' : 'btn--secondary'}`}
+              style={{ borderRadius: 0, padding: '2px 8px', fontSize: '11px' }}
+              onClick={() => setMode('grouped')}
+            >
+              Grouped Bars
+            </button>
+          </div>
+        </div>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 'var(--sp-3)',
+            fontSize: 'var(--text-meta)'
+          }}
+        >
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <span
+              style={{
+                width: 10,
+                height: 10,
+                background: '#38bdf8',
+                transform: 'rotate(45deg)',
+                display: 'inline-block'
+              }}
+            />
+            Average
+          </span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <span
+              style={{
+                width: 12,
+                height: 8,
+                background: '#34d399',
+                borderRadius: 2,
+                display: 'inline-block'
+              }}
+            />
+            p50 (Median)
+          </span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <span
+              style={{
+                width: 12,
+                height: 8,
+                background: '#fbbf24',
+                borderRadius: 2,
+                display: 'inline-block'
+              }}
+            />
+            p99
+          </span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <span
+              style={{
+                width: 12,
+                height: 8,
+                background: '#f472b6',
+                borderRadius: 2,
+                display: 'inline-block'
+              }}
+            />
+            p100 (Max)
+          </span>
+        </div>
+      </div>
+
+      <div style={{ width: '100%', overflowX: 'auto' }}>
+        <svg
+          viewBox={`0 0 ${totalWidth} ${totalHeight}`}
+          style={{ width: '100%', minWidth: 620, height: 'auto', display: 'block' }}
+        >
+          {/* Axis Gridlines & Labels */}
+          {ticks.map((t, idx) => {
+            const x = labelWidth + scale(t)
+            return (
+              <g key={idx}>
+                <line
+                  x1={x}
+                  y1={headerHeight - 8}
+                  x2={x}
+                  y2={totalHeight - 12}
+                  stroke="var(--color-border)"
+                  strokeDasharray={idx === 0 ? undefined : '2,2'}
+                  strokeWidth="1"
+                />
+                <text
+                  x={x}
+                  y={headerHeight - 12}
+                  textAnchor={idx === 0 ? 'start' : idx === tickCount ? 'end' : 'middle'}
+                  fill="var(--color-text-dim)"
+                  fontSize="10"
+                  fontFamily="var(--font-mono)"
+                >
+                  {render(t)}
+                </text>
+              </g>
+            )
+          })}
+
+          {/* Rows */}
+          {targetRows.map((row, idx) => {
+            const y = headerHeight + idx * rowHeight
+            const d = row.distribution
+            const xAvg = scale(d.average)
+            const xP50 = scale(d.p50)
+            const xP99 = scale(d.p99)
+            const xP100 = scale(d.p100)
+            const isHovered = hoveredIdx === idx
+
+            const label = rowLabel(row)
+
+            return (
+              <g
+                key={row.key}
+                onMouseEnter={() => setHoveredIdx(idx)}
+                onMouseLeave={() => setHoveredIdx(null)}
+                style={{ cursor: 'pointer' }}
+              >
+                {/* Row highlight */}
+                {isHovered && (
+                  <rect
+                    x="0"
+                    y={y}
+                    width={totalWidth}
+                    height={rowHeight}
+                    fill="var(--color-surface-hover, rgba(255,255,255,0.04))"
+                    rx="3"
+                  />
+                )}
+
+                {/* Model Label */}
+                <text
+                  x={labelWidth - 12}
+                  y={y + (mode === 'whisker' ? rowHeight / 2 + 4 : 16)}
+                  textAnchor="end"
+                  fill={isHovered ? 'var(--color-text)' : 'var(--color-text-dim)'}
+                  fontSize="12"
+                  fontWeight={row.level === 'agent' ? '600' : '400'}
+                >
+                  {label.length > 24 ? label.slice(0, 23) + '…' : label}
+                </text>
+
+                {mode === 'whisker' ? (
+                  // Range & Whisker Mode
+                  <g transform={`translate(${labelWidth}, ${y + rowHeight / 2})`}>
+                    {/* Background span line / bar 0 -> p100 */}
+                    <rect
+                      x={0}
+                      y={-4}
+                      width={xP100}
+                      height={8}
+                      fill="rgba(244, 114, 182, 0.15)"
+                      rx={3}
+                    />
+
+                    {/* Whisker bar p50 -> p100 */}
+                    <line x1={xP50} y1={0} x2={xP100} y2={0} stroke="#f472b6" strokeWidth="2" />
+
+                    {/* p50 -> p99 highlight */}
+                    <line x1={xP50} y1={0} x2={xP99} y2={0} stroke="#fbbf24" strokeWidth="3" />
+
+                    {/* p50 tick */}
+                    <line
+                      x1={xP50}
+                      y1={-8}
+                      x2={xP50}
+                      y2={8}
+                      stroke="#34d399"
+                      strokeWidth="2.5"
+                      strokeLinecap="round"
+                    />
+
+                    {/* p99 tick */}
+                    <line x1={xP99} y1={-7} x2={xP99} y2={7} stroke="#fbbf24" strokeWidth="2" />
+
+                    {/* p100 tick */}
+                    <line x1={xP100} y1={-7} x2={xP100} y2={7} stroke="#f472b6" strokeWidth="2" />
+
+                    {/* Average Diamond */}
+                    <g transform={`translate(${xAvg}, 0) rotate(45)`}>
+                      <rect
+                        x={-4}
+                        y={-4}
+                        width={8}
+                        height={8}
+                        fill="#38bdf8"
+                        stroke="var(--color-bg)"
+                        strokeWidth="1"
+                      />
+                    </g>
+                  </g>
+                ) : (
+                  // Grouped Bars Mode
+                  <g transform={`translate(${labelWidth}, ${y + 6})`}>
+                    {/* Average bar */}
+                    <rect x={0} y={0} width={xAvg} height={7} fill="#38bdf8" rx={1.5} />
+                    {/* p50 bar */}
+                    <rect x={0} y={9} width={xP50} height={7} fill="#34d399" rx={1.5} />
+                    {/* p99 bar */}
+                    <rect x={0} y={18} width={xP99} height={7} fill="#fbbf24" rx={1.5} />
+                    {/* p100 bar */}
+                    <rect x={0} y={27} width={xP100} height={7} fill="#f472b6" rx={1.5} />
+                  </g>
+                )}
+
+                {/* Hover values preview */}
+                {isHovered && (
+                  <title>{`${label} (n=${d.samples}): Avg=${d.average !== null ? render(d.average) : 'n/a'}, p50=${d.p50 !== null ? render(d.p50) : 'n/a'}, p99=${d.p99 !== null ? render(d.p99) : 'n/a'}, p100=${d.p100 !== null ? render(d.p100) : 'n/a'}`}</title>
+                )}
+              </g>
+            )
+          })}
+        </svg>
+      </div>
+      {hoveredIdx !== null && targetRows[hoveredIdx] && (
+        <div
+          style={{
+            marginTop: 'var(--sp-2)',
+            padding: 'var(--sp-2)',
+            background: 'var(--color-surface-2)',
+            borderRadius: 'var(--radius-sm)',
+            fontSize: 'var(--text-meta)',
+            display: 'flex',
+            gap: 'var(--sp-3)',
+            flexWrap: 'wrap'
+          }}
+        >
+          <strong>{rowLabel(targetRows[hoveredIdx])}</strong>
+          <span className="dim">n={targetRows[hoveredIdx].distribution.samples}</span>
+          <span>
+            Avg:{' '}
+            <strong className="num">
+              {targetRows[hoveredIdx].distribution.average !== null
+                ? render(targetRows[hoveredIdx].distribution.average)
+                : 'n/a'}
+            </strong>
+          </span>
+          <span>
+            p50:{' '}
+            <strong className="num">
+              {targetRows[hoveredIdx].distribution.p50 !== null
+                ? render(targetRows[hoveredIdx].distribution.p50)
+                : 'n/a'}
+            </strong>
+          </span>
+          <span>
+            p99:{' '}
+            <strong className="num">
+              {targetRows[hoveredIdx].distribution.p99 !== null
+                ? render(targetRows[hoveredIdx].distribution.p99)
+                : 'n/a'}
+            </strong>
+          </span>
+          <span>
+            p100:{' '}
+            <strong className="num">
+              {targetRows[hoveredIdx].distribution.p100 !== null
+                ? render(targetRows[hoveredIdx].distribution.p100)
+                : 'n/a'}
+            </strong>
+          </span>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function DistributionTable({
   rows,
   unit,
@@ -135,7 +491,7 @@ function DistributionTable({
     )
   }
   return (
-    <table className="tbl">
+    <table className="tbl stat-tbl">
       <thead>
         <tr>
           <th>Agent / Model / Effort</th>
@@ -297,6 +653,8 @@ function PriceTab({ report }: { report: StatisticsReport }): React.JSX.Element {
         )}
       </section>
 
+      <StatGraph rows={price.rows} unit="price" render={money} />
+
       <DistributionTable
         rows={price.rows}
         unit="price"
@@ -353,6 +711,8 @@ function VelocityTab({ report }: { report: StatisticsReport }): React.JSX.Elemen
           </p>
         )}
       </section>
+
+      <StatGraph rows={velocity.rows} unit="velocity" render={duration} />
 
       <DistributionTable rows={velocity.rows} unit="duration" render={duration} />
     </div>
@@ -419,7 +779,7 @@ function QualityTab({
           or to look a baseline up for.
         </div>
       ) : (
-        <table className="tbl">
+        <table className="tbl stat-tbl">
           <thead>
             <tr>
               <th>Agent / Model / Effort</th>
