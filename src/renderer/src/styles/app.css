@@ -556,6 +556,28 @@ body {
 }
 
 /*
+ * Money accruing now, under the windows it is no longer bounded by.
+ *
+ * ⛔ Below the gauges rather than among them, because it is a different kind of number: a gauge is a
+ * share of a fee already paid, this is a bill being run up. Four rows of identical shape would read
+ * as four measurements of one thing, which is the confusion `.wcard-rule` exists further down to end.
+ *
+ * ⚠️ Drawn only while credits are enabled on that account, so it cannot make the card grow and
+ * shrink on a timer the way a transient row would.
+ */
+.wcard-credits {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.tag--credits {
+  color: var(--state-human);
+  border-color: var(--state-human);
+}
+
+/*
  * The corner of the head row: how old the reading is, or three dots while a fresh one is on its way.
  *
  * ⛔ Here rather than under the quota bars, and that is the whole point of it. Both facts are

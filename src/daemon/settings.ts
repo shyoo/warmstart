@@ -50,6 +50,19 @@ export const DEFAULT_SETTINGS: Settings = {
   autoOverrunPreempt: true,
 
   /**
+   * Whether a run may keep going past the plan limit on an account with usage credits turned on.
+   *
+   * ⛔ Default **off**, and this one is not the usual caution. Every other switch here gates an
+   * intervention whose worst outcome is an early wrap-up or some wasted tokens; this one gates
+   * *spending real money*, at a rate the vendor sets and this app cannot see. An operator opts into
+   * a bill deliberately or not at all.
+   *
+   * ⚠️ Inert on its own. It only reaches a worker the vendor has reported as having credits enabled
+   * (`Worker.credits.enabled`) — see `spendingCreditsOn`.
+   */
+  spendCreditsPastLimit: false,
+
+  /**
    * Whether the scheduler may stop a run for going far past its estimate.
    *
    * ⛔ Default **off**, and the asymmetry with `autoPreempt` is the point. A window boundary is a

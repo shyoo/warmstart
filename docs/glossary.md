@@ -365,6 +365,23 @@ it lapses: send it queued work, keepalive, compact, or let it go. See `cost-mode
 reading that stops the fleet dispatching to an account says to save what it is holding. See
 `cost-model.md` §5.
 
+**Usage credits** (*extra usage*) — *permission for one account to keep working past its plan limit,
+billed on top of the subscription.* ⛔ **Two switches, and neither means anything alone.**
+`settings.spendCreditsPastLimit` is the operator's standing intent, fleet-wide and **off by default**
+because it is the only control in this app that spends real money; `Worker.credits.enabled` is what
+the *vendor* last said about that one account, read by `probeSpend`. `spendingCreditsOn()` is the only
+reader of the pair, and where both are true the quota guards stand down for that worker — both
+preempts, and the quota-motivated half of compaction — because hitting the limit is the moment credits
+start doing their job, and wrapping the run up there is what defeats the purchase. ⚠️ A worker no
+spend probe has read is `null`: **not knowing is not permission**.
+⛔ **A reading, never a request.** Nothing here turns credits on. Measured 2026-09-07 on Claude Code
+2.1.263, both live accounts report `can_toggle: false` with `org_level_disabled`, and `/usage-credits`
+opens a **login chooser** rather than a toggle — so the switch is thrown by a person where the vendor
+put it. What the app adds is that it knows what was *asked for* (`Worker.creditsIntent`), which is the
+only way `creditsDiscrepancy` can say *you asked for credits here and the vendor says they are off*.
+⚠️ Distinct from **Anthropic Console credits**, which are prepaid API balance spent by running against
+an API key at list price. See `cost-model.md` §4 and `adapters.md`.
+
 **Refusal vs caution** — what the vendor's live `rate_limit_event` `status` is saying. **`rejected`**
 is a refusal: the turn did not happen, and one is enough to stop a run. **`allowed_warning`** is a
 caution attached to a turn that *was served* — evidence that quota is moving, never proof the next

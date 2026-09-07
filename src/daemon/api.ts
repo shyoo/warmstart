@@ -21,6 +21,9 @@ import {
   createWorker,
   getWorker,
   listWorkers,
+  creditsDiscrepancy,
+  noteCreditsDiscrepancyReported,
+  setWorkerCreditsIntent,
   refreshIdentity,
   reorderWorkers,
   requireWorker,
@@ -259,6 +262,7 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
       checkWorkerDefaults(requireWorker(id).adapterId, patch)
       return updateWorker(id, patch)
     },
+    'worker.setCreditsIntent': (p) => setWorkerCreditsIntent(p.id, p.asked),
     'worker.reorder': (p) => reorderWorkers(p.ids),
     'worker.retire': (p) => retireWorker(p.id),
     // ⭐ A person pressing Probe wants a number, not a re-read of a cache that may be weeks old.
@@ -358,6 +362,17 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
               `${w.label}: quota reading is ${describeAge(quota.ageMs)} old - ` +
                 'treat it as unknown, not as current'
             )
+          }
+          // ⛔ **The gap between what was asked for and what the vendor is doing.** An operator who
+          // turned on "spend credits past the plan limit" for this account, and whose account is not
+          // in fact spending them, has runs still being wrapped up at the limit and no way to see
+          // why from the board. ⚠️ Raised here rather than as a `Question`, because a question needs
+          // a session to hang on and this is a property of the *account* — and because Doctor is
+          // already where "we probed, and here is what does not add up" lives.
+          const mismatch = creditsDiscrepancy(w)
+          if (mismatch) {
+            warnings.push(`${w.label}: ${mismatch.replace(/\*\*/g, '')}`)
+            noteCreditsDiscrepancyReported(w.id)
           }
           return {
             workerId: w.id,

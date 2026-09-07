@@ -12,7 +12,7 @@ import {
 import { cardStatus, gaugedSessions, shortWindowLabels } from '../lib/fleetcard'
 import { Working } from '../lib/taskview'
 import { AgentIcon } from './AgentIcon'
-import { cacheUrgency, countdown, percent, quotaUrgency, tokens } from '../lib/format'
+import { cacheUrgency, countdown, money, percent, quotaUrgency, tokens } from '../lib/format'
 
 /**
  * Context-fill fraction for sessions with no cache clock.
@@ -427,6 +427,23 @@ function WorkerCard({
               <span className="num gauge-reset">{countdown(w.resetsAt, now)}</span>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* ⛔ **Dollars, beside the percentages, and only where money is actually being spent.** A
+          quota gauge is a share of a fee already paid; this is a bill accruing now, and the operator
+          asked to be able to see how they are being billed rather than inferring it from a window
+          at 100%. ⚠️ Rendered only when the vendor says credits are *on* for this account — an
+          account with credits off publishes no balance at all, and `money()` would print `$0.00`
+          for a purse that has merely not been shown. */}
+      {worker.credits?.enabled === true && (
+        <div className="wcard-credits">
+          <span className="gauge-label">credits</span>
+          <span className="num">
+            {money(worker.credits.used)}
+            {worker.credits.monthlyLimit !== null && ` of ${money(worker.credits.monthlyLimit)}`}
+          </span>
+          <span className="tag tag--credits">billing</span>
         </div>
       )}
 

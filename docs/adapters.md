@@ -477,11 +477,61 @@ and carries no probe function.
 ### The adapter spend probe contract
 
 `AdapterCapabilities.spendProbe` governs how a CLI surfaces money meters:
-- `'config-cache'` (`openai-compatible`): reads cached balances from disk on the quota poller's pacing
-  via `probeSpend(isolationRoot)`. In Codex, reads `credits.balance` from rollout JSON files in ~1ms (0 tokens, 0 extra processes).
-- `'stream'` (`claude-code`): usage and overage data arrive in-band on stream turns (`result.total_cost_usd`
-  and `rate_limit_event.isUsingOverage`). It requires no polling, so `probeSpend` is omitted.
+- `'config-cache'` (`openai-compatible`, `claude-code`): reads cached balances from disk on the quota
+  poller's pacing via `probeSpend(isolationRoot)`. In Codex, reads `credits.balance` from rollout JSON
+  files in ~1ms (0 tokens, 0 extra processes).
+- `'stream'`: usage and overage data arriving in-band on stream turns. No adapter declares this alone
+  today; `claude-code` still *reads* those records (below) and declares `config-cache` for the amount.
 - `'none'` (`antigravity-cli`, `local-llm`): no spend meters available.
+
+### Claude usage credits — the amount was on disk all along (2026-09-07, t271)
+
+⛔ **`claude-code` was `spendProbe: 'stream'` and carried no `probeSpend`, so `spend_samples` was
+empty for Claude and `RunPrice.overageUsd` could never be anything but `null`.** The stream records
+it does read answer *whether* a turn was billed as extra usage — `rate_limit_event.isUsingOverage`,
+`overageStatus` — and a boolean cannot answer *how much*, which is the only question an operator
+spending credits is actually asking.
+
+⭐ The amount is structured JSON in the same `.claude.json` `probeQuota` already opens, on a cache
+the existing `/usage` PTY drive already refreshes. So it costs a `readFileSync` and no turn, and
+**no new TUI interaction was needed for any of it**. Measured on 2.1.263,
+`cachedUsageUtilization.utilization` carries, beside the `limits[]` array:
+
+```jsonc
+"extra_usage": { "is_enabled": false, "monthly_limit": null, "used_credits": null, "currency": null,
+                 "disabled_reason": null, "user_disabled": true, "credits_ever_enabled": true },
+"spend": { "used": { "amount_minor": 0, "currency": "USD", "exponent": 2 }, "limit": null,
+           "enabled": false, "balance": null, "can_toggle": false,
+           "disclaimer": "Usage credits cover you when you hit your plan limits." }
+```
+
+⛔ **Minor units and an exponent, never a float**: `{ amount_minor: 3787, exponent: 2 }` is `$37.87`.
+⛔ **`null` is *not reported*, never zero.** On an account with credits off the vendor publishes a
+status and no numbers at all, so rendering `$0.00` would claim a purse is empty when it has merely
+not been shown.
+
+⛔ **The app cannot turn credits on, and does not pretend to.** Driven under a PTY on both accounts
+(the second time with the app's own `spawnEnv()`, ruling out an inherited host variable),
+`/usage-credits` does **not** open a toggle — it starts a login chooser:
+
+```
+Login
+Starting new login following /usage-credits. Exit with Ctrl-C to use existing account.
+Select login method:
+ ❯ 1. Claude account with subscription · Pro, Max, Team, or Enterprise
+   2. Anthropic Console account · API usage billing
+```
+
+and both accounts report `spend.can_toggle: false` with
+`cachedExtraUsageDisabledReason: "org_level_disabled"`. So the switch is thrown by a person where the
+vendor put it; what this app does is **read** the state, record what the operator asked for, and say
+when the two disagree (`creditsDiscrepancy`, surfaced by Doctor).
+
+⚠️ **Still unmeasured, and honestly so.** Every credit-side field — `used_credits`, `monthly_limit`,
+`balance`, `currency`, `daily`, `weekly` — has only ever been observed as `null`, because credits have
+never been on while anything was measuring. The parser, the strip and the price attribution are built
+against the populated shape the vendor documents, not one that has been seen. **One account with
+credits actually enabled, probed once, removes the guess.**
 
 ## Still unmeasured, and why
 

@@ -892,6 +892,18 @@ export function Workers({
                         <label><input type="checkbox" checked={worker.gradingEnabled} onChange={() =>
                           void guard(`grading-role:${worker.id}`, () => rpc('worker.update', { id: worker.id, gradingEnabled: !worker.gradingEnabled }))
                         } /> Grading</label>
+                        {/* ⛔ **An intention, not a switch at the vendor.** Ticking this does not
+                            enable usage credits — measured 2026-09-07, Claude Code reports
+                            `can_toggle: false` and `/usage-credits` opens a login chooser, so the
+                            real control lives in the vendor's own account settings. What this does
+                            is tell the app what was wanted, which is what lets Doctor say "you
+                            asked for credits here and the vendor says they are off". ⚠️ Paired with
+                            the fleet switch: neither half does anything alone. */}
+                        <label title="Records that this account is meant to spend usage credits past its plan limit. Turning the credits on is done in the vendor's own account settings; this is how the app notices when the two disagree.">
+                          <input type="checkbox" checked={worker.creditsIntent?.asked === true} onChange={() =>
+                            void guard(`credits:${worker.id}`, () => rpc('worker.setCreditsIntent', { id: worker.id, asked: worker.creditsIntent?.asked !== true }))
+                          } /> Credits{worker.credits ? (worker.credits.enabled ? ' (on)' : ' (vendor: off)') : ''}
+                        </label>
                       </div>
                     </td>
                     {/* ⛔ The buttons live in a div, never directly in the <td>. The cell is a

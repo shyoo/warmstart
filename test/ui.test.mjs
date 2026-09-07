@@ -2059,6 +2059,28 @@ try {
       needsReauth: false
     })
     store.prepare('update workers set health_json = ? where id = ?').run(health, suspectWorkerId)
+    // ⛔ Seeded in the same breath as the health row above, and deliberately not in a round-trip of
+    // its own: every extra `worker.update` + settle in this section is time the scheduler spends
+    // dispatching, and a later check reads a task that must not have run.
+    //
+    // ⚠️ Seeded at all because credits have never been enabled on a live account — this is the
+    // populated shape the vendor documents, which is exactly the shape nothing has yet observed, so
+    // a rendering check is the only pin available for it.
+    store
+      .prepare('update workers set credits_json = ? where id = ?')
+      .run(
+        JSON.stringify({
+          enabled: true,
+          userDisabled: false,
+          disabledReason: null,
+          canToggle: false,
+          everEnabled: true,
+          monthlyLimit: 50,
+          used: 12.34,
+          currency: 'USD'
+        }),
+        staleWorker
+      )
     store.close()
   }
   await evaluate(
@@ -2070,6 +2092,29 @@ try {
   )
   check('a suspect worker without quota shows the error banner', /error · see Settings/i.test(suspectCard))
   check('and suppresses quota unknown when suspect', !/quota unknown/i.test(suspectCard))
+
+  // ⛔ A quota gauge is a share of a fee already paid; usage credits are a bill accruing now, so the
+  // card says it in dollars rather than leaving an operator to infer it from a window at 100%.
+  const creditCard = await evaluate(
+    `[...document.querySelectorAll('.wcard')].find(c => c.querySelector('.wcard-credits'))?.innerText ?? ''`
+  )
+  check(
+    'an account spending usage credits shows the money on its card',
+    /\$12\.34/.test(creditCard),
+    JSON.stringify(creditCard)
+  )
+  check(
+    '⚠️ and the ceiling beside it, so the number has something to be a share of',
+    /of \$50\.00/.test(creditCard),
+    JSON.stringify(creditCard)
+  )
+  // ⛔ **Off is not zero**, which is the rule the whole `CreditStatus` type is built on: with credits
+  // off the vendor publishes no balance at all, so the row is absent rather than reading `$0.00` for
+  // a purse that has merely not been shown.
+  check(
+    '⛔ and the row belongs to the account the vendor says is spending, not to every card',
+    (await evaluate(`document.querySelectorAll('.wcard-credits').length`)) === 1
+  )
 
   // ---- fleet density and hide / show controls -----------------------------------------
   const densityBtn = `document.querySelector('.fleet-density-btn')`

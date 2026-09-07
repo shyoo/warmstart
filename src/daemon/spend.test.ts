@@ -334,9 +334,17 @@ describe("the stream's money signals", () => {
     expect(price.pricingEpoch()).not.toBe(middle)
   })
 
-  it('declares a stream meter rather than a probe, so nothing polls for it', () => {
-    expect(claudeCode.info.capabilities.spendProbe).toBe('stream')
-    // ⛔ And carries no `probeSpend`: a second route to a number already in hand is a costlier one.
-    expect(claudeCode.probeSpend).toBeUndefined()
+  /**
+   * ⛔ **The stream keeps both of its signals and gains a probe beside them, since t271.** What a
+   * `rate_limit_event` reports is *whether* a turn was billed as extra usage; it never reports **how
+   * much**, and a boolean cannot answer "what did these credits cost me" — which is the question an
+   * operator spending them is actually asking. ⚠️ The probe it gains is not a second terminal: the
+   * amount is in `.claude.json`, a file `probeQuota` already opens on a cache the `/usage` drive
+   * already refreshes, so it costs a `readFileSync` and no turn. That is why `spendProbe` is
+   * `config-cache` and not `cli`.
+   */
+  it('keeps the stream signals and reads the amount off the config cache', () => {
+    expect(claudeCode.info.capabilities.spendProbe).toBe('config-cache')
+    expect(typeof claudeCode.probeSpend).toBe('function')
   })
 })

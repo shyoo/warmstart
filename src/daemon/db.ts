@@ -1637,6 +1637,21 @@ const MIGRATIONS: Migration[] = [
        where ended_at is null
          and task_id in (select id from tasks where status in ('completed', 'failed', 'cancelled'));
     `)
+  },
+  // 53 - what the vendor says about this account spending past its plan limit, and what the operator
+  // asked for.
+  //
+  // ⛔ Two columns, not one, because they answer different questions and are allowed to disagree:
+  // `credits_json` is the **reading**, refreshed by the spend probe, and `credits_intent_json` is
+  // the **operator's standing intent**. A discrepancy between them is the thing worth reporting, and
+  // it is invisible unless both are written down.
+  (conn) => {
+    if (!hasColumn(conn, 'workers', 'credits_json')) {
+      conn.exec('alter table workers add column credits_json text;')
+    }
+    if (!hasColumn(conn, 'workers', 'credits_intent_json')) {
+      conn.exec('alter table workers add column credits_intent_json text;')
+    }
   }
 ]
 

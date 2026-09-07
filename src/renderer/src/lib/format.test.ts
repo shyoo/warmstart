@@ -188,6 +188,8 @@ describe('an account whose subscription has expired', () => {
       defaultEffort: null,
       defaultModels: null,
       identity: null,
+      credits: null,
+      creditsIntent: null,
       health: {
         state: 'suspect',
         reason: 'Your organization has disabled Claude subscription access for Claude Code',

@@ -96,6 +96,24 @@ export interface Settings {
    */
   autoOverrunPreempt: boolean
   /**
+   * May a run keep going past the plan limit on an account that has usage credits turned on?
+   * Default **false**.
+   *
+   * ⛔ **Two conditions, and both must hold.** This switch is the operator's standing intent; the
+   * other half is `Worker.credits.enabled`, which is what the *vendor* says about that one account.
+   * Where both are true the three interventions that exist to protect a quota window —
+   * `autoCompact`, `autoPreempt` and `autoOverrunPreempt` — stand down for that worker, because
+   * hitting the limit is the moment credits start doing their job and wrapping the run up there is
+   * what defeats the purchase. Where the worker has no credits, nothing changes: a fleet-wide
+   * "spend credits" applied to an account with none behind it would trade a clean wrap-up for a hard
+   * vendor refusal.
+   *
+   * ⚠️ Default off because it is the one switch here that lets the fleet **spend real money** —
+   * every other intervention this interface gates costs at worst an early wrap-up. An operator opts
+   * into a bill; they are never defaulted into one.
+   */
+  spendCreditsPastLimit: boolean
+  /**
    * May the scheduler stop a run for going far past its token estimate? Default **false**.
    *
    * ⚠️ Off by design, not by oversight — though for a smaller reason since 2026-08-30. The factor is
@@ -357,6 +375,26 @@ export interface Worker {
    */
   routableModels?: string[] | null
   identity: WorkerIdentity | null
+  /**
+   * What the vendor last said about this account spending past its plan limit.
+   *
+   * ⛔ **The per-worker half of the `spendCreditsPastLimit` switch.** That switch is the operator's
+   * standing intent; this is the vendor's answer, and the scheduler only stops preempting where the
+   * two agree. A fleet-wide "use the credits" applied to a worker with no credits behind it would
+   * push runs into an exhausted window and trade a clean wrap-up for a hard vendor refusal.
+   *
+   * ⚠️ `null` until a spend probe has read one, which is also what every adapter that reports
+   * nothing leaves here for ever. Not knowing is not permission.
+   */
+  credits: CreditStatus | null
+  /**
+   * Whether the operator has said **this** account should spend credits, and what they were told.
+   *
+   * ⛔ Held so a discrepancy can be *noticed*: an operator who asked for credits on an account the
+   * vendor then reports as off has a real problem — the runs they expected to keep going are being
+   * wrapped up — and it is invisible unless the intent is written down beside the reading.
+   */
+  creditsIntent: CreditsIntent | null
   /** What the last run on this account proved about it. `null` means nothing is known against it. */
   health: WorkerHealth | null
   /**
@@ -595,10 +633,75 @@ export interface SpendMeter {
   usdPerUnit: number | null
 }
 
+/**
+ * Whether an account may spend past its plan limit, and on whose say-so.
+ *
+ * ⛔ **A reading, never a request.** Nothing in this app turns usage credits on: measured 2026-09-07
+ * on Claude Code 2.1.263, both live accounts report `can_toggle: false` with
+ * `disabled_reason: "org_level_disabled"`, and driving `/usage-credits` opens a **login chooser**
+ * rather than a toggle. So this type exists to say what the vendor reports, to let the scheduler act
+ * on it, and to let the operator be told when what they asked for and what the vendor says have come
+ * apart. Flipping the switch is done by a person, where the vendor put it.
+ *
+ * ⚠️ Every money field is nullable and `null` is *not reported*, never zero — the same rule
+ * `SpendMeter.balance` follows. On an account with credits off, the vendor publishes no balance at
+ * all, and rendering that as `$0.00` would claim a purse is empty when it has merely not been shown.
+ */
+export interface CreditStatus {
+  /** Is the account spending past its plan limit right now, per the vendor? */
+  enabled: boolean
+  /**
+   * Did a *person* turn it off, as opposed to the account never having been allowed it?
+   *
+   * ⚠️ Kept apart from `disabledReason` because they answer different questions and disagree in
+   * practice: both measured accounts report `user_disabled: true` **and** `org_level_disabled`.
+   */
+  userDisabled: boolean | null
+  /** The vendor's own word for why, e.g. `org_level_disabled`. ⛔ Recorded, never interpreted. */
+  disabledReason: string | null
+  /**
+   * Does the vendor say this account can turn credits on from the CLI at all?
+   *
+   * ⛔ The field that makes the honest answer possible. `false` on both measured accounts, and it is
+   * why the app reports rather than acts — see the note on this interface.
+   */
+  canToggle: boolean | null
+  /** Has this account ever had credits on? ⚠️ Distinguishes "off" from "never offered". */
+  everEnabled: boolean | null
+  /** The monthly ceiling, where the vendor publishes one. */
+  monthlyLimit: number | null
+  /** Spend against that ceiling so far this billing month. See `SpendMeter.direction`. */
+  used: number | null
+  /** ISO-4217, as the vendor spells it. ⛔ Not assumed to be USD. */
+  currency: string | null
+}
+
+/**
+ * What the operator asked for on one account, and when they were last told what the vendor says.
+ *
+ * ⚠️ `asked` is the intent and nothing more — it grants no permission by itself and enables nothing
+ * at the vendor. `reportedAt` exists so a discrepancy is raised **once** rather than on every probe:
+ * a question the operator has already answered must not come back every five minutes.
+ */
+export interface CreditsIntent {
+  asked: boolean
+  at: number
+  /** When a mismatch between `asked` and the vendor's reading was last put to the operator. */
+  reportedAt: number | null
+}
+
 /** Every meter one worker reports, at one moment. The money analogue of `QuotaSnapshot`. */
 export interface SpendSnapshot {
   workerId: string
   meters: SpendMeter[]
+  /**
+   * What the vendor says about spending past the plan limit, where it says anything.
+   *
+   * ⚠️ Rides the spend probe rather than the quota one because it is a statement about *money*, and
+   * because on every adapter measured so far it is read from the same file in the same breath.
+   * `undefined` is an adapter that does not report it; `null` is one that looked and found nothing.
+   */
+  credits?: CreditStatus | null
   sampledAt: number
   source: 'cli' | 'config-cache' | 'stream' | 'unknown'
   /** Set when the probe failed. ⚠️ A failed probe is recorded, not dropped — see `QuotaSnapshot`. */
@@ -1296,6 +1399,16 @@ export interface RpcMap {
     >
     result: Worker
   }
+  /**
+   * Say whether this account is *meant* to spend usage credits past its plan limit.
+   *
+   * ⛔ **Records an intention; changes nothing at the vendor.** Measured 2026-09-07 on Claude Code
+   * 2.1.263, both live accounts report `can_toggle: false` and `/usage-credits` opens a login
+   * chooser rather than a toggle — so the switch itself is thrown by a person, where the vendor put
+   * it. What this buys is that the app knows what was wanted, which is the only way `Doctor` can
+   * notice the account is not doing it.
+   */
+  'worker.setCreditsIntent': { params: { id: string; asked: boolean }; result: Worker }
   /**
    * Put the fleet in this order, top to bottom.
    *

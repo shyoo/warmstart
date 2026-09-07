@@ -77,6 +77,7 @@ export function FleetSettings(): React.JSX.Element {
   const autoCompact = settings?.autoCompact ?? true
   const autoPreempt = settings?.autoPreempt ?? true
   const autoOverrunPreempt = settings?.autoOverrunPreempt ?? true
+  const spendCreditsPastLimit = settings?.spendCreditsPastLimit ?? false
   const autoRunawayStop = settings?.autoRunawayStop ?? false
   const summariseTitles = settings?.summariseTitles ?? false
   const modelExploration = settings?.modelExploration ?? false
@@ -238,6 +239,28 @@ export function FleetSettings(): React.JSX.Element {
               on={autoOverrunPreempt}
               busy={disabled}
               onToggle={() => void save({ autoOverrunPreempt: !autoOverrunPreempt })}
+            />
+          }
+        />
+
+        {/* ⛔ The only switch here that lets the fleet spend real money, so it is off by default and
+            says so. ⚠️ It is also the only one that is inert on its own: it reaches a worker only
+            where the vendor itself reports usage credits enabled on that account, which is why the
+            description names both halves rather than promising something the switch cannot deliver
+            alone. */}
+        <SettingRow
+          title="Spend usage credits past the plan limit"
+          description={
+            spendCreditsPastLimit
+              ? 'On accounts where the vendor reports usage credits enabled, a run is no longer wrapped up or compacted at the plan limit — it carries on and is billed against those credits. Accounts without credits are unaffected and are still wrapped up.'
+              : 'A run is wrapped up at the plan limit even on an account that has usage credits, so credits are never spent automatically.'
+          }
+          control={
+            <SettingSwitch
+              label="Let a run continue past the plan limit on credit-enabled accounts"
+              on={spendCreditsPastLimit}
+              busy={disabled}
+              onToggle={() => void save({ spendCreditsPastLimit: !spendCreditsPastLimit })}
             />
           }
         />

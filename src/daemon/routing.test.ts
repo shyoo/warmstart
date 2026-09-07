@@ -135,6 +135,8 @@ describe('choosing between workers that score the same', () => {
     defaultModel: null,
     defaultEffort: null,
     identity: null,
+    credits: null,
+    creditsIntent: null,
     health: null,
     sortOrder: 0,
     retiredAt: null,

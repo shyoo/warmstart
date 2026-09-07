@@ -254,6 +254,7 @@ control in the task thread.
 | Default | `inherit`, on every task, including every row written before migration 32 |
 | Read through | `mayCompact()` in `cacheclock.ts` — the *only* reader of `settings.autoCompact` |
 | Reaches | move 4, move 5 (reserve at risk), move 5b (too full to lend), move 7 `revive_compact`, and `compactOnResume` |
+| Also gated by | usage credits, on the quota-motivated callers only — see *Usage credits* below |
 | Whose opinion | the **most recent run** on the session (`lastRunForSession`), so a borrowed conversation follows whoever is talking in it now |
 
 ⛔ **A permission, not an instruction.** `on` means *you may*, and every gate downstream is
@@ -277,6 +278,61 @@ the project tier later is an additive `session.autoCompact` key plus one branch 
 ⚠️ A refusal names the control that made it. "Automatic compaction is switched off" handed to
 somebody whose fleet switch is *on* is a wild goose chase, so the task's own refusal reads *this task
 is set never to compact*.
+
+### Usage credits, and the two switches that have to agree (2026-09-07, t271)
+
+A Claude subscription can be allowed to keep working **past** its plan limit, billed against usage
+credits. That inverts the assumption every guard in this app is built on: `autoPreempt`,
+`autoOverrunPreempt` and the quota-motivated half of `autoCompact` all exist to get work out before a
+window closes, and on an account deliberately spending past that window, wrapping the run up is
+precisely what defeats the purchase.
+
+| | |
+|---|---|
+| Operator intent | `settings.spendCreditsPastLimit`, Settings › Fleet. **Default off** |
+| Vendor's word | `Worker.credits.enabled`, written by `probeSpend` from `.claude.json` |
+| Read through | `spendingCreditsOn(worker, switch)` — the *only* reader of the pair |
+| Stands down | both quota preempts in `runWatchdogs`, and `mayCompact(…, 'quota')` |
+| Does **not** stand down | `mayCompact(…, 'context')`, `autoRunawayStop`, the reserve itself |
+
+⛔ **Both halves, and neither alone.** The switch is the operator's standing intent; `credits.enabled`
+is what the vendor says about one account. Acting on the switch alone would apply it to accounts with
+no credits behind them, where a run does not get a reprieve — it gets a hard vendor refusal, and loses
+the commit and the handoff that wrapping up would have produced. Acting on the vendor's word alone
+would start a bill nobody asked for. ⚠️ A worker no spend probe has read is `null` and therefore not
+spending: **not knowing is not permission**.
+
+⛔ **Credits suppress the *quota* motive for compaction, not the *context* one.** This app compacts
+for two unrelated ends through one gate. Protecting the window (move 4, move 5's reserve breach,
+`decideRevive`) is bought off by credits. The conversation's own size — `compactOnResume`, and move
+5b's *too full to lend* — is not: nothing about buying credits makes a context window bigger, and
+standing that down too would take the one intervention that keeps a long session under its own
+ceiling, so the next turn fails outright rather than being wrapped up. `mayCompact` takes the motive
+as an argument and defaults it to `'quota'`, so a caller that does not say gets the stand-down rather
+than silently opting out. (Operator's call, 2026-09-07; the first draft stood down both.)
+
+⛔ **An intervention that does not happen leaves no trace**, which is why the stand-down says so on
+the task thread — once per run per kind, and only at the moment a guard would actually have fired. A
+run carrying on at 100% of its window is otherwise indistinguishable from one the scheduler forgot.
+
+**What a run costs, split.** `RunPrice` already carried the shape this needs and simply had nothing
+to put in it for Claude: `subscriptionUsd` is the share of a fee already paid, `overageUsd` is money
+billed on top, `listUsd` is the API-equivalent price carried beside both and never added to either.
+`overageUsd` populates from `spend_samples` through the existing `attribute()` walk as soon as
+`probeSpend` writes rows, so the split needed no new pricing code.
+
+⭐ **The monthly reset needed no special case.** The vendor's counter is cumulative and resets each
+billing month; that is exactly `SpendMeter.direction: 'spend_rises'`, whose documented meaning is
+already *a fall is a billing-period rollover*, and `attribute()` has always handled it. A wrap
+therefore reads as a new period rather than as a refund.
+
+⚠️ **The bracket is forced only where money is moving.** `captureSpendBefore` forces the vendor's
+cache current at dispatch — a real terminal, ~30s — but only on a worker that is actually spending
+credits. Paying that on every dispatch fleet-wide to bracket a meter that reads the same zero on both
+sides would tax every account for a number that never moves. The closing reading needs nothing new:
+`captureQuotaAfter` already goes through `refreshNow`/`probeWorker`, both of which take a spend
+sample. ⚠️ The first seconds of a run fall outside the bracket, which `price.ts` reports honestly as
+`unmeasuredMs` rather than absorbing.
 
 ### ⛔ A conversation between runs is one the clock cannot see (2026-09-01, t92)
 

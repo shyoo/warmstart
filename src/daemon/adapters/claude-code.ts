@@ -4,7 +4,14 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { AdapterDetection, AdapterInfo, QuotaSnapshot } from '@shared/protocol.js'
+import type {
+  AdapterDetection,
+  AdapterInfo,
+  CreditStatus,
+  QuotaSnapshot,
+  SpendMeter,
+  SpendSnapshot
+} from '@shared/protocol.js'
 import type { AgentAdapter, IdentityProbe, SpawnPlan, SpawnRequest } from './types.js'
 import { workspaceGrants } from './grants.js'
 import { asRecord, textBlocks, type StreamEvent } from '../stream.js'
@@ -42,14 +49,19 @@ const info: AdapterInfo = {
     // messages cache — see docs/cost-model.md §11 for why that is a different decision.
     selectableEffort: true,
     quotaProbe: 'cli',
-    // ⭐ **Money arrives unasked here, on records this fleet already decodes.** The `result`
-    // record carries `total_cost_usd` and the `rate_limit_event` carries `isUsingOverage` /
-    // `overageStatus` — both were being thrown away. ⛔ So there is no `probeSpend` on this
-    // adapter and there must not be one: the signal rides a turn already being paid for, and a
-    // poller asking the same question again would be the expensive way to learn what is already
-    // in hand. ⚠️ `total_cost_usd` on a subscription is the **API-equivalent list price**, not
-    // money out of pocket — see `creditRunListUsd` in tasks.ts.
-    spendProbe: 'stream',
+    // ⭐ **Money arrives unasked here too**, and both halves are kept. The `result` record carries
+    // `total_cost_usd` and the `rate_limit_event` carries `isUsingOverage` / `overageStatus`, all of
+    // which still ride a turn already being paid for and still feed `creditRunListUsd` and
+    // `markRunOverage`. ⚠️ `total_cost_usd` on a subscription is the **API-equivalent list price**,
+    // not money out of pocket — see `creditRunListUsd` in tasks.ts.
+    //
+    // ⛔ **`config-cache` rather than `stream`, since t271.** What the stream reports is *whether*
+    // a turn was billed as extra usage; it never reports **how much**, and a boolean cannot answer
+    // "what did these credits cost me". The amount is in `.claude.json` under
+    // `cachedUsageUtilization.utilization.spend` — a file this adapter already opens for quota, on a
+    // cache the `/usage` drive already refreshes — so the reading costs a `readFileSync` and no turn.
+    // Measured 2026-09-07 on 2.1.263. See `probeSpend`.
+    spendProbe: 'config-cache',
     // stdin stays open and takes prompt after prompt; that is what the stream transport is for.
     streamPrompts: 'conversation',
     // `--session-id` takes a uuid we choose, which is what makes the transcript path knowable before
@@ -146,6 +158,148 @@ function usageFileFor(isolationRoot: string): string | null {
   }
   return candidates.find((f) => existsSync(f)) ?? null
 }
+
+// ------------------------------------------------------------------ usage credits ("extra usage")
+
+/**
+ * The parts of `.claude.json` this adapter reads for money, measured 2026-09-07 on 2.1.263.
+ *
+ * ⚠️ Every field optional and every value nullable, because that is how the vendor writes them: on
+ * an account with credits off, `used_credits`, `monthly_limit`, `currency` and `balance` are all
+ * `null` — which is *not reported*, and must never become `0`.
+ */
+interface ClaudeConfigShape {
+  cachedUsageUtilization?: {
+    fetchedAtMs?: number
+    utilization?: {
+      spend?: ClaudeSpendShape
+      extra_usage?: ClaudeExtraUsageShape
+    }
+  }
+  oauthAccount?: { hasExtraUsageEnabled?: boolean | null }
+  cachedExtraUsageDisabledReason?: string | null
+}
+
+interface ClaudeSpendShape {
+  /** ⛔ Minor units and an exponent, never a float: `{ amount_minor: 1234, exponent: 2 }` is $12.34. */
+  used?: { amount_minor?: number | null; currency?: string | null; exponent?: number | null } | null
+  limit?: number | null
+  enabled?: boolean | null
+  disabled_reason?: string | null
+  /** A purse, where the vendor publishes one. ⚠️ `null` on both measured accounts. */
+  balance?: number | null
+  can_toggle?: boolean | null
+}
+
+interface ClaudeExtraUsageShape {
+  is_enabled?: boolean | null
+  monthly_limit?: number | null
+  used_credits?: number | null
+  currency?: string | null
+  disabled_reason?: string | null
+  user_disabled?: boolean | null
+  credits_ever_enabled?: boolean | null
+}
+
+/** `{ amount_minor: 3787, exponent: 2 }` → `37.87`. ⚠️ `null` for anything not fully reported. */
+function majorUnits(amount: ClaudeSpendShape['used']): number | null {
+  const minor = amount?.amount_minor
+  if (typeof minor !== 'number' || !Number.isFinite(minor)) return null
+  const exponent = typeof amount?.exponent === 'number' ? amount.exponent : 2
+  return minor / 10 ** exponent
+}
+
+/**
+ * The meters `utilization.spend` describes.
+ *
+ * ⛔ Two shapes, and they move in opposite directions. `used` is a **cumulative counter** reset each
+ * billing month — `direction: 'spend_rises'`, whose documented meaning is that *a fall is a
+ * rollover*, which is exactly the monthly reset and is already handled by `price.ts::attribute()`.
+ * `balance` is a **purse** drawn down by spending, where a rise is a top-up.
+ *
+ * ⚠️ A meter is emitted only where the vendor actually published a number. An absent meter is a
+ * different statement from a meter reading zero, and only one of them is true here.
+ */
+function spendMeters(spend: ClaudeSpendShape | undefined): SpendMeter[] {
+  if (!spend) return []
+  const meters: SpendMeter[] = []
+  const currency = spend.used?.currency ?? null
+  // ⚠️ `usdPerUnit` is 1 only because the measured accounts bill in USD. A vendor reporting another
+  // currency is **real but unpriceable** — `null`, which renders as `n/a` and never as $0.00.
+  const usdPerUnit = currency === null || currency === 'USD' ? 1 : null
+
+  const used = majorUnits(spend.used)
+  if (used !== null) {
+    meters.push({
+      id: 'claude-extra-usage',
+      label: 'Claude usage credits',
+      unit: 'usd',
+      balance: used,
+      direction: 'spend_rises',
+      usdPerUnit
+    })
+  }
+  if (typeof spend.balance === 'number' && Number.isFinite(spend.balance)) {
+    meters.push({
+      id: 'claude-credit-balance',
+      label: 'Claude credit balance',
+      unit: 'usd',
+      balance: spend.balance,
+      direction: 'balance_falls',
+      usdPerUnit
+    })
+  }
+  return meters
+}
+
+/**
+ * What the vendor says about this account spending past its plan limit.
+ *
+ * ⛔ **Precedence, not a vote.** Three fields describe this in three places, written by three code
+ * paths: `extra_usage.is_enabled` is the vendor's direct statement, `spend.enabled` mirrors it on
+ * the money block, and `oauthAccount.hasExtraUsageEnabled` is an account-level cache that can lag a
+ * change made elsewhere. The first one actually present wins, and an explicit `false` from a
+ * higher-precedence field is **not** overridden by a lower one saying `true`.
+ *
+ * ⛔ **Which way the doubt falls is a money decision.** This value is what stands the quota guards
+ * down (`spendingCreditsOn`), so reading `true` when the truth is `false` pushes a run into an
+ * exhausted window expecting a reprieve that is not there — it loses the wrap-up, the commit and
+ * the handoff, and gets a hard vendor refusal instead. Reading `false` when the truth is `true`
+ * costs one early wrap-up. An OR across all three would take the cheerful answer from whichever
+ * field was most stale; precedence takes it from whichever field is most direct.
+ *
+ * ⚠️ `disabledReason` prefers the per-reading value and falls back to the top-level cache, which is
+ * where 2.1.263 actually wrote `org_level_disabled` on both measured accounts.
+ */
+function creditStatus(parsed: ClaudeConfigShape): CreditStatus | null {
+  const spend = parsed.cachedUsageUtilization?.utilization?.spend
+  const extra = parsed.cachedUsageUtilization?.utilization?.extra_usage
+  const account = parsed.oauthAccount
+  if (!spend && !extra && account?.hasExtraUsageEnabled === undefined) return null
+
+  const bool = (v: unknown): boolean | null => (typeof v === 'boolean' ? v : null)
+  const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null)
+  const str = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v : null)
+
+  return {
+    enabled:
+      bool(extra?.is_enabled) ??
+      bool(spend?.enabled) ??
+      bool(account?.hasExtraUsageEnabled) ??
+      false,
+    userDisabled: bool(extra?.user_disabled),
+    disabledReason:
+      str(extra?.disabled_reason) ?? str(spend?.disabled_reason) ?? str(parsed.cachedExtraUsageDisabledReason),
+    canToggle: bool(spend?.can_toggle),
+    everEnabled: bool(extra?.credits_ever_enabled),
+    monthlyLimit: num(extra?.monthly_limit) ?? num(spend?.limit),
+    used: num(extra?.used_credits) ?? majorUnits(spend?.used),
+    currency: str(extra?.currency) ?? str(spend?.used?.currency)
+  }
+}
+
+/** Exported for the tests, which drive it with payloads captured off the live accounts. */
+export const claudeCredits = { creditStatus, spendMeters, majorUnits }
 
 /**
  * Has this root been through the CLI's first-run screens?
@@ -610,6 +764,53 @@ export const claudeCode: AgentAdapter = {
       log.warn('claude-code probeQuota failed:', err)
       return {
         windows: [],
+        sampledAt: Date.now(),
+        source: 'unknown',
+        error: err instanceof Error ? err.message : String(err)
+      }
+    }
+  },
+
+  /**
+   * The money half of the same file the quota probe already opens.
+   *
+   * ⛔ **A file read, and that is the whole cost.** `cachedUsageUtilization` is refreshed by the
+   * `/usage` PTY drive this adapter already performs for quota, so the credit numbers arrive on a
+   * probe that has already been paid for. Measured 2026-09-07 on 2.1.263: `utilization.spend` and
+   * `utilization.extra_usage` sit beside the `limits[]` array `probeQuota` reads, and were simply
+   * being stepped over.
+   *
+   * ⚠️ Dated by `fetchedAtMs` — the **vendor's** clock — for the reason spend.ts gives: this cache
+   * is only as fresh as the last `/usage`, and stamping it with ours would present a reading from
+   * hours ago as one taken now.
+   */
+  async probeSpend(isolationRoot: string): Promise<Omit<SpendSnapshot, 'workerId'>> {
+    const file = usageFileFor(isolationRoot)
+    if (!file) {
+      return { meters: [], sampledAt: Date.now(), source: 'unknown', error: 'no .claude.json yet' }
+    }
+    try {
+      const parsed = JSON.parse(readFileSync(file, 'utf8')) as ClaudeConfigShape
+      const cached = parsed.cachedUsageUtilization
+      const at = cached?.fetchedAtMs
+      if (!at) {
+        return {
+          meters: [],
+          sampledAt: Date.now(),
+          source: 'unknown',
+          error: 'no cachedUsageUtilization in .claude.json'
+        }
+      }
+      return {
+        meters: spendMeters(cached?.utilization?.spend),
+        credits: creditStatus(parsed),
+        sampledAt: at,
+        source: 'config-cache'
+      }
+    } catch (err) {
+      log.warn('claude-code probeSpend failed:', err)
+      return {
+        meters: [],
         sampledAt: Date.now(),
         source: 'unknown',
         error: err instanceof Error ? err.message : String(err)

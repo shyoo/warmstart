@@ -3,7 +3,7 @@ import { adapter } from './adapters/index.js'
 import { db, rows } from './db.js'
 import { log } from './log.js'
 import { bumpPricingEpoch } from './price.js'
-import { requireWorker } from './workers.js'
+import { requireWorker, setWorkerCredits } from './workers.js'
 
 /**
  * The money store: what each account's meters read, and when.
@@ -238,6 +238,12 @@ export async function probeSpendFor(workerId: string, using?: SpendProbeSource):
 
   try {
     const snapshot = await a.probeSpend(w.isolationRoot)
+    // ⛔ **The reading, before the meters.** `credits.enabled` is what stands the quota guards down
+    // for this worker (`spendingCreditsOn`), so it has to be stored even on a probe that found no
+    // meter at all — which is exactly the shape of an account with credits **off**, where the vendor
+    // publishes a status and no numbers. ⚠️ `undefined` means this adapter does not report it and
+    // must not blank a reading another probe established; `null` means it looked and found nothing.
+    if (snapshot.credits !== undefined) setWorkerCredits(workerId, snapshot.credits)
     const written = recordSpendSample(workerId, snapshot)
     if (snapshot.meters.length) {
       log.info(

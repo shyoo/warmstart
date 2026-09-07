@@ -371,6 +371,16 @@ whose entire design is to be invisible.
   tells the rows apart: Antigravity meters two pools on one account, and `Claude/GPT 5h` beside
   `Gemini 5h` shortened would draw two bars claiming to be the same window. The full label is on
   every row's tooltip in both cases.
+- ⛔ **Money accrues in dollars, under the windows it is no longer bounded by.** A quota gauge is a
+  share of a fee already paid; a usage-credit meter is a bill being run up now, so the fleet card
+  draws it as its own row below the gauges rather than as a fourth gauge among them. ⚠️ Drawn only
+  where the vendor reports credits *enabled* on that account: with them off the vendor publishes no
+  balance at all, and `money()` would print `$0.00` for a purse that has merely not been shown.
+- ⛔ **A checkbox that records an intention says so.** Settings › Workers › *Credits* does not turn
+  usage credits on — the vendor reports `can_toggle: false` and `/usage-credits` opens a login chooser
+  — so it is labelled with what the vendor currently says (`(on)` / `(vendor: off)`) and its tooltip
+  names where the real switch lives. Presenting it as the switch would be the one lie the fleet strip
+  exists to prevent: a control that appears to be on and does nothing.
 - ⛔ **A held task says *why*, and says *when* where the refusal has an end.** `ready` on its own is
   unreadable: it is the scheduler's word for *eligible*, and a person who just filed a task reads it
   as *waiting for me*.

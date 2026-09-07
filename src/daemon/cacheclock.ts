@@ -24,7 +24,7 @@ import {
   setTaskHandoff
 } from './tasks.js'
 import { noteCompactionAsked, onCompactionLanded } from './compaction.js'
-import { getWorker } from './workers.js'
+import { getWorker, spendingCreditsOn } from './workers.js'
 import { reserveState } from './reserve.js'
 import { policy } from './objective.js'
 import { settings as fleetSettings } from './settings.js'
@@ -358,19 +358,58 @@ function worthCompactingNow(session: Session, model: ReturnType<typeof costModel
  */
 export function mayCompact(
   session: Session,
-  fleetAutoCompact: boolean
-): { allowed: boolean; source: 'task' | 'fleet' } {
+  fleetAutoCompact: boolean,
+  /**
+   * ⛔ **The credit stand-down, and it outranks every switch below it — but only for `'quota'`.**
+   * ⚠️ Only ever true when the fleet switch *and* this worker's own vendor-reported credit status
+   * agree — see `spendingCreditsOn`.
+   */
+  spendCreditsPastLimit = false,
+  /**
+   * ⛔ **Why this compaction was proposed, and the reason credits cannot simply switch compaction
+   * off.** This app compacts for two unrelated ends through one gate. `'quota'` is the maintenance
+   * kind — the reserve is at risk, or a warm prefix is being traded for a cheaper one — and it
+   * exists to keep a conversation inside the window it is billed against. `'context'` is the
+   * conversation's *own size*: a resumed session too large to carry cheaply, or one a queued task
+   * cannot borrow until it shrinks. Nothing about buying credits makes a context window bigger.
+   *
+   * ⛔ So credits stand down `'quota'` only. Standing down both — which is what the first draft did
+   * — reads as the simpler rule and buys a real failure: a long conversation on a credit-spending
+   * account would lose the one intervention that keeps it under its own ceiling, and the next turn
+   * fails outright rather than being wrapped up. The operator's call, 2026-09-07.
+   */
+  motive: CompactionMotive = 'quota'
+): { allowed: boolean; source: CompactionSource } {
+  if (motive === 'quota' && spendingCreditsOn(getWorker(session.workerId), spendCreditsPastLimit)) {
+    return { allowed: false, source: 'credits' }
+  }
   const run = lastRunForSession(session.id)
   const task = run?.taskId ? getTask(run.taskId) : null
   const { autoCompact, source } = resolveAutoCompact(task, fleetAutoCompact)
   return { allowed: autoCompact === 'on', source }
 }
 
+/** Which control said no. ⚠️ Carried so a refusal can name it — see `compactionOffBecause`. */
+export type CompactionSource = 'task' | 'fleet' | 'credits'
+
+/**
+ * What a proposed compaction is *for*. See the `motive` parameter of `mayCompact`.
+ *
+ * ⚠️ Defaulted to `'quota'` at every caller that does not say, because that is the kind the credit
+ * stand-down is about and defaulting the other way would silence it by omission.
+ */
+export type CompactionMotive = 'quota' | 'context'
+
 /** The sentence a refusal uses, so the operator is sent to the control that actually said no. */
-function compactionOffBecause(source: 'task' | 'fleet'): string {
-  return source === 'task'
-    ? 'this task is set never to compact'
-    : 'automatic compaction is switched off'
+function compactionOffBecause(source: CompactionSource): string {
+  if (source === 'task') return 'this task is set never to compact'
+  if (source === 'credits') {
+    return (
+      'this worker is spending usage credits past its plan limit, so there is no window left to ' +
+      'protect by compacting'
+    )
+  }
+  return 'automatic compaction is switched off'
 }
 
 /**
@@ -468,7 +507,16 @@ export function compactOnResume(
   // ⛔ Off means off here too, and the task's own override is read alongside the fleet switch — see
   // `mayCompact`. This is the last-resort compaction, so a task told never to compact must not
   // acquire one simply by being resumed.
-  const permission = mayCompact(session, settings.autoCompact)
+  //
+  // ⚠️ `'context'`: what is being weighed here is the conversation's own size on the way back in, not
+  // the window it is billed against, so usage credits do not stand it down. An account spending past
+  // its plan limit still has the same context ceiling as one that is not.
+  const permission = mayCompact(
+    session,
+    settings.autoCompact,
+    settings.spendCreditsPastLimit,
+    'context'
+  )
   if (!permission.allowed) return no(compactionOffBecause(permission.source))
 
   const model = costModel(info.policy.costModelId)
@@ -612,7 +660,16 @@ export function decideRevive(session: Session, ctx: ClockContext): ClockDecision
     return nothing(`${info.label} takes one prompt per session`)
   }
   // ⛔ Off means off, here as everywhere else the clock spends — fleet switch or task override.
-  const permission = mayCompact(session, ctx.settings?.autoCompact ?? true)
+  //
+  // ⚠️ `'quota'`: reviving an idle conversation to compact it while it is cheap is maintenance done
+  // to protect a budget. On an account deliberately spending past that budget it buys nothing and
+  // costs a process, so credits stand it down.
+  const permission = mayCompact(
+    session,
+    ctx.settings?.autoCompact ?? true,
+    ctx.settings?.spendCreditsPastLimit ?? false,
+    'quota'
+  )
   if (!permission.allowed) return nothing(compactionOffBecause(permission.source))
 
   const model = costModel(info.policy.costModelId)
@@ -769,8 +826,25 @@ export function decide(session: Session, ctx: ClockContext): ClockDecision {
   // can be told to compact on a fleet that is not, or told not to on a fleet that is. It answers
   // *may we*, and nothing below it changes: `worthSaving`, the TTL window, the reserve and the cost
   // model still decide whether this particular compaction buys anything.
-  const permission = mayCompact(session, ctx.settings?.autoCompact ?? true)
+  //
+  // ⛔ **Two permissions, because two of the three moves below are not asking the same question.**
+  // Moves 4 and 5 compact to protect the quota window; move 5b compacts because a queued task cannot
+  // borrow a conversation this large. Only the first kind stands down on usage credits — see the
+  // `motive` parameter of `mayCompact`.
+  const permission = mayCompact(
+    session,
+    ctx.settings?.autoCompact ?? true,
+    ctx.settings?.spendCreditsPastLimit ?? false,
+    'quota'
+  )
+  const borrowPermission = mayCompact(
+    session,
+    ctx.settings?.autoCompact ?? true,
+    ctx.settings?.spendCreditsPastLimit ?? false,
+    'context'
+  )
   const compactAllowed = caps.manualCompact && permission.allowed
+  const borrowCompactAllowed = caps.manualCompact && borrowPermission.allowed
   const compactOff = caps.manualCompact && !permission.allowed
 
   // Move 5 first: a reserve breach is not a preference, and it does not wait for the clock.
@@ -837,7 +911,9 @@ export function decide(session: Session, ctx: ClockContext): ClockDecision {
   // ⚠️ `worthSaving` still gates it, and it is what stops the loop. A landed compaction zeroes
   // `tokensSinceCompact`, so a conversation that stays over the share ceiling even after compacting
   // is asked once and then left alone rather than asked every four minutes forever.
-  if (ctx.borrowWanted?.has(session.id) && contextTokens > 0 && worthSaving && compactAllowed) {
+  // ⚠️ `borrowCompactAllowed`, not `compactAllowed`: this is the size of the conversation against
+  // what a waiting task needs, which usage credits do not change.
+  if (ctx.borrowWanted?.has(session.id) && contextTokens > 0 && worthSaving && borrowCompactAllowed) {
     const compactCost = model.costOfCompact(session)
     if (compactCost !== null) {
       return {

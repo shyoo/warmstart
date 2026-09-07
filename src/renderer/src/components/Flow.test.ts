@@ -101,6 +101,8 @@ function mockWorkspace(over: Partial<FlowWorkspace> = {}): FlowWorkspace {
 function mockWorker(over: Partial<Worker> = {}): Worker {
   return {
     id: 'w-1',
+    credits: null,
+    creditsIntent: null,
     label: 'CodexFirst',
     adapterId: 'codex',
     isolationRoot: '',

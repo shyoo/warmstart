@@ -2,7 +2,14 @@ import { randomUUID } from 'node:crypto'
 import { existsSync, watch, type FSWatcher } from 'node:fs'
 import { join } from 'node:path'
 import { canWork } from '@shared/protocol.js'
-import type { Worker, WorkerHealth, WorkerIdentity, WorkerRole } from '@shared/protocol.js'
+import type {
+  CreditStatus,
+  CreditsIntent,
+  Worker,
+  WorkerHealth,
+  WorkerIdentity,
+  WorkerRole
+} from '@shared/protocol.js'
 import { resolveModelChoice } from '@shared/tasks.js'
 import { db, row, rows } from './db.js'
 import { ensureDir, paths, slugify } from './paths.js'
@@ -27,6 +34,8 @@ interface WorkerRow {
   default_models_json: string | null
   routable_models_json: string | null
   identity_json: string | null
+  credits_json: string | null
+  credits_intent_json: string | null
   health_json: string | null
   sort_order: number
   created_at: number
@@ -62,6 +71,10 @@ function toWorker(r: WorkerRow): Worker {
       }
       return ident
     })(),
+    credits: r.credits_json ? (JSON.parse(r.credits_json) as CreditStatus) : null,
+    creditsIntent: r.credits_intent_json
+      ? (JSON.parse(r.credits_intent_json) as CreditsIntent)
+      : null,
     health: (() => {
       const hlth = r.health_json ? (JSON.parse(r.health_json) as WorkerHealth) : null
       if (hlth && hlth.subscriptionExpired === undefined) {
@@ -365,6 +378,93 @@ export function reorderWorkers(ids: string[]): Worker[] {
 function announce(worker: Worker): Worker {
   emit({ type: 'worker.changed', worker })
   return worker
+}
+
+// ------------------------------------------------------------------------------- usage credits
+
+/**
+ * Store what the vendor last said about this account spending past its plan limit.
+ *
+ * ⚠️ Announced only when the reading actually changed. This is written on every spend probe — every
+ * five minutes on a busy worker — and emitting a `worker.changed` each time would make an unchanged
+ * fact a fleet-wide refetch in every open window, which is the same cost `reorder` above avoids.
+ */
+export function setWorkerCredits(id: string, credits: CreditStatus | null): Worker {
+  const before = requireWorker(id)
+  const json = credits ? JSON.stringify(credits) : null
+  if (JSON.stringify(before.credits ?? null) === JSON.stringify(credits ?? null)) return before
+  db().prepare('update workers set credits_json = ? where id = ?').run(json, id)
+  return announce(requireWorker(id))
+}
+
+/**
+ * Record that the operator does — or does not — want this account spending credits.
+ *
+ * ⚠️ Grants nothing at the vendor and enables nothing by itself. Measured 2026-09-07: Claude Code
+ * reports `can_toggle: false` on both live accounts and `/usage-credits` opens a login chooser
+ * rather than a toggle, so the switch is thrown by a person where the vendor put it. This is how the
+ * app knows what was *wanted*, which is the only way a mismatch can be noticed at all.
+ */
+export function setWorkerCreditsIntent(id: string, asked: boolean): Worker {
+  requireWorker(id)
+  const intent: CreditsIntent = { asked, at: Date.now(), reportedAt: null }
+  db()
+    .prepare('update workers set credits_intent_json = ? where id = ?')
+    .run(JSON.stringify(intent), id)
+  return announce(requireWorker(id))
+}
+
+/** Remember that the operator has been told about a mismatch, so it is raised once and not hourly. */
+export function noteCreditsDiscrepancyReported(id: string): void {
+  const worker = getWorker(id)
+  if (!worker?.creditsIntent) return
+  const intent: CreditsIntent = { ...worker.creditsIntent, reportedAt: Date.now() }
+  db()
+    .prepare('update workers set credits_intent_json = ? where id = ?')
+    .run(JSON.stringify(intent), id)
+  announce(requireWorker(id))
+}
+
+/**
+ * Is this worker actually spending past its plan limit right now?
+ *
+ * ⛔ **Both halves, and the vendor's is not optional.** `spendCreditsPastLimit` is the operator's
+ * fleet-wide intent; `worker.credits.enabled` is what the vendor says about *this* account. Standing
+ * the quota guards down on the switch alone would apply it to accounts with no credits behind them,
+ * where the run does not gain a reprieve — it simply runs into a hard vendor refusal instead of
+ * being wrapped up cleanly, losing the commit and the handoff the wrap-up exists to produce.
+ *
+ * ⚠️ A worker whose credits have never been probed reads `null` here and is therefore **not**
+ * spending. Not knowing is not permission.
+ */
+export function spendingCreditsOn(worker: Worker | null, switchOn: boolean): boolean {
+  return switchOn && worker?.credits?.enabled === true
+}
+
+/**
+ * Has the operator asked for something the vendor is not doing? One sentence, or null.
+ *
+ * ⛔ Only ever the direction that **costs the operator something they did not expect**: they asked
+ * for credits and the account is not spending them, so runs they expected to carry on past the limit
+ * are still being wrapped up. The opposite — credits on where none were asked for — is the vendor's
+ * own setting on the operator's own account and is not this app's business to challenge.
+ */
+export function creditsDiscrepancy(worker: Worker): string | null {
+  const intent = worker.creditsIntent
+  const credits = worker.credits
+  if (!intent?.asked || !credits || credits.enabled) return null
+  if (intent.reportedAt !== null) return null
+  const why = credits.disabledReason ? ` The reason it gives is \`${credits.disabledReason}\`.` : ''
+  const toggle =
+    credits.canToggle === false
+      ? ' It also reports that this cannot be changed from the CLI, so the switch is somewhere ' +
+        'in the vendor’s own account settings rather than in the terminal.'
+      : ''
+  return (
+    `You asked for ${worker.label} to spend usage credits past its plan limit, but the vendor ` +
+    `reports credits as **off** on this account.${why}${toggle} Until they are on, runs on this ` +
+    'worker are still wrapped up at the limit rather than carrying on.'
+  )
 }
 
 /**

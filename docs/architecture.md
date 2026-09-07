@@ -208,6 +208,25 @@ field. Antigravity lacking `/compact` must express itself as a missing capabilit
 of them move. A cost model may also say it does not know: `cache.kind: "unpriced"` makes
 `canPriceCache()` false and the clock declines to spend rather than acting on an invented number.
 
+### Spending real money needs two independent yeses
+
+⛔ **An operator's intent and a vendor's reading are different facts, and the fleet acts only where
+they agree.** `settings.spendCreditsPastLimit` says what the operator wants of the fleet;
+`Worker.credits.enabled` says what the vendor reports about one account. `spendingCreditsOn()` is the
+**only** reader of the pair, for the same reason `mayCompact` is the only reader of `autoCompact`: two
+call sites that combine them themselves are two chances to disagree, and here the disagreement is
+billed. Acting on the intent alone pushes runs into exhausted windows on accounts with nothing behind
+them — a hard vendor refusal in place of a clean wrap-up, losing the commit and the handoff. Acting on
+the vendor's word alone starts a bill nobody asked for.
+
+⚠️ **Not knowing is not permission.** A worker no spend probe has read is `null` here and is therefore
+not spending, which is the same rule `unknown is a verdict` states one heading below.
+
+⛔ **An intervention that does not happen must still leave a trace.** A run carrying on at 100% of its
+window looks exactly like a run the scheduler forgot about, so the stand-down says so on the task
+thread — once per run per kind, and only at the moment a guard would actually have fired. Announcing
+it at dispatch instead puts a paragraph about the plan limit on every run that never goes near one.
+
 ### Every belief carries its basis
 
 ⛔ `remainingTokens` returns a number *and* how it was arrived at; the reserve returns a verdict *and*

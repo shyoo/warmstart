@@ -45,7 +45,8 @@ import {
   listWorkers,
   modelRoutingActive,
   recordDispatchFailure,
-  routableModelsFor
+  routableModelsFor,
+  spendingCreditsOn
 } from './workers.js'
 import { fitnessFor } from './fitness.js'
 import { qualityReport } from './quality.js'
@@ -811,6 +812,35 @@ export function probeDemand(): ProbeDemand {
  * the workspace is already back in the pool. If it fails, the run keeps its `before` and no `after`,
  * which renders as "not measured" rather than as a delta of zero.
  */
+/**
+ * Take an opening credit reading on a worker that is actually spending them.
+ *
+ * ⛔ **Only where credits are on, and that narrowing is the whole design.** A forced refresh opens a
+ * terminal for the better part of thirty seconds; paying that on every dispatch to bracket a meter
+ * that reads the same zero on both sides would tax the entire fleet for a number that never moves.
+ * The account the operator wants bracketed exactly is the one being billed, and this is that test.
+ *
+ * ⛔ **`run.quotaBefore` is a *stored* reading — up to a sweep old — and for money that is not good
+ * enough.** A window percent drifts; a credit balance is a bill. So this forces the vendor's cache
+ * current, which is what puts a real sample on the series just before the run's own spending starts.
+ *
+ * ⚠️ Fire-and-forget, exactly like `captureQuotaAfter`, and for the same reason: nothing is waiting
+ * on it and the run must not be held for half a minute behind a reading. The consequence is that the
+ * first few seconds of the run fall outside the bracket, which `price.ts` already reports honestly
+ * as `unmeasuredMs` rather than silently absorbing.
+ */
+async function captureSpendBefore(run: Run): Promise<void> {
+  if (!spendingCreditsOn(getWorker(run.workerId), settings().spendCreditsPastLimit)) return
+  try {
+    // ⚠️ Declined is fine and common — something refreshed this account seconds ago, in which case
+    // the sample already on the series *is* the opening reading and forcing a second terminal would
+    // buy nothing. See `captureQuotaAfter` for the same argument on the closing side.
+    if (!(await refreshNow(run.workerId, 0))) await probeWorker(run.workerId)
+  } catch (err) {
+    log.warn(`could not read the opening credit balance for run ${run.id.slice(0, 8)}:`, err)
+  }
+}
+
 async function captureQuotaAfter(run: Run): Promise<void> {
   // ⛔ Nothing spent, nothing to measure. A run that produced no metered turn cannot have moved the
   // window, and reading it again would open a terminal for half a minute to confirm a subtraction
@@ -2745,6 +2775,9 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
     objective: resolveObjective(project?.config?.objective, task.objective, settings().objective)
   })
   setRunQuota(run.id, 'before', runQuota(worker.id))
+  // ⛔ The money half of the same bracket, and only on an account that is spending credits.
+  // See `captureSpendBefore` for why it is narrowed and why nothing waits on it.
+  void captureSpendBefore(run)
   // A new attempt, so the peephole starts empty. ⛔ Cleared here and never on completion: what the
   // last run said is exactly what somebody wants to read in the seconds after it fails.
   clearActivity(task.id)
@@ -2942,6 +2975,9 @@ async function dispatchIntoWarmSession(
     objective: resolveObjective(project?.config?.objective, task.objective, settings().objective)
   })
   setRunQuota(run.id, 'before', runQuota(worker.id))
+  // ⛔ The money half of the same bracket, and only on an account that is spending credits.
+  // See `captureSpendBefore` for why it is narrowed and why nothing waits on it.
+  void captureSpendBefore(run)
   clearActivity(task.id)
   if (reclaimed) workspaces.set(session.id, { workspace: reclaimed, projectId: project?.id ?? null })
 
@@ -3312,13 +3348,29 @@ async function runWatchdogs(): Promise<void> {
     const taskObjective = resolveObjective(project?.config?.objective, task.objective, switches.objective)
     const margin = policy(taskObjective).preemptMarginMs
 
+    // ⛔ **The plan limit is where usage credits start doing their job.** Both halves have to hold:
+    // the operator's fleet switch, and the vendor's own word that *this* account has credits on.
+    // Where they do, the quota preempts below stand down — wrapping a run up at the limit is exactly
+    // what defeats the credits it was bought to spend. Where the worker has no credits the guards
+    // stay up, because a run pushed into an exhausted window with nothing behind it does not get a
+    // reprieve, it gets a hard vendor refusal and loses the commit the wrap-up would have made.
+    //
+    // ⛔ **Read here, acted on at each trigger, and never announced before one fires.** An earlier
+    // draft said the stand-down the moment a run began on a credit-enabled worker, which put a
+    // paragraph about the plan limit on the thread of every run that never went near it. The
+    // sentence is only true, and only wanted, at the moment an intervention would actually have
+    // happened — so each of the three triggers below asks for it by name.
+    const onCredits = spendingCreditsOn(getWorker(run.workerId), switches.spendCreditsPastLimit)
+
     // A rejection outranks an earlier caution. The turn has already failed, so leaving a stored
     // boundary warning in front of this check would misleadingly offer a choice for another minute.
     const refused =
       switches.autoOverrunPreempt && task.preemptible
         ? overrunVerdict(run.workerId, null, { quotaOverride: quotaOverridden(task) })
         : null
-    if (refused) {
+    if (refused && onCredits) {
+      noteCreditsStandDown(run, task, 'preempt')
+    } else if (refused) {
       if (task.quotaPreemptWarning) setQuotaPreemptWarning(task.id, null)
       log.warn(`t${task.seq} preempted for quota overrun risk (${refused.reason})`)
       await preempt(task, session, refused.resumeAt, refused.reason)
@@ -3326,7 +3378,11 @@ async function runWatchdogs(): Promise<void> {
     }
 
     if (switches.autoPreempt && reset && reset.at - Date.now() <= margin && task.preemptible) {
-      if (await warnBeforeQuotaPreempt(task, session, 'window', reset.at, reset.source)) continue
+      if (onCredits) {
+        noteCreditsStandDown(run, task, 'preempt')
+      } else if (await warnBeforeQuotaPreempt(task, session, 'window', reset.at, reset.source)) {
+        continue
+      }
     }
 
     // 2. Active 5h quota exhaustion, or a vendor refusal mid-stream.
@@ -3351,7 +3407,11 @@ async function runWatchdogs(): Promise<void> {
       const verdict = overrunVerdict(run.workerId, percent, {
         quotaOverride: quotaOverridden(task)
       })
-      if (verdict) {
+      if (verdict && onCredits) {
+        // ⛔ The window is exhausted and the account is spending credits: this is the case the
+        // switch was bought for, and it is the one place a person is owed the sentence.
+        noteCreditsStandDown(run, task, 'preempt')
+      } else if (verdict) {
         if (verdict.overridable) {
           if (
             await warnBeforeQuotaPreempt(
@@ -3474,6 +3534,46 @@ async function reportStall(task: Task, session: Session, lastTurn: number): Prom
       '⚠️ Nothing has been stopped — this is a report, and a run blocked on a slow network call ' +
       'looks the same. If it is stuck, stop the process above that is holding it and this task ' +
       'will carry on; the fleet will not kill a process it cannot prove is its own.'
+  )
+}
+
+/**
+ * Which runs have already been told that the credit switch is holding the quota guards down.
+ *
+ * ⛔ **In memory and keyed by run, because the message is about a decision rather than an event.**
+ * The scheduler re-reaches these checks on every tick; a thread line per tick would bury the run's
+ * actual conversation under a standing fact. Its correct lifetime is the run — a restart returns
+ * running tasks to `awaiting_human` anyway, so a set that survived one would be describing work that
+ * no longer exists. Same reasoning as `activity.ts`.
+ *
+ * ⚠️ Never emptied entry by entry, which is the cheaper of the two mistakes available: an entry is
+ * two short strings, and only a run that actually reached the plan limit on a credit-enabled account
+ * ever adds one. Clearing it as each run ends would need a hook in `finishRun`, which lives in
+ * `tasks.ts` and must not import this module back.
+ */
+const creditStandDownSaid = new Set<string>()
+
+/**
+ * Say, once, that an intervention was skipped because this account is spending usage credits.
+ *
+ * ⛔ **An intervention that does not happen leaves no trace, and that is the problem.** A run
+ * carrying on at 100% of its window looks identical to a run the scheduler forgot about, and the
+ * operator has no way to tell which from the board. This is the sentence that tells them, and it
+ * names *both* conditions — the fleet switch and this worker's own credit status — because either
+ * one being off is what they would need to change.
+ */
+function noteCreditsStandDown(run: Run, task: Task, what: 'preempt' | 'compact'): void {
+  const key = `${run.id}:${what}`
+  if (creditStandDownSaid.has(key)) return
+  creditStandDownSaid.add(key)
+  const worker = getWorker(run.workerId)
+  const doing = what === 'preempt' ? 'wrap this run up at the plan limit' : 'compact this session'
+  addMessage(
+    task.id,
+    'system',
+    `Not going to ${doing}: "spend credits past the plan limit" is on, and ${worker?.label ?? 'this worker'} ` +
+      'reports usage credits enabled, so the run carries on past the limit and is billed against ' +
+      'those credits. Turn the switch off in Settings › Fleet to go back to wrapping up instead.'
   )
 }
 
