@@ -21,40 +21,223 @@ import { emit } from './events.js'
 /** Enough to see what is going on, few enough that a long run cannot grow without bound. */
 const KEEP = 40
 
-/** One fragment is trimmed to this. An agent can emit a whole file in a single block. */
+/** One line is trimmed to this. An agent can emit a whole file in a single block. */
 const MAX_LINE = 400
 
-const tails = new Map<string, Array<{ text: string; ts: number }>>()
-const runTails = new Map<string, Array<{ text: string; ts: number }>>()
+interface Entry {
+  text: string
+  ts: number
+}
+
+/**
+ * One streaming line per tail, still being spoken.
+ *
+ * ⛔ **This is what stops streamed prose reading one word per line.** A provider that streams
+ * (`muse exec --json` emits `run.output.delta` per few tokens) hands this module dozens of
+ * fragments for one sentence. Each used to become its own tail entry, and the thread renders each
+ * entry as its own block — so the operator read `landing / corners.test.ts / pass. The / tree /
+ * is clean` as a column of words. A fragment that does not end in a newline is therefore a
+ * *continuation*: it extends the open line, and watchers are told so (`append` on the event) rather
+ * than being handed a new line. A fragment that does end in one (a tool announcement such as
+ * `· bash`, a `[run: …]` status line) closes the line and each of its rows stands alone.
+ */
+interface Tail {
+  lines: Entry[]
+  open: Entry | null
+}
+
+const tails = new Map<string, Tail>()
+const runTails = new Map<string, Tail>()
 const RUN_KEEP = 200
 
-export function noteActivity(taskId: string, text: string, runId?: string): void {
-  const trimmed = text.replace(/\s+/g, ' ').trim()
-  if (!trimmed) return
-  const entry = {
-    text: trimmed.length > MAX_LINE ? `${trimmed.slice(0, MAX_LINE)}…` : trimmed,
+function tailFor(map: Map<string, Tail>, key: string, keep: number): Tail {
+  let tail = map.get(key)
+  if (!tail) {
+    tail = { lines: [], open: null }
+    map.set(key, tail)
+  }
+  // ⚠️ The bound counts settled lines; the one line still being spoken sits outside it.
+  while (tail.lines.length > keep) tail.lines.shift()
+  return tail
+}
+
+function pushLine(tail: Tail, text: string, keep: number): Entry {
+  const entry: Entry = {
+    text: text.length > MAX_LINE ? `${text.slice(0, MAX_LINE)}…` : text,
     ts: Date.now()
   }
-  const tail = tails.get(taskId) ?? []
-  tail.push(entry)
-  while (tail.length > KEEP) tail.shift()
-  tails.set(taskId, tail)
-  emit({ type: 'task.activity', taskId, text: entry.text, ts: entry.ts })
+  tail.lines.push(entry)
+  while (tail.lines.length > keep) tail.lines.shift()
+  return entry
+}
 
-  if (runId) {
-    const runTail = runTails.get(runId) ?? []
-    runTail.push(entry)
-    while (runTail.length > RUN_KEEP) runTail.shift()
-    runTails.set(runId, runTail)
+function snapshot(tail: Tail | undefined): Entry[] {
+  if (!tail) return []
+  const lines = tail.lines.map((l) => ({ ...l }))
+  // ⚠️ The open line is part of what a watcher sees: a pane opened mid-turn must show the sentence
+  // in progress, not only the ones before it. Read trimmed — the stored form keeps a trailing
+  // separator for the next fragment, which is scaffolding, not content.
+  if (tail.open && tail.open.text.trim()) {
+    lines.push({ text: tail.open.text.trimEnd(), ts: tail.open.ts })
   }
+  return lines
+}
+
+/** What watchers are shown of an open line: content, without the scaffolding. */
+function shown(open: Entry): Entry {
+  return { text: open.text.trimEnd(), ts: open.ts }
+}
+
+export function noteActivity(taskId: string, text: string, runId?: string): void {
+  // ⚠️ `\r` is a carriage return, not content: a PTY-redrawn progress line would otherwise glue
+  // itself onto the prose with its control characters intact.
+  const norm = text.replace(/\r\n?/g, '\n')
+  const closed = norm.endsWith('\n')
+  const body = closed ? norm.slice(0, -1) : norm
+  // ⛔ Interior newlines join; only the trailing one frames. A single fragment carrying `a\nb` is
+  // one announcement that wrapped, not two turns — and the settled contract (`reading\n\n the file`
+  // reads as one line) already says so. What spans fragments is streaming, and that is what the
+  // open line reassembles.
+  const flat = body.replace(/\n/g, ' ')
+  const collapsed = flat.replace(/[ \t\f\v]+/g, ' ')
+
+  const taskTail = tailFor(tails, taskId, KEEP)
+  const runTail = runId ? tailFor(runTails, runId, RUN_KEEP) : null
+
+  if (closed) {
+    const line = collapsed.trim()
+    if (!line) {
+      // A blank row ends the paragraph without saying anything: settle the open line, emit
+      // nothing. Watchers already hold its text from the `append` events that built it.
+      taskTail.open = null
+      if (runTail) runTail.open = null
+      return
+    }
+    // ⚠️ The open line keeps the boundary the fragments spell: `hel` + `lo\n` settles as
+    // `hello`, not `hel lo`. Only the trailing end is dead whitespace — a line never needs it.
+    settleLine(taskTail, collapsed.replace(/\s+$/, ''), KEEP, taskId, runTail)
+    return
+  }
+
+  if (!collapsed.trim()) {
+    // A whitespace-only fragment carries at most one separator. Give it only where one can be
+    // missing — inside an open line that does not already end in one — and never start a line
+    // with it. (A lone-space delta between two word deltas is the case that matters.)
+    appendOpen(taskTail, ' ', taskId, runTail)
+    return
+  }
+  appendOpen(taskTail, collapsed, taskId, runTail)
+}
+
+/**
+ * A newline-terminated row: it finishes whatever line is open, then stands as its own entry.
+ * Emitted as `append` where it extended the open line (watchers replace their last row with the
+ * settled text) and as a fresh push otherwise.
+ */
+function settleLine(
+  taskTail: Tail,
+  piece: string,
+  keep: number,
+  taskId: string,
+  runTail: Tail | null
+): void {
+  // ⚠️ `piece` carries its leading boundary (see above) but is never blank here; the fresh-push
+  // half still trims, because a line starts with content.
+  const line = piece.trim()
+  if (taskTail.open) {
+    const added = joinPiece(taskTail.open.text, piece)
+    taskTail.open.text = cap(taskTail.open.text + added)
+    taskTail.open.ts = Date.now()
+    const settled = shown(taskTail.open)
+    taskTail.lines.push({ ...settled })
+    while (taskTail.lines.length > keep) taskTail.lines.shift()
+    taskTail.open = null
+    emit({ type: 'task.activity', taskId, text: settled.text, ts: settled.ts, append: true })
+  } else {
+    const entry = pushLine(taskTail, line, keep)
+    emit({ type: 'task.activity', taskId, text: entry.text, ts: entry.ts })
+  }
+  if (runTail) {
+    if (runTail.open) {
+      const added = joinPiece(runTail.open.text, piece)
+      runTail.open.text = cap(runTail.open.text + added)
+      runTail.open.ts = Date.now()
+      runTail.lines.push({ ...runTail.open })
+      while (runTail.lines.length > RUN_KEEP) runTail.lines.shift()
+      runTail.open = null
+    } else {
+      pushLine(runTail, line, RUN_KEEP)
+    }
+  }
+}
+
+/**
+ * A fragment of the line still being spoken. Starts the open line where there is none (leading
+ * whitespace is meaningless at a line start) and extends it otherwise, keeping the boundary the
+ * fragments themselves spell: `landing` + ` corners` reads `landing corners`, `squ` + `ashing`
+ * reads `squashing`. Emitted with the whole open line, so a watcher that missed a fragment still
+ * lands on the right text.
+ */
+function appendOpen(taskTail: Tail, piece: string, taskId: string, runTail: Tail | null): void {
+  if (!taskTail.open) {
+    // ⚠️ Leading-trimmed only. A trailing separator belongs to the boundary with the *next*
+    // fragment (`no ` + `squ` reads `no squ`), and trimming it here would glue the two (`nosqu`).
+    // Reads go through `shown`, so the scaffolding never reaches a watcher.
+    const start = piece.trimStart()
+    if (!start.trim()) return
+    taskTail.open = { text: cap(start), ts: Date.now() }
+    const first = shown(taskTail.open)
+    emit({ type: 'task.activity', taskId, text: first.text, ts: first.ts })
+  } else {
+    if (taskTail.open.text.endsWith('…')) return
+    const added = joinPiece(taskTail.open.text, piece)
+    if (!added) return
+    taskTail.open.text = cap(taskTail.open.text + added)
+    taskTail.open.ts = Date.now()
+    const grown = shown(taskTail.open)
+    emit({ type: 'task.activity', taskId, text: grown.text, ts: grown.ts, append: true })
+  }
+  if (runTail) {
+    if (!runTail.open) {
+      const start = piece.trimStart()
+      if (!start.trim()) return
+      runTail.open = { text: cap(start), ts: Date.now() }
+    } else {
+      if (runTail.open.text.endsWith('…')) return
+      const added = joinPiece(runTail.open.text, piece)
+      if (!added) return
+      runTail.open.text = cap(runTail.open.text + added)
+      runTail.open.ts = Date.now()
+    }
+  }
+}
+
+/**
+ * The piece as it attaches to the open line: concatenated, never re-spaced.
+ *
+ * ⛔ **No separator is ever inserted.** Streamed fragments spell their own boundary — `landing` +
+ * ` corners` reads `landing corners` because the space arrived in the fragment, and `squ` +
+ * `ashing` reads `squashing` because none did. Tokenisers split mid-word routinely, so inventing a
+ * space where neither side has one corrupts words (`squ ashing`, measured in the report that
+ * prompted this). The one cleanup is a doubled separator where both sides spell one.
+ */
+function joinPiece(open: string, piece: string): string {
+  if (!piece) return ''
+  if (!open) return piece
+  if (open.endsWith(' ') && piece.startsWith(' ')) return piece.slice(1)
+  return piece
+}
+
+function cap(text: string): string {
+  return text.length > MAX_LINE ? `${text.slice(0, MAX_LINE)}…` : text
 }
 
 export function activityFor(taskId: string): Array<{ text: string; ts: number }> {
-  return tails.get(taskId) ?? []
+  return snapshot(tails.get(taskId))
 }
 
 export function runActivityFor(runId: string): Array<{ text: string; ts: number }> {
-  return runTails.get(runId) ?? []
+  return snapshot(runTails.get(runId))
 }
 
 /**
@@ -62,7 +245,8 @@ export function runActivityFor(runId: string): Array<{ text: string; ts: number 
  * Called when a run is finished and about to be persisted into SQLite.
  */
 export function consumeRunActivity(runId: string): Array<{ text: string; ts: number }> {
-  const got = runTails.get(runId) ?? []
+  const tail = runTails.get(runId)
+  const got = snapshot(tail)
   runTails.delete(runId)
   return got
 }

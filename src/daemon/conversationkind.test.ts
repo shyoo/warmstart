@@ -370,8 +370,10 @@ describe('what ends a conversation turn', () => {
   it('persists intermediate streaming activity on the run', async () => {
     const { task, runId, session } = talking()
     const activity = await import('./activity.js')
-    activity.noteActivity(task.id, '[Tool: run_command git status]', runId)
-    activity.noteActivity(task.id, 'Reading configuration files...', runId)
+    // ⚠️ Newline-terminated: two settled rows, not one streaming line. Fragments without one
+    // share a single open row (streamed prose reassembled), which is what the peephole is for.
+    activity.noteActivity(task.id, '[Tool: run_command git status]\n', runId)
+    activity.noteActivity(task.id, 'Reading configuration files...\n', runId)
 
     await scheduler.onStreamResult(session, { isError: false, text: 'Done checking.', terminalReason: null })
 

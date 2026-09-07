@@ -172,6 +172,32 @@ export interface ActivityLine {
 }
 
 /**
+ * One `task.activity` event folded into a watcher's per-task tails. Pure so the L1 suite can pin
+ * the framing without spawning a pane.
+ *
+ * ⛔ **`append` replaces the last row, it never pushes.** The daemon sends the whole open line with
+ * each fragment, so a streamed sentence (`landing`, ` corners`, ` pass. The`, …) occupies one row
+ * that grows — pushing each fragment would render the sentence one word per line, which is the
+ * defect this exists to prevent. A watcher that missed a fragment still lands on the right text,
+ * because what arrives is the line, not the delta.
+ */
+export function applyActivityEvent(
+  prev: Record<string, ActivityLine[]>,
+  event: { taskId: string; text: string; ts: number; reset?: true; append?: true }
+): Record<string, ActivityLine[]> {
+  // A new attempt starts with an empty pane. See clearActivity.
+  if (event.reset) return { ...prev, [event.taskId]: [] }
+  const cur = prev[event.taskId] ?? []
+  if (event.append && cur.length > 0) {
+    return { ...prev, [event.taskId]: [...cur.slice(0, -1), { text: event.text, ts: event.ts }] }
+  }
+  // ⚠️ Bounded here as well as in the daemon. This is agent output arriving as fast as a model
+  // can produce it, and an unbounded array in a React state is a memory leak with a pretty UI.
+  const tail = [...cur, { text: event.text, ts: event.ts }].slice(-40)
+  return { ...prev, [event.taskId]: tail }
+}
+
+/**
  * What agents are saying right now, per task.
  *
  * ⛔ **Appended from the event stream, never re-fetched.** The daemon holds a tail of its own and
@@ -199,17 +225,7 @@ export function useActivity(): {
 
   useDaemonEvents((event) => {
     if (event.type !== 'task.activity') return
-    // A new attempt starts with an empty pane. See clearActivity.
-    if (event.reset) {
-      setActivity((prev) => ({ ...prev, [event.taskId]: [] }))
-      return
-    }
-    setActivity((prev) => {
-      // ⚠️ Bounded here as well as in the daemon. This is agent output arriving as fast as a model
-      // can produce it, and an unbounded array in a React state is a memory leak with a pretty UI.
-      const tail = [...(prev[event.taskId] ?? []), { text: event.text, ts: event.ts }].slice(-40)
-      return { ...prev, [event.taskId]: tail }
-    })
+    setActivity((prev) => applyActivityEvent(prev, event))
   })
 
   return { activity, seed }

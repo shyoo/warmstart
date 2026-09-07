@@ -2186,4 +2186,16 @@ export type DaemonEvent =
    *
    * ⚠️ Agent output, so it is untrusted text. It is rendered as text and never as markup.
    */
-  | { type: 'task.activity'; taskId: string; text: string; ts: number; reset?: true }
+  | {
+      type: 'task.activity'
+      taskId: string
+      text: string
+      ts: number
+      reset?: true
+      /**
+       * A fragment of the line still being spoken: replace the watcher's last row with this text
+       * rather than pushing a new one. Emitted with the whole open line, so a watcher that missed
+       * a fragment still lands on the right text. Absent, the row is a settled line of its own.
+       */
+      append?: true
+    }

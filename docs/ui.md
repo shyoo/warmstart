@@ -18,7 +18,10 @@ conventions live.
 
 ⛔ **Agent output is rendered as text, never as markup.** `task.activity` — the live peephole — is a
 bounded in-memory tail, not persisted, and gone when the daemon restarts. That is the correct lifetime
-for *what is happening right now*; the thread is what a person reads afterwards.
+for *what is happening right now*; the thread is what a person reads afterwards. ⚠️ One tail row is one
+row on screen, so a fragment without a trailing newline extends the open row instead of pushing a new one —
+streamed prose reassembles rather than reading one word per line — and `append` on the event carries the whole
+line so watchers replace their last row rather than extending it.
 
 ⛔ **No native modules here.** They live in the daemon so an Electron upgrade cannot break a running
 fleet.

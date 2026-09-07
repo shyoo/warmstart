@@ -468,7 +468,10 @@ describe('a worker the operator has switched off', () => {
 describe('the live peephole', () => {
   it('keeps a bounded tail, so a long run cannot grow without bound', async () => {
     const activity = await import('./activity.js')
-    for (let i = 0; i < 200; i++) activity.noteActivity('t-peek', `line ${i}`)
+    // ⚠️ Settled rows, one per line: a newline-terminated fragment is a row of its own, which is
+    // what the bound counts. Streaming fragments without one share a single open line (see below)
+    // and would never exercise this.
+    for (let i = 0; i < 200; i++) activity.noteActivity('t-peek', `line ${i}\n`)
     const tail = activity.activityFor('t-peek')
     expect(tail.length).toBeLessThanOrEqual(40)
     // ⛔ The *newest* survive. A tail that dropped the latest lines would answer "what was it doing
@@ -476,14 +479,15 @@ describe('the live peephole', () => {
     expect(tail[tail.length - 1]?.text).toBe('line 199')
   })
 
-  it('collapses an agent’s whitespace and caps one fragment', async () => {
+  it('collapses an agent’s whitespace and caps one line', async () => {
     const activity = await import('./activity.js')
     activity.clearActivity('t-wide')
     activity.noteActivity('t-wide', `  reading\n\n   the   file  `)
     activity.noteActivity('t-wide', 'x'.repeat(5000))
     const tail = activity.activityFor('t-wide')
-    expect(tail[0]?.text).toBe('reading the file')
-    expect(tail[1]?.text.length).toBeLessThan(500)
+    expect(tail).toHaveLength(1)
+    expect(tail[0]?.text.startsWith('reading the file')).toBe(true)
+    expect(tail[0]?.text.length).toBeLessThan(500)
   })
 
   it('ignores a fragment that says nothing', async () => {
@@ -498,6 +502,93 @@ describe('the live peephole', () => {
     activity.noteActivity('t-clear', 'from the run before')
     activity.clearActivity('t-clear')
     expect(activity.activityFor('t-clear')).toHaveLength(0)
+  })
+
+  it('reassembles streamed prose into one row, not one row per word', async () => {
+    // ⛔ The defect reported 2026-09-07: a muse turn streamed as `run.output.delta` fragments read
+    // `landing / corners.test.ts / pass. The / tree / is clean` — one word per block, because every
+    // fragment became its own tail entry and the thread renders each entry as its own row.
+    const activity = await import('./activity.js')
+    activity.clearActivity('t-stream')
+    for (const frag of ['landing', ' corners.test.ts', ' pass. The', ' tree', ' is clean']) {
+      activity.noteActivity('t-stream', frag)
+    }
+    const tail = activity.activityFor('t-stream')
+    expect(tail).toHaveLength(1)
+    expect(tail[0]?.text).toBe('landing corners.test.ts pass. The tree is clean')
+  })
+
+  it('keeps the boundary the fragments spell, including mid-word splits', async () => {
+    // ⛔ Concatenated, never re-spaced: the space between `no` and `squ` arrives in its fragment,
+    // and none is invented between `squ` and `ashing` — tokenisers split mid-word routinely, and
+    // a guessed separator corrupts words (`squ ashing`, measured in the report that prompted this).
+    const activity = await import('./activity.js')
+    activity.clearActivity('t-split')
+    activity.noteActivity('t-split', 'no ')
+    activity.noteActivity('t-split', 'squ')
+    activity.noteActivity('t-split', 'ashing was')
+    activity.noteActivity('t-split', ' needed')
+    expect(activity.activityFor('t-split').map((l) => l.text)).toEqual(['no squashing was needed'])
+  })
+
+  it('lets a newline-terminated row stand alone beside streaming prose', async () => {
+    const activity = await import('./activity.js')
+    activity.clearActivity('t-rows')
+    activity.noteActivity('t-rows', '· bash\n')
+    activity.noteActivity('t-rows', 'landing')
+    activity.noteActivity('t-rows', ' corners\n')
+    activity.noteActivity('t-rows', '· grep\n')
+    expect(activity.activityFor('t-rows').map((l) => l.text)).toEqual([
+      '· bash',
+      'landing corners',
+      '· grep'
+    ])
+  })
+
+  it('finishes the open line when the newline arrives in a later fragment', async () => {
+    const activity = await import('./activity.js')
+    activity.clearActivity('t-join')
+    activity.noteActivity('t-join', 'hel')
+    activity.noteActivity('t-join', 'lo\n')
+    activity.noteActivity('t-join', 'next\n')
+    expect(activity.activityFor('t-join').map((l) => l.text)).toEqual(['hello', 'next'])
+  })
+
+  it('tells watchers to replace the open row, with the whole line each time', async () => {
+    const events = await import('./events.js')
+    const activity = await import('./activity.js')
+    const seen: Array<{ text: string; append?: true; reset?: true }> = []
+    events.setEventSink((e) => {
+      if (e.type === 'task.activity' && e.taskId === 't-wire') seen.push(e)
+    })
+    try {
+      activity.clearActivity('t-wire')
+      seen.length = 0
+      activity.noteActivity('t-wire', 'landing')
+      activity.noteActivity('t-wire', ' corners')
+      activity.noteActivity('t-wire', '· bash\n')
+      expect(seen.map((e) => [e.text, e.append ?? false])).toEqual([
+        ['landing', false],
+        ['landing corners', true],
+        // The settled row carries the finished line, so a watcher that missed a fragment still
+        // lands on the right text. ⚠️ Abutted, not spaced: a terminated row arriving mid-line is
+        // concatenated like any other fragment — in practice tool rows precede the prose, so the
+        // open line is empty when they land.
+        ['landing corners· bash', true]
+      ])
+    } finally {
+      events.setEventSink(() => {})
+    }
+  })
+
+  it('keeps the open line in what a pane seeds from and what a run persists', async () => {
+    const activity = await import('./activity.js')
+    activity.clearActivity('t-seed')
+    activity.noteActivity('t-seed', 'landing', 'r-seed')
+    activity.noteActivity('t-seed', ' corners', 'r-seed')
+    expect(activity.activityFor('t-seed').map((l) => l.text)).toEqual(['landing corners'])
+    expect(activity.runActivityFor('r-seed').map((l) => l.text)).toEqual(['landing corners'])
+    expect(activity.consumeRunActivity('r-seed').map((l) => l.text)).toEqual(['landing corners'])
   })
 })
 
