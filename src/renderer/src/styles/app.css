@@ -558,23 +558,14 @@ body {
 /*
  * Money accruing now, under the windows it is no longer bounded by.
  *
- * ⛔ Below the gauges rather than among them, because it is a different kind of number: a gauge is a
- * share of a fee already paid, this is a bill being run up. Four rows of identical shape would read
- * as four measurements of one thing, which is the confusion `.wcard-rule` exists further down to end.
+ * ⛔ Drawn as a gauge matching sessions below it: font-size var(--text-meta), a bar with
+ * urgency fill, and $0.00/$40.00 value. "billing" tag dropped.
  *
  * ⚠️ Drawn only while credits are enabled on that account, so it cannot make the card grow and
  * shrink on a timer the way a transient row would.
  */
 .wcard-credits {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 4px;
-}
-
-.tag--credits {
-  color: var(--state-human);
-  border-color: var(--state-human);
+  margin-top: 2px;
 }
 
 /*
@@ -690,6 +681,10 @@ body {
   grid-template-columns: 44px 1fr 34px 58px;
 }
 
+.wcard:not(.wcard--narrow) .wcard-windows--terse ~ .gauge--credits {
+  grid-template-columns: 44px 1fr 124px;
+}
+
 .wcard:not(.wcard--narrow) .wcard-windows--terse ~ .wcard-sessions .gauge--session {
   grid-template-columns: 44px 1fr 58px 58px;
 }
@@ -732,6 +727,18 @@ body {
  */
 .gauge--session {
   grid-template-columns: 84px 1fr 58px 58px;
+}
+
+/*
+ * Extra usage / credits gauge: styled identically to session gauges with font-size var(--text-meta).
+ * The value column spans 124px (58px + 8px gap + 58px) matching the right edge of session gauges.
+ */
+.gauge--credits {
+  grid-template-columns: 84px 1fr 124px;
+}
+
+.gauge--credits .gauge-value {
+  white-space: nowrap;
 }
 
 .gauge--idle {
@@ -841,6 +848,10 @@ body {
 
 .wcard--narrow .gauge--session {
   grid-template-columns: 1fr 58px 58px;
+}
+
+.wcard--narrow .gauge--credits {
+  grid-template-columns: 1fr 124px;
 }
 
 /*

@@ -527,11 +527,12 @@ and both accounts report `spend.can_toggle: false` with
 vendor put it; what this app does is **read** the state, record what the operator asked for, and say
 when the two disagree (`creditsDiscrepancy`, surfaced by Doctor).
 
-⚠️ **Still unmeasured, and honestly so.** Every credit-side field — `used_credits`, `monthly_limit`,
-`balance`, `currency`, `daily`, `weekly` — has only ever been observed as `null`, because credits have
-never been on while anything was measuring. The parser, the strip and the price attribution are built
-against the populated shape the vendor documents, not one that has been seen. **One account with
-credits actually enabled, probed once, removes the guess.**
+⭐ **Measured 2026-09-07 on ClaudeSecond with extra usage enabled.** The vendor reports
+`extra_usage.monthly_limit: 4000` with `decimal_places: 2`, and `spend.limit: { amount_minor: 4000, currency: 'USD', exponent: 2 }`
+— both in minor units (cents), representing the $40.00 allowed usage ceiling configured by the user.
+The parser scales by `decimal_places` (and `majorUnits` by `exponent`), preventing the ceiling from
+being misread as `$4000.00`. In the fleet strip, credits are drawn as a gauge row matching sessions
+(font-size `var(--text-meta)`, urgency bar fill, `$0.00/$40.00` value, and `"billing"` tag dropped).
 
 ## Still unmeasured, and why
 

@@ -2105,7 +2105,7 @@ try {
   )
   check(
     '⚠️ and the ceiling beside it, so the number has something to be a share of',
-    /of \$50\.00/.test(creditCard),
+    /\/\$50\.00/.test(creditCard),
     JSON.stringify(creditCard)
   )
   // ⛔ **Off is not zero**, which is the rule the whole `CreditStatus` type is built on: with credits

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { Session } from '@shared/protocol'
+import type { CreditStatus, Session } from '@shared/protocol'
 import { isWorkerSubscriptionExpired, quotaFreshness } from '@shared/tasks'
 import type { FleetEntry } from '../lib/daemon'
 import {
@@ -207,6 +207,44 @@ function SessionGauge({ session, now }: { session: Session; now: number }): Reac
       <span className={`num gauge-reset gauge-reset--${hasCacheClock ? cacheUrgencyClass : ctxUrgencyClass}`}>
         {hasCacheClock ? countdown(session.cacheExpiresAt, now) : ''}
       </span>
+    </div>
+  )
+}
+
+/**
+ * Extra usage / credits gauge, drawn as a gauge matching sessions and quota rows.
+ *
+ * ⛔ Dollars, beside the percentages, and only where money is actually being spent. Sized and laid
+ * out identically to session gauges: font-size var(--text-meta), a bar with urgency fill, and
+ * $0.00/$40.00 value. "Billing" tag dropped.
+ */
+function CreditGauge({ credits }: { credits: CreditStatus }): React.JSX.Element {
+  const fill =
+    credits.monthlyLimit && credits.monthlyLimit > 0 && credits.used !== null
+      ? Math.min(1, Math.max(0, credits.used / credits.monthlyLimit))
+      : null
+  const urgencyClass = fill !== null ? quotaUrgency(fill * 100) : 'ok'
+  const valueText = `${money(credits.used)}${credits.monthlyLimit !== null ? `/${money(credits.monthlyLimit)}` : ''}`
+
+  return (
+    <div
+      className="wcard-credits gauge gauge--credits"
+      title={
+        credits.monthlyLimit !== null
+          ? `credits: ${money(credits.used)} used of ${money(credits.monthlyLimit)} monthly limit`
+          : `credits: ${money(credits.used)} used`
+      }
+    >
+      <span className="gauge-label">credits</span>
+      <span className="bar">
+        {fill !== null && (
+          <span
+            className={`bar-fill bar-fill--${urgencyClass}`}
+            style={{ width: `${Math.min(100, Math.max(2, fill * 100))}%` }}
+          />
+        )}
+      </span>
+      <span className="num gauge-value">{valueText}</span>
     </div>
   )
 }
@@ -433,19 +471,12 @@ function WorkerCard({
       {/* ⛔ **Dollars, beside the percentages, and only where money is actually being spent.** A
           quota gauge is a share of a fee already paid; this is a bill accruing now, and the operator
           asked to be able to see how they are being billed rather than inferring it from a window
-          at 100%. ⚠️ Rendered only when the vendor says credits are *on* for this account — an
-          account with credits off publishes no balance at all, and `money()` would print `$0.00`
-          for a purse that has merely not been shown. */}
-      {worker.credits?.enabled === true && (
-        <div className="wcard-credits">
-          <span className="gauge-label">credits</span>
-          <span className="num">
-            {money(worker.credits.used)}
-            {worker.credits.monthlyLimit !== null && ` of ${money(worker.credits.monthlyLimit)}`}
-          </span>
-          <span className="tag tag--credits">billing</span>
-        </div>
-      )}
+          at 100%. Sized and styled as a gauge matching sessions below it: font-size
+          var(--text-meta), a bar with urgency fill, and $0.00/$40.00 value. "billing" tag dropped.
+          ⚠️ Rendered only when the vendor says credits are *on* for this account — an account with
+          credits off publishes no balance at all, and `money()` would print `$0.00` for a purse
+          that has merely not been shown. */}
+      {worker.credits?.enabled === true && <CreditGauge credits={worker.credits} />}
 
       {/* ⛔ The rule is load-bearing, not decoration. Everything above it is the **account**: one
           quota, shared by every session on it, and it survives the session ending. Everything below

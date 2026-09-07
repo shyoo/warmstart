@@ -50,6 +50,50 @@ const CREDITS_OFF = {
   cachedExtraUsageDisabledReason: 'org_level_disabled'
 }
 
+/**
+ * Live payload captured 2026-09-07 off Claude Code 2.1.263 on ClaudeSecond with extra usage enabled.
+ * Notice monthly_limit is 4000 with decimal_places: 2 ($40.00), and spend.limit is { amount_minor: 4000, exponent: 2 }.
+ */
+const CREDITS_ON = {
+  cachedUsageUtilization: {
+    fetchedAtMs: 1788812514079,
+    utilization: {
+      extra_usage: {
+        is_enabled: true,
+        monthly_limit: 4000,
+        used_credits: 0,
+        utilization: null,
+        currency: 'USD',
+        decimal_places: 2,
+        disabled_reason: null,
+        user_disabled: false,
+        spend_limit_reached: false,
+        credits_ever_enabled: true,
+        daily: null,
+        weekly: null
+      },
+      spend: {
+        used: { amount_minor: 0, currency: 'USD', exponent: 2 },
+        limit: { amount_minor: 4000, currency: 'USD', exponent: 2 },
+        percent: 0,
+        severity: 'normal',
+        enabled: true,
+        disabled_reason: null,
+        cap: {
+          money: null,
+          credits: { amount_minor: 4000, exponent: 2 }
+        },
+        balance: null,
+        auto_reload: null,
+        can_purchase_credits: false,
+        can_toggle: false
+      }
+    }
+  },
+  oauthAccount: { hasExtraUsageEnabled: true },
+  cachedExtraUsageDisabledReason: null
+}
+
 describe('majorUnits', () => {
   /** ⛔ Minor units and an exponent. Reading `amount_minor` as dollars is off by a factor of 100. */
   it('converts minor units by the exponent the vendor gave', () => {
@@ -155,6 +199,35 @@ describe('creditStatus, when the account is spending', () => {
       }
     })
     expect(status).toMatchObject({ enabled: true, monthlyLimit: 100, used: 37.87 })
+  })
+
+  it('converts spend.limit minor units object when falling back', () => {
+    const status = creditStatus({
+      cachedUsageUtilization: {
+        utilization: { spend: { used: { amount_minor: 0, exponent: 2 }, limit: { amount_minor: 4000, exponent: 2 }, enabled: true } }
+      }
+    })
+    expect(status).toMatchObject({ enabled: true, monthlyLimit: 40, used: 0 })
+  })
+})
+
+describe('creditStatus, on the live payload with credits enabled', () => {
+  const status = creditStatus(CREDITS_ON)
+
+  it('reports credits as enabled', () => {
+    expect(status?.enabled).toBe(true)
+  })
+
+  it('converts monthly_limit by decimal_places to dollars ($40.00, not $4000.00)', () => {
+    expect(status?.monthlyLimit).toBe(40)
+  })
+
+  it('converts used credits to dollars', () => {
+    expect(status?.used).toBe(0)
+  })
+
+  it('reports currency as USD', () => {
+    expect(status?.currency).toBe('USD')
   })
 })
 

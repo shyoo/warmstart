@@ -180,10 +180,16 @@ interface ClaudeConfigShape {
   cachedExtraUsageDisabledReason?: string | null
 }
 
+interface ClaudeMoneyShape {
+  amount_minor?: number | null
+  currency?: string | null
+  exponent?: number | null
+}
+
 interface ClaudeSpendShape {
   /** ⛔ Minor units and an exponent, never a float: `{ amount_minor: 1234, exponent: 2 }` is $12.34. */
-  used?: { amount_minor?: number | null; currency?: string | null; exponent?: number | null } | null
-  limit?: number | null
+  used?: ClaudeMoneyShape | null
+  limit?: ClaudeMoneyShape | number | null
   enabled?: boolean | null
   disabled_reason?: string | null
   /** A purse, where the vendor publishes one. ⚠️ `null` on both measured accounts. */
@@ -196,17 +202,29 @@ interface ClaudeExtraUsageShape {
   monthly_limit?: number | null
   used_credits?: number | null
   currency?: string | null
+  decimal_places?: number | null
   disabled_reason?: string | null
   user_disabled?: boolean | null
   credits_ever_enabled?: boolean | null
 }
 
-/** `{ amount_minor: 3787, exponent: 2 }` → `37.87`. ⚠️ `null` for anything not fully reported. */
-function majorUnits(amount: ClaudeSpendShape['used']): number | null {
-  const minor = amount?.amount_minor
+/** `{ amount_minor: 3787, exponent: 2 }` → `37.87`. Also handles raw numbers. ⚠️ `null` for anything not fully reported. */
+function majorUnits(amount: ClaudeMoneyShape | number | null | undefined): number | null {
+  if (amount === null || amount === undefined) return null
+  if (typeof amount === 'number') return Number.isFinite(amount) ? amount : null
+  const minor = amount.amount_minor
   if (typeof minor !== 'number' || !Number.isFinite(minor)) return null
-  const exponent = typeof amount?.exponent === 'number' ? amount.exponent : 2
+  const exponent = typeof amount.exponent === 'number' ? amount.exponent : 2
   return minor / 10 ** exponent
+}
+
+/** Converts extra_usage amount which uses decimal_places. E.g. 4000 with decimal_places=2 → 40. */
+function extraAmount(value: unknown, decimalPlaces?: number | null): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null
+  if (typeof decimalPlaces === 'number' && Number.isFinite(decimalPlaces) && decimalPlaces > 0) {
+    return value / 10 ** decimalPlaces
+  }
+  return value
 }
 
 /**
@@ -278,7 +296,6 @@ function creditStatus(parsed: ClaudeConfigShape): CreditStatus | null {
   if (!spend && !extra && account?.hasExtraUsageEnabled === undefined) return null
 
   const bool = (v: unknown): boolean | null => (typeof v === 'boolean' ? v : null)
-  const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null)
   const str = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v : null)
 
   return {
@@ -292,14 +309,14 @@ function creditStatus(parsed: ClaudeConfigShape): CreditStatus | null {
       str(extra?.disabled_reason) ?? str(spend?.disabled_reason) ?? str(parsed.cachedExtraUsageDisabledReason),
     canToggle: bool(spend?.can_toggle),
     everEnabled: bool(extra?.credits_ever_enabled),
-    monthlyLimit: num(extra?.monthly_limit) ?? num(spend?.limit),
-    used: num(extra?.used_credits) ?? majorUnits(spend?.used),
+    monthlyLimit: extraAmount(extra?.monthly_limit, extra?.decimal_places) ?? majorUnits(spend?.limit),
+    used: extraAmount(extra?.used_credits, extra?.decimal_places) ?? majorUnits(spend?.used),
     currency: str(extra?.currency) ?? str(spend?.used?.currency)
   }
 }
 
 /** Exported for the tests, which drive it with payloads captured off the live accounts. */
-export const claudeCredits = { creditStatus, spendMeters, majorUnits }
+export const claudeCredits = { creditStatus, spendMeters, majorUnits, extraAmount }
 
 /**
  * Has this root been through the CLI's first-run screens?
