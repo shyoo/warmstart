@@ -404,6 +404,126 @@ describe('decodeStream', () => {
   it('ignores a record with no payload_type', () => {
     expect(decode({ type: 'assistant', message: { content: [] } })).toBeNull()
   })
+
+  /**
+   * ⛔ t269. Muse's only prose is the final answer — measured, the deltas of a two-tool turn arrived
+   * at sequences 47-49 of 67 — so a run's whole working half reaches the peephole through these
+   * records or not at all. Payloads below are verbatim from the 2026-09-07 capture.
+   */
+  describe('the records that say a run is working', () => {
+    it('announces a tool the moment it is proposed', () => {
+      expect(
+        decode({
+          payload_type: 'task.lifecycle.proposed',
+          payload: {
+            kind: 'task_lifecycle',
+            event: { kind: 'proposed', task_id: '5f7f82a1', task_kind: 'tool.bash' }
+          }
+        })
+      ).toEqual({ kind: 'assistant_text', text: '· bash\n' })
+    })
+
+    it.each([
+      ['a model call', 'model.meta.response'],
+      ['a plugin reminder', 'reminder.agent.plugin:tbh-reminders:skill-reminder']
+    ])('says nothing about %s, which is muse talking to itself', (_label, taskKind) => {
+      expect(
+        decode({
+          payload_type: 'task.lifecycle.proposed',
+          payload: { event: { kind: 'proposed', task_id: '6df29c97', task_kind: taskKind } }
+        })
+      ).toEqual({ kind: 'other', type: 'task.lifecycle.proposed' })
+    })
+
+    /** Announced once, by its proposal. Repeating it would push the *running* tool off the tail. */
+    it('stays quiet when a tool succeeds', () => {
+      expect(
+        decode({
+          payload_type: 'tool.result',
+          payload: {
+            kind: 'tool_result',
+            correlation_facts: { outcome: 'success', tool_name: 'bash' },
+            text: '{"exit_code": 0}'
+          }
+        })
+      ).toEqual({ kind: 'other', type: 'tool.result' })
+    })
+
+    it('reports a tool that did not succeed', () => {
+      expect(
+        decode({
+          payload_type: 'tool.result',
+          payload: { correlation_facts: { outcome: 'error', tool_name: 'bash' } }
+        })
+      ).toEqual({ kind: 'assistant_text', text: '· bash error\n' })
+    })
+
+    /** ⛔ The one thing that makes a healthy run genuinely idle, and it lasts up to ten attempts. */
+    it('reports a provider retry in the vendor’s own words', () => {
+      expect(
+        decode({
+          payload_type: 'task.lifecycle.status',
+          payload: {
+            event: {
+              kind: 'status',
+              message: 'retrying meta model stream in 5000ms (attempt 2/10)',
+              details: {
+                phase: 'retry_scheduled',
+                facets: [
+                  {
+                    attempt: 1,
+                    error_kind: 'rate_limited',
+                    http_status: 429,
+                    kind: 'external_attempt',
+                    max_attempts: 10
+                  },
+                  { kind: 'producer', detail: { kind: 'provider', provider: 'meta' } }
+                ]
+              }
+            }
+          }
+        })
+      ).toEqual({
+        kind: 'assistant_text',
+        text: '· retrying meta model stream in 5000ms (attempt 2/10)\n'
+      })
+    })
+
+    /** ⚠️ `stream_succeeded` rides the same field as the failures; unfiltered it fires per model call. */
+    it('stays quiet on the status records that report ordinary progress', () => {
+      for (const facets of [
+        [{ attempt: 1, kind: 'external_attempt', max_attempts: 10, operation: 'model.response' }],
+        [{ attempt: 2, error_kind: 'stream_succeeded', kind: 'external_attempt', max_attempts: 10 }]
+      ]) {
+        expect(
+          decode({
+            payload_type: 'task.lifecycle.status',
+            payload: {
+              event: { kind: 'status', message: 'opening meta model stream attempt 1/10', details: { facets } }
+            }
+          })
+        ).toEqual({ kind: 'other', type: 'task.lifecycle.status' })
+      }
+    })
+
+    /**
+     * ⛔ A 429 muse is already retrying is not the account's quota window. Decoding it as
+     * `rate_limit` would feed `recordRateLimit` and bench a worker whose account is fine.
+     */
+    it('never turns a provider retry into a quota signal', () => {
+      const decoded = decode({
+        payload_type: 'task.lifecycle.status',
+        payload: {
+          event: {
+            kind: 'status',
+            message: 'retrying meta model stream in 5000ms (attempt 2/10)',
+            details: { facets: [{ error_kind: 'rate_limited', http_status: 429 }] }
+          }
+        }
+      })
+      expect([decoded].flat().map((e) => e?.kind)).not.toContain('rate_limit')
+    })
+  })
 })
 
 describe('decodeTranscript', () => {

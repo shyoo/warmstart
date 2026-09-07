@@ -495,6 +495,66 @@ function decodeStream(record: Record<string, unknown>): StreamEvent | null {
     return reason ? { kind: 'assistant_text', text: `error: ${reason}` } : { kind: 'other', type }
   }
 
+  // ⛔ **The whole of t269, and the reason a working run read as a hung one.** Muse emits
+  // `run.output.delta` for the *final answer only*: measured 2026-09-07 on a real run, the three
+  // deltas of a two-tool turn arrived at sequences 47-49 of 67, after every tool had already
+  // finished. The t267 dispatch ran 24 minutes over 42 tool batches and put **one** line in the
+  // peephole — the `task.lifecycle.failed` above — so the operator watching the task saw an agent
+  // that had said nothing since it started and reasonably called it stuck. Everything it was
+  // actually doing arrived in the records below and decoded to `other`, which reaches nobody.
+  //
+  // ⚠️ Prose, not a new event kind. `noteActivity` takes text and the pane renders text; what these
+  // records describe — a tool starting, a provider retrying — is exactly the "what is it doing right
+  // now" the peephole exists to answer, and it is never read back for state (activity.ts).
+  if (type === 'task.lifecycle.proposed') {
+    const event = asRecord(payload.event)
+    const kind = typeof event?.task_kind === 'string' ? event.task_kind : ''
+    // ⚠️ `tool.` and nothing else. The other `task_kind`s on this record are muse's own bookkeeping —
+    // `model.meta.response` once per model call and `reminder.agent.plugin:…` several times per turn
+    // (7 of 67 records in the measured capture) — and forwarding those would bury the tool lines
+    // under scheduler noise a person cannot act on.
+    if (!kind.startsWith('tool.')) return { kind: 'other', type }
+    // ⚠️ The name only: this record carries no arguments, and the record that does (`tool.result`)
+    // arrives when the tool has already finished. A tool that runs for three minutes should show
+    // while it runs, so the early half-answer is the useful one.
+    return { kind: 'assistant_text', text: `· ${kind.slice('tool.'.length)}\n` }
+  }
+
+  // The other half of the pair, and only when it went wrong. A successful tool is already announced
+  // by its proposal, and saying so twice would push the tool that is *running* off the tail.
+  if (type === 'tool.result') {
+    const facts = asRecord(payload.correlation_facts)
+    const outcome = typeof facts?.outcome === 'string' ? facts.outcome : null
+    const tool = typeof facts?.tool_name === 'string' ? facts.tool_name : 'tool'
+    if (!outcome || outcome === 'success') return { kind: 'other', type }
+    return { kind: 'assistant_text', text: `· ${tool} ${outcome}\n` }
+  }
+
+  // ⛔ Provider retries, which are the one thing that makes a healthy run genuinely idle. Measured in
+  // the same capture: a 429 answered with `retrying meta model stream in 5000ms (attempt 2/10)`, and
+  // muse will do that ten times before it gives up. Without this the pane shows the tool that ran
+  // before the stall and nothing else for as long as it lasts.
+  //
+  // ⚠️ Deliberately **not** a `rate_limit` event. That kind feeds `recordRateLimit` and the
+  // preemption ladder, which are about the account's quota windows; this is a transient per-request
+  // retry the CLI is already handling itself, and reporting it as a quota signal would bench a
+  // worker whose account is fine.
+  if (type === 'task.lifecycle.status') {
+    const event = asRecord(payload.event)
+    const message = typeof event?.message === 'string' ? event.message : null
+    const details = asRecord(event?.details)
+    const facets = Array.isArray(details?.facets) ? details.facets : []
+    // `stream_succeeded` rides the same `error_kind` field as the real failures — it is how muse
+    // reports that the attempt it opened is done — so an unfiltered "has an error_kind" test would
+    // emit a line per model call and drown the retries this is here for.
+    const failing = facets.some((facet) => {
+      const kind = asRecord(facet)?.error_kind
+      return typeof kind === 'string' && kind !== 'stream_succeeded'
+    })
+    if (!failing || !message) return { kind: 'other', type }
+    return { kind: 'assistant_text', text: `· ${message}\n` }
+  }
+
   return { kind: 'other', type }
 }
 

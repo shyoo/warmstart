@@ -97,6 +97,29 @@ The records that matter:
 - `task.lifecycle.failed` → `{"kind":"failed","reason":"…"}`.
 - `task.lifecycle.status` → provider retry facets (`opening meta model stream attempt 1/10`).
 
+### ⛔ `run.output.delta` is the **final answer only** (measured 2026-09-07, t269)
+
+The transport itself is healthy — re-measured from a plain `child_process.spawn` of the exact command
+the daemon logs: line-buffered, **no NUL bytes**, every line valid JSON, `run.terminal.completed`
+then exit 0. The bytes flow and the parser reads them.
+
+What is *not* there is progress. On a two-tool turn the three `run.output.delta` records arrived at
+**sequences 47–49 of 67**, after every tool had already finished; muse streams no prose between tool
+calls the way Claude Code does. The t267 dispatch ran 24 minutes over 42 tool batches and put **one**
+line in the peephole (a `task.lifecycle.failed`), which is why a working run read as a hung one.
+
+Everything a run is *doing* arrives on these instead, and the adapter now decodes all three:
+
+| record | field | meaning |
+|---|---|---|
+| `task.lifecycle.proposed` | `event.task_kind` | `tool.<name>` — a tool is about to run. ⚠️ Also carries `model.meta.response` and `reminder.agent.plugin:…`, which are muse's own bookkeeping (7 of 67 records) and must be filtered out. No arguments on this record. |
+| `tool.result` | `correlation_facts.{tool_name,outcome}` | The verdict. `text` holds the tool's own JSON blob. |
+| `task.lifecycle.status` | `event.message`, `event.details.facets[].error_kind` | `retrying meta model stream in 5000ms (attempt 2/10)` on a 429. ⚠️ `stream_succeeded` rides the same `error_kind` field and means *fine*. ⛔ Not a quota signal — muse retries up to 10 times itself, and decoding it as `rate_limit` would bench a healthy account. |
+
+⭐ Re-measured end to end 2026-09-07 through `StreamParser` + the real adapter: a three-step prompt
+produced `INIT` at +3.9s, three `· bash` lines at +6.7/6.9/7.8s, prose from +10.8s, and
+`RESULT completed` at +21.6s. Send (stdin → `cat` → `--prompt-file`) and receive both work.
+
 ## `/usage` — the quota panel, free, screen-only
 Driven under tmux at 100x30 against the live account:
 ```
