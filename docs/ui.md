@@ -57,7 +57,7 @@ thing entirely. See [`glossary.md`](glossary.md).
 | `FleetStrip` `Workers` `FleetSettings` | the fleet: per-account quota with its **age**, reset countdowns, live sessions; one two-column settings card per worker |
 | `Tasks` `TaskThread` `Dependencies` | the board, one task's thread, and prerequisite edges |
 | `NewTask` `Pill` | the composer: the prompt first, its settings as a row of **pills** under it |
-| `Attention` `Questions` | the approvals/questions bar — one keystroke above the operator's work |
+| `Attention` `Questions` | the approvals/questions/quota-gate bar — one keystroke above the operator's work |
 | `Overview` `Controller` `Conversations` | dashboard, the controller chat, and conversation history |
 | `Project` `ProjectSettings` `Projects` | the project routes and the policy tier |
 | `NewProject` | the add-project wizard: three steps, one modal, `lib/newproject.ts` holds its rules |
@@ -387,10 +387,7 @@ whose entire design is to be invisible.
 - ⛔ **A completed task is not still waiting on its last hold.** `holdReason` is durable history and
   may survive a landing failure that was resolved separately; task rows and the detail facts suppress
   it after completion. Failed and cancelled tasks retain their reason because it can explain the end.
-- ⛔ **An avoidable quota preemption warns before it acts.** The running task's quota-gate fact shows
-  the persisted one-minute countdown, its reason, and **Override preemption**; clicking it keeps the
-  same session running until the measured window reset. A vendor refusal is not offered as a choice
-  because the turn has already failed.
+- ⛔ **An avoidable quota preemption warns before it acts, and quota holds surface at the prompt.** The running task's quota-gate fact and thread prompt area show the persisted countdown, its reason, and **Override preemption**; clicking it keeps the same session running until the measured window reset. Furthermore, any task paused or held on quota renders a `.decide--quota` card directly above the composer (`QuotaDecide`) matching the action-card shape of `Decide`, and active holds appear in the top `Attention` bar with direct override actions so they are immediately visible rather than buried in the side pane alone. A vendor refusal is not offered as a choice because the turn has already failed.
 - ⛔ **`awaiting_human` must offer somewhere to answer.** It is the one status explicitly about the
   operator, and it was once the only resting state with nothing to press.
 - ⛔ **A measurement outranks a prediction wherever both exist, and the label says which is which.**

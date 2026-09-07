@@ -136,6 +136,46 @@ export const CANCELLABLE = new Set([
  */
 export const STOPPABLE = new Set(['ready', 'blocked', 'scheduled', 'assigned', 'running'])
 
+/**
+ * Whether a task is held by quota or warning of quota preemption, needing operator attention / override.
+ * Active overrides are excluded because the quota gate is already lifted.
+ */
+export function isQuotaGated(
+  task: Pick<Task, 'status' | 'holdReason' | 'quotaPreemptWarning' | 'quotaOverrideUntil'> & {
+    deletedAt?: number | null
+  },
+  now = Date.now()
+): boolean {
+  if (task.deletedAt) return false
+  if (task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled') return false
+  if (task.quotaOverrideUntil !== null && task.quotaOverrideUntil > now) return false
+
+  if (task.status === 'paused_quota') return true
+  if (task.status === 'ready' && /% of its .* window/i.test(task.holdReason ?? '')) return true
+  if (task.status === 'running' && task.quotaPreemptWarning !== null) return true
+  return false
+}
+
+/**
+ * Whether a task has any quota gate state to show (either currently gated or live overridden).
+ */
+export function hasQuotaGate(
+  task: Pick<Task, 'status' | 'holdReason' | 'quotaPreemptWarning' | 'quotaOverrideUntil'> & {
+    deletedAt?: number | null
+  },
+  now = Date.now()
+): boolean {
+  if (task.deletedAt) return false
+  if (task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled') return false
+
+  const held =
+    (task.status === 'ready' && /% of its .* window/i.test(task.holdReason ?? '')) ||
+    task.status === 'paused_quota'
+  const warning = task.status === 'running' && task.quotaPreemptWarning !== null
+  const live = task.quotaOverrideUntil !== null && task.quotaOverrideUntil > now
+  return held || Boolean(warning) || live
+}
+
 export type ProjectWorkState = 'working' | 'needs_attention' | 'paused' | 'idle'
 
 /**

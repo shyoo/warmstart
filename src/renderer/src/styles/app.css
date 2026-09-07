@@ -3188,6 +3188,19 @@ select:focus-visible,
   background: var(--state-human);
 }
 
+/*
+ * Quota gate alert: wears the warning colour so a quota-gated task or preemption warning
+ * is immediately recognizable across the fleet.
+ */
+.approvals--quota {
+  background: color-mix(in srgb, var(--state-warn) 8%, var(--color-surface));
+}
+
+.approvals--quota .approvals-mark {
+  background: var(--state-warn);
+  color: var(--color-bg);
+}
+
 .attention-answers {
   display: flex;
   gap: var(--sp-1);
@@ -3855,6 +3868,14 @@ select:focus-visible,
   letter-spacing: 0.06em;
   color: var(--state-human);
   margin-bottom: var(--sp-2);
+}
+
+.decide--quota {
+  border-color: var(--state-warn);
+}
+
+.decide--quota .decide-head {
+  color: var(--state-warn);
 }
 
 /* The reason, beside the label rather than under it, and not shouted. */

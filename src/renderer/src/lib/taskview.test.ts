@@ -18,9 +18,11 @@ import {
   chronologicalRuns,
   chronologicalTimeline,
   elapsed,
+  hasQuotaGate,
   holdLine,
   isChecksFailedTask,
   isConflictedTask,
+  isQuotaGated,
   isTrunkMovedTask,
   isUncommittedTask,
   isWorking,
@@ -998,5 +1000,124 @@ describe('a plan task, as its own page describes it', () => {
     expect(
       pieceSettings({ kind: 'work', priority: 'P2', childDefaults: null, constraints: {} }, fleet)
     ).toEqual([])
+  })
+})
+
+describe('isQuotaGated and hasQuotaGate', () => {
+  const now = 1_000_000
+
+  it('detects a task paused on quota as gated and having quota gate', () => {
+    const task = {
+      status: 'paused_quota' as TaskStatus,
+      holdReason: 'ClaudeFirst at 95% of its 5h window',
+      quotaPreemptWarning: null,
+      quotaOverrideUntil: null,
+      deletedAt: null
+    }
+    expect(isQuotaGated(task, now)).toBe(true)
+    expect(hasQuotaGate(task, now)).toBe(true)
+  })
+
+  it('detects a ready task held by a quota window', () => {
+    const task = {
+      status: 'ready' as TaskStatus,
+      holdReason: 'ClaudeFirst is at 94% of its 5h window',
+      quotaPreemptWarning: null,
+      quotaOverrideUntil: null,
+      deletedAt: null
+    }
+    expect(isQuotaGated(task, now)).toBe(true)
+    expect(hasQuotaGate(task, now)).toBe(true)
+  })
+
+  it('detects a ready task held by a weekly window', () => {
+    const task = {
+      status: 'ready' as TaskStatus,
+      holdReason: 'ClaudeSecond at 97% of its weekly window',
+      quotaPreemptWarning: null,
+      quotaOverrideUntil: null,
+      deletedAt: null
+    }
+    expect(isQuotaGated(task, now)).toBe(true)
+    expect(hasQuotaGate(task, now)).toBe(true)
+  })
+
+  it('detects a running task with active quota preemption warning', () => {
+    const task = {
+      status: 'running' as TaskStatus,
+      holdReason: null,
+      quotaPreemptWarning: {
+        trigger: 'window' as const,
+        reason: '92% of Claude 5h window reached',
+        preemptAt: now + 50_000,
+        resumeAt: now + 300_000
+      },
+      quotaOverrideUntil: null,
+      deletedAt: null
+    }
+    expect(isQuotaGated(task, now)).toBe(true)
+    expect(hasQuotaGate(task, now)).toBe(true)
+  })
+
+  it('excludes an active quota override from isQuotaGated while keeping hasQuotaGate true', () => {
+    const task = {
+      status: 'ready' as TaskStatus,
+      holdReason: 'ClaudeFirst is at 94% of its 5h window',
+      quotaPreemptWarning: null,
+      quotaOverrideUntil: now + 60_000,
+      deletedAt: null
+    }
+    // Gated alert is inactive because operator already overrode the gate
+    expect(isQuotaGated(task, now)).toBe(false)
+    // Thread prompt area still shows the active override with Withdraw control
+    expect(hasQuotaGate(task, now)).toBe(true)
+  })
+
+  it('treats an expired override as gated again if still held on quota', () => {
+    const task = {
+      status: 'ready' as TaskStatus,
+      holdReason: 'ClaudeFirst is at 94% of its 5h window',
+      quotaPreemptWarning: null,
+      quotaOverrideUntil: now - 1000,
+      deletedAt: null
+    }
+    expect(isQuotaGated(task, now)).toBe(true)
+    expect(hasQuotaGate(task, now)).toBe(true)
+  })
+
+  it('ignores completed, failed, cancelled, and deleted tasks', () => {
+    for (const status of ['completed', 'failed', 'cancelled'] as TaskStatus[]) {
+      const task = {
+        status,
+        holdReason: 'ClaudeFirst at 95% of its 5h window',
+        quotaPreemptWarning: null,
+        quotaOverrideUntil: null,
+        deletedAt: null
+      }
+      expect(isQuotaGated(task, now)).toBe(false)
+      expect(hasQuotaGate(task, now)).toBe(false)
+    }
+
+    const deletedTask = {
+      status: 'paused_quota' as TaskStatus,
+      holdReason: 'ClaudeFirst at 95% of its 5h window',
+      quotaPreemptWarning: null,
+      quotaOverrideUntil: null,
+      deletedAt: now
+    }
+    expect(isQuotaGated(deletedTask, now)).toBe(false)
+    expect(hasQuotaGate(deletedTask, now)).toBe(false)
+  })
+
+  it('ignores non-quota hold reasons', () => {
+    const task = {
+      status: 'ready' as TaskStatus,
+      holdReason: 'waiting on 2 pieces of its own plan',
+      quotaPreemptWarning: null,
+      quotaOverrideUntil: null,
+      deletedAt: null
+    }
+    expect(isQuotaGated(task, now)).toBe(false)
+    expect(hasQuotaGate(task, now)).toBe(false)
   })
 })

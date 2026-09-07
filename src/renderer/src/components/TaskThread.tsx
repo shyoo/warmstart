@@ -56,6 +56,7 @@ import {
   kindLabel,
   pieceSettings,
   elapsed,
+  hasQuotaGate,
   holdLine,
   isChecksFailedTask,
   isConflictedTask,
@@ -506,16 +507,6 @@ function TaskDetail({
             </div>
           )}
 
-          {task.status === 'paused_quota' && (
-            <PausedQuotaBanner
-              task={task}
-              fleet={fleet}
-              modelOptions={modelOptions}
-              now={now}
-              onRefresh={refresh}
-            />
-          )}
-
           {/* ⛔ **Two ways out, because stopping a task is not a verdict on it.** The banner
               offered only Resume, so an operator who stopped a task and then decided the work was
               already good enough could either restart an agent they did not want or delete the
@@ -561,6 +552,20 @@ function TaskDetail({
                 </button>
               </div>
             </div>
+          )}
+
+          {/* ⛔ Shown around the composer, matching `Decide`: quota override decisions are an
+              action on the work and belong where the operator gives instructions, not only in the
+              read-only ledger on the right. */}
+          {hasQuotaGate(task, now) && task.status !== 'awaiting_human' && (
+            <QuotaDecide
+              task={task}
+              fleet={fleet}
+              modelOptions={modelOptions}
+              now={now}
+              onStop={cancel}
+              onRefresh={refresh}
+            />
           )}
 
           {/* ⛔ Here, with the composer, and not in the ledger on the right. All three answers to
@@ -1354,26 +1359,26 @@ function Thread({
 }
 
 /**
- * Preempted due to quota banner with Override, Resume, and Reassign controls.
+ * Quota decision card with Override, Resume, and Reassign controls.
  *
- * ⛔ The wait for window reset is automatic, but the operator can:
- * - Override: bypasses the 92% watermark and resumes immediately.
- * - Resume: resumes into the queue right now without waiting for the reset timer.
- * - Reassign: switches the worker/model and resumes immediately on the new target.
+ * ⛔ Displayed around the composer / prompt area (matching `Decide`), because quota preemption
+ * or gate holds require an operator decision: override the gate, wait for reset, or reassign.
  */
-function PausedQuotaBanner({
+function QuotaDecide({
   task,
   fleet,
   modelOptions,
   now,
+  onStop,
   onRefresh
 }: {
   task: Task
   fleet: FleetEntry[]
   modelOptions: ModelOptions[]
   now: number
+  onStop?: () => Promise<void>
   onRefresh: () => Promise<void>
-}): React.JSX.Element {
+}): React.JSX.Element | null {
   const [selectedWorkerId, setSelectedWorkerId] = useState<string>(task.constraints.workerId ?? '')
   const [selectedModel, setSelectedModel] = useState<string>(
     task.constraints.model ?? (task.constraints.modelPolicy === 'auto' ? '__auto__' : '')
@@ -1397,10 +1402,17 @@ function PausedQuotaBanner({
     ? (offeredModels.find((m) => m.id === selectedModel)?.effortLevels ?? [])
     : []
 
-  const handleOverride = async () => {
+  const isPaused = task.status === 'paused_quota'
+  const isReadyHeld = task.status === 'ready' && /% of its .* window/i.test(task.holdReason ?? '')
+  const warning = task.status === 'running' ? task.quotaPreemptWarning : null
+  const live = task.quotaOverrideUntil !== null && task.quotaOverrideUntil > now
+
+  if (!isPaused && !isReadyHeld && !warning && !live) return null
+
+  const handleOverride = async (withdraw = false) => {
     setBusy(true)
     try {
-      await rpc('task.overrideQuota', { id: task.id })
+      await rpc('task.overrideQuota', { id: task.id, ...(withdraw ? { until: null } : {}) })
       await onRefresh()
     } finally {
       setBusy(false)
@@ -1433,147 +1445,236 @@ function PausedQuotaBanner({
           effort: selectedEffort || null
         })
       }
-      await rpc('task.resume', { id: task.id })
+      if (isPaused) {
+        await rpc('task.resume', { id: task.id })
+      }
       await onRefresh()
     } finally {
       setBusy(false)
     }
   }
 
+  const canReassign = isPaused || isReadyHeld
+
   return (
-    <div className="paused-banner">
-      <div className="paused-banner-header">
-        <span className="paused-banner-title">
-          Preempted due to quota {task.holdReason ? `(${holdLine(task, now)})` : ''}
+    <div className="decide decide--quota">
+      <div className="decide-head">
+        <span>
+          {live
+            ? 'quota gate — overridden'
+            : isPaused
+              ? 'quota gate — preempted'
+              : warning
+                ? 'quota gate — preemption warning'
+                : 'quota gate — held'}
         </span>
-        <span className="dim">
-          Resumes automatically when quota is available (after window reset), or you can override to continue now, resume immediately, or reassign to another agent.
+        <span className="decide-why">
+          {live
+            ? `Overridden for ${duration((task.quotaOverrideUntil ?? 0) - now)}`
+            : warning
+              ? `Preempts in ${duration(Math.max(0, warning.preemptAt - now))}: ${warning.reason}`
+              : holdLine(task, now) || task.holdReason || 'Account is past quota watermark'}
         </span>
-      </div>
-      <div className="paused-banner-actions">
-        <button
-          type="button"
-          className="btn btn--warn"
-          disabled={busy}
-          title="Override preemption and resume this task immediately even though the account is at or past 92% of its window."
-          onClick={() => void handleOverride()}
-        >
-          Override &amp; continue
-        </button>
-        <button
-          type="button"
-          className="btn"
-          disabled={busy}
-          title="Puts the task back in the queue right now without waiting for the reset timer (dispatches if quota is available)."
-          onClick={() => void handleResume()}
-        >
-          Resume
-        </button>
       </div>
 
-      <div className="paused-banner-reassign">
-        <button
-          type="button"
-          className="btn btn--primary"
-          title="Reassigns this task to another worker or Auto and resumes it immediately."
-          disabled={busy}
-          onClick={() => void handleReassign()}
-        >
-          Reassign
-        </button>
-        <div className="reassign-row" style={{ flex: 1, margin: 0 }}>
-          <SettingButtonSelect
-            className="reassign-select"
-            value={selectedWorkerId}
+      {live ? (
+        <div className="decide-option">
+          <button
+            type="button"
+            className="btn"
             disabled={busy}
-            ariaLabel="Reassign worker"
-            options={[
-              { value: '', label: 'Auto (scheduler decides)' },
-              ...fleet
-                .filter((e) => (e.worker.enabled && canWork(e.worker.role)) || e.worker.id === selectedWorkerId)
-                .map((e) => ({
-                  value: e.worker.id,
-                  label: `${e.worker.label} (${e.worker.adapterId})`
-                }))
-            ]}
-            onChange={(nextWorkerId) => {
-              setSelectedWorkerId(nextWorkerId)
-              if (!nextWorkerId) {
-                setSelectedModel('')
-                setSelectedEffort('')
-              } else {
-                const w = fleet.find((entry) => entry.worker.id === nextWorkerId)?.worker
-                const offered = modelOptions.find((o) => o.adapterId === w?.adapterId)?.models ?? []
-                if (
-                  selectedModel &&
-                  selectedModel !== '__auto__' &&
-                  selectedModel !== '__inherit__' &&
-                  !offered.some((m) => m.id === selectedModel)
-                ) {
-                  setSelectedModel(reassignmentModel(selectedModel, offered))
-                  setSelectedEffort('')
-                }
-              }
-            }}
-          />
-
-          {offeredModels.length > 0 && (
-            <SettingButtonSelect
-              className="reassign-select"
-              value={selectedModel}
-              disabled={busy}
-              ariaLabel="Reassign model"
-              options={[
-                ...(offeredModels.length > 1
-                  ? [{ value: '__auto__', label: 'Auto Model (scheduler decides)' }]
-                  : []),
-                {
-                  value: '',
-                  label: inheritedModel
-                    ? `account default (${modelLabel(inheritedModel) ?? inheritedModel})`
-                    : 'CLI default model'
-                },
-                ...offeredModels.map((m) => ({ value: m.id, label: modelLabel(m.id) ?? m.id }))
-              ]}
-              displayLabel={
-                selectedModel === '__auto__'
-                  ? 'Auto Model'
-                  : !selectedModel || selectedModel === '__inherit__'
-                    ? inheritedModel
-                      ? (modelLabel(inheritedModel) ?? inheritedModel)
-                      : 'CLI default model'
-                    : undefined
-              }
-              onChange={(val) => {
-                setSelectedModel(val)
-                setSelectedEffort('')
-              }}
-            />
-          )}
-
-          {offeredEfforts.length > 0 && (
-            <SettingButtonSelect
-              className="reassign-select"
-              value={selectedEffort}
-              disabled={busy}
-              ariaLabel="Reassign effort"
-              options={[
-                {
-                  value: '',
-                  label: selectedWorker?.defaultEffort
-                    ? `account default (${effortLabel(selectedWorker.defaultEffort)})`
-                    : 'CLI default effort'
-                },
-                ...offeredEfforts.map((level) => ({
-                  value: level,
-                  label: effortLabel(level) ?? level
-                }))
-              ]}
-              onChange={(val) => setSelectedEffort(val)}
-            />
-          )}
+            title="Withdraw the quota override and restore normal quota enforcement."
+            onClick={() => void handleOverride(true)}
+          >
+            Withdraw
+          </button>
+          <span className="decide-what">
+            <strong>Override active.</strong> Overridden for{' '}
+            {duration((task.quotaOverrideUntil ?? 0) - now)}. Withdraw restores the usual quota gate.
+          </span>
         </div>
-      </div>
+      ) : (
+        <>
+          <div className="decide-option">
+            <button
+              type="button"
+              className="btn btn--warn"
+              disabled={busy}
+              title={
+                warning
+                  ? 'Keep this run going until the quota window resets rather than wrapping it up now.'
+                  : isPaused
+                    ? 'Override preemption and resume this task immediately even though the account is at or past its window watermark.'
+                    : 'Dispatch this task immediately even though the account is at or past its quota watermark.'
+              }
+              onClick={() => void handleOverride(false)}
+            >
+              {warning
+                ? 'Override preemption'
+                : isPaused
+                  ? 'Override & continue'
+                  : 'Run now anyway'}
+            </button>
+            <span className="decide-what">
+              <strong>Override the quota gate.</strong>{' '}
+              {warning
+                ? `Keeps this run going until ${new Date(warning.resumeAt).toLocaleTimeString()} rather than wrapping it up now.`
+                : isPaused
+                  ? 'Resumes immediately and overrides the quota gate until the window resets.'
+                  : 'Dispatches this task immediately even though the account is past its quota watermark.'}{' '}
+              ⚠️ A turn the vendor actually refuses will still stop it.
+            </span>
+          </div>
+
+          {isPaused && (
+            <div className="decide-option">
+              <button
+                type="button"
+                className="btn"
+                disabled={busy}
+                title="Puts the task back in the queue right now without waiting for the reset timer (dispatches if quota is available)."
+                onClick={() => void handleResume()}
+              >
+                Resume
+              </button>
+              <span className="decide-what">
+                <strong>Resume without override.</strong> Puts the task back in the queue right now
+                without waiting for the reset timer (dispatches if quota is available).
+              </span>
+            </div>
+          )}
+
+          {warning && onStop && (
+            <div className="decide-option">
+              <button
+                type="button"
+                className="btn btn--danger"
+                disabled={busy}
+                title="Stop the work now and return this task to a resting state."
+                onClick={() => void onStop()}
+              >
+                Stop here
+              </button>
+              <span className="decide-what">
+                <strong>Stop now.</strong> Parks the task in a resting state immediately without waiting
+                for preemption. Destroys nothing.
+              </span>
+            </div>
+          )}
+
+          {canReassign && (
+            <div className="decide-option">
+              <button
+                type="button"
+                className="btn btn--primary"
+                title="Reassigns this task to another worker or Auto and resumes it immediately."
+                disabled={busy}
+                onClick={() => void handleReassign()}
+              >
+                Reassign
+              </button>
+              <div className="decide-what">
+                <div style={{ marginBottom: 'var(--sp-1)' }}>
+                  <strong>Reassign to another agent.</strong> Switches worker or model{' '}
+                  {isPaused ? 'and resumes immediately' : 'to continue with available quota'}.
+                </div>
+                <div className="reassign-row">
+                  <SettingButtonSelect
+                    className="reassign-select"
+                    value={selectedWorkerId}
+                    disabled={busy}
+                    ariaLabel="Reassign worker"
+                    options={[
+                      { value: '', label: 'Auto (scheduler decides)' },
+                      ...fleet
+                        .filter((e) => (e.worker.enabled && canWork(e.worker.role)) || e.worker.id === selectedWorkerId)
+                        .map((e) => ({
+                          value: e.worker.id,
+                          label: `${e.worker.label} (${e.worker.adapterId})`
+                        }))
+                    ]}
+                    onChange={(nextWorkerId) => {
+                      setSelectedWorkerId(nextWorkerId)
+                      if (!nextWorkerId) {
+                        setSelectedModel('')
+                        setSelectedEffort('')
+                      } else {
+                        const w = fleet.find((entry) => entry.worker.id === nextWorkerId)?.worker
+                        const offered = modelOptions.find((o) => o.adapterId === w?.adapterId)?.models ?? []
+                        if (
+                          selectedModel &&
+                          selectedModel !== '__auto__' &&
+                          selectedModel !== '__inherit__' &&
+                          !offered.some((m) => m.id === selectedModel)
+                        ) {
+                          setSelectedModel(reassignmentModel(selectedModel, offered))
+                          setSelectedEffort('')
+                        }
+                      }
+                    }}
+                  />
+
+                  {offeredModels.length > 0 && (
+                    <SettingButtonSelect
+                      className="reassign-select"
+                      value={selectedModel}
+                      disabled={busy}
+                      ariaLabel="Reassign model"
+                      options={[
+                        ...(offeredModels.length > 1
+                          ? [{ value: '__auto__', label: 'Auto Model (scheduler decides)' }]
+                          : []),
+                        {
+                          value: '',
+                          label: inheritedModel
+                            ? `account default (${modelLabel(inheritedModel) ?? inheritedModel})`
+                            : 'CLI default model'
+                        },
+                        ...offeredModels.map((m) => ({ value: m.id, label: modelLabel(m.id) ?? m.id }))
+                      ]}
+                      displayLabel={
+                        selectedModel === '__auto__'
+                          ? 'Auto Model'
+                          : !selectedModel || selectedModel === '__inherit__'
+                            ? inheritedModel
+                              ? (modelLabel(inheritedModel) ?? inheritedModel)
+                              : 'CLI default model'
+                            : undefined
+                      }
+                      onChange={(val) => {
+                        setSelectedModel(val)
+                        setSelectedEffort('')
+                      }}
+                    />
+                  )}
+
+                  {offeredEfforts.length > 0 && (
+                    <SettingButtonSelect
+                      className="reassign-select"
+                      value={selectedEffort}
+                      disabled={busy}
+                      ariaLabel="Reassign effort"
+                      options={[
+                        {
+                          value: '',
+                          label: selectedWorker?.defaultEffort
+                            ? `account default (${effortLabel(selectedWorker.defaultEffort)})`
+                            : 'CLI default effort'
+                        },
+                        ...offeredEfforts.map((level) => ({
+                          value: level,
+                          label: effortLabel(level) ?? level
+                        }))
+                      ]}
+                      onChange={(val) => setSelectedEffort(val)}
+                    />
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+        </>
+      )}
     </div>
   )
 }
