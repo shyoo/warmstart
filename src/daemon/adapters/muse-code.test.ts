@@ -458,6 +458,82 @@ describe('decodeStream', () => {
       ).toEqual({ kind: 'assistant_text', text: '· bash error\n' })
     })
 
+    /**
+     * ⛔ t270. Payload verbatim from a live reproduction of the command that produced the report.
+     * Naming the command is what turns "a step failed" into something an operator can judge without
+     * killing the run to find out.
+     */
+    it('names the command a failed tool ran', () => {
+      expect(
+        decode({
+          payload_type: 'tool.result',
+          payload: {
+            kind: 'tool_result',
+            correlation_facts: { outcome: 'failure', tool_name: 'bash' },
+            text:
+              '{\n  "chunk_id": "exec-1-1",\n  "command": "echo hello; git config --global does.not.exist",\n' +
+              '  "exit_code": 1,\n  "terminal_status": "failed",\n  "output": "hello\\n"\n}'
+          }
+        })
+      ).toEqual({
+        kind: 'assistant_text',
+        text: '· bash failure: echo hello; git config --global does.not.exist\n'
+      })
+    })
+
+    it('keeps a long command to one line', () => {
+      const decoded = decode({
+        payload_type: 'tool.result',
+        payload: {
+          correlation_facts: { outcome: 'failure', tool_name: 'bash' },
+          text: JSON.stringify({ command: `git log ${'-'.repeat(400)}\n  --oneline` })
+        }
+      })
+      const text = (decoded as { text: string }).text
+      expect(text).toContain('…')
+      expect(text.split('\n').filter(Boolean)).toHaveLength(1)
+      expect(text.length).toBeLessThan(160)
+    })
+
+    it.each([
+      ['a tool whose result is not JSON', 'ok'],
+      ['a tool whose result names no command', '{"matches": 0}']
+    ])('falls back to the verdict alone for %s', (_label, text) => {
+      expect(
+        decode({
+          payload_type: 'tool.result',
+          payload: { correlation_facts: { outcome: 'failure', tool_name: 'grep' }, text }
+        })
+      ).toEqual({ kind: 'assistant_text', text: '· grep failure\n' })
+    })
+
+    /**
+     * ⛔ **The whole of t270.** A shell command whose last member exits non-zero — measured, a
+     * `git config --global` on a machine that has none, after the useful output was already printed
+     * — makes muse emit this while the agent reads the output and carries on. The run then ends
+     * `run.terminal.completed` and the process exits 0. Decoded as `error: <reason>` it was the only
+     * thing an operator saw all run, and they killed a healthy 24-minute run over it.
+     *
+     * ⚠️ Its own twin `tool.result` arrives immediately after with the tool and the command, so
+     * nothing is lost by staying quiet — and a step failure that really stops the run arrives as a
+     * terminal record instead.
+     */
+    it('never calls a failed step an error of the run', () => {
+      expect(
+        decode({
+          payload_type: 'task.lifecycle.failed',
+          payload: {
+            kind: 'task_lifecycle',
+            event: {
+              kind: 'failed',
+              reason: 'process exited with status exit status: 1',
+              task_id: '9f1e78eb-544d-4d3c-966c-e7a891648a41'
+            }
+          }
+        })
+      ).toEqual({ kind: 'other', type: 'task.lifecycle.failed' })
+    })
+
     /** ⛔ The one thing that makes a healthy run genuinely idle, and it lasts up to ten attempts. */
     it('reports a provider retry in the vendor’s own words', () => {
       expect(

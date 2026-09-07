@@ -120,6 +120,31 @@ Everything a run is *doing* arrives on these instead, and the adapter now decode
 produced `INIT` at +3.9s, three `· bash` lines at +6.7/6.9/7.8s, prose from +10.8s, and
 `RESULT completed` at +21.6s. Send (stdin → `cat` → `--prompt-file`) and receive both work.
 
+### ⛔ `task.lifecycle.failed` is a **step's** verdict, never the run's (measured 2026-09-07, t270)
+
+A shell command whose *last* member exits non-zero makes muse emit
+`task.lifecycle.failed` with `reason: "process exited with status exit status: 1"` — and then the
+agent reads the output, carries on, and the run ends `run.terminal.completed` with the process
+**exiting 0**. Reproduced verbatim against the live CLI with
+`echo hello; git config --global does.not.exist`, and again with the t267 original,
+`git log -1 --format='%an <%ae>'; git config --global user.email` — a machine with no global git
+config, where the answer had already been printed by the time the chain returned 1.
+
+This is what was reported as *"we had an error of `process exited with status exit status: 1`"*.
+Nothing had failed. The adapter decoded that record as `error: <reason>`, it was the only line the
+t267 run ever put in the peephole, and a healthy 24-minute run was killed over it.
+
+- ⛔ **What ends a muse run is `run.terminal.*`** and nothing else. That record is decoded as a
+  `result`, and `onStreamResult` turns an error one into a failed run and a closed session — so the
+  task *was* correctly still `running`, and there was nothing wrong with it to fix.
+- ⚠️ `task.lifecycle.failed` is the **contextless twin** of `tool.result`: measured, the two arrive
+  back to back for the same `task_id` (sequences 29 and 30), and only `tool.result` names the tool
+  and the command. The adapter is silent on the first and reports the second as
+  `· bash failure: <command>`.
+- ⭐ `tool.result.text` is a **string holding JSON**, whose `command`, `exit_code`, `terminal_status`
+  and `output` describe the call. Measured for `bash`; read defensively, since another tool may
+  spell its result differently.
+
 ## `/usage` — the quota panel, free, screen-only
 Driven under tmux at 100x30 against the live account:
 ```

@@ -453,6 +453,31 @@ export function parseResetTime(text: string, now: number): number | null {
  * payload_type, payload}` — and the type lives in `payload_type` rather than in `type`. ⚠️ There is
  * **no usage record here at all**; that is what `decodeTranscript` is for.
  */
+/** How much of a failed tool's command a peephole line may carry before it stops being one line. */
+const COMMAND_LINE = 120
+
+/**
+ * The command out of a tool result's own payload, or null for a tool that does not report one.
+ *
+ * ⚠️ `text` is a **string holding JSON**, not an object — measured on `tool.result` and on
+ * `task.lifecycle.output`'s `chunk`. Anything unparseable is not an error worth reporting; it is a
+ * tool whose result is shaped differently, and the caller simply says less about it.
+ */
+function commandIn(text: unknown): string | null {
+  if (typeof text !== 'string') return null
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    return null
+  }
+  const command = asRecord(parsed)?.command
+  if (typeof command !== 'string') return null
+  const oneLine = command.replace(/\s+/g, ' ').trim()
+  if (!oneLine) return null
+  return oneLine.length > COMMAND_LINE ? `${oneLine.slice(0, COMMAND_LINE)}…` : oneLine
+}
+
 function decodeStream(record: Record<string, unknown>): StreamEvent | null {
   const type = typeof record.payload_type === 'string' ? record.payload_type : ''
   if (!type) return null
@@ -488,20 +513,40 @@ function decodeStream(record: Record<string, unknown>): StreamEvent | null {
     }
   }
 
-  // A failed sub-task carries the sentence the failure classifiers below are written against.
-  if (type === 'task.lifecycle.failed') {
-    const event = asRecord(payload.event)
-    const reason = typeof event?.reason === 'string' ? event.reason : null
-    return reason ? { kind: 'assistant_text', text: `error: ${reason}` } : { kind: 'other', type }
-  }
+  // ⛔ **t270: this record is a *step's* verdict and was being read as the *run's*.** It used to
+  // decode to `error: <reason>`, and on the t267 dispatch the one line that reached the operator all
+  // run was `error: process exited with status exit status: 1`. Nothing had failed. Reproduced
+  // verbatim 2026-09-07 — the agent ran
+  // `git log -2 --format=… && git config user.name; …; git config --global user.email`, whose *last*
+  // member exits 1 on a machine with no global git config, having already printed the answer it
+  // wanted. Muse emits `task.lifecycle.failed` for that, the agent reads the output and carries on,
+  // and the run ends `run.terminal.completed` with the process exiting 0. So the operator was shown
+  // an error for a shell command that did its job, on a task correctly still marked running, and
+  // reasonably killed a healthy 24-minute run.
+  //
+  // ⛔ **Never the run's verdict, and nothing else here should imply otherwise.** What ends a muse
+  // run is `run.terminal.*` above, which is decoded as a `result` and which `onStreamResult` turns
+  // into a failed run and a closed session. A step failing is ordinary — a grep that matched
+  // nothing, a test that is red, a `git config` that is unset — and the agent is the thing that
+  // decides what it means.
+  //
+  // ⚠️ Silent rather than reworded, because it is the *contextless twin* of `tool.result` below:
+  // measured, the two arrive back to back for the same `task_id` (sequences 29 and 30), and only
+  // `tool.result` says which tool and which command. One line about a failed step is useful; this
+  // one is the half of the pair that caused the false alarm. A step failure that genuinely stops the
+  // run still reaches the operator through the terminal record, and a model step retrying is
+  // narrated by `task.lifecycle.status` below.
+  if (type === 'task.lifecycle.failed') return { kind: 'other', type }
 
   // ⛔ **The whole of t269, and the reason a working run read as a hung one.** Muse emits
   // `run.output.delta` for the *final answer only*: measured 2026-09-07 on a real run, the three
   // deltas of a two-tool turn arrived at sequences 47-49 of 67, after every tool had already
   // finished. The t267 dispatch ran 24 minutes over 42 tool batches and put **one** line in the
-  // peephole — the `task.lifecycle.failed` above — so the operator watching the task saw an agent
-  // that had said nothing since it started and reasonably called it stuck. Everything it was
-  // actually doing arrived in the records below and decoded to `other`, which reaches nobody.
+  // peephole — the `task.lifecycle.failed` above, then reading `error: …` — so the operator watching
+  // the task saw an agent that had said nothing since it started except an error that turned out to
+  // be a shell command doing its job, and reasonably called it stuck. That the two halves of t269
+  // and t270 were the *same* line is the point: the records below are what a run is actually doing,
+  // and without them the only voice the run had was its most alarming one.
   //
   // ⚠️ Prose, not a new event kind. `noteActivity` takes text and the pane renders text; what these
   // records describe — a tool starting, a provider retrying — is exactly the "what is it doing right
@@ -522,12 +567,19 @@ function decodeStream(record: Record<string, unknown>): StreamEvent | null {
 
   // The other half of the pair, and only when it went wrong. A successful tool is already announced
   // by its proposal, and saying so twice would push the tool that is *running* off the tail.
+  //
+  // ⛔ **The command, not just the verdict** — this is the line that has to make t270 unrepeatable.
+  // "a step failed" with no subject is what sent an operator to kill a working run; `· bash failed:
+  // git config --global user.email` is a sentence they can judge in one glance. `text` is the tool's
+  // own JSON and only bash was measured to carry `command`, so it is read defensively and the line
+  // degrades to the verdict alone for any tool that spells its result differently.
   if (type === 'tool.result') {
     const facts = asRecord(payload.correlation_facts)
     const outcome = typeof facts?.outcome === 'string' ? facts.outcome : null
     const tool = typeof facts?.tool_name === 'string' ? facts.tool_name : 'tool'
     if (!outcome || outcome === 'success') return { kind: 'other', type }
-    return { kind: 'assistant_text', text: `· ${tool} ${outcome}\n` }
+    const detail = commandIn(payload.text)
+    return { kind: 'assistant_text', text: `· ${tool} ${outcome}${detail ? `: ${detail}` : ''}\n` }
   }
 
   // ⛔ Provider retries, which are the one thing that makes a healthy run genuinely idle. Measured in
