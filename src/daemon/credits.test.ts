@@ -35,7 +35,8 @@ const ON: CreditStatus = {
   everEnabled: true,
   monthlyLimit: 50,
   used: 12.5,
-  currency: 'USD'
+  currency: 'USD',
+  resetsAt: null
 }
 
 /**
@@ -52,7 +53,8 @@ const OFF: CreditStatus = {
   everEnabled: true,
   monthlyLimit: null,
   used: null,
-  currency: 'USD'
+  currency: 'USD',
+  resetsAt: null
 }
 
 function seedWorker(label: string) {

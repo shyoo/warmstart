@@ -674,6 +674,14 @@ export interface CreditStatus {
   used: number | null
   /** ISO-4217, as the vendor spells it. ⛔ Not assumed to be USD. */
   currency: string | null
+  /**
+   * When the monthly purse refills, as ms epoch — or `null` where the vendor says nothing.
+   *
+   * ⚠️ Inferred on `claude-code` from `oauthAccount.subscriptionCreatedAt` (the vendor publishes
+   * no explicit credits reset anywhere measured), so this is the subscription-month anniversary,
+   * not a date anybody printed. Anything that cannot name its basis reads `null`.
+   */
+  resetsAt: number | null
 }
 
 /**

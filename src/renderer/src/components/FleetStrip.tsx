@@ -9,10 +9,10 @@ import {
   writeFleetDensity,
   type FleetDensity
 } from '../lib/prefs'
-import { cardStatus, gaugedSessions, shortWindowLabels } from '../lib/fleetcard'
+import { cardStatus, creditResetDays, gaugedSessions, shortWindowLabels } from '../lib/fleetcard'
 import { Working } from '../lib/taskview'
 import { AgentIcon } from './AgentIcon'
-import { cacheUrgency, countdown, money, percent, quotaUrgency, tokens } from '../lib/format'
+import { cacheUrgency, countdown, money, percent, quotaUrgency, tokens, when } from '../lib/format'
 
 /**
  * Context-fill fraction for sessions with no cache clock.
@@ -218,21 +218,25 @@ function SessionGauge({ session, now }: { session: Session; now: number }): Reac
  * out identically to session gauges: font-size var(--text-meta), a bar with urgency fill, and
  * $0.00/$40.00 value. "Billing" tag dropped.
  */
-function CreditGauge({ credits }: { credits: CreditStatus }): React.JSX.Element {
+function CreditGauge({ credits, now }: { credits: CreditStatus; now: number }): React.JSX.Element {
   const fill =
     credits.monthlyLimit && credits.monthlyLimit > 0 && credits.used !== null
       ? Math.min(1, Math.max(0, credits.used / credits.monthlyLimit))
       : null
   const urgencyClass = fill !== null ? quotaUrgency(fill * 100) : 'ok'
   const valueText = `${money(credits.used)}${credits.monthlyLimit !== null ? `/${money(credits.monthlyLimit)}` : ''}`
+  const resetText = creditResetDays(credits.resetsAt, now)
 
   return (
     <div
       className="wcard-credits gauge gauge--credits"
       title={
-        credits.monthlyLimit !== null
+        (credits.monthlyLimit !== null
           ? `credits: ${money(credits.used)} used of ${money(credits.monthlyLimit)} monthly limit`
-          : `credits: ${money(credits.used)} used`
+          : `credits: ${money(credits.used)} used`) +
+        // ⚠️ `?? null`: rows cached before `resetsAt` existed carry `undefined`, and an old row
+        // must read as unknown rather than as a refill dated `—`.
+        ((credits.resetsAt ?? null) !== null ? `\nrefills ${when(credits.resetsAt)}` : '')
       }
     >
       <span className="gauge-label">credits</span>
@@ -244,7 +248,11 @@ function CreditGauge({ credits }: { credits: CreditStatus }): React.JSX.Element 
           />
         )}
       </span>
+      {/* ⛔ Left, beside the bar — not right-aligned to the card edge. The value used to span a
+          124px column, which parked `$0.00/$40.00` at the far right with a gap after the bar and
+          read as a different row shape from every session below it. */}
       <span className="num gauge-value">{valueText}</span>
+      <span className="num gauge-reset">{resetText}</span>
     </div>
   )
 }
@@ -476,7 +484,7 @@ function WorkerCard({
           ⚠️ Rendered only when the vendor says credits are *on* for this account — an account with
           credits off publishes no balance at all, and `money()` would print `$0.00` for a purse
           that has merely not been shown. */}
-      {worker.credits?.enabled === true && <CreditGauge credits={worker.credits} />}
+      {worker.credits?.enabled === true && <CreditGauge credits={worker.credits} now={now} />}
 
       {/* ⛔ The rule is load-bearing, not decoration. Everything above it is the **account**: one
           quota, shared by every session on it, and it survives the session ending. Everything below

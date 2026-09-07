@@ -510,6 +510,15 @@ the existing `/usage` PTY drive already refreshes. So it costs a `readFileSync` 
 status and no numbers at all, so rendering `$0.00` would claim a purse is empty when it has merely
 not been shown.
 
+⭐ **The refill date is inferred, because the vendor never prints one** (2026-09-07, t278). Measured
+across three live accounts: `extra_usage`, `spend` and `limits[]` carry no credits reset — the limits
+carry only the 5h and 7d windows. What the file *does* carry is `oauthAccount.subscriptionCreatedAt`,
+and extra usage is a monthly allowance on a `stripe_subscription`, so `CreditStatus.resetsAt` is the
+next subscription-month anniversary in UTC (month-end clamped, e.g. a 31st renews on Feb 28). The
+strip shows whole days to it (`29d`) beside the `$used/$limit` value, which sits by the bar like
+every session row instead of right-aligned to the card edge. If the vendor ever publishes the date,
+that replaces the inference.
+
 ⛔ **The app cannot turn credits on, and does not pretend to.** Driven under a PTY on both accounts
 (the second time with the app's own `spawnEnv()`, ruling out an inherited host variable),
 `/usage-credits` does **not** open a toggle — it starts a login chooser:

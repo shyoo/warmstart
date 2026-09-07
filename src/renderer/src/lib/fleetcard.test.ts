@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Session } from '@shared/protocol'
-import { cardStatus, gaugedSessions, shortWindowLabels } from './fleetcard'
+import { cardStatus, creditResetDays, gaugedSessions, shortWindowLabels } from './fleetcard'
 import type { FleetEntry } from './daemon'
 
 /**
@@ -192,5 +192,21 @@ describe('shortWindowLabels', () => {
   /** An adapter that never named a pool is already terse, and its column narrows too. */
   it('accepts labels that were only ever the window length', () => {
     expect(shortWindowLabels(['5h', '7d'])).toEqual(['5h', '7d'])
+  })
+})
+
+describe('creditResetDays', () => {
+  const NOW = Date.UTC(2026, 8, 7, 12)
+
+  it('reads whole days to the refill, rounding a partial day up', () => {
+    expect(creditResetDays(Date.UTC(2026, 9, 3, 20, 41, 50), NOW)).toBe('27d')
+    expect(creditResetDays(NOW + 86_400_000, NOW)).toBe('1d')
+  })
+
+  it('reads blank where the refill is unknown or already past', () => {
+    expect(creditResetDays(null, NOW)).toBe('')
+    expect(creditResetDays(undefined, NOW)).toBe('')
+    expect(creditResetDays(NOW, NOW)).toBe('')
+    expect(creditResetDays(NOW - 1000, NOW)).toBe('')
   })
 })

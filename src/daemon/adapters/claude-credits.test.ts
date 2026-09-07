@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { claudeCredits } from './claude-code.js'
 
-const { creditStatus, spendMeters, majorUnits } = claudeCredits
+const { creditStatus, spendMeters, majorUnits, creditsResetAt } = claudeCredits
 
 /**
  * Claude Code's usage-credits reading, from `.claude.json`.
@@ -228,6 +228,62 @@ describe('creditStatus, on the live payload with credits enabled', () => {
 
   it('reports currency as USD', () => {
     expect(status?.currency).toBe('USD')
+  })
+})
+
+describe('creditsResetAt, the monthly refill the vendor never dates', () => {
+  // ⛔ Measured 2026-09-07 across three live accounts: `extra_usage`, `spend` and `limits[]` carry
+  // no credits reset date. The refill is inferred from `oauthAccount.subscriptionCreatedAt`, which
+  // the live accounts do publish (e.g. `2026-07-03T20:41:50Z` — a monthly allowance on a
+  // `stripe_subscription` refills on the subscription-month anniversary).
+  const SUB = '2026-07-03T20:41:50.158Z'
+
+  it('names the next subscription-month anniversary after now', () => {
+    // 2026-09-07 → the October anniversary, 26 days out.
+    expect(creditsResetAt(SUB, Date.UTC(2026, 8, 7, 12))).toBe(Date.UTC(2026, 9, 3, 20, 41, 50, 158))
+  })
+
+  it('keeps a refresh later today ahead instead of rolling a month', () => {
+    expect(creditsResetAt(SUB, Date.UTC(2026, 9, 3, 12))).toBe(Date.UTC(2026, 9, 3, 20, 41, 50, 158))
+  })
+
+  it('rolls to next month once today’s anniversary has passed', () => {
+    expect(creditsResetAt(SUB, Date.UTC(2026, 9, 3, 21))).toBe(Date.UTC(2026, 10, 3, 20, 41, 50, 158))
+  })
+
+  it('rolls the year when the anniversary is in December', () => {
+    // Dec 4 is past the Dec 3 anniversary, so the refill is January's — across the year boundary.
+    expect(creditsResetAt(SUB, Date.UTC(2026, 11, 4))).toBe(Date.UTC(2027, 0, 3, 20, 41, 50, 158))
+    expect(creditsResetAt('2026-12-15T00:00:00Z', Date.UTC(2026, 11, 16))).toBe(Date.UTC(2027, 0, 15))
+  })
+
+  it('clamps to the last day where the anniversary month is short', () => {
+    // A subscription opened on the 31st refills on Feb 28, not March 3rd.
+    expect(creditsResetAt('2026-01-31T10:00:00Z', Date.UTC(2026, 1, 1))).toBe(Date.UTC(2026, 1, 28, 10))
+  })
+
+  it('reads null where the vendor said nothing usable', () => {
+    expect(creditsResetAt(null, Date.UTC(2026, 8, 7))).toBeNull()
+    expect(creditsResetAt(undefined, Date.UTC(2026, 8, 7))).toBeNull()
+    expect(creditsResetAt('not a date', Date.UTC(2026, 8, 7))).toBeNull()
+  })
+
+  it('rides creditStatus off the account block', () => {
+    const status = creditStatus(
+      {
+        cachedUsageUtilization: {
+          utilization: { extra_usage: { is_enabled: true, monthly_limit: 4000, used_credits: 0, decimal_places: 2 } }
+        },
+        oauthAccount: { hasExtraUsageEnabled: true, subscriptionCreatedAt: SUB }
+      },
+      Date.UTC(2026, 8, 7, 12)
+    )
+    expect(status?.resetsAt).toBe(Date.UTC(2026, 9, 3, 20, 41, 50, 158))
+  })
+
+  it('reads null on the live payloads, which publish no subscription date', () => {
+    expect(creditStatus(CREDITS_OFF)?.resetsAt).toBeNull()
+    expect(creditStatus(CREDITS_ON)?.resetsAt).toBeNull()
   })
 })
 

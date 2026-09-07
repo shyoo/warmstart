@@ -2077,7 +2077,8 @@ try {
           everEnabled: true,
           monthlyLimit: 50,
           used: 12.34,
-          currency: 'USD'
+          currency: 'USD',
+          resetsAt: Date.now() + 26 * 86_400_000
         }),
         staleWorker
       )
@@ -2106,6 +2107,11 @@ try {
   check(
     '⚠️ and the ceiling beside it, so the number has something to be a share of',
     /\/\$50\.00/.test(creditCard),
+    JSON.stringify(creditCard)
+  )
+  check(
+    'and whole days to the refill in the reset column, like every session row',
+    /\b2[56]d\b/.test(creditCard),
     JSON.stringify(creditCard)
   )
   // ⛔ **Off is not zero**, which is the rule the whole `CreditStatus` type is built on: with credits
@@ -2759,6 +2765,21 @@ try {
     'checking one reaches the daemon, which is the only opinion that gates dispatch',
     routableAfter !== 'null' && JSON.parse(routableAfter)?.length === 1,
     routableAfter
+  )
+  // ⛔ Names, not a count: `2 models` says nothing to an operator choosing where a task lands,
+  // so the pill lists the allowlist (ellipsised, full list on the tooltip) while the menu stays
+  // the editor for adding or dropping models.
+  const secondCheckbox = `document.querySelectorAll('.pill-menu .workers-menu-list input[type=checkbox]')[1]`
+  await evaluate(`${secondCheckbox}?.click()`)
+  await wait(400)
+  const routableNames = await evaluate(
+    `[...document.querySelectorAll('.pill-menu .workers-menu-list label')].filter(l => l.querySelector('input:checked')).map(l => l.querySelector('.workers-menu-worker-name')?.textContent.trim()).join('|')`
+  )
+  const routableTwo = await evaluate(`${routableBtn}?.textContent.trim()`)
+  check(
+    'checking a second reads as both model names',
+    routableNames.split('|').length === 2 && routableTwo === routableNames.split('|').join(', '),
+    `${routableTwo} vs ${routableNames}`
   )
   await evaluate(`document.body.click()`)
   await wait(150)

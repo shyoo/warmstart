@@ -682,7 +682,7 @@ body {
 }
 
 .wcard:not(.wcard--narrow) .wcard-windows--terse ~ .gauge--credits {
-  grid-template-columns: 44px 1fr 124px;
+  grid-template-columns: 44px 1fr auto 58px;
 }
 
 .wcard:not(.wcard--narrow) .wcard-windows--terse ~ .wcard-sessions .gauge--session {
@@ -730,15 +730,18 @@ body {
 }
 
 /*
- * Extra usage / credits gauge: styled identically to session gauges with font-size var(--text-meta).
- * The value column spans 124px (58px + 8px gap + 58px) matching the right edge of session gauges.
+ * Extra usage / credits gauge: the same four columns as a session row — label, bar, value, reset.
+ * The value sits beside the bar (`$0.00/$40.00` then daylight, like `252k/1.0M` below it) instead of
+ * spanning a 124px column to the card edge, which parked it at the far right with a gap after the
+ * bar and read as a different row shape. The reset column carries whole days to the refill (`29d`).
  */
 .gauge--credits {
-  grid-template-columns: 84px 1fr 124px;
+  grid-template-columns: 84px 1fr auto 58px;
 }
 
 .gauge--credits .gauge-value {
   white-space: nowrap;
+  text-align: left;
 }
 
 .gauge--idle {
@@ -851,7 +854,7 @@ body {
 }
 
 .wcard--narrow .gauge--credits {
-  grid-template-columns: 1fr 124px;
+  grid-template-columns: 1fr auto 58px;
 }
 
 /*

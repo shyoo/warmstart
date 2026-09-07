@@ -65,12 +65,19 @@ const ROUTABLE_MODELS_HELP =
   'starting point, not a missing setting. Only models this account\'s adapter can price appear here.'
 
 /**
- * The **Routable models** multi-select: an opt-in allowlist beside the account's default model.
+ * What the **Routable models** pill reads. Pure so the L1 suite can pin it without a table.
  *
- * ⛔ **The empty state reads as what it is.** A blank pill for `Model` beside it would read as
- * "nothing chosen yet"; here it has to read as the opposite — a deliberate, inert default — so the
- * label is a sentence rather than a dash, matching `ROUTABLE_MODELS_HELP`.
+ * ⛔ **Names, not a count.** `2 models` says nothing an operator choosing where a task lands needs —
+ * the pill names the allowlist (`sonnet, opus`, truncated by the pill's own ellipsis with the full
+ * list on the tooltip), and the menu behind the pill is the editor: checkboxes add or drop models,
+ * and Reset returns to the default. The empty state reads as what it is — a deliberate, inert
+ * default, matching `ROUTABLE_MODELS_HELP` — because a blank beside `Model` would read as
+ * "nothing chosen yet" rather than its opposite.
  */
+export function routableModelsLabel(selected: string[]): string {
+  if (selected.length === 0) return 'default model only'
+  return selected.join(', ')
+}
 function RoutableModelsPill({
   worker,
   models,
@@ -85,12 +92,7 @@ function RoutableModelsPill({
   onChange: (next: string[]) => void
 }): React.JSX.Element {
   const selected = worker.routableModels ?? []
-  const label =
-    selected.length === 0
-      ? 'default model only'
-      : selected.length === 1
-        ? selected[0]!
-        : `${selected.length} models`
+  const label = routableModelsLabel(selected)
 
   const toggle = (id: string): void => {
     onChange(selected.includes(id) ? selected.filter((m) => m !== id) : [...selected, id])
@@ -99,7 +101,7 @@ function RoutableModelsPill({
   return (
     <Pill
       ariaLabel={`Routable models for ${worker.label}`}
-      title={ROUTABLE_MODELS_HELP}
+      title={selected.length > 0 ? `Routable models: ${selected.join(', ')}` : ROUTABLE_MODELS_HELP}
       muted={selected.length === 0}
       disabled={disabled || models.length === 0}
       label={label}

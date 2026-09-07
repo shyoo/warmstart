@@ -176,7 +176,7 @@ interface ClaudeConfigShape {
       extra_usage?: ClaudeExtraUsageShape
     }
   }
-  oauthAccount?: { hasExtraUsageEnabled?: boolean | null }
+  oauthAccount?: { hasExtraUsageEnabled?: boolean | null; subscriptionCreatedAt?: string | null }
   cachedExtraUsageDisabledReason?: string | null
 }
 
@@ -289,7 +289,45 @@ function spendMeters(spend: ClaudeSpendShape | undefined): SpendMeter[] {
  * ⚠️ `disabledReason` prefers the per-reading value and falls back to the top-level cache, which is
  * where 2.1.263 actually wrote `org_level_disabled` on both measured accounts.
  */
-function creditStatus(parsed: ClaudeConfigShape): CreditStatus | null {
+/**
+ * When this account's monthly credits purse refills, as a timestamp — or `null` where unknown.
+ *
+ * ⛔ **Inferred, not published.** Measured 2026-09-07 across three live accounts: neither
+ * `extra_usage`, `spend` nor `limits[]` carries a credits reset date (the limits carry only the 5h
+ * and 7d windows). What the vendor *does* publish is `oauthAccount.subscriptionCreatedAt`, and
+ * extra usage is a monthly allowance on a `stripe_subscription` — so the refill is taken to be the
+ * subscription-month anniversary. If the vendor ever publishes the date itself, that replaces this.
+ */
+export function creditsResetAt(subscriptionCreatedAt: string | null | undefined, now: number): number | null {
+  if (!subscriptionCreatedAt) return null
+  const start = Date.parse(subscriptionCreatedAt)
+  if (!Number.isFinite(start)) return null
+  // ⚠️ UTC throughout: a billing anniversary is a calendar date, and local DST must not move it.
+  const anchor = new Date(start)
+  const day = anchor.getUTCDate()
+  const time = [anchor.getUTCHours(), anchor.getUTCMinutes(), anchor.getUTCSeconds(), anchor.getUTCMilliseconds()]
+  const at = (y: number, m: number): number => {
+    const last = new Date(Date.UTC(y, m + 1, 0)).getUTCDate()
+    return Date.UTC(y, m, Math.min(day, last), time[0], time[1], time[2], time[3])
+  }
+  const nowDate = new Date(now)
+  let y = nowDate.getUTCFullYear()
+  let m = nowDate.getUTCMonth()
+  let candidate = at(y, m)
+  // A refresh later today is still ahead; one already past rolls to next month. Twelve steps is
+  // more than enough and bounds the loop absolutely.
+  for (let i = 0; i < 12 && candidate <= now; i++) {
+    m += 1
+    if (m > 11) {
+      m = 0
+      y += 1
+    }
+    candidate = at(y, m)
+  }
+  return candidate > now ? candidate : null
+}
+
+function creditStatus(parsed: ClaudeConfigShape, now: number = Date.now()): CreditStatus | null {
   const spend = parsed.cachedUsageUtilization?.utilization?.spend
   const extra = parsed.cachedUsageUtilization?.utilization?.extra_usage
   const account = parsed.oauthAccount
@@ -311,12 +349,13 @@ function creditStatus(parsed: ClaudeConfigShape): CreditStatus | null {
     everEnabled: bool(extra?.credits_ever_enabled),
     monthlyLimit: extraAmount(extra?.monthly_limit, extra?.decimal_places) ?? majorUnits(spend?.limit),
     used: extraAmount(extra?.used_credits, extra?.decimal_places) ?? majorUnits(spend?.used),
-    currency: str(extra?.currency) ?? str(spend?.used?.currency)
+    currency: str(extra?.currency) ?? str(spend?.used?.currency),
+    resetsAt: creditsResetAt(account?.subscriptionCreatedAt, now)
   }
 }
 
 /** Exported for the tests, which drive it with payloads captured off the live accounts. */
-export const claudeCredits = { creditStatus, spendMeters, majorUnits, extraAmount }
+export const claudeCredits = { creditStatus, spendMeters, majorUnits, extraAmount, creditsResetAt }
 
 /**
  * Has this root been through the CLI's first-run screens?

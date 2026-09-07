@@ -123,6 +123,18 @@ const WINDOW_TERM = /(?:^|\S\s+)((?:5h|7d)\b.*)$/
  * column on. A card either shows pool names on every row or on none — half-shortened labels read as
  * one window belonging to a pool and the other not.
  */
+/**
+ * Whole days until the monthly credits purse refills, for the gauge's reset column — `29d`.
+ *
+ * ⛔ Days, not a countdown. A monthly refill is weeks out, where `countdown`'s `29d 4h` buys
+ * nothing and breaks the 58px column every other row fits in; and anything at or past the date
+ * reads as blank rather than `0d`, because a refill that never lands is unknown, not imminent.
+ */
+export function creditResetDays(resetsAt: number | null | undefined, now: number): string {
+  if (!resetsAt || resetsAt <= now) return ''
+  return `${Math.ceil((resetsAt - now) / 86_400_000)}d`
+}
+
 export function shortWindowLabels(labels: string[]): string[] | null {
   const terms = labels.map((label) => WINDOW_TERM.exec(label)?.[1])
   if (terms.some((term) => term === undefined)) return null
