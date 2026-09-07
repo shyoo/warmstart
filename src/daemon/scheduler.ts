@@ -1228,6 +1228,37 @@ function stickyWorkerFor(task: Task): string | null {
   return null
 }
 
+/**
+ * ⭐ **The tie broken by the conversation that already exists, before anybody is asked anything.**
+ *
+ * `affinity` and `cold` already price reuse, but they are two terms among eleven, and a tie means
+ * the rest cancelled them out — so the fleet was buying a controller turn to choose between a
+ * candidate holding this task's own prefix and one that would rebuild it from nothing. Within ε that
+ * is not a judgment call: the scores say the two are indistinguishable, and reuse is the strictly
+ * cheaper of two equals. Measured 2026-08-28, a continued turn read back 41,542 cached tokens and
+ * wrote 65, against a cold start that wrote the lot.
+ *
+ * ⛔ **Only when reuse actually separates the tied field.** If every tied candidate holds a
+ * conversation, or none does, this says nothing and the consult goes ahead exactly as before — the
+ * tie-break must not become a second, quieter scorer.
+ *
+ * ⚠️ `session ?? resumable`, the same `held` every term in `scoreCandidate` reads, so a
+ * `streamPrompts: 'once'` adapter — which never has a live idle session and so could never win this
+ * — is judged on the conversation it can genuinely reopen.
+ *
+ * ⚠️ Takes the field already sorted by score, and returns the highest-scoring reuser: this breaks a
+ * tie, it does not re-rank one.
+ *
+ * Exported for its own tests: constructing a real ε-tie between a warm candidate and a cold one
+ * through the whole scorer would be tuning quota percentages until the arithmetic cooperated, which
+ * tests the tuning rather than the rule.
+ */
+export function reuseTieBreak(tied: WorkerChoice[]): WorkerChoice | null {
+  const reusing = tied.filter((c) => c.session ?? c.resumable)
+  if (reusing.length === 0 || reusing.length === tied.length) return null
+  return reusing[0] ?? null
+}
+
 export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
   const reasons: string[] = []
   /**
@@ -1603,7 +1634,9 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
       label: (c.worker as Worker).label,
       adapterId: (c.worker as Worker).adapterId,
       model: c.model ?? null,
-      warm: !!c.session,
+      // ⛔ Live *or* reopenable, matching `held` in `scoreCandidate` and the `warm` this row's own
+      // `affinity`/`cold` terms were computed from. See the shortlist below.
+      warm: !!(c.session ?? c.resumable),
       quotaUnverified: c.quotaUnverified,
       score: c.score,
       chosen: (c.worker as Worker).id === winner.worker?.id && (c.model ?? null) === (winner.model ?? null),
@@ -1661,7 +1694,9 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
   const estimate = cachedEstimate(
     best.worker?.adapterId ?? null,
     best.model ?? best.session?.model ?? null,
-    !!best.session
+    // ⚠️ `session ?? resumable`, as everywhere else: a task whose own conversation is on disk is
+    // priced for the reopen the dispatch is about to do, not for a cold start nobody will pay for.
+    !!(best.session ?? best.resumable)
   ).tokens
   const tie = second !== undefined && Math.abs(best.score - second.score) <= ROUTE_EPSILON
   if (!tie || estimate < ROUTE_CONSULT_FLOOR_TOKENS) return finalizeChoice(decided(best, 'score'))
@@ -1686,6 +1721,17 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
     }
   }
 
+  const tied = candidates.filter((c) => Math.abs(best.score - c.score) <= ROUTE_EPSILON)
+
+  const winner = reuseTieBreak(tied)
+  if (winner) {
+    log.info(
+      `t${task.seq}: tie within ε broken by reuse — ${winner.worker?.label} already holds this ` +
+        `task's conversation${winner.session ? '' : ' (closed, reopenable)'}, so no consult is spent`
+    )
+    return finalizeChoice(decided(winner, 'reuse'))
+  }
+
   if (hasPendingConsult('route', task.id)) {
     return {
       ...best,
@@ -1699,7 +1745,6 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
   // quota that can be refreshed. Stale quota zeroes out windowRisk and manufactures false ties.
   // Refresh the tied candidates first; if fresh numbers break the tie or gate a worker, no consult
   // is needed.
-  const tied = candidates.filter((c) => Math.abs(best.score - c.score) <= ROUTE_EPSILON)
   const refreshing = tied.map((c) => (c.worker ? needsBaseline(c.worker) : null)).filter(Boolean)
   if (refreshing.length > 0) {
     return {
@@ -1724,7 +1769,19 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
     worker: c.worker as Worker,
     model: c.model ?? null,
     score: c.score,
-    warm: !!c.session,
+    // ⛔ `session ?? resumable`, the same `held` every term in `scoreCandidate` reads. Read from
+    // `session` alone, this line called a candidate whose own conversation was sitting on disk a
+    // "cold start" while the table under it showed `affinity 1 · cold 0` — the controller was being
+    // asked to choose between a description and the arithmetic.
+    warm: !!(c.session ?? c.resumable),
+    reuse: c.session ? 'live' : c.resumable ? 'reopen' : null,
+    // ⛔ Priced from where this candidate starts. `cachedEstimate` is memoised per
+    // (adapter, model, warm), so this is the same object the `price` term was built from.
+    estimate: cachedEstimate(
+      c.worker?.adapterId ?? null,
+      c.model ?? c.session?.model ?? null,
+      !!(c.session ?? c.resumable)
+    ),
     note: c.quotaUnverified ? 'quota reading not trustworthy' : '',
     // ⛔ Both are built from the *same* breakdown, once. The brief line goes in the question and the
     // table goes in the detail; a second implementation of either could drift from the ordering.
@@ -2525,7 +2582,9 @@ export function noteRoutingDecision(task: Task, choice: WorkerChoice): void {
       weightFormulas: WEIGHT_FORMULAS,
       epsilon: ROUTE_EPSILON,
       basis: choice.routedBy ?? 'score',
-      warm: !!choice.session,
+      // ⛔ `RoutingDecision.warm` says the winner was reusing a conversation, and a reopened one is
+      // reuse — the dispatch calls `resumableSession` and continues it.
+      warm: !!(choice.session ?? choice.resumable),
       candidates: choice.scored
     })
   } catch (err) {

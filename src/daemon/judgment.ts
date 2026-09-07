@@ -706,11 +706,33 @@ function applyGate(task: Task, answer: Record<string, unknown>): ApplyResult {
 
 // ---------------------------------------------------------------------------- 4. route
 
+/**
+ * What the candidate would be starting from.
+ *
+ * ⛔ `reopen` is not a rung of cold. The scorer treats a closed-but-reopenable conversation as
+ * holding the task — `affinity 1 · cold 0`, see `reopenableFor` — and the dispatch really does
+ * reopen it, so a question that called it a "cold start" was describing a candidate the arithmetic
+ * beside it had already priced as warm.
+ */
+export type RouteReuse = 'live' | 'reopen' | null
+
 export interface RouteCandidate {
   worker: Worker
   model?: string | null
   score: number
+  /** Whether a conversation already holds this task on this account — live, or reopenable. */
   warm: boolean
+  /** Which kind of reuse `warm` is, where the caller knows. Absent reads as plain warm/cold. */
+  reuse?: RouteReuse
+  /**
+   * What *this* candidate would cost, priced with its own agent, model and start.
+   *
+   * ⛔ The question used to carry one figure for the whole task — `pessimisticOn()`, the worst agent
+   * the fleet has measured, always the same number for every candidate — so nothing the controller
+   * was shown could tell it that one candidate already held the context the other would pay to
+   * rebuild. This is the estimate that priced the candidate's own `price` term.
+   */
+  estimate?: Estimate | null
   note: string
   /**
    * One line: what the arithmetic actually weighed for this candidate, and what it could not
@@ -734,6 +756,33 @@ export interface RouteCandidate {
 }
 
 /**
+ * What this candidate would be starting from, in the words a controller has to reason with.
+ *
+ * ⛔ Reads `reuse` where the caller supplied it and falls back to `warm`, so the phrase can never
+ * contradict the `affinity` and `cold` terms printed under it. A reopenable conversation described
+ * as a "cold start" is the exact mismatch this exists to prevent.
+ */
+function reusePhrase(c: RouteCandidate): string {
+  if (c.reuse === 'live') return 'already holds this task’s context in a live conversation'
+  if (c.reuse === 'reopen') {
+    return 'holds this task’s own conversation, closed but reopenable — reusing it skips rebuilding the context'
+  }
+  return c.warm ? 'already holds this task’s context' : 'cold start'
+}
+
+/**
+ * The one line that names a candidate, shared by the question and the detail so a person auditing a
+ * decision reads the same sentence the controller was given.
+ */
+function candidateLine(c: RouteCandidate): string {
+  const cost = c.estimate ? `, ~${costPhrase(c.estimate)} from there` : ''
+  return (
+    `- ${c.worker.id}${c.model ? ` (${c.model})` : ''} — ${c.worker.label}: score ${c.score.toFixed(3)}, ` +
+    `${reusePhrase(c)}${cost}${c.note ? `, ${c.note}` : ''}`
+  )
+}
+
+/**
  * ⚠️ **The weakest of the four, and gated hardest.**
  *
  * A tie means the alternatives are by definition close, so the most this can win back is ε — while
@@ -747,26 +796,42 @@ export interface RouteCandidate {
  * `detail` — see `routeDetail`.
  */
 export function routeQuestion(task: Task, candidates: RouteCandidate[]): string {
+  const priced = candidates.some((c) => c.estimate)
   return [
     'You are the controller for Multi Agent Controller. Two accounts score within a hair of each other for a large',
     'task, so the arithmetic cannot separate them. Pick one.',
     '',
     `# Task t${task.seq}`,
     task.title,
-    `estimated ${costPhrase(estimateTask(task, pessimisticOn()))} ` +
-      `(${estimateTask(task, pessimisticOn()).basis})`,
+    // ⛔ Only where no candidate could be priced on its own. This figure is `pessimisticOn()` — the
+    // worst agent the fleet has measured, identical for every candidate — and printing it above a
+    // list that prices each candidate separately invites the two to be read as the same quantity.
+    ...(priced
+      ? []
+      : [
+          `estimated ${costPhrase(estimateTask(task, pessimisticOn()))} ` +
+            `(${estimateTask(task, pessimisticOn()).basis})`
+        ]),
     '',
     '# Candidates',
     // ⚠️ Scores are on one linear, unitless scale and HIGHER WINS. Said once, in a line, because a
     // bare `-0.120` is unfalsifiable without it — a reader cannot tell which end is better.
     'Scores are on one linear scale and HIGHER WINS; these are within ε of each other, which is why',
-    'you are being asked. Each candidate lists what the arithmetic weighed for it.',
+    'you are being asked. Each candidate lists what the arithmetic weighed for it, and — where it',
+    'could be priced — what that candidate in particular would cost from where it starts.',
     ...candidates.flatMap((c) => [
       '',
-      `- ${c.worker.id}${c.model ? ` (${c.model})` : ''} — ${c.worker.label}: score ${c.score.toFixed(3)}, ` +
-        `${c.warm ? 'already holds this task’s context' : 'cold start'}${c.note ? `, ${c.note}` : ''}`,
+      candidateLine(c),
       ...(c.considered ? [`  weighed: ${c.considered}`] : [])
     ]),
+    '',
+    // ⭐ The one preference to state outright, because it is the cheapest move on the board and the
+    // arithmetic has just failed to express it: a conversation that already holds this task is a
+    // prompt cache and a memory of the work that both already exist, and every other candidate pays
+    // for both again from nothing.
+    'If nothing else separates them, pick the candidate that already holds this task’s conversation —',
+    'live or reopenable. Reusing it skips a full cold start; the alternative rebuilds the same context',
+    'from scratch. Only pass it over for a reason you can name from what is listed above.',
     '',
     '# How to answer',
     '```json',
@@ -803,8 +868,7 @@ export function routeDetail(
     '# Candidates',
     ...candidates.flatMap((c) => [
       '',
-      `- ${c.worker.id}${c.model ? ` (${c.model})` : ''} — ${c.worker.label}: score ${c.score.toFixed(3)}, ` +
-        `${c.warm ? 'already holds this task’s context' : 'cold start'}${c.note ? `, ${c.note}` : ''}`,
+      candidateLine(c),
       // ⚠️ Indented under its own candidate rather than gathered into one table: a reader comparing
       // two candidates is comparing two of these blocks line for line.
       ...(c.formula ?? [])

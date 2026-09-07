@@ -402,12 +402,43 @@ Defer & Probe Baseline Quota
 (Fresh numbers often break false ties for free!)
 ```
 
+### 4.2a The Reuse Tie-Break (`reuseTieBreak`) — a tie is won by the conversation that already exists
+
+⛔ **Before the consult, after the controller's own answer.** When the tied field splits into
+candidates that already hold this task's conversation and candidates that do not, the highest-scoring
+holder wins the tie outright and **no controller turn is spent** (`basis: 'reuse'`).
+
+- **Why it is not double-counting.** `affinity` (+1.26 balanced) and `cold` (−1.19 balanced) already
+  price reuse, but they are two terms among eleven; a tie means the rest cancelled them out. Within
+  ε the scores say the two candidates are indistinguishable — and between two equals, the one that
+  skips a full cache write and already remembers the work is strictly cheaper. Measured 2026-08-28: a
+  continued turn read back **41,542** cached tokens and wrote 65, against a cold start that wrote all
+  of it.
+- ⛔ **`session ?? resumable`** — the same `held` every scoring term reads. A `streamPrompts: 'once'`
+  adapter never has a live idle session, so reading `session` alone would hand every tie on that
+  adapter to a cold start.
+- ⛔ **Only when reuse separates the field.** If every tied candidate holds a conversation, or none
+  does, the tie-break says nothing and the consult fires exactly as before.
+- ⚠️ A controller answer already on file still wins: the turn was paid for, so it is used.
+
 ### 4.3 Stale Quota Pre-Check (`needsBaseline`)
 Stale quota zeroes out `windowRisk`, which can manufacture artificial ties. Before spending tokens on a controller consult, the scheduler checks if any tied candidate has stale quota. If so, it defers the consult and triggers a background quota probe first (`reason: 'reading quota for tied candidates before asking the controller'`).
 
 ### 4.4 Consult Prompt vs Detailed Derivation
 - **Shortlist deduplication:** Before constructing the consult shortlist, candidate pairs are deduped to 1 candidate pair per worker (keeping that worker's top-scoring model). If only 1 worker is eligible fleet-wide, arithmetic decides immediately with 0 tokens. The shortlist takes at most 4 candidates.
-- **Sent to Controller LLM (`routeQuestion`):** Minimal prompt containing candidate IDs, candidate model, total score, warm status, and a single-line summary of live terms (`briefScore`). Keeps prompt token cost low (~1/3 of full table).
+- **Sent to Controller LLM (`routeQuestion`):** Minimal prompt containing candidate IDs, candidate model, total score, where the candidate would be *starting from*, its own estimated cost, and a single-line summary of live terms (`briefScore`). Keeps prompt token cost low (~1/3 of full table).
+- ⛔ **Reuse is described the way the score measured it.** `warm` on a shortlist entry is
+  `session ?? resumable`, and `reuse` says which: `live`, `reopen`, or nothing. A closed-but-reopenable
+  conversation used to be printed as `cold start` beside a table showing `affinity 1 · cold 0` — the
+  controller was being asked to choose between a description and the arithmetic under it.
+- ⛔ **Each candidate is priced from where it starts.** The prompt carried one figure for the whole
+  task (`pessimisticOn()` — the worst agent the fleet has measured, identical for every candidate), so
+  nothing the controller saw could show that one candidate already held the context the other would
+  pay to rebuild. Per-candidate estimates come from the same memoised `cachedEstimate(adapter, model,
+  warm)` that priced the `price` term; the fleet-wide figure is printed only when no candidate could
+  be priced on its own.
+- ⚠️ The question ends by stating the preference outright: where nothing else separates the
+  candidates, pick the one already holding the conversation.
 - **Stored for Humans (`routeDetail`):** Full legend and complete term-by-term formula tables stored on `consult.detail` for inspection in the UI.
 - **Closed-Set Validation (`validateRoute`):** The controller returns JSON:
   ```json
@@ -452,7 +483,7 @@ Scoring can starve unmeasured models: a model with no prior and no quality revie
 called from `dispatch`). It holds the objective vector that was in force, every weight it produced with
 its published formula, and **every candidate's term-by-term derivation** — value, weight, sign,
 contribution and the basis in words — plus how the winner was picked (`score`, `controller`,
-`pinned` or `sticky`).
+`pinned`, `sticky`, `reuse` or `explore`).
 
 - ⛔ **`sticky` is a conversation returning to the account it is already talking to**, and it wins
   outright rather than adding a term. Warmth is one weight among nine, which is right for unattended
@@ -462,6 +493,11 @@ contribution and the basis in words — plus how the winner was picked (`score`,
   `constraints.workerId` and the loop skips everyone else, and an account that has spent its window is
   removed by the quota gate. In both, nothing is found and the ordinary scoring decides. A sticky
   decision still records the whole ranked field, so the arithmetic it declined to use is auditable.
+
+- ⛔ **`reuse` is the tie-break of §4.2a**, not a term: the scores came within ε and only some of the
+  tied candidates already held this task's conversation. ⚠️ `RoutingDecision.warm` and each
+  candidate's `warm` are `session ?? resumable` — a reopened conversation is reuse, because the
+  dispatch really does call `resumableSession` and continue it.
 
 - ⛔ **Written at dispatch, not in `chooseTarget`.** Scoring runs on every tick for every eligible
   task, most of which are then held for a resource, a window or a controller answer. Recording there
@@ -621,14 +657,19 @@ Worker 1 beats Worker 2 by 0.430 (> 0.10), so **Worker 1 wins cleanly** without 
 **Execution:**
 1. Both workers have fresh quota readings (no baseline probe needed).
 2. Gap ($0.042 \le 0.10$) and task size ($220\text{k} \ge 150\text{k}$) trigger a consult.
-3. The controller receives:
+3. Neither holds a conversation for this task, so the §4.2a reuse tie-break says nothing and the
+   consult goes ahead. The controller receives:
    ```
    # Candidates
-   - w_b — Worker B: score -0.011, cold start
+   - w_b — Worker B: score -0.011, cold start, ~$0.31 (220000 tokens) from there
      weighed: cold -1.190, capabilityFit +1.220, quotaRisk -0.041 (unmeasurable here: pace)
-   - w_a — Worker A: score -0.052, cold start
+   - w_a — Worker A: score -0.052, cold start, ~$0.31 (220000 tokens) from there
      weighed: cold -1.190, capabilityFit +1.220, quotaRisk -0.082 (unmeasurable here: pace)
    ```
+   ⚠️ Had Worker A held this task's conversation — live or closed and reopenable — the tie would
+   never have reached here: §4.2a would have taken it for `basis: 'reuse'` at zero tokens, and its
+   line would have read `holds this task's own conversation, closed but reopenable` rather than
+   `cold start`.
 4. **If Controller replies:** `{"workerId": "w_b", "why": "Worker B has slightly lower window utilization"}` $\implies$ Dispatched to `Worker B`.
 5. **If Controller times out (90s) or has no quota:** Fallback chooses `Worker B` (highest arithmetic score). Zero disruption.
 

@@ -1206,6 +1206,126 @@ describe('routing a retry back to the account that already has the context', () 
   })
 })
 
+/**
+ * The conversation that already exists, and the consult that used to be spent choosing against it.
+ *
+ * ⛔ **t269, read off the judgment call itself.** Two candidates were offered within ε of each other;
+ * one already held the task's own conversation and the other did not, and the question described
+ * *both* as a cold start against one fleet-wide cost figure. Nothing the controller was shown could
+ * see the reuse, so the answer could not weigh it — the tie was decided on the labels again.
+ */
+describe('a tie between a conversation that exists and one that does not', () => {
+  const held = { id: 's1' } as Session
+
+  const candidate = (
+    label: string,
+    reuse: { session?: Session | null; resumable?: Session | null } = {}
+  ): WorkerChoice => ({
+    worker: { id: label, label } as Worker,
+    session: reuse.session ?? null,
+    resumable: reuse.resumable ?? null,
+    reason: '',
+    quotaUnverified: false,
+    score: -0.12
+  })
+
+  it('is won by the live conversation, so no controller turn is spent', () => {
+    const warm = candidate('warm', { session: held })
+    const winner = scheduler.reuseTieBreak([warm, candidate('cold')])
+    expect(winner).toBe(warm)
+  })
+
+  it('is won by a closed conversation this task can reopen, too', () => {
+    // ⛔ The half a one-shot CLI can ever have. `codex exec` never leaves a live idle session, so
+    // reading `session` alone would hand every tie on that adapter to a cold start.
+    const reopenable = candidate('reopenable', { resumable: held })
+    const winner = scheduler.reuseTieBreak([candidate('cold'), reopenable])
+    expect(winner).toBe(reopenable)
+  })
+
+  it('takes the highest-scoring reuser, because this breaks a tie rather than re-ranking one', () => {
+    const first = candidate('warm-first', { session: held })
+    const second = candidate('warm-second', { session: held })
+    expect(scheduler.reuseTieBreak([first, second, candidate('cold')])).toBe(first)
+  })
+
+  it('says nothing when reuse does not separate the field', () => {
+    // Every candidate holds one, or none does: either way the consult is still the honest answer.
+    expect(scheduler.reuseTieBreak([candidate('a'), candidate('b')])).toBeNull()
+    expect(
+      scheduler.reuseTieBreak([
+        candidate('a', { session: held }),
+        candidate('b', { resumable: held })
+      ])
+    ).toBeNull()
+    expect(scheduler.reuseTieBreak([])).toBeNull()
+  })
+})
+
+/**
+ * What the controller is told about where a candidate would be starting from.
+ *
+ * ⚠️ Pure prose checks. The question is the only thing the controller ever sees, so a candidate the
+ * scorer priced as warm and the sentence called cold is a defect in the *question*, not the score.
+ */
+describe('the routing question describes reuse the way the score does', () => {
+  const task = { id: 't', seq: 269, title: 'a large task', kind: 'work' } as Parameters<
+    typeof import('./judgment.js').routeQuestion
+  >[0]
+
+  const candidate = (
+    label: string,
+    extra: Partial<Parameters<typeof import('./judgment.js').routeQuestion>[1][number]> = {}
+  ): Parameters<typeof import('./judgment.js').routeQuestion>[1][number] => ({
+    worker: { id: label, label } as Worker,
+    score: -0.12,
+    warm: false,
+    note: '',
+    ...extra
+  })
+
+  it('never calls a reopenable conversation a cold start', async () => {
+    const { routeQuestion } = await import('./judgment.js')
+    const q = routeQuestion(task, [
+      candidate('opus', { warm: true, reuse: 'reopen' }),
+      candidate('sonnet')
+    ])
+    const line = (id: string) => q.split(/\r?\n/).find((l) => l.startsWith(`- ${id}`)) ?? ''
+    expect(line('opus')).toContain('closed but reopenable')
+    expect(line('opus')).not.toContain('cold start')
+    // ⚠️ The candidate that really has nothing is still described as having nothing.
+    expect(line('sonnet')).toContain('cold start')
+  })
+
+  it('prices each candidate from where it starts, not the fleet from nowhere', async () => {
+    const { routeQuestion } = await import('./judgment.js')
+    const estimate = (usd: number) =>
+      ({ usd, tokens: 200_000, pricedTokens: 200_000, basis: 'measured', confidence: 'high' }) as
+        Parameters<typeof import('./judgment.js').routeQuestion>[1][number]['estimate']
+    const q = routeQuestion(task, [
+      candidate('opus', { warm: true, reuse: 'live', estimate: estimate(0.04) }),
+      candidate('sonnet', { estimate: estimate(0.31) })
+    ])
+    expect(q).toContain('$0.04')
+    expect(q).toContain('$0.31')
+    // ⛔ The one fleet-wide `pessimisticOn()` figure is dropped once each candidate carries its own:
+    // two different quantities under the same word is how both candidates came to look identical.
+    expect(q).not.toMatch(/^estimated /m)
+  })
+
+  it('tells the controller outright to prefer the conversation that already exists', async () => {
+    const { routeQuestion } = await import('./judgment.js')
+    const q = routeQuestion(task, [candidate('opus', { warm: true, reuse: 'live' }), candidate('sonnet')])
+    expect(q).toMatch(/pick the candidate that already holds this task/i)
+  })
+
+  it('gives a person auditing the decision the same sentence', async () => {
+    const { routeDetail } = await import('./judgment.js')
+    const detail = routeDetail(task, [candidate('opus', { warm: true, reuse: 'reopen' })])
+    expect(detail).toContain('closed but reopenable')
+  })
+})
+
 describe('warmth as a fraction of what the provider granted', () => {
   it('scores a full prefix as 1 whatever window it was granted', async () => {
     const { costModel } = await import('./costmodel.js')

@@ -36,6 +36,7 @@ export interface RoutingCandidate {
   adapterId: string
   /** The model this candidate would have run, where it was knowable before the spawn. */
   model: string | null
+  /** A conversation already holds this task on this account — live, or closed and reopenable. */
   warm: boolean
   quotaUnverified: boolean
   score: number
@@ -57,8 +58,13 @@ export interface RoutingCandidate {
  * ⚠️ `sticky` is not a kind of score. It says the task already had a conversation on that account and
  * keeping it was worth more than any comparison — see `stickyWorkerFor`. A decision recorded as
  * `sticky` still carries the whole ranked field, so the arithmetic it declined to use is auditable.
+ *
+ * ⚠️ `reuse` is the tie-break, not a term: the scores came within ε of each other and only some of
+ * the tied candidates already held this task's conversation, so the cheaper of two equals was taken
+ * and no controller turn was spent. A `reuse` decision is one a `controller` consult would have
+ * decided before this existed.
  */
-export type RoutingBasis = 'score' | 'controller' | 'pinned' | 'sticky' | 'explore'
+export type RoutingBasis = 'score' | 'controller' | 'pinned' | 'sticky' | 'explore' | 'reuse'
 
 export interface RoutingDecision {
   id: string

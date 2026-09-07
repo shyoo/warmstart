@@ -871,6 +871,7 @@ const BASIS_LABEL: Record<string, string> = {
   score: 'dispatched',
   pinned: 'dispatched',
   sticky: 'dispatched',
+  reuse: 'dispatched',
   explore: 'explore'
 }
 
@@ -879,5 +880,7 @@ const BASIS_DETAIL: Record<string, string> = {
   score: 'The scoring arithmetic separated the candidates clearly; the highest score won.',
   pinned: 'The task named its worker or model explicitly; one candidate, no comparison.',
   sticky: 'The task already had a live conversation on this account; keeping it beat any comparison.',
+  reuse:
+    'The scores tied within ε and only this candidate already held the task’s conversation, so reusing it won the tie without spending a controller turn.',
   explore: 'ε-greedy exploration: the scheduler tried a non-top-scoring candidate to gather data.'
 }
