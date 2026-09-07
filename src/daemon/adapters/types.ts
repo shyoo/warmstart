@@ -274,6 +274,24 @@ export interface AgentAdapter {
   parseUsage?: (screen: string, now?: number) => QuotaWindow[] | null
 
   /**
+   * The same screen, asked a different question: does this CLI say *it* has no reading to give?
+   *
+   * ⛔ **The third answer.** `parseUsage` has two — a reading, or `null` for *I could not read this
+   * screen* — and a panel that drew correctly and printed `Currently unavailable` is neither.
+   * Measured 2026-09-07 on a Muse Code account commissioned the same morning: the `/usage` panel
+   * renders its Subscription block with no percentages until that account has completed one turn,
+   * and every probe before then reported *the usage panel did not appear* and pointed the operator
+   * at a folder-trust dialog that had already been answered.
+   *
+   * Return the sentence to show a person — what the CLI said and what ends it — or `null`, which is
+   * every screen this adapter has no special reading of. ⚠️ It is asked **only after `parseUsage`
+   * has declined**, so it can never mask a reading, and a non-null answer *ends the retry loop*: a
+   * provider that has published no numbers will not publish them because the command was typed a
+   * fifth time.
+   */
+  usageUnavailable?: (screen: string) => string | null
+
+  /**
    * Turn one of this CLI's own stream records into an agentyard event.
    *
    * ⛔ Required for any adapter that offers the `stream` transport, because **there is no shared

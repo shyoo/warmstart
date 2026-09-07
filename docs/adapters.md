@@ -35,7 +35,7 @@ first spawn.** That is the whole reason `AdapterInfo.verification` exists.
 | Accepts our session id | ✔ | ⛔ | ⛔ | ⛔ | ✔ `--session-id` |
 | Resumes a past conversation | ✔ `--resume <id>` | ✔ `--conversation <id>` | ✔ **`exec resume <thread_id>`** — measured 2026-09-02 | ⛔ fresh conversation per dispatch | ✔ **the same `--session-id`** — measured 2026-09-06 |
 | Prompt cache TTL | **60m** (`1h`, 2.0× write) | ⛔ unpriced (storage per token-hour) | **30m** (1.25× write) | ⛔ none | ⛔ unpublished (reads and writes are *reported*, not priced) |
-| Free quota probe | ✔ the `.claude.json` cache; `/usage` refreshes it | ⛔ **measured — see below** | ✔ **`account/rateLimits/read`**, rollout as fallback | ⛔ none (unlimited) | ⚠️ **screen only** — `/usage `, and the block is absent until a turn is spent |
+| Free quota probe | ✔ the `.claude.json` cache; `/usage` refreshes it | ⛔ **measured — see below** | ✔ **`account/rateLimits/read`**, rollout as fallback | ⛔ none (unlimited) | ⚠️ **screen only** — `/usage `, and it reads `Currently unavailable` until the credential has spent a turn |
 | Free **money** meter (`spendProbe`) | `stream` — `total_cost_usd` and the overage flags ride a turn already paid for | ⛔ `none` — cloud credits are real and nothing read reports a balance | `config-cache` — `credits.balance`, in the rollout the quota already comes from | ⛔ `none` — it runs on the operator's own machine | ⛔ `none` — no local file names a figure |
 | Reports cache reads | via transcript | ⛔ no | ✔ reads **and** writes | ⛔ server-side | ✔ reads **and** writes, in the session log |
 | Read-only mode (may review) | ✔ `plan` | ✔ `plan` | ✔ `read-only` | ✔ `read-only` | ✔ `read-only` (`never` + `--disable-write` + `--disable-shell`) |
@@ -142,7 +142,7 @@ from a Windows host, on a live *Everyday Usage* account. The full capture is
 | `exec --json` carries usage, the way agy and codex do | ⛔ **It carries none.** A full real run was captured — 39 records — and there is no usage anywhere in it. Usage is in the **session log** (`payload.event.kind == "model_completed"`), so `metering: 'transcript'` |
 | a transcript is a transcript | ⛔ **Three differences at once, all silent.** It keys on `payload_type` not `type`, dates records in **microseconds**, and counts the cached prefix *inside* `input_tokens` (24,679 against a 24,433 cache read). A Claude-shaped reader meters nothing; summing the fields as they arrive doubles every cache read. Adapters now declare `decodeTranscript` |
 | resuming needs a resume flag | ⭐ **Reusing `--session-id` is the resume.** A second `exec` on the same id appended to the conversation and logged `session.resumed` with `prior_turn_count: 1`. So the vendor's handle for a conversation is the id this app minted for it |
-| `/usage` + Enter shows the panel | ⛔ **The slash-command popup swallows the first Enter.** Two Enters work, and so does a **trailing space** — which is the fix, because `quota.ts` writes `${command}\r` and `'/usage '` submits in one go. ⚠️ And the `Subscription` block is **absent until the account has spent a turn**, so the parser answers `null` rather than 0% |
+| `/usage` + Enter shows the panel | ⛔ **The slash-command popup swallows the first Enter.** Two Enters work, and so does a **trailing space** — which is the fix, because `quota.ts` writes `${command}\r` and `'/usage '` submits in one go. ⚠️ And a **newly signed-in account has no windows on it at all** — see *the first probe of a new muse worker* below — so the parser answers `null` rather than 0% |
 | an isolation root is a directory | ⚠️ **Two of them.** No `MUSE_HOME` exists and the real binary ignores the launcher's `MUSE_AUTH_PATH` (grep: 0 hits), so isolation is `XDG_CONFIG_HOME` + `XDG_DATA_HOME` or nothing. Both work on a Windows drive, with one benign warning: DrvFs cannot express mode 0700, so cross-session messaging disables itself |
 | *(Windows)* `wsl.exe -- bash -lc <script> arg…` passes the arguments | ⛔ **It drops them.** `$#` came back `0`, `$0` read `/bin/bash`. Every path is quoted into the script text by `shQuote` instead |
 | *(Windows)* a worktree is a directory git can open | ⛔ **Not from inside WSL.** `<worktree>/.git` holds `gitdir: C:/Dev/…`, which git resolves *relatively*: `fatal: not a git repository: /mnt/c/…/ws1/C:/Dev/…`. Every workspace this app hands out is a worktree, so a muse worker could not have run one git command. ⭐ Fixed by `GIT_DIR` + `GIT_WORK_TREE` alone — **no file is modified**, and no `safe.directory` is needed |
@@ -155,6 +155,72 @@ the macOS build carries no Windows code it could never run.
 
 ⚠️ **Still unflown**: `--image`, and no task has yet been dispatched to a commissioned muse worker.
 Every capability above was exercised against the CLI; none of it has been through the scheduler.
+
+### Three faults behind one message: *"its usage panel did not appear"*
+
+⛔ **Measured 2026-09-07 on MuseFirst, commissioned and signed in that morning** (t266). The first
+probe reported *"`/usage ` was typed into MuseFirst but its usage panel did not appear"* and pointed
+at a folder-trust dialog. It had been typed, no dialog was in the way, and **three separate things
+were wrong** — each of which alone produces that same sentence, which is why the message had to stop
+being a guess.
+
+**1. The return must not travel with the command.** `driveScreenProbe` wrote `'/usage \r'` in one
+`write`; through this app's own PTY that leaves `/usage` sitting in the composer, unsent — four
+attempts, eighteen seconds, nothing. Typing the text and sending the return **400ms later** drew the
+panel on the first attempt. Muse's TUI negotiates the kitty keyboard protocol and bracketed paste at
+startup (`ESC[>3u`, `ESC[?2004h`), and a return inside the same chunk as the text is not a keypress
+to it. `usageRefresh.submitDelayMs` is the declaration; an adapter that omits it still gets exactly
+one write, which is what Claude Code and Antigravity were measured on.
+
+**2. Through a PTY there are no lines.** `backscroll` is the raw stream with its escapes stripped,
+and muse paints with **absolute cursor addressing**, emitting no newline between rows. The whole
+panel arrives as *one* line:
+
+```
+… Subscription · Muse Code Everyday Usage   Current   0% used · Resets at 1:55 PM   Weekly   2% …
+```
+
+So `/^\s*Current\s+/` matched nothing on a complete, correct panel, and would have gone on doing so
+after fault 1 was fixed. Nothing in `parseUsage` may be anchored to a line now, the reset clause is
+bounded to the two shapes measured (`at 1:38 AM`, `Sep 13 at 5:00 PM`) rather than to the end of a
+"line" that is the rest of the panel, and **the last paint wins** — a TUI redraws, so the backscroll
+holds every frame it ever drew. ⚠️ Antigravity's TUI does emit newlines, which is why this survived
+a screen-answered adapter shipping: it took the second one to expose it.
+
+**3. A new account's panel has no numbers on it, and that is not a fault at all.** Driven by hand
+under tmux against that same isolation root, the panel read:
+
+```
+  Subscription · Muse Code Everyday Usage
+    Currently unavailable
+```
+
+⭐ **What ends it is one turn on that credential** — not one turn in that session, not one in that
+isolation root, and not time:
+
+| Tried | Read |
+|---|---|
+| signed in, two hours old, zero turns | `Currently unavailable` |
+| one `muse exec` turn, then a **fresh** TUI on `Turns 0` | `Current 0% used · Weekly 2% used` |
+| a **second** isolation root holding a copy of the same `auth.json` | the same windows, immediately |
+
+The account already had usage from another credential and the panel still said nothing, so the gate
+is that credential's own first turn, and the numbers come from the provider rather than from any
+local file — there is nothing on disk to read, and nothing for `trust.json` to fix.
+
+⛔ So *"what did the screen say"* has a third answer, and adapters now have somewhere to put it:
+**`usageUnavailable(screen)`** returns the sentence a person is shown when the panel drew and said
+it has no reading. It is asked
+only after `parseUsage` has declined, so it can never mask a reading; a non-null answer **ends the
+retry loop**, because a provider that has published no numbers will not publish them because the
+command was typed a fifth time. `quotaGap` then shows the worker in the *no usage data yet* state
+the Claude Code and Codex first-probe cases already use — the fleet dispatches to it regardless (the
+run is marked `quotaUnverified`), and that first run is what fills the panel in.
+
+⭐ **Verified end to end, 2026-09-07**: the adapter's own spawn plan, this app's PTY at 100×30,
+`driveScreenProbe` with the adapter's parser — **one attempt**, `Muse 5h 0% · Muse 7d 2%`, with both
+reset times. Before the fix the same worker answered *"the usage panel did not appear"* on every
+probe, including one taken through the running daemon minutes earlier.
 
 ---
 

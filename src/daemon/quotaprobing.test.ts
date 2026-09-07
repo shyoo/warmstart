@@ -50,10 +50,12 @@ describe('screen-answered probes', () => {
         value === 'complete panel'
           ? [{ id: '5h', label: '5h', percent: 12, resetsAt: null }]
           : null,
-      async (ms) => {
-        now += ms
-      },
-      () => now
+      {
+        pause: async (ms) => {
+          now += ms
+        },
+        now: () => now
+      }
     )
 
     expect(result.attempts).toBe(3)
@@ -69,14 +71,110 @@ describe('screen-answered probes', () => {
       (value) => writes.push(value),
       () => 'still starting',
       () => null,
-      async (ms) => {
-        now += ms
-      },
-      () => now
+      {
+        pause: async (ms) => {
+          now += ms
+        },
+        now: () => now
+      }
     )
 
     expect(writes).toEqual(['/usage\r', '/usage\r'])
     expect(result.windows).toBeNull()
+    expect(result.unavailable).toBeNull()
+  })
+
+  /**
+   * ⛔ The state t266 found on a Muse Code worker commissioned the same morning: the panel drew and
+   * said `Currently unavailable`, because the provider publishes no windows until the account has
+   * spent a turn. Retrying that is twenty seconds of typing at a CLI that has already answered, and
+   * the answer the operator was shown ("the panel did not appear") was about a different fault.
+   */
+  it('stops as soon as the CLI says it has no reading, and keeps its reason', async () => {
+    let now = 0
+    const writes: string[] = []
+    const result = await quota.driveScreenProbe(
+      '/usage ',
+      30_000,
+      (value) => writes.push(value),
+      () => 'Subscription · Muse Code Everyday Usage\n  Currently unavailable',
+      () => null,
+      {
+        unavailable: (screen) =>
+          screen.includes('Currently unavailable') ? 'this account has not spent a turn yet' : null,
+        pause: async (ms) => {
+          now += ms
+        },
+        now: () => now
+      }
+    )
+
+    expect(writes).toEqual(['/usage \r'])
+    expect(result.windows).toBeNull()
+    expect(result.unavailable).toBe('this account has not spent a turn yet')
+  })
+
+  /**
+   * ⛔ The other half of t266: on Muse Code the command and the return must not arrive in one
+   * write. Measured through this app's own PTY — `'/usage \r'` left the text sitting in the
+   * composer unsent, four times over eighteen seconds, and the same text with the return behind it
+   * drew the panel first time. ⚠️ An adapter that declares no delay still gets exactly one write,
+   * which is what the other two were measured on.
+   */
+  it('sends the return separately when the adapter asks for a gap', async () => {
+    let now = 0
+    const writes: Array<{ at: number; data: string }> = []
+    const result = await quota.driveScreenProbe(
+      '/usage ',
+      12_000,
+      (data) => writes.push({ at: now, data }),
+      () => (writes.length >= 2 ? 'complete panel' : 'startup screen'),
+      (screen) =>
+        screen === 'complete panel'
+          ? [{ id: '5h', label: '5h', percent: 4, resetsAt: null }]
+          : null,
+      {
+        submitDelayMs: 400,
+        pause: async (ms) => {
+          now += ms
+        },
+        now: () => now
+      }
+    )
+
+    expect(writes.map((w) => w.data)).toEqual(['/usage ', '\r'])
+    expect(writes[1]!.at - writes[0]!.at).toBe(400)
+    expect(result.windows?.[0]?.percent).toBe(4)
+  })
+
+  /**
+   * ⚠️ A reading always wins. The backscroll is a tail of everything the session printed, so an
+   * account that filled its windows in while the probe was open leaves *both* panels on it - and
+   * the parser is asked first, every pass, precisely so the empty one cannot win that race.
+   */
+  it('prefers the reading when one screen holds both panels', async () => {
+    let now = 0
+    const result = await quota.driveScreenProbe(
+      '/usage ',
+      30_000,
+      () => {},
+      () => 'Currently unavailable\n… later …\nCurrent 3% used',
+      (screen) =>
+        /Current (\d+)% used/.test(screen)
+          ? [{ id: '5h', label: '5h', percent: 3, resetsAt: null }]
+          : null,
+      {
+        unavailable: (screen) =>
+          screen.includes('Currently unavailable') ? 'this account has not spent a turn yet' : null,
+        pause: async (ms) => {
+          now += ms
+        },
+        now: () => now
+      }
+    )
+
+    expect(result.windows?.[0]?.percent).toBe(3)
+    expect(result.unavailable).toBeNull()
   })
 })
 

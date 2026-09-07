@@ -218,17 +218,21 @@ export function quotaGap(
     // ⚠️ Codex belongs in this branch too, for the same reason by a different file: its reading
     // lives in a rollout, and a worker that has never run a turn has written none. `unknown` would
     // send the operator back to Probe, which is the one thing that cannot help.
+    // ⚠️ Muse Code reaches this branch by a different road and belongs on it just as much: it has
+    // no file at all, and its `/usage` panel draws `Currently unavailable` until the account has
+    // completed a turn (measured 2026-09-07). Same fix, same sentence — work on it, then probe.
     if (
-      /cachedUsageUtilization|no \.claude\.json|no rollout files|no rate_limits record/i.test(
+      /cachedUsageUtilization|no \.claude\.json|no rollout files|no rate_limits record|currently unavailable/i.test(
         quota.error ?? ''
       )
     ) {
       return {
         label: 'no usage data yet',
         hint:
-          'Signing in does not produce a usage reading. The CLI writes its usage cache only after ' +
-          'it has done real work on the account, so start a session on this worker and probe again ' +
-          `once it has run. (${quota.error})`
+          'Signing in does not produce a usage reading. The reading exists only once the account ' +
+          'has done real work — the CLI writes its usage cache then, or the provider publishes the ' +
+          'windows then — so start a session on this worker and probe again once it has run. ' +
+          `(${quota.error})`
       }
     }
     return {

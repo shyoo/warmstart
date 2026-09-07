@@ -130,7 +130,18 @@ const info: AdapterInfo = {
   // — a trailing space closes it, so `'/usage '` submits with the single carriage return quota.ts
   // already appends. ⚠️ `readyMs` is padded because being early means reading a screen that has not
   // drawn yet, which parses as *no reading* rather than as a wrong one.
-  usageRefresh: { command: '/usage ', readyMs: 14_000, settleMs: 18_000, answer: 'screen', cols: 100, rows: 30 },
+  // ⛔ `submitDelayMs` is not a nicety: measured 2026-09-07 through this app's own PTY, `'/usage \r'`
+  // written in one go leaves the text in the composer unsent — four attempts, eighteen seconds,
+  // nothing — while the same text with the return 400ms behind it draws the panel first time.
+  usageRefresh: {
+    command: '/usage ',
+    readyMs: 14_000,
+    settleMs: 18_000,
+    answer: 'screen',
+    cols: 100,
+    rows: 30,
+    submitDelayMs: 400
+  },
   // ⛔ Measured on a fresh config root, 2026-09-06: a bare `muse` opens **"Do you trust this
   // workspace?"** and then the login chooser, and swallows every keystroke until both are answered.
   // That is the same coupling claude-code has and the same cost — `/usage` typed into a dialog
@@ -305,39 +316,94 @@ function envFor(host: CliHost, isolationRoot: string, cwd: string): Record<strin
  *     Weekly         1% used · Resets Sep 13 at 5:00 PM
  *     as of 9:17 PM
  * ```
- * ⛔ **The `Subscription` block is absent until the account has spent a turn.** The operator saw
- * exactly that on first launch, and it is the reason this returns `null` rather than zeroes: a
- * missing reading is a state everything downstream already distrusts correctly, and a 0% one would
- * be believed.
+ * ⛔ **A newly signed-in account has no numbers here at all** — the block draws as
+ * `Currently unavailable` (measured 2026-09-07, see `usageUnavailable`), and before that this
+ * project recorded it as absent. Either way this returns `null` rather than zeroes: a missing
+ * reading is a state everything downstream already distrusts correctly, and a 0% one would be
+ * believed.
  *
  * ⚠️ `Session usage` above it counts this session's tokens, not the subscription's window, and is
  * deliberately not read here — it is the number that is present when the one we want is not.
+ *
+ * ⛔ **Nothing here may be anchored to a line, because through a PTY there are no lines.** Measured
+ * 2026-09-07 (t266) on the app's own probe session: muse paints with absolute cursor addressing and
+ * emits no newline between the rows, so the backscroll this is handed — the raw stream with its
+ * escapes stripped — carries the whole panel as *one* line:
+ * ```
+ * … Subscription · Muse Code Everyday Usage   Current   0% used · Resets at 1:55 PM   Weekly   2% …
+ * ```
+ * A `/^\s*Current\s+/` matched nothing on it, so a complete, correct panel read as no reading at
+ * all, on every probe, for reasons that had nothing to do with the account. ⚠️ Antigravity's TUI
+ * does emit newlines, which is why this went unnoticed until a second screen-answered adapter.
+ *
+ * ⚠️ **The last paint wins.** A TUI redraws, so the backscroll holds every frame it ever drew and
+ * an account whose windows arrived mid-probe has both the empty panel and the filled one on it.
  */
 function parseUsage(screen: string, now: number = Date.now()): QuotaWindow[] | null {
-  if (!/^\s*Subscription\b/m.test(screen)) return null
+  if (!/\bSubscription\b/.test(screen)) return null
 
-  const rows: Array<{ id: string; label: string; heading: RegExp }> = [
-    { id: '5h', label: 'Muse 5h', heading: /^\s*Current\s+/ },
-    { id: '7d', label: 'Muse 7d', heading: /^\s*Weekly\s+/ }
+  const rows: Array<{ id: string; label: string; heading: string }> = [
+    { id: '5h', label: 'Muse 5h', heading: 'Current' },
+    { id: '7d', label: 'Muse 7d', heading: 'Weekly' }
   ]
 
   const windows: QuotaWindow[] = []
   for (const row of rows) {
-    const line = screen.split(/\r?\n/).find((l) => row.heading.test(l))
-    if (!line) continue
-    const used = /(\d+(?:\.\d+)?)\s*%\s*used/i.exec(line)
-    if (!used?.[1]) continue
-    const resets = /Resets\s+(.+?)\s*$/i.exec(line)
+    // `Current        0% used · Resets at 1:55 PM`, with the run of spaces being a cursor move.
+    // ⚠️ The reset clause is bounded to the two shapes measured — `at 1:38 AM` and
+    // `Sep 13 at 5:00 PM` — rather than *to the end of the line*, which on one line is the rest of
+    // the panel. An unrecognised shape leaves `resetsAt` null and keeps the percentage.
+    const pattern = new RegExp(
+      String.raw`\b${row.heading}\s+(\d+(?:\.\d+)?)\s*%\s*used` +
+        String.raw`(?:\s*·\s*Resets\s+((?:[A-Z][a-z]{2}\w*\s+\d{1,2}\s+)?at\s+\d{1,2}:\d{2}(?:\s*[AP]M)?))?`,
+      'gi'
+    )
+    const seen = [...screen.matchAll(pattern)]
+    const match = seen[seen.length - 1]
+    if (!match?.[1]) continue
     windows.push({
       id: row.id,
       label: row.label,
-      percent: Number(used[1]),
-      resetsAt: resets?.[1] ? parseResetTime(resets[1], now) : null
+      percent: Number(match[1]),
+      resetsAt: match[2] ? parseResetTime(match[2], now) : null
     })
   }
   // ⛔ A panel that drew its header and no row it recognises is a rendering this parser does not
   // understand, not an account with no windows.
   return windows.length > 0 ? windows : null
+}
+
+/**
+ * Why the panel drew no numbers, when it drew none — the sentence a person is shown.
+ *
+ * ⛔ **The state the first probe of a new worker is in, and the one this adapter shipped unable to
+ * name.** Measured 2026-09-07 against MuseFirst, commissioned and signed in that morning:
+ * ```
+ *   Subscription · Muse Code Everyday Usage
+ *     Currently unavailable
+ * ```
+ * The panel is drawn, the slash command was not swallowed and no dialog is in the way — Meta simply
+ * publishes no windows for a credential that has not spent a turn. ⭐ What ends it is **one turn on
+ * this credential**, not one turn in this session and not one in this isolation root: measured, a
+ * single `muse exec` flipped the panel to `Current 0% used · Weekly 2% used`, a *fresh* TUI on zero
+ * turns then read it, and so did a second isolation root holding a copy of the same `auth.json`.
+ * ⚠️ Time alone does not: the same root read `Currently unavailable` two hours after login.
+ *
+ * So this is not a failure to report, and it is not a fault to fix — it is a worker that has not
+ * worked yet, and dispatch is what clears it (the run is marked `quotaUnverified`, which is what
+ * that flag is for).
+ */
+function usageUnavailable(screen: string): string | null {
+  // ⚠️ Unanchored, for the reason `parseUsage` is: through a PTY this panel arrives on one line.
+  if (!/\bSubscription\b/.test(screen)) return null
+  if (!/currently unavailable/i.test(screen)) return null
+  return (
+    'Muse Code drew its `/usage` panel, and it reads "Currently unavailable": Meta publishes no ' +
+    'subscription windows for an account that has not completed a turn yet. Measured 2026-09-07 — ' +
+    'one completed run on this account is what ends it, after which every probe reads the panel. ' +
+    'Nothing here needs fixing and no dialog is in the way; give this worker a task and the reading ' +
+    'appears on its own.'
+  )
 }
 
 /**
@@ -535,6 +601,7 @@ export const museCode: AgentAdapter = {
   decodeStream,
   decodeTranscript,
   parseUsage,
+  usageUnavailable,
 
   /** ⛔ The prompt is a file, so there is no envelope: what goes down stdin is the prompt itself. */
   encodeStreamPrompt: (text: string) => text,

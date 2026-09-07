@@ -108,8 +108,26 @@ Driven under tmux at 100x30 against the live account:
 - Two windows: **Current** (the 5h window) and **Weekly** (7d). `Session usage` above it is
   per-session tokens, not quota.
 - ⛔ **Costs no tokens** — the same panel reported `Turns 0` on the session that displayed it.
-- ⛔ **The Subscription block is absent until the account has spent a turn**, which is what the
-  operator saw on first launch. A parser must therefore return `null` (unknown), never zeroes.
+- ⛔ **A credential that has not spent a turn has no windows here.** Recorded 2026-09-06 as *the
+  block is absent*; **measured again 2026-09-07** on a worker commissioned that morning, where the
+  block is present and reads `Currently unavailable`. Either way a parser must return `null`
+  (unknown), never zeroes. ⭐ **One turn on that credential ends it** — measured: a single
+  `muse exec`, after which a *fresh* TUI on `Turns 0` read `Current 0% used · Weekly 2% used`, and
+  so did a second isolation root holding a copy of the same `auth.json`. ⚠️ Time alone does not: the
+  same root still read `Currently unavailable` two hours after `muse login`. The account already had
+  usage from another credential throughout, so the gate is per-credential and server-side — nothing
+  local caches it (`grep subscription` over the data dir hits only `feature-config`).
+- ⛔ **Through a PTY, the panel arrives on ONE line** (measured 2026-09-07 with `@lydell/node-pty`,
+  the app's own terminal). Muse paints with absolute cursor addressing and emits no newline between
+  rows, so after `stripAnsi` the backscroll reads
+  `… Subscription · Muse Code Everyday Usage   Current   0% used · Resets at 1:55 PM   Weekly   2% …`.
+  ⚠️ tmux `capture-pane` renders a grid and hides this completely — which is how the line-anchored
+  parser was written and believed. A parser for this CLI must be line-agnostic.
+- ⛔ **The command and the return must be two writes** (measured 2026-09-07 through the same PTY).
+  `write('/usage \r')` leaves the text in the composer unsent; `write('/usage ')` then `write('\r')`
+  400ms later draws the panel first time. Muse enables the kitty keyboard protocol (`ESC[>3u`) and
+  bracketed paste (`ESC[?2004h`) at startup, and a return inside the same chunk as the text is not a
+  keypress. ⚠️ `\n` in place of `\r` does not submit either.
 - ⛔ **Typing `/usage` + Enter is not enough**: the slash-command popup swallows the first Enter.
   ⭐ **A trailing space closes the popup**, so `"/usage "` + Enter submits in one go — which is
   exactly the shape `quota.ts` already writes (`write(`${command}\r`)`).

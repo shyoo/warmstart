@@ -70,6 +70,32 @@ export const IDENTITY_STALE_AFTER_MS = 15 * 60 * 1000
 const SCREEN_PROBE_POLL_MS = 500
 const SCREEN_PROBE_RETRY_MS = 5_000
 
+export interface ScreenProbeOptions {
+  /**
+   * Does this screen say, in the CLI's own words, that it *has* no reading?
+   *
+   * ⛔ The one answer that is neither a reading nor a failure — see `AgentAdapter.usageUnavailable`.
+   */
+  unavailable?: (screen: string) => string | null
+  /**
+   * Wait this long between the command text and the carriage return, instead of writing them
+   * together. ⛔ Load-bearing on Muse Code — see `UsageRefresh.submitDelayMs`.
+   */
+  submitDelayMs?: number
+  /** Test seam: the clock this loop waits on. */
+  pause?: (ms: number) => Promise<void>
+  /** Test seam: the clock this loop reads. */
+  now?: () => number
+}
+
+export interface ScreenProbeResult {
+  screen: string
+  windows: QuotaWindow[] | null
+  attempts: number
+  /** The CLI's own reason for having no numbers to draw, where it gave one. */
+  unavailable: string | null
+}
+
 /**
  * Drive a screen-answered slash command until it produces a complete reading or its deadline ends.
  *
@@ -84,9 +110,9 @@ export async function driveScreenProbe(
   write: (data: string) => void,
   read: () => string,
   parse: (screen: string) => QuotaWindow[] | null,
-  pause: (ms: number) => Promise<void> = wait,
-  now: () => number = Date.now
-): Promise<{ screen: string; windows: QuotaWindow[] | null; attempts: number }> {
+  opts: ScreenProbeOptions = {}
+): Promise<ScreenProbeResult> {
+  const { unavailable, submitDelayMs, pause = wait, now = Date.now } = opts
   const startedAt = now()
   let nextAttemptAt = startedAt
   let attempts = 0
@@ -95,17 +121,32 @@ export async function driveScreenProbe(
   do {
     const current = now()
     if (current >= nextAttemptAt) {
-      write(`${command}\r`)
+      if (submitDelayMs) {
+        // ⛔ Two writes with a gap, because on one CLI the gap *is* the keypress: a return arriving
+        // in the same chunk as the text is not one. See `UsageRefresh.submitDelayMs`.
+        write(command)
+        await pause(submitDelayMs)
+        write('\r')
+      } else {
+        write(`${command}\r`)
+      }
       attempts += 1
-      nextAttemptAt = current + SCREEN_PROBE_RETRY_MS
+      nextAttemptAt = now() + SCREEN_PROBE_RETRY_MS
     }
     await pause(Math.min(SCREEN_PROBE_POLL_MS, Math.max(0, startedAt + timeoutMs - now())))
     screen = stripAnsi(read())
     const windows = parse(screen)
-    if (windows) return { screen, windows, attempts }
+    if (windows) return { screen, windows, attempts, unavailable: null }
+    // ⛔ Asked only once `parse` has declined, and it ends the drive. A panel that says in words
+    // that it has no numbers has *answered*: typing the command four more times cannot produce a
+    // reading the provider has not published, and the twenty seconds spent doing it are charged to
+    // an operator watching a spinner. ⚠️ The order matters the other way too — a backscroll holding
+    // an early unavailable panel *and* a later complete one is a worker whose reading arrived.
+    const why = unavailable?.(screen) ?? null
+    if (why) return { screen, windows: null, attempts, unavailable: why }
   } while (now() < startedAt + timeoutMs)
 
-  return { screen, windows: null, attempts }
+  return { screen, windows: null, attempts, unavailable: null }
 }
 
 export interface DatedQuota extends QuotaSnapshot {
@@ -197,6 +238,9 @@ async function readUsage(workerId: string): Promise<DatedQuota> {
 
   let sessionId: string | null = null
   let screen: string | null = null
+  // ⛔ The CLI's own words for *there is no reading yet*, kept apart from the screen. It is not a
+  // failure of this probe and it is not a reading, and the operator is owed the difference.
+  let unavailable: string | null = null
   try {
     const session = spawnSession({
       workerId,
@@ -221,10 +265,20 @@ async function readUsage(workerId: string): Promise<DatedQuota> {
         refresh.settleMs,
         (data) => writeSession(session.id, data),
         () => backscroll(session.id),
-        parse
+        parse,
+        {
+          unavailable: adapter(w.adapterId).usageUnavailable,
+          ...(refresh.submitDelayMs ? { submitDelayMs: refresh.submitDelayMs } : {})
+        }
       )
       screen = driven.screen
+      unavailable = driven.unavailable
       log.info(`drove \`${refresh.command}\` ${driven.attempts} time(s) on ${w.label}`)
+    } else if (refresh.submitDelayMs) {
+      writeSession(session.id, refresh.command)
+      await wait(refresh.submitDelayMs)
+      writeSession(session.id, '\r')
+      await wait(refresh.settleMs)
     } else {
       writeSession(session.id, `${refresh.command}\r`)
       await wait(refresh.settleMs)
@@ -246,17 +300,24 @@ async function readUsage(workerId: string): Promise<DatedQuota> {
     const parse = adapter(w.adapterId).parseUsage
     const windows = screen && parse ? parse(screen) : null
     if (!windows) {
-      // ⚠️ A rendering that did not parse is an unknown, not a zero. The commonest cause is real and
-      // worth naming: this CLI asks about folder trust per directory and swallows every keystroke
-      // until it is answered, so the command can be typed into a dialog and vanish.
-      const why =
-        `\`${refresh.command}\` was typed into ${w.label} but its usage panel did not appear. ` +
-        (screen === null
-          ? 'The probe session did not start, so nothing was read.'
-          : 'The session may still have been starting, or a folder-trust dialog may have taken the ' +
-            'keystrokes - this CLI asks that question per directory and swallows input until it is ' +
-            'answered.')
-      log.warn(why)
+      // ⛔ **The panel drew and said it has nothing.** Measured 2026-09-07 on a newly commissioned
+      // Muse Code account: `/usage` renders its Subscription block as `Currently unavailable` until
+      // that account has completed one turn. Reported as *the panel did not appear* it read as a
+      // broken probe, and the sentence underneath it sent the operator to look for a folder-trust
+      // dialog that was not there. The adapter knows its own CLI's wording, so it says why.
+      const stated = screen !== null ? (unavailable ?? adapter(w.adapterId).usageUnavailable?.(screen) ?? null) : null
+      const why = stated
+        ? `${w.label}: ${stated}`
+        : `\`${refresh.command}\` was typed into ${w.label} but its usage panel did not appear. ` +
+          (screen === null
+            ? 'The probe session did not start, so nothing was read.'
+            : 'The session may still have been starting, or a folder-trust dialog may have taken the ' +
+              'keystrokes - this CLI asks that question per directory and swallows input until it is ' +
+              'answered.')
+      // ⚠️ `info` where the CLI explained itself: an expected state a person can act on is not a
+      // fault of this fleet, and warning about it every sweep teaches the operator to skip the log.
+      if (stated) log.info(why)
+      else log.warn(why)
       const failed: QuotaSnapshot = {
         workerId,
         windows: [],

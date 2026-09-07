@@ -1126,6 +1126,18 @@ export interface UsageRefresh {
    */
   cols?: number
   rows?: number
+  /**
+   * How long to wait between typing the command and sending the carriage return.
+   *
+   * ⛔ **Measured 2026-09-07 (t266): on Muse Code the two must not arrive in one write.** Driven
+   * through this app's own PTY, `write('/usage \r')` left `/usage` sitting in the composer unsent —
+   * four times over eighteen seconds — while typing the text and sending the return 400ms later
+   * drew the panel first time. Its TUI negotiates the kitty keyboard protocol and bracketed paste
+   * on startup, and a return arriving inside the same chunk as the text is not a keypress to it.
+   * ⚠️ Absent means one write, which is what Claude Code and Antigravity were measured on and what
+   * they keep.
+   */
+  submitDelayMs?: number
 }
 
 export interface AdapterDetection {

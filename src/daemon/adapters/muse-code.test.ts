@@ -158,11 +158,124 @@ describe('parseUsage', () => {
     expect(museCode.parseUsage?.(panel, NOW)?.[0]?.percent).toBe(12.5)
   })
 
+  /**
+   * ⛔ **What the daemon is actually handed, and what t266 was really about.** `backscroll` is the
+   * raw PTY stream with its escapes stripped, and muse paints with absolute cursor addressing — so
+   * every row of the panel arrives on **one line**, separated by runs of spaces where the cursor
+   * moved. Verbatim from a probe session on 2026-09-07, only the space runs shortened: the parser
+   * that read the tmux capture above found nothing at all in this, and reported a healthy account
+   * as unreadable on every probe.
+   */
+  it('reads the panel out of one line, which is how a PTY delivers it', () => {
+    const gap = ' '.repeat(9)
+    const oneLine =
+      ['Session usage', 'Input      0', 'Cached     0', 'Output     0', 'Total      0'].join(gap) +
+      gap +
+      ['Turns         0', 'Subagents  none'].join(gap) +
+      gap +
+      [
+        'Subscription · Muse Code Everyday Usage',
+        'Current        0% used · Resets at 1:55 PM',
+        'Weekly         2% used · Resets Sep 13 at 5:00 PM',
+        'as of 9:10 AM'
+      ].join(gap)
+
+    expect(oneLine.split('\n')).toHaveLength(1)
+    expect(museCode.parseUsage?.(oneLine, NOW)).toEqual([
+      { id: '5h', label: 'Muse 5h', percent: 0, resetsAt: new Date(2026, 8, 7, 13, 55).getTime() },
+      { id: '7d', label: 'Muse 7d', percent: 2, resetsAt: new Date(2026, 8, 13, 17, 0).getTime() }
+    ])
+  })
+
+  /**
+   * ⚠️ A TUI redraws, so the backscroll holds every frame. The last paint is the current one — and
+   * on one line, an unbounded `Resets (.+)$` would have swallowed the rest of the panel with it.
+   */
+  it('takes the last paint when the screen holds several', () => {
+    const frame = (used: number): string =>
+      `Subscription · Muse Code Everyday Usage     Current        ${used}% used · Resets at 1:55 PM     ` +
+      `Weekly         2% used · Resets Sep 13 at 5:00 PM     as of 9:10 AM`
+    const windows = museCode.parseUsage?.(`${frame(0)}    ${frame(7)}`, NOW)
+    expect(windows?.[0]?.percent).toBe(7)
+    expect(windows?.[0]?.resetsAt).toBe(new Date(2026, 8, 7, 13, 55).getTime())
+    expect(windows?.[1]?.percent).toBe(2)
+  })
+
   /** A window with no reset time is a reading, not a failure: `null` is *unknown*. */
   it('keeps the percentage when the reset time is missing', () => {
     const panel = PANEL.replace(' · Resets at 1:38 AM', '')
     const windows = museCode.parseUsage?.(panel, NOW)
     expect(windows?.[0]).toEqual({ id: '5h', label: 'Muse 5h', percent: 5, resetsAt: null })
+  })
+})
+
+/**
+ * ⛔ **What the first probe of a freshly commissioned worker actually reads**, and the reason t266
+ * exists: MuseFirst was commissioned, signed in and probed on 2026-09-07, and the probe reported
+ * that the panel had not appeared and pointed at a folder-trust dialog. It had appeared, the dialog
+ * was answered, and Meta had simply published no windows for an account that had not yet spent a
+ * turn.
+ */
+describe('usageUnavailable', () => {
+  /** Verbatim, 2026-09-07, from MuseFirst's own isolation root under a 100x30 terminal. */
+  const UNAVAILABLE = [
+    '',
+    '  Muse Code 1.0.3',
+    '',
+    '  Session usage',
+    '',
+    '    Input      0',
+    '    Cached     0',
+    '    Output     0',
+    '    Total      0',
+    '',
+    '    Turns         0',
+    '    Subagents  none',
+    '',
+    '  Subscription · Muse Code Everyday Usage',
+    '    Currently unavailable',
+    ''
+  ].join('\n')
+
+  const NOW = new Date(2026, 8, 7, 8, 45).getTime()
+
+  it('is still no reading, and never a zero', () => {
+    expect(museCode.parseUsage?.(UNAVAILABLE, NOW)).toBeNull()
+  })
+
+  it('names the state and the one thing that ends it', () => {
+    const why = museCode.usageUnavailable?.(UNAVAILABLE)
+    expect(why).toContain('Currently unavailable')
+    expect(why).toContain('completed run')
+  })
+
+  /**
+   * ⚠️ The two failures it must not claim. A screen with no panel on it is the *other* diagnosis —
+   * a swallowed keystroke or a session still starting — and saying "the account has not worked yet"
+   * there would send the operator away from a dialog that really is in the way.
+   */
+  /** ⚠️ One line here too — the `Currently unavailable` panel arrives exactly as the full one does. */
+  it('recognises the panel on a single line', () => {
+    const oneLine =
+      'Turns         0        Subagents  none        Subscription · Muse Code Everyday Usage' +
+      '        Currently unavailable'
+    expect(museCode.parseUsage?.(oneLine, NOW)).toBeNull()
+    expect(museCode.usageUnavailable?.(oneLine)).toContain('Currently unavailable')
+  })
+
+  it('says nothing about a screen that is not the panel', () => {
+    expect(museCode.usageUnavailable?.('')).toBeNull()
+    expect(museCode.usageUnavailable?.('⟩ /usage')).toBeNull()
+    expect(museCode.usageUnavailable?.('  Do you trust this workspace?')).toBeNull()
+  })
+
+  it('says nothing once the windows are there', () => {
+    const panel = UNAVAILABLE.replace(
+      '    Currently unavailable',
+      '    Current        0% used · Resets at 1:55 PM\n    Weekly         2% used · Resets Sep 13 at 5:00 PM'
+    )
+    expect(museCode.usageUnavailable?.(panel)).toBeNull()
+    expect(museCode.parseUsage?.(panel, NOW)?.map((w) => w.percent)).toEqual([0, 2])
   })
 })
 
