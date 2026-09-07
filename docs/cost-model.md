@@ -1030,9 +1030,10 @@ watchdogs for stalls and runaways.
 ⚠️ **But be precise about what is live.** The reserve's *token* gate needs `remaining` in tokens,
 which needs a fresh percentage **and** a learned `tokens_per_percent`; that conversion is still R2, so
 that rung still answers **`unknown`** on a real worker and the code says so everywhere it surfaces.
-⭐ Since 2026-08-31 the reserve is load-bearing anyway, on the percentage rung: at the 92% high-water
-mark a worker's live sessions are `at_risk` and the clock compacts them. That was the difference
-between a *reporting* gate and one that acts, and it is why `/compact` now runs at all.
+⭐ Since 2026-08-31 the reserve is load-bearing anyway, on the percentage rung: at the high-water
+mark (92% for 5h windows, 97% for 7-day windows, which have significantly more runway) a worker's
+live sessions are `at_risk` and the clock compacts them. Where an operator overrides the quota gate
+for a task, Move 5 honors that override and active runs are protected against mid-run compaction and closure.
 
 What does work without any of that: the cache clock (context size and the TTL are both exact from the
 transcript), preemption (the reset time is exact from the live rate-limit record), and the estimator

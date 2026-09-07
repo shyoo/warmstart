@@ -19,6 +19,7 @@ import {
   getTask,
   lastRunForSession,
   listTasks,
+  quotaOverridden,
   runForSession,
   setTaskHandoff
 } from './tasks.js'
@@ -187,6 +188,14 @@ export interface IdleEstimate {
 export function expectedIdleMs(session: Session, now = Date.now()): IdleEstimate {
   const run = runForSession(session.id)
   const task = run?.taskId ? getTask(run.taskId) : null
+
+  if (run && !run.endedAt && task?.status === 'running') {
+    return {
+      ms: 0,
+      because: 'this session is actively executing a run',
+      confident: true
+    }
+  }
 
   if (task?.status === 'awaiting_human') {
     const median = medianHumanLatencyMs()
@@ -679,6 +688,10 @@ export function decide(session: Session, ctx: ClockContext): ClockDecision {
   const expiry = session.cacheExpiresAt
   const contextTokens = session.contextTokens ?? 0
 
+  const run = runForSession(session.id) ?? lastRunForSession(session.id)
+  const task = run?.taskId ? getTask(run.taskId) : null
+  const quotaOverrideActive = task ? quotaOverridden(task, now) : false
+
   const base = {
     sessionId: session.id,
     contextTokens: session.contextTokens,
@@ -729,6 +742,12 @@ export function decide(session: Session, ctx: ClockContext): ClockDecision {
     // prefix go. Saying so in words matters - "compaction is not reaching this session" is what
     // closes HANDOFF R6 the day somebody reads it.
     if (!canBePrompted) return nothing(noChannel)
+    if (hasOpenRun(session.id) || quotaOverrideActive) {
+      return nothing(
+        `${session.clockMove} was asked for ${session.clockMoveAttempts} times and never landed, ` +
+          `but ${hasOpenRun(session.id) ? 'a run is currently open' : 'the quota gate is overridden by hand'} on this session - not closing`
+      )
+    }
     return {
       ...base,
       move: 'handoff_close',
@@ -768,6 +787,15 @@ export function decide(session: Session, ctx: ClockContext): ClockDecision {
   const reserve = reserveState(session.workerId)
   const worthSaving = worthCompactingNow(session, model)
   if (reserve.verdict === 'at_risk' && contextTokens > 0 && worthSaving) {
+    if (quotaOverrideActive) {
+      return nothing(
+        `compaction reserve at risk (${reserve.reason}), but the quota gate is overridden by hand` +
+          (task ? ` for t${task.seq}` : '')
+      )
+    }
+    if (hasOpenRun(session.id)) {
+      return nothing(`compaction reserve at risk (${reserve.reason}), but a run is currently open on this session`)
+    }
     const compactCost = compactAllowed ? model.costOfCompact(session) : null
     if (compactCost !== null) {
       return {
@@ -929,6 +957,13 @@ export function decide(session: Session, ctx: ClockContext): ClockDecision {
   if (untilExpiry <= lastChanceMs(ttlMs)) {
     const run = runForSession(session.id)
     if (run?.taskId && canBePrompted) {
+      if (hasOpenRun(session.id) || quotaOverrideActive) {
+        return nothing(
+          `prefix expiring in ${Math.round(untilExpiry / 1000)}s, but ` +
+            (hasOpenRun(session.id) ? 'a run is currently open' : 'the quota gate is overridden by hand') +
+            ' - not taking a handoff'
+        )
+      }
       return {
         ...base,
         move: 'handoff_close',
@@ -1003,7 +1038,12 @@ export async function runCacheClock(ctx: ClockContext): Promise<ClockResult> {
 
     const decision = decide(outcome === 'landed' ? { ...session, clockMove: null } : session, withSettings)
     decisions.push(decision)
-    if (decision.move === 'none') continue
+    if (decision.move === 'none') {
+      if (outcome === 'ignored' && session.clockMoveAttempts >= MAX_MOVE_ATTEMPTS) {
+        clearClockMove(session.id)
+      }
+      continue
+    }
 
     record(decision)
     if (decision.move === 'dispatch' || decision.move === 'let_expire') continue

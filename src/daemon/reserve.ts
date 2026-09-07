@@ -1,5 +1,5 @@
 import type { QuotaWindow } from '@shared/protocol.js'
-import { WINDOW_HIGH_WATER } from '@shared/tasks.js'
+import { windowHighWater } from '@shared/tasks.js'
 import { db, rows } from './db.js'
 import { costModel } from './costmodel.js'
 import { adapter } from './adapters/index.js'
@@ -214,7 +214,7 @@ export function remainingTokens(workerId: string): { tokens: number | null; basi
  */
 export function windowPressure(
   workerId: string
-): { percent: number; label: string; sampledAt: number } | null {
+): { percent: number; label: string; threshold: number; sampledAt: number } | null {
   const quota = lastQuota(workerId)
   if (!quota || quota.stale || quota.windows.length === 0) return null
 
@@ -222,16 +222,25 @@ export function windowPressure(
   for (const session of sessionsForWorker(workerId)) pools.add(poolOf(session))
   if (pools.size === 0) return null
 
-  let worst: QuotaWindow | null = null
+  let worst: { window: QuotaWindow; threshold: number; deficit: number } | null = null
   for (const pool of pools) {
     const windows = windowsForPool(quota.windows, pool)
     for (const window of windows) {
       if (!window || windowExpired(window)) continue
-      if (!worst || window.percent > worst.percent) worst = window
+      const threshold = windowHighWater(window)
+      const deficit = window.percent - threshold
+      if (!worst || deficit > worst.deficit) {
+        worst = { window, threshold, deficit }
+      }
     }
   }
   return worst
-    ? { percent: worst.percent, label: worst.label || worst.id, sampledAt: quota.sampledAt }
+    ? {
+        percent: worst.window.percent,
+        label: worst.window.label || worst.window.id,
+        threshold: worst.threshold,
+        sampledAt: quota.sampledAt
+      }
     : null
 }
 
@@ -272,7 +281,7 @@ export function reserveState(workerId: string): ReserveState {
   // high-water mark the answer to the second question is no, and a session left uncompacted there is
   // one the fleet has decided not to touch again until the window resets.
   const pressure = windowPressure(workerId)
-  if (pressure && pressure.percent >= WINDOW_HIGH_WATER) {
+  if (pressure && pressure.percent >= pressure.threshold) {
     return {
       workerId,
       verdict: 'at_risk',
@@ -281,7 +290,7 @@ export function reserveState(workerId: string): ReserveState {
       liveSessions: sessions,
       reason:
         `${Math.round(pressure.percent)}% of its ${pressure.label} window used - at or past the ` +
-        `${WINDOW_HIGH_WATER}% mark where this fleet stops sending it work, so the ` +
+        `${pressure.threshold}% mark where this fleet stops sending it work, so the ` +
         `${sessions} session(s) it still holds should be saved now` +
         (remaining === null ? ` (${basis}, so this is the percentage rung)` : '')
     }

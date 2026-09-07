@@ -807,3 +807,42 @@ describe('a conversation with no channel to speak into', () => {
     expect(decision.move).toBe('handoff_close')
   })
 })
+
+describe('reserve pressure on weekly 7-day windows', () => {
+  it('does not mark reserve at risk at 93% on a 7d window, but does at 97%', () => {
+    const worker = workers.createWorker({ adapterId: 'claude-code', label: 'Claude7dWorker', enabled: true })
+    const workerId = worker.id
+
+    // Create a live session for this worker so poolOf(session) finds the pool
+    db.db()
+      .prepare(
+        `insert into sessions (id, worker_id, adapter_id, transport, project_id, cwd, state, purpose,
+                               context_tokens, tokens_since_compact, cache_expires_at, started_at)
+         values (?,?,?,?,?,?,?,?,?,?,?,?)`
+      )
+      .run('s-7d-test', workerId, 'claude-code', 'stream', null, '/tmp', 'live', 'work', 50000, 50000, NOW + 100000, NOW)
+
+    // Seed 7d quota at 93%
+    db.db()
+      .prepare(
+        `insert into quota_samples (worker_id, window_id, label, percent, resets_at, source, sampled_at)
+         values (?,?,?,?,?,?,?)`
+      )
+      .run(workerId, 'weekly', 'Claude 7d', 93, Date.now() + 7 * 86400000, 'probe', Date.now())
+
+    const state93 = reserve.reserveState(workerId)
+    expect(state93.verdict).not.toBe('at_risk')
+
+    // Update 7d quota to 97%
+    db.db()
+      .prepare(
+        `insert into quota_samples (worker_id, window_id, label, percent, resets_at, source, sampled_at)
+         values (?,?,?,?,?,?,?)`
+      )
+      .run(workerId, 'weekly', 'Claude 7d', 97, Date.now() + 7 * 86400000, 'probe', Date.now() + 1000)
+
+    const state97 = reserve.reserveState(workerId)
+    expect(state97.verdict).toBe('at_risk')
+    expect(state97.reason).toContain('at or past the 97% mark')
+  })
+})

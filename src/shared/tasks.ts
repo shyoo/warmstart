@@ -2435,6 +2435,28 @@ export interface ResolvedModelChoice {
 export const WINDOW_HIGH_WATER = 92
 
 /**
+ * The share of a 7-day (weekly) window past which this fleet stops starting new work
+ * or reserves compaction on an account.
+ *
+ * ⚠️ 7d usage has significantly more runway left than 5h windows (3% remaining is many hours
+ * of active work), so compaction and dispatch gates turn around 97-98%, not at 92-93%.
+ */
+export const WINDOW_7D_HIGH_WATER = 97
+
+export function isWeeklyWindow(window: { id?: string | null; label?: string | null }): boolean {
+  const id = (window.id ?? '').toLowerCase()
+  const label = (window.label ?? '').toLowerCase()
+  return id.includes('weekly') || id.includes('7d') || label.includes('weekly') || label.includes('7d')
+}
+
+export function windowHighWater(window?: { id?: string | null; label?: string | null } | null): number {
+  if (window && isWeeklyWindow(window)) {
+    return WINDOW_7D_HIGH_WATER
+  }
+  return WINDOW_HIGH_WATER
+}
+
+/**
  * Beyond this, a reading is reported but must not be treated as the current state of the window.
  *
  * ⛔ **Shared, because the renderer has to answer the same question the daemon does.** The daemon
@@ -2595,7 +2617,7 @@ export function resolveModelChoice(
             return !worst || w.percent > worst.percent ? w : worst
           }, null)
           const percent = worstWin ? worstWin.percent : 0
-          const blocked = percent >= WINDOW_HIGH_WATER
+          const blocked = worstWin ? worstWin.percent >= windowHighWater(worstWin) : false
           if (!bestCandidate) {
             bestCandidate = { pool, model: m, percent, blocked }
           } else if (bestCandidate.blocked && !blocked) {

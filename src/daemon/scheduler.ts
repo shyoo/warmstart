@@ -14,6 +14,7 @@ import type {
 import { describeAttachment } from './attachments.js'
 import {
   WINDOW_HIGH_WATER,
+  windowHighWater,
   FINISH_LABELS,
   cleanQuestionText,
   isMultiSelectQuestion,
@@ -672,7 +673,7 @@ export function quotaReleaseFor(task: Task): string | null {
   const windows = windowsForPool(quota.windows, poolFor(worker, choice.model))
   if (windows.length === 0) return null
 
-  const blocking = windows.find((w) => !windowExpired(w) && w.percent >= QUOTA_HIGH_WATER)
+  const blocking = windows.find((w) => !windowExpired(w) && w.percent >= windowHighWater(w))
   if (blocking) return null
 
   const age = Math.round(quota.ageMs / 1000)
@@ -682,9 +683,10 @@ export function quotaReleaseFor(task: Task): string | null {
   }
 
   const highest = windows.reduce((max, w) => (w.percent > max.percent ? w : max), windows[0]!)
+  const gate = windowHighWater(highest)
   return (
     `${worker.label} is at ${Math.round(highest.percent)}% of its ${highest.label ?? '5h'} window ` +
-    `on a reading ${age}s old, which is below the ${QUOTA_HIGH_WATER}% gate.`
+    `on a reading ${age}s old, which is below the ${gate}% gate.`
   )
 }
 
@@ -1268,16 +1270,18 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
         const pool = poolFor(worker, model)
         const applicable = windowsForPool(quota.windows, pool)
         const active: QuotaWindow[] = []
-        let blockingWindow: QuotaWindow | null = null
+        let blockingWindow: { window: QuotaWindow; threshold: number; deficit: number } | null = null
 
         for (const win of applicable) {
           if (windowExpired(win)) {
             quotaUnverified = true
           } else {
             active.push(win)
-            if (win.percent >= QUOTA_HIGH_WATER) {
-              if (!blockingWindow || win.percent > blockingWindow.percent) {
-                blockingWindow = win
+            const threshold = windowHighWater(win)
+            if (win.percent >= threshold) {
+              const deficit = win.percent - threshold
+              if (!blockingWindow || deficit > blockingWindow.deficit) {
+                blockingWindow = { window: win, threshold, deficit }
               }
             }
           }
@@ -1285,17 +1289,19 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
         trustedWindows = active
 
         if (blockingWindow) {
+          const win = blockingWindow.window
+          const gate = blockingWindow.threshold
           if (override) {
             log.info(
-              `t${task.seq} dispatching to ${worker.label}${namesModel ? ` (${model ?? 'default'})` : ''} at ${Math.round(blockingWindow.percent)}% of its ` +
-                `${blockingWindow.label ?? '5h'} window — a person overrode the ${QUOTA_HIGH_WATER}% gate`
+              `t${task.seq} dispatching to ${worker.label}${namesModel ? ` (${model ?? 'default'})` : ''} at ${Math.round(win.percent)}% of its ` +
+                `${win.label ?? '5h'} window — a person overrode the ${gate}% gate`
             )
           } else {
             const modelSuffix = namesModel ? ` (${model ?? 'default'})` : ''
             reasons.push(
-              `${worker.label}${modelSuffix} at ${Math.round(blockingWindow.percent)}% of its ${blockingWindow.label ?? '5h'} window`
+              `${worker.label}${modelSuffix} at ${Math.round(win.percent)}% of its ${win.label ?? '5h'} window`
             )
-            const resetsAt = blockingWindow.resetsAt ?? windowResetsAt(worker.id)?.at ?? null
+            const resetsAt = win.resetsAt ?? windowResetsAt(worker.id)?.at ?? null
             if (resetsAt && resetsAt > Date.now()) {
               quotaHoldUntil = quotaHoldUntil === null ? resetsAt : Math.min(quotaHoldUntil, resetsAt)
             }
@@ -2010,7 +2016,7 @@ function scoreCandidate(
   let worstWindow: QuotaWindow | null = null
   let worstRisk = 0
   for (const win of trustedWindows) {
-    const r = windowRisk(win.percent, QUOTA_HIGH_WATER, QUOTA_RISK_FLOOR, win.resetsAt, now, win.id)
+    const r = windowRisk(win.percent, windowHighWater(win), QUOTA_RISK_FLOOR, win.resetsAt, now, win.id)
     if (r > maxWindowRisk || !worstWindow) {
       maxWindowRisk = Math.max(maxWindowRisk, r)
       worstRisk = r
@@ -2329,13 +2335,16 @@ function noteQuotaOverrideDispatch(task: Task, worker: Worker): void {
   const quota = lastQuota(worker.id)
   if (!quota || quota.stale) return
   const choice = resolveModelChoice(task.constraints, worker, false, quota)
-  const win = sessionWindowFor(quota.windows, poolFor(worker, choice.model))
-  if (!win || windowExpired(win) || win.percent < QUOTA_HIGH_WATER) return
+  const pool = poolFor(worker, choice.model)
+  const windows = windowsForPool(quota.windows, pool)
+  const win = windows.find((w) => w && !windowExpired(w) && w.percent >= windowHighWater(w))
+  if (!win) return
+  const gate = windowHighWater(win)
   addMessage(
     task.id,
     'system',
     `Starting on ${worker.label} at ${Math.round(win.percent)}% of its ${win.label ?? '5h'} ` +
-      `window. The ${QUOTA_HIGH_WATER}% gate would normally hold this task; it was overridden by ` +
+      `window. The ${gate}% gate would normally hold this task; it was overridden by ` +
       'hand, so this run is also exempt from being preempted over that percentage. ⚠️ A turn the ' +
       'vendor actually refuses still stops it, and the window boundary itself still applies.'
   )

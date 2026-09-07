@@ -11,7 +11,7 @@ import type {
 } from '@shared/protocol.js'
 import { canWork } from '@shared/protocol.js'
 import type { ChildDefaults, Task, TaskConstraints } from '@shared/tasks.js'
-import { resolveAutoCompact, resolveCompletionMode, windowsForPool } from '@shared/tasks.js'
+import { resolveAutoCompact, resolveCompletionMode, windowHighWater, windowsForPool } from '@shared/tasks.js'
 import { existsSync } from 'node:fs'
 import { adapter, adapters } from './adapters/index.js'
 import { deleteReview, reviewsForTask } from './review.js'
@@ -37,7 +37,7 @@ import { qualityReport, reviewQueue, ungradedTasks } from './quality.js'
 import { cancelBatch, currentBatch, startBatch } from './gradebatch.js'
 import { statisticsReport } from './statistics.js'
 import { weights, WEIGHT_FORMULAS } from './objective.js'
-import { lastQuota, lastQuotaReading, probeWorker, refreshNow } from './quota.js'
+import { lastQuota, lastQuotaReading, probeWorker, refreshNow, windowExpired } from './quota.js'
 import { benchmarkPrior } from './benchmarks.js'
 import { fitnessFor } from './fitness.js'
 import { emit } from './events.js'
@@ -142,9 +142,9 @@ import { chatHistory, clearChat, sendChat } from './chat.js'
 import { costFactors, estimateTask } from './estimator.js'
 import { recentClockEvents, remainingTokens, reserveState } from './reserve.js'
 import { decide, medianHumanLatencyMs } from './cacheclock.js'
+import { lastRateLimit, windowResetsAt } from './quota.js'
 import { DEFAULT_OBJECTIVE, parseObjective, resolveObjective } from './objective.js'
 import { setSetting, settings } from './settings.js'
-import { lastRateLimit, windowResetsAt } from './quota.js'
 import { lastSpend } from './spend.js'
 import { compactionsForTask } from './compaction.js'
 import { listConversations } from './conversations.js'
@@ -830,10 +830,23 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
         `t${task.seq}: quota water mark overridden by hand until ${new Date(until).toISOString()}` +
           (applies ? ` (was ${before.status}: ${before.holdReason ?? 'paused on quota'})` : ' (not currently held on quota)')
       )
+      let gatePercent = QUOTA_HIGH_WATER
+      const targetWorker = pinned ?? (before.assignee ? getWorker(before.assignee) : null)
+      if (targetWorker) {
+        const q = lastQuota(targetWorker.id)
+        if (q) {
+          for (const win of q.windows) {
+            if (win && !windowExpired(win) && win.percent >= windowHighWater(win)) {
+              gatePercent = windowHighWater(win)
+              break
+            }
+          }
+        }
+      }
       addMessage(
         p.id,
         'system',
-        `A person overrode the ${QUOTA_HIGH_WATER}% quota gate for this task until ` +
+        `A person overrode the ${gatePercent}% quota gate for this task until ` +
           `${new Date(until).toISOString()}.${resumed ? ' Resumed to continue to completion.' : ''} ${reason}`
       )
       return { task: requireTask(p.id), until, applies, reason }

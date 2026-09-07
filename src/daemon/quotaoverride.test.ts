@@ -61,6 +61,17 @@ function seedQuota(workerId: string, percent: number, resetsIn = RESET_IN_MS): n
   return resetsAt
 }
 
+function seed7dQuota(workerId: string, percent: number, resetsIn = 7 * 24 * 3600 * 1000): number {
+  const resetsAt = Date.now() + resetsIn
+  db.db()
+    .prepare(
+      `insert into quota_samples (worker_id, window_id, label, percent, resets_at, source, sampled_at)
+       values (?,?,?,?,?,?,?)`
+    )
+    .run(workerId, 'weekly', 'Claude 7d', percent, resetsAt, 'config-cache', Date.now())
+  return resetsAt
+}
+
 /** A task pinned to one account, which is what t71 was and why it could not route around anything. */
 function pinnedTask(workerId: string, title = 'the t71 shape') {
   return tasks.createTask({
@@ -459,5 +470,203 @@ describe('a queue that cannot move is not a queue about to move', () => {
       settings: settings.settings()
     })
     expect(decision.move).not.toBe('compact')
+  })
+})
+
+describe('7-day windows have more runway and compact / hold around 97-98%', () => {
+  it('does not hold a task at 93% on a 7d window, where 5h would be held', () => {
+    const worker = seedWorker('ClaudeThird')
+    seed7dQuota(worker.id, 93)
+    const task = pinnedTask(worker.id)
+
+    const choice = scheduler.chooseTarget(task)
+    // ⚠️ At 93% on a 7d window, the account is NOT held.
+    expect(choice.worker?.id).toBe(worker.id)
+  })
+
+  it('holds a pinned task when the 7d window reaches 97%', () => {
+    const worker = seedWorker('ClaudeThird')
+    const resetsAt = seed7dQuota(worker.id, 97)
+    const task = pinnedTask(worker.id)
+
+    const choice = scheduler.chooseTarget(task)
+    expect(choice.worker).toBeNull()
+    expect(choice.reason).toContain('ClaudeThird at 97% of its Claude 7d window')
+    expect(choice.holdUntil).toBe(resetsAt)
+  })
+
+  it('task.overrideQuota reports the 97% gate when overriding a weekly window', async () => {
+    const worker = seedWorker('ClaudeThird')
+    seed7dQuota(worker.id, 97)
+    const task = pinnedTask(worker.id)
+    await scheduler.tick()
+
+    const handlers = api.buildApi({ version: '0.0.0', startedAt: Date.now(), port: 0 })
+    const result = await handlers['task.overrideQuota']({ id: task.id })
+    expect(result.applies).toBe(true)
+
+    const notes = tasks.messagesFor(task.id).filter((m) => m.role === 'system')
+    expect(notes.some((m) => m.text.includes('overrode the 97% quota gate'))).toBe(true)
+  })
+})
+
+describe('cache clock respects quota overrides and active runs', () => {
+  const OBJECTIVE = { cost: 1, velocity: 0, quality: 0 }
+
+  it('Move 5 declines to compact or close when the task has an active quota override', () => {
+    const worker = seedWorker('ClaudeThird')
+    seedQuota(worker.id, 95) // reserve is at risk (> 92%)
+    const task = pinnedTask(worker.id)
+    tasks.setQuotaOverride(task.id, Date.now() + RESET_IN_MS)
+
+    const s = {
+      id: 'session-override-1',
+      workerId: worker.id,
+      adapterId: ADAPTER,
+      transport: 'stream' as const,
+      projectId: null,
+      cwd: '/tmp',
+      model: null,
+      effort: null,
+      state: 'live' as const,
+      pid: null,
+      purpose: 'work' as const,
+      transcriptPath: null,
+      vendorSessionId: null,
+      currentBranch: null,
+      contextTokens: 150_000,
+      contextWindow: null,
+      lastRequestStartedAt: null,
+      cacheExpiresAt: Date.now() + 10 * 60 * 1000,
+      tokensSinceCompact: 80_000,
+      clockMove: null,
+      clockMoveAt: null,
+      clockMoveAttempts: 0,
+      clockMoveContext: null,
+      startedAt: Date.now() - 60 * 60 * 1000,
+      closedAt: null
+    }
+
+    db.db()
+      .prepare(
+        `insert into sessions (id, worker_id, adapter_id, transport, project_id, cwd, state, purpose,
+                               context_tokens, tokens_since_compact, cache_expires_at, started_at)
+         values (?,?,?,?,?,?,?,?,?,?,?,?)`
+      )
+      .run(
+        s.id,
+        s.workerId,
+        s.adapterId,
+        s.transport,
+        s.projectId,
+        s.cwd,
+        s.state,
+        s.purpose,
+        s.contextTokens,
+        s.tokensSinceCompact,
+        s.cacheExpiresAt,
+        s.startedAt
+      )
+
+    // Associate a run with this session for the task
+    const run = tasks.startRun({
+      taskId: task.id,
+      workerId: worker.id,
+      sessionId: s.id,
+      projectId: null,
+      quotaUnverified: false,
+      costModelId: null
+    })
+
+    const decision = clock.decide(s, {
+      objective: OBJECTIVE,
+      now: Date.now(),
+      settings: settings.settings()
+    })
+
+    // Move 5 must NOT compact or handoff_close; it must return none noting the override or active run
+    expect(decision.move).toBe('none')
+    expect(decision.reason).toContain('overridden by hand')
+
+    tasks.finishRun(run.id, 'completed')
+  })
+
+  it('outcome === ignored does not issue handoff_close while a run is open', () => {
+    const worker = seedWorker('ClaudeThird')
+    const task = pinnedTask(worker.id)
+
+    const s = {
+      id: 'session-open-run',
+      workerId: worker.id,
+      adapterId: ADAPTER,
+      transport: 'stream' as const,
+      projectId: null,
+      cwd: '/tmp',
+      model: null,
+      effort: null,
+      state: 'live' as const,
+      pid: null,
+      purpose: 'work' as const,
+      transcriptPath: null,
+      vendorSessionId: null,
+      currentBranch: null,
+      contextTokens: 150_000,
+      contextWindow: null,
+      lastRequestStartedAt: null,
+      cacheExpiresAt: Date.now() + 10 * 60 * 1000,
+      tokensSinceCompact: 80_000,
+      clockMove: 'compact' as const,
+      clockMoveAt: Date.now() - 300_000,
+      clockMoveAttempts: 2,
+      clockMoveContext: 80_000,
+      startedAt: Date.now() - 60 * 60 * 1000,
+      closedAt: null
+    }
+
+    db.db()
+      .prepare(
+        `insert into sessions (id, worker_id, adapter_id, transport, project_id, cwd, state, purpose,
+                               context_tokens, tokens_since_compact, cache_expires_at, clock_move,
+                               clock_move_at, clock_move_attempts, started_at)
+         values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+      )
+      .run(
+        s.id,
+        s.workerId,
+        s.adapterId,
+        s.transport,
+        s.projectId,
+        s.cwd,
+        s.state,
+        s.purpose,
+        s.contextTokens,
+        s.tokensSinceCompact,
+        s.cacheExpiresAt,
+        s.clockMove,
+        s.clockMoveAt,
+        s.clockMoveAttempts,
+        s.startedAt
+      )
+
+    const run = tasks.startRun({
+      taskId: task.id,
+      workerId: worker.id,
+      sessionId: s.id,
+      projectId: null,
+      quotaUnverified: false,
+      costModelId: null
+    })
+
+    const decision = clock.decide(s, {
+      objective: OBJECTIVE,
+      now: Date.now(),
+      settings: settings.settings()
+    })
+
+    // Must NOT be handoff_close
+    expect(decision.move).toBe('none')
+    expect(decision.reason).toContain('a run is currently open')
+
+    tasks.finishRun(run.id, 'completed')
   })
 })
