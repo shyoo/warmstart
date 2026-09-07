@@ -1560,6 +1560,27 @@ describe('resolveTask when a person marks a task as complete', () => {
     expect(resolved.assignee).toBeNull()
   })
 
+  it('completes a task the operator had stopped, and releases what waited on it', () => {
+    // t262: Stop parks a task in `paused_user`, and the only ways out on the page were Resume or
+    // Delete. Changing your mind about a task you stopped is an ordinary thing to do, and until it
+    // reaches `completed` nothing blocked behind it moves.
+    const { task: parent } = seedRunningTask()
+    tasks.setStatus(parent.id, 'paused_user')
+    expect(tasks.requireTask(parent.id).status).toBe('paused_user')
+
+    const child = tasks.createTask({
+      title: 'child of a stopped task',
+      createdBy: { kind: 'human' },
+      dependsOn: [parent.id]
+    })
+    tasks.setStatus(child.id, 'blocked')
+
+    scheduler.resolveTask(parent.id, 'good enough as it stands')
+
+    expect(tasks.requireTask(parent.id).status).toBe('completed')
+    expect(tasks.requireTask(child.id).status).not.toBe('blocked')
+  })
+
   it('admits dependents waiting on this task', () => {
     const { task: parent } = seedRunningTask()
     const child = tasks.createTask({

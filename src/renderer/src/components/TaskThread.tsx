@@ -516,12 +516,19 @@ function TaskDetail({
             />
           )}
 
+          {/* ⛔ **Two ways out, because stopping a task is not a verdict on it.** The banner
+              offered only Resume, so an operator who stopped a task and then decided the work was
+              already good enough could either restart an agent they did not want or delete the
+              record — and everything blocked behind it stayed blocked either way, since `admit()`
+              releases a dependent only on `completed`. `resolveTask` completes from any status;
+              what was missing was somewhere to press. */}
           {task.status === 'paused_user' && (
             <div className="paused-banner">
               <div className="paused-banner-header">
                 <span className="paused-banner-title">Paused by operator</span>
                 <span className="dim">
-                  Work and context are preserved. Click Resume to put this task back in the queue.
+                  Work and context are preserved. Resume puts this task back in the queue; Mark done
+                  rests it as finished and releases anything waiting on it.
                 </span>
               </div>
               <div className="paused-banner-actions">
@@ -536,6 +543,21 @@ function TaskDetail({
                   }}
                 >
                   Resume
+                </button>
+                {/* ⚠️ The same judgement the Decide card records, said the same way: this is your
+                    call, not a check. `task_complete` remains the only signal that an agent
+                    finished. */}
+                <button
+                  type="button"
+                  className="btn btn--ok"
+                  title={
+                    blocking > 0
+                      ? `Records your judgement that this is finished. Releases the ${blocking} task(s) waiting on it. ⚠️ Nothing here verified the work.`
+                      : 'Records your judgement that this is finished. ⚠️ Nothing here verified the work.'
+                  }
+                  onClick={() => void resolve()}
+                >
+                  Mark done
                 </button>
               </div>
             </div>

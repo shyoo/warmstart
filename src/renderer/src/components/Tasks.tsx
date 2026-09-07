@@ -769,7 +769,13 @@ export function Tasks({
                                 Run now anyway
                               </button>
                             )}
-                            {task.status === 'awaiting_human' && (
+                            {/* ⛔ `paused_user` included. Stopping a task and judging it
+                                finished are two different decisions, and an operator who stopped
+                                one and then changed their mind had only Resume or Delete — so a
+                                task whose work was already good enough sat parked, and nothing
+                                waiting on it was ever released. `resolveTask` completes from any
+                                status, so the only thing missing was somewhere to press. */}
+                            {(task.status === 'awaiting_human' || task.status === 'paused_user') && (
                               <button
                                 type="button"
                                 role="menuitem"

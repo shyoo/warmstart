@@ -256,7 +256,10 @@ they are the estimator's training data and the record of real spend.
 **Resolve** — *a person recording that a task is finished.* ⛔ A judgement, not a verification, and
 written into the thread as one; `task_complete` stays the only signal that an **agent** finished. It
 is the answer `awaiting_human` is asking for, and admits dependents exactly as an agent completion
-does.
+does. ⚠️ Offered on a **stopped** task too (`paused_user`): stopping a task is *not now*, not a
+verdict on the work, and an operator who changes their mind should not have to restart an agent or
+delete the record to say so — until it reaches `completed`, everything blocked behind it stays
+blocked.
 
 **`awaiting_human`** — the task needs a person. Its question lands in **My Queue**. The session
 holding the context is a prime candidate for a keepalive, because human latency routinely straddles
