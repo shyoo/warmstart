@@ -127,6 +127,7 @@ import {
   deliverToLiveSession,
   promptFor,
   commitConversation,
+  landConversation,
   pendingWorkFor,
   relandTask,
   QUOTA_HIGH_WATER,
@@ -641,6 +642,8 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
     'task.pendingWork': (p) => pendingWorkFor(p.id),
     /** ⛔ One call, because the rung it writes decides both the landing and the next turn's prompt. */
     'task.commitConversation': (p) => commitConversation(p.id, p.finishPolicy),
+    /** ⛔ The clean-tree half of the same decision: no turn, the tool lands it. See `landConversation`. */
+    'task.landConversation': (p) => landConversation(p.id, p.finishPolicy),
     'task.setSessionSharing': (p) => updateTask(p.id, { sessionSharing: p.sessionSharing }),
     'task.setCompletionMode': (p) => updateTask(p.id, { completionMode: p.completionMode }),
     /**

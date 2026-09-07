@@ -2004,6 +2004,19 @@ export function policyVerifies(policy: FinishPolicy): boolean {
 }
 
 /**
+ * Does the **tool** do something with the branch once the commit is in place?
+ *
+ * ⛔ The other half of `policyVerifies`, and the question the thread's Land button asks: `commit-only`
+ * and `commit-and-verify` leave the branch exactly where the agent put it, so offering them as ways
+ * to *land* a branch that is already committed would be offering to do nothing. ⚠️ `pull-request`
+ * counts — the tool pushes the branch and opens the PR; a person merges it — and `custom` does not,
+ * because its own last step is the landing and the tool must not add a second one.
+ */
+export function policyLands(policy: FinishPolicy): boolean {
+  return policy === 'commit-and-merge' || policy === 'commit-and-push' || policy === 'pull-request'
+}
+
+/**
  * A policy that promises verification, on a project that has declared none.
  *
  * ⛔ An empty `check` list must never read as a clean verification. Every project starts this
@@ -2309,6 +2322,16 @@ export interface PendingWork {
   supported: boolean
   reason: string
   branch: string | null
+  /**
+   * The workspace was found by the branch it has checked out, not by a claim this task holds.
+   *
+   * ⛔ **A conversation outlives its claim.** When its session ends the workspace goes back to the
+   * pool, but the worktree keeps the branch — and with it every uncommitted file. Looking only at
+   * the claim answered *"this task is not holding a workspace"*, the card drew no Commit button, and
+   * the hold reason went on telling the operator to press one (t280). ⚠️ It is still the honest
+   * place to look: this is where the files are, and it is the tree the next run prefers.
+   */
+  unclaimed: boolean
   dirtyFiles: number
   untrackedFiles: number
   /** Commits on the branch the landing target does not have. Safe work — see `hasDiff`. */

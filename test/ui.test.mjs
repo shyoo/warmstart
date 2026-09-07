@@ -3740,6 +3740,143 @@ try {
   // The whole data directory goes in `finally`.
   void titleShown
 
+  section('settling a conversation from its thread')
+  // ⭐ Reported 2026-09-07 against t280. The thread's own hold reason read *"use Finish, Stop or
+  // Commit below"* and there was no Commit below: the conversation's workspace claim had been
+  // released when its session closed, `pendingWorkFor` looked only at the claims, and the card hid
+  // every settle-it control on *I could not look*. The files were still sitting in ws2 on the
+  // task's branch the whole time.
+  //
+  // ⚠️ Seeded through the store and real git: no RPC releases a claim, and the question is what a
+  // worktree has checked out — a stub would pass against the bug.
+  const convoProjectId = JSON.parse(
+    await evaluate(
+      `window.agentyard.rpc('project.list', {}).then(p => JSON.stringify(p.find(x => x.name === 'ui project')?.id ?? null))`
+    )
+  )
+  const gitIn = (cwd, ...args) => execFileSync('git', args, { cwd, stdio: 'ignore' })
+  gitIn(projectRoot, 'config', 'user.email', 'ui@test.invalid')
+  gitIn(projectRoot, 'config', 'user.name', 'ui test')
+  writeFileSync(join(projectRoot, 'README.md'), '# ui fixture\n')
+  gitIn(projectRoot, 'add', '-A')
+  gitIn(projectRoot, 'commit', '-m', 'initial')
+
+  const convoWorkspace = join(dataDir, 'convo-ws1')
+  gitIn(projectRoot, 'worktree', 'add', '--detach', convoWorkspace)
+  const settleTask = JSON.parse(
+    await evaluate(`
+      window.agentyard.rpc('task.create', {
+        title: 'A conversation with work left in its workspace',
+        kind: 'conversation',
+        projectId: ${JSON.stringify(convoProjectId)}
+      }).then(t => JSON.stringify({ id: t.id, seq: t.seq }))
+    `)
+  )
+  const convoBranch = `multi-agent-controller/t${settleTask.seq}-ui-settling`
+  gitIn(convoWorkspace, 'switch', '-c', convoBranch)
+  gitIn(convoWorkspace, 'config', 'user.email', 'ui@test.invalid')
+  gitIn(convoWorkspace, 'config', 'user.name', 'ui test')
+  writeFileSync(join(convoWorkspace, 'edited.txt'), 'not committed yet\n')
+  {
+    const store = new DatabaseSync(join(dataDir, 'multi_agent_controller.db'))
+    // ⛔ The pool is declared with this worktree in it and **no claim on it** — the state a
+    // conversation rests in once its session has ended.
+    store
+      .prepare(
+        `insert into resources (id, project_id, kind, label, capacity, members_json, meta_json)
+         values (?, ?, 'counted', 'ui project workspaces', 1, ?, '{}')
+         on conflict(id) do update set members_json = excluded.members_json`
+      )
+      .run(`workspace:${convoProjectId}`, convoProjectId, JSON.stringify([convoWorkspace]))
+    store
+      .prepare('update tasks set status = ?, assignee = ?, branch = ?, hold_reason = ? where id = ?')
+      .run(
+        'awaiting_human',
+        'human',
+        convoBranch,
+        'The agent finished this turn. Reply to carry on in the same conversation, or use Finish, Stop or Commit below.',
+        settleTask.id
+      )
+    store.close()
+  }
+
+  const openConvoThread = async () => {
+    await evaluate(
+      `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim().startsWith('ui project'))?.click()`
+    )
+    await wait(800)
+    await evaluate(
+      `[...document.querySelectorAll('.tab')].find(b => b.innerText.trim() === 'Tasks')?.click()`
+    )
+    await wait(800)
+    await evaluate(
+      `[...document.querySelectorAll('.tbl tbody tr')].find(r => r.innerText.includes('A conversation with work left'))?.click()`
+    )
+  }
+  await openConvoThread()
+  // ⚠️ Waits for the control rather than for a fixed pause: `task.pendingWork` runs git, so the row
+  // it decides appears a beat after the card does.
+  let settleLabels = '[]'
+  await waitFor(async () => {
+    settleLabels = await evaluate(
+      `JSON.stringify([...document.querySelectorAll('.decide .commit-select button.setting-btn-select')].map(b => b.innerText.trim()))`
+    )
+    return /Commit|Land/.test(settleLabels)
+  }, 'a settle-it control on the conversation thread')
+  check(
+    'a conversation with uncommitted work offers Commit, even though nothing holds its workspace',
+    /Commit/.test(settleLabels),
+    settleLabels
+  )
+  const commitCopy = await evaluate(
+    `document.querySelector('.decide')?.innerText ?? ''`
+  )
+  check(
+    'and the card names the branch the files are sitting on',
+    commitCopy.includes(convoBranch),
+    commitCopy.slice(0, 400)
+  )
+
+  // The other half: commit the work in that same worktree, and the card must offer to land it.
+  gitIn(convoWorkspace, 'add', '-A')
+  gitIn(convoWorkspace, 'commit', '-m', 'the conversation’s work')
+  // ⚠️ Any write to the task re-reads the workspace: the card asks again whenever `updatedAt` moves.
+  await evaluate(
+    `window.agentyard.rpc('task.setPriority', { id: ${JSON.stringify(settleTask.id)}, priority: 'P1' })`
+  )
+  let landLabels = '[]'
+  await waitFor(async () => {
+    landLabels = await evaluate(
+      `JSON.stringify([...document.querySelectorAll('.decide .commit-select button.setting-btn-select')].map(b => b.innerText.trim()))`
+    )
+    return /Land/.test(landLabels)
+  }, 'the Land control once the work is committed')
+  check(
+    '⛔ committed work with nowhere to go offers Land, which used to have no button at all',
+    /Land/.test(landLabels) && !/Commit…/.test(landLabels),
+    landLabels
+  )
+  // ⚠️ Opened, then read on a later turn: the menu is React state, so a query in the same
+  // evaluate as the click reads the DOM one render too early and finds nothing.
+  await evaluate(
+    `[...document.querySelectorAll('.decide .commit-select')].pop()?.querySelector('button.setting-btn-select')?.click()`
+  )
+  await wait(500)
+  const landRungs = JSON.parse(
+    await evaluate(
+      `JSON.stringify([...document.querySelectorAll('.setting-btn-select-option')].map(o => o.innerText.trim()))`
+    )
+  )
+  check(
+    'and its menu offers only the rungs the tool itself acts on',
+    landRungs.some((o) => /merge into main/i.test(o)) &&
+      !landRungs.some((o) => /^Commit — commit only/i.test(o)),
+    JSON.stringify(landRungs)
+  )
+  // ⚠️ Closed again, so the portal menu is not left over the next section's clicks.
+  await evaluate(`document.body.click()`)
+  await wait(300)
+
   const errors = await evaluate('window.__agentyardErrors?.length ?? 0')
   check('no uncaught renderer errors', errors === 0)
 } catch (err) {

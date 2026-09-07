@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -30,6 +31,8 @@ let db: typeof import('./db.js')
 let workers: typeof import('./workers.js')
 let tasks: typeof import('./tasks.js')
 let scheduler: typeof import('./scheduler.js')
+let projects: typeof import('./projects.js')
+let worktrees: typeof import('./worktrees.js')
 
 let claude: Worker
 let second: Worker
@@ -54,6 +57,8 @@ beforeAll(async () => {
   workers = await import('./workers.js')
   tasks = await import('./tasks.js')
   scheduler = await import('./scheduler.js')
+  projects = await import('./projects.js')
+  worktrees = await import('./worktrees.js')
   const { claudeCode } = await import('./adapters/claude-code.js')
   claudeCode.isInstalled = () => true
   db.openDb(join(dir, 'conversationkind.db'))
@@ -431,5 +436,133 @@ describe('what the Commit button does', () => {
     expect(answer.supported).toBe(false)
     expect(answer.hasDiff).toBe(false)
     expect(answer.reason).toContain('no git project')
+  })
+})
+
+/**
+ * The workspace a conversation left behind, and the button that was not drawn over it.
+ *
+ * ⛔ **t280, read off the live database.** The conversation came to rest with its session `closed`,
+ * so its workspace claim had been released — while ws2 still stood on
+ * `multi-agent-controller/t280-…` holding eight uncommitted files. `pendingWorkFor` looked only at the
+ * claims, answered *"this task is not holding a workspace"*, and the card hid every settle-it control
+ * on that answer. The hold reason on the same screen read *"use Finish, Stop or Commit below"*, and
+ * there was no Commit below.
+ *
+ * ⚠️ Real git in a temporary repository, for the reason `worktrees.test.ts` gives: the whole
+ * question is what a worktree has checked out, and a stubbed git would pass against the bug.
+ */
+describe('a conversation whose workspace went back to the pool', () => {
+  const git = (cwd: string, ...args: string[]): string =>
+    execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+
+  let repoSeq = 0
+
+  /** A one-slot pool with the task's branch checked out in it, and nothing claiming it. */
+  const abandonedOn = async (
+    name: string,
+    fill: (workspace: string) => void
+  ): Promise<{ taskId: string; branch: string; workspace: string }> => {
+    repoSeq += 1
+    const root = join(dir, `convo-repo${repoSeq}`)
+    mkdirSync(join(root, '.multi_agent_controller'), { recursive: true })
+    git(root, 'init', '--initial-branch=main')
+    git(root, 'config', 'user.name', 'agentyard test')
+    git(root, 'config', 'user.email', 'test@example.invalid')
+    writeFileSync(
+      join(root, '.multi_agent_controller', 'project.json'),
+      JSON.stringify({
+        schema_version: 1,
+        name: `convo-repo${repoSeq}`,
+        vcs: 'git',
+        check: [],
+        workspaces: { poolSize: 1 },
+        landing: { strategy: 'auto-land', target: 'main' }
+      })
+    )
+    writeFileSync(join(root, 'README.md'), '# fixture\n')
+    git(root, 'add', '-A')
+    git(root, 'commit', '-m', 'initial')
+
+    const project = projects.addProject({ root })
+    const [member] = await worktrees.ensurePool(project)
+    const workspace = member as string
+    const task = tasks.createTask({
+      title: name,
+      kind: 'conversation',
+      status: 'ready',
+      projectId: project.id
+    })
+    const branch = `multi-agent-controller/t${task.seq}-${name}`
+    // ⛔ The branch is on the worktree and on the task row, and **nothing holds a claim** — which
+    // is exactly the state a conversation rests in once its session has ended.
+    git(workspace, 'switch', '-c', branch)
+    fill(workspace)
+    tasks.setStatus(task.id, 'awaiting_human', { branch })
+    return { taskId: task.id, branch, workspace }
+  }
+
+  it('finds the uncommitted work in the workspace that still has its branch', async () => {
+    const { taskId, branch } = await abandonedOn('left-behind', (workspace) => {
+      writeFileSync(join(workspace, 'edited.txt'), 'not committed\n')
+    })
+
+    const answer = await scheduler.pendingWorkFor(taskId)
+    expect(answer.supported).toBe(true)
+    expect(answer.hasDiff).toBe(true)
+    expect(answer.branch).toBe(branch)
+    expect(answer.untrackedFiles).toBe(1)
+    // ⚠️ Said out loud, because the card's wording depends on it: the files are real and the
+    // tree they are sitting in belongs to nobody.
+    expect(answer.unclaimed).toBe(true)
+  })
+
+  it('reports a committed branch as clean work with somewhere to go', async () => {
+    // ⛔ The state that draws the Land button: nothing to ask an agent for, and commits that have
+    // not reached the trunk. Before this, the card offered nothing at all here.
+    const { taskId } = await abandonedOn('committed-not-landed', (workspace) => {
+      writeFileSync(join(workspace, 'done.txt'), 'committed\n')
+      git(workspace, 'add', '-A')
+      git(workspace, 'commit', '-m', 'the work')
+    })
+
+    const answer = await scheduler.pendingWorkFor(taskId)
+    expect(answer.supported).toBe(true)
+    expect(answer.hasDiff).toBe(false)
+    expect(answer.unlandedCommits).toBe(1)
+  })
+
+  it('still says it could not look when no workspace has the branch', async () => {
+    const { taskId, workspace } = await abandonedOn('parked-off', () => {})
+    git(workspace, 'switch', '--detach', 'main')
+
+    const answer = await scheduler.pendingWorkFor(taskId)
+    expect(answer.supported).toBe(false)
+    expect(answer.reason).toContain('no workspace has')
+    // ⚠️ And the branch is still named, so the card can say which one it went looking for.
+    expect(answer.branch).toContain('parked-off')
+  })
+})
+
+/** Landing a conversation from the thread — the half of settling it that costs no turn. */
+describe('what the Land button does', () => {
+  it('refuses a rung that would land nothing, rather than appearing to land it', async () => {
+    // ⛔ `commit-only` and `commit-and-verify` leave the branch where it is. Accepting one here
+    // would write a finish policy, land nothing, and report success for a branch that never moved.
+    const task = tasks.createTask({ title: 'Nothing to land', kind: 'conversation', status: 'ready' })
+    const answer = await scheduler.landConversation(task.id, 'commit-only')
+    expect(answer.ok).toBe(false)
+    expect(answer.reason).toContain('does not land')
+    // ⚠️ And the policy is untouched: a refusal must not leave the task half-converted out of
+    // its conversation contract.
+    expect(tasks.requireTask(task.id).finishPolicy).toBe('inherit')
+  })
+
+  it('will not land a turn that is still running', async () => {
+    const task = tasks.createTask({ title: 'Mid-turn', kind: 'conversation', status: 'ready' })
+    tasks.setStatus(task.id, 'running')
+    const answer = await scheduler.landConversation(task.id, 'commit-and-merge')
+    expect(answer.ok).toBe(false)
+    expect(answer.reason).toContain('already running')
   })
 })

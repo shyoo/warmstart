@@ -1757,6 +1757,19 @@ export interface RpcMap {
     result: { ok: boolean; reason?: string }
   }
   /**
+   * Land this conversation's branch on the rung the operator picked, with no turn spent.
+   *
+   * ⛔ **Separate from `task.commitConversation` because it is a different action**, not the same one
+   * in a different state: nothing is asked of an agent and nothing is dispatched — the branch is
+   * already committed, and the tool does the rebase, the checks and the merge itself. The card draws
+   * whichever of the two the workspace actually calls for, so a person is never offered one button
+   * that means two things. ⚠️ Only rungs the tool acts on are valid (`policyLands`).
+   */
+  'task.landConversation': {
+    params: { id: string; finishPolicy: FinishPolicy }
+    result: { ok: boolean; reason?: string }
+  }
+  /**
    * Dispatch this task now even though the account it needs is at or past the 92% water mark.
    *
    * ⛔ **An override of one number, granted by a person, expiring with the window it overrules.**

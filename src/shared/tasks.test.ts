@@ -4,7 +4,9 @@ import {
   FINISH_ORDER,
   FINISH_SHORT,
   SHARING_LABELS,
-  SHARING_SHORT
+  SHARING_SHORT,
+  policyLands,
+  policyVerifies
 } from './tasks.js'
 
 /**
@@ -39,5 +41,42 @@ describe('the pill-sized names for the two policies a task carries', () => {
     expect(Object.keys(SHARING_SHORT).sort()).toEqual(Object.keys(SHARING_LABELS).sort())
     expect(SHARING_SHORT.on).toBe('Reuse')
     expect(SHARING_SHORT.off).toBe('Fresh')
+  })
+})
+
+/**
+ * Which rungs the tool itself acts on, which is what the thread's Land button may offer.
+ *
+ * ⛔ The list is derived from this predicate rather than written out beside the button, for the
+ * reason above: a hand-written second copy of the ladder is how three dropdowns went on offering
+ * `agent-lands` after it was renamed.
+ */
+describe('the rungs where the tool does the last part', () => {
+  it('names the three that move a branch, and none of the ones that leave it alone', () => {
+    expect(FINISH_ORDER.filter(policyLands)).toEqual([
+      'commit-and-merge',
+      'commit-and-push',
+      'pull-request'
+    ])
+  })
+
+  it('never offers landing under a rung that only commits', () => {
+    // ⛔ The refusal `landConversation` enforces: pressing Land on `commit-only` would write a
+    // policy, move nothing, and look like it had worked.
+    expect(policyLands('commit-only')).toBe(false)
+    expect(policyLands('commit-and-verify')).toBe(false)
+    expect(policyLands('await-human')).toBe(false)
+    // ⚠️ `custom` lands nothing *of the tool's own*: its last step is the project's instruction to
+    // the agent, and a second landing on top of it is exactly what `decideFinish` refuses to add.
+    expect(policyLands('custom')).toBe(false)
+  })
+
+  it('is a different question from whether the checks run', () => {
+    // ⚠️ They overlap on the two merge rungs and disagree at both ends, which is why there are two
+    // predicates: `commit-and-verify` verifies and lands nothing; `pull-request` lands and does not.
+    expect(policyVerifies('commit-and-verify')).toBe(true)
+    expect(policyLands('commit-and-verify')).toBe(false)
+    expect(policyLands('pull-request')).toBe(true)
+    expect(policyVerifies('pull-request')).toBe(false)
   })
 })

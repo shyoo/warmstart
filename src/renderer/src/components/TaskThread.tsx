@@ -4,6 +4,7 @@ import {
   FINISH_LABELS,
   FINISH_ORDER,
   FINISH_SHORT,
+  policyLands,
   type FinishPolicy,
   resolveModelChoice,
   AUTO_COMPACT_LABELS,
@@ -1694,6 +1695,16 @@ const COMMIT_RUNGS: FinishPolicy[] = FINISH_ORDER.filter(
 )
 
 /**
+ * The rungs the Land button offers: the ones the **tool** acts on.
+ *
+ * ⛔ Derived from `policyLands`, for the reason above and one more of its own. Landing a branch under
+ * `commit-only` or `commit-and-verify` is a button that does nothing — those rungs leave the branch
+ * exactly where the agent put it — and the whole point of this control is that the tool does the last
+ * part. ⚠️ `commit·verify·merge` is the one an operator means by "merge it into main".
+ */
+const LAND_RUNGS: FinishPolicy[] = FINISH_ORDER.filter(policyLands)
+
+/**
  * The two ways to settle a task that is waiting on a person, each next to what it actually does.
  *
  * ⛔ They were indistinguishable, and the tooltips were the reason: *"records that you are
@@ -1803,6 +1814,26 @@ function Decide({
     ? `${pending.dirtyFiles + pending.untrackedFiles} uncommitted file(s) in this workspace.`
     : ''
 
+  /**
+   * Committed work sitting on the branch with nowhere to go.
+   *
+   * ⛔ **The state that had no button on this card at all.** Commit has nothing to ask an agent for,
+   * Finish only records that a person is satisfied, and Retry landing is drawn solely after a landing
+   * has already failed — so a conversation whose agent committed left its commits on the branch and
+   * offered no way to move them. This is where the tool does the last part.
+   */
+  const unlandedNow =
+    conversation && pending?.supported === true && !pending.hasDiff && pending.unlandedCommits > 0
+
+  /**
+   * ⛔ **"I could not look" is not "there is nothing there", and it must not render as one.** The
+   * measurement can fail — no workspace has the branch, git could not be read — and hiding every
+   * settle-it control on that answer is what left t280's thread telling an operator to press a Commit
+   * button it had decided not to draw. The control is shown with the reason instead: committing
+   * dispatches a run, which checks the branch out again wherever it has to.
+   */
+  const cannotLook = conversation && pending !== null && !pending.supported
+
   // ⛔ Offered only when the thing that stopped it is a conflict, and read from `holdReason`
   // because that is where `landTask`'s failure is actually recorded. A *fix the conflict* button on
   // a task that failed its checks would send an agent to rebase something that rebases fine.
@@ -1837,6 +1868,20 @@ function Decide({
     try {
       const result = await rpc('task.commitConversation', { id: task.id, finishPolicy })
       setCommitError(result.ok ? null : (result.reason ?? 'the commit could not be started'))
+      await onRefresh()
+      await readPending()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  // ⚠️ The same shape as `handleCommit` and a different call, because it is a different action: this
+  // one spends no turn. Its failure lands in the same place, so one line on the card carries either.
+  const handleLand = async (finishPolicy: FinishPolicy): Promise<void> => {
+    setBusy(true)
+    try {
+      const result = await rpc('task.landConversation', { id: task.id, finishPolicy })
+      setCommitError(result.ok ? null : (result.reason ?? 'the branch could not be landed'))
       await onRefresh()
       await readPending()
     } finally {
@@ -1936,10 +1981,11 @@ function Decide({
         </span>
       </div>
 
-      {/* ⛔ Drawn only when there is something to commit, which is why `pendingWork` runs git rather
-          than reading the task. A Commit button on a clean tree would dispatch a turn to commit
-          nothing, and one that was always there would say nothing about whether it was needed. */}
-      {conversation && uncommittedNow && (
+      {/* ⛔ Drawn on what the workspace actually holds, which is why `pendingWork` runs git rather
+          than reading the task — and drawn as **two** controls, because committing costs a turn and
+          landing does not. A Commit button on a clean tree would dispatch a turn to commit nothing;
+          one control that quietly did either would be two actions wearing one label. */}
+      {(uncommittedNow || cannotLook) && (
         <div className="decide-option">
           <SettingButtonSelect
             className="commit-select"
@@ -1958,6 +2004,56 @@ function Decide({
             same session, so it still has the context — to commit on{' '}
             <span className="mono">{pending?.branch ?? task.branch}</span> and report complete, then
             the rung you pick above is what the tool does with the branch afterwards.
+            {/* ⚠️ Said out loud rather than hidden behind a missing button: the card could not read
+                the tree, so it does not know whether there is anything to commit — and the run this
+                dispatches checks the branch out again wherever it has to. */}
+            {cannotLook && (
+              <span className="decide-warn">
+                {' '}
+                ⚠️ Could not read this task’s workspace ({pending?.reason}), so there is no telling
+                what is uncommitted. The run will check the branch out again.
+              </span>
+            )}
+            {/* ⚠️ The workspace is not claimed by this task any more — its session ended and the slot
+                went back to the pool — but the branch and these files are still sitting in it. */}
+            {uncommittedNow && pending?.unclaimed && (
+              <span className="dim">
+                {' '}
+                This task is not holding that workspace any more; the branch and these files are
+                still in it, and the run prefers that tree.
+              </span>
+            )}
+            {commitError && <span className="decide-warn"> ⚠️ {commitError}</span>}
+          </span>
+        </div>
+      )}
+
+      {/* ⛔ The clean-tree half: committed work with nowhere to go. No agent, no turn — the tool
+          rebases, runs the project's checks and merges, exactly as it would have at the end of an
+          ordinary task. */}
+      {unlandedNow && (
+        <div className="decide-option">
+          <SettingButtonSelect
+            className="commit-select"
+            value=""
+            disabled={busy}
+            ariaLabel="Land this conversation"
+            displayLabel="Land…"
+            options={LAND_RUNGS.map((rung) => ({
+              value: rung,
+              label: `${FINISH_SHORT[rung]} — ${FINISH_LABELS[rung]}`
+            }))}
+            onChange={(rung) => void handleLand(rung as FinishPolicy)}
+          />
+          <span className="decide-what">
+            <strong>Land it.</strong> Nothing is uncommitted, and{' '}
+            {pending?.unlandedCommits === 1
+              ? '1 commit is'
+              : `${pending?.unlandedCommits} commits are`}{' '}
+            sitting on <span className="mono">{pending?.branch ?? task.branch}</span>. The tool does
+            this part itself and spends no turn: it rebases onto the landing target, runs the
+            project’s checks where the rung asks for them, and then does what the rung says — merge,
+            push, or open a pull request. A refusal leaves the branch exactly where it is.
             {commitError && <span className="decide-warn"> ⚠️ {commitError}</span>}
           </span>
         </div>

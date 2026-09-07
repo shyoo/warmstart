@@ -253,16 +253,33 @@ draws neither pill — a control offering a choice that is not on the table is w
 — and files the task with both fields on `inherit`, which is the value that keeps the kind answering.
 The thread shows the same two as read-only facts.
 
-⛔ **A conversation's thread offers Finish · Stop · Commit, and Commit is drawn only when git says
-there is something to commit.** `task.pendingWork` reads the workspace at the moment the card renders;
-`hasDiff` counts **uncommitted** files only, because an unlanded commit is already safe on the branch
-and warning about it would cry wolf on every conversation that did commit. Finish releases the
-workspace, so over a dirty tree it arms once and says what it would lose before it will do it. The
-Commit menu offers the finish ladder minus `await-human` (which is what the conversation is already
-doing) and `custom` (an instruction about the project's own finish, not about this commit); picking a
-rung writes it to the task and asks the agent — in the same session, so it still has the context — to
-commit and report complete, after which the ordinary landing path runs that rung. ⚠️ It asks rather
-than commits because the daemon never authors a commit; see [`landing.md`](landing.md).
+⛔ **A conversation's thread offers Finish · Stop · Commit · Land, and which of the last two is drawn
+is decided by git rather than by the task.** `task.pendingWork` reads the workspace at the moment the
+card renders; `hasDiff` counts **uncommitted** files only, because an unlanded commit is already safe
+on the branch and warning about it would cry wolf on every conversation that did commit. Finish
+releases the workspace, so over a dirty tree it arms once and says what it would lose before it will
+do it.
+
+- **Commit…** — uncommitted files. The menu offers the finish ladder minus `await-human` (which is
+  what the conversation is already doing) and `custom` (an instruction about the project's own finish,
+  not about this commit); picking a rung writes it to the task and asks the agent — in the same
+  session, so it still has the context — to commit and report complete, after which the ordinary
+  landing path runs that rung. ⚠️ It asks rather than commits because the daemon never authors a
+  commit; see [`landing.md`](landing.md).
+- **Land…** — a clean tree with commits the landing target does not have. ⛔ **Two controls, not one
+  that changes meaning:** committing costs a turn and landing does not, so `task.landConversation`
+  writes the rung and lands the branch itself — rebase, the project's checks, merge — through the same
+  `decideFinish` bar a first completion meets. Its menu offers only the rungs the tool acts on
+  (`policyLands`: merge, push, pull request), because landing under `commit-only` would be a button
+  that does nothing. This state used to have no button at all: Commit had nothing to ask for and
+  *Retry landing* is drawn only after a landing has already failed.
+- ⛔ **"I could not look" is not "there is nothing there".** When the measurement fails the Commit
+  control is still drawn, carrying the reason. `pendingWorkFor` looks in three places, and the third
+  is why: a conversation's claim on its workspace is released when its session ends, while the
+  worktree keeps the branch **and every uncommitted file on it** — so the pool member that still has
+  the branch checked out is searched by name (`workspaceOnBranch`, `unclaimed: true` on the answer).
+  Without it, t280 rested with eight uncommitted files in ws2 while its own hold reason said *"use
+  Finish, Stop or Commit below"* and no Commit was below.
 
 ⛔ **A pill's menu is rendered into a portal at the document root, positioned by `lib/menuposition.ts`.**
 It used to be an absolutely positioned child of the pill, which every scroll container between it and the

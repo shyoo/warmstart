@@ -19,6 +19,7 @@ import {
   cleanQuestionText,
   isMultiSelectQuestion,
   isOpenConversation,
+  policyLands,
   policyVerifies,
   resolveCompletionMode,
   resolveModelChoice
@@ -123,6 +124,7 @@ import {
   trunkCommitsSince,
   trunkTargetSha,
   workspaceHeldBy,
+  workspaceOnBranch,
   workspaceState,
   type Rescue,
   type Workspace
@@ -6361,6 +6363,7 @@ export async function pendingWorkFor(taskId: string): Promise<PendingWork> {
     supported: false,
     reason: '',
     branch: null,
+    unclaimed: false,
     dirtyFiles: 0,
     untrackedFiles: 0,
     unlandedCommits: 0,
@@ -6372,20 +6375,39 @@ export async function pendingWorkFor(taskId: string): Promise<PendingWork> {
   if (!project || project.vcs !== 'git') {
     return { ...none, reason: 'this task has no git project, so there is nothing to commit' }
   }
+  const target = landingTargetFor(task, project)
   const held =
     workspaceHeldBy(project, task.id) ??
     (() => {
       const session = sessionOf(task.id)
       return session ? workspaceHeldBy(project, session.id) : null
     })()
-  if (!held) {
-    return { ...none, reason: 'this task is not holding a workspace' }
+  // ⛔ **The third place to look, and the one t280 needed.** A conversation between turns holds its
+  // claim; a conversation whose session has ended does not — the slot went back to the pool while the
+  // worktree kept the branch and every uncommitted file on it. Answering "not holding a workspace"
+  // there is not a measurement, it is a look in the wrong place, and the card hid the Commit button
+  // the hold reason was telling the operator to press.
+  const branch = task.branch ?? null
+  const state =
+    held !== null
+      ? await workspaceState(held.path, target)
+      : branch
+        ? await workspaceOnBranch(project, branch, target)
+        : null
+  if (!state) {
+    return {
+      ...none,
+      branch,
+      reason: branch
+        ? `this task is not holding a workspace, and no workspace has \`${branch}\` checked out`
+        : 'this task is not holding a workspace and has no branch'
+    }
   }
-  const state = await workspaceState(held.path, landingTargetFor(task, project))
   return {
     supported: true,
     reason: '',
     branch: state.branch,
+    unclaimed: held === null,
     dirtyFiles: state.dirtyFiles.length,
     untrackedFiles: state.untrackedFiles.length,
     unlandedCommits: state.unlandedCommits,
@@ -6400,10 +6422,13 @@ export async function pendingWorkFor(taskId: string): Promise<PendingWork> {
  * Ask the agent to commit this thread's work, on the rung the operator picked.
  *
  * ⛔ **It asks rather than commits, because the daemon does not author commits** — the rule
- * `decideFinish` is built on, and the reason `commit-after-verified` cannot exist. The button is
- * shown precisely when the tree is dirty, so there is nothing here that could be landed without a
- * turn, and a second code path that landed a clean tree directly would be a button that does two
- * different things depending on state nobody can see.
+ * `decideFinish` is built on, and the reason `commit-after-verified` cannot exist. This is the
+ * dirty-tree half of settling a conversation: there is something here that only an agent can turn
+ * into a commit, so it costs a turn.
+ *
+ * ⛔ **The clean-tree half is `landConversation`, and it is a *different button*.** One control that
+ * asked an agent or landed by itself depending on state nobody can see would be two actions wearing
+ * one label; the card draws Commit when there are uncommitted files and Land when there are not.
  *
  * ⛔ **The rung is written to `finishPolicy` first, and that write does two jobs.** It is what the
  * landing will read when the agent reports complete — so `commit·verify·merge` really merges — and
@@ -6459,6 +6484,42 @@ export async function commitConversation(
   const outcome = continueTask(task.id)
   log.info(`t${task.seq}: asked the agent to commit this conversation as ${policy} (${outcome})`)
   return { ok: true }
+}
+
+/**
+ * Land this thread's branch on the rung the operator picked, with no turn spent.
+ *
+ * ⛔ **The other half of settling a conversation, and the half that had no button at all.** A
+ * conversation whose agent committed leaves a clean tree and commits sitting on its branch: Commit
+ * has nothing to ask for, Finish only writes down that a person is satisfied, and Retry landing is
+ * drawn only after a landing has already failed. So the work stayed on the branch and the thread
+ * offered no way to move it — which is what "one of them should be commit/verify/land into main,
+ * where the tool does the last landing part" is asking for.
+ *
+ * ⛔ **The rung is written to `finishPolicy` first**, for the same two reasons as
+ * `commitConversation`: `relandTask` reads the resolved policy, and a conversation's own kind
+ * otherwise resolves to `await-human`, which lands nothing. ⚠️ Only the rungs the *tool* acts on are
+ * offered (`policyLands`) — landing under `commit-only` would be a button that does nothing.
+ *
+ * ⛔ **No shortcut past `decideFinish`.** `relandTask` runs the identical bar a first completion
+ * meets — authority, checks, a clean tree, real commits — so a dirty tree is refused here with the
+ * ordinary reason rather than landed because somebody pressed a button.
+ */
+export async function landConversation(
+  taskId: string,
+  policy: FinishPolicy
+): Promise<{ ok: boolean; reason?: string }> {
+  const task = getTask(taskId)
+  if (!task) return { ok: false, reason: 'no such task' }
+  if (!policyLands(policy)) {
+    return { ok: false, reason: `${FINISH_LABELS[policy]} does not land a branch` }
+  }
+  if (task.status === 'running' || task.status === 'assigned') {
+    return { ok: false, reason: 'this task is already running; wait for the turn to end' }
+  }
+  updateTask(task.id, { finishPolicy: policy })
+  log.info(`t${task.seq}: landing this conversation as ${policy} at the operator's request`)
+  return relandTask(task.id)
 }
 
 export async function relandTask(taskId: string): Promise<{ ok: boolean; reason?: string }> {

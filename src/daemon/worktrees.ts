@@ -182,6 +182,35 @@ export function releaseWorkspace(claimId: string): void {
   release(claimId)
 }
 
+/**
+ * The pool member that still has this branch checked out, claimed or not.
+ *
+ * ⛔ **Because a branch outlives the claim on the tree it sits in.** A conversation's workspace goes
+ * back to the pool when its session ends, and the worktree keeps the branch — and every uncommitted
+ * file on it. Anything that asks "where is this task's work" by looking only at the claims gets
+ * *nowhere* as an answer while the files are sitting in ws2, which is how t280's thread told an
+ * operator to press a Commit button it had already decided not to draw.
+ *
+ * ⛔ **Reads the pool as declared, and never `ensurePool`.** This is asked to render a card, and a
+ * read that creates worktrees is not a read. A project whose pool has never been built has no
+ * members and gets `null`, which is the truthful answer at that moment.
+ *
+ * ⚠️ Returns the whole `WorkspaceState`, not a path: every caller wants what is *in* the tree, and
+ * handing back a path would make them read it a second time to find out.
+ */
+export async function workspaceOnBranch(
+  project: Project,
+  branch: string,
+  target: string
+): Promise<WorkspaceState | null> {
+  if (project.vcs !== 'git') return null
+  for (const path of availability(workspacePoolId(project.id))?.resource.members ?? []) {
+    const state = await workspaceState(path, target)
+    if (state.branch === branch) return state
+  }
+  return null
+}
+
 /** `multi-agent-controller/t<seq>-<slug>` - the task's name, never the workspace's. */
 export function branchNameFor(seq: number, title: string): string {
   const slug = title
