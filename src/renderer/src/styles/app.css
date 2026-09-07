@@ -649,6 +649,29 @@ body {
   line-height: 1.6;
 }
 
+/*
+ * ⚠️ The label column is sized for the widest thing that has to fit: `Claude/GPT 5h`, which only
+ * Antigravity draws because only Antigravity meters two pools on one account. Every other card's
+ * rows say `5h` and `7d` (see `shortWindowLabels`), and the 40px that named a pool they do not have
+ * goes to the bar, which is the row's actual measurement.
+ *
+ * ⛔ Sized off the *account* rows, not the session rows below them, and both densities share one
+ * column set so the two halves of a card still line up. `active` and `probe` fit the terse column;
+ * a card that keeps the wide one just gives its session labels more room than they need.
+ *
+ * ⛔ Excluded in the condensed density, where the labels are hidden from the eye entirely and the
+ * column is gone rather than narrowed — without the `:not`, these longer selectors would win and
+ * leave a card-wide gutter holding nothing.
+ */
+.wcard:not(.wcard--narrow) .wcard-windows--terse .gauge,
+.wcard:not(.wcard--narrow) .wcard-windows--terse ~ .wcard-sessions .gauge {
+  grid-template-columns: 44px 1fr 34px 58px;
+}
+
+.wcard:not(.wcard--narrow) .wcard-windows--terse ~ .wcard-sessions .gauge--session {
+  grid-template-columns: 44px 1fr 58px 58px;
+}
+
 .gauge-label {
   color: var(--color-text-faint);
   overflow: hidden;

@@ -9,7 +9,7 @@ import {
   writeFleetDensity,
   type FleetDensity
 } from '../lib/prefs'
-import { cardStatus, gaugedSessions } from '../lib/fleetcard'
+import { cardStatus, gaugedSessions, shortWindowLabels } from '../lib/fleetcard'
 import { Working } from '../lib/taskview'
 import { AgentIcon } from './AgentIcon'
 import { cacheUrgency, countdown, percent, quotaUrgency, tokens } from '../lib/format'
@@ -270,6 +270,14 @@ function WorkerCard({
    */
   const { stale } = quotaFreshness(quota, now)
   const windows = quota?.windows ?? []
+  /**
+   * ⚠️ The pool name comes off the rows when the rows are still telling apart without it, and the
+   * label column narrows to match. On a one-pool account every row began with the card's own title
+   * — `Muse 5h` under a card headed *Muse* — and a column sized for Antigravity's two-pool
+   * `Claude/GPT 5h` then held that repetition in whitespace taken from the bar beside it. The full
+   * label is still on the row's tooltip, and Antigravity keeps it on the row.
+   */
+  const shortLabels = shortWindowLabels(windows.map((w) => w.label))
   const suspect = worker.health?.state === 'suspect' ? worker.health : null
   const subscriptionExpired =
     isWorkerSubscriptionExpired(worker) ||
@@ -403,10 +411,12 @@ function WorkerCard({
            to wait for the next probe or go and press one - and because a line that appears under
            these bars the minute a reading turns fifteen minutes old resizes every card in the strip
            on a timer. */
-        <div className={stale ? 'wcard-windows wcard-windows--stale' : 'wcard-windows'}>
-          {windows.map((w) => (
-            <div className="gauge" key={w.id}>
-              <span className="gauge-label">{w.label}</span>
+        <div
+          className={`wcard-windows${stale ? ' wcard-windows--stale' : ''}${shortLabels ? ' wcard-windows--terse' : ''}`}
+        >
+          {windows.map((w, i) => (
+            <div className="gauge" key={w.id} title={w.label}>
+              <span className="gauge-label">{shortLabels ? shortLabels[i] : w.label}</span>
               <span className="bar">
                 <span
                   className={`bar-fill bar-fill--${quotaUrgency(w.percent)}`}

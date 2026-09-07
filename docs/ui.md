@@ -363,6 +363,14 @@ whose entire design is to be invisible.
   number. ⚠️ "Unknown" is not the whole answer either — never probed, no usage cache yet, stale, a
   failed probe, and `quotaProbe: 'none'` are **five** states with five different things to do about
   them. Collapsing them is what made a working Probe button look broken. See `quotaGap()`.
+- ⛔ **A window label names the window, not the card it is on.** Adapters name a quota window by its
+  pool *and* its length — `Muse 5h` — because a reading has to be legible wherever it is quoted. On a
+  worker card the pool half is the card's own title repeated down the rows, paid for out of the
+  column the bars need, so `shortWindowLabels` (`src/renderer/src/lib/fleetcard.ts`) drops it and
+  `.wcard-windows--terse` narrows the label column to match. ⛔ Dropped only when what is left still
+  tells the rows apart: Antigravity meters two pools on one account, and `Claude/GPT 5h` beside
+  `Gemini 5h` shortened would draw two bars claiming to be the same window. The full label is on
+  every row's tooltip in both cases.
 - ⛔ **A held task says *why*, and says *when* where the refusal has an end.** `ready` on its own is
   unreadable: it is the scheduler's word for *eligible*, and a person who just filed a task reads it
   as *waiting for me*.

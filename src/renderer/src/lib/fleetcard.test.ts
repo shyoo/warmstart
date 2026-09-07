@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Session } from '@shared/protocol'
-import { cardStatus, gaugedSessions } from './fleetcard'
+import { cardStatus, gaugedSessions, shortWindowLabels } from './fleetcard'
 import type { FleetEntry } from './daemon'
 
 /**
@@ -149,5 +149,48 @@ describe('what the card corner says', () => {
       NOW
     )
     expect(status).toMatchObject({ kind: 'age', label: '3h ago' })
+  })
+})
+
+/**
+ * What a card's gauges are allowed to stop saying.
+ *
+ * The pool name in front of every window label is the card's own title repeated down the rows, and
+ * it is charged to the label column - the one the bars are competing with for width. It comes off
+ * exactly when what is left still names a different window on each row, which is what keeps
+ * Antigravity's two pools apart.
+ */
+describe('shortWindowLabels', () => {
+  it('drops the pool name a one-pool account repeats on every row', () => {
+    expect(shortWindowLabels(['Muse 5h', 'Muse 7d'])).toEqual(['5h', '7d'])
+    expect(shortWindowLabels(['GPT 5h', 'GPT 7d'])).toEqual(['5h', '7d'])
+  })
+
+  /** Claude Code meters a third window, and what tells it from the second is the part that stays. */
+  it('keeps whatever follows the window length', () => {
+    expect(shortWindowLabels(['Claude 5h', 'Claude 7d', 'Claude 7d Opus'])).toEqual([
+      '5h',
+      '7d',
+      '7d Opus'
+    ])
+  })
+
+  /**
+   * ⛔ Antigravity's two pools are different quotas gating different tasks. Shortened, both would
+   * draw a bar labelled `5h` and the card would claim to meter one window twice.
+   */
+  it('keeps the pool name when two pools would collide without it', () => {
+    const agy = ['Claude/GPT 5h', 'Claude/GPT 7d', 'Gemini 5h', 'Gemini 7d']
+    expect(shortWindowLabels(agy)).toBeNull()
+  })
+
+  /** A label that is not a named window is left alone rather than guessed at. */
+  it('leaves labels it does not recognise as named windows', () => {
+    expect(shortWindowLabels(['Claude 5h', 'Credits'])).toBeNull()
+  })
+
+  /** An adapter that never named a pool is already terse, and its column narrows too. */
+  it('accepts labels that were only ever the window length', () => {
+    expect(shortWindowLabels(['5h', '7d'])).toEqual(['5h', '7d'])
   })
 })

@@ -99,3 +99,34 @@ export function cardStatus(
         'about to run here, or when you press Probe.'
   }
 }
+
+/**
+ * The window term a label ends in — `5h`, `7d`, `7d Opus` — and whatever names the pool in front
+ * of it.
+ *
+ * Adapters name a window twice over: once by the pool it belongs to and once by its length, because
+ * a reading has to be legible on its own wherever it is quoted. On a card that is one pool's worth
+ * of windows, the pool half is the card's own title repeated on every row — `Claude 5h` under a
+ * card headed *Claude Code* — and it is paid for in the one column the bars are competing for.
+ */
+const WINDOW_TERM = /(?:^|\S\s+)((?:5h|7d)\b.*)$/
+
+/**
+ * What the gauges on one card should say, given what the adapter called them.
+ *
+ * ⛔ Dropped only when what is left still tells the windows apart. Antigravity meters two pools on
+ * one account — `Claude/GPT 5h` and `Gemini 5h` are different quotas that gate different tasks —
+ * and shortening both to `5h` would draw two bars claiming to be the same window. That is the whole
+ * test: not which adapter this is, but whether the terms are still unique once the pool name goes.
+ *
+ * ⚠️ Returns `null` for "keep what you were given", which is also what the caller widens the label
+ * column on. A card either shows pool names on every row or on none — half-shortened labels read as
+ * one window belonging to a pool and the other not.
+ */
+export function shortWindowLabels(labels: string[]): string[] | null {
+  const terms = labels.map((label) => WINDOW_TERM.exec(label)?.[1])
+  if (terms.some((term) => term === undefined)) return null
+  const short = terms as string[]
+  if (new Set(short).size !== short.length) return null
+  return short
+}

@@ -1978,13 +1978,18 @@ try {
     // suite must not wait twenty hours to find out how one is drawn.
     const store = new DatabaseSync(join(dataDir, 'multi_agent_controller.db'))
     const at = Date.now() - 20 * 3600 * 1000
-    for (const [id, pct] of [['session', 11], ['weekly', 16]]) {
+    // ⚠️ Labelled the way an adapter labels them — pool name and window length — because what the
+    // card does with that pair is checked below.
+    for (const [id, label, pct] of [
+      ['session', 'Claude 5h', 11],
+      ['weekly', 'Claude 7d', 16]
+    ]) {
       store
         .prepare(
           `insert into quota_samples (worker_id, window_id, label, percent, resets_at, source, sampled_at)
            values (?,?,?,?,?,?,?)`
         )
-        .run(staleWorker, id, id, pct, at + 7_200_000, 'config cache', at)
+        .run(staleWorker, id, label, pct, at + 7_200_000, 'config cache', at)
     }
     store.close()
   }
@@ -2005,6 +2010,38 @@ try {
     'rather than calling a measured account unknown',
     !/quota unknown/i.test(strip),
     'an account read yesterday and one never read are different states'
+  )
+
+  // ⛔ The pool name on a window label is the card's own title repeated down the rows, and it is
+  // charged to the one column the bars are competing with. It comes off when what is left still
+  // names a different window on each row — Antigravity's two pools are the case where it does not,
+  // and `fleetcard.test.ts` holds that half, which needs no card to be true.
+  const windowLabels = JSON.parse(
+    await evaluate(`(() => {
+      const card = [...document.querySelectorAll('.wcard')].find(c => c.querySelector('.wcard-windows'));
+      const gauge = card?.querySelector('.wcard-windows .gauge');
+      return JSON.stringify({
+        labels: [...(card?.querySelectorAll('.wcard-windows .gauge-label') ?? [])].map(n => n.innerText),
+        titles: [...(card?.querySelectorAll('.wcard-windows .gauge') ?? [])].map(n => n.title),
+        column: gauge ? getComputedStyle(gauge).gridTemplateColumns.split(' ')[0] : null
+      });
+    })()`)
+  )
+  check(
+    'a one-pool card drops the pool name its own title already says',
+    JSON.stringify(windowLabels.labels) === JSON.stringify(['5h', '7d']),
+    JSON.stringify(windowLabels)
+  )
+  check(
+    '⚠️ and keeps the full name on the row, for whoever needs it named',
+    JSON.stringify(windowLabels.titles) === JSON.stringify(['Claude 5h', 'Claude 7d']),
+    JSON.stringify(windowLabels.titles)
+  )
+  // The 84px default is in the stylesheet for `Claude/GPT 5h`, which only a two-pool account draws.
+  check(
+    'and the width those names needed goes to the bar instead',
+    windowLabels.column === '44px',
+    JSON.stringify(windowLabels.column)
   )
 
   // ⛔ A suspect worker without quota windows shows `error · see Settings > Workers` and suppresses `quota unknown`
