@@ -164,6 +164,75 @@ describe('TranscriptTailer compact_boundary handling and recordCompaction', () =
     expect(m.ts).toBe(Date.parse('2026-09-01T22:20:15.000Z'))
   })
 
+  /**
+   * ⛔ There is no shared transcript format, and until 2026-09-06 this tailer assumed there was.
+   * Muse Code keys on `payload_type`, nests usage under `payload.event.usage` and dates records in
+   * microseconds — a Claude-shaped reader meters **nothing** from it, silently, and an unmetered run
+   * reports as costing nothing rather than as unknown.
+   *
+   * ⚠️ The `requestStartedAt` assertion is the half that is easy to lose: the previous record's time
+   * is the earliest plausible start of the next request, the cache clock counts from it, and the
+   * bookkeeping stays in the tailer precisely so every adapter does not have to redo it.
+   */
+  it('reads a foreign transcript through the adapter’s own decoder, and keeps the request clock', async () => {
+    const { writeFileSync } = await import('node:fs')
+    const { join } = await import('node:path')
+    const { museCode } = await import('./adapters/muse-code.js')
+    const file = join(dir, 'muse-session.jsonl')
+    const sessionId = 'session-muse-1'
+
+    const lines = [
+      // An ordinary record: no usage, but its timestamp is what the next request started after.
+      {
+        recorded_at: 1_788_754_280_000_000,
+        payload_type: 'runtime.session.metadata',
+        payload: { kind: 'metadata' }
+      },
+      {
+        recorded_at: 1_788_754_289_278_935,
+        payload_type: 'runtime.session',
+        payload: {
+          source_run_record_id: '33d871da',
+          event: {
+            kind: 'model_completed',
+            model: 'muse-spark-1.3-contributor',
+            usage: {
+              cache_read_tokens: 24_433,
+              cache_write_tokens: 0,
+              cached_tokens: 24_433,
+              input_tokens: 24_679,
+              output_tokens: 88,
+              reasoning_tokens: 75
+            }
+          }
+        }
+      }
+    ]
+    writeFileSync(file, lines.map((l) => JSON.stringify(l)).join('\n') + '\n', 'utf8')
+
+    const turns: Array<import('@shared/protocol.js').Turn> = []
+    const tailer = new transcriptModule.TranscriptTailer(
+      sessionId,
+      file,
+      { onTurn: (t) => turns.push(t), onCompact() {} },
+      museCode.decodeTranscript
+    )
+    tailer.start()
+    await new Promise((r) => setTimeout(r, 200))
+    tailer.stop()
+
+    expect(turns).toHaveLength(1)
+    const turn = turns[0]!
+    expect(turn.requestId).toBe('33d871da')
+    expect(turn.ts).toBe(1_788_754_289_279)
+    // The metadata record before it, not the turn's own stamp.
+    expect(turn.requestStartedAt).toBe(1_788_754_280_000)
+    // ⛔ `input_tokens` includes the cached prefix on this vendor; 24,679 − 24,433 fresh.
+    expect(turn.inputTokens).toBe(246)
+    expect(turn.cacheReadTokens).toBe(24_433)
+    expect(turn.contextTokens).toBe(24_679)
+  })
+
   it('⭐ recordCompaction deduplicates a replayed compact_boundary when session is resumed', async () => {
     const sessionId = 'session-replay-1'
     const T1 = Date.parse('2026-09-01T22:20:15.000Z')

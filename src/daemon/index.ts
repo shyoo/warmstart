@@ -6,7 +6,7 @@ import { prunePending } from './attachments.js'
 import { closeDb, openDb } from './db.js'
 import { loadCostModels } from './costmodel.js'
 import { logCostFactors } from './estimator.js'
-import { loadAdapters } from './adapters/index.js'
+import { adapter, loadAdapters } from './adapters/index.js'
 import { startServer, type DaemonServer } from './server.js'
 import { QuotaPoller } from './quota.js'
 import {
@@ -136,7 +136,10 @@ async function main(): Promise<void> {
           onCompact(sessionId, meta) {
             recordCompaction(sessionId, meta)
           }
-        })
+        },
+        // ⛔ The adapter's own reader, where it has one. Absent means Claude Code's shape, which is
+        // what this tailer assumed for every adapter until muse arrived with a different one.
+        adapter(session.adapterId).decodeTranscript)
         tailer.start()
         tailers.set(session.id, tailer)
       }

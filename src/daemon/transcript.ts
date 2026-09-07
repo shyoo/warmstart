@@ -145,6 +145,43 @@ export interface TailerEvents {
   ): void
 }
 
+/** One metered turn, as an adapter reads it out of its own CLI's transcript. */
+export type TranscriptTurn = Omit<Turn, 'sessionId' | 'requestStartedAt'>
+
+/**
+ * What one line of a transcript turned out to be.
+ *
+ * ⛔ `other` still carries a timestamp, and dropping it would be a real loss: the tailer uses the
+ * *previous* record's time as the earliest plausible start of the next request, which is what the
+ * cache clock counts from.
+ */
+export type TranscriptDecoded =
+  | { kind: 'turn'; turn: TranscriptTurn }
+  | {
+      kind: 'compact'
+      ts: number
+      preTokens: number | null
+      durationMs: number | null
+      trigger: string | null
+    }
+  | { kind: 'other'; ts: number | null }
+
+/**
+ * Read one record of **this CLI's** transcript.
+ *
+ * ⛔ There is no shared transcript format, exactly as there is no shared stream format. Claude Code
+ * writes `{"type":"assistant","message":{"usage":{…}}}`; Muse Code writes an envelope keyed on
+ * `payload_type` with the usage nested under `payload.event.usage`, in microseconds, using a token
+ * convention where `input_tokens` **includes** the cached prefix rather than excluding it. A reader
+ * keyed on one vendor's shape meters *nothing* from another — silently, and an unmetered run reports
+ * as costing nothing rather than as unknown, which is the expensive direction.
+ *
+ * ⚠️ Optional. An adapter that does not supply one is read with Claude Code's shape, which is what
+ * every adapter declaring `metering: 'transcript'` used before 2026-09-06 and what `claude-code`
+ * still uses.
+ */
+export type TranscriptDecoder = (record: unknown) => TranscriptDecoded | null
+
 export class TranscriptTailer {
   private offset = 0
   private watcher: FSWatcher | null = null
@@ -161,7 +198,9 @@ export class TranscriptTailer {
   constructor(
     private readonly sessionId: string,
     private readonly path: string,
-    private readonly events: TailerEvents
+    private readonly events: TailerEvents,
+    /** ⚠️ Absent means Claude Code's shape — see `TranscriptDecoder`. */
+    private readonly decode?: TranscriptDecoder | undefined
   ) {}
 
   start(): void {
@@ -232,6 +271,10 @@ export class TranscriptTailer {
   }
 
   private handle(record: unknown): void {
+    if (this.decode) {
+      this.handleDecoded(record)
+      return
+    }
     const rec = record as TranscriptRecord
     const stamp = rec.timestamp
     const parsedTs = stamp ? Date.parse(stamp) : NaN
@@ -272,6 +315,45 @@ export class TranscriptTailer {
     }
     this.previousTs = ts
     this.events.onTurn(turn)
+  }
+
+  /**
+   * The same bookkeeping, for an adapter that reads its own transcript.
+   *
+   * ⛔ `previousTs` is kept here rather than in the decoder, because it is a fact about *this file
+   * being read in order* and not about the vendor's format — every adapter would otherwise have to
+   * reimplement the one piece of it that is subtle, and the cache clock reads the result.
+   */
+  private handleDecoded(record: unknown): void {
+    let decoded: TranscriptDecoded | null
+    try {
+      decoded = this.decode?.(record) ?? null
+    } catch (err) {
+      log.warn(`transcript decode failed for ${this.sessionId.slice(0, 8)}:`, err)
+      return
+    }
+    if (!decoded) return
+
+    if (decoded.kind === 'other') {
+      if (decoded.ts !== null) this.previousTs = decoded.ts
+      return
+    }
+    if (decoded.kind === 'compact') {
+      this.events.onCompact(this.sessionId, {
+        trigger: decoded.trigger,
+        preTokens: decoded.preTokens,
+        durationMs: decoded.durationMs,
+        ts: decoded.ts
+      })
+      this.previousTs = decoded.ts
+      return
+    }
+    this.events.onTurn({
+      sessionId: this.sessionId,
+      requestStartedAt: this.previousTs ?? decoded.turn.ts,
+      ...decoded.turn
+    })
+    this.previousTs = decoded.turn.ts
   }
 }
 

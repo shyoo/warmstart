@@ -18,27 +18,27 @@ first spawn.** That is the whole reason `AdapterInfo.verification` exists.
 
 ## The fleet, at a glance
 
-| | `claude-code` | `antigravity-cli` | `openai-compatible` | `local-llm` |
-|---|---|---|---|---|
-| Command | `claude` | `agy` | `codex` | `local-llm-bridge` (node) |
-| Measured against | 2.1.223 | 1.1.20 | 0.151.0 | llama.cpp / Qwen3-Coder |
-| **Accounts per machine** | **unlimited** (`CLAUDE_CONFIG_DIR`) | ⛔ **1** (OS keyring) | **unlimited** (`CODEX_HOME`) | **unlimited** (by endpoint URL) |
-| Credential lives in | a directory | ⛔ the OS keyring | a directory | ⛔ none (local HTTP) |
-| Metered from | ⛔ transcript, **by choice** (exact, survives a restart; its stream carries usage too) | **its live stream** | **its live stream** | **its live stream** |
-| Can compact | ✔ | ⛔ | ⛔ *(conservative)* | ⛔ |
-| Classifier reviews actions | ⚠️ `auto`, **interactive only** — unattended work runs `bypassPermissions` | ⛔ | ⛔ | ⛔ |
-| Approvals | `permission_prompt_tool` | settings rules | settings rules | ⛔ none |
-| Raises its own questions | ✔ **`AskUserQuestion` / `ask_human` (single & multi-checkboxes)** | ✔ **`NEEDS DECISION: [multi]` contract** | ✔ **`NEEDS DECISION: [multi]` contract** | ✔ via `ask_human` tool |
-| Says why a turn stopped | ✔ **`post_turn_summary`** carries `status_category` + `needs_action` | ⛔ none seen | ⛔ none seen | ⛔ none seen |
-| Multi Agent Controller MCP tools | ✔ | ⛔ global registration only | ⛔ global registration only | ⛔ function calling in bridge |
-| Prompt arrives on stdin as | a conversation, pipe stays open | a conversation, pipe stays open | ⛔ **one prompt, then EOF** — `codex exec` is one-shot | a conversation, pipe stays open |
-| Accepts our session id | ✔ | ⛔ | ⛔ | ⛔ |
-| Resumes a past conversation | ✔ `--resume <id>` | ✔ `--conversation <id>` | ✔ **`exec resume <thread_id>`** — measured 2026-09-02 | ⛔ fresh conversation per dispatch |
-| Prompt cache TTL | **60m** (`1h`, 2.0× write) | ⛔ unpriced (storage per token-hour) | **30m** (1.25× write) | ⛔ none |
-| Free quota probe | ✔ the `.claude.json` cache; `/usage` refreshes it | ⛔ **measured — see below** | ✔ **`account/rateLimits/read`**, rollout as fallback | ⛔ none (unlimited) |
-| Free **money** meter (`spendProbe`) | `stream` — `total_cost_usd` and the overage flags ride a turn already paid for | ⛔ `none` — cloud credits are real and nothing read reports a balance | `config-cache` — `credits.balance`, in the rollout the quota already comes from | ⛔ `none` — it runs on the operator's own machine |
-| Reports cache reads | via transcript | ⛔ no | ✔ reads **and** writes | ⛔ server-side |
-| Read-only mode (may review) | ✔ `plan` | ✔ `plan` | ✔ `read-only` | ✔ `read-only` |
+| | `claude-code` | `antigravity-cli` | `openai-compatible` | `local-llm` | `muse-code` |
+|---|---|---|---|---|---|
+| Command | `claude` | `agy` | `codex` | `local-llm-bridge` (node) | `muse` — ⛔ **through `wsl.exe` on Windows** (`clihost.ts`) |
+| Measured against | 2.1.223 | 1.1.20 | 0.151.0 | llama.cpp / Qwen3-Coder | 1.0.3 (1.0.3-R2198.1) |
+| **Accounts per machine** | **unlimited** (`CLAUDE_CONFIG_DIR`) | ⛔ **1** (OS keyring) | **unlimited** (`CODEX_HOME`) | **unlimited** (by endpoint URL) | **unlimited** (`XDG_CONFIG_HOME`/`XDG_DATA_HOME`) |
+| Credential lives in | a directory | ⛔ the OS keyring | a directory | ⛔ none (local HTTP) | a directory (`config/muse/auth.json`) |
+| Metered from | ⛔ transcript, **by choice** (exact, survives a restart; its stream carries usage too) | **its live stream** | **its live stream** | **its live stream** | ⛔ **its session log** — its stream carries no usage at all |
+| Can compact | ✔ | ⛔ | ⛔ *(conservative)* | ⛔ | ⛔ *(automatic thresholds only; no slash command)* |
+| Classifier reviews actions | ⚠️ `auto`, **interactive only** — unattended work runs `bypassPermissions` | ⛔ | ⛔ | ⛔ | ⚠️ `--approval-judge` — interactive only; unattended runs `--approval-mode never` |
+| Approvals | `permission_prompt_tool` | settings rules | settings rules | ⛔ none | ⛔ flags on the process, before it starts |
+| Raises its own questions | ✔ **`AskUserQuestion` / `ask_human` (single & multi-checkboxes)** | ✔ **`NEEDS DECISION: [multi]` contract** | ✔ **`NEEDS DECISION: [multi]` contract** | ✔ via `ask_human` tool | ✔ **`NEEDS DECISION: [multi]` contract** |
+| Says why a turn stopped | ✔ **`post_turn_summary`** carries `status_category` + `needs_action` | ⛔ none seen | ⛔ none seen | ⛔ none seen | ⚠️ `run.terminal.<verdict>` names the verdict, not the reason |
+| Multi Agent Controller MCP tools | ✔ | ⛔ global registration only | ⛔ global registration only | ⛔ function calling in bridge | ⛔ `mcpServers` is per-**root** config, not per session |
+| Prompt arrives on stdin as | a conversation, pipe stays open | a conversation, pipe stays open | ⛔ **one prompt, then EOF** — `codex exec` is one-shot | a conversation, pipe stays open | ⛔ **it does not** — `exec` answers `missing prompt`; the host script writes a `--prompt-file` |
+| Accepts our session id | ✔ | ⛔ | ⛔ | ⛔ | ✔ `--session-id` |
+| Resumes a past conversation | ✔ `--resume <id>` | ✔ `--conversation <id>` | ✔ **`exec resume <thread_id>`** — measured 2026-09-02 | ⛔ fresh conversation per dispatch | ✔ **the same `--session-id`** — measured 2026-09-06 |
+| Prompt cache TTL | **60m** (`1h`, 2.0× write) | ⛔ unpriced (storage per token-hour) | **30m** (1.25× write) | ⛔ none | ⛔ unpublished (reads and writes are *reported*, not priced) |
+| Free quota probe | ✔ the `.claude.json` cache; `/usage` refreshes it | ⛔ **measured — see below** | ✔ **`account/rateLimits/read`**, rollout as fallback | ⛔ none (unlimited) | ⚠️ **screen only** — `/usage `, and the block is absent until a turn is spent |
+| Free **money** meter (`spendProbe`) | `stream` — `total_cost_usd` and the overage flags ride a turn already paid for | ⛔ `none` — cloud credits are real and nothing read reports a balance | `config-cache` — `credits.balance`, in the rollout the quota already comes from | ⛔ `none` — it runs on the operator's own machine | ⛔ `none` — no local file names a figure |
+| Reports cache reads | via transcript | ⛔ no | ✔ reads **and** writes | ⛔ server-side | ✔ reads **and** writes, in the session log |
+| Read-only mode (may review) | ✔ `plan` | ✔ `plan` | ✔ `read-only` | ✔ `read-only` | ✔ `read-only` (`never` + `--disable-write` + `--disable-shell`) |
 
 ⛔ **`spendProbe` says *where the money comes from*, not whether there is any.** It is the capability
 the poller reads instead of recognising an adapter by name, and `'stream'` and `'config-cache'` are
@@ -127,6 +127,34 @@ Written from documentation, then run. Each of these was wrong:
 The `cmd /s` one was latent since M1 and had never fired, because `claude` resolves to a `.EXE` on
 this machine; `codex` installs as `codex.cmd`, which exposed it. The last two came from running the
 CLIs against real accounts — see the quota section below.
+
+---
+
+## `muse-code`, and the five things that would have failed on the first spawn
+
+Written from `--help` on 2026-09-06, then run against Muse Code 1.0.3 (1.0.3-R2198.1) in WSL2 Ubuntu
+from a Windows host, on a live *Everyday Usage* account. The full capture is
+`transient_docs/muse_code_findings_2026-09-06.md`; each of these was believed and wrong.
+
+| Documented | Measured |
+|---|---|
+| `exec` reads its prompt from stdin, like `codex exec` | ⛔ **It has no stdin prompt channel at all.** A piped prompt answers `missing prompt` / `usage: muse exec [OPTIONS] [PROMPT]` and exits 1. The prompt is argv or `--prompt-file` and nothing else — so the host script does `cat > <file>` first and the EOF the `once` transport already sends becomes the go signal. Nothing in the scheduler changed |
+| `exec --json` carries usage, the way agy and codex do | ⛔ **It carries none.** A full real run was captured — 39 records — and there is no usage anywhere in it. Usage is in the **session log** (`payload.event.kind == "model_completed"`), so `metering: 'transcript'` |
+| a transcript is a transcript | ⛔ **Three differences at once, all silent.** It keys on `payload_type` not `type`, dates records in **microseconds**, and counts the cached prefix *inside* `input_tokens` (24,679 against a 24,433 cache read). A Claude-shaped reader meters nothing; summing the fields as they arrive doubles every cache read. Adapters now declare `decodeTranscript` |
+| resuming needs a resume flag | ⭐ **Reusing `--session-id` is the resume.** A second `exec` on the same id appended to the conversation and logged `session.resumed` with `prior_turn_count: 1`. So the vendor's handle for a conversation is the id this app minted for it |
+| `/usage` + Enter shows the panel | ⛔ **The slash-command popup swallows the first Enter.** Two Enters work, and so does a **trailing space** — which is the fix, because `quota.ts` writes `${command}\r` and `'/usage '` submits in one go. ⚠️ And the `Subscription` block is **absent until the account has spent a turn**, so the parser answers `null` rather than 0% |
+| an isolation root is a directory | ⚠️ **Two of them.** No `MUSE_HOME` exists and the real binary ignores the launcher's `MUSE_AUTH_PATH` (grep: 0 hits), so isolation is `XDG_CONFIG_HOME` + `XDG_DATA_HOME` or nothing. Both work on a Windows drive, with one benign warning: DrvFs cannot express mode 0700, so cross-session messaging disables itself |
+| *(Windows)* `wsl.exe -- bash -lc <script> arg…` passes the arguments | ⛔ **It drops them.** `$#` came back `0`, `$0` read `/bin/bash`. Every path is quoted into the script text by `shQuote` instead |
+| *(Windows)* a worktree is a directory git can open | ⛔ **Not from inside WSL.** `<worktree>/.git` holds `gitdir: C:/Dev/…`, which git resolves *relatively*: `fatal: not a git repository: /mnt/c/…/ws1/C:/Dev/…`. Every workspace this app hands out is a worktree, so a muse worker could not have run one git command. ⭐ Fixed by `GIT_DIR` + `GIT_WORK_TREE` alone — **no file is modified**, and no `safe.directory` is needed |
+
+⛔ **`clihost.ts` is the whole of the platform-specific part, and that is the requirement rather than
+a convenience.** `hostFor()` answers *native or bridged*, `hostPlan()` produces the command either
+way, and `muse-code.ts` never mentions WSL or `win32`. Native wins where it exists — which is every
+macOS and Linux install — so nobody is routed through a virtual machine they did not ask for, and
+the macOS build carries no Windows code it could never run.
+
+⚠️ **Still unflown**: `--image`, and no task has yet been dispatched to a commissioned muse worker.
+Every capability above was exercised against the CLI; none of it has been through the scheduler.
 
 ---
 

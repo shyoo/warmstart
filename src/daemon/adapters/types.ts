@@ -9,6 +9,7 @@ import type {
   WorkerIdentity
 } from '@shared/protocol.js'
 import type { StreamDecoder } from '../stream.js'
+import type { TranscriptDecoder } from '../transcript.js'
 
 /**
  * A permission rule for an adapter whose approvals are settled by **configuration rather than a
@@ -283,6 +284,20 @@ export interface AgentAdapter {
    * Return null for records this adapter does not care about.
    */
   decodeStream?: StreamDecoder
+
+  /**
+   * Turn one line of this CLI's own transcript into a metered turn.
+   *
+   * ⛔ Required for any adapter declaring `metering: 'transcript'` whose transcript is **not** Claude
+   * Code's shape, and there is no shared shape any more than there is a shared stream format —
+   * measured 2026-09-06, muse's session log keys on `payload_type`, nests usage under
+   * `payload.event.usage`, dates records in **microseconds**, and counts the cached prefix *inside*
+   * `input_tokens` rather than beside it. A reader keyed on the other vendor meters nothing at all,
+   * silently, and an unmetered run reports as free rather than as unknown.
+   *
+   * ⚠️ Absent means Claude Code's shape, which is what this tailer has always assumed.
+   */
+  decodeTranscript?: TranscriptDecoder
 
   /**
    * Format a user prompt into the wire shape this CLI's stream transport expects.

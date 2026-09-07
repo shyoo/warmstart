@@ -73,11 +73,12 @@ afterAll(() => {
 })
 
 describe('the registry', () => {
-  it('carries four adapters, and each declares a distinct cost model', () => {
+  it('carries five adapters, and each declares a distinct cost model', () => {
     expect(ALL.map((a) => a.info.id).sort()).toEqual([
       'antigravity-cli',
       'claude-code',
       'local-llm',
+      'muse-code',
       'openai-compatible'
     ])
     const models = ALL.map((a) => a.info.policy.costModelId)

@@ -1,0 +1,143 @@
+# Muse Code CLI — measured findings (2026-09-06)
+
+Measured on: Windows 11 host, WSL2 `Ubuntu` distro, `muse` 1.0.3 (1.0.3-R2198.1),
+plan "Everyday Usage". Invoked from Windows as `C:\WINDOWS\system32\wsl.exe`.
+
+Everything below was run against the live CLI on this machine unless a line says otherwise.
+
+## Install shape
+- `~/.local/bin/muse` is a **bash launcher** that self-updates and `exec`s
+  `~/.local/bin/muse-bin-<version>` (263 MB). `MUSE_NO_AUTO_UPDATE=1` stops the update check.
+- `muse --version` -> `Muse Code 1.0.3 (1.0.3-R2198.1)`.
+
+## Config / data locations (XDG)
+- Config: `$XDG_CONFIG_HOME/muse` else `~/.config/muse` — `auth.json` (creds, 0600),
+  `settings.json`, `trust.json` (+ `.lock` files).
+- Data: `$XDG_DATA_HOME/muse` else `~/.local/share/muse` — `sessions/`, `session-index.db`,
+  `tui-history.jsonl`, `plugins/`, `skills/`, `model-catalog/`, `runtime/`.
+- No `MUSE_HOME` / `MUSE_CONFIG_DIR` exists; the launcher honours `MUSE_AUTH_PATH` but the real
+  binary does not (grep: 0 hits) — **isolation must be by XDG dirs**. `META_API_KEY` overrides login.
+- ⭐ **Both XDG dirs work when they live on a Windows drive** (`/mnt/c/...`) — measured: a full
+  `muse exec` run with `XDG_CONFIG_HOME=/mnt/c/Dev/…/config` and `XDG_DATA_HOME=…/data` completed
+  and wrote its session log there, readable from the Windows side. ⚠️ One warning is printed and is
+  benign: *"local session messaging unavailable: unsafe_registry_root … directory must be same-user
+  mode 0700"* — DrvFs cannot express 0700, so cross-session messaging (a feature this app does not
+  use) turns itself off.
+
+## `auth.json` — the free identity probe
+```
+{"schema_version":1,"providers":{"meta":{"access_token":"dca:…","api_base_url":"https://api.meta.ai/v1",
+ "api_key":"LLM|…","mechanism":"oauth","obtained_via":"device_code",
+ "user_email":"…","user_full_name":"…"}}}
+```
+A file read answers *who is signed in*. No command, no turn.
+
+## `trust.json` — the folder-trust dialog, pre-answerable
+```
+{"schema_version":1,"projects":{"/home/shyoo/musetest":{"decision":"trusted"}}}
+```
+⛔ Measured on a fresh config root: the very first screen is **"Do you trust this workspace?"**
+(1 Trust and continue / 2 Quit), and the second is the **login chooser** (*Log in with browser* /
+*Set an API key*). Those are the "few yes" clicks. Writing `trust.json` answers the first.
+
+## CLI surface (from `--help`, both root and `exec`)
+- `muse [OPTIONS] [PROMPT]` = interactive TUI. Subcommands: resume, exec, config, export, trace,
+  skills, sandbox, schema, serve, session-message, auth, login, logout, init.
+- `muse exec [OPTIONS] [PROMPT]` — headless. `--json`, `--prompt-file <PATH>`, `--session-id <UUID>`,
+  `--model <ID>`, `--reasoning-effort none|minimal|low|medium|high|xhigh|max|ultra`,
+  `--approval-mode untrusted|on-request|never`, `--workspace <PATH>`, `--image <PATH>` (repeatable),
+  `--trust-workspace`, `--disable-approval`, `--disable-sandbox`, `--disable-write`,
+  `--disable-shell`, `--sandbox-network`, `--yolo`, `--max-model-steps`, `--no-session-log`.
+- `muse login` — a **plain, non-TUI** device-code flow. Measured output:
+  `Open this page to sign in: https://auth.meta.com/oauth/device/?code=XXXX-XXXX` … `Press Enter to
+  open it in your browser:`. Exits on its own. Perfect for a commissioning terminal.
+
+## ⛔ `muse exec` has **no stdin prompt channel**
+Measured: `echo "…" | muse exec --json --provider echo --session-id …` answers
+`missing prompt` / `usage: muse exec [OPTIONS] [PROMPT]` and exits 1. Codex reads stdin to EOF;
+muse does not. The prompt must arrive as **argv** or **`--prompt-file`**.
+
+⭐ **The bridge that fixes this without touching the scheduler**: launch under a shell that copies
+stdin into a file and then `exec`s muse against it —
+`bash -lc 'cat > <f>; exec muse exec --json --prompt-file <f> …'`. The daemon's existing
+`streamPrompts: 'once'` path already writes one prompt and closes stdin, and the EOF is exactly the
+go signal `cat` needs. Measured end to end from Windows `child_process.spawn`.
+
+## `--session-id` is ours to choose, and reusing one **resumes**
+Measured: a second `muse exec --session-id <same uuid>` appended to the same session and wrote
+`session.resumed` with `prior_turn_count: 1`, `resumed_from_sequence: 80`. So `mintsSessionId: true`
+and `resumeSession: true`, and the vendor handle is our own id.
+
+## Session log = the transcript, and the only place usage appears
+`$XDG_DATA_HOME/muse/sessions/<YYYY>/<MM>/<DD>/<session-uuid>/session.jsonl` — the date directory is
+**local** (WSL and Windows agreed to the minute on this machine).
+
+⛔ **Usage is in the session log and *not* on the `--json` stdout stream.** A full real run was
+captured (39 records) and carries no usage anywhere. The log carries:
+```
+"payload_type":"runtime.session","payload":{"event":{"duration_ms":2155,"kind":"model_completed",
+ "model":"muse-spark-1.3-contributor","usage":{"cache_read_tokens":0,"cache_write_tokens":0,
+ "cached_tokens":0,"input_tokens":24532,"output_tokens":24,"reasoning_tokens":12}}, …}
+```
+So `metering: 'transcript'`, and the record shape is muse's, not Claude Code's — the tailer has to
+be told which dialect it is reading.
+
+Other log records worth knowing: `runtime.session.metadata` (build semver/sha, model_id,
+workspace_root), `run.model.configured`, `session.resumed`, `session.end` (exit_reason,
+resource_usage, uptime_ms).
+
+## `exec --json` stdout dialect (the stream transport)
+Every line is an envelope: `{schema_version, id, stream:{kind:"session",id}, sequence, recorded_at,
+record_type, durability, causation_id, payload_type, payload}` — `recorded_at` is **microseconds**.
+The records that matter:
+- `run.model.configured` → the model and the session id (our `init`).
+- `run.output.delta` → `payload.text`, the assistant's prose.
+- `run.terminal.completed` → `{kind:"run_terminal","terminal":"completed","reason":null,"text":"PONG"}`
+  — **the terminal record**, and the process exits after it.
+- `task.lifecycle.failed` → `{"kind":"failed","reason":"…"}`.
+- `task.lifecycle.status` → provider retry facets (`opening meta model stream attempt 1/10`).
+
+## `/usage` — the quota panel, free, screen-only
+Driven under tmux at 100x30 against the live account:
+```
+  Subscription · Muse Code Everyday Usage
+    Current        5% used · Resets at 1:38 AM
+    Weekly         1% used · Resets Sep 13 at 5:00 PM
+    as of 9:17 PM
+```
+- Two windows: **Current** (the 5h window) and **Weekly** (7d). `Session usage` above it is
+  per-session tokens, not quota.
+- ⛔ **Costs no tokens** — the same panel reported `Turns 0` on the session that displayed it.
+- ⛔ **The Subscription block is absent until the account has spent a turn**, which is what the
+  operator saw on first launch. A parser must therefore return `null` (unknown), never zeroes.
+- ⛔ **Typing `/usage` + Enter is not enough**: the slash-command popup swallows the first Enter.
+  ⭐ **A trailing space closes the popup**, so `"/usage "` + Enter submits in one go — which is
+  exactly the shape `quota.ts` already writes (`write(`${command}\r`)`).
+
+## Models (from `$XDG_DATA_HOME/muse/model-catalog/*.json`, a free file read)
+| model | default | context | efforts |
+|---|---|---|---|
+| `muse-spark-1.3-contributor` | ✔ | 1,007,997 | minimal low medium high xhigh |
+| `muse-spark-1.3` | | 1,007,997 | minimal low medium high xhigh max |
+| `muse-spark-1.2-contributor` | | 1,007,997 | minimal low medium high xhigh |
+| `muse-spark-1.2` | | 1,007,997 | minimal low medium high xhigh |
+⚠️ `-contributor` variants carry *"Your content, including inter-session messages, may be used for
+product improvement."*
+
+## Plans (vendor pricing, read 2026-09-06; **not** measured here)
+Everyday Usage **$5/mo** · High Usage **$15/mo** (3×) · Power Usage **$50/mo** (10×).
+The panel names the plan verbatim: `Muse Code Everyday Usage`.
+
+## ⛔ WSL: what actually blocks, and what fixes it
+1. **`wsl.exe -- bash -lc <script> arg…` drops the trailing positional arguments.** Measured:
+   `$#` came back `0` and `$0` was `/bin/bash`. So paths must be **quoted into the script text**,
+   never passed as `$1`/`$2`.
+2. **A Windows-made git worktree is unreadable by WSL git.** `<worktree>/.git` holds
+   `gitdir: C:/Dev/…/.git/worktrees/ws1`, which WSL git resolves *relatively*:
+   `fatal: not a git repository: /mnt/c/Dev/…/ws1/C:/Dev/…/worktrees/ws1`. Every workspace this app
+   hands out is such a worktree, so without a fix a muse worker could not run one git command.
+   ⭐ **Fixed by environment alone, touching no file**: `GIT_DIR=<translated gitdir>` and
+   `GIT_WORK_TREE=<translated worktree>`. Measured — `rev-parse --abbrev-ref HEAD`, `status
+   --short` and `log` all correct, and **no `safe.directory` was needed**.
+3. `wsl.exe --cd <path>` accepts a `/mnt/c/…` path and works.
+4. WSL does not inherit the Windows environment, so `XDG_*` must be exported inside the script.

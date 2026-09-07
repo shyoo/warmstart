@@ -1,0 +1,137 @@
+{
+  "$comment": [
+    "Muse Code, Meta's terminal coding agent, on a Muse Code subscription.",
+    "",
+    "Every claim here carries its provenance the way docs/adapters.md requires:",
+    "  - models, context windows and effort tiers are READ FROM THE RUNNING CLI's own catalogue",
+    "    ($XDG_DATA_HOME/muse/model-catalog/*.json) on 2026-09-06 against muse 1.0.3.",
+    "  - the two quota windows are MEASURED off the live `/usage` panel the same day:",
+    "    'Current' (five-hourly) and 'Weekly'.",
+    "  - the plan prices are the VENDOR'S PUBLISHED figures, read 2026-09-06, and are the one",
+    "    thing here nothing on this machine can verify.",
+    "",
+    "What is deliberately absent: per-token prices and a cache TTL. Meta publishes neither for the",
+    "subscription, and the catalogue's own `cost` field is null on every row. Guessing a TTL would",
+    "arm the cache clock against a window nobody has measured, so the cache is `unpriced` and the",
+    "clock's manual moves are unavailable on this adapter anyway - there is no `/compact` to send."
+  ],
+  "id": "meta.muse.2026-09",
+  "provider": "meta",
+  "channel": "subscription",
+  "schema_version": 1,
+  "effective_from": "2026-09-01",
+
+  "cache": {
+    "kind": "unpriced",
+    "$comment": [
+      "Muse reports cache_read_tokens and cache_write_tokens per model call - measured, 24,433 read",
+      "against 24,679 input on a second turn - so the fleet can SEE the cache. It publishes no TTL,",
+      "no write multiplier and no read multiplier, so it cannot PRICE it. Reporting a number here",
+      "would be inventing one."
+    ],
+    "read_multiplier": null,
+    "read_refreshes_ttl": false,
+    "ttl_measured_from": "request_start",
+    "ttls": [],
+    "default_ttl": null,
+    "scope": "unknown"
+  },
+
+  "compaction": {
+    "$comment": [
+      "Muse compacts on its own thresholds (--context-compaction-soft/hard-threshold) and offers no",
+      "slash command a daemon owning stdin could send. `available: false` is what the adapter's",
+      "`manualCompact: false` says in the other direction, and every number below is inert."
+    ],
+    "available": false,
+    "summary_output_tokens": 0,
+    "post_context_tokens": 0,
+    "duration_ms": 0,
+    "breakeven_context_tokens": 0,
+    "min_tokens_since_compact": 0
+  },
+
+  "models": [
+    {
+      "id": "muse-spark-1.3-contributor",
+      "context_window": 1007997,
+      "input_per_mtok": null,
+      "output_per_mtok": null,
+      "tokenizer": "unknown",
+      "context_awareness": false,
+      "effort_levels": ["minimal", "low", "medium", "high", "xhigh"]
+    },
+    {
+      "id": "muse-spark-1.3",
+      "context_window": 1007997,
+      "input_per_mtok": null,
+      "output_per_mtok": null,
+      "tokenizer": "unknown",
+      "context_awareness": false,
+      "effort_levels": ["minimal", "low", "medium", "high", "xhigh", "max"]
+    },
+    {
+      "id": "muse-spark-1.2-contributor",
+      "context_window": 1007997,
+      "input_per_mtok": null,
+      "output_per_mtok": null,
+      "tokenizer": "unknown",
+      "context_awareness": false,
+      "effort_levels": ["minimal", "low", "medium", "high", "xhigh"]
+    },
+    {
+      "id": "muse-spark-1.2",
+      "context_window": 1007997,
+      "input_per_mtok": null,
+      "output_per_mtok": null,
+      "tokenizer": "unknown",
+      "context_awareness": false,
+      "effort_levels": ["minimal", "low", "medium", "high", "xhigh"]
+    }
+  ],
+
+  "$plans_comment": [
+    "Three tiers, read from the vendor 2026-09-06. The `/usage` panel names the plan verbatim -",
+    "'Subscription · Muse Code Everyday Usage' - which is what `match` is written against.",
+    "",
+    "`default_plan` is `everyday` and NOT a free tier, because there is no free tier and because",
+    "guessing free would print n/a over real money (docs/cost-model.md §13).",
+    "",
+    "`billing_window` matches on the ids the ADAPTER EMITS, never the ids declared under `quota`",
+    "below - the distinction that priced nothing at all for two providers until 2026-09-02. This",
+    "adapter emits `5h` and `7d`, and the weekly one is what the money divides over."
+  ],
+  "plans": {
+    "billing_window": { "days": 7, "match": ["7d", "weekly"], "pooled": false },
+    "default_plan": "everyday",
+    "catalog": [
+      { "id": "power", "label": "Muse Code Power Usage", "monthly_usd": 50, "match": ["power"] },
+      { "id": "high", "label": "Muse Code High Usage", "monthly_usd": 15, "match": ["high"] },
+      { "id": "everyday", "label": "Muse Code Everyday Usage", "monthly_usd": 5, "match": ["everyday"] }
+    ]
+  },
+
+  "quota": {
+    "kind": "rolling_windows",
+    "probe": "cli",
+    "windows": [
+      { "id": "5h", "label": "Muse 5h" },
+      { "id": "7d", "label": "Muse 7d" }
+    ],
+    "reports": "percent",
+    "$comment": [
+      "Percent only, and screen-only: the panel prints '5% used · Resets at 1:38 AM' and writes the",
+      "figure to no file. The Subscription block is absent until the account has spent a turn, which",
+      "the parser answers with null rather than with zeroes."
+    ],
+    "compact_succeeds_below_true_100": false
+  },
+
+  "$owed": [
+    "No per-token price is published for the Muse subscription and none is invented here; the",
+    "scheduler's gates run on tokens and percentages, not on dollars.",
+    "The cache TTL is unmeasured, so no cache-clock move can be priced on this provider.",
+    "The plan a worker is actually on is printed on the /usage panel and recorded nowhere this app",
+    "reads, so every run prices at the `everyday` default until an operator says otherwise."
+  ]
+}
