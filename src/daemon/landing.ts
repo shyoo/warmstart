@@ -394,7 +394,7 @@ export async function finishWithoutLanding(
  * to know whether their work survived and where to go and look for it.
  */
 async function whereTheWorkIs(cwd: string, branch: string): Promise<string> {
-  const dirty = (await git(cwd, ['status', '--porcelain'])).split('\n').filter(Boolean)
+  const dirty = porcelainNames(await git(cwd, ['status', '--porcelain']))
   const carried = (await git(cwd, ['log', '--oneline', branch, '--not', '--remotes', '--']))
     .split('\n')
     .filter(Boolean)
@@ -405,7 +405,7 @@ async function whereTheWorkIs(cwd: string, branch: string): Promise<string> {
       : `⚠️ Nothing was committed and nothing is uncommitted — \`${branch}\` holds no work.`
   }
 
-  const named = dirty.slice(0, 5).map((line) => line.slice(3)).join(', ')
+  const named = dirty.slice(0, 5).join(', ')
   const more = dirty.length > 5 ? `, +${dirty.length - 5} more` : ''
   const alsoCommitted =
     carried.length > 0
@@ -556,6 +556,25 @@ export const mergeLocal: LandingStrategy = {
       return { ok: false, reason: 'the workspace has uncommitted changes' }
     }
     if (await tipIsRescue(ctx.workspacePath)) return { ok: false, reason: RESCUE_TIP_REASON }
+    // ⛔ Preflight: refuse before the rebase and the project checks run when the trunk cannot
+    // take the merge. t259 failed here: a dirty trunk was discovered only after both had run,
+    // so the wait was spent and the reason named a count instead of the files.
+    // ⚠️ Only when this task lands onto the project's own trunk — a planner-branch landing
+    // never touches the trunk checkout, so its state is irrelevant.
+    if (landingTargetFor(ctx.task, ctx.project) === policyFor(ctx.project).landingTarget) {
+      const blocked = await trunkNotReady(
+        ctx.project.root,
+        landingTargetFor(ctx.task, ctx.project)
+      )
+      if (blocked) {
+        return {
+          ok: false,
+          reason:
+            `the trunk is not ready to receive this: ${blocked}. ` +
+            'The branch is intact — merge it once the trunk is clean.'
+        }
+      }
+    }
     return { ok: true }
   },
 
@@ -585,6 +604,23 @@ export const mergeLocal: LandingStrategy = {
     }
 
     try {
+      // ⛔ Re-check the trunk before the rebase and the checks: it may have become dirty since
+      // `canLand` ran, and running a rebase plus the project's checks first only to fail on a
+      // dirty trunk wastes both and buries the reason. The post-checks gate below stays — the
+      // trunk can equally become dirty while the checks run.
+      if (target === policyFor(ctx.project).landingTarget) {
+        const blockedEarly = await trunkNotReady(ctx.project.root, target)
+        if (blockedEarly) {
+          return {
+            strategy: 'merge-local',
+            ok: false,
+            branch: ctx.branch,
+            reason:
+              `not merged: ${blockedEarly}. ` +
+              'The branch is intact — merge it when the trunk is free.'
+          }
+        }
+      }
       // ⚠️ The local target, never `origin/<target>`. Rebasing onto the remote would quietly make
       // this policy depend on a fetch, which is the thing it exists to avoid.
       //
@@ -918,18 +954,46 @@ async function isAncestorOf(cwd: string, ancestor: string, descendant: string): 
  * tree, a detached HEAD, or a different branch checked out. None of them is an error, and none of
  * them is the tool's to fix.
  */
+/**
+ * File names out of `git status --porcelain`.
+ *
+ * ⚠️ Parsed per line, never sliced at a fixed column off a trimmed buffer. The `git()` helper
+ * above trims the whole stdout, so the first line's leading status column is already gone by the
+ * time it arrives here — slicing it at index 3 turned `README.md` into `EADME.md` (t259).
+ * A short status plus whitespace plus the path holds for every entry shape this tool names.
+ */
+function porcelainNames(out: string): string[] {
+  const names: string[] = []
+  for (const line of out.split(/\r?\n/)) {
+    const trimmed = line.trim()
+    if (!trimmed) continue
+    const m = trimmed.match(/^\S{1,2}\s+(.+)$/)
+    const name = (m?.[1] ?? trimmed).trim()
+    if (name) names.push(name)
+  }
+  return names
+}
+
 async function trunkNotReady(root: string, target: string): Promise<string | null> {
   try {
     const head = await git(root, ['rev-parse', '--abbrev-ref', 'HEAD'])
     if (head !== target) {
       return head === 'HEAD'
-        ? `the trunk is on a detached HEAD rather than \`${target}\``
-        : `the trunk has \`${head}\` checked out rather than \`${target}\``
+        ? `the trunk is on a detached HEAD rather than \`${target}\` — switch the trunk checkout back to \`${target}\` to let the merge run`
+        : `the trunk has \`${head}\` checked out rather than \`${target}\` — switch the trunk checkout back to \`${target}\` to let the merge run`
     }
     const dirty = await git(root, ['status', '--porcelain'])
-    if (dirty.trim()) {
-      const count = dirty.trim().split(/\r?\n/).length
-      return `the trunk has ${count} uncommitted file(s) in it`
+    const lines = dirty.split(/\r?\n/).filter((l) => l.trim() !== '')
+    if (lines.length > 0) {
+      const untracked = lines.filter((l) => l.trim().startsWith('??')).length
+      const tracked = lines.length - untracked
+      const names = porcelainNames(dirty).slice(0, 5).join(', ')
+      const more = lines.length > 5 ? `, +${lines.length - 5} more` : ''
+      return (
+        `the trunk has ${lines.length} uncommitted file(s) in it ` +
+        `(${tracked} modified/tracked, ${untracked} untracked): ${names}${more}. ` +
+        `Commit, stash, or clear them in the trunk checkout (${root}) so the merge can run`
+      )
     }
     return null
   } catch (err) {

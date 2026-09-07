@@ -271,6 +271,14 @@ So the merge is a `git merge --ff-only` **inside the trunk**, attempted only whe
 target and has nothing uncommitted in it. When it is not, the branch is kept, and the task says which
 of the three it was: a dirty tree, a detached HEAD, or another branch checked out.
 
+⭐ **The trunk is checked before the rebase and the checks run, not after.** Until t259 the dirty
+trunk was discovered past both — so a landing spent the rebase and up to thirty minutes of checks and
+then failed with a bare file count. `merge-local` now refuses in `canLand` when the trunk cannot take
+the merge, and re-checks inside the landing before rebasing (the post-checks gate stays, because the
+trunk can become dirty while the checks run). A dirty trunk names its files — how many are
+modified/tracked versus untracked, the first five by name — and says to commit, stash, or clear them
+in the trunk checkout.
+
 ⭐ **Split work merges into the planner's branch, not the trunk.** When a task is a child of a plan task,
 its target ref is the planner's branch (`plannerBranchFor()`). Merging updates the planner branch directly
 via `git branch -f <planner-branch> <commit>` without touching the trunk, keeping `main` clean until the planner

@@ -283,6 +283,70 @@ describe('landing without a remote', () => {
   // on its filesystem bookkeeping without the safety check or its result being stalled.
   }, 20_000)
 
+  /**
+   * ⛔ **t259: a dirty trunk was discovered only after the rebase and the project checks had run.**
+   * The landing failed late with a bare count, after spending both. The trunk is now checked in
+   * `canLand` — before anything runs — and the reason names the files, split into tracked and
+   * untracked, instead of a number. Uses real git: the defect lived in what was asked, and when.
+   */
+  it('refuses before running anything when the trunk has untracked files, and names them', async () => {
+    const branch = 'multi-agent-controller/t88-untracked'
+    const { project, taskId, root, ws } = seedLocal(branch)
+    // The operator, mid-scribble: one modified file and one untracked one.
+    writeFileSync(join(root, 'README.md'), '# fixture\nhalf-written local change\n')
+    writeFileSync(join(root, 'scratch-note.txt'), 'operator scribble\n')
+    const before = git(root, 'rev-parse', 'main')
+
+    const result = await land(project, taskId, ws, branch, 'commit-and-merge')
+
+    expect(result.ok).toBe(false)
+    expect(result.reason).toContain('scratch-note.txt')
+    expect(result.reason).toContain('README.md')
+    expect(result.reason).toContain('untracked')
+    // ⛔ Nothing was stashed, reset or merged. The operator's work is untouched and so is the branch.
+    expect(git(root, 'rev-parse', 'main')).toBe(before)
+    expect(git(root, 'status', '--porcelain')).toContain('scratch-note.txt')
+    expect(git(root, 'branch', '--list', branch)).toContain(branch)
+    // And the agent's commit is still on it, which is what makes this recoverable.
+    expect(git(ws, 'log', '--oneline', '-1')).toContain('the agent did the work')
+  }, 20_000)
+
+  it('fails on the trunk before the project checks, not on the checks', async () => {
+    const branch = 'multi-agent-controller/t89-checks-skipped'
+    const { project, taskId, root, ws } = seedLocal(branch)
+    // A check that would fail if it ever ran, plus a trunk that must stop the landing first.
+    // ⚠️ `setProjectChecks` writes `project.json` into the trunk uncommitted, which is itself
+    // part of the blockage — the assertion is that the failure names the trunk, not the check.
+    const checked = projects.setProjectChecks(project.id, ['git nope-this-is-not-a-command'])
+    writeFileSync(join(root, 'scratch-note.txt'), 'operator scribble\n')
+
+    const result = await land(checked, taskId, ws, branch, 'commit-and-merge')
+
+    expect(result.ok).toBe(false)
+    expect(result.reason).toContain('trunk')
+    expect(result.reason).toContain('scratch-note.txt')
+    expect(result.reason).not.toContain('checks failed')
+  }, 20_000)
+
+  it('re-checks the trunk inside the landing itself, for dirt that arrived after canLand', async () => {
+    const branch = 'multi-agent-controller/t90-late-dirt'
+    const { project, taskId, root, ws } = seedLocal(branch)
+    writeFileSync(join(root, 'late-scribble.txt'), 'arrived after the preflight\n')
+
+    // ⚠️ Straight at the strategy, past `canLand`: this is the re-check before the rebase.
+    const result = await landing.mergeLocal.land({
+      project,
+      task: tasks.requireTask(taskId),
+      workspacePath: ws,
+      branch,
+      policy: 'commit-and-merge'
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.reason).toContain('late-scribble.txt')
+    expect(git(root, 'branch', '--list', branch)).toContain(branch)
+  }, 20_000)
+
   it('says which branch is in the way when the trunk is on another one', async () => {
     const branch = 'multi-agent-controller/t82-elsewhere'
     const { project, taskId, root, ws } = seedLocal(branch)
