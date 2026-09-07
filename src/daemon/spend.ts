@@ -3,7 +3,7 @@ import { adapter } from './adapters/index.js'
 import { db, rows } from './db.js'
 import { log } from './log.js'
 import { bumpPricingEpoch } from './price.js'
-import { requireWorker, setWorkerCredits } from './workers.js'
+import { listWorkers, requireWorker, setWorkerCredits } from './workers.js'
 
 /**
  * The money store: what each account's meters read, and when.
@@ -264,4 +264,26 @@ export async function probeSpendFor(workerId: string, using?: SpendProbeSource):
       error: `the spend probe threw: ${why}`
     })
   }
+}
+
+/**
+ * Ask every account what the vendor now says about its credits.
+ *
+ * ⭐ **Because the switch that needs this answer is thrown by a person, not by a probe.**
+ * `spendCreditsPastLimit` is inert without `Worker.credits.enabled`, and that field is written only
+ * here — so an operator turning the switch on to unstick a task could be waiting on a reading taken
+ * when the account was commissioned, or on no reading at all, with nothing on screen to say so. The
+ * moment the intent changes is the moment to go and look.
+ *
+ * ⚠️ Cheap by construction: `probeSpendFor` asks only the adapters that declare a pollable meter,
+ * and on those it reads a config cache rather than opening a terminal. Accounts on `none` or
+ * `stream` cost a function call.
+ *
+ * ⚠️ Never throws — `probeSpendFor` records its own failures — so a caller may fire and forget.
+ * Returns how many workers were asked, which is what the tests count.
+ */
+export async function refreshCreditStatus(using?: SpendProbeSource): Promise<number> {
+  const targets = listWorkers().filter((w) => !w.retiredAt)
+  await Promise.all(targets.map((w) => probeSpendFor(w.id, using)))
+  return targets.length
 }

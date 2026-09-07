@@ -225,7 +225,13 @@ not spending, which is the same rule `unknown is a verdict` states one heading b
 ⛔ **An intervention that does not happen must still leave a trace.** A run carrying on at 100% of its
 window looks exactly like a run the scheduler forgot about, so the stand-down says so on the task
 thread — once per run per kind, and only at the moment a guard would actually have fired. Announcing
-it at dispatch instead puts a paragraph about the plan limit on every run that never goes near one.
+it unconditionally at dispatch would put a paragraph about the plan limit on every run that never
+goes near one; `noteCreditsDispatch` is the dispatch-time case and it re-reads the window first, so
+it speaks only where the gate would in fact have held the task.
+
+⛔ **The pair gates *starting* work as well as continuing it** (t282). `chooseTarget` and
+`quotaReleaseFor` read `spendingCreditsOn` too, or the one account allowed to spend past its limit is
+the one account that can never be handed a task queued behind that limit. See `cost-model.md` §4.
 
 ### Every belief carries its basis
 

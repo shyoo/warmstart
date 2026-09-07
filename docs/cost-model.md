@@ -292,8 +292,9 @@ precisely what defeats the purchase.
 | Operator intent | `settings.spendCreditsPastLimit`, Settings › Fleet. **Default off** |
 | Vendor's word | `Worker.credits.enabled`, written by `probeSpend` from `.claude.json` |
 | Read through | `spendingCreditsOn(worker, switch)` — the *only* reader of the pair |
-| Stands down | both quota preempts in `runWatchdogs`, and `mayCompact(…, 'quota')` |
-| Does **not** stand down | `mayCompact(…, 'context')`, `autoRunawayStop`, the reserve itself |
+| Stands down | both quota preempts in `runWatchdogs`, `mayCompact(…, 'quota')`, the dispatch gate in `chooseTarget`, and `quotaReleaseFor` |
+| Does **not** stand down | `mayCompact(…, 'context')`, `autoRunawayStop`, the reserve itself, every gate that is not a percentage |
+| Also needs | credits left this month — `creditsPurseEmpty` reads a spent allowance as credits off |
 
 ⛔ **Both halves, and neither alone.** The switch is the operator's standing intent; `credits.enabled`
 is what the vendor says about one account. Acting on the switch alone would apply it to accounts with
@@ -314,6 +315,23 @@ than silently opting out. (Operator's call, 2026-09-07; the first draft stood do
 ⛔ **An intervention that does not happen leaves no trace**, which is why the stand-down says so on
 the task thread — once per run per kind, and only at the moment a guard would actually have fired. A
 run carrying on at 100% of its window is otherwise indistinguishable from one the scheduler forgot.
+
+### The start of a run is a guard too (2026-09-07, t282)
+
+⛔ **The switch was wired into three mid-run guards and none of the two that decide whether work
+*begins*.** A task filed against a 7d window at 100% was refused by `chooseTarget`, and turning the
+switch on changed no answer it gave; a task already parked at `paused_quota` went on waiting for a
+reset, because `quotaReleaseFor` only ever asks *has the window come back*. Neither is the right
+question for an account that has been given permission to spend straight past the limit — so the
+account with credits was the one account that could not be given work.
+
+Both now read `spendingCreditsOn`, and the dispatch gate consults it **before** the exhaustion rule:
+`WINDOW_EXHAUSTED` exists because at 100% an ordinary account has no turn to buy, and an account on
+credits does. ⚠️ A refusal that the switch *did not* lift now says which of the three conditions is
+missing — unread account, vendor says off, or purse spent — because an inert switch that says nothing
+is indistinguishable from a broken one. ⚠️ Throwing the switch also re-probes the fleet's credit
+status (`refreshCreditStatus`), so the permission is decided on a reading taken after the intent
+changed rather than one from commissioning day.
 
 **What a run costs, split.** `RunPrice` already carried the shape this needs and simply had nothing
 to put in it for Claude: `subscriptionUsd` is the share of a fee already paid, `overageUsd` is money

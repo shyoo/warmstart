@@ -252,8 +252,8 @@ export function FleetSettings(): React.JSX.Element {
           title="Spend usage credits past the plan limit"
           description={
             spendCreditsPastLimit
-              ? 'On accounts where the vendor reports usage credits enabled, a run is no longer wrapped up or compacted at the plan limit — it carries on and is billed against those credits. Accounts without credits are unaffected and are still wrapped up.'
-              : 'A run is wrapped up at the plan limit even on an account that has usage credits, so credits are never spent automatically.'
+              ? 'On accounts where the vendor reports usage credits enabled, a run is no longer wrapped up or compacted at the plan limit, and a task is no longer held back from starting on a full window — work carries on and is billed against those credits. Accounts without credits, and accounts whose monthly credits are spent, are unaffected and are still wrapped up and held.'
+              : 'A run is wrapped up at the plan limit even on an account that has usage credits, and no new work starts on a window that is over its gate, so credits are never spent automatically.'
           }
           control={
             <SettingSwitch

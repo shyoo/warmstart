@@ -148,7 +148,7 @@ import { decide, medianHumanLatencyMs } from './cacheclock.js'
 import { lastRateLimit, windowResetsAt } from './quota.js'
 import { DEFAULT_OBJECTIVE, parseObjective, resolveObjective } from './objective.js'
 import { setSetting, settings } from './settings.js'
-import { lastSpend } from './spend.js'
+import { lastSpend, refreshCreditStatus } from './spend.js'
 import { compactionsForTask } from './compaction.js'
 import { listConversations } from './conversations.js'
 import { log, logFiles, recentLog } from './log.js'
@@ -1028,11 +1028,21 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
     // so two clients cannot silently overwrite each other's unrelated settings by round-tripping a
     // stale copy of the whole thing.
     'settings.set': (p) => {
-      let current = settings()
+      const before = settings()
+      let current = before
       for (const [key, value] of Object.entries(p) as Array<[keyof Settings, Settings[keyof Settings]]>) {
         const sanitized = key === 'objective' ? (parseObjective(value) ?? DEFAULT_OBJECTIVE) : value
         current = setSetting(key, sanitized as never)
       }
+      // ⭐ **Throwing the switch asks the vendor again.** `spendCreditsPastLimit` is inert without
+      // `Worker.credits.enabled`, which is written only by a spend probe — so an operator who turned
+      // it on to unstick a task could sit behind a credit status nobody had read since the account
+      // was commissioned, watching a switch that changed nothing and being told nothing. The probe
+      // reads a config cache on the accounts that have one; it opens no terminal and spends no turn.
+      //
+      // ⚠️ Fire-and-forget, and only on the false → true edge: nothing here waits on it, a failed
+      // probe records itself, and re-saving an unrelated setting must not re-probe the fleet.
+      if (current.spendCreditsPastLimit && !before.spendCreditsPastLimit) void refreshCreditStatus()
       return current
     },
 

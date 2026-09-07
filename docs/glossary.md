@@ -371,9 +371,12 @@ billed on top of the subscription.* ⛔ **Two switches, and neither means anythi
 because it is the only control in this app that spends real money; `Worker.credits.enabled` is what
 the *vendor* last said about that one account, read by `probeSpend`. `spendingCreditsOn()` is the only
 reader of the pair, and where both are true the quota guards stand down for that worker — both
-preempts, and the quota-motivated half of compaction — because hitting the limit is the moment credits
-start doing their job, and wrapping the run up there is what defeats the purchase. ⚠️ A worker no
-spend probe has read is `null`: **not knowing is not permission**.
+preempts, the quota-motivated half of compaction, the **dispatch gate** and the release of a
+`paused_quota` park — because hitting the limit is the moment credits start doing their job, and
+holding work there is what defeats the purchase. ⚠️ A worker no spend probe has read is `null`: **not
+knowing is not permission**. ⚠️ Nor is an allowance already spent: `creditsPurseEmpty` reads
+`used >= monthlyLimit` as credits off, because a purse with nothing in it buys a hard vendor refusal
+rather than a reprieve.
 ⛔ **A reading, never a request.** Nothing here turns credits on. Measured 2026-09-07 on Claude Code
 2.1.263, both live accounts report `can_toggle: false` with `org_level_disabled`, and `/usage-credits`
 opens a **login chooser** rather than a toggle — so the switch is thrown by a person where the vendor

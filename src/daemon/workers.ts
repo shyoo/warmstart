@@ -436,9 +436,31 @@ export function noteCreditsDiscrepancyReported(id: string): void {
  *
  * ⚠️ A worker whose credits have never been probed reads `null` here and is therefore **not**
  * spending. Not knowing is not permission.
+ *
+ * ⚠️ And a purse the vendor has already emptied is not permission either — see
+ * `creditsPurseEmpty`.
  */
 export function spendingCreditsOn(worker: Worker | null, switchOn: boolean): boolean {
-  return switchOn && worker?.credits?.enabled === true
+  return switchOn && worker?.credits?.enabled === true && !creditsPurseEmpty(worker.credits)
+}
+
+/**
+ * Has this account already spent every credit it was allowed this month?
+ *
+ * ⛔ **A purse with nothing in it is credits *off* for every decision that matters.** `enabled`
+ * says the vendor is willing to bill past the plan limit; it does not say there is anything left to
+ * bill against. Standing the quota guards down on an emptied purse is the worst of both answers —
+ * the run is not wrapped up cleanly *and* the vendor refuses the turn anyway, which is exactly the
+ * outcome `spendingCreditsOn` exists to avoid.
+ *
+ * ⚠️ Both numbers or nothing. A vendor that publishes no ceiling, or no spend against it, has
+ * said nothing about the purse being empty — and an unknown is not an exhaustion.
+ */
+export function creditsPurseEmpty(credits: CreditStatus | null | undefined): boolean {
+  if (!credits) return false
+  const { monthlyLimit, used } = credits
+  if (monthlyLimit === null || monthlyLimit <= 0 || used === null) return false
+  return used >= monthlyLimit
 }
 
 /**

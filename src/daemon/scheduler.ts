@@ -41,6 +41,7 @@ import {
   poolVerdict
 } from './quota.js'
 import {
+  creditsPurseEmpty,
   getWorker,
   inheritedModelFor,
   listWorkers,
@@ -744,6 +745,23 @@ export function quotaReleaseFor(task: Task): string | null {
   const worker = getWorker(workerId)
   if (!worker) return null
 
+  // ⭐ **Credits release a park on their own evidence, before any reading is consulted.** t282: a
+  // task parked when the 7d window filled stayed parked after the operator turned "spend credits
+  // past the plan limit" on, because every test below asks *has the window come back* — and the
+  // answer is still no, for ever, until the reset. It is the wrong question for an account that has
+  // been given permission to spend straight past the limit. The dispatch gate stands down for the
+  // same pair of conditions, so a task released here is one that will actually run.
+  //
+  // ⛔ Not the same permission as `quotaOverrideUntil`, which is deliberately *not* read here: an
+  // override says "92% is enough room for this task" and stops at the window boundary; credits say
+  // "bill me past the boundary", which is exactly this park.
+  if (spendingCreditsOn(worker, settings().spendCreditsPastLimit)) {
+    return (
+      `${worker.label} reports usage credits enabled and "spend credits past the plan limit" is on, ` +
+      'so work on this account carries on past the limit and is billed against those credits.'
+    )
+  }
+
   const quota = lastQuota(workerId)
   if (!quota || quota.stale || quota.windows.length === 0) return null
 
@@ -1259,6 +1277,33 @@ export function reuseTieBreak(tied: WorkerChoice[]): WorkerChoice | null {
   return reusing[0] ?? null
 }
 
+/**
+ * Why the operator's "spend credits past the plan limit" did not lift this refusal — or nothing.
+ *
+ * ⭐ **The switch is inert on its own, and an inert switch that says nothing is indistinguishable
+ * from a broken one.** An operator who threw it to get a task moving and watched the same sentence
+ * come back tick after tick has no way, from the row, to tell *which* of the three conditions it is
+ * waiting on: an account nobody has probed, a vendor that says credits are off, or a monthly purse
+ * already spent. Each has a different next move, so each gets named.
+ *
+ * ⚠️ Silent unless the switch is on and did not apply. With the switch off there is nothing to
+ * explain, and where it *did* apply there is no refusal to append to.
+ */
+function whyCreditsDidNotLift(worker: Worker, switchOn: boolean): string {
+  if (!switchOn || spendingCreditsOn(worker, true)) return ''
+  const lead = ' — "spend credits past the plan limit" is on, but '
+  const credits = worker.credits
+  if (!credits) {
+    return `${lead}nothing has read this account's credit status yet, so it does not lift this`
+  }
+  if (creditsPurseEmpty(credits)) {
+    const spent = `${credits.used}${credits.currency ? ` ${credits.currency}` : ''}`
+    return `${lead}${worker.label} has spent all ${spent} of its monthly credits, so it does not lift this`
+  }
+  const why = credits.disabledReason ? ` (${credits.disabledReason})` : ''
+  return `${lead}${worker.label} reports usage credits off${why}, so it does not lift this`
+}
+
 export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
   const reasons: string[] = []
   /**
@@ -1284,8 +1329,11 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
   // whether a person has overruled the water mark — a tick that changed its mind halfway through
   // would dispatch under an override and then report that there was none.
   const override = quotaOverridden(task)
+  // ⚠️ Read once for the same reason `override` is: the credits stand-down below and the sentence
+  // an operator reads when it does *not* apply both have to describe one settings snapshot.
+  const switches = settings()
   const project = task.projectId ? getProject(task.projectId) : undefined
-  const objective = resolveObjective(project?.config?.objective, task.objective, settings().objective)
+  const objective = resolveObjective(project?.config?.objective, task.objective, switches.objective)
   const w = weights(objective)
   // ⛔ Once per decision, not once per candidate. See `scoreCandidate`'s `pace` parameter.
   const pace = paceFactors()
@@ -1437,6 +1485,20 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
     // model — "(claude-opus-5)" appended to every refusal on a single-model fleet is noise that says
     // nothing, since there was never another pair it could have meant.
     const namesModel = candidateModels.length > 1
+    /**
+     * Is this account billing past its plan limit right now, with the operator's say-so?
+     *
+     * ⭐ **The half of "spend credits past the plan limit" that was missing, and the whole of t282.**
+     * The switch stood the three *mid-run* guards down — compaction, the window boundary, the
+     * overrun preempt — and did nothing at all at the *start* of a run. So a task filed against a
+     * 7d window at 100% was refused by the dispatch gate; turning the switch on changed no answer
+     * the gate gave, and neither did stopping and resuming by hand. The task waited for a window
+     * reset it had been given permission to spend straight past.
+     *
+     * ⛔ Per worker, never per fleet: it is `spendingCreditsOn`'s two conditions, and the vendor's
+     * word is about *this* account.
+     */
+    const onCredits = spendingCreditsOn(worker, switches.spendCreditsPastLimit)
     for (const model of candidateModels) {
       let trustedWindows: QuotaWindow[] = []
       if (quota && quota.windows.length > 0) {
@@ -1459,7 +1521,18 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
           // there is no such turn: t276 was dispatched to CodexFirst on a 7d window the vendor had
           // already emptied and came back `paused_quota` five seconds later, having bought a
           // process, a cold start and a preempted run. See `WINDOW_EXHAUSTED`.
-          if (override && !verdict.blocking.exhausted) {
+          if (onCredits) {
+            // ⛔ **Including at 100%, and that is the point.** The exhaustion rule below exists
+            // because an ordinary account at 100% has no turn to buy — the vendor refuses it. An
+            // account spending usage credits does have one: the plan limit is precisely where the
+            // credits start being what pays, so a full window is a bill rather than a refusal. This
+            // is the same stand-down the three mid-run guards already make (`noteCreditsStandDown`),
+            // applied at the moment a run *starts* instead of only once it is under way.
+            log.info(
+              `t${task.seq} dispatching to ${worker.label}${modelSuffix} at ${Math.round(win.percent)}% of its ` +
+                `${label} window — "spend credits past the plan limit" is on and the account reports credits enabled`
+            )
+          } else if (override && !verdict.blocking.exhausted) {
             log.info(
               `t${task.seq} dispatching to ${worker.label}${modelSuffix} at ${Math.round(win.percent)}% of its ` +
                 `${label} window — a person overrode the ${gate}% gate`
@@ -1477,7 +1550,8 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
               : ''
             const spent = verdict.blocking.exhausted && override ? ', which no override can buy a turn on' : ''
             refuse(
-              `${worker.label}${modelSuffix} at ${Math.round(win.percent)}% of its ${label} window${spent}${staleness}`
+              `${worker.label}${modelSuffix} at ${Math.round(win.percent)}% of its ${label} window${spent}` +
+                `${staleness}${whyCreditsDidNotLift(worker, switches.spendCreditsPastLimit)}`
             )
             const resetsAt = win.resetsAt ?? windowResetsAt(worker.id)?.at ?? null
             if (resetsAt && resetsAt > Date.now()) {
@@ -2537,9 +2611,15 @@ function poolIsNarrow(project: Project, capacity: number): string {
  * starts. ⚠️ Silent unless the override is both live *and* actually load-bearing — a task carrying
  * one that dispatched to an account at 40% was never held by anything, and announcing an override
  * that changed no decision would train the reader to ignore the line that matters.
+ *
+ * ⚠️ Exported alongside `noteCreditsDispatch`, so a test can hold the two side by side and show
+ * that exactly one of them ever speaks.
  */
-function noteQuotaOverrideDispatch(task: Task, worker: Worker): void {
+export function noteQuotaOverrideDispatch(task: Task, worker: Worker): void {
   if (!quotaOverridden(task)) return
+  // ⛔ The gate consults credits *first*, so on a credit-enabled account the override is not what
+  // let this run start and saying it was would be false — `noteCreditsDispatch` writes the true one.
+  if (spendingCreditsOn(worker, settings().spendCreditsPastLimit)) return
   const quota = lastQuota(worker.id)
   // ⚠️ Age is not asked about here, for the reason the dispatch gate no longer asks either: the
   // override was load-bearing against whatever reading the gate actually read, stale or not.
@@ -2557,6 +2637,39 @@ function noteQuotaOverrideDispatch(task: Task, worker: Worker): void {
       `window. The ${gate}% gate would normally hold this task; it was overridden by ` +
       'hand, so this run is also exempt from being preempted over that percentage. ⚠️ A turn the ' +
       'vendor actually refuses still stops it, and the window boundary itself still applies.'
+  )
+}
+
+/**
+ * Say, on the task, that this run started over a full window because the account is on credits.
+ *
+ * ⛔ **A run that starts at 100% has to say why, or it reads as a bug.** The board shows the
+ * window full and the run going; without this line the only two explanations available to a reader
+ * are "the gate is broken" and "the gate was overridden", and neither is true. ⚠️ It names both
+ * conditions and the money, because carrying on past the plan limit is what is being billed.
+ *
+ * ⚠️ Once per run, from `dispatch`, and silent unless the stand-down was load-bearing — a
+ * credit-enabled account dispatched at 40% was never held by anything.
+ *
+ * ⚠️ Exported for its own test: reaching it through a real dispatch would need a spawned process
+ * and a workspace, neither of which the sentence depends on.
+ */
+export function noteCreditsDispatch(task: Task, worker: Worker): void {
+  if (!spendingCreditsOn(worker, settings().spendCreditsPastLimit)) return
+  const quota = lastQuota(worker.id)
+  if (!quota || quota.windows.length === 0) return
+  const choice = resolveModelChoice(task.constraints, worker, false, quota)
+  const blocking = poolVerdict(windowsForPool(quota.windows, poolFor(worker, choice.model))).blocking
+  if (!blocking) return
+  const win = blocking.window
+  addMessage(
+    task.id,
+    'system',
+    `Starting on ${worker.label} at ${Math.round(win.percent)}% of its ${win.label ?? '5h'} window. ` +
+      `The ${blocking.threshold}% gate would normally hold this task; "spend credits past the plan ` +
+      'limit" is on and this account reports usage credits enabled, so the run goes ahead and is ' +
+      'billed against those credits. ⚠️ Turn the switch off in Settings › Fleet to go back to ' +
+      'waiting for the window.'
   )
 }
 
@@ -2608,6 +2721,10 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
   // something they have to remember pressing. ⚠️ Written before the spawn, so it survives a dispatch
   // that then fails.
   noteQuotaOverrideDispatch(task, worker)
+  // ⚠️ Beside it, and for the same reason: the stand-down that let this run start is invisible
+  // otherwise. Exactly one of the two ever speaks — credits outrank an override, because that is
+  // the order the gate itself asks in.
+  noteCreditsDispatch(task, worker)
 
   // ⛔ Reusing a warm session skips the workspace claim entirely: the session is already sitting in
   // the workspace this task claimed, on this task's branch. Claiming again would double-book the
