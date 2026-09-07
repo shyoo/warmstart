@@ -59,6 +59,38 @@ describe('run quota window pairs', () => {
     ])
   })
 
+  it('⛔ keeps each antigravity pool on its own row as the bare 5h alias moves pools (t273)', () => {
+    // Opening: the 5h tie (0/0) leaves the alias on Gemini, the first group. Closing: Claude/GPT
+    // spent to 100% and holds the alias now. Pairing by id alone reads `Gemini 5h 0% → 100%` and
+    // `Claude/GPT 5h 0% → n/a`; pairing by pool and kind reads what the run actually spent.
+    const aliasedBefore = {
+      sampledAt: 1,
+      stale: false,
+      windows: [
+        { id: '5h', label: 'Gemini 5h', percent: 0, group: 'gemini' },
+        { id: 'weekly:gemini', label: 'Gemini 7d', percent: 92, group: 'gemini' },
+        { id: '5h:claude-gpt', label: 'Claude/GPT 5h', percent: 0, group: 'claude-gpt' },
+        { id: 'weekly:claude-gpt', label: 'Claude/GPT 7d', percent: 93, group: 'claude-gpt' }
+      ]
+    }
+    const aliasedAfter = {
+      sampledAt: 2,
+      stale: false,
+      windows: [
+        { id: '5h:gemini', label: 'Gemini 5h', percent: 0, group: 'gemini' },
+        { id: 'weekly:gemini', label: 'Gemini 7d', percent: 92, group: 'gemini' },
+        { id: '5h', label: 'Claude/GPT 5h', percent: 100, group: 'claude-gpt' },
+        { id: 'weekly:claude-gpt', label: 'Claude/GPT 7d', percent: 100, group: 'claude-gpt' }
+      ]
+    }
+    expect(quotaWindowDeltas(aliasedBefore, aliasedAfter)).toEqual([
+      { label: 'Gemini 5h', from: 0, to: 0 },
+      { label: 'Gemini 7d', from: 92, to: 92 },
+      { label: 'Claude/GPT 5h', from: 0, to: 100 },
+      { label: 'Claude/GPT 7d', from: 93, to: 100 }
+    ])
+  })
+
   it('leaves only the missing final window as n/a when the closing sample is partial', () => {
     expect(
       quotaWindowDeltas(before, {

@@ -1139,7 +1139,16 @@ export interface RunPrice {
 
 /** A quota reading kept beside a run, with enough of its basis to be distrusted properly. */
 export interface RunQuota {
-  windows: Array<{ id: string; label: string; percent: number }>
+  /**
+   * Windows are paired across the run's two readings by pool and kind, never by bare id.
+   *
+   * ⛔ Antigravity aliases its busiest five-hour window to the bare id `5h`, and whichever pool
+   * is busiest holds that id — so the id moves between pools from one reading to the next and
+   * pairing by id alone attributes one pool's spend to the other (t273). `group` is the stable
+   * half of the pair: it survives the aliasing by contract (see `QuotaWindow.group`).
+   * `undefined` on a single-pool provider, where the id is already stable.
+   */
+  windows: Array<{ id: string; label: string; percent: number; group?: string }>
   sampledAt: number
   /** True when this was the best available reading and was already too old to act on. */
   stale: boolean

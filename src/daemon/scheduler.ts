@@ -703,7 +703,11 @@ function runQuota(workerId: string): RunQuota | null {
   const quota = lastQuota(workerId)
   if (!quota || quota.windows.length === 0) return null
   return {
-    windows: quota.windows.map((w) => ({ id: w.id, label: w.label, percent: w.percent })),
+    // ⛔ `group` travels too. Without it the run's two readings pair windows by bare id, and
+    // Antigravity's busiest pool holds the bare `5h` id — so a reading taken before the run and
+    // one taken after can hold that id on different pools, and the thread shows one pool's spend
+    // on the other's row (t273).
+    windows: quota.windows.map((w) => ({ id: w.id, label: w.label, percent: w.percent, group: w.group })),
     sampledAt: quota.sampledAt,
     stale: quota.stale
   }
@@ -3398,6 +3402,9 @@ async function runWatchdogs(): Promise<void> {
         // Fall back to the baseline snapshot taken at dispatch if mid-run staleness elapsed (>15m)
         const pool = poolFor(worker, run.model)
         const win =
+          run.quotaBefore.windows.find(
+            (w) => isSessionRateWindow(w.id) || (pool && (w.group?.includes(pool) ?? false))
+          ) ??
           run.quotaBefore.windows.find((w) => isSessionRateWindow(w.id) || (pool && w.id.includes(pool))) ??
           run.quotaBefore.windows.find((w) => isSessionRateWindow(w.id)) ??
           run.quotaBefore.windows[0]

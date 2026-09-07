@@ -147,6 +147,12 @@ export function quotaUrgency(percentUsed: number): 'ok' | 'warn' | 'danger' {
  * ⛔ The opening reading is a baseline, not a cost on its own. Keeping its rows when the closing
  * reading is pending makes that explicit — `48% → n/a` cannot be mistaken for the amount the run
  * spent, while it gives the operator a stable place to watch the eventual reading arrive.
+ *
+ * ⛔ Paired by pool and window kind, never by bare id. Antigravity aliases its busiest five-hour
+ * window to the bare id `5h`, and whichever pool is busiest holds that id — so the id can sit on
+ * Gemini in the opening reading and on Claude/GPT in the closing one, and pairing by id alone
+ * shows one pool's spend on the other's row (t273: `Gemini 5h 0% → 100%` beside
+ * `Claude/GPT 5h 0% → n/a`). `group` survives the aliasing by contract and is the stable half.
  */
 export function quotaWindowDeltas(
   before: RunQuota,
@@ -155,8 +161,31 @@ export function quotaWindowDeltas(
   return before.windows.map((opening) => ({
     label: opening.label,
     from: opening.percent,
-    to: after?.windows.find((closing) => closing.id === opening.id)?.percent ?? null
+    to: closingPercent(opening, after)
   }))
+}
+
+/** `5h:gemini` and the bare `5h` alias are the same kind of window; `weekly:x` likewise. */
+function windowKind(id: string): string {
+  if (id === '5h' || id.startsWith('5h:')) return '5h'
+  if (id === 'weekly' || id.startsWith('weekly:')) return '7d'
+  return id
+}
+
+function closingPercent(
+  opening: RunQuota['windows'][number],
+  after: RunQuota | null
+): number | null {
+  if (!after) return null
+  // Groupless rows pair exactly as before — by bare id, which is stable everywhere no pool
+  // exists to move it. Only rows that carry a pool pair by pool and kind.
+  if (opening.group !== undefined) {
+    const samePool = after.windows.find(
+      (closing) => closing.group === opening.group && windowKind(closing.id) === windowKind(opening.id)
+    )
+    if (samePool) return samePool.percent
+  }
+  return after.windows.find((closing) => closing.id === opening.id)?.percent ?? null
 }
 
 /**

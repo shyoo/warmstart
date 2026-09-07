@@ -686,11 +686,19 @@ a worker that cannot answer `/usage` (§ Rung 0's two dialogs) would otherwise h
 A run that metered nothing is not re-read at all — no spend, no difference to take.
 
 ⭐ **This is R1's instrument, made visible.** The window delta and the transcript token count are shown
-side by side in the task's detail pane and ⛔ **never reconciled**: transcript metering is exact for
+side by side in the task's detail pane (`quotaWindowDeltas`) and ⛔ **never reconciled**: transcript metering is exact for
 assistant turns, while quota covers everything the CLI spent that never reached a transcript — the
 auto-mode classifier (§9), title generation, whatever else. Their difference *is* the measurement, so
 merging them destroys it. R1 no longer needs an experiment run by hand; it needs a quiet worker and a
 look at the pane.
+
+⛔ **The two readings pair by pool and window kind, never by bare window id** (t274, 2026-09-07).
+Antigravity aliases its busiest five-hour window to the bare id `5h`, and whichever pool is busiest
+holds that id — so the id can sit on Gemini in `quotaBefore` and on Claude/GPT in `quotaAfter`, and
+pairing by id showed one pool's spend on the other's row (`Gemini 5h 0% → 100%` beside
+`Claude/GPT 5h 0% → n/a`). `RunQuota` windows therefore carry `group`, which survives the aliasing
+by contract, and the pane matches on `(group, kind)` with the bare id as fallback for rows stored
+before `group` was recorded.
 
 ### Rung 0 on Antigravity — the same probe, with the answer in a different place (2026-08-27)
 
