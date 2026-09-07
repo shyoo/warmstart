@@ -99,6 +99,19 @@ will ever move.
 ⚠️ **`queued` is not a status.** A task the scheduler passed over is still `ready`, with a
 `hold_reason` and — where the refusal has a known end — a `hold_until` beside it.
 
+⛔ **And a `ready` task owes a releaser just as much as a held one.** t268 (2026-09-07): a task
+pinned to a worker whose CLI the daemon could not find sat at `ready` reading *"Muse Code is not
+installed"* for as long as the daemon ran, indistinguishable on the queue from one waiting behind a
+busy account. `chooseTarget` now answers **`standing`** beside `holdUntil` — *no amount of waiting
+changes this*, true when every refusal in the field was one of retired, not installed, signed out,
+subscription expired, role held-out, or a capability no candidate has — and `tick` hands such a task
+to a person as `awaiting_human` once the same standing reason has outlived `STANDING_HOLD_GRACE_MS`
+(ten minutes, because a bridged adapter's `isInstalled()` is *false* until its first probe returns).
+⚠️ Not `failed`: nothing was attempted and nothing was lost, and a reply re-queues it through
+`continueTask`. ⚠️ The two refusals a person is already holding — **disabled** and
+**human-occupied** — are deliberately *not* standing, nor is `suspect`, which a probe or a turn
+clears without anybody being asked.
+
 ⚠️ `hold_until` is **descriptive only**. `not_before` is the one `admit()` reads; they were split
 deliberately so a task could say *when* without changing what dispatches.
 

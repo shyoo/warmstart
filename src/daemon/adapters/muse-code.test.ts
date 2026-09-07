@@ -3,7 +3,7 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { museCode, parseResetTime } from './muse-code.js'
-import { gitEnvFor, hostFor, hostPath, hostScript, shQuote, type CliHost } from './clihost.js'
+import { gitEnvFor, hostExec, hostFor, hostPath, hostScript, shQuote, type CliHost } from './clihost.js'
 
 /**
  * Muse Code, and the host bridge it is the first adapter to need.
@@ -77,6 +77,48 @@ describe('hostScript', () => {
   it('always execs, even with nothing to export and no stdin to drain', () => {
     const script = hostScript({ command: 'muse', args: [], cwd: 'C:\\x', env: {} })
     expect(script).toBe("exec 'muse'")
+  })
+})
+
+describe('hostExec', () => {
+  /**
+   * ⛔ **The whole of t268.** `wsl.exe -- muse --version` answers
+   * `/bin/bash: line 1: muse: command not found` — measured 2026-09-07 — because the launcher lives
+   * in `~/.local/bin`, which `~/.profile` puts on `PATH` and a bare `wsl.exe --` never reads. So
+   * `isInstalled()` and `detect()` said *no* for a CLI that runs perfectly, a task pinned to that
+   * worker was held with *"Muse Code is not installed"*, and the quota probe — which has always gone
+   * through `hostPlan`'s `bash -lc` — read that same account's windows in the same minute.
+   */
+  it('reaches a bridged CLI through a login shell', () => {
+    expect(hostExec(WSL, 'muse', ['--version'])).toEqual({
+      command: 'C:\\Windows\\System32\\wsl.exe',
+      args: ['--', 'bash', '-lc', "exec 'muse' '--version'"]
+    })
+  })
+
+  /** ⚠️ Quoted into the script, for the same reason `hostScript` quotes: `--` args never survive. */
+  it('quotes what it is given rather than pasting it into a script', () => {
+    const plan = hostExec(WSL, 'muse', ['--config', "/mnt/c/a b/$RECYCLE.BIN/it's"])
+    expect(plan.args[3]).toBe("exec 'muse' '--config' '/mnt/c/a b/$RECYCLE.BIN/it'\\''s'")
+  })
+
+  /**
+   * ⛔ Exported into the script, because nothing crosses the boundary — and it matters *now*: this
+   * half only started finding the CLI in t268, and muse's launcher self-updates a 263 MB binary
+   * unless it is told not to. A version check that swaps the binary under a running fleet is the
+   * thing that variable exists to prevent.
+   */
+  it('exports what the command needs on the far side of the bridge', () => {
+    const plan = hostExec(WSL, 'muse', ['--version'], { MUSE_NO_AUTO_UPDATE: '1' })
+    expect(plan.args[3]).toBe("export MUSE_NO_AUTO_UPDATE='1'\nexec 'muse' '--version'")
+  })
+
+  /** ⛔ A native host is started directly: there is no boundary, and no shell to pay for. */
+  it('runs a native CLI with no shell at all', () => {
+    expect(hostExec(NATIVE, 'muse', ['--version'])).toEqual({
+      command: '/home/me/.local/bin/muse',
+      args: ['--version']
+    })
   })
 })
 

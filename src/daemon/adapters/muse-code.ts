@@ -214,7 +214,9 @@ function refreshInstalled(): void {
 
 async function version(host: CliHost): Promise<string | null> {
   try {
-    const probe = hostExec(host, info.command, ['--version'])
+    // ⛔ Exported *inside* the script, not handed to the spawn: on a bridged host the environment
+    // stops at `wsl.exe`. Without it the launcher may self-update mid-fleet — see `hostExec`.
+    const probe = hostExec(host, info.command, ['--version'], { MUSE_NO_AUTO_UPDATE: '1' })
     const { stdout } = await run(probe.command, probe.args, {
       timeout: 30_000,
       env: { ...spawnEnv(), MUSE_NO_AUTO_UPDATE: '1' }

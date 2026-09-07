@@ -51,7 +51,7 @@ import { fitnessFor } from './fitness.js'
 import { qualityReport } from './quality.js'
 import { complexityOf } from './complexity.js'
 import { exploreRoute } from './exploration.js'
-import { accountUnavailability } from './eligibility.js'
+import { accountRefusal } from './eligibility.js'
 import { getProject, landingTargetFor, policyFor, reloadProject } from './projects.js'
 import {
   admitBlocked,
@@ -402,6 +402,78 @@ export interface TickResult {
   note: string
 }
 
+/**
+ * How long a standing refusal has to survive before the task behind it is handed to a person.
+ *
+ * ⛔ **Not zero, and the reason is measured.** A bridged adapter's `isInstalled()` answers *no* until
+ * its first background probe returns — that is the contract, not a bug (see `muse-code.ts`) — and a
+ * daemon that had just started would otherwise escalate every task pinned to that account inside ten
+ * seconds of a restart. Ten minutes is longer than any cold start here and far shorter than the
+ * forever this replaces.
+ */
+export const STANDING_HOLD_GRACE_MS = 10 * 60 * 1000
+
+/**
+ * Standing holds this process has seen, and since when.
+ *
+ * ⚠️ Process-local on purpose, like the quota refresh ledger: a restart re-starts the clock, which
+ * is the safe direction to be wrong in — it delays a hand-over, it never invents one. The reason is
+ * part of the key, so a task whose refusal changes gets a fresh grace period rather than inheriting
+ * the age of a different problem.
+ */
+const standingHolds = new Map<string, { reason: string; since: number }>()
+
+/** ⛔ A task that moved is no longer being held: dispatched, given up on, or refused transiently. */
+function clearStandingHold(taskId: string): void {
+  standingHolds.delete(taskId)
+}
+
+/** Test seam: the ledger is process state, and a test that seeds a fleet needs it empty. */
+export function forgetStandingHolds(): void {
+  standingHolds.clear()
+}
+
+/**
+ * A task nothing in this fleet will ever start, handed to the person who can change that.
+ *
+ * ⛔ **The question t268 asked: how does a queued task unblock itself?** It does not, when what is
+ * holding it is standing — a CLI that is not installed, an account signed out or retired, a
+ * capability no adapter here has. Before this, such a task sat at `ready` with a sentence on its row
+ * for as long as the daemon ran, indistinguishable at a glance from one waiting behind a busy
+ * account, and the fleet reported *"held"* on every tick for ever.
+ *
+ * ⚠️ `awaiting_human`, not `failed`. Nothing failed: no run was attempted, no work was lost, and the
+ * task is one act away from being runnable — install the CLI, sign the account in, or re-file
+ * without the pin. `failed` is a settled status that releases dependents and closes runs, and it
+ * would say the work was tried and did not survive. `awaiting_human` is the resting state that says
+ * *this needs you* and that a reply puts straight back in the queue (`continueTask`).
+ *
+ * Returns whether the task was handed over on this pass.
+ */
+function handOverStandingHold(task: Task, reason: string, now = Date.now()): boolean {
+  const prior = standingHolds.get(task.id)
+  if (!prior || prior.reason !== reason) {
+    standingHolds.set(task.id, { reason, since: now })
+    return false
+  }
+  if (now - prior.since < STANDING_HOLD_GRACE_MS) return false
+  standingHolds.delete(task.id)
+  addMessage(
+    task.id,
+    'system',
+    `Nothing in this fleet can start this task as it is filed: ${reason}. That is not a queue — ` +
+      'waiting will not change it, so it is over to you: fix the account (install the CLI, sign in, ' +
+      're-enable it) or re-file this task without the pin that names it. Say anything here once it ' +
+      'is sorted and this goes straight back in the queue.'
+  )
+  setStatus(task.id, 'awaiting_human', { assignee: 'human', holdReason: reason })
+  log.warn(
+    `t${task.seq} handed to a person after ${Math.round((now - prior.since) / 60000)}m of a hold ` +
+      `nothing clears by itself: ${reason}`
+  )
+  return true
+}
+
 export async function tick(): Promise<TickResult> {
   admitScheduled()
   // ⛔ Beside it for the same reason `resumeQuotaPaused` is: a different status, held by a different
@@ -472,6 +544,14 @@ export async function tick(): Promise<TickResult> {
 
     const choice = chooseTarget(task)
     if (choice.deferred || !choice.worker) {
+      // ⛔ Before the hold is recorded, because a hand-over is not a hold: the task stops being
+      // `ready` and there is nothing left for the cache clock to try to unblock. ⚠️ Never on a
+      // `deferred` result — that is a routing question in flight, which is the opposite of standing.
+      if (!choice.deferred && choice.standing && handOverStandingHold(task, choice.reason)) {
+        skipped.push(`t${task.seq}: ${choice.reason} — handed to a person`)
+        continue
+      }
+      if (!choice.standing) clearStandingHold(task.id)
       skipped.push(`t${task.seq}: ${choice.reason}`)
       held.push(task)
       // ⛔ Told to the operator, not only to the log. `ready` on its own is unreadable - it is the
@@ -495,6 +575,7 @@ export async function tick(): Promise<TickResult> {
     }
     try {
       if (choice.session) dispatchTargets.add(choice.session.id)
+      clearStandingHold(task.id)
       await dispatch(task, choice)
       dispatched++
     } catch (err) {
@@ -798,6 +879,19 @@ export interface WorkerChoice {
    * moment it could move.
    */
   holdUntil?: number | null
+  /**
+   * Is every refusal behind this one a **standing** one — something no amount of waiting changes?
+   *
+   * ⛔ **The other half of what an operator is owed, beside `holdUntil`.** That says when a refusal
+   * could stop being true; this says that it never will on its own. A task pinned to an account
+   * whose CLI is not installed, that is signed out, retired, or that simply cannot do what the task
+   * requires, is not queued behind anything — it is waiting for a person, and `runTick` escalates it
+   * to `awaiting_human` once the same standing hold has survived `STANDING_HOLD_GRACE_MS`.
+   *
+   * ⚠️ False whenever *any* refusal in the field was transient, because the task needs only one
+   * worker and one of them may free up. Absent on a result that chose somebody.
+   */
+  standing?: boolean
   /** The model this candidate would run, resolved before the spawn. Null where it is the CLI's own. */
   model?: string | null
   /**
@@ -1102,6 +1196,16 @@ function stickyWorkerFor(task: Task): string | null {
 export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
   const reasons: string[] = []
   /**
+   * ⛔ Standing until something transient is met, not the other way round. A field of refusals is
+   * only *standing* if every one of them is — the task needs one worker, and one that is merely
+   * busy is a task that will run without anybody being asked anything.
+   */
+  let standing = true
+  function refuse(why: string, isStanding = false): void {
+    reasons.push(why)
+    if (!isStanding) standing = false
+  }
+  /**
    * When the workers held on quota get their windows back — the earliest of them.
    *
    * ⛔ Collected as the gate fires rather than recomputed afterwards, so the number the operator is
@@ -1175,10 +1279,12 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
     // ⛔ Role gate: an account that does not do work is not offered work. `controller` is reserved
     // for judgment/consults; `none` is held out of both, on purpose, while staying commissioned.
     if (!canWork(worker.role)) {
-      reasons.push(
+      // ⚠️ Standing: a role is a setting on the account, and no tick changes one.
+      refuse(
         worker.role === 'none'
           ? `${worker.label} is held out of both work and judgment`
-          : `${worker.label} is controller only`
+          : `${worker.label} is controller only`,
+        true
       )
       continue
     }
@@ -1188,9 +1294,9 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
     // nothing. These used to be written out here and half-written in the controller, which is how
     // an account this loop had already quarantined stayed eligible for judgment calls. Anything
     // that has to know *what is being asked* stays below, where the task is in scope.
-    const unfit = accountUnavailability(worker)
+    const unfit = accountRefusal(worker)
     if (unfit) {
-      reasons.push(unfit)
+      refuse(unfit.why, unfit.standing)
       continue
     }
 
@@ -1200,7 +1306,8 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
       (need) => (info.capabilities as unknown as Record<string, unknown>)[need] !== true
     )
     if (missing.length) {
-      reasons.push(`${worker.label} lacks ${missing.join(', ')}`)
+      // ⚠️ Standing: an adapter does not grow a capability while a task waits for it.
+      refuse(`${worker.label} lacks ${missing.join(', ')}`, true)
       continue
     }
 
@@ -1214,7 +1321,7 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
     const sessions = sessionsForWorker(worker.id)
     const retained = retainedReservations(worker.id, sessions)
     if (atCapacity(sessions, worker.maxConcurrent, reuse, retained)) {
-      reasons.push(`${worker.label} at capacity`)
+      refuse(`${worker.label} at capacity`)
       continue
     }
 
@@ -1298,7 +1405,7 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
             )
           } else {
             const modelSuffix = namesModel ? ` (${model ?? 'default'})` : ''
-            reasons.push(
+            refuse(
               `${worker.label}${modelSuffix} at ${Math.round(win.percent)}% of its ${win.label ?? '5h'} window`
             )
             const resetsAt = win.resetsAt ?? windowResetsAt(worker.id)?.at ?? null
@@ -1333,7 +1440,11 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
       reason: reasons.length ? reasons.join('; ') : 'no eligible worker',
       quotaUnverified,
       score: 0,
-      holdUntil: quotaHoldUntil
+      holdUntil: quotaHoldUntil,
+      // ⛔ **An empty field is standing too.** `no eligible worker` is what a task pinned to a
+      // retired account, or one naming an adapter this fleet has none of, comes back with — every
+      // worker was filtered out before it could refuse — and waiting changes that least of all.
+      standing: reasons.length === 0 || standing
     }
   }
 

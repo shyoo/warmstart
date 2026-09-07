@@ -153,6 +153,15 @@ way, and `muse-code.ts` never mentions WSL or `win32`. Native wins where it exis
 macOS and Linux install — so nobody is routed through a virtual machine they did not ask for, and
 the macOS build carries no Windows code it could never run.
 
+⛔ **Both halves of that bridge have to be a *login* shell, and only one of them was.** t268
+(2026-09-07): `hostPlan` has always used `bash -lc`, and `hostExec` — the `execFile` half, which is
+all `isInstalled()` and `detect()` ever use — ran `wsl.exe -- muse --version`. That answers
+`/bin/bash: line 1: muse: command not found`, because the vendor's launcher installs into
+`~/.local/bin` and `~/.profile` is what puts that on `PATH`. So a commissioned worker reported *"Muse
+Code is not installed"* and every task pinned to it was held — **while its quota probe, which goes
+through `hostPlan`, read that same account's windows in the same minute.** ⚠️ The asymmetry is the
+lesson: a bridged CLI has to be reached the same way for a question about itself as for a turn.
+
 ⚠️ **Still unflown**: `--image`, and no task has yet been dispatched to a commissioned muse worker.
 Every capability above was exercised against the CLI; none of it has been through the scheduler.
 

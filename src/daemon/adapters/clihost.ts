@@ -179,10 +179,33 @@ export function hostPlan(host: CliHost, req: HostRequest): HostPlan {
 /**
  * Run one command on the host and read its output — the `execFile` half, for version detection.
  *
- * ⚠️ No script and no environment: this is for questions a CLI answers about itself, which must not
- * depend on an isolation root being set up.
+ * ⚠️ No environment and no isolation root: this is for questions a CLI answers about itself, which
+ * must not depend on a worker being set up.
+ *
+ * ⛔ **A login shell, and that is the whole of t268.** `wsl.exe -- muse --version` answers
+ * `/bin/bash: line 1: muse: command not found` — measured 2026-09-07 — because the vendor's launcher
+ * installs to `~/.local/bin`, which is put on `PATH` by `~/.profile`, and a bare `wsl.exe --` runs
+ * the command through a shell that reads no profile. `hostPlan` has always used `bash -lc` and works;
+ * this half did not, so `isInstalled()` and `detect()` answered *no* for a CLI that runs perfectly —
+ * and a task pinned to that worker was held with `Muse Code is not installed` while its quota probe,
+ * which goes through `hostPlan`, read the account's windows in the same minute.
  */
-export function hostExec(host: CliHost, command: string, args: string[]): HostPlan {
+export function hostExec(
+  host: CliHost,
+  command: string,
+  args: string[],
+  /**
+   * ⚠️ Variables the *command* needs, not the host's. On a bridged host nothing crosses the
+   * boundary — the environment handed to `child_process` reaches `wsl.exe` and stops there — so a
+   * caller that needs one exported has to say so here. ⛔ Load-bearing since this half started
+   * finding the CLI at all: muse's launcher self-updates a 263 MB binary unless
+   * `MUSE_NO_AUTO_UPDATE` is set, and a version check that swaps the binary under a running fleet
+   * is the thing that variable exists to prevent.
+   */
+  env: Record<string, string> = {}
+): HostPlan {
   if (host.kind === 'native') return { command: host.path, args }
-  return { command: host.wsl, args: ['--', command, ...args] }
+  const lines = Object.entries(env).map(([key, value]) => `export ${key}=${shQuote(value)}`)
+  lines.push(['exec', shQuote(command), ...args.map(shQuote)].join(' '))
+  return { command: host.wsl, args: ['--', 'bash', '-lc', lines.join('\n')] }
 }
