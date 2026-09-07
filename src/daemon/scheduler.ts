@@ -3672,11 +3672,24 @@ export function promptFor(
   )
   const outstanding = thread.filter((m, i) => (i === 0 && !resumed) || m.deliveredAt === null)
   const initialPrefixCount = (opts.branchNotice ? 1 : 0) + (task.handoffNote ? 1 : 0)
+  // ⛔ **A follow-up typed into a conversation that is still live is sent as it was typed, and
+  // nothing else.** Measured on t260: a person asked a question, the agent answered, they asked the
+  // next thing — and what reached the session was their opening prompt again on top, their new
+  // sentence in the middle, and the whole conversation contract underneath, every turn. All three
+  // pieces exist for a session that does *not* already have them; this one does, in its own history,
+  // because it is the same session that read them the first time. Restating the opening prompt reads
+  // as being asked to do that work again, and re-appending the contract spends tokens re-teaching an
+  // agent something it is already following.
+  //
+  // ⚠️ Narrow on purpose: `resumed` is false for a fresh session after a preemption and false for a
+  // borrowed one, and both of those genuinely need the prompt and the contract — see the notes on
+  // those two call sites. This is the same-session case alone.
+  const followUp = resumed && isOpenConversation(task) && outstanding.length > 0
   if (thread.length === 0 && !resumed) {
     parts.push(task.title)
   } else {
     for (const message of outstanding) {
-      if (parts.length === initialPrefixCount && message.text !== task.title) {
+      if (!followUp && parts.length === initialPrefixCount && message.text !== task.title) {
         parts.push(task.title)
       }
       parts.push(message.text)
@@ -3754,7 +3767,8 @@ export function promptFor(
         ? `Before reporting complete, run this project's checks (${checks.map((c) => `\`${c}\``).join(', ')}) and ensure they pass. `
         : ''
     if (isOpenConversation(task)) {
-      parts.push(conversationInstruction(false))
+      // ⚠️ Withheld only on a follow-up into the session that was already told it — see `followUp`.
+      if (!followUp) parts.push(conversationInstruction(false))
     } else if (planPhase === 'planning') {
       parts.push(planningInstruction(checkLead))
     } else if (planPhase === 'resolving') {
@@ -3785,7 +3799,10 @@ export function promptFor(
     // terminal contract is a line of text rather than a tool call, so a conversation has to be told
     // not to write that line rather than not to call that tool — but it still has to be told what
     // the line *is*, because being asked to finish is a thing that can happen to it later.
-    parts.push(
+    // ⚠️ `followUp` withholds even the conversation wording, for the reason given where it is
+    // computed: the session it is going to has already been told it and has not stopped since.
+    if (!(isOpenConversation(task) && followUp)) {
+      parts.push(
       isOpenConversation(task)
         ? conversationInstruction(true)
         : checkLead +
@@ -3796,7 +3813,8 @@ export function promptFor(
         '`- <the option> — <what choosing it means>`, so they can be offered as buttons. ' +
         'If multiple options can be chosen (checkboxes), indicate that with `NEEDS DECISION: [multi] <question>` ' +
         'or include `(multi-select)` / `(select all that apply)` in the question.'
-    )
+      )
+    }
   }
 
   // ⛔ **A conversation stops here, and skipping the block below is the point rather than an

@@ -175,6 +175,77 @@ describe('what a conversation is told at the end of its turn', () => {
   })
 })
 
+/**
+ * What a follow-up into a conversation that is still live is sent.
+ *
+ * ⛔ **Nothing but what the person typed.** Measured on t260: every turn after the first arrived
+ * with the opening prompt restated on top and the whole conversation contract underneath — both
+ * addressed to a session that had read them already and never stopped since. The restated prompt
+ * reads as being asked to do that work a second time; the restated contract is paid for on every
+ * turn to teach an agent something it is currently obeying.
+ *
+ * ⚠️ The subtraction is `resumed`-only, and the two tests below that pin the *un*-subtracted
+ * cases are the point: a fresh session after a preemption has none of this in its history, and a
+ * conversation somebody has pressed Commit on is not a conversation any more.
+ */
+describe('what a follow-up into a live conversation is sent', () => {
+  /** A conversation whose opening prompt has already gone out, with `text` typed underneath it. */
+  const followUp = (title: string, text: string): Task => {
+    const task = tasks.requireTask(
+      tasks.createTask({ title, kind: 'conversation', status: 'ready' }).id
+    )
+    scheduler.promptFor(task, 'claude-code', false, { markDelivered: true })
+    tasks.addMessage(task.id, 'human', text)
+    return tasks.requireTask(task.id)
+  }
+
+  it('is the message and nothing else — no restated prompt, no contract', () => {
+    const task = followUp('Set up notarization on CI', 'What about the provisioning profile?')
+    const prompt = scheduler.promptFor(task, 'claude-code', true, { markDelivered: false }).text
+    expect(prompt).toBe('What about the provisioning profile?')
+  })
+
+  it('is the message and nothing else on an adapter with no tools either', () => {
+    const task = followUp('Notarization, agy', 'And the entitlements file?')
+    const prompt = scheduler.promptFor(task, 'antigravity-cli', true, { markDelivered: false }).text
+    expect(prompt).toBe('And the entitlements file?')
+  })
+
+  it('still restates everything into the fresh session a preemption starts', () => {
+    // ⛔ `resumed: false`. That session has never seen the opening prompt or the contract, so
+    // withholding them there would hand it a stray sentence and no idea what it was for.
+    const task = followUp('Preempted chat', 'and the notarytool password?')
+    const prompt = scheduler.promptFor(task, 'claude-code', false, { markDelivered: false }).text
+    expect(prompt).toContain('Preempted chat')
+    expect(prompt).toContain('and the notarytool password?')
+    expect(prompt).toContain('This is an ongoing conversation')
+  })
+
+  it('leaves an ordinary task’s resumed prompt exactly as it was', () => {
+    const work = tasks.createTask({ title: 'Ordinary work, resumed', status: 'ready' })
+    scheduler.promptFor(work, 'claude-code', false, { markDelivered: true })
+    tasks.addMessage(work.id, 'human', 'also check the linter')
+    const prompt = scheduler.promptFor(tasks.requireTask(work.id), 'claude-code', true, {
+      markDelivered: false
+    }).text
+    expect(prompt).toContain('Ordinary work, resumed')
+    expect(prompt).toContain('also check the linter')
+    expect(prompt).toContain('Work to the end without stopping between phases')
+  })
+
+  it('says the whole thing again once Commit has written a rung', () => {
+    // ⛔ The rung takes the task out of `isOpenConversation`, and the turn it is asking for is an
+    // ordinary landing turn — which needs the landing instruction whether the session is warm or not.
+    const task = followUp('Chat, then commit', 'ok, land it')
+    tasks.updateTask(task.id, { finishPolicy: 'commit-and-merge' })
+    const prompt = scheduler.promptFor(tasks.requireTask(task.id), 'claude-code', true, {
+      markDelivered: false
+    }).text
+    expect(prompt).toContain('ok, land it')
+    expect(prompt).toContain('call the MCP tool `task_complete` with a one-line summary')
+  })
+})
+
 describe('which account a conversation comes back to', () => {
   /** A live session on `worker`, and a finished run of `taskId` in it. */
   const talkedTo = (taskId: string, worker: Worker): string => {
