@@ -731,25 +731,6 @@ function pickRateLimit(
 }
 
 /**
- * A window that has already turned over, and therefore counts nothing.
- *
- * ⛔ **`stale` is an age test and this is not.** A reading taken two minutes before a reset is as
- * fresh as a reading gets, and every number in it stops being true the moment the window rolls. The
- * dispatch gate believed one for the better part of two hours: measured on t60, 2026-08-31,
- * ClaudeThird's 5h window read `percent: 88` with `resetsAt` 06:39:59Z and was still offered as 88%
- * at 06:46Z, on an account whose window had emptied.
- *
- * ⚠️ Expired means **unknown**, never zero. What the new window holds cannot be derived from the old
- * one, and a caller that reads this as free capacity is making up a number.
- *
- * ⭐ `windowResetsAt` has always discarded a reset in the past for exactly this reason; this is that
- * rule applied to the percentage sitting beside it.
- */
-export function windowExpired(window: QuotaWindow, now = Date.now()): boolean {
-  return window.resetsAt !== null && window.resetsAt !== undefined && window.resetsAt <= now
-}
-
-/**
  * When this worker's current window resets, from the best source available.
  *
  * Preferred: a live `rate_limit_event`, which is current by construction. Fallback: whatever
@@ -1327,4 +1308,4 @@ export function forgetRefreshAttempts(): void {
  * of all three. A pool that matches nothing falls back rather than returning no window, because an
  * unrecognised pool is ignorance, not permission.
  */
-export { sessionWindowFor, windowsForPool } from '@shared/tasks.js'
+export { sessionWindowFor, windowsForPool, windowExpired, poolVerdict } from '@shared/tasks.js'

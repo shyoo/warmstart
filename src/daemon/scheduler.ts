@@ -37,7 +37,8 @@ import {
   requestUrgentProbe,
   sessionWindowFor,
   windowsForPool,
-  windowExpired
+  windowExpired,
+  poolVerdict
 } from './quota.js'
 import {
   getWorker,
@@ -1407,40 +1408,45 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
     const namesModel = candidateModels.length > 1
     for (const model of candidateModels) {
       let trustedWindows: QuotaWindow[] = []
-      if (quota && !quota.stale) {
+      if (quota && quota.windows.length > 0) {
         const pool = poolFor(worker, model)
-        const applicable = windowsForPool(quota.windows, pool)
-        const active: QuotaWindow[] = []
-        let blockingWindow: { window: QuotaWindow; threshold: number; deficit: number } | null = null
+        const verdict = poolVerdict(windowsForPool(quota.windows, pool))
+        if (verdict.turnedOver) quotaUnverified = true
+        // ⛔ **Only a reading this fleet trusts may *score*.** `trustedWindows` feeds `quotaRisk`,
+        // which is a preference over how much room an account has left — and a percentage nobody
+        // re-read is not evidence of room. It is, however, still evidence of *no* room, which is
+        // why the refusal below reads `verdict` rather than this list.
+        if (quota.stale) quotaUnverified = true
+        else trustedWindows = verdict.active
 
-        for (const win of applicable) {
-          if (windowExpired(win)) {
-            quotaUnverified = true
-          } else {
-            active.push(win)
-            const threshold = windowHighWater(win)
-            if (win.percent >= threshold) {
-              const deficit = win.percent - threshold
-              if (!blockingWindow || deficit > blockingWindow.deficit) {
-                blockingWindow = { window: win, threshold, deficit }
-              }
-            }
-          }
-        }
-        trustedWindows = active
-
-        if (blockingWindow) {
-          const win = blockingWindow.window
-          const gate = blockingWindow.threshold
-          if (override) {
+        if (verdict.blocking) {
+          const win = verdict.blocking.window
+          const gate = verdict.blocking.threshold
+          const modelSuffix = namesModel ? ` (${model ?? 'default'})` : ''
+          const label = win.label ?? '5h'
+          // ⛔ **An override buys a turn the vendor would have served, and nothing else.** At 100%
+          // there is no such turn: t276 was dispatched to CodexFirst on a 7d window the vendor had
+          // already emptied and came back `paused_quota` five seconds later, having bought a
+          // process, a cold start and a preempted run. See `WINDOW_EXHAUSTED`.
+          if (override && !verdict.blocking.exhausted) {
             log.info(
-              `t${task.seq} dispatching to ${worker.label}${namesModel ? ` (${model ?? 'default'})` : ''} at ${Math.round(win.percent)}% of its ` +
-                `${win.label ?? '5h'} window — a person overrode the ${gate}% gate`
+              `t${task.seq} dispatching to ${worker.label}${modelSuffix} at ${Math.round(win.percent)}% of its ` +
+                `${label} window — a person overrode the ${gate}% gate`
             )
           } else {
-            const modelSuffix = namesModel ? ` (${model ?? 'default'})` : ''
+            // ⭐ **A reading too old to score is not too old to refuse, and this is the whole of
+            // t277.** Spend inside a window only ever goes up until the window resets, and the
+            // sample carries the `resetsAt` of the window instance it measured — so an unexpired
+            // window read as full *is* full, however many minutes ago somebody read it. The gate
+            // used to skip itself entirely on `quota.stale`, and at 20:33:59Z on 2026-09-07 a
+            // reading of CodexFirst's GPT 7d window at 100% crossed fifteen minutes old and the
+            // account went from refused, with that percentage on the row, to silently routable.
+            const staleness = quota.stale
+              ? ` (read ${Math.max(1, Math.round(quota.ageMs / 60_000))}m ago; a window that has not reset cannot have refilled)`
+              : ''
+            const spent = verdict.blocking.exhausted && override ? ', which no override can buy a turn on' : ''
             refuse(
-              `${worker.label}${modelSuffix} at ${Math.round(win.percent)}% of its ${win.label ?? '5h'} window`
+              `${worker.label}${modelSuffix} at ${Math.round(win.percent)}% of its ${label} window${spent}${staleness}`
             )
             const resetsAt = win.resetsAt ?? windowResetsAt(worker.id)?.at ?? null
             if (resetsAt && resetsAt > Date.now()) {
@@ -2478,13 +2484,15 @@ function poolIsNarrow(project: Project, capacity: number): string {
 function noteQuotaOverrideDispatch(task: Task, worker: Worker): void {
   if (!quotaOverridden(task)) return
   const quota = lastQuota(worker.id)
-  if (!quota || quota.stale) return
+  // ⚠️ Age is not asked about here, for the reason the dispatch gate no longer asks either: the
+  // override was load-bearing against whatever reading the gate actually read, stale or not.
+  if (!quota || quota.windows.length === 0) return
   const choice = resolveModelChoice(task.constraints, worker, false, quota)
   const pool = poolFor(worker, choice.model)
-  const windows = windowsForPool(quota.windows, pool)
-  const win = windows.find((w) => w && !windowExpired(w) && w.percent >= windowHighWater(w))
-  if (!win) return
-  const gate = windowHighWater(win)
+  const blocking = poolVerdict(windowsForPool(quota.windows, pool)).blocking
+  if (!blocking) return
+  const win = blocking.window
+  const gate = blocking.threshold
   addMessage(
     task.id,
     'system',

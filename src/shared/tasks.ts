@@ -2466,6 +2466,106 @@ export function windowHighWater(window?: { id?: string | null; label?: string | 
 }
 
 /**
+ * The percentage at which the provider has nothing left to sell on this window.
+ *
+ * ⛔ **Not a water mark and not tunable.** `WINDOW_HIGH_WATER` and `WINDOW_7D_HIGH_WATER` are this
+ * fleet's own caution — arithmetic of ours over a reading the vendor has been serving turns against,
+ * which is exactly why a person is allowed to overrule them. This is the vendor's own answer, and
+ * there is nothing on the other side of it to overrule: a turn started here is refused, and the only
+ * thing it buys is a spawned process, a cold start and a `paused_quota` five seconds later.
+ */
+export const WINDOW_EXHAUSTED = 100
+
+/** Has this window been spent outright? See `WINDOW_EXHAUSTED`. */
+export function windowExhausted(window: { percent: number }): boolean {
+  return window.percent >= WINDOW_EXHAUSTED
+}
+
+/**
+ * A window that has already turned over, and therefore counts nothing.
+ *
+ * ⛔ **`stale` is an age test and this is not.** A reading taken two minutes before a reset is as
+ * fresh as a reading gets, and every number in it stops being true the moment the window rolls. The
+ * dispatch gate believed one for the better part of two hours: measured on t60, 2026-08-31,
+ * ClaudeThird's 5h window read `percent: 88` with `resetsAt` 06:39:59Z and was still offered as 88%
+ * at 06:46Z, on an account whose window had emptied.
+ *
+ * ⚠️ Expired means **unknown**, never zero. What the new window holds cannot be derived from the old
+ * one, and a caller that reads this as free capacity is making up a number.
+ *
+ * ⭐ `windowResetsAt` has always discarded a reset in the past for exactly this reason; this is that
+ * rule applied to the percentage sitting beside it.
+ *
+ * ⚠️ Lives here rather than in the daemon's `quota.ts` — which re-exports it — because `poolVerdict`
+ * below is the shared answer to *does this reading refuse this pool*, and an expiry test that lived
+ * on the other side of that boundary would be a second copy of this rule waiting to disagree.
+ */
+export function windowExpired(window: QuotaWindow, now = Date.now()): boolean {
+  return window.resetsAt !== null && window.resetsAt !== undefined && window.resetsAt <= now
+}
+
+/** The window furthest past its gate, and how far past it is. */
+export interface BlockingWindow {
+  window: QuotaWindow
+  /** The percentage this window is gated at — `windowHighWater`, which differs for a weekly. */
+  threshold: number
+  /** How far past the gate, so the *worst* window in a pool is the one named. */
+  deficit: number
+  /** Spent outright, which no override lifts. See `WINDOW_EXHAUSTED`. */
+  exhausted: boolean
+}
+
+/** What one pool's windows say about starting new work on it. */
+export interface PoolVerdict {
+  /**
+   * The windows whose numbers still describe something that exists — everything unexpired.
+   *
+   * ⚠️ Nothing here is a claim about *freshness*: an old reading of an unreset window is still in
+   * this list, because it can still refuse. A caller that means to *score* headroom rather than
+   * refuse a dispatch has to ask its own staleness question. See `chooseTarget`'s `trustedWindows`.
+   */
+  active: QuotaWindow[]
+  /** At least one window here has reset since it was read, so what it holds now is unknown. */
+  turnedOver: boolean
+  /** The window that refuses this pool, or `null` when none does. */
+  blocking: BlockingWindow | null
+}
+
+/**
+ * Does this pool's reading refuse new work, and on which window?
+ *
+ * ⛔ **One place, because the answer was written out three times and the copies drifted.** The
+ * dispatch gate, the override note and the compaction reserve all ask this and all have to agree —
+ * a fleet where the gate that stops dispatching and the gate that saves the context disagree by a
+ * point strands a session for a rounding error.
+ */
+export function poolVerdict(windows: QuotaWindow[], now = Date.now()): PoolVerdict {
+  const active: QuotaWindow[] = []
+  let turnedOver = false
+  let blocking: BlockingWindow | null = null
+  for (const window of windows) {
+    if (!window) continue
+    if (windowExpired(window, now)) {
+      turnedOver = true
+      continue
+    }
+    active.push(window)
+    const threshold = windowHighWater(window)
+    if (window.percent < threshold) continue
+    const deficit = window.percent - threshold
+    // ⚠️ Worst by deficit, and an exhausted window wins outright however small its deficit is: the
+    // weekly gate sits at 97, so a 7d at 100% is 3 past its mark while a 5h at 96 is 4 past its own,
+    // and naming the second would report a refusal a person could lift over one they cannot.
+    const better =
+      !blocking ||
+      (windowExhausted(window) && !blocking.exhausted) ||
+      (windowExhausted(window) === blocking.exhausted && deficit > blocking.deficit)
+    if (better) blocking = { window, threshold, deficit, exhausted: windowExhausted(window) }
+  }
+  return { active, turnedOver, blocking }
+}
+
+/**
  * Beyond this, a reading is reported but must not be treated as the current state of the window.
  *
  * ⛔ **Shared, because the renderer has to answer the same question the daemon does.** The daemon

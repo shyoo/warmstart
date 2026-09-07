@@ -593,10 +593,11 @@ so anything deriving "try again?" from the age says *yes* forever on exactly the
 answer. Under the old one-refresh-per-sweep rule that worker re-claimed the single slot every five
 minutes and starved every worker behind it in `listWorkers()` order, indefinitely.
 
-⚠️ **`stale` is a gate, not a label.** Nothing the scheduler gates on uses a reading older than
-`STALE_AFTER_MS`, and that is unchanged. The UI stopped *printing* the word: an old reading on an
-idle account is ordinary, so the strip shows `read 2h ago` and reserves the warning colour for the
-case that is a fault — every check since has failed.
+⚠️ **`stale` is a gate, not a label.** Nothing the scheduler *scores* on uses a reading older than
+`STALE_AFTER_MS` — but since t277 (below) an old reading may still **refuse**, which is not the same
+thing. The UI stopped *printing* the word: an old reading on an idle account is ordinary, so the strip
+shows `read 2h ago` and reserves the warning colour for the case that is a fault — every check since
+has failed.
 
 ### ⭐ The poller paces itself, and the cadence means a refresh (2026-08-31)
 
@@ -626,6 +627,37 @@ never below `MIN_FORCED_GAP_MS` (60s) whatever the setting says.
 when something is about to act on the number: the gate knows *a task is about to run here*, and the
 poller knows *a run is in flight / a park is due back / the vendor just warned us*. Neither is a
 clock, and there is no longer one anywhere.
+
+### ⭐ A reading too old to score is not too old to refuse (t277, 2026-09-07)
+
+⛔ **The dispatch gate was `if (quota && !quota.stale)`, so an aged reading did not make it cautious
+— it removed the gate.** Measured on t276: at 20:28:21Z the gate held the task with *"CodexFirst
+(gpt-5.6-terra) at 100% of its GPT 7d window"*, read off a sample taken at 20:18:42Z. At **20:33:59Z**
+the same task was dispatched to that same account *"on an unverified quota reading"*, scoring
+`quotaRisk 0.00 — no quota reading this fleet trusts`. Nothing about the account had changed; the
+sample had crossed fifteen minutes old by seventeen seconds. The run was `paused_quota` five seconds
+later, having bought a spawned process, a cold start and a preempted run — and the whole fleet's
+accounts age out of freshness the same way, so this was every account in turn.
+
+⭐ **Spend inside a window only ever goes up.** A sample carries the `resetsAt` of the window
+*instance* it measured, so while that reset is in the future the sample and the live window are the
+same window and no amount of age can lower the number. That splits the two questions the gate had
+been treating as one:
+
+| question | what a stale reading is worth |
+|---|---|
+| *how much room is left here?* (`trustedWindows` → the `quotaRisk` preference) | **nothing.** Unknown scores 0, exactly as before — a percentage nobody re-read may not price an account as cheap |
+| *is this window spent?* | **everything, until it resets.** The refusal names the age: `at 100% of its GPT 7d window (read 15m ago; a window that has not reset cannot have refilled)` |
+
+⚠️ An **expired** window is still unknown rather than full, in both columns: the claim is only ever
+*this instance is spent*, and it dies with the instance — otherwise one 100% reading would bench an
+account for a week after the week it described had ended.
+
+⛔ **And `WINDOW_EXHAUSTED` (100%) is not a water mark.** 92 and 97 are this fleet's own caution over
+turns the vendor was still serving, which is exactly why a person may overrule them (t71). At 100%
+there is no turn on the other side to buy, so the override stops there and says so on the row: *"which
+no override can buy a turn on"*. One shared `poolVerdict()` in `@shared/tasks.ts` now answers *does
+this reading refuse this pool* for the gate and the override note, so the two cannot drift.
 
 ### ⛔ A quota park ends on *either* its clock or a measurement (2026-08-31)
 
