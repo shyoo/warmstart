@@ -532,6 +532,256 @@ try {
   const promoted = await daemon.rpc('task.promote', { id: first.id })
   check('promoting a draft re-enters admission', promoted.status === 'ready', promoted.status)
 
+  // ---------------------------------------------------------------- the agent surface
+  //
+  // ⛔ 56 of the daemon's 115 RPC methods are named by no test, including every agent.*
+  // handler — the surface coding agents actually call, and the one where a bad error shape
+  // costs real tokens to discover. The functions underneath are L1-proven; what was not is
+  // the handler: its parameter validation, the shape of its error, what it assembles.
+  //
+  // An open run is seeded straight into the database, because every worker this suite
+  // commissions is closed to work and the scheduler therefore never opens one — and opening
+  // a real one would spend. Nothing here dispatches, lands on a trunk, or asks a model: the
+  // tasks are pinned to the disabled probe worker and cancelled at the end of the section.
+  section('agent.*')
+  let agentDb = null
+  try {
+    const sqlite = await import('node:sqlite')
+    agentDb = new sqlite.DatabaseSync(join(daemon.dataDir, 'multi_agent_controller.db'))
+    agentDb.exec('PRAGMA busy_timeout = 5000')
+  } catch {
+    // No embedded sqlite in this runtime: the checks below cannot seed their runs.
+  }
+  if (!agentDb) {
+    skip('the six agent.* handlers answer over live RPC', 'this node cannot open node:sqlite')
+  } else {
+    const seedAgentRun = (taskId, workerId, sessionId) => {
+      const id = `agent-run-${taskId.slice(0, 8)}-${String(Date.now() % 100000)}`
+      agentDb
+        .prepare('insert into runs (id, task_id, worker_id, session_id, started_at) values (?,?,?,?,?)')
+        .run(id, taskId, workerId, sessionId, Date.now())
+      return id
+    }
+    const spawnAgentSession = () =>
+      daemon.rpc('session.spawn', {
+        workerId: probeWorker.id,
+        cwd: tmpdir(),
+        transport: 'pty',
+        purpose: 'login',
+        argv: PROBE_ARGV,
+        cols: 80,
+        rows: 24
+      })
+    const pin = { workerId: probeWorker.id }
+
+    const agentTask = await daemon.rpc('task.create', {
+      title: 'agent surface',
+      projectId: added.id,
+      constraints: pin
+    })
+    const agentSession = await spawnAgentSession()
+    seedAgentRun(agentTask.id, probeWorker.id, agentSession.id)
+
+    const noted = await daemon.rpc('agent.handoff', { sessionId: agentSession.id, note: 'porch swept' })
+    check('handoff records the note on the thread', noted.ok === true)
+    const handoffThread = await daemon.rpc('task.get', { id: agentTask.id })
+    check(
+      'and the note is readable there, with its run beside it',
+      handoffThread.messages.some((m) => /Handoff recorded/.test(m.text)) && handoffThread.runs.length >= 1,
+      `${handoffThread.messages.length} messages, ${handoffThread.runs.length} runs`
+    )
+    const strayHandoff = await daemon.rpc('agent.handoff', { sessionId: 'no-such-session', note: 'x' })
+    const strayThread = await daemon.rpc('task.get', { id: agentTask.id })
+    check(
+      'handoff from a session on nothing succeeds and writes nothing rather than throwing',
+      strayHandoff.ok === true &&
+        strayThread.messages.filter((m) => /Handoff recorded/.test(m.text)).length === 1
+    )
+
+    const child = await daemon.rpc('agent.createTask', {
+      sessionId: agentSession.id,
+      title: 'sweep the porch',
+      prompt: 'broom, not leafblower'
+    })
+    check(
+      'an agent can file a follow-up and learns its number',
+      child.ok === true && typeof child.seq === 'number',
+      `seq=${child.seq}`
+    )
+    const noTitle = await daemon.rpc('agent.createTask', { sessionId: agentSession.id, title: '' })
+    check(
+      'an empty title is refused with the reason, not a throw',
+      noTitle.ok === false && /title/.test(noTitle.reason ?? ''),
+      noTitle.reason
+    )
+    const noRun = await daemon.rpc('agent.createTask', { sessionId: 'no-such-session', title: 'x' })
+    check(
+      'filing from a session on nothing names the problem',
+      noRun.ok === false && /not working on a task/.test(noRun.reason ?? ''),
+      noRun.reason
+    )
+
+    const splitNobody = await daemon.rpc('agent.split', { sessionId: 'no-such-session', pieces: [] })
+    check(
+      'splitting from a session on nothing is refused before anything is read',
+      splitNobody.ok === false && /not working on a task/.test(splitNobody.reply ?? ''),
+      splitNobody.reply
+    )
+    const planTask = await daemon.rpc('task.create', {
+      title: 'agent plan',
+      projectId: added.id,
+      kind: 'plan',
+      constraints: pin
+    })
+    const planSession = await spawnAgentSession()
+    seedAgentRun(planTask.id, probeWorker.id, planSession.id)
+    const tooFew = await daemon.rpc('agent.split', {
+      sessionId: planSession.id,
+      pieces: [{ title: 'only one' }]
+    })
+    check(
+      'a one-piece split is refused with the rule, not filed',
+      tooFew.ok === false && /at least 2 pieces/.test(tooFew.reply ?? ''),
+      tooFew.reply
+    )
+    const branchless = await daemon.rpc('agent.split', {
+      sessionId: planSession.id,
+      pieces: [{ title: 'count the lanterns' }, { title: 'sweep the porch' }]
+    })
+    check(
+      'a planner with no branch is refused before anyone is asked, not filed onto the trunk',
+      branchless.ok === false && /no branch yet/.test(branchless.reply ?? ''),
+      branchless.reply
+    )
+    // A dispatched planner holds `multi-agent-controller/t<seq>-<slug>`; this one never dispatched
+    // (every worker here is closed to work), so the suite writes the branch the dispatch would have
+    // cut. One column, and the only raw task write in this section — everything else is an RPC.
+    agentDb
+      .prepare('update tasks set branch = ? where id = ?')
+      .run(`multi-agent-controller/t${planTask.seq}-agent-probe`, planTask.id)
+    const splitCall = daemon.rpc('agent.split', {
+      sessionId: planSession.id,
+      pieces: [{ title: 'count the lanterns' }, { title: 'sweep the porch' }]
+    })
+    let splitQuestion = null
+    const askBy = Date.now() + 20_000
+    while (!splitQuestion && Date.now() < askBy) {
+      const open = await daemon.rpc('question.list', {})
+      splitQuestion = open.find((q) => q.origin === 'task_split') ?? null
+      if (!splitQuestion) await wait(250)
+    }
+    check('the split raises one structural approval before writing anything', splitQuestion !== null)
+    await daemon.rpc('question.answer', { id: splitQuestion.id, optionIds: ['approve'] })
+    const split = await splitCall
+    check(
+      'approving files every piece at once',
+      split.ok === true && split.seqs.length === 2,
+      (split.seqs ?? []).join(',')
+    )
+
+    const depended = await daemon.rpc('agent.depend', {
+      sessionId: planSession.id,
+      taskSeq: split.seqs[1],
+      dependsOnSeq: split.seqs[0]
+    })
+    check('an agent can order two of its own pieces', depended.ok === true)
+    const stranger = await daemon.rpc('agent.depend', {
+      sessionId: planSession.id,
+      taskSeq: 999999,
+      dependsOnSeq: split.seqs[0]
+    })
+    check(
+      'an edge to a stranger names the boundary',
+      stranger.ok === false && /not one of this task's own pieces/.test(stranger.reason ?? ''),
+      stranger.reason
+    )
+    const dependNobody = await daemon.rpc('agent.depend', {
+      sessionId: 'no-such-session',
+      taskSeq: 1,
+      dependsOnSeq: 2
+    })
+    check('depending from a session on nothing names the problem', dependNobody.ok === false, dependNobody.reason)
+
+    const parked = await daemon.rpc('agent.awaitHuman', {
+      sessionId: planSession.id,
+      reason: 'porch is locked'
+    })
+    check('handing over answers ok', parked.ok === true)
+    const parkedTask = await daemon.rpc('task.get', { id: planTask.id })
+    check(
+      'and rests the task with its reason on a blocked run, never completed',
+      parkedTask.task.status === 'awaiting_human' &&
+        /porch is locked/.test(parkedTask.task.holdReason ?? '') &&
+        parkedTask.runs.some((r) => r.sessionId === planSession.id && r.outcome === 'blocked'),
+      parkedTask.task.status
+    )
+    const parkedNobody = await daemon.rpc('agent.awaitHuman', { sessionId: 'no-such-session', reason: 'x' })
+    check(
+      'handing over from a session on nothing is refused, not thrown',
+      parkedNobody.ok === false && /no open run/.test(parkedNobody.reply ?? ''),
+      parkedNobody.reply
+    )
+
+    const afterPark = await daemon.rpc('agent.complete', { sessionId: planSession.id, summary: 'done' })
+    const stillParked = await daemon.rpc('task.get', { id: planTask.id })
+    check(
+      'completing a parked run is a no-op that still answers ok and changes nothing',
+      afterPark.ok === true && stillParked.task.status === 'awaiting_human',
+      stillParked.task.status
+    )
+    const finishTask = await daemon.rpc('task.create', {
+      title: 'agent finish',
+      projectId: added.id,
+      constraints: pin
+    })
+    const finishSession = await spawnAgentSession()
+    seedAgentRun(finishTask.id, probeWorker.id, finishSession.id)
+    const done = await daemon.rpc('agent.complete', { sessionId: finishSession.id, summary: 'porch swept' })
+    const doneTask = await daemon.rpc('task.get', { id: finishTask.id })
+    check(
+      'a reported completion finishes the task',
+      done.ok === true && doneTask.task.status === 'completed',
+      doneTask.task.status
+    )
+    check(
+      'and the report is written to the thread beside its run',
+      doneTask.messages.some((m) => /porch swept/.test(m.text)) && doneTask.runs.length >= 1
+    )
+    const completeNobody = await daemon.rpc('agent.complete', { sessionId: 'no-such-session', summary: 'x' })
+    check('completing from a session on nothing succeeds silently rather than throwing', completeNobody.ok === true)
+    const completeUnshaped = await daemon.rpcResult('agent.complete', {})
+    check(
+      'a missing session id fails at the transport with a message, not a hang',
+      !completeUnshaped.ok && (completeUnshaped.message ?? '').length > 0,
+      completeUnshaped.message
+    )
+
+    for (const sessionId of [agentSession.id, planSession.id, finishSession.id]) {
+      await daemon.rpc('session.close', { id: sessionId })
+    }
+    const listed = await daemon.rpc('task.list', {})
+    const splitSeqs = split && split.ok === true ? (split.seqs ?? []) : []
+    // ⛔ Not the finished one: cancelling a completed task is refused, and it holds nothing.
+    const ownIds = new Set([agentTask.id, planTask.id])
+    for (const t of listed.filter(
+      (t) => ownIds.has(t.id) || t.seq === child.seq || splitSeqs.some((s) => s === t.seq)
+    )) {
+      await daemon.rpc('task.cancel', { id: t.id, restingState: 'cancelled' })
+    }
+    // The filed follow-up waited on a gate consult, and cancelling it does not settle the row —
+    // the drain answers nothing with no controller available. Delete this section's own row, by
+    // subject, so the controller section below starts from the empty queue it asserts from. This
+    // is teardown of our own fixture, not of anyone else's state: the subject id is the child we
+    // filed two screens up.
+    const filed = listed.find((t) => t.seq === child.seq)
+    if (filed) {
+      agentDb.prepare("delete from consults where subject_id = ? and kind = 'gate'").run(filed.id)
+    }
+    agentDb.close()
+    const drained = await daemon.rpc('controller.report', {})
+    check('the section leaves no judgment question behind it', drained.pending === 0, `${drained.pending} pending`)
+  }
+
   // ---------------------------------------------------------------- resources
   section('resources')
   const tick = await daemon.rpc('scheduler.tick')
