@@ -1,7 +1,7 @@
 import { canWork } from '@shared/protocol.js'
 import type { QuotaWindow, Session, Worker } from '@shared/protocol.js'
 import type { Objective, Project, Task } from '@shared/tasks.js'
-import { windowHighWater } from '@shared/tasks.js'
+import { windowHighWater, WINDOW_HIGH_WATER } from '@shared/tasks.js'
 import { adapter } from './adapters/index.js'
 import { paceFactors, paceFor, paceValue, type PaceFactors } from './pace.js'
 import {
@@ -52,11 +52,20 @@ import type { WorkerChoice } from './scheduler.js'
 import {
   needsBaseline,
   poolFor,
-  QUOTA_HIGH_WATER,
   reopenableFor,
   stickyWorkerFor,
   warmSessionFor
 } from './scheduler.js'
+/**
+ * ⚠️ **`WINDOW_HIGH_WATER` straight from `@shared/tasks.js`, never `scheduler.js`'s `QUOTA_HIGH_WATER`
+ * re-export of it.** That re-export sits on the far side of the scheduler.ts <-> scoring.ts import
+ * cycle, and `QUOTA_HIGH_WATER` was being read at *module-eval* time (in the `VALUE_MEANS` table
+ * below), not inside a function body — the one place in this file the cycle was not safe. A bundler
+ * that flattens the cycle into one file can evaluate scoring.ts's module body before scheduler.ts has
+ * finished initialising its own top-level `const`, which is a `ReferenceError` in strict ESM
+ * (temporal dead zone), not merely a stale value. Measured 2026-09-08: `vitest`'s per-file dynamic
+ * imports never hit this ordering and stayed green; the real packaged daemon crashed on boot.
+ */
 import { atCapacity, evictableResidents, retainedReservations } from './residency.js'
 
 /**
@@ -745,7 +754,7 @@ export const QUOTA_RISK_FLOOR = 50
  */
 export function windowRisk(
   percent: number,
-  highWater = QUOTA_HIGH_WATER,
+  highWater = WINDOW_HIGH_WATER,
   floor = QUOTA_RISK_FLOOR,
   resetsAt?: number | null,
   now = Date.now(),
@@ -943,7 +952,7 @@ const VALUE_MEANS: Record<string, string> = {
   contextHeld: '1 = a conversation already holds this task, live or reopenable',
   contextRot: '1 = the context window is full',
   projectSwitch: '1 = the session is on another project',
-  quotaRisk: `1 = at ${QUOTA_HIGH_WATER}% of its window (adjusted for reset horizon; 0 below ${QUOTA_RISK_FLOOR}%)`,
+  quotaRisk: `1 = at ${WINDOW_HIGH_WATER}% of its window (adjusted for reset horizon; 0 below ${QUOTA_RISK_FLOOR}%)`,
   cold: '1 = no conversation to reuse, live or reopenable',
   capabilityFit: '1 = every capability the task needs is present',
   // ⚠️ The only signed value in the table, and the only one whose 0 is a *middle* rather than a
