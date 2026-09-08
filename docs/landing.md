@@ -149,7 +149,9 @@ the unexplained commits.
 In the UI, you can:
 - **Mark done** — if you inspected the commits in trunk and accept them as the finished work.
 - **Resolve & retry** — sends the branch back to an agent to rebase onto the moved trunk, ensure all
-  intended changes are committed and verified on the task branch, and report complete.
+  intended changes are committed and verified on the task branch, and report complete. One button
+  however many causes match: a landing that failed two ways (conflict plus failing checks, e.g.)
+  stacks every matching explanation under it instead of asking the same question twice.
 - **Stop here** or reply directly in the thread.
 
 ⛔ **"Retry landing" is never offered for an empty branch.** `relandTask` requires unlanded commits on

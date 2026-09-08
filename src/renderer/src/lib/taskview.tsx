@@ -746,3 +746,23 @@ export function canRelandTask(task: Pick<Task, 'branch' | 'holdReason'>): boolea
     reason
   )
 }
+
+/** Every "Resolve & retry" cause matching this task, in the order they draw on the card. */
+export type ResolveRetryCause = 'conflicted' | 'checksFailed' | 'uncommitted' | 'trunkMoved'
+
+/**
+ * Which explanations the single "Resolve & retry" button carries.
+ *
+ * ⛔ **One button, however many match.** All four causes dispatch the same `task.resolveRetry`
+ * with only the task id — the daemon reads `holdReason` itself — so returning every match and
+ * drawing one button per match asked the same question twice (t289). The card draws one button
+ * and stacks every cause returned here beneath it.
+ */
+export function resolveRetryCauses(task: Pick<Task, 'holdReason'>): ResolveRetryCause[] {
+  const out: ResolveRetryCause[] = []
+  if (isConflictedTask(task)) out.push('conflicted')
+  if (isChecksFailedTask(task)) out.push('checksFailed')
+  if (isUncommittedTask(task)) out.push('uncommitted')
+  if (isTrunkMovedTask(task)) out.push('trunkMoved')
+  return out
+}

@@ -67,10 +67,8 @@ import {
   elapsed,
   hasQuotaGate,
   holdLine,
-  isChecksFailedTask,
-  isConflictedTask,
-  isTrunkMovedTask,
-  isUncommittedTask,
+  resolveRetryCauses,
+  type ResolveRetryCause,
   isWorking,
   modelFacts,
   reassignmentModel,
@@ -1841,14 +1839,56 @@ function Decide({
    */
   const cannotLook = conversation && pending !== null && !pending.supported
 
-  // ⛔ Offered only when the thing that stopped it is a conflict, and read from `holdReason`
-  // because that is where `landTask`'s failure is actually recorded. A *fix the conflict* button on
-  // a task that failed its checks would send an agent to rebase something that rebases fine.
-  const conflicted = isConflictedTask(task)
-  const checksFailed = isChecksFailedTask(task)
-  const uncommitted = isUncommittedTask(task)
-  const trunkMoved = isTrunkMovedTask(task)
   const canReland = canRelandTask(task)
+
+  /**
+   * Every cause whose explanation the operator gets, under one button (t289). The copy lives
+   * here because it is presentation; which causes match lives in `resolveRetryCauses`, because
+   * that is the rule a test can pin.
+   */
+  const resolveCauseCopy: Record<ResolveRetryCause, { heading: string; body: React.JSX.Element }> = {
+    conflicted: {
+      heading: 'The work is fine, the branch is stale.',
+      body: (
+        <>
+          Sends the branch back to an agent to rebase onto the landing target and resolve the
+          conflicts, then report complete again — same thread, so it keeps the context it already
+          has. Nothing is discarded and the branch is never reset.
+        </>
+      )
+    },
+    checksFailed: {
+      heading: 'Project checks failed.',
+      body: (
+        <>
+          Sends the check output back to the agent to fix the lint, type, or test errors, commit
+          the fix on <span className="mono">{task.branch}</span>, and report complete again — same
+          thread, preserving existing context.
+        </>
+      )
+    },
+    uncommitted: {
+      heading: 'Uncommitted work.',
+      body: (
+        <>
+          Sends the branch back to an agent to commit the changes on{' '}
+          <span className="mono">{task.branch}</span> and report complete again — same thread,
+          preserving existing context.
+        </>
+      )
+    },
+    trunkMoved: {
+      heading: 'The trunk moved and the branch is empty.',
+      body: (
+        <>
+          Sends the branch back to an agent to rebase onto the landing target, ensure all intended
+          changes are committed on <span className="mono">{task.branch}</span>, run project checks,
+          and report complete again — same thread, preserving existing context.
+        </>
+      )
+    }
+  }
+  const resolveCauses = resolveRetryCauses(task).map((key) => ({ key, ...resolveCauseCopy[key] }))
 
   const handleResolveRetry = async () => {
     setBusy(true)
@@ -2074,76 +2114,23 @@ function Decide({
         </div>
       )}
 
-      {conflicted && (
+      {resolveCauses.length > 0 && (
         <div className="decide-option">
           <button
             className="btn btn--primary"
-            title="Dispatches a run on this thread that rebases the branch onto the landing target, resolves the conflicts and reports complete again."
+            title="Dispatches a run on this thread to resolve what stopped it and report complete again — same thread, so it keeps the context it already has."
             disabled={busy}
             onClick={() => void handleResolveRetry()}
           >
             Resolve &amp; retry
           </button>
           <span className="decide-what">
-            <strong>The work is fine, the branch is stale.</strong> Sends the branch back to an agent
-            to rebase onto the landing target and resolve the conflicts, then report complete again —
-            same thread, so it keeps the context it already has. Nothing is discarded and the branch
-            is never reset.
-          </span>
-        </div>
-      )}
-
-      {checksFailed && (
-        <div className="decide-option">
-          <button
-            className="btn btn--primary"
-            title="Dispatches a run on this thread asking the agent to fix the failing checks, commit the fix, and report complete again."
-            disabled={busy}
-            onClick={() => void handleResolveRetry()}
-          >
-            Resolve &amp; retry
-          </button>
-          <span className="decide-what">
-            <strong>Project checks failed.</strong> Sends the check output back to the agent to fix
-            the lint, type, or test errors, commit the fix on <span className="mono">{task.branch}</span>, and report
-            complete again — same thread, preserving existing context.
-          </span>
-        </div>
-      )}
-
-      {uncommitted && (
-        <div className="decide-option">
-          <button
-            className="btn btn--primary"
-            title="Dispatches a run on this thread asking the agent to review, commit uncommitted work, and report complete again."
-            disabled={busy}
-            onClick={() => void handleResolveRetry()}
-          >
-            Resolve &amp; retry
-          </button>
-          <span className="decide-what">
-            <strong>Uncommitted work.</strong> Sends the branch back to an agent to commit the
-            changes on <span className="mono">{task.branch}</span> and report complete again — same
-            thread, preserving existing context.
-          </span>
-        </div>
-      )}
-
-      {trunkMoved && (
-        <div className="decide-option">
-          <button
-            className="btn btn--primary"
-            title="Dispatches a run on this thread asking the agent to rebase onto the moved trunk, verify project checks, and commit on this branch."
-            disabled={busy}
-            onClick={() => void handleResolveRetry()}
-          >
-            Resolve &amp; retry
-          </button>
-          <span className="decide-what">
-            <strong>The trunk moved and the branch is empty.</strong> Sends the branch back to an
-            agent to rebase onto the landing target, ensure all intended changes are committed on{' '}
-            <span className="mono">{task.branch}</span>, run project checks, and report complete
-            again — same thread, preserving existing context.
+            {resolveCauses.map((cause, index) => (
+              <Fragment key={cause.key}>
+                {index > 0 && <br />}
+                <strong>{cause.heading}</strong> {cause.body}
+              </Fragment>
+            ))}
           </span>
         </div>
       )}

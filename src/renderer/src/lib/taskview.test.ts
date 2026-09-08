@@ -31,6 +31,7 @@ import {
   modelLine,
   pieceSettings,
   reassignmentModel,
+  resolveRetryCauses,
   projectWorkState,
   STATUS_TONE,
   statusLabel,
@@ -898,6 +899,19 @@ describe('landing recovery actions and canRelandTask', () => {
 
   it('does not offer canReland when there is no branch', () => {
     expect(canRelandTask({ branch: null, holdReason: 'landing failed: the trunk was busy' })).toBe(false)
+  })
+
+  it('returns every matching retry cause so one button can carry them all (t289)', () => {
+    // ⛔ Each cause used to draw its own identical "Resolve & retry" button calling the same RPC,
+    // so a landing that failed two ways asked the same question twice. The card draws one button
+    // and stacks these beneath it.
+    expect(resolveRetryCauses({ holdReason: 'landing failed: conflict' })).toEqual(['conflicted'])
+    expect(
+      resolveRetryCauses({
+        holdReason: 'landing failed: rebase conflict, and the project checks failed after rebase'
+      })
+    ).toEqual(['conflicted', 'checksFailed'])
+    expect(resolveRetryCauses({ holdReason: 'all clear' })).toEqual([])
   })
 
   it('does not offer canReland for conflicts, failing checks, or workspace uncommitted files', () => {
