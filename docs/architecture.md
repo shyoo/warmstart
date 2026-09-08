@@ -419,7 +419,7 @@ scripts/                ensure-electron, icons, build-win.ps1                   
 | File | Owns |
 |---|---|
 | `index.ts` | entry: lock, db, server, poller, scheduler, tailer wiring, shutdown |
-| `server.ts` `api.ts` | HTTP + WS on 127.0.0.1, bearer token, the typed RPC table |
+| `server.ts` `api.ts` `api/` | HTTP + WS on 127.0.0.1, bearer token, and the typed RPC table assembled from task, worker, project, quality and agent domains |
 | `db.ts` | `node:sqlite` + numbered migrations → [`data-model.md`](data-model.md) |
 | `paths.ts` | the data directory, and the legacy-install adoption |
 | `scheduler.ts` | `tick`, dispatch, the watchdogs, `continueTask` → [`routing.md`](routing.md). Scoring, session residency, turn-end handling and the resolution RPCs are split into the five files below it |

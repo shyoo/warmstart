@@ -157,8 +157,14 @@ import { log, logFiles, recentLog } from './log.js'
 import { dismissLooseEnd, resolveFinishPolicy, scanLooseEnds } from './finish.js'
 import { resolveSessionSharing } from './sharing.js'
 import { errorMessage } from '@shared/errors.js'
+import { apiAgent } from './api/agent.js'
+import { apiProjects } from './api/projects.js'
+import { apiQuality } from './api/quality.js'
+import { apiTasks } from './api/tasks.js'
+import { apiWorkers } from './api/workers.js'
 
-type Handler<M extends RpcMethod> = (params: RpcParams<M>) => RpcResult<M> | Promise<RpcResult<M>>
+export type Handler<M extends RpcMethod> = (params: RpcParams<M>) => RpcResult<M> | Promise<RpcResult<M>>
+export type Api = { [M in RpcMethod]: Handler<M> }
 
 /**
  * The prerequisites of a task, as rows rather than ids, with deleted ones dropped.
@@ -220,7 +226,7 @@ export interface ApiContext {
   port: number
 }
 
-export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
+function apiHandlers(ctx: ApiContext): Api {
   const uptime = () => Date.now() - ctx.startedAt
 
   return {
@@ -1336,6 +1342,18 @@ ${p.note}`, run.id)
       return { ok: true as const }
     }
   }
+}
+
+/** Assemble the domain RPC builders. `satisfies Api` deliberately names any omitted RPC method. */
+export function buildApi(ctx: ApiContext): Api {
+  const handlers = apiHandlers(ctx)
+  return {
+    ...apiWorkers(handlers),
+    ...apiProjects(handlers),
+    ...apiTasks(handlers),
+    ...apiQuality(handlers),
+    ...apiAgent(handlers)
+  } satisfies Api
 }
 
 /**
