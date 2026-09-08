@@ -339,11 +339,11 @@ function envFor(host: CliHost, isolationRoot: string, cwd: string): Record<strin
  *     Weekly         1% used · Resets Sep 13 at 5:00 PM
  *     as of 9:17 PM
  * ```
- * ⛔ **A newly signed-in account has no numbers here at all** — the block draws as
- * `Currently unavailable` (measured 2026-09-07, see `usageUnavailable`), and before that this
- * project recorded it as absent. Either way this returns `null` rather than zeroes: a missing
- * reading is a state everything downstream already distrusts correctly, and a 0% one would be
- * believed.
+ * ⛔ **The provider can draw this block with no numbers at all** — it reads `Currently unavailable`
+ * (measured first on a newly signed-in account on 2026-09-07, and again after completed work on
+ * MuseFirst on 2026-09-08; see `usageUnavailable`). Either way this returns `null` rather than
+ * zeroes: a missing reading is a state everything downstream already distrusts correctly, and a
+ * 0% one would be believed.
  *
  * ⚠️ `Session usage` above it counts this session's tokens, not the subscription's window, and is
  * deliberately not read here — it is the number that is present when the one we want is not.
@@ -399,33 +399,26 @@ function parseUsage(screen: string, now: number = Date.now()): QuotaWindow[] | n
 /**
  * Why the panel drew no numbers, when it drew none — the sentence a person is shown.
  *
- * ⛔ **The state the first probe of a new worker is in, and the one this adapter shipped unable to
- * name.** Measured 2026-09-07 against MuseFirst, commissioned and signed in that morning:
+ * ⛔ **A real provider answer, distinct from both a reading and a screen that did not parse.** It
+ * was first measured on a newly commissioned MuseFirst (2026-09-07), then recurred after that
+ * account had completed work and its probes had read 35% through 80% (2026-09-08):
  * ```
  *   Subscription · Muse Code Everyday Usage
  *     Currently unavailable
  * ```
- * The panel is drawn, the slash command was not swallowed and no dialog is in the way — Meta simply
- * publishes no windows for a credential that has not spent a turn. ⭐ What ends it is **one turn on
- * this credential**, not one turn in this session and not one in this isolation root: measured, a
- * single `muse exec` flipped the panel to `Current 0% used · Weekly 2% used`, a *fresh* TUI on zero
- * turns then read it, and so did a second isolation root holding a copy of the same `auth.json`.
- * ⚠️ Time alone does not: the same root read `Currently unavailable` two hours after login.
- *
- * So this is not a failure to report, and it is not a fault to fix — it is a worker that has not
- * worked yet, and dispatch is what clears it (the run is marked `quotaUnverified`, which is what
- * that flag is for).
+ * The panel is drawn and the slash command was accepted, but the provider has published no windows.
+ * An early observation suggested that one completed turn on the credential ended this state; the
+ * 2026-09-08 recurrence disproves that as a sufficient diagnosis. The cause is therefore unknown,
+ * and the app must not tell an operator to dispatch paid work as a remedy.
  */
 function usageUnavailable(screen: string): string | null {
   // ⚠️ Unanchored, for the reason `parseUsage` is: through a PTY this panel arrives on one line.
   if (!/\bSubscription\b/.test(screen)) return null
   if (!/currently unavailable/i.test(screen)) return null
   return (
-    'Muse Code drew its `/usage` panel, and it reads "Currently unavailable": Meta publishes no ' +
-    'subscription windows for an account that has not completed a turn yet. Measured 2026-09-07 — ' +
-    'one completed run on this account is what ends it, after which every probe reads the panel. ' +
-    'Nothing here needs fixing and no dialog is in the way; give this worker a task and the reading ' +
-    'appears on its own.'
+    'Muse Code drew its `/usage` panel, but it reads "Currently unavailable" instead of publishing ' +
+    'subscription windows. No quota reading is available from this probe; this can occur even after ' +
+    'completed work, so the app does not infer a cause or ask you to spend a turn to clear it.'
   )
 }
 

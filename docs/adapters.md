@@ -35,7 +35,7 @@ first spawn.** That is the whole reason `AdapterInfo.verification` exists.
 | Accepts our session id | ✔ | ⛔ | ⛔ | ⛔ | ✔ `--session-id` |
 | Resumes a past conversation | ✔ `--resume <id>` | ✔ `--conversation <id>` | ✔ **`exec resume <thread_id>`** — measured 2026-09-02 | ⛔ fresh conversation per dispatch | ✔ **the same `--session-id`** — measured 2026-09-06 |
 | Prompt cache TTL | **60m** (`1h`, 2.0× write) | ⛔ unpriced (storage per token-hour) | **30m** (1.25× write) | ⛔ none | ⛔ unpublished (reads and writes are *reported*, not priced) |
-| Free quota probe | ✔ the `.claude.json` cache; `/usage` refreshes it | ⛔ **measured — see below** | ✔ **`account/rateLimits/read`**, rollout as fallback | ⛔ none (unlimited) | ⚠️ **screen only** — `/usage `, and it reads `Currently unavailable` until the credential has spent a turn |
+| Free quota probe | ✔ the `.claude.json` cache; `/usage` refreshes it | ⛔ **measured — see below** | ✔ **`account/rateLimits/read`**, rollout as fallback | ⛔ none (unlimited) | ⚠️ **screen only** — `/usage `; the provider can answer `Currently unavailable` with no windows |
 | Free **money** meter (`spendProbe`) | `config-cache` — `.claude.json`’s usage-credit counter, only while the vendor says credits are enabled | ⛔ `none` — cloud credits are real and nothing read reports a balance | `config-cache` — `credits.balance`, in the rollout the quota already comes from | ⛔ `none` — it runs on the operator's own machine | ⛔ `none` — no local file names a figure |
 | Reports cache reads | via transcript | ⛔ no | ✔ reads **and** writes | ⛔ server-side | ✔ reads **and** writes, in the session log |
 | Read-only mode (may review) | ✔ `plan` | ✔ `plan` | ✔ `read-only` | ✔ `read-only` | ✔ `read-only` (`never` + `--disable-write` + `--disable-shell`) |
@@ -199,16 +199,16 @@ bounded to the two shapes measured (`at 1:38 AM`, `Sep 13 at 5:00 PM`) rather th
 holds every frame it ever drew. ⚠️ Antigravity's TUI does emit newlines, which is why this survived
 a screen-answered adapter shipping: it took the second one to expose it.
 
-**3. A new account's panel has no numbers on it, and that is not a fault at all.** Driven by hand
-under tmux against that same isolation root, the panel read:
+**3. The provider can return no numbers even when the probe itself worked.** Driven by hand under
+tmux against that same isolation root, the panel read:
 
 ```
   Subscription · Muse Code Everyday Usage
     Currently unavailable
 ```
 
-⭐ **What ends it is one turn on that credential** — not one turn in that session, not one in that
-isolation root, and not time:
+The first observation was a newly signed-in credential, and one completed turn then made a fresh
+TUI publish windows:
 
 | Tried | Read |
 |---|---|
@@ -216,18 +216,20 @@ isolation root, and not time:
 | one `muse exec` turn, then a **fresh** TUI on `Turns 0` | `Current 0% used · Weekly 2% used` |
 | a **second** isolation root holding a copy of the same `auth.json` | the same windows, immediately |
 
-The account already had usage from another credential and the panel still said nothing, so the gate
-is that credential's own first turn, and the numbers come from the provider rather than from any
-local file — there is nothing on disk to read, and nothing for `trust.json` to fix.
+That correlation was not a general rule. On 2026-09-08, MuseFirst had already completed work and
+its probes had read 5h values from **35% to 80%** and 7d values from **46% to 62%**; after the
+window reset, the same accepted `/usage` command again read `Currently unavailable`. The provider
+publishes no reason and no local file contains these windows, so the app records an unknown reading
+and does not tell an operator to spend a turn as a remedy.
 
 ⛔ So *"what did the screen say"* has a third answer, and adapters now have somewhere to put it:
 **`usageUnavailable(screen)`** returns the sentence a person is shown when the panel drew and said
 it has no reading. It is asked
 only after `parseUsage` has declined, so it can never mask a reading; a non-null answer **ends the
 retry loop**, because a provider that has published no numbers will not publish them because the
-command was typed a fifth time. `quotaGap` then shows the worker in the *no usage data yet* state
-the Claude Code and Codex first-probe cases already use — the fleet dispatches to it regardless (the
-run is marked `quotaUnverified`), and that first run is what fills the panel in.
+command was typed a fifth time. `quotaGap` then shows the worker with no current quota reading;
+the fleet may dispatch to it only under the existing unverified-quota policy, never as a remedy for
+the provider response.
 
 ⭐ **Verified end to end, 2026-09-07**: the adapter's own spawn plan, this app's PTY at 100×30,
 `driveScreenProbe` with the adapter's parser — **one attempt**, `Muse 5h 0% · Muse 7d 2%`, with both

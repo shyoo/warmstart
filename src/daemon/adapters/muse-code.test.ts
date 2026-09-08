@@ -264,9 +264,9 @@ describe('parseUsage', () => {
 /**
  * ⛔ **What the first probe of a freshly commissioned worker actually reads**, and the reason t266
  * exists: MuseFirst was commissioned, signed in and probed on 2026-09-07, and the probe reported
- * that the panel had not appeared and pointed at a folder-trust dialog. It had appeared, the dialog
- * was answered, and Meta had simply published no windows for an account that had not yet spent a
- * turn.
+ * that the panel had not appeared and pointed at a folder-trust dialog. It had appeared and the
+ * dialog was answered; the provider had simply published no windows. A later recurrence after
+ * completed work proved this state does not identify a never-used credential.
  */
 describe('usageUnavailable', () => {
   /** Verbatim, 2026-09-07, from MuseFirst's own isolation root under a 100x30 terminal. */
@@ -295,16 +295,18 @@ describe('usageUnavailable', () => {
     expect(museCode.parseUsage?.(UNAVAILABLE, NOW)).toBeNull()
   })
 
-  it('names the state and the one thing that ends it', () => {
+  it('names the provider response without inventing a remedy', () => {
     const why = museCode.usageUnavailable?.(UNAVAILABLE)
     expect(why).toContain('Currently unavailable')
-    expect(why).toContain('completed run')
+    expect(why).toContain('No quota reading')
+    expect(why).toContain('even after completed work')
+    expect(why).not.toContain('give this worker a task')
   })
 
   /**
    * ⚠️ The two failures it must not claim. A screen with no panel on it is the *other* diagnosis —
-   * a swallowed keystroke or a session still starting — and saying "the account has not worked yet"
-   * there would send the operator away from a dialog that really is in the way.
+   * a swallowed keystroke or a session still starting — and assigning a provider cause there would
+   * send the operator away from a dialog that really is in the way.
    */
   /** ⚠️ One line here too — the `Currently unavailable` panel arrives exactly as the full one does. */
   it('recognises the panel on a single line', () => {
