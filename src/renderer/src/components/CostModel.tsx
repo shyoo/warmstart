@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import type { CostModelSummary, CostReport } from '@shared/protocol'
 import { rpc, useDaemonEvents } from '../lib/daemon'
 import { age, countdown, money, tokens } from '../lib/format'
+import { errorMessage } from '@shared/errors.js'
 
 /**
  * Analytics > Cost Model
@@ -25,7 +26,7 @@ export function CostModel({ now }: { now: number }): React.JSX.Element {
       setModels(costModels)
       setError(null)
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(errorMessage(err))
     }
   }, [])
 

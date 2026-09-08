@@ -7,6 +7,7 @@ import { age, percent, quotaGap } from '../lib/format'
 import { SettingButtonSelect, type SettingOption } from './SettingButtonSelect'
 import { Pill } from './Pill'
 import { TerminalPane } from './Terminal'
+import { errorMessage } from '@shared/errors.js'
 
 /**
  * The (i) beside a column heading whose number needs a sentence.
@@ -233,7 +234,7 @@ export function Workers({
       await fn()
       await refresh()
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(errorMessage(err))
     } finally {
       setBusy(null)
     }
@@ -1117,7 +1118,7 @@ function AddWorker({
       })
       await onDone(worker.id, worker.adapterId)
     } catch (err) {
-      onError(err instanceof Error ? err.message : String(err))
+      onError(errorMessage(err))
     } finally {
       setSaving(false)
     }

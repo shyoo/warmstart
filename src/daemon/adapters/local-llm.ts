@@ -7,6 +7,7 @@ import type { AdapterDetection, AdapterInfo, QuotaSnapshot } from '@shared/proto
 import type { AgentAdapter, IdentityProbe, SpawnPlan, SpawnRequest } from './types.js'
 import { asRecord, num, type StreamEvent } from '../stream.js'
 import { spawnEnv } from '../which.js'
+import { errorMessage } from '@shared/errors.js'
 
 /**
  * Local LLM adapter — any OpenAI-compatible server, designed for llama.cpp + Qwen3-Coder.
@@ -146,7 +147,7 @@ async function probeEndpoint(
         done({ ok: false, models: [], error: 'timeout (5s)' })
       })
     } catch (err) {
-      done({ ok: false, models: [], error: err instanceof Error ? err.message : String(err) })
+      done({ ok: false, models: [], error: errorMessage(err) })
     }
   })
 }

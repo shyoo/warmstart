@@ -10,6 +10,7 @@ import type {
   Session,
   Worker
 } from '@shared/protocol'
+import { errorMessage } from '@shared/errors.js'
 
 /**
  * The renderer's view of the fleet.
@@ -119,7 +120,7 @@ export function useFleet(connected: boolean): {
       setFleet(await rpc('fleet.list'))
       setError(null)
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(errorMessage(err))
     }
   }, [connected])
 

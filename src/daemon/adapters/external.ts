@@ -5,6 +5,7 @@ import type { AgentAdapter } from './types.js'
 import { paths } from '../paths.js'
 import { log } from '../log.js'
 import { genericAdapter } from './generic.js'
+import { errorMessage } from '@shared/errors.js'
 
 /**
  * Adapters an operator can add without waiting for a release.
@@ -161,7 +162,7 @@ export function loadExternalAdapters(dir = externalAdapterDir()): ExternalLoadRe
     try {
       raw = JSON.parse(readFileSync(full, 'utf8'))
     } catch (err) {
-      problems.push(`${name}: ${err instanceof Error ? err.message : String(err)}`)
+      problems.push(`${name}: ${errorMessage(err)}`)
       continue
     }
     const parsed = parseExternalAdapter(raw, name)

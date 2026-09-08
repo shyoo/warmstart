@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { LogEntry, LogFile, LogLevel } from '@shared/protocol'
 import { rpc, useDaemonEvents } from '../lib/daemon'
 import { age } from '../lib/format'
+import { errorMessage } from '@shared/errors.js'
 
 /**
  * What the daemon is doing, and did.
@@ -46,7 +47,7 @@ export function Logs({ now }: { now: number }): React.JSX.Element {
       setFiles(onDisk)
       setError(null)
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(errorMessage(err))
     }
   }, [])
 

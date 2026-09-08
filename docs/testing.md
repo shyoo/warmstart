@@ -13,11 +13,12 @@ a suite in this repository has reported a confident pass for code that was broke
 
 | Tier | Command | What it drives | Spends |
 |---|---|---|---|
-| **L1** | `npm test` | `vitest`, `src/**/*.test.ts`, pure logic against the source | nothing |
+| **L1** | `npm test` | `vitest`, `src/**/*.test.ts{,x}`, pure logic against the source | nothing |
 | **L2** | `npm run test:daemon` | a live orchestratord over its own HTTP/WS RPC | nothing |
 | **L3** | `npm run test:ui` | the built app, driven over the DevTools protocol | nothing |
 | **L4** | `npm run test:e2e` | an agent in the loop | ⛔ **real tokens** |
 | — | `npm run test:pack` | the **packaged** app in `release/win-unpacked` | nothing |
+| — | `npm run coverage` | L1 again, instrumented — see §4 | nothing |
 
 `npm run test:all` is L1 + L2 + L3. That is the pre-commit set.
 
@@ -209,7 +210,38 @@ wrong one costs somebody their work.
 tree. If it fails with `EPERM`/`EBUSY`, something is executing out of `release/` — expect it to be the
 operator's own app, and ask before reaching for a kill.
 
-## 4. Writing a new check
+## 4. Coverage, and what the number is for
+
+`npm run coverage` is `npm test` with v8 instrumentation. **Baseline 2026-09-07: 50.27% statements**
+(19,919/39,618), 81.16% branches, 77.31% functions, over 134 files and 2,768 checks.
+
+⛔ **It measures L1 and nothing else, and a number read without that sentence is misleading.** The
+daemon's HTTP surface is proven at L2 and the renderer at L3, and neither is instrumented. A file at
+0% here is *not covered by pure-logic checks* — it is not necessarily untested.
+
+| Area | Statements | What it means |
+|---|---|---|
+| `src/shared` | 94.36% | what good looks like here |
+| `src/daemon` | 76.40% | solid; `gradebatch.ts` 6.7% and `chat.ts` 11.1% are the low ones |
+| `src/renderer/src/lib` | 75.76% | the extract-a-pure-function-and-check-it pattern, working |
+| `src/daemon/adapters` | 65.27% | stream decoding covered, spawning not |
+| `src/renderer/src` components | **0.00%** | ~15k statements; one number is most of the gap |
+
+⛔ **There is no threshold, on purpose.** A coverage gate makes the cheapest route to a green build
+*writing a check that executes a line and asserts nothing about it* — and §3 above is a list of the
+times a suite here already reported a confident false pass without any help. The number says where to
+look next; whether a thing is worth covering stays a judgement.
+
+⚠️ **The renderer's 0% is not an argument for a DOM tier.** Components are proven at L3 against a real
+daemon, and a jsdom tier would be a fourth way to test the same thing. The way that number moves is
+the way `lib/` got to 75%: when a component's decisions — which control to draw, what a row says, when
+something is disabled — become pure functions, they get checked here. See
+`transient_docs/maintainability_plan_2026-09-07.md`.
+
+⚠️ Entry points are excluded (`daemon/index.ts`, `mcp/index.ts`, `src/main`, `src/preload`). Their
+whole behaviour is starting something; counting them buries the files where the number means anything.
+
+## 5. Writing a new check
 
 - Use the harness (`test/lib/harness.mjs`): `check`, `skip` with a reason, `section`, `summary`,
   `wait`, `startDeadline`, `freePort`, `makeProject`/`destroyProject`, `writeProbeAdapter`.

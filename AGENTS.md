@@ -133,8 +133,9 @@ measurement behind it, in [`docs/architecture.md`](docs/architecture.md) §4. Th
 
 Grouped by the page that explains each in full. Read that page before working in the area.
 
-**Tests** — [`docs/testing.md`](docs/testing.md) §3. Every suite below L1 drives a build product and
-none of them builds one. A suite that cannot run twice at once is a bug in the suite (hard-coded
+**Tests** — [`docs/testing.md`](docs/testing.md) §§3-4. `npm run coverage` reports L1 only (50% of
+statements, 2026-09-07); a file at 0% there may still be proven at L2 or L3. Every suite below L1
+drives a build product and none of them builds one. A suite that cannot run twice at once is a bug in the suite (hard-coded
 port, 2026-08-29). Bound the wait nearest the resource. The UI worker has no credentials, so any
 check against runs, sessions or tokens **passes against an empty list** — assert non-empty as half
 the claim. [`test/ui.test.mjs`](test/ui.test.mjs) never opens a project, so project-tab changes run
@@ -147,8 +148,11 @@ postinstall and does not download itself: run
 [`scripts/ensure-electron.mjs`](scripts/ensure-electron.mjs) or every suite fails as if the build
 broke. ⛔ Never compare two paths with `===`; use `samePath` from
 [`src/daemon/fspath.ts`](src/daemon/fspath.ts). node-pty does not search PATH — everything spawnable
-goes through [`src/daemon/which.ts`](src/daemon/which.ts). `cmd /d /s /c` splits any path with a
-space. The preload must be CommonJS, and native modules cannot load from inside an asar.
+goes through [`src/daemon/which.ts`](src/daemon/which.ts), and every `git` call through
+[`src/daemon/git.ts`](src/daemon/git.ts) — four private copies disagreed about whether to eat leading
+whitespace, which `git status --porcelain` uses as data. `cmd /d /s /c` splits any path with a space;
+`node --experimental-strip-types` resolves no `@shared` alias, so `adapters/local-llm-bridge.ts`
+shares nothing and copies instead. The preload must be CommonJS, and native modules cannot load from inside an asar.
 `ready-to-show` may never fire, so no window may be shown only from it. `node:sqlite`, not
 better-sqlite3.
 

@@ -43,6 +43,7 @@ import {
   writeComposerScratch,
   type ScheduleOption
 } from '../lib/composerscratch'
+import { errorMessage } from '@shared/errors.js'
 
 /**
  * When a task is allowed to start, as offered on the clock beside Send.
@@ -547,7 +548,7 @@ export function NewTask({
       writeComposerScratch(scope, EMPTY_SCRATCH)
       await onDone()
     } catch (err) {
-      onError(err instanceof Error ? err.message : String(err))
+      onError(errorMessage(err))
     } finally {
       setSaving(null)
     }

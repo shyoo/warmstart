@@ -3,6 +3,7 @@ import type { RoutingCandidate, RoutingDecision } from '@shared/routing'
 import { OBJECTIVE_PRESET_LABELS, presetOf } from '@shared/tasks'
 import { rpc, useDaemonEvents } from '../lib/daemon'
 import { when } from '../lib/format'
+import { errorMessage } from '@shared/errors.js'
 
 /**
  * Analytics > Routing Model > Overview.
@@ -33,7 +34,7 @@ export function RoutingOverview(): React.JSX.Element {
       setTotal(result.total)
       setError(null)
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(errorMessage(err))
     }
   }, [page])
 

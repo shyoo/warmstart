@@ -125,6 +125,13 @@ describes.
   CLI installed as a `.cmd` rather than a `.exe`. Everything that starts a CLI goes through
   `launchable()` / `launchArgs()`, **including detection** — `execFile` on a `.cmd` without a shell
   fails with a bare `spawn EINVAL`, and detection that fails for an installed CLI reports it missing.
+- ⛔ **`node --experimental-strip-types` resolves no path aliases, and the failure is silent.**
+  `local-llm.test.ts` spawns `adapters/local-llm-bridge.ts` as *source* that way rather than building
+  it. Type stripping is not compilation: it knows nothing of `@shared`, so an import through the alias
+  kills the child before its first record and every check in that suite waits out its 15s timeout and
+  reports as **slow rather than broken** — 105 seconds of red with no error message anywhere in it
+  (2026-09-07, an `errorMessage` sweep that touched 91 files and could not touch that one). The bridge
+  therefore copies in anything it would otherwise share, and the suite asserts that it did.
 - **`--print` will not start under a PTY.** It exits immediately with *"Input must be provided either
   through stdin or as a prompt argument"*, because a pseudo-terminal is not piped stdin. The `stream`
   transport uses real pipes; only `pty` uses node-pty.

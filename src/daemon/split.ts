@@ -9,6 +9,7 @@ import {
 } from './tasks.js'
 import { log } from './log.js'
 import type { ChildDefaults, Principal, Task, TaskConstraints } from '@shared/tasks.js'
+import { errorMessage } from '@shared/errors.js'
 
 /**
  * Plan & Split: turning one planner's plan into the tasks that carry it out.
@@ -262,7 +263,7 @@ export function applySplit(
         // Best effort: the message below is what the operator acts on.
       }
     }
-    const reason = err instanceof Error ? err.message : String(err)
+    const reason = errorMessage(err)
     log.warn(`t${parent.seq} split could not be filed: ${reason}`)
     return { ok: false, reason }
   }
@@ -308,7 +309,7 @@ export function addSplitDependency(
   try {
     addDependency(from.id, to.id)
   } catch (err) {
-    return { ok: false, reason: err instanceof Error ? err.message : String(err) }
+    return { ok: false, reason: errorMessage(err) }
   }
   admit(from.id)
   return { ok: true }

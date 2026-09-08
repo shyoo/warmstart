@@ -1,9 +1,8 @@
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
 import type { Project, TaskCommit } from '@shared/tasks.js'
 import { db, rows } from './db.js'
 import { listProjects, policyFor } from './projects.js'
 import { log } from './log.js'
+import { tryGit } from './git.js'
 
 /**
  * Which commits a task put on its landing target — recorded when it lands, salvaged when it did not.
@@ -32,20 +31,8 @@ import { log } from './log.js'
  * somebody else's work that is indistinguishable from a real one.
  */
 
-const run = promisify(execFile)
 
-async function git(cwd: string, args: string[]): Promise<string> {
-  const { stdout } = await run('git', args, { cwd, maxBuffer: 64 * 1024 * 1024 })
-  return stdout.replace(/\s+$/, '')
-}
 
-async function tryGit(cwd: string, args: string[]): Promise<string | null> {
-  try {
-    return await git(cwd, args)
-  } catch {
-    return null
-  }
-}
 
 interface CommitRow {
   task_id: string

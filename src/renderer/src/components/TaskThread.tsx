@@ -79,6 +79,7 @@ import {
   Working,
   workspacePathFor
 } from '../lib/taskview'
+import { errorMessage } from '@shared/errors.js'
 
 export interface TaskDetailData {
   task: Task
@@ -2434,7 +2435,7 @@ function DependencyEditor({
       // it an illegal next choice, and a stale list would keep offering them.
       await reload()
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(errorMessage(err))
     } finally {
       setBusy(false)
     }
@@ -2836,7 +2837,7 @@ function QualityReviewBox({
       if (!result.ok) setFailed(result.reason)
       await refresh()
     } catch (err) {
-      setFailed(err instanceof Error ? err.message : String(err))
+      setFailed(errorMessage(err))
     } finally {
       setRunning(false)
     }
@@ -2850,7 +2851,7 @@ function QualityReviewBox({
       if (!result.ok) setFailed(result.reason)
       await refresh()
     } catch (err) {
-      setFailed(err instanceof Error ? err.message : String(err))
+      setFailed(errorMessage(err))
     } finally {
       setStopping(false)
     }
@@ -3492,7 +3493,7 @@ function FinishPicker({
       )
       if (onChanged) await onChanged()
     } catch (err) {
-      setNote(err instanceof Error ? err.message : String(err))
+      setNote(errorMessage(err))
     } finally {
       setBusy(false)
     }
@@ -3557,7 +3558,7 @@ function SharingPicker({
       await rpc('task.setSessionSharing', { id: task.id, sessionSharing })
       if (onChanged) await onChanged()
     } catch (err) {
-      setNote(err instanceof Error ? err.message : String(err))
+      setNote(errorMessage(err))
     } finally {
       setBusy(false)
     }
@@ -3619,7 +3620,7 @@ function CompletionPicker({
       await rpc('task.setCompletionMode', { id: task.id, completionMode })
       if (onChanged) await onChanged()
     } catch (err) {
-      setNote(err instanceof Error ? err.message : String(err))
+      setNote(errorMessage(err))
     } finally {
       setBusy(false)
     }
@@ -3696,7 +3697,7 @@ function CompactionPicker({
       await rpc('task.setAutoCompact', { id: task.id, autoCompact })
       if (onChanged) await onChanged()
     } catch (err) {
-      setNote(err instanceof Error ? err.message : String(err))
+      setNote(errorMessage(err))
     } finally {
       setBusy(false)
     }
@@ -3774,7 +3775,7 @@ function StatsExclusionToggle({
       await rpc('task.setStatsExcluded', { id: task.id, excluded: !excluded })
       if (onChanged) await onChanged()
     } catch (err) {
-      setNote(err instanceof Error ? err.message : String(err))
+      setNote(errorMessage(err))
     } finally {
       setBusy(false)
     }
@@ -3831,7 +3832,7 @@ function ObjectivePicker({
       await rpc('task.setObjective', { id: task.id, objective })
       if (onChanged) await onChanged()
     } catch (err) {
-      setNote(err instanceof Error ? err.message : String(err))
+      setNote(errorMessage(err))
     } finally {
       setBusy(false)
     }
@@ -3999,7 +4000,7 @@ function DraftControls({
       }
       setConfirming(true)
     } catch (err) {
-      setDeleteError(err instanceof Error ? err.message : String(err))
+      setDeleteError(errorMessage(err))
     } finally {
       setBusy(false)
     }
@@ -4013,7 +4014,7 @@ function DraftControls({
       onDelete()
     } catch (err) {
       setConfirming(false)
-      setDeleteError(err instanceof Error ? err.message : String(err))
+      setDeleteError(errorMessage(err))
     } finally {
       setBusy(false)
     }

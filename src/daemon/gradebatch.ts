@@ -4,6 +4,7 @@ import { batchCandidates } from './quality.js'
 import { requestReview, reviewerAvailability } from './reviewer.js'
 import { getTask } from './tasks.js'
 import { log } from './log.js'
+import { errorMessage } from '@shared/errors.js'
 
 /**
  * Grading many tasks at once, in the background.
@@ -237,6 +238,6 @@ async function grade(entry: BatchEntry): Promise<void> {
     )
   } catch (err) {
     entry.state = 'skipped'
-    entry.reason = err instanceof Error ? err.message : String(err)
+    entry.reason = errorMessage(err)
   }
 }

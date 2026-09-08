@@ -25,6 +25,8 @@ import { landedCommits, recordTaskCommits } from './taskcommits.js'
 import { landedRef, parkOtherHolders, parkPooledHolders, rescueAtTip } from './worktrees.js'
 import { launchArgs, which } from './which.js'
 import { log } from './log.js'
+import { git } from './git.js'
+import { errorMessage } from '@shared/errors.js'
 
 const run = promisify(execFile)
 
@@ -68,10 +70,6 @@ export interface LandingStrategy {
   land(ctx: LandingContext): Promise<LandingResult>
 }
 
-async function git(cwd: string, args: string[]): Promise<string> {
-  const { stdout } = await run('git', args, { cwd, maxBuffer: 8 * 1024 * 1024 })
-  return stdout.trim()
-}
 
 export async function hasRemote(cwd: string): Promise<boolean> {
   try {
@@ -636,7 +634,7 @@ export const mergeLocal: LandingStrategy = {
           strategy: 'merge-local',
           ok: false,
           branch: ctx.branch,
-          reason: `rebase onto ${base} conflicted: ${err instanceof Error ? err.message : String(err)}`
+          reason: `rebase onto ${base} conflicted: ${errorMessage(err)}`
         }
       }
 
@@ -685,7 +683,7 @@ export const mergeLocal: LandingStrategy = {
             commit,
             reason:
               `committed and verified on \`${ctx.branch}\`, but the trunk would not fast-forward: ` +
-              (err instanceof Error ? err.message : String(err))
+              (errorMessage(err))
           }
         }
       } else {
@@ -701,7 +699,7 @@ export const mergeLocal: LandingStrategy = {
             commit,
             reason:
               `committed and verified on \`${ctx.branch}\`, but could not update \`${target}\`: ` +
-              (err instanceof Error ? err.message : String(err))
+              (errorMessage(err))
           }
         }
       }
@@ -826,7 +824,7 @@ export const mergeBranch: LandingStrategy = {
           strategy: 'merge-branch',
           ok: false,
           branch: ctx.branch,
-          reason: `rebase onto ${target} conflicted: ${err instanceof Error ? err.message : String(err)}`
+          reason: `rebase onto ${target} conflicted: ${errorMessage(err)}`
         }
       }
 
@@ -892,7 +890,7 @@ export const mergeBranch: LandingStrategy = {
           commit,
           reason:
             `committed and verified on \`${ctx.branch}\`, but \`${target}\` would not ` +
-            `fast-forward: ${err instanceof Error ? err.message : String(err)}`
+            `fast-forward: ${errorMessage(err)}`
         }
       }
 
@@ -997,7 +995,7 @@ async function trunkNotReady(root: string, target: string): Promise<string | nul
     }
     return null
   } catch (err) {
-    return `the trunk could not be read: ${err instanceof Error ? err.message : String(err)}`
+    return `the trunk could not be read: ${errorMessage(err)}`
   }
 }
 
@@ -1172,7 +1170,7 @@ export const autoLand: LandingStrategy = {
           strategy: 'auto-land',
           ok: false,
           branch: ctx.branch,
-          reason: `rebase onto ${base} conflicted: ${err instanceof Error ? err.message : String(err)}`
+          reason: `rebase onto ${base} conflicted: ${errorMessage(err)}`
         }
       }
 
@@ -1224,7 +1222,7 @@ export const autoLand: LandingStrategy = {
         strategy: 'auto-land',
         ok: false,
         branch: ctx.branch,
-        reason: err instanceof Error ? err.message : String(err)
+        reason: errorMessage(err)
       }
     } finally {
       release(lock.id)
@@ -1337,7 +1335,7 @@ export const pullRequest: LandingStrategy = {
         ok: false,
         branch: ctx.branch,
         reason:
-          `${err instanceof Error ? err.message : String(err)} ` +
+          `${errorMessage(err)} ` +
           `(the branch \`${ctx.branch}\` may already be pushed - check the remote before redoing work)`
       }
     }

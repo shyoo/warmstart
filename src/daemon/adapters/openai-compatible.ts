@@ -16,6 +16,7 @@ import { gitWritableRoots, linkedWritableRoots } from './grants.js'
 import { asRecord, num, type StreamEvent, type StreamUsage } from '../stream.js'
 import { log } from '../log.js'
 import { formatCmdInvocation, launchArgs, launchable, spawnEnv, which } from '../which.js'
+import { errorMessage } from '@shared/errors.js'
 
 /**
  * Codex CLI — the OpenAI-compatible adapter.
@@ -1005,7 +1006,7 @@ export const openaiCompatible: AgentAdapter = {
         found: false,
         path: null,
         version: null,
-        error: err instanceof Error ? err.message : String(err)
+        error: errorMessage(err)
       }
     }
   },
@@ -1132,7 +1133,7 @@ export const openaiCompatible: AgentAdapter = {
       writeFileSync(path, lines.join('\n'))
       return { path }
     } catch (err) {
-      return { path: null, error: err instanceof Error ? err.message : String(err) }
+      return { path: null, error: errorMessage(err) }
     }
   },
 

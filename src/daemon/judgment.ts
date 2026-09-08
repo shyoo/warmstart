@@ -20,6 +20,7 @@ import { estimateTask, pessimisticOn, type Estimate } from './estimator.js'
 import { resolveObjective } from './objective.js'
 import { settings } from './settings.js'
 import { log } from './log.js'
+import { errorMessage } from '@shared/errors.js'
 
 /**
  * The four judgment events: what is asked, what a valid answer looks like, and what happens when
@@ -965,7 +966,7 @@ export function applyConsult(consult: Consult, answer: Record<string, unknown>):
         return applyTitle(task, answer)
     }
   } catch (err) {
-    return bad(`applying the answer failed: ${err instanceof Error ? err.message : String(err)}`)
+    return bad(`applying the answer failed: ${errorMessage(err)}`)
   }
 }
 

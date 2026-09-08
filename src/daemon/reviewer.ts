@@ -38,6 +38,7 @@ import {
 import { finishRun, getTask, messagesFor, startRun } from './tasks.js'
 import { defaultGradingModel, listWorkers } from './workers.js'
 import { log } from './log.js'
+import { errorMessage } from '@shared/errors.js'
 
 /**
  * Choosing a reviewer, and running the review.
@@ -586,7 +587,7 @@ async function runReview(
     finishRun(run.id, parsed.ok ? 'completed' : 'failed', parsed.ok ? undefined : parsed.reason)
     return { ok: true, review: completeReview(review.id, parsed) }
   } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err)
+    const reason = errorMessage(err)
     log.warn(`quality review of t${task.seq} failed: ${reason}`)
     if (reviewId) activeReviews.delete(reviewId)
     if (sessionId) await closeAndWait(sessionId)

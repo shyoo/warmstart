@@ -31,6 +31,7 @@ import {
   type NewProjectDraft,
   type NewProjectStep
 } from '../lib/newproject'
+import { errorMessage } from '@shared/errors.js'
 
 /**
  * Adding a project, as a setup step.
@@ -116,7 +117,7 @@ export function NewProject({
         .catch((err: unknown) => {
           if (seq !== inspectSeq.current) return
           setInspection(null)
-          setInspectError(err instanceof Error ? err.message : String(err))
+          setInspectError(errorMessage(err))
         })
     }, 200)
     return () => clearTimeout(timer)
@@ -192,7 +193,7 @@ export function NewProject({
     } catch (err) {
       // ⚠️ Not fatal and not a blocker: the project can be created without a scaffold, so this says
       // so and leaves the step usable.
-      setWarnings([`could not build the starter files: ${err instanceof Error ? err.message : String(err)}`])
+      setWarnings([`could not build the starter files: ${errorMessage(err)}`])
     }
   }, [inspection, draft.name, draft.checksText, draft.landingTarget])
 
@@ -239,7 +240,7 @@ export function NewProject({
       }
       onCreated(result.project)
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(errorMessage(err))
       setBusy(false)
     }
   }

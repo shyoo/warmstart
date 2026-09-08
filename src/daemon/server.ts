@@ -4,6 +4,7 @@ import { WebSocketServer, type WebSocket } from 'ws'
 import type { DaemonEvent, RpcMethod, RpcRequest, RpcResponse } from '@shared/protocol.js'
 import { buildApi, type ApiContext } from './api.js'
 import { log } from './log.js'
+import { errorMessage } from '@shared/errors.js'
 
 /**
  * The daemon's front door.
@@ -81,7 +82,7 @@ export async function startServer(token: string, ctx: Omit<ApiContext, 'port'>):
           const result = await handler(request.params)
           send(200, { id: request.id, ok: true, result } satisfies RpcResponse)
         } catch (err) {
-          const message = err instanceof Error ? err.message : String(err)
+          const message = errorMessage(err)
           log.warn(`rpc ${request.method} failed: ${message}`)
           send(200, { id: request.id, ok: false, error: { message } } satisfies RpcResponse)
         }

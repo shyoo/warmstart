@@ -7,6 +7,7 @@ import { when } from '../lib/format'
 import { agentNames } from '../lib/agentname'
 import { readQualityGradableOnly, writeQualityGradableOnly } from '../lib/prefs'
 import { AgentLabel } from './AgentLabel'
+import { errorMessage } from '@shared/errors.js'
 
 /**
  * Analytics › Quality Review.
@@ -77,7 +78,7 @@ export function QualityReview({
       setBatch(running)
       setError(null)
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(errorMessage(err))
     }
   }, [filter, offset, gradableOnly])
 
@@ -112,7 +113,7 @@ export function QualityReview({
       }
       await refresh()
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(errorMessage(err))
     } finally {
       setBusy(false)
     }
@@ -124,7 +125,7 @@ export function QualityReview({
       if (!result.ok) setError(result.reason)
       await refresh()
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(errorMessage(err))
     }
   }, [refresh])
 

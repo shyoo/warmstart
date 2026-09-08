@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import type { DoctorReport } from '@shared/protocol'
 import { rpc } from '../lib/daemon'
 import { age } from '../lib/format'
+import { errorMessage } from '@shared/errors.js'
 
 /**
  * Doctor.
@@ -22,7 +23,7 @@ export function Doctor({ now }: { now: number }): React.JSX.Element {
       setReport(await rpc('doctor.run'))
       setError(null)
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(errorMessage(err))
     } finally {
       setRunning(false)
     }

@@ -5,6 +5,7 @@ import { rpc, useDaemonEvents } from '../lib/daemon'
 import { when } from '../lib/format'
 import { modelLabel } from '../lib/modelname'
 import { AgentLabel } from './AgentLabel'
+import { errorMessage } from '@shared/errors.js'
 
 /**
  * Analytics > Routing Model > Quality.
@@ -41,7 +42,7 @@ export function QualityModel({
       setUngraded(pending)
       setError(null)
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(errorMessage(err))
     }
   }, [])
 

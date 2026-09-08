@@ -28,6 +28,7 @@ import {
   writeStarterConfig
 } from './projects.js'
 import { isEmptyProjectDir, proposeChecks, proposeDocs, suggestProjectName, detectStack } from './projectstack.js'
+import { errorMessage } from '@shared/errors.js'
 
 /**
  * Adding a project, as a setup step rather than a text box.
@@ -72,7 +73,7 @@ export function workspaceRootReport(
   } catch (err) {
     // ⛔ The writer's own refusals, surfaced as a report rather than as a thrown error, because this
     // runs on every keystroke in the form. `relativeWorkspaceRoot` throws for exactly two cases.
-    const message = err instanceof Error ? err.message : String(err)
+    const message = errorMessage(err)
     state = /same drive/.test(message) ? 'other-drive' : 'inside-project'
     note = message
   }
@@ -249,7 +250,7 @@ export async function createProject(request: ProjectCreateRequest): Promise<Proj
       log.info(`git init -b ${landingTarget} in ${root}`)
     } catch (err) {
       warnings.push(
-        `could not initialise a git repository: ${err instanceof Error ? err.message : String(err)}`
+        `could not initialise a git repository: ${errorMessage(err)}`
       )
     }
   }
@@ -280,7 +281,7 @@ export async function createProject(request: ProjectCreateRequest): Promise<Proj
     // ⛔ Reported, not fatal. The project is registered; a policy that did not write is something an
     // operator can fix on the settings tab, and throwing here would leave a registered project
     // behind an error that says the creation failed.
-    warnings.push(`could not write the project policy: ${err instanceof Error ? err.message : String(err)}`)
+    warnings.push(`could not write the project policy: ${errorMessage(err)}`)
   }
 
   const docsWritten = writeProjectDocs(project, request.docs ?? [], warnings)
@@ -343,7 +344,7 @@ export function writeProjectDocs(
       written.push(doc.name)
     } catch (err) {
       warnings.push(
-        `could not write ${doc.name}: ${err instanceof Error ? err.message : String(err)}`
+        `could not write ${doc.name}: ${errorMessage(err)}`
       )
     }
   }

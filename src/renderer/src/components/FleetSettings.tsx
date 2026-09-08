@@ -14,6 +14,7 @@ import {
 import type { Settings } from '@shared/protocol'
 import { rpc } from '../lib/daemon'
 import { SettingRow, SettingSwitch } from './SettingRow'
+import { errorMessage } from '@shared/errors.js'
 
 /**
  * Fleet-wide settings: what the scheduler optimizes for, how it intervenes, how often it probes.
@@ -36,7 +37,7 @@ export function FleetSettings(): React.JSX.Element {
       setSettings(await rpc('settings.get'))
       setError(null)
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(errorMessage(err))
     }
   }, [])
 
@@ -51,7 +52,7 @@ export function FleetSettings(): React.JSX.Element {
     try {
       setSettings(await rpc('settings.set', patch))
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(errorMessage(err))
     } finally {
       setBusy(false)
     }

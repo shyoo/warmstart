@@ -32,6 +32,7 @@ import {
   taskLabelShort,
   Working
 } from '../lib/taskview'
+import { errorMessage } from '@shared/errors.js'
 
 /**
  * A column header you can sort by.
@@ -294,7 +295,7 @@ export function Tasks({
     try {
       await fn()
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(errorMessage(err))
     }
     await refresh()
   }
@@ -309,7 +310,7 @@ export function Tasks({
       }
       setPendingDelete(task)
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(errorMessage(err))
     }
   }
 

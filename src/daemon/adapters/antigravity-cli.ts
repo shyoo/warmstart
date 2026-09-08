@@ -16,6 +16,7 @@ import { asRecord, num, type StreamEvent, type StreamUsage } from '../stream.js'
 import { attachmentDirs } from '../attachments.js'
 import { log } from '../log.js'
 import { launchArgs, launchable, spawnEnv, which } from '../which.js'
+import { errorMessage } from '@shared/errors.js'
 
 /**
  * Antigravity CLI (`agy`) — the Google adapter.
@@ -936,7 +937,7 @@ export const antigravityCli: AgentAdapter = {
         found: false,
         path: null,
         version: null,
-        error: err instanceof Error ? err.message : String(err)
+        error: errorMessage(err)
       }
     }
   },
@@ -1091,7 +1092,7 @@ export const antigravityCli: AgentAdapter = {
       writeFileSync(path, `${JSON.stringify(merged, null, 2)}\n`)
       return { path }
     } catch (err) {
-      return { path: null, error: err instanceof Error ? err.message : String(err) }
+      return { path: null, error: errorMessage(err) }
     }
   },
 

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { LooseEnd } from '@shared/tasks'
 import { rpc, useDaemonEvents } from '../lib/daemon'
+import { errorMessage } from '@shared/errors.js'
 
 // The overview unmounts while another page is open. Keep the last confirmed scan at module scope so
 // returning to it does not briefly erase the decisions the operator was just reading.
@@ -57,7 +58,7 @@ export function LooseEnds(): React.JSX.Element | null {
     try {
       setNote(await fn())
     } catch (err) {
-      setNote(err instanceof Error ? err.message : String(err))
+      setNote(errorMessage(err))
     } finally {
       setBusy(null)
       await refresh()

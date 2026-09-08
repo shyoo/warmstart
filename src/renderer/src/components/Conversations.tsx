@@ -4,6 +4,7 @@ import { SESSION_ENDED } from '@shared/protocol'
 import { rpc, useDaemonEvents, useNow } from '../lib/daemon'
 import { duration, tokens, when } from '../lib/format'
 import { Working } from '../lib/taskview'
+import { errorMessage } from '@shared/errors.js'
 
 /**
  * Which conversation served which runs.
@@ -136,7 +137,7 @@ export function Conversations({
       setRows(await rpc('conversation.list', projectId ? { projectId } : {}))
       setError(null)
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(errorMessage(err))
     } finally {
       setLoaded(true)
     }

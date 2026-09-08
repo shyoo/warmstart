@@ -1,6 +1,4 @@
-import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { promisify } from 'node:util'
 import type { Project, Task, TaskMessage } from '@shared/tasks.js'
 import {
   composite,
@@ -17,6 +15,7 @@ import { taskCommits } from './taskcommits.js'
 import { requireTask } from './tasks.js'
 import { emit } from './events.js'
 import { log } from './log.js'
+import { git, tryGit } from './git.js'
 
 /**
  * Peer quality review — the rubric, the diff, and the grade.
@@ -35,12 +34,7 @@ import { log } from './log.js'
  * `@shared/review.js` because the thread renders them beside each score.
  */
 
-const run = promisify(execFile)
 
-async function git(cwd: string, args: string[]): Promise<string> {
-  const { stdout } = await run('git', args, { cwd, maxBuffer: 16 * 1024 * 1024 })
-  return stdout.replace(/\s+$/, '')
-}
 
 // ---------------------------------------------------------------------------- blinding
 
@@ -258,13 +252,6 @@ async function resolves(cwd: string, ref: string): Promise<string | null> {
   return tryGit(cwd, ['rev-parse', `${ref}^{commit}`])
 }
 
-async function tryGit(cwd: string, args: string[]): Promise<string | null> {
-  try {
-    return await git(cwd, args)
-  } catch {
-    return null
-  }
-}
 
 /**
  * What to hand `git diff` — one range, or one spec per commit.

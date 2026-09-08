@@ -6,6 +6,15 @@
 > **Authority for:** the tier contract and the tool inventory.
 > The RPC surface it calls is in [`architecture.md`](architecture.md).
 
+⚠️ **Two files, and the split is what makes any of it testable.** `index.ts` is the wiring and ends by
+connecting a stdio transport at the top level — so importing it *starts a server*, and nothing in it
+could ever be loaded by a check. `payload.ts` is the pure half: what a tool result looks like, and how
+the vendor's permission-hook payload is read (`questionsFrom`, which accepts four spellings of
+*multi-select* and two each of *label* and *detail*, every one of them written from a payload somebody
+watched arrive). ⛔ It must **degrade rather than throw** — this runs inside
+`--permission-prompt-tool`, where a parse error is not a wrong answer on screen but an agent that
+cannot act, with the reason buried in a CLI's stderr. `payload.test.ts` pins that.
+
 ---
 
 ## 1. Why it exists as its own entry point

@@ -9,6 +9,8 @@ import { landingTargetFor, policyFor } from './projects.js'
 import { settings } from './settings.js'
 import { availability, claim, openClaims, release, upsertResource, workspacePoolId } from './resources.js'
 import { log } from './log.js'
+import { git } from './git.js'
+import { errorMessage } from '@shared/errors.js'
 
 const run = promisify(execFile)
 
@@ -41,10 +43,6 @@ export interface Workspace {
   index: number
 }
 
-async function git(cwd: string, args: string[]): Promise<string> {
-  const { stdout } = await run('git', args, { cwd, maxBuffer: 8 * 1024 * 1024 })
-  return stdout.trim()
-}
 
 async function gitOk(cwd: string, args: string[]): Promise<boolean> {
   try {
@@ -323,7 +321,7 @@ export async function switchResidentBranch(
     }
     return { ok: true, from: state.branch }
   } catch (err) {
-    return { ok: false, from: state.branch, error: err instanceof Error ? err.message : String(err) }
+    return { ok: false, from: state.branch, error: errorMessage(err) }
   }
 }
 
@@ -462,7 +460,7 @@ export async function prepareWorkspace(
         ok: false,
         branch: null,
         steps,
-        error: err instanceof Error ? err.message : String(err)
+        error: errorMessage(err)
       }
     }
   }
@@ -984,7 +982,7 @@ export async function retireStrandedBranch(
     log.info(`retired ${branch}: every commit on it was already landed`)
     return { deleted: true }
   } catch (err) {
-    return { deleted: false, reason: err instanceof Error ? err.message : String(err) }
+    return { deleted: false, reason: errorMessage(err) }
   }
 }
 

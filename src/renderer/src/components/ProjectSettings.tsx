@@ -31,6 +31,7 @@ import type { Settings } from '@shared/protocol'
 import { rpc } from '../lib/daemon'
 import { SettingButtonSelect, type SettingOption } from './SettingButtonSelect'
 import { SettingRow } from './SettingRow'
+import { errorMessage } from '@shared/errors.js'
 
 /**
  * Everything about one project that is a *setting* rather than a task.
@@ -78,7 +79,7 @@ export function ProjectSettings({
         await rpc('project.setPolicy', { id: project.id, ...patch })
         await refreshProjects()
       } catch (err) {
-        setError(err instanceof Error ? err.message : String(err))
+        setError(errorMessage(err))
         throw err
       }
     },
@@ -619,7 +620,7 @@ function ChecksPanel({
       await rpc('project.setChecks', { id: project.id, checks: lines })
       setNote(`Saved ${lines.length} command(s) to project.json.`)
     } catch (err) {
-      setNote(err instanceof Error ? err.message : String(err))
+      setNote(errorMessage(err))
     } finally {
       setBusy(false)
     }
@@ -645,7 +646,7 @@ function ChecksPanel({
       })
       setNote(`Filed as t${task.seq}.`)
     } catch (err) {
-      setNote(err instanceof Error ? err.message : String(err))
+      setNote(errorMessage(err))
     } finally {
       setBusy(false)
     }

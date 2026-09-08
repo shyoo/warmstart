@@ -4,6 +4,7 @@ import { rpc, useDaemonEvents, useNow, type FleetEntry } from '../lib/daemon'
 import { duration } from '../lib/format'
 import { assigneeLabel } from '../lib/taskview'
 import { AgentIcon } from './AgentIcon'
+import { errorMessage } from '@shared/errors.js'
 
 export type FlowLane = 'ready' | 'queued' | 'dispatching' | 'running' | 'awaiting' | 'finished'
 
@@ -198,7 +199,7 @@ export function Flow({ projectId, fleet, onOpenTask }: {
       setWorkspaces(bound)
       setError(null)
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(errorMessage(err))
     }
   }, [projectId])
 

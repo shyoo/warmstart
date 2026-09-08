@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import type { VelocityReport } from '@shared/routing'
 import { rpc, useDaemonEvents } from '../lib/daemon'
 import { duration } from '../lib/format'
+import { errorMessage } from '@shared/errors.js'
 
 /**
  * Analytics > Routing Model > Velocity.
@@ -21,7 +22,7 @@ export function VelocityModel(): React.JSX.Element {
       setReport(await rpc('routing.velocity'))
       setError(null)
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(errorMessage(err))
     }
   }, [])
 

@@ -1,5 +1,6 @@
 import React, { useCallback, useRef, useState } from 'react'
 import { rpc } from './daemon.js'
+import { errorMessage } from '@shared/errors.js'
 
 /**
  * Pasting, dropping, and selecting attachments in a composer.
@@ -148,7 +149,7 @@ export function usePastedImages(
         ])
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(errorMessage(err))
     } finally {
       setBusy(false)
     }
@@ -204,7 +205,7 @@ export function usePastedImages(
         setImages((current) => [...current, { id: attachment.id, preview: null, name: file.name, width: 0, height: 0, bytes: attachment.bytes }])
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(errorMessage(err))
     } finally {
       setBusy(false)
     }
@@ -224,7 +225,7 @@ export function usePastedImages(
         setImages((current) => [...current, { id: attachment.id, preview: null, name: path.split(/[/\\]/).pop() ?? path, width: 0, height: 0, bytes: 0 }])
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(errorMessage(err))
     } finally {
       setBusy(false)
     }

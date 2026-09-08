@@ -19,6 +19,7 @@ import {
   hostPlan,
   type CliHost
 } from './clihost.js'
+import { errorMessage } from '@shared/errors.js'
 
 const run = promisify(execFile)
 
@@ -871,7 +872,7 @@ export const museCode: AgentAdapter = {
         raw: JSON.stringify({ provider: 'meta', mechanism: meta.mechanism ?? null })
       }
     } catch (err) {
-      return { loggedIn: null, raw: err instanceof Error ? err.message : String(err) }
+      return { loggedIn: null, raw: errorMessage(err) }
     }
   },
 

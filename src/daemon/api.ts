@@ -155,6 +155,7 @@ import { listConversations } from './conversations.js'
 import { log, logFiles, recentLog } from './log.js'
 import { dismissLooseEnd, resolveFinishPolicy, scanLooseEnds } from './finish.js'
 import { resolveSessionSharing } from './sharing.js'
+import { errorMessage } from '@shared/errors.js'
 
 type Handler<M extends RpcMethod> = (params: RpcParams<M>) => RpcResult<M> | Promise<RpcResult<M>>
 
@@ -1226,7 +1227,7 @@ export function buildApi(ctx: ApiContext): { [M in RpcMethod]: Handler<M> } {
         if (task.createdAt >= filedAt) admitAgentTask(task.id)
         return { ok: true, seq: task.seq }
       } catch (err) {
-        return { ok: false, reason: err instanceof Error ? err.message : String(err) }
+        return { ok: false, reason: errorMessage(err) }
       }
     },
     /**

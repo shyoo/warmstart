@@ -19,6 +19,7 @@ import { log } from '../log.js'
 import { launchArgs, launchable, spawnEnv, which } from '../which.js'
 import { APPROVE_TOOL } from '../mcpconfig.js'
 import { paths } from '../paths.js'
+import { errorMessage } from '@shared/errors.js'
 
 const run = promisify(execFile)
 
@@ -634,7 +635,7 @@ export const claudeCode: AgentAdapter = {
         found: false,
         path: null,
         version: null,
-        error: err instanceof Error ? err.message : String(err)
+        error: errorMessage(err)
       }
     }
   },
@@ -692,7 +693,7 @@ export const claudeCode: AgentAdapter = {
     } catch (err) {
       stdout = (err as { stdout?: string }).stdout ?? ''
       if (!stdout.trim()) {
-        return { loggedIn: null, raw: err instanceof Error ? err.message : String(err) }
+        return { loggedIn: null, raw: errorMessage(err) }
       }
     }
     const file = join(isolationRoot, '.claude.json')
@@ -825,7 +826,7 @@ export const claudeCode: AgentAdapter = {
         windows: [],
         sampledAt: Date.now(),
         source: 'unknown',
-        error: err instanceof Error ? err.message : String(err)
+        error: errorMessage(err)
       }
     }
   },
@@ -872,7 +873,7 @@ export const claudeCode: AgentAdapter = {
         meters: [],
         sampledAt: Date.now(),
         source: 'unknown',
-        error: err instanceof Error ? err.message : String(err)
+        error: errorMessage(err)
       }
     }
   },

@@ -10,6 +10,7 @@ import type {
 import { rpc, useDaemonEvents } from '../lib/daemon'
 import { duration, money, when } from '../lib/format'
 import { effortLabel, modelLabel } from '../lib/modelname'
+import { errorMessage } from '@shared/errors.js'
 
 /**
  * Analytics › Statistics.
@@ -570,7 +571,7 @@ export function Statistics({
       setReport(await rpc('statistics.report'))
       setError(null)
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(errorMessage(err))
     }
   }, [])
 

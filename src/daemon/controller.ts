@@ -19,6 +19,7 @@ import {
 } from './sessions.js'
 import { applyConsult, fallbackFor, questionStillStands } from './judgment.js'
 import { getTask } from './tasks.js'
+import { errorMessage } from '@shared/errors.js'
 
 /**
  * The controller.
@@ -485,7 +486,7 @@ async function run(consult: Consult, worker: Worker): Promise<void> {
     if (sessionId) closeSession(sessionId)
     applyFallback(
       requireConsult(consult.id),
-      `could not ask ${worker.label}: ${err instanceof Error ? err.message : String(err)}`
+      `could not ask ${worker.label}: ${errorMessage(err)}`
     )
   }
 }

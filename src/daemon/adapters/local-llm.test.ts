@@ -1,7 +1,7 @@
 import { createServer, type Server } from 'node:http'
 import { spawn } from 'node:child_process'
 import { createInterface } from 'node:readline'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { adapter } from './index.js'
@@ -275,6 +275,28 @@ describe('local-llm probeIdentity against mock HTTP server', () => {
     expect(probe.loggedIn).toBe(false)
     expect(probe.account).toBeUndefined()
     expect(probe.organization).toMatch(/connect|ECONNREFUSED/i)
+  })
+})
+
+/**
+ * ⛔ The bridge is spawned **as TypeScript source** by the suite below — `node
+ * --experimental-strip-types`, which strips types and resolves nothing else. It has no idea what
+ * `@shared` is, so an import through the alias kills the child before it emits its `init` record and
+ * every check below then waits out its full 15s timeout and reports as *slow*, never as *broken*.
+ *
+ * ⚠️ This check exists because that is exactly what happened (2026-09-07): `errorMessage` was
+ * factored out of 91 call sites, one of them was here, and the result was seven timeouts and no
+ * error message anywhere. It costs one file read and it names the rule, which the timeouts did not.
+ */
+describe('what the bridge is allowed to import', () => {
+  it('reaches for nothing through the @shared alias', () => {
+    const source = readFileSync(join(__dirname, 'local-llm-bridge.ts'), 'utf8')
+    const offenders = source
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith('import ') && line.includes('@shared'))
+    expect(offenders, 'the bridge runs under --experimental-strip-types; copy it in instead').toEqual(
+      []
+    )
   })
 })
 

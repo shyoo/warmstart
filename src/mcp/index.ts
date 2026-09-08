@@ -6,6 +6,8 @@ import http from 'node:http'
 import type { DaemonEndpoint, RpcMethod, RpcParams, RpcResponse, RpcResult } from '@shared/protocol.js'
 import { normaliseAsk, parseOptionList } from '@shared/tasks.js'
 import { paths } from '../daemon/paths.js'
+import { errorMessage } from '@shared/errors.js'
+import { describeTarget, failed, questionsFrom, text, type NativeQuestion } from './payload.js'
 
 /**
  * The agentyard MCP server.
@@ -35,32 +37,13 @@ import { paths } from '../daemon/paths.js'
 
 const TIER = process.env.MULTI_AGENT_CONTROLLER_TIER === 'controller' ? 'controller' : 'worker'
 
-/** Render whatever a tool produced as MCP text content. */
-function text(value: unknown): { content: Array<{ type: 'text'; text: string }> } {
-  return {
-    content: [
-      { type: 'text' as const, text: typeof value === 'string' ? value : JSON.stringify(value, null, 2) }
-    ]
-  }
-}
-
-function failed(err: unknown): {
-  content: Array<{ type: 'text'; text: string }>
-  isError: true
-} {
-  return {
-    content: [{ type: 'text' as const, text: err instanceof Error ? err.message : String(err) }],
-    isError: true
-  }
-}
-
 function endpoint(): DaemonEndpoint {
   try {
     return JSON.parse(readFileSync(paths.endpoint, 'utf8')) as DaemonEndpoint
   } catch (err) {
     throw new Error(
       `orchestratord is not running (no endpoint at ${paths.endpoint}): ` +
-        (err instanceof Error ? err.message : String(err)),
+        (errorMessage(err)),
       { cause: err }
     )
   }
@@ -99,7 +82,7 @@ function rpc<M extends RpcMethod>(method: M, params?: RpcParams<M>): Promise<Rpc
             }
           } catch (err) {
             reject(
-              new Error(`Failed to parse RPC response: ${err instanceof Error ? err.message : String(err)}`)
+              new Error(`Failed to parse RPC response: ${errorMessage(err)}`)
             )
           }
         })
@@ -173,7 +156,7 @@ server.registerTool(
       decision = answer.decision === 'deny' ? 'deny' : 'allow'
       message = answer.reason ?? ''
     } catch (err) {
-      message = `Denied by default: ${err instanceof Error ? err.message : String(err)}`
+      message = `Denied by default: ${errorMessage(err)}`
     }
 
     const payload =
@@ -859,82 +842,6 @@ if (TIER === 'controller') {
 } // end controller tier
 
 /**
- * The vendor's own question(s), if this is one.
- *
- * ⚠️ Shape measured, not documented: `{questions: [{question, header?, options: [{label,
- * description?}], multiSelect?}]}`. Returns an empty array on anything that does not match, so a future change
- * to the payload degrades to the ordinary approval path rather than throwing inside a permission
- * hook - where the failure mode is an agent that cannot act at all.
- */
-interface NativeQuestion {
-  question: string
-  header?: string
-  multiSelect: boolean
-  options: Array<{ id: string; label: string; detail?: string }>
-}
-
-function questionsFrom(input: unknown): NativeQuestion[] {
-  if (!input || typeof input !== 'object') return []
-  const list = (input as { questions?: unknown }).questions
-  if (!Array.isArray(list) || list.length === 0) return []
-  const result: NativeQuestion[] = []
-  for (const item of list) {
-    if (!item || typeof item !== 'object') continue
-    const record = item as Record<string, unknown>
-    const rawQuestion = typeof record.question === 'string' ? record.question : null
-    if (!rawQuestion) continue
-    const rawOptions = Array.isArray(record.options) ? record.options : []
-    const explicitMulti =
-      record.multiSelect === true ||
-      record.multi_select === true ||
-      record.is_multi_select === true ||
-      record.multiple === true
-
-    // ⚠️ `description` is what the vendor's own `AskUserQuestion` calls the per-option prose, and
-    // `detail` is what this app calls it. Mapped here, once, before anything else reads an option.
-    const supplied = rawOptions
-      .map((entry, index) => {
-        if (typeof entry === 'string') return { id: `opt${index + 1}`, label: entry }
-        const option = entry as Record<string, unknown>
-        const label =
-          typeof option.label === 'string'
-            ? option.label
-            : typeof option.text === 'string'
-              ? option.text
-              : null
-        if (!label) return null
-        return {
-          id: typeof option.id === 'string' && option.id.trim() ? option.id.trim() : `opt${index + 1}`,
-          label,
-          ...(typeof option.description === 'string' && option.description
-            ? { detail: option.description }
-            : typeof option.detail === 'string' && option.detail
-              ? { detail: option.detail }
-              : {})
-        }
-      })
-      .filter((option): option is { id: string; label: string; detail?: string } => option !== null)
-
-    // ⛔ The same repair the agent's own `ask_human` gets. A question the CLI half-serialised is
-    // half-serialised whichever tool it came from.
-    const asked = normaliseAsk({
-      question: rawQuestion,
-      header: typeof record.header === 'string' ? record.header : null,
-      kind: explicitMulti ? 'multi' : supplied.length > 0 ? 'choice' : 'text',
-      options: supplied
-    })
-
-    result.push({
-      question: asked.question,
-      ...(asked.header ? { header: asked.header } : {}),
-      multiSelect: asked.kind === 'multi',
-      options: asked.options
-    })
-  }
-  return result
-}
-
-/**
  * Put the vendor's question(s) to a person, and hand the answer(s) back through the only channel that
  * carries one.
  *
@@ -976,17 +883,6 @@ async function answerNativeQuestions(
   }
   const message = replies.join('\n')
   return { content: [{ type: 'text' as const, text: JSON.stringify({ behavior: 'deny', message }) }] }
-}
-
-/** A best-effort one-line rendering of what is about to happen. Never used for a policy decision. */
-function describeTarget(input: unknown): string {
-  if (!input || typeof input !== 'object') return ''
-  const record = input as Record<string, unknown>
-  for (const key of ['command', 'file_path', 'path', 'url', 'pattern', 'query']) {
-    const value = record[key]
-    if (typeof value === 'string') return value.slice(0, 300)
-  }
-  return ''
 }
 
 await server.connect(new StdioServerTransport())

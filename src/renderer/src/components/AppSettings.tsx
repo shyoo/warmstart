@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { EnterBehavior } from '@shared/ipc'
 import { useUiSettings } from '../lib/uisettings'
 import { SettingRow, SettingSwitch } from './SettingRow'
+import { errorMessage } from '@shared/errors.js'
 
 /**
  * The preferences that belong to this window rather than to the fleet.
@@ -26,7 +27,7 @@ export function AppSettings(): React.JSX.Element {
     try {
       await updateUiSettings(patch)
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(errorMessage(err))
     } finally {
       setSaving(false)
     }

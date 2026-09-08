@@ -13,6 +13,7 @@ import {
   sendPrompt,
   spawnSession
 } from './sessions.js'
+import { errorMessage } from '@shared/errors.js'
 
 /**
  * Talking to the controller.
@@ -151,7 +152,7 @@ export function sendChat(text: string, threadId = DEFAULT_THREAD): SendResult {
         session.id
       )
     } catch (err) {
-      const reason = err instanceof Error ? err.message : String(err)
+      const reason = errorMessage(err)
       append(threadId, 'system', `Could not open a controller session: ${reason}`, null)
       return { ok: false, reason }
     }

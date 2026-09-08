@@ -215,6 +215,7 @@ import {
   onCompactionLanded
 } from './compaction.js'
 import { costModel } from './costmodel.js'
+import { errorMessage } from '@shared/errors.js'
 
 /**
  * The scheduler.
@@ -648,7 +649,7 @@ export async function tick(): Promise<TickResult> {
  * into an unbounded loop of the same one.
  */
 export function afterFailedDispatch(err: unknown): { status: 'ready' | 'failed'; reason: string } {
-  const reason = err instanceof Error ? err.message : String(err)
+  const reason = errorMessage(err)
   return { status: err instanceof Contended ? 'ready' : 'failed', reason }
 }
 

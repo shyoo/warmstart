@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import type { ModelReport } from '@shared/routing'
 import { rpc, useDaemonEvents } from '../lib/daemon'
 import { money } from '../lib/format'
+import { errorMessage } from '@shared/errors.js'
 
 /**
  * Analytics > Routing Model > Models.
@@ -27,7 +28,7 @@ export function ModelsModel(): React.JSX.Element {
       setReport(await rpc('routing.models'))
       setError(null)
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(errorMessage(err))
     }
   }, [])
 

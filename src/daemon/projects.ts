@@ -10,6 +10,7 @@ import { readFinishPolicy } from '@shared/tasks.js'
 import { db, row, rows } from './db.js'
 import { emit } from './events.js'
 import { log } from './log.js'
+import { errorMessage } from '@shared/errors.js'
 
 /**
  * Projects.
@@ -231,7 +232,7 @@ function editProjectConfig(
     } catch (err) {
       throw new Error(
         `${path} is not valid JSON, so this will not overwrite it: ` +
-          (err instanceof Error ? err.message : String(err)),
+          (errorMessage(err)),
         { cause: err }
       )
     }

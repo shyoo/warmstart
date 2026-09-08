@@ -4,6 +4,7 @@ import { db, rows } from './db.js'
 import { log } from './log.js'
 import { bumpPricingEpoch } from './price.js'
 import { listWorkers, requireWorker, setWorkerCredits } from './workers.js'
+import { errorMessage } from '@shared/errors.js'
 
 /**
  * The money store: what each account's meters read, and when.
@@ -255,7 +256,7 @@ export async function probeSpendFor(workerId: string, using?: SpendProbeSource):
     }
     return written
   } catch (err) {
-    const why = err instanceof Error ? err.message : String(err)
+    const why = errorMessage(err)
     log.warn(`spend probe failed for ${w.label}: ${why}`)
     return recordSpendSample(workerId, {
       meters: [],

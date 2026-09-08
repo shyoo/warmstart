@@ -6,6 +6,7 @@ import { rpc, useDaemonEvents } from '../lib/daemon'
 import { isSubmitKey, useUiSettings } from '../lib/uisettings'
 import { duration, tokens, when } from '../lib/format'
 import { Working } from '../lib/taskview'
+import { errorMessage } from '@shared/errors.js'
 
 /**
  * The controller.
@@ -76,7 +77,7 @@ export function Controller(_props: { now: number }): React.JSX.Element {
       setToolDispatches(routingPage.decisions)
       setError(null)
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(errorMessage(err))
     }
   }, [page, pageSize])
 
@@ -114,7 +115,7 @@ export function Controller(_props: { now: number }): React.JSX.Element {
       }
     } catch (err) {
       setBusy(false)
-      setError(err instanceof Error ? err.message : String(err))
+      setError(errorMessage(err))
     }
   }
 

@@ -27,6 +27,20 @@ import * as http from 'node:http'
 import * as https from 'node:https'
 import { createInterface } from 'node:readline'
 
+/**
+ * ⛔ **This file imports nothing from `@shared`, and that is a constraint rather than an oversight.**
+ * `local-llm.test.ts` runs this bridge by spawning *the TypeScript source* under
+ * `node --experimental-strip-types`, which strips types and resolves nothing — it has no idea what
+ * `@shared` is, because the alias is a bundler and `tsconfig` fact. The child dies on the import
+ * before it emits its `init` record, and every check in that suite then waits out its full timeout
+ * and reports as slow rather than as broken. Measured 2026-09-07, when `errorMessage` was factored
+ * out of 91 call sites and this was the one place it could not go: seven checks, seven 15s timeouts,
+ * no error message anywhere. Anything shared this file needs is copied here on purpose.
+ */
+function errText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
+}
+
 // ---------------------------------------------------------------------------- configuration
 
 const ENDPOINT = process.env.LOCAL_LLM_ENDPOINT ?? 'http://127.0.0.1:8080'
@@ -521,7 +535,7 @@ async function runConversation(prompt: string, messages: ChatMessage[]): Promise
         })
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
+      const msg = errText(err)
       log(`error: ${msg}`)
       emit({
         type: 'result',
@@ -593,6 +607,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  log(`fatal: ${err instanceof Error ? err.message : String(err)}`)
+  log(`fatal: ${errText(err)}`)
   process.exit(1)
 })
