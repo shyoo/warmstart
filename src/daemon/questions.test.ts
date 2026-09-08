@@ -691,6 +691,34 @@ describe('a question filed with its asker already gone', () => {
     expect(answer?.deliveredAt ?? null).toBeNull()
   })
 
+  it('releases the timed-out task lease before requeueing its answer', async () => {
+    // A question that outlives its cache wait keeps the original run's lease until the answer
+    // requeues it. Without this release, that same task is refused as a different task when it
+    // tries to resume the conversation it already owns.
+    const api = await import('./api.js')
+    const resources = await import('./resources.js')
+    const { sessionLeaseId } = await import('./residency.js')
+    const handlers = api.buildApi({ version: '1.0.0', startedAt: Date.now(), port: 8080 })
+    const { task, session } = seedAsker()
+    const pending = questions.askQuestion({
+      sessionId: session.id,
+      origin: 'ask_human',
+      kind: 'text',
+      question: 'Which store?'
+    })
+    const lease = sessionLeaseId(session.id)
+    resources.upsertResource({ id: lease, kind: 'exclusive', label: 'conversation', meta: {} })
+    expect(resources.claim(lease, task.id)).not.toBeNull()
+
+    questions.parkQuestionsForSession(session.id)
+    await pending
+    const [parked] = questions.openQuestions()
+    await handlers['question.answer']({ id: parked!.id, optionIds: [], text: 'Postgres' })
+
+    expect(tasks.requireTask(task.id).status).toBe('ready')
+    expect(resources.availability(lease)?.free).toBe(1)
+  })
+
   it('does not overrule an operator who had already stopped the task', async () => {
     // ⚠️ Answering is not a request to restart something a person deliberately paused.
     const api = await import('./api.js')

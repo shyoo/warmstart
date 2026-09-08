@@ -2750,6 +2750,14 @@ export function continueTask(taskId: string): 'delivered' | 'requeued' | 'queued
       finishRun(run.id, 'terminated', 'task requeued for continuation')
     }
   }
+  // A parked question can leave its old run's session lease behind: its waiter timed out, so the
+  // task is requeued instead of receiving the answer in that live turn.  The next warm dispatch is
+  // this same task taking that same lease again, and treating its old claim as somebody else's makes
+  // it wait forever.  Release only session leases here: an awaiting-human task can separately hold
+  // its workspace while the old conversation is parked, and that claim must survive until dispatch.
+  for (const held of claimsForHolder(task.id)) {
+    if (held.resourceId.startsWith('session:')) release(held.id)
+  }
   db().prepare('update tasks set not_before = null where id = ?').run(task.id)
   setStatus(task.id, 'ready', { assignee: null })
   return 'requeued'
@@ -3777,4 +3785,3 @@ export function sessionOf(taskId: string): Session | null {
 }
 
 export { policyFor }
-
