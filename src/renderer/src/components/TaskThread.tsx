@@ -2,15 +2,10 @@ import { canWork, sessionEnded } from '@shared/protocol'
 import { Fragment, useCallback, useEffect, useState } from 'react'
 import {
   FINISH_LABELS,
-  FINISH_ORDER,
   FINISH_SHORT,
   type FinishPolicy,
   resolveModelChoice,
-  AUTO_COMPACT_LABELS,
-  COMPLETION_LABELS,
-  OBJECTIVE_PRESET_ORDER,
   SHARING_LABELS,
-  presetOf,
   type AutoCompactChoice,
   type Compaction,
   type CompletionModeChoice,
@@ -39,7 +34,7 @@ import { rpc, useActivity, useDaemonEvents, useNow, type FleetEntry } from '../l
 import { isSubmitKey, useUiSettings } from '../lib/uisettings'
 import { ImageChips, usePastedImages } from '../lib/pasteimages'
 import { conversationIdFor } from '../lib/conversation'
-import { SettingButtonSelect, type SettingOption } from './SettingButtonSelect'
+import { SettingButtonSelect } from './SettingButtonSelect'
 import { SplitButton } from './SplitButton'
 import {
   COMMIT_FALLBACK,
@@ -81,6 +76,19 @@ import {
 } from '../lib/taskview'
 import { errorMessage } from '@shared/errors.js'
 import { useAction } from '../lib/useAction'
+import { TaskSettingPicker } from './TaskSettingPicker'
+import {
+  compactionChoice,
+  completionChoice,
+  finishChoice,
+  objectiveChoice,
+  outcomeClass,
+  paceNote,
+  priorityChoice,
+  ranOnLabel,
+  sharingChoice,
+  workerChoice
+} from '../lib/threadview'
 
 export interface TaskDetailData {
   task: Task
@@ -716,7 +724,18 @@ function TaskDetail({
               </Fact>
             )}
             <Fact label="worker">
-              <WorkerPicker task={task} fleet={fleet} onChanged={refresh} />
+              <TaskSettingPicker
+                choice={workerChoice(task, fleet)}
+                ariaLabel="Worker"
+                title="Pin a worker to restrict this task to that worker, or let the scheduler decide."
+                save={(workerId) => rpc('task.setWorker', { id: task.id, workerId: workerId || null })}
+                onChanged={refresh}
+                footer={
+                  task.ranOn && !task.constraints.workerId ? (
+                    <div className="tbl-sub dim">last run on {ranOnLabel(task, fleet)}</div>
+                  ) : null
+                }
+              />
             </Fact>
 
             {/* ⭐ The question this whole cost model exists to answer, and the one the UI could not.
@@ -873,21 +892,55 @@ function TaskDetail({
               </>
             ) : (
               <>
+                {/* ⚠️ Three tiers resolve into one answer — task, then project, then fleet — and
+                    `inherit` is a real value rather than a blank. A task set to inherit follows its
+                    project as the project changes; one set explicitly to the same value does not.
+                    ⛔ The answer from the daemon is what lands in state, never the value that was
+                    clicked, and here that matters twice over: choosing a landing policy on a
+                    finished task also *lands* it, and the attempt can be refused. Hence
+                    `successNote` — a control that painted itself green while the push was rejected
+                    would be the worst kind of lie this app could tell. */}
                 <Fact label="finish">
-                  <FinishPicker
-                    task={task}
-                    inheritedFinish={detail.inheritedFinish}
+                  <TaskSettingPicker
+                    choice={finishChoice(task, detail.inheritedFinish)}
+                    ariaLabel="Finish policy"
+                    title="What happens to this task's work when it is done."
+                    save={(value) =>
+                      rpc('task.setFinishPolicy', {
+                        id: task.id,
+                        finishPolicy: value as FinishPolicyChoice
+                      })
+                    }
+                    successNote={(result) =>
+                      result.landed ? 'landed' : result.reason ? `not landed — ${result.reason}` : null
+                    }
                     onChanged={refresh}
                   />
                 </Fact>
                 {/* ⚠️ Next to `finish` because they are the same shape of decision — three tiers, `inherit`
                     a real value, changeable at any time — and an operator who has learnt one has learnt
                     the other. ⛔ Unlike `finish`, this one only records: a task already talking in a
-                    conversation is never moved out of it. */}
+                    conversation is never moved out of it — acting on this one would mean moving a
+                    running agent out of the conversation it is mid-thought in, which is the single
+                    thing sharing must never do. It applies from the next run. ⚠️ The saving is real
+                    and measured, and so is the disclosure the tooltip makes: an agent joining a
+                    conversation sees everything said in it. */}
                 <Fact label="conversation">
-                  <SharingPicker
-                    task={task}
-                    inheritedSharing={detail.inheritedSharing}
+                  <TaskSettingPicker
+                    choice={sharingChoice(task, detail.inheritedSharing)}
+                    ariaLabel="Session sharing"
+                    title={
+                      'Whether this task may continue in a conversation another task in this ' +
+                      'project has already been having. Cheaper — a cold start rebuilt 41,542 ' +
+                      'tokens of prefix that a reused one read back for 65 — but the agent sees ' +
+                      'everything said in that conversation.'
+                    }
+                    save={(value) =>
+                      rpc('task.setSessionSharing', {
+                        id: task.id,
+                        sessionSharing: value as SessionSharingChoice
+                      })
+                    }
                     onChanged={refresh}
                   />
                 </Fact>
@@ -897,9 +950,21 @@ function TaskDetail({
                 `inherit` a real value, effective on the next run. ⚠️ It is not a care setting -
                 an autonomous agent still stops to ask when a decision changes what it builds. */}
             <Fact label="completion">
-              <CompletionPicker
-                task={task}
-                inheritedCompletion={detail.inheritedCompletion}
+              <TaskSettingPicker
+                choice={completionChoice(task, detail.inheritedCompletion)}
+                ariaLabel="Completion mode"
+                title={
+                  'How far the agent goes before it stops. Running to the end is the default and ' +
+                  'does not stop it asking you a question when one changes what it builds; ' +
+                  'checking in makes it report at each phase boundary and wait. Takes effect on ' +
+                  'the next run.'
+                }
+                save={(value) =>
+                  rpc('task.setCompletionMode', {
+                    id: task.id,
+                    completionMode: value as CompletionModeChoice
+                  })
+                }
                 onChanged={refresh}
               />
             </Fact>
@@ -908,24 +973,63 @@ function TaskDetail({
                 doing anything. ⚠️ Unlike the three above it does **not** wait for the next run —
                 the cache clock re-reads it on its next tick, so switching a long-running task on
                 can schedule a compaction into the conversation it is already having, within 10s,
-                if the clock works out that one is worth its tokens. */}
+                if the clock works out that one is worth its tokens.
+                ⛔ It is a permission, not an instruction: `on` lets the clock reach the moves that
+                can compact, and the clock still has to agree this one buys something.
+                ⛔ `capable === false` is *shown*, disabled, not hidden — a control quietly missing
+                on Codex or Antigravity is indistinguishable from a bug, and one present but
+                silently inert is worse. ⚠️ `=== false`, not `!capable`: undefined means an older
+                daemon that does not send the field, and disabling a working control because the
+                answer is missing is the worse of the two mistakes. Nothing here branches on an
+                adapter name; the daemon read `capabilities.manualCompact` and sent the answer. */}
             <Fact label="compaction">
-              <CompactionPicker
-                task={task}
-                inheritedAutoCompact={detail.inheritedAutoCompact}
-                capable={detail.compactionCapable}
+              <TaskSettingPicker
+                choice={compactionChoice(task, detail.inheritedAutoCompact)}
+                ariaLabel="Automatic compaction"
+                disabled={detail.compactionCapable === false}
+                title={
+                  detail.compactionCapable === false
+                    ? 'This task’s agent cannot be asked to compact — the capability is ' +
+                      'declared by the adapter, and only Claude Code declares it today. The ' +
+                      'setting is recorded either way and takes effect if this task moves to a ' +
+                      'worker that can.'
+                    : 'Whether the cache clock may compact this conversation, overriding Settings ' +
+                      '> Global. It is permission, not an instruction: the clock still decides on ' +
+                      'its own terms — context past the ~2h break-even, enough growth since the ' +
+                      'last compaction, and a prefix worth reading while it is still warm. Unlike ' +
+                      'the settings above it applies to the conversation this task is in now, from ' +
+                      'the next tick.'
+                }
+                save={(value) =>
+                  rpc('task.setAutoCompact', { id: task.id, autoCompact: value as AutoCompactChoice })
+                }
                 onChanged={refresh}
               />
             </Fact>
             <Fact label="objective">
-              <ObjectivePicker
-                task={task}
-                inheritedObjective={detail.inheritedObjective}
+              <TaskSettingPicker
+                choice={objectiveChoice(task.objective, detail.inheritedObjective)}
+                ariaLabel="Optimization objective"
+                title="Optimization objective (cost, velocity, quality) for this task's next run."
+                save={(value) =>
+                  rpc('task.setObjective', { id: task.id, objective: value as ObjectiveChoice })
+                }
                 onChanged={refresh}
               />
             </Fact>
             <Fact label="priority">
-              <PriorityPicker task={task} onChanged={refresh} />
+              <TaskSettingPicker
+                choice={priorityChoice(task)}
+                ariaLabel="Priority"
+                title="Priority orders the queue: P0 runs before P1, P2, P3."
+                save={(value) =>
+                  rpc('task.setPriority', {
+                    id: task.id,
+                    priority: value as 'P0' | 'P1' | 'P2' | 'P3'
+                  })
+                }
+                onChanged={refresh}
+              />
             </Fact>
             <Fact label="filed">{when(task.createdAt)}</Fact>
             {task.status === 'scheduled' && task.notBefore && (
@@ -2405,7 +2509,7 @@ const FINISHED_FOR_GOOD = new Set<Task['status']>(['completed', 'cancelled', 'fa
  *
  * ⛔ In the ledger beside `blocks`, not in the composer. An edge is a fact about the task in the same
  * sense its worker and its model are, and all three are now editable in the place they are read —
- * the pattern `WorkerPicker` established. What the composer is for is saying something to the agent.
+ * the pattern the worker picker established. What the composer is for is saying something to the agent.
  *
  * ⚠️ Every change is a round trip that can be refused: a cycle, a task somebody deleted between this
  * pane loading and the click. The refusal is shown here rather than swallowed, because the list not
@@ -2519,12 +2623,6 @@ function SessionFact({ runs, sessions }: { runs: Run[]; sessions: Session[] }): 
  * work and is one answer away from continuing. It gets the same colour as `awaiting_human` — which is
  * what the task itself is now — rather than the amber that means something went wrong.
  */
-function outcomeClass(outcome: Run['outcome']): string {
-  if (outcome === 'completed') return 'ok'
-  if (outcome === 'blocked') return 'state-human'
-  return outcome ? 'warn' : 'state-running'
-}
-
 /**
  * One attempt, with what it cost — twice over, and deliberately not reconciled.
  *
@@ -2777,12 +2875,6 @@ function CommitsBox({ commits }: { commits: TaskCommit[] }): React.JSX.Element {
  * hosted one would have — and borrowing another agent's number would set an expectation this app
  * has no evidence for.
  */
-function paceNote(typicalMs: number | null): string {
-  return typicalMs === null
-    ? 'How long it takes here is not yet known: it has not finished a review on this fleet.'
-    : `Its last reviews here took about ${duration(typicalMs)}.`
-}
-
 function QualityReviewBox({
   task,
   reviews,
@@ -3455,250 +3547,6 @@ function Compose({
 }
 
 /**
- * What happens to this task's work when it is done.
- *
- * ⚠️ Three tiers resolve into one answer — task, then project, then fleet — and `inherit` is a real
- * value rather than a blank. A task set to inherit follows its project as the project changes; one
- * set explicitly to the same value does not, and a control that could not express the difference
- * would quietly convert every glance at this dropdown into a decision.
- *
- * ⛔ The answer from the daemon is what lands in state, never the value that was clicked — and here
- * that matters twice over, because choosing a landing policy on a finished task also *lands* it, and
- * the attempt can be refused. A dropdown that painted itself green while the push was rejected would
- * be the worst kind of lie this app could tell.
- */
-
-function FinishPicker({
-  task,
-  inheritedFinish,
-  onChanged
-}: {
-  task: Task
-  inheritedFinish?: ResolvedFinishPolicy
-  onChanged?: () => Promise<void>
-}): React.JSX.Element {
-  const { busy, note, run: choose } = useAction(
-    (finishPolicy: FinishPolicyChoice) => rpc('task.setFinishPolicy', { id: task.id, finishPolicy }),
-    {
-      successNote: (result) =>
-        result.landed ? 'landed' : result.reason ? `not landed — ${result.reason}` : null,
-      onSuccess: onChanged
-    }
-  )
-
-  const inheritedLabel = inheritedFinish?.policy
-    ? FINISH_LABELS[inheritedFinish.policy] ?? inheritedFinish.policy
-    : 'agent lands it'
-
-  const options: SettingOption[] = [
-    { value: 'inherit', label: `inherit (${inheritedLabel})` },
-    ...FINISH_ORDER.map((p) => ({
-      value: p,
-      label: FINISH_LABELS[p]
-    }))
-  ]
-
-  return (
-    <>
-      <SettingButtonSelect
-        value={task.finishPolicy}
-        options={options}
-        disabled={busy}
-        ariaLabel="Finish policy"
-        title="What happens to this task's work when it is done."
-        displayLabel={task.finishPolicy === 'inherit' ? inheritedLabel : undefined}
-        onChange={(val) => void choose(val as FinishPolicyChoice)}
-      />
-      {note && <div className="note">{note}</div>}
-    </>
-  )
-}
-
-/**
- * Whether this task may borrow a conversation somebody else has been having.
- *
- * ⛔ Records a preference and nothing more. `FinishPicker` beside it also *acts* — switching a
- * finished task to a landing policy lands it — and the asymmetry is deliberate rather than an
- * omission: acting on this one would mean moving a running agent out of the conversation it is
- * mid-thought in, which is the single thing sharing must never do. It applies from the next run.
- *
- * ⚠️ The saving is real and measured, and so is the disclosure. An agent joining a conversation sees
- * everything said in it, which is why this is off until somebody says otherwise and why the tooltip
- * says so rather than describing only the upside.
- */
-function SharingPicker({
-  task,
-  inheritedSharing,
-  onChanged
-}: {
-  task: Task
-  inheritedSharing?: ResolvedSessionSharing
-  onChanged?: () => Promise<void>
-}): React.JSX.Element {
-  const { busy, note, run: choose } = useAction(
-    (sessionSharing: SessionSharingChoice) => rpc('task.setSessionSharing', { id: task.id, sessionSharing }),
-    { onSuccess: onChanged }
-  )
-
-  const inheritedLabel = inheritedSharing?.sharing
-    ? SHARING_LABELS[inheritedSharing.sharing] ?? inheritedSharing.sharing
-    : 'always start a new one'
-
-  const options: SettingOption[] = [
-    { value: 'inherit', label: `inherit (${inheritedLabel})` },
-    { value: 'on', label: 'reuse one if possible' },
-    { value: 'off', label: 'always start a new one' }
-  ]
-
-  return (
-    <>
-      <SettingButtonSelect
-        value={task.sessionSharing}
-        options={options}
-        disabled={busy}
-        ariaLabel="Session sharing"
-        title={
-          'Whether this task may continue in a conversation another task in this project has ' +
-          'already been having. Cheaper — a cold start rebuilt 41,542 tokens of prefix that a ' +
-          'reused one read back for 65 — but the agent sees everything said in that conversation.'
-        }
-        displayLabel={task.sessionSharing === 'inherit' ? inheritedLabel : undefined}
-        onChange={(val) => void choose(val as SessionSharingChoice)}
-      />
-      {note && <div className="note">{note}</div>}
-    </>
-  )
-}
-
-/**
- * How far the agent is expected to get before it stops.
- *
- * ⚠️ Records a preference and nothing else. A run already in flight was given its prompt when
- * it was dispatched, and a prompt is sent once - so this takes effect on the task's next run, which
- * the control says rather than leaving somebody to discover.
- */
-function CompletionPicker({
-  task,
-  inheritedCompletion,
-  onChanged
-}: {
-  task: Task
-  inheritedCompletion?: ResolvedCompletionMode
-  onChanged?: () => Promise<void>
-}): React.JSX.Element {
-  const { busy, note, run: choose } = useAction(
-    (completionMode: CompletionModeChoice) => rpc('task.setCompletionMode', { id: task.id, completionMode }),
-    { onSuccess: onChanged }
-  )
-
-  const inheritedLabel = inheritedCompletion?.mode
-    ? COMPLETION_LABELS[inheritedCompletion.mode] ?? inheritedCompletion.mode
-    : 'run to the end'
-
-  const options: SettingOption[] = [
-    { value: 'inherit', label: `inherit (${inheritedLabel})` },
-    { value: 'autonomous', label: 'run to the end' },
-    { value: 'checkpointed', label: 'check in at each phase' }
-  ]
-
-  return (
-    <>
-      <SettingButtonSelect
-        value={task.completionMode}
-        options={options}
-        disabled={busy}
-        ariaLabel="Completion mode"
-        title={
-          'How far the agent goes before it stops. Running to the end is the default and does not ' +
-          'stop it asking you a question when one changes what it builds; checking in makes it ' +
-          'report at each phase boundary and wait. Takes effect on the next run.'
-        }
-        displayLabel={task.completionMode === 'inherit' ? inheritedLabel : undefined}
-        onChange={(val) => void choose(val as CompletionModeChoice)}
-      />
-      {note && <div className="note">{note}</div>}
-    </>
-  )
-}
-
-/**
- * Whether the cache clock may spend a `/compact` on this task's conversation.
- *
- * ⛔ **A permission, and the control says so rather than reading as a button.** `on` does not compact
- * anything; it lets the clock reach the moves that can, and the clock still has to agree that this
- * particular compaction buys something — context past the break-even, enough growth since the last
- * one, a prefix worth reading while it is still warm. An operator who reads this as *compact now*
- * and watches nothing happen for an hour has been misled by the label, not by the feature.
- *
- * ⚠️ **The one picker on this pane that is not "takes effect on the next run".** Sharing, completion
- * and finish all change a *prompt*, and a prompt is sent once, so a run in flight was already given
- * its instructions. This changes what a loop decides on its next tick, and that loop runs every ten
- * seconds against the session this task is talking in right now.
- *
- * ⛔ **`capable === false` is shown, not hidden.** Codex takes one prompt per session and has no
- * `/compact`; Antigravity implements none. A control quietly missing on those workers is
- * indistinguishable from a bug, and a control present but silently inert is worse — so the options
- * are disabled and the tooltip says which agent cannot do it. ⚠️ Nothing here branches on an adapter
- * name; the daemon read `capabilities.manualCompact` and sent the answer.
- */
-function CompactionPicker({
-  task,
-  inheritedAutoCompact,
-  capable,
-  onChanged
-}: {
-  task: Task
-  inheritedAutoCompact?: ResolvedAutoCompact
-  capable?: boolean
-  onChanged?: () => Promise<void>
-}): React.JSX.Element {
-  const { busy, note, run: choose } = useAction(
-    (autoCompact: AutoCompactChoice) => rpc('task.setAutoCompact', { id: task.id, autoCompact }),
-    { onSuccess: onChanged }
-  )
-
-  const inheritedLabel = inheritedAutoCompact?.autoCompact
-    ? AUTO_COMPACT_LABELS[inheritedAutoCompact.autoCompact] ?? inheritedAutoCompact.autoCompact
-    : AUTO_COMPACT_LABELS.on
-
-  const options: SettingOption[] = [
-    { value: 'inherit', label: `inherit (${inheritedLabel})` },
-    { value: 'on', label: AUTO_COMPACT_LABELS.on },
-    { value: 'off', label: AUTO_COMPACT_LABELS.off }
-  ]
-
-  // ⚠️ `capable === false`, not `!capable`. Undefined means a detail payload from an older daemon
-  // that does not send the field, and disabling a working control because the answer is missing
-  // would be the worse of the two mistakes.
-  const cannot = capable === false
-
-  return (
-    <>
-      <SettingButtonSelect
-        value={task.autoCompact}
-        options={options}
-        disabled={busy || cannot}
-        ariaLabel="Automatic compaction"
-        title={
-          cannot
-            ? 'This task\u2019s agent cannot be asked to compact — the capability is declared by the ' +
-              'adapter, and only Claude Code declares it today. The setting is recorded either way ' +
-              'and takes effect if this task moves to a worker that can.'
-            : 'Whether the cache clock may compact this conversation, overriding Settings > Global. ' +
-              'It is permission, not an instruction: the clock still decides on its own terms — ' +
-              'context past the ~2h break-even, enough growth since the last compaction, and a ' +
-              'prefix worth reading while it is still warm. Unlike the settings above it applies to ' +
-              'the conversation this task is in now, from the next tick.'
-        }
-        displayLabel={task.autoCompact === 'inherit' ? inheritedLabel : undefined}
-        onChange={(val) => void choose(val as AutoCompactChoice)}
-      />
-      {note && <div className="note">{note}</div>}
-    </>
-  )
-}
-
-/**
  * Take this task out of the fleet's own statistics, or put it back.
  *
  * ⛔ **For a measurement that is wrong, not for a result somebody dislikes**, and the tooltip says
@@ -3748,133 +3596,6 @@ function StatsExclusionToggle({
       </button>
       {note && <div className="note">{note}</div>}
     </>
-  )
-}
-
-/**
- * What this task is optimising for.
- *
- * ⚠️ Records a preference and nothing else — effective on the next run.
- */
-function ObjectivePicker({
-  task,
-  inheritedObjective,
-  onChanged
-}: {
-  task: Task
-  inheritedObjective?: Objective
-  onChanged?: () => Promise<void>
-}): React.JSX.Element {
-  const { busy, note, run: choose } = useAction(
-    (objective: ObjectiveChoice) => rpc('task.setObjective', { id: task.id, objective }),
-    { onSuccess: onChanged }
-  )
-
-  const inheritedPreset = inheritedObjective ? presetOf(inheritedObjective) : null
-  const inheritedLabel =
-    inheritedPreset ??
-    (inheritedObjective
-      ? `${Math.round(inheritedObjective.cost * 100)}%/${Math.round(inheritedObjective.velocity * 100)}%/${Math.round(inheritedObjective.quality * 100)}%`
-      : 'balanced')
-
-  const currentChoice =
-    typeof task.objective === 'string'
-      ? task.objective
-      : task.objective
-        ? presetOf(task.objective) ?? 'custom'
-        : 'inherit'
-
-  const options: SettingOption[] = [
-    { value: 'inherit', label: `inherit (${inheritedLabel})` },
-    ...OBJECTIVE_PRESET_ORDER.map((preset) => ({ value: preset, label: preset })),
-    ...(currentChoice === 'custom' ? [{ value: 'custom', label: 'custom' }] : [])
-  ]
-
-  return (
-    <>
-      <SettingButtonSelect
-        value={currentChoice}
-        options={options}
-        disabled={busy}
-        aria-label="Optimization objective"
-        title="Optimization objective (cost, velocity, quality) for this task's next run."
-        displayLabel={currentChoice === 'inherit' ? inheritedLabel : undefined}
-        onChange={(value) => void choose(value as ObjectiveChoice)}
-      />
-      {note && <div className="note">{note}</div>}
-    </>
-  )
-}
-
-function WorkerPicker({
-  task,
-  fleet,
-  onChanged
-}: {
-  task: Task
-  fleet: FleetEntry[]
-  onChanged?: () => Promise<void>
-}): React.JSX.Element {
-  const pinnable = fleet.filter((e) => e.worker.enabled && canWork(e.worker.role)).map((e) => e.worker)
-  const currentWorkerId = task.constraints.workerId ?? ''
-  const { busy, run: choose } = useAction(
-    (workerId: string) => rpc('task.setWorker', { id: task.id, workerId: workerId || null }),
-    { onSuccess: onChanged }
-  )
-
-  const options: SettingOption[] = [
-    { value: '', label: 'Auto — scheduler choice' },
-    ...pinnable.map((w) => ({
-      value: w.id,
-      label: w.label
-    }))
-  ]
-
-  return (
-    <>
-      <SettingButtonSelect
-        value={currentWorkerId}
-        options={options}
-        disabled={busy}
-        ariaLabel="Worker"
-        title="Pin a worker to restrict this task to that worker, or let the scheduler decide."
-        onChange={(val) => void choose(val)}
-      />
-      {task.ranOn && !currentWorkerId && (
-        <div className="tbl-sub dim">
-          last run on {fleet.find((f) => f.worker.id === task.ranOn)?.worker.label ?? task.ranOn.slice(0, 8)}
-        </div>
-      )}
-    </>
-  )
-}
-
-function PriorityPicker({
-  task,
-  onChanged
-}: {
-  task: Task
-  onChanged?: () => Promise<void>
-}): React.JSX.Element {
-  const { busy, run: choose } = useAction(
-    (priority: 'P0' | 'P1' | 'P2' | 'P3') => rpc('task.setPriority', { id: task.id, priority }),
-    { onSuccess: onChanged }
-  )
-
-  const options: SettingOption[] = (['P0', 'P1', 'P2', 'P3'] as const).map((p) => ({
-    value: p,
-    label: p
-  }))
-
-  return (
-    <SettingButtonSelect
-      value={task.priority}
-      options={options}
-      disabled={busy}
-      ariaLabel="Priority"
-      title="Priority orders the queue: P0 runs before P1, P2, P3."
-      onChange={(val) => void choose(val as 'P0' | 'P1' | 'P2' | 'P3')}
-    />
   )
 }
 
