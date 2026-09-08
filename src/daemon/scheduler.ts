@@ -1182,7 +1182,7 @@ function pastSessionsFor(task: Task): Session[] {
  * ⭐ **The half of "a session already holds this task" that a one-shot CLI can ever have.**
  * `warmSessionFor` can only offer a conversation with a live process, and `codex exec` reads one
  * prompt, runs one turn and exits — so on that adapter there is never a live idle session, and every
- * candidate scored `affinity 0 · warm 0 · cold 1` no matter how recently it had done the work. The
+ * candidate scored `contextHeld 0 · cacheWarmth 0 · cold 1` no matter how recently it had done the work. The
  * dispatch knew better all along: it calls `resumableSession` and reopens the conversation. The score
  * simply could not see what the dispatch was about to do.
  *
@@ -1192,7 +1192,7 @@ function pastSessionsFor(task: Task): Session[] {
  * everything from nothing, because the only thing that could have said otherwise was structurally
  * unavailable to a `streamPrompts: 'once'` adapter.
  *
- * ⚠️ **Not filtered on cache warmth**, deliberately, and `warm` is the term that carries that. A
+ * ⚠️ **Not filtered on cache warmth**, deliberately, and `cacheWarmth` is the term that carries that. A
  * conversation whose prefix has lapsed still remembers the task, which is the greater part of why
  * reopening it beats starting over; it just no longer comes with a discount, and scoring it as though
  * it did would be the lie this function exists to stop telling.
@@ -1646,7 +1646,7 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
     let priceBasis: string
     if (!modelRouting) {
       // ⛔ Same gate as `fitness`, and for the same reason: with one model per worker this term
-      // would price a choice nobody is making. `warm`, `cold`, `quotaRisk` and `projectSwitch`
+      // would price a choice nobody is making. `cacheWarmth`, `cold`, `quotaRisk` and `projectSwitch`
       // already carry cost on an un-opted-in fleet, exactly as they did before this landed.
       priceValue = 0
       priceBasis = INERT_BASIS
@@ -2038,7 +2038,8 @@ export function quotaRiskOf(workerId: string): 0 | 1 {
 /**
  * ⛔ Every term is a continuous function of the objective vector, never a switch on a mode name. The
  * two requirements the plan wanted fall out of the arithmetic rather than needing features:
- * "add X, test X, document X" lands on one session because `warm` and `affinity` both peak there, and
+ * "add X, test X, document X" lands on one session because `cacheWarmth` and `contextHeld` both peak
+ * there, and
  * three big independent tasks go to three workers whole because `cold` prices the alternative.
  */
 /**
@@ -2077,8 +2078,8 @@ export interface ScoreBreakdown {
 
 /** The direction each weight pushes. ⛔ Must match the signs used in `scoreCandidate`. */
 const SIGN_OF: Record<keyof ReturnType<typeof weights>, 1 | -1> = {
-  warm: 1,
-  affinity: 1,
+  cacheWarmth: 1,
+  contextHeld: 1,
   contextRot: -1,
   projectSwitch: -1,
   quotaRisk: -1,
@@ -2150,8 +2151,8 @@ export function scoreLegend(objective: Objective, epsilon = ROUTE_EPSILON): stri
 const VALUE_MEANS: Record<string, string> = {
   // ⚠️ Not "a full hour". The denominator is the provider's own TTL — 60m on Anthropic, 30m on
   // codex — so the term compares fractions of a cache across providers rather than minutes.
-  warm: '1 = a full TTL of prompt cache left',
-  affinity: '1 = a conversation already holds this task, live or reopenable',
+  cacheWarmth: '1 = a full TTL of prompt cache left',
+  contextHeld: '1 = a conversation already holds this task, live or reopenable',
   contextRot: '1 = the context window is full',
   projectSwitch: '1 = the session is on another project',
   quotaRisk: `1 = at ${QUOTA_HIGH_WATER}% of its window (adjusted for reset horizon; 0 below ${QUOTA_RISK_FLOOR}%)`,
@@ -2211,7 +2212,7 @@ export function briefScore(b: ScoreBreakdown): string {
 }
 
 /**
- * The span the `warm` term divides by: how long a full prompt cache lasts on this conversation's
+ * The span the `cacheWarmth` term divides by: how long a full prompt cache lasts on this conversation's
  * provider.
  *
  * ⛔ An hour is Anthropic's TTL and was written into the score as though it were everybody's. The
@@ -2273,7 +2274,7 @@ function scoreCandidate(
   const warmth = held?.cacheExpiresAt
     ? Math.max(0, Math.min(1, (held.cacheExpiresAt - now) / ttlMs))
     : 0
-  const affinity = held ? 1 : 0
+  const contextHeld = held ? 1 : 0
   const cold = held ? 0 : 1
   const projectSwitch = held && held.projectId && held.projectId !== task.projectId ? 1 : 0
 
@@ -2337,7 +2338,7 @@ function scoreCandidate(
   const fit = needs.length === 0 ? 1 : met.length / needs.length
 
   // ⚠️ The model the *conversation* is on wins over the worker's default, because that is the model
-  // the turn would actually be served by — the same rule the `warm` term follows when it reads
+  // the turn would actually be served by — the same rule the `cacheWarmth` term follows when it reads
   // `held` rather than `worker`.
   const measuredPace = paceFor(pace, worker.adapterId, held?.model ?? paceModel)
 
@@ -2348,9 +2349,9 @@ function scoreCandidate(
   // published derivation stops matching the number it claims to explain.
   return breakdownOf([
     [
-      'warm',
-      w.warm,
-      WEIGHT_FORMULAS.warm,
+      'cacheWarmth',
+      w.cacheWarmth,
+      WEIGHT_FORMULAS.cacheWarmth,
       warmth,
       1,
       held?.cacheExpiresAt
@@ -2362,10 +2363,10 @@ function scoreCandidate(
           : 'no session, so no live prompt cache'
     ],
     [
-      'affinity',
-      w.affinity,
-      WEIGHT_FORMULAS.affinity,
-      affinity,
+      'contextHeld',
+      w.contextHeld,
+      WEIGHT_FORMULAS.contextHeld,
+      contextHeld,
       1,
       reopened
         ? "this task's own closed conversation is on this account and can be reopened"

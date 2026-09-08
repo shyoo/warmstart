@@ -66,7 +66,7 @@ describe('objectives', () => {
 describe('weights', () => {
   it('cost-weighted work values a warm session more than velocity-weighted does', () => {
     // The whole point of the vector: this is a continuous consequence, not a switch on a mode name.
-    expect(weights(PRESETS.economy).warm).toBeGreaterThan(weights(PRESETS.velocity).warm)
+    expect(weights(PRESETS.economy).cacheWarmth).toBeGreaterThan(weights(PRESETS.velocity).cacheWarmth)
   })
 
   it('cost-weighted work prices a cold start higher', () => {

@@ -701,7 +701,7 @@ describe('the routing score shows its own arithmetic', () => {
   it('says which direction each term pushes, and what a value of 1 would mean', () => {
     const legend = scheduler.scoreLegend({ cost: 0.34, velocity: 0.33, quality: 0.33 }).join('\n')
     expect(legend).toMatch(/cold\s+penalty/)
-    expect(legend).toMatch(/warm\s+bonus/)
+    expect(legend).toMatch(/cacheWarmth\s+bonus/)
     // ⚠️ "conversation", not "session", and it is the whole 2026-09-02 finding in four words: a
     // closed conversation this task can reopen is one to reuse, and calling only a live process a
     // session is what made a one-shot adapter uniformly cold. See `reopenableFor`.
@@ -755,7 +755,7 @@ describe('the routing score shows its own arithmetic', () => {
     // ⚠️ The invariant that makes the table trustworthy — a derivation that does not reconcile with
     // its own total is worse than no derivation.
     const terms = [
-      term('warm', 1.55, 0.4, 1),
+      term('cacheWarmth', 1.55, 0.4, 1),
       term('cold', 1.249, 0, -1),
       term('capabilityFit', 1.129, 0.5, 1),
       term('unproven', 0.35, 0.5, -1)
@@ -1011,10 +1011,10 @@ describe('gating controller consults on fresh quota', () => {
  * asked it to retry the commit. The retry went to ClaudeThird — a different account, a cold start,
  * nothing about the task in its context — and rebuilt everything from scratch.
  *
- * Nothing was misweighted. `warm`, `affinity` and `cold` all read the live-session slot, and
+ * Nothing was misweighted. `cacheWarmth`, `contextHeld` and `cold` all read the live-session slot, and
  * `codex exec` is `streamPrompts: 'once'`: it takes one prompt, runs one turn and exits, so a codex
  * conversation is **never** a live idle session. The one candidate that had actually done the work
- * could not be described by the vocabulary the score had. It scored `affinity 0 · warm 0 · cold 1`,
+ * could not be described by the vocabulary the score had. It scored `contextHeld 0 · cacheWarmth 0 · cold 1`,
  * which is exactly what a worker that has never heard of the task scores.
  *
  * ⛔ Three things had to be true together, and each was separately false: the adapter had to be able
@@ -1142,20 +1142,20 @@ describe('routing a retry back to the account that already has the context', () 
     expect(choice.worker?.id).toBe(codex.id)
 
     const terms = termsOf(choice)
-    expect(terms.affinity?.value).toBe(1)
+    expect(terms.contextHeld?.value).toBe(1)
     expect(terms.cold?.value).toBe(0)
     // ⛔ 10 of 30 minutes on codex is a third of its cache, not a sixth of an hour. Dividing by a
     // hard-coded 60m — which is what the score did — penalised the shorter-TTL provider for having
     // a shorter TTL, on the one term whose whole job is to say how much is left.
-    expect(terms.warm?.value).toBeCloseTo(1 / 3, 2)
-    expect(terms.warm?.basis).toContain('30m cache TTL')
-    expect(terms.affinity?.basis).toContain('can be reopened')
+    expect(terms.cacheWarmth?.value).toBeCloseTo(1 / 3, 2)
+    expect(terms.cacheWarmth?.basis).toContain('30m cache TTL')
+    expect(terms.contextHeld?.basis).toContain('can be reopened')
   })
 
   it('still prefers it once the prefix has lapsed, and says the cache is gone', () => {
     // ⚠️ Two separate claims. A lapsed conversation still *remembers the task*, which is the greater
-    // part of why reopening beats starting over — so `affinity` holds. What it no longer comes with
-    // is a discount, and `warm` is the term that has to say so. Scoring a cold prefix as warm would
+    // part of why reopening beats starting over — so `contextHeld` holds. What it no longer comes with
+    // is a discount, and `cacheWarmth` is the term that has to say so. Scoring a cold prefix as warm would
     // be the lie this whole change exists to stop telling.
     db.db().prepare('update workers set enabled = 0').run()
     const codex = workers.createWorker({
@@ -1175,8 +1175,8 @@ describe('routing a retry back to the account that already has the context', () 
     })
 
     const terms = termsOf(scheduler.chooseTarget(tasks.requireTask(task.id)))
-    expect(terms.affinity?.value).toBe(1)
-    expect(terms.warm?.value).toBe(0)
+    expect(terms.contextHeld?.value).toBe(1)
+    expect(terms.cacheWarmth?.value).toBe(0)
   })
 
   it('will not reopen a conversation on an adapter that cannot resume', () => {
@@ -1201,7 +1201,7 @@ describe('routing a retry back to the account that already has the context', () 
     })
 
     const terms = termsOf(scheduler.chooseTarget(tasks.requireTask(task.id)))
-    expect(terms.affinity?.value).toBe(0)
+    expect(terms.contextHeld?.value).toBe(0)
     expect(terms.cold?.value).toBe(1)
   })
 })

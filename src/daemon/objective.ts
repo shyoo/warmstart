@@ -40,9 +40,24 @@ export function resolveObjective(
 // ---------------------------------------------------------------------------- consumer 1
 
 export interface Weights {
-  /** A live cache is an asset with an expiry date; using it is the cheapest thing available. */
-  warm: number
-  affinity: number
+  /**
+   * A live cache is an asset with an expiry date; using it is the cheapest thing available.
+   *
+   * ⚠️ **The discount, not the memory** — the continuous fraction of this conversation's prompt-cache
+   * TTL that is still unspent. `contextHeld` is the memory, and the two are not the same term said
+   * twice: a reopenable conversation whose prefix has lapsed scores `contextHeld 1 · cacheWarmth 0`,
+   * because it still remembers the task but no longer comes with a discount.
+   */
+  cacheWarmth: number
+  /**
+   * Whether a conversation carrying this task's context exists at all — live, or closed and
+   * reopenable. Binary, where `cacheWarmth` is continuous.
+   *
+   * ⛔ Says nothing about *which model*. A held conversation pins the candidate model list to its own
+   * model in `chooseTarget`, so every candidate scoring 1 here is necessarily on that conversation's
+   * model — an invariant of candidate enumeration, not a comparison this term makes.
+   */
+  contextHeld: number
   /** Context rot is documented, not folklore: accuracy and recall degrade as tokens grow. */
   contextRot: number
   projectSwitch: number
@@ -86,8 +101,8 @@ export interface Weights {
  * ⚠️ Written with `×` and `−` because they are read by people, and parsed back by that test.
  */
 export const WEIGHT_FORMULAS: Record<keyof Weights, string> = {
-  warm: '1.0 + 2.2×cost − 0.6×velocity',
-  affinity: '0.8 + 1.0×cost + 0.4×quality',
+  cacheWarmth: '1.0 + 2.2×cost − 0.6×velocity',
+  contextHeld: '0.8 + 1.0×cost + 0.4×quality',
   contextRot: '0.6 + 1.6×quality',
   projectSwitch: '0.3 + 0.6×cost',
   quotaRisk: '0.5 + 1.2×cost',
@@ -103,8 +118,8 @@ export function weights(objective: Objective): Weights {
   return {
     // Cost-weighted work hugs warm sessions; velocity-weighted work tolerates a cold start to begin
     // sooner. Both are continuous in the weights - neither is a switch.
-    warm: 1.0 + 2.2 * cost - 0.6 * velocity,
-    affinity: 0.8 + 1.0 * cost + 0.4 * quality,
+    cacheWarmth: 1.0 + 2.2 * cost - 0.6 * velocity,
+    contextHeld: 0.8 + 1.0 * cost + 0.4 * quality,
     contextRot: 0.6 + 1.6 * quality,
     projectSwitch: 0.3 + 0.6 * cost,
     quotaRisk: 0.5 + 1.2 * cost,

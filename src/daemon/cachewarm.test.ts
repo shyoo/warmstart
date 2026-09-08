@@ -14,7 +14,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
  * unattended for as long as the task needs, and emits its single `turn.completed` at the very end —
  * so every request after the first was invisible, and a codex run longer than thirty minutes ended
  * by stamping an expiry that had already passed, at the moment its prefix was hottest. The fleet
- * strip counted down to nothing on a working session, and the routing score's `warm` term read 0 for
+ * strip counted down to nothing on a working session, and the routing score's `cacheWarmth` term read 0 for
  * the account holding the warmest prefix in the fleet, sending the follow-up somewhere that had to
  * pay `1.25·C` to rebuild what was sitting warm.
  *

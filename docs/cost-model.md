@@ -92,12 +92,12 @@ fractions of `CostModel.cacheTtlMs()`, anchored so an hour reproduces the old co
 adapter whose `metering` is `'stream'` — wrote `context_tokens` and stopped. Its own note said no
 expiry was needed *"because the cache clock leaves these sessions alone anyway"*, which was true and
 answers a question about **spending**. Two things read `cache_expires_at` and spend nothing: the
-fleet strip's countdown and the routing score's `warm` term. So a codex session stored
+fleet strip's countdown and the routing score's `cacheWarmth` term. So a codex session stored
 `cache_expires_at = null` however well the cost model was written.
 
 Measured: session `bffdc5d2` finished t123 holding **175,626** tokens of context with
 `last_request_started_at` null, and the retry twenty minutes later scored CodexFirst
-`warm 0 · affinity 0 · cold 1` and went to an account that had never seen the task. See
+`cacheWarmth 0 · contextHeld 0 · cold 1` and went to an account that had never seen the task. See
 `docs/routing.md` §3.2 for the routing half, which was a third independent fault.
 
 ⚠️ **A stream never says when its last request began** — unlike a transcript, which carries
@@ -143,7 +143,7 @@ OpenAI's guide is explicit: *"A cached prefix remains eligible for reuse for 30 
 most recent write or reuse"*, and reusing one *"refreshes its lifetime without another cache-write
 charge"*. `openai.codex.2026-08.json` had said so all along (`read_refreshes_ttl: true`). Every one
 of those invisible requests had been renewing the prefix for free the whole time, while the row said
-it had lapsed — so routing scored the account `warm 0` and sent the follow-up somewhere that paid
+it had lapsed — so routing scored the account `cacheWarmth 0` and sent the follow-up somewhere that paid
 `1.25·C` to rebuild what was sitting warm. This is §1c's own measurement (96.3% of input served from
 cache at gaps under a minute) being thrown away by the bookkeeping above it.
 
@@ -1286,7 +1286,7 @@ wherever the estimator is read:
 - **Budgets remain in tokens** (`task.budgetTokens`). Quota enforcement and runaway ceilings check
   raw metered tokens, not money.
 - **`objective.ts` weights are not in money.** The objective vector `[cost, velocity, quality]`
-  produces routing weights (`warm`, `affinity`, `contextRot`, `cold`, `quotaRisk`) as unit-sum
+  produces routing weights (`cacheWarmth`, `contextHeld`, `contextRot`, `cold`, `quotaRisk`) as unit-sum
   trade-offs, not dollar amounts.
 
 ---

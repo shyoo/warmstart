@@ -565,7 +565,7 @@ export function newestRequestStart(
  * and runs once, at the end; a `codex exec` turn can outlive the 30-minute prefix it is actively
  * reusing several times over before it gets there. In between, the row said the cache had lapsed
  * while codex was refreshing it on every request — so the fleet strip counted down to zero on a
- * working session, and the routing score's `warm` term read 0 for an account holding the hottest
+ * working session, and the routing score's `cacheWarmth` term read 0 for an account holding the hottest
  * prefix in the fleet.
  *
  * ⛔ **Only where the provider says a read refreshes the TTL.** `read_refreshes_ttl` is the whole
@@ -640,10 +640,10 @@ const CLOCK_TOUCH_MS = 60 * 1000
  * here reasoned that no expiry was needed because "the cache clock leaves these sessions alone
  * anyway, since neither provider prices a steerable cache" — which is true and answers a different
  * question. `cache_expires_at` is read by two things that have nothing to do with spending: the fleet
- * strip's countdown, and the routing score's `warm` term. Leaving it null told both of them that a
+ * strip's countdown, and the routing score's `cacheWarmth` term. Leaving it null told both of them that a
  * codex conversation has no prompt cache at all. Measured 2026-09-02: session `bffdc5d2` finished
  * t123 holding 175,626 tokens of context with `last_request_started_at` null, so twenty minutes later
- * the retry scored CodexFirst at `warm 0 · affinity 0 · cold 1` and went to a Claude account that had
+ * the retry scored CodexFirst at `cacheWarmth 0 · contextHeld 0 · cold 1` and went to a Claude account that had
  * never seen the task. See `openai.codex.2026-08.json` § cache.
  *
  * ⚠️ **Every cost model with a TTL counts from the request, and a stream reports usage when the

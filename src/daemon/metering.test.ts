@@ -276,11 +276,11 @@ describe('the event that says a metered turn moved the session', () => {
  * wrote `context_tokens` and stopped. The note above it reasoned that no expiry was needed "because
  * the cache clock leaves these sessions alone anyway" — true, and about *spending*. Two things read
  * `cache_expires_at` that never spend anything: the fleet strip's countdown, and the routing score's
- * `warm` term. A null told both there was no prompt cache at all.
+ * `cacheWarmth` term. A null told both there was no prompt cache at all.
  *
  * Session `bffdc5d2` finished t123 on CodexFirst holding 175,626 tokens of context with
  * `last_request_started_at` null; twenty minutes later the retry scored CodexFirst
- * `warm 0 · affinity 0 · cold 1` and went to a Claude account that had never seen the task.
+ * `cacheWarmth 0 · contextHeld 0 · cold 1` and went to a Claude account that had never seen the task.
  */
 describe('a turn metered from the stream winds the session cache clock', () => {
   const usage = { input: 40_000, output: 200, thinking: 0, cacheRead: 30_000, cacheWrite: 0 }

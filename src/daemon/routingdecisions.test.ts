@@ -51,8 +51,8 @@ function record(patch: Partial<Parameters<typeof ledger.recordRoutingDecision>[0
     chosenWorkerId: 'w1',
     chosenLabel: 'ClaudeFirst',
     objective: { cost: 0.3, velocity: 0.3, quality: 0.4 },
-    weights: { cold: 1.19, warm: 1.48 },
-    weightFormulas: { cold: '0.8 + 2.0×cost − 0.7×velocity', warm: '1.0 + 2.2×cost − 0.6×velocity' },
+    weights: { cold: 1.19, cacheWarmth: 1.48 },
+    weightFormulas: { cold: '0.8 + 2.0×cost − 0.7×velocity', cacheWarmth: '1.0 + 2.2×cost − 0.6×velocity' },
     epsilon: 0.05,
     basis: 'score',
     warm: false,
@@ -97,7 +97,7 @@ describe('recording a decision', () => {
     record()
     const [decision] = ledger.routingDecisions().decisions
     expect(decision?.objective).toEqual({ cost: 0.3, velocity: 0.3, quality: 0.4 })
-    expect(decision?.weights.warm).toBeCloseTo(1.48, 10)
+    expect(decision?.weights.cacheWarmth).toBeCloseTo(1.48, 10)
   })
 
   it('marks exactly one candidate as chosen', () => {

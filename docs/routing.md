@@ -117,8 +117,8 @@ Weights derive from the objective vector `(cost, velocity, quality)` configured 
 
 | Term | Direction | Weight Formula (`objective.ts`) | Balanced (`cost 0.30, velocity 0.30, quality 0.40`) | Value Range | Meaning of Value = 1 |
 |---|:---:|---|:---:|:---:|---|
-| **`warm`** | Bonus (+1) | `1.0 + 2.2×cost − 0.6×velocity` | `+1.480` | 0 .. 1 | A full TTL of prompt cache remaining — **the provider's own TTL**, 60m on Anthropic, 30m on Codex |
-| **`affinity`** | Bonus (+1) | `0.8 + 1.0×cost + 0.4×quality` | `+1.260` | 0 or 1 | A conversation already holds this task's context — **live or reopenable** |
+| **`cacheWarmth`** | Bonus (+1) | `1.0 + 2.2×cost − 0.6×velocity` | `+1.480` | 0 .. 1 | A full TTL of prompt cache remaining — **the provider's own TTL**, 60m on Anthropic, 30m on Codex |
+| **`contextHeld`** | Bonus (+1) | `0.8 + 1.0×cost + 0.4×quality` | `+1.260` | 0 or 1 | A conversation already holds this task's context — **live or reopenable** |
 | **`contextRot`** | Penalty (−1) | `0.6 + 1.6×quality` | `−1.240` | 0 .. 1 | Context window is 100% full (starts at >50%) |
 | **`projectSwitch`** | Penalty (−1) | `0.3 + 0.6×cost` | `−0.480` | 0 or 1 | Reusable session belongs to another project |
 | **`quotaRisk`** | Penalty (−1) | `0.5 + 1.2×cost` | `−0.860` | 0 .. 1 | At 92% of window or vendor rate-limit warning |
@@ -163,6 +163,18 @@ $$\text{Score} = \sum (\text{sign} \times \text{weight} \times \text{value})$$
 ### 3.2 Deep Dive: Warm Cache Preference & Session Affinity
 Prompt cache creation costs up to **2.0×** base input tokens, while a cache read costs only **0.1×** and refreshes the TTL for free.
 
+⚠️ **`cacheWarmth` and `contextHeld` are two assets with different expiry dates, not one term said
+twice.** `contextHeld` is binary — *does a conversation carrying this task's context exist at all*,
+live or closed-and-reopenable. `cacheWarmth` is continuous — *how much of that conversation's
+prompt-cache TTL is still unspent*. They diverge on exactly the case that motivated splitting them: a
+reopenable conversation whose prefix has lapsed scores `contextHeld 1 · cacheWarmth 0`, because the
+agent still remembers the task but the token discount is gone. Merging them would force that
+conversation to be priced as either fully cold (rebuild the context from nothing) or fully warm
+(claim a discount that does not exist), and both are wrong. ⛔ Neither term compares **models**: a
+held conversation pins `candidateModels` to its own model in `chooseTarget`, so every candidate
+scoring `contextHeld 1` is necessarily on that conversation's model as a consequence of candidate
+enumeration, not because either term checks.
+
 A candidate is scored against **the conversation it would actually work in**, which is one of two
 things and used to be only the first:
 
@@ -176,25 +188,25 @@ things and used to be only the first:
    a process, where sending a prompt into a live session does not.
 
 Whichever is found:
-  - `warm` value = $\max(0, \min(1, \frac{\text{cacheExpiresAt} - \text{now}}{\text{TTL}}))$, where
+  - `cacheWarmth` value = $\max(0, \min(1, \frac{\text{cacheExpiresAt} - \text{now}}{\text{TTL}}))$, where
     **TTL is the provider's own** (`CostModel.cacheTtlMs()`) — 60 min on Anthropic, 30 min on Codex.
-  - `affinity` value = `1.0`
+  - `contextHeld` value = `1.0`
   - `cold` value = `0.0`
-- If starting cold: `warm` = `0.0`, `affinity` = `0.0`, `cold` = `1.0` (pays the cold start penalty).
+- If starting cold: `cacheWarmth` = `0.0`, `contextHeld` = `0.0`, `cold` = `1.0` (pays the cold start penalty).
 
 ⛔ **Why (2) exists — t123, 2026-09-02.** `codex exec` reads one prompt, runs one turn and exits, so a
 codex conversation is *never* a live idle session. With only (1), every codex candidate scored
-`affinity 0 · warm 0 · cold 1` — identical to an account that had never heard of the task. t123 ran on
+`contextHeld 0 · cacheWarmth 0 · cold 1` — identical to an account that had never heard of the task. t123 ran on
 CodexFirst leaving 175,626 tokens of context in a closed conversation; the retry twenty minutes later
 scored a cold ClaudeThird above it. Three separate things had to change: the adapter had to declare
 `resumeSession`, the conversation had to carry a cache clock at all (`creditStreamTurn` wrote none —
 see `docs/cost-model.md` §1c), and the score had to look past the live slot.
 
-⚠️ **`warm` is not filtered out of (2), and neither is `affinity` filtered by it.** A lapsed
+⚠️ **`cacheWarmth` is not filtered out of (2), and neither is `contextHeld` filtered by it.** A lapsed
 conversation still remembers the task, which is most of why reopening beats starting over — so
-`affinity` holds while `warm` falls to 0. Scoring a cold prefix as warm would claim a discount that
-is not there.
-- Under cost-heavy objectives (`cost: 0.7`), the preference for warm cache rises steeply (`warm` weight: `+2.48`, `cold` penalty: `−2.13`), strongly serializing tasks onto existing warm sessions. Under velocity-heavy objectives (`velocity: 0.7`), cold penalty drops to `−0.51`, encouraging parallel dispatch.
+`contextHeld` holds while `cacheWarmth` falls to 0. Scoring a cold prefix as warm would claim a
+discount that is not there.
+- Under cost-heavy objectives (`cost: 0.7`), the preference for warm cache rises steeply (`cacheWarmth` weight: `+2.48`, `cold` penalty: `−2.13`), strongly serializing tasks onto existing warm sessions. Under velocity-heavy objectives (`velocity: 0.7`), cold penalty drops to `−0.51`, encouraging parallel dispatch.
 
 ### 3.3 Deep Dive: 5-Hour and 7-Day Quota Window Scoring
 Quota risk combines two inputs:
@@ -525,8 +537,8 @@ modes and its own honest gaps. The UI is one tab per axis for that reason, not f
 
 | Axis | Measured in | Feeds | Shown in |
 |---|---|---|---|
-| **Quality** | `review.ts` / `reviewer.ts` — a peer agent grades a landed diff against a seven-dimension rubric, blended (`fitness.ts`) with a checked-in public benchmark prior | `contextRot`, `affinity`, `capabilityFit`, and, since 2026-09-05, **`fitness`** | Routing Model › Quality and › Models |
-| **Cost** | `estimator.ts`, `price.ts`, `spend.ts` — what runs actually cost, per (agent, model) | `warm`, `cold`, `quotaRisk`, `projectSwitch`, `affinity`, and, since 2026-09-05, **`price`** | Routing Model › Cost and › Models |
+| **Quality** | `review.ts` / `reviewer.ts` — a peer agent grades a landed diff against a seven-dimension rubric, blended (`fitness.ts`) with a checked-in public benchmark prior | `contextRot`, `contextHeld`, `capabilityFit`, and, since 2026-09-05, **`fitness`** | Routing Model › Quality and › Models |
+| **Cost** | `estimator.ts`, `price.ts`, `spend.ts` — what runs actually cost, per (agent, model) | `cacheWarmth`, `cold`, `quotaRisk`, `projectSwitch`, `contextHeld`, and, since 2026-09-05, **`price`** | Routing Model › Cost and › Models |
 | **Velocity** | `pace.ts` over `activetime.ts` — median active time per finished task, per (agent, model) | `pace`, plus the concurrency multiplier in `policy()` | Routing Model › Velocity |
 
 ⚠️ **Analytics › Statistics reads the same three axes and is not this table.** `src/daemon/statistics.ts`
@@ -568,8 +580,8 @@ shaped so it structurally cannot become one.
 
 | Term | Weight | Worker A (Warm Reuse) | Worker B (Cold Start) |
 |---|:---:|---|---|
-| `warm` | `+1.480` | $45/60 \times 1.480 = \mathbf{+1.110}$ | $0 \times 1.480 = \mathbf{0.000}$ |
-| `affinity`| `+1.260` | $1.0 \times 1.260 = \mathbf{+1.260}$ | $0 \times 1.260 = \mathbf{0.000}$ |
+| `cacheWarmth` | `+1.480` | $45/60 \times 1.480 = \mathbf{+1.110}$ | $0 \times 1.480 = \mathbf{0.000}$ |
+| `contextHeld`| `+1.260` | $1.0 \times 1.260 = \mathbf{+1.260}$ | $0 \times 1.260 = \mathbf{0.000}$ |
 | `cold` | `−1.190` | $0 \times -1.190 = \mathbf{0.000}$ | $1.0 \times -1.190 = \mathbf{-1.190}$ |
 | `capabilityFit` | `+1.220` | $1.0 \times 1.220 = \mathbf{+1.220}$ | $1.0 \times 1.220 = \mathbf{+1.220}$ |
 | `quotaRisk` | `−0.860` | $0.0 \times -0.860 = \mathbf{0.000}$ | $0.0 \times -0.860 = \mathbf{0.000}$ |

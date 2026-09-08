@@ -83,18 +83,27 @@ export function RoutingOverview(): React.JSX.Element {
         <pre className="code-block">
 {`balanced  =  quality 0.40 · cost 0.30 · velocity 0.30
 
-warm      = 1.0 + 2.2×cost − 0.6×velocity   →  1.0 + 0.66 − 0.18  =  1.48
+cacheWarmth = 1.0 + 2.2×cost − 0.6×velocity →  1.0 + 0.66 − 0.18  =  1.48
+contextHeld = 0.8 + 1.0×cost + 0.4×quality  →  0.8 + 0.30 + 0.16  =  1.26
 cold      = 0.8 + 2.0×cost − 0.7×velocity   →  0.8 + 0.60 − 0.21  =  1.19
 quotaRisk = 0.5 + 1.2×cost                  →  0.5 + 0.36         =  0.86
 pace      = 0.3 + 1.7×velocity              →  0.3 + 0.51         =  0.81
 contextRot= 0.6 + 1.6×quality               →  0.6 + 0.64         =  1.24`}
         </pre>
         <p className="panel-sub">
-          Turn <code>cost</code> up and <code>warm</code> grows: the scheduler starts hugging live
+          Turn <code>cost</code> up and <code>cacheWarmth</code> grows: the scheduler starts hugging live
           prompt caches and serialising work onto one conversation. Turn <code>velocity</code> up and{' '}
           <code>cold</code> shrinks while <code>pace</code> grows: it stops waiting for the cheap
           moment, and starts preferring whichever agent history says finishes fastest. Nothing here
           is a mode or a switch — every term is a continuous function of the three numbers you set.
+        </p>
+        <p className="dim">
+          ⚠️ <code>cacheWarmth</code> and <code>contextHeld</code> are not the same term twice.{' '}
+          <code>contextHeld</code> is binary — does a conversation carrying this task&rsquo;s context
+          exist at all, live or closed-and-reopenable. <code>cacheWarmth</code> is continuous — how
+          much of that conversation&rsquo;s prompt-cache TTL is still unspent. A reopenable
+          conversation whose prefix has lapsed scores <code>contextHeld 1 · cacheWarmth 0</code>: it
+          still remembers the task, it just no longer comes with a discount.
         </p>
       </section>
 
@@ -116,8 +125,8 @@ contextRot= 0.6 + 1.6×quality               →  0.6 + 0.64         =  1.24`}
               </tr>
             </thead>
             <tbody>
-              <tr><td>warm</td><td className="tbl-num num">0.50</td><td className="tbl-num num">+1.480</td><td className="tbl-num num">+0.740</td></tr>
-              <tr><td>affinity</td><td className="tbl-num num">1.00</td><td className="tbl-num num">+1.260</td><td className="tbl-num num">+1.260</td></tr>
+              <tr><td>cacheWarmth</td><td className="tbl-num num">0.50</td><td className="tbl-num num">+1.480</td><td className="tbl-num num">+0.740</td></tr>
+              <tr><td>contextHeld</td><td className="tbl-num num">1.00</td><td className="tbl-num num">+1.260</td><td className="tbl-num num">+1.260</td></tr>
               <tr><td>cold</td><td className="tbl-num num">0.00</td><td className="tbl-num num">−1.190</td><td className="tbl-num num">−0.000</td></tr>
               <tr><td>quotaRisk</td><td className="tbl-num num">0.29</td><td className="tbl-num num">−0.860</td><td className="tbl-num num">−0.249</td></tr>
               <tr><td className="tbl-strong">TOTAL</td><td /><td /><td className="tbl-num num tbl-strong">+1.751</td></tr>
@@ -133,8 +142,8 @@ contextRot= 0.6 + 1.6×quality               →  0.6 + 0.64         =  1.24`}
               </tr>
             </thead>
             <tbody>
-              <tr><td>warm</td><td className="tbl-num num">0.00</td><td className="tbl-num num">+1.480</td><td className="tbl-num num">+0.000</td></tr>
-              <tr><td>affinity</td><td className="tbl-num num">0.00</td><td className="tbl-num num">+1.260</td><td className="tbl-num num">+0.000</td></tr>
+              <tr><td>cacheWarmth</td><td className="tbl-num num">0.00</td><td className="tbl-num num">+1.480</td><td className="tbl-num num">+0.000</td></tr>
+              <tr><td>contextHeld</td><td className="tbl-num num">0.00</td><td className="tbl-num num">+1.260</td><td className="tbl-num num">+0.000</td></tr>
               <tr><td>cold</td><td className="tbl-num num">1.00</td><td className="tbl-num num">−1.190</td><td className="tbl-num num">−1.190</td></tr>
               <tr><td>quotaRisk</td><td className="tbl-num num">0.00</td><td className="tbl-num num">−0.860</td><td className="tbl-num num">−0.000</td></tr>
               <tr><td className="tbl-strong">TOTAL</td><td /><td /><td className="tbl-num num tbl-strong">−1.190</td></tr>

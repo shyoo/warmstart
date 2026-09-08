@@ -312,7 +312,7 @@ export class CostModel {
    * that — which quietly ranks every codex conversation below every Claude one no matter how
    * recently it was used. Two callers arrived at this independently and for different reasons: the
    * cache clock, whose decision windows are a fraction of the TTL rather than a fixed fifteen
-   * minutes (`decideBeforeExpiryMs`), and the routing score's `warm` term, which divided by a
+   * minutes (`decideBeforeExpiryMs`), and the routing score's `cacheWarmth` term, which divided by a
    * hard-coded 60m and so penalised the shorter-TTL provider for being fresh.
    *
    * ⚠️ The renderer does **not** ask: it holds both stored timestamps and derives the span from
