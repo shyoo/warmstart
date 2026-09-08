@@ -80,6 +80,7 @@ import {
   workspacePathFor
 } from '../lib/taskview'
 import { errorMessage } from '@shared/errors.js'
+import { useAction } from '../lib/useAction'
 
 export interface TaskDetailData {
   task: Task
@@ -3476,28 +3477,14 @@ function FinishPicker({
   inheritedFinish?: ResolvedFinishPolicy
   onChanged?: () => Promise<void>
 }): React.JSX.Element {
-  const [busy, setBusy] = useState(false)
-  const [note, setNote] = useState<string | null>(null)
-
-  const choose = async (finishPolicy: FinishPolicyChoice): Promise<void> => {
-    setBusy(true)
-    setNote(null)
-    try {
-      const result = await rpc('task.setFinishPolicy', { id: task.id, finishPolicy })
-      setNote(
-        result.landed
-          ? 'landed'
-          : result.reason
-            ? `not landed — ${result.reason}`
-            : null
-      )
-      if (onChanged) await onChanged()
-    } catch (err) {
-      setNote(errorMessage(err))
-    } finally {
-      setBusy(false)
+  const { busy, note, run: choose } = useAction(
+    (finishPolicy: FinishPolicyChoice) => rpc('task.setFinishPolicy', { id: task.id, finishPolicy }),
+    {
+      successNote: (result) =>
+        result.landed ? 'landed' : result.reason ? `not landed — ${result.reason}` : null,
+      onSuccess: onChanged
     }
-  }
+  )
 
   const inheritedLabel = inheritedFinish?.policy
     ? FINISH_LABELS[inheritedFinish.policy] ?? inheritedFinish.policy
@@ -3548,21 +3535,10 @@ function SharingPicker({
   inheritedSharing?: ResolvedSessionSharing
   onChanged?: () => Promise<void>
 }): React.JSX.Element {
-  const [busy, setBusy] = useState(false)
-  const [note, setNote] = useState<string | null>(null)
-
-  const choose = async (sessionSharing: SessionSharingChoice): Promise<void> => {
-    setBusy(true)
-    setNote(null)
-    try {
-      await rpc('task.setSessionSharing', { id: task.id, sessionSharing })
-      if (onChanged) await onChanged()
-    } catch (err) {
-      setNote(errorMessage(err))
-    } finally {
-      setBusy(false)
-    }
-  }
+  const { busy, note, run: choose } = useAction(
+    (sessionSharing: SessionSharingChoice) => rpc('task.setSessionSharing', { id: task.id, sessionSharing }),
+    { onSuccess: onChanged }
+  )
 
   const inheritedLabel = inheritedSharing?.sharing
     ? SHARING_LABELS[inheritedSharing.sharing] ?? inheritedSharing.sharing
@@ -3610,21 +3586,10 @@ function CompletionPicker({
   inheritedCompletion?: ResolvedCompletionMode
   onChanged?: () => Promise<void>
 }): React.JSX.Element {
-  const [busy, setBusy] = useState(false)
-  const [note, setNote] = useState<string | null>(null)
-
-  const choose = async (completionMode: CompletionModeChoice): Promise<void> => {
-    setBusy(true)
-    setNote(null)
-    try {
-      await rpc('task.setCompletionMode', { id: task.id, completionMode })
-      if (onChanged) await onChanged()
-    } catch (err) {
-      setNote(errorMessage(err))
-    } finally {
-      setBusy(false)
-    }
-  }
+  const { busy, note, run: choose } = useAction(
+    (completionMode: CompletionModeChoice) => rpc('task.setCompletionMode', { id: task.id, completionMode }),
+    { onSuccess: onChanged }
+  )
 
   const inheritedLabel = inheritedCompletion?.mode
     ? COMPLETION_LABELS[inheritedCompletion.mode] ?? inheritedCompletion.mode
@@ -3687,21 +3652,10 @@ function CompactionPicker({
   capable?: boolean
   onChanged?: () => Promise<void>
 }): React.JSX.Element {
-  const [busy, setBusy] = useState(false)
-  const [note, setNote] = useState<string | null>(null)
-
-  const choose = async (autoCompact: AutoCompactChoice): Promise<void> => {
-    setBusy(true)
-    setNote(null)
-    try {
-      await rpc('task.setAutoCompact', { id: task.id, autoCompact })
-      if (onChanged) await onChanged()
-    } catch (err) {
-      setNote(errorMessage(err))
-    } finally {
-      setBusy(false)
-    }
-  }
+  const { busy, note, run: choose } = useAction(
+    (autoCompact: AutoCompactChoice) => rpc('task.setAutoCompact', { id: task.id, autoCompact }),
+    { onSuccess: onChanged }
+  )
 
   const inheritedLabel = inheritedAutoCompact?.autoCompact
     ? AUTO_COMPACT_LABELS[inheritedAutoCompact.autoCompact] ?? inheritedAutoCompact.autoCompact
@@ -3764,22 +3718,11 @@ function StatsExclusionToggle({
   task: Task
   onChanged?: () => Promise<void>
 }): React.JSX.Element {
-  const [busy, setBusy] = useState(false)
-  const [note, setNote] = useState<string | null>(null)
   const excluded = task.excludedFromStats
-
-  const toggle = async (): Promise<void> => {
-    setBusy(true)
-    setNote(null)
-    try {
-      await rpc('task.setStatsExcluded', { id: task.id, excluded: !excluded })
-      if (onChanged) await onChanged()
-    } catch (err) {
-      setNote(errorMessage(err))
-    } finally {
-      setBusy(false)
-    }
-  }
+  const { busy, note, run: toggle } = useAction(
+    () => rpc('task.setStatsExcluded', { id: task.id, excluded: !excluded }),
+    { onSuccess: onChanged }
+  )
 
   return (
     <>
@@ -3822,21 +3765,10 @@ function ObjectivePicker({
   inheritedObjective?: Objective
   onChanged?: () => Promise<void>
 }): React.JSX.Element {
-  const [busy, setBusy] = useState(false)
-  const [note, setNote] = useState<string | null>(null)
-
-  const choose = async (objective: ObjectiveChoice): Promise<void> => {
-    setBusy(true)
-    setNote(null)
-    try {
-      await rpc('task.setObjective', { id: task.id, objective })
-      if (onChanged) await onChanged()
-    } catch (err) {
-      setNote(errorMessage(err))
-    } finally {
-      setBusy(false)
-    }
-  }
+  const { busy, note, run: choose } = useAction(
+    (objective: ObjectiveChoice) => rpc('task.setObjective', { id: task.id, objective }),
+    { onSuccess: onChanged }
+  )
 
   const inheritedPreset = inheritedObjective ? presetOf(inheritedObjective) : null
   const inheritedLabel =
@@ -3883,19 +3815,12 @@ function WorkerPicker({
   fleet: FleetEntry[]
   onChanged?: () => Promise<void>
 }): React.JSX.Element {
-  const [busy, setBusy] = useState(false)
   const pinnable = fleet.filter((e) => e.worker.enabled && canWork(e.worker.role)).map((e) => e.worker)
   const currentWorkerId = task.constraints.workerId ?? ''
-
-  const choose = async (workerId: string): Promise<void> => {
-    setBusy(true)
-    try {
-      await rpc('task.setWorker', { id: task.id, workerId: workerId || null })
-      if (onChanged) await onChanged()
-    } finally {
-      setBusy(false)
-    }
-  }
+  const { busy, run: choose } = useAction(
+    (workerId: string) => rpc('task.setWorker', { id: task.id, workerId: workerId || null }),
+    { onSuccess: onChanged }
+  )
 
   const options: SettingOption[] = [
     { value: '', label: 'Auto — scheduler choice' },
@@ -3931,17 +3856,10 @@ function PriorityPicker({
   task: Task
   onChanged?: () => Promise<void>
 }): React.JSX.Element {
-  const [busy, setBusy] = useState(false)
-
-  const choose = async (priority: 'P0' | 'P1' | 'P2' | 'P3'): Promise<void> => {
-    setBusy(true)
-    try {
-      await rpc('task.setPriority', { id: task.id, priority })
-      if (onChanged) await onChanged()
-    } finally {
-      setBusy(false)
-    }
-  }
+  const { busy, run: choose } = useAction(
+    (priority: 'P0' | 'P1' | 'P2' | 'P3') => rpc('task.setPriority', { id: task.id, priority }),
+    { onSuccess: onChanged }
+  )
 
   const options: SettingOption[] = (['P0', 'P1', 'P2', 'P3'] as const).map((p) => ({
     value: p,
