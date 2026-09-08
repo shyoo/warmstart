@@ -192,6 +192,11 @@ describe('what a conversation is told at the end of its turn', () => {
  * ⚠️ The subtraction is `resumed`-only, and the two tests below that pin the *un*-subtracted
  * cases are the point: a fresh session after a preemption has none of this in its history, and a
  * conversation somebody has pressed Commit on is not a conversation any more.
+ *
+ * ⚠️ **An ordinary task is subtracted too now** (t286) — the reason was never conversation-specific
+ * — but not to nothing: it keeps one sentence naming `task_complete`, because that tool is the only
+ * signal a run finished. `prompt.test.ts` owns that case in full; the test here pins the one thing
+ * this file is about, which is that the *conversation* contract is not what an ordinary task gets.
  */
 describe('what a follow-up into a live conversation is sent', () => {
   /** A conversation whose opening prompt has already gone out, with `text` typed underneath it. */
@@ -226,16 +231,20 @@ describe('what a follow-up into a live conversation is sent', () => {
     expect(prompt).toContain('This is an ongoing conversation')
   })
 
-  it('leaves an ordinary task’s resumed prompt exactly as it was', () => {
+  it('subtracts an ordinary task’s framing too, but never into the conversation contract', () => {
     const work = tasks.createTask({ title: 'Ordinary work, resumed', status: 'ready' })
     scheduler.promptFor(work, 'claude-code', false, { markDelivered: true })
     tasks.addMessage(work.id, 'human', 'also check the linter')
     const prompt = scheduler.promptFor(tasks.requireTask(work.id), 'claude-code', true, {
       markDelivered: false
     }).text
-    expect(prompt).toContain('Ordinary work, resumed')
     expect(prompt).toContain('also check the linter')
-    expect(prompt).toContain('Work to the end without stopping between phases')
+    expect(prompt).not.toContain('Ordinary work, resumed')
+    expect(prompt).not.toContain('Work to the end without stopping between phases')
+    // ⛔ The one thing this file is about: a `work` task is never handed the contract that tells an
+    // agent a person decides when to commit. What it gets instead is pinned in `prompt.test.ts`.
+    expect(prompt).not.toContain('This is an ongoing conversation')
+    expect(prompt).toContain('call the MCP tool `task_complete`')
   })
 
   it('says the whole thing again once Commit has written a rung', () => {

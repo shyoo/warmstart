@@ -45,10 +45,62 @@ export interface ProjectConfig {
     share?: SessionSharingChoice
     completion?: CompletionModeChoice
   }
+  /**
+   * What this project says to an agent that is starting **cold**.
+   *
+   * ⛔ Cold only, and that is the whole of the design. Both halves below travel on exactly the
+   * prompts that restate the task's own instruction — a session that already holds this task's
+   * context has read them, and re-sending them would be the same re-teaching this project spent
+   * t260 removing from follow-ups. See `promptFor`.
+   */
+  prompt?: {
+    /**
+     * `auto` — name whichever of `AGENTS.md`, `HANDOFF.md` and `README.md` are actually on disk.
+     * `off` — name none of them.
+     *
+     * ⚠️ Absent means `auto`, and a project with none of the three is unaffected either way: the
+     * sentence is built from what was found, so nothing found is no sentence.
+     */
+    orientation?: OrientationChoice
+    /**
+     * The operator's own opening instruction, sent verbatim after the doc line.
+     *
+     * ⚠️ *After*, never *instead of*: turning `orientation` off is how a project says "mine only",
+     * and a seed that silently suppressed the other half would make that suppression invisible in
+     * the file it is written in.
+     */
+    seed?: string
+  }
   permission?: { mode?: string; allow?: string[]; deny?: string[] }
   env?: Record<string, string | number>
   resources?: Array<{ ref: string }>
   mandate?: Partial<Mandate>
+}
+
+/** Whether a cold prompt names this project's orientation docs. See `ProjectConfig.prompt`. */
+export type OrientationChoice = 'auto' | 'off'
+
+export const ORIENTATION_LABELS: Record<OrientationChoice, string> = {
+  auto: 'name the docs that exist',
+  off: 'say nothing about docs'
+}
+
+/**
+ * ⚠️ Absent is `auto`, so a project that has never been asked still gets the line. The docs are
+ * named only if they are on disk, so this is inert for a project that keeps none of them.
+ */
+export function projectOrientationChoice(
+  project: Pick<Project, 'config'> | null | undefined
+): OrientationChoice {
+  return project?.config?.prompt?.orientation === 'off' ? 'off' : 'auto'
+}
+
+/** The operator's own cold-start sentence for this project, or null when it has none. */
+export function projectSeedPrompt(
+  project: Pick<Project, 'config'> | null | undefined
+): string | null {
+  const seed = project?.config?.prompt?.seed?.trim()
+  return seed ? seed : null
 }
 
 export interface ProjectPolicyPatch {
@@ -73,6 +125,14 @@ export interface ProjectPolicyPatch {
    * then derives its own sibling rather than inheriting somebody else's.
    */
   workspaceRoot?: string
+  /** See `ProjectConfig.prompt.orientation`. */
+  promptOrientation?: OrientationChoice
+  /**
+   * See `ProjectConfig.prompt.seed`. ⚠️ An empty string means *this project has no seed*, written
+   * as an absent key rather than as `""` — the same rule `finishInstruction` follows, and for the
+   * same reason: an empty string in a committed file reads as a decision somebody made.
+   */
+  promptSeed?: string | null
 }
 
 export interface Project {
@@ -167,6 +227,24 @@ export interface WorkspaceRootReport {
 export type ProjectDocName = 'README.md' | 'AGENTS.md' | 'HANDOFF.md'
 
 export const PROJECT_DOC_NAMES: ProjectDocName[] = ['README.md', 'AGENTS.md', 'HANDOFF.md']
+
+/**
+ * The same three, in the order a cold agent is told to read them — which is not the order above.
+ *
+ * ⛔ Rules, then state, then what the thing is. `AGENTS.md` is what an agent must not break and is
+ * therefore worth reading before it can break anything; `HANDOFF.md` is where the work actually
+ * stands; `README.md` is the slowest and least urgent of the three. `PROJECT_DOC_NAMES` is ordered
+ * for the wizard's checklist instead, and a test pins these two lists to the same **set** so neither
+ * can gain a name the other has not got.
+ *
+ * ⚠️ Shared rather than daemon-side because the project's Cold start panel lists the docs it found
+ * and the prompt names them, and an operator comparing the two should not find them in two orders.
+ */
+export const ORIENTATION_READING_ORDER: ProjectDocName[] = [
+  'AGENTS.md',
+  'HANDOFF.md',
+  'README.md'
+]
 
 /**
  * A starter file, as proposed and as the operator edited it.

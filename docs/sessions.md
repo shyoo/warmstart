@@ -147,6 +147,56 @@ Coming back is the same move in the other direction. ⛔ **A worktree holding un
 moved** — the borrower starts a fresh conversation instead. Stashing to make room would take work that
 is visible under **Loose ends** and hide it inside a stash you would have to know to look for.
 
+## What a returning agent is told, and what it is not
+
+A run into a session **that has already heard this task** is sent the new message and nothing else. No
+restated title, no re-appended contract, no re-sent orientation — that session read all of it on its
+first turn and has not stopped since. What it does get is one sentence re-anchoring it: *your
+instructions from the start of this task still apply*, plus how this run is to be reported finished
+(`task_complete`, or the `TASK COMPLETE:` line for an adapter with no MCP).
+
+⛔ **Re-teaching a session what it already knows is not free and not neutral.** It costs ~200 tokens a
+turn, and it reads to the agent as new instruction — an agent told its task afresh alongside a
+follow-up has to work out which of the two it is being asked to do. Conversations have been sent this
+way since t260; ordinary work tasks joined them in t286.
+
+Three things put the full framing back, and each is a case where the session genuinely does not hold
+it:
+
+| case | why |
+|---|---|
+| a **cold or borrowed** session | it has never heard this task |
+| a **compaction** landed since this task last spoke | the framing may have been summarised away with everything else — read from the `compactions` table, against the start of this task's last run in that session |
+| the conversation **contract was withdrawn** (Commit pressed) | the turn is now under a different contract from the one it was told, so it is told the new one |
+
+⚠️ Plan tasks are the deliberate exception: a planning or resolving turn always carries its full
+instruction, because that instruction rolls up what the children actually did and is new every time.
+
+## What a cold agent is told first
+
+Ahead of the task itself, a cold prompt names the orientation documents this project actually keeps —
+`AGENTS.md` (how to work in this codebase), `HANDOFF.md` (where the work stands), `README.md` (what
+the project is) — one clause each, rules first.
+
+⛔ **Only the ones on disk are named.** Telling an agent to read a `HANDOFF.md` a repository has never
+had sends it looking, finding nothing, and spending a paragraph deciding whether the tool is wrong or
+the checkout is. The three names are the same set the add-project wizard offers to scaffold, so a
+project that took the scaffolding gets the sentence and one that declined it is untouched.
+
+A project may also add a **seeding prompt** of its own — *Read CLAUDE.md before you start*, *the API
+contract lives in docs/api.md* — carried verbatim, after the doc line rather than instead of it. Both
+live under `prompt` in `.multi_agent_controller/project.json` and are set from the project's
+**Settings** tab → **Cold start**:
+
+| tier | where | values |
+|---|---|---|
+| Project | **Settings** → **Cold start** → *Orientation docs*, or `prompt.orientation` | `auto` (default — name the ones that exist) · `off` |
+| Project | **Settings** → **Cold start** → *Seeding prompt*, or `prompt.seed` | any text, or empty for none |
+
+⚠️ Both travel on exactly the prompts that restate the task — which is to say cold, borrowed, and
+post-compaction runs, and no others. A project that turns orientation `off` and writes no seed is back
+to the prompt as it was before t286.
+
 ## What a borrower is told
 
 An agent reopening another task's conversation is told so **at the top of its first prompt**: that

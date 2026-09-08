@@ -7,8 +7,11 @@ import {
   DEFAULT_FLEET_SHARING,
   FINISH_LABELS,
   FINISH_ORDER,
+  ORIENTATION_LABELS,
+  ORIENTATION_READING_ORDER,
   projectCompletionChoice,
   projectFinishChoice,
+  projectOrientationChoice,
   projectSharingChoice,
   resolveCompletionMode,
   resolveFinishPolicy,
@@ -17,7 +20,9 @@ import {
   verificationWarning,
   type CompletionModeChoice,
   type FinishPolicyChoice,
+  type OrientationChoice,
   type Project as ProjectRecord,
+  type ProjectDocName,
   type ProjectPolicyPatch,
   type ResourceAvailability,
   type SessionSharingChoice
@@ -95,6 +100,7 @@ export function ProjectSettings({
         fleetSharing={fleetSharing}
         setPolicy={setPolicy}
       />
+      <ColdStartPanel project={project} setPolicy={setPolicy} />
       <ChecksPanel project={project} fleetFinish={fleetFinish} />
       <ProjectResources project={project} resources={resources} />
     </div>
@@ -458,6 +464,109 @@ function TextPolicyRow({
         </div>
       }
     />
+  )
+}
+
+/**
+ * What an agent starting **cold** in this project is told before it is told the task.
+ *
+ * ⛔ **Cold only, and the panel says so, because that is the part nobody would guess.** Both settings
+ * here travel on exactly the prompts that restate the task's own instruction — a session already
+ * holding this task's context has read them, and orientation is worth one telling. An operator who
+ * thought this was every-turn text would write it far shorter than it deserves to be.
+ *
+ * ⛔ **Nothing is named that is not on disk**, so this panel reads the disk rather than assuming.
+ * `project.inspect` is the same read-only probe the add wizard runs on every keystroke, and it is
+ * what lets the row say *which* docs were found instead of listing three names the repository may
+ * not have.
+ */
+function ColdStartPanel({
+  project,
+  setPolicy
+}: {
+  project: ProjectRecord
+  setPolicy: (patch: ProjectPolicyPatch) => Promise<void>
+}): React.JSX.Element {
+  const [docs, setDocs] = useState<ProjectDocName[] | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    setDocs(null)
+    void rpc('project.inspect', { root: project.root })
+      .then((r) => setDocs(ORIENTATION_READING_ORDER.filter((name) => r.docs[name])))
+      .catch(() => setDocs([]))
+  }, [project.root])
+
+  const apply = (patch: ProjectPolicyPatch): void => {
+    setBusy(true)
+    void setPolicy(patch)
+      .catch(() => undefined)
+      .finally(() => setBusy(false))
+  }
+
+  const choice = projectOrientationChoice(project)
+  const found = docs ?? []
+  // ⚠️ Three states, not two. "None of them are here" and "we have not looked yet" are different
+  // answers, and showing the first while the probe is still out would tell an operator their repo
+  // has no docs a moment before the row changes its mind.
+  const description =
+    docs === null
+      ? 'Looking at the project directory…'
+      : choice === 'off'
+        ? 'A cold prompt says nothing about this project’s docs.'
+        : found.length > 0
+          ? `A cold prompt tells the agent to read ${found.join(', ')} first.`
+          : 'None of AGENTS.md, HANDOFF.md or README.md are at the project root, so nothing is named.'
+
+  return (
+    <div className="panel">
+      <header className="panel-head">
+        <div>
+          <h2>Cold start</h2>
+          <p className="panel-sub">
+            What an agent is told before the task itself, and <em>only</em> when it is starting
+            without this task&rsquo;s context. A session that already holds the task has read this,
+            so it is never repeated.
+          </p>
+        </div>
+      </header>
+
+      <div className="setting-list">
+        <SettingRow
+          title="Orientation docs"
+          description={description}
+          control={
+            <SettingButtonSelect
+              className="finish-picker setting-row-control-select"
+              value={choice}
+              options={[
+                { value: 'auto', label: ORIENTATION_LABELS.auto },
+                { value: 'off', label: ORIENTATION_LABELS.off }
+              ]}
+              disabled={busy}
+              ariaLabel="Project orientation docs"
+              title="Name this project's orientation docs at the top of a cold prompt. Only the ones actually on disk are named."
+              onChange={(val) => apply({ promptOrientation: val as OrientationChoice })}
+            />
+          }
+        />
+
+        <TextPolicyRow
+          title="Seeding prompt"
+          value={project.config.prompt?.seed ?? ''}
+          placeholder="Read CLAUDE.md before you start. The API contract lives in docs/api.md."
+          multiline
+          disabled={busy}
+          ariaLabel="Project seeding prompt"
+          onSave={(val) => apply({ promptSeed: val })}
+          description={
+            project.config.prompt?.seed
+              ? 'Sent verbatim after the doc line, on every cold prompt in this project.'
+              : 'Your own opening instruction, sent after the doc line. Empty sends nothing.'
+          }
+        />
+      </div>
+    </div>
   )
 }
 

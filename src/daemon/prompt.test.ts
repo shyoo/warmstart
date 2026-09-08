@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { Worker } from '@shared/protocol.js'
+import type { Task } from '@shared/tasks.js'
 
 let dir: string
 let db: typeof import('./db.js')
@@ -694,5 +695,279 @@ describe('an attachment and the message it belongs to', () => {
     const built = scheduler.promptFor(task, 'claude-code', false, { markDelivered: false })
     expect(built.attachments).toEqual([])
     expect(built.text).not.toContain('Attached context')
+  })
+})
+
+/**
+ * What reaches the session that is **already holding this task's context**.
+ *
+ * ⛔ **The whole of this suite is a subtraction, and t286 is why it exists.** Every warm continuation
+ * of an ordinary task — a note typed into a running one, a reply that restarts a rested one, a
+ * revived conversation on the far side of a wait — arrived with the task's title restated on top and
+ * the entire closing contract underneath: the checks, `task_complete`, commit hygiene, `ask_human`,
+ * the hand-back. All of it addressed to a session that had been reading it since its first turn. The
+ * restated title reads as being asked to do the work a second time; the restated contract is ~200
+ * tokens a turn spent re-teaching an agent something it is currently obeying. `conversation` had
+ * this subtraction from t260 and `work` did not, and the reason was never conversation-specific.
+ *
+ * ⛔ **What survives the subtraction is one sentence, and it is not decoration.** `task_complete` is
+ * the only signal an agent finished — a clean exit says nothing — so a turn that named it nowhere
+ * could end in `awaiting_human` however well the work went. The anchor names it and points at the
+ * rest rather than restating it.
+ */
+describe('a resumed run into the session that already has the framing', () => {
+  /** A task whose opening prompt has gone out, with `note` typed underneath it. */
+  const continued = (title: string, note: string): Task => {
+    const task = tasks.createTask({ title, status: 'ready' })
+    scheduler.promptFor(task, 'claude-code', false, { markDelivered: true })
+    tasks.addMessage(task.id, 'human', note)
+    return tasks.requireTask(task.id)
+  }
+
+  it('sends the note and one anchoring sentence, and nothing else', () => {
+    const task = continued('Rework the settings page', 'also fix the tab order')
+    const prompt = promptText(task, 'claude-code', true, { markDelivered: false })
+
+    expect(prompt).toContain('also fix the tab order')
+    // ⛔ The two things the session is already holding.
+    expect(prompt).not.toContain('Rework the settings page')
+    expect(prompt).not.toContain('Work to the end without stopping between phases')
+    expect(prompt).not.toContain('squash them into one coherent commit')
+    expect(prompt).not.toContain('pass each choice you are deciding between')
+    expect(prompt).not.toContain('call `await_human` with the reason')
+    // ⭐ And the one thing it must never be left without.
+    expect(prompt).toContain('still apply')
+    expect(prompt).toContain('call the MCP tool `task_complete` with a one-line summary')
+  })
+
+  /**
+   * ⛔ The subtraction has to pay for itself, or it is a behaviour change with no benefit. The
+   * contract it removes is the largest fixed block in an ordinary prompt.
+   */
+  it('is dramatically shorter than the prompt it replaced', () => {
+    const task = continued('Measure the saving', 'one more thing')
+    const resumedText = promptText(task, 'claude-code', true, { markDelivered: false })
+    const coldText = promptText(task, 'claude-code', false, { markDelivered: false })
+    expect(resumedText.length).toBeLessThan(coldText.length / 2)
+  })
+
+  /**
+   * ⛔ Naming a channel the agent has not got is the failure `capabilities.mcp` exists to prevent,
+   * and it is just as wrong in one sentence as in twenty. An MCP-less agent's terminal contract is a
+   * line of text.
+   */
+  it('anchors an MCP-less adapter on its line, never on the tool it has not got', () => {
+    const task = continued('agy, resumed', 'and the entitlements file?')
+    const prompt = promptText(task, 'antigravity-cli', true, { markDelivered: false })
+
+    expect(prompt).toContain('and the entitlements file?')
+    expect(prompt).toContain('TASK COMPLETE: ')
+    expect(prompt).not.toContain('task_complete')
+    expect(prompt).not.toContain('agy, resumed')
+    expect(prompt).not.toContain('NEEDS DECISION:')
+  })
+
+  /**
+   * ⛔ `resumed: false` is what a fresh session after a preemption gets, and what a **borrowed**
+   * conversation gets — see the note at the dispatch call site. Neither has any of this in its
+   * history, and withholding it there would hand an agent a stray sentence and no idea what it was
+   * for. This is the case the subtraction must never reach.
+   */
+  it('restates everything into a session that has not got it', () => {
+    const task = continued('Preempted work', 'and the linter')
+    const prompt = promptText(task, 'claude-code', false, { markDelivered: false })
+
+    expect(prompt).toContain('Preempted work')
+    expect(prompt).toContain('and the linter')
+    expect(prompt).toContain('Work to the end without stopping between phases')
+    expect(prompt).toContain('squash them into one coherent commit')
+    expect(prompt).not.toContain('still apply')
+  })
+
+  /**
+   * ⛔ **A compaction is `resumed`'s undo.** Everything above is withheld on the grounds that the
+   * session is still holding it, and a compaction replaces what it was holding with a summary
+   * somebody else wrote. Nothing guarantees the sentence naming `task_complete` survived that, and a
+   * run that has lost it ends in `awaiting_human` however well the work went — so the framing comes
+   * back in full, which is the direction it is safe to be wrong in.
+   */
+  it('says the whole thing again when the conversation has been compacted', () => {
+    const task = continued('Compacted work', 'carry on with the second half')
+    const prompt = promptText(task, 'claude-code', true, {
+      markDelivered: false,
+      compacted: true
+    })
+
+    expect(prompt).toContain('Compacted work')
+    expect(prompt).toContain('carry on with the second half')
+    expect(prompt).toContain('Work to the end without stopping between phases')
+    expect(prompt).not.toContain('still apply')
+  })
+
+  /**
+   * ⛔ **A run with nothing outstanding is not a follow-up.** It is the finish ask — the Commit
+   * button re-entering the ordinary contract with the rung the operator picked — and the contract is
+   * the entire content of that turn. Withholding it would send a prompt that asks for nothing.
+   */
+  it('keeps the contract on a resumed run that carries no new message', () => {
+    const task = tasks.createTask({ title: 'Nothing new to say', status: 'ready' })
+    scheduler.promptFor(task, 'claude-code', false, { markDelivered: true })
+    const prompt = promptText(tasks.requireTask(task.id), 'claude-code', true, {
+      markDelivered: false
+    })
+
+    expect(prompt).toContain('Work to the end without stopping between phases')
+    expect(prompt).toContain('call the MCP tool `task_complete` with a one-line summary')
+  })
+
+  /**
+   * ⛔ **A conversation somebody has pressed Commit on has had its contract *withdrawn*, not
+   * confirmed.** Everything that session holds says *do not commit, a person decides*; the turn it
+   * is about to be given says the opposite. `isOpenConversation` is the flag that knows, and the
+   * prompt it holds is redundant while the contract it holds is actively wrong.
+   */
+  it('says the whole contract again once Commit has changed it', () => {
+    const task = tasks.createTask({
+      title: 'Chat that became a landing',
+      kind: 'conversation',
+      status: 'ready'
+    })
+    scheduler.promptFor(tasks.requireTask(task.id), 'claude-code', false, { markDelivered: true })
+    tasks.addMessage(task.id, 'human', 'ok, land it')
+    tasks.updateTask(task.id, { finishPolicy: 'commit-and-merge' })
+
+    const prompt = promptText(tasks.requireTask(task.id), 'claude-code', true, {
+      markDelivered: false
+    })
+    expect(prompt).toContain('ok, land it')
+    expect(prompt).toContain('Work to the end without stopping between phases')
+    expect(prompt).toContain('squash them into one coherent commit')
+    expect(prompt).not.toContain('still apply')
+    expect(prompt).not.toContain('This is an ongoing conversation')
+  })
+
+  /**
+   * ⛔ **A plan turn's instruction is content, not framing.** The resolution instruction carries the
+   * roll of what every child did — new on every turn and unguessable from the conversation — and the
+   * planning instruction is what stops a planner building the first piece itself. Neither is
+   * something the session can be assumed to be still following, so the subtraction stops short of
+   * both.
+   */
+  it('leaves a plan task’s own instruction alone on both phases', () => {
+    const planning = tasks.createTask({ title: 'Plan the migration', kind: 'plan', status: 'ready' })
+    scheduler.promptFor(planning, 'claude-code', false, { markDelivered: true })
+    tasks.addMessage(planning.id, 'human', 'keep it to four pieces')
+    const first = promptText(tasks.requireTask(planning.id), 'claude-code', true, {
+      markDelivered: true
+    })
+    expect(first).toContain('keep it to four pieces')
+    expect(first).toContain('You are PLANNING this work, not doing it')
+    expect(first).not.toContain('still apply')
+
+    // ⚠️ Both halves of a split edge, because `childrenOf` requires both: a child names its parent
+    // *and* the parent waits on it. A row with only `parentTaskId` is not a piece of a plan.
+    const child = tasks.createTask({ title: 'Piece one', status: 'ready', parentTaskId: planning.id })
+    tasks.addDependency(planning.id, child.id, 'settled')
+    tasks.addMessage(planning.id, 'human', 'now wrap it up')
+    const second = promptText(tasks.requireTask(planning.id), 'claude-code', true, {
+      markDelivered: false
+    })
+    expect(second).toContain('Every piece of your plan has settled')
+    expect(second).not.toContain('still apply')
+  })
+
+  /**
+   * ⛔ A notice is a **new fact about the world**, not framing, so it travels on a resumed turn like
+   * any other new thing. The whole reason it exists is that the agent cannot see what changed while
+   * it was not running.
+   */
+  it('still carries a branch notice into the session that has the framing', () => {
+    const task = continued('Moved workspace', 'carry on')
+    const prompt = promptText(task, 'claude-code', true, {
+      markDelivered: false,
+      branchNotice: '⚠️ This workspace has moved since your last turn'
+    })
+    expect(prompt).toContain('This workspace has moved since your last turn')
+    expect(prompt).toContain('carry on')
+    expect(prompt).not.toContain('Moved workspace')
+  })
+})
+
+/**
+ * When the framing a resumed session is holding has **lapsed**.
+ *
+ * ⛔ Both compaction paths land in one table — the one this tool buys before prompting a revived
+ * conversation and the one the CLI performs on itself when a context fills — so one reading answers
+ * for both. The reference point is the start of this task's last run *in this session*, which is the
+ * moment the framing was last sent: anything earlier answers `true` forever once a conversation has
+ * compacted at all, and anything later misses the compaction that happened during the run being
+ * continued.
+ */
+describe('framingLapsed', () => {
+  let compaction: typeof import('./compaction.js')
+
+  beforeAll(async () => {
+    compaction = await import('./compaction.js')
+  })
+
+  /** A task with one finished run in `sessionId`, started at `startedAt`. */
+  const ranIn = (sessionId: string, startedAt: number): string => {
+    const task = tasks.createTask({ title: `ran in ${sessionId}`, status: 'ready' })
+    const run = tasks.startRun({
+      taskId: task.id,
+      workerId: claude.id,
+      sessionId,
+      projectId: null,
+      quotaUnverified: false,
+      costModelId: null
+    })
+    db.db().prepare('update runs set started_at = ? where id = ?').run(startedAt, run.id)
+    return task.id
+  }
+
+  it('is false for a conversation that has never compacted', () => {
+    const taskId = ranIn('sess-never-compacted', Date.now() - 60_000)
+    expect(scheduler.framingLapsed(taskId, 'sess-never-compacted')).toBe(false)
+  })
+
+  it('is true when a compaction landed after this task last spoke', () => {
+    const started = Date.now() - 60_000
+    const taskId = ranIn('sess-compacted-after', started)
+    compaction.noteCompactionLanded('sess-compacted-after', {
+      preTokens: 300_000,
+      durationMs: 1000,
+      ts: started + 30_000
+    })
+    expect(scheduler.framingLapsed(taskId, 'sess-compacted-after')).toBe(true)
+  })
+
+  /**
+   * ⛔ The case that would break the reference point. A conversation that compacted *before* this
+   * task's last run got the whole framing on that run and is still holding it — reading this as
+   * lapsed would restate the contract on every turn of a conversation that had ever compacted once.
+   */
+  it('is false when the only compaction predates this task’s last run', () => {
+    const started = Date.now() - 60_000
+    const taskId = ranIn('sess-compacted-before', started)
+    compaction.noteCompactionLanded('sess-compacted-before', {
+      preTokens: 300_000,
+      durationMs: 1000,
+      ts: started - 30_000
+    })
+    expect(scheduler.framingLapsed(taskId, 'sess-compacted-before')).toBe(false)
+  })
+
+  /**
+   * ⚠️ A task that has never run in this conversation is a **borrowed** one, where `resumed` is
+   * already false and nothing is being withheld to undo.
+   */
+  it('is false for a task that has never run in the conversation', () => {
+    const other = tasks.createTask({ title: 'never been here', status: 'ready' })
+    compaction.noteCompactionLanded('sess-borrowed', {
+      preTokens: 300_000,
+      durationMs: 1000,
+      ts: Date.now()
+    })
+    expect(scheduler.framingLapsed(other.id, 'sess-borrowed')).toBe(false)
   })
 })

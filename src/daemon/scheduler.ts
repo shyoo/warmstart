@@ -57,6 +57,7 @@ import { complexityOf } from './complexity.js'
 import { exploreRoute } from './exploration.js'
 import { accountRefusal } from './eligibility.js'
 import { getProject, landingTargetFor, policyFor, reloadProject } from './projects.js'
+import { coldStartBlock } from './orientation.js'
 import {
   admitBlocked,
   admitScheduled,
@@ -2925,9 +2926,21 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
   // conversation already contains it — true of a revived conversation of one's own, and false in the
   // most damaging way available of somebody else's: the agent would be handed a context full of
   // another task's instructions and never told what it was itself being asked to do.
+  // ⛔ **Decided here rather than at the send, because the prompt has to know.** This plan is what
+  // `openConversation` acts on below, and it is also the difference between a session that will
+  // still be holding this task's instructions when the prompt lands and one that will be holding a
+  // summary of them — see `promptFor`'s `compacted`. One decision, read twice; asking twice would
+  // let the two answers differ across the ~1s between them and send a subtracted prompt into a
+  // conversation that was about to be compacted anyway.
+  const resumeCompaction = revive ? compactOnResume(revive, settings()) : null
   const prompt = promptFor(task, worker.adapterId, revive !== null && !borrowed, {
     branchNotice: [borrowNotice, branchNotice, rescueNotice].filter(Boolean).join('\n\n') || null,
-    markDelivered: true
+    markDelivered: true,
+    // ⚠️ Either compaction counts: the one about to happen, and any that already landed in this
+    // conversation since this task last spoke in it.
+    compacted:
+      revive !== null &&
+      (resumeCompaction?.compact === true || framingLapsed(task.id, revive.id))
   })
   const promptText = prompt.text
 
@@ -3023,13 +3036,7 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
   // ⛔ And a revived conversation may need shrinking before it is spoken to at all — see
   // `openConversation`. The delay is the same either way; what changes is what goes in first.
   setTimeout(() => {
-    openConversation(
-      session,
-      task,
-      promptText,
-      revive ? compactOnResume(revive, settings()) : null,
-      prompt.attachments
-    )
+    openConversation(session, task, promptText, resumeCompaction, prompt.attachments)
   }, PROMPT_DELAY_MS)
 
   // ⚠️ The *reason* travels with it. "dispatched t5 to ClaudeSecond" says what happened; it does not
@@ -3165,7 +3172,10 @@ async function dispatchIntoWarmSession(
 
   const continuing = promptFor(task, worker.adapterId, true, {
     branchNotice: notice,
-    markDelivered: true
+    markDelivered: true,
+    // ⚠️ Nothing compacts a session on this path — it never closed — but the CLI may have compacted
+    // itself mid-run, and a summary is a summary however it was bought.
+    compacted: framingLapsed(task.id, session.id)
   })
   const promptText = continuing.text
 
@@ -4072,11 +4082,82 @@ function conversationInstruction(mcpLess: boolean): string {
 }
 
 
+/**
+ * Has this conversation been compacted since it was last given this task's prompt and contract?
+ *
+ * ⛔ **The undo for `resumed`, and the reason the subtraction is safe to make at all.** A compaction
+ * replaces the turns an agent was holding with a summary somebody else wrote, and nothing guarantees
+ * that summary kept the sentence naming `task_complete`. Both compaction paths land in the same
+ * table — the one this tool buys before prompting a revived conversation (`compactOnResume`) and the
+ * one the CLI performs on itself when a context fills — so one reading answers for both.
+ *
+ * ⛔ **Measured against the start of this task's last run in this session**, which is the moment the
+ * framing was last sent. Any earlier reference point would answer `true` forever once a conversation
+ * had ever compacted; any later one would miss the compaction that happened during the run being
+ * continued. ⚠️ Called before `startRun`, so the newest run on this session is the previous one.
+ *
+ * ⚠️ `false` for a session that has never compacted and for a task that has never run in it — the
+ * second is a borrowed conversation, where `resumed` is already false and nothing is withheld.
+ */
+export function framingLapsed(taskId: string, sessionId: string): boolean {
+  const landed = lastCompactionLandedAt(sessionId)
+  if (landed === null) return false
+  const prior = runsFor(taskId).find((r) => r.sessionId === sessionId)
+  return prior ? landed >= prior.startedAt : false
+}
+
+/**
+ * What replaces the closing contract on a turn into the session that already has it.
+ *
+ * ⛔ **One sentence rather than nothing, and the difference is the completion signal.** Everything
+ * else the contract carries — the checks, commit hygiene, `ask_human`, the hand-back — is guidance
+ * the agent is already following, and re-teaching it costs ~200 tokens a turn for an agent that has
+ * been reading it since its first. `task_complete` is not guidance: it is the *only* thing that says
+ * an agent finished, a clean exit says nothing, and a run that has lost it ends in `awaiting_human`
+ * however well the work went. So the naming survives the subtraction and the rest does not.
+ *
+ * ⚠️ It points at the instructions rather than restating them, which is what keeps it one sentence.
+ * The session has them; what it needs is to be told they still apply, because a turn that arrives
+ * with a new note and no contract at all is ambiguous about whether the old one was withdrawn.
+ *
+ * ⚠️ Two endings, for the same reason `conversationInstruction` has two: an MCP-less agent's terminal
+ * contract is a line of text and naming it a tool call would name a channel it has not got.
+ */
+function resumedAnchor(mcpLess: boolean): string {
+  return (
+    'Your instructions from the start of this task still apply — including this project’s checks ' +
+    'and how its work is to be finished. ' +
+    (mcpLess
+      ? 'When the work is finished, end with a line beginning `TASK COMPLETE: ` followed by a ' +
+        'one-line summary.'
+      : 'When the work is finished, call the MCP tool `task_complete` with a one-line summary.')
+  )
+}
+
 export function promptFor(
   task: Task,
   adapterId: string,
   resumed = false,
-  opts: { markDelivered?: boolean; branchNotice?: string | null } = { markDelivered: true }
+  opts: {
+    markDelivered?: boolean
+    branchNotice?: string | null
+    /**
+     * The conversation being resumed has been **compacted** since it was last given this task's
+     * prompt and contract — or is about to be, before this prompt goes in.
+     *
+     * ⛔ It is `resumed`'s undo. Everything the flag below suppresses is suppressed on the grounds
+     * that the session is still holding it, and a compaction is precisely the event that makes that
+     * false: what the agent holds afterwards is a summary somebody else wrote, and neither the task's
+     * own instruction nor the sentence naming `task_complete` is guaranteed to have survived it. A
+     * run that lost the completion signal ends in `awaiting_human` however well the work went, so
+     * this is the direction it is safe to be wrong in.
+     *
+     * ⚠️ Set by the two call sites that resume, from `compactOnResume`'s own plan and from the
+     * `compactions` table. Absent means *no compaction has happened*, which is the state of every
+     * cold prompt and the only honest default for a caller that has not looked.
+     */
+    compacted?: boolean
+  } = { markDelivered: true }
 ): BuiltPrompt {
   const parts: string[] = []
   const attachments: Attachment[] = []
@@ -4088,6 +4169,35 @@ export function promptFor(
       ['Continuing earlier work. Handoff from the previous session:', task.handoffNote, ''].join('\n')
     )
   }
+
+  // ⛔ **Two questions, not one, and they have different answers.** `holdsPrompt` asks whether this
+  // conversation already contains what the task was asked to do; `holdsContract` asks whether it is
+  // already running under the contract this turn wants. They came apart the moment Commit was added
+  // to a conversation: that session holds every word of the chat *and* has just had the contract it
+  // was working under withdrawn, so the prompt is redundant there and the closing instruction is not.
+  //
+  // ⚠️ A compaction answers `false` to both, which is what makes it safe to withhold anything at all.
+  const holdsPrompt = resumed && !opts.compacted
+  // ⛔ A conversation somebody has pressed Commit on is not a conversation any more. Everything it
+  // holds is `conversationInstruction` — *do not commit, a person decides* — and the turn it is
+  // about to be given is the exact opposite of that. `isOpenConversation` is the one flag that says
+  // which contract a turn runs under, so a `conversation` task that is no longer one has changed
+  // contract by definition and is told so in full.
+  const contractWithdrawn = task.kind === 'conversation' && !isOpenConversation(task)
+  const holdsContract = holdsPrompt && !contractWithdrawn
+
+  const project = task.projectId ? getProject(task.projectId) : null
+  // ⛔ **Where this project keeps its orientation, said once per conversation and never again.** An
+  // agent opening on an empty state guesses at what to read, and the guess is expensive: it greps,
+  // it opens the wrong three files, and on a repository that keeps `AGENTS.md` it does all of that
+  // beside the page that would have answered it. ⚠️ `!holdsPrompt` is the same gate the task's own
+  // instruction uses, which is the whole point — a session already carrying this task's context has
+  // already read this, and orientation is worth exactly one telling. See `orientation.ts`.
+  if (!holdsPrompt) {
+    const cold = coldStartBlock(project)
+    if (cold) parts.push(cold)
+  }
+
   // ⚠️ The first prompt-bearing message is the task's own prompt and is restated: a fresh session after a
   // preemption has no idea what it was asked to do. Everything after it is a *note*, and a note
   // typed into a live session was already answered there - repeating it would charge for it twice and
@@ -4101,8 +4211,7 @@ export function promptFor(
   const thread = messagesFor(task.id).filter(
     (m, i) => m.role === 'human' || m.role === 'controller' || (m.role === 'agent' && i === 0)
   )
-  const outstanding = thread.filter((m, i) => (i === 0 && !resumed) || m.deliveredAt === null)
-  const initialPrefixCount = (opts.branchNotice ? 1 : 0) + (task.handoffNote ? 1 : 0)
+  const outstanding = thread.filter((m, i) => (i === 0 && !holdsPrompt) || m.deliveredAt === null)
   // ⛔ **A follow-up typed into a conversation that is still live is sent as it was typed, and
   // nothing else.** Measured on t260: a person asked a question, the agent answered, they asked the
   // next thing — and what reached the session was their opening prompt again on top, their new
@@ -4112,17 +4221,27 @@ export function promptFor(
   // as being asked to do that work again, and re-appending the contract spends tokens re-teaching an
   // agent something it is already following.
   //
+  // ⛔ **And an ordinary task is the same session and the same problem**, which this missed until
+  // t286. `work` is by far the commonest kind and every warm continuation of one — a note typed into
+  // a running task, a reply that restarts a rested one — arrived with the title on top and the whole
+  // closing contract underneath, into a session that had been reading both since its first turn. What
+  // changed here is only *which kinds* the subtraction applies to; the reason was never conversation-
+  // specific. What an ordinary task gets in its place is one sentence, `RESUMED_ANCHOR` — see there
+  // for why it is not nothing.
+  //
   // ⚠️ Narrow on purpose: `resumed` is false for a fresh session after a preemption and false for a
   // borrowed one, and both of those genuinely need the prompt and the contract — see the notes on
   // those two call sites. This is the same-session case alone.
-  const followUp = resumed && isOpenConversation(task) && outstanding.length > 0
-  if (thread.length === 0 && !resumed) {
+  const followUp = holdsContract && outstanding.length > 0
+  if (thread.length === 0 && !holdsPrompt) {
     parts.push(task.title)
   } else {
+    let opened = false
     for (const message of outstanding) {
-      if (!followUp && parts.length === initialPrefixCount && message.text !== task.title) {
+      if (!holdsPrompt && !opened && message.text !== task.title) {
         parts.push(task.title)
       }
+      opened = true
       parts.push(message.text)
     }
   }
@@ -4164,7 +4283,6 @@ export function promptFor(
   // tool there is genuinely no signal, and inventing one from a clean exit would be the guess this
   // project refuses to make. What changes is that the operator is told *why* the hand-off is
   // structural rather than being left to read it as the agent having failed.
-  const project = task.projectId ? getProject(task.projectId) : null
   const { policy } = resolveFinishPolicy(task, project)
   const checks = policyVerifies(policy) ? (project?.config?.check ?? []) : []
   // Keep a task branch reviewable and cheap to rebase. This is conditional: a branch can legitimately
@@ -4204,6 +4322,9 @@ export function promptFor(
       parts.push(planningInstruction(checkLead))
     } else if (planPhase === 'resolving') {
       parts.push(resolutionInstruction(task, checkLead, commitHygiene))
+    } else if (followUp) {
+      // ⚠️ One sentence where the whole contract used to be. See `RESUMED_ANCHOR`.
+      parts.push(resumedAnchor(false))
     } else
     parts.push(
       (checkpointed
@@ -4231,8 +4352,13 @@ export function promptFor(
     // not to write that line rather than not to call that tool — but it still has to be told what
     // the line *is*, because being asked to finish is a thing that can happen to it later.
     // ⚠️ `followUp` withholds even the conversation wording, for the reason given where it is
-    // computed: the session it is going to has already been told it and has not stopped since.
-    if (!(isOpenConversation(task) && followUp)) {
+    // computed: the session it is going to has already been told it and has not stopped since. An
+    // ordinary task gets the one-sentence anchor in its place, in this adapter's vocabulary — the
+    // line, not the tool call, because naming the wrong channel is the failure the note above
+    // describes.
+    if (followUp) {
+      if (!isOpenConversation(task)) parts.push(resumedAnchor(true))
+    } else {
       parts.push(
       isOpenConversation(task)
         ? conversationInstruction(true)

@@ -316,6 +316,25 @@ export function setProjectPolicy(id: string, patch: ProjectPolicyPatch): Project
     if (patch.prepare !== undefined) {
       config.prepare = patch.prepare.map((c) => c.trim()).filter(Boolean)
     }
+    if (patch.promptOrientation !== undefined) {
+      if (!['auto', 'off'].includes(patch.promptOrientation)) {
+        throw new Error(`not an orientation choice: ${String(patch.promptOrientation)}`)
+      }
+      config.prompt = { ...config.prompt, orientation: patch.promptOrientation }
+    }
+    if (patch.promptSeed !== undefined) {
+      const seed = patch.promptSeed?.trim()
+      config.prompt = { ...config.prompt }
+      // ⚠️ Empty means *this project has no seed*, which is an absent key rather than an empty
+      // string — the same rule `finishInstruction` follows. An empty string in a committed file
+      // reads as a decision somebody made, and `projectSeedPrompt` would ignore it anyway.
+      if (seed) config.prompt.seed = seed
+      else delete config.prompt.seed
+      // ⚠️ And a `prompt` object left holding nothing is deleted with it, so clearing the seed on a
+      // project that never touched `orientation` leaves the file as it was rather than gaining an
+      // empty stanza nobody wrote.
+      if (Object.keys(config.prompt).length === 0) delete config.prompt
+    }
     log.info(`project ${project.name}: policy updated (${Object.keys(patch).join(', ')})`)
   })
 }

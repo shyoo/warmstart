@@ -95,6 +95,16 @@ typed.** The three docs name the project, the landing target and the check list,
 changing any of them has to leave them agreeing with it — but `DocDraftState.edited` freezes a doc the
 operator has opened and written in, because rewriting it would discard their work with no undo.
 
+⚠️ **A project's Settings tab has a Cold start panel, and it only knows what is on disk**
+(`ProjectSettings.tsx`). *Orientation docs* is a two-value `SettingButtonSelect` — `auto` names the
+docs the project actually keeps, `off` says nothing about them — and under it the panel prints which
+of `AGENTS.md`, `HANDOFF.md` and `README.md` `project.inspect` found there, so the choice is not made
+blind: on a project with none of them, `auto` and `off` do the same thing and the panel says so.
+Below it a multi-line *Seeding prompt* box goes verbatim into the same cold prompt, after the doc
+line. ⛔ Neither reaches a warm session — see [`sessions.md`](sessions.md) — and the panel says that
+too, because a setting whose effect is *sometimes* is one an operator will otherwise test by watching
+a follow-up and conclude is broken.
+
 ⛔ **A thread message renders inline code spans, and nothing else of markdown.** Every message this
 codebase writes names refs, branches, shas and files in backticks — *"Landed as `98f200ab` onto
 `main`"* — and `{m.text}` printed the backticks, which is the worst of both readings: punctuation to
