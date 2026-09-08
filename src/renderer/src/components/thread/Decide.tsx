@@ -1,0 +1,1061 @@
+/**
+ * The cards that ask the operator for something, above the composer where they cannot be missed.
+ *
+ * ⛔ **A decision card is drawn from what the daemon says, never from what was clicked.** Each of
+ * these can be refused — a landing that does not land, an override that cannot lift an exhausted
+ * window — and the refusal is what is shown. ⚠️ `QuotaOverride` draws a `Fact` row, which is the
+ * only reason this file imports from `Facts.tsx`.
+ */
+import { canWork } from '@shared/protocol'
+import { Fragment, useCallback, useEffect, useState } from 'react'
+import {
+  FINISH_LABELS,
+  FINISH_SHORT,
+  type FinishPolicy,
+  resolveModelChoice,
+  type PendingWork,
+  type ResolvedFinishPolicy,
+  type Task
+} from '@shared/tasks'
+import type { ModelOptions } from '@shared/protocol'
+import { rpc, useNow, type FleetEntry } from '../../lib/daemon'
+import { SettingButtonSelect } from '../SettingButtonSelect'
+import { SplitButton } from '../SplitButton'
+import {
+  COMMIT_FALLBACK,
+  COMMIT_RUNGS,
+  defaultRung,
+  LAND_FALLBACK,
+  LAND_RUNGS,
+  rungOrigin
+} from '../../lib/finishrung'
+import { duration } from '../../lib/format'
+import { effortLabel, modelLabel } from '../../lib/modelname'
+import {
+  canRelandTask,
+  holdLine,
+  resolveRetryCauses,
+  type ResolveRetryCause,
+  reassignmentModel
+} from '../../lib/taskview'
+import { Fact } from './Facts'
+
+/**
+ * Quota decision card with Override, Resume, and Reassign controls.
+ *
+ * ⛔ Displayed around the composer / prompt area (matching `Decide`), because quota preemption
+ * or gate holds require an operator decision: override the gate, wait for reset, or reassign.
+ */
+export function QuotaDecide({
+  task,
+  fleet,
+  modelOptions,
+  now,
+  onStop,
+  onRefresh
+}: {
+  task: Task
+  fleet: FleetEntry[]
+  modelOptions: ModelOptions[]
+  now: number
+  onStop?: () => Promise<void>
+  onRefresh: () => Promise<void>
+}): React.JSX.Element | null {
+  const [selectedWorkerId, setSelectedWorkerId] = useState<string>(task.constraints.workerId ?? '')
+  const [selectedModel, setSelectedModel] = useState<string>(
+    task.constraints.model ?? (task.constraints.modelPolicy === 'auto' ? '__auto__' : '')
+  )
+  const [selectedEffort, setSelectedEffort] = useState<string>(task.constraints.effort ?? '')
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    setSelectedWorkerId(task.constraints.workerId ?? '')
+    setSelectedModel(task.constraints.model ?? (task.constraints.modelPolicy === 'auto' ? '__auto__' : ''))
+    setSelectedEffort(task.constraints.effort ?? '')
+  }, [task.constraints.workerId, task.constraints.model, task.constraints.modelPolicy, task.constraints.effort])
+
+  const selectedWorker = fleet.find((e) => e.worker.id === selectedWorkerId)?.worker ?? null
+  const selectedEntry = fleet.find((e) => e.worker.id === selectedWorkerId) ?? null
+  const adapterOptions = modelOptions.find((o) => o.adapterId === selectedWorker?.adapterId)
+  const offeredModels = adapterOptions?.models ?? []
+  const canSetEffort = adapterOptions?.selectableEffort ?? false
+  const inheritedModel = resolveModelChoice(null, selectedWorker, canSetEffort, selectedEntry?.quota).model
+  const offeredEfforts = canSetEffort
+    ? (offeredModels.find((m) => m.id === selectedModel)?.effortLevels ?? [])
+    : []
+
+  const isPaused = task.status === 'paused_quota'
+  const isReadyHeld = task.status === 'ready' && /% of its .* window/i.test(task.holdReason ?? '')
+  const warning = task.status === 'running' ? task.quotaPreemptWarning : null
+  const live = task.quotaOverrideUntil !== null && task.quotaOverrideUntil > now
+
+  if (!isPaused && !isReadyHeld && !warning && !live) return null
+
+  const handleOverride = async (withdraw = false) => {
+    setBusy(true)
+    try {
+      await rpc('task.overrideQuota', { id: task.id, ...(withdraw ? { until: null } : {}) })
+      await onRefresh()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleResume = async () => {
+    setBusy(true)
+    try {
+      await rpc('task.resume', { id: task.id })
+      await onRefresh()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleReassign = async () => {
+    setBusy(true)
+    try {
+      await rpc('task.setWorker', { id: task.id, workerId: selectedWorkerId || null })
+      if (selectedWorkerId) {
+        const modelPolicy =
+          selectedModel === '__auto__' ? 'auto' : !selectedModel || selectedModel === '__inherit__' ? 'inherit' : null
+        const model =
+          selectedModel === '__auto__' || selectedModel === '__inherit__' ? null : selectedModel || null
+        await rpc('task.setModel', {
+          id: task.id,
+          model,
+          modelPolicy,
+          effort: selectedEffort || null
+        })
+      }
+      if (isPaused) {
+        await rpc('task.resume', { id: task.id })
+      }
+      await onRefresh()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const canReassign = isPaused || isReadyHeld
+
+  return (
+    <div className="decide decide--quota">
+      <div className="decide-head">
+        <span>
+          {live
+            ? 'quota gate — overridden'
+            : isPaused
+              ? 'quota gate — preempted'
+              : warning
+                ? 'quota gate — preemption warning'
+                : 'quota gate — held'}
+        </span>
+        <span className="decide-why">
+          {live
+            ? `Overridden for ${duration((task.quotaOverrideUntil ?? 0) - now)}`
+            : warning
+              ? `Preempts in ${duration(Math.max(0, warning.preemptAt - now))}: ${warning.reason}`
+              : holdLine(task, now) || task.holdReason || 'Account is past quota watermark'}
+        </span>
+      </div>
+
+      {live ? (
+        <div className="decide-option">
+          <button
+            type="button"
+            className="btn"
+            disabled={busy}
+            title="Withdraw the quota override and restore normal quota enforcement."
+            onClick={() => void handleOverride(true)}
+          >
+            Withdraw
+          </button>
+          <span className="decide-what">
+            <strong>Override active.</strong> Overridden for{' '}
+            {duration((task.quotaOverrideUntil ?? 0) - now)}. Withdraw restores the usual quota gate.
+          </span>
+        </div>
+      ) : (
+        <>
+          <div className="decide-option">
+            <button
+              type="button"
+              className="btn btn--warn"
+              disabled={busy}
+              title={
+                warning
+                  ? 'Keep this run going until the quota window resets rather than wrapping it up now.'
+                  : isPaused
+                    ? 'Override preemption and resume this task immediately even though the account is at or past its window watermark.'
+                    : 'Dispatch this task immediately even though the account is at or past its quota watermark.'
+              }
+              onClick={() => void handleOverride(false)}
+            >
+              {warning
+                ? 'Override preemption'
+                : isPaused
+                  ? 'Override & continue'
+                  : 'Run now anyway'}
+            </button>
+            <span className="decide-what">
+              <strong>Override the quota gate.</strong>{' '}
+              {warning
+                ? `Keeps this run going until ${new Date(warning.resumeAt).toLocaleTimeString()} rather than wrapping it up now.`
+                : isPaused
+                  ? 'Resumes immediately and overrides the quota gate until the window resets.'
+                  : 'Dispatches this task immediately even though the account is past its quota watermark.'}{' '}
+              ⚠️ A turn the vendor actually refuses will still stop it.
+            </span>
+          </div>
+
+          {isPaused && (
+            <div className="decide-option">
+              <button
+                type="button"
+                className="btn"
+                disabled={busy}
+                title="Puts the task back in the queue right now without waiting for the reset timer (dispatches if quota is available)."
+                onClick={() => void handleResume()}
+              >
+                Resume
+              </button>
+              <span className="decide-what">
+                <strong>Resume without override.</strong> Puts the task back in the queue right now
+                without waiting for the reset timer (dispatches if quota is available).
+              </span>
+            </div>
+          )}
+
+          {warning && onStop && (
+            <div className="decide-option">
+              <button
+                type="button"
+                className="btn btn--danger"
+                disabled={busy}
+                title="Stop the work now and return this task to a resting state."
+                onClick={() => void onStop()}
+              >
+                Stop here
+              </button>
+              <span className="decide-what">
+                <strong>Stop now.</strong> Parks the task in a resting state immediately without waiting
+                for preemption. Destroys nothing.
+              </span>
+            </div>
+          )}
+
+          {canReassign && (
+            <div className="decide-option">
+              <button
+                type="button"
+                className="btn btn--primary"
+                title="Reassigns this task to another worker or Auto and resumes it immediately."
+                disabled={busy}
+                onClick={() => void handleReassign()}
+              >
+                Reassign
+              </button>
+              <div className="decide-what">
+                <div style={{ marginBottom: 'var(--sp-1)' }}>
+                  <strong>Reassign to another agent.</strong> Switches worker or model{' '}
+                  {isPaused ? 'and resumes immediately' : 'to continue with available quota'}.
+                </div>
+                <div className="reassign-row">
+                  <SettingButtonSelect
+                    className="reassign-select"
+                    value={selectedWorkerId}
+                    disabled={busy}
+                    ariaLabel="Reassign worker"
+                    options={[
+                      { value: '', label: 'Auto (scheduler decides)' },
+                      ...fleet
+                        .filter((e) => (e.worker.enabled && canWork(e.worker.role)) || e.worker.id === selectedWorkerId)
+                        .map((e) => ({
+                          value: e.worker.id,
+                          label: `${e.worker.label} (${e.worker.adapterId})`
+                        }))
+                    ]}
+                    onChange={(nextWorkerId) => {
+                      setSelectedWorkerId(nextWorkerId)
+                      if (!nextWorkerId) {
+                        setSelectedModel('')
+                        setSelectedEffort('')
+                      } else {
+                        const w = fleet.find((entry) => entry.worker.id === nextWorkerId)?.worker
+                        const offered = modelOptions.find((o) => o.adapterId === w?.adapterId)?.models ?? []
+                        if (
+                          selectedModel &&
+                          selectedModel !== '__auto__' &&
+                          selectedModel !== '__inherit__' &&
+                          !offered.some((m) => m.id === selectedModel)
+                        ) {
+                          setSelectedModel(reassignmentModel(selectedModel, offered))
+                          setSelectedEffort('')
+                        }
+                      }
+                    }}
+                  />
+
+                  {offeredModels.length > 0 && (
+                    <SettingButtonSelect
+                      className="reassign-select"
+                      value={selectedModel}
+                      disabled={busy}
+                      ariaLabel="Reassign model"
+                      options={[
+                        ...(offeredModels.length > 1
+                          ? [{ value: '__auto__', label: 'Auto Model (scheduler decides)' }]
+                          : []),
+                        {
+                          value: '',
+                          label: inheritedModel
+                            ? `account default (${modelLabel(inheritedModel) ?? inheritedModel})`
+                            : 'CLI default model'
+                        },
+                        ...offeredModels.map((m) => ({ value: m.id, label: modelLabel(m.id) ?? m.id }))
+                      ]}
+                      displayLabel={
+                        selectedModel === '__auto__'
+                          ? 'Auto Model'
+                          : !selectedModel || selectedModel === '__inherit__'
+                            ? inheritedModel
+                              ? (modelLabel(inheritedModel) ?? inheritedModel)
+                              : 'CLI default model'
+                            : undefined
+                      }
+                      onChange={(val) => {
+                        setSelectedModel(val)
+                        setSelectedEffort('')
+                      }}
+                    />
+                  )}
+
+                  {offeredEfforts.length > 0 && (
+                    <SettingButtonSelect
+                      className="reassign-select"
+                      value={selectedEffort}
+                      disabled={busy}
+                      ariaLabel="Reassign effort"
+                      options={[
+                        {
+                          value: '',
+                          label: selectedWorker?.defaultEffort
+                            ? `account default (${effortLabel(selectedWorker.defaultEffort)})`
+                            : 'CLI default effort'
+                        },
+                        ...offeredEfforts.map((level) => ({
+                          value: level,
+                          label: effortLabel(level) ?? level
+                        }))
+                      ]}
+                      onChange={(val) => setSelectedEffort(val)}
+                    />
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
+/**
+ * The two ways to settle a task that is waiting on a person, each next to what it actually does.
+ *
+ * ⛔ They were indistinguishable, and the tooltips were the reason: *"records that you are
+ * satisfied"* and *"stops here and rests the task"* are two ways of saying **it stops**. The
+ * difference is not in how it feels, it is in the DAG. `admit()` unblocks a dependent only when its
+ * dependency reaches `completed`, so **Mark done releases everything waiting on this task and Stop
+ * here does not** — and with nothing on screen saying so, the choice looked like a matter of taste
+ * while it was quietly the difference between the rest of a plan running and not.
+ *
+ * ⚠️ The count is drawn, not implied. "2 tasks start" is a fact somebody can check; "unblocks
+ * dependents" is a sentence they have to take on trust and cannot see the scope of.
+ */
+export function Decide({
+  task,
+  blocking,
+  fleet,
+  modelOptions,
+  inheritedFinish,
+  onResolve,
+  onStop,
+  onRefresh
+}: {
+  task: Task
+  blocking: number
+  fleet: FleetEntry[]
+  modelOptions: ModelOptions[]
+  /**
+   * What this task's *project* (else the fleet) says a finish does — the tier below the task itself.
+   *
+   * ⛔ Passed in rather than read off `resolvedFinish`, because on a conversation that answers
+   * `await-human` from the kind and would make every settle-it button here default to doing nothing.
+   * See `defaultRung`.
+   */
+  inheritedFinish?: ResolvedFinishPolicy
+  onResolve: () => Promise<void>
+  onStop: () => Promise<void>
+  onRefresh: () => Promise<void>
+}): React.JSX.Element {
+  const [selectedWorkerId, setSelectedWorkerId] = useState<string>(task.constraints.workerId ?? '')
+  const [selectedModel, setSelectedModel] = useState<string>(
+    task.constraints.model ?? (task.constraints.modelPolicy === 'auto' ? '__auto__' : '')
+  )
+  const [selectedEffort, setSelectedEffort] = useState<string>(task.constraints.effort ?? '')
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    setSelectedWorkerId(task.constraints.workerId ?? '')
+    setSelectedModel(task.constraints.model ?? (task.constraints.modelPolicy === 'auto' ? '__auto__' : ''))
+    setSelectedEffort(task.constraints.effort ?? '')
+  }, [task.constraints.workerId, task.constraints.model, task.constraints.modelPolicy, task.constraints.effort])
+
+  const selectedWorker = fleet.find((e) => e.worker.id === selectedWorkerId)?.worker ?? null
+  const selectedEntry = fleet.find((e) => e.worker.id === selectedWorkerId) ?? null
+  const adapterOptions = modelOptions.find((o) => o.adapterId === selectedWorker?.adapterId)
+  const offeredModels = adapterOptions?.models ?? []
+  const canSetEffort = adapterOptions?.selectableEffort ?? false
+  const inheritedModel = resolveModelChoice(null, selectedWorker, canSetEffort, selectedEntry?.quota).model
+  const offeredEfforts = canSetEffort
+    ? (offeredModels.find((m) => m.id === selectedModel)?.effortLevels ?? [])
+    : []
+
+  // ⚠️ Both numbers agree with their verb. "The 2 tasks waiting on it stays blocked" is the kind of
+  // sentence somebody stops reading, and this one is load-bearing.
+  const releases =
+    blocking === 0
+      ? 'Nothing is waiting on this one, so it just comes to rest as done.'
+      : blocking === 1
+        ? 'Releases the one task waiting on it — it becomes ready and can be dispatched.'
+        : `Releases the ${blocking} tasks waiting on it — they become ready and can be dispatched.`
+  const holds =
+    blocking === 0
+      ? 'Nothing is waiting on it either way.'
+      : blocking === 1
+        ? 'The one task waiting on it stays blocked — only a completed task releases it.'
+        : `The ${blocking} tasks waiting on it stay blocked — only a completed task releases them.`
+
+  /**
+   * What is sitting uncommitted in this task's workspace, for a conversation.
+   *
+   * ⛔ Fetched rather than derived, and only for the kind that needs it. Finish releases the
+   * workspace, so on a conversation it can walk away from files nothing else on this page mentions —
+   * see `PendingWork`. ⚠️ `null` while it is being read, which is *not* the same as "nothing there":
+   * the Commit button appears when the answer arrives and the Finish warning with it, rather than
+   * either being drawn on a guess.
+   */
+  const [pending, setPending] = useState<PendingWork | null>(null)
+  const [confirmFinish, setConfirmFinish] = useState(false)
+  const [commitError, setCommitError] = useState<string | null>(null)
+  const conversation = task.kind === 'conversation'
+
+  const readPending = useCallback(async (): Promise<void> => {
+    if (!conversation) return
+    try {
+      const answer = await rpc('task.pendingWork', { id: task.id })
+      setPending(answer)
+      // ⚠️ An arming that outlives the thing it warned about is a trap. Once the tree is clean the
+      // next press of Finish must be an ordinary press again.
+      if (!answer.supported || !answer.hasDiff) setConfirmFinish(false)
+    } catch {
+      // ⚠️ A tree that cannot be read is not a tree with nothing in it. Leaving `pending` alone keeps
+      // whatever the last successful read said rather than replacing it with a reassuring absence.
+    }
+  }, [conversation, task.id])
+
+  // ⚠️ Re-read when the task moves, because every action on this card changes the tree: a commit
+  // empties it, a reply can fill it again. `updatedAt` is the cheapest honest trigger.
+  useEffect(() => {
+    void readPending()
+  }, [readPending, task.updatedAt])
+
+  // ⚠️ `hasDiff` only, and only once the read has come back. `pending === null` means *not yet
+  // known*, and drawing a warning or a Commit button off an unknown is how a card ends up telling
+  // somebody there is nothing to lose a moment before there is.
+  const uncommittedNow = conversation && pending?.supported === true && pending.hasDiff
+  const uncommittedLine = pending
+    ? `${pending.dirtyFiles + pending.untrackedFiles} uncommitted file(s) in this workspace.`
+    : ''
+
+  /**
+   * Committed work sitting on the branch with nowhere to go.
+   *
+   * ⛔ **The state that had no button on this card at all.** Commit has nothing to ask an agent for,
+   * Finish only records that a person is satisfied, and Retry landing is drawn solely after a landing
+   * has already failed — so a conversation whose agent committed left its commits on the branch and
+   * offered no way to move them. This is where the tool does the last part.
+   */
+  const unlandedNow =
+    conversation && pending?.supported === true && !pending.hasDiff && pending.unlandedCommits > 0
+
+  /**
+   * The rung each settle-it button starts on, and where that answer came from.
+   *
+   * ⭐ **t283.** Both controls used to open on `commit-only` — not as a decision, but because a
+   * picker with no value shows the first item in its list, and `commit-only` is the bottom rung of
+   * the ladder. On a project configured for commit·verify·merge the offered answer was therefore the
+   * one that leaves the work sitting on the branch, every single time.
+   */
+  const commitRung = defaultRung(task.finishPolicy, inheritedFinish?.policy, COMMIT_RUNGS, COMMIT_FALLBACK)
+  const commitRungWhere = rungOrigin(task.finishPolicy, inheritedFinish, commitRung)
+  const landRung = defaultRung(task.finishPolicy, inheritedFinish?.policy, LAND_RUNGS, LAND_FALLBACK)
+  const landRungWhere = rungOrigin(task.finishPolicy, inheritedFinish, landRung)
+
+  /**
+   * ⛔ **"I could not look" is not "there is nothing there", and it must not render as one.** The
+   * measurement can fail — no workspace has the branch, git could not be read — and hiding every
+   * settle-it control on that answer is what left t280's thread telling an operator to press a Commit
+   * button it had decided not to draw. The control is shown with the reason instead: committing
+   * dispatches a run, which checks the branch out again wherever it has to.
+   */
+  const cannotLook = conversation && pending !== null && !pending.supported
+
+  const canReland = canRelandTask(task)
+
+  /**
+   * Every cause whose explanation the operator gets, under one button (t289). The copy lives
+   * here because it is presentation; which causes match lives in `resolveRetryCauses`, because
+   * that is the rule a test can pin.
+   */
+  const resolveCauseCopy: Record<ResolveRetryCause, { heading: string; body: React.JSX.Element }> = {
+    conflicted: {
+      heading: 'The work is fine, the branch is stale.',
+      body: (
+        <>
+          Sends the branch back to an agent to rebase onto the landing target and resolve the
+          conflicts, then report complete again — same thread, so it keeps the context it already
+          has. Nothing is discarded and the branch is never reset.
+        </>
+      )
+    },
+    checksFailed: {
+      heading: 'Project checks failed.',
+      body: (
+        <>
+          Sends the check output back to the agent to fix the lint, type, or test errors, commit
+          the fix on <span className="mono">{task.branch}</span>, and report complete again — same
+          thread, preserving existing context.
+        </>
+      )
+    },
+    uncommitted: {
+      heading: 'Uncommitted work.',
+      body: (
+        <>
+          Sends the branch back to an agent to commit the changes on{' '}
+          <span className="mono">{task.branch}</span> and report complete again — same thread,
+          preserving existing context.
+        </>
+      )
+    },
+    trunkMoved: {
+      heading: 'The trunk moved and the branch is empty.',
+      body: (
+        <>
+          Sends the branch back to an agent to rebase onto the landing target, ensure all intended
+          changes are committed on <span className="mono">{task.branch}</span>, run project checks,
+          and report complete again — same thread, preserving existing context.
+        </>
+      )
+    }
+  }
+  const resolveCauses = resolveRetryCauses(task).map((key) => ({ key, ...resolveCauseCopy[key] }))
+
+  const handleResolveRetry = async () => {
+    setBusy(true)
+    try {
+      await rpc('task.resolveRetry', { id: task.id })
+      await onRefresh()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleReland = async () => {
+    setBusy(true)
+    try {
+      await rpc('task.land', { id: task.id })
+      await onRefresh()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleCommit = async (finishPolicy: FinishPolicy): Promise<void> => {
+    setBusy(true)
+    try {
+      const result = await rpc('task.commitConversation', { id: task.id, finishPolicy })
+      setCommitError(result.ok ? null : (result.reason ?? 'the commit could not be started'))
+      await onRefresh()
+      await readPending()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  // ⚠️ The same shape as `handleCommit` and a different call, because it is a different action: this
+  // one spends no turn. Its failure lands in the same place, so one line on the card carries either.
+  const handleLand = async (finishPolicy: FinishPolicy): Promise<void> => {
+    setBusy(true)
+    try {
+      const result = await rpc('task.landConversation', { id: task.id, finishPolicy })
+      setCommitError(result.ok ? null : (result.reason ?? 'the branch could not be landed'))
+      await onRefresh()
+      await readPending()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleReassign = async () => {
+    setBusy(true)
+    try {
+      await rpc('task.setWorker', { id: task.id, workerId: selectedWorkerId || null })
+      if (selectedWorkerId) {
+        const modelPolicy =
+          selectedModel === '__auto__' ? 'auto' : !selectedModel || selectedModel === '__inherit__' ? 'inherit' : null
+        const model =
+          selectedModel === '__auto__' || selectedModel === '__inherit__' ? null : selectedModel || null
+        await rpc('task.setModel', {
+          id: task.id,
+          model,
+          modelPolicy,
+          effort: selectedEffort || null
+        })
+      }
+      const targetName = selectedWorkerId
+        ? (fleet.find((e) => e.worker.id === selectedWorkerId)?.worker.label ?? selectedWorkerId)
+        : 'auto / scheduler choice'
+      await rpc('task.message', {
+        id: task.id,
+        text: `Reassigned worker to ${targetName} and continued.`
+      })
+      await onRefresh()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="decide">
+      <div className="decide-head">
+        <span>your call</span>
+        {/* The reason it stopped, where the answer is given rather than only in the ledger. */}
+        {task.holdReason && <span className="decide-why">{task.holdReason}</span>}
+      </div>
+
+      <div className="decide-option">
+        <button
+          className="btn btn--ok"
+          title={
+            uncommittedNow
+              ? 'There is uncommitted work in this workspace. Finishing releases it — commit first, or press again to finish anyway.'
+              : 'Records your judgement that this is finished. ⚠️ Nothing verified the work — task_complete remains the only signal that an agent finished.'
+          }
+          disabled={busy}
+          onClick={() => {
+            // ⛔ **The warning is a first press, not a dialog**, and it is armed only when something
+            // would actually be lost. Finish releases the workspace back to the pool, so on a
+            // conversation carrying uncommitted files it is the one irreversible button on this
+            // card — and nothing else on the page says those files exist. A confirmation that fired
+            // on every finish would be trained away within a day; this one only ever appears when it
+            // is telling the truth.
+            if (uncommittedNow && !confirmFinish) {
+              setConfirmFinish(true)
+              return
+            }
+            void onResolve()
+          }}
+        >
+          {conversation ? (confirmFinish && uncommittedNow ? 'Finish anyway' : 'Finish') : 'Mark done'}
+        </button>
+        <span className="decide-what">
+          <strong>Finished.</strong> {releases} ⚠️ Your judgement, written into the thread as such —
+          nothing here checked the work.
+          {uncommittedNow && (
+            <>
+              {' '}
+              <span className="decide-warn">
+                ⚠️ {uncommittedLine} Finishing releases this workspace, and uncommitted files go back
+                to the pool with it. Commit below first, or press Finish again to finish anyway.
+              </span>
+            </>
+          )}
+        </span>
+      </div>
+
+      <div className="decide-option">
+        <button
+          className="btn btn--danger"
+          title="Parks the task. Destroys nothing, and Resume picks it up where it stopped."
+          disabled={busy}
+          onClick={() => void onStop()}
+        >
+          {conversation ? 'Stop' : 'Stop here'}
+        </button>
+        <span className="decide-what">
+          <strong>Not finished.</strong> Parks it as <span className="mono">paused_user</span>, which
+          Resume picks back up. {holds} The branch and the workspace are kept.
+        </span>
+      </div>
+
+      {/* ⛔ Drawn on what the workspace actually holds, which is why `pendingWork` runs git rather
+          than reading the task — and drawn as **two** controls, because committing costs a turn and
+          landing does not. A Commit button on a clean tree would dispatch a turn to commit nothing;
+          one control that quietly did either would be two actions wearing one label. */}
+      {(uncommittedNow || cannotLook) && (
+        <div className="decide-option">
+          <SplitButton
+            className="commit-select"
+            label="Commit"
+            tone="warn"
+            value={commitRung}
+            disabled={busy}
+            title={`Asks this conversation’s agent to commit, then ${FINISH_LABELS[commitRung]}. Use ▼ for a different landing strategy.`}
+            ariaLabel="Commit this conversation"
+            menuAriaLabel="Landing strategy for this commit"
+            options={COMMIT_RUNGS.map((rung) => ({
+              value: rung,
+              label: `${FINISH_SHORT[rung]} — ${FINISH_LABELS[rung]}`
+            }))}
+            onAct={(rung) => void handleCommit(rung as FinishPolicy)}
+          />
+          <span className="decide-what">
+            <strong>Commit it.</strong> {uncommittedLine} Asks this conversation’s agent — in the
+            same session, so it still has the context — to commit on{' '}
+            <span className="mono">{pending?.branch ?? task.branch}</span> and report complete, then
+            the tool does <strong>{FINISH_LABELS[commitRung]}</strong> with the branch —{' '}
+            {commitRungWhere}. ▼ picks a different one for this press.
+            {/* ⚠️ Said out loud rather than hidden behind a missing button: the card could not read
+                the tree, so it does not know whether there is anything to commit — and the run this
+                dispatches checks the branch out again wherever it has to. */}
+            {cannotLook && (
+              <span className="decide-warn">
+                {' '}
+                ⚠️ Could not read this task’s workspace ({pending?.reason}), so there is no telling
+                what is uncommitted. The run will check the branch out again.
+              </span>
+            )}
+            {/* ⚠️ The workspace is not claimed by this task any more — its session ended and the slot
+                went back to the pool — but the branch and these files are still sitting in it. */}
+            {uncommittedNow && pending?.unclaimed && (
+              <span className="dim">
+                {' '}
+                This task is not holding that workspace any more; the branch and these files are
+                still in it, and the run prefers that tree.
+              </span>
+            )}
+            {commitError && <span className="decide-warn"> ⚠️ {commitError}</span>}
+          </span>
+        </div>
+      )}
+
+      {/* ⛔ The clean-tree half: committed work with nowhere to go. No agent, no turn — the tool
+          rebases, runs the project's checks and merges, exactly as it would have at the end of an
+          ordinary task. */}
+      {unlandedNow && (
+        <div className="decide-option">
+          <SplitButton
+            className="commit-select"
+            label="Land"
+            tone="primary"
+            value={landRung}
+            disabled={busy}
+            title={`Lands this branch: ${FINISH_LABELS[landRung]}. Use ▼ for a different landing strategy.`}
+            ariaLabel="Land this conversation"
+            menuAriaLabel="Landing strategy for this branch"
+            options={LAND_RUNGS.map((rung) => ({
+              value: rung,
+              label: `${FINISH_SHORT[rung]} — ${FINISH_LABELS[rung]}`
+            }))}
+            onAct={(rung) => void handleLand(rung as FinishPolicy)}
+          />
+          <span className="decide-what">
+            <strong>Land it.</strong> Nothing is uncommitted, and{' '}
+            {pending?.unlandedCommits === 1
+              ? '1 commit is'
+              : `${pending?.unlandedCommits} commits are`}{' '}
+            sitting on <span className="mono">{pending?.branch ?? task.branch}</span>. The tool does
+            this part itself and spends no turn: it rebases onto the landing target, runs the
+            project’s checks where the rung asks for them, and then does what the rung says. This press
+            does <strong>{FINISH_LABELS[landRung]}</strong> — {landRungWhere}; ▼ picks another. A
+            refusal leaves the branch exactly where it is.
+            {commitError && <span className="decide-warn"> ⚠️ {commitError}</span>}
+          </span>
+        </div>
+      )}
+
+      {resolveCauses.length > 0 && (
+        <div className="decide-option">
+          <button
+            className="btn btn--primary"
+            title="Dispatches a run on this thread to resolve what stopped it and report complete again — same thread, so it keeps the context it already has."
+            disabled={busy}
+            onClick={() => void handleResolveRetry()}
+          >
+            Resolve &amp; retry
+          </button>
+          <span className="decide-what">
+            {resolveCauses.map((cause, index) => (
+              <Fragment key={cause.key}>
+                {index > 0 && <br />}
+                <strong>{cause.heading}</strong> {cause.body}
+              </Fragment>
+            ))}
+          </span>
+        </div>
+      )}
+
+      {canReland && (
+        <div className="decide-option">
+          <button
+            className="btn btn--primary"
+            title="Attempts to land the branch again without dispatching an agent."
+            disabled={busy}
+            onClick={() => void handleReland()}
+          >
+            Retry landing
+          </button>
+          <span className="decide-what">
+            <strong>Land again.</strong> Attempts to rebase and land <span className="mono">{task.branch}</span> now.
+            Use this if the trunk is now clean or another task has finished landing.
+          </span>
+        </div>
+      )}
+
+      <div className="decide-option">
+        <button
+          className="btn btn--primary"
+          title="Reassigns the worker and model and dispatches a new run on this thread."
+          disabled={busy}
+          onClick={() => void handleReassign()}
+        >
+          Reassign
+        </button>
+        <div className="decide-what">
+          {/* ⚠️ One row, and it stays one row. Each selector used to size itself to its own longest
+              label — "Auto (scheduler decides)", "account default (claude-opus-5)" — so the three of
+              them asked for more width than the column has and wrapped onto a line each, turning one
+              decision into a stack. They share the row equally now and ellipsize instead; the full
+              label is still on the button that opens the menu, and in the menu itself. */}
+          <div className="reassign-row">
+            <SettingButtonSelect
+              className="reassign-select"
+              value={selectedWorkerId}
+              disabled={busy}
+              ariaLabel="Reassign worker"
+              options={[
+                { value: '', label: 'Auto (scheduler decides)' },
+                /* ⛔ Deactivated accounts are not offered. Reassigning to a disabled worker
+                   parks the task on an account the scheduler will never hand a turn, so the menu
+                   lists only what can actually pick the work up. The one exception is the account
+                   this task is already pinned to — if it was deactivated after assignment it stays
+                   in the list, so the button reads its label instead of a bare id. */
+                ...fleet
+                  .filter((e) => (e.worker.enabled && canWork(e.worker.role)) || e.worker.id === selectedWorkerId)
+                  .map((e) => ({
+                    value: e.worker.id,
+                    label: `${e.worker.label} (${e.worker.adapterId})`
+                  }))
+              ]}
+              onChange={(nextWorkerId) => {
+                setSelectedWorkerId(nextWorkerId)
+                if (!nextWorkerId) {
+                  setSelectedModel('')
+                  setSelectedEffort('')
+                } else {
+                  const w = fleet.find((entry) => entry.worker.id === nextWorkerId)?.worker
+                  const offered = modelOptions.find((o) => o.adapterId === w?.adapterId)?.models ?? []
+                  if (
+                    selectedModel &&
+                    selectedModel !== '__auto__' &&
+                    selectedModel !== '__inherit__' &&
+                    !offered.some((m) => m.id === selectedModel)
+                  ) {
+                    setSelectedModel(reassignmentModel(selectedModel, offered))
+                    setSelectedEffort('')
+                  }
+                }
+              }}
+            />
+
+            {offeredModels.length > 0 && (
+              <SettingButtonSelect
+                className="reassign-select"
+                value={selectedModel}
+                disabled={busy}
+                ariaLabel="Reassign model"
+                options={[
+                  ...(offeredModels.length > 1
+                    ? [{ value: '__auto__', label: 'Auto Model (scheduler decides)' }]
+                    : []),
+                  {
+                    value: '',
+                    label: inheritedModel
+                      ? `account default (${modelLabel(inheritedModel) ?? inheritedModel})`
+                      : 'CLI default model'
+                  },
+                  // ⚠️ The label is written for a person; the value stays the id, which is what is
+                  // sent to the CLI and what the cost model is keyed by.
+                  ...offeredModels.map((m) => ({ value: m.id, label: modelLabel(m.id) ?? m.id }))
+                ]}
+                displayLabel={
+                  selectedModel === '__auto__'
+                    ? 'Auto Model'
+                    : !selectedModel || selectedModel === '__inherit__'
+                      ? inheritedModel
+                        ? (modelLabel(inheritedModel) ?? inheritedModel)
+                        : 'CLI default model'
+                      : undefined
+                }
+                onChange={(val) => {
+                  setSelectedModel(val)
+                  setSelectedEffort('')
+                }}
+              />
+            )}
+
+            {offeredEfforts.length > 0 && (
+              <SettingButtonSelect
+                className="reassign-select"
+                value={selectedEffort}
+                disabled={busy}
+                ariaLabel="Reassign effort"
+                options={[
+                  {
+                    value: '',
+                    label: selectedWorker?.defaultEffort
+                      ? `account default (${effortLabel(selectedWorker.defaultEffort)})`
+                      : 'CLI default effort'
+                  },
+                  ...offeredEfforts.map((level) => ({
+                    value: level,
+                    label: effortLabel(level) ?? level
+                  }))
+                ]}
+                displayLabel={
+                  !selectedEffort
+                    ? selectedWorker?.defaultEffort
+                      ? (effortLabel(selectedWorker.defaultEffort) ?? selectedWorker.defaultEffort)
+                      : 'CLI default effort'
+                    : undefined
+                }
+                onChange={(val) => setSelectedEffort(val)}
+              />
+            )}
+          </div>
+          <span>
+            <strong>Reroute & continue.</strong> Sets the worker/model preference and dispatches a new run.
+            If set to Auto, the scheduler automatically picks the best worker (e.g. Antigravity) based on quota and capacity.
+          </span>
+        </div>
+      </div>
+
+      <p className="decide-hint">
+        Or say what you want next in the box below — another run on this same thread, preferring the
+        session that still holds its context.
+      </p>
+    </div>
+  )
+}
+
+/**
+ * Run this now anyway, at 92% of a window — or keep a run alive through the minute before an
+ * automatic quota preemption.
+ *
+ * ⛔ **The countdown is the daemon's, not this component's.** `quotaPreemptWarning` is written to
+ * the database before it is ever shown, so the deadline survives a reload and a restart of the app
+ * that is displaying it; the renderer only subtracts a ticking clock from a number it was given. A
+ * vendor **refusal** never appears here, because that turn has already been declined and there is
+ * nothing left to choose.
+ *
+ * ⛔ **Otherwise shown only when the hold is one the fleet invented for itself.** The water mark is
+ * a caution computed from a reading — the vendor served every turn up to it — and on a task pinned to one
+ * account there was no way to say *"8% is more than this needs"*. Every other hold on this row ends
+ * when something else happens (a run finishes, a dependency completes, somebody signs in) and has
+ * nothing here to overrule, so no button appears on one. ⚠️ Matched on the sentence the gate writes,
+ * for the same reason the conflict button is: that sentence is where the scheduler records *which*
+ * gate refused, and re-deriving it in the renderer would be a second opinion on a settled question.
+ *
+ * ⚠️ It says what it does **not** buy, because the honest failure mode is an operator who overrides
+ * at 92%, sees the run stop anyway on a vendor refusal, and concludes the button is broken.
+ */
+export function QuotaOverride({
+  task,
+  onChanged
+}: {
+  task: Task
+  onChanged?: () => Promise<void>
+}): React.JSX.Element | null {
+  const [busy, setBusy] = useState(false)
+  // ⚠️ One ticking clock, not `Date.now()` in the render: the countdown below has to move, and a
+  // component that reads the wall clock while rendering only updates when something else makes it.
+  const now = useNow(1000)
+  const held =
+    (task.status === 'ready' && /% of its .* window/.test(task.holdReason ?? '')) ||
+    task.status === 'paused_quota'
+  const warning = task.status === 'running' ? task.quotaPreemptWarning : null
+  const live = task.quotaOverrideUntil !== null && task.quotaOverrideUntil > now
+  if (!held && !live && !warning) return null
+
+  // ⚠️ `withdraw` sends an explicit `null`; granting sends no `until` at all, so the daemon dates
+  // the permission from the window it measured rather than from a clock in the renderer.
+  const set = async (withdraw: boolean): Promise<void> => {
+    setBusy(true)
+    try {
+      await rpc('task.overrideQuota', { id: task.id, ...(withdraw ? { until: null } : {}) })
+      if (onChanged) await onChanged()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Fact label="quota gate">
+      {live ? (
+        <>
+          <span>overridden for {duration((task.quotaOverrideUntil ?? 0) - now)}</span>{' '}
+          <button className="btn" disabled={busy} onClick={() => void set(true)}>
+            Withdraw
+          </button>
+        </>
+      ) : (
+        <>
+          {warning && (
+            <span className="quota-countdown">
+              Preempts in {duration(Math.max(0, warning.preemptAt - now))}: {warning.reason}.{' '}
+            </span>
+          )}
+          <button
+            className="btn btn--warn"
+            disabled={busy}
+            title={
+              warning
+                ? 'Keep this run going until the quota window resets rather than wrapping it up now. A turn the vendor actually refuses will still stop it.'
+                : task.status === 'paused_quota'
+                  ? 'Override preemption and resume this task immediately even though the account is at or past 92% of its window.'
+                  : 'Dispatch this task even though the account is at or past 92% of its window. Expires when that window resets. ⚠️ A turn the vendor actually refuses still stops the run, and so does the window boundary itself.'
+            }
+            onClick={() => void set(false)}
+          >
+            {warning
+              ? 'Override preemption'
+              : task.status === 'paused_quota'
+                ? 'Override & continue'
+                : 'Run now anyway'}
+          </button>{' '}
+          <span className="dim">
+            {warning
+              ? `keeps this run going until ${new Date(warning.resumeAt).toLocaleTimeString()}`
+              : task.status === 'paused_quota'
+                ? 'resumes immediately and overrides the quota gate'
+                : 'spends into the window this task is waiting on'}
+          </span>
+        </>
+      )}
+    </Fact>
+  )
+}
