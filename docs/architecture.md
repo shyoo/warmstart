@@ -436,5 +436,6 @@ scripts/                ensure-electron, icons, build-win.ps1                   
 | `approvals.ts` `questions.ts` | the two interrupt objects |
 | `resources.ts` | the broker: `exclusive`, `counted`, `rate_limited` |
 | `adapters/` | per-CLI integrations, capabilities as data → [`adapters.md`](adapters.md) |
-| `which.ts` `git.ts` | PATH resolution — node-pty does not do it; and the one way this daemon shells out to git |
+| `which.ts` `git.ts` `spawn.ts` | PATH resolution — node-pty does not do it; and the shared git / promise-based `execFile` runners |
+| `stats.ts` | shared medians: `null` is no series, never a measured zero |
 | `activetime.ts` `activity.ts` `log.ts` | agent time, the live peephole, the daily log |

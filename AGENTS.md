@@ -148,9 +148,11 @@ postinstall and does not download itself: run
 [`scripts/ensure-electron.mjs`](scripts/ensure-electron.mjs) or every suite fails as if the build
 broke. ⛔ Never compare two paths with `===`; use `samePath` from
 [`src/daemon/fspath.ts`](src/daemon/fspath.ts). node-pty does not search PATH — everything spawnable
-goes through [`src/daemon/which.ts`](src/daemon/which.ts), and every `git` call through
-[`src/daemon/git.ts`](src/daemon/git.ts) — four private copies disagreed about whether to eat leading
-whitespace, which `git status --porcelain` uses as data. `cmd /d /s /c` splits any path with a space;
+goes through [`src/daemon/which.ts`](src/daemon/which.ts); every `git` call through
+[`src/daemon/git.ts`](src/daemon/git.ts); every promise-based `execFile` through
+[`src/daemon/spawn.ts`](src/daemon/spawn.ts); and every median through
+[`src/daemon/stats.ts`](src/daemon/stats.ts). Private copies do not come back — `git status --porcelain`
+uses leading whitespace as data. `cmd /d /s /c` splits any path with a space;
 `node --experimental-strip-types` resolves no `@shared` alias, so `adapters/local-llm-bridge.ts`
 shares nothing and copies instead. The preload must be CommonJS, and native modules cannot load from inside an asar.
 `ready-to-show` may never fire, so no window may be shown only from it. `node:sqlite`, not

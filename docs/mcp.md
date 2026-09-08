@@ -13,7 +13,7 @@ the vendor's permission-hook payload is read (`questionsFrom`, which accepts fou
 *multi-select* and two each of *label* and *detail*, every one of them written from a payload somebody
 watched arrive). ⛔ It must **degrade rather than throw** — this runs inside
 `--permission-prompt-tool`, where a parse error is not a wrong answer on screen but an agent that
-cannot act, with the reason buried in a CLI's stderr. `payload.test.ts` pins that.
+cannot act, with the reason buried in a CLI's stderr. `payload.test.ts` pins that with 21 L1 checks.
 
 ---
 
