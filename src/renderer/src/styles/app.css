@@ -2629,18 +2629,31 @@ body {
   filter: none;
 }
 
+/* ⚠️ `--warn` is in this list too: light theme's warn is a dark amber (#a86b12), and near-black
+   text on it is the one solid button that would be unreadable. */
 @media (prefers-color-scheme: light) {
   :root:not([data-theme="dark"]) .btn--primary,
   :root:not([data-theme="dark"]) .btn--ok,
+  :root:not([data-theme="dark"]) .btn--warn,
   :root:not([data-theme="dark"]) .btn--danger {
     color: #ffffff;
+  }
+
+  /* The ▼ half is not a `.btn`, so it takes the same answer through its own variable. */
+  :root:not([data-theme="dark"]) .split-btn {
+    --split-btn-fg: #ffffff;
   }
 }
 
 :root[data-theme="light"] .btn--primary,
 :root[data-theme="light"] .btn--ok,
+:root[data-theme="light"] .btn--warn,
 :root[data-theme="light"] .btn--danger {
   color: #ffffff;
+}
+
+:root[data-theme="light"] .split-btn {
+  --split-btn-fg: #ffffff;
 }
 
 .check {
@@ -3927,12 +3940,92 @@ select:focus-visible,
 }
 
 /*
- * The Commit rung picker sits in the button column, so it has to fill it exactly as the buttons
- * beside it do — a select sized to its own longest label would make one row of three wider than the
- * other two.
+ * The Commit and Land controls sit in the button column, so they have to fill it exactly as the
+ * buttons beside them do — a control sized to its own longest label would make one row of three
+ * wider than the other two.
  */
 .commit-select {
   width: 100%;
+}
+
+/*
+ * ⛔ **An action button with a second answer behind a ▼, and it has to *read* as a button.** These
+ * two used to be `SettingButtonSelect`s: the dark rounded pill every setting in this app wears, in a
+ * column beside a green Finish and a red Stop. The one row on the card that spends a turn was the
+ * one that did not look pressable, and its ✍ icon said *edit a setting* about an action.
+ *
+ * ⚠️ The halves are one control, so they share a border rather than each drawing their own: the
+ * seam is a single divider on the arrow's left edge.
+ */
+.split-btn {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  /* ⚠️ A variable rather than a colour repeated in four rules: the arrow half has a hover, an open
+     and a focus state, and a light theme that had to win a specificity race against each of them is
+     the kind of fight one of them always loses. */
+  --split-btn-fg: #0b0f17;
+}
+
+.split-btn--warn {
+  --split-btn-bg: var(--state-warn);
+}
+
+.split-btn--primary {
+  --split-btn-bg: var(--color-accent);
+}
+
+.decide-option .split-btn-main {
+  /* ⚠️ `width: auto`, against `.decide-option .btn`'s 100%: inside the split it is a flex item, and
+     a 100% basis pushes the ▼ half out of the column. */
+  width: auto;
+  flex: 1 1 auto;
+  min-width: 0;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+  border-right: 0;
+}
+
+.split-btn-more {
+  flex: 0 0 auto;
+}
+
+/*
+ * ⚠️ The arrow half is a `Pill` — for its portal menu, its flip and its arrow keys — wearing the
+ * button's colour rather than the pill's. Only the skin is overridden; nothing about the behaviour
+ * is re-implemented here.
+ */
+.split-btn .pill {
+  background: var(--split-btn-bg);
+  border: 1px solid var(--split-btn-bg);
+  border-left: 1px solid rgba(0, 0, 0, 0.28);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  color: var(--split-btn-fg);
+  font-weight: 600;
+  font-size: var(--text-dense);
+  padding: var(--sp-1) 7px;
+  max-width: none;
+}
+
+.split-btn .pill:hover:not(:disabled) {
+  background: var(--split-btn-bg);
+  border-color: var(--split-btn-bg);
+  border-left-color: rgba(0, 0, 0, 0.28);
+  color: var(--split-btn-fg);
+  filter: brightness(1.08);
+}
+
+.split-btn .pill--open,
+.split-btn .pill:focus-visible {
+  color: var(--split-btn-fg);
+  border-color: var(--split-btn-bg);
+  border-left-color: rgba(0, 0, 0, 0.28);
+  box-shadow: 0 0 0 1px var(--color-accent-dim);
+}
+
+/* ⚠️ Both halves dim together, or a disabled control reads as half-live. */
+.split-btn .pill:disabled {
+  opacity: 0.5;
 }
 
 /*

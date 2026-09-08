@@ -4,7 +4,6 @@ import {
   FINISH_LABELS,
   FINISH_ORDER,
   FINISH_SHORT,
-  policyLands,
   type FinishPolicy,
   resolveModelChoice,
   AUTO_COMPACT_LABELS,
@@ -41,6 +40,15 @@ import { isSubmitKey, useUiSettings } from '../lib/uisettings'
 import { ImageChips, usePastedImages } from '../lib/pasteimages'
 import { conversationIdFor } from '../lib/conversation'
 import { SettingButtonSelect, type SettingOption } from './SettingButtonSelect'
+import { SplitButton } from './SplitButton'
+import {
+  COMMIT_FALLBACK,
+  COMMIT_RUNGS,
+  defaultRung,
+  LAND_FALLBACK,
+  LAND_RUNGS,
+  rungOrigin
+} from '../lib/finishrung'
 import { TaskQuestions } from './Questions'
 import { AddDependency, candidatesFor, DependencyList, useTaskCandidates } from './Dependencies'
 import { showsLiveOutput } from '../lib/live'
@@ -579,6 +587,7 @@ function TaskDetail({
               blocking={blocking}
               fleet={fleet}
               modelOptions={modelOptions}
+              inheritedFinish={detail.inheritedFinish}
               onResolve={resolve}
               onStop={cancel}
               onRefresh={refresh}
@@ -1681,30 +1690,6 @@ function QuotaDecide({
 }
 
 /**
- * The rungs the Commit button offers, and the two it does not.
- *
- * ⛔ **Derived from `FINISH_ORDER`, never hand-written**, for the reason the composer's own list
- * carries: three dropdowns each kept their own copy of these and all three still offered
- * `agent-lands` a week after the rename. ⚠️ `await-human` is dropped because it is what the
- * conversation is already doing — offering it under a button called Commit would be a button that
- * does nothing — and `custom` because it is an instruction the project wrote for its *own* finish,
- * which is a different question from what this one commit should do.
- */
-const COMMIT_RUNGS: FinishPolicy[] = FINISH_ORDER.filter(
-  (policy) => policy !== 'await-human' && policy !== 'custom'
-)
-
-/**
- * The rungs the Land button offers: the ones the **tool** acts on.
- *
- * ⛔ Derived from `policyLands`, for the reason above and one more of its own. Landing a branch under
- * `commit-only` or `commit-and-verify` is a button that does nothing — those rungs leave the branch
- * exactly where the agent put it — and the whole point of this control is that the tool does the last
- * part. ⚠️ `commit·verify·merge` is the one an operator means by "merge it into main".
- */
-const LAND_RUNGS: FinishPolicy[] = FINISH_ORDER.filter(policyLands)
-
-/**
  * The two ways to settle a task that is waiting on a person, each next to what it actually does.
  *
  * ⛔ They were indistinguishable, and the tooltips were the reason: *"records that you are
@@ -1722,6 +1707,7 @@ function Decide({
   blocking,
   fleet,
   modelOptions,
+  inheritedFinish,
   onResolve,
   onStop,
   onRefresh
@@ -1730,6 +1716,14 @@ function Decide({
   blocking: number
   fleet: FleetEntry[]
   modelOptions: ModelOptions[]
+  /**
+   * What this task's *project* (else the fleet) says a finish does — the tier below the task itself.
+   *
+   * ⛔ Passed in rather than read off `resolvedFinish`, because on a conversation that answers
+   * `await-human` from the kind and would make every settle-it button here default to doing nothing.
+   * See `defaultRung`.
+   */
+  inheritedFinish?: ResolvedFinishPolicy
   onResolve: () => Promise<void>
   onStop: () => Promise<void>
   onRefresh: () => Promise<void>
@@ -1824,6 +1818,19 @@ function Decide({
    */
   const unlandedNow =
     conversation && pending?.supported === true && !pending.hasDiff && pending.unlandedCommits > 0
+
+  /**
+   * The rung each settle-it button starts on, and where that answer came from.
+   *
+   * ⭐ **t283.** Both controls used to open on `commit-only` — not as a decision, but because a
+   * picker with no value shows the first item in its list, and `commit-only` is the bottom rung of
+   * the ladder. On a project configured for commit·verify·merge the offered answer was therefore the
+   * one that leaves the work sitting on the branch, every single time.
+   */
+  const commitRung = defaultRung(task.finishPolicy, inheritedFinish?.policy, COMMIT_RUNGS, COMMIT_FALLBACK)
+  const commitRungWhere = rungOrigin(task.finishPolicy, inheritedFinish, commitRung)
+  const landRung = defaultRung(task.finishPolicy, inheritedFinish?.policy, LAND_RUNGS, LAND_FALLBACK)
+  const landRungWhere = rungOrigin(task.finishPolicy, inheritedFinish, landRung)
 
   /**
    * ⛔ **"I could not look" is not "there is nothing there", and it must not render as one.** The
@@ -1987,23 +1994,27 @@ function Decide({
           one control that quietly did either would be two actions wearing one label. */}
       {(uncommittedNow || cannotLook) && (
         <div className="decide-option">
-          <SettingButtonSelect
+          <SplitButton
             className="commit-select"
-            value=""
+            label="Commit"
+            tone="warn"
+            value={commitRung}
             disabled={busy}
+            title={`Asks this conversation’s agent to commit, then ${FINISH_LABELS[commitRung]}. Use ▼ for a different landing strategy.`}
             ariaLabel="Commit this conversation"
-            displayLabel="Commit…"
+            menuAriaLabel="Landing strategy for this commit"
             options={COMMIT_RUNGS.map((rung) => ({
               value: rung,
               label: `${FINISH_SHORT[rung]} — ${FINISH_LABELS[rung]}`
             }))}
-            onChange={(rung) => void handleCommit(rung as FinishPolicy)}
+            onAct={(rung) => void handleCommit(rung as FinishPolicy)}
           />
           <span className="decide-what">
             <strong>Commit it.</strong> {uncommittedLine} Asks this conversation’s agent — in the
             same session, so it still has the context — to commit on{' '}
             <span className="mono">{pending?.branch ?? task.branch}</span> and report complete, then
-            the rung you pick above is what the tool does with the branch afterwards.
+            the tool does <strong>{FINISH_LABELS[commitRung]}</strong> with the branch —{' '}
+            {commitRungWhere}. ▼ picks a different one for this press.
             {/* ⚠️ Said out loud rather than hidden behind a missing button: the card could not read
                 the tree, so it does not know whether there is anything to commit — and the run this
                 dispatches checks the branch out again wherever it has to. */}
@@ -2033,17 +2044,20 @@ function Decide({
           ordinary task. */}
       {unlandedNow && (
         <div className="decide-option">
-          <SettingButtonSelect
+          <SplitButton
             className="commit-select"
-            value=""
+            label="Land"
+            tone="primary"
+            value={landRung}
             disabled={busy}
+            title={`Lands this branch: ${FINISH_LABELS[landRung]}. Use ▼ for a different landing strategy.`}
             ariaLabel="Land this conversation"
-            displayLabel="Land…"
+            menuAriaLabel="Landing strategy for this branch"
             options={LAND_RUNGS.map((rung) => ({
               value: rung,
               label: `${FINISH_SHORT[rung]} — ${FINISH_LABELS[rung]}`
             }))}
-            onChange={(rung) => void handleLand(rung as FinishPolicy)}
+            onAct={(rung) => void handleLand(rung as FinishPolicy)}
           />
           <span className="decide-what">
             <strong>Land it.</strong> Nothing is uncommitted, and{' '}
@@ -2052,8 +2066,9 @@ function Decide({
               : `${pending?.unlandedCommits} commits are`}{' '}
             sitting on <span className="mono">{pending?.branch ?? task.branch}</span>. The tool does
             this part itself and spends no turn: it rebases onto the landing target, runs the
-            project’s checks where the rung asks for them, and then does what the rung says — merge,
-            push, or open a pull request. A refusal leaves the branch exactly where it is.
+            project’s checks where the rung asks for them, and then does what the rung says. This press
+            does <strong>{FINISH_LABELS[landRung]}</strong> — {landRungWhere}; ▼ picks another. A
+            refusal leaves the branch exactly where it is.
             {commitError && <span className="decide-warn"> ⚠️ {commitError}</span>}
           </span>
         </div>

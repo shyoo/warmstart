@@ -3819,7 +3819,7 @@ try {
   let settleLabels = '[]'
   await waitFor(async () => {
     settleLabels = await evaluate(
-      `JSON.stringify([...document.querySelectorAll('.decide .commit-select button.setting-btn-select')].map(b => b.innerText.trim()))`
+      `JSON.stringify([...document.querySelectorAll('.decide .commit-select .split-btn-main')].map(b => b.innerText.trim()))`
     )
     return /Commit|Land/.test(settleLabels)
   }, 'a settle-it control on the conversation thread')
@@ -3847,31 +3847,49 @@ try {
   let landLabels = '[]'
   await waitFor(async () => {
     landLabels = await evaluate(
-      `JSON.stringify([...document.querySelectorAll('.decide .commit-select button.setting-btn-select')].map(b => b.innerText.trim()))`
+      `JSON.stringify([...document.querySelectorAll('.decide .commit-select .split-btn-main')].map(b => b.innerText.trim()))`
     )
     return /Land/.test(landLabels)
   }, 'the Land control once the work is committed')
   check(
     '⛔ committed work with nowhere to go offers Land, which used to have no button at all',
-    /Land/.test(landLabels) && !/Commit…/.test(landLabels),
+    /Land/.test(landLabels) && !/Commit/.test(landLabels),
     landLabels
+  )
+  // ⭐ t283: the card says which landing strategy the button will use, and it is the project's
+  // answer rather than the bottom rung of the ladder. `ui project` inherits the fleet default.
+  const landCopy = await evaluate(`document.querySelector('.decide')?.innerText ?? ''`)
+  check(
+    'and it names the landing strategy it will use, taken from the project or the fleet',
+    /commit, verify and merge into main/i.test(landCopy) && /fleet default|project/i.test(landCopy),
+    landCopy.slice(0, 600)
   )
   // ⚠️ Opened, then read on a later turn: the menu is React state, so a query in the same
   // evaluate as the click reads the DOM one render too early and finds nothing.
   await evaluate(
-    `[...document.querySelectorAll('.decide .commit-select')].pop()?.querySelector('button.setting-btn-select')?.click()`
+    `[...document.querySelectorAll('.decide .commit-select')].pop()?.querySelector('.split-btn-more .pill')?.click()`
   )
   await wait(500)
   const landRungs = JSON.parse(
     await evaluate(
-      `JSON.stringify([...document.querySelectorAll('.setting-btn-select-option')].map(o => o.innerText.trim()))`
+      `JSON.stringify([...document.querySelectorAll('.pill-menu [role=option]')].map(o => o.innerText.trim()))`
     )
   )
   check(
-    'and its menu offers only the rungs the tool itself acts on',
+    'and its ▼ offers only the rungs the tool itself acts on',
     landRungs.some((o) => /merge into main/i.test(o)) &&
       !landRungs.some((o) => /^Commit — commit only/i.test(o)),
     JSON.stringify(landRungs)
+  )
+  // ⚠️ The tick is on the rung the button would use, so opening the menu confirms the default
+  // rather than presenting a list with nothing chosen — which is what t283 was reported for.
+  const landTicked = await evaluate(
+    `document.querySelector('.pill-menu [role=option][aria-selected=true]')?.innerText.trim() ?? ''`
+  )
+  check(
+    'and the rung it would use is the one already ticked',
+    /merge into main/i.test(landTicked),
+    landTicked
   )
   // ⚠️ Closed again, so the portal menu is not left over the next section's clicks.
   await evaluate(`document.body.click()`)

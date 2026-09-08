@@ -267,19 +267,38 @@ on the branch and warning about it would cry wolf on every conversation that did
 releases the workspace, so over a dirty tree it arms once and says what it would lose before it will
 do it.
 
-- **Commit…** — uncommitted files. The menu offers the finish ladder minus `await-human` (which is
+- **Commit ▼** — uncommitted files. The ▼ offers the finish ladder minus `await-human` (which is
   what the conversation is already doing) and `custom` (an instruction about the project's own finish,
-  not about this commit); picking a rung writes it to the task and asks the agent — in the same
+  not about this commit); the rung writes itself to the task and the agent is asked — in the same
   session, so it still has the context — to commit and report complete, after which the ordinary
   landing path runs that rung. ⚠️ It asks rather than commits because the daemon never authors a
   commit; see [`landing.md`](landing.md).
-- **Land…** — a clean tree with commits the landing target does not have. ⛔ **Two controls, not one
+- **Land ▼** — a clean tree with commits the landing target does not have. ⛔ **Two controls, not one
   that changes meaning:** committing costs a turn and landing does not, so `task.landConversation`
   writes the rung and lands the branch itself — rebase, the project's checks, merge — through the same
-  `decideFinish` bar a first completion meets. Its menu offers only the rungs the tool acts on
+  `decideFinish` bar a first completion meets. Its ▼ offers only the rungs the tool acts on
   (`policyLands`: merge, push, pull request), because landing under `commit-only` would be a button
   that does nothing. This state used to have no button at all: Commit had nothing to ask for and
   *Retry landing* is drawn only after a landing has already failed.
+- ⭐ **Both are buttons with a second answer behind a ▼ — `SplitButton`, not a picker** (t283).
+  They shipped as `SettingButtonSelect`s: the dark rounded control with a ✍ on it that every
+  *setting* in this app wears, in a column beside a green Finish and a red Stop. The one row on the
+  card that spends a turn was the one that did not read as pressable, and a picker has no default
+  action — pressing it could only open a list. Now the main half acts and the ▼ chooses, Commit in
+  `--warn` and Land in `--primary` (never `ok` or `danger`: those two are spoken for on this card).
+  The ▼ half is a `Pill` wearing the button's colour, so the portal, the flip and the arrow keys are
+  the same code every other menu uses.
+- ⭐ **The rung it starts on is the task's, else the project's, else the fleet's** — `defaultRung`
+  in `lib/finishrung.ts`, and the card prints where the answer came from. ⛔ Deliberately **not**
+  `resolveFinishPolicy`, which answers `await-human` for a conversation above every other tier: that
+  is right for what happens when a task finishes on its own and useless for the button whose purpose
+  is to overrule it. Before this the controls had no value at all, so their menus opened on the first
+  rung of the ladder — `commit-only` — and a project configured for commit·verify·merge was offered
+  the one rung that leaves the work on the branch. ⚠️ Where the tier below asks for something the
+  button cannot do (`await-human`, `custom`), Commit falls back to `commit-only` rather than to the
+  fleet default, because merging a trunk on behalf of a project that asked for a person is the
+  expensive direction to be wrong in; Land falls back to `commit-and-merge`, because a Land that does
+  not land is nothing.
 - ⛔ **"I could not look" is not "there is nothing there".** When the measurement fails the Commit
   control is still drawn, carrying the reason. `pendingWorkFor` looks in three places, and the third
   is why: a conversation's claim on its workspace is released when its session ends, while the
