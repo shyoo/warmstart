@@ -42,6 +42,7 @@ let db: typeof import('./db.js')
 let workers: typeof import('./workers.js')
 let tasks: typeof import('./tasks.js')
 let scheduler: typeof import('./scheduler.js')
+let turnend: typeof import('./turnend.js')
 let compaction: typeof import('./compaction.js')
 
 let seq = 0
@@ -123,7 +124,7 @@ function seedRunningTask(
 
 /** The turn ending as the stream reports it: a clean result, and nothing terminal in it. */
 async function endTurn(session: Session, text: string | null = 'The fix is minimal and focused.') {
-  await scheduler.onStreamResult(session, { isError: false, text, terminalReason: null })
+  await turnend.onStreamResult(session, { isError: false, text, terminalReason: null })
 }
 
 const holdReasonOf = (taskId: string): string => tasks.getTask(taskId)?.holdReason ?? ''
@@ -135,6 +136,7 @@ beforeAll(async () => {
   workers = await import('./workers.js')
   tasks = await import('./tasks.js')
   scheduler = await import('./scheduler.js')
+  turnend = await import('./turnend.js')
   compaction = await import('./compaction.js')
   db.openDb(join(dir, 'idleturn.db'))
 })
@@ -175,7 +177,7 @@ describe('the turn that ended without reporting', () => {
     const { run, session } = seedRunningTask()
     await endTurn(session, 'All checks pass.')
 
-    const note = scheduler.idleTurnFor(session.id)
+    const note = turnend.idleTurnFor(session.id)
     expect(note?.runId).toBe(run.id)
     expect(note?.at).toBe(Date.now())
     expect(note?.said).toBe('All checks pass.')
@@ -184,14 +186,14 @@ describe('the turn that ended without reporting', () => {
   it('records a turn that said nothing at all as having said nothing', async () => {
     const { session } = seedRunningTask()
     await endTurn(session, '   ')
-    expect(scheduler.idleTurnFor(session.id)?.said).toBeNull()
+    expect(turnend.idleTurnFor(session.id)?.said).toBeNull()
   })
 
   it('⭐ hands the task to a person once nothing has happened for the grace period', async () => {
     const { run, task, session } = seedRunningTask()
     await endTurn(session, 'All checks pass. The fix is minimal, focused.')
 
-    await vi.advanceTimersByTimeAsync(scheduler.IDLE_TURN_AFTER_MS + 10_000)
+    await vi.advanceTimersByTimeAsync(turnend.IDLE_TURN_AFTER_MS + 10_000)
     await scheduler.tick()
 
     // ⛔ `blocked`, never `failed` and never `completed`. The run did work and metered turns and is
@@ -210,7 +212,7 @@ describe('the turn that ended without reporting', () => {
     // an admission that something was done to the branch, and the whole point is that nothing was.
     const { task, session } = seedRunningTask()
     await endTurn(session)
-    await vi.advanceTimersByTimeAsync(scheduler.IDLE_TURN_AFTER_MS + 1000)
+    await vi.advanceTimersByTimeAsync(turnend.IDLE_TURN_AFTER_MS + 1000)
     await scheduler.tick()
 
     expect(holdReasonOf(task.id)).toContain('landed, committed or discarded')
@@ -223,13 +225,13 @@ describe('the turn that ended without reporting', () => {
     // *before* the result and says what the agent stopped for; the result cannot carry it. Reading
     // it here is the difference between "over to you" and a sentence the operator can answer.
     const { task, session } = seedRunningTask()
-    scheduler.noteTurnStatus(session.id, {
+    turnend.noteTurnStatus(session.id, {
       category: 'blocked',
       detail: null,
       needsAction: 'Which database should the migration target?'
     })
     await endTurn(session, 'I got as far as the migration.')
-    await vi.advanceTimersByTimeAsync(scheduler.IDLE_TURN_AFTER_MS + 1000)
+    await vi.advanceTimersByTimeAsync(turnend.IDLE_TURN_AFTER_MS + 1000)
     await scheduler.tick()
 
     expect(holdReasonOf(task.id)).toContain('Which database should the migration target?')
@@ -239,7 +241,7 @@ describe('the turn that ended without reporting', () => {
   it('⛔ is not a quieter task_complete: the task never reaches completed', async () => {
     const { task, session } = seedRunningTask()
     await endTurn(session, 'TASK COMPLETE: everything is done and landed.')
-    await vi.advanceTimersByTimeAsync(scheduler.IDLE_TURN_AFTER_MS + 1000)
+    await vi.advanceTimersByTimeAsync(turnend.IDLE_TURN_AFTER_MS + 1000)
     await scheduler.tick()
 
     // ⚠️ Even the literal words. `TASK COMPLETE:` is the contract given to adapters that *cannot*
@@ -252,7 +254,7 @@ describe('the turn that ended without reporting', () => {
   it('keeps the session warm, so a reply carries on the same conversation', async () => {
     const { task, session } = seedRunningTask()
     await endTurn(session)
-    await vi.advanceTimersByTimeAsync(scheduler.IDLE_TURN_AFTER_MS + 1000)
+    await vi.advanceTimersByTimeAsync(turnend.IDLE_TURN_AFTER_MS + 1000)
     await scheduler.tick()
 
     expect(tasks.getTask(task.id)?.status).toBe('awaiting_human')
@@ -268,7 +270,7 @@ describe('the turn that ended without reporting', () => {
 
     // ⚠️ Ticks all the way through the grace period. An agent that ended a turn ten seconds ago is
     // one the daemon may still be about to prompt — a wrap-up, a `/compact`, an operator's reply.
-    await vi.advanceTimersByTimeAsync(scheduler.IDLE_TURN_AFTER_MS - 30_000)
+    await vi.advanceTimersByTimeAsync(turnend.IDLE_TURN_AFTER_MS - 30_000)
     await scheduler.tick()
 
     expect(tasks.requireRun(run.id).endedAt).toBeNull()
@@ -278,7 +280,7 @@ describe('the turn that ended without reporting', () => {
   it('acts once, however many ticks follow', async () => {
     const { task, session } = seedRunningTask()
     await endTurn(session)
-    await vi.advanceTimersByTimeAsync(scheduler.IDLE_TURN_AFTER_MS + 1000)
+    await vi.advanceTimersByTimeAsync(turnend.IDLE_TURN_AFTER_MS + 1000)
 
     await scheduler.tick()
     await scheduler.tick()
@@ -302,7 +304,7 @@ describe('what stands the check down', () => {
       .prepare('update sessions set last_request_started_at = ? where id = ?')
       .run(Date.now(), session.id)
 
-    await vi.advanceTimersByTimeAsync(scheduler.IDLE_TURN_AFTER_MS + 1000)
+    await vi.advanceTimersByTimeAsync(turnend.IDLE_TURN_AFTER_MS + 1000)
     await scheduler.tick()
 
     expect(tasks.requireRun(run.id).endedAt).toBeNull()
@@ -322,7 +324,7 @@ describe('what stands the check down', () => {
     })
     compaction.noteCompactionLanded(session.id, { preTokens: 120_000, durationMs: 30_000 })
 
-    await vi.advanceTimersByTimeAsync(scheduler.IDLE_TURN_AFTER_MS + 1000)
+    await vi.advanceTimersByTimeAsync(turnend.IDLE_TURN_AFTER_MS + 1000)
     await scheduler.tick()
 
     expect(tasks.requireRun(run.id).endedAt).toBeNull()
@@ -339,7 +341,7 @@ describe('what stands the check down', () => {
       preTokens: 120_000
     })
 
-    await vi.advanceTimersByTimeAsync(scheduler.IDLE_TURN_AFTER_MS + 1000)
+    await vi.advanceTimersByTimeAsync(turnend.IDLE_TURN_AFTER_MS + 1000)
     await scheduler.tick()
 
     expect(tasks.requireRun(run.id).endedAt).toBeNull()
@@ -354,7 +356,7 @@ describe('what stands the check down', () => {
     tasks.finishRun(run.id, 'completed', 'reported by the agent')
     tasks.setStatus(task.id, 'completed')
 
-    await vi.advanceTimersByTimeAsync(scheduler.IDLE_TURN_AFTER_MS + 1000)
+    await vi.advanceTimersByTimeAsync(turnend.IDLE_TURN_AFTER_MS + 1000)
     await scheduler.tick()
 
     expect(tasks.requireRun(run.id).outcome).toBe('completed')
@@ -378,7 +380,7 @@ describe('what stands the check down', () => {
     })
     tasks.setStatus(task.id, 'running', { assignee: worker.id })
 
-    await vi.advanceTimersByTimeAsync(scheduler.IDLE_TURN_AFTER_MS + 1000)
+    await vi.advanceTimersByTimeAsync(turnend.IDLE_TURN_AFTER_MS + 1000)
     await scheduler.tick()
 
     expect(tasks.requireRun(second.id).endedAt).toBeNull()
@@ -388,13 +390,13 @@ describe('what stands the check down', () => {
   it('a session that exited, which onSessionExit already decided', async () => {
     const { task, session } = seedRunningTask()
     await endTurn(session)
-    expect(scheduler.idleTurnFor(session.id)).not.toBeNull()
+    expect(turnend.idleTurnFor(session.id)).not.toBeNull()
 
-    await scheduler.onSessionExit(session, 0)
+    await turnend.onSessionExit(session, 0)
 
     // ⛔ The note is dropped with the process. `onSessionExit` has already wound the run up and
     // written its own reason; a second verdict from the watchdog would overwrite it with a worse one.
-    expect(scheduler.idleTurnFor(session.id)).toBeNull()
+    expect(turnend.idleTurnFor(session.id)).toBeNull()
     expect(tasks.getTask(task.id)?.status).toBe('awaiting_human')
   })
 
@@ -404,20 +406,20 @@ describe('what stands the check down', () => {
 
     // ⚠️ No note at all: a conversation is *told* to end its turn without completing, and that path
     // closes the run itself. Noting it would double up on a run that is already resting.
-    expect(scheduler.idleTurnFor(session.id)).toBeNull()
+    expect(turnend.idleTurnFor(session.id)).toBeNull()
     expect(tasks.requireRun(run.id).outcome).toBe('completed')
     expect(tasks.getTask(task.id)?.status).toBe('awaiting_human')
   })
 
   it('a turn that ended in an error, which the failure path owns', async () => {
     const { run, session } = seedRunningTask({ metered: 500 })
-    await scheduler.onStreamResult(session, {
+    await turnend.onStreamResult(session, {
       isError: true,
       text: 'api_error: something broke',
       terminalReason: 'api_error'
     })
 
-    expect(scheduler.idleTurnFor(session.id)).toBeNull()
+    expect(turnend.idleTurnFor(session.id)).toBeNull()
     expect(tasks.requireRun(run.id).outcome).toBe('failed')
   })
 })
@@ -429,22 +431,22 @@ describe('idleTurnOverdue', () => {
   const NOTE = 1_000_000
 
   it('is false until the grace period has passed', () => {
-    expect(scheduler.idleTurnOverdue(NOTE, NOTE, NOTE + scheduler.IDLE_TURN_AFTER_MS)).toBe(false)
-    expect(scheduler.idleTurnOverdue(NOTE, NOTE, NOTE + scheduler.IDLE_TURN_AFTER_MS + 1)).toBe(true)
+    expect(turnend.idleTurnOverdue(NOTE, NOTE, NOTE + turnend.IDLE_TURN_AFTER_MS)).toBe(false)
+    expect(turnend.idleTurnOverdue(NOTE, NOTE, NOTE + turnend.IDLE_TURN_AFTER_MS + 1)).toBe(true)
   })
 
   it('⛔ is false whenever anything happened after the turn ended', () => {
     // The second clock. `quietSince` folds the last request, the run's own start and the last
     // compaction into one number; any of them landing after the note means the session moved on.
     const late = NOTE + 1
-    expect(scheduler.idleTurnOverdue(NOTE, late, NOTE + 10 * 60_000)).toBe(false)
-    expect(scheduler.idleTurnOverdue(NOTE, NOTE, NOTE + 10 * 60_000)).toBe(true)
+    expect(turnend.idleTurnOverdue(NOTE, late, NOTE + 10 * 60_000)).toBe(false)
+    expect(turnend.idleTurnOverdue(NOTE, NOTE, NOTE + 10 * 60_000)).toBe(true)
   })
 
   it('counts a request that started before the turn ended as part of that turn', () => {
     // ⚠️ The ordinary case, and it must not read as activity: the request that *produced* this
     // result necessarily started before it.
-    expect(scheduler.idleTurnOverdue(NOTE, NOTE - 6_000, NOTE + 10 * 60_000)).toBe(true)
+    expect(turnend.idleTurnOverdue(NOTE, NOTE - 6_000, NOTE + 10 * 60_000)).toBe(true)
   })
 })
 
@@ -483,7 +485,7 @@ describe('t254, replayed', () => {
     // a `maxConcurrent` slot. Two defects, one cause — a run nothing closes.
     const { worker, run, task, session } = seedRunningTask()
     await endTurn(session)
-    await vi.advanceTimersByTimeAsync(scheduler.IDLE_TURN_AFTER_MS + 1000)
+    await vi.advanceTimersByTimeAsync(turnend.IDLE_TURN_AFTER_MS + 1000)
     await scheduler.tick()
 
     expect(tasks.getTask(task.id)?.status).toBe('awaiting_human')

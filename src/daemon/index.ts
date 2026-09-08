@@ -19,14 +19,12 @@ import {
 } from './sessions.js'
 import { reconcileClaims } from './resources.js'
 import {
-  noteTurnStatus,
-  onSessionExit,
-  onStreamResult,
   probeDemand,
   reconcileTasks,
   startScheduler,
   stopScheduler
 } from './scheduler.js'
+import { noteTurnStatus, onSessionExit, onStreamResult } from './turnend.js'
 import { reconcileConsults, startController, stopController } from './controller.js'
 import { reconcileReviews } from './reviewer.js'
 import { salvageLandedCommits } from './taskcommits.js'

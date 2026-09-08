@@ -31,6 +31,7 @@ let db: typeof import('./db.js')
 let workers: typeof import('./workers.js')
 let tasks: typeof import('./tasks.js')
 let scheduler: typeof import('./scheduler.js')
+let turnend: typeof import('./turnend.js')
 let scoring: typeof import('./scoring.js')
 let prompt: typeof import('./prompt.js')
 let projects: typeof import('./projects.js')
@@ -59,6 +60,7 @@ beforeAll(async () => {
   workers = await import('./workers.js')
   tasks = await import('./tasks.js')
   scheduler = await import('./scheduler.js')
+  turnend = await import('./turnend.js')
   scoring = await import('./scoring.js')
   prompt = await import('./prompt.js')
   projects = await import('./projects.js')
@@ -370,7 +372,7 @@ describe('what ends a conversation turn', () => {
     // told never to send one — so without this the run stays open and the task stays `running`
     // forever, with the operator watching a finished reply and no buttons under it.
     const { task, runId, session } = talking()
-    await scheduler.onStreamResult(session, { isError: false, text: 'Here is what I found.', terminalReason: null })
+    await turnend.onStreamResult(session, { isError: false, text: 'Here is what I found.', terminalReason: null })
 
     const after = tasks.requireRun(runId)
     expect(after.endedAt).not.toBeNull()
@@ -393,7 +395,7 @@ describe('what ends a conversation turn', () => {
     activity.noteActivity(task.id, '[Tool: run_command git status]\n', runId)
     activity.noteActivity(task.id, 'Reading configuration files...\n', runId)
 
-    await scheduler.onStreamResult(session, { isError: false, text: 'Done checking.', terminalReason: null })
+    await turnend.onStreamResult(session, { isError: false, text: 'Done checking.', terminalReason: null })
 
     const after = tasks.requireRun(runId)
     expect(after.activity).toBeDefined()
@@ -404,7 +406,7 @@ describe('what ends a conversation turn', () => {
 
   it('keeps the session alive, which is what makes the next reply warm', async () => {
     const { session } = talking()
-    await scheduler.onStreamResult(session, { isError: false, text: 'Done for now.', terminalReason: null })
+    await turnend.onStreamResult(session, { isError: false, text: 'Done for now.', terminalReason: null })
     const row = db.db().prepare('select state from sessions where id = ?').get(session.id) as {
       state: string
     }
@@ -418,7 +420,7 @@ describe('what ends a conversation turn', () => {
     // ⚠️ Written in SQL because `kind` is set at filing and there is no updater for it — nothing in
     // the app turns one kind of task into another, and this fixture is not asking for one.
     db.db().prepare("update tasks set kind = 'work' where id = ?").run(task.id)
-    await scheduler.onStreamResult(session, { isError: false, text: 'Still going.', terminalReason: null })
+    await turnend.onStreamResult(session, { isError: false, text: 'Still going.', terminalReason: null })
     expect(tasks.requireRun(runId).endedAt).toBeNull()
     expect(tasks.requireTask(task.id).status).toBe('running')
   })
@@ -428,7 +430,7 @@ describe('what ends a conversation turn', () => {
     // to call `task_complete`, and ending its turn underneath it would close the run it needs.
     const { task, runId, session } = talking()
     tasks.updateTask(task.id, { finishPolicy: 'commit-and-merge' })
-    await scheduler.onStreamResult(session, { isError: false, text: 'Committing now.', terminalReason: null })
+    await turnend.onStreamResult(session, { isError: false, text: 'Committing now.', terminalReason: null })
     expect(tasks.requireRun(runId).endedAt).toBeNull()
   })
 })

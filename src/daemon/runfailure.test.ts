@@ -28,6 +28,7 @@ let db: typeof import('./db.js')
 let workers: typeof import('./workers.js')
 let tasks: typeof import('./tasks.js')
 let scheduler: typeof import('./scheduler.js')
+let turnend: typeof import('./turnend.js')
 let sessions: typeof import('./sessions.js')
 let questions: typeof import('./questions.js')
 let approvals: typeof import('./approvals.js')
@@ -154,6 +155,7 @@ beforeAll(async () => {
   workers = await import('./workers.js')
   tasks = await import('./tasks.js')
   scheduler = await import('./scheduler.js')
+  turnend = await import('./turnend.js')
   sessions = await import('./sessions.js')
   questions = await import('./questions.js')
   approvals = await import('./approvals.js')
@@ -200,7 +202,7 @@ describe('a cache-clock compaction that interrupts an open run', () => {
 
     // A real process exit invokes this callback. Drive it explicitly because the fixture has no
     // CLI process, then assert the clock's interruption is a hold and not blamed on the work.
-    await scheduler.onSessionExit({ ...session, state: 'closed', closedAt: Date.now() }, 0)
+    await turnend.onSessionExit({ ...session, state: 'closed', closedAt: Date.now() }, 0)
     expect(tasks.requireRun(run.id).outcome).toBe('blocked')
     expect(tasks.requireTask(task.id).status).toBe('awaiting_human')
     expect(tasks.requireTask(task.id).holdReason).toContain('cache clock compacted')
@@ -250,7 +252,7 @@ describe('a cache-clock compaction that interrupts an open run', () => {
 describe('an error the CLI reports without exiting', () => {
   it('ends the run instead of leaving it open forever', async () => {
     const { run, session } = seedRunningTask()
-    await scheduler.onStreamResult(session, {
+    await turnend.onStreamResult(session, {
       isError: true,
       text: ORG_DISABLED,
       terminalReason: 'api_error'
@@ -262,7 +264,7 @@ describe('an error the CLI reports without exiting', () => {
 
   it('closes the session, because an api_error does not close itself', async () => {
     const { session } = seedRunningTask()
-    await scheduler.onStreamResult(session, {
+    await turnend.onStreamResult(session, {
       isError: true,
       text: ORG_DISABLED,
       terminalReason: 'api_error'
@@ -280,7 +282,7 @@ describe('an error the CLI reports without exiting', () => {
     // ⛔ The task is not the thing that failed. Marking it `failed` — or handing it to a person as
     // `awaiting_human` — sends somebody to read a prompt that was never delivered to anything.
     const { task, session } = seedRunningTask()
-    await scheduler.onStreamResult(session, {
+    await turnend.onStreamResult(session, {
       isError: true,
       text: ORG_DISABLED,
       terminalReason: 'api_error'
@@ -296,7 +298,7 @@ describe('an error the CLI reports without exiting', () => {
     const { worker } = seedRunningTask()
     const stray = seedSession('5e55f00d-0000-4000-8000-00000000000f', worker.id)
     await expect(
-      scheduler.onStreamResult(stray, { isError: true, text: 'nope', terminalReason: 'api_error' })
+      turnend.onStreamResult(stray, { isError: true, text: 'nope', terminalReason: 'api_error' })
     ).resolves.toBeUndefined()
   })
 })
@@ -304,7 +306,7 @@ describe('an error the CLI reports without exiting', () => {
 describe('a run that produced nothing at all', () => {
   it('benches the worker and re-queues the task', async () => {
     const { worker, task, session } = seedRunningTask()
-    await scheduler.onStreamResult(session, {
+    await turnend.onStreamResult(session, {
       isError: true,
       text: ORG_DISABLED,
       terminalReason: 'api_error'
@@ -321,7 +323,7 @@ describe('a run that produced nothing at all', () => {
     // ⚠️ The reason has to be actionable. "produced no output" is true and sends nobody anywhere;
     // "your organization has disabled…" tells the operator exactly what to go and fix.
     const { worker, session } = seedRunningTask()
-    await scheduler.onStreamResult(session, {
+    await turnend.onStreamResult(session, {
       isError: true,
       text: ORG_DISABLED,
       terminalReason: 'api_error'
@@ -331,7 +333,7 @@ describe('a run that produced nothing at all', () => {
 
   it('spares the worker and clears the session prefix when a warm run fails on arrival', async () => {
     const { worker, task, session } = seedRunningTask({ startedWarm: true, contextTokens: 10_000 })
-    await scheduler.onStreamResult(session, {
+    await turnend.onStreamResult(session, {
       isError: true,
       text: 'unexpected status 404 Not Found',
       terminalReason: 'turn.failed'
@@ -352,7 +354,7 @@ describe('a run that produced nothing at all', () => {
 describe('a run that did work and then failed', () => {
   it('is the task’s problem, not the account’s', async () => {
     const { worker, task, session } = seedRunningTask({ metered: 4_200 })
-    await scheduler.onStreamResult(session, {
+    await turnend.onStreamResult(session, {
       isError: true,
       text: 'Tool use failed: the file could not be written',
       terminalReason: 'error_during_execution'
@@ -365,7 +367,7 @@ describe('a run that did work and then failed', () => {
 
   it('puts the reason where a person will read it', async () => {
     const { task, session } = seedRunningTask({ metered: 4_200 })
-    await scheduler.onStreamResult(session, {
+    await turnend.onStreamResult(session, {
       isError: true,
       text: 'Tool use failed: the file could not be written',
       terminalReason: 'error_during_execution'
@@ -382,8 +384,8 @@ describe('a run that did work and then failed', () => {
     const { worker, task, session } = seedRunningTask()
     db.db()
       .prepare('update runs set started_at = ? where task_id = ?')
-      .run(Date.now() - scheduler.DEAD_ON_ARRIVAL_MS - 60_000, task.id)
-    await scheduler.onStreamResult(session, {
+      .run(Date.now() - turnend.DEAD_ON_ARRIVAL_MS - 60_000, task.id)
+    await turnend.onStreamResult(session, {
       isError: true,
       text: 'something went wrong late in the run',
       terminalReason: 'error_during_execution'
@@ -418,7 +420,7 @@ describe('a completion that is still landing when the process exits', () => {
     const { run, task, session } = seedRunningTask({ metered: 500 })
 
     const landing = scheduler.completeTask(session.id, 'did the thing')
-    await scheduler.onSessionExit(session, 0)
+    await turnend.onSessionExit(session, 0)
     await landing
 
     expect(tasks.requireRun(run.id).outcome).toBe('completed')
@@ -430,7 +432,7 @@ describe('a completion that is still landing when the process exits', () => {
     // ⚠️ The guard must be narrow. A session that simply dies is the case `onSessionExit`
     // exists for, and swallowing that would leave runs open and workspaces held forever.
     const { run, session } = seedRunningTask({ metered: 500 })
-    await scheduler.onSessionExit(session, 0)
+    await turnend.onSessionExit(session, 0)
     expect(tasks.requireRun(run.id).outcome).toBe('failed')
   })
 })
@@ -440,12 +442,12 @@ describe('a session that stopped to ask', () => {
 
   it('quotes what the agent was waiting for instead of reporting an unknown', async () => {
     const { task, session } = seedRunningTask({ metered: 500 })
-    scheduler.noteTurnStatus(session.id, {
+    turnend.noteTurnStatus(session.id, {
       category: 'blocked',
       detail: ASKED,
       needsAction: ASKED
     })
-    await scheduler.onSessionExit(session, 0)
+    await turnend.onSessionExit(session, 0)
 
     const settled = tasks.getTask(task.id)
     expect(settled?.status).toBe('awaiting_human')
@@ -457,8 +459,8 @@ describe('a session that stopped to ask', () => {
     // The decision, 2026-08-30: a run that stopped for an answer is in progress, not broken. Filing
     // it as `failed` was inferred from nothing but the absence of a completion signal.
     const { run, task, session } = seedRunningTask({ metered: 500 })
-    scheduler.noteTurnStatus(session.id, { category: 'blocked', detail: ASKED, needsAction: ASKED })
-    await scheduler.onSessionExit(session, 0)
+    turnend.noteTurnStatus(session.id, { category: 'blocked', detail: ASKED, needsAction: ASKED })
+    await turnend.onSessionExit(session, 0)
 
     expect(tasks.requireRun(run.id).outcome).toBe('blocked')
     expect(tasks.getTask(task.id)?.status).toBe('awaiting_human')
@@ -468,8 +470,8 @@ describe('a session that stopped to ask', () => {
     // ⚠️ `maybeTriage` asks why a task keeps *failing*. A task that keeps asking good questions is
     // the system working, and three of those in a row must not look like a pattern of failure.
     const { task, session } = seedRunningTask({ metered: 500 })
-    scheduler.noteTurnStatus(session.id, { category: 'blocked', detail: ASKED, needsAction: ASKED })
-    await scheduler.onSessionExit(session, 0)
+    turnend.noteTurnStatus(session.id, { category: 'blocked', detail: ASKED, needsAction: ASKED })
+    await turnend.onSessionExit(session, 0)
 
     const failed = tasks.runsFor(task.id).filter((r) => r.outcome === 'failed')
     expect(failed).toHaveLength(0)
@@ -477,7 +479,7 @@ describe('a session that stopped to ask', () => {
 
   it('still files a genuine failure as failed', async () => {
     const { run, session } = seedRunningTask({ metered: 500 })
-    await scheduler.onStreamResult(session, {
+    await turnend.onStreamResult(session, {
       isError: true,
       text: 'the tool exploded',
       terminalReason: 'error_during_execution'
@@ -495,7 +497,7 @@ describe('a session that stopped to ask', () => {
       kind: 'text',
       question: 'Which database should this use?'
     })
-    await scheduler.onSessionExit(session, 0)
+    await turnend.onSessionExit(session, 0)
 
     expect(tasks.requireRun(run.id).outcome).toBe('blocked')
     expect(tasks.getTask(task.id)?.status).toBe('awaiting_human')
@@ -506,7 +508,7 @@ describe('a session that stopped to ask', () => {
 
   it('reports the unknown honestly when the agent said nothing', async () => {
     const { task, session } = seedRunningTask({ metered: 500 })
-    await scheduler.onSessionExit(session, 0)
+    await turnend.onSessionExit(session, 0)
     expect(tasks.getTask(task.id)?.holdReason).toContain('Nothing here can tell')
   })
 
@@ -514,23 +516,23 @@ describe('a session that stopped to ask', () => {
     // A turn that blocked and a later turn that did not must not leave a stale sentence behind to be
     // reported as the reason this session ended.
     const { task, session } = seedRunningTask({ metered: 500 })
-    scheduler.noteTurnStatus(session.id, { category: 'blocked', detail: ASKED, needsAction: ASKED })
-    scheduler.noteTurnStatus(session.id, { category: 'in_progress', detail: null, needsAction: null })
-    await scheduler.onSessionExit(session, 0)
+    turnend.noteTurnStatus(session.id, { category: 'blocked', detail: ASKED, needsAction: ASKED })
+    turnend.noteTurnStatus(session.id, { category: 'in_progress', detail: null, needsAction: null })
+    await turnend.onSessionExit(session, 0)
     expect(tasks.getTask(task.id)?.holdReason).toContain('Nothing here can tell')
   })
 
   it('does not carry one session’s block into the next', async () => {
     const first = seedRunningTask({ metered: 500 })
-    scheduler.noteTurnStatus(first.session.id, {
+    turnend.noteTurnStatus(first.session.id, {
       category: 'blocked',
       detail: ASKED,
       needsAction: ASKED
     })
-    await scheduler.onSessionExit(first.session, 0)
+    await turnend.onSessionExit(first.session, 0)
 
     const second = seedRunningTask({ metered: 500 })
-    await scheduler.onSessionExit(second.session, 0)
+    await turnend.onSessionExit(second.session, 0)
     expect(tasks.getTask(second.task.id)?.holdReason).toContain('Nothing here can tell')
   })
 })
@@ -592,7 +594,7 @@ describe('an approval nobody answers', () => {
 describe('a result that is not an error', () => {
   it('on an MCP-enabled adapter is left for task_complete to signal', async () => {
     const { run, task, session } = seedRunningTask({ adapterId: 'claude-code' })
-    await scheduler.onStreamResult(session, {
+    await turnend.onStreamResult(session, {
       isError: false,
       text: 'here is the answer',
       terminalReason: null
@@ -609,7 +611,7 @@ describe('a result that is not an error', () => {
     // ⚠️ `openai-compatible`, not Antigravity: only one Antigravity account exists per machine and
     // the test below needs it. Both declare `mcp: false`, which is the property under test.
     const { run, task, session } = seedRunningTask({ metered: 500 })
-    await scheduler.onStreamResult(session, {
+    await turnend.onStreamResult(session, {
       isError: false,
       text: 'I looked at both options.\nNEEDS DECISION: OAuth or session cookies?',
       terminalReason: null
@@ -625,7 +627,7 @@ describe('a result that is not an error', () => {
     //    is typed into are all written against a `Question` row — and no row was ever written, so an
     //    adapter without MCP could ask a question that was structurally unanswerable.
     const { task, session } = seedRunningTask({ metered: 500 })
-    await scheduler.onStreamResult(session, {
+    await turnend.onStreamResult(session, {
       isError: false,
       text:
         'I compared the three.\nNEEDS DECISION: how should the quota be refreshed?\n' +
@@ -654,7 +656,7 @@ describe('a result that is not an error', () => {
 
   it('files a multi-select question when marked with [multi] or multi phrases', async () => {
     const { task, session } = seedRunningTask({ metered: 500 })
-    await scheduler.onStreamResult(session, {
+    await turnend.onStreamResult(session, {
       isError: false,
       text:
         'I surveyed the pipeline options.\nNEEDS DECISION: [multi] Which direct-money sources should the pipeline read?\n' +
@@ -674,14 +676,14 @@ describe('a result that is not an error', () => {
   })
 
   it('detects [multi] and select-all tags in needsDecisionIn', () => {
-    const tagged = scheduler.needsDecisionIn(
+    const tagged = turnend.needsDecisionIn(
       'NEEDS DECISION: [multi] which components should be active?\n- Component A\n- Component B'
     )
     expect(tagged?.kind).toBe('multi')
     expect(tagged?.question).toBe('which components should be active?')
     expect(tagged?.options).toHaveLength(2)
 
-    const phrase = scheduler.needsDecisionIn(
+    const phrase = turnend.needsDecisionIn(
       'NEEDS DECISION: Select all packages to deploy\n- pkg-a\n- pkg-b'
     )
     expect(phrase?.kind).toBe('multi')
@@ -691,14 +693,14 @@ describe('a result that is not an error', () => {
   it('reads the options only from the contract, never out of the sentence', () => {
     // ⛔ What antigravity actually wrote on t63. There is deliberately no attempt to recover choices
     //    from prose — a question with no parsed options is still answerable in the text box.
-    const inline = scheduler.needsDecisionIn(
+    const inline = turnend.needsDecisionIn(
       'NEEDS DECISION: keep it as is (Option A), gate it (Option B), or refresh everything (Option C)?'
     )
     expect(inline?.options).toEqual([])
     expect(inline?.question).toContain('Option C')
 
     // The list ends at the first line that is not a bullet, so a closing sentence is not an option.
-    const listed = scheduler.needsDecisionIn(
+    const listed = turnend.needsDecisionIn(
       'NEEDS DECISION: which store?\n1. Postgres — we already run one\n2. SQLite\n\nI lean Postgres.'
     )
     expect(listed?.options.map((o) => o.label)).toEqual(['Postgres', 'SQLite'])
@@ -708,24 +710,24 @@ describe('a result that is not an error', () => {
   it('matches the contract it gave, and not prose that resembles it', () => {
     // ⚠️ The anchor is the point. A looser match would fire on an agent *describing* a
     // decision it had already made, and park a task that was finished.
-    expect(scheduler.needsDecisionIn('NEEDS DECISION: which database?')?.question).toBe(
+    expect(turnend.needsDecisionIn('NEEDS DECISION: which database?')?.question).toBe(
       'which database?'
     )
-    expect(scheduler.needsDecisionIn('  - NEEDS DECISION:   trimmed  ')?.question).toBe('trimmed')
-    expect(scheduler.needsDecisionIn('I decided this needs decision: none really')).toBeNull()
-    expect(scheduler.needsDecisionIn('there was no decision to make')).toBeNull()
-    expect(scheduler.needsDecisionIn(null)).toBeNull()
+    expect(turnend.needsDecisionIn('  - NEEDS DECISION:   trimmed  ')?.question).toBe('trimmed')
+    expect(turnend.needsDecisionIn('I decided this needs decision: none really')).toBeNull()
+    expect(turnend.needsDecisionIn('there was no decision to make')).toBeNull()
+    expect(turnend.needsDecisionIn(null)).toBeNull()
   })
 
   it('accepts only the explicit completion contract', () => {
-    expect(scheduler.taskCompletionIn('TASK COMPLETE: fixed quota parsing')).toBe('fixed quota parsing')
-    expect(scheduler.taskCompletionIn('I think the task is complete.')).toBeNull()
-    expect(scheduler.taskCompletionIn('TASK COMPLETE:   ')).toBeNull()
+    expect(turnend.taskCompletionIn('TASK COMPLETE: fixed quota parsing')).toBe('fixed quota parsing')
+    expect(turnend.taskCompletionIn('I think the task is complete.')).toBeNull()
+    expect(turnend.taskCompletionIn('TASK COMPLETE:   ')).toBeNull()
   })
 
   it('on an adapter without MCP completes the task', async () => {
     const { run, task, session } = seedRunningTask({ adapterId: 'antigravity-cli' })
-    await scheduler.onStreamResult(session, {
+    await turnend.onStreamResult(session, {
       isError: false,
       text: 'here is the completed answer',
       terminalReason: null
@@ -739,7 +741,7 @@ describe('a result that is not an error', () => {
     // t163 emitted its finished answer and then an ERROR terminal record. The marker is a contract
     // from the prompt, unlike the surrounding prose, so it is sufficient evidence to finish.
     const { run, task, session } = seedRunningTask({ metered: 500 })
-    await scheduler.onStreamResult(session, {
+    await turnend.onStreamResult(session, {
       isError: true,
       text: 'All checks passed.\nTASK COMPLETE: fixed the session context gauge',
       terminalReason: 'ERROR'
@@ -1146,7 +1148,7 @@ describe('a turn refused because the account is out of window', () => {
   /** Claude Code is the adapter that knows this sentence, so the case has to run on one. */
   const refuse = async (text = SESSION_LIMIT, options: { metered?: number } = {}) => {
     const seeded = seedRunningTask({ adapterId: 'claude-code', ...options })
-    await scheduler.onStreamResult(seeded.session, {
+    await turnend.onStreamResult(seeded.session, {
       isError: true,
       text,
       terminalReason: 'api_error'
@@ -1182,7 +1184,7 @@ describe('a turn refused because the account is out of window', () => {
          values (?,?,?,?,?,?)`
       )
       .run(seeded.worker.id, seeded.session.id, 'five_hour', 'rejected', resetsAt, Date.now())
-    await scheduler.onStreamResult(seeded.session, {
+    await turnend.onStreamResult(seeded.session, {
       isError: true,
       text: SESSION_LIMIT,
       terminalReason: 'api_error'
@@ -1218,7 +1220,7 @@ describe('a turn refused because the account is out of window', () => {
     // ⚠️ `outOfQuota` checks measured wording per adapter: Claude Code's session limit phrasing is
     //    not recognized as a Codex quota error on openai-compatible.
     const seeded = seedRunningTask({ metered: 900 })
-    await scheduler.onStreamResult(seeded.session, {
+    await turnend.onStreamResult(seeded.session, {
       isError: true,
       text: SESSION_LIMIT,
       terminalReason: 'api_error'
@@ -1240,7 +1242,7 @@ describe('a Codex turn refused because the account is out of quota', () => {
 
   const refuse = async (text = CODEX_USAGE_LIMIT, options: { metered?: number } = {}) => {
     const seeded = seedRunningTask({ adapterId: 'openai-compatible', ...options })
-    await scheduler.onStreamResult(seeded.session, {
+    await turnend.onStreamResult(seeded.session, {
       isError: true,
       text,
       terminalReason: 'error'
@@ -1274,7 +1276,7 @@ describe('a Codex turn refused because the account is out of quota', () => {
          values (?,?,?,?,?,?)`
       )
       .run(seeded.worker.id, seeded.session.id, '5h', 'rejected', resetsAt, Date.now())
-    await scheduler.onStreamResult(seeded.session, {
+    await turnend.onStreamResult(seeded.session, {
       isError: true,
       text: CODEX_USAGE_LIMIT,
       terminalReason: 'error'
@@ -1343,7 +1345,7 @@ describe('a turn failed because the remote provider is overloaded (529)', () => 
         })()
       : seedRunningTask({ adapterId: options.adapterId ?? 'claude-code', metered: options.metered })
 
-    await scheduler.onStreamResult(seeded.session, {
+    await turnend.onStreamResult(seeded.session, {
       isError: true,
       text,
       terminalReason: 'api_error'
@@ -1444,7 +1446,7 @@ describe('a turn failed because the remote provider is overloaded (529)', () => 
 
   it('⛔ does not read overload into an adapter that does not implement it', async () => {
     const seeded = seedRunningTask({ adapterId: 'local-llm', metered: 900 })
-    await scheduler.onStreamResult(seeded.session, {
+    await turnend.onStreamResult(seeded.session, {
       isError: true,
       text: OVERLOAD_MSG,
       terminalReason: 'api_error'
@@ -1454,7 +1456,7 @@ describe('a turn failed because the remote provider is overloaded (529)', () => 
 
   it('recognizes overload on openai-compatible and schedules retry', async () => {
     const seeded = seedRunningTask({ adapterId: 'openai-compatible', metered: 0 })
-    await scheduler.onStreamResult(seeded.session, {
+    await turnend.onStreamResult(seeded.session, {
       isError: true,
       text: 'unexpected status 404 Not Found: Unknown error, url: https://chatgpt.com/backend-api/codex/responses',
       terminalReason: 'turn.failed'

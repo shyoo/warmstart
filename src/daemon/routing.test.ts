@@ -20,6 +20,7 @@ let quota: typeof import('./quota.js')
 let workers: typeof import('./workers.js')
 let tasks: typeof import('./tasks.js')
 let scheduler: typeof import('./scheduler.js')
+let turnend: typeof import('./turnend.js')
 let scoring: typeof import('./scoring.js')
 let controller: typeof import('./controller.js')
 let complexityOf: typeof import('./complexity.js').complexityOf
@@ -61,6 +62,7 @@ beforeAll(async () => {
   workers = await import('./workers.js')
   tasks = await import('./tasks.js')
   scheduler = await import('./scheduler.js')
+  turnend = await import('./turnend.js')
   scoring = await import('./scoring.js')
   controller = await import('./controller.js')
   complexityOf = (await import('./complexity.js')).complexityOf
@@ -269,22 +271,22 @@ describe('a dispatch that produced nothing', () => {
     })
 
   it('is charged to the worker, not to the task', () => {
-    expect(scheduler.deadOnArrival(session(), run())).toMatch(/produced no output/)
+    expect(turnend.deadOnArrival(session(), run())).toMatch(/produced no output/)
   })
 
   it('spares a run that metered anything at all', () => {
-    expect(scheduler.deadOnArrival(session(), run({ outputTokens: 12 }))).toBeNull()
+    expect(turnend.deadOnArrival(session(), run({ outputTokens: 12 }))).toBeNull()
   })
 
   it('spares a run whose turn had started even before the tokens landed', () => {
     // ⚠️ The transcript's final turn is routinely flushed *after* the process is gone, so tokens
     // alone would libel a session that did work and exited quickly.
-    expect(scheduler.deadOnArrival(session({ lastRequestStartedAt: 1 }), run())).toBeNull()
+    expect(turnend.deadOnArrival(session({ lastRequestStartedAt: 1 }), run())).toBeNull()
   })
 
   it('spares a long run, whatever it metered', () => {
-    const old = run({ startedAt: Date.now() - scheduler.DEAD_ON_ARRIVAL_MS - 1 })
-    expect(scheduler.deadOnArrival(session(), old)).toBeNull()
+    const old = run({ startedAt: Date.now() - turnend.DEAD_ON_ARRIVAL_MS - 1 })
+    expect(turnend.deadOnArrival(session(), old)).toBeNull()
   })
 })
 
@@ -656,7 +658,7 @@ describe('what a CLI said, on its way into a sentence', () => {
   })
 
   it('leaves ordinary prose exactly as it was', () => {
-    expect(scheduler.deadOnArrival).toBeTypeOf('function')
+    expect(turnend.deadOnArrival).toBeTypeOf('function')
   })
 })
 
