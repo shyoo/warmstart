@@ -154,7 +154,9 @@ parent, and `claude-sonnet-4-6` is served both by Claude Code and by Antigravity
 subscriptions at different prices. So `graphLabel` prints *Antigravity · Sonnet 4.6*, read off the
 agent rows in the same report rather than off the adapter registry — the chart names only what the
 table beneath it is folding. On the price chart each bar also carries its basis in parentheses
-(*Opus 4.6 (subs)*), because the split model rung would otherwise draw two same-named bars.
+(*Opus 4.6 (subs)*), because the split model rung would otherwise draw two same-named bars. The
+subscription rows and the API/mixed rows are drawn in separate charts with separate axes: an overage
+must not flatten the subscription distributions it is meant to be compared against.
 
 ⚠️ **A task can be taken out of all of it, from its own thread.** The `statistics` row in the thread's
 right pane toggles `Task.excludedFromStats`, and an excluded task leaves Statistics, the pace factor

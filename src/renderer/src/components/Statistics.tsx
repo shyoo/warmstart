@@ -141,11 +141,14 @@ function thin(samples: number): boolean {
 function StatGraph({
   rows,
   unit,
-  render
+  render,
+  title
 }: {
   rows: Array<StatRow & { basis?: PriceBasis; unpriced?: number }>
   unit: 'price' | 'velocity'
   render: (value: number) => string
+  /** Price uses separate scales for subscription and API/overage work. */
+  title?: string
 }): React.JSX.Element | null {
   const [mode, setMode] = useState<'whisker' | 'grouped'>('whisker')
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
@@ -210,7 +213,7 @@ function StatGraph({
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-3)' }}>
           <span style={{ fontWeight: 600, fontSize: 'var(--text-body)' }}>
-            {unit === 'price' ? 'Price' : 'Active Time'} Distribution Comparison
+            {title ?? `${unit === 'price' ? 'Price' : 'Active Time'} Distribution Comparison`}
           </span>
           <div
             className="btn-group"
@@ -648,6 +651,14 @@ function Window({ report }: { report: StatisticsReport }): React.JSX.Element {
 
 function PriceTab({ report }: { report: StatisticsReport }): React.JSX.Element {
   const { price } = report
+  // ⛔ API and mixed rows can be orders of magnitude above an amortised subscription share. A
+  // shared scale makes the subscription distribution unreadable, so preserve the same model rows
+  // while giving each kind of dollar its own chart and axis.
+  const priceRowsFor = (bases: PriceBasis[]) => {
+    const modelRows = price.rows.filter((row) => row.level === 'model' && bases.includes(row.basis))
+    const adapters = new Set(modelRows.map((row) => row.adapterId))
+    return price.rows.filter((row) => row.level !== 'agent' || adapters.has(row.adapterId))
+  }
   return (
     <div className="stack">
       <section className="doc-section">
@@ -686,7 +697,18 @@ function PriceTab({ report }: { report: StatisticsReport }): React.JSX.Element {
         )}
       </section>
 
-      <StatGraph rows={price.rows} unit="price" render={money} />
+      <StatGraph
+        rows={priceRowsFor(['subscription'])}
+        unit="price"
+        render={money}
+        title="Subscription Model Price Comparison"
+      />
+      <StatGraph
+        rows={priceRowsFor(['api', 'mixed'])}
+        unit="price"
+        render={money}
+        title="API & Mixed Model Price Comparison"
+      />
 
       <DistributionTable
         rows={price.rows}
