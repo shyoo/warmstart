@@ -445,8 +445,8 @@ describe('decodeStream', () => {
       ).toEqual({ kind: 'other', type: 'task.lifecycle.proposed' })
     })
 
-    /** Announced once, by its proposal. Repeating it would push the *running* tool off the tail. */
-    it('stays quiet when a tool succeeds', () => {
+    /** The proposal stays the live indication; no subject on success adds nothing after it. */
+    it('stays quiet when a successful tool reports no useful subject', () => {
       expect(
         decode({
           payload_type: 'tool.result',
@@ -457,6 +457,30 @@ describe('decodeStream', () => {
           }
         })
       ).toEqual({ kind: 'other', type: 'tool.result' })
+    })
+
+    it('names the command a successful bash tool ran', () => {
+      expect(
+        decode({
+          payload_type: 'tool.result',
+          payload: {
+            correlation_facts: { outcome: 'success', tool_name: 'bash' },
+            text: JSON.stringify({ command: 'rg -n "decodeStream" src/daemon' })
+          }
+        })
+      ).toEqual({ kind: 'assistant_text', text: '· bash: rg -n "decodeStream" src/daemon\n' })
+    })
+
+    it('names a successful tool’s file target without copying its output', () => {
+      expect(
+        decode({
+          payload_type: 'tool.result',
+          payload: {
+            correlation_facts: { outcome: 'success', tool_name: 'read_file' },
+            text: JSON.stringify({ file_path: 'src/daemon/adapters/muse-code.ts', output: 'x'.repeat(1000) })
+          }
+        })
+      ).toEqual({ kind: 'assistant_text', text: '· read_file: src/daemon/adapters/muse-code.ts\n' })
     })
 
     it('reports a tool that did not succeed', () => {

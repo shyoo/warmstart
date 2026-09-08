@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 /**
  * Analytics › Quality Review — the coverage read, and the rule that keeps a batch from paying twice.
@@ -20,6 +20,7 @@ let quality: typeof import('./quality.js')
 let review: typeof import('./review.js')
 let reviewer: typeof import('./reviewer.js')
 let tasks: typeof import('./tasks.js')
+let adapters: typeof import('./adapters/index.js')
 
 let seq = 0
 
@@ -104,6 +105,10 @@ beforeAll(async () => {
   review = await import('./review.js')
   reviewer = await import('./reviewer.js')
   tasks = await import('./tasks.js')
+  adapters = await import('./adapters/index.js')
+  // ⛔ L1 does not inherit a host capability. The batch gate correctly checks whether a reviewer
+  // can launch now; this fixture establishes that precondition without requiring Antigravity in CI.
+  vi.spyOn(adapters.adapter('antigravity-cli'), 'isInstalled').mockReturnValue(true)
   db.openDb(join(dir, 'queue.db'))
   worker('w-claude', 'claude-code')
   worker('w-antigravity', 'antigravity-cli')

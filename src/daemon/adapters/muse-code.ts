@@ -499,6 +499,35 @@ function commandIn(text: unknown): string | null {
   return oneLine.length > COMMAND_LINE ? `${oneLine.slice(0, COMMAND_LINE)}…` : oneLine
 }
 
+/**
+ * The useful subject from a completed tool result.
+ *
+ * Muse's proposal record says only `tool.bash`; the result record is where the CLI finally puts a
+ * command or a file target. It is deliberately a small, explicit allowlist: result payloads also
+ * carry arbitrary command output, which must never become a second, unbounded transcript in the
+ * peephole.
+ */
+function activityDetailIn(text: unknown): string | null {
+  const command = commandIn(text)
+  if (command) return command
+  if (typeof text !== 'string') return null
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    return null
+  }
+  const payload = asRecord(parsed)
+  if (!payload) return null
+  for (const key of ['file_path', 'path', 'file', 'query', 'pattern']) {
+    const value = payload[key]
+    if (typeof value !== 'string') continue
+    const oneLine = value.replace(/\s+/g, ' ').trim()
+    if (oneLine) return oneLine.length > COMMAND_LINE ? `${oneLine.slice(0, COMMAND_LINE)}…` : oneLine
+  }
+  return null
+}
+
 function decodeStream(record: Record<string, unknown>): StreamEvent | null {
   const type = typeof record.payload_type === 'string' ? record.payload_type : ''
   if (!type) return null
@@ -586,8 +615,9 @@ function decodeStream(record: Record<string, unknown>): StreamEvent | null {
     return { kind: 'assistant_text', text: `· ${kind.slice('tool.'.length)}\n` }
   }
 
-  // The other half of the pair, and only when it went wrong. A successful tool is already announced
-  // by its proposal, and saying so twice would push the tool that is *running* off the tail.
+  // The other half of the pair. A successful tool with no useful subject stays quiet: its proposal
+  // is already visible while it runs. Where Muse supplies the command or target, retain it as the
+  // completed step — a tail of `bash / read_file / edit_file` alone answers almost nothing.
   //
   // ⛔ **The command, not just the verdict** — this is the line that has to make t270 unrepeatable.
   // "a step failed" with no subject is what sent an operator to kill a working run; `· bash failed:
@@ -598,8 +628,11 @@ function decodeStream(record: Record<string, unknown>): StreamEvent | null {
     const facts = asRecord(payload.correlation_facts)
     const outcome = typeof facts?.outcome === 'string' ? facts.outcome : null
     const tool = typeof facts?.tool_name === 'string' ? facts.tool_name : 'tool'
-    if (!outcome || outcome === 'success') return { kind: 'other', type }
-    const detail = commandIn(payload.text)
+    if (!outcome) return { kind: 'other', type }
+    const detail = activityDetailIn(payload.text)
+    if (outcome === 'success') {
+      return detail ? { kind: 'assistant_text', text: `· ${tool}: ${detail}\n` } : { kind: 'other', type }
+    }
     return { kind: 'assistant_text', text: `· ${tool} ${outcome}${detail ? `: ${detail}` : ''}\n` }
   }
 
@@ -1039,4 +1072,3 @@ export const museCode: AgentAdapter = {
     )
   }
 }
-
