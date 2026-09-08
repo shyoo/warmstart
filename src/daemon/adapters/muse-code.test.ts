@@ -2,8 +2,18 @@ import { describe, expect, it } from 'vitest'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type { Attachment } from '@shared/tasks.js'
 import { museCode, parseResetTime } from './muse-code.js'
-import { gitEnvFor, hostExec, hostFor, hostPath, hostScript, shQuote, type CliHost } from './clihost.js'
+import {
+  gitEnvFor,
+  honoursPosixModes,
+  hostExec,
+  hostFor,
+  hostPath,
+  hostScript,
+  shQuote,
+  type CliHost
+} from './clihost.js'
 
 /**
  * Muse Code, and the host bridge it is the first adapter to need.
@@ -740,6 +750,37 @@ describe('the capability block', () => {
   })
 })
 
+/**
+ * Whether a `chmod` on a path actually does anything.
+ *
+ * ⛔ Measured 2026-09-07 on this machine: `mkdir` + `chmod 0700` under
+ * `/mnt/c/…/workers/musefirst/data/muse` reports `777` immediately afterwards, because a Windows
+ * volume reaches WSL2 over 9p with no `metadata` mount option. It is a fact about the **path**, not
+ * the host — the distribution's own ext4 honours modes perfectly.
+ */
+describe('honoursPosixModes', () => {
+  it('says no for anything a bridged host reads off a Windows volume', () => {
+    expect(honoursPosixModes(WSL, 'C:/Users/me/AppData/Roaming/x')).toBe(false)
+    expect(honoursPosixModes(WSL, 'D:/data')).toBe(false)
+    // Already translated, and translating twice is safe — so both spellings answer the same.
+    expect(honoursPosixModes(WSL, '/mnt/c/Users/me/x')).toBe(false)
+    expect(honoursPosixModes(WSL, '/mnt/d')).toBe(false)
+  })
+
+  it('says yes inside the distribution, where modes are real', () => {
+    expect(honoursPosixModes(WSL, '/home/me/.local/share')).toBe(true)
+    expect(honoursPosixModes(WSL, '/var/tmp/x')).toBe(true)
+    // ⚠️ Not every path beginning `/mnt` is a drive: `/mnt/data` is an ordinary directory.
+    expect(honoursPosixModes(WSL, '/mnt/data/x')).toBe(true)
+    expect(honoursPosixModes(WSL, '/mnt/cdrom')).toBe(true)
+  })
+
+  it('says yes on a native host, because there is no boundary to cross', () => {
+    expect(honoursPosixModes(NATIVE, '/home/me/.local/share')).toBe(true)
+    expect(honoursPosixModes(NATIVE, 'C:/Users/me/AppData')).toBe(true)
+  })
+})
+
 describe('plan', () => {
   /**
    * ⚠️ Needs a host — muse on `PATH`, or `wsl.exe` to reach it through. On a machine with neither
@@ -748,6 +789,19 @@ describe('plan', () => {
   const reachable = hostFor('muse') !== null
   const root = join(mkdtempSync(join(tmpdir(), 'muse-plan-')), 'root')
   const cwd = mkdtempSync(join(tmpdir(), 'muse-cwd-'))
+
+  const png = (file: string): Attachment => ({
+    id: file,
+    messageId: null,
+    taskId: null,
+    kind: 'image',
+    mediaType: 'image/png',
+    file,
+    bytes: 1,
+    width: 1,
+    height: 1,
+    createdAt: 0
+  })
 
   it.runIf(reachable)('sends the prompt as a file and takes stdin for it', () => {
     const plan = museCode.plan({
@@ -787,6 +841,62 @@ describe('plan', () => {
     const script = plan.args[plan.args.length - 1] ?? ''
     expect(script).toContain("'--session-id' 'bbbbbbbb-2222-4222-8222-222222222222'")
     expect(script).not.toContain('resume')
+  })
+
+  /**
+   * ⛔ **t289, and it is the host rather than the CLI.** `--image` does not hand muse a path, it
+   * makes muse *install* the file into an asset store under `XDG_DATA_HOME` whose mode it insists
+   * is `0700`. A Windows volume seen from WSL is 9p without `metadata`: everything reads `0777` and
+   * `chmod` is a silent no-op. Measured 2026-09-07 with the real account — data home on ext4, the
+   * model answered; data home on `/mnt/c`, `failed to install accepted image asset: asset is
+   * corrupt: asset directory permissions must be 0700, got 0777` and **exit 1**, five seconds after
+   * dispatch and before the model was called. The run read as the agent having failed the task.
+   */
+  it.runIf(reachable)('never asks for an image where its asset store cannot be 0700', () => {
+    const plan = museCode.plan({
+      sessionId: 'eeeeeeee-5555-4555-8555-555555555555',
+      isolationRoot: root,
+      cwd,
+      transport: 'stream',
+      attachments: [png('/attachments/one.png'), png('/attachments/two.png')]
+    })
+    const script = plan.args[plan.args.length - 1] ?? ''
+    const dataHomeIsWindowsVolume = /export XDG_DATA_HOME='\/mnt\//.test(script)
+    if (dataHomeIsWindowsVolume) {
+      // ⛔ Not "fewer images" — none, and no stray path left in the argv either.
+      expect(script).not.toContain('--image')
+      expect(script).not.toContain('one.png')
+    } else {
+      expect(script.match(/'--image'/g)).toHaveLength(2)
+    }
+  })
+
+  /**
+   * The invariant, stated without reference to the predicate that implements it: whatever host this
+   * runs on, those two things may never appear in the same script.
+   */
+  it.runIf(reachable)('so a Windows data home and an --image flag never share a script', () => {
+    const plan = museCode.plan({
+      sessionId: 'ffffffff-6666-4666-8666-666666666666',
+      isolationRoot: root,
+      cwd,
+      transport: 'stream',
+      attachments: [png('/attachments/one.png')]
+    })
+    const script = plan.args[plan.args.length - 1] ?? ''
+    expect(/export XDG_DATA_HOME='\/mnt\//.test(script) && script.includes('--image')).toBe(false)
+  })
+
+  it.runIf(reachable)('still takes a folder as a path in the prompt, never as an image', () => {
+    const plan = museCode.plan({
+      sessionId: '99999999-7777-4777-8777-777777777777',
+      isolationRoot: root,
+      cwd,
+      transport: 'stream',
+      attachments: [{ ...png('/attachments/ctx'), kind: 'folder', mediaType: 'inode/directory' }]
+    })
+    const script = plan.args[plan.args.length - 1] ?? ''
+    expect(script).not.toContain('--image')
   })
 
   it.runIf(reachable)('opens a plain TUI for a probe, with no exec and no prompt file', () => {

@@ -110,6 +110,29 @@ export function hostPath(host: CliHost, path: string): string {
 }
 
 /**
+ * Will a `chmod` on this path stick, or is it a Windows drive where mode bits are decoration?
+ *
+ * ⛔ **Measured 2026-09-07, and it cost a whole run.** A Windows volume reaches a WSL2 distribution
+ * over 9p as `/mnt/c`, mounted without `metadata`, so every file and directory reads `0777` and
+ * `chmod 0700` is a **silent no-op** — `stat` reports `777` immediately afterwards. Any CLI that
+ * checks its own private directory is safe enough will therefore refuse to work there, and it will
+ * refuse from inside its own turn where the fleet sees only an exit code. t290: `muse exec --image`
+ * on a `/mnt/c` XDG data home ends the run with *asset directory permissions must be 0700, got
+ * 0777* and exit 1; the same command with the data home on ext4 answers the prompt.
+ *
+ * ⚠️ It is a fact about the **path**, not about the host — a bridged distribution's own filesystem
+ * honours modes perfectly, and only what is mounted from Windows does not. So the argument is the
+ * translated path, and a native host is always true: there is no boundary to cross.
+ *
+ * ⛔ Not fixable from here. `/etc/wsl.conf` with `options=metadata` would do it, and that is the
+ * operator's machine to configure, not this app's to rewrite.
+ */
+export function honoursPosixModes(host: CliHost, path: string): boolean {
+  if (host.kind === 'native') return true
+  return !/^\/mnt\/[a-z](\/|$)/i.test(hostPath(host, path))
+}
+
+/**
  * One argument, safe inside a POSIX shell script.
  *
  * ⛔ Single quotes and nothing else. A double-quoted string still expands `$`, and a path this app

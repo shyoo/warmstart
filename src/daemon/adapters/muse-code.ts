@@ -10,7 +10,15 @@ import { asRecord } from '../stream.js'
 import { log } from '../log.js'
 import { spawnEnv } from '../which.js'
 import { paths } from '../paths.js'
-import { gitEnvFor, hostExec, hostFor, hostPath, hostPlan, type CliHost } from './clihost.js'
+import {
+  gitEnvFor,
+  honoursPosixModes,
+  hostExec,
+  hostFor,
+  hostPath,
+  hostPlan,
+  type CliHost
+} from './clihost.js'
 
 const run = promisify(execFile)
 
@@ -83,7 +91,14 @@ const info: AdapterInfo = {
     // `-w/--worktree` exists and this adapter never passes it: the pool hands out its own.
     nativeWorktree: false,
     // `--image <PATH>` is repeatable on `exec` and there is no stdin channel to send a second one
-    // down — initial prompt only, exactly Codex's shape.
+    // down — initial prompt only, exactly Codex's shape. ⭐ Flown 2026-09-07: the model answered a
+    // prompt carrying a real PNG.
+    // ⚠️ **A claim about the CLI, and the CLI is not always able to honour it here.** muse installs
+    // the image into an asset store under `XDG_DATA_HOME` that it requires to be `0700`, and on a
+    // WSL bridge whose data home sits on a Windows volume no such mode can exist. `plan()` drops
+    // `--image` in that case rather than spending a run on a turn that cannot start — see there,
+    // and `honoursPosixModes` in clihost.ts. The capability stays `spawn-flag` because it describes
+    // the CLI; a native install, or a data home inside the distribution, takes images.
     imageInput: 'spawn-flag',
     // ⛔ Muse reads `mcpServers` out of `settings.json`, which belongs to the **isolation root** and
     // not to one session — so a per-session identity token, which is what `task_complete` needs,
@@ -171,7 +186,9 @@ const info: AdapterInfo = {
       '2026-09-06, on a live "Everyday Usage" account: real `exec --json` runs (native and with ' +
       'both XDG roots on a Windows drive), session-id resume, the `/usage` panel, `muse login`, ' +
       'the fresh-root first-run screens, and the full Windows-spawn bridge end to end. ' +
-      '⚠️ Unflown here: `--image`, and no task has yet been dispatched to a commissioned worker.'
+      '⭐ `--image` flown 2026-09-07, in both directions: it answers a prompt carrying a real PNG ' +
+      'with the XDG data home on ext4, and refuses with exit 1 — *asset directory permissions must ' +
+      'be 0700, got 0777* — with the data home on a Windows volume, which is how this fleet runs it.'
   }
 }
 
@@ -970,8 +987,30 @@ export const museCode: AgentAdapter = {
     // ⛔ Images only, and only at spawn: `imageInput: 'spawn-flag'` because there is no stdin channel
     // to send a second one down. A folder or a non-image file travels as a path in the prompt text,
     // the way it does on every adapter.
-    for (const file of req.attachments ?? []) {
-      if (file.kind === 'image') args.push('--image', hostPath(host, file.file))
+    //
+    // ⛔ **And only where muse can build its asset store**, which on this bridge it often cannot.
+    // `--image` does not read the file and pass it on: muse *installs* it into a private asset
+    // directory under `XDG_DATA_HOME` and refuses one whose mode is not `0700`. A Windows volume
+    // seen from WSL is 9p without `metadata`, so that directory is `0777` and `chmod` does not
+    // change it — measured 2026-09-07. The refusal is not a skipped attachment, it is
+    // `runtime driver failed to plan turn.submit user intent: failed to install accepted image
+    // asset: asset is corrupt: asset directory permissions must be 0700, got 0777` and **exit 1**
+    // before the model is ever called (t289: a run that read as the agent having failed the task,
+    // five seconds after dispatch). With the same account and the data home on ext4, the identical
+    // command answers the prompt — so this is the host, not the CLI, and not the account.
+    //
+    // ⚠️ Dropped rather than deferred: the path is already in the prompt text on every adapter, so
+    // the run proceeds with an agent that has been told where the file is instead of a turn that
+    // died before it started.
+    const images = (req.attachments ?? []).filter((file) => file.kind === 'image')
+    if (images.length > 0 && !honoursPosixModes(host, dataHome(req.isolationRoot))) {
+      log.warn(
+        `${info.label} cannot take ${images.length} image(s) at spawn here: its asset store under ` +
+          `${dataHome(req.isolationRoot)} is on a Windows volume, where muse's required 0700 ` +
+          'permissions cannot be set. They travel as paths in the prompt text instead.'
+      )
+    } else {
+      for (const file of images) args.push('--image', hostPath(host, file.file))
     }
     return shell(args, { path: hostPath(host, prompt) })
   },
