@@ -1,5 +1,4 @@
-import { execFile, execFileSync } from 'node:child_process'
-import { promisify } from 'node:util'
+import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import type { FinishPolicy, Project, Task } from '@shared/tasks.js'
@@ -11,8 +10,7 @@ import { availability, claim, openClaims, release, upsertResource, workspacePool
 import { log } from './log.js'
 import { git } from './git.js'
 import { errorMessage } from '@shared/errors.js'
-
-const run = promisify(execFile)
+import { run } from './spawn.js'
 
 /**
  * Workspaces: pooled git worktrees.

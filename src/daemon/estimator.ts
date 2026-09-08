@@ -1,5 +1,6 @@
 import type { Task } from '@shared/tasks.js'
 import { db, rows } from './db.js'
+import { median, medianFloat } from './stats.js'
 import { adapter } from './adapters/index.js'
 import { costModel, type CostModel } from './costmodel.js'
 import { priceForRun, pricesForRuns } from './price.js'
@@ -189,31 +190,6 @@ export interface CostFactors {
   assumed: boolean
 }
 
-function median(values: number[]): number {
-  if (values.length === 0) return 0
-  const sorted = [...values].sort((a, b) => a - b)
-  const middle = Math.floor(sorted.length / 2)
-  return sorted.length % 2 === 0
-    ? Math.round(((sorted[middle - 1] ?? 0) + (sorted[middle] ?? 0)) / 2)
-    : (sorted[middle] ?? 0)
-}
-
-/**
- * The same median, unrounded.
- *
- * ⛔ Money needs its own, because `median` rounds to an integer — correct for a token count and
- * catastrophic for dollars, where every run on this fleet would round to $0. Kept as a second
- * function rather than a flag on the first so that the token series is provably unchanged.
- */
-function medianFloat(values: number[]): number {
-  if (values.length === 0) return 0
-  const sorted = [...values].sort((a, b) => a - b)
-  const middle = Math.floor(sorted.length / 2)
-  return sorted.length % 2 === 0
-    ? ((sorted[middle - 1] ?? 0) + (sorted[middle] ?? 0)) / 2
-    : (sorted[middle] ?? 0)
-}
-
 function confidenceFor(samples: number): Confidence {
   if (samples === 0) return 'none'
   if (samples < 3) return 'low'
@@ -386,7 +362,8 @@ export function costFactors(): CostFactors {
   for (const [id, list] of groups) {
     const cut = id.lastIndexOf('/')
     const modelPart = id.slice(cut + 1)
-    const medianPriced = median(list.map((s) => s.priced))
+    // `list` is populated by the grouping loop; retain zero only as its defensive no-data fallback.
+    const medianPriced = median(list.map((s) => s.priced)) ?? 0
     const usdList = list.filter((s) => s.usd !== null).map((s) => s.usd!)
     const medianUsd = usdList.length > 0 ? medianFloat(usdList) : null
     // Money where the key has earned it, priced tokens where it has not. ⛔ The token branch is
@@ -432,11 +409,13 @@ export function costFactors(): CostFactors {
   const coldSet = neutralised.filter((s) => s.warm === false)
   const warmFactor =
     midNeutral > 0 && warmSet.length > 0
-      ? shrink(median(warmSet.map((s) => s.value)) / midNeutral, warmSet.length)
+      // The length guard proves a series; zero is retained only as a defensive no-data fallback.
+      ? shrink((median(warmSet.map((s) => s.value)) ?? 0) / midNeutral, warmSet.length)
       : 1
   const coldFactor =
     midNeutral > 0 && coldSet.length > 0
-      ? shrink(median(coldSet.map((s) => s.value)) / midNeutral, coldSet.length)
+      // The length guard proves a series; zero is retained only as a defensive no-data fallback.
+      ? shrink((median(coldSet.map((s) => s.value)) ?? 0) / midNeutral, coldSet.length)
       : 1
 
   const divisor = (s: Sample): number =>
@@ -453,8 +432,9 @@ export function costFactors(): CostFactors {
     coldFactor,
     warmSamples: warmSet.length,
     coldSamples: coldSet.length,
-    neutralPriced: median(samples.map((s) => s.priced / divisor(s))),
-    neutralRaw: median(samples.map((s) => s.raw / divisor(s))),
+    // A fresh fleet has no series; its neutral size is deliberately the prior's zero fallback.
+    neutralPriced: median(samples.map((s) => s.priced / divisor(s))) ?? 0,
+    neutralRaw: median(samples.map((s) => s.raw / divisor(s))) ?? 0,
     neutralUsd: usdNeutral.length > 0 ? medianFloat(usdNeutral) : null,
     samples: samples.length,
     usdSamples: usdNeutral.length,
@@ -582,8 +562,9 @@ function withinProject(
   }
   const usd = samples.filter((s) => s.usd !== null).map((s) => s.usd! / divisor(s))
   return {
-    raw: median(samples.map((s) => s.raw / divisor(s))),
-    priced: median(samples.map((s) => s.priced / divisor(s))),
+    // `samples` is known non-empty above; zero is a defensive fallback, not a measurement.
+    raw: median(samples.map((s) => s.raw / divisor(s))) ?? 0,
+    priced: median(samples.map((s) => s.priced / divisor(s))) ?? 0,
     usd: usd.length > 0 ? medianFloat(usd) : null,
     usdSamples: usd.length,
     samples: samples.length

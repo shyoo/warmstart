@@ -1,7 +1,5 @@
-import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { promisify } from 'node:util'
 import type {
   FinishPolicy,
   LandingResult,
@@ -27,8 +25,7 @@ import { launchArgs, which } from './which.js'
 import { log } from './log.js'
 import { git } from './git.js'
 import { errorMessage } from '@shared/errors.js'
-
-const run = promisify(execFile)
+import { run } from './spawn.js'
 
 // ⛔ Re-exported, not redefined: every existing caller keeps one import site and one answer.
 export { landingBaseFor }

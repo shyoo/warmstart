@@ -5,7 +5,7 @@ import { priceForTask } from './price.js'
 import { qualityReport } from './quality.js'
 import { fitnessFor } from './fitness.js'
 import { benchmarkPrior } from './benchmarks.js'
-import { adapters } from './adapters/index.js'
+import { adapterLabels } from './adapters/index.js'
 import type {
   Distribution,
   PriceBasis,
@@ -373,12 +373,6 @@ function tree<T extends Sample, R>(
   return out
 }
 
-function adapterLabels(): Map<string, string> {
-  const out = new Map<string, string>()
-  for (const a of adapters()) out.set(a.info.id, a.info.label)
-  return out
-}
-
 // ---------------------------------------------------------------------------- the three tabs
 
 function priceStats(all: Sample[], label: (id: string) => string): PriceStats {
@@ -537,7 +531,7 @@ function cleanReviews(): ReviewRow[] {
 export function statisticsReport(now = Date.now()): StatisticsReport {
   const all = samples(now)
   const labels = adapterLabels()
-  const label = (id: string): string => labels.get(id) ?? id
+  const label = (id: string): string => labels[id] ?? id
   return {
     generatedAt: now,
     sampleLimit: SAMPLE_LIMIT,

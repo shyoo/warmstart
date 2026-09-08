@@ -1,4 +1,5 @@
 import { db, rows } from './db.js'
+import { medianFloat } from './stats.js'
 import { timingForTasks } from './activetime.js'
 
 /**
@@ -95,15 +96,6 @@ export interface Credit {
 
 function keyId(adapterId: string, model: string | null): string {
   return `${adapterId}/${model ?? '?'}`
-}
-
-function median(values: number[]): number {
-  if (values.length === 0) return 0
-  const sorted = [...values].sort((a, b) => a - b)
-  const middle = Math.floor(sorted.length / 2)
-  return sorted.length % 2 === 0
-    ? ((sorted[middle - 1] ?? 0) + (sorted[middle] ?? 0)) / 2
-    : (sorted[middle] ?? 0)
 }
 
 /**
@@ -214,7 +206,8 @@ export function paceFactors(now = Date.now()): PaceFactors {
   const neutral = centre(all)
   const keys: PaceKey[] = [...perKey.values()]
     .map((bucket) => {
-      const medianActiveMs = median(bucket.values)
+      // No samples has historically meant the neutral pace, not a measured zero duration.
+      const medianActiveMs = medianFloat(bucket.values) ?? 0
       const ratio = neutral > 0 && medianActiveMs > 0 ? medianActiveMs / neutral : 1
       return {
         adapterId: bucket.adapterId,
@@ -259,7 +252,8 @@ export function paceFor(
   const sameAdapter = factors.keys.filter((k) => k.adapterId === adapterId)
   if (sameAdapter.length > 0) {
     const samples = sameAdapter.reduce((n, k) => n + k.samples, 0)
-    const pooled = median(sameAdapter.map((k) => k.medianActiveMs))
+    // No model samples falls back to the neutral factor below, rather than reporting a zero pace.
+    const pooled = medianFloat(sameAdapter.map((k) => k.medianActiveMs)) ?? 0
     const ratio = factors.neutralActiveMs > 0 ? pooled / factors.neutralActiveMs : 1
     return {
       factor: shrinkPace(ratio, samples),

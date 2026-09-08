@@ -16,12 +16,13 @@ import type {
   UngradedTask
 } from '@shared/quality.js'
 import { db, rows } from './db.js'
-import { adapter, adapters } from './adapters/index.js'
+import { adapter, adapterLabels } from './adapters/index.js'
 import { pendingReviews } from './review.js'
 import { getTask } from './tasks.js'
 import type { Task } from '@shared/tasks.js'
 import { defaultGradingModel, listWorkers } from './workers.js'
 import { hasBatchReviewer, reviewEligibility, reviewerAvailability } from './reviewer.js'
+import { medianFloat } from './stats.js'
 
 /**
  * What the fleet has actually measured about *quality*, aggregated from stored peer reviews.
@@ -159,18 +160,6 @@ function qualityKeys(reviews: ReviewAggRow[]): QualityKey[] {
  * correction: nothing here rescales a score by its reviewer's generosity, because there is no
  * measurement on this fleet that would justify choosing a scale factor.
  */
-function median(values: number[]): number | null {
-  if (values.length === 0) return null
-  const sorted = [...values].sort((a, b) => a - b)
-  const mid = Math.floor(sorted.length / 2)
-  if (sorted.length % 2 === 0) {
-    const a = sorted[mid - 1]
-    const b = sorted[mid]
-    return a !== undefined && b !== undefined ? (a + b) / 2 : null
-  }
-  return sorted[mid] ?? null
-}
-
 function reviewerTallies(reviews: ReviewAggRow[]): QualityReviewerTally[] {
   const buckets = new Map<string, { scores: number[]; models: Set<string> }>()
   for (const r of reviews) {
@@ -196,7 +185,8 @@ function reviewerTallies(reviews: ReviewAggRow[]): QualityReviewerTally[] {
           model,
           reviews: scores.length,
           meanGiven: mean(scores),
-          medianGiven: median(scores),
+          // An empty score series remains explicitly unmeasured in the operator report.
+          medianGiven: medianFloat(scores),
           minGiven: scores.length ? Math.min(...scores) : null,
           maxGiven: scores.length ? Math.max(...scores) : null
         }))
@@ -209,26 +199,14 @@ function reviewerTallies(reviews: ReviewAggRow[]): QualityReviewerTally[] {
         modelsUsed: [...bucket.models].sort(),
         reviews: bucket.scores.length,
         meanGiven: mean(bucket.scores),
-        medianGiven: median(bucket.scores),
+        // An empty score series remains explicitly unmeasured in the operator report.
+        medianGiven: medianFloat(bucket.scores),
         minGiven: bucket.scores.length ? Math.min(...bucket.scores) : null,
         maxGiven: bucket.scores.length ? Math.max(...bucket.scores) : null,
         byModel
       }
     })
     .sort((a, b) => b.reviews - a.reviews)
-}
-
-/**
- * Every loaded adapter's display name, for the renderer to look ids up in.
- *
- * ⚠️ Built from the adapters themselves rather than from a table anywhere else, for the reason
- * `@shared/quality.ts` gives: a second list of adapter names is a second thing to keep true. An
- * adapter this build no longer loads is simply absent, and the id it left behind renders as itself.
- */
-function adapterLabels(): Record<string, string> {
-  const out: Record<string, string> = {}
-  for (const a of adapters()) out[a.info.id] = a.info.label
-  return out
 }
 
 function labelFor(adapterId: string): string {

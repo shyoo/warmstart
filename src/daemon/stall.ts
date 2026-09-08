@@ -1,7 +1,4 @@
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
-
-const run = promisify(execFile)
+import { run } from './spawn.js'
 
 /**
  * Telling a stuck run from a slow one.

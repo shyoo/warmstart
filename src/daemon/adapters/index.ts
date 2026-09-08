@@ -58,6 +58,17 @@ export function adapters(): AgentAdapter[] {
   return ADAPTERS
 }
 
+/**
+ * Every loaded adapter's display name, for reports that render stored adapter ids.
+ *
+ * An adapter this build no longer loads is deliberately absent, so its stored id renders as itself.
+ */
+export function adapterLabels(): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const item of ADAPTERS) out[item.info.id] = item.info.label
+  return out
+}
+
 export function adapter(id: string): AgentAdapter {
   const found = ADAPTERS.find((a) => a.info.id === id)
   if (!found) throw new Error(`unknown adapter '${id}'`)
