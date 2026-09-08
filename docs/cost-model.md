@@ -1398,7 +1398,7 @@ meaning is now the wider *the baseline moved*.
 | adapter | `spendProbe` | the signal | dated by | probe cost (wall-clock & processes) |
 |---|---|---|---|---|
 | `openai-compatible` | `config-cache` | `credits.balance` in newest rollout file (`CODEX_HOME/sessions/rollouts/`) | ⛔ the **rollout's** timestamp | **~1ms** file read, 0 extra processes, 0 tokens |
-| `claude-code` | `stream` | `result.total_cost_usd` → `runs.list_usd`; `rate_limit_event`'s `isUsingOverage` / `overageStatus` → `runs.on_overage` / `overage_status` | the turn it rode in on | **0ms** (in-band on stream), 0 extra processes, 0 tokens |
+| `claude-code` | `config-cache` | `.claude.json`’s `utilization.spend.used` counter, only while `extra_usage.is_enabled` is true; stream fields still stamp `runs.list_usd` / `on_overage` separately | the cache's `fetchedAtMs` | file read, 0 extra processes, 0 tokens |
 | `antigravity-cli` | `none` | negative measurement result (see below) | — | 0 processes, 0 tokens |
 | `local-llm` | `none` | self-hosted, unmetered | — | 0 processes, 0 tokens |
 

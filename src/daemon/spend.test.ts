@@ -164,6 +164,16 @@ describe('recording what a meter read', () => {
     expect(last?.error).toMatch(/threw/)
   })
 
+  it('lets a meterless reading at the same vendor timestamp overrule an old zero-shaped meter', () => {
+    const w = worker()
+    spend.recordSpendSample(w, purse(0, 5_000))
+    spend.recordSpendSample(w, { meters: [], sampledAt: 5_000, source: 'config-cache' })
+
+    // A provider that turned credits off has answered "n/a", not "$0.00". This also repairs
+    // readings written by the earlier parser without having to rewrite its raw historical row.
+    expect(spend.lastSpend(w)?.meters).toEqual([])
+  })
+
   it('leaves a balance-less row out of the series rather than reading it as zero', () => {
     const w = worker()
     spend.recordSpendSample(w, purse(412, 1_000))

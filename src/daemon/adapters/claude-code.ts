@@ -242,7 +242,12 @@ function extraAmount(value: unknown, decimalPlaces?: number | null): number | nu
  * ⚠️ A meter is emitted only where the vendor actually published a number. An absent meter is a
  * different statement from a meter reading zero, and only one of them is true here.
  */
-function spendMeters(spend: ClaudeSpendShape | undefined): SpendMeter[] {
+function spendMeters(spend: ClaudeSpendShape | undefined, creditsEnabled?: boolean): SpendMeter[] {
+  // ⛔ Claude keeps `spend.used.amount_minor: 0` in the usage cache after the operator turns
+  // credits off. That is the shape of an unavailable balance, not evidence that the accumulated
+  // counter reset: `extra_usage.is_enabled` is the vendor's direct statement of which one it is.
+  // Reporting that zero would turn a previous $20.57 reading into a fabricated $0.00 run delta.
+  if (creditsEnabled === false) return []
   if (!spend) return []
   const meters: SpendMeter[] = []
   const currency = spend.used?.currency ?? null
@@ -861,9 +866,10 @@ export const claudeCode: AgentAdapter = {
           error: 'no cachedUsageUtilization in .claude.json'
         }
       }
+      const credits = creditStatus(parsed)
       return {
-        meters: spendMeters(cached?.utilization?.spend),
-        credits: creditStatus(parsed),
+        meters: spendMeters(cached?.utilization?.spend, credits?.enabled),
+        credits,
         sampledAt: at,
         source: 'config-cache'
       }

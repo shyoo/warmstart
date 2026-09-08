@@ -293,8 +293,23 @@ describe('spendMeters', () => {
    * That is exactly what `direction: 'spend_rises'` means to `price.ts::attribute()`, and it is how
    * the monthly reset is handled without a special case anywhere.
    */
-  it('reads the monthly counter as a rising meter', () => {
+  it('does not mistake the disabled payload’s zero-shaped counter for a zero balance', () => {
     const meters = spendMeters(CREDITS_OFF.cachedUsageUtilization.utilization.spend)
+    expect(meters).toEqual([
+      {
+        id: 'claude-extra-usage',
+        label: 'Claude usage credits',
+        unit: 'usd',
+        balance: 0,
+        direction: 'spend_rises',
+        usdPerUnit: 1
+      }
+    ])
+    expect(spendMeters(CREDITS_OFF.cachedUsageUtilization.utilization.spend, creditStatus(CREDITS_OFF)?.enabled)).toEqual([])
+  })
+
+  it('reads an enabled monthly counter as a rising meter', () => {
+    const meters = spendMeters(CREDITS_ON.cachedUsageUtilization.utilization.spend, creditStatus(CREDITS_ON)?.enabled)
     expect(meters).toEqual([
       {
         id: 'claude-extra-usage',

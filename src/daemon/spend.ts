@@ -170,9 +170,13 @@ export function lastSpend(workerId: string): DatedSpend | null {
   const first = sampled[0]
   if (!first) return null
   const source = first.source
+  // ⛔ An empty probe is a newer vendor statement that no balance is available. A previous build
+  // could already have stored a zero-shaped meter at the same cache timestamp; the sentinel must
+  // therefore win over that row rather than letting historical parser output resurrect a $0.00.
+  const unavailable = sampled.some((r) => r.meter_id === NO_METER)
   return {
     workerId,
-    meters: sampled.filter((r) => r.meter_id !== NO_METER).map(toMeter),
+    meters: unavailable ? [] : sampled.filter((r) => r.meter_id !== NO_METER).map(toMeter),
     sampledAt: at,
     source:
       source === 'cli' || source === 'config-cache' || source === 'stream' ? source : 'unknown',
