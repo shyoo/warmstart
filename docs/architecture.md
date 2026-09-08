@@ -423,6 +423,7 @@ scripts/                ensure-electron, icons, build-win.ps1                   
 | `db.ts` | `node:sqlite` + numbered migrations → [`data-model.md`](data-model.md) |
 | `paths.ts` | the data directory, and the legacy-install adoption |
 | `scheduler.ts` | scoring, dispatch, watchdogs, `continueTask` → [`routing.md`](routing.md) |
+| `prompt.ts` | `promptFor` and its helpers — what an agent is actually told, and what a resumed turn withholds |
 | `eligibility.ts` | ⛔ the account gates, in ONE list |
 | `tasks.ts` | the DAG, admission, mandates, budgets, runs |
 | `sessions.ts` | pty and stream transports, reaping, resuming a closed conversation |

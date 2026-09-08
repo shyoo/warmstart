@@ -31,6 +31,7 @@ let db: typeof import('./db.js')
 let workers: typeof import('./workers.js')
 let tasks: typeof import('./tasks.js')
 let scheduler: typeof import('./scheduler.js')
+let prompt: typeof import('./prompt.js')
 let projects: typeof import('./projects.js')
 let worktrees: typeof import('./worktrees.js')
 
@@ -48,7 +49,7 @@ const project = (finish?: string): Project =>
   }) as unknown as Project
 
 const promptText = (task: Task, adapterId = 'claude-code'): string =>
-  scheduler.promptFor(task, adapterId, false, { markDelivered: false }).text
+  prompt.promptFor(task, adapterId, false, { markDelivered: false }).text
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'agentyard-conversationkind-'))
@@ -57,6 +58,7 @@ beforeAll(async () => {
   workers = await import('./workers.js')
   tasks = await import('./tasks.js')
   scheduler = await import('./scheduler.js')
+  prompt = await import('./prompt.js')
   projects = await import('./projects.js')
   worktrees = await import('./worktrees.js')
   const { claudeCode } = await import('./adapters/claude-code.js')
@@ -204,47 +206,47 @@ describe('what a follow-up into a live conversation is sent', () => {
     const task = tasks.requireTask(
       tasks.createTask({ title, kind: 'conversation', status: 'ready' }).id
     )
-    scheduler.promptFor(task, 'claude-code', false, { markDelivered: true })
+    prompt.promptFor(task, 'claude-code', false, { markDelivered: true })
     tasks.addMessage(task.id, 'human', text)
     return tasks.requireTask(task.id)
   }
 
   it('is the message and nothing else — no restated prompt, no contract', () => {
     const task = followUp('Set up notarization on CI', 'What about the provisioning profile?')
-    const prompt = scheduler.promptFor(task, 'claude-code', true, { markDelivered: false }).text
-    expect(prompt).toBe('What about the provisioning profile?')
+    const text = prompt.promptFor(task, 'claude-code', true, { markDelivered: false }).text
+    expect(text).toBe('What about the provisioning profile?')
   })
 
   it('is the message and nothing else on an adapter with no tools either', () => {
     const task = followUp('Notarization, agy', 'And the entitlements file?')
-    const prompt = scheduler.promptFor(task, 'antigravity-cli', true, { markDelivered: false }).text
-    expect(prompt).toBe('And the entitlements file?')
+    const text = prompt.promptFor(task, 'antigravity-cli', true, { markDelivered: false }).text
+    expect(text).toBe('And the entitlements file?')
   })
 
   it('still restates everything into the fresh session a preemption starts', () => {
     // ⛔ `resumed: false`. That session has never seen the opening prompt or the contract, so
     // withholding them there would hand it a stray sentence and no idea what it was for.
     const task = followUp('Preempted chat', 'and the notarytool password?')
-    const prompt = scheduler.promptFor(task, 'claude-code', false, { markDelivered: false }).text
-    expect(prompt).toContain('Preempted chat')
-    expect(prompt).toContain('and the notarytool password?')
-    expect(prompt).toContain('This is an ongoing conversation')
+    const text = prompt.promptFor(task, 'claude-code', false, { markDelivered: false }).text
+    expect(text).toContain('Preempted chat')
+    expect(text).toContain('and the notarytool password?')
+    expect(text).toContain('This is an ongoing conversation')
   })
 
   it('subtracts an ordinary task’s framing too, but never into the conversation contract', () => {
     const work = tasks.createTask({ title: 'Ordinary work, resumed', status: 'ready' })
-    scheduler.promptFor(work, 'claude-code', false, { markDelivered: true })
+    prompt.promptFor(work, 'claude-code', false, { markDelivered: true })
     tasks.addMessage(work.id, 'human', 'also check the linter')
-    const prompt = scheduler.promptFor(tasks.requireTask(work.id), 'claude-code', true, {
+    const text = prompt.promptFor(tasks.requireTask(work.id), 'claude-code', true, {
       markDelivered: false
     }).text
-    expect(prompt).toContain('also check the linter')
-    expect(prompt).not.toContain('Ordinary work, resumed')
-    expect(prompt).not.toContain('Work to the end without stopping between phases')
+    expect(text).toContain('also check the linter')
+    expect(text).not.toContain('Ordinary work, resumed')
+    expect(text).not.toContain('Work to the end without stopping between phases')
     // ⛔ The one thing this file is about: a `work` task is never handed the contract that tells an
     // agent a person decides when to commit. What it gets instead is pinned in `prompt.test.ts`.
-    expect(prompt).not.toContain('This is an ongoing conversation')
-    expect(prompt).toContain('call the MCP tool `task_complete`')
+    expect(text).not.toContain('This is an ongoing conversation')
+    expect(text).toContain('call the MCP tool `task_complete`')
   })
 
   it('says the whole thing again once Commit has written a rung', () => {
@@ -252,11 +254,11 @@ describe('what a follow-up into a live conversation is sent', () => {
     // ordinary landing turn — which needs the landing instruction whether the session is warm or not.
     const task = followUp('Chat, then commit', 'ok, land it')
     tasks.updateTask(task.id, { finishPolicy: 'commit-and-merge' })
-    const prompt = scheduler.promptFor(tasks.requireTask(task.id), 'claude-code', true, {
+    const text = prompt.promptFor(tasks.requireTask(task.id), 'claude-code', true, {
       markDelivered: false
     }).text
-    expect(prompt).toContain('ok, land it')
-    expect(prompt).toContain('call the MCP tool `task_complete` with a one-line summary')
+    expect(text).toContain('ok, land it')
+    expect(text).toContain('call the MCP tool `task_complete` with a one-line summary')
   })
 })
 

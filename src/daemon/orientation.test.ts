@@ -26,7 +26,7 @@ let db: typeof import('./db.js')
 let projects: typeof import('./projects.js')
 let orientation: typeof import('./orientation.js')
 let tasks: typeof import('./tasks.js')
-let scheduler: typeof import('./scheduler.js')
+let prompt: typeof import('./prompt.js')
 let workers: typeof import('./workers.js')
 
 let seq = 0
@@ -54,7 +54,7 @@ beforeAll(async () => {
   projects = await import('./projects.js')
   orientation = await import('./orientation.js')
   tasks = await import('./tasks.js')
-  scheduler = await import('./scheduler.js')
+  prompt = await import('./prompt.js')
   workers = await import('./workers.js')
   db.openDb(join(dir, 'orientation.db'))
   workers.createWorker({ adapterId: 'claude-code', label: 'claude-1', enabled: true })
@@ -237,44 +237,44 @@ describe('where the cold-start block travels', () => {
   it('leads a cold prompt, ahead of the task', () => {
     const project = seeded()
     const task = tasks.createTask({ title: 'Cold work', status: 'ready', projectId: project.id })
-    const prompt = scheduler.promptFor(task, 'claude-code', false, { markDelivered: false }).text
-    expect(prompt).toContain('`AGENTS.md`')
-    expect(prompt).toContain('Read CLAUDE.md before you start.')
-    expect(prompt.indexOf('`AGENTS.md`')).toBeLessThan(prompt.indexOf('Cold work'))
+    const text = prompt.promptFor(task, 'claude-code', false, { markDelivered: false }).text
+    expect(text).toContain('`AGENTS.md`')
+    expect(text).toContain('Read CLAUDE.md before you start.')
+    expect(text.indexOf('`AGENTS.md`')).toBeLessThan(text.indexOf('Cold work'))
   })
 
   /** ⛔ The point of t286. The session has read this already; sending it again is the confusion. */
   it('is withheld from a resumed run into the same session', () => {
     const project = seeded()
     const task = tasks.createTask({ title: 'Warm work', status: 'ready', projectId: project.id })
-    scheduler.promptFor(task, 'claude-code', false, { markDelivered: true })
+    prompt.promptFor(task, 'claude-code', false, { markDelivered: true })
     tasks.addMessage(task.id, 'human', 'also check the linter')
-    const prompt = scheduler.promptFor(tasks.requireTask(task.id), 'claude-code', true, {
+    const text = prompt.promptFor(tasks.requireTask(task.id), 'claude-code', true, {
       markDelivered: false
     }).text
-    expect(prompt).toContain('also check the linter')
-    expect(prompt).not.toContain('`AGENTS.md`')
-    expect(prompt).not.toContain('Read CLAUDE.md before you start.')
+    expect(text).toContain('also check the linter')
+    expect(text).not.toContain('`AGENTS.md`')
+    expect(text).not.toContain('Read CLAUDE.md before you start.')
   })
 
   /** ⚠️ A compaction may have carried the orientation off with everything else, so it comes back. */
   it('returns after a compaction', () => {
     const project = seeded()
     const task = tasks.createTask({ title: 'Compacted work', status: 'ready', projectId: project.id })
-    scheduler.promptFor(task, 'claude-code', false, { markDelivered: true })
+    prompt.promptFor(task, 'claude-code', false, { markDelivered: true })
     tasks.addMessage(task.id, 'human', 'also check the linter')
-    const prompt = scheduler.promptFor(tasks.requireTask(task.id), 'claude-code', true, {
+    const text = prompt.promptFor(tasks.requireTask(task.id), 'claude-code', true, {
       markDelivered: false,
       compacted: true
     }).text
-    expect(prompt).toContain('`AGENTS.md`')
-    expect(prompt).toContain('Read CLAUDE.md before you start.')
+    expect(text).toContain('`AGENTS.md`')
+    expect(text).toContain('Read CLAUDE.md before you start.')
   })
 
   it('is absent for a task belonging to no project', () => {
     const task = tasks.createTask({ title: 'Projectless', status: 'ready' })
-    const prompt = scheduler.promptFor(task, 'claude-code', false, { markDelivered: false }).text
-    expect(prompt).toContain('Projectless')
-    expect(prompt).not.toContain('at the root of this project')
+    const text = prompt.promptFor(task, 'claude-code', false, { markDelivered: false }).text
+    expect(text).toContain('Projectless')
+    expect(text).not.toContain('at the root of this project')
   })
 })

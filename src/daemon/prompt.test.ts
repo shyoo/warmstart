@@ -10,6 +10,7 @@ let db: typeof import('./db.js')
 let workers: typeof import('./workers.js')
 let tasks: typeof import('./tasks.js')
 let scheduler: typeof import('./scheduler.js')
+let prompt: typeof import('./prompt.js')
 let api: typeof import('./api.js')
 
 let claude: Worker
@@ -22,6 +23,7 @@ beforeAll(async () => {
   workers = await import('./workers.js')
   tasks = await import('./tasks.js')
   scheduler = await import('./scheduler.js')
+  prompt = await import('./prompt.js')
   api = await import('./api.js')
   db.openDb(join(dir, 'prompt.db'))
   claude = workers.createWorker({ adapterId: 'claude-code', label: 'claude-1', enabled: true })
@@ -44,8 +46,8 @@ afterAll(() => {
  * a route the sentence cannot express. The one test that cares about that half calls the real
  * function; everything else is about words.
  */
-const promptText = (...args: Parameters<typeof scheduler.promptFor>): string =>
-  scheduler.promptFor(...args).text
+const promptText = (...args: Parameters<typeof prompt.promptFor>): string =>
+  prompt.promptFor(...args).text
 
 describe('promptFor prompt construction', () => {
   it('builds prompt for an MCP adapter with task_complete instruction', () => {
@@ -628,7 +630,7 @@ describe('an attachment and the message it belongs to', () => {
 
   it('goes out with the first prompt, and names its absolute path in the text', () => {
     const { task, image } = withImage('Make the header match this')
-    const built = scheduler.promptFor(task, 'claude-code', false, { markDelivered: false })
+    const built = prompt.promptFor(task, 'claude-code', false, { markDelivered: false })
     expect(built.attachments.map((a) => a.id)).toEqual([image.id])
     // ⛔ On every adapter, including the one that also gets the bytes. All three read a PNG off
     // disk with their own view tool, and this is what rescues a run whose inline block a vendor
@@ -639,7 +641,7 @@ describe('an attachment and the message it belongs to', () => {
 
   it('names the path to antigravity too, which is the only channel it has', () => {
     const { task, image } = withImage('Match this on agy')
-    const built = scheduler.promptFor(task, 'antigravity-cli', false, { markDelivered: false })
+    const built = prompt.promptFor(task, 'antigravity-cli', false, { markDelivered: false })
     expect(built.text).toContain(image.file)
     expect(built.attachments).toHaveLength(1)
   })
@@ -651,12 +653,12 @@ describe('an attachment and the message it belongs to', () => {
    */
   it('does not travel again into the conversation that already has it', () => {
     const { task } = withImage('Only once')
-    const first = scheduler.promptFor(task, 'claude-code', false, { markDelivered: true })
+    const first = prompt.promptFor(task, 'claude-code', false, { markDelivered: true })
     expect(first.attachments).toHaveLength(1)
 
     // A later note on the same task carries its own attachments and none of the earlier ones.
     tasks.addMessage(task.id, 'human', 'and one more thing')
-    const second = scheduler.promptFor(tasks.requireTask(task.id), 'claude-code', true, {
+    const second = prompt.promptFor(tasks.requireTask(task.id), 'claude-code', true, {
       markDelivered: true
     })
     expect(second.text).toContain('and one more thing')
@@ -666,11 +668,11 @@ describe('an attachment and the message it belongs to', () => {
 
   it('travels again when a preemption re-sends the first prompt', () => {
     const { task, image } = withImage('Preempted with a screenshot')
-    scheduler.promptFor(task, 'claude-code', false, { markDelivered: true })
+    prompt.promptFor(task, 'claude-code', false, { markDelivered: true })
     // ⛔ `resumed: false` is what a fresh session after a preemption gets: the task's own prompt is
     // restated because that session has never seen it — and the image has to come with it, or the
     // agent is reading a sentence about a picture it was not given.
-    const again = scheduler.promptFor(tasks.requireTask(task.id), 'claude-code', false, {
+    const again = prompt.promptFor(tasks.requireTask(task.id), 'claude-code', false, {
       markDelivered: false
     })
     expect(again.attachments.map((a) => a.id)).toEqual([image.id])
@@ -679,11 +681,11 @@ describe('an attachment and the message it belongs to', () => {
 
   it('carries an image pasted into a note, on the run that delivers the note', () => {
     const task = tasks.createTask({ title: 'A note with a picture', status: 'ready' })
-    scheduler.promptFor(task, 'claude-code', false, { markDelivered: true })
+    prompt.promptFor(task, 'claude-code', false, { markDelivered: true })
     const image = attachments.createAttachment(png, 'image/png')
     tasks.addMessage(task.id, 'human', 'this is what it looks like now', null, [image.id])
 
-    const built = scheduler.promptFor(tasks.requireTask(task.id), 'claude-code', false, {
+    const built = prompt.promptFor(tasks.requireTask(task.id), 'claude-code', false, {
       markDelivered: true
     })
     expect(built.attachments.map((a) => a.id)).toEqual([image.id])
@@ -692,7 +694,7 @@ describe('an attachment and the message it belongs to', () => {
 
   it('says nothing about attachments on a task that has none', () => {
     const task = tasks.createTask({ title: 'No pictures here', status: 'ready' })
-    const built = scheduler.promptFor(task, 'claude-code', false, { markDelivered: false })
+    const built = prompt.promptFor(task, 'claude-code', false, { markDelivered: false })
     expect(built.attachments).toEqual([])
     expect(built.text).not.toContain('Attached context')
   })
@@ -719,7 +721,7 @@ describe('a resumed run into the session that already has the framing', () => {
   /** A task whose opening prompt has gone out, with `note` typed underneath it. */
   const continued = (title: string, note: string): Task => {
     const task = tasks.createTask({ title, status: 'ready' })
-    scheduler.promptFor(task, 'claude-code', false, { markDelivered: true })
+    prompt.promptFor(task, 'claude-code', false, { markDelivered: true })
     tasks.addMessage(task.id, 'human', note)
     return tasks.requireTask(task.id)
   }
@@ -811,13 +813,13 @@ describe('a resumed run into the session that already has the framing', () => {
    */
   it('keeps the contract on a resumed run that carries no new message', () => {
     const task = tasks.createTask({ title: 'Nothing new to say', status: 'ready' })
-    scheduler.promptFor(task, 'claude-code', false, { markDelivered: true })
-    const prompt = promptText(tasks.requireTask(task.id), 'claude-code', true, {
+    prompt.promptFor(task, 'claude-code', false, { markDelivered: true })
+    const text = promptText(tasks.requireTask(task.id), 'claude-code', true, {
       markDelivered: false
     })
 
-    expect(prompt).toContain('Work to the end without stopping between phases')
-    expect(prompt).toContain('call the MCP tool `task_complete` with a one-line summary')
+    expect(text).toContain('Work to the end without stopping between phases')
+    expect(text).toContain('call the MCP tool `task_complete` with a one-line summary')
   })
 
   /**
@@ -832,18 +834,18 @@ describe('a resumed run into the session that already has the framing', () => {
       kind: 'conversation',
       status: 'ready'
     })
-    scheduler.promptFor(tasks.requireTask(task.id), 'claude-code', false, { markDelivered: true })
+    prompt.promptFor(tasks.requireTask(task.id), 'claude-code', false, { markDelivered: true })
     tasks.addMessage(task.id, 'human', 'ok, land it')
     tasks.updateTask(task.id, { finishPolicy: 'commit-and-merge' })
 
-    const prompt = promptText(tasks.requireTask(task.id), 'claude-code', true, {
+    const text = promptText(tasks.requireTask(task.id), 'claude-code', true, {
       markDelivered: false
     })
-    expect(prompt).toContain('ok, land it')
-    expect(prompt).toContain('Work to the end without stopping between phases')
-    expect(prompt).toContain('squash them into one coherent commit')
-    expect(prompt).not.toContain('still apply')
-    expect(prompt).not.toContain('This is an ongoing conversation')
+    expect(text).toContain('ok, land it')
+    expect(text).toContain('Work to the end without stopping between phases')
+    expect(text).toContain('squash them into one coherent commit')
+    expect(text).not.toContain('still apply')
+    expect(text).not.toContain('This is an ongoing conversation')
   })
 
   /**
@@ -855,7 +857,7 @@ describe('a resumed run into the session that already has the framing', () => {
    */
   it('leaves a plan task’s own instruction alone on both phases', () => {
     const planning = tasks.createTask({ title: 'Plan the migration', kind: 'plan', status: 'ready' })
-    scheduler.promptFor(planning, 'claude-code', false, { markDelivered: true })
+    prompt.promptFor(planning, 'claude-code', false, { markDelivered: true })
     tasks.addMessage(planning.id, 'human', 'keep it to four pieces')
     const first = promptText(tasks.requireTask(planning.id), 'claude-code', true, {
       markDelivered: true
@@ -927,7 +929,7 @@ describe('framingLapsed', () => {
 
   it('is false for a conversation that has never compacted', () => {
     const taskId = ranIn('sess-never-compacted', Date.now() - 60_000)
-    expect(scheduler.framingLapsed(taskId, 'sess-never-compacted')).toBe(false)
+    expect(prompt.framingLapsed(taskId, 'sess-never-compacted')).toBe(false)
   })
 
   it('is true when a compaction landed after this task last spoke', () => {
@@ -938,7 +940,7 @@ describe('framingLapsed', () => {
       durationMs: 1000,
       ts: started + 30_000
     })
-    expect(scheduler.framingLapsed(taskId, 'sess-compacted-after')).toBe(true)
+    expect(prompt.framingLapsed(taskId, 'sess-compacted-after')).toBe(true)
   })
 
   /**
@@ -954,7 +956,7 @@ describe('framingLapsed', () => {
       durationMs: 1000,
       ts: started - 30_000
     })
-    expect(scheduler.framingLapsed(taskId, 'sess-compacted-before')).toBe(false)
+    expect(prompt.framingLapsed(taskId, 'sess-compacted-before')).toBe(false)
   })
 
   /**
@@ -968,6 +970,6 @@ describe('framingLapsed', () => {
       durationMs: 1000,
       ts: Date.now()
     })
-    expect(scheduler.framingLapsed(other.id, 'sess-borrowed')).toBe(false)
+    expect(prompt.framingLapsed(other.id, 'sess-borrowed')).toBe(false)
   })
 })

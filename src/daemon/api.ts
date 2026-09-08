@@ -125,7 +125,6 @@ import {
   parkForHuman,
   continueTask,
   deliverToLiveSession,
-  promptFor,
   commitConversation,
   landConversation,
   pendingWorkFor,
@@ -140,6 +139,7 @@ import {
   retainedReservations,
   tick
 } from './scheduler.js'
+import { promptFor } from './prompt.js'
 import { controllerReport, drainConsults, enqueueConsult } from './controller.js'
 import { gateQuestion, riskOf } from './judgment.js'
 import { chatHistory, clearChat, sendChat } from './chat.js'

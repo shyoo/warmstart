@@ -33,6 +33,7 @@ let workers: typeof import('./workers.js')
 let tasks: typeof import('./tasks.js')
 let sessions: typeof import('./sessions.js')
 let scheduler: typeof import('./scheduler.js')
+let prompt: typeof import('./prompt.js')
 
 let claude: Worker
 let seq = 0
@@ -45,6 +46,7 @@ beforeAll(async () => {
   tasks = await import('./tasks.js')
   sessions = await import('./sessions.js')
   scheduler = await import('./scheduler.js')
+  prompt = await import('./prompt.js')
   const { claudeCode } = await import('./adapters/claude-code.js')
   claudeCode.isInstalled = () => true
   db.openDb(join(dir, 'awaithuman.db'))
@@ -166,10 +168,10 @@ describe('the agent is told the tool exists', () => {
    */
   it('names await_human in the same breath as task_complete', () => {
     const task = tasks.createTask({ title: 'prompt shape', status: 'ready' })
-    const prompt = scheduler.promptFor(task, 'claude-code', false, { markDelivered: false }).text
-    expect(prompt).toContain('`task_complete`')
-    expect(prompt).toContain('`await_human`')
-    expect(prompt).toContain('leaves the task reading as still running')
+    const text = prompt.promptFor(task, 'claude-code', false, { markDelivered: false }).text
+    expect(text).toContain('`task_complete`')
+    expect(text).toContain('`await_human`')
+    expect(text).toContain('leaves the task reading as still running')
   })
 })
 
