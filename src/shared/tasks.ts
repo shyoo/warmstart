@@ -85,24 +85,6 @@ export const ORIENTATION_LABELS: Record<OrientationChoice, string> = {
   off: 'say nothing about docs'
 }
 
-/**
- * ⚠️ Absent is `auto`, so a project that has never been asked still gets the line. The docs are
- * named only if they are on disk, so this is inert for a project that keeps none of them.
- */
-function _projectOrientationChoiceLegacy(
-  project: Pick<Project, 'config'> | null | undefined
-): OrientationChoice {
-  return project?.config?.prompt?.orientation === 'off' ? 'off' : 'auto'
-}
-
-/** The operator's own cold-start sentence for this project, or null when it has none. */
-function _projectSeedPromptLegacy(
-  project: Pick<Project, 'config'> | null | undefined
-): string | null {
-  const seed = project?.config?.prompt?.seed?.trim()
-  return seed ? seed : null
-}
-
 export interface ProjectPolicyPatch {
   finish?: FinishPolicyChoice
   landingTarget?: string
@@ -1621,40 +1603,6 @@ function parseTolerantJsonArray(text: string): unknown[] | null {
   return null
 }
 
-/**
- * Everything a question needs, after recovering whatever the tool call mangled.
- *
- * ⛔ **The one place `kind` is decided.** It arrives as a claim about what the asker *sent*; this
- * makes it a fact about what the question *has*, which is the only thing the card can render. No
- * asker can hand the operator a text box for a question that came with choices, and none can hand
- * them buttons for a question that has none.
- *
- * ⚠️ Supplied options always beat recovered ones, and an explicit `multi` is never downgraded to a
- * single choice because a phrase match failed to fire.
- */
-function _normaliseAskLegacy(input: {
-  question: string
-  header?: string | null
-  kind: QuestionKind
-  options?: QuestionOption[] | null
-}): { question: string; header: string | null; kind: QuestionKind; options: QuestionOption[] } {
-  const embedded = extractEmbeddedParameters(input.question)
-  const question = cleanQuestionText(embedded.question)
-  const header = stripCallSyntax(input.header?.trim() || embedded.header || '') || null
-  const supplied = (input.options ?? []).filter((option) => option.label?.trim())
-  const options = supplied.length > 0 ? supplied : (embedded.options ?? [])
-  const multi =
-    input.kind === 'multi' ||
-    embedded.multiSelect === true ||
-    isMultiSelectQuestion(question, options, header ?? undefined)
-  return {
-    question,
-    header,
-    kind: options.length === 0 ? 'text' : multi ? 'multi' : 'choice',
-    options
-  }
-}
-
 /** A remembered answer. `Bash(npm test)`-shaped, matched by tool plus a glob over the target. */
 export interface ApprovalRule {
   id: string
@@ -1738,7 +1686,18 @@ export const OBJECTIVE_PRESET_LABELS: Record<ObjectivePreset, string> = {
 
 export const DEFAULT_OBJECTIVE: Objective = PRESETS.balanced
 
-function normaliseLegacy(objective: Partial<Objective>): Objective {
+/**
+ * Scale a weight vector to sum to 1, so a caller may state weights in whatever units it likes.
+ *
+ * ⛔ **This is the one implementation**, and it lives here rather than in `policy.ts` only because
+ * `parseObjective` below needs it and `policy.ts` imports *this* file — the other direction would
+ * close a cycle. `policy.ts` re-exports it as `normalise`, which is the name every other process
+ * calls it by; nothing outside this file should import it from here.
+ *
+ * ⚠️ An all-zero vector is not a valid objective, so it resolves to the balanced preset rather than
+ * dividing by zero and publishing three `NaN` weights into the score arithmetic.
+ */
+export function normaliseObjective(objective: Partial<Objective>): Objective {
   const cost = Math.max(0, objective.cost ?? 0)
   const velocity = Math.max(0, objective.velocity ?? 0)
   const quality = Math.max(0, objective.quality ?? 0)
@@ -1755,7 +1714,7 @@ export function parseObjective(value: unknown): Objective | null {
   }
   if (value && typeof value === 'object') {
     const record = value as Partial<Objective>
-    if ('cost' in record || 'velocity' in record || 'quality' in record) return normaliseLegacy(record)
+    if ('cost' in record || 'velocity' in record || 'quality' in record) return normaliseObjective(record)
   }
   return null
 }
@@ -2282,22 +2241,6 @@ export function projectCompletionChoice(
   return raw === 'autonomous' || raw === 'checkpointed' || raw === 'inherit' ? raw : 'inherit'
 }
 
-/** Task, then project, then fleet - the same three tiers as finish and sharing, and `inherit` is real. */
-function _resolveCompletionModeLegacy(
-  task: Task | null | undefined,
-  project: Project | null | undefined,
-  fleetMode: CompletionMode = DEFAULT_FLEET_COMPLETION
-): ResolvedCompletionMode {
-  if (task && task.completionMode !== 'inherit') {
-    return { mode: task.completionMode, source: 'task' }
-  }
-  if (project) {
-    const choice = projectCompletionChoice(project)
-    if (choice !== 'inherit') return { mode: choice, source: 'project' }
-  }
-  return { mode: fleetMode, source: 'fleet' }
-}
-
 /** The pre-2026-08-28 spelling, still read off any project.json that has not been rewritten. */
 const FROM_STRATEGY: Record<string, FinishPolicy> = {
   'auto-land': 'commit-and-push',
@@ -2327,85 +2270,6 @@ export function projectSharingChoice(project: Project | null | undefined): Sessi
 
 export function finishInstructionFor(project: Project | null | undefined): string {
   return project?.config?.landing?.finishInstruction?.trim() || DEFAULT_FINISH_INSTRUCTION
-}
-
-function pickCustomInstruction(policy: FinishPolicy, instruction: string): string | null {
-  return policy === 'custom' ? instruction : null
-}
-
-/**
- * Task, then project, then fleet - the first one that is not `inherit`.
- *
- * ⚠️ The `source` travels with the answer so the UI can say *inherited from the project* rather than
- * showing a value the operator will look for on the task and not find. A setting whose origin is
- * invisible is one nobody trusts and everybody overrides.
- */
-function _resolveFinishPolicyLegacy(
-  task: Task | null | undefined,
-  project: Project | null | undefined,
-  fleetFinish: FinishPolicy = DEFAULT_FLEET_FINISH
-): ResolvedFinishPolicy {
-  const instruction = finishInstructionFor(project)
-
-  // ⛔ **A conversation answers `await-human` from its kind, above the project and the fleet.** Not
-  // as a default it merely starts on: a chat filed into a project set to `commit-and-merge` would
-  // otherwise land the repository every time the agent said something conclusive, which is the one
-  // thing the kind exists to stop. ⚠️ Only while its own policy is `inherit` — the Commit button
-  // writes a real rung, and from that moment the operator's choice is the answer. That is the whole
-  // of the override, and `isOpenConversation` is the same test read from the other side.
-  if (isOpenConversation(task)) {
-    return { policy: 'await-human', source: 'task', instruction: null }
-  }
-  if (task && task.finishPolicy !== 'inherit') {
-    return {
-      policy: task.finishPolicy,
-      source: 'task',
-      instruction: pickCustomInstruction(task.finishPolicy, instruction)
-    }
-  }
-  if (project) {
-    const choice = projectFinishChoice(project)
-    if (choice !== 'inherit') {
-      return {
-        policy: choice,
-        source: 'project',
-        instruction: pickCustomInstruction(choice, instruction)
-      }
-    }
-  }
-  return {
-    policy: fleetFinish,
-    source: 'fleet',
-    instruction: pickCustomInstruction(fleetFinish, instruction)
-  }
-}
-
-/**
- * Resolve task → project → fleet, taking the first that is not `inherit`.
- *
- * ⚠️ `inherit` is a real value, not a blank. A task left on it follows its project as the project
- * changes; a task set explicitly to the same value does not. That difference is the reason the
- * dropdown offers it rather than showing an empty box.
- */
-function _resolveSessionSharingLegacy(
-  task: Task | null | undefined,
-  project: Project | null | undefined,
-  fleetSharing: SessionSharing = DEFAULT_FLEET_SHARING
-): ResolvedSessionSharing {
-  // ⛔ Reuse is half of what a conversation *is*, so it comes from the kind rather than from the
-  // tier below it. ⚠️ Still only while the task is on `inherit`: somebody who explicitly turns
-  // sharing off on one conversation has said something, and the kind does not get to overrule it.
-  if (task && task.kind === 'conversation' && task.sessionSharing === 'inherit') {
-    return { sharing: 'on', source: 'task' }
-  }
-  if (task && task.sessionSharing !== 'inherit') {
-    return { sharing: task.sessionSharing, source: 'task' }
-  }
-  if (project) {
-    const choice = projectSharingChoice(project)
-    if (choice !== 'inherit') return { sharing: choice, source: 'project' }
-  }
-  return { sharing: fleetSharing, source: 'fleet' }
 }
 
 /**

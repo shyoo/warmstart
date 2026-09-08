@@ -203,19 +203,54 @@ shorter.
 
 Each row is one commit, green in between, no behaviour change mixed into a move.
 
-| # | Work | §  | Risk |
+**Executed 2026-09-08 as t293–t297, reviewed as a batch by t292.** Ten of the eleven rows are in.
+⛔ The status column is what was *measured* on the branch afterwards, not what the piece reported —
+two rows came back marked complete having done something other than the row.
+
+| # | Work | §  | Status |
 |---|---|---|---|
-| 1 | `scheduler.ts` → `prompt.ts` | 1.1 | low — one caller, 44 checks already on it |
-| 2 | `useAction()` hook, applied to `TaskThread.tsx`'s 22 sites | 1.2 | low |
-| 3 | `TaskSettingPicker` replaces the seven pickers | 1.2 | low, visible — drive the app after |
-| 4 | `scheduler.ts` → `scoring.ts` | 1.1 | medium |
-| 5 | `testkit.ts` + the three `pinnedTask` suites | 1.3 | low |
-| 6 | L2 checks for the six `agent.*` RPCs | 2.2 | low, high value |
-| 7 | `cancel.ts`: adopt `split.ts`'s `childrenOf`, cover it | 1.2 / 2.2 | ⛔ **behaviour change** — its own commit, verified against a split task |
-| 8 | `api.ts` → per-domain builders | 1.1 | medium |
-| 9 | `TaskThread.tsx` → `thread/*`, decisions into `lib/` | 1.1 / 2.2 | medium |
-| 10 | `shared/tasks.ts` → `shared/policy.ts` | 1.1 | wide, shallow — alone |
-| 11 | the rest of the `scheduler.ts` seams | 1.1 | ⛔ highest — dispatch |
+| 1 | `scheduler.ts` → `prompt.ts` | 1.1 | ✅ 557 lines |
+| 2 | `useAction()` hook, applied to `TaskThread.tsx`'s 22 sites | 1.2 | ✅ `lib/useAction.ts` |
+| 3 | `TaskSettingPicker` replaces the seven pickers | 1.2 | ⛔ **not done** — all seven still inline |
+| 4 | `scheduler.ts` → `scoring.ts` | 1.1 | ✅ 1,403 lines |
+| 5 | `testkit.ts` + the three `pinnedTask` suites | 1.3 | ✅ 350 lines, 4 suites on it |
+| 6 | L2 checks for the six `agent.*` RPCs | 2.2 | ✅ `test/daemon.test.mjs` +250 |
+| 7 | `cancel.ts`: adopt `split.ts`'s `childrenOf` | 1.2 / 2.2 | ✅ the one behaviour change, its own commit |
+| 8 | `api.ts` → per-domain builders | 1.1 | ✅ (redone by t292 — see below) |
+| 9 | `TaskThread.tsx` → `thread/*`, decisions into `lib/` | 1.1 / 2.2 | ⛔ **not done** |
+| 10 | `shared/tasks.ts` → `shared/policy.ts` | 1.1 | ✅ (finished by t292 — see below) |
+| 11 | the rest of the `scheduler.ts` seams | 1.1 | ✅ `residency.ts`, `turnend.ts`, `resolutions.ts` |
+
+### What the batch left behind
+
+⚠️ **Row 8 was filed as done having only renamed the problem, and was redone during review.** As
+landed by t297, `src/daemon/api/*.ts` each held a list of RPC method *names* and called a shared
+`pickApi()` that re-picked keys out of an already-built object; the 118-entry handler literal was
+intact inside `apiHandlers()` and `api.ts` had **grown** 1,710 → 1,730 lines. t292 moved the handler
+bodies for real: `api.ts` is now **28 lines**, the five domain files hold 66–525 lines each, and
+`api/support.ts` (458) carries the types, `ApiContext` and the shared validators. ⛔ The completeness
+proof survived the move and was re-verified by experiment — deleting `agent.depend` from its domain
+file fails the build naming `Property '"agent.depend"' is missing in type … but required in type
+'Api'`, at both `Pick<Api, AgentMethod>` and `satisfies Api`. The one thing t297 did leave that was
+worth keeping is the partition itself: its five name lists were a correct, non-overlapping inventory
+of all 118 methods, and they became the five `*Method` unions.
+
+⛔ **Rows 3 and 9 were never attempted.** `TaskThread.tsx` is 4,086 lines, the seven pickers are all
+still inline, and there is no `components/thread/` or `lib/threadview.ts`. This was the row carrying
+the renderer's 0% (§2.1), so that number has not moved. `docs/ui.md` is therefore **not** owed the
+"one component, seven uses" line in §3 yet.
+
+⚠️ **Row 10 landed as a copy, not a move**, and was finished during review: the six resolvers were
+duplicated into `policy.ts` while the originals stayed in `tasks.ts` renamed `_*Legacy` — ~200 lines
+of dead code, with the load-bearing ⛔/⚠️ docblocks stranded on the dead copies. t292 deleted them and
+carried the docblocks over. `normalise` is the one that could not simply move: `parseObjective` in
+`tasks.ts` needs the same arithmetic and `policy.ts` imports `tasks.ts`, so the implementation stays
+there as `normaliseObjective` and `policy.ts` re-exports it under the public name.
+
+⚠️ **Row 11 stopped short of the §1.1 target.** `scheduler.ts` is 3,780 lines, not ~1,500. The five
+seams are real moves with no re-export shims, but each new module imports back from `scheduler.ts`,
+so the cycles are load-bearing: `14f7155` fixed a module-eval TDZ read of `QUOTA_HIGH_WATER` that
+this shape introduced. ⛔ Nothing in these modules may read a scheduler binding at module-eval time.
 
 ⚠️ **1–6 are worth doing whatever happens to 7–11.** They are self-contained, and every one of them
 makes the file it touches cheaper to change before anything larger is attempted in it.

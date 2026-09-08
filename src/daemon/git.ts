@@ -1,7 +1,4 @@
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
-
-const run = promisify(execFile)
+import { run } from './spawn.js'
 
 /**
  * The one way this daemon shells out to git.

@@ -56,10 +56,17 @@ means capabilities changed between the gate that admitted a task and the dispatc
 Events flow the other way over a WebSocket: `DaemonEvent` (`protocol.ts`) → main → `daemon:event-push`
 → renderer. `session.data` carries raw terminal bytes; everything else is typed state.
 
-The RPC method table is the object literal in `daemon/api.ts` — ~90 methods grouped by prefix
-(`worker.*`, `task.*`, `project.*`, `session.*`, `approval.*`, `question.*`, `looseend.*`,
-`settings.*`, `controller.*`, `chat.*`, `agent.*`). `RpcMethod`/`RpcParams`/`RpcResult` in
-`shared/protocol.ts` are derived from it, so adding a method is one edit plus its types.
+The RPC method table is **118 methods across five domain files** — `daemon/api/workers.ts`,
+`projects.ts`, `tasks.ts`, `quality.ts` and `agent.ts` — that `daemon/api.ts` spreads into one
+object. `RpcMethod`/`RpcParams`/`RpcResult` in `shared/protocol.ts` are derived from it, so adding a
+method is one edit plus its types.
+
+⛔ **A method belongs to exactly one domain, and the mapped type is what enforces it.** `Api` is
+`{ [M in RpcMethod]: Handler<M> }`, each domain returns `Pick<Api, ItsMethodUnion>`, and `buildApi`
+closes with `satisfies Api` — so a method no domain claims fails the build *by name*. That check is
+the only reason splitting the table was safe, and nothing may replace it with a cast.
+`daemon/api/support.ts` holds what the domains share: the RPC types, `ApiContext`, and the
+`checkConstraints` / `checkWorkerDefaults` validators that refuse a bad request at the door.
 
 ## 2. Three loops
 
@@ -419,7 +426,7 @@ scripts/                ensure-electron, icons, build-win.ps1                   
 | File | Owns |
 |---|---|
 | `index.ts` | entry: lock, db, server, poller, scheduler, tailer wiring, shutdown |
-| `server.ts` `api.ts` `api/` | HTTP + WS on 127.0.0.1, bearer token, and the typed RPC table assembled from task, worker, project, quality and agent domains |
+| `server.ts` `api.ts` `api/` | HTTP + WS on 127.0.0.1, bearer token; `api.ts` spreads the five domain files in `api/` into one table (§1), and `api/support.ts` holds the types and validators they share |
 | `db.ts` | `node:sqlite` + numbered migrations → [`data-model.md`](data-model.md) |
 | `paths.ts` | the data directory, and the legacy-install adoption |
 | `scheduler.ts` | `tick`, dispatch, the watchdogs, `continueTask` → [`routing.md`](routing.md). Scoring, session residency, turn-end handling and the resolution RPCs are split into the five files below it |
