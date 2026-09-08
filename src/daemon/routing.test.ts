@@ -20,6 +20,7 @@ let quota: typeof import('./quota.js')
 let workers: typeof import('./workers.js')
 let tasks: typeof import('./tasks.js')
 let scheduler: typeof import('./scheduler.js')
+let scoring: typeof import('./scoring.js')
 let controller: typeof import('./controller.js')
 let complexityOf: typeof import('./complexity.js').complexityOf
 
@@ -60,6 +61,7 @@ beforeAll(async () => {
   workers = await import('./workers.js')
   tasks = await import('./tasks.js')
   scheduler = await import('./scheduler.js')
+  scoring = await import('./scoring.js')
   controller = await import('./controller.js')
   complexityOf = (await import('./complexity.js')).complexityOf
   const { claudeCode } = await import('./adapters/claude-code.js')
@@ -150,7 +152,7 @@ describe('choosing between workers that score the same', () => {
     // routing decision, and on that machine it was the one nobody had finished setting up.
     const ready = { ...base, identity: { loggedIn: true, setupComplete: true } }
     const halfDone = { ...base, identity: { loggedIn: true, setupComplete: false } }
-    expect(scheduler.unproven(ready, true)).toBeLessThan(scheduler.unproven(halfDone, true))
+    expect(scoring.unproven(ready, true)).toBeLessThan(scoring.unproven(halfDone, true))
   })
 
   it('does not penalise an adapter that cannot answer the question', () => {
@@ -158,7 +160,7 @@ describe('choosing between workers that score the same', () => {
     // Reading that as a missing step would bench a healthy account for a fact it can never report.
     const cannotTell = { ...base, identity: { loggedIn: true, setupComplete: null } }
     const ready = { ...base, identity: { loggedIn: true, setupComplete: true } }
-    expect(scheduler.unproven(cannotTell, true)).toBe(scheduler.unproven(ready, true))
+    expect(scoring.unproven(cannotTell, true)).toBe(scoring.unproven(ready, true))
   })
 
   it('does not penalise an adapter that cannot answer the SIGN-IN question either', () => {
@@ -175,7 +177,7 @@ describe('choosing between workers that score the same', () => {
     // was applied to one of the two fields.
     const keyring = { ...base, identity: { loggedIn: null, setupComplete: null } }
     const ready = { ...base, identity: { loggedIn: true, setupComplete: true } }
-    expect(scheduler.unproven(keyring, true)).toBe(scheduler.unproven(ready, true))
+    expect(scoring.unproven(keyring, true)).toBe(scoring.unproven(ready, true))
   })
 
   it('still penalises a worker that is genuinely, checkably signed out', () => {
@@ -183,11 +185,11 @@ describe('choosing between workers that score the same', () => {
     // fix for the above would have thrown away a real signal to buy fairness for a null.
     const signedOut = { ...base, identity: { loggedIn: false, setupComplete: true } }
     const ready = { ...base, identity: { loggedIn: true, setupComplete: true } }
-    expect(scheduler.unproven(signedOut, true)).toBeGreaterThan(scheduler.unproven(ready, true))
+    expect(scoring.unproven(signedOut, true)).toBeGreaterThan(scoring.unproven(ready, true))
   })
 
   it('knows least about a worker nothing has ever probed', () => {
-    expect(scheduler.unproven(base, false)).toBeGreaterThanOrEqual(1)
+    expect(scoring.unproven(base, false)).toBeGreaterThanOrEqual(1)
   })
 
   it('prefers an account that has actually produced a turn', () => {
@@ -198,12 +200,12 @@ describe('choosing between workers that score the same', () => {
     // is the one fact that separates those two cases, and it was not being consulted.
     const proven = { ...base, identity: { loggedIn: true, setupComplete: null } }
     const never = { ...base, identity: { loggedIn: true, setupComplete: null } }
-    expect(scheduler.unproven(proven, true)).toBeLessThan(scheduler.unproven(never, false))
+    expect(scoring.unproven(proven, true)).toBeLessThan(scoring.unproven(never, false))
   })
 
   it('still lets an unproven worker be tried, because nothing else ever becomes proven', () => {
     // ⚠️ A penalty, never a gate. Every fleet starts with no proven account.
-    expect(scheduler.unproven(base, false)).toBeLessThan(Infinity)
+    expect(scoring.unproven(base, false)).toBeLessThan(Infinity)
   })
 })
 
@@ -626,7 +628,7 @@ describe('the compaction reserve as a routing input', () => {
     expect(reserve.reserveState(worker.id).verdict).toBe('unknown')
     // ⚠️ What changed is that the *scorer* no longer converts that into a preference. This asserts
     // the rule rather than the arithmetic: only checked evidence may move the score.
-    expect(scheduler.quotaRiskOf(worker.id)).toBe(0)
+    expect(scoring.quotaRiskOf(worker.id)).toBe(0)
   })
 
   it('still penalises a worker the vendor has actually rate-limited', async () => {
@@ -637,7 +639,7 @@ describe('the compaction reserve as a routing input', () => {
       rateLimitType: 'five_hour',
       resetsAt: Date.now() + 3_600_000
     })
-    expect(scheduler.quotaRiskOf(worker.id)).toBe(1)
+    expect(scoring.quotaRiskOf(worker.id)).toBe(1)
   })
 })
 
@@ -683,14 +685,14 @@ describe('the routing score shows its own arithmetic', () => {
   it('states that higher wins, and on what scale', () => {
     // ⛔ Neither is inferable from a number. `-0.120` could be a rank, a cost, or a log-odds, and a
     // reader with no legend guessed — which is exactly what the controller did four times.
-    const legend = scheduler.scoreLegend({ cost: 0.34, velocity: 0.33, quality: 0.33 }).join('\n')
+    const legend = scoring.scoreLegend({ cost: 0.34, velocity: 0.33, quality: 0.33 }).join('\n')
     expect(legend).toContain('HIGHER WINS')
     expect(legend).toContain('linear and unitless')
     expect(legend).toMatch(/nothing is logarithmic/i)
   })
 
   it('derives every weight from the objective vector, and says so', () => {
-    const legend = scheduler.scoreLegend({ cost: 0.34, velocity: 0.33, quality: 0.33 }).join('\n')
+    const legend = scoring.scoreLegend({ cost: 0.34, velocity: 0.33, quality: 0.33 }).join('\n')
     // The weight, and the arithmetic that produced it, on the same line.
     expect(legend).toContain('1.249 = 0.8 + 2.0×cost − 0.7×velocity')
     expect(legend).toContain('cost 0.34 · velocity 0.33 · quality 0.33')
@@ -699,7 +701,7 @@ describe('the routing score shows its own arithmetic', () => {
   })
 
   it('says which direction each term pushes, and what a value of 1 would mean', () => {
-    const legend = scheduler.scoreLegend({ cost: 0.34, velocity: 0.33, quality: 0.33 }).join('\n')
+    const legend = scoring.scoreLegend({ cost: 0.34, velocity: 0.33, quality: 0.33 }).join('\n')
     expect(legend).toMatch(/cold\s+penalty/)
     expect(legend).toMatch(/cacheWarmth\s+bonus/)
     // ⚠️ "conversation", not "session", and it is the whole 2026-09-02 finding in four words: a
@@ -716,7 +718,7 @@ describe('the routing score shows its own arithmetic', () => {
    * floor, when 0 here is the *middle*: exactly the fleet's median pace, and also "nothing measured".
    */
   it('says that pace is signed, and that its zero means unmeasured as well as average', () => {
-    const legend = scheduler.scoreLegend({ cost: 0.3, velocity: 0.3, quality: 0.4 }).join('\n')
+    const legend = scoring.scoreLegend({ cost: 0.3, velocity: 0.3, quality: 0.4 }).join('\n')
     expect(legend).toMatch(/pace\s+bonus/)
     expect(legend).toContain('0.3 + 1.7×velocity')
     expect(legend).toContain('unmeasured')
@@ -728,7 +730,7 @@ describe('the routing score shows its own arithmetic', () => {
       term('cold', 1.249, 1, -1, 'no session to reuse, so a start pays a full cache write'),
       term('capabilityFit', 1.129, 1, 1, 'the task requires no specific capability')
     ]
-    const out = scheduler
+    const out = scoring
       .formatScore({ total: terms.reduce((s, t) => s + t.contribution, 0), terms })
       .join('\n')
     expect(out).toContain('why the value is that')
@@ -743,7 +745,7 @@ describe('the routing score shows its own arithmetic', () => {
       term('cold', 1.249, 1, -1),
       term('quotaRisk', 0.908, 0, -1, 'reserve verdict unknown — remaining quota % is not an input')
     ]
-    const out = scheduler
+    const out = scoring
       .formatScore({ total: terms.reduce((s, t) => s + t.contribution, 0), terms })
       .join('\n')
     expect(out).toContain('quotaRisk')
@@ -761,7 +763,7 @@ describe('the routing score shows its own arithmetic', () => {
       term('unproven', 0.35, 0.5, -1)
     ]
     const total = terms.reduce((s, t) => s + t.contribution, 0)
-    const out = scheduler.formatScore({ total, terms })
+    const out = scoring.formatScore({ total, terms })
     const printed = out
       .filter((l) => / = /.test(l) && !l.includes('TOTAL') && !l.includes('contrib'))
       .map((l) => Number((l.split('=')[1] ?? '').trim().split(/\s+/)[0]))
@@ -804,8 +806,8 @@ describe('the derivation is generated for a person, not sent to the controller',
     score: breakdown().total,
     warm: false,
     note: '',
-    considered: scheduler.briefScore(breakdown()),
-    formula: scheduler.formatScore(breakdown())
+    considered: scoring.briefScore(breakdown()),
+    formula: scoring.formatScore(breakdown())
   })
 
   const task = { id: 't', seq: 41, title: 'a large task', kind: 'work' } as Parameters<
@@ -815,7 +817,7 @@ describe('the derivation is generated for a person, not sent to the controller',
   it('names the live terms and the unmeasurable ones in a single line', () => {
     // ⚠️ A zero term is named rather than dropped: on this fleet it is usually one that could not be
     // read at all, and that is the finding the controller has to be able to see.
-    const brief = scheduler.briefScore(breakdown())
+    const brief = scoring.briefScore(breakdown())
     expect(brief).toContain('cold -1.249')
     expect(brief).toContain('capabilityFit +1.129')
     expect(brief).toContain('unmeasurable here: quotaRisk')
@@ -848,7 +850,7 @@ describe('the derivation is generated for a person, not sent to the controller',
 
   it('puts the full derivation on the detail instead, legend and all', async () => {
     const { routeDetail } = await import('./judgment.js')
-    const legend = scheduler.scoreLegend({ cost: 0.34, velocity: 0.33, quality: 0.33 })
+    const legend = scoring.scoreLegend({ cost: 0.34, velocity: 0.33, quality: 0.33 })
     const detail = routeDetail(task, [candidate('w1', 'ClaudeSecond')], legend)
     expect(detail).toContain('How a score is built')
     expect(detail).toContain('HIGHER WINS')
@@ -871,36 +873,36 @@ describe('quota as a slope rather than a switch', () => {
     // ⛔ Not a load balancer. A term rising from the first token would prefer the emptiest account
     // always, which fights the one preference this cost model exists to express — that a warm
     // session is the cheapest thing available.
-    expect(scheduler.windowRisk(0)).toBe(0)
-    expect(scheduler.windowRisk(25)).toBe(0)
-    expect(scheduler.windowRisk(50)).toBe(0)
+    expect(scoring.windowRisk(0)).toBe(0)
+    expect(scoring.windowRisk(25)).toBe(0)
+    expect(scoring.windowRisk(50)).toBe(0)
   })
 
   it('rises linearly between the floor and the hard gate', () => {
     // 50 → 92 is the span; 71 is its midpoint.
-    expect(scheduler.windowRisk(71)).toBeCloseTo(0.5, 2)
-    expect(scheduler.windowRisk(60)).toBeCloseTo(10 / 42, 2)
-    expect(scheduler.windowRisk(85)).toBeCloseTo(35 / 42, 2)
+    expect(scoring.windowRisk(71)).toBeCloseTo(0.5, 2)
+    expect(scoring.windowRisk(60)).toBeCloseTo(10 / 42, 2)
+    expect(scoring.windowRisk(85)).toBeCloseTo(35 / 42, 2)
   })
 
   it('reaches exactly 1.0 where the candidate would be excluded outright', () => {
     // ⭐ The property that matters: the slope hands over to the cliff with no step in between, so a
     // worker is never simultaneously nearly-excluded and cheap.
-    expect(scheduler.windowRisk(92)).toBe(1)
-    expect(scheduler.windowRisk(99)).toBe(1)
-    expect(scheduler.windowRisk(100)).toBe(1)
+    expect(scoring.windowRisk(92)).toBe(1)
+    expect(scoring.windowRisk(99)).toBe(1)
+    expect(scoring.windowRisk(100)).toBe(1)
   })
 
   it('treats a missing or nonsense reading as zero, never as a guess', () => {
     // ⛔ AGENTS.md: only checked evidence may move a score. Unknown is not bad news.
-    expect(scheduler.windowRisk(Number.NaN)).toBe(0)
-    expect(scheduler.windowRisk(-5)).toBe(0)
+    expect(scoring.windowRisk(Number.NaN)).toBe(0)
+    expect(scoring.windowRisk(-5)).toBe(0)
   })
 
     it('separates the two accounts that four consults could not', () => {
     // The real readings from 2026-08-30, and the whole point of the change: these must not tie.
-    const claudeSecond = scheduler.windowRisk(64)
-    const antigravity = scheduler.windowRisk(98)
+    const claudeSecond = scoring.windowRisk(64)
+    const antigravity = scoring.windowRisk(98)
     expect(antigravity).toBeGreaterThan(claudeSecond)
     // At weight 0.908 the gap is far wider than ROUTE_EPSILON (0.1), so no consult is spent at all.
     expect((antigravity - claudeSecond) * 0.908).toBeGreaterThan(0.1)
@@ -909,9 +911,9 @@ describe('quota as a slope rather than a switch', () => {
   it('penalises quota deficit and rewards expiring credits based on reset horizon', () => {
     const now = Date.now()
     // Antigravity: 93% on 7d window resetting in 10h (expiring credits, high available rate before reset)
-    const antigravity = scheduler.windowRisk(93, 92, 50, now + 10 * 3600 * 1000, now, 'weekly:gemini')
+    const antigravity = scoring.windowRisk(93, 92, 50, now + 10 * 3600 * 1000, now, 'weekly:gemini')
     // ClaudeSecond: 97% on 7d window resetting in 33h (1d 9h, low available rate, severe deficit)
-    const claudeSecond = scheduler.windowRisk(97, 92, 50, now + 33 * 3600 * 1000, now, 'weekly')
+    const claudeSecond = scoring.windowRisk(97, 92, 50, now + 33 * 3600 * 1000, now, 'weekly')
 
     expect(antigravity).toBeLessThan(claudeSecond)
     expect(claudeSecond).toBeGreaterThan(2.0)
@@ -951,7 +953,7 @@ describe('quota as a slope rather than a switch', () => {
     })
     tasks.setQuotaOverride(task.id, now + 48 * 3600 * 1000)
 
-    const choice = scheduler.chooseTarget(tasks.requireTask(task.id))
+    const choice = scoring.chooseTarget(tasks.requireTask(task.id))
     expect(choice.worker?.id).toBe(agy.id)
   })
 
@@ -976,7 +978,7 @@ describe('quota as a slope rather than a switch', () => {
       constraints: { workerId: claude.id }
     })
 
-    const choice = scheduler.chooseTarget(task)
+    const choice = scoring.chooseTarget(task)
     expect(choice.worker).toBeNull()
     expect(choice.reason).toContain('ClaudeThird-t84 at 99% of its Claude 7d window')
     expect(choice.holdUntil).toBe(now + 33 * 3600 * 1000)
@@ -995,7 +997,7 @@ describe('gating controller consults on fresh quota', () => {
       estTokens: 200_000
     })
 
-    const choice = scheduler.chooseTarget(task)
+    const choice = scoring.chooseTarget(task)
     expect(choice.deferred).toBe(true)
     expect(choice.reason).toContain('reading quota for tied candidates')
     expect(choice.worker).toBeNull()
@@ -1083,7 +1085,7 @@ describe('routing a retry back to the account that already has the context', () 
     }
   }
 
-  const termsOf = (choice: ReturnType<typeof scheduler.chooseTarget>) =>
+  const termsOf = (choice: ReturnType<typeof scoring.chooseTarget>) =>
     Object.fromEntries((choice.breakdown?.terms ?? []).map((t) => [t.name, t]))
 
   beforeAll(async () => {
@@ -1138,7 +1140,7 @@ describe('routing a retry back to the account that already has the context', () 
       cacheLeftMs: 30 * 60 * 1000
     })
 
-    const choice = scheduler.chooseTarget(tasks.requireTask(task.id))
+    const choice = scoring.chooseTarget(tasks.requireTask(task.id))
     expect(choice.worker?.id).toBe(codex.id)
 
     const terms = termsOf(choice)
@@ -1174,7 +1176,7 @@ describe('routing a retry back to the account that already has the context', () 
       cacheLeftMs: -60_000
     })
 
-    const terms = termsOf(scheduler.chooseTarget(tasks.requireTask(task.id)))
+    const terms = termsOf(scoring.chooseTarget(tasks.requireTask(task.id)))
     expect(terms.contextHeld?.value).toBe(1)
     expect(terms.cacheWarmth?.value).toBe(0)
   })
@@ -1200,7 +1202,7 @@ describe('routing a retry back to the account that already has the context', () 
       cacheLeftMs: 20 * 60 * 1000
     })
 
-    const terms = termsOf(scheduler.chooseTarget(tasks.requireTask(task.id)))
+    const terms = termsOf(scoring.chooseTarget(tasks.requireTask(task.id)))
     expect(terms.contextHeld?.value).toBe(0)
     expect(terms.cold?.value).toBe(1)
   })
@@ -1231,7 +1233,7 @@ describe('a tie between a conversation that exists and one that does not', () =>
 
   it('is won by the live conversation, so no controller turn is spent', () => {
     const warm = candidate('warm', { session: held })
-    const winner = scheduler.reuseTieBreak([warm, candidate('cold')])
+    const winner = scoring.reuseTieBreak([warm, candidate('cold')])
     expect(winner).toBe(warm)
   })
 
@@ -1239,26 +1241,26 @@ describe('a tie between a conversation that exists and one that does not', () =>
     // ⛔ The half a one-shot CLI can ever have. `codex exec` never leaves a live idle session, so
     // reading `session` alone would hand every tie on that adapter to a cold start.
     const reopenable = candidate('reopenable', { resumable: held })
-    const winner = scheduler.reuseTieBreak([candidate('cold'), reopenable])
+    const winner = scoring.reuseTieBreak([candidate('cold'), reopenable])
     expect(winner).toBe(reopenable)
   })
 
   it('takes the highest-scoring reuser, because this breaks a tie rather than re-ranking one', () => {
     const first = candidate('warm-first', { session: held })
     const second = candidate('warm-second', { session: held })
-    expect(scheduler.reuseTieBreak([first, second, candidate('cold')])).toBe(first)
+    expect(scoring.reuseTieBreak([first, second, candidate('cold')])).toBe(first)
   })
 
   it('says nothing when reuse does not separate the field', () => {
     // Every candidate holds one, or none does: either way the consult is still the honest answer.
-    expect(scheduler.reuseTieBreak([candidate('a'), candidate('b')])).toBeNull()
+    expect(scoring.reuseTieBreak([candidate('a'), candidate('b')])).toBeNull()
     expect(
-      scheduler.reuseTieBreak([
+      scoring.reuseTieBreak([
         candidate('a', { session: held }),
         candidate('b', { resumable: held })
       ])
     ).toBeNull()
-    expect(scheduler.reuseTieBreak([])).toBeNull()
+    expect(scoring.reuseTieBreak([])).toBeNull()
   })
 })
 
@@ -1381,7 +1383,7 @@ describe('a task pinned to a list of accounts', () => {
       constraints: { workerIds: [chosen.id] }
     })
 
-    const choice = scheduler.chooseTarget(task)
+    const choice = scoring.chooseTarget(task)
     expect(choice.worker?.id).toBe(chosen.id)
   })
 
@@ -1397,7 +1399,7 @@ describe('a task pinned to a list of accounts', () => {
 
     // ⛔ No worker, not "the next best one". Silently substituting an account the operator excluded
     // is the failure this gate exists to make impossible.
-    expect(scheduler.chooseTarget(task).worker).toBeNull()
+    expect(scoring.chooseTarget(task).worker).toBeNull()
   })
 
   it('gives each named account the model chosen for it, not one model for the fleet', async () => {
@@ -1421,7 +1423,7 @@ describe('a task pinned to a list of accounts', () => {
       title: 'a work task',
       constraints: { workerId: ctrl.id }
     })
-    const choice = scheduler.chooseTarget(workTask)
+    const choice = scoring.chooseTarget(workTask)
     expect(choice.worker).toBeNull()
     expect(choice.reason).toContain('controller only')
   })
@@ -1439,7 +1441,7 @@ describe('a task pinned to a list of accounts', () => {
       title: 'a work task',
       constraints: { workerId: idle.id }
     })
-    const choice = scheduler.chooseTarget(workTask)
+    const choice = scoring.chooseTarget(workTask)
     expect(choice.worker).toBeNull()
     expect(choice.reason).toContain('held out of both work and judgment')
   })
@@ -1453,7 +1455,7 @@ describe('model-aware routing', () => {
   it('headline: with empty allowlist, candidate set and every score are identical to single-model behavior', () => {
     const w = workers.createWorker({ adapterId: 'claude-code', label: 'SingleModelW', enabled: true })
     const task = tasks.createTask({ title: 'A single model task', constraints: { workerId: w.id } })
-    const choice = scheduler.chooseTarget(task)
+    const choice = scoring.chooseTarget(task)
     expect(choice.worker?.id).toBe(w.id)
     expect(choice.scored).toHaveLength(1)
     expect(choice.scored?.[0]?.model).toBeNull()
@@ -1494,7 +1496,7 @@ describe('model-aware routing', () => {
     for (const w of [a, b]) {
       const task = tasks.createTask({ title: prompt, constraints: { workerId: w.id } })
       expect(complexityOf(task).band).not.toBe('low')
-      const choice = scheduler.chooseTarget(task)
+      const choice = scoring.chooseTarget(task)
       const scored = choice.scored ?? []
       expect(scored, `${w.label} produced a scored field`).toHaveLength(1)
       for (const name of ['fitness', 'price']) {
@@ -1523,7 +1525,7 @@ describe('model-aware routing', () => {
       constraints: { workerId: a.id }
     })
     expect(complexityOf(task).band).not.toBe('low')
-    const scored = scheduler.chooseTarget(task).scored ?? []
+    const scored = scoring.chooseTarget(task).scored ?? []
     expect(scored).toHaveLength(2)
 
     // ⛔ Neither term may still be claiming inertness once a worker has opted in.
@@ -1594,7 +1596,7 @@ describe('model-aware routing', () => {
        values (?, ?, ?, ?, 'work', ?, ?, 'complete')`
     ).run('run-warm-1', task.id, sId, w.id, Date.now() - 1000, Date.now())
 
-    const choice = scheduler.chooseTarget(task)
+    const choice = scoring.chooseTarget(task)
     expect(choice.session?.id).toBe(sId)
     const candidates = choice.scored?.filter((s) => s.workerId === w.id)
     expect(candidates).toHaveLength(1)
@@ -1609,7 +1611,7 @@ describe('model-aware routing', () => {
       title: 'Pinned model task',
       constraints: { model: 'claude-haiku-4-5-20251001', workerId: w.id }
     })
-    const choice1 = scheduler.chooseTarget(task1)
+    const choice1 = scoring.chooseTarget(task1)
     const candidates1 = choice1.scored?.filter((s) => s.workerId === w.id)
     expect(candidates1).toHaveLength(1)
     expect(candidates1?.[0]?.model).toBe('claude-haiku-4-5-20251001')
@@ -1618,7 +1620,7 @@ describe('model-aware routing', () => {
       title: 'ModelsByWorker task',
       constraints: { modelsByWorker: { [w.id]: 'claude-opus-5' }, workerId: w.id }
     })
-    const choice2 = scheduler.chooseTarget(task2)
+    const choice2 = scoring.chooseTarget(task2)
     const candidates2 = choice2.scored?.filter((s) => s.workerId === w.id)
     expect(candidates2).toHaveLength(1)
     expect(candidates2?.[0]?.model).toBe('claude-opus-5')
@@ -1638,13 +1640,13 @@ describe('model-aware routing', () => {
     })
 
     const auto = tasks.createTask({ title: 'Auto model task', constraints: { workerId: w.id } })
-    expect(scheduler.chooseTarget(auto).scored?.filter((s) => s.workerId === w.id)).toHaveLength(3)
+    expect(scoring.chooseTarget(auto).scored?.filter((s) => s.workerId === w.id)).toHaveLength(3)
 
     const inherit = tasks.createTask({
       title: 'Inherited model task',
       constraints: { workerId: w.id, modelPolicy: 'inherit' }
     })
-    const candidates = scheduler.chooseTarget(inherit).scored?.filter((s) => s.workerId === w.id)
+    const candidates = scoring.chooseTarget(inherit).scored?.filter((s) => s.workerId === w.id)
     expect(candidates).toHaveLength(1)
     expect(candidates?.[0]?.model).toBe('claude-sonnet-5')
   })
@@ -1664,7 +1666,7 @@ describe('model-aware routing', () => {
         constraints: { workerId: w.id, modelPolicy: 'inherit' }
       })
 
-      const choice = scheduler.chooseTarget(task)
+      const choice = scoring.chooseTarget(task)
       const candidates = choice.scored?.filter((s) => s.workerId === w.id)
       expect(candidates).toHaveLength(1)
       expect(candidates?.[0]?.model).toBe('claude-opus-5')
@@ -1721,7 +1723,7 @@ describe('model-aware routing', () => {
         )
         .run('run-haiku-past', task.id, 'sess-haiku-past', w.id, now - 600_000, now - 300_000, 'success', 'claude-haiku-4-5-20251001')
 
-      const choice = scheduler.chooseTarget(task)
+      const choice = scoring.chooseTarget(task)
       const candidates = choice.scored?.filter((s) => s.workerId === w.id)
       expect(candidates).toHaveLength(1)
       expect(candidates?.[0]?.model).toBe('claude-opus-5')
@@ -1776,7 +1778,7 @@ describe('model-aware routing', () => {
         )
         .run('run-haiku-past-2', task.id, 'sess-haiku-past-2', w.id, now - 600_000, now - 300_000, 'success', 'claude-haiku-4-5-20251001')
 
-      const choice = scheduler.chooseTarget(task)
+      const choice = scoring.chooseTarget(task)
       const candidates = choice.scored?.filter((s) => s.workerId === w.id)
       expect(candidates).toHaveLength(1)
       expect(candidates?.[0]?.model).toBe('claude-opus-5')
@@ -1843,7 +1845,7 @@ describe('model-aware routing', () => {
         constraints: { workerId: w.id, modelPolicy: 'auto' }
       })
 
-      const choice = scheduler.chooseTarget(task)
+      const choice = scoring.chooseTarget(task)
       const candidates = choice.scored?.filter((s) => s.workerId === w.id)
       expect(candidates).toHaveLength(3)
     })
@@ -1853,7 +1855,7 @@ describe('model-aware routing', () => {
     const w = workers.createWorker({ adapterId: 'claude-code', label: 'MultiModelWorker', enabled: true })
     workers.updateWorker(w.id, { routableModels: ['claude-haiku-4-5-20251001', 'claude-sonnet-5'] })
     const task = tasks.createTask({ title: 'Multi model task', constraints: { workerId: w.id } })
-    const choice = scheduler.chooseTarget(task)
+    const choice = scoring.chooseTarget(task)
     const candidates = choice.scored?.filter((s) => s.workerId === w.id)
     expect(candidates).toHaveLength(2)
     const models = candidates?.map((c) => c.model)
@@ -1874,7 +1876,7 @@ describe('model-aware routing', () => {
     sample.run(agy.id, 'gemini_session', 'Gemini 5h', 20, now + 4 * 3600 * 1000, 'cli', now, 'gemini')
 
     const task = tasks.createTask({ title: 'Multi-pool quota task', constraints: { workerId: agy.id } })
-    const choice = scheduler.chooseTarget(task)
+    const choice = scoring.chooseTarget(task)
 
     expect(choice.worker?.id).toBe(agy.id)
     expect(choice.model).toBe('gemini-3.7-flash-high')
@@ -1923,7 +1925,7 @@ describe('model-aware routing', () => {
     const tenModels = ['m1', 'm2', 'm3', 'm4', 'm5', 'm6', 'm7', 'm8', 'm9', 'm10']
     workers.updateWorker(w.id, { routableModels: tenModels })
     const task = tasks.createTask({ title: 'Cap test task', constraints: { workerId: w.id } })
-    const choice = scheduler.chooseTarget(task)
+    const choice = scoring.chooseTarget(task)
     const candidateCount = choice.scored?.filter((s) => s.workerId === w.id).length
     expect(candidateCount).toBe(8)
   })
@@ -1939,7 +1941,7 @@ describe('model-aware routing', () => {
       estTokens: 1_000,
       constraints: { workerId: w.id }
     })
-    const lowChoice = scheduler.chooseTarget(lowTask)
+    const lowChoice = scoring.chooseTarget(lowTask)
     expect(lowChoice.model).toBe('claude-haiku-4-5-20251001')
 
     // High complexity task: required = 0.75. Haiku (0.418 < 0.75) gets fitness value 0. Opus (0.846 >= 0.75) gets 1.0.
@@ -1950,7 +1952,7 @@ describe('model-aware routing', () => {
       objective: { cost: 0.1, velocity: 0.1, quality: 0.8 },
       constraints: { workerId: w.id }
     })
-    const highChoice = scheduler.chooseTarget(highTask)
+    const highChoice = scoring.chooseTarget(highTask)
     expect(highChoice.model).toBe('claude-opus-5')
   })
 
@@ -1958,7 +1960,7 @@ describe('model-aware routing', () => {
     const w = workers.createWorker({ adapterId: 'claude-code', label: 'UnmeasuredWorker', enabled: true })
     workers.updateWorker(w.id, { routableModels: ['custom-unmeasured-model-xyz'] })
     const task = tasks.createTask({ title: 'Unmeasured fitness task', constraints: { workerId: w.id } })
-    const choice = scheduler.chooseTarget(task)
+    const choice = scoring.chooseTarget(task)
     expect(choice.worker?.id).toBe(w.id)
     expect(choice.model).toBe('custom-unmeasured-model-xyz')
     const candidate = choice.scored?.find((s) => s.model === 'custom-unmeasured-model-xyz')
@@ -1984,7 +1986,7 @@ describe('model-aware routing', () => {
     const w = workers.createWorker({ adapterId: 'claude-code', label: 'PriceTokensWorker', enabled: true })
     workers.updateWorker(w.id, { routableModels: ['claude-haiku-4-5-20251001', 'claude-sonnet-5'] })
     const task = tasks.createTask({ title: 'Tokens fallback task', constraints: { workerId: w.id } })
-    const choice = scheduler.chooseTarget(task)
+    const choice = scoring.chooseTarget(task)
     const candidates = choice.scored?.filter((s) => s.workerId === w.id)
     expect(candidates).toHaveLength(2)
     for (const c of candidates ?? []) {
@@ -2003,7 +2005,7 @@ describe('model-aware routing', () => {
 
     const task = tasks.createTask({ title: 'Memo test task' })
     spy.mockClear()
-    scheduler.chooseTarget(task)
+    scoring.chooseTarget(task)
 
     const matchingCalls = spy.mock.calls.filter(
       (call) => call[1]?.adapterId === 'claude-code' && call[1]?.model === 'claude-sonnet-5' && call[1]?.warm === false
@@ -2022,7 +2024,7 @@ describe('model-aware routing', () => {
       setSetting('modelExploration', true)
       setSetting('modelExplorationRate', 1.0)
 
-      const choice = scheduler.chooseTarget(task)
+      const choice = scoring.chooseTarget(task)
       expect(choice.routedBy).toBe('explore')
       expect(choice.scored).toHaveLength(2)
       const chosenInScored = choice.scored?.find((s) => s.chosen)

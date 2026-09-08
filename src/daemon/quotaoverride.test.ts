@@ -37,6 +37,7 @@ let db: typeof import('./db.js')
 let workers: typeof import('./workers.js')
 let tasks: typeof import('./tasks.js')
 let scheduler: typeof import('./scheduler.js')
+let scoring: typeof import('./scoring.js')
 let clock: typeof import('./cacheclock.js')
 let api: typeof import('./api.js')
 let quota: typeof import('./quota.js')
@@ -105,6 +106,7 @@ beforeAll(async () => {
   workers = await import('./workers.js')
   tasks = await import('./tasks.js')
   scheduler = await import('./scheduler.js')
+  scoring = await import('./scoring.js')
   clock = await import('./cacheclock.js')
   api = await import('./api.js')
   quota = await import('./quota.js')
@@ -137,7 +139,7 @@ describe('a task held at the water mark says when it could next move', () => {
     seedQuota(worker.id, HELD_PERCENT)
     const task = pinnedTask(worker.id)
 
-    const choice = scheduler.chooseTarget(task)
+    const choice = scoring.chooseTarget(task)
     expect(choice.worker).toBeNull()
     // The sentence names the window, because on a two-pool account "its 5h window" is unverifiable.
     expect(choice.reason).toContain('ClaudeThird at 92% of its Claude 5h window')
@@ -148,7 +150,7 @@ describe('a task held at the water mark says when it could next move', () => {
     const resetsAt = seedQuota(worker.id, HELD_PERCENT)
     const task = pinnedTask(worker.id)
 
-    const choice = scheduler.chooseTarget(task)
+    const choice = scoring.chooseTarget(task)
     // ⛔ The very sample that refused the dispatch, not a second lookup that could name another one.
     expect(choice.holdUntil).toBe(resetsAt)
   })
@@ -187,7 +189,7 @@ describe('a task held at the water mark says when it could next move', () => {
     seedQuota(second.id, HELD_PERCENT, RESET_IN_MS)
     const task = tasks.createTask({ title: 'unpinned', createdBy: { kind: 'human' } })
 
-    const choice = scheduler.chooseTarget(task)
+    const choice = scoring.chooseTarget(task)
     expect(choice.worker).toBeNull()
     // The task needs any one of them, so the first window back is the first moment it could move.
     expect(choice.holdUntil).toBe(soon)
@@ -201,7 +203,7 @@ describe('a person may overrule the water mark, and only the water mark', () => 
     const task = pinnedTask(worker.id)
     tasks.setQuotaOverride(task.id, Date.now() + RESET_IN_MS)
 
-    const choice = scheduler.chooseTarget(tasks.requireTask(task.id))
+    const choice = scoring.chooseTarget(tasks.requireTask(task.id))
     expect(choice.worker?.id).toBe(worker.id)
   })
 
@@ -212,7 +214,7 @@ describe('a person may overrule the water mark, and only the water mark', () => 
     // ⛔ A deadline in the past is not an override. The permission expires with its own reason.
     tasks.setQuotaOverride(task.id, Date.now() - 1000)
 
-    const choice = scheduler.chooseTarget(tasks.requireTask(task.id))
+    const choice = scoring.chooseTarget(tasks.requireTask(task.id))
     expect(choice.worker).toBeNull()
     expect(choice.reason).toContain('92% of its Claude 5h window')
   })
@@ -227,7 +229,7 @@ describe('a person may overrule the water mark, and only the water mark', () => 
     const task = tasks.createTask({ title: 'unpinned', createdBy: { kind: 'human' } })
     tasks.setQuotaOverride(task.id, Date.now() + RESET_IN_MS)
 
-    const choice = scheduler.chooseTarget(tasks.requireTask(task.id))
+    const choice = scoring.chooseTarget(tasks.requireTask(task.id))
     expect(choice.worker?.id).toBe(free.id)
   })
 
@@ -238,7 +240,7 @@ describe('a person may overrule the water mark, and only the water mark', () => 
     const task = pinnedTask(worker.id)
     tasks.setQuotaOverride(task.id, Date.now() + RESET_IN_MS)
 
-    const choice = scheduler.chooseTarget(tasks.requireTask(task.id))
+    const choice = scoring.chooseTarget(tasks.requireTask(task.id))
     expect(choice.worker).toBeNull()
     expect(choice.reason).toContain('disabled')
   })
@@ -327,7 +329,7 @@ describe('task.overrideQuota', () => {
     expect(result.task.quotaOverrideUntil).toBe(resetsAt)
 
     // The resumed task can now be chosen by the scheduler despite the 92% watermark
-    const choice = scheduler.chooseTarget(tasks.requireTask(task.id))
+    const choice = scoring.chooseTarget(tasks.requireTask(task.id))
     expect(choice.worker?.id).toBe(worker.id)
 
     // And is exempt from mid-run preemption at 96%
@@ -343,11 +345,11 @@ describe('task.overrideQuota', () => {
     seedQuota(worker.id, HELD_PERCENT)
     const task = pinnedTask(worker.id)
     await handlers()['task.overrideQuota']({ id: task.id })
-    expect(scheduler.chooseTarget(tasks.requireTask(task.id)).worker?.id).toBe(worker.id)
+    expect(scoring.chooseTarget(tasks.requireTask(task.id)).worker?.id).toBe(worker.id)
 
     const withdrawn = await handlers()['task.overrideQuota']({ id: task.id, until: null })
     expect(withdrawn.task.quotaOverrideUntil).toBeNull()
-    expect(scheduler.chooseTarget(tasks.requireTask(task.id)).worker).toBeNull()
+    expect(scoring.chooseTarget(tasks.requireTask(task.id)).worker).toBeNull()
   })
 
   it('writes the decision into the thread, where the run it enables will be read', async () => {
@@ -479,7 +481,7 @@ describe('7-day windows have more runway and compact / hold around 97-98%', () =
     seed7dQuota(worker.id, 93)
     const task = pinnedTask(worker.id)
 
-    const choice = scheduler.chooseTarget(task)
+    const choice = scoring.chooseTarget(task)
     // ⚠️ At 93% on a 7d window, the account is NOT held.
     expect(choice.worker?.id).toBe(worker.id)
   })
@@ -489,7 +491,7 @@ describe('7-day windows have more runway and compact / hold around 97-98%', () =
     const resetsAt = seed7dQuota(worker.id, 97)
     const task = pinnedTask(worker.id)
 
-    const choice = scheduler.chooseTarget(task)
+    const choice = scoring.chooseTarget(task)
     expect(choice.worker).toBeNull()
     expect(choice.reason).toContain('ClaudeThird at 97% of its Claude 7d window')
     expect(choice.holdUntil).toBe(resetsAt)

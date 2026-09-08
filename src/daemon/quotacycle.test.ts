@@ -30,6 +30,7 @@ let db: typeof import('./db.js')
 let workers: typeof import('./workers.js')
 let tasks: typeof import('./tasks.js')
 let scheduler: typeof import('./scheduler.js')
+let scoring: typeof import('./scoring.js')
 
 const HOUR = 3600_000
 const MIN = 60_000
@@ -135,6 +136,7 @@ beforeAll(async () => {
   workers = await import('./workers.js')
   tasks = await import('./tasks.js')
   scheduler = await import('./scheduler.js')
+  scoring = await import('./scoring.js')
   const { claudeCode } = await import('./adapters/claude-code.js')
   const { antigravityCli } = await import('./adapters/antigravity-cli.js')
   origClaudeInstalled = claudeCode.isInstalled
@@ -527,7 +529,7 @@ describe('which account a task may be given while windows are filling', () => {
     reading(b, [{ id: 'session', label: '5h', percent: 99, resetsIn: 2 * HOUR }])
     const task = tasks.createTask({ title: 'needs an account', createdBy: { kind: 'human' } })
 
-    const choice = scheduler.chooseTarget(tasks.requireTask(task.id))
+    const choice = scoring.chooseTarget(tasks.requireTask(task.id))
 
     expect(choice.worker).toBeNull()
     expect(choice.reason).toMatch(/93%/)
@@ -542,7 +544,7 @@ describe('which account a task may be given while windows are filling', () => {
     reading(free, [{ id: 'session', label: '5h', percent: 12, resetsIn: 2 * HOUR }])
     const task = tasks.createTask({ title: 'needs an account', createdBy: { kind: 'human' } })
 
-    expect(scheduler.chooseTarget(tasks.requireTask(task.id)).worker?.id).toBe(free)
+    expect(scoring.chooseTarget(tasks.requireTask(task.id)).worker?.id).toBe(free)
   })
 
   it('takes the same account again once a fresh reading says it has room', () => {
@@ -552,11 +554,11 @@ describe('which account a task may be given while windows are filling', () => {
     enable(worker)
     reading(worker, [{ id: 'session', label: '5h', percent: 97, resetsIn: 2 * HOUR }])
     const task = tasks.createTask({ title: 'needs an account', createdBy: { kind: 'human' } })
-    expect(scheduler.chooseTarget(tasks.requireTask(task.id)).worker).toBeNull()
+    expect(scoring.chooseTarget(tasks.requireTask(task.id)).worker).toBeNull()
 
     reading(worker, [{ id: 'session', label: '5h', percent: 4, resetsIn: 5 * HOUR }], 1000)
 
-    expect(scheduler.chooseTarget(tasks.requireTask(task.id)).worker?.id).toBe(worker)
+    expect(scoring.chooseTarget(tasks.requireTask(task.id)).worker?.id).toBe(worker)
   })
 
   it('does not gate on a window that expired while nobody was looking', () => {
@@ -569,7 +571,7 @@ describe('which account a task may be given while windows are filling', () => {
     reading(worker, [{ id: 'session', label: '5h', percent: 96, resetsIn: -2 * MIN }])
     const task = tasks.createTask({ title: 'needs an account', createdBy: { kind: 'human' } })
 
-    const choice = scheduler.chooseTarget(tasks.requireTask(task.id))
+    const choice = scoring.chooseTarget(tasks.requireTask(task.id))
     expect(choice.worker?.id).toBe(worker)
     expect(choice.quotaUnverified).toBe(true)
   })

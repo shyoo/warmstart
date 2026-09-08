@@ -20,6 +20,7 @@ let db: typeof import('./db.js')
 let tasks: typeof import('./tasks.js')
 let projects: typeof import('./projects.js')
 let scheduler: typeof import('./scheduler.js')
+let scoring: typeof import('./scoring.js')
 let workers: typeof import('./workers.js')
 
 let projectId: string
@@ -31,6 +32,7 @@ beforeAll(async () => {
   tasks = await import('./tasks.js')
   projects = await import('./projects.js')
   scheduler = await import('./scheduler.js')
+  scoring = await import('./scoring.js')
   workers = await import('./workers.js')
   db.openDb(join(dir, 'scheduling.db'))
 
@@ -302,7 +304,7 @@ describe('scheduler tick: end-to-end FIFO dispatch', () => {
 
     // ClaudeFirst has capacity, so task2 must not be held with "ClaudeFirst at capacity"
     expect(scheduler.retainedReservations(w.id, [])).toBe(0)
-    const choice = scheduler.chooseTarget(task2)
+    const choice = scoring.chooseTarget(task2)
     expect(choice.worker).not.toBeNull()
     expect(choice.worker?.id).toBe(w.id)
     expect(choice.reason).not.toMatch(/ClaudeFirst at capacity/)

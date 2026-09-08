@@ -424,9 +424,11 @@ describe('the two gate lists that drifted apart', () => {
   it('are one list, imported by both', () => {
     // ⛔ The structural half of the fix. Behaviour tests prove today's gates agree; this proves
     // nobody re-introduced a private copy tomorrow, which is how they diverged the first time.
-    const scheduler = readFileSync(new URL('scheduler.ts', import.meta.url), 'utf8')
+    // ⛔ `accountRefusal` is called from `chooseTarget`, which lives in scoring.ts since t295 split
+    // the scorer out of scheduler.ts — that is the file that must import the shared list now.
+    const scoring = readFileSync(new URL('scoring.ts', import.meta.url), 'utf8')
     const ctrl = readFileSync(new URL('controller.ts', import.meta.url), 'utf8')
-    expect(scheduler).toContain("from './eligibility.js'")
+    expect(scoring).toContain("from './eligibility.js'")
     expect(ctrl).toContain("from './eligibility.js'")
   })
 

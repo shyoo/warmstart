@@ -424,6 +424,7 @@ scripts/                ensure-electron, icons, build-win.ps1                   
 | `paths.ts` | the data directory, and the legacy-install adoption |
 | `scheduler.ts` | scoring, dispatch, watchdogs, `continueTask` → [`routing.md`](routing.md) |
 | `prompt.ts` | `promptFor` and its helpers — what an agent is actually told, and what a resumed turn withholds |
+| `scoring.ts` | `chooseTarget`, the score arithmetic and its explanation (`formatScore`, `briefScore`, `scoreLegend`), `poolPressure` |
 | `eligibility.ts` | ⛔ the account gates, in ONE list |
 | `tasks.ts` | the DAG, admission, mandates, budgets, runs |
 | `sessions.ts` | pty and stream transports, reaping, resuming a closed conversation |

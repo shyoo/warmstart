@@ -31,6 +31,7 @@ let db: typeof import('./db.js')
 let workers: typeof import('./workers.js')
 let tasks: typeof import('./tasks.js')
 let scheduler: typeof import('./scheduler.js')
+let scoring: typeof import('./scoring.js')
 let prompt: typeof import('./prompt.js')
 let projects: typeof import('./projects.js')
 let worktrees: typeof import('./worktrees.js')
@@ -58,6 +59,7 @@ beforeAll(async () => {
   workers = await import('./workers.js')
   tasks = await import('./tasks.js')
   scheduler = await import('./scheduler.js')
+  scoring = await import('./scoring.js')
   prompt = await import('./prompt.js')
   projects = await import('./projects.js')
   worktrees = await import('./worktrees.js')
@@ -291,7 +293,7 @@ describe('which account a conversation comes back to', () => {
     // with what is being tested here.
     const task = tasks.createTask({ title: 'Sticky chat', kind: 'conversation', status: 'ready' })
     talkedTo(task.id, second)
-    const choice = scheduler.chooseTarget(tasks.requireTask(task.id))
+    const choice = scoring.chooseTarget(tasks.requireTask(task.id))
     expect(choice.worker?.id).toBe(second.id)
     expect(choice.routedBy).toBe('sticky')
     // ⛔ And the field it declined to use is still written down. A decision that skipped the
@@ -305,7 +307,7 @@ describe('which account a conversation comes back to', () => {
     const task = tasks.createTask({ title: 'Reassigned chat', kind: 'conversation', status: 'ready' })
     talkedTo(task.id, second)
     tasks.updateTask(task.id, { constraints: { workerId: claude.id } })
-    const choice = scheduler.chooseTarget(tasks.requireTask(task.id))
+    const choice = scoring.chooseTarget(tasks.requireTask(task.id))
     expect(choice.worker?.id).toBe(claude.id)
     expect(choice.routedBy).toBe('pinned')
   })
@@ -313,7 +315,7 @@ describe('which account a conversation comes back to', () => {
   it('does not stick an ordinary task to its last account', () => {
     const task = tasks.createTask({ title: 'Ordinary, and re-routable', status: 'ready' })
     talkedTo(task.id, second)
-    expect(scheduler.chooseTarget(tasks.requireTask(task.id)).routedBy).not.toBe('sticky')
+    expect(scoring.chooseTarget(tasks.requireTask(task.id)).routedBy).not.toBe('sticky')
   })
 })
 

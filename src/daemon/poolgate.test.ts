@@ -34,6 +34,7 @@ let resources: typeof import('./resources.js')
 let projects: typeof import('./projects.js')
 let tasks: typeof import('./tasks.js')
 let scheduler: typeof import('./scheduler.js')
+let scoring: typeof import('./scoring.js')
 let workers: typeof import('./workers.js')
 
 let projectId: string
@@ -60,6 +61,7 @@ beforeAll(async () => {
   projects = await import('./projects.js')
   tasks = await import('./tasks.js')
   scheduler = await import('./scheduler.js')
+  scoring = await import('./scoring.js')
   workers = await import('./workers.js')
   db.openDb(join(dir, 'poolgate.db'))
 
@@ -105,7 +107,7 @@ function file(title: string, priority?: 'P0' | 'P2'): string {
 }
 
 function pressureOn(id: string): string | null {
-  return scheduler.poolPressure(tasks.requireTask(id))
+  return scoring.poolPressure(tasks.requireTask(id))
 }
 
 function reasonFor(id: string): string {

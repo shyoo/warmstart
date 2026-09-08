@@ -20,6 +20,7 @@ let db: typeof import('./db.js')
 let workers: typeof import('./workers.js')
 let tasks: typeof import('./tasks.js')
 let scheduler: typeof import('./scheduler.js')
+let scoring: typeof import('./scoring.js')
 
 let origClaudeInstalled: () => boolean
 
@@ -30,6 +31,7 @@ beforeAll(async () => {
   workers = await import('./workers.js')
   tasks = await import('./tasks.js')
   scheduler = await import('./scheduler.js')
+  scoring = await import('./scoring.js')
   const { claudeCode } = await import('./adapters/claude-code.js')
   origClaudeInstalled = claudeCode.isInstalled
   claudeCode.isInstalled = () => true
@@ -124,7 +126,7 @@ describe('dispatching scenarios and capacity tracking', () => {
     })
 
     // Dispatch target choice must pick ClaudeFirst, NOT defer with 'ClaudeFirst at capacity'
-    const choice = scheduler.chooseTarget(task2)
+    const choice = scoring.chooseTarget(task2)
     expect(choice.worker).not.toBeNull()
     expect(choice.worker?.id).toBe(claudeFirst.id)
     expect(choice.reason).not.toMatch(/ClaudeFirst at capacity/)
@@ -150,7 +152,7 @@ describe('dispatching scenarios and capacity tracking', () => {
     })
 
     // WorkerA is genuinely running a task (with closed session or live session), so it is at capacity
-    const choiceBusy = scheduler.chooseTarget(taskPinned)
+    const choiceBusy = scoring.chooseTarget(taskPinned)
     expect(choiceBusy.worker).toBeNull()
     expect(choiceBusy.reason).toMatch(/WorkerA at capacity/)
 
@@ -158,7 +160,7 @@ describe('dispatching scenarios and capacity tracking', () => {
     tasks.setStatus(taskRunning.id, 'completed')
     tasks.finishRun(run.id, 'completed')
 
-    const choiceFree = scheduler.chooseTarget(taskPinned)
+    const choiceFree = scoring.chooseTarget(taskPinned)
     expect(choiceFree.worker).not.toBeNull()
     expect(choiceFree.worker?.id).toBe(workerA.id)
   })
@@ -192,7 +194,7 @@ describe('dispatching scenarios and capacity tracking', () => {
       title: 'Task 2 on WorkerA',
       constraints: { workerId: workerA.id }
     })
-    const choice = scheduler.chooseTarget(task2)
+    const choice = scoring.chooseTarget(task2)
     expect(choice.worker).not.toBeNull()
     expect(choice.worker?.id).toBe(workerA.id)
   })
