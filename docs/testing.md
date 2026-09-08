@@ -243,6 +243,7 @@ whole behaviour is starting something; counting them buries the files where the 
 
 ## 5. Writing a new check
 
+- Seed rows through [`src/daemon/testkit.ts`](../src/daemon/testkit.ts), not raw SQL. A column rename is currently a 41-file edit because 41 suites write their own inserts; the kit's builders take the union of the options the copies took, so extend the kit rather than forking a local copy. Suites migrate to it opportunistically, when already being edited.
 - Use the harness (`test/lib/harness.mjs`): `check`, `skip` with a reason, `section`, `summary`,
   `wait`, `startDeadline`, `freePort`, `makeProject`/`destroyProject`, `writeProbeAdapter`.
 - ⛔ **Skip visibly, with the reason.** A silently absent check is indistinguishable from a passing

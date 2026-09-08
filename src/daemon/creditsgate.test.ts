@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { pinnedTask } from './testkit.js'
 import type { CreditStatus } from '@shared/protocol.js'
 
 /**
@@ -106,15 +107,6 @@ function seed5h(workerId: string, percent: number, resetsIn = 90 * 60 * 1000): n
   return resetsAt
 }
 
-/** A task pinned to one account: t282's shape, and the one that cannot route around a full window. */
-function pinnedTask(workerId: string, title = 'the t282 shape') {
-  return tasks.createTask({
-    title,
-    createdBy: { kind: 'human' },
-    constraints: { workerId, adapterId: ADAPTER }
-  })
-}
-
 /** What the scheduler said on this task's thread — the prompt the task was filed with is not that. */
 function notes(taskId: string): string[] {
   return tasks
@@ -183,7 +175,7 @@ describe('the dispatch gate on a window the vendor has already emptied', () => {
     seed7d(worker.id, FULL_7D)
     workers.setWorkerCredits(worker.id, ON)
 
-    const choice = scoring.chooseTarget(pinnedTask(worker.id))
+    const choice = scoring.chooseTarget(pinnedTask(worker.id, ADAPTER))
     expect(choice.worker).toBeNull()
     expect(choice.reason).toContain('ClaudeSecond at 100% of its Claude 7d window')
     // ⛔ Nothing about credits on the row: the operator has not asked for them, so there is no
@@ -196,7 +188,7 @@ describe('the dispatch gate on a window the vendor has already emptied', () => {
     seed7d(worker.id, FULL_7D)
     creditsOn(worker.id)
 
-    const choice = scoring.chooseTarget(pinnedTask(worker.id))
+    const choice = scoring.chooseTarget(pinnedTask(worker.id, ADAPTER))
     expect(choice.worker?.id).toBe(worker.id)
     // ⛔ And the hold clock goes with it. A task that is dispatching is not waiting for a reset, and
     // leaving one on the choice would tell the cache clock the queue cannot move.
@@ -208,7 +200,7 @@ describe('the dispatch gate on a window the vendor has already emptied', () => {
     seed5h(worker.id, 96)
     creditsOn(worker.id)
 
-    expect(scoring.chooseTarget(pinnedTask(worker.id)).worker?.id).toBe(worker.id)
+    expect(scoring.chooseTarget(pinnedTask(worker.id, ADAPTER)).worker?.id).toBe(worker.id)
   })
 
   it('does not lift a gate that rests on anything other than a percentage', () => {
@@ -219,7 +211,7 @@ describe('the dispatch gate on a window the vendor has already emptied', () => {
     creditsOn(worker.id)
     workers.updateWorker(worker.id, { enabled: false })
 
-    const choice = scoring.chooseTarget(pinnedTask(worker.id))
+    const choice = scoring.chooseTarget(pinnedTask(worker.id, ADAPTER))
     expect(choice.worker).toBeNull()
     expect(choice.reason).toContain('disabled')
   })
@@ -236,8 +228,8 @@ describe('the dispatch gate on a window the vendor has already emptied', () => {
     workers.setWorkerCredits(plain.id, OFF)
     settings.setSetting('spendCreditsPastLimit', true)
 
-    expect(scoring.chooseTarget(pinnedTask(billing.id)).worker?.id).toBe(billing.id)
-    expect(scoring.chooseTarget(pinnedTask(plain.id)).worker).toBeNull()
+    expect(scoring.chooseTarget(pinnedTask(billing.id, ADAPTER)).worker?.id).toBe(billing.id)
+    expect(scoring.chooseTarget(pinnedTask(plain.id, ADAPTER)).worker).toBeNull()
   })
 
   it('does not make the billing account look cheap', () => {
@@ -265,7 +257,7 @@ describe('the switch on its own, and what the row says when it changes nothing',
     workers.setWorkerCredits(worker.id, OFF)
     settings.setSetting('spendCreditsPastLimit', true)
 
-    const choice = scoring.chooseTarget(pinnedTask(worker.id))
+    const choice = scoring.chooseTarget(pinnedTask(worker.id, ADAPTER))
     expect(choice.worker).toBeNull()
     expect(choice.reason).toContain('100% of its Claude 7d window')
     expect(choice.reason).toContain('"spend credits past the plan limit" is on, but')
@@ -280,7 +272,7 @@ describe('the switch on its own, and what the row says when it changes nothing',
     seed7d(worker.id, FULL_7D)
     settings.setSetting('spendCreditsPastLimit', true)
 
-    const choice = scoring.chooseTarget(pinnedTask(worker.id))
+    const choice = scoring.chooseTarget(pinnedTask(worker.id, ADAPTER))
     expect(choice.worker).toBeNull()
     expect(choice.reason).toContain("nothing has read this account's credit status yet")
   })
@@ -294,7 +286,7 @@ describe('the switch on its own, and what the row says when it changes nothing',
     workers.setWorkerCredits(worker.id, SPENT)
     settings.setSetting('spendCreditsPastLimit', true)
 
-    const choice = scoring.chooseTarget(pinnedTask(worker.id))
+    const choice = scoring.chooseTarget(pinnedTask(worker.id, ADAPTER))
     expect(choice.worker).toBeNull()
     expect(choice.reason).toContain('has spent all 40 USD of its monthly credits')
   })
@@ -305,7 +297,7 @@ describe('the switch on its own, and what the row says when it changes nothing',
     workers.setWorkerCredits(worker.id, { ...ON, used: 39.99 })
     settings.setSetting('spendCreditsPastLimit', true)
 
-    expect(scoring.chooseTarget(pinnedTask(worker.id)).worker?.id).toBe(worker.id)
+    expect(scoring.chooseTarget(pinnedTask(worker.id, ADAPTER)).worker?.id).toBe(worker.id)
   })
 
   it('says nothing about credits on a refusal the operator never asked them to lift', () => {
@@ -313,7 +305,7 @@ describe('the switch on its own, and what the row says when it changes nothing',
     seed7d(worker.id, FULL_7D)
     workers.setWorkerCredits(worker.id, OFF)
 
-    const choice = scoring.chooseTarget(pinnedTask(worker.id))
+    const choice = scoring.chooseTarget(pinnedTask(worker.id, ADAPTER))
     expect(choice.reason).not.toContain('spend credits past the plan limit')
   })
 
@@ -325,7 +317,7 @@ describe('the switch on its own, and what the row says when it changes nothing',
     workers.setWorkerCredits(worker.id, OFF)
     settings.setSetting('spendCreditsPastLimit', true)
 
-    expect(scoring.chooseTarget(pinnedTask(worker.id)).holdUntil).toBe(resetsAt)
+    expect(scoring.chooseTarget(pinnedTask(worker.id, ADAPTER)).holdUntil).toBe(resetsAt)
   })
 })
 
@@ -335,7 +327,7 @@ describe('a hand-thrown override and a full window, which is where t282 went nex
     // override buys a process, a cold start and a `paused_quota` five seconds later.
     const worker = seedWorker('ClaudeSecond')
     seed7d(worker.id, FULL_7D)
-    const task = pinnedTask(worker.id)
+    const task = pinnedTask(worker.id, ADAPTER)
     tasks.setQuotaOverride(task.id, Date.now() + RESET_IN_MS)
 
     const choice = scoring.chooseTarget(tasks.requireTask(task.id))
@@ -346,7 +338,7 @@ describe('a hand-thrown override and a full window, which is where t282 went nex
   it('dispatches the same task once credits are on, because now there is a turn to buy', () => {
     const worker = seedWorker('ClaudeSecond')
     seed7d(worker.id, FULL_7D)
-    const task = pinnedTask(worker.id)
+    const task = pinnedTask(worker.id, ADAPTER)
     tasks.setQuotaOverride(task.id, Date.now() + RESET_IN_MS)
     creditsOn(worker.id)
 
@@ -358,7 +350,7 @@ describe('a hand-thrown override and a full window, which is where t282 went nex
     // first, so on a credit-enabled account the override is not what let this run start.
     const worker = seedWorker('ClaudeSecond')
     seed7d(worker.id, FULL_7D)
-    const task = pinnedTask(worker.id)
+    const task = pinnedTask(worker.id, ADAPTER)
     tasks.setQuotaOverride(task.id, Date.now() + RESET_IN_MS)
     creditsOn(worker.id)
 
@@ -376,7 +368,7 @@ describe('a hand-thrown override and a full window, which is where t282 went nex
     // stand-down that changed no decision trains the reader to ignore the line that matters.
     const worker = seedWorker('ClaudeSecond')
     seed7d(worker.id, 5)
-    const task = pinnedTask(worker.id)
+    const task = pinnedTask(worker.id, ADAPTER)
     creditsOn(worker.id)
 
     scheduler.noteCreditsDispatch(task, workers.requireWorker(worker.id))
@@ -386,7 +378,7 @@ describe('a hand-thrown override and a full window, which is where t282 went nex
   it('names the window and the gate it stood down, so the board can be read back', () => {
     const worker = seedWorker('ClaudeSecond')
     seed7d(worker.id, FULL_7D)
-    const task = pinnedTask(worker.id)
+    const task = pinnedTask(worker.id, ADAPTER)
     creditsOn(worker.id)
 
     scheduler.noteCreditsDispatch(task, workers.requireWorker(worker.id))
@@ -400,7 +392,7 @@ describe('a hand-thrown override and a full window, which is where t282 went nex
 describe('a task already parked at paused_quota when the switch is thrown', () => {
   /** The t282 park: preempted or refused on a full window, waiting on a reset three days out. */
   function parked(workerId: string) {
-    const task = pinnedTask(workerId)
+    const task = pinnedTask(workerId, ADAPTER)
     tasks.setStatus(task.id, 'paused_quota', { assignee: workerId })
     db.db()
       .prepare('update tasks set not_before = ? where id = ?')

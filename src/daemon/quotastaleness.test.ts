@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { pinnedTask } from './testkit.js'
 import type { QuotaWindow } from '@shared/protocol.js'
 
 /**
@@ -87,14 +88,6 @@ function seedCodexFirst(workerId: string, ageMs: number): number {
     ageMs
   )
   return weekly!
-}
-
-function pinnedTask(workerId: string, title = 'the t276 shape') {
-  return tasks.createTask({
-    title,
-    createdBy: { kind: 'human' },
-    constraints: { workerId, adapterId: ADAPTER }
-  })
 }
 
 function looseTask(title = 'unpinned') {
@@ -223,7 +216,7 @@ describe('t276: a reading too old to score is not too old to refuse', () => {
     // assumed, so a change to that constant retunes this test instead of quietly disarming it.
     expect(quota.lastQuota(worker.id)?.stale).toBe(true)
 
-    const choice = scoring.chooseTarget(pinnedTask(worker.id))
+    const choice = scoring.chooseTarget(pinnedTask(worker.id, ADAPTER))
     expect(choice.worker).toBeNull()
     expect(choice.reason).toContain('CodexFirst at 100% of its GPT 7d window')
   })
@@ -232,7 +225,7 @@ describe('t276: a reading too old to score is not too old to refuse', () => {
     const worker = seedWorker('CodexFirst')
     seedCodexFirst(worker.id, STALE_MS)
 
-    const choice = scoring.chooseTarget(pinnedTask(worker.id))
+    const choice = scoring.chooseTarget(pinnedTask(worker.id, ADAPTER))
     expect(choice.reason).toContain('read 15m ago')
     expect(choice.reason).toContain('cannot have refilled')
   })
@@ -241,7 +234,7 @@ describe('t276: a reading too old to score is not too old to refuse', () => {
     const worker = seedWorker('CodexFirst')
     const weeklyReset = seedCodexFirst(worker.id, STALE_MS)
 
-    const choice = scoring.chooseTarget(pinnedTask(worker.id))
+    const choice = scoring.chooseTarget(pinnedTask(worker.id, ADAPTER))
     expect(choice.holdUntil).toBe(weeklyReset)
   })
 
@@ -249,7 +242,7 @@ describe('t276: a reading too old to score is not too old to refuse', () => {
     const worker = seedWorker('CodexFirst')
     seedCodexFirst(worker.id, STALE_MS)
 
-    expect(scoring.chooseTarget(pinnedTask(worker.id)).standing).toBe(false)
+    expect(scoring.chooseTarget(pinnedTask(worker.id, ADAPTER)).standing).toBe(false)
   })
 
   it('routes to an account with room instead, rather than holding the whole task', () => {
@@ -264,7 +257,7 @@ describe('t276: a reading too old to score is not too old to refuse', () => {
   it('refuses it on the tick a person is watching, with the percentage on the row', async () => {
     const worker = seedWorker('CodexFirst')
     const weeklyReset = seedCodexFirst(worker.id, STALE_MS)
-    const task = pinnedTask(worker.id)
+    const task = pinnedTask(worker.id, ADAPTER)
 
     await scheduler.tick()
 
@@ -279,7 +272,7 @@ describe('t276: a reading too old to score is not too old to refuse', () => {
     const worker = seedWorker('CodexFirst')
     seedCodexFirst(worker.id, 6 * 60 * 60 * 1000)
 
-    expect(scoring.chooseTarget(pinnedTask(worker.id)).worker).toBeNull()
+    expect(scoring.chooseTarget(pinnedTask(worker.id, ADAPTER)).worker).toBeNull()
   })
 })
 
@@ -288,7 +281,7 @@ describe('what staleness does still cost a reading', () => {
     const worker = seedWorker('CodexFirst')
     seedReading(worker.id, [{ id: '5h', label: 'GPT 5h', percent: 40, resetsIn: FIVE_HOURS }], STALE_MS)
 
-    const choice = scoring.chooseTarget(pinnedTask(worker.id))
+    const choice = scoring.chooseTarget(pinnedTask(worker.id, ADAPTER))
     // ⚠️ Unchanged on purpose. Refusing every old reading would strand a fleet whose accounts
     //    cannot answer `/usage`; the fix narrows to the one thing an old reading still proves.
     expect(choice.worker?.id).toBe(worker.id)
@@ -299,7 +292,7 @@ describe('what staleness does still cost a reading', () => {
     const worker = seedWorker('CodexFirst')
     seedReading(worker.id, [{ id: '5h', label: 'GPT 5h', percent: 85, resetsIn: FIVE_HOURS }], STALE_MS)
 
-    const choice = scoring.chooseTarget(pinnedTask(worker.id))
+    const choice = scoring.chooseTarget(pinnedTask(worker.id, ADAPTER))
     const risk = choice.breakdown?.terms.find((t) => t.name === 'quotaRisk')
     // 85% of a five-hour window is a real penalty on a fresh reading and a guess on an old one.
     expect(risk?.value).toBe(0)
@@ -311,7 +304,7 @@ describe('what staleness does still cost a reading', () => {
     seedReading(worker.id, [{ id: '5h', label: 'GPT 5h', percent: 85, resetsIn: FIVE_HOURS }])
 
     const risk = scoring
-      .chooseTarget(pinnedTask(worker.id))
+      .chooseTarget(pinnedTask(worker.id, ADAPTER))
       .breakdown?.terms.find((t) => t.name === 'quotaRisk')
     expect(risk?.value).toBeGreaterThan(0)
   })
@@ -327,7 +320,7 @@ describe('what staleness does still cost a reading', () => {
       STALE_MS
     )
 
-    const choice = scoring.chooseTarget(pinnedTask(worker.id))
+    const choice = scoring.chooseTarget(pinnedTask(worker.id, ADAPTER))
     expect(choice.worker?.id).toBe(worker.id)
     expect(choice.quotaUnverified).toBe(true)
   })
@@ -336,7 +329,7 @@ describe('what staleness does still cost a reading', () => {
     const worker = seedWorker('CodexFirst')
     seedCodexFirst(worker.id, 0)
 
-    const choice = scoring.chooseTarget(pinnedTask(worker.id))
+    const choice = scoring.chooseTarget(pinnedTask(worker.id, ADAPTER))
     expect(choice.worker).toBeNull()
     expect(choice.reason).toContain('100% of its GPT 7d window')
     // Nothing about age is said about a reading that has none worth mentioning.
@@ -348,7 +341,7 @@ describe('an override buys a turn the vendor would have served, and nothing else
   it('still lifts the fleet’s own water mark', () => {
     const worker = seedWorker('CodexFirst')
     seedReading(worker.id, [{ id: '5h', label: 'GPT 5h', percent: 93, resetsIn: FIVE_HOURS }])
-    const task = pinnedTask(worker.id)
+    const task = pinnedTask(worker.id, ADAPTER)
     tasks.setQuotaOverride(task.id, Date.now() + FIVE_HOURS)
 
     expect(scoring.chooseTarget(tasks.requireTask(task.id)).worker?.id).toBe(worker.id)
@@ -357,7 +350,7 @@ describe('an override buys a turn the vendor would have served, and nothing else
   it('lifts it on a stale reading too, since the override answered that same reading', () => {
     const worker = seedWorker('CodexFirst')
     seedReading(worker.id, [{ id: '5h', label: 'GPT 5h', percent: 93, resetsIn: FIVE_HOURS }], STALE_MS)
-    const task = pinnedTask(worker.id)
+    const task = pinnedTask(worker.id, ADAPTER)
     tasks.setQuotaOverride(task.id, Date.now() + FIVE_HOURS)
 
     expect(scoring.chooseTarget(tasks.requireTask(task.id)).worker?.id).toBe(worker.id)
@@ -366,7 +359,7 @@ describe('an override buys a turn the vendor would have served, and nothing else
   it('does not buy a turn on a window the vendor has already emptied', () => {
     const worker = seedWorker('CodexFirst')
     seedCodexFirst(worker.id, 0)
-    const task = pinnedTask(worker.id)
+    const task = pinnedTask(worker.id, ADAPTER)
     tasks.setQuotaOverride(task.id, Date.now() + WEEK)
 
     const choice = scoring.chooseTarget(tasks.requireTask(task.id))
@@ -377,7 +370,7 @@ describe('an override buys a turn the vendor would have served, and nothing else
   it('does not buy one on a stale exhausted reading either, which is t276 with a person in it', () => {
     const worker = seedWorker('CodexFirst')
     seedCodexFirst(worker.id, STALE_MS)
-    const task = pinnedTask(worker.id)
+    const task = pinnedTask(worker.id, ADAPTER)
     tasks.setQuotaOverride(task.id, Date.now() + WEEK)
 
     expect(scoring.chooseTarget(tasks.requireTask(task.id)).worker).toBeNull()
@@ -386,7 +379,7 @@ describe('an override buys a turn the vendor would have served, and nothing else
   it('parks the overridden task on the spent window’s reset rather than nowhere', () => {
     const worker = seedWorker('CodexFirst')
     const weeklyReset = seedCodexFirst(worker.id, 0)
-    const task = pinnedTask(worker.id)
+    const task = pinnedTask(worker.id, ADAPTER)
     tasks.setQuotaOverride(task.id, Date.now() + WEEK)
 
     expect(scoring.chooseTarget(tasks.requireTask(task.id)).holdUntil).toBe(weeklyReset)

@@ -444,3 +444,4 @@ scripts/                ensure-electron, icons, build-win.ps1                   
 | `which.ts` `git.ts` `spawn.ts` | PATH resolution — node-pty does not do it; and the shared git / promise-based `execFile` runners |
 | `stats.ts` | shared medians: `null` is no series, never a measured zero |
 | `activetime.ts` `activity.ts` `log.ts` | agent time, the live peephole, the daily log |
+| `testkit.ts` | ⛔ test-only shared L1 fixtures — never bundled, never imported outside `*.test.ts` |

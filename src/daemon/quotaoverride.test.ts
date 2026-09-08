@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { pinnedTask } from './testkit.js'
 
 /**
  * t71, and the two things that were wrong with the way it waited.
@@ -73,15 +74,6 @@ function seed7dQuota(workerId: string, percent: number, resetsIn = 7 * 24 * 3600
   return resetsAt
 }
 
-/** A task pinned to one account, which is what t71 was and why it could not route around anything. */
-function pinnedTask(workerId: string, title = 'the t71 shape') {
-  return tasks.createTask({
-    title,
-    createdBy: { kind: 'human' },
-    constraints: { workerId, adapterId: ADAPTER }
-  })
-}
-
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'agentyard-quotaoverride-'))
   process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
@@ -137,7 +129,7 @@ describe('a task held at the water mark says when it could next move', () => {
   it('holds a pinned task at exactly 92%, which is the boundary t71 met', () => {
     const worker = seedWorker('ClaudeThird')
     seedQuota(worker.id, HELD_PERCENT)
-    const task = pinnedTask(worker.id)
+    const task = pinnedTask(worker.id, ADAPTER)
 
     const choice = scoring.chooseTarget(task)
     expect(choice.worker).toBeNull()
@@ -148,7 +140,7 @@ describe('a task held at the water mark says when it could next move', () => {
   it('carries the reset of the window that refused it, rather than discarding it', () => {
     const worker = seedWorker('ClaudeThird')
     const resetsAt = seedQuota(worker.id, HELD_PERCENT)
-    const task = pinnedTask(worker.id)
+    const task = pinnedTask(worker.id, ADAPTER)
 
     const choice = scoring.chooseTarget(task)
     // ⛔ The very sample that refused the dispatch, not a second lookup that could name another one.
@@ -158,7 +150,7 @@ describe('a task held at the water mark says when it could next move', () => {
   it('writes that clock onto the task, where a person and the cache clock can both read it', async () => {
     const worker = seedWorker('ClaudeThird')
     const resetsAt = seedQuota(worker.id, HELD_PERCENT)
-    const task = pinnedTask(worker.id)
+    const task = pinnedTask(worker.id, ADAPTER)
 
     await scheduler.tick()
 
@@ -173,7 +165,7 @@ describe('a task held at the water mark says when it could next move', () => {
     // a moment they stop being true. Inventing a countdown for one would be worse than silence.
     const worker = seedWorker('ClaudeThird')
     workers.updateWorker(worker.id, { enabled: false })
-    const task = pinnedTask(worker.id)
+    const task = pinnedTask(worker.id, ADAPTER)
 
     await scheduler.tick()
 
@@ -200,7 +192,7 @@ describe('a person may overrule the water mark, and only the water mark', () => 
   it('dispatches to the pinned account at 92% once the override is live', () => {
     const worker = seedWorker('ClaudeThird')
     seedQuota(worker.id, HELD_PERCENT)
-    const task = pinnedTask(worker.id)
+    const task = pinnedTask(worker.id, ADAPTER)
     tasks.setQuotaOverride(task.id, Date.now() + RESET_IN_MS)
 
     const choice = scoring.chooseTarget(tasks.requireTask(task.id))
@@ -210,7 +202,7 @@ describe('a person may overrule the water mark, and only the water mark', () => 
   it('stops applying the moment it expires, without anybody withdrawing it', () => {
     const worker = seedWorker('ClaudeThird')
     seedQuota(worker.id, HELD_PERCENT)
-    const task = pinnedTask(worker.id)
+    const task = pinnedTask(worker.id, ADAPTER)
     // ⛔ A deadline in the past is not an override. The permission expires with its own reason.
     tasks.setQuotaOverride(task.id, Date.now() - 1000)
 
@@ -237,7 +229,7 @@ describe('a person may overrule the water mark, and only the water mark', () => 
     const worker = seedWorker('ClaudeThird')
     workers.updateWorker(worker.id, { enabled: false })
     seedQuota(worker.id, HELD_PERCENT)
-    const task = pinnedTask(worker.id)
+    const task = pinnedTask(worker.id, ADAPTER)
     tasks.setQuotaOverride(task.id, Date.now() + RESET_IN_MS)
 
     const choice = scoring.chooseTarget(tasks.requireTask(task.id))
@@ -274,7 +266,7 @@ describe('task.overrideQuota', () => {
   it('dates the permission from the window the scheduler measured, not from a clock in the caller', async () => {
     const worker = seedWorker('ClaudeThird')
     const resetsAt = seedQuota(worker.id, HELD_PERCENT)
-    const task = pinnedTask(worker.id)
+    const task = pinnedTask(worker.id, ADAPTER)
     await scheduler.tick()
 
     const result = await handlers()['task.overrideQuota']({ id: task.id })
@@ -285,7 +277,7 @@ describe('task.overrideQuota', () => {
 
   it('answers a live preemption warning and keeps its measured window boundary', async () => {
     const worker = seedWorker('ClaudeThird')
-    const task = pinnedTask(worker.id)
+    const task = pinnedTask(worker.id, ADAPTER)
     const resumeAt = Date.now() + RESET_IN_MS
     tasks.setQuotaPreemptWarning(task.id, {
       trigger: 'window',
@@ -304,7 +296,7 @@ describe('task.overrideQuota', () => {
   it('says so plainly when the grant changes nothing right now', async () => {
     const worker = seedWorker('ClaudeThird')
     seedQuota(worker.id, 5)
-    const task = pinnedTask(worker.id)
+    const task = pinnedTask(worker.id, ADAPTER)
 
     const result = await handlers()['task.overrideQuota']({ id: task.id })
     expect(result.applies).toBe(false)
@@ -317,7 +309,7 @@ describe('task.overrideQuota', () => {
   it('overrides preemption and resumes a paused_quota task immediately to continue to completion', async () => {
     const worker = seedWorker('ClaudeThird')
     const resetsAt = seedQuota(worker.id, HELD_PERCENT)
-    const task = pinnedTask(worker.id)
+    const task = pinnedTask(worker.id, ADAPTER)
     tasks.setStatus(task.id, 'paused_quota', { assignee: worker.id })
     db.db().prepare('update tasks set not_before = ? where id = ?').run(resetsAt, task.id)
 
@@ -343,7 +335,7 @@ describe('task.overrideQuota', () => {
   it('withdraws on an explicit null, and the gate applies again', async () => {
     const worker = seedWorker('ClaudeThird')
     seedQuota(worker.id, HELD_PERCENT)
-    const task = pinnedTask(worker.id)
+    const task = pinnedTask(worker.id, ADAPTER)
     await handlers()['task.overrideQuota']({ id: task.id })
     expect(scoring.chooseTarget(tasks.requireTask(task.id)).worker?.id).toBe(worker.id)
 
@@ -355,7 +347,7 @@ describe('task.overrideQuota', () => {
   it('writes the decision into the thread, where the run it enables will be read', async () => {
     const worker = seedWorker('ClaudeThird')
     seedQuota(worker.id, HELD_PERCENT)
-    const task = pinnedTask(worker.id)
+    const task = pinnedTask(worker.id, ADAPTER)
     await scheduler.tick()
     await handlers()['task.overrideQuota']({ id: task.id })
 
@@ -479,7 +471,7 @@ describe('7-day windows have more runway and compact / hold around 97-98%', () =
   it('does not hold a task at 93% on a 7d window, where 5h would be held', () => {
     const worker = seedWorker('ClaudeThird')
     seed7dQuota(worker.id, 93)
-    const task = pinnedTask(worker.id)
+    const task = pinnedTask(worker.id, ADAPTER)
 
     const choice = scoring.chooseTarget(task)
     // ⚠️ At 93% on a 7d window, the account is NOT held.
@@ -489,7 +481,7 @@ describe('7-day windows have more runway and compact / hold around 97-98%', () =
   it('holds a pinned task when the 7d window reaches 97%', () => {
     const worker = seedWorker('ClaudeThird')
     const resetsAt = seed7dQuota(worker.id, 97)
-    const task = pinnedTask(worker.id)
+    const task = pinnedTask(worker.id, ADAPTER)
 
     const choice = scoring.chooseTarget(task)
     expect(choice.worker).toBeNull()
@@ -500,7 +492,7 @@ describe('7-day windows have more runway and compact / hold around 97-98%', () =
   it('task.overrideQuota reports the 97% gate when overriding a weekly window', async () => {
     const worker = seedWorker('ClaudeThird')
     seed7dQuota(worker.id, 97)
-    const task = pinnedTask(worker.id)
+    const task = pinnedTask(worker.id, ADAPTER)
     await scheduler.tick()
 
     const handlers = api.buildApi({ version: '0.0.0', startedAt: Date.now(), port: 0 })
@@ -518,7 +510,7 @@ describe('cache clock respects quota overrides and active runs', () => {
   it('Move 5 declines to compact or close when the task has an active quota override', () => {
     const worker = seedWorker('ClaudeThird')
     seedQuota(worker.id, 95) // reserve is at risk (> 92%)
-    const task = pinnedTask(worker.id)
+    const task = pinnedTask(worker.id, ADAPTER)
     tasks.setQuotaOverride(task.id, Date.now() + RESET_IN_MS)
 
     const s = {
@@ -595,7 +587,7 @@ describe('cache clock respects quota overrides and active runs', () => {
 
   it('outcome === ignored does not issue handoff_close while a run is open', () => {
     const worker = seedWorker('ClaudeThird')
-    const task = pinnedTask(worker.id)
+    const task = pinnedTask(worker.id, ADAPTER)
 
     const s = {
       id: 'session-open-run',
