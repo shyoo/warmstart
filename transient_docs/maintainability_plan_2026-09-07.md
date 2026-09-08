@@ -203,7 +203,8 @@ shorter.
 
 Each row is one commit, green in between, no behaviour change mixed into a move.
 
-**Executed 2026-09-08 as t293–t297, reviewed as a batch by t292.** Ten of the eleven rows are in.
+**Executed 2026-09-08 as t293–t297, reviewed as a batch by t292, finished by t298.** All eleven rows
+are in.
 ⛔ The status column is what was *measured* on the branch afterwards, not what the piece reported —
 two rows came back marked complete having done something other than the row.
 
@@ -211,13 +212,13 @@ two rows came back marked complete having done something other than the row.
 |---|---|---|---|
 | 1 | `scheduler.ts` → `prompt.ts` | 1.1 | ✅ 557 lines |
 | 2 | `useAction()` hook, applied to `TaskThread.tsx`'s 22 sites | 1.2 | ✅ `lib/useAction.ts` |
-| 3 | `TaskSettingPicker` replaces the seven pickers | 1.2 | ⛔ **not done** — all seven still inline |
+| 3 | `TaskSettingPicker` replaces the seven pickers | 1.2 | ✅ t298 — one component, menus in `lib/threadview.ts` |
 | 4 | `scheduler.ts` → `scoring.ts` | 1.1 | ✅ 1,403 lines |
 | 5 | `testkit.ts` + the three `pinnedTask` suites | 1.3 | ✅ 350 lines, 4 suites on it |
 | 6 | L2 checks for the six `agent.*` RPCs | 2.2 | ✅ `test/daemon.test.mjs` +250 |
 | 7 | `cancel.ts`: adopt `split.ts`'s `childrenOf` | 1.2 / 2.2 | ✅ the one behaviour change, its own commit |
 | 8 | `api.ts` → per-domain builders | 1.1 | ✅ (redone by t292 — see below) |
-| 9 | `TaskThread.tsx` → `thread/*`, decisions into `lib/` | 1.1 / 2.2 | ⛔ **not done** |
+| 9 | `TaskThread.tsx` → `thread/*`, decisions into `lib/` | 1.1 / 2.2 | ✅ t298 — 4,086 → 1,973 lines |
 | 10 | `shared/tasks.ts` → `shared/policy.ts` | 1.1 | ✅ (finished by t292 — see below) |
 | 11 | the rest of the `scheduler.ts` seams | 1.1 | ✅ `residency.ts`, `turnend.ts`, `resolutions.ts` |
 
@@ -235,10 +236,20 @@ file fails the build naming `Property '"agent.depend"' is missing in type … bu
 worth keeping is the partition itself: its five name lists were a correct, non-overlapping inventory
 of all 118 methods, and they became the five `*Method` unions.
 
-⛔ **Rows 3 and 9 were never attempted.** `TaskThread.tsx` is 4,086 lines, the seven pickers are all
-still inline, and there is no `components/thread/` or `lib/threadview.ts`. This was the row carrying
-the renderer's 0% (§2.1), so that number has not moved. `docs/ui.md` is therefore **not** owed the
-"one component, seven uses" line in §3 yet.
+⭐ **Rows 3 and 9, unattempted by the batch, were done as t298 (2026-09-08).** `TaskThread.tsx` is
+**1,973 lines** and 12 components, from 4,086 and 34. The seven pickers are one `TaskSettingPicker`
+over pure menu functions in `lib/threadview.ts` (19 L1 checks, where there were none); the rest went
+to `thread/{Facts,Decide,RunRow,Disclosure}.tsx`. ⚠️ `Disclosure.tsx` is not in §1.1's list and is
+there to keep the graph acyclic — three callers on both sides of the seam draw those two
+collapsibles. ⛔ The move was verified byte-for-byte: all 25 function bodies compared against their
+text in the parent commit, none differing by anything but `export`. `docs/ui.md` §3 now carries the
+"one component, seven uses" line it was owed.
+
+⚠️ **And the L3 suite grew the five checks that make row 3 verifiable at all** — the seven controls
+are drawn, `inherit` reads as what it resolves to on the button and as `inherit (…)` in the menu, and
+a choice round-trips to the daemon and back. ⛔ Writing them exposed a section of `test/ui.test.mjs`
+that had been asserting against **whichever thread was still on screen**: the ledger checks read the
+model row of a task nobody had opened, and passed only while the timing held. It navigates now.
 
 ⚠️ **Row 10 landed as a copy, not a move**, and was finished during review: the six resolvers were
 duplicated into `policy.ts` while the originals stayed in `tasks.ts` renamed `_*Legacy` — ~200 lines

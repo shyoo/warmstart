@@ -62,7 +62,8 @@ thing entirely. See [`glossary.md`](glossary.md).
 |---|---|
 | `Flow` | project lifecycle map: 6-column kanban flow with ticket ↔ workspace ↔ worker bindings and read-only grading runs |
 | `FleetStrip` `Workers` `FleetSettings` | the fleet: per-account quota with its **age**, reset countdowns, live sessions; one two-column settings card per worker |
-| `Tasks` `TaskThread` `Dependencies` | the board, one task's thread, and prerequisite edges |
+| `Tasks` `TaskThread` `thread/*` `Dependencies` | the board, one task's thread, and prerequisite edges |
+| `TaskSettingPicker` | ⛔ **one component, seven uses** — the thread's finish, conversation, completion, compaction, objective, worker and priority settings |
 | `NewTask` `Pill` | the composer: the prompt first, its settings as a row of **pills** under it |
 | `Attention` `Questions` | the approvals/questions/quota-gate bar — one keystroke above the operator's work |
 | `Overview` `Controller` `Conversations` | dashboard, the controller chat, and conversation history |
@@ -75,6 +76,15 @@ thing entirely. See [`glossary.md`](glossary.md).
 | `Logs` | the daemon's log, live and filterable, ring-buffered so a late window sees the past |
 | `Terminal` | the real agent TUI over xterm.js, not a reconstruction |
 | `AppSettings` `SettingRow` `SettingButtonSelect` `SidebarResizer` | chrome |
+
+⛔ **A thread setting is one component, and the menu behind it is a pure function.**
+(`components/TaskSettingPicker.tsx` over `lib/threadview.ts`.) Finish, conversation, completion,
+compaction, objective, worker and priority were seven copies of the same `useAction` + button + note;
+what differs between them is a menu and an RPC, and both are now passed in. ⚠️ **`inherit` is
+answered twice, differently, and that is the feature**: the menu entry reads `inherit (await human)`
+so choosing it is informed, while the button reads `await human` alone — what is in effect, which is
+what somebody scanning the pane is asking. ⛔ The write stays a typed `rpc()` call at the call site
+rather than a method name assembled from a string, so a renamed RPC still fails the build.
 
 ⛔ **Adding a project is a wizard, and it is chrome rather than a route.** (`components/NewProject.tsx`;
 its rules are pure functions in `lib/newproject.ts`.) The sidebar's Projects group carries a `+`, and
@@ -398,7 +408,7 @@ list. Logic extracted into a pure function under `lib/` is provable at L1 instea
 |---|---|
 | `daemon.ts` | the RPC/event client |
 | `conversation.ts` | conversation grouping and outcome, as a pure function |
-| `taskview.tsx` `fleetcard.ts` `fleetcounts.ts` | derived view state |
+| `taskview.tsx` `threadview.ts` `fleetcard.ts` `fleetcounts.ts` | derived view state |
 | `format.ts` `modelname.ts` `agenticon.ts` | display formatting |
 | `live.ts` | `showsLiveOutput(status)` — which statuses get a peephole |
 | `menuposition.ts` | where a pill's portalled menu goes: flip above, clamp to the window, never clip |

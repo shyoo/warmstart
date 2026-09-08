@@ -107,6 +107,13 @@ broken.
 When you change anything on a project tab, **mutate the code and watch the suite go red first.** If it
 stays green, the suite is not reaching your change.
 
+⚠️ **And a section that reads whatever pane is still on screen is not reaching your change either.**
+The thread-ledger checks asserted against a task nobody had opened — the section before them left a
+different thread up, and the model row they were reading belonged to that one's run. They passed for
+as long as the timing held, and flipped the day a section four seconds earlier was added
+(2026-09-08). A section that depends on a particular screen now navigates to it and waits for the
+value it is about, rather than for a fixed number of milliseconds.
+
 ### A merge strategy that silently does nothing looks exactly like one that worked
 
 ⛔ **`merge-branch` moves a git ref with `update-ref`**, which will happily move a branch backwards,

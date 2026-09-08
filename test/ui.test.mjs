@@ -533,6 +533,85 @@ try {
     })()`)
   )
 
+  // ---- the seven settings, now one component ------------------------------------------
+  // ⛔ **The tier this row was missing.** The thread's settings were seven copies of one component
+  // and are now one (`TaskSettingPicker`, 2026-09-08); the menus behind them are pure and tested at
+  // L1 in `lib/threadview.test.ts`. What no L1 check can say is whether the component is *wired* —
+  // whether the button an operator presses reaches the daemon and comes back. That is this section,
+  // and without it the refactor rests on a suite that never renders the pane.
+  const pickers = JSON.parse(
+    await evaluate(`
+      JSON.stringify([...document.querySelectorAll('.detail .setting-btn-select')].map(b => ({
+        label: b.getAttribute('aria-label'),
+        text: b.innerText.trim()
+      })))
+    `)
+  )
+  const labelled = (name) => pickers.find((p) => p.label === name)
+  check(
+    'the thread draws all seven of its settings',
+    ['Finish policy', 'Session sharing', 'Completion mode', 'Automatic compaction',
+      'Optimization objective', 'Worker', 'Priority'].every((l) => labelled(l)),
+    `drew: ${pickers.map((p) => p.label).join(', ')}`
+  )
+  // ⛔ The button says what is *in effect*, the menu says what choosing it means. A task on
+  // `inherit` that displayed the word "inherit" would answer a question nobody asked.
+  check(
+    'a setting left on inherit shows the value it resolves to',
+    !/^inherit/.test(labelled('Finish policy')?.text ?? 'inherit'),
+    `the finish button reads "${labelled('Finish policy')?.text}"`
+  )
+  await evaluate(
+    `document.querySelector('.detail .setting-btn-select[aria-label="Finish policy"]')?.click()`
+  )
+  await wait(200)
+  check(
+    'and its menu still names inherit as a choice, with what it resolves to',
+    await evaluate(`
+      [...document.querySelectorAll('.setting-btn-select-menu [role="option"]')]
+        .some(o => /^inherit \\(.+\\)/.test(o.innerText.trim()))
+    `),
+    'choosing inherit has to be an informed choice'
+  )
+  await evaluate(`document.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))`)
+  await wait(200)
+
+  // ⛔ **The round trip, which is the only part a person had to click through before.** The value
+  // below is re-read from the daemon after the write — the pane refetches rather than trusting what
+  // was clicked — so a picker wired to nothing fails here even though it renders perfectly.
+  const openSeq = Number(
+    (await evaluate(`document.querySelector('.detail-head h3')?.innerText ?? ''`)).match(/t(\d+)/)?.[1]
+  )
+  const priorityOf = async () =>
+    await evaluate(`
+      window.agentyard.rpc('task.page', { limit: 200 })
+        .then(p => p.tasks.find(t => t.seq === ${openSeq})?.priority ?? null)
+    `)
+  const wasPriority = await priorityOf()
+  const pick = async (label, option) => {
+    await evaluate(
+      `document.querySelector('.detail .setting-btn-select[aria-label=${JSON.stringify(label)}]')?.click()`
+    )
+    await wait(200)
+    await evaluate(`
+      [...document.querySelectorAll('.setting-btn-select-menu [role="option"]')]
+        .find(o => o.innerText.trim().startsWith(${JSON.stringify(option)}))?.click()
+    `)
+    await wait(600)
+  }
+  await pick('Priority', 'P0')
+  let landed = null
+  await waitFor(async () => (landed = await priorityOf()) === 'P0', 'the priority write to land')
+  check('choosing a setting writes it through to the daemon', landed === 'P0', `daemon says ${landed}`)
+  check(
+    'and the button reads back what the daemon returned, not what was clicked',
+    await evaluate(
+      `(document.querySelector('.detail .setting-btn-select[aria-label="Priority"]')?.innerText ?? '').includes('P0')`
+    )
+  )
+  // ⚠️ Put back, through the same control, so nothing below inherits a task this section reordered.
+  await pick('Priority', wasPriority)
+  await waitFor(async () => (await priorityOf()) === wasPriority, 'the priority to be restored')
 
   // ⛔ Measured, not eyeballed. The Send button used to be painted on top of the box somebody was
   // typing into, because an unlabelled row borrowed a three-column grid built for labelled forms.
@@ -3623,6 +3702,35 @@ try {
   // two measurements docs/cost-model.md §5 never reconciles, and they were drawn as one number with
   // a caption under it — which reads as the token count *explaining* the price. Two labelled rows,
   // and the unit lives in the label so the value stays a number.
+  // ⛔ **Opened deliberately, because this section used to read whichever pane was still on screen.**
+  // The section above leaves `t8 · ui dependent task` open, whose model row is a label with an empty
+  // value — nothing has run on it and no account is named — so the model check below only passed
+  // while the read landed on the pane before it, and it was measured reading `Opus 5 confirmed by
+  // the transcript`, which is a different task's run. Adding four seconds anywhere earlier in the
+  // suite flipped it (2026-09-08). The task named here has never run and has nothing pinned, which
+  // is the case all four of these checks are about.
+  await evaluate(`document.querySelector('.detail-head .back-to-list')?.click()`)
+  await waitFor(
+    async () =>
+      await evaluate(
+        `[...document.querySelectorAll('.tbl tbody tr')].some(r => r.innerText.includes('A task the UI can render'))`
+      ),
+    'the task list to come back'
+  )
+  await evaluate(
+    `[...document.querySelectorAll('.tbl tbody tr')].find(r => r.innerText.includes('A task the UI can render'))?.click()`
+  )
+  // ⚠️ Bounded at the resource, not slept past: the row's answer comes from `model.options`, which
+  // is fetched on mount, so it is a label with nothing under it while that request is in flight.
+  await waitFor(
+    async () =>
+      await evaluate(`(() => {
+        const facts = [...document.querySelectorAll('.detail-side .fact')];
+        const model = facts.find(f => /^model$/i.test(f.querySelector('.fact-label')?.innerText ?? ''));
+        return (model?.querySelector('.fact-value')?.innerText ?? '').trim().length > 0;
+      })()`),
+    'the model row to say what the next dispatch would ask for'
+  )
   const cost = JSON.parse(
     await evaluate(`
       JSON.stringify((() => {
