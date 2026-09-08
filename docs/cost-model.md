@@ -709,11 +709,28 @@ through the store (which is every gate) saw windows with no group and silently f
 ### ⛔ An account that cannot authenticate is not asked again (2026-08-27)
 
 Rung 0 is free in tokens and **not** free in processes: it opens a real interactive session and types
-into it. So `mayRefreshUsage()` skips any worker a dispatch has already proved work dies on
-(`health.state === 'suspect'`), and the cheap sweep skips it too. Before this, a lapsed subscription meant a CLI spawned on every eligible sweep, forever, to watch it fail to authenticate - and the reading stayed `unknown` either way.
+into it. So `mayRefreshUsage()` skips any worker whose failed run **measured its subscription as
+expired** (`health.subscriptionExpired`). Before this, a lapsed subscription meant a CLI spawned on
+every eligible sweep, forever, to watch it fail to authenticate - and the reading stayed `unknown`
+either way.
 
-⚠️ The *automatic* paths only. Pressing Probe still refreshes: it is one of the two things that lift
-the hold, and a quarantine nobody can attempt to clear by hand is worse than the fault it prevents.
+⚠️ The *automatic* paths only. Pressing Probe still refreshes: it is one of the things that lift the
+hold, and a quarantine nobody can attempt to clear by hand is worse than the fault it prevents.
+
+### ⭐ A merely quarantined account *is* asked, or the hold is a lock (t309, 2026-09-08)
+
+The rule above originally skipped **every** `suspect` worker, and that made the quarantine two-way:
+`accountRefusal` withheld the dispatch, `mayRefreshUsage` withheld the probe, and the only exits left
+were a metered turn (which needs a dispatch) and a person pressing Probe. An operator hitting that
+state has no way to tell it from the fleet being broken — it was reported as exactly that.
+
+⛔ **The asymmetry that resolves it is cost, not confidence.** A probe is one PTY and about thirty
+seconds. A dispatch is a workspace claim, a process, and a task handed to a person as though their
+own work had failed. So the cheap half is now allowed: the sweep spends one ledgered probe on a
+held-out account (`ensureFreshQuota`, never awaited, at most one per `REFRESH_BACKOFF_MS`), and a
+reading that comes back **with real windows in it** clears the hold. Windows only — an empty or
+errored probe proves nothing and leaves it standing. An expired subscription cannot draw a `/usage`
+panel with percentages in it, so the measured case this whole mechanism was built for is untouched.
 
 ### A reading either side of a run (2026-08-27)
 

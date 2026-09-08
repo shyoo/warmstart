@@ -535,9 +535,13 @@ export function Workers({
                     // what this app did; `re-sign-in required` is the only part that tells the
                     // operator what to do about it.
                     label: suspect.needsReauth ? 're-sign-in required' : 'held out of dispatch',
+                    // ⚠️ It *is* probed in the background now (t309), and saying so is the point:
+                    // this note used to read as a dead end an operator had to clear by hand, which
+                    // is how a hold with an automatic exit got reported as a deadlock.
                     text:
-                      `${suspect.reason} — not probed in the background while it is held out. ` +
-                      'Recheck reads the account again and offers it work.'
+                      `${suspect.reason} — a background usage probe still runs, and a reading with ` +
+                      'real windows in it lifts this on its own, as does one metered turn. ' +
+                      'Recheck reads the account again and offers it work immediately.'
                   })
                 }
               } else if (isSubscriptionExpired) {

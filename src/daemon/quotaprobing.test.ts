@@ -503,12 +503,40 @@ describe('the account gates every refresh goes through', () => {
     expect(quota.mayRefreshUsage(worker)).toBe(false)
   })
 
-  it('refuses an account a dead run has quarantined', () => {
+  /**
+   * ⭐ **Reversed by t309, deliberately.** This asserted `false`, and that was the lock: a
+   * quarantined account was refused the dispatch *and* the probe, so both its exits — a metered turn
+   * and a person pressing Probe — needed the very thing being withheld. The asymmetry that settles
+   * it is cost. A probe is a PTY and thirty seconds; a dispatch is a workspace claim, a process, and
+   * a task handed to a person as though their own work had failed. Asking is the cheap half.
+   */
+  it('probes an account a dead run has quarantined, which is how the hold lifts itself', () => {
     const worker = seedWorker('suspect')
     enable(worker)
     db.db()
       .prepare('update workers set health_json = ? where id = ?')
       .run(JSON.stringify({ state: 'suspect', reason: 'a run produced nothing' }), worker)
+    expect(quota.mayRefreshUsage(worker)).toBe(true)
+  })
+
+  /**
+   * ⛔ The measured case the quarantine was built for, and the one this must still refuse. An
+   * expired subscription answers `auth status` exactly as a live one does, so only the failed run's
+   * own verdict tells them apart — and a probe on it spawns a CLI to watch it fail to authenticate.
+   */
+  it('still refuses an account whose subscription the failed run measured as expired', () => {
+    const worker = seedWorker('expired')
+    enable(worker)
+    db.db()
+      .prepare('update workers set health_json = ? where id = ?')
+      .run(
+        JSON.stringify({
+          state: 'suspect',
+          reason: 'subscription expired',
+          subscriptionExpired: true
+        }),
+        worker
+      )
     expect(quota.mayRefreshUsage(worker)).toBe(false)
   })
 })

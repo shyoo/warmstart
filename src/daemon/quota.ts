@@ -4,7 +4,12 @@ import { db, row, rows } from './db.js'
 import { emit } from './events.js'
 import { adapter } from './adapters/index.js'
 import { stripAnsi } from './stream.js'
-import { listWorkers, refreshIdentityIfStale, requireWorker } from './workers.js'
+import {
+  clearQuarantineByProbe,
+  listWorkers,
+  refreshIdentityIfStale,
+  requireWorker
+} from './workers.js'
 import { settings } from './settings.js'
 import { log } from './log.js'
 import { bumpPricingEpoch } from './price.js'
@@ -447,6 +452,13 @@ function store(s: QuotaSnapshot): void {
  */
 function storeAndPublish(s: QuotaSnapshot): void {
   store(s)
+  // ⭐ **A reading with windows in it lifts a dispatch quarantine** (t309). The account answered a
+  // real interactive session and published subscription windows, which is evidence of a different
+  // kind from `auth status`: an expired subscription is exactly what *cannot* produce this row, so
+  // the measured case the quarantine was built for is not lifted by accident. ⛔ Windows only —
+  // a probe that comes back empty or errored proves nothing and must leave the hold standing, or
+  // every failed probe would clear the very state it failed to disprove.
+  if (s.windows.length > 0) clearQuarantineByProbe(s.workerId)
   const reading = lastQuotaReading(s.workerId)
   if (reading) emit({ type: 'quota.changed', quota: reading })
 }
@@ -1138,7 +1150,23 @@ export class QuotaPoller {
       // floor.
       const forced = this.forcedRefresh(w.id, demand, now)
       urgentProbes.delete(w.id)
-      if (w.retiredAt || !w.enabled || w.health?.state === 'suspect') continue
+      if (w.retiredAt || !w.enabled) continue
+
+      // ⭐ **The one probe the sweep spends on an account it may not dispatch to** (t309). A
+      // quarantined worker is unreachable by every other path — the dispatch gate never runs for it,
+      // and the screen-answered skip below would pass it over — so without this the hold has no
+      // automatic exit at all. Through `refreshNow`, so it shares the one attempt ledger and can
+      // cost at most one terminal per `REFRESH_BACKOFF_MS`; `mayRefreshUsage` still refuses an
+      // account whose subscription the failed run measured as expired, which is the case the
+      // quarantine was built for and the case retrying cannot help.
+      // ⚠️ Through `ensureFreshQuota`, so it is **not awaited**: `refreshUsage` holds a PTY for the
+      // better part of thirty seconds, and a held-out account must not delay the sweep of every
+      // account behind it in the list.
+      if (w.health?.state === 'suspect') {
+        ensureFreshQuota(w.id)
+        continue
+      }
+
       try {
         // ⚠️ Identity is a cached belief and nothing used to expire it. ClaudeFirst read "not signed
         // in" on 2026-08-27 while its isolation root held a valid credential, because the `false`
@@ -1196,21 +1224,30 @@ export class QuotaPoller {
  * is signed in to sits on its login screen for the whole timeout and answers nothing. `null` is
  * allowed through, as everywhere else — unknown is not the same as no.
  *
- * ⛔ An account a run has already proved work dies on is not asked either. The refresh is not free
- * in the way a file read is: on both adapters it opens a real interactive session and types into
- * it, so on a worker whose subscription has expired this would spawn a CLI to watch it fail to
- * authenticate and record `unknown` either way. Effectively the same state as disabled, and
- * treated as one.
+ * ⛔ An account whose **subscription has expired** is not asked. The refresh is not free in the way
+ * a file read is: on both adapters it opens a real interactive session and types into it, so this
+ * would spawn a CLI to watch it fail to authenticate and record `unknown` either way. Effectively
+ * the same state as disabled, and treated as one.
  *
- * ⚠️ The *automatic* paths only. `probeWorker` and `refreshUsage` still run when the operator
- * presses Probe - that is one of the two things that lifts the hold, and a quarantine nobody can
- * attempt to clear by hand is the fault this whole mechanism was careful to avoid.
+ * ⭐ **A merely `suspect` worker *is* asked, and that is t309's fix.** This used to refuse every
+ * quarantined account, which made the quarantine two-way: `accountRefusal` withheld the dispatch,
+ * this withheld the probe, and the only exits left were a metered turn (which needs a dispatch) and
+ * a person pressing Probe. Measured 2026-09-08 — that is a genuine lock, and it is the one shape
+ * the operator's *"it can never start"* report actually fits. The asymmetry that resolves it: a
+ * probe costs a PTY and about thirty seconds, while a dispatch costs a workspace claim, a process,
+ * and a task handed to a person as though their own work had failed. A probe is the cheap way to
+ * ask, and a reading with real windows in it is evidence no expired account can forge — see
+ * `storeAndPublish`, which lifts the hold on exactly that evidence.
+ *
+ * ⚠️ The measured case the original exclusion was written for is kept, precisely: an expired
+ * subscription answers `auth status` like a live one, so it is caught here by the verdict the
+ * *failed run* recorded (`health.subscriptionExpired`) rather than by re-asking identity.
  */
 export function mayRefreshUsage(workerId: string): boolean {
   const w = requireWorker(workerId)
   if (w.retiredAt || !w.enabled) return false
   if (w.identity?.loggedIn === false) return false
-  if (w.health?.state === 'suspect') return false
+  if (w.health?.subscriptionExpired === true) return false
   return Boolean(adapter(w.adapterId).info.usageRefresh)
 }
 

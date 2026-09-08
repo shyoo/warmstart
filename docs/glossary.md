@@ -31,10 +31,12 @@ person is using it by hand. Keeps the budget arithmetic honest without taking th
 **identity** (*who is signed in*) and answered by different evidence. Identity is free and local and
 cannot tell a live subscription from a lapsed one; health comes from a dispatch that produced **no
 metered turn**, which is charged to the account rather than to the task. A `suspect` worker is a hard
-gate on **work and judgment alike** - both read the same list in `src/daemon/eligibility.ts` - and it
-also stops the background usage probe, since a refresh opens a real session and an account that
-cannot authenticate simply fails to, every thirty minutes. Lifted by re-probing it by hand, which is
-deliberately still allowed, or by one real turn.
+gate on **work and judgment alike** - both read the same list in `src/daemon/eligibility.ts` - but it
+does **not** stop the background usage probe, and that asymmetry is deliberate (t309): a probe is one
+PTY, a dispatch is a workspace claim and a process and somebody's task appearing to fail, so the
+fleet keeps the cheap way of asking. Lifted by a usage reading that publishes real windows, by one
+real turn, or by re-probing it by hand. ⛔ An account whose failed run measured the **subscription as
+expired** is refused the probe too, because there retrying is the thing that cannot help.
 
 ---
 

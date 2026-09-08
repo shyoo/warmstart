@@ -63,7 +63,7 @@ Before scoring, every worker in the fleet is evaluated against hard admission ru
   - Human-occupied (`humanOccupied: true` — tracked for quota accounting, but never handed automated turns)
   - Not installed (`installed: false`)
   - Signed out (`identity.loggedIn === false`)
-  - Quarantined (`health.state === 'suspect'` — failed a dispatch with zero metered turns)
+  - Quarantined (`health.state === 'suspect'` — failed a dispatch with zero metered turns; the refusal sentence names its own exits, because a hold that reads as permanent gets reported as a deadlock. Cleared by a metered turn, by a background usage probe that comes back with real windows in it, or by pressing Probe)
   - Retired (`health.state === 'retired'`)
 - **Capability fit:** If a task requires specific features (`task.constraints.needs`, e.g. `mcp`, `edit`), workers lacking that adapter capability are excluded.
 
@@ -93,7 +93,7 @@ export function atCapacity(
 
 ### 2.3 Quota High-Water Gate (92%)
 - **Pool-aware lookup:** Multi-pool workers (such as Google Antigravity, which meters Gemini separately from Claude/GPT) look up the specific quota pool matching each candidate model (`poolFor(worker, model)`).
-- **Freshness & Expiry:** Quota readings that have passed their `resetsAt` time or are stale are marked `quotaUnverified: true` and are **not** blocked (allowing CLIs without usage probes to operate).
+- **Freshness & Expiry:** Quota readings that have passed their `resetsAt` time or are stale are marked `quotaUnverified: true` and are **not** blocked (allowing CLIs without usage probes to operate). A screen probe may hold a dispatch while its one refresh is in flight, but a provider answer with no windows (including Muse Code's `Currently unavailable`) ends that attempt; it is not a successful-probe gate. The next eligible tick dispatches blind and records the run as unverified rather than deadlocking the account behind its own meter.
 - **The 92% Gate (`QUOTA_HIGH_WATER = 92`):** If a trusted pool reading is ≥ 92%, that specific `(worker, model)` pair is excluded with `${worker.label} (${model}) at X% of its window`, and `quotaHoldUntil` is set to the window's `resetsAt` timestamp.
 - **The Timed Human Override (`task.overrideQuota`):** 92% and the early wrap-up before a known reset are cautions from this fleet, not vendor rejections. An avoidable mid-run quota preemption first writes a durable 60-second warning (`quota_preempt_json`), posts it to the thread, and exposes **Override preemption** with a live countdown. The watchdog re-reads the trigger after the minute; a changing percentage updates the reason without restarting the deadline. The override lasts until that window resets and lifts the dispatch cut, matching 95% cliff, and early boundary wrap-up, but **never** bypasses `windowRisk` scoring, vendor `rejected` rate-limits, or disabled account gates. A rejection is immediate because the turn has already been refused.
 

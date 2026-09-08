@@ -110,8 +110,10 @@ to a person as `awaiting_human` once the same standing reason has outlived `STAN
 (ten minutes, because a bridged adapter's `isInstalled()` is *false* until its first probe returns).
 ⚠️ Not `failed`: nothing was attempted and nothing was lost, and a reply re-queues it through
 `continueTask`. ⚠️ The two refusals a person is already holding — **disabled** and
-**human-occupied** — are deliberately *not* standing, nor is `suspect`, which a probe or a turn
-clears without anybody being asked.
+**human-occupied** — are deliberately *not* standing, nor is `suspect`, which a background usage
+probe or a turn clears without anybody being asked. ⛔ That is only true because the probe is
+*allowed* on a held-out account (t309); when it was not, `standing: false` was a promise the fleet
+had no way to keep.
 
 ⚠️ `hold_until` is **descriptive only**. `not_before` is the one `admit()` reads; they were split
 deliberately so a task could say *when* without changing what dispatches.

@@ -198,7 +198,7 @@ describe('QuotaPoller.sweep', () => {
       )
   })
 
-  it('skips disabled and suspect workers during background sweep', async () => {
+  it('skips a disabled worker during background sweep, and says nothing about it', async () => {
     sample({ ageMs: 60_000, windows: [['session', 10]] })
     db.db()
       .prepare(
@@ -222,7 +222,27 @@ describe('QuotaPoller.sweep', () => {
     }
 
     expect(heard).not.toContain(DISABLED)
-    expect(heard).not.toContain(SUSPECT)
+  })
+
+  /**
+   * ⭐ **t309: the one probe the sweep spends on an account it may not dispatch to.** A quarantined
+   * worker used to be skipped here as well, which made the hold two-way — `accountRefusal` withheld
+   * the dispatch, `mayRefreshUsage` withheld the probe, and the only exits left were a metered turn
+   * that needed a dispatch and a person pressing Probe. The dispatch gate never runs for a held-out
+   * account, so this sweep is the only automatic path that reaches it at all.
+   *
+   * ⚠️ Asserted as *in flight* rather than as a reading, because it is deliberately not awaited: the
+   * probe holds a PTY for the better part of thirty seconds and the sweep must not sit behind it.
+   * `ensureFreshQuota` answering `true` here means the ledger has a live claim on this worker, which
+   * only the sweep can have opened.
+   */
+  it('probes a suspect worker during the sweep, so the hold has an exit that needs nobody', async () => {
+    quota.forgetRefreshAttempts()
+    const poller = new quota.QuotaPoller()
+
+    await poller.sweep()
+
+    expect(quota.ensureFreshQuota(SUSPECT)).toBe(true)
   })
 
   /**

@@ -663,6 +663,32 @@ export function clearDispatchFailure(id: string): void {
 }
 
 /**
+ * A probe read this account's real usage windows, so it is offered work again.
+ *
+ * ⛔ **The automatic exit from quarantine, and the half of t309 that closes the lock.** Before this,
+ * `health.state === 'suspect'` refused the dispatch *and* `mayRefreshUsage` refused the probe, so
+ * the only ways out were a metered turn — which needs a dispatch — and a person pressing Probe.
+ * A quarantine whose only exits both require the thing it is blocking is a lock, however good the
+ * reason for entering it.
+ *
+ * ⚠️ Called only where **windows were actually published** (`storeAndPublish`). That is the whole
+ * strength of the evidence: an expired subscription cannot draw a `/usage` panel with percentages
+ * in it, so this cannot lift the measured case the quarantine exists for. A failed or empty probe
+ * changes nothing here on purpose.
+ *
+ * ⚠️ Unlike `refreshIdentity(lift = true)` this does **not** reset the failed run's session. A
+ * person pressing Probe has usually just fixed something and wants a cold start; a probe that
+ * happened to succeed is evidence about the account, not a decision about anyone's context.
+ */
+export function clearQuarantineByProbe(id: string): void {
+  const w = getWorker(id)
+  if (w?.health?.state !== 'suspect') return
+  db().prepare('update workers set health_json = null where id = ?').run(id)
+  log.info(`${w.label} published usage windows; clearing '${w.health.reason}'`)
+  announce(requireWorker(id))
+}
+
+/**
  * Re-read who is signed in.
  *
  * `lift` says whether this re-read may also lift a dispatch quarantine, and it defaults to **no**.

@@ -75,7 +75,13 @@ export function accountRefusal(worker: Worker): AccountRefusal | null {
   // does, so nothing free can tell them apart and only a turn can. Held out until somebody re-probes
   // it or something on it produces a turn. See workers.ts.
   if (worker.health?.state === 'suspect') {
-    return { why: `${worker.label} is held out: ${worker.health.reason}`, standing: false }
+    // ⚠️ The sentence names its own exit. t309: this refusal used to end at the reason, and an
+    // operator reading it had no way to know the hold was theirs to clear — which is what made a
+    // state with two automatic exits read as a dead end.
+    return {
+      why: `${worker.label} is held out: ${worker.health.reason} — a successful quota probe or one metered turn clears this, or press Probe`,
+      standing: false
+    }
   }
 
   return null
