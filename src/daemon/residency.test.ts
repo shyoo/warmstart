@@ -4,7 +4,8 @@ import { join } from 'node:path'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { Session } from '@shared/protocol.js'
 import type { Project } from '@shared/tasks.js'
-import { atCapacity, cacheHasLapsed, leastValuableResident } from './scheduler.js'
+import { cacheHasLapsed } from './sessions.js'
+import { atCapacity, leastValuableResident } from './residency.js'
 
 /**
  * Phase 1 of resident sessions: **the workspace belongs to the conversation, not to the run.**

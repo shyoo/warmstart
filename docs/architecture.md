@@ -425,6 +425,7 @@ scripts/                ensure-electron, icons, build-win.ps1                   
 | `scheduler.ts` | scoring, dispatch, watchdogs, `continueTask` → [`routing.md`](routing.md) |
 | `prompt.ts` | `promptFor` and its helpers — what an agent is actually told, and what a resumed turn withholds |
 | `scoring.ts` | `chooseTarget`, the score arithmetic and its explanation (`formatScore`, `briefScore`, `scoreLegend`), `poolPressure` |
+| `residency.ts` | session residency and worker capacity — `atCapacity`, the reservation counters, `leastValuableResident`, `sessionLeaseId`, `evictableResidents` |
 | `eligibility.ts` | ⛔ the account gates, in ONE list |
 | `tasks.ts` | the DAG, admission, mandates, budgets, runs |
 | `sessions.ts` | pty and stream transports, reaping, resuming a closed conversation |

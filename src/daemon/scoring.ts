@@ -50,16 +50,14 @@ import { db } from './db.js'
 import type { RoutingBasis } from '@shared/routing.js'
 import type { WorkerChoice } from './scheduler.js'
 import {
-  atCapacity,
-  evictableResidents,
   needsBaseline,
   poolFor,
   QUOTA_HIGH_WATER,
   reopenableFor,
-  retainedReservations,
   stickyWorkerFor,
   warmSessionFor
 } from './scheduler.js'
+import { atCapacity, evictableResidents, retainedReservations } from './residency.js'
 
 /**
  * What `fitness` and `price` say for their basis while no worker has a routable-model allowlist.

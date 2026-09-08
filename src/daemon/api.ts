@@ -120,7 +120,6 @@ import {
 import { allAvailability } from './resources.js'
 import { activityFor } from './activity.js'
 import {
-  atCapacity,
   completeTask,
   parkForHuman,
   continueTask,
@@ -136,10 +135,10 @@ import {
   resolveConflictOnTask,
   resolveRetryOnTask,
   resolveTask,
-  retainedReservations,
   tick
 } from './scheduler.js'
 import { promptFor } from './prompt.js'
+import { atCapacity, retainedReservations } from './residency.js'
 import { controllerReport, drainConsults, enqueueConsult } from './controller.js'
 import { gateQuestion, riskOf } from './judgment.js'
 import { chatHistory, clearChat, sendChat } from './chat.js'

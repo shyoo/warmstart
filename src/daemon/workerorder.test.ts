@@ -20,7 +20,7 @@ let dir: string
 let db: typeof import('./db.js')
 let workers: typeof import('./workers.js')
 let sessions: typeof import('./sessions.js')
-let scheduler: typeof import('./scheduler.js')
+let residency: typeof import('./residency.js')
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'agentyard-workerorder-'))
@@ -28,7 +28,7 @@ beforeAll(async () => {
   db = await import('./db.js')
   workers = await import('./workers.js')
   sessions = await import('./sessions.js')
-  scheduler = await import('./scheduler.js')
+  residency = await import('./residency.js')
   db.openDb(join(dir, 'workerorder.db'))
 })
 
@@ -125,6 +125,6 @@ describe('making a worker less parallel', () => {
       'running-3'
     ])
     // A new task is held at the newly lowered ceiling, while the existing three finish normally.
-    expect(scheduler.atCapacity(sessions.sessionsForWorker(worker.id), reduced.maxConcurrent, null)).toBe(true)
+    expect(residency.atCapacity(sessions.sessionsForWorker(worker.id), reduced.maxConcurrent, null)).toBe(true)
   })
 })

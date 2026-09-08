@@ -20,6 +20,7 @@ let db: typeof import('./db.js')
 let workers: typeof import('./workers.js')
 let tasks: typeof import('./tasks.js')
 let scheduler: typeof import('./scheduler.js')
+let residency: typeof import('./residency.js')
 let scoring: typeof import('./scoring.js')
 
 let origClaudeInstalled: () => boolean
@@ -31,6 +32,7 @@ beforeAll(async () => {
   workers = await import('./workers.js')
   tasks = await import('./tasks.js')
   scheduler = await import('./scheduler.js')
+  residency = await import('./residency.js')
   scoring = await import('./scoring.js')
   const { claudeCode } = await import('./adapters/claude-code.js')
   origClaudeInstalled = claudeCode.isInstalled
@@ -116,8 +118,8 @@ describe('dispatching scenarios and capacity tracking', () => {
     db.db().prepare('update runs set ended_at = null, outcome = null where id = ?').run(run1.id)
 
     // Verify ClaudeFirst is not considered reserved or at capacity
-    expect(scheduler.runningTaskReservations(claudeFirst.id, [])).toBe(0)
-    expect(scheduler.atCapacity([], claudeFirst.maxConcurrent, null, 0)).toBe(false)
+    expect(residency.runningTaskReservations(claudeFirst.id, [])).toBe(0)
+    expect(residency.atCapacity([], claudeFirst.maxConcurrent, null, 0)).toBe(false)
 
     // Task 2 (t255) is manually launched/pinned on ClaudeFirst
     const task2 = tasks.createTask({
@@ -180,14 +182,14 @@ describe('dispatching scenarios and capacity tracking', () => {
     })
     tasks.setStatus(task1.id, 'running', { assignee: workerA.id })
 
-    expect(scheduler.runningTaskReservations(workerA.id, [])).toBe(1)
-    expect(scheduler.runningTaskReservations(workerB.id, [])).toBe(0)
+    expect(residency.runningTaskReservations(workerA.id, [])).toBe(1)
+    expect(residency.runningTaskReservations(workerB.id, [])).toBe(0)
 
     // Reassign task 1 to worker B
     tasks.setStatus(task1.id, 'running', { assignee: workerB.id })
 
-    expect(scheduler.runningTaskReservations(workerA.id, [])).toBe(0)
-    expect(scheduler.runningTaskReservations(workerB.id, [])).toBe(1)
+    expect(residency.runningTaskReservations(workerA.id, [])).toBe(0)
+    expect(residency.runningTaskReservations(workerB.id, [])).toBe(1)
 
     // A task pinned to worker A can now be targeted
     const task2 = tasks.createTask({
@@ -311,7 +313,7 @@ describe('dispatching scenarios and capacity tracking', () => {
     expect(tasks.requireRun('orphan-stuck').endedAt).not.toBeNull()
     expect(tasks.requireRun('orphan-stuck').outcome).toBe('terminated')
 
-    expect(scheduler.runningTaskReservations(worker.id, [])).toBe(0)
+    expect(residency.runningTaskReservations(worker.id, [])).toBe(0)
   })
 
   it('migration 52: closes orphaned runs on settled tasks with correct outcomes and notes', () => {

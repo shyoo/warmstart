@@ -20,7 +20,7 @@ import type { Session } from '@shared/protocol.js'
 let dir: string
 let db: typeof import('./db.js')
 let workers: typeof import('./workers.js')
-let scheduler: typeof import('./scheduler.js')
+let residency: typeof import('./residency.js')
 let tasks: typeof import('./tasks.js')
 let sessions: typeof import('./sessions.js')
 
@@ -29,7 +29,7 @@ beforeAll(async () => {
   process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
   db = await import('./db.js')
   workers = await import('./workers.js')
-  scheduler = await import('./scheduler.js')
+  residency = await import('./residency.js')
   tasks = await import('./tasks.js')
   sessions = await import('./sessions.js')
   db.openDb(join(dir, 'concurrency.db'))
@@ -93,11 +93,11 @@ describe('how many tasks one account may run at once', () => {
 describe('the capacity gate above one slot', () => {
   it('lets a second task onto an account already running one', () => {
     // ⭐ The whole point. At `maxConcurrent: 1` this is the hold the operator saw as `queued`.
-    expect(scheduler.atCapacity([session('a')], 2, null)).toBe(false)
+    expect(residency.atCapacity([session('a')], 2, null)).toBe(false)
   })
 
   it('stops the third, so the number is a bound and not a suggestion', () => {
-    expect(scheduler.atCapacity([session('a'), session('b')], 2, null)).toBe(true)
+    expect(residency.atCapacity([session('a'), session('b')], 2, null)).toBe(true)
   })
 
   it('still exempts the session a task would reuse, at every width', () => {
@@ -105,8 +105,8 @@ describe('the capacity gate above one slot', () => {
     //    made a one-slot worker refuse every warm continuation; widening the account must not
     //    quietly reintroduce it at the new ceiling.
     const open = session('warm')
-    expect(scheduler.atCapacity([open, session('b')], 2, open)).toBe(false)
-    expect(scheduler.atCapacity([open], 1, open)).toBe(false)
+    expect(residency.atCapacity([open, session('b')], 2, open)).toBe(false)
+    expect(residency.atCapacity([open], 1, open)).toBe(false)
   })
 
   it('counts work only, so consults do not consume the widened slots either', () => {
@@ -114,7 +114,7 @@ describe('the capacity gate above one slot', () => {
     //    controller.ts. Counting it here would mean a busy fleet cannot ask for judgment exactly
     //    when judgment is worth the most.
     const busy = [session('a'), session('c1', 'consult'), session('c2', 'consult')]
-    expect(scheduler.atCapacity(busy, 2, null)).toBe(false)
+    expect(residency.atCapacity(busy, 2, null)).toBe(false)
   })
 
   it('keeps a slot for a task whose question closed its session', () => {
@@ -134,10 +134,10 @@ describe('the capacity gate above one slot', () => {
     tasks.finishRun(run.id, 'blocked')
     tasks.setStatus(parked.id, 'awaiting_human', { assignee: 'human' })
 
-    const retained = scheduler.awaitingHumanReservations(worker.id, [])
+    const retained = residency.awaitingHumanReservations(worker.id, [])
     expect(retained).toBe(1)
-    expect(scheduler.atCapacity([], worker.maxConcurrent, null, retained)).toBe(true)
-    expect(scheduler.awaitingHumanReservations('another-worker', [])).toBe(0)
+    expect(residency.atCapacity([], worker.maxConcurrent, null, retained)).toBe(true)
+    expect(residency.awaitingHumanReservations('another-worker', [])).toBe(0)
   })
 
   it('does not double-count a parked task whose session is still warm', () => {
@@ -155,8 +155,8 @@ describe('the capacity gate above one slot', () => {
     tasks.setStatus(parked.id, 'awaiting_human', { assignee: 'human' })
 
     const warm = session('still-warm')
-    expect(scheduler.awaitingHumanReservations(worker.id, [warm])).toBe(0)
-    expect(scheduler.atCapacity([warm], worker.maxConcurrent, warm, 0)).toBe(false)
+    expect(residency.awaitingHumanReservations(worker.id, [warm])).toBe(0)
+    expect(residency.atCapacity([warm], worker.maxConcurrent, warm, 0)).toBe(false)
   })
 
   it('keeps a slot for a task that is still running or landing after its session closed', () => {
@@ -177,23 +177,23 @@ describe('the capacity gate above one slot', () => {
     tasks.setStatus(runningTask.id, 'running', { assignee: worker.id })
 
     // Session is closed, so absent from sessionsForWorker ([]).
-    const runningRetained = scheduler.runningTaskReservations(worker.id, [])
+    const runningRetained = residency.runningTaskReservations(worker.id, [])
     expect(runningRetained).toBe(1)
-    const totalRetained = scheduler.retainedReservations(worker.id, [])
+    const totalRetained = residency.retainedReservations(worker.id, [])
     expect(totalRetained).toBe(1)
-    expect(scheduler.atCapacity([], worker.maxConcurrent, null, totalRetained)).toBe(true)
-    expect(scheduler.runningTaskReservations('another-worker', [])).toBe(0)
+    expect(residency.atCapacity([], worker.maxConcurrent, null, totalRetained)).toBe(true)
+    expect(residency.runningTaskReservations('another-worker', [])).toBe(0)
 
     // Does not double-count if the session is still live:
     const liveSession = session('closed-while-landing')
-    expect(scheduler.runningTaskReservations(worker.id, [liveSession])).toBe(0)
+    expect(residency.runningTaskReservations(worker.id, [liveSession])).toBe(0)
 
     // Once landing finishes and the run is closed, the slot is freed:
     tasks.setStatus(runningTask.id, 'completed')
     tasks.finishRun(run.id, 'completed')
-    expect(scheduler.runningTaskReservations(worker.id, [])).toBe(0)
-    expect(scheduler.retainedReservations(worker.id, [])).toBe(0)
-    expect(scheduler.atCapacity([], worker.maxConcurrent, null, 0)).toBe(false)
+    expect(residency.runningTaskReservations(worker.id, [])).toBe(0)
+    expect(residency.retainedReservations(worker.id, [])).toBe(0)
+    expect(residency.atCapacity([], worker.maxConcurrent, null, 0)).toBe(false)
   })
 
   it('spawnSession refuses when an uncounted open run exists on a 1-slot worker', () => {
@@ -277,16 +277,16 @@ describe('the capacity gate above one slot', () => {
 
     for (const st of nonRunningStatuses) {
       db.db().prepare('update tasks set status = ?, assignee = null where id = ?').run(st, task.id)
-      expect(scheduler.runningTaskReservations(worker.id, [])).toBe(0)
+      expect(residency.runningTaskReservations(worker.id, [])).toBe(0)
     }
 
     // If task is in 'running' status assigned to this worker, it reports 1
     db.db().prepare('update tasks set status = ?, assignee = ? where id = ?').run('running', worker.id, task.id)
-    expect(scheduler.runningTaskReservations(worker.id, [])).toBe(1)
+    expect(residency.runningTaskReservations(worker.id, [])).toBe(1)
 
     // If task is in 'running' status assigned to ANOTHER worker, it reports 0
     db.db().prepare('update tasks set status = ?, assignee = ? where id = ?').run('running', 'other-worker', task.id)
-    expect(scheduler.runningTaskReservations(worker.id, [])).toBe(0)
+    expect(residency.runningTaskReservations(worker.id, [])).toBe(0)
   })
 
   it('setStatus automatically closes open runs when task settles', () => {
@@ -366,14 +366,14 @@ describe('a planner blocked on its own pieces', () => {
       costModelId: null
     })
     tasks.setStatus(plan.id, 'running', { assignee: worker.id })
-    expect(scheduler.retainedReservations(worker.id, [])).toBe(1)
+    expect(residency.retainedReservations(worker.id, [])).toBe(1)
 
     // The split is filed: `applySplit` parks the parent, then the run ends as `blocked`.
     tasks.setStatus(plan.id, 'blocked', { holdReason: 'waiting on 2 pieces of its own plan' })
     tasks.finishRun(run.id, 'blocked')
 
-    expect(scheduler.retainedReservations(worker.id, [])).toBe(0)
-    expect(scheduler.atCapacity([], worker.maxConcurrent, null, 0)).toBe(false)
+    expect(residency.retainedReservations(worker.id, [])).toBe(0)
+    expect(residency.atCapacity([], worker.maxConcurrent, null, 0)).toBe(false)
   })
 
   it('⚠️ still holds one while the split approval is open, because a person is being waited on', () => {
@@ -392,7 +392,7 @@ describe('a planner blocked on its own pieces', () => {
       costModelId: null
     })
     tasks.setStatus(plan.id, 'awaiting_human', { assignee: worker.id })
-    expect(scheduler.awaitingHumanReservations(worker.id, [])).toBe(1)
+    expect(residency.awaitingHumanReservations(worker.id, [])).toBe(1)
   })
 
   it('does not count a task as retained when it has moved to another worker with a live session', () => {
@@ -427,12 +427,12 @@ describe('a planner blocked on its own pieces', () => {
     const liveSessionB = session('live-session-b')
 
     // Worker A should not count the task as retained, since it's now on Worker B with a live session
-    expect(scheduler.runningTaskReservations(workerA.id, [])).toBe(0)
-    expect(scheduler.runningTaskReservations(workerB.id, [liveSessionB])).toBe(0)
+    expect(residency.runningTaskReservations(workerA.id, [])).toBe(0)
+    expect(residency.runningTaskReservations(workerB.id, [liveSessionB])).toBe(0)
 
     // Verify the task is correctly counted as retained on Worker B if its session closes
     tasks.finishRun(runB.id, 'completed')
     tasks.setStatus(task.id, 'running', { assignee: workerB.id })
-    expect(scheduler.runningTaskReservations(workerB.id, [])).toBe(1)
+    expect(residency.runningTaskReservations(workerB.id, [])).toBe(1)
   })
 })

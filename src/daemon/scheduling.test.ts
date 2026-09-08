@@ -20,6 +20,7 @@ let db: typeof import('./db.js')
 let tasks: typeof import('./tasks.js')
 let projects: typeof import('./projects.js')
 let scheduler: typeof import('./scheduler.js')
+let residency: typeof import('./residency.js')
 let scoring: typeof import('./scoring.js')
 let workers: typeof import('./workers.js')
 
@@ -32,6 +33,7 @@ beforeAll(async () => {
   tasks = await import('./tasks.js')
   projects = await import('./projects.js')
   scheduler = await import('./scheduler.js')
+  residency = await import('./residency.js')
   scoring = await import('./scoring.js')
   workers = await import('./workers.js')
   db.openDb(join(dir, 'scheduling.db'))
@@ -273,7 +275,7 @@ describe('scheduler tick: end-to-end FIFO dispatch', () => {
     tasks.finishRun(run1.id, 'completed')
 
     // Worker is now free, runningTaskReservations is 0:
-    expect(scheduler.retainedReservations(w.id, [])).toBe(0)
+    expect(residency.retainedReservations(w.id, [])).toBe(0)
   })
 
   it('does not hold a queued task at capacity when a previous task completed with an unclosed run', async () => {
@@ -303,7 +305,7 @@ describe('scheduler tick: end-to-end FIFO dispatch', () => {
     const task2 = tasks.createTask({ title: 'Task 2 Queued', projectId, constraints: { workerId: w.id } })
 
     // ClaudeFirst has capacity, so task2 must not be held with "ClaudeFirst at capacity"
-    expect(scheduler.retainedReservations(w.id, [])).toBe(0)
+    expect(residency.retainedReservations(w.id, [])).toBe(0)
     const choice = scoring.chooseTarget(task2)
     expect(choice.worker).not.toBeNull()
     expect(choice.worker?.id).toBe(w.id)
