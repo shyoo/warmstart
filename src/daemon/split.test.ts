@@ -193,6 +193,26 @@ describe('applySplit', () => {
     expect(tasks.listTasks()).toHaveLength(before)
     expect(tasks.requireTask(parent.id).status).not.toBe('blocked')
   })
+
+  it('frees fan-out slots after every piece settles, so the resumed planner can file follow-up work', () => {
+    const parent = planner({ maxChildren: 2 })
+    const result = split.applySplit(parent.id, [piece('one'), piece('two')], AGENT)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+
+    expect(() =>
+      tasks.createTask({ title: 'blocked follow-up', parentTaskId: parent.id, createdBy: AGENT })
+    ).toThrow(/fan-out cap of 2/)
+
+    for (const child of result.children) tasks.setStatus(child.id, 'completed')
+
+    const followUp = tasks.createTask({
+      title: 'review the completed pieces',
+      parentTaskId: parent.id,
+      createdBy: AGENT
+    })
+    expect(followUp.status).toBe('ready')
+  })
 })
 
 describe('the edge release rule', () => {

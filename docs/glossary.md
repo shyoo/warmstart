@@ -335,9 +335,10 @@ cost model, matched against the window's group by containment, because the vendo
 heading three different ways. Every other provider here has one pool and no group.
 
 **Mandate** — *the authority a task runs under.* Inherited from its creator and **narrowed, never
-widened**: allowed operations, project scope, remaining lineage depth, fan-out cap. A task that has
-lost `spawn_tasks` cannot create children — not because a heuristic caught it, but because it has no
-such authority.
+widened**: allowed operations, project scope, remaining lineage depth, fan-out cap. The cap bounds
+unsettled children; completed, failed and cancelled children leave a slot for the parent's resumed
+resolution turn. A task that has lost `spawn_tasks` cannot create children — not because a heuristic
+caught it, but because it has no such authority.
 
 **Budget** — a token grant, inherited as a *share* of the creator's remaining budget, so an
 agent-generated subtree cannot outspend its root however many nodes it grows.

@@ -610,8 +610,8 @@ export function createTask(input: CreateTaskInput): Task {
         `lineage depth ${lineageDepth} exceeds the mandate limit of ${parent.mandate.maxLineageDepth}`
       )
     }
-    const siblings = countChildren(parent.id)
-    if (siblings >= parent.mandate.maxChildren) {
+    const activeChildren = countUnsettledChildren(parent.id)
+    if (activeChildren >= parent.mandate.maxChildren) {
       throw new Error(`task ${parent.seq} has reached its fan-out cap of ${parent.mandate.maxChildren}`)
     }
     mandate = narrowMandate(parent.mandate, input.mandate)
@@ -707,9 +707,20 @@ export function createTask(input: CreateTaskInput): Task {
   return task
 }
 
-function countChildren(parentId: string): number {
+/**
+ * The fan-out cap bounds work that is still outstanding, not a task's permanent family tree.
+ *
+ * A Plan & Split planner is resumed after its pieces settle so it can review their result. At that
+ * point its old pieces no longer consume a delegation slot: refusing a follow-up merely because
+ * five completed rows remain made the cap a lifetime limit and stranded the resolution turn.
+ */
+function countUnsettledChildren(parentId: string): number {
   const r = db()
-    .prepare('select count(*) as n from tasks where parent_task_id = ? and deleted_at is null')
+    .prepare(
+      `select count(*) as n from tasks
+        where parent_task_id = ? and deleted_at is null
+          and status not in ('completed', 'failed', 'cancelled')`
+    )
     .get(parentId) as { n: number }
   return r.n
 }
