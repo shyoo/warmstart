@@ -115,9 +115,10 @@ function notes(taskId: string): string[] {
     .map((m) => m.text)
 }
 
-/** The account the operator actually gave permission for: switch on, vendor agreeing. */
+/** The account the operator actually gave permission for: fleet, worker, and vendor agreeing. */
 function creditsOn(workerId: string): void {
   workers.setWorkerCredits(workerId, ON)
+  workers.setWorkerCreditsIntent(workerId, true)
   settings.setSetting('spendCreditsPastLimit', true)
 }
 
@@ -225,6 +226,7 @@ describe('the dispatch gate on a window the vendor has already emptied', () => {
     seed7d(billing.id, FULL_7D)
     seed7d(plain.id, FULL_7D)
     workers.setWorkerCredits(billing.id, ON)
+    workers.setWorkerCreditsIntent(billing.id, true)
     workers.setWorkerCredits(plain.id, OFF)
     settings.setSetting('spendCreditsPastLimit', true)
 
@@ -295,6 +297,7 @@ describe('the switch on its own, and what the row says when it changes nothing',
     const worker = seedWorker('ClaudeSecond')
     seed7d(worker.id, FULL_7D)
     workers.setWorkerCredits(worker.id, { ...ON, used: 39.99 })
+    workers.setWorkerCreditsIntent(worker.id, true)
     settings.setSetting('spendCreditsPastLimit', true)
 
     expect(scoring.chooseTarget(pinnedTask(worker.id, ADAPTER)).worker?.id).toBe(worker.id)
@@ -483,7 +486,7 @@ describe('a task already parked at paused_quota when the switch is thrown', () =
 
 describe('spendingCreditsOn, and the purse behind it', () => {
   it('reads an emptied purse as not spending, however willing the vendor is', () => {
-    const worker = { credits: SPENT } as Parameters<typeof workers.spendingCreditsOn>[0]
+    const worker = { credits: SPENT, creditsIntent: { asked: true } } as Parameters<typeof workers.spendingCreditsOn>[0]
     expect(workers.spendingCreditsOn(worker, true)).toBe(false)
   })
 

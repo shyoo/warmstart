@@ -140,10 +140,11 @@ describe('what the vendor said, stored beside what the operator asked for', () =
   })
 })
 
-describe('spendingCreditsOn — both halves, and neither alone', () => {
-  it('spends only when the operator asked and the vendor agrees', () => {
+describe('spendingCreditsOn — all three halves, and none alone', () => {
+  it('spends only when fleet and worker both allow it and the vendor agrees', () => {
     const worker = seedWorker('ClaudeFirst')
     workers.setWorkerCredits(worker.id, ON)
+    workers.setWorkerCreditsIntent(worker.id, true)
     expect(workers.spendingCreditsOn(workers.getWorker(worker.id), true)).toBe(true)
   })
 
@@ -162,6 +163,16 @@ describe('spendingCreditsOn — both halves, and neither alone', () => {
     const worker = seedWorker('ClaudeFirst')
     workers.setWorkerCredits(worker.id, ON)
     expect(workers.spendingCreditsOn(workers.getWorker(worker.id), false)).toBe(false)
+  })
+
+  it('stops an active account from spending when its worker toggle is turned off', () => {
+    const worker = seedWorker('ClaudeFirst')
+    workers.setWorkerCredits(worker.id, ON)
+    workers.setWorkerCreditsIntent(worker.id, true)
+    expect(workers.spendingCreditsOn(workers.getWorker(worker.id), true)).toBe(true)
+
+    workers.setWorkerCreditsIntent(worker.id, false)
+    expect(workers.spendingCreditsOn(workers.getWorker(worker.id), true)).toBe(false)
   })
 
   /** ⚠️ Not knowing is not permission. A worker no spend probe has read is not spending. */
@@ -219,6 +230,7 @@ describe('compaction stands down where credits are being spent — but only the 
   const sessionOn = (): Parameters<typeof clock.mayCompact>[0] => {
     const worker = seedWorker('ClaudeFirst')
     workers.setWorkerCredits(worker.id, ON)
+    workers.setWorkerCreditsIntent(worker.id, true)
     return { id: seedSession(worker.id), workerId: worker.id } as Parameters<
       typeof clock.mayCompact
     >[0]

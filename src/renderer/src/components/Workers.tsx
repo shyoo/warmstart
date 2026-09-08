@@ -1,6 +1,6 @@
 import { canJudge, canWork, roleOf, sessionEnded } from '@shared/protocol'
 import { Fragment, useEffect, useState } from 'react'
-import type { AdapterDetection, AdapterInfo, ModelOptions, Session, Worker } from '@shared/protocol'
+import type { AdapterDetection, AdapterInfo, ModelOptions, Session, Settings, Worker } from '@shared/protocol'
 import { rpc, useDaemonEvents, useNow, type FleetEntry } from '../lib/daemon'
 import { isWorkerSubscriptionExpired, QUOTA_STALE_AFTER_MS, quotaFreshness } from '@shared/tasks'
 import { age, percent, quotaGap } from '../lib/format'
@@ -159,6 +159,7 @@ export function Workers({
   // of the whole worker table would buy nothing anybody can see.
   const now = useNow(30_000)
   const [adapters, setAdapters] = useState<AdapterInfo[]>([])
+  const [settings, setSettings] = useState<Settings | null>(null)
   /**
    * ⛔ Fetched from the daemon, never compiled in. The renderer holds no cost models, and a second
    * table of model facts here would drift from the first the day a model was added to a file and
@@ -205,6 +206,7 @@ export function Workers({
 
   useEffect(() => {
     void rpc('adapter.list').then(setAdapters)
+    void rpc('settings.get').then(setSettings).catch(() => setSettings(null))
     // A fleet with no priceable model list still runs work; the column falls back to CLI default.
     void rpc('model.options').then(setModelOptions).catch(() => setModelOptions([]))
     void rpc('adapter.detect').then(setDetections)
@@ -411,7 +413,8 @@ export function Workers({
             <col style={{ width: '10%' }} />
             <col style={{ width: '5%' }} />
             <col style={{ width: '13%' }} />
-            <col style={{ width: '9%' }} />
+            <col style={{ width: '7%' }} />
+            <col style={{ width: '11%' }} />
             <col style={{ width: '9%' }} />
             <col style={{ width: '9%' }} />
             <col style={{ width: '9%' }} />
@@ -444,6 +447,7 @@ export function Workers({
               </th>
               <th>Grading model</th>
               <th>Role</th>
+              <th>Usage credits</th>
               <th className="tbl-num">Action</th>
             </tr>
           </thead>
@@ -895,19 +899,40 @@ export function Workers({
                         <label><input type="checkbox" checked={worker.gradingEnabled} onChange={() =>
                           void guard(`grading-role:${worker.id}`, () => rpc('worker.update', { id: worker.id, gradingEnabled: !worker.gradingEnabled }))
                         } /> Grading</label>
-                        {/* ⛔ **An intention, not a switch at the vendor.** Ticking this does not
-                            enable usage credits — measured 2026-09-07, Claude Code reports
-                            `can_toggle: false` and `/usage-credits` opens a login chooser, so the
-                            real control lives in the vendor's own account settings. What this does
-                            is tell the app what was wanted, which is what lets Doctor say "you
-                            asked for credits here and the vendor says they are off". ⚠️ Paired with
-                            the fleet switch: neither half does anything alone. */}
-                        <label title="Records that this account is meant to spend usage credits past its plan limit. Turning the credits on is done in the vendor's own account settings; this is how the app notices when the two disagree.">
-                          <input type="checkbox" checked={worker.creditsIntent?.asked === true} onChange={() =>
-                            void guard(`credits:${worker.id}`, () => rpc('worker.setCreditsIntent', { id: worker.id, asked: worker.creditsIntent?.asked !== true }))
-                          } /> Credits{worker.credits ? (worker.credits.enabled ? ' (on)' : ' (vendor: off)') : ''}
-                        </label>
                       </div>
+                    </td>
+                    <td>
+                      {(() => {
+                        const globalCreditsOn = settings?.spendCreditsPastLimit === true
+                        const workerCreditsOn = worker.creditsIntent?.asked === true
+                        const unavailable = !globalCreditsOn
+                        return (
+                          <div className={`worker-credits${unavailable ? ' worker-credits--disabled' : ''}`}>
+                            <label title={
+                              unavailable
+                                ? 'Disabled until “Spend usage credits past the plan limit” is enabled in Settings › Global.'
+                                : 'Allow this worker to spend usage credits past its plan limit. The vendor must also report credits enabled.'
+                            }>
+                              <input
+                                type="checkbox"
+                                checked={workerCreditsOn}
+                                disabled={unavailable || busy === `credits:${worker.id}`}
+                                onChange={() =>
+                                  void guard(`credits:${worker.id}`, () =>
+                                    rpc('worker.setCreditsIntent', { id: worker.id, asked: !workerCreditsOn })
+                                  )
+                                }
+                              /> Allow credits
+                            </label>
+                            {!globalCreditsOn && workerCreditsOn && (
+                              <span className="worker-credits-warning">Disabled: turn on the global setting first.</span>
+                            )}
+                            {globalCreditsOn && worker.credits && !worker.credits.enabled && (
+                              <span className="worker-credits-warning">Vendor reports credits off.</span>
+                            )}
+                          </div>
+                        )
+                      })()}
                     </td>
                     {/* ⛔ The buttons live in a div, never directly in the <td>. The cell is a
                         `label | value` grid, so three loose buttons were laid out as grid items:
@@ -927,7 +952,7 @@ export function Workers({
                       the time — is one an operator learns to stop reading. */}
                   {notes.length > 0 && (
                     <tr className={`tbl-row--note${worker.enabled ? '' : ' tbl-row--off'}`}>
-                       <td colSpan={12}>
+                       <td colSpan={13}>
                         {notes.map((n) => (
                           <div key={n.key} className="tbl-note">
                             <span className={`tbl-note-label ${n.tone}`}>{n.label}</span>

@@ -428,9 +428,11 @@ export function noteCreditsDiscrepancyReported(id: string): void {
 /**
  * Is this worker actually spending past its plan limit right now?
  *
- * ⛔ **Both halves, and the vendor's is not optional.** `spendCreditsPastLimit` is the operator's
- * fleet-wide intent; `worker.credits.enabled` is what the vendor says about *this* account. Standing
- * the quota guards down on the switch alone would apply it to accounts with no credits behind them,
+ * ⛔ **All three halves, and the vendor's is not optional.** `spendCreditsPastLimit` is the operator's
+ * fleet-wide permission; `worker.creditsIntent.asked` is their explicit choice for *this* account;
+ * and `worker.credits.enabled` is what the vendor says about that choice. Standing the quota guards
+ * down without the worker choice would keep a run billing after an operator turned that worker off.
+ * Standing them down on the fleet switch alone would apply it to accounts with no credits behind them,
  * where the run does not gain a reprieve — it simply runs into a hard vendor refusal instead of
  * being wrapped up cleanly, losing the commit and the handoff the wrap-up exists to produce.
  *
@@ -441,7 +443,12 @@ export function noteCreditsDiscrepancyReported(id: string): void {
  * `creditsPurseEmpty`.
  */
 export function spendingCreditsOn(worker: Worker | null, switchOn: boolean): boolean {
-  return switchOn && worker?.credits?.enabled === true && !creditsPurseEmpty(worker.credits)
+  return (
+    switchOn &&
+    worker?.creditsIntent?.asked === true &&
+    worker.credits?.enabled === true &&
+    !creditsPurseEmpty(worker.credits)
+  )
 }
 
 /**
