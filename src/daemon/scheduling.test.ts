@@ -20,6 +20,7 @@ let db: typeof import('./db.js')
 let tasks: typeof import('./tasks.js')
 let projects: typeof import('./projects.js')
 let scheduler: typeof import('./scheduler.js')
+let resolutions: typeof import('./resolutions.js')
 let residency: typeof import('./residency.js')
 let scoring: typeof import('./scoring.js')
 let workers: typeof import('./workers.js')
@@ -33,6 +34,7 @@ beforeAll(async () => {
   tasks = await import('./tasks.js')
   projects = await import('./projects.js')
   scheduler = await import('./scheduler.js')
+  resolutions = await import('./resolutions.js')
   residency = await import('./residency.js')
   scoring = await import('./scoring.js')
   workers = await import('./workers.js')
@@ -326,7 +328,7 @@ describe('automatic resolve and retry', () => {
         task.id
       )
 
-    expect(await scheduler.resolveRetryOnTask(task.id, true)).toEqual({ ok: true })
+    expect(await resolutions.resolveRetryOnTask(task.id, true)).toEqual({ ok: true })
     const retried = tasks.requireTask(task.id)
     expect(retried.status).toBe('ready')
     expect(retried.resolveRetryAskedAt).not.toBeNull()
@@ -338,7 +340,7 @@ describe('automatic resolve and retry', () => {
       assignee: 'human',
       holdReason: 'landing failed: the project checks failed after rebase'
     })
-    expect(await scheduler.resolveRetryOnTask(task.id, true)).toMatchObject({ ok: false })
+    expect(await resolutions.resolveRetryOnTask(task.id, true)).toMatchObject({ ok: false })
     expect(tasks.requireTask(task.id).status).toBe('awaiting_human')
     expect(tasks.messagesFor(task.id).filter((m) => /Automatically retrying once/.test(m.text))).toHaveLength(1)
   })

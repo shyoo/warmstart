@@ -54,7 +54,7 @@ Task routing executes in four sequential phases:
 
 ## 2. Phase 1: Hard Eligibility & Capacity Gates
 
-Before scoring, every worker in the fleet is evaluated against hard admission rules in `src/daemon/scheduler.ts` and `src/daemon/eligibility.ts`:
+Before scoring, every worker in the fleet is evaluated against hard admission rules in `src/daemon/scoring.ts`, `src/daemon/residency.ts` and `src/daemon/eligibility.ts`:
 
 ### 2.1 Task Constraints & Account Fitness
 - **Target constraints:** If `task.constraints.workerId` or `task.constraints.adapterId` is set, only matching workers are considered. ⛔ `workerIds` is the same gate over a **list** — what the composer's Each piece row writes onto every piece of a Plan & Split — and a candidate outside it is *discarded*, never merely scored lower. `modelsByWorker` then gives each named account its own model, because a model id belongs to one CLI and a single `model` alongside a list of accounts from different CLIs would hand at least one of them an id it cannot start on.
@@ -74,7 +74,7 @@ Each worker defines `maxConcurrent` (default `1` parallel run):
 - ⛔ **Retained Task Reservations:** Closed sessions are absent from `sessionsForWorker`. However, tasks parked at `awaiting_human` or tasks still `running` (such as completing/landing work after a one-shot CLI like Codex has exited) still own a slot. `retainedReservations()` counts these uncounted tasks so the scheduler and `spawnSession` do not dispatch into an occupied worker.
 
 ```typescript
-// src/daemon/scheduler.ts
+// src/daemon/residency.ts
 export function atCapacity(
   sessions: Session[],
   maxConcurrent: number,

@@ -9,7 +9,7 @@ let dir: string
 let db: typeof import('./db.js')
 let workers: typeof import('./workers.js')
 let tasks: typeof import('./tasks.js')
-let scheduler: typeof import('./scheduler.js')
+let resolutions: typeof import('./resolutions.js')
 let turnend: typeof import('./turnend.js')
 let prompt: typeof import('./prompt.js')
 let api: typeof import('./api.js')
@@ -23,7 +23,7 @@ beforeAll(async () => {
   db = await import('./db.js')
   workers = await import('./workers.js')
   tasks = await import('./tasks.js')
-  scheduler = await import('./scheduler.js')
+  resolutions = await import('./resolutions.js')
   turnend = await import('./turnend.js')
   prompt = await import('./prompt.js')
   api = await import('./api.js')
@@ -407,7 +407,7 @@ describe('run prompt persistence and task.get preview', () => {
       'Landing failed: the project checks failed after rebase.\n\n$ npm run lint\n1 problem (1 error)'
     )
 
-    const res = await scheduler.resolveChecksOnTask(task.id)
+    const res = await resolutions.resolveChecksOnTask(task.id)
     expect(res).toEqual({ ok: true })
 
     const msgs = tasks.messagesFor(task.id)
@@ -431,7 +431,7 @@ describe('run prompt persistence and task.get preview', () => {
       holdReason: 'landing failed: conflict'
     })
 
-    await expect(scheduler.resolveConflictOnTask(task.id)).resolves.toEqual({ ok: true })
+    await expect(resolutions.resolveConflictOnTask(task.id)).resolves.toEqual({ ok: true })
 
     const retry = tasks.messagesFor(task.id).filter((m) => m.role === 'human').at(-1)?.text
     expect(retry).toContain('Run `git rebase main`')
@@ -463,7 +463,7 @@ describe('run prompt persistence and task.get preview', () => {
       '1 file(s) are uncommitted. OpenAI Codex runs one turn and exits, so it cannot be asked to finish the job afterwards — this one is over to you.'
     )
 
-    const res = await scheduler.resolveCommitOnTask(task.id)
+    const res = await resolutions.resolveCommitOnTask(task.id)
     expect(res).toEqual({ ok: true })
 
     const updatedTask = tasks.requireTask(task.id)
@@ -486,7 +486,7 @@ describe('run prompt persistence and task.get preview', () => {
       holdReason: 'landing failed: the trunk was busy'
     })
 
-    await expect(scheduler.relandTask(task.id)).resolves.toEqual({ ok: false, reason: 'not a git project' })
+    await expect(resolutions.relandTask(task.id)).resolves.toEqual({ ok: false, reason: 'not a git project' })
     expect(tasks.requireTask(task.id).holdReason).toBe('Retry landing failed: not a git project')
     expect(tasks.messagesFor(task.id).at(-1)).toMatchObject({
       role: 'system',
@@ -501,7 +501,7 @@ describe('run prompt persistence and task.get preview', () => {
       holdReason: 'the trunk moved during this run and this branch is empty — check where the work went'
     })
 
-    await expect(scheduler.relandTask(task.id)).resolves.toEqual({
+    await expect(resolutions.relandTask(task.id)).resolves.toEqual({
       ok: false,
       reason: 'the branch carries no commits; use Mark done if the work in trunk is finished, or Resolve & retry to rebase'
     })
@@ -520,7 +520,7 @@ describe('run prompt persistence and task.get preview', () => {
       holdReason: 'the trunk moved during this run and this branch is empty — check where the work went'
     })
 
-    await expect(scheduler.resolveRetryOnTask(task.id)).resolves.toEqual({ ok: true })
+    await expect(resolutions.resolveRetryOnTask(task.id)).resolves.toEqual({ ok: true })
 
     const retry = tasks.messagesFor(task.id).filter((m) => m.role === 'human').at(-1)?.text
     expect(retry).toContain(`rebase \`multi-agent-controller/t${task.seq}-resolve-trunk-moved\` onto \`main\``)
@@ -564,7 +564,7 @@ describe('run prompt persistence and task.get preview', () => {
 
     it('⛔ sends a conflicted piece at its plan branch, never at the trunk', async () => {
       const { seq, taskId, planBranch } = await splitChild('A piece with a conflict')
-      await expect(scheduler.resolveConflictOnTask(taskId)).resolves.toEqual({ ok: true })
+      await expect(resolutions.resolveConflictOnTask(taskId)).resolves.toEqual({ ok: true })
 
       const asked = tasks.messagesFor(taskId).filter((m) => m.role === 'human').at(-1)?.text ?? ''
       expect(asked).toContain(`git rebase ${planBranch}`)
@@ -581,7 +581,7 @@ describe('run prompt persistence and task.get preview', () => {
         holdReason: 'the trunk moved during this run and this branch is empty — check where the work went'
       })
 
-      await expect(scheduler.resolveRetryOnTask(taskId)).resolves.toEqual({ ok: true })
+      await expect(resolutions.resolveRetryOnTask(taskId)).resolves.toEqual({ ok: true })
       const asked = tasks.messagesFor(taskId).filter((m) => m.role === 'human').at(-1)?.text ?? ''
       expect(asked).toContain(planBranch)
       expect(asked).not.toContain('onto `main`')
@@ -599,7 +599,7 @@ describe('run prompt persistence and task.get preview', () => {
         holdReason: 'landing failed'
       })
 
-      await expect(scheduler.resolveConflictOnTask(task.id)).resolves.toEqual({ ok: true })
+      await expect(resolutions.resolveConflictOnTask(task.id)).resolves.toEqual({ ok: true })
       const asked = tasks.messagesFor(task.id).filter((m) => m.role === 'human').at(-1)?.text ?? ''
       expect(asked).toContain('git rebase main')
     })

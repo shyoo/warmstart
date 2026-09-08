@@ -422,11 +422,12 @@ scripts/                ensure-electron, icons, build-win.ps1                   
 | `server.ts` `api.ts` | HTTP + WS on 127.0.0.1, bearer token, the typed RPC table |
 | `db.ts` | `node:sqlite` + numbered migrations → [`data-model.md`](data-model.md) |
 | `paths.ts` | the data directory, and the legacy-install adoption |
-| `scheduler.ts` | scoring, dispatch, watchdogs, `continueTask` → [`routing.md`](routing.md) |
+| `scheduler.ts` | `tick`, dispatch, the watchdogs, `continueTask` → [`routing.md`](routing.md). Scoring, session residency, turn-end handling and the resolution RPCs are split into the five files below it |
 | `prompt.ts` | `promptFor` and its helpers — what an agent is actually told, and what a resumed turn withholds |
 | `scoring.ts` | `chooseTarget`, the score arithmetic and its explanation (`formatScore`, `briefScore`, `scoreLegend`), `poolPressure` |
 | `residency.ts` | session residency and worker capacity — `atCapacity`, the reservation counters, `leastValuableResident`, `sessionLeaseId`, `evictableResidents` |
 | `turnend.ts` | what happens when a turn ends — `onSessionExit`, `onStreamResult`, the two MCP-less prompt contracts (`needsDecisionIn`, `taskCompletionIn`), the idle-turn note, `overloadFailureRetry`, `deadOnArrival` |
+| `resolutions.ts` | RPC-driven actions, not scheduling: every Resolve & retry cause (`resolveConflictOnTask`, `resolveChecksOnTask`, `resolveCommitOnTask`, `resolveTrunkMovedOnTask`, `resolveRetryOnTask`), `pendingWorkFor`, `commitConversation`, `landConversation`, `relandTask` |
 | `eligibility.ts` | ⛔ the account gates, in ONE list |
 | `tasks.ts` | the DAG, admission, mandates, budgets, runs |
 | `sessions.ts` | pty and stream transports, reaping, resuming a closed conversation |

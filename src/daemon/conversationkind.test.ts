@@ -30,7 +30,7 @@ let dir: string
 let db: typeof import('./db.js')
 let workers: typeof import('./workers.js')
 let tasks: typeof import('./tasks.js')
-let scheduler: typeof import('./scheduler.js')
+let resolutions: typeof import('./resolutions.js')
 let turnend: typeof import('./turnend.js')
 let scoring: typeof import('./scoring.js')
 let prompt: typeof import('./prompt.js')
@@ -59,7 +59,7 @@ beforeAll(async () => {
   db = await import('./db.js')
   workers = await import('./workers.js')
   tasks = await import('./tasks.js')
-  scheduler = await import('./scheduler.js')
+  resolutions = await import('./resolutions.js')
   turnend = await import('./turnend.js')
   scoring = await import('./scoring.js')
   prompt = await import('./prompt.js')
@@ -438,7 +438,7 @@ describe('what ends a conversation turn', () => {
 describe('what the Commit button does', () => {
   it('refuses without a git project, and says so rather than pretending', async () => {
     const task = tasks.createTask({ title: 'Nowhere to commit', kind: 'conversation', status: 'ready' })
-    await expect(scheduler.commitConversation(task.id, 'commit-only')).resolves.toEqual({
+    await expect(resolutions.commitConversation(task.id, 'commit-only')).resolves.toEqual({
       ok: false,
       reason: 'not a git project'
     })
@@ -447,7 +447,7 @@ describe('what the Commit button does', () => {
   it('reports no workspace rather than an empty diff when it has nowhere to look', async () => {
     // ⚠️ The distinction the card is built on: *I could not look* is not *there is nothing there*.
     const task = tasks.createTask({ title: 'No workspace', kind: 'conversation', status: 'ready' })
-    const answer = await scheduler.pendingWorkFor(task.id)
+    const answer = await resolutions.pendingWorkFor(task.id)
     expect(answer.supported).toBe(false)
     expect(answer.hasDiff).toBe(false)
     expect(answer.reason).toContain('no git project')
@@ -522,7 +522,7 @@ describe('a conversation whose workspace went back to the pool', () => {
       writeFileSync(join(workspace, 'edited.txt'), 'not committed\n')
     })
 
-    const answer = await scheduler.pendingWorkFor(taskId)
+    const answer = await resolutions.pendingWorkFor(taskId)
     expect(answer.supported).toBe(true)
     expect(answer.hasDiff).toBe(true)
     expect(answer.branch).toBe(branch)
@@ -541,7 +541,7 @@ describe('a conversation whose workspace went back to the pool', () => {
       git(workspace, 'commit', '-m', 'the work')
     })
 
-    const answer = await scheduler.pendingWorkFor(taskId)
+    const answer = await resolutions.pendingWorkFor(taskId)
     expect(answer.supported).toBe(true)
     expect(answer.hasDiff).toBe(false)
     expect(answer.unlandedCommits).toBe(1)
@@ -551,7 +551,7 @@ describe('a conversation whose workspace went back to the pool', () => {
     const { taskId, workspace } = await abandonedOn('parked-off', () => {})
     git(workspace, 'switch', '--detach', 'main')
 
-    const answer = await scheduler.pendingWorkFor(taskId)
+    const answer = await resolutions.pendingWorkFor(taskId)
     expect(answer.supported).toBe(false)
     expect(answer.reason).toContain('no workspace has')
     // ⚠️ And the branch is still named, so the card can say which one it went looking for.
@@ -565,7 +565,7 @@ describe('what the Land button does', () => {
     // ⛔ `commit-only` and `commit-and-verify` leave the branch where it is. Accepting one here
     // would write a finish policy, land nothing, and report success for a branch that never moved.
     const task = tasks.createTask({ title: 'Nothing to land', kind: 'conversation', status: 'ready' })
-    const answer = await scheduler.landConversation(task.id, 'commit-only')
+    const answer = await resolutions.landConversation(task.id, 'commit-only')
     expect(answer.ok).toBe(false)
     expect(answer.reason).toContain('does not land')
     // ⚠️ And the policy is untouched: a refusal must not leave the task half-converted out of
@@ -576,7 +576,7 @@ describe('what the Land button does', () => {
   it('will not land a turn that is still running', async () => {
     const task = tasks.createTask({ title: 'Mid-turn', kind: 'conversation', status: 'ready' })
     tasks.setStatus(task.id, 'running')
-    const answer = await scheduler.landConversation(task.id, 'commit-and-merge')
+    const answer = await resolutions.landConversation(task.id, 'commit-and-merge')
     expect(answer.ok).toBe(false)
     expect(answer.reason).toContain('already running')
   })

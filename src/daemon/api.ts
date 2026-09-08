@@ -124,21 +124,23 @@ import {
   parkForHuman,
   continueTask,
   deliverToLiveSession,
-  commitConversation,
-  landConversation,
-  pendingWorkFor,
-  relandTask,
   QUOTA_HIGH_WATER,
   QUOTA_OVERRIDE_FALLBACK_MS,
-  resolveChecksOnTask,
-  resolveCommitOnTask,
-  resolveConflictOnTask,
-  resolveRetryOnTask,
   resolveTask,
   tick
 } from './scheduler.js'
 import { promptFor } from './prompt.js'
 import { atCapacity, retainedReservations } from './residency.js'
+import {
+  commitConversation,
+  landConversation,
+  pendingWorkFor,
+  relandTask,
+  resolveChecksOnTask,
+  resolveCommitOnTask,
+  resolveConflictOnTask,
+  resolveRetryOnTask
+} from './resolutions.js'
 import { controllerReport, drainConsults, enqueueConsult } from './controller.js'
 import { gateQuestion, riskOf } from './judgment.js'
 import { chatHistory, clearChat, sendChat } from './chat.js'
