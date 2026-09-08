@@ -6,6 +6,7 @@ import {
   RUBRIC_VERSION,
   rubricFor,
   type DimensionScore,
+  type ManualReview,
   type QualityReview,
   type ReviewAuthor,
   type RubricDimension
@@ -1017,6 +1018,68 @@ export function reviewsForTask(taskId: string): QualityReview[] {
       .prepare('select * from quality_reviews where task_id = ? order by created_at desc')
       .all(taskId)
   ).map(toReview)
+}
+
+interface ManualReviewRow {
+  id: string
+  task_id: string
+  subject_adapter: string
+  subject_model: string | null
+  mixed_authorship: number
+  score: number
+  explanation: string
+  created_at: number
+}
+
+function toManualReview(r: ManualReviewRow): ManualReview {
+  return {
+    id: r.id, taskId: r.task_id, subjectAdapter: r.subject_adapter, subjectModel: r.subject_model,
+    mixedAuthorship: r.mixed_authorship === 1, score: r.score, explanation: r.explanation,
+    createdAt: r.created_at
+  }
+}
+
+/** Store a direct user rating without applying the peer-review rubric. */
+export function createManualReview(taskId: string, score: number, explanation: string):
+  | { ok: true; review: ManualReview }
+  | { ok: false; reason: string } {
+  if (!Number.isInteger(score) || score < 0 || score > 10) {
+    return { ok: false, reason: 'rating must be a whole number from 0 to 10' }
+  }
+  const text = explanation.trim()
+  if (!text) return { ok: false, reason: 'add a brief explanation for this rating' }
+  if (text.length > 2_000) return { ok: false, reason: 'explanation must be 2,000 characters or fewer' }
+  const authorship = authorshipOf(taskId)
+  if (!authorship.subjectAdapter) return { ok: false, reason: 'this task has no agent work to rate' }
+  const id = randomUUID()
+  const now = Date.now()
+  db().prepare(
+    `insert into manual_reviews
+       (id, task_id, subject_adapter, subject_model, mixed_authorship, score, explanation, created_at)
+     values (?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(id, taskId, authorship.subjectAdapter, authorship.subjectModel, authorship.mixed ? 1 : 0, score, text, now)
+  emit({ type: 'task.changed', task: requireTaskRow(taskId) })
+  return { ok: true, review: requireManualReview(id) }
+}
+
+export function manualReviewsForTask(taskId: string): ManualReview[] {
+  return rows<ManualReviewRow>(db().prepare(
+    'select * from manual_reviews where task_id = ? order by created_at desc'
+  ).all(taskId)).map(toManualReview)
+}
+
+function requireManualReview(id: string): ManualReview {
+  const found = row<ManualReviewRow>(db().prepare('select * from manual_reviews where id = ?').get(id))
+  if (!found) throw new Error(`no manual review '${id}'`)
+  return toManualReview(found)
+}
+
+export function deleteManualReview(id: string): { ok: true } | { ok: false; reason: string } {
+  const found = row<ManualReviewRow>(db().prepare('select * from manual_reviews where id = ?').get(id))
+  if (!found) return { ok: false, reason: `no manual review '${id}'` }
+  db().prepare('delete from manual_reviews where id = ?').run(id)
+  emit({ type: 'task.changed', task: requireTaskRow(found.task_id) })
+  return { ok: true }
 }
 
 /**

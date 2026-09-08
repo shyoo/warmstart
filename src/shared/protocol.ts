@@ -1,4 +1,4 @@
-import type { QualityReview } from './review.js'
+import type { ManualReview, QualityReview } from './review.js'
 import type {
   GradeBatch,
   QualityReport,
@@ -1621,6 +1621,8 @@ export interface RpcMap {
       activity: Array<{ text: string; ts: number }>
       /** Every quality review of this task, newest first. ⛔ Kept, never replaced. */
       reviews?: QualityReview[]
+      /** Operator-entered overall ratings, newest first. */
+      manualReviews?: ManualReview[]
       /**
        * How many tasks are held at `blocked` waiting on this one.
        *
@@ -1714,6 +1716,15 @@ export interface RpcMap {
   }
   /** Remove one quality review result (cancelled, failed, or unwanted). */
   'review.delete': {
+    params: { reviewId: string }
+    result: { ok: true } | { ok: false; reason: string }
+  }
+  /** Record a direct 0–10 user rating; it is not a rubric review. */
+  'review.manual.create': {
+    params: { taskId: string; score: number; explanation: string }
+    result: { ok: true; review: ManualReview } | { ok: false; reason: string }
+  }
+  'review.manual.delete': {
     params: { reviewId: string }
     result: { ok: true } | { ok: false; reason: string }
   }

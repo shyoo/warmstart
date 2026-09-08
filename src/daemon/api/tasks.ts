@@ -2,7 +2,7 @@
 import { resolveAutoCompact, windowHighWater } from '@shared/tasks.js'
 import { resolveCompletionMode } from '@shared/policy.js'
 import { adapter } from '../adapters/index.js'
-import { reviewsForTask } from '../review.js'
+import { manualReviewsForTask, reviewsForTask } from '../review.js'
 import { attachmentBytes, createAttachment, createFolderAttachment, requireAttachment } from '../attachments.js'
 import { getWorker, listWorkers, requireWorker } from '../workers.js'
 import { lastQuota, windowExpired } from '../quota.js'
@@ -96,6 +96,7 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
         // two independent scores that disagree are the most interesting rows in this dataset — they
         // measure how much the *judge* is worth — and the thread has to be able to show both.
         reviews: reviewsForTask(p.id),
+        manualReviews: manualReviewsForTask(p.id),
         blocking: blockedDependentsOf(p.id),
         dependencies,
         dependents,

@@ -169,6 +169,20 @@ export interface QualityReview {
   completedAt: number | null
 }
 
+/** A direct operator rating. It intentionally has no peer-review rubric dimensions. */
+export interface ManualReview {
+  id: string
+  taskId: string
+  subjectAdapter: string
+  subjectModel: string | null
+  /** A task with several agents is not clean comparative evidence. */
+  mixedAuthorship: boolean
+  /** Integer 0–10. Zero is a real rating, never a missing value. */
+  score: number
+  explanation: string
+  createdAt: number
+}
+
 /**
  * The headline number: a weighted mean over the dimensions that were actually scored.
  *

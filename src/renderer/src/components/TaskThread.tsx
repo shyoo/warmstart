@@ -21,7 +21,7 @@ import {
   type TaskMessage
 } from '@shared/tasks'
 import type { ModelOptions, Session } from '@shared/protocol'
-import type { QualityReview } from '@shared/review'
+import type { ManualReview, QualityReview } from '@shared/review'
 import { rpc, useActivity, useDaemonEvents, useNow, type FleetEntry } from '../lib/daemon'
 import { isSubmitKey, useUiSettings } from '../lib/uisettings'
 import { ImageChips, usePastedImages } from '../lib/pasteimages'
@@ -79,6 +79,8 @@ export interface TaskDetailData {
   compactions?: Compaction[]
   /** Every quality review of this task, newest first. Optional for the same reason as above. */
   reviews?: QualityReview[]
+  /** Direct operator ratings, kept separately because they have no peer-review rubric. */
+  manualReviews?: ManualReview[]
   /**
    * Every commit this task landed, oldest first.
    *
@@ -257,6 +259,7 @@ function TaskDetail({
     parent = null,
     children = [],
     reviews = [],
+    manualReviews = [],
     commits = []
   } = detail
   const timeline = chronologicalTimeline(runs, compactions, reviews)
@@ -1026,6 +1029,7 @@ function TaskDetail({
           {commits.length > 0 && <CommitsBox commits={commits} />}
 
           <QualityReviewBox task={task} reviews={reviews} refresh={refresh} />
+          <ManualReviewBox task={task} reviews={manualReviews} refresh={refresh} />
 
           {timeline.length > 0 && (
             <div className="detail-side-box">
@@ -1580,6 +1584,92 @@ function QualityReviewBox({
             : eligibility.reason}
       </div>
       {failed && <div className="side-note warn">{failed}</div>}
+    </div>
+  )
+}
+
+/** A human's overall verdict sits beside, never inside, the peer-review rubric. */
+function ManualReviewBox({
+  task,
+  reviews,
+  refresh
+}: {
+  task: Task
+  reviews: ManualReview[]
+  refresh: () => Promise<void>
+}): React.JSX.Element | null {
+  const [score, setScore] = useState('')
+  const [explanation, setExplanation] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [failure, setFailure] = useState<string | null>(null)
+  const finished = task.status === 'completed' || task.status === 'cancelled'
+  if (!finished) return null
+
+  const submit = async () => {
+    setSaving(true)
+    setFailure(null)
+    try {
+      const result = await rpc('review.manual.create', {
+        taskId: task.id,
+        score: Number(score),
+        explanation
+      })
+      if (result.ok) {
+        setScore('')
+        setExplanation('')
+      } else {
+        setFailure(result.reason)
+      }
+      await refresh()
+    } catch (err) {
+      setFailure(errorMessage(err))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="detail-side-box">
+      <div
+        className="side-label"
+        title="Your overall 0–10 rating and explanation. It contributes to quality reporting, but does not use the peer-review rubric."
+      >
+        your review
+      </div>
+      {reviews.map((review) => (
+        <div className="side-run" key={review.id}>
+          <div className="side-run-head">
+            <strong className="num">{review.score} / 10</strong>
+            <span className="dim">{when(review.createdAt)}</span>
+          </div>
+          <div className="side-note">{review.explanation}</div>
+        </div>
+      ))}
+      <select
+        className="reassign-select quality-review-select"
+        aria-label="Your quality rating"
+        value={score}
+        disabled={saving}
+        onChange={(event) => setScore(event.target.value)}
+      >
+        <option value="">Rate the agent’s work…</option>
+        {Array.from({ length: 11 }, (_, value) => (
+          <option key={value} value={String(value)}>{value} / 10</option>
+        ))}
+      </select>
+      <textarea
+        className="compose-input"
+        rows={2}
+        value={explanation}
+        disabled={saving}
+        placeholder="Briefly explain this rating…"
+        onChange={(event) => setExplanation(event.target.value)}
+      />
+      <button type="button" className="btn" disabled={saving || score === '' || !explanation.trim()} onClick={() => void submit()}>
+        {saving ? 'saving…' : 'Save your review'}
+      </button>
+      <div className="side-note dim">This is an overall rating, not a seven-dimension rubric score.</div>
+      {failure && <div className="side-note warn">{failure}</div>}
     </div>
   )
 }

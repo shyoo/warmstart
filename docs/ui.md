@@ -230,6 +230,10 @@ the adapter's smallest configured model; the Workers card can change it or opt t
 grading. A pending review overlays **grading** in Tasks, TaskThread and Flow without changing the
 task's stored lifecycle status or claiming a worktree. Accounts on any adapter that authored the work are absent;
 the daemon revalidates a named choice when the button is pressed rather than trusting the menu.
+The same thread ledger also offers **Your review** after completed or cancelled agent work: an operator
+selects an integer 0–10 and must add a brief explanation. These direct ratings feed the quality
+aggregate alongside peer grades, but never masquerade as its seven rubric dimensions or as an agent
+reviewer; a mixed-authorship rating is kept but excluded from clean model comparison.
 
 ⛔ **In Plan & Split the composer draws two labelled rows of pills, and this is decision D5.** The
 first is **Planner** — worker, model, effort, reuse, finish, priority, dependencies, attachments — which

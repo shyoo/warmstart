@@ -1,7 +1,7 @@
 import type { RubricDimension } from './review.js'
 
 /**
- * The aggregate view of peer quality review — what the fleet has measured about each agent.
+ * The aggregate view of peer and direct-user quality ratings — what the fleet has measured about each agent.
  *
  * ⛔ **Nothing gates on any of it.** The same sentence `@shared/review.ts` opens with, and it stays
  * true here: no routing decision reads a composite, no task changes status because of one, and the
@@ -16,10 +16,10 @@ export interface QualityKey {
   adapterId: string
   /** Null is the adapter-wide rung: work whose model was never recorded. */
   model: string | null
-  /** Every complete, scored review of this key's work. */
+  /** Every complete peer grade or direct user rating of this key's work. */
   samples: number
   /**
-   * The subset that is clean evidence: single-author, and blinded without a leak.
+   * The subset that is clean evidence: single-author; peer grades are also blinded without a leak.
    *
    * ⛔ The number to compare agents on. A review of a task two adapters both worked on is not
    * evidence about either, and one whose blinding left a vendor name in the prose was not blind.

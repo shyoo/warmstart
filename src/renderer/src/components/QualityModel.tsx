@@ -77,7 +77,7 @@ export function QualityModel({
           reinterpret history.
         </p>
         <div className="metric-grid">
-          <Tile value={String(report.totalReviews)} label="complete, scored reviews" />
+          <Tile value={String(report.totalReviews)} label="complete ratings & peer reviews" />
           <Tile value={String(report.gradedTasks)} label="finished tasks with a grade" />
           <Tile value={String(report.ungradedTasks)} label="finished tasks with none" />
           <Tile value={report.rubricVersion} label="rubric version in force" />

@@ -1652,6 +1652,22 @@ const MIGRATIONS: Migration[] = [
     if (!hasColumn(conn, 'workers', 'credits_intent_json')) {
       conn.exec('alter table workers add column credits_intent_json text;')
     }
+  },
+  // 54 - direct operator ratings are overall 0–10 judgements, never fabricated rubric scores.
+  (conn) => {
+    conn.exec(`
+      create table if not exists manual_reviews (
+        id               text primary key,
+        task_id          text not null references tasks(id) on delete cascade,
+        subject_adapter  text not null,
+        subject_model    text,
+        mixed_authorship integer not null default 0,
+        score            integer not null check(score >= 0 and score <= 10),
+        explanation      text not null,
+        created_at       integer not null
+      );
+      create index if not exists manual_reviews_task on manual_reviews(task_id, created_at desc);
+    `)
   }
 ]
 

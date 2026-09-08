@@ -113,6 +113,7 @@ beforeAll(async () => {
 })
 
 beforeEach(() => {
+  db.db().exec('delete from manual_reviews')
   db.db().exec('delete from quality_reviews')
   db.db().exec('delete from runs')
   db.db().exec('delete from tasks')
@@ -129,6 +130,19 @@ afterAll(() => {
 })
 
 describe('per-model quality', () => {
+  it('uses a direct user rating as an overall datapoint without inventing rubric dimensions or a reviewer', () => {
+    completedTask({ graded: false, adapter: 'claude-code' })
+    db.db().prepare(
+      `insert into manual_reviews
+         (id, task_id, subject_adapter, subject_model, mixed_authorship, score, explanation, created_at)
+       values ('manual-1', 't-1', 'claude-code', 'claude-sonnet-5', 0, 9, 'Met the brief.', 1)`
+    ).run()
+    const report = quality.qualityReport()
+    expect(report.keys[0]).toMatchObject({ adapterId: 'claude-code', samples: 1, clean: 1, composite: 9 })
+    expect(report.keys[0]?.dimensions).toEqual({})
+    expect(report.reviewers).toEqual([])
+  })
+
   it('groups by agent and model, because one number for an account is a number for nothing', () => {
     review({ adapter: 'claude-code', model: 'claude-sonnet-5', composite: 8 })
     review({ adapter: 'claude-code', model: 'claude-opus-5', composite: 6 })

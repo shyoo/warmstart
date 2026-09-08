@@ -24,7 +24,7 @@ Everything else in the daemon goes through those two, so swapping the driver is 
 ## 2. The migration contract
 
 `MIGRATIONS` in `db.ts` is a numbered, **append-only** array. `MIGRATION_COUNT` is its length and is
-the `user_version` a current database sits at — **53** as of 2026-09-07.
+the `user_version` a current database sits at — **54** as of 2026-09-08.
 
 - ⛔ **Never edit a migration that has shipped.** Add the next one.
 - ⛔ **Every migration must survive being replayed.** `sessionstate.test.ts` rewinds `user_version`
@@ -68,6 +68,7 @@ the first. Both are required and `paths.test.ts` fails if either is removed.
 | `attachments` | image metadata; bytes under `<dataDir>/attachments/` | `attachments.ts` is the only writer |
 | `runs` | one attempt of a task on one session | ⛔ never deleted — the estimator's training data. `adapter_id`, `model`, `quota_before/after_json`, `trunk_sha_before`, `prompt`, `started_warm`, `plan_id`/`plan_raw`/`plan_source`, **`kind`**, `list_usd`/`on_overage`/`overage_status`, `activity_json` (intermediate stream steps recorded on finish) — ⛔ the plan and the three facts a probe stated about *this run alone* are stamped; **both** money layers are derived on read by `src/daemon/price.ts`, because an attribution changes the moment a later overlapping run is found — which is why there is no `overage_usd` column. ⚠️ All three money columns are nullable and null means *not known* |
 | `quality_reviews` | one peer grade of one task's diff | ⛔ every review is kept with its immutable `rubric_version`; `tasks.quality_review_score` is the mean of all completed, scored reviews and `quality_review_count` states its denominator. `run_id` is the metering *and* the timeline entry. ⚠️ `blinding_leak` means an **attribution** survived blinding, not that a vendor was named — migration 50 re-decided every stored flag from `runs.prompt` after the old any-mention test turned out to be true of 30 of this fleet's 32 reviews; see *Blinding* in the glossary |
+| `manual_reviews` | one direct 0–10 operator rating plus its explanation | No rubric dimensions, reviewer, or run is invented: it is an overall judgement. It records the task's last non-failed work adapter/model; mixed authorship remains visible and is excluded from clean agent comparison, just like peer review. |
 | `approvals` `approval_rules` | the permission gate and its remembered answers | |
 | `questions` | the third object: content answers, not allow/deny | born parked when the asker is gone |
 | `resources` `resource_claims` | the broker | claims are reconciled at startup |

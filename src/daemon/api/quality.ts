@@ -1,6 +1,6 @@
 /** Reviews, cost, routing, statistics and the controller chat. */
 import type { CostReport } from '@shared/protocol.js'
-import { deleteReview } from '../review.js'
+import { createManualReview, deleteManualReview, deleteReview } from '../review.js'
 import { cancelReview, requestReview, reviewEligibility } from '../reviewer.js'
 import { getWorker, listWorkers } from '../workers.js'
 import { routingDecisions } from '../routingdecisions.js'
@@ -23,7 +23,7 @@ import type { Api, ApiContext } from './support.js'
 import { checkConstraints, checkedChildAccounts, modelReport, velocityReport } from './support.js'
 
 type QualityMethod =
-  | 'review.eligibility' | 'review.request' | 'review.cancel' | 'review.delete' | 'cost.report'
+  | 'review.eligibility' | 'review.request' | 'review.cancel' | 'review.delete' | 'review.manual.create' | 'review.manual.delete' | 'cost.report'
   | 'routing.decisions' | 'routing.velocity' | 'routing.models' | 'quality.report' | 'statistics.report'
   | 'quality.ungraded' | 'quality.queue' | 'quality.batch.start' | 'quality.batch' | 'quality.batch.cancel'
   | 'scheduler.tick' | 'controller.report' | 'controller.drain' | 'task.plan' | 'task.estimate'
@@ -45,6 +45,8 @@ export function apiQuality(_ctx: ApiContext): Pick<Api, QualityMethod> {
       if (!p.reviewId) return { ok: false, reason: 'missing reviewId' }
       return deleteReview(p.reviewId)
     },
+    'review.manual.create': (p) => createManualReview(p.taskId, p.score, p.explanation),
+    'review.manual.delete': (p) => deleteManualReview(p.reviewId),
     'cost.report': () => {
       const objective = settings().objective ?? DEFAULT_OBJECTIVE
       const live = listSessions()

@@ -25,7 +25,7 @@ import { hasBatchReviewer, reviewEligibility, reviewerAvailability } from './rev
 import { medianFloat } from './stats.js'
 
 /**
- * What the fleet has actually measured about *quality*, aggregated from stored peer reviews.
+ * What the fleet has actually measured about *quality*, aggregated from stored peer and user reviews.
  *
  * ⛔ **A read, and only a read.** Nothing here grades anything, nothing here changes a task, and — as
  * `@shared/review.ts` says at the top — no routing decision reads the number this produces. It is an
@@ -39,7 +39,7 @@ import { medianFloat } from './stats.js'
  * the composites that were stored, never a re-weighting of the dimensions underneath them.
  *
  * ⚠️ **`clean` is the number to compare agents on, and it is routinely smaller than `samples`.** A
- * review of a task two adapters both worked on is not evidence about either, and a review whose
+ * rating of a task two adapters both worked on is not evidence about either, and a peer review whose
  * blinding leaked a vendor name is not a blind review. Both are counted and both are excluded from
  * `cleanComposite`, so the difference can be *seen* rather than assumed away.
  */
@@ -51,7 +51,7 @@ interface ReviewAggRow {
   scores_json: string | null
   mixed_authorship: number
   blinding_leak: number
-  reviewer_adapter: string
+  reviewer_adapter: string | null
   reviewer_model: string | null
   completed_at: number | null
 }
@@ -100,7 +100,13 @@ function loadReviews(): ReviewAggRow[] {
            from quality_reviews q join tasks t on t.id = q.task_id
           where q.status = 'complete' and q.composite is not null
             and coalesce(t.stats_excluded, 0) = 0
-          order by q.completed_at desc`
+        union all
+         select m.subject_adapter, m.subject_model, m.score as composite, null as scores_json,
+                m.mixed_authorship, 0 as blinding_leak, null as reviewer_adapter,
+                null as reviewer_model, m.created_at as completed_at
+           from manual_reviews m join tasks t on t.id = m.task_id
+          where coalesce(t.stats_excluded, 0) = 0
+          order by completed_at desc`
       )
       .all()
   )
@@ -163,6 +169,7 @@ function qualityKeys(reviews: ReviewAggRow[]): QualityKey[] {
 function reviewerTallies(reviews: ReviewAggRow[]): QualityReviewerTally[] {
   const buckets = new Map<string, { scores: number[]; models: Set<string> }>()
   for (const r of reviews) {
+    if (!r.reviewer_adapter) continue
     const bucket = buckets.get(r.reviewer_adapter) ?? { scores: [], models: new Set<string>() }
     bucket.scores.push(r.composite as number)
     // ⛔ Only what was stored. A review whose model was never recorded contributes no name here
