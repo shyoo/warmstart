@@ -98,13 +98,23 @@ export interface PasteImages {
  * between pressing the button and the task existing. An upload whose form is then abandoned is
  * collected by the daemon's `prunePending`.
  */
-export function usePastedImages(): PasteImages {
-  const [images, setImages] = useState<PastedImage[]>([])
+export function usePastedImages(
+  /**
+   * Attachments this composer already had, from a scratch it is being restored from.
+   *
+   * ⚠️ Read once, at first render. These are ids of uploads that already happened — nothing is
+   * re-sent — and re-seeding them later would fight whatever the operator has done since. A
+   * restored image has no `preview`, because previews are deliberately not persisted; see
+   * `composerscratch.ts`.
+   */
+  initial: PastedImage[] = []
+): PasteImages {
+  const [images, setImages] = useState<PastedImage[]>(initial)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   // ⚠️ A ref alongside the state, because the upload loop is async and `images` in its closure is
   // whatever it was when the paste started. The cap has to be counted against what is really there.
-  const count = useRef(0)
+  const count = useRef(initial.length)
 
   const accept = useCallback(async (files: File[]) => {
     const pictures = files.filter((f) => f.type.startsWith('image/'))

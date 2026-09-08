@@ -4,13 +4,17 @@ import { TASK_VIEW_ORDER, TASK_VIEWS } from '@shared/tasks'
 import type { ModelOptions } from '@shared/protocol'
 import { rpc, useActivity, useDaemonEvents, useNow, type FleetEntry } from '../lib/daemon'
 import { NewTask } from './NewTask'
+import { clearComposerScratch, hasComposerScratch } from '../lib/composerscratch'
 import { showsLiveOutput } from '../lib/live'
 import { tokens, when } from '../lib/format'
 import { Money, taskPriceTitle } from './Price'
 import {
   PAGE_SIZE_OPTIONS,
+  readTaskPage,
   readTaskPageSize,
   readViews,
+  taskListSignature,
+  writeTaskPage,
   writeTaskPageSize,
   writeViews
 } from '../lib/prefs'
@@ -130,7 +134,14 @@ export function Tasks({
   const [total, setTotal] = useState(0)
   const [counts, setCounts] = useState<Record<TaskView, number> | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [adding, setAdding] = useState(false)
+  /**
+   * ⭐ Open already, when there is something half-written to come back to. The composer is behind a
+   * button, so a remembered prompt that stayed hidden would be the same as no memory at all — the
+   * operator would press *New task* on an empty-looking form and find their paragraph in it, or
+   * more likely never press it and lose the paragraph.
+   */
+  const composerScope = projectId ?? ''
+  const [adding, setAdding] = useState(() => hasComposerScratch(composerScope))
   /**
    * Which buckets are showing.
    *
@@ -142,7 +153,18 @@ export function Tasks({
   const [pageSize, setPageSize] = useState<number>(readTaskPageSize)
   const [sort, setSort] = useState<TaskSort>('updated')
   const [asc, setAsc] = useState(false)
-  const [page, setPage] = useState(0)
+  /**
+   * ⭐ Seeded from disk, like the view filter above it, and for a sharper reason: opening a task
+   * unmounts this table, so without this every `← Tasks` landed on page 1 and somebody reading the
+   * back of a long list had to walk there again after each task they opened. The offset is only
+   * restored onto the list it was taken from — see `taskListSignature`.
+   *
+   * ⚠️ `search` is `''` here because it is state that starts empty and is never restored; the
+   * signature has to be built from the values this render actually has, not from what it will have.
+   */
+  const [page, setPage] = useState(() =>
+    readTaskPage(taskListSignature({ projectId, views, sort, asc, pageSize, search: '' }))
+  )
   const [search, setSearch] = useState('')
   const deferredSearch = useDeferredValue(search)
   const [menuTaskId, setMenuTaskId] = useState<string | null>(null)
@@ -224,10 +246,23 @@ export function Tasks({
   // ⛔ Back to the first page whenever what is being listed changes. Staying on page 4 of a filter
   // that now has one page renders an empty table over a chip reading `Done 3`, which reads as a
   // broken screen rather than as a stale offset.
+  //
+  // ⚠️ Not on the first run. An effect fires once on mount with nothing changed, and that pass would
+  // undo the offset the initial state just restored — the reset is for a filter somebody *changed*,
+  // which cannot have happened before the table has been drawn once.
+  const listed = useRef(false)
   useEffect(() => {
-    setPage(0)
+    if (listed.current) setPage(0)
+    listed.current = true
     setMenuTaskId(null)
   }, [views, sort, asc, projectId, pageSize, deferredSearch])
+
+  // ⛔ Written on every change, not on unmount: a cleanup does not run when the window is closed,
+  // and the page you were on has to survive that too.
+  const signature = taskListSignature({ projectId, views, sort, asc, pageSize, search: deferredSearch })
+  useEffect(() => {
+    writeTaskPage(signature, page)
+  }, [signature, page])
 
   const toggleView = (view: TaskView): void => {
     const next = views.includes(view) ? views.filter((v) => v !== view) : [...views, view]
@@ -291,7 +326,18 @@ export function Tasks({
             effectively a prompt. Anyone can file one: you, the controller, or an agent mid-run.
           </p>
         </div>
-        <button className="btn btn--primary" onClick={() => setAdding((v) => !v)}>
+        <button
+          className="btn btn--primary"
+          onClick={() =>
+            setAdding((v) => {
+              // ⛔ Cancel throws the scratch away. Otherwise what was typed is unclosable: the form
+              // would reopen on the next visit, and the button that looks like it dismisses it
+              // would do nothing lasting.
+              if (v) clearComposerScratch(composerScope)
+              return !v
+            })
+          }
+        >
           {adding ? 'Cancel' : 'New task'}
         </button>
       </header>

@@ -168,3 +168,81 @@ export function writeQualityGradableOnly(gradableOnly: boolean): void {
 
 
 
+
+const TASK_PAGE_KEY = 'multi_agent_controller.taskPage'
+
+/** What the task list was showing, precise enough that restoring an offset onto it is honest. */
+export interface TaskListScope {
+  /** The project whose list this is, or absent for the fleet-wide one. */
+  projectId?: string
+  views: TaskView[]
+  sort: string
+  asc: boolean
+  pageSize: number
+  search: string
+}
+
+/**
+ * One string standing for *which list this offset belongs to*.
+ *
+ * ⛔ Restoring page 4 is only ever right for the **same** list. The table already resets to the
+ * first page whenever the filter, sort, page size or search changes, because page 4 of a filter
+ * with one page draws an empty table under a chip reading `Done 3`. A remembered offset has to
+ * obey the same rule, so it is stored against everything that decides what is being listed and is
+ * ignored the moment any of it differs.
+ *
+ * ⚠️ Views are sorted before they are written. Selecting two buckets in the other order is the same
+ * list, and a signature that said otherwise would throw the offset away for no reason anyone
+ * sitting here could see.
+ */
+export function taskListSignature(scope: TaskListScope): string {
+  return JSON.stringify([
+    scope.projectId ?? '',
+    [...scope.views].sort(),
+    scope.sort,
+    scope.asc,
+    scope.pageSize,
+    scope.search.trim()
+  ])
+}
+
+/**
+ * Which page of `signature`'s list was last being read, or 0 for any list this has not seen.
+ *
+ * ⛔ **Not component state, because the list does not survive the trip.** Opening a task replaces
+ * the table with the thread, which unmounts it; `← Tasks` mounts a fresh one that has never heard
+ * of page 4. An operator working through the back of a long list had to re-navigate there after
+ * every single task they opened.
+ *
+ * ⚠️ `localStorage` rather than the route, on the precedent every other per-display preference here
+ * sets — and it is guarded in both directions, because it throws rather than returning null in real
+ * configurations.
+ */
+export function readTaskPage(signature: string): number {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return 0
+    const raw = window.localStorage.getItem(TASK_PAGE_KEY)
+    if (!raw) return 0
+    const parsed: unknown = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object') return 0
+    const held = parsed as { signature?: unknown; page?: unknown }
+    if (held.signature !== signature) return 0
+    if (typeof held.page !== 'number' || !Number.isInteger(held.page) || held.page < 0) return 0
+    return held.page
+  } catch {
+    return 0
+  }
+}
+
+/**
+ * ⚠️ One slot, not one per list. Only the list you last left can be the one you are coming back to,
+ * and a map keyed by signature would grow an entry for every search anybody ever typed.
+ */
+export function writeTaskPage(signature: string, page: number): void {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return
+    window.localStorage.setItem(TASK_PAGE_KEY, JSON.stringify({ signature, page }))
+  } catch {
+    // A preference that cannot be saved is not an error worth showing anybody.
+  }
+}

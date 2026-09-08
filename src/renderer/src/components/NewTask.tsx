@@ -35,6 +35,14 @@ import {
   type ComposerPrefs,
   type ModelPolicy
 } from '../lib/composerprefs'
+import {
+  EMPTY_SCRATCH,
+  readComposerScratch,
+  scratchAttachments,
+  scratchImages,
+  writeComposerScratch,
+  type ScheduleOption
+} from '../lib/composerscratch'
 
 /**
  * When a task is allowed to start, as offered on the clock beside Send.
@@ -42,8 +50,11 @@ import {
  * ⚠️ `now` is not a schedule and never becomes `notBefore`. It is the absence of one, kept in the
  * same list so that turning a scheduled send back off is one click in the place that armed it
  * rather than a separate control somewhere else.
+ *
+ * ⚠️ Declared in `composerscratch.ts` rather than here, because it is one of the values that has
+ * to survive leaving this screen — and a persisted union needs its members somewhere the reader
+ * that validates them can see.
  */
-type ScheduleOption = 'now' | '30m' | '1h' | '2h' | '4h' | 'custom'
 
 const SCHEDULE_DELAYS: Record<Exclude<ScheduleOption, 'now' | 'custom'>, number> = {
   '30m': 30 * 60 * 1000,
@@ -73,7 +84,10 @@ const PRIORITY_OPTIONS: PillOption[] = [
  * nothing is worse than a missing one, because somebody picks it and nothing happens.
  */
 const KIND_OPTIONS: PillOption[] = [
-  { value: 'task', label: 'Task', hint: 'one thread of work, dispatched to an agent' },
+  // ⚠️ Named for what it is *not*. Beside Plan&Split, which files several tasks, plain "Task"
+  // read as the category rather than as one of three shapes — "Single Task" says the difference the
+  // option next to it is offering.
+  { value: 'task', label: 'Single Task', hint: 'one thread of work, dispatched to an agent' },
   {
     value: 'plan',
     label: 'Plan&Split',
@@ -117,7 +131,7 @@ const ATTACH_OPTIONS: PillOption[] = [
 ]
 
 const KIND_SHORT: Record<ComposerKind, string> = {
-  task: 'Task',
+  task: 'Single Task',
   plan: 'Plan&Split',
   conversation: 'Conversation'
 }
@@ -193,7 +207,17 @@ export function NewTask({
   onDone: () => void | Promise<void>
   onError: (message: string) => void
 }): React.JSX.Element {
-  const [prompt, setPrompt] = useState('')
+  /**
+   * What was left half-written here last time.
+   *
+   * ⛔ **Read once, at first render, and never filed as a task.** A composer that auto-saved a draft
+   * would put rows in the fleet's table nobody asked to create; a composer that kept nothing lost a
+   * paragraph every time somebody opened a task to look something up mid-sentence. See
+   * `composerscratch.ts` for what is kept and what deliberately is not.
+   */
+  const scope = fixedProjectId ?? ''
+  const [restored] = useState(() => readComposerScratch(scope))
+  const [prompt, setPrompt] = useState(restored.prompt)
   /**
    * ⚠️ The clock, read through a callback rather than inline. `Date.now()` in a body defined during
    * render is what React's purity rule exists to catch — a re-render would quietly re-answer it —
@@ -213,7 +237,7 @@ export function NewTask({
    * a composer that quietly re-armed "in 4 hours" would file a task that goes nowhere and say
    * nothing about it.
    */
-  const [dependsOn, setDependsOn] = useState<string[]>([])
+  const [dependsOn, setDependsOn] = useState<string[]>(restored.dependsOn)
   const [plannerFinishPolicy, setPlannerFinishPolicy] = useState<FinishPolicyChoice>('commit-and-merge')
   const [piecePriority, setPiecePriority] = useState<ComposerPrefs['priority']>('P2')
   const [pieceLimit, setPieceLimit] = useState<number>(5)
@@ -222,13 +246,15 @@ export function NewTask({
   const [pieceWorkerIds, setPieceWorkerIds] = useState<string[]>([])
   const [pieceModels, setPieceModels] = useState<Record<string, string>>({})
   const [pieceEfforts, setPieceEfforts] = useState<Record<string, string>>({})
-  const [scheduleOption, setScheduleOption] = useState<ScheduleOption>('now')
-  const [customTime, setCustomTime] = useState('')
+  const [scheduleOption, setScheduleOption] = useState<ScheduleOption>(restored.schedule)
+  const [customTime, setCustomTime] = useState(restored.customTime)
   const [saving, setSaving] = useState<'draft' | 'ready' | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const attachmentPickerRef = useRef<HTMLInputElement>(null)
   // ⚠️ Uploaded the moment they are added, so what the form carries is a list of ids.
-  const paste = usePastedImages()
+  // ⚠️ Seeded from the scratch, which holds ids and no bytes: a restored attachment is the same
+  // upload wearing a name instead of a thumbnail.
+  const paste = usePastedImages(useMemo(() => scratchImages(restored), [restored]))
 
   /**
    * ⛔ Fetched, not compiled in. The renderer holds no cost models, and a second table of model facts
@@ -256,6 +282,27 @@ export function NewTask({
       .then(setSettings)
       .catch(() => setSettings(null))
   }, [])
+
+  /**
+   * Keep the scratch in step with the box.
+   *
+   * ⛔ On every change rather than on unmount. A cleanup does not run when the window is closed or
+   * the app is quit, and "I typed a paragraph and it went" is the same complaint whichever of those
+   * happened. Each write is a few hundred bytes to `localStorage` and is guarded internally.
+   *
+   * ⚠️ The pill row is not in here. Priority, worker, model and the rest are already remembered by
+   * `composerprefs`, which is a different kind of memory — those are how this operator files *every*
+   * task, and these are the one they are in the middle of.
+   */
+  useEffect(() => {
+    writeComposerScratch(scope, {
+      prompt,
+      dependsOn,
+      schedule: scheduleOption,
+      customTime,
+      attachments: scratchAttachments(paste.images)
+    })
+  }, [scope, prompt, dependsOn, scheduleOption, customTime, paste.images])
 
   /** One place writes the remembered state, so nothing can update the pill and forget the disk. */
   const setPrefs = (next: ComposerPrefs): void => {
@@ -495,6 +542,9 @@ export function NewTask({
       setScheduleOption('now')
       setCustomTime('')
       paste.clear()
+      // ⛔ Explicitly, and not only through the effect above. The task now owns those attachment
+      // ids, and a scratch that outlived the send would re-attach them to the next one.
+      writeComposerScratch(scope, EMPTY_SCRATCH)
       await onDone()
     } catch (err) {
       onError(err instanceof Error ? err.message : String(err))

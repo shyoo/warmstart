@@ -347,6 +347,28 @@ page by a number the database could not see would drop and repeat rows between p
 exactly like data loss. A name column opens A→Z and a measurement opens biggest-first; `null` sorts
 last in **both** directions, because unpriced is not free and ungraded is not zero.
 
+⭐ **The list comes back to the page you left it on, and the composer comes back with what you
+typed in it.** Both were lost for the same reason: opening a task replaces the table with the thread,
+which unmounts everything under it, so `← Tasks` mounted a fresh list on page 1 and a fresh, empty
+composer. Neither is route state — there is no URL here — so both are held in `localStorage`.
+⛔ The page offset is stored against a **signature** of what is being listed (project, buckets, sort,
+direction, page size, trimmed search) and is ignored the instant any of it differs: the table already
+resets to the first page when a filter changes, because page 4 of a filter with one page draws an
+empty table under a chip reading `Done 3`, and a remembered offset has to obey the same rule.
+⛔ The composer's memory is a **scratch and never a draft** — a draft is a task row somebody filed,
+and auto-filing half a sentence would put work in the fleet's table nobody asked to create. It holds
+the prompt, the prerequisites, the schedule and the ids of attachments that were already uploaded;
+it deliberately does **not** hold preview bytes, because one downscaled screenshot is over a megabyte
+of base64 against a ~5 MB budget and evicting the prompt to keep a thumbnail gets the trade backwards
+(a restored attachment shows its name instead). The Tasks page opens the composer already if a
+scratch exists — a remembered prompt behind a collapsed button is the same as no memory at all — and
+**Cancel** clears it, so what was typed is closable rather than immortal. The pill row is a different
+memory: `composerprefs` is how this operator files *every* task, the scratch is the one they are in
+the middle of.
+
+⚠️ The first kind option is **Single Task**, not *Task*. Beside *Plan&Split*, which files several,
+plain “Task” read as the category rather than as one of three shapes.
+
 ⚠️ A subtask is marked in the task table with **➥**, not a `└`. A box-drawing corner claims to join the
 row above it, and this table is sorted by whatever column the operator picked — one click on Updated and
 the corner points at an unrelated task. The marker says *this belongs to something else*, which is the
@@ -371,10 +393,11 @@ list. Logic extracted into a pure function under `lib/` is provable at L1 instea
 | `live.ts` | `showsLiveOutput(status)` — which statuses get a peephole |
 | `menuposition.ts` | where a pill's portalled menu goes: flip above, clamp to the window, never clip |
 | `newproject.ts` | the add-project wizard's step blockers, its creation plan, and the template signature |
-| `prefs.ts` | saved views, fleet collapse and density, page size (localStorage) |
+| `prefs.ts` | saved views, fleet collapse and density, page size, **which page of the list you were reading** (localStorage) |
 | `uisettings.ts` `zoom.ts` | tray/Enter behaviour and zoom, mirrored from main's `ui-settings.json` |
 | `pasteimages.tsx` | paste-to-attach; downscales to 1568px and uploads one image per call |
 | `composerprefs.ts` | what the composer was last set to — ⛔ **last-selected beats inherited**, and model/effort are keyed **per account** |
+| `composerscratch.ts` | what is still half-written in the composer — ⛔ a **scratch, not a draft**: no task row is filed |
 
 ⚠️ `UiSettings` is **separate from fleet `Settings`** on purpose. Those live in the daemon's database
 and change what the *scheduler* does; these are read by the main process and change what the *window*
