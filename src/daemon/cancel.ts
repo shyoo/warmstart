@@ -10,7 +10,6 @@ import {
   dependentsOf,
   finishRun,
   getTask,
-  listTasks,
   requireTask,
   runsFor,
   setStatus
@@ -24,6 +23,7 @@ import { costModel } from './costmodel.js'
 import { voidQuestionsForTask } from './questions.js'
 import { voidApprovalsForTask } from './approvals.js'
 import { cancelReview } from './reviewer.js'
+import { childrenOf } from './split.js'
 
 /**
  * Cancel is not delete.
@@ -150,9 +150,10 @@ async function retireCancelledBranch(task: Task): Promise<void> {
   }
 }
 
-function childrenOf(taskId: string): Task[] {
-  return listTasks().filter((t) => t.parentTaskId === taskId)
-}
+// ⛔ Reached through `split.ts`'s canonical `childrenOf`, not a local copy: a cancel reaches
+// exactly the pieces of a split (both halves of the edge), never a follow-up filed with only
+// `parentTaskId`. Two copies drifted once; this one required only `parentTaskId` and cancelled
+// work the planner never filed as pieces.
 
 /**
  * Stop the work well.
