@@ -6,7 +6,7 @@ import { prunePending } from './attachments.js'
 import { closeDb, openDb } from './db.js'
 import { loadCostModels } from './costmodel.js'
 import { logCostFactors } from './estimator.js'
-import { adapter, loadAdapters } from './adapters/index.js'
+import { adapter, hasAdapter, loadAdapters } from './adapters/index.js'
 import { startServer, type DaemonServer } from './server.js'
 import { QuotaPoller } from './quota.js'
 import {
@@ -190,10 +190,16 @@ async function main(): Promise<void> {
       // "is this working or is it stuck?" could only be answered by opening the session pane and
       // reading a terminal. This is the same prose, already decoded, forwarded to whoever is looking
       // at the task. It is never written to the thread - see activity.ts.
+      // ⛔ Framed by the adapter, not by this module reading the bytes. One `assistant_text` off
+      // claude-code is a whole message; one off muse is a handful of tokens. Treating either as the
+      // other wrecks the pane — see `AdapterCapabilities.outputFraming`.
       if (event.kind === 'assistant_text') {
         const run = runForSession(session.id)
         if (run?.taskId) {
-          noteActivity(run.taskId, event.text, run.id)
+          const framing = hasAdapter(session.adapterId)
+            ? adapter(session.adapterId).info.capabilities.outputFraming
+            : 'message'
+          noteActivity(run.taskId, event.text, run.id, framing)
         }
       }
       // ⛔ And the record that says the turn failed, which nothing was listening to. A `stream`

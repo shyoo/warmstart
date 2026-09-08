@@ -1054,6 +1054,31 @@ export interface AdapterCapabilities {
    */
   streamPrompts: 'conversation' | 'once'
   /**
+   * What one `assistant_text` event off this adapter's stream **is** — a finished piece of prose, or
+   * a fragment of one still arriving.
+   *
+   *  - `message` — the event carries a whole assistant message, already framed by the vendor. Claude
+   *    Code emits one per `{"type":"assistant"}` record; Codex one per `item.completed`. Its
+   *    linebreaks are the agent's own, and the next event is a *different* message.
+   *  - `delta`   — the event carries however many tokens happened to arrive together. Muse's
+   *    `run.output.delta`, Antigravity's `text_delta`, the local-LLM bridge's ~60-character rungs.
+   *    Consecutive events spell one sentence, and the boundary between two of them is usually
+   *    mid-word.
+   *
+   * ⛔ **Declared, because the peephole cannot tell by looking, and it guessed wrong in both
+   * directions.** Framing every event as its own row made a muse turn read one word per line
+   * (`landing / corners.test.ts / pass. The / tree / is clean`, t272); framing every event as a
+   * continuation then glued Claude's separate messages into one paragraph with no separator at all
+   * (`…what t269 recorded.Now let me make the edits.`, t284) and dropped every linebreak it had
+   * written. There is no reading of the bytes that gets both right — only the adapter knows which
+   * shape its vendor emits, so the adapter says.
+   *
+   * ⚠️ `message` is the default a declarative adapter gets, and it is the safe direction: the worst
+   * a wrongly-`message` stream does is show more rows than it needed, where a wrongly-`delta` one
+   * destroys the text by running unrelated sentences together.
+   */
+  outputFraming: 'message' | 'delta'
+  /**
    * Will this CLI accept a session id agentyard chose?
    *
    * ⛔ Load-bearing twice over, and it took M5 to notice. When false, the transcript path cannot be

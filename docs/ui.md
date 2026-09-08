@@ -18,10 +18,17 @@ conventions live.
 
 ⛔ **Agent output is rendered as text, never as markup.** `task.activity` — the live peephole — is a
 bounded in-memory tail, not persisted, and gone when the daemon restarts. That is the correct lifetime
-for *what is happening right now*; the thread is what a person reads afterwards. ⚠️ One tail row is one
-row on screen, so a fragment without a trailing newline extends the open row instead of pushing a new one —
-streamed prose reassembles rather than reading one word per line — and `append` on the event carries the whole
-line so watchers replace their last row rather than extending it.
+for *what is happening right now*; the thread is what a person reads afterwards.
+
+⚠️ **One tail row is one row on screen, and how the daemon cuts those rows is the adapter's call** —
+`AdapterCapabilities.outputFraming`, because the bytes do not say. On a `message` adapter (claude-code,
+openai-compatible) one event is a whole assistant message: it settles on arrival and its own linebreaks
+become rows. On a `delta` adapter (muse-code, antigravity-cli, local-llm) one event is a handful of
+tokens: a fragment without a trailing newline extends the open row instead of pushing a new one, so
+streamed prose reassembles rather than reading one word per line, and `append` on the event carries the
+whole line so watchers replace their last row rather than extending it. Getting this backwards has cost
+both directions once each — one word per line on muse (t272), and Claude's messages concatenated with
+their linebreaks gone (t284).
 
 ⛔ **No native modules here.** They live in the daemon so an Electron upgrade cannot break a running
 fleet.

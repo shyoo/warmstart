@@ -155,6 +155,8 @@ const info: AdapterInfo = {
      * no error anywhere to say so.
      */
     streamPrompts: 'once',
+    // `item.completed` only — codex publishes an `agent_message` when it is finished writing one.
+    outputFraming: 'message',
     // `codex exec resume <SESSION_ID>` takes an id, but the id is codex's to create - there is no
     // flag that supplies one for a *new* session.
     mintsSessionId: false,

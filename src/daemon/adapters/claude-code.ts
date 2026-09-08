@@ -64,6 +64,9 @@ const info: AdapterInfo = {
     spendProbe: 'config-cache',
     // stdin stays open and takes prompt after prompt; that is what the stream transport is for.
     streamPrompts: 'conversation',
+    // One `{"type":"assistant"}` record per message, its text blocks joined. Whole prose, own
+    // linebreaks, and the next record is a new message rather than more of this one.
+    outputFraming: 'message',
     // `--session-id` takes a uuid we choose, which is what makes the transcript path knowable before
     // the file exists and what lets orphan reaping prove a pid is ours.
     mintsSessionId: true,

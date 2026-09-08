@@ -100,6 +100,9 @@ const info: AdapterInfo = {
     // One prompt, then the process runs that turn and exits — like `codex exec`, but arriving as a
     // file rather than on stdin. See the note at the top of this file.
     streamPrompts: 'once',
+    // `run.output.delta`, and it is the stream that named this capability: t272 read one word per
+    // line before anything reassembled it.
+    outputFraming: 'delta',
     // `--session-id <UUID>` takes an id we choose, which is what makes the session log's path
     // knowable before the file exists and lets orphan reaping prove a pid is ours.
     mintsSessionId: true,

@@ -27,6 +27,8 @@ describe('local-llm adapter unit tests', () => {
       // Nothing to bill: the model runs on the operator's own machine.
       spendProbe: 'none',
       streamPrompts: 'conversation',
+      // The bridge flushes on a rung, not on a message: the peephole must reassemble it.
+      outputFraming: 'delta',
       metering: 'stream',
       maxAccounts: null,
       mintsSessionId: false,

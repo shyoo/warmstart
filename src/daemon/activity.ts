@@ -32,6 +32,10 @@ interface Entry {
 /**
  * One streaming line per tail, still being spoken.
  *
+ * ⛔ **Only ever open on a `delta` adapter.** A `message` adapter's events are already whole, so
+ * they settle on arrival and never open a line — reassembling those is exactly what glued Claude's
+ * separate messages into one paragraph (t284). See `OutputFraming`.
+ *
  * ⛔ **This is what stops streamed prose reading one word per line.** A provider that streams
  * (`muse exec --json` emits `run.output.delta` per few tokens) hands this module dozens of
  * fragments for one sentence. Each used to become its own tail entry, and the thread renders each
@@ -88,7 +92,80 @@ function shown(open: Entry): Entry {
   return { text: open.text.trimEnd(), ts: open.ts }
 }
 
-export function noteActivity(taskId: string, text: string, runId?: string): void {
+/**
+ * What one call to `noteActivity` is: a whole message, or a fragment of one.
+ *
+ * ⛔ **The adapter's answer, never this module's guess** — `AdapterCapabilities.outputFraming`, and
+ * see that field for the two regressions that come of guessing. `message` is the default here for
+ * the same reason it is the default there: it is the framing that cannot destroy text.
+ */
+export type OutputFraming = 'message' | 'delta'
+
+/**
+ * A whole message, framed by the vendor that wrote it.
+ *
+ * ⛔ **Its linebreaks are the agent's own and they are kept.** Claude Code emits one event per
+ * assistant message, and reassembling those the way streamed deltas are reassembled produced
+ * `…what t269 recorded.Now let me make the edits.` — two separate messages run together without so
+ * much as a space, every paragraph break inside them gone (t284, reported 2026-09-07). So a message
+ * settles immediately: it closes whatever line is open, and each of its own lines becomes a row.
+ */
+function noteMessage(
+  text: string,
+  taskId: string,
+  taskTail: Tail,
+  runTail: Tail | null
+): void {
+  // ⚠️ A message can arrive while a `delta` line is open — an adapter may emit a tool announcement
+  // one way and prose the other. Settle the open line first rather than interleaving rows.
+  closeOpen(taskId, taskTail, runTail)
+  for (const raw of text.replace(/\r\n?/g, '\n').split('\n')) {
+    // ⚠️ Interior blank lines are dropped rather than pushed as empty rows: the tail is bounded at
+    // KEEP settled lines, and a paragraph break that costs one of them buys nothing a reader can
+    // see — both renderers already put every row on its own block.
+    const line = raw.replace(/[ \t\f\v]+/g, ' ').trim()
+    if (!line) continue
+    const entry = pushLine(taskTail, line, KEEP)
+    emit({ type: 'task.activity', taskId, text: entry.text, ts: entry.ts })
+    if (runTail) pushLine(runTail, line, RUN_KEEP)
+  }
+}
+
+/** Settle whatever line is open, so the next row does not extend it. */
+function closeOpen(taskId: string, taskTail: Tail, runTail: Tail | null): void {
+  if (taskTail.open) {
+    const settled = shown(taskTail.open)
+    taskTail.open = null
+    if (settled.text) {
+      taskTail.lines.push({ ...settled })
+      while (taskTail.lines.length > KEEP) taskTail.lines.shift()
+      emit({ type: 'task.activity', taskId, text: settled.text, ts: settled.ts, append: true })
+    }
+  }
+  if (runTail?.open) {
+    const settled = shown(runTail.open)
+    runTail.open = null
+    if (settled.text) {
+      runTail.lines.push(settled)
+      while (runTail.lines.length > RUN_KEEP) runTail.lines.shift()
+    }
+  }
+}
+
+export function noteActivity(
+  taskId: string,
+  text: string,
+  runId?: string,
+  framing: OutputFraming = 'message'
+): void {
+  const taskTail = tailFor(tails, taskId, KEEP)
+  const runTail = runId ? tailFor(runTails, runId, RUN_KEEP) : null
+
+  if (framing === 'message') {
+    noteMessage(text, taskId, taskTail, runTail)
+    return
+  }
+
   // ⚠️ `\r` is a carriage return, not content: a PTY-redrawn progress line would otherwise glue
   // itself onto the prose with its control characters intact.
   const norm = text.replace(/\r\n?/g, '\n')
@@ -100,9 +177,6 @@ export function noteActivity(taskId: string, text: string, runId?: string): void
   // open line reassembles.
   const flat = body.replace(/\n/g, ' ')
   const collapsed = flat.replace(/[ \t\f\v]+/g, ' ')
-
-  const taskTail = tailFor(tails, taskId, KEEP)
-  const runTail = runId ? tailFor(runTails, runId, RUN_KEEP) : null
 
   if (closed) {
     const line = collapsed.trim()

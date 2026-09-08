@@ -203,6 +203,8 @@ const info: AdapterInfo = {
     spendProbe: 'none',
     // stdin stays open and takes prompt after prompt; that is what the stream transport is for.
     streamPrompts: 'conversation',
+    // `step_update` carries `text_delta`/`thought_delta`: a few tokens at a time, split mid-word.
+    outputFraming: 'delta',
     mintsSessionId: false,
     // ⚠️ Not from a transcript: agy writes conversations as SQLite, which the line-oriented tailer
     // cannot read. But usage IS in the stream - measured 2026-08-25 - so the work is metered after

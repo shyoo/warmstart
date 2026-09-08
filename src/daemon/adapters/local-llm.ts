@@ -64,6 +64,9 @@ const info: AdapterInfo = {
     // ⭐ The bridge keeps stdin open and reads NDJSON prompts line by line, so follow-up messages
     // (wrap-up nudges, finish instructions) can be sent mid-conversation.
     streamPrompts: 'conversation',
+    // The bridge flushes its SSE buffer on a newline, a sentence end or 60 characters, so an event
+    // is a rung of one reply rather than the reply.
+    outputFraming: 'delta',
     mintsSessionId: false,
     // Usage comes from the OpenAI-format response's `usage` field in the final SSE chunk.
     // llama.cpp reports `prompt_tokens` and `completion_tokens` there.
