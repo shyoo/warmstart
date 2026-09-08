@@ -11,10 +11,9 @@ import {
   FINISH_SHORT,
   SHARING_LABELS,
   SHARING_SHORT,
-  resolveFinishPolicy,
   resolveModelChoice,
-  resolveSessionSharing
 } from '@shared/tasks'
+import { resolveFinishPolicy, resolveSessionSharing } from '@shared/policy'
 import type { ModelOptions, Settings } from '@shared/protocol'
 import { canWork } from '@shared/protocol'
 import { ImageChips, usePastedImages } from '../lib/pasteimages.js'

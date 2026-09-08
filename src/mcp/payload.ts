@@ -1,4 +1,4 @@
-import { normaliseAsk } from '@shared/tasks.js'
+import { normaliseAsk } from '@shared/policy.js'
 import { errorMessage } from '@shared/errors.js'
 
 /**

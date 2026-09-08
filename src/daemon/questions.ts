@@ -7,7 +7,7 @@ import type {
   QuestionOrigin,
   QuestionResolution
 } from '@shared/tasks.js'
-import { normaliseAsk } from '@shared/tasks.js'
+import { normaliseAsk } from '@shared/policy.js'
 import { db, row, rows } from './db.js'
 import { emit } from './events.js'
 import { log } from './log.js'

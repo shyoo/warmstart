@@ -7,9 +7,9 @@ import {
   isMultiSelectQuestion,
   cleanQuestionText,
   extractEmbeddedParameters,
-  normaliseAsk,
   parseOptionList
 } from '@shared/tasks.js'
+import { normaliseAsk } from '@shared/policy.js'
 
 /**
  * The third object.

@@ -6,9 +6,8 @@ import type { FleetEntry } from './daemon'
 import {
   FINISH_LABELS,
   SHARING_LABELS,
-  resolveFinishPolicy,
-  resolveSessionSharing
 } from '@shared/tasks'
+import { resolveFinishPolicy, resolveSessionSharing } from '@shared/policy'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import {

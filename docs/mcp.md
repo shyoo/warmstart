@@ -108,7 +108,7 @@ It supports multiple selection via `multi_select: true` (or `multiSelect`), extr
 attributes, and detects multi-select intent from phrasing.
 
 ⛔ **Whether a question gets buttons or a text box is decided from what it *has*, not from what the
-asker claimed.** `normaliseAsk` (shared/tasks.ts) runs inside `insertQuestion`, so every path in —
+asker claimed.** `normaliseAsk` (shared/policy.ts) runs inside `insertQuestion`, so every path in —
 the MCP tools, the `NEEDS DECISION:` contract, the CLI's own `AskUserQuestion` — is repaired once:
 a `choice` with no options becomes `text`, and options that arrived become `choice` even if the call
 said otherwise. ⭐ Measured on t235, 2026-09-06: three `ask_human` calls in a row reached the daemon

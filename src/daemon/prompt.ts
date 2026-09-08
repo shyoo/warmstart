@@ -1,5 +1,6 @@
 import type { Attachment, Task } from '@shared/tasks.js'
-import { isOpenConversation, policyVerifies, resolveCompletionMode } from '@shared/tasks.js'
+import { isOpenConversation, policyVerifies } from '@shared/tasks.js'
+import { resolveCompletionMode } from '@shared/policy.js'
 import { describeAttachment } from './attachments.js'
 import { adapter } from './adapters/index.js'
 import { getProject } from './projects.js'

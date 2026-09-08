@@ -11,11 +11,7 @@ import {
   ORIENTATION_READING_ORDER,
   projectCompletionChoice,
   projectFinishChoice,
-  projectOrientationChoice,
   projectSharingChoice,
-  resolveCompletionMode,
-  resolveFinishPolicy,
-  resolveSessionSharing,
   SHARING_LABELS,
   verificationWarning,
   type CompletionModeChoice,
@@ -27,6 +23,7 @@ import {
   type ResourceAvailability,
   type SessionSharingChoice
 } from '@shared/tasks'
+import { projectOrientationChoice, resolveCompletionMode, resolveFinishPolicy, resolveSessionSharing } from '@shared/policy'
 import type { Settings } from '@shared/protocol'
 import { rpc } from '../lib/daemon'
 import { SettingButtonSelect, type SettingOption } from './SettingButtonSelect'

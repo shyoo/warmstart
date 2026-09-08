@@ -2,10 +2,10 @@ import type { Objective, ObjectivePreset } from '@shared/tasks.js'
 import {
   PRESETS,
   DEFAULT_OBJECTIVE,
-  normalise,
   parseObjective,
   presetOf
 } from '@shared/tasks.js'
+import { normalise } from '@shared/policy.js'
 
 export {
   PRESETS,

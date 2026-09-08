@@ -89,14 +89,14 @@ export const ORIENTATION_LABELS: Record<OrientationChoice, string> = {
  * ⚠️ Absent is `auto`, so a project that has never been asked still gets the line. The docs are
  * named only if they are on disk, so this is inert for a project that keeps none of them.
  */
-export function projectOrientationChoice(
+function _projectOrientationChoiceLegacy(
   project: Pick<Project, 'config'> | null | undefined
 ): OrientationChoice {
   return project?.config?.prompt?.orientation === 'off' ? 'off' : 'auto'
 }
 
 /** The operator's own cold-start sentence for this project, or null when it has none. */
-export function projectSeedPrompt(
+function _projectSeedPromptLegacy(
   project: Pick<Project, 'config'> | null | undefined
 ): string | null {
   const seed = project?.config?.prompt?.seed?.trim()
@@ -1510,7 +1510,7 @@ function parameterBlock(text: string, names: string): { matched: string; body: s
  * `</parameter>` are punctuation from a machine, and whatever sits between them is still the
  * asker's own words.
  */
-function stripCallSyntax(text: string): string {
+export function stripCallSyntax(text: string): string {
   return text
     .replace(/<\/?parameter(?:\s+name=["']?[^>]*)?>/gi, '')
     .replace(/<\/?(?:question|invoke|antml:parameter|antml:invoke)[^>]*>/gi, '')
@@ -1632,7 +1632,7 @@ function parseTolerantJsonArray(text: string): unknown[] | null {
  * ⚠️ Supplied options always beat recovered ones, and an explicit `multi` is never downgraded to a
  * single choice because a phrase match failed to fire.
  */
-export function normaliseAsk(input: {
+function _normaliseAskLegacy(input: {
   question: string
   header?: string | null
   kind: QuestionKind
@@ -1738,7 +1738,7 @@ export const OBJECTIVE_PRESET_LABELS: Record<ObjectivePreset, string> = {
 
 export const DEFAULT_OBJECTIVE: Objective = PRESETS.balanced
 
-export function normalise(objective: Partial<Objective>): Objective {
+function normaliseLegacy(objective: Partial<Objective>): Objective {
   const cost = Math.max(0, objective.cost ?? 0)
   const velocity = Math.max(0, objective.velocity ?? 0)
   const quality = Math.max(0, objective.quality ?? 0)
@@ -1755,7 +1755,7 @@ export function parseObjective(value: unknown): Objective | null {
   }
   if (value && typeof value === 'object') {
     const record = value as Partial<Objective>
-    if ('cost' in record || 'velocity' in record || 'quality' in record) return normalise(record)
+    if ('cost' in record || 'velocity' in record || 'quality' in record) return normaliseLegacy(record)
   }
   return null
 }
@@ -2283,7 +2283,7 @@ export function projectCompletionChoice(
 }
 
 /** Task, then project, then fleet - the same three tiers as finish and sharing, and `inherit` is real. */
-export function resolveCompletionMode(
+function _resolveCompletionModeLegacy(
   task: Task | null | undefined,
   project: Project | null | undefined,
   fleetMode: CompletionMode = DEFAULT_FLEET_COMPLETION
@@ -2340,7 +2340,7 @@ function pickCustomInstruction(policy: FinishPolicy, instruction: string): strin
  * showing a value the operator will look for on the task and not find. A setting whose origin is
  * invisible is one nobody trusts and everybody overrides.
  */
-export function resolveFinishPolicy(
+function _resolveFinishPolicyLegacy(
   task: Task | null | undefined,
   project: Project | null | undefined,
   fleetFinish: FinishPolicy = DEFAULT_FLEET_FINISH
@@ -2387,7 +2387,7 @@ export function resolveFinishPolicy(
  * changes; a task set explicitly to the same value does not. That difference is the reason the
  * dropdown offers it rather than showing an empty box.
  */
-export function resolveSessionSharing(
+function _resolveSessionSharingLegacy(
   task: Task | null | undefined,
   project: Project | null | undefined,
   fleetSharing: SessionSharing = DEFAULT_FLEET_SHARING

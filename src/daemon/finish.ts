@@ -8,8 +8,8 @@ import {
   DEFAULT_FINISH_INSTRUCTION,
   finishInstructionFor,
   projectFinishChoice,
-  resolveFinishPolicy as sharedResolveFinishPolicy
 } from '@shared/tasks.js'
+import { resolveFinishPolicy as sharedResolveFinishPolicy } from '@shared/policy.js'
 import { db, rows } from './db.js'
 import { log } from './log.js'
 import { landingTargetFor, listProjects, policyFor } from './projects.js'
@@ -21,11 +21,7 @@ import { settings } from './settings.js'
 export { projectFinishChoice, finishInstructionFor }
 
 /**
- * Task, then project, then fleet - the first one that is not `inherit`.
- *
- * ⚠️ The `source` travels with the answer so the UI can say *inherited from the project* rather than
- * showing a value the operator will look for on the task and not find. A setting whose origin is
- * invisible is one nobody trusts and everybody overrides.
+ * Delegates to `shared/policy.ts`, binding the fleet setting for daemon callers.
  */
 export function resolveFinishPolicy(task: Task | null, project: Project | null): ResolvedFinishPolicy {
   return sharedResolveFinishPolicy(task, project, settings().finishPolicy)

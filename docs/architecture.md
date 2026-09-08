@@ -445,3 +445,4 @@ scripts/                ensure-electron, icons, build-win.ps1                   
 | `stats.ts` | shared medians: `null` is no series, never a measured zero |
 | `activetime.ts` `activity.ts` `log.ts` | agent time, the live peephole, the daily log |
 | `testkit.ts` | ⛔ test-only shared L1 fixtures — never bundled, never imported outside `*.test.ts` |
+| `../shared/policy.ts` | cross-process preference resolvers; task/project/fleet choices never widen a mandate |

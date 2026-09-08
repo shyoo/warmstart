@@ -3,8 +3,8 @@ import type { Session } from '@shared/protocol.js'
 import {
   DEFAULT_FLEET_SHARING,
   projectSharingChoice,
-  resolveSessionSharing as sharedResolveSessionSharing
 } from '@shared/tasks.js'
+import { resolveSessionSharing as sharedResolveSessionSharing } from '@shared/policy.js'
 import { settings } from './settings.js'
 import { adapter } from './adapters/index.js'
 import { cacheHasLapsed } from './sessions.js'
@@ -56,11 +56,7 @@ export const SHARE_COMPACT_FLOOR = 0.7
 export { projectSharingChoice }
 
 /**
- * Resolve task → project → fleet, taking the first that is not `inherit`.
- *
- * ⚠️ `inherit` is a real value, not a blank. A task left on it follows its project as the project
- * changes; a task set explicitly to the same value does not. That difference is the reason the
- * dropdown offers it rather than showing an empty box.
+ * Delegates to `shared/policy.ts`, binding the fleet setting for daemon callers.
  */
 export function resolveSessionSharing(
   task: Task | null,

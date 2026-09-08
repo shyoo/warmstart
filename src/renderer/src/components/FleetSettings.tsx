@@ -8,9 +8,9 @@ import {
   OBJECTIVE_PRESET_LABELS,
   OBJECTIVE_PRESET_ORDER,
   PRESETS,
-  normalise,
   presetOf
 } from '@shared/tasks'
+import { normalise } from '@shared/policy'
 import type { Settings } from '@shared/protocol'
 import { rpc } from '../lib/daemon'
 import { SettingRow, SettingSwitch } from './SettingRow'

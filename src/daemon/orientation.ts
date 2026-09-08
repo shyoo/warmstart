@@ -2,11 +2,10 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   ORIENTATION_READING_ORDER,
-  projectOrientationChoice,
-  projectSeedPrompt,
   type Project,
   type ProjectDocName
 } from '@shared/tasks.js'
+import { projectOrientationChoice, projectSeedPrompt } from '@shared/policy.js'
 
 /**
  * What a **cold** agent is told before it is told the task.

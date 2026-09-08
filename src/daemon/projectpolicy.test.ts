@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { Project, ProjectConfig } from '@shared/tasks.js'
-import { projectCompletionChoice, projectFinishChoice, resolveFinishPolicy } from '@shared/tasks.js'
+import { projectCompletionChoice, projectFinishChoice } from '@shared/tasks.js'
+import { resolveFinishPolicy } from '@shared/policy.js'
 
 /**
  * The middle tier, written from the app.

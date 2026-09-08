@@ -7,9 +7,8 @@ import type { Project, Task } from '@shared/tasks.js'
 import type { Session, Worker } from '@shared/protocol.js'
 import {
   isOpenConversation,
-  resolveFinishPolicy,
-  resolveSessionSharing
 } from '@shared/tasks.js'
+import { resolveFinishPolicy, resolveSessionSharing } from '@shared/policy.js'
 
 /**
  * The `conversation` kind: a task with the single-turn contract taken out of it.
