@@ -10,14 +10,18 @@ import { tokens, when } from '../lib/format'
 import { Money, taskPriceTitle } from './Price'
 import {
   PAGE_SIZE_OPTIONS,
+  TASK_COLUMNS,
   readTaskPage,
   readTaskPageSize,
+  readTaskColumns,
   readViews,
   taskListSignature,
   writeTaskPage,
   writeTaskPageSize,
+  writeTaskColumns,
   writeViews
 } from '../lib/prefs'
+import type { TaskColumn } from '../lib/prefs'
 import {
   activeTime,
   activeTimeTitle,
@@ -152,6 +156,7 @@ export function Tasks({
    */
   const [views, setViews] = useState<TaskView[]>(readViews)
   const [pageSize, setPageSize] = useState<number>(readTaskPageSize)
+  const [columns, setColumns] = useState<TaskColumn[]>(readTaskColumns)
   const [sort, setSort] = useState<TaskSort>('updated')
   const [asc, setAsc] = useState(false)
   /**
@@ -285,6 +290,12 @@ export function Tasks({
   }
 
   const pages = Math.max(1, Math.ceil(total / pageSize))
+  const shown = new Set(columns)
+  const toggleColumn = (column: TaskColumn): void => {
+    const next = shown.has(column) ? columns.filter((item) => item !== column) : [...columns, column]
+    setColumns(next)
+    writeTaskColumns(next)
+  }
 
   useDaemonEvents((event) => {
     if (event.type === 'task.changed' || event.type === 'run.changed') void refresh()
@@ -432,6 +443,22 @@ export function Tasks({
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
+        <details className="tasks-columns">
+          <summary>Columns</summary>
+          <div className="tasks-columns-menu">
+            <span className="tasks-columns-id">ID is always shown</span>
+            {TASK_COLUMNS.map((column) => (
+              <label key={column}>
+                <input
+                  type="checkbox"
+                  checked={shown.has(column)}
+                  onChange={() => toggleColumn(column)}
+                />
+                {column === 'dep' ? 'Dependencies' : column[0]!.toUpperCase() + column.slice(1)}
+              </label>
+            ))}
+          </div>
+        </details>
       </div>
 
       {tasks.length === 0 ? (
@@ -491,7 +518,8 @@ export function Tasks({
           <thead>
             <tr>
               <SortHead label="#" column="seq" sort={sort} asc={asc} onSort={sortBy} numeric />
-              <SortHead label="Title" column="title" sort={sort} asc={asc} onSort={sortBy} />
+              {shown.has('title') && <SortHead label="Title" column="title" sort={sort} asc={asc} onSort={sortBy} />}
+              {shown.has('from') && (
               <SortHead
                 label="From"
                 column="from"
@@ -500,6 +528,7 @@ export function Tasks({
                 onSort={sortBy}
                 title="Who filed the task: you, the controller, or an agent."
               />
+              )}
               {/* ⛔ On the table, not only in the detail pane. Which account is spending on a task is
                   the first thing an operator checks and the last thing that should need a click —
                   and a routing mistake is invisible until it is shown here.
@@ -509,7 +538,7 @@ export function Tasks({
                   ordinary. Two columns apart, that pairing is a join the reader has to do by eye on
                   every row; stacked, the wrong one stands out — and the row stays one line of text
                   wide, which a table of a hundred tasks needs more than it needs a header. */}
-              <SortHead
+              {shown.has('worker') && <SortHead
                 label="Worker"
                 column="worker"
                 sort={sort}
@@ -517,7 +546,8 @@ export function Tasks({
                 onSort={sortBy}
                 title="The account this task last ran on. ⚠️ Sorted by the account's id rather than the label printed here, which groups one account's tasks together without the daemon having to carry display names."
               />
-              <SortHead
+              }
+              {shown.has('dep') && <SortHead
                 label="Dep"
                 column="dep"
                 sort={sort}
@@ -525,6 +555,7 @@ export function Tasks({
                 onSort={sortBy}
                 title="How many other tasks this one waits on."
               />
+              }
               {/* ⛔ How long, beside how much. A task showing only a token count answers "what did
                   this cost" and not "is this taking too long", and the second is the question
                   somebody watching a run actually has.
@@ -532,7 +563,7 @@ export function Tasks({
                   first-dispatch, which counts queueing, quota parks and every minute a question sat
                   waiting on a person — so a four-minute task filed before dinner reported nine
                   hours. The gap is in the tooltip, where it belongs. */}
-              <SortHead
+              {shown.has('took') && <SortHead
                 label="Took"
                 column="took"
                 sort={sort}
@@ -541,12 +572,13 @@ export function Tasks({
                 numeric
                 title="Time an agent was actually working, excluding time queued, held, or waiting on you."
               />
+              }
               {/* ⛔ Money over tokens, stacked, because they answer the same question at two
                   different altitudes: what this task cost, and how much conversation it took to get
                   there. The header used to read "Tokens" only because a column headed "Spent" was
                   read as money by everybody who saw it — now it *is* money, with the tokens kept
                   underneath in the same quiet treatment the model line uses. */}
-              <SortHead
+              {shown.has('price') && <SortHead
                 label="Price"
                 column="price"
                 sort={sort}
@@ -555,11 +587,12 @@ export function Tasks({
                 numeric
                 title="What this task has cost. ⚠️ A task nobody could price sorts last in both directions — unpriced is not free."
               />
+              }
               {/* ⛔ A grade, and nothing gates on it. It sits beside Price because both are
                   after-the-fact measurements of one attempt — what it cost, and whether it was any
                   good — and because the comparison this column exists for is between agents, which
                   is a query over these rows rather than a screen of its own. */}
-              <SortHead
+              {shown.has('quality') && <SortHead
                 label="Quality"
                 column="quality"
                 sort={sort}
@@ -568,14 +601,15 @@ export function Tasks({
                 numeric
                 title="Peer quality review: a different agent's weighted score out of 10, against the published rubric. Nothing in the fleet gates on it. ⚠️ Ungraded tasks sort last in both directions."
               />
+              }
               {/* ⛔ Both dates, not one. When a task was filed and when it last moved answer
                   different questions — "how long has this been sitting here" and "is anything still
                   happening" — and a task filed weeks ago that ran an hour ago looks identical to a
                   fresh one under either column alone. */}
-              <SortHead label="Created" column="created" sort={sort} asc={asc} onSort={sortBy} />
-              <SortHead label="Updated" column="updated" sort={sort} asc={asc} onSort={sortBy} />
-              <SortHead label="Status" column="status" sort={sort} asc={asc} onSort={sortBy} />
-              <th className="tbl-num tbl-col-action">Action</th>
+              {shown.has('created') && <SortHead label="Created" column="created" sort={sort} asc={asc} onSort={sortBy} />}
+              {shown.has('updated') && <SortHead label="Updated" column="updated" sort={sort} asc={asc} onSort={sortBy} />}
+              {shown.has('status') && <SortHead label="Status" column="status" sort={sort} asc={asc} onSort={sortBy} />}
+              {shown.has('action') && <th className="tbl-num tbl-col-action">Action</th>}
             </tr>
           </thead>
           <tbody>
@@ -612,7 +646,7 @@ export function Tasks({
                     onClick={() => onOpenTask(task.id)}
                   >
                     <td className="num tbl-num">{task.seq}</td>
-                    <td className="tbl-title-cell">
+                    {shown.has('title') && <td className="tbl-title-cell">
                       <div className="tbl-title" title={task.title}>
                         <span className="tbl-strong">
                           {/* ⛔ A glyph that means *this belongs to something else*, not a box-drawing
@@ -642,15 +676,15 @@ export function Tasks({
                         </span>
                       </div>
                       {task.branch && <div className="tbl-path mono">{task.branch}</div>}
-                    </td>
-                    <td className="dim">
+                    </td>}
+                    {shown.has('from') && <td className="dim">
                       {task.createdBy.kind === 'human'
                         ? 'you'
                         : task.createdBy.kind === 'controller'
                           ? 'ctrl'
                           : 'agent'}
-                    </td>
-                    <td className={task.ranOn || task.assignee ? '' : 'dim'}>
+                    </td>}
+                    {shown.has('worker') && <td className={task.ranOn || task.assignee ? '' : 'dim'}>
                       {assigneeLabel(task, fleet)}
                       {/* ⚠️ The id in the tooltip, always. The label is written for reading at a
                           glance; the operator chasing a routing mistake needs the exact string that
@@ -667,14 +701,14 @@ export function Tasks({
                           {model.label}
                         </div>
                       )}
-                    </td>
-                    <td className="num dim" title={dependencyTooltip(task, tasks)}>
+                    </td>}
+                    {shown.has('dep') && <td className="num dim" title={dependencyTooltip(task, tasks)}>
                       {task.dependsOn.length ? `←${task.dependsOn.length}` : '—'}
-                    </td>
-                    <td className="num tbl-num dim" title={activeTimeTitle(task, now)}>
+                    </td>}
+                    {shown.has('took') && <td className="num tbl-num dim" title={activeTimeTitle(task, now)}>
                       {activeTime(task, now)}
-                    </td>
-                    <td className="num tbl-num">
+                    </td>}
+                    {shown.has('price') && <td className="num tbl-num">
                       <Money
                         usd={task.budget.spentUsd}
                         estimated={task.budget.spentUsdEstimated}
@@ -687,8 +721,8 @@ export function Tasks({
                       >
                         {tokens(task.budget.spentTokens || null)}
                       </div>
-                    </td>
-                    <td className="num tbl-num">
+                    </td>}
+                    {shown.has('quality') && <td className="num tbl-num">
                       {task.qualityScore === null ? (
                         <span className="dim">—</span>
                       ) : (
@@ -703,20 +737,20 @@ export function Tasks({
                           {task.qualityScore.toFixed(1)}
                         </span>
                       )}
-                    </td>
-                    <td className="tbl-when dim" title={new Date(task.createdAt).toLocaleString()}>
+                    </td>}
+                    {shown.has('created') && <td className="tbl-when dim" title={new Date(task.createdAt).toLocaleString()}>
                       {when(task.createdAt)}
-                    </td>
-                    <td className="tbl-when dim" title={new Date(task.updatedAt).toLocaleString()}>
+                    </td>}
+                    {shown.has('updated') && <td className="tbl-when dim" title={new Date(task.updatedAt).toLocaleString()}>
                       {when(task.updatedAt)}
-                    </td>
-                    <td>
+                    </td>}
+                    {shown.has('status') && <td>
                       <span className={`status ${STATUS_TONE[task.gradingWorkerId ? 'grading' : task.status] ?? ''}`}>
                         {statusLabel(task)}
                         {isWorking(task) && <Working />}
                       </span>
-                    </td>
-                    <td className="tbl-action-cell" onClick={(e) => e.stopPropagation()}>
+                    </td>}
+                    {shown.has('action') && <td className="tbl-action-cell" onClick={(e) => e.stopPropagation()}>
                       <div
                         ref={menuTaskId === task.id ? menuRef : null}
                         className="action-menu-wrap"
@@ -865,7 +899,7 @@ export function Tasks({
                           </div>
                         )}
                       </div>
-                    </td>
+                    </td>}
                   </tr>
                   {/* ⚠️ The same row, the same prefix, whichever of the two is speaking. Marking
                       the scheduler's reason differently from the agent's output would be honest
@@ -879,7 +913,7 @@ export function Tasks({
                       className={`tbl-row--live${selected === task.id ? ' tbl-row--selected' : ''}`}
                       onClick={() => onOpenTask(task.id)}
                     >
-                      <td colSpan={12} className="tbl-live-cell">
+                      <td colSpan={columns.length + 1} className="tbl-live-cell">
                         <div className="tbl-live-line" title={belowLine}>
                           <span className="tbl-live-prefix" aria-hidden>&gt;</span>
                           <span className="tbl-live-text">

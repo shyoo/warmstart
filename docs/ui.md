@@ -367,6 +367,12 @@ page by a number the database could not see would drop and repeat rows between p
 exactly like data loss. A name column opens A→Z and a measurement opens biggest-first; `null` sorts
 last in **both** directions, because unpriced is not free and ungraded is not zero.
 
+⭐ **The task table's ID is fixed; its other columns are an operator preference.** The **Columns**
+menu keeps the choice in guarded `localStorage`, scoped to the display like the task filters and page
+size. It starts with every optional column shown, and an absent, malformed or old value does the same
+so a browser preference cannot silently hide information. The ID stays because it is the compact,
+stable reference shared by the table, the thread and row actions.
+
 ⭐ **The list comes back to the page you left it on, and the composer comes back with what you
 typed in it.** Both were lost for the same reason: opening a task replaces the table with the thread,
 which unmounts everything under it, so `← Tasks` mounted a fresh list on page 1 and a fresh, empty

@@ -13,6 +13,7 @@ import { TASK_VIEWS, type TaskView } from '@shared/tasks'
  */
 
 const VIEWS_KEY = 'multi_agent_controller.taskViews'
+const TASK_COLUMNS_KEY = 'multi_agent_controller.taskColumns'
 const FLEET_COLLAPSED_KEY = 'multi_agent_controller.fleetCollapsed'
 const FLEET_DENSITY_KEY = 'multi_agent_controller.fleetDensity'
 
@@ -44,6 +45,55 @@ export function writeViews(views: TaskView[]): void {
   try {
     if (typeof window === 'undefined' || !window.localStorage) return
     window.localStorage.setItem(VIEWS_KEY, JSON.stringify(views))
+  } catch {
+    // A preference that cannot be saved is not an error worth showing anybody.
+  }
+}
+
+/** The optional columns in the task table. Its id is deliberately not a member: it is always shown. */
+export const TASK_COLUMNS = [
+  'title',
+  'from',
+  'worker',
+  'dep',
+  'took',
+  'price',
+  'quality',
+  'created',
+  'updated',
+  'status',
+  'action'
+] as const
+
+export type TaskColumn = (typeof TASK_COLUMNS)[number]
+
+/**
+ * Which optional task columns are visible.
+ *
+ * ⛔ The task id is not configurable: it is the compact, stable way to identify a task in every
+ * conversation and action menu. A missing, malformed, or old preference instead shows every
+ * optional column, so an operator never loses information because a saved browser value aged out.
+ */
+export function readTaskColumns(): TaskColumn[] {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return [...TASK_COLUMNS]
+    const raw = window.localStorage.getItem(TASK_COLUMNS_KEY)
+    if (!raw) return [...TASK_COLUMNS]
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return [...TASK_COLUMNS]
+    const known = TASK_COLUMNS.filter((column) => parsed.includes(column))
+    // `[]` is a deliberate compact table. A non-empty list with no known name is an obsolete
+    // preference, and showing nothing because a column was renamed is not a reasonable migration.
+    return parsed.length > 0 && known.length === 0 ? [...TASK_COLUMNS] : known
+  } catch {
+    return [...TASK_COLUMNS]
+  }
+}
+
+export function writeTaskColumns(columns: TaskColumn[]): void {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return
+    window.localStorage.setItem(TASK_COLUMNS_KEY, JSON.stringify(columns))
   } catch {
     // A preference that cannot be saved is not an error worth showing anybody.
   }

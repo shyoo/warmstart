@@ -2,13 +2,42 @@ import { afterEach, describe, expect, it } from 'vitest'
 import type { TaskView } from '@shared/tasks'
 import {
   readFleetDensity,
+  readTaskColumns,
   writeFleetDensity,
+  writeTaskColumns,
   readQualityGradableOnly,
   writeQualityGradableOnly,
   readTaskPage,
   taskListSignature,
   writeTaskPage
 } from './prefs.js'
+
+describe('which task columns are visible', () => {
+  const stub = (store: Record<string, string>): void => {
+    ;(globalThis as { window?: unknown }).window = {
+      localStorage: { getItem: (key: string) => store[key] ?? null, setItem: (key: string, value: string) => { store[key] = value } }
+    }
+  }
+
+  afterEach(() => {
+    delete (globalThis as { window?: unknown }).window
+  })
+
+  it('shows every optional column by default and remembers a chosen subset', () => {
+    const store: Record<string, string> = {}
+    stub(store)
+    expect(readTaskColumns()).toContain('title')
+    writeTaskColumns(['title', 'status'])
+    expect(readTaskColumns()).toEqual(['title', 'status'])
+  })
+
+  it('uses the full table when a saved value is malformed or obsolete', () => {
+    stub({ 'multi_agent_controller.taskColumns': '{' })
+    expect(readTaskColumns()).toContain('action')
+    stub({ 'multi_agent_controller.taskColumns': '["owner"]' })
+    expect(readTaskColumns()).toContain('action')
+  })
+})
 
 /**
  * ⛔ The default is the interesting case, not the round trip. `narrow` hides the name of every

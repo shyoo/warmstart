@@ -1590,6 +1590,42 @@ body {
   margin-left: auto;
 }
 
+.tasks-columns {
+  position: relative;
+}
+
+.tasks-columns summary {
+  cursor: pointer;
+  color: var(--color-text-dim);
+  font-size: var(--text-meta);
+}
+
+.tasks-columns-menu {
+  position: absolute;
+  z-index: 2;
+  right: 0;
+  top: calc(100% + var(--sp-1));
+  display: grid;
+  gap: var(--sp-1);
+  min-width: 150px;
+  padding: var(--sp-2);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-2);
+  box-shadow: var(--shadow-panel);
+  font-size: var(--text-meta);
+}
+
+.tasks-columns-menu label {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+}
+
+.tasks-columns-id {
+  color: var(--color-text-dim);
+}
+
 .tasks-search input {
   padding: 3px var(--sp-2);
   font-size: var(--text-meta);
