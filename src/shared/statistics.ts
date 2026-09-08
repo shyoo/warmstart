@@ -74,6 +74,12 @@ export interface StatRow {
 }
 
 export interface PriceStatRow extends StatRow {
+  /**
+   * Which dollars this row is in. ⛔ On the model rung (and the effort rungs under it) one row
+   * is one basis: a model whose tasks were billed two ways gets a `subscription` row and a
+   * `mixed` row rather than one average in neither currency. The agent rung above still folds
+   * everything, so the totals reconcile.
+   */
   basis: PriceBasis
   /**
    * ⚠️ At least one task in this row could not be priced at all, so `samples` is smaller than the

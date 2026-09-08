@@ -165,6 +165,50 @@ export function quotaWindowDeltas(
   }))
 }
 
+/**
+ * Pair the account's pay-as-you-go meters across a run's two readings, in dollars.
+ *
+ * ⛔ The same two-readings-or-none rule the window percents keep: a meter on one reading only is
+ * not a cost, and a meter whose unit has no dollar conversion is unpriceable rather than zero —
+ * it is left out, and the thread says nothing, instead of converting at a guessed rate. A meter
+ * both readings carry at `null` was asked and published nothing; that is `n/a`, not `$0.00`.
+ *
+ * ⚠️ The delta follows the meter's own direction: a purse that `balance_falls` spent
+ * `from − to`, a counter that `spend_rises` spent `to − from`. A top-up or rollover that moved
+ * the baseline the other way comes out negative, which is the honest reading of the series.
+ */
+export function spendDeltas(
+  before: RunQuota,
+  after: RunQuota | null
+): Array<{ label: string; from: number | null; to: number | null; spent: number | null }> {
+  const closing = new Map((after?.spend ?? []).map((m) => [m.meterId, m]))
+  const out: Array<{ label: string; from: number | null; to: number | null; spent: number | null }> = []
+  for (const opening of before.spend ?? []) {
+    const close = closing.get(opening.meterId)
+    // ⛔ Paired by meter id, and only where both sides convert to dollars. Two different meters
+    // never share an id on one worker, so there is no aliasing half to pair by (t273's lesson
+    // does not apply here) — and a missing conversion is a missing number, not a zero.
+    if (opening.usdPerUnit === null || opening.usdPerUnit === undefined) continue
+    if (close && (close.usdPerUnit === null || close.usdPerUnit === undefined)) continue
+    const from = opening.balance === null ? null : opening.balance * (opening.usdPerUnit ?? 1)
+    const to =
+      !close || close.balance === null ? null : close.balance * (close.usdPerUnit ?? opening.usdPerUnit ?? 1)
+    // ⚠️ Nothing measured on either side: asked both times and published nothing twice. There is
+    // no movement to show and no baseline to keep, so the row is dropped rather than drawn `n/a`.
+    if (from === null && to === null) continue
+    // ⚠️ `spent` follows the meter's own direction: a purse drawn down spent `from − to`, a
+    // cumulative counter spent `to − from`. One side missing is `n/a`, not zero.
+    const spent =
+      from === null || to === null
+        ? null
+        : opening.direction === 'balance_falls'
+          ? from - to
+          : to - from
+    out.push({ label: opening.label, from, to, spent })
+  }
+  return out
+}
+
 /** `5h:gemini` and the bare `5h` alias are the same kind of window; `weekly:x` likewise. */
 function windowKind(id: string): string {
   if (id === '5h' || id.startsWith('5h:')) return '5h'

@@ -95,13 +95,19 @@ function rowLabel(row: { level: StatRow['level']; label: string; model: string |
  * harness in the agent row above each model; a chart has no such row, so it carries it inline.
  */
 function graphLabel(
-  row: { level: StatRow['level']; label: string; model: string | null; adapterId: string },
-  agents: Map<string, string>
+  row: { level: StatRow['level']; label: string; model: string | null; adapterId: string; basis?: PriceBasis },
+  agents: Map<string, string>,
+  /** The price chart splits the model rung by billing basis, so the bar has to say which dollars it is in. */
+  unit?: 'price' | 'velocity'
 ): string {
   const own = rowLabel(row)
-  if (row.level === 'agent') return own
+  const suffixed =
+    unit === 'price' && row.level !== 'effort' && row.basis && row.basis !== 'unknown'
+      ? `${own} (${BASIS_LABEL[row.basis]})`
+      : own
+  if (row.level === 'agent') return suffixed
   const agent = agents.get(row.adapterId)
-  return agent ? `${agent} · ${own}` : own
+  return agent ? `${agent} · ${suffixed}` : suffixed
 }
 
 /**
@@ -334,7 +340,7 @@ function StatGraph({
             const xP100 = scale(d.p100)
             const isHovered = hoveredIdx === idx
 
-            const label = graphLabel(row, agentLabels)
+            const label = graphLabel(row, agentLabels, unit)
 
             return (
               <g
@@ -452,7 +458,7 @@ function StatGraph({
             flexWrap: 'wrap'
           }}
         >
-          <strong>{graphLabel(targetRows[hoveredIdx], agentLabels)}</strong>
+          <strong>{graphLabel(targetRows[hoveredIdx], agentLabels, unit)}</strong>
           <span className="dim">n={targetRows[hoveredIdx].distribution.samples}</span>
           <span>
             Avg:{' '}
@@ -660,7 +666,9 @@ function PriceTab({ report }: { report: StatisticsReport }): React.JSX.Element {
           moment the work ran. <em>mixed</em> means the group contains both, which is what an account
           crossing into overage mid-month does to every total above it. Averaging the two without
           saying which is which turns &ldquo;this agent is cheap&rdquo; into a sentence that means
-          nothing.
+          nothing — so a model whose tasks were billed both ways gets one row (and one chart bar)
+          per basis, e.g. <em>Opus (subs)</em> beside <em>Opus (mixed)</em>, while the agent row
+          above keeps folding everything.
         </div>
         {price.estimated && (
           <p className="dim">

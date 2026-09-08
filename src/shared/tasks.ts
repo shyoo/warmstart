@@ -1149,9 +1149,35 @@ export interface RunQuota {
    * `undefined` on a single-pool provider, where the id is already stable.
    */
   windows: Array<{ id: string; label: string; percent: number; group?: string }>
+  /**
+   * The pay-as-you-go meters read at the same moment, so a run that spent credits past the plan
+   * limit can show the movement beside the window percents (t285).
+   *
+   * ⚠️ Optional and best-effort: runs that predate it, and runs on workers with no spend meter,
+   * carry nothing here, and the thread pairs only the meters present on *both* readings.
+   */
+  spend?: RunSpend[]
   sampledAt: number
   /** True when this was the best available reading and was already too old to act on. */
   stale: boolean
+}
+
+/**
+ * One money meter as a run bracketed it: the raw vendor balance, not dollars.
+ *
+ * ⛔ Raw, because the dollar conversion (`usdPerUnit`) is a property of the meter that a later
+ * correction could restate — the snapshot keeps what the vendor said and the reader converts.
+ * `usdPerUnit: null` means the vendor bills in a currency nobody here prices, and the row is
+ * shown as `n/a` rather than converted at a guessed rate.
+ */
+export interface RunSpend {
+  meterId: string
+  label: string
+  balance: number | null
+  /** Which way the number moves when money is spent. See `SpendMeter.direction`. */
+  direction: 'balance_falls' | 'spend_rises'
+  /** What one unit is worth in dollars. Always 1 for a `usd` meter. */
+  usdPerUnit: number | null
 }
 
 /**

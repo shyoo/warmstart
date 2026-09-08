@@ -53,7 +53,7 @@ import { TaskQuestions } from './Questions'
 import { AddDependency, candidatesFor, DependencyList, useTaskCandidates } from './Dependencies'
 import { showsLiveOutput } from '../lib/live'
 import { codeSpans } from '../lib/codespans'
-import { duration, quotaWindowDeltas, timeRange, tokens, when } from '../lib/format'
+import { duration, money, quotaWindowDeltas, spendDeltas, timeRange, tokens, when } from '../lib/format'
 import { Money, runPriceTitle, taskPriceTitle } from './Price'
 import { effortLabel, modelLabel } from '../lib/modelname'
 import {
@@ -3284,19 +3284,23 @@ function ConversationId({
 }
 
 /**
- * What this run cost the account's window.
+ * What this run cost the account's window — and what it spent past the plan limit.
  *
  * ⛔ Each opening window always keeps its own row. One reading is a state, not a cost, and rendering
  * "41%" beside a run invites it to be read as the run's price. Until the background closing reading
  * arrives, `41% → n/a` makes the missing half explicit and leaves a stable row for the result.
+ * The pay-as-you-go meters bracketed beside the run keep the same contract one row down: a purse
+ * drawn down reads `spent = from − to`, a cumulative counter `to − from`, and a meter one reading
+ * never carried is not a cost at all.
  */
 function QuotaDelta({ run }: { run: Run }): React.JSX.Element | null {
   const before = run.quotaBefore
   const after = run.quotaAfter
   if (!before) return null
   const rows = quotaWindowDeltas(before, after)
+  const spend = spendDeltas(before, after)
 
-  if (rows.length === 0) return null
+  if (rows.length === 0 && spend.length === 0) return null
   return (
     <div className="side-run-quota side-run-quota--windows num">
       {rows.map((r) => (
@@ -3307,6 +3311,19 @@ function QuotaDelta({ run }: { run: Run }): React.JSX.Element | null {
               {' '}
               ({r.to > r.from ? '+' : ''}
               {Math.round(r.to - r.from)})
+            </span>
+          )}
+        </span>
+      ))}
+      {spend.map((r) => (
+        <span key={r.label} title="pay-as-you-go spend on this account, read before the run and after it">
+          {r.label} {r.from === null ? 'n/a' : money(r.from)} →{' '}
+          {r.to === null ? 'n/a' : money(r.to)}
+          {r.spent !== null && (
+            <span className={r.spent > 0 ? 'warn' : 'dim'}>
+              {' '}
+              ({r.spent > 0 ? '+' : ''}
+              {money(r.spent)})
             </span>
           )}
         </span>

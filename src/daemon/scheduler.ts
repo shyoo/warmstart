@@ -188,6 +188,7 @@ import {
   type LiveRateLimit
 } from './quota.js'
 import { reserveState } from './reserve.js'
+import { lastSpend } from './spend.js'
 import { settings } from './settings.js'
 import { estimateTask, overrunFactor, type Estimate } from './estimator.js'
 import type { Objective } from '@shared/tasks.js'
@@ -706,12 +707,28 @@ function needsBaseline(worker: Worker | null): string | null {
 function runQuota(workerId: string): RunQuota | null {
   const quota = lastQuota(workerId)
   if (!quota || quota.windows.length === 0) return null
+  // ⚠️ Best-effort and unbracketed by freshness: a meter nobody has ever read for this worker
+  // contributes nothing, and the thread pairs only what both readings carry. `lastSpend` answers
+  // with the newest probe whatever it found, so a balance of `null` (asked, published nothing)
+  // is kept as `null` rather than read as zero.
+  const spend = lastSpend(workerId)?.meters
   return {
     // ⛔ `group` travels too. Without it the run's two readings pair windows by bare id, and
     // Antigravity's busiest pool holds the bare `5h` id — so a reading taken before the run and
     // one taken after can hold that id on different pools, and the thread shows one pool's spend
     // on the other's row (t273).
     windows: quota.windows.map((w) => ({ id: w.id, label: w.label, percent: w.percent, group: w.group })),
+    ...(spend && spend.length > 0
+      ? {
+          spend: spend.map((m) => ({
+            meterId: m.id,
+            label: m.label,
+            balance: m.balance,
+            direction: m.direction,
+            usdPerUnit: m.usdPerUnit
+          }))
+        }
+      : {}),
     sampledAt: quota.sampledAt,
     stale: quota.stale
   }

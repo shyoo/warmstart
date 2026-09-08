@@ -298,7 +298,16 @@ export function compareModelPower(a: string, b: string): number {
 function tree<T extends Sample, R>(
   all: T[],
   agentLabel: (adapterId: string) => string,
-  fold: (level: 'agent' | 'model' | 'effort', label: string, key: string, group: T[]) => R
+  fold: (level: 'agent' | 'model' | 'effort', label: string, key: string, group: T[]) => R,
+  /**
+   * Splits the model rung: one row per distinct value the classifier names.
+   *
+   * ⛔ Price only. A model whose tasks were billed two ways must not average an amortised
+   * subscription share with money really billed on top — the mean of the two is a number in
+   * neither currency (t285). The agent rung above stays the fold of everything, so the totals
+   * still reconcile; the model rung below names which dollars each row is in.
+   */
+  modelSplit?: (s: T) => string | null
 ): R[] {
   const out: R[] = []
   const byAgent = new Map<string, T[]>()
@@ -320,25 +329,44 @@ function tree<T extends Sample, R>(
       byModel.set(k, list)
     }
     for (const [model, modelGroup] of [...byModel.entries()].sort((a, b) => compareModelPower(a[0], b[0]))) {
-      out.push(fold('model', model, `${adapterId}/${model}`, modelGroup))
-
-      const byEffort = new Map<string, T[]>()
-      for (const s of modelGroup) {
-        // ⛔ A task whose effort was never recorded gets no effort row at all. A `?` rung under a
-        //    model is a bucket nobody can act on, and it would sit in the table looking like a
-        //    setting somebody chose.
-        if (!s.effort) continue
-        const list = byEffort.get(s.effort) ?? []
-        list.push(s)
-        byEffort.set(s.effort, list)
+      // ⚠️ One row per billing basis where the caller asked for the split, so `subs` and `API
+      //    rate` dollars are never averaged together. The key carries the basis because two rows
+      //    share the model label; the effort key below carries it too, for the same reason.
+      const splits = new Map<string, T[]>()
+      if (modelSplit) {
+        for (const s of modelGroup) {
+          const k = modelSplit(s) ?? ''
+          const list = splits.get(k) ?? []
+          list.push(s)
+          splits.set(k, list)
+        }
+      } else {
+        splits.set('', modelGroup)
       }
-      // ⚠️ Suppressed when the model ran at exactly one effort: a lone child that restates its
-      //    parent's numbers is a row that costs a line and says nothing.
-      if (byEffort.size < 2) continue
-      for (const [effort, effortGroup] of [...byEffort.entries()].sort((a, b) =>
-        compareEffortPower(a[0], b[0])
-      )) {
-        out.push(fold('effort', effort, `${adapterId}/${model}/${effort}`, effortGroup))
+      for (const [split, splitGroup] of [...splits.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+        const modelKey = split ? `${adapterId}/${model}/${split}` : `${adapterId}/${model}`
+        out.push(fold('model', model, modelKey, splitGroup))
+
+        const byEffort = new Map<string, T[]>()
+        for (const s of splitGroup) {
+          // ⛔ A task whose effort was never recorded gets no effort row at all. A `?` rung under a
+          //    model is a bucket nobody can act on, and it would sit in the table looking like a
+          //    setting somebody chose.
+          if (!s.effort) continue
+          const list = byEffort.get(s.effort) ?? []
+          list.push(s)
+          byEffort.set(s.effort, list)
+        }
+        // ⚠️ Suppressed when the model ran at exactly one effort: a lone child that restates its
+        //    parent's numbers is a row that costs a line and says nothing.
+        if (byEffort.size < 2) continue
+        for (const [effort, effortGroup] of [...byEffort.entries()].sort((a, b) =>
+          compareEffortPower(a[0], b[0])
+        )) {
+          out.push(
+            fold('effort', effort, split ? `${modelKey}/${effort}` : `${adapterId}/${model}/${effort}`, effortGroup)
+          )
+        }
       }
     }
   }
@@ -367,7 +395,16 @@ function priceStats(all: Sample[], label: (id: string) => string): PriceStats {
       basis: basisOf(group.map((s) => ({ subscription: s.subscriptionUsd, overage: s.overageUsd }))),
       unpriced: group.length - priced.length
     }
-  })
+  },
+  // ⛔ A task is billed exactly one way: subscription-only, billed on top, or both. Splitting the
+  //    model rung on it is what keeps an account crossing into overage mid-month from averaging
+  //    the two layers into one row. A task nobody could price lands in `unknown`, whose row the
+  //    samples filter below drops — the fleet-wide `unpriced` count is where that fact belongs.
+  (s) =>
+    s.usd === null
+      ? 'unknown'
+      : basisOf([{ subscription: s.subscriptionUsd, overage: s.overageUsd }])
+  )
   return {
     // ⛔ A rung nobody could price at all is dropped rather than rendered as a row of `n/a`. The
     //    fleet-wide `unpriced` count below is where that fact belongs; a table of blanks is not.

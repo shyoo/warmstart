@@ -121,7 +121,10 @@ describes what happened: nothing on it is smoothed. Price, Velocity and Quality 
 rather than averaging the rung below, and every table prints `n` beside its percentiles. The two
 pages will disagree — a shrunk pace factor is not a measured p50 — and the page says so rather than
 reconciling them quietly. Price additionally names its basis per row: `subs`, `API rate` or `mixed`,
-since averaging an amortised share of a flat fee together with money billed on top means nothing.
+since averaging an amortised share of a flat fee together with money billed on top means nothing —
+and the model rung (with the effort rungs under it) is split one row per basis, so a model billed
+both ways reads as e.g. *Opus (subs)* beside *Opus (mixed)* while the agent row above still folds
+everything.
 ⚠️ An `unknown` renders `n/a`, never `$0.00`, and the benchmark prior and fitness columns are drawn
 on **model** rows only — a prior is published per model, so there is no prior for `high` alone.
 
@@ -130,7 +133,8 @@ model rows, which in a table are indented under the agent row that owns them; a 
 parent, and `claude-sonnet-4-6` is served both by Claude Code and by Antigravity out of different
 subscriptions at different prices. So `graphLabel` prints *Antigravity · Sonnet 4.6*, read off the
 agent rows in the same report rather than off the adapter registry — the chart names only what the
-table beneath it is folding.
+table beneath it is folding. On the price chart each bar also carries its basis in parentheses
+(*Opus 4.6 (subs)*), because the split model rung would otherwise draw two same-named bars.
 
 ⚠️ **A task can be taken out of all of it, from its own thread.** The `statistics` row in the thread's
 right pane toggles `Task.excludedFromStats`, and an excluded task leaves Statistics, the pace factor

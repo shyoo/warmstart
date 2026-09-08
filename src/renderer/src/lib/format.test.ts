@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Worker } from '@shared/protocol'
 import { QUOTA_STALE_AFTER_MS, quotaFreshness } from '@shared/tasks'
-import { cacheRemaining, countdown, money, quotaGap, quotaWindowDeltas, timeRange, when } from './format'
+import { cacheRemaining, countdown, money, quotaGap, quotaWindowDeltas, spendDeltas, timeRange, when } from './format'
 
 describe('countdown', () => {
   const NOW = Date.UTC(2026, 8, 2, 12, 0, 0)
@@ -104,6 +104,60 @@ describe('run quota window pairs', () => {
       { label: 'Claude/GPT 5h', from: 0, to: null },
       { label: 'Claude/GPT 7d', from: 57, to: null }
     ])
+  })
+})
+
+describe('run spend pairs', () => {
+  const before = {
+    sampledAt: 1,
+    stale: false,
+    windows: [],
+    spend: [
+      { meterId: 'claude-extra-usage', label: 'Claude usage credits', balance: 0, direction: 'spend_rises' as const, usdPerUnit: 1 },
+      { meterId: 'claude-credit-balance', label: 'Claude credit balance', balance: 40, direction: 'balance_falls' as const, usdPerUnit: 1 }
+    ]
+  }
+
+  it('reads a rising counter as to − from and a falling purse as from − to', () => {
+    expect(
+      spendDeltas(before, {
+        sampledAt: 2,
+        stale: false,
+        windows: [],
+        spend: [
+          { meterId: 'claude-extra-usage', label: 'Claude usage credits', balance: 7.42, direction: 'spend_rises', usdPerUnit: 1 },
+          { meterId: 'claude-credit-balance', label: 'Claude credit balance', balance: 32.5, direction: 'balance_falls', usdPerUnit: 1 }
+        ]
+      })
+    ).toEqual([
+      { label: 'Claude usage credits', from: 0, to: 7.42, spent: 7.42 },
+      { label: 'Claude credit balance', from: 40, to: 32.5, spent: 7.5 }
+    ])
+  })
+
+  it('keeps a meter with no closing reading on its own n/a row, like the windows', () => {
+    expect(spendDeltas(before, null)).toEqual([
+      { label: 'Claude usage credits', from: 0, to: null, spent: null },
+      { label: 'Claude credit balance', from: 40, to: null, spent: null }
+    ])
+  })
+
+  it('leaves out a meter with no dollar conversion rather than converting at a guess', () => {
+    expect(
+      spendDeltas(
+        {
+          sampledAt: 1,
+          stale: false,
+          windows: [],
+          spend: [{ meterId: 'm', label: 'Foreign credits', balance: 5, direction: 'spend_rises', usdPerUnit: null }]
+        },
+        null
+      )
+    ).toEqual([])
+  })
+
+  it('says nothing at all where neither reading carried a meter', () => {
+    expect(spendDeltas({ sampledAt: 1, stale: false, windows: [] }, null)).toEqual([])
   })
 })
 

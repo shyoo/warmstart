@@ -392,6 +392,33 @@ describe('price', () => {
     expect(row?.basis).toBe('mixed')
   })
 
+  it('splits the model rung by billing basis instead of averaging subs with overage', () => {
+    // ⛔ The mean of an amortised subscription share and money really billed on top is a number in
+    // neither currency. One account crossing into overage mid-month puts the two layers on the
+    // same model, so the model rung carries one row per basis while the agent rung above keeps
+    // folding everything (t285).
+    const plain = finishedTask({ adapter: 'claude-code', model: 'opus', activeMs: 4 * MIN, costModel: CLAUDE })
+    const billed = finishedTask({ adapter: 'claude-code', model: 'opus', activeMs: 4 * MIN, costModel: CLAUDE })
+    const at = db.db().prepare('select started_at, ended_at from runs where task_id = ?').get(billed) as {
+      started_at: number
+      ended_at: number
+    }
+    overageMeter([
+      [at.started_at, 40],
+      [at.ended_at, 39.25]
+    ])
+    void plain
+    const report = stats.statisticsReport().price
+    const models = report.rows.filter((r) => r.level === 'model')
+    expect(models.map((r) => r.basis).sort()).toEqual(['mixed', 'subscription'])
+    expect(models.map((r) => r.distribution.samples).sort()).toEqual([1, 1])
+    // ⚠️ Two rows share the model label, so the keys are what keep them apart.
+    expect(new Set(models.map((r) => r.key)).size).toBe(2)
+    const agent = report.rows.find((r) => r.level === 'agent')
+    expect(agent?.basis).toBe('mixed')
+    expect(agent?.distribution.samples).toBe(2)
+  })
+
   it('counts an unpriced task in the row it belongs to without folding it into the numbers', () => {
     // ⛔ `unpriced` is not `free`. The row's distribution describes only what could be measured,
     //    and the count beside it is what stops the average reading as the whole story.
