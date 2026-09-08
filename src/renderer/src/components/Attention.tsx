@@ -3,6 +3,14 @@ import type { Approval, Question, Task } from '@shared/tasks'
 import { rpc, useDaemonEvents } from '../lib/daemon'
 import { cacheUrgency, countdown, duration } from '../lib/format'
 import { isQuotaGated } from '../lib/taskview'
+import {
+  isQuotaAlertDismissed,
+  prunedQuotaAlerts,
+  readQuotaAlertDismissals,
+  withQuotaAlertDismissed,
+  writeQuotaAlertDismissals,
+  type QuotaAlertDismissals
+} from '../lib/quotaalerts'
 import { QuestionCard } from './Questions'
 
 /**
@@ -50,14 +58,35 @@ export function Attention({
   const [questions, setQuestions] = useState<Question[]>([])
   const [gatedTasks, setGatedTasks] = useState<Task[]>([])
   const [busy, setBusy] = useState<string | null>(null)
+  // ⚠️ Read once, from `localStorage`: a quota park lasts hours and the operator who dismissed it
+  // was very likely in a different run of the app. See `quotaalerts.ts`.
+  const [dismissed, setDismissed] = useState<QuotaAlertDismissals>(() => readQuotaAlertDismissals())
 
   const refresh = useCallback(() => {
     void rpc('approval.list').then(setApprovals)
     void rpc('question.list').then(setQuestions)
     void rpc('task.list')
-      .then((all) => setGatedTasks(all.filter((t) => isQuotaGated(t, Date.now()))))
+      .then((all) => {
+        const gated = all.filter((t) => isQuotaGated(t, Date.now()))
+        setGatedTasks(gated)
+        // ⛔ Pruned against what is *actually* gated now, so a task released by its window reset
+        // gets a fresh interruption the next time it hits one.
+        setDismissed((held) => {
+          const kept = prunedQuotaAlerts(held, gated)
+          if (Object.keys(kept).length !== Object.keys(held).length) writeQuotaAlertDismissals(kept)
+          return kept
+        })
+      })
       .catch(() => setGatedTasks([]))
   }, [])
+
+  const dismissQuota = (task: Task): void => {
+    setDismissed((held) => {
+      const next = withQuotaAlertDismissed(held, task)
+      writeQuotaAlertDismissals(next)
+      return next
+    })
+  }
 
   useEffect(refresh, [refresh])
   useDaemonEvents((event) => {
@@ -80,11 +109,16 @@ export function Attention({
   const items: Item[] = [
     ...approvals.map((approval) => ({ kind: 'approval' as const, at: approval.askedAt, approval })),
     ...questions.map((question) => ({ kind: 'question' as const, at: question.askedAt, question })),
-    ...gatedTasks.map((task) => ({
-      kind: 'quota' as const,
-      at: task.quotaPreemptWarning ? task.quotaPreemptWarning.preemptAt - 60_000 : task.updatedAt,
-      task
-    }))
+    // ⛔ Dismissed alerts are dropped here rather than merely skipped for the top slot: they must
+    // not be counted by `+N more` either. A task somebody has told this bar to stop raising is not
+    // one of the things waiting on them.
+    ...gatedTasks
+      .filter((task) => !isQuotaAlertDismissed(task, dismissed))
+      .map((task) => ({
+        kind: 'quota' as const,
+        at: task.quotaPreemptWarning ? task.quotaPreemptWarning.preemptAt - 60_000 : task.updatedAt,
+        task
+      }))
   ].sort((a, b) => a.at - b.at)
 
   const current = items[0]
@@ -230,6 +264,16 @@ export function Attention({
               onClick={() => onOpenTask?.(current.task.id)}
             >
               View…
+            </button>
+            {/* ⛔ Silences the bar, changes nothing about the task: the gate still holds, the
+                Tasks list still shows it, and the fleet still releases it when the window resets.
+                A park lasts hours, so this is remembered across restarts — see quotaalerts.ts. */}
+            <button
+              className="btn btn--ghost"
+              title="Stop showing this here. The task stays gated and resumes when its window resets."
+              onClick={() => dismissQuota(current.task)}
+            >
+              Dismiss
             </button>
           </>
         )}
