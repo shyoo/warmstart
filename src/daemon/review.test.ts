@@ -106,6 +106,14 @@ describe('parsing a reviewer’s reply', () => {
     expect(parsed.reason).toContain('expected 1.0')
   })
 
+  it('names an omitted rubric version, rather than reporting an opaque undefined value', () => {
+    const { rubric_version: _version, ...withoutVersion } = good
+    const parsed = parseReviewReply(withoutVersion)
+    expect(parsed.ok).toBe(false)
+    if (parsed.ok) return
+    expect(parsed.reason).toBe('the reply omitted required `rubric_version`; expected 1.0')
+  })
+
   it('accepts a null score, which is how "this dimension does not apply" is said', () => {
     const parsed = parseReviewReply({
       ...good,
@@ -202,6 +210,12 @@ describe('the prompt', () => {
     const prompt = build()
     expect(prompt.indexOf('KEEP THIS TO A SINGLE PASS')).toBeGreaterThan(-1)
     expect(prompt.indexOf('KEEP THIS TO A SINGLE PASS')).toBeLessThan(prompt.indexOf('=== RUBRIC ==='))
+  })
+
+  it('puts the required rubric version before the long review context', () => {
+    const prompt = build()
+    expect(prompt).toContain('OUTPUT PROTOCOL: Your final JSON object MUST include "rubric_version": "1.0" exactly.')
+    expect(prompt.indexOf('OUTPUT PROTOCOL:')).toBeLessThan(prompt.indexOf('=== RUBRIC ==='))
   })
 
   it('makes the reviewer seek concrete issues before giving an exceptional score', () => {

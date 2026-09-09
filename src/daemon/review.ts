@@ -500,6 +500,9 @@ export function buildReviewPrompt(input: PromptInputs): string {
     'file, and do not run any command that writes. You may read files to understand the code around',
     'the change.',
     '',
+    `OUTPUT PROTOCOL: Your final JSON object MUST include "rubric_version": "${RUBRIC_VERSION}" exactly.`,
+    'A score without that field is rejected, even when every dimension is otherwise present.',
+    '',
     'IMPORTANT: Some tasks produce no code changes. A task may accomplish its goal through database',
     'migrations, configuration updates, or other non-code work that leaves no commit to review. If the',
     'task has no commits or no reviewable diff, return "n/a" for the summary and null for all dimension',
@@ -589,9 +592,13 @@ const MAX_RATIONALE = 600
  */
 export function parseReviewReply(reply: Record<string, unknown>): ParsedReview {
   if (reply.rubric_version !== RUBRIC_VERSION) {
+    const used = reply.rubric_version
     return {
       ok: false,
-      reason: `the reply used rubric ${JSON.stringify(reply.rubric_version)}, expected ${RUBRIC_VERSION}`
+      reason:
+        used === undefined
+          ? `the reply omitted required \`rubric_version\`; expected ${RUBRIC_VERSION}`
+          : `the reply used rubric ${JSON.stringify(used)}, expected ${RUBRIC_VERSION}`
     }
   }
   const raw = reply.scores
