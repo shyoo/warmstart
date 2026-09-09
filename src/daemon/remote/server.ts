@@ -28,7 +28,7 @@ export function startRemoteServer(ctx: ApiContext): { close(): Promise<void>; br
   let live: RemoteServer | null = null
   let info: TailscaleInfo | null = null
   let refreshTail: Promise<void> = Promise.resolve()
-  const publish = () => setRemoteListenerInfo(() => ({ listening: !!live, secure: !!live && secure(remoteConfig().bind, info), urls: urls(), tailscale: info ? { installed: info.installed, hostname: info.hostname, certAvailable: info.certAvailable, error: info.error, certError: info.certError } : null }))
+  const publish = () => setRemoteListenerInfo(() => ({ listening: !!live, secure: !!live && secure(remoteConfig().bind, info), urls: urls(), tailscale: info ? { installed: info.installed, hostname: info.hostname, certAvailable: info.certAvailable, error: info.error, certError: info.certError, certTimedOut: info.certTimedOut } : null }))
   const urls = () => {
     if (!live) return []
     const c = remoteConfig(), scheme = secure(c.bind, info) ? 'https' : 'http'

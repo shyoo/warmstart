@@ -18,11 +18,15 @@ describe('remote access presentation', () => {
 
   it('names the one next step, never the whole setup at once', () => {
     expect(tailscaleStep(status(null))).toMatch(/Install Tailscale/)
-    expect(tailscaleStep(status({ installed: true, hostname: null, certAvailable: false, error: null, certError: null }))).toMatch(/Sign in/)
-    expect(tailscaleStep(status({ installed: true, hostname: null, certAvailable: false, error: 'Access is denied.', certError: null }))).toMatch(/could not be read.*Access is denied/)
-    expect(tailscaleStep(status({ installed: true, hostname: 'desk.ts.net', certAvailable: false, error: null, certError: 'local-tailscaled.sock: Tailscale service: Access is denied.' }))).toMatch(/local Windows service denied.*Update Tailscale.*tailscale status/)
-    expect(tailscaleStep(status({ installed: true, hostname: 'desk.ts.net', certAvailable: false, error: null, certError: 'certificate is not permitted' }))).toMatch(/could not issue.*certificate is not permitted/)
-    expect(tailscaleStep(status({ installed: true, hostname: 'desk.ts.net', certAvailable: false, error: null, certError: null }))).toMatch(/HTTPS certificates/)
-    expect(tailscaleStep(status({ installed: true, hostname: 'desk.ts.net', certAvailable: true, error: null, certError: null }))).toMatch(/ready/)
+    expect(tailscaleStep(status({ installed: true, hostname: null, certAvailable: false, error: null, certError: null, certTimedOut: false }))).toMatch(/Sign in/)
+    expect(tailscaleStep(status({ installed: true, hostname: null, certAvailable: false, error: 'Access is denied.', certError: null, certTimedOut: false }))).toMatch(/could not be read.*Access is denied/)
+    expect(tailscaleStep(status({ installed: true, hostname: 'desk.ts.net', certAvailable: false, error: null, certError: 'local-tailscaled.sock: Tailscale service: Access is denied.', certTimedOut: false }))).toMatch(/local Windows service denied.*Update Tailscale.*tailscale status/)
+    expect(tailscaleStep(status({ installed: true, hostname: 'desk.ts.net', certAvailable: false, error: null, certError: 'certificate is not permitted', certTimedOut: false }))).toMatch(/could not issue.*certificate is not permitted/)
+    // ⛔ A cert request we killed on our own timer must not be presented as a tailnet
+    // misconfiguration: nothing in the admin console would fix it (t321 → t322, 2026-09-08).
+    expect(tailscaleStep(status({ installed: true, hostname: 'desk.ts.net', certAvailable: false, error: null, certError: 'Multi Agent Controller stopped waiting after 120s.', certTimedOut: true }))).toMatch(/did not finish issuing.*re-check to try again/)
+    expect(tailscaleStep(status({ installed: true, hostname: 'desk.ts.net', certAvailable: false, error: null, certError: 'Multi Agent Controller stopped waiting after 120s.', certTimedOut: true }))).not.toMatch(/tailnet HTTPS setting/)
+    expect(tailscaleStep(status({ installed: true, hostname: 'desk.ts.net', certAvailable: false, error: null, certError: null, certTimedOut: false }))).toMatch(/HTTPS certificates/)
+    expect(tailscaleStep(status({ installed: true, hostname: 'desk.ts.net', certAvailable: true, error: null, certError: null, certTimedOut: false }))).toMatch(/ready/)
   })
 })

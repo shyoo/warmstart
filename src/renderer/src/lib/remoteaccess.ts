@@ -9,6 +9,9 @@ export function tailscaleStep(status: RemoteStatus): string {
   if (status.tailscale.certError && /local-tailscaled\.sock|\\\\pipe\\.*Tailscale/i.test(status.tailscale.certError) && /access is denied/i.test(status.tailscale.certError)) {
     return `Tailscale's local Windows service denied the certificate request: ${status.tailscale.certError} Update Tailscale, then confirm \`tailscale status\` works from your normal user terminal before re-checking.`
   }
+  // A timeout is our own doing, not the tailnet's. Sending the operator to the admin console for it
+  // is the wrong instruction: the first issuance is a slow ACME exchange and re-checking finishes it.
+  if (status.tailscale.certTimedOut) return `Tailscale did not finish issuing this machine's HTTPS certificate in time: ${status.tailscale.certError} The first issuance is a slow exchange with the certificate authority; re-check to try again.`
   if (status.tailscale.certError) return `Tailscale could not issue this machine's HTTPS certificate: ${status.tailscale.certError} Check the tailnet HTTPS setting and this device's certificate permission, then re-check.`
   if (!status.tailscale.certAvailable) return 'Enable MagicDNS and HTTPS certificates in the Tailscale admin console, then re-check.'
   return 'Tailscale is ready for encrypted phone access.'
