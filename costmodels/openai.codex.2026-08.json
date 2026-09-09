@@ -14,17 +14,17 @@
     "1.25x to rebuild. So `kind` is `ttl_multiplier`, exactly as in the Anthropic file - not a new",
     "shape, just shorter and cheaper to rebuild.",
     "",
-    "⚠️ ONE 30m TTL COVERS ALL FIVE MODELS, and only the GPT-5.6 trio is documented at 30m.",
+    "⚠️ ONE 30m TTL COVERS ALL FOUR MODELS, and only the GPT-5.6 trio is documented at 30m.",
     "gpt-5.6-sol, gpt-5.6-terra and gpt-5.6-luna use `prompt_cache_options.ttl`, whose sole supported value is",
-    "'30m'. gpt-5.5 and gpt-5.4-mini predate that and use `prompt_cache_retention`, where the",
-    "non-ZDR default '24h' 'typically keeps entries available for around 30 minutes and can retain",
-    "them for up to 24 hours'. Thirty minutes is therefore the honest number for all five: exact",
-    "for the newer pair, and the typical case for the older pair. ⛔ It is NOT a floor for the older",
-    "pair - an organization with Zero Data Retention enabled defaults to 'in_memory' instead, which",
+    "'30m'. gpt-5.5 predates that and uses `prompt_cache_retention`, where the non-ZDR default '24h'",
+    "'typically keeps entries available for around 30 minutes and can retain them for up to 24 hours'.",
+    "Thirty minutes is therefore the honest number for all four: exact for the newer trio, and the",
+    "typical case for the older model. ⛔ It is NOT a floor for the older model - an organization with",
+    "Zero Data Retention enabled defaults to 'in_memory' instead, which",
     "is '5 to 10 minutes of inactivity', and against that this file is optimistic. A ZDR fleet that",
     "measures its own reuse rate should say so here rather than leave this comment standing.",
     "",
-    "⚠️ Cache writes cost 1.25x on GPT-5.6+ but nothing at all on the older pair, and this file",
+    "⚠️ Cache writes cost 1.25x on GPT-5.6+ but nothing at all on the older model, and this file",
     "charges every model the 1.25x. Erring toward the expensive side is the safe direction: it makes",
     "the scheduler slightly too eager to reuse a warm prefix and slightly too reluctant to let one",
     "lapse, and both of those fail toward reuse, which is free when the guess is wrong.",
@@ -39,11 +39,11 @@
     "brackets the TTL only as (5m, 10h]: it corroborates the documented 30m and does not measure it.",
     "The rollout field used is the same one probeQuota reads, so the check is free to repeat.",
     "",
-    "MODELS: read from $CODEX_HOME/models_cache.json on 2026-09-03 (codex-cli 0.151.0), which the CLI",
-    "refreshes itself. Its `gpt-5.6-sol` entry is visible and supports low, medium, high, xhigh, max",
-    "and ultra reasoning. `gpt-reserve` and `codex-auto-review` are deliberately omitted: the first is not",
-    "a model an operator should route to by name, and the second is the review agent rather than a",
-    "coding model."
+    "MODELS: refreshed from OpenAI's ChatGPT Codex model documentation on 2026-09-09. ChatGPT-authenticated",
+    "Codex retired `gpt-5.4` and `gpt-5.4-mini` on 2026-08-31, replacing the latter with `gpt-5.6-luna`.",
+    "The API and Codex authenticated with an API key are unaffected; this subscription model list is for",
+    "the ChatGPT-backed Codex adapter. `gpt-reserve` and `codex-auto-review` remain omitted: the first is",
+    "not a model an operator should route to by name, and the second is the review agent rather than a coding model."
   ],
   "id": "openai.codex.2026-08",
   "provider": "openai",
@@ -69,8 +69,7 @@
       "gpt-5.6-sol": 1024,
       "gpt-5.6-terra": 1024,
       "gpt-5.6-luna": 1024,
-      "gpt-5.5": 2048,
-      "gpt-5.4-mini": 2048
+      "gpt-5.5": 2048
     }
   },
   "compaction": {
@@ -143,20 +142,6 @@
     },
     {
       "id": "gpt-5.5",
-      "context_window": 400000,
-      "input_per_mtok": null,
-      "output_per_mtok": null,
-      "tokenizer": "o200k",
-      "context_awareness": false,
-      "effort_levels": [
-        "low",
-        "medium",
-        "high",
-        "xhigh"
-      ]
-    },
-    {
-      "id": "gpt-5.4-mini",
       "context_window": 400000,
       "input_per_mtok": null,
       "output_per_mtok": null,

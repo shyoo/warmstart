@@ -334,7 +334,7 @@ export function defaultGradingModel(adapterId: string): string | null {
   return {
     'claude-code': 'claude-haiku-4-5',
     'antigravity-cli': 'gemini-3.8-flash-low',
-    'openai-compatible': 'gpt-5.4-mini',
+    'openai-compatible': 'gpt-5.6-luna',
     'local-llm': 'qwen3-coder-30b-a3b'
   }[adapterId] ?? null
 }

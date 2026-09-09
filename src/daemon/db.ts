@@ -1751,7 +1751,27 @@ const MIGRATIONS: Migration[] = [
   //
   // ⚠️ `if not exists` like migrations 39, 45 and 46: `versionBefore` lets a test rewind
   // `user_version` and reopen, which replays this against a database that already has the index.
-  `create index if not exists runs_worker on runs(worker_id, kind, outcome, started_at desc);`
+  `create index if not exists runs_worker on runs(worker_id, kind, outcome, started_at desc);`,
+  // 60 - ChatGPT Codex retired GPT-5.4 Mini; API-key Codex did not.
+  //
+  // OpenAI's Codex model documentation, read 2026-09-09, directs ChatGPT-authenticated users to
+  // replace `gpt-5.4-mini` with `gpt-5.6-luna` after the former retired on 2026-08-31. This is
+  // deliberately a data repair, not a new global default alone: a persisted grading choice outranks
+  // `defaultGradingModel`, so leaving it intact would keep retrying the exact rejected model.
+  //
+  // ⛔ API-key Codex is explicitly unaffected. `identity_json` is the vendor-auth evidence this
+  // process already records; a missing identity is unknown, not permission to rewrite a choice.
+  // The predicate is safe to replay: after one pass no matching ChatGPT row remains.
+  (conn) => {
+    conn.prepare(
+      `update workers
+          set grading_model = 'gpt-5.6-luna'
+        where adapter_id = 'openai-compatible'
+          and grading_model = 'gpt-5.4-mini'
+          and identity_json is not null
+          and identity_json not like '%API Key%'`
+    ).run()
+  }
 ]
 
 /**

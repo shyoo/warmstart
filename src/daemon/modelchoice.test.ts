@@ -130,10 +130,26 @@ afterAll(() => {
 describe('what an account is allowed to default to', () => {
   it('starts new workers on each adapter\'s smallest grading model', () => {
     expect(workers.createWorker({ adapterId: 'claude-code', label: 'grader-claude' }).gradingModel).toBe('claude-haiku-4-5')
-    expect(workers.createWorker({ adapterId: 'openai-compatible', label: 'grader-codex' }).gradingModel).toBe('gpt-5.4-mini')
+    expect(workers.createWorker({ adapterId: 'openai-compatible', label: 'grader-codex' }).gradingModel).toBe('gpt-5.6-luna')
     const agy = workers.createWorker({ adapterId: 'antigravity-cli', label: 'grader-agy' })
     expect(agy.gradingModel).toBe('gemini-3.8-flash-low')
     workers.retireWorker(agy.id)
+  })
+
+  it('migration 60 replaces the retired ChatGPT Codex grading model but preserves API-key Codex', () => {
+    const chatgpt = workers.createWorker({ adapterId: 'openai-compatible', label: 'm60-chatgpt' })
+    const apiKey = workers.createWorker({ adapterId: 'openai-compatible', label: 'm60-api-key' })
+    const setLegacy = db.db().prepare('update workers set grading_model = ?, identity_json = ? where id = ?')
+    setLegacy.run('gpt-5.4-mini', JSON.stringify({ loggedIn: true, subscriptionType: 'ChatGPT Plus' }), chatgpt.id)
+    setLegacy.run('gpt-5.4-mini', JSON.stringify({ loggedIn: true, subscriptionType: 'API Key' }), apiKey.id)
+
+    const before = db.versionBefore("set grading_model = 'gpt-5.6-luna'")
+    db.db().exec(`pragma user_version = ${before}`)
+    db.closeDb()
+    db.openDb(join(dir, 'modelchoice.db'))
+
+    expect(workers.getWorker(chatgpt.id)?.gradingModel).toBe('gpt-5.6-luna')
+    expect(workers.getWorker(apiKey.id)?.gradingModel).toBe('gpt-5.4-mini')
   })
 
   it('validates and stores a worker grading model and role', () => {
