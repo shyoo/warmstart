@@ -23,6 +23,7 @@ let workers: typeof import('./workers.js')
 let residency: typeof import('./residency.js')
 let tasks: typeof import('./tasks.js')
 let sessions: typeof import('./sessions.js')
+let scheduler: typeof import('./scheduler.js')
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'agentyard-concurrency-'))
@@ -32,6 +33,7 @@ beforeAll(async () => {
   residency = await import('./residency.js')
   tasks = await import('./tasks.js')
   sessions = await import('./sessions.js')
+  scheduler = await import('./scheduler.js')
   db.openDb(join(dir, 'concurrency.db'))
 })
 
@@ -354,6 +356,32 @@ describe('the capacity gate above one slot', () => {
  * pooled slot used to refuse every child's landing for ever, which is the same wedge by another road.
  */
 describe('a planner blocked on its own pieces', () => {
+  it('stops the planner run when its split is filed, even before the CLI exits', async () => {
+    const worker = add(1)
+    const plan = tasks.createTask({ title: 'plan and delegate', kind: 'plan' })
+    const run = tasks.startRun({
+      taskId: plan.id,
+      workerId: worker.id,
+      sessionId: 'planner-still-live',
+      projectId: null,
+      quotaUnverified: false,
+      costModelId: null
+    })
+    tasks.setStatus(plan.id, 'running', { assignee: worker.id })
+
+    // This is the durable half of `task_split`: its children now own the work, while the planner
+    // waits for them. The CLI has not exited yet, which is the regression that used to leave the
+    // active-time clock open for the whole split.
+    tasks.setStatus(plan.id, 'blocked', { holdReason: 'waiting on its own pieces' })
+    await scheduler.endPlannerForSplit('planner-still-live')
+
+    const ended = tasks.requireRun(run.id)
+    expect(ended.endedAt).not.toBeNull()
+    expect(ended.outcome).toBe('blocked')
+    expect(ended.note).toMatch(/filed its plan as subtasks/)
+    expect(residency.retainedReservations(worker.id, [])).toBe(0)
+  })
+
   it('⛔ holds no slot, so the pieces it waits for can be dispatched', () => {
     const worker = add(1)
     const plan = tasks.createTask({ title: 'plan the work', kind: 'plan' })

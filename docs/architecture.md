@@ -336,7 +336,10 @@ left `quotaRisk` with no reachable trigger and quota vanished from routing for t
   edge (the one `task_split` writes, so a planner is woken by the pieces that *failed*) was released
   by nothing outside `cancelTask`. Measured: t192 was landed by hand at 14:40, and t193 was still
   `blocked` behind it when a person looked. A `blocked` task holds no clock, no worker and no
-  session, so **nothing about it ever expires** and one missed event strands it permanently.
+  session, so **nothing about it ever expires** and one missed event strands it permanently. A Plan
+  & Split planner closes its active run and asks its session to stop in the same successful
+  `task_split` path that writes `blocked`; it never waits for the CLI to obey its stop instruction
+  before its agent-time clock stops.
   ⚠️ `admit()` still decides per edge, so an ordinary `completed` edge is unmoved by a failure.
   ⚠️ The backstop is `admitBlocked()` on the tick, which re-reads every blocked row against the world
   and logs at warn when it releases one — a release there means a bug above it. ⚠️ Admission now

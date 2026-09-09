@@ -3426,6 +3426,36 @@ export async function endUnfinishedRun(
 }
 
 /**
+ * End the planning turn once it has delegated its work.
+ *
+ * ⛔ A Plan & Split planner is blocked on its pieces, not on its own agent.  The old path changed
+ * the task to `blocked` and relied on the agent obeying "STOP NOW" and exiting before it wound the
+ * run up.  A planner that remained alive after its `task_split` response therefore kept accruing
+ * active time (and retained its run's claims) for the entire time its pieces worked.  Filing a
+ * successful split is itself the terminal event for this turn, so the control plane ends it here.
+ */
+export async function endPlannerForSplit(sessionId: string): Promise<void> {
+  const run = runForSession(sessionId)
+  if (!run?.taskId) return
+
+  const task = getTask(run.taskId)
+  // ⛔ Narrow to the state `applySplit` has just written.  A task can be blocked for ordinary
+  // dependencies too, and that is not authority to stop its agent.
+  if (task?.kind !== 'plan' || task.status !== 'blocked') return
+
+  const why =
+    'The planner filed its plan as subtasks and stopped. This task waits for them and comes back by itself.'
+  finishRun(run.id, 'blocked', why)
+  void captureQuotaAfter(requireRun(run.id))
+  await releaseFor(run.id, task.id, task.projectId)
+
+  // `closeSession` only asks; `onSessionExit` releases the workspace after the process is actually
+  // gone.  The run is deliberately closed before that asynchronous exit so its active clock stops
+  // at the split, even if a CLI takes time to honour the close.
+  closeSession(sessionId)
+}
+
+/**
  * Did this run fail because the account ran out of window — and if so, when may it try again?
  *
  * ⛔ **The gap t108 fell through** (2026-09-02). This fleet meets an exhausted window three ways.

@@ -2,7 +2,7 @@
 import { addMessage, createTask, getTask, runForSession, setTaskHandoff } from '../tasks.js'
 import { askQuestion } from '../questions.js'
 import { addSplitDependency, applySplit, validateSplit } from '../split.js'
-import { completeTask, parkForHuman } from '../scheduler.js'
+import { completeTask, endPlannerForSplit, parkForHuman } from '../scheduler.js'
 import { errorMessage } from '@shared/errors.js'
 import type { Api, ApiContext } from './support.js'
 import { admitAgentTask } from './support.js'
@@ -134,6 +134,11 @@ export function apiAgent(_ctx: ApiContext): Pick<Api, AgentMethod> {
         parent.childDefaults
       )
       if (!result.ok) return { ok: false, reply: `That split was not filed: ${result.reason}` }
+
+      // ⛔ The split's wait costs neither agent time nor a run-held claim.  Do not rely on the
+      // planner following the reply below and exiting: the run must stop at the durable transition
+      // to `blocked`, while its children are still running.
+      await endPlannerForSplit(p.sessionId)
 
       const seqs = result.children.map((c) => c.seq)
       return {
