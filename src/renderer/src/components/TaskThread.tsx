@@ -44,6 +44,7 @@ import {
   hasQuotaGate,
   holdLine,
   isWorking,
+  routerPicksModel,
   statusLabel,
   STOPPABLE,
   taskLabel,
@@ -326,10 +327,9 @@ function TaskDetail({
   // ⚠️ `modelPolicy: 'inherit'` is a task-level answer too, even though it names no model: the
   // scheduler is told to take the account's default and score nothing, so the default *is* what the
   // next run asks for and saying "chosen at dispatch" would be reporting a decision nobody makes.
-  const routerPicks =
-    resolved.modelSource !== 'task' &&
-    task.constraints.modelPolicy !== 'inherit' &&
-    (assigned?.routableModels?.length ?? 0) > 0
+  // ⛔ The predicate itself lives in `taskview.tsx`, beside the list cell that asks the same
+  // question. The row and the page it opens must not name different models for the same task.
+  const routerPicks = routerPicksModel(task.constraints, assigned, resolved.modelSource)
   const requestedModel = {
     model: routerPicks ? null : resolved.model,
     undecided: routerPicks,

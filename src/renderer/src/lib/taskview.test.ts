@@ -678,6 +678,51 @@ describe('the model under the account, in the Worker column', () => {
     // A fleet whose cost models failed to load still runs work, and the column still says what on.
     expect(modelLine(routed(), fleet(), [])?.label).toBe('Sonnet 5')
   })
+
+  /**
+   * ⛔ The reported symptom was a model that *changed by itself*: a task sitting in `assigned` read
+   * `GPT 5.6 Sol` — the account default — and the moment its first run was recorded the same cell
+   * read `GPT 5.6 Terra`. Nothing switched. The account default was never the answer, because
+   * `chooseTarget` scores every routable model as its own candidate and does not decide until the
+   * tick that dispatches; the cell was reporting a prediction it had no right to make.
+   */
+  describe('⛔ an account whose models the router chooses between', () => {
+    const routable = worker({
+      id: 'w1',
+      label: 'CodexFirst',
+      defaultModel: 'gpt-5.6-sol',
+      routableModels: ['gpt-5.6-sol', 'gpt-5.6-terra']
+    })
+
+    it('does not name the account default while the choice is still pending', () => {
+      const line = modelLine(routed(), fleet(routable), options)
+      expect(line).toMatchObject({ label: 'router picks', id: null, ran: false, undecided: true })
+      expect(line?.routable).toBe(2)
+    })
+
+    it('names what ran the instant a run records one', () => {
+      // ⚠️ Half the claim: the cell must not simply go quiet forever on a routable account.
+      const line = modelLine(routed({ ranOn: 'w1', ranModel: 'gpt-5.6-terra' }), fleet(routable), options)
+      expect(line).toMatchObject({ id: 'gpt-5.6-terra', ran: true, undecided: false })
+    })
+
+    it('names a task-level pin, which the router does not touch', () => {
+      const line = modelLine(routed({ constraints: { model: 'gpt-5.6-sol' } }), fleet(routable), options)
+      expect(line).toMatchObject({ id: 'gpt-5.6-sol', undecided: false })
+    })
+
+    it('names the account default under `modelPolicy: inherit`, which scores nothing', () => {
+      const line = modelLine(routed({ constraints: { modelPolicy: 'inherit' } }), fleet(routable), options)
+      expect(line).toMatchObject({ id: 'gpt-5.6-sol', undecided: false })
+    })
+
+    it('leaves an account with no allowlist naming its default as before', () => {
+      expect(modelLine(routed(), fleet(worker({ routableModels: [] })), options)).toMatchObject({
+        id: 'claude-sonnet-5',
+        undecided: false
+      })
+    })
+  })
 })
 
 /**

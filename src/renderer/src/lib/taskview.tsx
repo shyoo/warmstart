@@ -1,4 +1,10 @@
-import { resolveModelChoice, type Compaction, type Run, type Task } from '@shared/tasks'
+import {
+  resolveModelChoice,
+  type Compaction,
+  type ResolvedModelChoice,
+  type Run,
+  type Task
+} from '@shared/tasks'
 import type { ModelOptions, Session } from '@shared/protocol'
 import type { QualityReview } from '@shared/review'
 import type { FleetEntry } from './daemon'
@@ -266,17 +272,61 @@ export function assigneeLabel(task: Task, fleet: FleetEntry[]): string {
  * ⚠️ Effort comes from the resolution either way: a run records the model it was given and not the
  * level, and on the adapters where the level matters it is part of the model id anyway.
  *
+ * ⛔ **A prediction the router has not made yet is not shown as a model name.** On a worker with a
+ * routable-model allowlist `chooseTarget` scores each allowed model as its own candidate, so the
+ * account's default is not what dispatch will pick — a task sitting in `assigned` read *GPT 5.6 Sol*
+ * for the seconds before its first run recorded *GPT 5.6 Terra*, which looks exactly like a model
+ * being switched under the operator. `routerPicksModel` is the same test the thread pane applies;
+ * the cell says the choice is pending instead of naming the loser.
+ *
  * Returns null where there is nothing true to say - no account, or an account that has never been
  * told a model and never run one. ⛔ The cell then shows the worker alone rather than a placeholder:
  * "the CLI picks" is the honest reading, and it is already what the detail pane says at length.
  */
 export type Routed = Pick<Task, 'ranOn' | 'ranModel' | 'assignee' | 'constraints'>
 
+export interface ModelLine {
+  /** What the cell draws. */
+  label: string
+  /** The exact model id, for the tooltip — null while the router has yet to choose one. */
+  id: string | null
+  /** True where a run actually used this model, false where it is a prediction. */
+  ran: boolean
+  /** The router scores this account's routable models at dispatch, so no id can be named yet. */
+  undecided: boolean
+  /** How many models it will be scoring, for the tooltip. Zero unless `undecided`. */
+  routable: number
+}
+
+/**
+ * Whether the *router*, not this resolution, decides the model of the next dispatch.
+ *
+ * ⛔ **One predicate, both screens.** The list cell and the thread's model row ask the same
+ * question, and the whole point of asking it is that `resolveModelChoice` answers a different one —
+ * what the *account* defaults to. Two copies of this test would drift, and the symptom of the drift
+ * is a row and the page it opens naming different models for the same unstarted task.
+ *
+ * ⚠️ A task-level pin still wins: a pin is a mandate the router does not touch. And
+ * `modelPolicy: 'inherit'` is a task-level answer too, even though it names no model — the scheduler
+ * is told to take the account's default and score nothing, so the default *is* what runs next.
+ */
+export function routerPicksModel(
+  constraints: Task['constraints'],
+  worker: { routableModels?: string[] | null } | null | undefined,
+  modelSource: ResolvedModelChoice['modelSource']
+): boolean {
+  return (
+    modelSource !== 'task' &&
+    constraints.modelPolicy !== 'inherit' &&
+    (worker?.routableModels?.length ?? 0) > 0
+  )
+}
+
 export function modelLine(
   task: Routed,
   fleet: FleetEntry[],
   modelOptions: ModelOptions[]
-): { label: string; id: string; ran: boolean } | null {
+): ModelLine | null {
   const account = task.ranOn ?? task.constraints.workerId ?? task.assignee
   const entry = fleet.find((f) => f.worker.id === account) ?? null
   const options = modelOptions.find((o) => o.adapterId === entry?.worker.adapterId) ?? null
@@ -286,6 +336,17 @@ export function modelLine(
     options?.selectableEffort ?? false,
     entry?.quota
   )
+  // ⚠️ Only where nothing has run. `ranModel` is a measurement, and a measurement outranks the
+  // question of who would choose next — that is the "what ran beats what would run" rule above.
+  if (task.ranModel === null && routerPicksModel(task.constraints, entry?.worker, resolved.modelSource)) {
+    return {
+      label: 'router picks',
+      id: null,
+      ran: false,
+      undecided: true,
+      routable: entry?.worker.routableModels?.length ?? 0
+    }
+  }
   const id = task.ranModel ?? resolved.model
   if (!id) return null
   // ⛔ No effort beside a model that has no levels. `resolveModelChoice` inherits the account's
@@ -296,7 +357,7 @@ export function modelLine(
   const spec = options?.models.find((m) => m.id === id) ?? null
   const label = modelLabel(id, spec && spec.effortLevels.length === 0 ? null : resolved.effort)
   if (!label) return null
-  return { label, id, ran: task.ranModel !== null }
+  return { label, id, ran: task.ranModel !== null, undecided: false, routable: 0 }
 }
 
 /**

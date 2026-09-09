@@ -293,6 +293,19 @@ model ignores. The thread, the Tasks column and the dispatch itself all drop it 
 drop it only where the cost model actually describes the model: an unpriced id says nothing about its
 levels.
 
+⛔ **A model the router has not chosen yet is not named anywhere.** The Tasks list's Worker column
+stacks the model under the account, and for a task that has not run it shows what the next dispatch
+would ask for — but on an account with a `routableModels` allowlist there is no such answer:
+`chooseTarget` scores each allowed model as its own candidate and settles it on the tick that
+dispatches. The column drew the account default through the whole of `dispatching` — the seconds
+spent claiming a worktree and running `prepare` — so a row read *GPT 5.6 Sol* and then *GPT 5.6
+Terra* the instant its first run was recorded, which reads as the model being switched underneath the
+operator (t336). It now says **router picks**, with the count of routable models in the tooltip, and
+`ranModel` still wins the moment a run has one. ⚠️ The thread's model row had this right first
+(*chosen at dispatch from N routable models*); the fix was to make the list ask the *same* predicate
+— `routerPicksModel` in `taskview.tsx` — rather than to write the test out a second time, because a
+row and the page it opens naming different models is its own bug.
+
 ⛔ **A draft's thread can delete it.** The banner's *Delete draft* asks with the same confirmation the
 Tasks row action uses and then leaves for the list, because a deleted task's thread can re-fetch
 itself into nothing but *that task is no longer here*. Filing was previously the only way out of a

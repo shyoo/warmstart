@@ -691,11 +691,13 @@ export function Tasks({
                           was dispatched, and it must never be more than a hover away. */}
                       {model && (
                         <div
-                          className="tbl-model"
+                          className={`tbl-model${model.undecided ? ' dim' : ''}`}
                           title={
-                            model.ran
-                              ? `${model.id} — the model the last run was dispatched with`
-                              : `${model.id} — what the next dispatch would ask for`
+                            model.undecided
+                              ? `Chosen at dispatch from ${model.routable} routable models on this account — naming one before the tick that picks it would be a guess`
+                              : model.ran
+                                ? `${model.id} — the model the last run was dispatched with`
+                                : `${model.id} — what the next dispatch would ask for`
                           }
                         >
                           {model.label}

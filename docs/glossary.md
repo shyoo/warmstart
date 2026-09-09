@@ -212,7 +212,13 @@ names, so the Worker column can stack the two in one cell. ⛔ Never re-resolved
 be given next is a different question (`resolveModelChoice`), and the two diverge the moment an
 account's default changes under work that has already finished. ⚠️ Null until something has run, and
 null on a run whose session had not learned a model yet — the UI then falls back to what the next
-dispatch would ask for, and says which of the two it is showing.
+dispatch would ask for, and says which of the two it is showing. ⛔ **Except where the router has yet
+to choose**: on an account with a `routableModels` allowlist, `chooseTarget` scores every allowed
+model and does not decide until the tick that dispatches, so the account default is not a prediction
+at all. Both the Worker column and the thread's model row test this with one predicate
+(`routerPicksModel`, `taskview.tsx`) and say the choice is pending rather than naming a model — a
+task at `dispatching` read *GPT 5.6 Sol* and then *GPT 5.6 Terra* seconds later, which looks exactly
+like a model being switched underneath the operator (t336, 2026-09-09).
 
 **Approval** — *an interrupt on a session*, not a task: a permission or tool gate that blocks one
 live session, with a closed answer set supplied by the adapter and a deadline equal to that session's
