@@ -1148,6 +1148,9 @@ try {
   }
   check('turning it on starts a listener', remoteStatus.listening === true, `port ${remotePort}`)
 
+  const rechecked = await daemon.rpc('remote.recheck')
+  check('re-checking Tailscale waits for a fresh probe and keeps the listener available', rechecked.listening === true, `port ${remotePort}`)
+
   const base = `http://127.0.0.1:${remotePort}`
   const remoteRpc = async (token, method, params) => {
     const res = await fetch(`${base}/remote/rpc`, {

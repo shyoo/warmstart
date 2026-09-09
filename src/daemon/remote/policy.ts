@@ -128,6 +128,7 @@ export const REMOTE_METHODS = {
   'agent.split': 'deny',
   'agent.depend': 'deny',
   'remote.status': 'deny',
+  'remote.recheck': 'deny',
   'remote.setEnabled': 'deny',
   'remote.setBind': 'deny',
   'remote.setProject': 'deny',

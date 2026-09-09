@@ -21,6 +21,7 @@ export function RemoteAccess(): React.JSX.Element {
   const [now, setNow] = useState(() => Date.now())
 
   const refresh = async (): Promise<void> => setStatus(await rpc('remote.status'))
+  const recheck = async (): Promise<void> => setStatus(await rpc('remote.recheck'))
   useEffect(() => {
     void refresh().catch((err: unknown) => setError(errorMessage(err)))
     const timer = setInterval(() => setNow(Date.now()), 1000)
@@ -133,7 +134,7 @@ export function RemoteAccess(): React.JSX.Element {
               </a>
             )}
           </p>
-          <button className="btn btn--ghost" onClick={() => void refresh()}>
+          <button className="btn btn--primary" onClick={() => void recheck()}>
             Re-check Tailscale
           </button>
 

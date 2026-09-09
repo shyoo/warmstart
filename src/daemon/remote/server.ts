@@ -12,7 +12,7 @@ import { errorMessage } from '@shared/errors.js'
 import { getTask } from '../tasks.js'
 import { requireQuestion } from '../questions.js'
 import { requireApproval } from '../approvals.js'
-import { remoteConfig, onRemoteConfigChange, remoteProjects, setRemoteListenerInfo } from './config.js'
+import { remoteConfig, onRemoteConfigChange, remoteProjects, setRemoteListenerInfo, setRemoteListenerRefresh } from './config.js'
 import { verifyDevice, touchDevice } from './devices.js'
 import { redeemPairingCode } from './pairing.js'
 import { createPushDispatcher, subscribePush } from './push.js'
@@ -27,7 +27,7 @@ interface RemoteServer { close(): Promise<void>; broadcast(event: DaemonEvent): 
 export function startRemoteServer(ctx: ApiContext): { close(): Promise<void>; broadcast(event: DaemonEvent): void } {
   let live: RemoteServer | null = null
   let info: TailscaleInfo | null = null
-  const publish = () => setRemoteListenerInfo(() => ({ listening: !!live, secure: !!live && secure(remoteConfig().bind, info), urls: urls(), tailscale: info ? { installed: info.installed, hostname: info.hostname, certAvailable: info.certAvailable } : null }))
+  const publish = () => setRemoteListenerInfo(() => ({ listening: !!live, secure: !!live && secure(remoteConfig().bind, info), urls: urls(), tailscale: info ? { installed: info.installed, hostname: info.hostname, certAvailable: info.certAvailable, error: info.error } : null }))
   const urls = () => {
     if (!live) return []
     const c = remoteConfig(), scheme = secure(c.bind, info) ? 'https' : 'http'
@@ -38,22 +38,24 @@ export function startRemoteServer(ctx: ApiContext): { close(): Promise<void>; br
     if (c.bind === 'lan' || c.bind === 'both') for (const address of lanAddresses()) out.push(`${scheme}://${address}:${c.port}`)
     return out
   }
-  const refresh = async () => {
+  const refresh = async (probeOnly = false) => {
     if (live) { await live.close(); live = null }
-    if (!remoteConfig().enabled) return publish()
+    if (!remoteConfig().enabled && !probeOnly) return publish()
     info = await tailscaleInfo()
+    if (!remoteConfig().enabled) return publish()
     const c = remoteConfig()
     if (c.bind === 'tailscale' && !info.ipv4) { log.warn('remote access not listening: Tailscale is unavailable'); return publish() }
     try { live = await listen(ctx, info); publish() } catch (err) { log.warn(`remote access could not bind port ${c.port}: ${errorMessage(err)}`); publish() }
   }
   const off = onRemoteConfigChange(() => { void refresh() })
+  setRemoteListenerRefresh(() => refresh(true))
   void refresh()
   // ⛔ Notifications are gated on the *setting*, not on `live`. A phone that is asleep on another
   // network has no event socket — waking it is the whole point — so a listener that happens to be
   // rebinding must not silently swallow the one alert the operator was waiting for.
   const push = createPushDispatcher({ enabled: () => remoteConfig().enabled, visible: remotelyVisible })
   return {
-    async close() { off(); if (live) await live.close(); live = null; setRemoteListenerInfo(null) },
+    async close() { off(); if (live) await live.close(); live = null; setRemoteListenerInfo(null); setRemoteListenerRefresh(null) },
     broadcast(event) { live?.broadcast(event); push.deliver(event) }
   }
 }

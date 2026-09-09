@@ -1,12 +1,13 @@
 import type { Api, ApiContext } from './support.js'
 import { listProjects, requireProject } from '../projects.js'
-import { remoteConfig, remoteListenerInfo, remoteProjects, setRemoteConfig, setRemoteProject } from '../remote/config.js'
+import { refreshRemoteListener, remoteConfig, remoteListenerInfo, remoteProjects, setRemoteConfig, setRemoteProject } from '../remote/config.js'
 import { listRemoteDevices, revokeDevice } from '../remote/devices.js'
 import { issuePairingCode } from '../remote/pairing.js'
 import { dropDeviceSubscriptions, unsubscribePush, vapidKeys } from '../remote/push.js'
 
 type RemoteMethod =
   | 'remote.status'
+  | 'remote.recheck'
   | 'remote.setEnabled'
   | 'remote.setBind'
   | 'remote.setProject'
@@ -36,6 +37,7 @@ export function pairingUrl(base: string, code: string): string {
 export function apiRemote(_ctx: ApiContext): Pick<Api, RemoteMethod> {
   return {
     'remote.status': () => status(),
+    'remote.recheck': async () => { await refreshRemoteListener(); return status() },
     'remote.setEnabled': (p) => { setRemoteConfig('enabled', p.enabled); return status() },
     'remote.setBind': (p) => { setRemoteConfig('bind', p.bind); if (p.port !== undefined) setRemoteConfig('port', p.port); return status() },
     'remote.setProject': (p) => { requireProject(p.projectId); setRemoteProject(p.projectId, p.enabled); return status() },

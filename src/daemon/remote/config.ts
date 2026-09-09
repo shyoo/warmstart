@@ -22,7 +22,11 @@ export function setRemoteConfig<K extends keyof RemoteConfig>(key: K, value: Rem
 }
 export function remoteProjects(): Set<string> { return new Set(rows<{ project_id: string }>(db().prepare('select project_id from remote_projects where enabled = 1').all()).map((r) => r.project_id)) }
 export function setRemoteProject(projectId: string, enabled: boolean): void { db().prepare(`insert into remote_projects (project_id,enabled,updated_at) values (?,?,?) on conflict(project_id) do update set enabled=excluded.enabled,updated_at=excluded.updated_at`).run(projectId, enabled ? 1 : 0, Date.now()) }
-export interface RemoteListenerInfo { listening: boolean; secure: boolean; urls: string[]; tailscale: { installed: boolean; hostname: string | null; certAvailable: boolean } | null }
+export interface RemoteListenerInfo { listening: boolean; secure: boolean; urls: string[]; tailscale: { installed: boolean; hostname: string | null; certAvailable: boolean; error: string | null } | null }
 let listenerInfo: (() => RemoteListenerInfo) | null = null
+let listenerRefresh: (() => Promise<void>) | null = null
 export function setRemoteListenerInfo(provider: (() => RemoteListenerInfo) | null): void { listenerInfo = provider }
 export function remoteListenerInfo(): RemoteListenerInfo { return listenerInfo?.() ?? { listening: false, secure: false, urls: [], tailscale: null } }
+/** Ask the remote listener to probe Tailscale now, rather than returning its last observation. */
+export function setRemoteListenerRefresh(refresh: (() => Promise<void>) | null): void { listenerRefresh = refresh }
+export async function refreshRemoteListener(): Promise<void> { await listenerRefresh?.() }

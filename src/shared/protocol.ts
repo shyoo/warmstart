@@ -2252,6 +2252,7 @@ export interface RpcMap {
   }
 
   'remote.status': { params: void; result: RemoteStatus }
+  'remote.recheck': { params: void; result: RemoteStatus }
   'remote.setEnabled': { params: { enabled: boolean }; result: RemoteStatus }
   'remote.setBind': { params: { bind: RemoteBind; port?: number }; result: RemoteStatus }
   'remote.setProject': { params: { projectId: string; enabled: boolean }; result: RemoteStatus }
@@ -2282,7 +2283,7 @@ export type RemoteBind = 'tailscale' | 'lan' | 'both'
 export interface RemoteDevice { id: string; label: string; createdAt: number; lastSeenAt: number | null; lastAddress: string | null; revokedAt: number | null }
 export interface RemoteStatus {
   enabled: boolean; bind: RemoteBind; port: number; listening: boolean; secure: boolean; urls: string[]
-  tailscale: { installed: boolean; hostname: string | null; certAvailable: boolean } | null
+  tailscale: { installed: boolean; hostname: string | null; certAvailable: boolean; error: string | null } | null
   projects: Array<{ id: string; name: string; enabled: boolean }>; devices: RemoteDevice[]
 }
 
