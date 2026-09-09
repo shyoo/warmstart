@@ -214,6 +214,10 @@ function inScope(method: RemoteAllowedMethod, params: unknown): boolean {
 
 /** Cut a fleet-wide result down to the enabled projects. See `REMOTE_FILTERED`. */
 function withinRemoteProjects(method: RemoteAllowedMethod, result: unknown): unknown {
+  if (method === 'project.list') {
+    const enabled = remoteProjects()
+    return (result as Array<{ id: string }>).filter((project) => enabled.has(project.id))
+  }
   if (method === 'task.list') {
     const enabled = remoteProjects()
     return (result as Array<{ projectId: string | null }>).filter((t) => !!t.projectId && enabled.has(t.projectId))

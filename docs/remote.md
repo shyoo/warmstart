@@ -19,7 +19,7 @@ into a live agent's terminal (`session.write`). Two more are denied for a reason
   switch could not be applied to it.
 - `task.page` is sliced in SQLite before any project filter could run, so a filtered page would come
   back short with a `total` counting rows the phone was never allowed to know about. The phone uses
-  `task.list` and sorts what it is given.
+  `task.list` and paginates the already-filtered result locally.
 
 There are two switches, and both must be on. Remote access must be enabled for the machine, then each
 project must be enabled individually. ⛔ Project exposure is stored in the daemon database, never in
@@ -28,8 +28,19 @@ machine, and whether *this* computer is reachable from a phone is not a fact abo
 
 Every call is checked against the project it belongs to, by the parameter that actually carries it:
 a task through its id, a question or approval through the task it was asked on, and the two
-fleet-wide lists (`approval.list`, `question.list`) filtered on the way out. A project you have not
+fleet-wide lists (`approval.list`, `question.list`) and `project.list` filtered on the way out. A project you have not
 enabled answers `404`, not `403` — it should not be distinguishable from one that does not exist.
+
+## Phone interface
+
+The four fixed bottom tabs are **Attention**, **Quota**, **Tasks**, and **Settings**; they remain
+visible while the screen content scrolls. Quota shows enabled workers only, with one state-coloured
+utilisation bar and reset countdown per reported window. Tasks shows ten newest-updated rows per
+page, preferring `titleSummary` and otherwise shortening the prompt for the row; each row includes
+worker, model, active duration, priced cost, update age, status, and an Open action. Filing work is
+the `+` in the Tasks header rather than a fifth tab. Settings is descriptive, not administrative:
+it shows this server address and uptime, the projects exposed to this phone, enabled/running worker
+counts, and notification setup. None of those surfaces widens the remote allowlist.
 
 ## Setup
 

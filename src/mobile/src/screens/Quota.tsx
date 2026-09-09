@@ -3,7 +3,7 @@ import type { RpcResult } from '@shared/protocol'
 type FleetList = RpcResult<'fleet.list'>
 import { RemoteError, rpc } from '../api.js'
 import { useNow } from '../hooks.js'
-import { quotaAge, quotaLine, relTime } from '../lib/format.js'
+import { quotaAge, quotaTone, relTime } from '../lib/format.js'
 
 /**
  * The fleet, one card per worker: its quota snapshot with the reading's age, what is running,
@@ -34,29 +34,33 @@ export function QuotaScreen({ refreshKey }: { refreshKey: number }): React.JSX.E
 
   return (
     <div className="m-screen">
-      {fleet.map((w) => (
+      {fleet.filter((w) => w.worker.enabled).map((w) => (
         <section className="m-card" key={w.worker.id}>
           <div className="m-card-head">
             <p className="m-card-title">{w.worker.label}</p>
+            <span className={`m-health${w.unavailable ? ' m-health--warn' : ''}`}>{w.unavailable ? 'Unavailable' : w.atCapacity ? 'At capacity' : 'Ready'}</span>
           </div>
           <p className="m-meta">
             {w.worker.adapterId} · {w.sessions.length} running
           </p>
-          <p className="m-quota">{quotaLine(w.quota?.windows ?? [])}</p>
-          <p className="m-meta">{quotaAge(w.quota?.sampledAt ?? null, now)}</p>
-          {w.quota?.windows
-            .filter((win) => win.resetsAt !== null)
-            .map((win) => (
-              <p className="m-meta" key={win.id}>
-                {win.label} resets {relTime(win.resetsAt as number, now)}
-              </p>
+          <div className="m-quota-stack">
+            {(w.quota?.windows ?? []).map((win) => (
+              <div className="m-quota-window" key={win.id}>
+                <div className="m-quota-label"><span>{win.label}</span><strong>{Math.round(win.percent)}%</strong></div>
+                <div className="m-quota-track" role="progressbar" aria-label={`${win.label} quota used`} aria-valuenow={Math.round(win.percent)} aria-valuemin={0} aria-valuemax={100}>
+                  <span className={`m-quota-fill m-quota-fill--${quotaTone(win.percent)}`} style={{ width: `${Math.max(0, Math.min(100, win.percent))}%` }} />
+                </div>
+                <p className="m-meta">{win.resetsAt === null ? 'Reset not reported' : `Resets ${relTime(win.resetsAt, now)}`}</p>
+              </div>
             ))}
+            {(w.quota?.windows.length ?? 0) === 0 && <p className="m-empty">No quota windows reported.</p>}
+          </div>
+          <p className="m-meta m-reading-age">{quotaAge(w.quota?.sampledAt ?? null, now)}</p>
           {w.unavailable && <p className="m-warn">{w.unavailable}</p>}
           {w.atCapacity && <p className="m-meta">At capacity — finishing what it holds.</p>}
-          {!w.worker.enabled && <p className="m-meta">Closed to work.</p>}
         </section>
       ))}
-      {fleet.length === 0 && <p className="m-empty">No accounts.</p>}
+      {fleet.filter((w) => w.worker.enabled).length === 0 && <p className="m-empty">No enabled workers.</p>}
     </div>
   )
 }

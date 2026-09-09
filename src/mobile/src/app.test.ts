@@ -8,6 +8,7 @@ describe('hash routes', () => {
     expect(routeFromHash('#/quota')).toEqual({ name: 'quota' })
     expect(routeFromHash('#/tasks')).toEqual({ name: 'tasks' })
     expect(routeFromHash('#/new')).toEqual({ name: 'new' })
+    expect(routeFromHash('#/settings')).toEqual({ name: 'settings' })
     expect(routeFromHash('#/pair?code=ABC')).toEqual({ name: 'pair' })
     expect(routeFromHash('#/task/abc123')).toEqual({ name: 'task', id: 'abc123' })
     expect(routeFromHash('#/nope')).toEqual({ name: 'attention' })

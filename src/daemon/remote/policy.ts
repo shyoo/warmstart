@@ -252,6 +252,7 @@ export function remoteScopeOf(method: RemoteAllowedMethod): RemoteScope {
  * the exception that carries `projectId` on the row itself.
  */
 export const REMOTE_FILTERED = {
+  'project.list': 'id',
   'approval.list': 'taskId',
   'question.list': 'taskId'
 } as const

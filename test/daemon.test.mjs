@@ -1209,6 +1209,12 @@ try {
     beforeEnable.status === 200 && beforeEnable.body.ok === true && beforeEnable.body.result.length === 0,
     JSON.stringify(beforeEnable.body).slice(0, 200)
   )
+  const hiddenProjects = await remoteRpc(deviceToken, 'project.list')
+  check(
+    'with no project enabled, the phone project picker and settings list are empty',
+    hiddenProjects.status === 200 && hiddenProjects.body.ok === true && hiddenProjects.body.result.length === 0,
+    JSON.stringify(hiddenProjects.body).slice(0, 200)
+  )
   const hiddenTask = await remoteRpc(deviceToken, 'task.get', { id: first.id })
   check('and a task in a project that is not enabled is not found', hiddenTask.status === 404)
 
@@ -1218,6 +1224,12 @@ try {
     'enabling the project makes its tasks reachable',
     reachable.status === 200 && reachable.body.result.length > 0,
     `${reachable.body?.result?.length} task(s)`
+  )
+  const shownProjects = await remoteRpc(deviceToken, 'project.list')
+  check(
+    'enabling a project exposes it to the phone project picker and settings list',
+    shownProjects.status === 200 && shownProjects.body.result.some((project) => project.id === added.id),
+    JSON.stringify(shownProjects.body).slice(0, 200)
   )
   const shownTask = await remoteRpc(deviceToken, 'task.get', { id: first.id })
   check('and one of them can be opened by id', shownTask.status === 200 && shownTask.body.ok === true)

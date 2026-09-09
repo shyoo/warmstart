@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { quotaAge, quotaLine, relTime } from './format.js'
+import { duration, price, quotaAge, quotaLine, quotaTone, relTime, shortTitle, statusTone } from './format.js'
 
 const NOW = 1_700_000_000_000
 
@@ -24,5 +24,29 @@ describe('quotaAge', () => {
   it('reads the age, never a bare number', () => {
     expect(quotaAge(NOW - 120_000, NOW)).toBe('read 2m ago')
     expect(quotaAge(null, NOW)).toBe('no reading')
+  })
+})
+
+describe('phone row formatting', () => {
+  it('prefers a summary and safely shortens paragraph prompts', () => {
+    expect(shortTitle('  Short summary  ', 'long prompt')).toBe('Short summary')
+    expect(shortTitle(null, 'one\n two   three', 12)).toBe('one two thr…')
+  })
+
+  it('formats moving active time and priced beliefs compactly', () => {
+    expect(duration(30_000, NOW - 90_000, NOW)).toBe('2m')
+    expect(duration(3_600_000, null, NOW)).toBe('1h')
+    expect(price(null)).toBe('n/a')
+    expect(price(0.004)).toBe('<$0.01')
+    expect(price(1.2, true, true)).toBe('~$1.20+')
+  })
+
+  it('maps state and quota pressure to the shared visual vocabulary', () => {
+    expect(statusTone('running')).toBe('active')
+    expect(statusTone('awaiting_human')).toBe('human')
+    expect(statusTone('completed')).toBe('success')
+    expect(quotaTone(74.9)).toBe('ok')
+    expect(quotaTone(75)).toBe('warn')
+    expect(quotaTone(92)).toBe('danger')
   })
 })

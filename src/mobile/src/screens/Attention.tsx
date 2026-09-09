@@ -4,7 +4,6 @@ import { RemoteError, rpc } from '../api.js'
 import { useNow } from '../hooks.js'
 import { actionsFor, buildAttentionItems, itemSummary, type AttentionAction, type AttentionItem } from '../lib/attention.js'
 import { relTime } from '../lib/format.js'
-import { Notifications } from './Notifications.js'
 
 /**
  * The reason this app exists: everything waiting on a person, newest first, answerable in place.
@@ -70,11 +69,8 @@ export function AttentionScreen({ refreshKey, openTask }: { refreshKey: number; 
     }
   }
 
-  // ⚠️ The notification control sits above every state of this screen, including the empty one:
-  // an empty list is exactly when someone decides they would rather be told than keep looking.
   return (
     <div className="m-screen">
-      <Notifications />
       {error && <p className="m-error">{error}</p>}
       {!error && items.length === 0 && <p className="m-empty">Nothing is waiting on you.</p>}
       {items.map((item) => (

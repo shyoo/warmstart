@@ -36,7 +36,7 @@ describe('remote policy', () => {
     expect(remoteScopeOf('approval.answer')).toEqual({ by: 'approval', param: 'id' })
     expect(remoteScopeOf('fleet.list')).toEqual({ by: 'fleet' })
     // The two fleet-wide lists that must still be cut down on the way out.
-    expect(Object.keys(REMOTE_FILTERED).sort()).toEqual(['approval.list', 'question.list'])
+    expect(Object.keys(REMOTE_FILTERED).sort()).toEqual(['approval.list', 'project.list', 'question.list'])
   })
 
   it('extracts task event ids', () => {
