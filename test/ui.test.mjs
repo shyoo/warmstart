@@ -941,6 +941,7 @@ try {
         selects: composer.querySelectorAll('select').length,
         saysInherited: (bar?.innerText ?? '').toLowerCase().includes('inherit'),
         sendsInsideTheBox: !!ask?.querySelector('.composer-send'),
+        attachmentInsideTheBox: !!ask?.querySelector('.composer-send button[aria-label="Add attachment"]'),
         clock: !!ask?.querySelector('.pill--clock button'),
         buttons: [...(ask?.querySelectorAll('.composer-send button') ?? [])].map(b => b.innerText.trim())
       };
@@ -977,7 +978,7 @@ try {
   )
   check(
     'draft, send and the scheduled send sit together inside the box',
-    f.sendsInsideTheBox === true && f.clock === true && f.buttons?.includes('Send'),
+    f.sendsInsideTheBox === true && f.attachmentInsideTheBox === true && f.clock === true && f.buttons?.includes('Send'),
     filing
   )
   // ⚠️ The verb, not the noun. `Draft` beside `Send` reads as a second kind of thing to file rather
@@ -1017,6 +1018,12 @@ try {
         rows: bars.length,
         planner: names.filter(n => !n.startsWith('Piece')),
         pieces: names.filter(n => n.startsWith('Piece')),
+        labels: [...composer.querySelectorAll('.composer-plan-label')].map(e => e.innerText.trim()),
+        kindFirst: composer.querySelector('.composer-plan-table tr:first-child td:first-child button')?.innerText.trim(),
+        controlsInsideTheBox: {
+          draft: [...composer.querySelectorAll('.composer-send button')].some(b => b.innerText.trim() === 'Save as Draft'),
+          clock: !!composer.querySelector('.composer-send .pill--clock button')
+        },
         sendLabel: ([...composer.querySelectorAll('.composer-send button')]
           .find(b => b.classList.contains('btn--primary'))?.innerText ?? '').trim()
       };
@@ -1053,6 +1060,16 @@ try {
     planned
   )
   check('the send button says what it will do', p.sendLabel === 'Plan & Split', planned)
+  check(
+    'Plan & Split labels the planner and executor rows, with the kind first',
+    p.kindFirst?.includes('Plan&Split') && p.labels?.join('|') === 'Planner|Executor',
+    planned
+  )
+  check(
+    'a plan can also be saved as a draft or scheduled from its prompt box',
+    p.controlsInsideTheBox?.draft === true && p.controlsInsideTheBox?.clock === true,
+    planned
+  )
 
   // ⛔ **Conversation, and what it *removes* from the row.** A conversation is `Reuse` + `await
   // human`, and both come from the kind rather than from a pill — `resolveFinishPolicy` and
@@ -1081,7 +1098,11 @@ try {
         kind: ([...composer.querySelectorAll('button.pill')]
           .find(p => p.getAttribute('aria-label') === 'What this files')?.innerText ?? '').trim(),
         sendLabel: ([...composer.querySelectorAll('.composer-send button')]
-          .find(b => b.classList.contains('btn--primary'))?.innerText ?? '').trim()
+          .find(b => b.classList.contains('btn--primary'))?.innerText ?? '').trim(),
+        controlsInsideTheBox: {
+          draft: [...composer.querySelectorAll('.composer-send button')].some(b => b.innerText.trim() === 'Save as Draft'),
+          clock: !!composer.querySelector('.composer-send .pill--clock button')
+        }
       };
     })())
   `)
@@ -1098,6 +1119,11 @@ try {
     chat
   )
   check('the send button says Start rather than Send', convo.sendLabel === 'Start', chat)
+  check(
+    'a conversation can also be saved as a draft or scheduled',
+    convo.controlsInsideTheBox?.draft === true && convo.controlsInsideTheBox?.clock === true,
+    chat
+  )
 
   // Back to Task, so nothing below inherits the plan kind.
   await evaluate(

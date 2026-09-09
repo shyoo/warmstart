@@ -1044,6 +1044,17 @@ try {
   const plan = await daemon.rpc('task.plan', { title: 'Ship the thing end to end' })
   check('a goal is filed as a plan, not as work', plan.kind === 'plan', plan.status)
 
+  const scheduledPlan = await daemon.rpc('task.plan', {
+    title: 'Schedule the next goal',
+    notBefore: Date.now() + 60_000
+  })
+  const draftPlan = await daemon.rpc('task.plan', {
+    title: 'Keep this goal as a draft',
+    status: 'draft'
+  })
+  check('a plan can wait for a scheduled send', scheduledPlan.status === 'scheduled', scheduledPlan.status)
+  check('a plan can be saved without dispatching', draftPlan.status === 'draft', draftPlan.status)
+
   const planTick = await daemon.rpc('scheduler.tick')
   const planned = await daemon.rpc('task.get', { id: plan.id })
   check(

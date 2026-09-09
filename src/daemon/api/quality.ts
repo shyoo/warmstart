@@ -128,6 +128,8 @@ export function apiQuality(_ctx: ApiContext): Pick<Api, QualityMethod> {
         ...(p.priority ? { priority: p.priority } : {}),
         ...(p.finishPolicy ? { finishPolicy: p.finishPolicy } : {}),
         ...(p.sessionSharing ? { sessionSharing: p.sessionSharing } : {}),
+        ...(p.status ? { status: p.status } : {}),
+        ...(p.notBefore ? { notBefore: p.notBefore } : {}),
         ...(p.constraints ? { constraints: checkConstraints(p.constraints) } : {}),
         ...(p.dependsOn?.length ? { dependsOn: p.dependsOn } : {}),
         ...(p.attachmentIds?.length ? { attachmentIds: p.attachmentIds } : {}),

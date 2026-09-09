@@ -2169,6 +2169,9 @@ export interface RpcMap {
       attachmentIds?: string[]
       childDefaults?: ChildDefaults
       maxChildren?: number
+      /** A draft stays put; a ready plan may instead wait for this moment before it is dispatched. */
+      status?: 'draft' | 'ready'
+      notBefore?: number | null
     }
     result: Task
   }

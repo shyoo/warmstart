@@ -452,6 +452,12 @@ export function NewTask({
     setSaving(targetStatus)
     try {
       if (isPlan) {
+        const notBefore = plannedStart(scheduleOption, customTime, readClock())
+        if (notBefore === 'invalid') {
+          onError('Pick a date and time for the scheduled send, or set the clock back to Send now')
+          setSaving(null)
+          return
+        }
         const pieceConstraints =
           pieceWorkerIds.length > 0 || Object.keys(pieceModels).length > 0 || Object.keys(pieceEfforts).length > 0
             ? {
@@ -468,6 +474,8 @@ export function NewTask({
           priority: prefs.priority,
           finishPolicy: plannerFinishPolicy,
           sessionSharing: prefs.sessionSharing,
+          status: targetStatus,
+          ...(notBefore ? { notBefore } : {}),
           ...(dependsOn.length > 0 ? { dependsOn } : {}),
           maxChildren: pieceLimit,
           childDefaults: {
@@ -560,10 +568,10 @@ export function NewTask({
   const sendLabel =
     saving === 'ready'
       ? '…'
-      : isPlan
-        ? 'Plan & Split'
-        : armed
+      : armed
           ? 'Schedule'
+          : isPlan
+            ? 'Plan & Split'
           : isConversation
             ? 'Start'
             : 'Send'
@@ -605,65 +613,90 @@ export function NewTask({
         />
         <ImageChips paste={paste} />
         <div className="composer-send">
-          {!isPlan && (
-            <button
-              className="btn btn--quiet"
-              disabled={!canSend}
-              title="File it without dispatching. A draft sits still until you promote it."
-              onClick={() => void submit('draft')}
-            >
-              {saving === 'draft' ? '…' : 'Save as Draft'}
-            </button>
-          )}
+          <input
+            ref={attachmentPickerRef}
+            type="file"
+            multiple
+            hidden
+            onChange={(e) => {
+              const files = [...(e.currentTarget.files ?? [])]
+              e.currentTarget.value = ''
+              void paste.addFiles(files)
+            }}
+          />
+          <Pill
+            className="composer-attachment"
+            ariaLabel="Add attachment"
+            title="Add a file, photo, or folder"
+            label="+"
+            menu={(close) => (
+              <PillOptions
+                options={ATTACH_OPTIONS}
+                value=""
+                ariaLabel="Add attachment"
+                onPick={(next) => {
+                  close()
+                  if (next === 'file') attachmentPickerRef.current?.click()
+                  else if (next === 'folder') void paste.addFolders()
+                }}
+              />
+            )}
+          />
+          <button
+            className="btn btn--quiet"
+            disabled={!canSend}
+            title="File it without dispatching. A draft sits still until you promote it."
+            onClick={() => void submit('draft')}
+          >
+            {saving === 'draft' ? '…' : 'Save as Draft'}
+          </button>
           <button className="btn btn--primary" disabled={!canSend} onClick={() => void submit('ready')}>
             {sendLabel}
           </button>
-          {!isPlan && (
-            <Pill
-              className="pill--clock"
-              align="right"
-              muted={!armed}
-              ariaLabel="When to send"
-              title={
-                armed
-                  ? 'This task waits at scheduled until its time arrives, then is routed and dispatched.'
-                  : 'Send now, or pick a time to file it as scheduled.'
-              }
-              label={scheduleLabel(scheduleOption, customTime)}
-              menu={(close) => (
-                <>
-                  <PillOptions
-                    options={SCHEDULE_OPTIONS}
-                    value={scheduleOption}
-                    ariaLabel="When to send"
-                    onPick={(next) => {
-                      setScheduleOption(next as ScheduleOption)
-                      if (next === 'custom') {
-                        // The moment is not chosen yet — the field below is what chooses it, so the
-                        // menu stays open rather than arming a schedule with no time on it.
-                        if (!customTime) setCustomTime(localInputValue(readClock() + 60 * 60 * 1000))
-                        return
-                      }
-                      close()
-                    }}
-                  />
-                  {scheduleOption === 'custom' && (
-                    <div className="pill-menu-foot">
-                      <input
-                        type="datetime-local"
-                        aria-label="Custom schedule time"
-                        value={customTime}
-                        onChange={(e) => setCustomTime(e.target.value)}
-                      />
-                      <button className="btn btn--quiet" disabled={!customTime} onClick={close}>
-                        Set
-                      </button>
-                    </div>
-                  )}
-                </>
-              )}
-            />
-          )}
+          <Pill
+            className="pill--clock"
+            align="right"
+            muted={!armed}
+            ariaLabel="When to send"
+            title={
+              armed
+                ? 'This task waits at scheduled until its time arrives, then is routed and dispatched.'
+                : 'Send now, or pick a time to file it as scheduled.'
+            }
+            label={scheduleLabel(scheduleOption, customTime)}
+            menu={(close) => (
+              <>
+                <PillOptions
+                  options={SCHEDULE_OPTIONS}
+                  value={scheduleOption}
+                  ariaLabel="When to send"
+                  onPick={(next) => {
+                    setScheduleOption(next as ScheduleOption)
+                    if (next === 'custom') {
+                      // The moment is not chosen yet — the field below is what chooses it, so the
+                      // menu stays open rather than arming a schedule with no time on it.
+                      if (!customTime) setCustomTime(localInputValue(readClock() + 60 * 60 * 1000))
+                      return
+                    }
+                    close()
+                  }}
+                />
+                {scheduleOption === 'custom' && (
+                  <div className="pill-menu-foot">
+                    <input
+                      type="datetime-local"
+                      aria-label="Custom schedule time"
+                      value={customTime}
+                      onChange={(e) => setCustomTime(e.target.value)}
+                    />
+                    <button className="btn btn--quiet" disabled={!customTime} onClick={close}>
+                      Set
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
+          />
         </div>
       </div>
 
@@ -676,38 +709,6 @@ export function NewTask({
       <div className={`composer-bar${isPlan ? ' composer-bar--plan' : ''}`} role="group" aria-label="Task settings">
         {!isPlan ? (
           <>
-            <input
-              ref={attachmentPickerRef}
-              type="file"
-              multiple
-              hidden
-              onChange={(e) => {
-                const files = [...(e.currentTarget.files ?? [])]
-                e.currentTarget.value = ''
-                void paste.addFiles(files)
-              }}
-            />
-            <Pill
-              ariaLabel="Add attachment"
-              title="Add a file, photo, or folder"
-              label="+"
-              menu={(close) => (
-                <PillOptions
-                  options={ATTACH_OPTIONS}
-                  value=""
-                  ariaLabel="Add attachment"
-                  onPick={(next) => {
-                    close()
-                    if (next === 'file') {
-                      attachmentPickerRef.current?.click()
-                    } else if (next === 'folder') {
-                      void paste.addFolders()
-                    }
-                  }}
-                />
-              )}
-            />
-
             <PillSelect
               ariaLabel="What this files"
               title="A task is dispatched to an agent. A plan is decomposed into drafts first."
@@ -889,43 +890,9 @@ export function NewTask({
           </>
         ) : (
           <>
-            <input
-              ref={attachmentPickerRef}
-              type="file"
-              multiple
-              hidden
-              onChange={(e) => {
-                const files = [...(e.currentTarget.files ?? [])]
-                e.currentTarget.value = ''
-                void paste.addFiles(files)
-              }}
-            />
             <table className="composer-plan-table">
               <tbody>
                 <tr>
-                  <th className="composer-plan-label">Planner</th>
-                  <td>
-                    <Pill
-                      ariaLabel="Add attachment"
-                      title="Add a file, photo, or folder"
-                      label="+"
-                      menu={(close) => (
-                        <PillOptions
-                          options={ATTACH_OPTIONS}
-                          value=""
-                          ariaLabel="Add attachment"
-                          onPick={(next) => {
-                            close()
-                            if (next === 'file') {
-                              attachmentPickerRef.current?.click()
-                            } else if (next === 'folder') {
-                              void paste.addFolders()
-                            }
-                          }}
-                        />
-                      )}
-                    />
-                  </td>
                   <td>
                     <PillSelect
                       ariaLabel="What this files"
@@ -937,6 +904,7 @@ export function NewTask({
                       onChange={(v) => setPrefs({ ...prefs, kind: v as ComposerKind })}
                     />
                   </td>
+                  <th className="composer-plan-label">Planner</th>
                   <td>
                     <PillSelect
                       ariaLabel="Priority"
@@ -1071,8 +1039,8 @@ export function NewTask({
                   </td>
                 </tr>
                 <tr>
-                  <th className="composer-plan-label">Each Piece</th>
                   <td></td>
+                  <th className="composer-plan-label">Executor</th>
                   <td></td>
                   <td>
                     <PillSelect

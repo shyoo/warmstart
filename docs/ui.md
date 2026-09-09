@@ -238,16 +238,19 @@ selects an integer 0–10 and must add a brief explanation. These direct ratings
 aggregate alongside peer grades, but never masquerade as its seven rubric dimensions or as an agent
 reviewer; a mixed-authorship rating is kept but excluded from clean model comparison.
 
-⛔ **In Plan & Split the composer draws two labelled rows of pills, and this is decision D5.** The
-first is **Planner** — worker, model, effort, reuse, finish, priority, dependencies, attachments — which
-is what the *planning turn* runs as. The second is **Each piece**, plus a fan-out pill, which is what
-every subtask it files inherits. "Plan with one model, build with another" is the case Plan & Split
-exists for, and one row would have forced them to be the same.
+⛔ **The attachment picker lives inside the prompt it enriches, beside Save as Draft, Send and the
+schedule clock.** Those actions apply to all three kinds: Single Task, Plan & Split and Conversation.
+In Plan & Split the composer draws two labelled rows of pills, and this is decision D5. The first is
+**Planner** — priority, dependencies, reuse, finish, worker, model and effort — which is what the
+*planning turn* runs as. The second is **Executor**, plus a fan-out pill, which is what every subtask
+it files inherits. "Plan with one model, build with another" is the case Plan & Split exists for, and
+one row would have forced them to be the same. The kind pill starts the Planner row; the table scrolls
+rather than truncating the executor's `Commit·Verify·Merge Branch` landing policy.
 
 ⚠️ Until t182 **every one of those controls was hidden** whenever the kind pill said Plan. That was
 honest while a plan task was never dispatched — nothing would have read them — and wrong the moment one
-is. Only the Draft button and the schedule clock stay task-only: a scheduled plan and a draft plan are
-both coherent, and neither has been asked for.
+is. A plan is a task like the other kinds at filing time, so it can now be saved as a draft or scheduled
+before it reaches the planner.
 
 ⚠️ The captions are not decoration. Two identical rows of pills with nothing to tell them apart is the
 failure they buy, and it is worse than one row. The fan-out pill's number is written into the task's

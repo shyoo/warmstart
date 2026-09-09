@@ -5485,6 +5485,12 @@ select:focus-visible,
   padding: var(--sp-1) var(--sp-1) 0;
 }
 
+/* The attachment picker belongs to the prompt it enriches, while the other send controls stay at
+   its far edge. `margin-right: auto` preserves that relationship when the composer becomes wide. */
+.composer-attachment {
+  margin-right: auto;
+}
+
 .composer-bar {
   display: flex;
   flex-wrap: wrap;
@@ -5534,7 +5540,7 @@ select:focus-visible,
   border-spacing: 0;
   border: none;
   background: transparent;
-  width: auto;
+  width: max-content;
 }
 
 .composer-plan-table tr {
@@ -5557,7 +5563,13 @@ select:focus-visible,
   font-weight: 600;
   color: var(--color-text-dim);
   padding-right: var(--sp-2) !important;
-  width: 90px;
+  width: auto;
+}
+
+/* This is an operational policy name, not an optional detail: truncating “Branch” changes where an
+   operator thinks split work lands. The plan table scrolls horizontally when needed instead. */
+.composer-plan-table [aria-label='Piece Finish Policy'] .pill {
+  max-width: none;
 }
 
 .workers-menu {
