@@ -1732,6 +1732,12 @@ const MIGRATIONS: Migration[] = [
       .run(legacyNote)
     const moved = Number(changed.changes ?? 0)
     if (moved > 0) log.info(`planner-split repair: ended ${moved} planner run(s) at their split`)
+  },
+  // 58 - peer-review effort is independent from work effort because its model is independent too.
+  (conn) => {
+    if (!hasColumn(conn, 'workers', 'grading_effort')) {
+      conn.exec('alter table workers add column grading_effort text;')
+    }
   }
 ]
 

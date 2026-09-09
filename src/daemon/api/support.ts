@@ -97,6 +97,7 @@ export function checkWorkerDefaults(
   patch: {
     defaultModel?: string | null
     gradingModel?: string | null
+    gradingEffort?: string | null
     defaultEffort?: string | null
     defaultModels?: Record<string, string | null> | null
     routableModels?: string[] | null
@@ -141,6 +142,19 @@ export function checkWorkerDefaults(
       if (!cm.modelSpec(m)) {
         throw new Error(`'${m}' is not a model ${info.label} can be priced for`)
       }
+    }
+  }
+
+  if (patch.gradingEffort) {
+    if (!info.capabilities.selectableEffort) {
+      throw new Error(`${info.label} takes no effort flag, so it has no grading effort to set`)
+    }
+    const gradingSpec = patch.gradingModel ? cm.modelSpec(patch.gradingModel) : null
+    if (!gradingSpec) {
+      throw new Error('set a grading model before choosing its effort')
+    }
+    if (!gradingSpec.effort_levels.includes(patch.gradingEffort)) {
+      throw new Error(`'${patch.gradingModel}' has no effort level '${patch.gradingEffort}'`)
     }
   }
 

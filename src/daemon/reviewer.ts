@@ -127,6 +127,10 @@ function gradingModel(worker: Worker): string | null {
   return worker.gradingModel ?? defaultGradingModel(worker.adapterId)
 }
 
+function gradingEffort(worker: Worker): string | undefined {
+  return adapter(worker.adapterId).info.capabilities.selectableEffort ? worker.gradingEffort ?? undefined : undefined
+}
+
 /**
  * The cheap rung of each provider's pool, by adapter.
  *
@@ -144,12 +148,14 @@ export interface ReviewerChoice {
   reason: string
   /** What the button says it would use, before anybody presses it. */
   model?: string | null
+  effort?: string | null
 }
 
 export interface ReviewCandidate {
   workerId: string
   label: string
   model: string | null
+  effort: string | null
   /**
    * How long a review has actually taken on this account, in milliseconds — the median of its own
    * completed review runs, or null when it has never finished one.
@@ -341,6 +347,7 @@ export function reviewCandidateOptions(task: Task): ReviewCandidate[] {
     workerId: worker.id,
     label: worker.label,
     model: gradingModel(worker),
+    effort: gradingEffort(worker) ?? null,
     typicalMs: typicalReviewMs(worker.id)
   }))
 }
@@ -374,7 +381,8 @@ export function pickReviewer(
   return {
     worker: chosen,
     reason: '',
-    model: gradingModel(chosen)
+    model: gradingModel(chosen),
+    effort: gradingEffort(chosen) ?? null
   }
 }
 
@@ -495,6 +503,7 @@ async function runReview(
   const leaked = blindedDiff.leaked || blindedHistory.leaked
 
   const model = gradingModel(worker) ?? undefined
+  const effort = gradingEffort(worker)
   const readOnly = adapter(worker.adapterId).info.capabilities.readOnlyPermissionMode ?? undefined
 
   let sessionId: string | null = null
@@ -510,6 +519,7 @@ async function runReview(
       // is gone. The read-only mode above is what makes standing here acceptable.
       cwd: project.root,
       ...(model ? { model } : {}),
+      ...(effort ? { effort } : {}),
       ...(readOnly ? { permissionMode: readOnly } : {})
     })
     sessionId = session.id

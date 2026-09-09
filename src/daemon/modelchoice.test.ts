@@ -144,6 +144,27 @@ describe('what an account is allowed to default to', () => {
     expect(saved.gradingModel).toBe('claude-sonnet-5')
     expect(saved.gradingEnabled).toBe(false)
   })
+
+  it('stores a Muse grading effort separately and rejects one the grading model cannot take', () => {
+    const w = workers.createWorker({ adapterId: 'muse-code', label: 'grader-muse' })
+    api.checkWorkerDefaults('muse-code', {
+      gradingModel: 'muse-spark-1.3',
+      gradingEffort: 'max'
+    })
+    expect(() =>
+      api.checkWorkerDefaults('muse-code', {
+        gradingModel: 'muse-spark-1.3-contributor',
+        gradingEffort: 'max'
+      })
+    ).toThrow(/no effort level/)
+
+    const saved = workers.updateWorker(w.id, {
+      gradingModel: 'muse-spark-1.3',
+      gradingEffort: 'max'
+    })
+    expect(saved.gradingEffort).toBe('max')
+    expect(workers.getWorker(w.id)?.gradingEffort).toBe('max')
+  })
   it('stores a model its own CLI can be priced for', () => {
     const w = workers.createWorker({ adapterId: 'claude-code', label: 'defaults-1' })
     const saved = workers.updateWorker(w.id, { defaultModel: 'claude-opus-5', defaultEffort: 'xhigh' })

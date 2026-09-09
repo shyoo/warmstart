@@ -1454,6 +1454,7 @@ function QualityReviewBox({
         workerId: string
         label: string
         model: string | null
+        effort: string | null
         /** The median review this account has actually completed here, or null for never. */
         typicalMs: number | null
       }>
@@ -1547,6 +1548,7 @@ function QualityReviewBox({
           <option key={reviewer.workerId} value={reviewer.workerId}>
             {reviewer.label}
             {reviewer.model ? ` · ${modelLabel(reviewer.model)}` : ' · CLI default'}
+            {reviewer.effort ? ` · ${reviewer.effort}` : ''}
             {reviewer.typicalMs === null ? '' : ` · ~${duration(reviewer.typicalMs)}`}
           </option>
         ))}

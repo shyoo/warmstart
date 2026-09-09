@@ -1,6 +1,6 @@
 # Multi Agent Controller — Session Handoff
 
-**Current UI follow-up:** phone Overview is project-selected (same-site cookie), confirms remote actions, projects a 200-entry durable task/run timeline, and revalidates its shell without clearing pairing; stale desktop credit values now dim with the quota reading.
+**Current UI follow-up:** phone Overview is project-selected (same-site cookie), confirms remote actions, projects a 200-entry durable task/run timeline, and revalidates its shell without clearing pairing; stale desktop credit values now dim with the quota reading. Worker settings now separately retain a grading model's effort and pass it to read-only peer reviews.
 
 Multi-agent controller: a scheduler that routes coding-agent tasks to the worker, session and moment
 where they are cheapest. Electron shell + `orchestratord` daemon. Windows now; macOS/Linux built and

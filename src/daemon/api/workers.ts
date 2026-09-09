@@ -64,7 +64,15 @@ export function apiWorkers(ctx: ApiContext): Pick<Api, WorkerMethod> {
       // ⛔ Checked at the door, exactly as a task's own pin is. A default is worse than a pin when it
       // is wrong: nobody chose it at the moment of dispatch, so an invalid one fails *every* task
       // routed to this account with an error about a model the operator set days ago and forgot.
-      checkWorkerDefaults(requireWorker(id).adapterId, patch)
+      const current = requireWorker(id)
+      // Validation needs the effective grading model when an effort-only edit arrives. Preserve an
+      // explicit null so clearing the model cannot leave its old effort behind.
+      checkWorkerDefaults(current.adapterId, {
+        ...patch,
+        ...(patch.gradingEffort !== undefined && patch.gradingModel === undefined
+          ? { gradingModel: current.gradingModel }
+          : {})
+      })
       return updateWorker(id, patch)
     },
     'worker.setCreditsIntent': (p) => setWorkerCreditsIntent(p.id, p.asked),

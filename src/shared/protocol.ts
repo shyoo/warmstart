@@ -352,6 +352,8 @@ export interface Worker {
   defaultModel: string | null
   /** Model used for peer reviews performed by this account. */
   gradingModel?: string | null
+  /** Reasoning effort used with this account's grading model, where its CLI accepts one. */
+  gradingEffort?: string | null
   /** Whether this account may be selected as a peer reviewer. */
   gradingEnabled?: boolean
   /** ⚠️ Only ever sent where the adapter declares `selectableEffort`; dropped otherwise. */
@@ -1425,6 +1427,7 @@ export interface RpcMap {
         | 'role'
         | 'defaultModel'
         | 'gradingModel'
+        | 'gradingEffort'
         | 'gradingEnabled'
         | 'defaultEffort'
         | 'defaultModels'
@@ -1691,6 +1694,7 @@ export interface RpcMap {
         workerId: string
         label: string
         model: string | null
+        effort: string | null
         /**
          * How long a review has actually taken on this account, or null when it has never finished
          * one. ⚠️ Measured, never modelled — the pace of a local endpoint belongs to the operator's

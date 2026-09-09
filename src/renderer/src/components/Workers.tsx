@@ -868,19 +868,43 @@ export function Workers({
                       />
                     </td>
                     <td>
-                      <SettingButtonSelect
-                        className="worker-grading-select"
-                        value={worker.gradingModel ?? ''}
-                        options={modelChoices(modelsFor(worker.adapterId)?.models ?? [])}
-                        ariaLabel={`Grading model for ${worker.label}`}
-                        disabled={busy === `grading-model:${worker.id}`}
-                        title="The model this account uses for peer reviews. New workers start on the adapter's smallest configured model."
-                        onChange={(value) =>
-                          void guard(`grading-model:${worker.id}`, () =>
-                            rpc('worker.update', { id: worker.id, gradingModel: value || null })
-                          )
-                        }
-                      />
+                      <div className="worker-model-row">
+                        <SettingButtonSelect
+                          className="worker-grading-select"
+                          value={worker.gradingModel ?? ''}
+                          options={modelChoices(modelsFor(worker.adapterId)?.models ?? [])}
+                          ariaLabel={`Grading model for ${worker.label}`}
+                          disabled={busy === `grading-model:${worker.id}`}
+                          title="The model this account uses for peer reviews. New workers start on the adapter's smallest configured model."
+                          onChange={(value) =>
+                            void guard(`grading-model:${worker.id}`, () =>
+                              rpc('worker.update', {
+                                id: worker.id,
+                                gradingModel: value || null,
+                                ...(value !== worker.gradingModel ? { gradingEffort: null } : {})
+                              })
+                            )
+                          }
+                        />
+                        {worker.gradingModel && effortsFor({ ...worker, defaultModel: worker.gradingModel }).length > 0 && (
+                          <SettingButtonSelect
+                            className="worker-effort-select"
+                            value={worker.gradingEffort ?? ''}
+                            options={[
+                              { value: '', label: 'CLI default' },
+                              ...effortsFor({ ...worker, defaultModel: worker.gradingModel }).map((level) => ({ value: level, label: level }))
+                            ]}
+                            ariaLabel={`Grading reasoning effort for ${worker.label}`}
+                            disabled={busy === `grading-effort:${worker.id}`}
+                            title="How hard this grading model thinks on the next peer review."
+                            onChange={(value) =>
+                              void guard(`grading-effort:${worker.id}`, () =>
+                                rpc('worker.update', { id: worker.id, gradingEffort: value || null })
+                              )
+                            }
+                          />
+                        )}
+                      </div>
                     </td>
                     <td>
                       <div className="worker-role-checks" aria-label={`Roles for ${worker.label}`}>
