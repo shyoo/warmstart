@@ -100,40 +100,48 @@ function RoutableModelsPill({
   }
 
   return (
-    <Pill
-      ariaLabel={`Routable models for ${worker.label}`}
-      title={selected.length > 0 ? `Routable models: ${selected.join(', ')}` : ROUTABLE_MODELS_HELP}
-      muted={selected.length === 0}
-      disabled={disabled || models.length === 0}
-      label={label}
-      menu={() => (
-        <div className="workers-menu">
-          <div className="workers-menu-head">
-            <span className="workers-menu-title">Routable models</span>
-            {selected.length > 0 && (
-              <button type="button" className="workers-menu-action" onClick={() => onChange([])} disabled={busy}>
-                Reset to default model only
-              </button>
-            )}
+    <div className="routable-models-control">
+      <span
+        className={`routable-models-value${selected.length === 0 ? ' routable-models-value--muted' : ''}`}
+        title={selected.length > 0 ? `Routable models: ${selected.join(', ')}` : ROUTABLE_MODELS_HELP}
+      >
+        {label}
+      </span>
+      <Pill
+        className="routable-models-edit"
+        ariaLabel={`Edit routable models for ${worker.label}`}
+        title="Edit routable models"
+        disabled={disabled || models.length === 0}
+        label={<span aria-hidden="true">✎</span>}
+        menu={() => (
+          <div className="workers-menu">
+            <div className="workers-menu-head">
+              <span className="workers-menu-title">Routable models</span>
+              {selected.length > 0 && (
+                <button type="button" className="workers-menu-action" onClick={() => onChange([])} disabled={busy}>
+                  Reset to default model only
+                </button>
+              )}
+            </div>
+            <div className="workers-menu-list">
+              {models.map((m) => (
+                <label key={m.id} className="workers-menu-worker-row">
+                  <div className="workers-menu-worker-info">
+                    <input
+                      type="checkbox"
+                      checked={selected.includes(m.id)}
+                      onChange={() => toggle(m.id)}
+                      disabled={busy}
+                    />
+                    <span className="workers-menu-worker-name">{m.id}</span>
+                  </div>
+                </label>
+              ))}
+            </div>
           </div>
-          <div className="workers-menu-list">
-            {models.map((m) => (
-              <label key={m.id} className="workers-menu-worker-row">
-                <div className="workers-menu-worker-info">
-                  <input
-                    type="checkbox"
-                    checked={selected.includes(m.id)}
-                    onChange={() => toggle(m.id)}
-                    disabled={busy}
-                  />
-                  <span className="workers-menu-worker-name">{m.id}</span>
-                </div>
-              </label>
-            ))}
-          </div>
-        </div>
-      )}
-    />
+        )}
+      />
+    </div>
   )
 }
 
@@ -396,11 +404,10 @@ export function Workers({
         </div>
       ) : (
         <table className="tbl tbl-workers">
-          {/* ⛔ Ten columns, ten <col>s. There were nine here against ten headers and the nine
-              summed to 100% — so under `table-layout: fixed` the actions column was allotted
-              nothing at all, and Sign in / Probe / Retire wrapped one per line inside a cell the
-              width of a button. Every width below is a share of the same 100%; adding a column
-              means taking the room for it from the others, not appending to the list.
+          {/* ⛔ Fourteen columns, fourteen <col>s. A missing column makes a fixed-layout table
+              hand the final cell no width at all, and Sign in / Probe / Retire then wrap one per
+              line inside a cell the width of a button. Keep this count in lockstep with the
+              headers and cells; the card layout below also labels by this same position.
               ⭐ The three actions are one 6% menu now rather than a 19% row of buttons, and the
               fourteen points that freed went where the content was actually being squeezed: Quota
               (which now sets one window per line), Account, Model and Role. */}
@@ -997,7 +1004,7 @@ export function Workers({
                       the time — is one an operator learns to stop reading. */}
                   {notes.length > 0 && (
                     <tr className={`tbl-row--note${worker.enabled ? '' : ' tbl-row--off'}`}>
-                       <td colSpan={13}>
+                       <td colSpan={14}>
                         {notes.map((n) => (
                           <div key={n.key} className="tbl-note">
                             <span className={`tbl-note-label ${n.tone}`}>{n.label}</span>

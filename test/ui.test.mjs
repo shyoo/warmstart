@@ -2562,15 +2562,30 @@ try {
   )
   await wait(1500)
 
-  // ⛔ Ten headers, ten <col>s. Nine of them summed to 100%, so the actions column was allotted no
-  // width at all and its buttons stacked one per line inside a cell as wide as one button.
+  // ⛔ The headers, fixed-layout columns and card fields are one sequence. t334 added Summary
+  // model to the table but not the card's positional labels, which relabelled Role as Actions and
+  // left the actions with no label at all.
   const colCount = await evaluate(
     `JSON.stringify([
        document.querySelectorAll('.tbl-workers colgroup col').length,
        document.querySelectorAll('.tbl-workers thead th').length
      ])`
   )
-  check('the workers card fields describe every setting the header declares', colCount === '[12,12]', colCount)
+  check('the workers card fields describe every setting the header declares', colCount === '[14,14]', colCount)
+
+  const cardLabels = await evaluate(
+    `JSON.stringify([...document.querySelector('.tbl-workers tbody tr:not(.tbl-row--note)').children]
+      .slice(2)
+      .map(td => getComputedStyle(td, '::before').content.replaceAll('"', '')))`
+  )
+  check(
+    'every worker card field keeps its own label after Summary model',
+    cardLabels === JSON.stringify([
+      'Adapter', 'Config location', 'Account', 'Quota', 'Max parallel instances', 'Default model',
+      'Routable models', 'Grading model', 'Summary model', 'Role', 'Usage credits', 'Actions'
+    ]),
+    cardLabels
+  )
 
   // Cards have enough horizontal room to expose their three actions without a hidden menu.
   const actionRows = await evaluate(
@@ -2609,7 +2624,7 @@ try {
   {
     const seen = JSON.parse(noteCell)
     check('an account with something wrong gets a note row of its own', seen.rows >= 1, noteCell)
-    check('which spans the card rather than sitting in one field', seen.span === 12, String(seen.span))
+    check('which spans the card rather than sitting in one field', seen.span === 14, String(seen.span))
     check(
       'and carries the reason the run failed, plus what to do about it',
       /subscription expired/.test(seen.note) && /Recheck/.test(seen.note),
@@ -2839,14 +2854,15 @@ try {
   // ⭐ Routable models: the opt-in allowlist beside the account's default model. Its whole point is
   // that leaving it alone is inert, so the honest check is that the empty state reads as a sentence
   // rather than a blank, and that checking one box actually reaches the daemon.
-  const routableBtn = `document.querySelector('.tbl tbody tr td:nth-child(9) .pill')`
+  const routableValue = `document.querySelector('.tbl tbody tr td:nth-child(9) .routable-models-value')`
+  const routableBtn = `document.querySelector('.tbl tbody tr td:nth-child(9) .routable-models-edit .pill')`
   const routableBtnTag = await evaluate(`${routableBtn}?.tagName`)
   check(
-    'a routable-models control sits beside the default model',
+    'a separate edit control sits beside the routable-models value',
     routableBtnTag === 'BUTTON',
     `tagName: ${routableBtnTag}`
   )
-  const routableEmptyLabel = await evaluate(`${routableBtn}?.textContent.trim()`)
+  const routableEmptyLabel = await evaluate(`${routableValue}?.textContent.trim()`)
   check(
     'and its empty state reads as a deliberate default, not a blank',
     routableEmptyLabel === 'default model only',
@@ -2880,7 +2896,7 @@ try {
   const routableNames = await evaluate(
     `[...document.querySelectorAll('.pill-menu .workers-menu-list label')].filter(l => l.querySelector('input:checked')).map(l => l.querySelector('.workers-menu-worker-name')?.textContent.trim()).join('|')`
   )
-  const routableTwo = await evaluate(`${routableBtn}?.textContent.trim()`)
+  const routableTwo = await evaluate(`${routableValue}?.textContent.trim()`)
   check(
     'checking a second reads as both model names',
     routableNames.split('|').length === 2 && routableTwo === routableNames.split('|').join(', '),
