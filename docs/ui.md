@@ -76,6 +76,7 @@ thing entirely. See [`glossary.md`](glossary.md).
 | `Logs` | the daemon's log, live and filterable, ring-buffered so a late window sees the past |
 | `Terminal` | the real agent TUI over xterm.js, not a reconstruction |
 | `AppSettings` `SettingRow` `SettingButtonSelect` `SidebarResizer` | chrome |
+| `RemoteAccess` | phone access: the two switches, the address, the pairing QR and the paired devices. Renders under `AppSettings`, with the per-project half in `ProjectSettings`. See [`remote.md`](remote.md) |
 
 ⛔ **A thread setting is one component, and the menu behind it is a pure function.**
 (`components/TaskSettingPicker.tsx` over `lib/threadview.ts`.) Finish, conversation, completion,

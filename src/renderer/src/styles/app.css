@@ -4929,6 +4929,30 @@ select:focus-visible,
   min-width: 0;
 }
 
+/* ---- Remote access ---- */
+
+/* An address, a pairing code or a QR: things read off the screen rather than clicked. */
+.remote-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  max-width: 360px;
+  margin: var(--sp-2) 0;
+}
+
+.remote-code {
+  font-size: var(--text-section);
+  letter-spacing: 0.12em;
+}
+
+/* ⚠️ Fixed size and light-on-dark independent: a QR is read by a camera, not by the theme.
+   The white plate is the code's own quiet zone, which the matrix already includes. */
+.remote-qr {
+  width: 200px;
+  height: 200px;
+  border-radius: var(--radius-sm);
+}
+
 /* ---- Setting button selector (value + ✒️ in rounded dark button) ---- */
 .setting-btn-select-wrap {
   position: relative;

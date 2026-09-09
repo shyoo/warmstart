@@ -13,6 +13,7 @@ import { apiProjects } from './api/projects.js'
 import { apiQuality } from './api/quality.js'
 import { apiTasks } from './api/tasks.js'
 import { apiWorkers } from './api/workers.js'
+import { apiRemote } from './api/remote.js'
 
 export type { Api, ApiContext, Handler } from './api/support.js'
 export { checkConstraints, checkWorkerDefaults, modelReport } from './api/support.js'
@@ -23,6 +24,7 @@ export function buildApi(ctx: ApiContext): Api {
     ...apiProjects(ctx),
     ...apiTasks(ctx),
     ...apiQuality(ctx),
-    ...apiAgent(ctx)
+    ...apiAgent(ctx),
+    ...apiRemote(ctx)
   } satisfies Api
 }

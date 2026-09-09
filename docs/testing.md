@@ -31,8 +31,12 @@ a suite in this repository has reported a confident pass for code that was broke
   formatting, `conversation.ts`. If a behaviour can be a pure function, it belongs here — that is why
   `lib/conversation.ts` exists at all.
 - **L2** proves the daemon: scheduling, the task DAG, cancellation, approvals, the controller, cost
-  arithmetic, spawn/stream/teardown. It spawns one session on a worker with **no credentials**, which
-  is what makes process handling testable for free.
+  arithmetic, spawn/stream/teardown, and **remote access over its own listener**. It spawns one
+  session on a worker with **no credentials**, which is what makes process handling testable for
+  free. ⚠️ The remote section binds a *random* high port and turns the listener off again — the
+  8787 default is a hard-coded port and two copies of this suite must be able to run at once. It
+  exists because every bug that feature shipped with was in the seam between its allowlist and its
+  callers, and every one of them passed the unit tests.
 - **L3** proves the renderer against a real daemon: routes, forms, the ledger, project settings,
   Conversations, the session TUI.
 - **L4** proves the only thing the others cannot — that a real agent, on a real account, completes a

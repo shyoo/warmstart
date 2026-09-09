@@ -3,6 +3,7 @@ import type { EnterBehavior } from '@shared/ipc'
 import { useUiSettings } from '../lib/uisettings'
 import { SettingRow, SettingSwitch } from './SettingRow'
 import { errorMessage } from '@shared/errors.js'
+import { RemoteAccess } from './RemoteAccess'
 
 /**
  * The preferences that belong to this window rather than to the fleet.
@@ -37,6 +38,7 @@ export function AppSettings(): React.JSX.Element {
   const enterBehavior = settings.enterBehavior
 
   return (
+    <>
     <div className="panel">
       <header className="panel-head">
         <div>
@@ -100,5 +102,7 @@ export function AppSettings(): React.JSX.Element {
         />
       </div>
     </div>
+    <RemoteAccess />
+    </>
   )
 }

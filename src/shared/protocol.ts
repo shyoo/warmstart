@@ -2250,6 +2250,40 @@ export interface RpcMap {
     params: { sessionId: string; taskSeq: number; dependsOnSeq: number }
     result: { ok: boolean; reason?: string }
   }
+
+  'remote.status': { params: void; result: RemoteStatus }
+  'remote.setEnabled': { params: { enabled: boolean }; result: RemoteStatus }
+  'remote.setBind': { params: { bind: RemoteBind; port?: number }; result: RemoteStatus }
+  'remote.setProject': { params: { projectId: string; enabled: boolean }; result: RemoteStatus }
+  'remote.pairingCode': { params: void; result: { code: string; expiresAt: number; url: string } }
+  'remote.revokeDevice': { params: { id: string }; result: { ok: true } }
+
+  /**
+   * The VAPID application-server key a phone needs before it may subscribe.
+   *
+   * ⛔ Public half only. It is minted on this machine, and the private half signs the pushes and
+   * never leaves the daemon.
+   */
+  'remote.pushKey': { params: void; result: { publicKey: string } }
+  'remote.subscribe': { params: RemotePushSubscription; result: { ok: true } }
+  'remote.unsubscribe': { params: { endpoint: string }; result: { ok: true } }
+}
+
+/** A browser's `pushManager.subscribe()` result, as the phone app forwards it. */
+export interface RemotePushSubscription {
+  endpoint: string
+  /** The subscriber's public key, base64url. */
+  p256dh: string
+  /** The subscriber's 16-byte authentication secret, base64url. */
+  auth: string
+}
+
+export type RemoteBind = 'tailscale' | 'lan' | 'both'
+export interface RemoteDevice { id: string; label: string; createdAt: number; lastSeenAt: number | null; lastAddress: string | null; revokedAt: number | null }
+export interface RemoteStatus {
+  enabled: boolean; bind: RemoteBind; port: number; listening: boolean; secure: boolean; urls: string[]
+  tailscale: { installed: boolean; hostname: string | null; certAvailable: boolean } | null
+  projects: Array<{ id: string; name: string; enabled: boolean }>; devices: RemoteDevice[]
 }
 
 export interface TaskCreateParams {

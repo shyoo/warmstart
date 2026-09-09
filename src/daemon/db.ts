@@ -1668,7 +1668,29 @@ const MIGRATIONS: Migration[] = [
       );
       create index if not exists manual_reviews_task on manual_reviews(task_id, created_at desc);
     `)
-  }
+  },
+  // 55 - remote access is machine-local state: never put a network exposure decision in project.json.
+  `
+    create table if not exists remote_config (
+      key text primary key, value text not null, updated_at integer not null
+    );
+    create table if not exists remote_projects (
+      project_id text primary key, enabled integer not null, updated_at integer not null
+    );
+    create table if not exists remote_devices (
+      id text primary key, label text not null, token_hash text not null, created_at integer not null,
+      last_seen_at integer, last_address text, revoked_at integer
+    );
+  `,
+  // 56 - web push. Keyed by endpoint because that is what the push service and the browser both
+  // treat as the subscription's identity; a device may resubscribe and get a new one.
+  `
+    create table if not exists remote_push_subscriptions (
+      endpoint text primary key, device_id text not null, p256dh text not null, auth text not null,
+      created_at integer not null
+    );
+    create index if not exists remote_push_device on remote_push_subscriptions(device_id);
+  `
 ]
 
 /**

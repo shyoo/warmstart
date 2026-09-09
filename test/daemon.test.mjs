@@ -1126,6 +1126,119 @@ try {
   section('controller tier (real MCP client)')
   await runControllerTierChecks(daemon)
 
+  // ---------------------------------------------------------------- L2: remote access
+  //
+  // ⛔ Drives the *second* listener over real HTTP, because every bug this feature shipped with was
+  // in the seam between its allowlist and its callers, and every one of them passed the unit tests.
+  // A method may only be reached with a device token, and only for a project the operator enabled.
+  //
+  // ⚠️ Binds a random high port, not the 8787 default: two copies of this suite must be able to run
+  // at once, and a hard-coded port is how that stops being true.
+  section('remote access')
+  const remotePort = 20000 + Math.floor(Math.random() * 30000)
+  await daemon.rpc('remote.setBind', { bind: 'lan', port: remotePort })
+  const offStatus = await daemon.rpc('remote.status')
+  check('remote access is off until it is turned on', offStatus.enabled === false && offStatus.listening === false)
+
+  await daemon.rpc('remote.setEnabled', { enabled: true })
+  let remoteStatus = offStatus
+  for (let i = 0; i < 50 && !remoteStatus.listening; i++) {
+    await wait(100)
+    remoteStatus = await daemon.rpc('remote.status')
+  }
+  check('turning it on starts a listener', remoteStatus.listening === true, `port ${remotePort}`)
+
+  const base = `http://127.0.0.1:${remotePort}`
+  const remoteRpc = async (token, method, params) => {
+    const res = await fetch(`${base}/remote/rpc`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
+      body: JSON.stringify({ id: 'r1', method, params })
+    })
+    return { status: res.status, body: await res.json().catch(() => null) }
+  }
+
+  const noToken = await remoteRpc(null, 'fleet.list')
+  check('a request with no device token is refused', noToken.status === 401)
+  const badDevice = await remoteRpc('not-a-real-token', 'fleet.list')
+  check('a token that was never issued is refused', badDevice.status === 401)
+
+  const pairing = await daemon.rpc('remote.pairingCode')
+  check('the pairing URL is the app shell plus the code, built once', pairing.url.endsWith(`/#/pair?code=${pairing.code}`), pairing.url)
+  const wrongCode = await fetch(`${base}/remote/pair`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ code: 'ZZZZZZZZ', label: 'wrong' })
+  })
+  check('a wrong pairing code pairs nothing', wrongCode.status === 401)
+
+  const paired = await fetch(`${base}/remote/pair`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ code: pairing.code, label: 'suite phone' })
+  })
+  const pairedBody = await paired.json()
+  check('a valid pairing code mints a device token', paired.status === 200 && /^[0-9a-f]{64}$/.test(pairedBody.token ?? ''))
+  const deviceToken = pairedBody.token
+
+  const replay = await fetch(`${base}/remote/pair`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ code: pairing.code, label: 'second phone' })
+  })
+  check('and the same code cannot be used twice', replay.status === 401)
+
+  // ⛔ The two switches are independent: remote access being on says nothing about which projects.
+  const beforeEnable = await remoteRpc(deviceToken, 'task.list')
+  check(
+    'with no project enabled, the task list is empty rather than refused',
+    beforeEnable.status === 200 && beforeEnable.body.ok === true && beforeEnable.body.result.length === 0,
+    JSON.stringify(beforeEnable.body).slice(0, 200)
+  )
+  const hiddenTask = await remoteRpc(deviceToken, 'task.get', { id: first.id })
+  check('and a task in a project that is not enabled is not found', hiddenTask.status === 404)
+
+  await daemon.rpc('remote.setProject', { projectId: added.id, enabled: true })
+  const reachable = await remoteRpc(deviceToken, 'task.list')
+  check(
+    'enabling the project makes its tasks reachable',
+    reachable.status === 200 && reachable.body.result.length > 0,
+    `${reachable.body?.result?.length} task(s)`
+  )
+  const shownTask = await remoteRpc(deviceToken, 'task.get', { id: first.id })
+  check('and one of them can be opened by id', shownTask.status === 200 && shownTask.body.ok === true)
+
+  // ⛔ The allowlist, over the wire. `session.write` is raw keystrokes into a live agent.
+  const denied = await remoteRpc(deviceToken, 'session.write', { id: 'anything', data: 'x' })
+  check('a denied method is refused by name, not attempted', denied.status === 403, JSON.stringify(denied.body))
+  const shutdown = await remoteRpc(deviceToken, 'daemon.shutdown')
+  check('and stopping the daemon is not something a phone may do', shutdown.status === 403)
+
+  // The app shell is public; a path outside it is not served at all.
+  const shell = await fetch(`${base}/`)
+  const shellBody = await shell.text()
+  check('the app shell is served without a token, so pairing can happen at all', shell.status === 200 || shell.status === 503)
+  const escape = await fetch(`${base}/%2e%2e/package.json`)
+  const escapeBody = await escape.text()
+  check(
+    'a path that climbs out of the bundle gets the shell, never a file above it',
+    !escapeBody.includes('"devDependencies"'),
+    escapeBody.slice(0, 80)
+  )
+  void shellBody
+
+  await daemon.rpc('remote.revokeDevice', { id: pairedBody.deviceId })
+  const revoked = await remoteRpc(deviceToken, 'fleet.list')
+  check('revoking a device stops its token working immediately', revoked.status === 401)
+
+  await daemon.rpc('remote.setEnabled', { enabled: false })
+  let stopped = false
+  for (let i = 0; i < 50 && !stopped; i++) {
+    await wait(100)
+    stopped = (await daemon.rpc('remote.status')).listening === false
+  }
+  check('turning it off closes the listener', stopped)
+
   // ---------------------------------------------------------------- it can be asked to stop
   //
   // ⛔ Last, because it ends the daemon every check above needed. This is the mechanism behind the

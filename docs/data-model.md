@@ -76,6 +76,10 @@ the first. Both are required and `paths.test.ts` fails if either is removed.
 | `chat_messages` | the one tooled controller session | |
 | `loose_end_dismissals` | what an operator has said to stop showing | |
 | `settings` | fleet settings as JSON under string keys | a boolean today can become a shape tomorrow without a migration |
+| `remote_config` | remote access as JSON under string keys, the same shape as `settings` | ⛔ **not** in `settings`: these are not scheduler preferences, and `remote.status` deliberately reads only `enabled`, `bind` and `port` back out. The VAPID signing pair lives here too, under `vapidPublicKey`/`vapidPrivateKey`, written by `remote/push.ts` **without** firing the config-change listener — writing them through `setRemoteConfig` would restart the listener and drop every connected phone |
+| `remote_projects` | which projects a paired phone may reach | ⛔ machine-local on purpose. `.multi_agent_controller/project.json` is pulled by every clone, and whether *this* computer is exposed to a phone is not a fact about the repository |
+| `remote_devices` | one paired phone | ⛔ `token_hash` only — the token is shown once, at pairing, and never stored. `revoked_at` is a tombstone, not a delete, so a revoked phone stays visible in the list that revoked it |
+| `remote_push_subscriptions` | where to send a notification | keyed by `endpoint`, which is what the push service and the browser both treat as the subscription's identity. ⛔ `device_id` is what makes revocation complete: revoking a phone drops its subscriptions in the same call, or a lost handset keeps being told what the fleet is doing |
 | `meta` | key/value bookkeeping | |
 
 ⚠️ **Fleet settings are JSON values under string keys**, read through `settings()` so a key never

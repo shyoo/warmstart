@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512"
+     role="img" aria-label="Multi Agent Controller">
+  <title>Multi Agent Controller</title>
+  <desc>Three accounts on a ring around one controller.</desc>
+  <!--
+    The master. Every raster in this directory is generated from this file by scripts/icons.mjs.
+
+    ⚠️ Drawn for 16px first, not for 512. The ring is the element that dies in a taskbar, so it is
+    stroked at 20 (~0.6px at 16px) in accent-dim rather than the border grey it started as, and the
+    three satellites overlap it enough that the shape survives even when the ring itself is a smudge.
+    Nothing here is thinner than that, and there is no text: a wordmark at 16px is a grey bar.
+  -->
+  <rect width="512" height="512" rx="114" fill="#0e1013"/>
+  <rect x="4" y="4" width="504" height="504" rx="110" fill="none" stroke="#2a3040" stroke-width="8"/>
+  <circle cx="256" cy="256" r="146" fill="none" stroke="#3d5a94" stroke-width="20"/>
+  <circle cx="256" cy="256" r="66" fill="#7aa2f7"/>
+  <g fill="#e6e8ec">
+    <circle cx="256" cy="110" r="48"/>
+    <circle cx="382" cy="329" r="48"/>
+    <circle cx="130" cy="329" r="48"/>
+  </g>
+</svg>

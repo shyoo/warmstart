@@ -8,7 +8,7 @@ import { defineConfig } from 'vitest/config'
  */
 export default defineConfig({
   resolve: {
-    alias: { '@shared': resolve('src/shared') }
+    alias: { '@shared': resolve('src/shared'), '@renderer': resolve('src/renderer/src') }
   },
   test: {
     // ⛔ `.test.tsx` as well as `.test.ts`. The pattern was `.test.ts` alone until 2026-09-07, which

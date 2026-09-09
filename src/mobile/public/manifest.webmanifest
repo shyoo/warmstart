@@ -1,0 +1,14 @@
+{
+  "name": "Multi Agent Controller",
+  "short_name": "Controller",
+  "description": "Watch quota, answer agents and file work from your phone.",
+  "start_url": "./#/",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#16181d",
+  "theme_color": "#16181d",
+  "icons": [
+    { "src": "./icon-1024.png", "sizes": "1024x1024", "type": "image/png", "purpose": "any" }
+  ]
+}

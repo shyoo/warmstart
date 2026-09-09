@@ -74,6 +74,13 @@ worth and refuses to let it evaporate.
 - **Isolated workspaces.** Each task gets its own git worktree from a pooled set, on a branch named
   after the task. Agents never work in the trunk.
 - **A live view.** The real agent TUI, not a reconstruction.
+- **Answer it from your phone.** Turn on remote access and pair a phone by scanning a QR code: it
+  shows quota and everything waiting on you, answers questions and approvals, overrides a quota gate,
+  stops or reassigns work, and files new tasks. It gets its own revocable credential and a much
+  smaller API than the desktop has — it cannot stop the daemon, administer accounts or type into a
+  live agent — and it reaches only the projects you switch on, one at a time. Over Tailscale it
+  installs to the home screen and notifies you with the app closed. See
+  [`docs/remote.md`](docs/remote.md).
 
 ## Requirements
 
@@ -231,6 +238,7 @@ to do to the page that governs it. The ones most people want first:
 | [`docs/routing.md`](docs/routing.md) | How a task is scored and where it is sent |
 | [`docs/adapters.md`](docs/adapters.md) | What each CLI can actually do, measured against a running binary |
 | [`docs/development.md`](docs/development.md) | Setup, build, packaging, and the commit workflow |
+| [`docs/remote.md`](docs/remote.md) | Phone access: the boundary, Tailscale setup, pairing and notifications |
 
 Reference under `docs/` is kept current: a test in `npm test` fails the build on a page nobody
 indexed, a link that resolves to nothing, or a source path a doc cites that has since moved.

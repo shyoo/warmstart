@@ -8,6 +8,7 @@ import { loadCostModels } from './costmodel.js'
 import { logCostFactors } from './estimator.js'
 import { adapter, hasAdapter, loadAdapters } from './adapters/index.js'
 import { startServer, type DaemonServer } from './server.js'
+import { startRemoteServer } from './remote/server.js'
 import { QuotaPoller } from './quota.js'
 import {
   getSession,
@@ -95,6 +96,8 @@ async function main(): Promise<void> {
 
   const token = randomBytes(32).toString('hex')
   const server: DaemonServer = await startServer(token, { version: VERSION, startedAt })
+  // Separate credentials and listener: the loopback bearer token never leaves this process.
+  const remote = startRemoteServer({ version: VERSION, startedAt, port: server.port })
 
   // ⛔ **Not awaited, and it must not be.** Reading every project's history is one `git log` per
   // project, and the endpoint below is what the UI connects to — a repository on a slow or
@@ -107,7 +110,7 @@ async function main(): Promise<void> {
 
   publishEndpoint({ pid: process.pid, port: server.port, token, version: VERSION, startedAt })
 
-  const emit = (event: DaemonEvent) => server.broadcast(event)
+  const emit = (event: DaemonEvent) => { server.broadcast(event); remote.broadcast(event) }
   setEventSink(emit)
   const tailers = new Map<string, TranscriptTailer>()
 
@@ -263,7 +266,7 @@ async function main(): Promise<void> {
     stopController()
     for (const t of tailers.values()) t.stop()
     shutdownAll()
-    void server.close().finally(() => {
+    void Promise.all([server.close(), remote.close()]).finally(() => {
       clearEndpoint()
       releaseLock()
       closeDb()

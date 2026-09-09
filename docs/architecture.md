@@ -52,13 +52,21 @@ means capabilities changed between the gate that admitted a task and the dispatc
 | Renderer | `window.agentyard.rpc(method, params)` → `ipcRenderer.invoke('daemon:rpc')` → main → HTTP `POST /rpc` |
 | MCP server | reads `<dataDir>/orchestratord.json`, `POST /rpc` with `Authorization: Bearer <token>` |
 | Tests | the same HTTP + WS surface (`test/lib/harness.mjs`) |
+| Paired phone | a **second listener** on a second credential — see [`remote.md`](remote.md) |
+
+⛔ **Remote access is a separate listener with a separate credential, and that is the point.** The
+loopback endpoint above authorises spawning processes, so its token never leaves the machine.
+`daemon/remote/server.ts` binds its own port only while the operator has switched remote access on,
+authenticates a per-device token stored hashed, and reaches only the subset of methods
+`daemon/remote/policy.ts` allows — which is a total map over `RpcMethod`, so a new method is denied
+until someone decides otherwise. It is off by default and gated a second time per project.
 
 Events flow the other way over a WebSocket: `DaemonEvent` (`protocol.ts`) → main → `daemon:event-push`
 → renderer. `session.data` carries raw terminal bytes; everything else is typed state.
 
-The RPC method table is **118 methods across five domain files** — `daemon/api/workers.ts`,
-`projects.ts`, `tasks.ts`, `quality.ts` and `agent.ts` — that `daemon/api.ts` spreads into one
-object. `RpcMethod`/`RpcParams`/`RpcResult` in `shared/protocol.ts` are derived from it, so adding a
+The RPC method table is **129 methods across six domain files** — `daemon/api/workers.ts`,
+`projects.ts`, `tasks.ts`, `quality.ts`, `agent.ts` and `remote.ts` — that `daemon/api.ts` spreads
+into one object. `RpcMethod`/`RpcParams`/`RpcResult` in `shared/protocol.ts` are derived from it, so adding a
 method is one edit plus its types.
 
 ⛔ **A method belongs to exactly one domain, and the mapped type is what enforces it.** `Api` is
@@ -259,6 +267,12 @@ left `quotaRisk` with no reachable trigger and quota vanished from routing for t
 - ⛔ **The renderer never holds the daemon token.** It calls main over IPC; main is orchestratord's
   only client. The renderer displays untrusted agent output and does not get a credential to a
   service that can spawn processes.
+- ⛔ **A phone gets its own credential, never the daemon's.** Pairing mints a 32-byte token stored
+  as a SHA-256 hash and revocable from the desktop; it reaches an allowlist that denies
+  `session.write`, `daemon.shutdown`, every `worker.*`, project mutation, `task.delete` and
+  `settings.set`. Two switches gate it — global, then per project — and the per-project one lives in
+  the daemon database rather than the committed `project.json`, because a network-exposure decision
+  must not travel to another machine with a clone.
 - ⛔ **Native modules live in the daemon, never the renderer.** An Electron upgrade must not be able
   to break a running fleet.
 - ⛔ **Code is never loaded from the data directory.** Declarative adapters are JSON driven by a

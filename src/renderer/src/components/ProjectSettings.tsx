@@ -27,7 +27,7 @@ import { projectOrientationChoice, resolveCompletionMode, resolveFinishPolicy, r
 import type { Settings } from '@shared/protocol'
 import { rpc } from '../lib/daemon'
 import { SettingButtonSelect, type SettingOption } from './SettingButtonSelect'
-import { SettingRow } from './SettingRow'
+import { SettingRow, SettingSwitch } from './SettingRow'
 import { errorMessage } from '@shared/errors.js'
 
 /**
@@ -98,11 +98,20 @@ export function ProjectSettings({
         fleetSharing={fleetSharing}
         setPolicy={setPolicy}
       />
+      <RemoteProjectAccess project={project} />
       <ColdStartPanel project={project} setPolicy={setPolicy} />
       <ChecksPanel project={project} fleetFinish={fleetFinish} />
       <ProjectResources project={project} resources={resources} />
     </div>
   )
+}
+
+/** Machine-local remote exposure; deliberately not part of the committed project policy. */
+function RemoteProjectAccess({ project }: { project: ProjectRecord }): React.JSX.Element {
+  const [enabled, setEnabled] = useState(false)
+  const [global, setGlobal] = useState(false)
+  useEffect(() => { void rpc('remote.status').then((s) => { setGlobal(s.enabled); setEnabled(s.projects.find((p) => p.id === project.id)?.enabled ?? false) }) }, [project.id])
+  return <div className="panel"><header className="panel-head"><div><h2>Remote access</h2><p className="panel-sub">This is stored on this machine, never in project.json. A phone can reach this project only when remote access is on globally and enabled here.</p></div></header><div className="setting-list"><SettingRow title="Allow paired phones" description={global ? (enabled ? 'This project is reachable by paired phones.' : 'Remote access is on, but this project is not reachable.') : 'Remote access is off globally, so this project is not reachable.'} control={<SettingSwitch label="Allow paired phones for this project" on={enabled} busy={false} onToggle={() => void rpc('remote.setProject', { projectId: project.id, enabled: !enabled }).then((s) => setEnabled(s.projects.find((p) => p.id === project.id)?.enabled ?? false))} />}/></div></div>
 }
 
 /**
