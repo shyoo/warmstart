@@ -138,6 +138,15 @@ function thin(samples: number): boolean {
   return samples < 5
 }
 
+/**
+ * The two price charts are comparisons within one billing basis, never two views of the same rows.
+ * Agent totals can be `mixed`, but model rows already carry the per-task basis that makes a chart
+ * comparison meaningful, so keep only rows the requested chart explicitly names.
+ */
+export function priceRowsForGraph(rows: PriceStatRow[], bases: PriceBasis[]): PriceStatRow[] {
+  return rows.filter((row) => bases.includes(row.basis))
+}
+
 function StatGraph({
   rows,
   unit,
@@ -652,13 +661,9 @@ function Window({ report }: { report: StatisticsReport }): React.JSX.Element {
 function PriceTab({ report }: { report: StatisticsReport }): React.JSX.Element {
   const { price } = report
   // ⛔ API and mixed rows can be orders of magnitude above an amortised subscription share. A
-  // shared scale makes the subscription distribution unreadable, so preserve the same model rows
-  // while giving each kind of dollar its own chart and axis.
-  const priceRowsFor = (bases: PriceBasis[]) => {
-    const modelRows = price.rows.filter((row) => row.level === 'model' && bases.includes(row.basis))
-    const adapters = new Set(modelRows.map((row) => row.adapterId))
-    return price.rows.filter((row) => row.level !== 'agent' || adapters.has(row.adapterId))
-  }
+  // shared scale makes the subscription distribution unreadable, so give each billing basis its
+  // own chart and axis. ⛔ Filter the chart input itself: retaining all non-agent rows makes both
+  // charts render the same models (t325).
   return (
     <div className="stack">
       <section className="doc-section">
@@ -698,13 +703,13 @@ function PriceTab({ report }: { report: StatisticsReport }): React.JSX.Element {
       </section>
 
       <StatGraph
-        rows={priceRowsFor(['subscription'])}
+        rows={priceRowsForGraph(price.rows, ['subscription'])}
         unit="price"
         render={money}
         title="Subscription Model Price Comparison"
       />
       <StatGraph
-        rows={priceRowsFor(['api', 'mixed'])}
+        rows={priceRowsForGraph(price.rows, ['api', 'mixed'])}
         unit="price"
         render={money}
         title="API & Mixed Model Price Comparison"
