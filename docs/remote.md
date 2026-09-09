@@ -45,8 +45,11 @@ Success looks like an `https://…ts.net:<port>` address on the desktop screen a
 paired-device list. It is private to the tailnet, not a public internet address: the phone must also
 be connected to Tailscale and signed into that tailnet. If the address is missing, finish step 2 and
 press **Re-check Tailscale**, which runs a new local probe rather than showing the prior result. If
-Tailscale's local service or certificate request refuses the probe, the screen shows its error; check
-that the service is running, the desktop app may access it, and the device may issue a certificate.
+Tailscale's local service or certificate request refuses the probe, the screen shows its error. On
+Windows, `local-tailscaled.sock` / `\\.\pipe\…\Tailscale\tailscaled: Access is denied` is a local
+Tailscale service problem, not an HTTPS setting or tailnet-policy refusal: update Tailscale and make
+sure `tailscale status` works from the normal user terminal. Other certificate refusals name the
+tailnet setting or device permission to check.
 If the port is taken, change it on the same screen. ⚠️ No inbound port forwarding is involved at any
 point.
 

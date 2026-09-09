@@ -20,6 +20,7 @@ describe('remote access presentation', () => {
     expect(tailscaleStep(status(null))).toMatch(/Install Tailscale/)
     expect(tailscaleStep(status({ installed: true, hostname: null, certAvailable: false, error: null, certError: null }))).toMatch(/Sign in/)
     expect(tailscaleStep(status({ installed: true, hostname: null, certAvailable: false, error: 'Access is denied.', certError: null }))).toMatch(/could not be read.*Access is denied/)
+    expect(tailscaleStep(status({ installed: true, hostname: 'desk.ts.net', certAvailable: false, error: null, certError: 'local-tailscaled.sock: Tailscale service: Access is denied.' }))).toMatch(/local Windows service denied.*Update Tailscale.*tailscale status/)
     expect(tailscaleStep(status({ installed: true, hostname: 'desk.ts.net', certAvailable: false, error: null, certError: 'certificate is not permitted' }))).toMatch(/could not issue.*certificate is not permitted/)
     expect(tailscaleStep(status({ installed: true, hostname: 'desk.ts.net', certAvailable: false, error: null, certError: null }))).toMatch(/HTTPS certificates/)
     expect(tailscaleStep(status({ installed: true, hostname: 'desk.ts.net', certAvailable: true, error: null, certError: null }))).toMatch(/ready/)
