@@ -9,7 +9,7 @@ import { lastQuota, windowExpired } from '../quota.js'
 import { getSession } from '../sessions.js'
 import { getProject, policyFor, requireProject } from '../projects.js'
 import { retireStrandedBranch } from '../worktrees.js'
-import { addMessage, attachDependency, blockedDependentsOf, createTask, dependentsOf, detachDependency, getTask, listTasks, messagesFor, pageTasks, promoteDraft, requireTask, setQuotaOverride, runsFor, setTaskStatsExcluded, updateTask } from '../tasks.js'
+import { addMessage, attachDependency, blockedDependentsOf, createTask, dependentsOf, detachDependency, getTask, listTasks, messagesFor, pageTasks, projectActivity, promoteDraft, requireTask, setQuotaOverride, runsFor, setTaskStatsExcluded, updateTask } from '../tasks.js'
 import { taskCommits } from '../taskcommits.js'
 import { cancelTask, deleteBlockers, deleteTask, restoreTask, resumeTask } from '../cancel.js'
 import { addRule, answerApproval, listRules, openApprovals, removeRule, requestApproval } from '../approvals.js'
@@ -32,7 +32,7 @@ import type { Api, ApiContext } from './support.js'
 import { checkConstraints, dependenciesFor } from './support.js'
 
 type TaskMethod =
-  | 'task.list' | 'task.page' | 'task.get' | 'task.create' | 'attachment.create' | 'attachment.folder'
+  | 'task.list' | 'task.page' | 'task.get' | 'project.activity' | 'task.create' | 'attachment.create' | 'attachment.folder'
   | 'attachment.read' | 'task.update' | 'task.setFinishPolicy' | 'task.pendingWork'
   | 'task.commitConversation' | 'task.landConversation' | 'task.setSessionSharing'
   | 'task.setCompletionMode' | 'task.setAutoCompact' | 'task.setStatsExcluded' | 'task.setObjective'
@@ -47,6 +47,7 @@ type TaskMethod =
 export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
   return {
     'task.list': (p) => listTasks(p ?? {}),
+    'project.activity': (p) => projectActivity(p.projectId, p.limit),
     'task.page': (p) => pageTasks(p ?? {}),
     'task.get': (p) => {
       const task = getTask(p.id)

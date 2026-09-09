@@ -218,7 +218,7 @@ function SessionGauge({ session, now }: { session: Session; now: number }): Reac
  * out identically to session gauges: font-size var(--text-meta), a bar with urgency fill, and
  * $0.00/$40.00 value. "Billing" tag dropped.
  */
-function CreditGauge({ credits, now }: { credits: CreditStatus; now: number }): React.JSX.Element {
+function CreditGauge({ credits, now, stale }: { credits: CreditStatus; now: number; stale: boolean }): React.JSX.Element {
   const fill =
     credits.monthlyLimit && credits.monthlyLimit > 0 && credits.used !== null
       ? Math.min(1, Math.max(0, credits.used / credits.monthlyLimit))
@@ -229,7 +229,7 @@ function CreditGauge({ credits, now }: { credits: CreditStatus; now: number }): 
 
   return (
     <div
-      className="wcard-credits gauge gauge--credits"
+      className={`wcard-credits gauge gauge--credits${stale ? ' dim' : ''}`}
       title={
         (credits.monthlyLimit !== null
           ? `credits: ${money(credits.used)} used of ${money(credits.monthlyLimit)} monthly limit`
@@ -484,7 +484,7 @@ function WorkerCard({
           ⚠️ Rendered only when the vendor says credits are *on* for this account — an account with
           credits off publishes no balance at all, and `money()` would print `$0.00` for a purse
           that has merely not been shown. */}
-      {worker.credits?.enabled === true && <CreditGauge credits={worker.credits} now={now} />}
+      {worker.credits?.enabled === true && <CreditGauge credits={worker.credits} now={now} stale={stale} />}
 
       {/* ⛔ The rule is load-bearing, not decoration. Everything above it is the **account**: one
           quota, shared by every session on it, and it survives the session ending. Everything below

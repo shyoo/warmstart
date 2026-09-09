@@ -22,6 +22,7 @@ import {
   type TaskKind,
   type TaskMessage,
   type TaskPage,
+  type ProjectActivity,
   DERIVED_TASK_SORTS,
   type TaskSort,
   type TaskStatus,
@@ -300,6 +301,31 @@ export function listTasks(opts: { includeDeleted?: boolean; projectId?: string }
   return toTasks(
     rows<TaskRow>(db().prepare(`${TASK_SELECT} ${where} order by t.created_at asc, t.seq asc`).all(...args))
   )
+}
+
+/**
+ * The phone's project overview is deliberately a projection of durable task and run records,
+ * rather than the live event socket: it remains useful after the phone reconnects.  A task can
+ * contribute its filing, current state, and each run boundary; the caller receives only the most
+ * recent bounded slice, newest first.
+ */
+export function projectActivity(projectId: string, limit = 200): ProjectActivity[] {
+  const cap = Math.min(Math.max(limit, 1), 200)
+  const entries: ProjectActivity[] = []
+  for (const task of listTasks({ projectId })) {
+    const title = task.titleSummary ?? task.title
+    entries.push({ id: `filed:${task.id}`, taskId: task.id, taskSeq: task.seq, title, kind: 'filed', at: task.createdAt })
+    if (task.status === 'completed') {
+      entries.push({ id: `completed:${task.id}:${task.updatedAt}`, taskId: task.id, taskSeq: task.seq, title, kind: 'completed', at: task.updatedAt, activeMs: task.activeMs, priceUsd: task.budget.spentUsd })
+    } else if (task.updatedAt > task.createdAt) {
+      entries.push({ id: `status:${task.id}:${task.updatedAt}`, taskId: task.id, taskSeq: task.seq, title, kind: 'status_changed', at: task.updatedAt, status: task.status })
+    }
+    for (const run of runsFor(task.id)) {
+      entries.push({ id: `run-start:${run.id}`, taskId: task.id, taskSeq: task.seq, title, kind: 'run_started', at: run.startedAt })
+      if (run.endedAt !== null) entries.push({ id: `run-end:${run.id}`, taskId: task.id, taskSeq: task.seq, title, kind: 'run_finished', at: run.endedAt })
+    }
+  }
+  return entries.sort((a, b) => b.at - a.at || b.taskSeq - a.taskSeq).slice(0, cap)
 }
 
 /**

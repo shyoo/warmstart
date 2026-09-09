@@ -259,7 +259,12 @@ function staticFile(req: IncomingMessage, res: ServerResponse): void {
   const file = normalize(join(base, requested))
   // Anything outside the bundle, and anything missing, is the SPA shell — hash routes never hit disk.
   const target = withinBase(base, file) && existsSync(file) ? file : join(base, 'index.html')
-  res.writeHead(200, { 'content-type': staticContentType(target) })
+  // HTML and the service worker must revalidate so a phone receives a new build without clearing
+  // its pairing token; Vite's fingerprinted assets can remain immutable and cheap to cache.
+  const basename = target.slice(target.lastIndexOf(sep) + 1)
+  const cacheControl = basename === 'index.html' || basename === 'sw.js' || basename.endsWith('.webmanifest')
+    ? 'no-cache' : 'public, max-age=31536000, immutable'
+  res.writeHead(200, { 'content-type': staticContentType(target), 'cache-control': cacheControl })
   res.end(readFileSync(target))
 }
 

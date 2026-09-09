@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { DaemonEvent } from '@shared/protocol'
-import { connectEvents, onAuthChange, store, type EventsStatus } from './api.js'
+import type { Project } from '@shared/tasks'
+import { connectEvents, onAuthChange, rpc, store, type EventsStatus } from './api.js'
 import { AttentionScreen } from './screens/Attention.js'
 import { NewScreen } from './screens/New.js'
 import { Pair, pairCodeFromHash } from './screens/Pair.js'
@@ -12,7 +13,7 @@ import { SettingsScreen } from './screens/Settings.js'
 /**
  * The shell: hash routing, the pairing gate, the bottom tabs, and the live socket.
  *
- * Routes: `#/` attention, `#/quota`, `#/tasks`, `#/task/:id`, `#/new`, `#/settings`, `#/pair?code=…`.
+ * Routes: `#/` overview, `#/quota`, `#/tasks`, `#/task/:id`, `#/new`, `#/settings`, `#/pair?code=…`.
  * Every route except pairing redirects to pairing when there is no token, and any 401 anywhere
  * clears the token and lands back here — which is what a revoked device experiences.
  */
@@ -32,7 +33,7 @@ export function routeFromHash(hash: string): Route {
 }
 
 const TITLES: Record<Route['name'], string> = {
-  attention: 'Attention',
+  attention: 'Overview',
   quota: 'Quota',
   tasks: 'Tasks',
   task: 'Task',
@@ -48,6 +49,8 @@ export function App(): React.JSX.Element {
   const [paired, setPaired] = useState(() => store.get() !== null)
   const [refreshKey, setRefreshKey] = useState(0)
   const [eventsStatus, setEventsStatus] = useState<EventsStatus>('connecting')
+  const [projects, setProjects] = useState<Project[]>([])
+  const [projectId, setProjectId] = useState(() => readProjectId())
 
   useEffect(() => {
     const onHash = (): void => setRoute(routeFromHash(location.hash))
@@ -56,6 +59,14 @@ export function App(): React.JSX.Element {
   }, [])
 
   useEffect(() => onAuthChange(() => setPaired(store.get() !== null)), [])
+
+  useEffect(() => {
+    if (!paired) return
+    void rpc('project.list', undefined).then((listed) => {
+      setProjects(listed)
+      setProjectId((current) => listed.some((p) => p.id === current) ? current : (listed[0]?.id ?? ''))
+    })
+  }, [paired, refreshKey])
 
   useEffect(() => {
     if (!paired) return
@@ -86,25 +97,44 @@ export function App(): React.JSX.Element {
     <div className="m-app">
       <header className="m-topbar">
         <span className="m-topbar-title">{TITLES[route.name]}</span>
+        {(route.name === 'attention' || route.name === 'tasks') && projects.length > 0 && (
+          <select className="m-project-picker" aria-label="Project" value={projectId} onChange={(e) => {
+            writeProjectId(e.target.value)
+            setProjectId(e.target.value)
+          }}>
+            {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
+          </select>
+        )}
         <span className={`m-dot m-dot--${eventsStatus}`} title={`live updates: ${eventsStatus}`} />
       </header>
       <main className="m-main">
-        {route.name === 'attention' && <AttentionScreen refreshKey={refreshKey} openTask={(id) => go(`#/task/${id}`)} />}
+        {route.name === 'attention' && <AttentionScreen refreshKey={refreshKey} projectId={projectId} openTask={(id) => go(`#/task/${id}`)} />}
         {route.name === 'quota' && <QuotaScreen refreshKey={refreshKey} />}
-        {route.name === 'tasks' && <TasksScreen refreshKey={refreshKey} openTask={(id) => go(`#/task/${id}`)} newTask={() => go('#/new')} />}
+        {route.name === 'tasks' && <TasksScreen refreshKey={refreshKey} projectId={projectId} openTask={(id) => go(`#/task/${id}`)} newTask={() => go('#/new')} />}
         {route.name === 'task' && <TaskDetailScreen id={route.id} refreshKey={refreshKey} />}
         {route.name === 'new' && <NewScreen openTask={(id) => go(`#/task/${id}`)} />}
         {route.name === 'settings' && <SettingsScreen refreshKey={refreshKey} />}
         {route.name === 'pair' && <Pair initialCode={pairCodeFromHash(location.hash)} onPaired={() => go('#/')} />}
       </main>
       <nav className="m-tabs">
-        <TabButton active={route.name === 'attention'} onPress={() => go('#/')} label="Attention" />
+        <TabButton active={route.name === 'attention'} onPress={() => go('#/')} label="Overview" />
         <TabButton active={route.name === 'quota'} onPress={() => go('#/quota')} label="Quota" />
         <TabButton active={route.name === 'tasks' || route.name === 'task'} onPress={() => go('#/tasks')} label="Tasks" />
         <TabButton active={route.name === 'settings'} onPress={() => go('#/settings')} label="Settings" />
       </nav>
     </div>
   )
+}
+
+const PROJECT_COOKIE_KEY = 'multi_agent_controller_mobile_project'
+function readProjectId(): string {
+  try {
+    const found = document.cookie.split('; ').find((part) => part.startsWith(`${PROJECT_COOKIE_KEY}=`))
+    return found ? decodeURIComponent(found.slice(PROJECT_COOKIE_KEY.length + 1)) : ''
+  } catch { return '' }
+}
+function writeProjectId(id: string): void {
+  try { document.cookie = `${PROJECT_COOKIE_KEY}=${encodeURIComponent(id)}; Path=/; SameSite=Strict; Max-Age=31536000` } catch { /* private browsing may refuse persistence */ }
 }
 
 function TabButton({ active, onPress, label }: { active: boolean; onPress: () => void; label: string }): React.JSX.Element {

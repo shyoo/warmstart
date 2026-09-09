@@ -27,6 +27,7 @@ html, body, #root { height: 100%; margin: 0; }
 }
 
 .m-topbar-title { font-weight: 600; font-size: 17px; margin: 0; }
+.m-project-picker { max-width: 48%; min-height: 32px; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-surface); color: var(--color-text); font: 13px var(--font-ui); padding: 4px 8px; }
 
 .m-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--color-text-dim, #8a8f98); }
 .m-dot--live { background: var(--state-ok, #4caf7d); }
@@ -70,6 +71,12 @@ html, body, #root { height: 100%; margin: 0; }
 .m-warn { color: var(--state-warn, #d9a441); font-size: 14px; }
 .m-error { color: var(--state-danger, #c0492f); }
 .m-empty { color: var(--color-text-dim, #8a8f98); }
+.m-detail { margin: 8px 0 0; font-size: 13px; line-height: 1.4; }
+.m-overview-section { margin-bottom: 28px; }
+.m-overview-section > .m-page-title { margin-bottom: 10px; }
+.m-activity { display: block; width: 100%; text-align: left; border: 0; border-top: 1px solid var(--color-border); background: none; color: inherit; padding: 11px 0; font: 13px/1.35 var(--font-ui); }
+.m-activity strong { color: var(--color-accent); }
+.m-activity .m-meta { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .m-health { font-size: 10px; font-weight: 700; color: var(--state-ok); background: color-mix(in srgb, var(--state-ok) 12%, transparent); border: 1px solid color-mix(in srgb, var(--state-ok) 28%, transparent); border-radius: 999px; padding: 4px 8px; text-transform: uppercase; letter-spacing: .05em; }
 .m-health--warn { color: var(--state-warn); background: color-mix(in srgb, var(--state-warn) 12%, transparent); border-color: color-mix(in srgb, var(--state-warn) 28%, transparent); }

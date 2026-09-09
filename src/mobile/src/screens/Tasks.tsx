@@ -14,7 +14,7 @@ import { duration, price, relTime, shortTitle, statusTone } from '../lib/format.
  */
 export const TASKS_PER_PAGE = 10
 
-export function TasksScreen({ refreshKey, openTask, newTask }: { refreshKey: number; openTask: (id: string) => void; newTask: () => void }): React.JSX.Element {
+export function TasksScreen({ refreshKey, projectId, openTask, newTask }: { refreshKey: number; projectId: string; openTask: (id: string) => void; newTask: () => void }): React.JSX.Element {
   const now = useNow()
   const [tasks, setTasks] = useState<Task[]>([])
   const [workerLabels, setWorkerLabels] = useState<Record<string, string>>({})
@@ -22,7 +22,8 @@ export function TasksScreen({ refreshKey, openTask, newTask }: { refreshKey: num
   const [error, setError] = useState<string | null>(null)
 
   const refresh = useCallback(() => {
-    void Promise.all([rpc('task.list', undefined), rpc('fleet.list', undefined)])
+    if (!projectId) { setTasks([]); return }
+    void Promise.all([rpc('task.list', { projectId }), rpc('fleet.list', undefined)])
       .then(([all, fleet]) => {
         setTasks(
           [...all]
@@ -37,7 +38,7 @@ export function TasksScreen({ refreshKey, openTask, newTask }: { refreshKey: num
           setError(err instanceof Error ? err.message : 'Could not load.')
         }
       })
-  }, [])
+  }, [projectId])
 
   useEffect(refresh, [refresh, refreshKey])
 
@@ -48,7 +49,7 @@ export function TasksScreen({ refreshKey, openTask, newTask }: { refreshKey: num
   return (
     <div className="m-screen">
       <div className="m-screen-head">
-        <div><p className="m-eyebrow">Remote projects</p><h1 className="m-page-title">Task activity</h1></div>
+        <div><p className="m-eyebrow">Selected project</p><h1 className="m-page-title">Task activity</h1></div>
         <button className="m-add" aria-label="New task" onClick={newTask}>+</button>
       </div>
       {shown.map((t) => (
@@ -64,7 +65,7 @@ export function TasksScreen({ refreshKey, openTask, newTask }: { refreshKey: num
           <div className="m-task-foot"><span>Updated {relTime(t.updatedAt, now)}</span><button className="m-open" onClick={() => openTask(t.id)}>Open <span aria-hidden="true">→</span></button></div>
         </article>
       ))}
-      {tasks.length === 0 && <p className="m-empty">No tasks in remote projects.</p>}
+      {tasks.length === 0 && <p className="m-empty">No tasks in this project.</p>}
       {tasks.length > 0 && <nav className="m-pager" aria-label="Task pages">
         <button disabled={page === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>Previous</button>
         <span>{page + 1} / {pageCount} · {tasks.length} tasks</span>

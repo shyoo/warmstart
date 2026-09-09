@@ -3,7 +3,7 @@
  * It caches the app shell (HTML, JS, CSS, manifest, icons) and passes every other request
  * through untouched — `/remote/*` must never be cached, and POSTs never are.
  */
-const SHELL = './sw-shell'
+const SHELL = './sw-shell-v2'
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -30,8 +30,13 @@ self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET' || url.pathname.startsWith('/remote/')) return
   event.respondWith(
     (async () => {
-      const cached = await caches.match(event.request)
-      if (cached) return cached
+      // Navigation and the manifest must ask the server first, so an installed phone picks up
+      // an updated service worker and bundle without sacrificing its local pairing credential.
+      const freshFirst = event.request.mode === 'navigate' || /\/(?:index\.html|manifest\.webmanifest|sw\.js)$/.test(url.pathname)
+      if (!freshFirst) {
+        const cached = await caches.match(event.request)
+        if (cached) return cached
+      }
       const live = await fetch(event.request)
       if (live.ok && url.origin === self.location.origin) {
         const cache = await caches.open(SHELL)

@@ -441,6 +441,19 @@ export interface TaskPage {
   counts: Record<TaskView, number>
 }
 
+/** A compact, durable project timeline entry for the remote overview. */
+export interface ProjectActivity {
+  id: string
+  taskId: string
+  taskSeq: number
+  title: string
+  kind: 'filed' | 'run_started' | 'run_finished' | 'completed' | 'status_changed'
+  at: number
+  status?: TaskStatus
+  activeMs?: number
+  priceUsd?: number | null
+}
+
 /**
  * What the table can be ordered by — one value per column it has.
  *

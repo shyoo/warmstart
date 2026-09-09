@@ -48,6 +48,7 @@ import type {
   TaskKind,
   TaskMessage,
   TaskPage,
+  ProjectActivity,
   TaskSort,
   TaskView,
   FinishPolicy,
@@ -1561,6 +1562,8 @@ export interface RpcMap {
   'project.flow': { params: { projectId: string }; result: FlowWorkspace[] }
 
   'task.list': { params: { projectId?: string; includeDeleted?: boolean } | void; result: Task[] }
+  /** The phone overview's bounded, reverse-chronological project timeline. */
+  'project.activity': { params: { projectId: string; limit?: number }; result: ProjectActivity[] }
   /**
    * One page of the task table, filtered by bucket.
    *
