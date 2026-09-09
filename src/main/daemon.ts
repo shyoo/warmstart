@@ -12,6 +12,7 @@ import type {
   RpcResult
 } from '@shared/protocol.js'
 import { readEndpoint } from '../daemon/lock.js'
+import { errorMessage } from '@shared/errors.js'
 
 /**
  * The Electron side of the daemon relationship.
@@ -168,14 +169,25 @@ export class DaemonClient extends EventEmitter {
 
   async rpc<M extends RpcMethod>(method: M, params?: RpcParams<M>): Promise<RpcResult<M>> {
     if (!this.endpoint) throw new Error('orchestratord is not connected')
-    const res = await fetch(`http://127.0.0.1:${this.endpoint.port}/rpc`, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        authorization: `Bearer ${this.endpoint.token}`
-      },
-      body: JSON.stringify({ id: this.nextId++, method, params })
-    })
+    const startedAt = Date.now()
+    let res: Response
+    try {
+      res = await fetch(`http://127.0.0.1:${this.endpoint.port}/rpc`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${this.endpoint.token}`
+        },
+        body: JSON.stringify({ id: this.nextId++, method, params })
+      })
+    } catch (err) {
+      // ⛔ **`fetch` reports every transport fault as the same three words**, and the renderer showed
+      // them raw: *"Error invoking remote method 'daemon:rpc': TypeError: fetch failed"* told an
+      // operator neither which call broke nor whether the daemon was down, slow or had dropped the
+      // socket — three problems with three different answers. The cause is one property away and
+      // was being discarded. See `applyLoopbackTimeouts` for the fault this was hiding.
+      throw new Error(transportFailure(method, err, Date.now() - startedAt), { cause: err })
+    }
     if (!res.ok) throw new Error(`orchestratord returned HTTP ${res.status}`)
     const body = (await res.json()) as RpcResponse
     if (!body.ok) throw new Error(body.error.message)
@@ -192,6 +204,32 @@ export class DaemonClient extends EventEmitter {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/**
+ * What to say when the call never reached an answer.
+ *
+ * ⚠️ **The method, the cause and how long it waited — all three, because each one changes what the
+ * operator should do.** `ECONNREFUSED` is a daemon that is not there and the Start button is the
+ * answer; `ECONNRESET` after two seconds is a dropped keep-alive socket and retrying is; a headers
+ * timeout after five minutes is a daemon that is alive and overloaded, and neither of those helps.
+ * ⛔ Never invents a diagnosis: an error whose cause carries no `code` is reported by its message,
+ * and one that carries neither is reported as unexplained rather than guessed at.
+ */
+export function transportFailure(method: string, err: unknown, elapsedMs: number): string {
+  const cause = (err as { cause?: unknown })?.cause
+  // undici nests: `TypeError: fetch failed` → cause `Error { code }`, or an `AggregateError` whose
+  // `errors[0]` carries the code (that is the shape a refused connect arrives in).
+  const inner =
+    cause instanceof AggregateError ? (cause.errors[0] as unknown) : cause
+  const code = (inner as { code?: unknown })?.code
+  const detail =
+    typeof code === 'string' && code
+      ? code
+      : inner instanceof Error && inner.message
+        ? inner.message
+        : errorMessage(err)
+  return `could not reach orchestratord for '${method}' after ${Math.round(elapsedMs / 1000)}s (${detail})`
 }
 
 /** Where electron-vite puts the daemon bundle, next to the main process bundle. */

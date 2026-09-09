@@ -185,6 +185,17 @@ on and off across both the Refresh button and the "Filter out cannot be graded" 
 that described the poll and nothing an operator cares about. The mark is drawn for as long as
 `batch.state === 'running'` and the button keeps its label and stays clickable throughout.
 
+⛔ **A poll may not stack on itself, and this page is where that rule was learned.** The in-flight
+flag here was once argued away — *"the fetch is over in well under the three seconds between
+polls"* — and measured false on 2026-09-09: `quality.queue` took **2.4s** against 322 finished tasks
+with the daemon idle, and this page fires it from the 3s interval *and* again on every
+`task.changed` / `run.changed`, which during a batch is most seconds. Because `orchestratord` is
+single-threaded the calls do not overlap, they queue: 40 deep, `/health` took 78s and the UI's own
+connection was reset out from under it — the *"TypeError: fetch failed"* badge. ⚠️ A ticking poll
+that finds one in flight is **dropped, not queued**: the next is 3s away and asks for current state
+anyway, so a refresh that waited its turn could only paint something staler. The daemon owes the
+other half — see [`architecture.md`](architecture.md) §1.
+
 ⛔ **Batching is a queue, not a call.** `quality.batch.start` returns as soon as the queue exists and
 the reviews run in the background (`daemon/gradebatch.ts`), because ALL over a backlog is hours of
 grading and an RPC held open for it would be lost by the first window reload. Progress is read back

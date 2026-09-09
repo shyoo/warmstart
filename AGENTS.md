@@ -98,7 +98,9 @@ measurement behind it, in [`docs/architecture.md`](docs/architecture.md) §4. Th
 - **Security boundaries.** The renderer never holds the daemon token. Code is never loaded from the
   data directory. A spawned CLI gets `spawnEnv()`, which prefix-denies `CLAUDE*` / `ANTHROPIC_*` —
   never a copy of `process.env`. Unattended judgment gets no tools; its reply is validated against a
-  closed set, and a reply that keeps failing means the *prompt* is wrong. Preference never widens
+  closed set, and a reply that keeps failing means the *prompt* is wrong — ⛔ but only once a `result`
+  with `isError` has been ruled out, because an errored turn carries the *vendor's* JSON where the
+  answer goes and it validates as badly as a bad answer. Preference never widens
   authority: `finishPolicy` says what should happen, `mandate.allowed` says what may.
 - **Process lifecycle.** The daemon is *asked* to stop, never killed. ⛔ Never kill a process by
   image name — not in code, not in a shell, not once in a test. ⛔ Never kill a bare pid; read the

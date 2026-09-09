@@ -533,3 +533,48 @@ describe('the session’s own startup record', () => {
     expect(reviewer.reviewStall(spoke, min(19))).toContain('quiet')
   })
 })
+
+/**
+ * A turn that ended in an error is not a reply, and for months it was read as one.
+ *
+ * ⛔ **Measured on this install.** codex's `result` record carries `isError` and, as its text, the
+ * vendor's refusal — sometimes a JSON envelope, sometimes a plain sentence. `ask` ignored the flag
+ * and handed the text to `extractJson`, which parsed the envelope perfectly well; it simply has no
+ * `rubric_version` in it. So **2** reviews on 2026-09-09 were filed as *"the reply omitted required
+ * `rubric_version`"* when the truth was that the account may not use that model, and **31** on
+ * 2026-09-06 as *"the reply contained no JSON object"* when the truth was a usage limit with a reset
+ * time in it. Both blamed the reviewer's formatting for something only the operator could fix, and
+ * both are facts about the *fleet* that were being stored as facts about a model's JSON.
+ */
+describe('a reviewer whose turn ended in an error', () => {
+  it('reports the vendor’s sentence out of its JSON envelope, not the envelope', () => {
+    const said = reviewer.resultError(
+      '{"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The ' +
+        "'gpt-5.4-mini' model is not supported when using Codex with a ChatGPT account.\"}}",
+      'turn.failed'
+    )
+    expect(said).toContain('turn.failed')
+    expect(said).toContain("The 'gpt-5.4-mini' model is not supported")
+    // ⛔ The operator must never be shown the wrapper instead of the sentence inside it.
+    expect(said).not.toContain('invalid_request_error')
+    expect(said).not.toContain('rubric')
+  })
+
+  it('passes a plain-text refusal through whole, reset time and all', () => {
+    const limit =
+      "You've hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit " +
+      'https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Sep 8th, ' +
+      '2026 8:36 PM.'
+    expect(reviewer.resultError(limit, 'turn.failed')).toContain('try again at Sep 8th')
+  })
+
+  it('reports an unrecognised JSON shape whole rather than truncating it to nothing', () => {
+    const odd = '{"type":"error","status":500}'
+    expect(reviewer.resultError(odd, null)).toContain(odd)
+  })
+
+  it('says so plainly when the error carried no words at all', () => {
+    expect(reviewer.resultError(null, 'turn.failed')).toContain('said nothing about it')
+    expect(reviewer.resultError('   ', null)).toContain('said nothing about it')
+  })
+})

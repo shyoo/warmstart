@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { GradeBatch, ReviewFilter, ReviewQueuePage } from '@shared/quality'
 import { BATCH_SIZES, BATCH_THRESHOLDS, thresholdLabel } from '@shared/quality'
 import type { Project } from '@shared/tasks'
@@ -65,10 +65,24 @@ export function QualityReview({
     writeQualityGradableOnly(value)
   }, [])
 
-  // ⚠️ No in-flight flag. The one thing this page has to say about being busy is whether a *batch*
-  // is grading, and the fetch that answers that question is over in well under the three seconds
-  // between polls — a flag for it only ever described the poll to itself.
+  /**
+   * ⛔ **One refresh at a time, and this page is the reason the rule exists.** The flag here used to
+   * be argued away — *"the fetch is over in well under the three seconds between polls"* — and that
+   * was measured false on 2026-09-09: `quality.queue` took **2.4s** against 322 finished tasks with
+   * the daemon idle, and this page fires it from a 3s interval *and* again on every `task.changed` /
+   * `run.changed`, which during a batch is most seconds. So the calls stacked, and because
+   * `orchestratord` is single-threaded they do not overlap, they queue: 40 deep, `/health` took 78s
+   * and the UI's own connection was reset out from under it. The daemon's side of that is fixed too
+   * (`isTaskGradable`, `applyLoopbackTimeouts`) — this is the half that stops asking a question
+   * faster than it can be answered.
+   *
+   * ⚠️ A dropped tick, not a queued one: the next poll is 3s away and it asks for the current state
+   * anyway, so a refresh that waited its turn would only ever paint something staler.
+   */
+  const inFlight = useRef(false)
   const refresh = useCallback(async () => {
+    if (inFlight.current) return
+    inFlight.current = true
     try {
       const [queue, running] = await Promise.all([
         rpc('quality.queue', { filter, limit: PAGE_SIZE, offset, gradableOnly }),
@@ -79,6 +93,8 @@ export function QualityReview({
       setError(null)
     } catch (err) {
       setError(errorMessage(err))
+    } finally {
+      inFlight.current = false
     }
   }, [filter, offset, gradableOnly])
 

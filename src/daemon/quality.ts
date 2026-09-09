@@ -21,7 +21,7 @@ import { pendingReviews } from './review.js'
 import { getTask } from './tasks.js'
 import type { Task } from '@shared/tasks.js'
 import { defaultGradingModel, listWorkers } from './workers.js'
-import { hasBatchReviewer, reviewEligibility, reviewerAvailability } from './reviewer.js'
+import { hasBatchReviewer, reviewRange, reviewerAvailability } from './reviewer.js'
 import { medianFloat } from './stats.js'
 
 /**
@@ -467,8 +467,15 @@ export async function isTaskGradable(task: Task): Promise<{ ok: boolean; reason:
     return { ok: false, reason: peers.reason }
   }
   if (task.projectId) {
-    const el = await reviewEligibility(task.id)
-    if (!el.ok) return { ok: false, reason: el.reason }
+    // ⛔ `reviewRange`, never `reviewEligibility`. The peer half of that call is `reviewCandidates`,
+    // which `reviewerAvailability` above has already asked; what came back on top of it was the
+    // reviewer *menu*, and building one costs a `runs` scan per worker for a `typicalMs` no caller
+    // here reads. Measured 2026-09-09: `quality.queue` runs this for every finished task, so on 322
+    // tasks × 8 workers that menu was 2,576 table scans and **5.0s of a 5.1s** RPC — long enough,
+    // when the page's 3s poll stacked on it during a batch, to block the daemon's event loop for
+    // 78s and have node's own header-timeout reaper destroy the UI's live connection under it.
+    const range = await reviewRange(task.id)
+    if (!range.ok) return { ok: false, reason: range.reason }
   }
   return { ok: true, reason: '' }
 }

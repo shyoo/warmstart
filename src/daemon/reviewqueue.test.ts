@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { readFileSync } from 'node:fs'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 /**
@@ -311,6 +312,53 @@ describe('what a batch would attempt', () => {
       db.db().exec("delete from workers where id = 'w-openai-quota'")
       db.db().exec("delete from quota_samples where worker_id = 'w-openai-quota'")
     }
+  })
+})
+
+/**
+ * What the coverage page is allowed to cost.
+ *
+ * ⛔ **This page polls, so its RPC is a cost multiplied by a cadence.** `QualityReview.tsx` fires
+ * `quality.queue` from a 3s interval *and* on every `task.changed` / `run.changed`, and the daemon is
+ * single-threaded, so a call that is merely expensive becomes a call that blocks everything.
+ * Measured on this install 2026-09-09: `reviewQueue` asked `isTaskGradable` for all **322** finished
+ * tasks, that asked `reviewEligibility`, and that built the reviewer *menu* — whose `typicalReviewMs`
+ * is a `runs` scan **per worker**. 322 × 8 = 2,576 scans, **5.0s of a 5.1s** call, for a menu no
+ * caller here reads. Stacked 40 deep the loop stalled for 78s and node reset the UI's connection:
+ * *"TypeError: fetch failed"*.
+ */
+describe('what the coverage page costs to draw', () => {
+  it('asks whether a task has a diff, never who is free to grade it and how fast they are', () => {
+    // ⛔ The peer half of `reviewEligibility` duplicates `reviewerAvailability`, which
+    // `isTaskGradable` has already called; what it added on top was the priced menu. Pinned at the
+    // import, because the cost is not visible at the call site — it is three functions down.
+    const source = readFileSync(new URL('./quality.ts', import.meta.url), 'utf8')
+    const imported = source
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith('import ') && line.includes('./reviewer.js'))
+      .join(' ')
+    expect(imported).toContain('reviewRange')
+    expect(imported).not.toContain('reviewEligibility')
+  })
+
+  it('has an index for "what has this worker done lately", so it is not a scan and a sort', () => {
+    // ⛔ `runs_task` is keyed on the task and `runs_key` on (adapter, model); neither matches
+    // `worker_id` + `kind` + `outcome`. Before migration 59 this planned as `SCAN runs` + `USE TEMP
+    // B-TREE FOR ORDER BY` against 796 rows, once per worker per task.
+    const plan = db
+      .db()
+      .prepare(
+        `explain query plan
+         select ended_at - started_at as ms from runs
+          where worker_id = ? and kind = 'quality_review' and outcome = 'completed'
+            and ended_at is not null and ended_at > started_at
+          order by started_at desc limit 20`
+      )
+      .all('w-claude') as Array<{ detail: string }>
+    const detail = plan.map((r) => r.detail).join(' ')
+    expect(detail).toContain('runs_worker')
+    expect(detail).not.toContain('SCAN runs')
+    expect(detail).not.toContain('TEMP B-TREE')
   })
 })
 

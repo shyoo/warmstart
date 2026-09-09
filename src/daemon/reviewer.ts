@@ -387,6 +387,35 @@ export function pickReviewer(
 }
 
 /**
+ * Is there anything left to grade — a diff this task can still be measured on?
+ *
+ * ⛔ **Split out of `reviewEligibility` because the other half is not free.** Building the reviewer
+ * *menu* costs `typicalReviewMs` per candidate, which is a `runs` scan per worker; a caller that
+ * only wants the yes/no was paying for a menu it discarded. Measured 2026-09-09 on this install:
+ * `quality.queue` asked this question for all 322 finished tasks on every poll and spent **5.0s of
+ * the 5.1s** it took inside those per-worker scans. See `isTaskGradable`.
+ */
+export async function reviewRange(taskId: string): Promise<{ ok: boolean; reason: string }> {
+  const task = getTask(taskId)
+  if (!task) return { ok: false, reason: 'no such task' }
+  const project = task.projectId ? getProject(task.projectId) : null
+  if (!project) return { ok: false, reason: 'this task has no project to read' }
+  // ⛔ **The task's own target.** A split child lands onto its plan branch and never onto `main`, so
+  // measured against `main` the ladder's first rung fails (its head is not an ancestor of the trunk)
+  // and the second resolves `merge-base(main, child)` — which is where the *plan branch* diverged,
+  // putting the planner's commits and every earlier sibling's work inside the range this child is
+  // graded on. `resolveRange` refuses to review the wrong commits by name; this is the reference
+  // point that keeps it able to tell.
+  const range = await resolveRange(
+    task,
+    project,
+    landingTargetFor(task, project),
+    policyFor(project).landingTarget
+  )
+  return range.ok ? { ok: true, reason: '' } : { ok: false, reason: range.reason }
+}
+
+/**
  * Whether the button can be offered at all, and what it would do.
  *
  * ⚠️ Two independent questions — is there a peer, and is there a diff — and both are answered
@@ -400,22 +429,7 @@ export async function reviewEligibility(taskId: string): Promise<{
 }> {
   const task = getTask(taskId)
   if (!task) return { ok: false, reviewers: [], reason: 'no such task' }
-  const project = task.projectId ? getProject(task.projectId) : null
-  if (!project) {
-    return { ok: false, reviewers: [], reason: 'this task has no project to read' }
-  }
-  // ⛔ **The task's own target.** A split child lands onto its plan branch and never onto `main`, so
-  // measured against `main` the ladder's first rung fails (its head is not an ancestor of the trunk)
-  // and the second resolves `merge-base(main, child)` — which is where the *plan branch* diverged,
-  // putting the planner's commits and every earlier sibling's work inside the range this child is
-  // graded on. `resolveRange` refuses to review the wrong commits by name; this is the reference
-  // point that keeps it able to tell.
-  const range = await resolveRange(
-    task,
-    project,
-    landingTargetFor(task, project),
-    policyFor(project).landingTarget
-  )
+  const range = await reviewRange(taskId)
   if (!range.ok) return { ok: false, reviewers: [], reason: range.reason }
 
   const reviewers = reviewCandidateOptions(task)
@@ -681,6 +695,42 @@ function mins(ms: number): string {
 }
 
 /**
+ * The sentence to file when the reviewer's turn ended in an error rather than an answer.
+ *
+ * ⚠️ **Unwrapped where the vendor wrapped it, and left alone where it did not.** Codex reports the
+ * refusal as a JSON envelope — `{"type":"error","status":400,"error":{"message":"…"}}` — and the one
+ * part an operator can act on is the innermost `message`. Nothing here classifies the error or
+ * guesses what to do about it: an unrecognised shape is reported whole, because a truncated vendor
+ * sentence is worse than an ugly one.
+ */
+export function resultError(text: string | null, terminalReason: string | null): string {
+  const said = (text ?? '').trim()
+  const detail = (said.startsWith('{') ? vendorMessage(said) : null) ?? said
+  const where = terminalReason ? ` (${terminalReason})` : ''
+  return detail
+    ? `the reviewer's turn ended in an error${where}: ${detail.slice(0, 600)}`
+    : `the reviewer's turn ended in an error${where} and said nothing about it`
+}
+
+/** The innermost human sentence in a vendor's JSON error envelope, or null if there is not one. */
+function vendorMessage(json: string): string | null {
+  let node: unknown
+  try {
+    node = JSON.parse(json)
+  } catch {
+    return null
+  }
+  // Depth-bounded: `{ error: { error: { message } } }` is the deepest shape any adapter has shown.
+  for (let depth = 0; depth < 4; depth++) {
+    if (!node || typeof node !== 'object') return null
+    const record = node as Record<string, unknown>
+    if (typeof record.message === 'string' && record.message.trim()) return record.message.trim()
+    node = record.error
+  }
+  return null
+}
+
+/**
  * Has this reviewer stopped? The sentence to record, or null to keep waiting.
  *
  * ⛔ **Every reason it can return names the numbers it decided on**, because a review that failed on
@@ -750,6 +800,20 @@ function ask(sessionId: string, prompt: string, signal: AbortSignal): Promise<{ 
       if (event.kind === 'assistant_text') {
         text += event.text
         progress.chars += event.text.length
+      }
+      // ⛔ **A turn the CLI says failed carries an error, not an answer, and `isError` was being
+      // ignored.** Measured on this fleet: codex answered `task_complete` with
+      // `{"type":"error","status":400,…"The 'gpt-5.4-mini' model is not supported when using Codex
+      // with a ChatGPT account."}`, which the adapter decodes as `result` + `isError` — and that
+      // *text* went to `extractJson`, which happily parsed the error envelope as the reply. It has
+      // no `rubric_version`, so 2 reviews were filed as *"the reply omitted required
+      // `rubric_version`"* (2026-09-09) and 31 more, whose error was *"You've hit your usage limit…
+      // try again at Sep 8th"*, as *"the reply contained no JSON object"* (2026-09-06). Both
+      // sentences blamed the model's formatting for a vendor refusal the operator could have acted
+      // on in one click. ⚠️ The vendor's own words, verbatim: what makes this reportable is that it
+      // names the model and the account, which no sentence written here could.
+      if (event.kind === 'result' && event.isError) {
+        return finish(null, resultError(event.text, event.terminalReason))
       }
       if (event.kind === 'result') finish(event.text ?? text ?? null, 'the turn ended')
     })

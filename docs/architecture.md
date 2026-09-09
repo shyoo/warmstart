@@ -64,6 +64,25 @@ until someone decides otherwise. It is off by default and gated a second time pe
 Events flow the other way over a WebSocket: `DaemonEvent` (`protocol.ts`) → main → `daemon:event-push`
 → renderer. `session.data` carries raw terminal bytes; everything else is typed state.
 
+⛔ **The daemon is single-threaded and every handler is synchronous `node:sqlite`, so an expensive
+RPC is not slow — it is a stall for everyone.** And node's socket reapers are timers: they do not
+fire *during* a stall, they fire in a batch the instant it clears. Measured 2026-09-09 by stacking 40
+`quality.queue` calls: `/health` answered in **78s**, and one poll came back `TypeError: fetch
+failed` / `ECONNRESET` — node's 5s `keepAliveTimeout` had elapsed on a socket whose client, told
+`Keep-Alive: timeout=5` and subtracting its own safety margin, still believed it reusable. The work
+had succeeded; only the answer was destroyed in transit. Two rules follow:
+
+- **`applyLoopbackTimeouts` (`server.ts`)** gives *this* listener a 75s keep-alive and disables the
+  header/request reapers. They exist to stop a hostile client dribbling a request; on 127.0.0.1
+  behind a bearer token, with our own main process as the only client, the sole thing they ever
+  caught was our own slowness. ⚠️ **Not for `daemon/remote/`**, which is reachable from a tailnet.
+- ⛔ **A polled RPC's cost is multiplied by its cadence, so it may not be O(everything).**
+  `reviewQueue` asked `isTaskGradable` for all 322 finished tasks, which built the reviewer *menu*,
+  whose `typicalReviewMs` is a `runs` scan **per worker**: 2,576 scans and **5.0s of a 5.1s** call
+  for a menu no caller read. It now asks `reviewRange` — the diff half only — and migration 59 gives
+  the scan an index (5,225ms → 91ms for the same 2,576 calls). ⚠️ The renderer owes the other half:
+  a poll must not stack on itself (`QualityReview.tsx`).
+
 The RPC method table is **129 methods across six domain files** — `daemon/api/workers.ts`,
 `projects.ts`, `tasks.ts`, `quality.ts`, `agent.ts` and `remote.ts` — that `daemon/api.ts` spreads
 into one object. `RpcMethod`/`RpcParams`/`RpcResult` in `shared/protocol.ts` are derived from it, so adding a
@@ -297,6 +316,16 @@ left `quotaRisk` with no reachable trigger and quota vanished from routing for t
   validated against a **closed set**: a worker id must be a candidate that was offered, a model one
   the cost model can price, a dependency index must point backwards. If a real reply keeps failing
   validation, the *prompt* is wrong — never widen a closed set to make a reply fit.
+- ⛔ **First establish there is a reply.** A `result` record carries `isError`, and a turn that ended
+  in an error carries the *vendor's* words where the answer would be — which parse perfectly well and
+  satisfy nothing. Measured 2026-09-09: codex reports `{"type":"error","status":400,…"The
+  'gpt-5.4-mini' model is not supported when using Codex with a ChatGPT account."}` as a turn, and
+  `reviewer.ts` fed that envelope to `extractJson`, so **2** reviews were stored as *"the reply
+  omitted required `rubric_version`"* and **31** more, whose error was a usage limit with a reset
+  time in it, as *"the reply contained no JSON object"*. ⚠️ Every one of those blamed a model's
+  formatting for something only the operator could fix, and each was a fact about the **fleet** filed
+  as a fact about a model's JSON. The rule the previous bullet states is only sound once this one
+  holds: a validation failure means the prompt is wrong *if there was an answer to validate*.
 
 ### Process lifecycle
 

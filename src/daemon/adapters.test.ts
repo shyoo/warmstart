@@ -597,6 +597,30 @@ describe('a stream transport has two halves, and only one of them was wired', ()
     expect(result?.kind === 'result' && result.isError).toBe(false)
   })
 
+  it('a codex turn the account was refused is a result that says isError, carrying the refusal', () => {
+    // ⛔ The record behind two whole classes of mis-filed quality review. Verbatim from this
+    // install's rollout on 2026-09-09: codex reports a model the ChatGPT plan may not use as a
+    // *turn*, with the vendor's 400 envelope as its text. `isError` is the only thing separating
+    // this from an answer — `reviewer.ts`'s `ask` ignored it and let `extractJson` parse the
+    // envelope as the reviewer's verdict, which then failed on a missing `rubric_version`.
+    const decode = adapter('openai-compatible').decodeStream
+    const out = decode?.({
+      type: 'turn.failed',
+      error: {
+        message:
+          '{"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The ' +
+          "'gpt-5.4-mini' model is not supported when using Codex with a ChatGPT account.\"}}",
+        codex_error_info: 'other'
+      }
+    })
+    const events = Array.isArray(out) ? out : out ? [out] : []
+    // ⛔ No usage record on a failed turn: nothing was spent, and pairing one here would meter it.
+    expect(events.map((e) => e.kind)).toEqual(['result'])
+    const result = events[0]
+    expect(result?.kind === 'result' && result.isError).toBe(true)
+    expect(result?.kind === 'result' && result.text).toContain('not supported when using Codex')
+  })
+
   it('codex is not told to call a tool it was never given', () => {
     // ⛔ Codex has MCP; this adapter cannot pass a *per-session* registration, which is what
     // `task_complete` needs - `plan()` has said so since it was written while `capabilities.mcp`

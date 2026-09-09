@@ -104,6 +104,8 @@ export async function startServer(token: string, ctx: Omit<ApiContext, 'port'>):
     })
   })
 
+  applyLoopbackTimeouts(server)
+
   const port = await listen(server)
   context.port = port
   log.info(`orchestratord listening on 127.0.0.1:${port}`)
@@ -131,6 +133,39 @@ export async function startServer(token: string, ctx: Omit<ApiContext, 'port'>):
       return new Promise<void>((resolve) => server.close(() => resolve()))
     }
   }
+}
+
+/**
+ * Node's socket reapers, retuned for the one client this listener actually has.
+ *
+ * ⛔ **A busy daemon must make the UI slow, never broken, and until now it made it broken.**
+ * `orchestratord` is single-threaded and every RPC handler is synchronous `node:sqlite` work, so a
+ * heavy read blocks the event loop — and node's reapers are timers, which means they do not fire
+ * *during* the block, they fire in a batch the instant it clears. Measured on this install
+ * 2026-09-09 by stacking 40 `quality.queue` calls: `/health` took **78s** to answer, and one poll
+ * came back `TypeError: fetch failed` / `ECONNRESET` — the badge this fixes. What reset it is
+ * `keepAliveTimeout`, whose default 5s node advertises to the client as `Keep-Alive: timeout=5`:
+ * undici subtracts its own safety threshold and re-uses the socket believing 5s is when the server
+ * *will* close, while a blocked loop means 5s is only when the server *starts wanting to*. The
+ * request goes out onto a socket the server destroys as soon as it can run a timer again.
+ *
+ * ⛔ **Raising these is safe here and only here.** `headersTimeout`/`requestTimeout` exist to stop a
+ * hostile client holding sockets open by dribbling a request; this server is bound to 127.0.0.1
+ * behind a bearer token, and its only client is the Electron main process in the same session — so
+ * they defend against nothing and can only fire on our own slowness. ⚠️ **Not for the remote
+ * listener** (`src/daemon/remote/`), which is reachable from a tailnet and keeps node's defaults.
+ *
+ * ⭐ The cure for the *cause* is that no RPC should block the loop for 78s; see `isTaskGradable`.
+ * This is the belt: the failure it removes is one where the work succeeded and the answer was
+ * thrown away in transit.
+ */
+export function applyLoopbackTimeouts(server: Server): void {
+  // Longer than any client's idle window, so the client is always the side that closes and the
+  // race above cannot happen. Node's own guidance for a server behind something that pools.
+  server.keepAliveTimeout = 75_000
+  // 0 disables. Node checks both on a 30s sweep that runs late for exactly as long as we were busy.
+  server.headersTimeout = 0
+  server.requestTimeout = 0
 }
 
 function listen(server: Server): Promise<number> {

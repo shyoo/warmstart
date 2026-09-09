@@ -1738,7 +1738,20 @@ const MIGRATIONS: Migration[] = [
     if (!hasColumn(conn, 'workers', 'grading_effort')) {
       conn.exec('alter table workers add column grading_effort text;')
     }
-  }
+  },
+  // 59 - the per-account run index, because `runs_key` answers a different question.
+  //
+  // ⛔ **Every "what has this *worker* done lately" query was a full table scan plus a sort.**
+  // `runs_task` is keyed on the task and `runs_key` on (adapter, model), so `typicalReviewMs` —
+  // `worker_id` + `kind` + `outcome`, newest first — matched neither. Measured on this install
+  // 2026-09-09 against 796 runs: `explain query plan` said `SCAN runs` + `USE TEMP B-TREE FOR ORDER
+  // BY`, and 2,576 of those calls (322 tasks × 8 workers, one `quality.queue`) cost **5.0s**. The
+  // caller no longer asks it per task, but the query is a fleet-wide shape and the next caller
+  // should not have to know it was a trap.
+  //
+  // ⚠️ `if not exists` like migrations 39, 45 and 46: `versionBefore` lets a test rewind
+  // `user_version` and reopen, which replays this against a database that already has the index.
+  `create index if not exists runs_worker on runs(worker_id, kind, outcome, started_at desc);`
 ]
 
 /**
