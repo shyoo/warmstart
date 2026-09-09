@@ -339,7 +339,9 @@ left `quotaRisk` with no reachable trigger and quota vanished from routing for t
   session, so **nothing about it ever expires** and one missed event strands it permanently. A Plan
   & Split planner closes its active run and asks its session to stop in the same successful
   `task_split` path that writes `blocked`; it never waits for the CLI to obey its stop instruction
-  before its agent-time clock stops.
+  before its agent-time clock stops. ⚠️ The four planners that ran before that landed had their ends
+  moved back onto their splits by migration 57 — each was carrying about 47 minutes of waiting,
+  which is one session idle timeout, as work.
   ⚠️ `admit()` still decides per edge, so an ordinary `completed` edge is unmoved by a failure.
   ⚠️ The backstop is `admitBlocked()` on the tick, which re-reads every blocked row against the world
   and logs at warn when it releases one — a release there means a bug above it. ⚠️ Admission now

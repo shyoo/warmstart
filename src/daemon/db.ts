@@ -1690,7 +1690,49 @@ const MIGRATIONS: Migration[] = [
       created_at integer not null
     );
     create index if not exists remote_push_device on remote_push_subscriptions(device_id);
-  `
+  `,
+  // 57 - stop a pre-t317 Plan & Split planner's clock at the split it filed.
+  //
+  // ⛔ **The retrospective half of `endPlannerForSplit`.** Until t317 the control plane wrote
+  // `blocked` and relied on the planner reading "stop now" and exiting; the run was closed by
+  // `onSessionExit`, so `ended_at` recorded the moment the CLI's idle timer fired rather than the
+  // moment the planner delegated. `activetime.ts` derives every duration from `started_at` and
+  // `ended_at`, so those runs report the wait as work. Measured on this install 2026-09-08: **4**
+  // runs (t191, t226, t292, t310) carrying **47.3-47.9 minutes** of nothing each - the same figure
+  // four times over, which is one idle timeout and not four coincidences.
+  //
+  // ⛔ **Moved to a measurement, never to an estimate.** `applySplit` files every child in one pass,
+  // so the newest child created inside the run's own span *is* where `endPlannerForSplit` would put
+  // the end today. A run with no such child is left exactly as it is: there is no evidence of when
+  // its split happened, and inventing one would be the kind of reading this repairs. `max` and not
+  // `min`, because a planner may have called `task_create` earlier in the same run and that child
+  // is not the split.
+  //
+  // ⚠️ Matched on the exact note `turnend.ts` wrote for this case and nothing else writes, and
+  // guarded by `ended_at >` the split, so replaying it moves nothing a second time.
+  (conn) => {
+    const legacyNote =
+      'The agent filed its plan as subtasks and stopped, as instructed. This task waits for ' +
+      'them and comes back by itself.'
+    const splitAt = `select max(c.created_at) from tasks c
+                      where c.parent_task_id = runs.task_id
+                        and c.created_at >= runs.started_at
+                        and c.created_at <= runs.ended_at`
+    const changed = conn
+      .prepare(
+        `update runs
+            set ended_at = (${splitAt})
+          where kind = 'work'
+            and outcome = 'blocked'
+            and note = ?
+            and ended_at is not null
+            and task_id in (select id from tasks where kind = 'plan')
+            and ended_at > coalesce((${splitAt}), ended_at)`
+      )
+      .run(legacyNote)
+    const moved = Number(changed.changes ?? 0)
+    if (moved > 0) log.info(`planner-split repair: ended ${moved} planner run(s) at their split`)
+  }
 ]
 
 /**
