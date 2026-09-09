@@ -27,7 +27,8 @@ interface RemoteServer { close(): Promise<void>; broadcast(event: DaemonEvent): 
 export function startRemoteServer(ctx: ApiContext): { close(): Promise<void>; broadcast(event: DaemonEvent): void } {
   let live: RemoteServer | null = null
   let info: TailscaleInfo | null = null
-  const publish = () => setRemoteListenerInfo(() => ({ listening: !!live, secure: !!live && secure(remoteConfig().bind, info), urls: urls(), tailscale: info ? { installed: info.installed, hostname: info.hostname, certAvailable: info.certAvailable, error: info.error } : null }))
+  let refreshTail: Promise<void> = Promise.resolve()
+  const publish = () => setRemoteListenerInfo(() => ({ listening: !!live, secure: !!live && secure(remoteConfig().bind, info), urls: urls(), tailscale: info ? { installed: info.installed, hostname: info.hostname, certAvailable: info.certAvailable, error: info.error, certError: info.certError } : null }))
   const urls = () => {
     if (!live) return []
     const c = remoteConfig(), scheme = secure(c.bind, info) ? 'https' : 'http'
@@ -38,7 +39,7 @@ export function startRemoteServer(ctx: ApiContext): { close(): Promise<void>; br
     if (c.bind === 'lan' || c.bind === 'both') for (const address of lanAddresses()) out.push(`${scheme}://${address}:${c.port}`)
     return out
   }
-  const refresh = async (probeOnly = false) => {
+  const refreshNow = async (probeOnly: boolean) => {
     if (live) { await live.close(); live = null }
     if (!remoteConfig().enabled && !probeOnly) return publish()
     info = await tailscaleInfo()
@@ -46,6 +47,15 @@ export function startRemoteServer(ctx: ApiContext): { close(): Promise<void>; br
     const c = remoteConfig()
     if (c.bind === 'tailscale' && !info.ipv4) { log.warn('remote access not listening: Tailscale is unavailable'); return publish() }
     try { live = await listen(ctx, info); publish() } catch (err) { log.warn(`remote access could not bind port ${c.port}: ${errorMessage(err)}`); publish() }
+  }
+  // Configuration writes arrive independently (bind, then port) and an operator can press
+  // Re-check while either is settling. Two concurrent close/probe/listen cycles race each other
+  // into publishing an old HTTP listener after a fresh HTTPS one; make each observation land in
+  // the order it was requested.
+  const refresh = (probeOnly = false): Promise<void> => {
+    const next = refreshTail.then(() => refreshNow(probeOnly))
+    refreshTail = next.catch(() => undefined)
+    return next
   }
   const off = onRemoteConfigChange(() => { void refresh() })
   setRemoteListenerRefresh(() => refresh(true))

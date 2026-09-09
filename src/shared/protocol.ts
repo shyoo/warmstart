@@ -2283,7 +2283,7 @@ export type RemoteBind = 'tailscale' | 'lan' | 'both'
 export interface RemoteDevice { id: string; label: string; createdAt: number; lastSeenAt: number | null; lastAddress: string | null; revokedAt: number | null }
 export interface RemoteStatus {
   enabled: boolean; bind: RemoteBind; port: number; listening: boolean; secure: boolean; urls: string[]
-  tailscale: { installed: boolean; hostname: string | null; certAvailable: boolean; error: string | null } | null
+  tailscale: { installed: boolean; hostname: string | null; certAvailable: boolean; error: string | null; certError: string | null } | null
   projects: Array<{ id: string; name: string; enabled: boolean }>; devices: RemoteDevice[]
 }
 

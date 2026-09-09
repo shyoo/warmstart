@@ -42,12 +42,13 @@ enabled answers `404`, not `403` — it should not be distinguishable from one t
 5. Add the opened page to the phone's home screen, then turn on notifications from the app.
 
 Success looks like an `https://…ts.net:<port>` address on the desktop screen and the phone in the
-paired-device list. If the address is missing, finish step 2 and press **Re-check Tailscale**, which
-runs a new local probe rather than showing the prior result. If Tailscale's local service refuses the
-probe, the screen shows that error instead of calling the machine signed out; check that the service
-is running and the desktop app may access it. If the phone cannot open it, check both devices are in
-the same tailnet. If the port is taken, change it on the same screen. ⚠️ No inbound port forwarding is
-involved at any point.
+paired-device list. It is private to the tailnet, not a public internet address: the phone must also
+be connected to Tailscale and signed into that tailnet. If the address is missing, finish step 2 and
+press **Re-check Tailscale**, which runs a new local probe rather than showing the prior result. If
+Tailscale's local service or certificate request refuses the probe, the screen shows its error; check
+that the service is running, the desktop app may access it, and the device may issue a certificate.
+If the port is taken, change it on the same screen. ⚠️ No inbound port forwarding is involved at any
+point.
 
 ## Tailscale, or a plain LAN
 
