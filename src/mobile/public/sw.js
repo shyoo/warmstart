@@ -5,6 +5,22 @@
  */
 const SHELL = './sw-shell-v2'
 
+/**
+ * How long a navigation waits for the network before the cached shell answers instead.
+ *
+ * ⛔ **Because the phone is reached over a tailnet relay, not a LAN.** Off the home network
+ * Tailscale routinely cannot build a direct connection and falls back to a DERP relay: measured
+ * 2026-09-09 from `shyoo-12700k` to a phone off the LAN, `tailscale ping` reported *"direct
+ * connection not established"* and 324ms–1.0s per round trip, against 19.7ms to the machine's
+ * own nearest relay. That is slow but perfectly usable — the app shell is already on the phone,
+ * and everything the screens then read is small JSON.
+ *
+ * ⚠️ The number is a deadline, not a budget. Whatever the network eventually answers still
+ * populates the cache for the next open, so a phone that took the cached shell today is not
+ * pinned to it tomorrow.
+ */
+const NAVIGATION_TIMEOUT_MS = 2500
+
 self.addEventListener('install', (event) => {
   event.waitUntil(
     (async () => {
@@ -25,6 +41,51 @@ self.addEventListener('activate', (event) => {
   )
 })
 
+/**
+ * Fetch, and keep a good same-origin answer for next time.
+ *
+ * ⚠️ The cache write never delays the reply, but it is handed to `waitUntil` rather than left to
+ * run loose: a worker may be shut down the moment it has answered, and a refresh that is racing
+ * that shutdown is the one that most needs to finish.
+ */
+async function fetchAndCache(event, url) {
+  const live = await fetch(event.request)
+  if (live.ok && url.origin === self.location.origin) {
+    const copy = live.clone()
+    event.waitUntil(caches.open(SHELL).then((cache) => cache.put(event.request, copy)))
+  }
+  return live
+}
+
+/**
+ * The network's answer if it arrives in time, the cached one if it does not.
+ *
+ * ⛔ **Neither a timeout nor a rejection may reach the page.** This is the whole bug: a bare
+ * `await fetch()` on the navigation path had no deadline, no `catch` and no fallback, so a slow
+ * or stalled relay produced a spinner and then the browser's network-error page — with a
+ * complete shell sitting unused in the cache. What it was waiting on is `index.html`, **1,170
+ * bytes**; the 224KB bundle beside it is fingerprinted, is not `freshFirst`, and was already
+ * being served from cache. So the app refused to open over a round trip, not over a download.
+ *
+ * ⚠️ A non-`ok` answer loses to the cache too. A daemon mid-restart replies 502, and rendering
+ * that over a known-good shell trades a working screen for an error page.
+ */
+function withDeadline(live, cached, ms) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(cached), ms)
+    live.then(
+      (response) => {
+        clearTimeout(timer)
+        resolve(response.ok ? response : cached)
+      },
+      () => {
+        clearTimeout(timer)
+        resolve(cached)
+      }
+    )
+  })
+}
+
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url)
   if (event.request.method !== 'GET' || url.pathname.startsWith('/remote/')) return
@@ -36,13 +97,22 @@ self.addEventListener('fetch', (event) => {
       if (!freshFirst) {
         const cached = await caches.match(event.request)
         if (cached) return cached
+        return fetchAndCache(event, url)
       }
-      const live = await fetch(event.request)
-      if (live.ok && url.origin === self.location.origin) {
-        const cache = await caches.open(SHELL)
-        void cache.put(event.request, live.clone())
-      }
-      return live
+      // ⚠️ A navigation falls back to the shell for *any* path, because the server already works
+      // that way: anything it cannot find on disk it answers with `index.html`. Only `./` was
+      // precached, so without this a deep link would have no fallback to prefer.
+      const cached =
+        (await caches.match(event.request)) ??
+        (event.request.mode === 'navigate' ? await caches.match('./index.html') : undefined)
+      const live = fetchAndCache(event, url)
+      // ⛔ Nothing cached yet — a first visit, or one whose shell was evicted. There is no
+      // fallback to prefer, so this is the one case that must still wait for the network.
+      if (!cached) return live
+      // ⚠️ The revalidation outlives the response, so the worker has to be told to stay alive for
+      // it; and its rejection is answered here, or a failed refresh surfaces as an unhandled one.
+      event.waitUntil(live.catch(() => {}))
+      return withDeadline(live, cached, NAVIGATION_TIMEOUT_MS)
     })()
   )
 })

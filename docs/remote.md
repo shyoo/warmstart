@@ -50,6 +50,23 @@ The mobile server sends `no-cache` for the HTML, manifest and service worker whi
 assets remain immutable. The service worker uses a new shell cache on update and goes to the network
 first for navigation, so a normal reload receives a new phone build without clearing the pairing token.
 
+⛔ **Network-first is a preference with a deadline, never a requirement.** A navigation races the
+network against 2.5s and falls back to the cached shell on timeout, on a rejection, *or* on a non-`ok`
+answer; whatever the network eventually returns still refreshes the cache for the next open. Without
+the deadline the phone was unusable off the home network — reported 2026-09-09 and reproduced from
+stored evidence rather than from the description. The daemon answered `https://…ts.net:8787/` in
+**7.8ms** locally and MagicDNS was correct, but `tailscale ping` to the phone reported *"direct
+connection not established"* and **324ms–1.0s** round trips over a DERP relay. On the LAN Tailscale
+builds a direct connection and the same page opens instantly; off it, the old bare `await fetch()` had
+no deadline, no `catch` and no fallback, so `respondWith` received a rejected promise and the browser
+showed its network-error page. ⚠️ What it was waiting on is `index.html`, **1,170 bytes** — the 224KB
+bundle beside it is fingerprinted and was already cache-first. The app refused to open over a round
+trip, not a download. `src/mobile/src/lib/sw.test.ts` holds the four outcomes of that race.
+
+⚠️ **A relay is the normal path off the LAN, not a fault to chase.** On cellular both ends are usually
+behind carrier NAT, so Tailscale cannot always build a direct connection and DERP is what it is for.
+The fix belongs in what the phone does with a slow path, not in trying to make every path fast.
+
 ## Setup
 
 1. Install Tailscale on the computer and the phone, and sign both into the same tailnet.
