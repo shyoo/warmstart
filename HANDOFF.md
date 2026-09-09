@@ -1,6 +1,6 @@
 # Multi Agent Controller — Session Handoff
 
-**Current UI follow-up:** phone Overview is project-selected (same-site cookie), confirms remote actions, projects a 200-entry durable task/run timeline, and revalidates its shell without clearing pairing; stale desktop credit values now dim with the quota reading. Worker settings now separately retain a grading model's effort and pass it to read-only peer reviews.
+**Current design decision:** CLI update health is specified in `transient_docs/cli_update_design_2026-09-08.md`. Today the app reports installed versions only. The proposed adapter-capability design checks once weekly and in Doctor, keeps `current` / `available` / vendor-evidenced `required` / `unknown` distinct with age and basis, and never gates dispatch. Decide whether the first implementation is passive only or also offers a confirmed, idle-only Update action; unattended host mutation is explicitly not recommended.
 
 Multi-agent controller: a scheduler that routes coding-agent tasks to the worker, session and moment
 where they are cheapest. Electron shell + `orchestratord` daemon. Windows now; macOS/Linux built and
