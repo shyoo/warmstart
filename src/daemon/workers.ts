@@ -29,6 +29,7 @@ interface WorkerRow {
   max_concurrent: number
   default_model: string | null
   grading_model: string | null
+  summarising_model: string | null
   grading_effort: string | null
   grading_enabled: number
   default_effort: string | null
@@ -55,6 +56,7 @@ function toWorker(r: WorkerRow): Worker {
     maxConcurrent: r.max_concurrent,
     defaultModel: r.default_model,
     gradingModel: r.grading_model,
+    summarisingModel: r.summarising_model,
     gradingEffort: r.grading_effort,
     gradingEnabled: r.grading_enabled !== 0,
     defaultEffort: r.default_effort,
@@ -175,14 +177,15 @@ export function createWorker(input: {
   const defaultModels = policy.defaultModels ?? null
   const defaultModelsJson = defaultModels ? JSON.stringify(defaultModels) : null
   const gradingModel = defaultGradingModel(input.adapterId)
+  const summarisingModel = defaultSummarisingModel(input.adapterId)
 
   db()
     .prepare(
       `insert into workers (id, adapter_id, label, isolation_root, enabled, human_occupied,
                             max_concurrent, default_model, default_effort, default_models_json,
-                            grading_model, grading_enabled,
+                            grading_model, summarising_model, grading_enabled,
                             sort_order, created_at)
-       values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`
+       values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`
     )
     .run(
       id,
@@ -198,6 +201,7 @@ export function createWorker(input: {
       defaultEffort,
       defaultModelsJson,
       gradingModel,
+      summarisingModel,
       tail,
       now
     )
@@ -244,6 +248,7 @@ export function updateWorker(
       | 'role'
       | 'defaultModel'
       | 'gradingModel'
+      | 'summarisingModel'
       | 'gradingEffort'
       | 'gradingEnabled'
       | 'defaultEffort'
@@ -272,7 +277,7 @@ export function updateWorker(
     .prepare(
       `update workers set label = ?, enabled = ?, human_occupied = ?, max_concurrent = ?, role = ?,
                           default_model = ?, default_effort = ?, default_models_json = ?,
-                          routable_models_json = ?, grading_model = ?, grading_effort = ?, grading_enabled = ?
+                          routable_models_json = ?, grading_model = ?, summarising_model = ?, grading_effort = ?, grading_enabled = ?
        where id = ?`
     )
     .run(
@@ -289,6 +294,7 @@ export function updateWorker(
       defaultModelsJson,
       routableModelsJson,
       patch.gradingModel === undefined ? (current.gradingModel ?? null) : patch.gradingModel,
+      patch.summarisingModel === undefined ? (current.summarisingModel ?? null) : patch.summarisingModel,
       patch.gradingEffort === undefined ? (current.gradingEffort ?? null) : patch.gradingEffort,
       (patch.gradingEnabled ?? current.gradingEnabled) ? 1 : 0,
       id
@@ -331,6 +337,16 @@ export function inheritedModelFor(worker: Worker): Array<string | null> {
 
 /** Smallest configured review rung for a built-in adapter; external adapters use their CLI default. */
 export function defaultGradingModel(adapterId: string): string | null {
+  return {
+    'claude-code': 'claude-haiku-4-5',
+    'antigravity-cli': 'gemini-3.8-flash-low',
+    'openai-compatible': 'gpt-5.6-luna',
+    'local-llm': 'qwen3-coder-30b-a3b'
+  }[adapterId] ?? null
+}
+
+/** Smallest configured model suitable for the one-line, title-only consult. */
+export function defaultSummarisingModel(adapterId: string): string | null {
   return {
     'claude-code': 'claude-haiku-4-5',
     'antigravity-cli': 'gemini-3.8-flash-low',

@@ -97,6 +97,7 @@ export function checkWorkerDefaults(
   patch: {
     defaultModel?: string | null
     gradingModel?: string | null
+    summarisingModel?: string | null
     gradingEffort?: string | null
     defaultEffort?: string | null
     defaultModels?: Record<string, string | null> | null
@@ -114,6 +115,10 @@ export function checkWorkerDefaults(
 
   if (patch.gradingModel && !cm.modelSpec(patch.gradingModel)) {
     throw new Error(`'${patch.gradingModel}' is not a model ${info.label} can be priced for`)
+  }
+
+  if (patch.summarisingModel && !cm.modelSpec(patch.summarisingModel)) {
+    throw new Error(`'${patch.summarisingModel}' is not a model ${info.label} can be priced for`)
   }
 
   if (patch.defaultModels) {

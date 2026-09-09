@@ -352,6 +352,8 @@ export interface Worker {
   defaultModel: string | null
   /** Model used for peer reviews performed by this account. */
   gradingModel?: string | null
+  /** Model used for this account's optional, title-only consults. */
+  summarisingModel?: string | null
   /** Reasoning effort used with this account's grading model, where its CLI accepts one. */
   gradingEffort?: string | null
   /** Whether this account may be selected as a peer reviewer. */
@@ -1427,6 +1429,7 @@ export interface RpcMap {
         | 'role'
         | 'defaultModel'
         | 'gradingModel'
+        | 'summarisingModel'
         | 'gradingEffort'
         | 'gradingEnabled'
         | 'defaultEffort'

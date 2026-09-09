@@ -406,16 +406,17 @@ export function Workers({
               (which now sets one window per line), Account, Model and Role. */}
           <colgroup>
             <col style={{ width: '3%' }} />
-            <col style={{ width: '16%' }} />
-            <col style={{ width: '7%' }} />
             <col style={{ width: '14%' }} />
+            <col style={{ width: '7%' }} />
             <col style={{ width: '12%' }} />
             <col style={{ width: '10%' }} />
+            <col style={{ width: '10%' }} />
             <col style={{ width: '5%' }} />
-            <col style={{ width: '13%' }} />
-            <col style={{ width: '7%' }} />
             <col style={{ width: '11%' }} />
+            <col style={{ width: '7%' }} />
             <col style={{ width: '9%' }} />
+            <col style={{ width: '8%' }} />
+            <col style={{ width: '8%' }} />
             <col style={{ width: '9%' }} />
             <col style={{ width: '9%' }} />
           </colgroup>
@@ -446,6 +447,7 @@ export function Workers({
                 </span>
               </th>
               <th>Grading model</th>
+              <th>Summary model</th>
               <th>Role</th>
               <th>Usage credits</th>
               <th className="tbl-num">Action</th>
@@ -905,6 +907,21 @@ export function Workers({
                           />
                         )}
                       </div>
+                    </td>
+                    <td>
+                      <SettingButtonSelect
+                        className="worker-grading-select"
+                        value={worker.summarisingModel ?? ''}
+                        options={modelChoices(modelsFor(worker.adapterId)?.models ?? [])}
+                        ariaLabel={`Summary model for ${worker.label}`}
+                        disabled={busy === `summary-model:${worker.id}`}
+                        title="The small model this account uses for optional, asynchronous task-title summaries. Clear it to leave this worker out."
+                        onChange={(value) =>
+                          void guard(`summary-model:${worker.id}`, () =>
+                            rpc('worker.update', { id: worker.id, summarisingModel: value || null })
+                          )
+                        }
+                      />
                     </td>
                     <td>
                       <div className="worker-role-checks" aria-label={`Roles for ${worker.label}`}>

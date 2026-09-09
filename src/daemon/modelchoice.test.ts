@@ -128,11 +128,12 @@ afterAll(() => {
 })
 
 describe('what an account is allowed to default to', () => {
-  it('starts new workers on each adapter\'s smallest grading model', () => {
+  it('starts new workers on each adapter\'s smallest grading and summary model', () => {
     expect(workers.createWorker({ adapterId: 'claude-code', label: 'grader-claude' }).gradingModel).toBe('claude-haiku-4-5')
     expect(workers.createWorker({ adapterId: 'openai-compatible', label: 'grader-codex' }).gradingModel).toBe('gpt-5.6-luna')
     const agy = workers.createWorker({ adapterId: 'antigravity-cli', label: 'grader-agy' })
     expect(agy.gradingModel).toBe('gemini-3.8-flash-low')
+    expect(agy.summarisingModel).toBe('gemini-3.8-flash-low')
     workers.retireWorker(agy.id)
   })
 
@@ -159,6 +160,15 @@ describe('what an account is allowed to default to', () => {
     const saved = workers.updateWorker(w.id, { gradingModel: 'claude-sonnet-5', gradingEnabled: false })
     expect(saved.gradingModel).toBe('claude-sonnet-5')
     expect(saved.gradingEnabled).toBe(false)
+  })
+
+  it('validates and stores a worker summary model independently', () => {
+    const w = workers.createWorker({ adapterId: 'claude-code', label: 'summary-settings' })
+    api.checkWorkerDefaults('claude-code', { summarisingModel: 'claude-sonnet-5' })
+    expect(() => api.checkWorkerDefaults('claude-code', { summarisingModel: 'gpt-5.6-luna' })).toThrow(/not a model/)
+    const saved = workers.updateWorker(w.id, { summarisingModel: 'claude-sonnet-5' })
+    expect(saved.summarisingModel).toBe('claude-sonnet-5')
+    expect(workers.getWorker(w.id)?.summarisingModel).toBe('claude-sonnet-5')
   })
 
   it('stores a Muse grading effort separately and rejects one the grading model cannot take', () => {

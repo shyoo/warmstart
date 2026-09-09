@@ -1,5 +1,5 @@
 # Multi Agent Controller — Session Handoff
-**Current design decision:** CLI update health is specified in `transient_docs/cli_update_design_2026-09-08.md`. Today the app reports installed versions only. The proposed adapter-capability design checks once weekly and in Doctor, keeps `current` / `available` / vendor-evidenced `required` / `unknown` distinct with age and basis, and never gates dispatch. Decide whether the first implementation is passive only or also offers a confirmed, idle-only Update action; unattended host mutation is explicitly not recommended.
+**Current design decision:** Long task titles remain opt-in (`summariseTitles`) and never gate dispatch. Each worker now has a separately configurable small **Summary model**; title-only consults use it asynchronously through the ordinary judgment gates, while clearing it leaves that worker out. CLI update health is specified in `transient_docs/cli_update_design_2026-09-08.md`; decide whether its first implementation is passive only or also offers a confirmed, idle-only Update action.
 
 Multi-agent controller: a scheduler that routes coding-agent tasks to the worker, session and moment
 where they are cheapest. Electron shell + `orchestratord` daemon. Windows now; macOS/Linux built and

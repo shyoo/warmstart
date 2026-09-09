@@ -268,6 +268,22 @@ describe("the controller's own gates, on top of the account's", () => {
 })
 
 describe('choosing between the accounts that are left', () => {
+  it('uses a worker\'s configured cheap model for a title-only consult', () => {
+    const worker = workers.updateWorker(fit('title-worker').id, { summarisingModel: 'claude-haiku-4-5' })
+    const choice = controller.chooseController({ kind: 'title' })
+    expect(choice.worker?.id).toBe(worker.id)
+    expect(choice.model).toBe('claude-haiku-4-5')
+    workers.retireWorker(worker.id)
+  })
+
+  it('leaves a worker with no summary model out of title-only consults', () => {
+    const worker = workers.updateWorker(fit('no-title-worker').id, { summarisingModel: null })
+    const choice = controller.chooseController({ kind: 'title' })
+    expect(choice.worker).toBeNull()
+    expect(choice.reason).toContain('no title-summary model')
+    workers.retireWorker(worker.id)
+  })
+
   it('says nothing is available, with a reason, when every account is unfit', () => {
     const worker = fit('the-only-one')
     workers.recordDispatchFailure(worker.id, 'subscription expired', null)

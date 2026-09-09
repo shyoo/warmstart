@@ -271,6 +271,8 @@ function settle(
 export interface ControllerChoice {
   worker: Worker | null
   reason: string
+  /** A title consult may use the worker's separately configured cheap model. */
+  model?: string | null
 }
 
 /**
@@ -350,12 +352,17 @@ function controllerHeadroom(workerId: string): number {
   return window ? 1 - window.percent / 100 : 1
 }
 
-export function chooseController(): ControllerChoice {
+export function chooseController(consult?: Pick<Consult, 'kind'>): ControllerChoice {
   const reasons: string[] = []
-  const candidates: Array<{ worker: Worker; score: number }> = []
+  const candidates: Array<{ worker: Worker; score: number; model: string | null }> = []
 
   for (const worker of listWorkers()) {
     if (!canJudge(worker.role)) continue
+    const model = consult?.kind === 'title' ? worker.summarisingModel ?? null : null
+    if (consult?.kind === 'title' && !model) {
+      reasons.push(`${worker.label} has no title-summary model`)
+      continue
+    }
     const blocked = controllerUnavailability(worker)
     if (blocked) {
       reasons.push(blocked)
@@ -366,7 +373,7 @@ export function chooseController(): ControllerChoice {
 
     // A dedicated controller is preferred over an account that also does work, because asking a busy
     // account for judgment competes with the work it is doing.
-    candidates.push({ worker, score: (worker.role === 'controller' ? 1 : 0) + headroom })
+    candidates.push({ worker, score: (worker.role === 'controller' ? 1 : 0) + headroom, model })
   }
 
   if (candidates.length === 0) {
@@ -376,7 +383,8 @@ export function chooseController(): ControllerChoice {
     }
   }
   candidates.sort((a, b) => b.score - a.score)
-  return { worker: (candidates[0] as { worker: Worker }).worker, reason: '' }
+  const chosen = candidates[0]!
+  return { worker: chosen.worker, reason: '', model: chosen.model }
 }
 
 export function consultsStartedSince(since: number): number {
@@ -427,13 +435,13 @@ export async function drainConsults(): Promise<{ answered: number; note: string 
         break
       }
 
-      const choice = chooseController()
+      const choice = chooseController(consult)
       if (!choice.worker) {
         notes.push(`no controller available: ${choice.reason}`)
         break
       }
 
-      await run(consult, choice.worker)
+      await run(consult, choice.worker, choice.model)
       answered++
       // One per pass. The next question can wait thirty seconds; a fleet-wide burst cannot be undone.
       break
@@ -448,10 +456,15 @@ export async function drainConsults(): Promise<{ answered: number; note: string 
   }
 }
 
-async function run(consult: Consult, worker: Worker): Promise<void> {
+async function run(consult: Consult, worker: Worker, model: string | null = null): Promise<void> {
   let sessionId: string | null = null
   try {
-    const session = spawnSession({ workerId: worker.id, transport: 'stream', purpose: 'consult' })
+    const session = spawnSession({
+      workerId: worker.id,
+      transport: 'stream',
+      purpose: 'consult',
+      ...(model ? { model } : {})
+    })
     sessionId = session.id
     db()
       .prepare("update consults set status = 'pending', worker_id = ?, session_id = ?, started_at = ? where id = ?")

@@ -1771,6 +1771,22 @@ const MIGRATIONS: Migration[] = [
           and identity_json is not null
           and identity_json not like '%API Key%'`
     ).run()
+  },
+  // 61 - title-only consults name their own cheap model instead of borrowing the controller's.
+  //
+  // A null is deliberate for adapters without a measured small model: title generation stays
+  // optional rather than silently falling back to a provider default of unknown cost.
+  (conn) => {
+    if (!hasColumn(conn, 'workers', 'summarising_model')) {
+      conn.exec('alter table workers add column summarising_model text;')
+    }
+    conn.exec(`update workers set summarising_model = case adapter_id
+      when 'claude-code' then 'claude-haiku-4-5'
+      when 'antigravity-cli' then 'gemini-3.8-flash-low'
+      when 'openai-compatible' then 'gpt-5.6-luna'
+      when 'local-llm' then 'qwen3-coder-30b-a3b'
+      else summarising_model end
+      where summarising_model is null;`)
   }
 ]
 
