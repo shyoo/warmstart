@@ -699,12 +699,25 @@ try {
       const button = row?.querySelector('button');
       if (!row || !input || !button) return { missing: true };
       const i = input.getBoundingClientRect(), b = button.getBoundingClientRect();
-      return { overlap: Math.round(i.right - b.left), inputWidth: Math.round(i.width) };
+      const r = row.getBoundingClientRect();
+      return {
+        overlap: Math.round(i.right - b.left),
+        inputWidth: Math.round(i.width),
+        rowWidth: Math.round(r.width),
+        buttonWidth: Math.round(b.width),
+        share: r.width ? Math.round((i.width / r.width) * 100) : 0
+      };
     })())
   `)
   const c = JSON.parse(compose)
   check('the Send button does not sit on top of the message box', c.overlap <= 0, compose)
-  check('and the message box gets the room', c.inputWidth > 200, compose)
+  // ⛔ **A share of the row, not a pixel count.** This asserted `inputWidth > 200`, which is the
+  // width the box happens to have on a 1440-wide window and says nothing about the layout. Windows CI
+  // clamps the window to a smaller screen, so the same correct layout measured 183 and the job went
+  // red for a fortnight of runs (2026-09-09, run 34430693395) while `overlap` was -8 — the button and
+  // the box adjacent, exactly as intended. What the check is *for* is that the composer is not
+  // squeezed by its own button, and that is a ratio.
+  check('and the message box gets the room', c.share >= 50 && c.inputWidth > c.buttonWidth, compose)
 
   // ⛔ Stopping used to mean leaving the thread. The only Stop outside `awaiting_human` lived in the
   // action menu on the task table, so an operator reading a run go wrong had to go back to the list,
