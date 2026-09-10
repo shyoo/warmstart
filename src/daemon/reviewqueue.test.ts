@@ -113,7 +113,10 @@ beforeAll(async () => {
   // rejected as *"Claude Code is not installed"* on any machine without it, so a batch that should
   // take two tasks took one — red on Linux, green on a developer box that happens to have Claude
   // Code on PATH. Measured 2026-09-09.
-  for (const id of ['antigravity-cli', 'claude-code']) {
+  // ⚠️ **Every adapter this suite names, including ones seeded inside a test body.** Stubbing only
+  // the two commissioned in `beforeAll` left `w-openai` — created inside *takes only tasks under
+  // the threshold* — rejected as not installed, so a batch that should take two took one.
+  for (const id of ['antigravity-cli', 'claude-code', 'openai-compatible']) {
     vi.spyOn(adapters.adapter(id), 'isInstalled').mockReturnValue(true)
   }
   db.openDb(join(dir, 'queue.db'))

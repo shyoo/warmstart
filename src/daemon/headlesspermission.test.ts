@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join, sep } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { AdapterInfo } from '@shared/protocol.js'
-import { forceInstalled } from './testkit.js'
+import { forceInstalled, stubCliPath } from './testkit.js'
 
 /**
  * Why an unattended run stopped asking, and why "Always" now means always.
@@ -31,6 +31,7 @@ let adapters: typeof import('./adapters/index.js')
 let projectId: string
 let pool: string
 let undoInstalled: (() => void) | undefined
+let undoPath: (() => void) | undefined
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'mac-headless-permission-'))
@@ -51,9 +52,14 @@ beforeAll(async () => {
   // Measured 2026-09-09: without this the suite fails as `'claude' is not on PATH` on any machine
   // without Claude Code installed, saying nothing about the permission mode it exists to pin.
   undoInstalled = await forceInstalled('claude-code')
+  // ⛔ A second, separate gate: `plan()` resolves the command through `which()` before it builds
+  // an argv, so eligibility being satisfied is not enough. Measured 2026-09-09 — this suite was
+  // given `forceInstalled` alone and stayed red in CI as `'claude' is not on PATH`.
+  undoPath = stubCliPath('claude')
 })
 
 afterAll(() => {
+  undoPath?.()
   undoInstalled?.()
   db.closeDb()
   rmSync(dir, { recursive: true, force: true })

@@ -31,9 +31,9 @@
 
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { delimiter, join } from 'node:path'
 import type { Session, Worker } from '@shared/protocol.js'
 import type { Project, ProjectConfig, Task } from '@shared/tasks.js'
 import { db, openDb, row } from './db.js'
@@ -90,6 +90,43 @@ export async function forceInstalled(...adapterIds: string[]): Promise<() => voi
   }
   return () => {
     for (const restore of undo) restore()
+  }
+}
+
+/**
+ * Put stub executables for the named commands on `PATH`, and hand back the undo.
+ *
+ * ⛔ **`isInstalled()` and `plan()` are two different gates, and `forceInstalled` only closes the
+ * first.** `plan()` resolves the command through `which()` *before* it builds an argv, so a suite
+ * that asserts on argv throws `'claude' is not on PATH` on a machine with no CLI even when every
+ * eligibility check has been satisfied. Measured 2026-09-09: `headlesspermission` was given
+ * `forceInstalled` and stayed red in CI for exactly this reason, which is the distinction
+ * `docs/testing.md` §3 had already drawn and this helper now makes hard to miss.
+ *
+ * ⚠️ The stubs are **never executed** and prove nothing about the CLI; what is under test is the argv
+ * *this repository* builds, which is provable on a machine that has never installed anything.
+ * `which()` wants a regular file — plus the executable bit off Windows and a PATHEXT-matching
+ * extension on it — so both `name` and `name.exe` are written.
+ *
+ * Third copy of an idiom already in `resume.test.ts` and `adapters.test.ts`; per this file's own
+ * rule it lives here rather than being forked a fourth time. ⛔ Always call the undo in `afterAll`:
+ * `PATH` is process-wide, and a suite that leaks it changes what every later suite can resolve.
+ */
+export function stubCliPath(...commands: string[]): () => void {
+  const realPath = process.env.PATH
+  const stubDir = mkdtempSync(join(tmpdir(), 'agentyard-clistub-'))
+  for (const command of commands) {
+    for (const name of [command, `${command}.exe`]) {
+      const file = join(stubDir, name)
+      writeFileSync(file, '')
+      chmodSync(file, 0o755)
+    }
+  }
+  process.env.PATH = `${stubDir}${delimiter}${realPath ?? ''}`
+  return () => {
+    if (realPath === undefined) delete process.env.PATH
+    else process.env.PATH = realPath
+    rmSync(stubDir, { recursive: true, force: true })
   }
 }
 
