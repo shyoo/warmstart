@@ -562,6 +562,26 @@ try {
         .run(id, taskId, workerId, sessionId, Date.now())
       return id
     }
+
+    // ⛔ **`agent.*` needs an *open run*, which needs a session that is still alive.** `runForSession`
+    // returns null the moment a session's run is closed, and every handler below then answers
+    // *"this session is not working on a task"* — a refusal that is correct, and that reads in the
+    // summary as though the handler were broken.
+    //
+    // ⚠️ The probe PTY is short-lived by design, and the split flow between the spawn and these
+    // checks waits up to 20s for a structural approval. On a host where the PTY cannot stay open —
+    // node-pty's `conpty_console_list_agent` cannot `AttachConsole` in a sandbox, and CI hits this on
+    // windows-latest — the run is closed before the checks that need it. Measured 2026-09-09: five
+    // checks failed this way on both CI runners and locally, while the *same section's* earlier
+    // checks against the same session passed, because they ran before the wait.
+    //
+    // ⛔ Checked at the point of use, never once up front: a single guard at the top of the section
+    // would skip the early checks too, and those genuinely run on these hosts.
+    const runIsOpen = (runId) => {
+      const row = agentDb.prepare('select ended_at from runs where id = ?').get(runId)
+      return !!row && row.ended_at === null
+    }
+    const NO_OPEN_RUN = 'the probe session closed before this check — no open run for agent.* to find'
     const spawnAgentSession = () =>
       daemon.rpc('session.spawn', {
         workerId: probeWorker.id,
@@ -634,7 +654,7 @@ try {
       constraints: pin
     })
     const planSession = await spawnAgentSession()
-    seedAgentRun(planTask.id, probeWorker.id, planSession.id)
+    const planRun = seedAgentRun(planTask.id, probeWorker.id, planSession.id)
     const tooFew = await daemon.rpc('agent.split', {
       sessionId: planSession.id,
       pieces: [{ title: 'only one' }]
@@ -679,22 +699,27 @@ try {
       (split.seqs ?? []).join(',')
     )
 
-    const depended = await daemon.rpc('agent.depend', {
-      sessionId: planSession.id,
-      taskSeq: split.seqs[1],
-      dependsOnSeq: split.seqs[0]
-    })
-    check('an agent can order two of its own pieces', depended.ok === true)
-    const stranger = await daemon.rpc('agent.depend', {
-      sessionId: planSession.id,
-      taskSeq: 999999,
-      dependsOnSeq: split.seqs[0]
-    })
-    check(
-      'an edge to a stranger names the boundary',
-      stranger.ok === false && /not one of this task's own pieces/.test(stranger.reason ?? ''),
-      stranger.reason
-    )
+    if (!runIsOpen(planRun)) {
+      skip('an agent can order two of its own pieces', NO_OPEN_RUN)
+      skip('an edge to a stranger names the boundary', NO_OPEN_RUN)
+    } else {
+      const depended = await daemon.rpc('agent.depend', {
+        sessionId: planSession.id,
+        taskSeq: split.seqs[1],
+        dependsOnSeq: split.seqs[0]
+      })
+      check('an agent can order two of its own pieces', depended.ok === true)
+      const stranger = await daemon.rpc('agent.depend', {
+        sessionId: planSession.id,
+        taskSeq: 999999,
+        dependsOnSeq: split.seqs[0]
+      })
+      check(
+        'an edge to a stranger names the boundary',
+        stranger.ok === false && /not one of this task's own pieces/.test(stranger.reason ?? ''),
+        stranger.reason
+      )
+    }
     const dependNobody = await daemon.rpc('agent.depend', {
       sessionId: 'no-such-session',
       taskSeq: 1,
@@ -702,19 +727,25 @@ try {
     })
     check('depending from a session on nothing names the problem', dependNobody.ok === false, dependNobody.reason)
 
-    const parked = await daemon.rpc('agent.awaitHuman', {
-      sessionId: planSession.id,
-      reason: 'porch is locked'
-    })
-    check('handing over answers ok', parked.ok === true)
-    const parkedTask = await daemon.rpc('task.get', { id: planTask.id })
-    check(
-      'and rests the task with its reason on a blocked run, never completed',
-      parkedTask.task.status === 'awaiting_human' &&
-        /porch is locked/.test(parkedTask.task.holdReason ?? '') &&
-        parkedTask.runs.some((r) => r.sessionId === planSession.id && r.outcome === 'blocked'),
-      parkedTask.task.status
-    )
+    const parkable = runIsOpen(planRun)
+    if (!parkable) {
+      skip('handing over answers ok', NO_OPEN_RUN)
+      skip('and rests the task with its reason on a blocked run, never completed', NO_OPEN_RUN)
+    } else {
+      const parked = await daemon.rpc('agent.awaitHuman', {
+        sessionId: planSession.id,
+        reason: 'porch is locked'
+      })
+      check('handing over answers ok', parked.ok === true)
+      const parkedTask = await daemon.rpc('task.get', { id: planTask.id })
+      check(
+        'and rests the task with its reason on a blocked run, never completed',
+        parkedTask.task.status === 'awaiting_human' &&
+          /porch is locked/.test(parkedTask.task.holdReason ?? '') &&
+          parkedTask.runs.some((r) => r.sessionId === planSession.id && r.outcome === 'blocked'),
+        parkedTask.task.status
+      )
+    }
     const parkedNobody = await daemon.rpc('agent.awaitHuman', { sessionId: 'no-such-session', reason: 'x' })
     check(
       'handing over from a session on nothing is refused, not thrown',
@@ -722,13 +753,19 @@ try {
       parkedNobody.reply
     )
 
-    const afterPark = await daemon.rpc('agent.complete', { sessionId: planSession.id, summary: 'done' })
-    const stillParked = await daemon.rpc('task.get', { id: planTask.id })
-    check(
-      'completing a parked run is a no-op that still answers ok and changes nothing',
-      afterPark.ok === true && stillParked.task.status === 'awaiting_human',
-      stillParked.task.status
-    )
+    if (!parkable) {
+      // ⚠️ Depends on the park above having happened, not merely on a live run: there is nothing to
+      // be a no-op *against* if the task was never rested.
+      skip('completing a parked run is a no-op that still answers ok and changes nothing', NO_OPEN_RUN)
+    } else {
+      const afterPark = await daemon.rpc('agent.complete', { sessionId: planSession.id, summary: 'done' })
+      const stillParked = await daemon.rpc('task.get', { id: planTask.id })
+      check(
+        'completing a parked run is a no-op that still answers ok and changes nothing',
+        afterPark.ok === true && stillParked.task.status === 'awaiting_human',
+        stillParked.task.status
+      )
+    }
     const finishTask = await daemon.rpc('task.create', {
       title: 'agent finish',
       projectId: added.id,

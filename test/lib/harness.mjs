@@ -311,7 +311,13 @@ export function section(title) {
 export function summary(label) {
   // ⚠️ Skips are reported next to the result, never folded into it. "ALL 96 CHECKS PASSED" on a
   // machine that silently ran 80 of them is the kind of green nobody should trust.
-  const tail = skipped ? ` (${skipped} skipped — no agent CLI on this machine)` : ''
+  //
+  // ⛔ **The count is stated; the cause is not guessed.** This line used to read *"no agent CLI on
+  // this machine"*, which was one plausible reason asserted as the only one — and it printed that on
+  // a developer box with all five CLIs installed, where the real cause was a probe session closing
+  // before the checks that needed it. Every `skip()` already carries its own reason; this footer's
+  // job is to stop a green summary hiding how much did not run.
+  const tail = skipped ? ` (${skipped} skipped, each with its reason above)` : ''
   console.log(
     failures === 0
       ? `\n${label}: ALL ${checks} CHECKS PASSED${tail}`
