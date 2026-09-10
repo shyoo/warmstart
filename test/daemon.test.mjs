@@ -772,18 +772,27 @@ try {
       constraints: pin
     })
     const finishSession = await spawnAgentSession()
-    seedAgentRun(finishTask.id, probeWorker.id, finishSession.id)
-    const done = await daemon.rpc('agent.complete', { sessionId: finishSession.id, summary: 'porch swept' })
-    const doneTask = await daemon.rpc('task.get', { id: finishTask.id })
-    check(
-      'a reported completion finishes the task',
-      done.ok === true && doneTask.task.status === 'completed',
-      doneTask.task.status
-    )
-    check(
-      'and the report is written to the thread beside its run',
-      doneTask.messages.some((m) => /porch swept/.test(m.text)) && doneTask.runs.length >= 1
-    )
+    const finishRun = seedAgentRun(finishTask.id, probeWorker.id, finishSession.id)
+    // ⚠️ **The third spawn needs the same guard as the other two.** It was left unguarded when the
+    // first two were fixed and passed on the next run purely on timing, then failed the run after
+    // (34446585618, `a reported completion finishes the task -- ready`): a fresh session dies just
+    // as readily as a reused one, and this one is spawned immediately before the call that needs it.
+    if (!runIsOpen(finishRun)) {
+      skip('a reported completion finishes the task', NO_OPEN_RUN)
+      skip('and the report is written to the thread beside its run', NO_OPEN_RUN)
+    } else {
+      const done = await daemon.rpc('agent.complete', { sessionId: finishSession.id, summary: 'porch swept' })
+      const doneTask = await daemon.rpc('task.get', { id: finishTask.id })
+      check(
+        'a reported completion finishes the task',
+        done.ok === true && doneTask.task.status === 'completed',
+        doneTask.task.status
+      )
+      check(
+        'and the report is written to the thread beside its run',
+        doneTask.messages.some((m) => /porch swept/.test(m.text)) && doneTask.runs.length >= 1
+      )
+    }
     const completeNobody = await daemon.rpc('agent.complete', { sessionId: 'no-such-session', summary: 'x' })
     check('completing from a session on nothing succeeds silently rather than throwing', completeNobody.ok === true)
     const completeUnshaped = await daemon.rpcResult('agent.complete', {})
