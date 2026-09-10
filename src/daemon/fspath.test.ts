@@ -32,7 +32,7 @@ describe.runIf(win)('the same Windows directory, spelled differently', () => {
 
   it('leaves the rest of the path alone, because these strings are shown as well as compared', () => {
     // ⚠️ Not `toLowerCase()` on the whole path. An operator recognises the worktree they configured;
-    // `c:\dev\multi_agent_controller_workspaces\ws1` is the same directory and a worse label.
+    // `c:\dev\warmstart_workspaces\ws1` is the same directory and a worse label.
     expect(canonicalPath('C:\\Dev\\Multi_Agent\\WS1')).toBe('C:\\Dev\\Multi_Agent\\WS1')
   })
 
@@ -71,7 +71,12 @@ describe.runIf(!win)('POSIX paths, where case is meaning', () => {
  */
 describe('one directory beneath another', () => {
   const sep = win ? '\\' : '/'
-  const root = win ? 'C:\\Dev\\x' : '/dev/x'
+  // ⚠️ **The POSIX root carries a capital deliberately.** It used to be `/dev/x`, which is already
+  // lowercase — so the case assertion below lowercased it into *itself*, asked whether a directory
+  // contains its own child, and got a correct `true` where it expected `false`. The test read as a
+  // platform bug on Linux and macOS and was a fixture with nothing to fold. `samePath`'s own tests
+  // (`/Dev/x` vs `/dev/x`, above) always had this right.
+  const root = win ? 'C:\\Dev\\x' : '/Dev/x'
   const at = (...parts: string[]): string => [root, ...parts].join(sep)
 
   it('counts a directory as within itself, because a grant of it covers it', () => {

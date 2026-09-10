@@ -1,6 +1,6 @@
 # Cost model — the measured facts
 
-**This is the load-bearing knowledge in Multi Agent Controller.** Every scheduling decision reduces to arithmetic
+**This is the load-bearing knowledge in Warmstart.** Every scheduling decision reduces to arithmetic
 over these numbers. Several are counter-intuitive and at least one contradicts what a reasonable
 person would assume, so ⛔ **do not re-derive any of this from memory.**
 
@@ -1138,7 +1138,7 @@ Claude Code's `auto` mode runs a second model (Claude Sonnet 5 by default) over 
 before it executes. The docs state those calls **count toward token usage on Enterprise plans and on
 API / Bedrock / Vertex / Foundry accounts**, and say nothing about Pro/Max/Team.
 
-⛔ **Silence is not "free".** Multi Agent Controller defaults every Claude worker to `auto` (see the plan §9.1), so
+⛔ **Silence is not "free".** Warmstart defaults every Claude worker to `auto` (see the plan §9.1), so
 if the classifier bills on a subscription it is a per-action tax on every scheduled run, and the
 percent→token calibration in §5 would absorb it as noise rather than name it.
 

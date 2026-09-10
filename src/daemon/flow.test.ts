@@ -47,7 +47,7 @@ function declarePool(members = [WS1, WS2, WS3]): void {
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'agentyard-flow-'))
-  process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
+  process.env.WARMSTART_DATA_DIR = dir
   db = await import('./db.js')
   resources = await import('./resources.js')
   projects = await import('./projects.js')
@@ -89,7 +89,7 @@ function session(id: string, cwd: string): string {
                              tokens_since_compact, started_at, project_id, current_branch)
        values (?,?,'claude-code','stream',?,'live','work',0,?,?,?)`
     )
-    .run(id, workerId, cwd, Date.now(), projectId, 'multi-agent-controller/t1-demo')
+    .run(id, workerId, cwd, Date.now(), projectId, 'warmstart/t1-demo')
   return id
 }
 
@@ -127,7 +127,7 @@ describe('the ticket ↔ workspace ↔ worker binding the Flow board draws', () 
     expect(row.workerLabel).toBe('ClaudeSecond')
     expect(row.adapterId).toBe('claude-code')
     expect(row.sessionId).toBe(sessionId)
-    expect(row.branch).toBe('multi-agent-controller/t1-demo')
+    expect(row.branch).toBe('warmstart/t1-demo')
   })
 
   it('still names the account for a task holding its tree between runs', () => {
@@ -197,7 +197,7 @@ describe('the ticket ↔ workspace ↔ worker binding the Flow board draws', () 
     expect(row.holding).toBeNull()
     expect(row.taskId).toBeNull()
     expect(row.workerLabel).toBe('ClaudeSecond')
-    expect(row.branch).toBe('multi-agent-controller/t1-demo')
+    expect(row.branch).toBe('warmstart/t1-demo')
   })
 
   it('keeps drawing a claim on a member the pool no longer lists', () => {

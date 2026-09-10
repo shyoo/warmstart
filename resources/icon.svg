@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512"
-     role="img" aria-label="Multi Agent Controller">
-  <title>Multi Agent Controller</title>
+     role="img" aria-label="Warmstart">
+  <title>Warmstart</title>
   <desc>Three accounts on a ring around one controller.</desc>
   <!--
     The master. Every raster in this directory is generated from this file by scripts/icons.mjs.

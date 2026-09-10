@@ -161,7 +161,7 @@ function ProjectIdentity({
           <button
             className="btn btn--ghost"
             disabled={busy}
-            title="Re-read .multi_agent_controller/project.json from disk."
+            title="Re-read .warmstart/project.json from disk."
             onClick={() => void act(() => rpc('project.reload', { id: project.id }))}
           >
             Reload
@@ -170,7 +170,7 @@ function ProjectIdentity({
             <button
               className="btn btn--ghost"
               disabled={busy}
-              title="Write a starter .multi_agent_controller/project.json into the repository."
+              title="Write a starter .warmstart/project.json into the repository."
               onClick={() => void act(() => rpc('project.writeConfig', { id: project.id }))}
             >
               Write config
@@ -230,7 +230,7 @@ function ProjectIdentity({
       {!project.configPath && (
         <p className="note">
           ⚠️ Changing anything below <strong>creates</strong>{' '}
-          <span className="mono">.multi_agent_controller/project.json</span> in this repository — the
+          <span className="mono">.warmstart/project.json</span> in this repository — the
           file is committed, so the policy travels with the repo rather than living in this install.
         </p>
       )}
@@ -644,7 +644,7 @@ function ChecksPanel({
         projectId: project.id,
         prompt:
           'Work out which commands should verify this project before work is landed, and write them ' +
-          'into `.multi_agent_controller/project.json` under `check`, as an ordered array of shell ' +
+          'into `.warmstart/project.json` under `check`, as an ordered array of shell ' +
           'commands. Cheap and fast ones first, so a failure stops the run early. They must exit ' +
           'non-zero on failure and must not need a network or an interactive terminal. ' +
           `Currently declared: ${declared.length > 0 ? declared.join(', ') : 'nothing'}. ` +

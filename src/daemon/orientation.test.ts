@@ -38,9 +38,9 @@ function makeProject(docs: string[], config?: Partial<ProjectConfig>): Project {
   mkdirSync(root, { recursive: true })
   for (const name of docs) writeFileSync(join(root, name), `# ${name}\n`)
   if (config) {
-    mkdirSync(join(root, '.multi_agent_controller'), { recursive: true })
+    mkdirSync(join(root, '.warmstart'), { recursive: true })
     writeFileSync(
-      join(root, '.multi_agent_controller', 'project.json'),
+      join(root, '.warmstart', 'project.json'),
       JSON.stringify({ schema_version: 1, name: `repo${seq}`, ...config }, null, 2)
     )
   }
@@ -49,7 +49,7 @@ function makeProject(docs: string[], config?: Partial<ProjectConfig>): Project {
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'agentyard-orientation-'))
-  process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
+  process.env.WARMSTART_DATA_DIR = dir
   db = await import('./db.js')
   projects = await import('./projects.js')
   orientation = await import('./orientation.js')

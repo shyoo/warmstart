@@ -54,8 +54,8 @@ try {
   // a window over the operator's work and steal the focus on the machine it is running on.
   const env = {
     ...process.env,
-    MULTI_AGENT_CONTROLLER_DATA_DIR: dataDir,
-    MULTI_AGENT_CONTROLLER_HEADLESS: '1'
+    WARMSTART_DATA_DIR: dataDir,
+    WARMSTART_HEADLESS: '1'
   }
   delete env.ELECTRON_RUN_AS_NODE
   app = spawn(electronBinary(), [REPO, `--remote-debugging-port=${PORT}`], {
@@ -68,7 +68,7 @@ try {
   const appOutput = []
   const record = (d) => {
     appOutput.push(String(d))
-    if (process.env.MULTI_AGENT_CONTROLLER_TEST_VERBOSE) process.stderr.write(`[app] ${d}`)
+    if (process.env.WARMSTART_TEST_VERBOSE) process.stderr.write(`[app] ${d}`)
   }
   app.stdout.on('data', record)
   app.stderr.on('data', record)
@@ -201,7 +201,7 @@ try {
       hidden,
       hidden
         ? 'MainWindowHandle 0 (or unmapped title) - a window driven over DevTools, and nobody has to look at it'
-        : `MainWindowHandle ${handle} (title: "${title}"): a real window is on screen, so MULTI_AGENT_CONTROLLER_HEADLESS is not being honoured`
+        : `MainWindowHandle ${handle} (title: "${title}"): a real window is on screen, so WARMSTART_HEADLESS is not being honoured`
     )
   } else {
     // ⚠️ A capability of the machine, per `skip`'s rule: there is no equivalent one-liner for "does
@@ -353,7 +353,7 @@ try {
   check(
     'and the choice is remembered, so a reopened window keeps the view',
     JSON.parse(
-      (await evaluate(`window.localStorage.getItem('multi_agent_controller.taskViews')`)) ?? '[]'
+      (await evaluate(`window.localStorage.getItem('warmstart.taskViews')`)) ?? '[]'
     ).length === 2
   )
 
@@ -2055,7 +2055,7 @@ try {
   // business in the daemon's settings table beside the switches that gate spending.
   check(
     'the new width is remembered',
-    (await evaluate(`window.localStorage.getItem('multi_agent_controller.sidebarWidth')`)) ===
+    (await evaluate(`window.localStorage.getItem('warmstart.sidebarWidth')`)) ===
       String(wider),
     String(wider)
   )
@@ -2081,7 +2081,7 @@ try {
   {
     // Seeded through the store, because no RPC can file a reading from twenty hours ago and the
     // suite must not wait twenty hours to find out how one is drawn.
-    const store = new DatabaseSync(join(dataDir, 'multi_agent_controller.db'))
+    const store = new DatabaseSync(join(dataDir, 'warmstart.db'))
     const at = Date.now() - 20 * 3600 * 1000
     // ⚠️ Labelled the way an adapter labels them — pool name and window length — because what the
     // card does with that pair is checked below.
@@ -2154,7 +2154,7 @@ try {
     `window.agentyard.rpc('worker.create', { adapterId: 'claude-code', label: 'suspect worker', enabled: true }).then(w => w.id)`
   )
   {
-    const store = new DatabaseSync(join(dataDir, 'multi_agent_controller.db'))
+    const store = new DatabaseSync(join(dataDir, 'warmstart.db'))
     const health = JSON.stringify({
       state: 'suspect',
       reason: 'subscription expired',
@@ -2286,7 +2286,7 @@ try {
 
   check(
     'and the collapsed preference is saved to localStorage',
-    (await evaluate(`window.localStorage.getItem('multi_agent_controller.fleetCollapsed')`)) === 'true'
+    (await evaluate(`window.localStorage.getItem('warmstart.fleetCollapsed')`)) === 'true'
   )
 
   await evaluate(`${toggleBtn}?.click()`)
@@ -2297,7 +2297,7 @@ try {
   check('clicking again expands the fleet strip', isExpanded === true)
   check(
     'and the expanded state is persisted',
-    (await evaluate(`window.localStorage.getItem('multi_agent_controller.fleetCollapsed')`)) === 'false'
+    (await evaluate(`window.localStorage.getItem('warmstart.fleetCollapsed')`)) === 'false'
   )
 
   section('finishing work')
@@ -2537,7 +2537,7 @@ try {
     // Seeded, because the states that break the layout are the ones a healthy fleet never reaches:
     // a long sign-in address, an account that never finished onboarding, and one held out of
     // dispatch carrying the vendor's own explanation.
-    const store = new DatabaseSync(join(dataDir, 'multi_agent_controller.db'))
+    const store = new DatabaseSync(join(dataDir, 'warmstart.db'))
     store
       .prepare('update workers set identity_json = ? where id = ?')
       .run(
@@ -2995,7 +2995,7 @@ try {
       `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim().startsWith('Unassigned'))?.querySelector('.project-dot')?.className ?? ''`
     )
   {
-    const store = new DatabaseSync(join(dataDir, 'multi_agent_controller.db'))
+    const store = new DatabaseSync(join(dataDir, 'warmstart.db'))
     // Everything else at rest, so the one status under test is the one the dot is answering.
     store.prepare('update tasks set status = ?').run('completed')
     // ⛔ **With a `not_before` in the future, or this is a race the suite loses on a slow runner.**
@@ -3044,7 +3044,7 @@ try {
   // label and so wrapped onto a line each in a column this narrow, turning one decision into a
   // stack. They share the row now and ellipsize.
   {
-    const store = new DatabaseSync(join(dataDir, 'multi_agent_controller.db'))
+    const store = new DatabaseSync(join(dataDir, 'warmstart.db'))
     store
       .prepare('update tasks set status = ?, assignee = ? where id = ?')
       .run('awaiting_human', 'human', heldId)
@@ -3140,7 +3140,7 @@ try {
     // ⚠️ Attached to the task through the store. A question takes its task from the *run* of the
     // session that asked, and this suite spends nothing and so starts no run - so the join that
     // puts the card in a thread has to be made by hand here.
-    const store = new DatabaseSync(join(dataDir, 'multi_agent_controller.db'))
+    const store = new DatabaseSync(join(dataDir, 'warmstart.db'))
     store.prepare('update questions set task_id = ? where id = ?').run(heldId, askedId)
     store.close()
   }
@@ -3332,11 +3332,11 @@ try {
   )
   check(
     'creating writes the committed policy file',
-    existsSync(join(wizardRoot, '.multi_agent_controller', 'project.json')),
-    join(wizardRoot, '.multi_agent_controller', 'project.json')
+    existsSync(join(wizardRoot, '.warmstart', 'project.json')),
+    join(wizardRoot, '.warmstart', 'project.json')
   )
   const wizardConfig = JSON.parse(
-    readFileSync(join(wizardRoot, '.multi_agent_controller', 'project.json'), 'utf8')
+    readFileSync(join(wizardRoot, '.warmstart', 'project.json'), 'utf8')
   )
   check(
     'and the check commands the wizard proposed are in it',
@@ -3465,7 +3465,7 @@ try {
   check(
     'choosing one writes it into the project’s committed config',
     JSON.parse(
-      readFileSync(join(projectRoot, '.multi_agent_controller', 'project.json'), 'utf8')
+      readFileSync(join(projectRoot, '.warmstart', 'project.json'), 'utf8')
     ).landing?.finish === 'commit-only',
     'project.setPolicy is the only write path this page has'
   )
@@ -3922,13 +3922,13 @@ try {
       }).then(t => JSON.stringify({ id: t.id, seq: t.seq }))
     `)
   )
-  const convoBranch = `multi-agent-controller/t${settleTask.seq}-ui-settling`
+  const convoBranch = `warmstart/t${settleTask.seq}-ui-settling`
   gitIn(convoWorkspace, 'switch', '-c', convoBranch)
   gitIn(convoWorkspace, 'config', 'user.email', 'ui@test.invalid')
   gitIn(convoWorkspace, 'config', 'user.name', 'ui test')
   writeFileSync(join(convoWorkspace, 'edited.txt'), 'not committed yet\n')
   {
-    const store = new DatabaseSync(join(dataDir, 'multi_agent_controller.db'))
+    const store = new DatabaseSync(join(dataDir, 'warmstart.db'))
     // ⛔ The pool is declared with this worktree in it and **no claim on it** — the state a
     // conversation rests in once its session has ended.
     store

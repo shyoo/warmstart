@@ -1,4 +1,5 @@
 import { TASK_VIEWS, type TaskView } from '@shared/tasks'
+import { appKey } from './storagekeys'
 
 /**
  * Preferences that belong to this screen rather than to the fleet.
@@ -12,10 +13,10 @@ import { TASK_VIEWS, type TaskView } from '@shared/tasks'
  * platforms — and a preference is never worth a blank screen.
  */
 
-const VIEWS_KEY = 'multi_agent_controller.taskViews'
-const TASK_COLUMNS_KEY = 'multi_agent_controller.taskColumns'
-const FLEET_COLLAPSED_KEY = 'multi_agent_controller.fleetCollapsed'
-const FLEET_DENSITY_KEY = 'multi_agent_controller.fleetDensity'
+const VIEWS_KEY = appKey('taskViews')
+const TASK_COLUMNS_KEY = appKey('taskColumns')
+const FLEET_COLLAPSED_KEY = appKey('fleetCollapsed')
+const FLEET_DENSITY_KEY = appKey('fleetDensity')
 
 /**
  * Which buckets were showing last time.
@@ -157,7 +158,7 @@ export function writeFleetDensity(density: FleetDensity): void {
   }
 }
 
-const PAGE_SIZE_KEY = 'multi_agent_controller.taskPageSize'
+const PAGE_SIZE_KEY = appKey('taskPageSize')
 export const DEFAULT_PAGE_SIZE = 25
 export const PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const
 export type PageSizeOption = (typeof PAGE_SIZE_OPTIONS)[number]
@@ -191,7 +192,7 @@ export function writeTaskPageSize(size: number): void {
   }
 }
 
-const QUALITY_GRADABLE_ONLY_KEY = 'multi_agent_controller.qualityGradableOnly'
+const QUALITY_GRADABLE_ONLY_KEY = appKey('qualityGradableOnly')
 
 /**
  * Whether the Quality Review page filters out tasks that cannot be graded.
@@ -219,7 +220,7 @@ export function writeQualityGradableOnly(gradableOnly: boolean): void {
 
 
 
-const TASK_PAGE_KEY = 'multi_agent_controller.taskPage'
+const TASK_PAGE_KEY = appKey('taskPage')
 
 /** What the task list was showing, precise enough that restoring an offset onto it is honest. */
 export interface TaskListScope {

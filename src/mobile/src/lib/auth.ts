@@ -11,7 +11,7 @@ export interface TokenStorage {
   removeItem(key: string): void
 }
 
-export const DEVICE_TOKEN_KEY = 'multi-agent-controller.device-token'
+export const DEVICE_TOKEN_KEY = 'warmstart.device-token'
 
 export interface TokenStore {
   get(): string | null

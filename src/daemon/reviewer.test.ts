@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { Task } from '@shared/tasks.js'
 import { RUBRIC_DIMENSIONS, type DimensionScore, type RubricDimension } from '@shared/review.js'
+import { forceInstalled } from './testkit.js'
 
 /**
  * Who is allowed to grade whom.
@@ -20,6 +21,7 @@ import { RUBRIC_DIMENSIONS, type DimensionScore, type RubricDimension } from '@s
 let dir: string
 let db: typeof import('./db.js')
 let reviewer: typeof import('./reviewer.js')
+let undoInstalled: (() => void) | undefined
 
 const CLAUDE_A = 'aaaaaaaa-0000-4000-8000-000000000001'
 const CLAUDE_B = 'aaaaaaaa-0000-4000-8000-000000000002'
@@ -63,10 +65,15 @@ const task = (): Task => ({ id: TASK }) as Task
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'agentyard-reviewer-'))
-  process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
+  process.env.WARMSTART_DATA_DIR = dir
   db = await import('./db.js')
   db.openDb(join(dir, 'reviewer.db'))
   reviewer = await import('./reviewer.js')
+  // ⛔ `pickReviewer` asks `reviewCandidates(task, true)`, and `requireAvailable` reaches
+  // `eligibility.ts`'s *"…is not installed"* gate before any of the rules these tests exist to pin.
+  // Without this every candidate is rejected on a machine with no vendor CLI and the suite asserts
+  // nothing about authorship, adapter exclusion or model choice. Measured 2026-09-09.
+  undoInstalled = await forceInstalled('claude-code', 'openai-compatible', 'antigravity-cli', 'local-llm')
   db.db()
     .prepare(
       `insert into tasks (id, seq, title, status, created_by_json, mandate_json, budget_json,
@@ -77,6 +84,7 @@ beforeAll(async () => {
 })
 
 afterAll(() => {
+  undoInstalled?.()
   try {
     rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
   } catch {

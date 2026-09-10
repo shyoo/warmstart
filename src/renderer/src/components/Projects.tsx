@@ -7,7 +7,7 @@ import { rpc } from '../lib/daemon'
  *
  * A project is a directory plus policy, and the policy is **committed in the repo** so a collaborator
  * or a fresh clone reproduces the same behaviour. Everything shown here that came from
- * `.multi_agent_controller/project.json` is a fact about the repository, not a setting stored in this app.
+ * `.warmstart/project.json` is a fact about the repository, not a setting stored in this app.
  *
  * ⛔ **No resources table.** This page used to list every one of the fleet's pools, landing locks
  * and metered APIs beneath the projects. It was read-only, it duplicated what each project's own
@@ -110,7 +110,7 @@ export function Projects({
                     {!project.configPath && (
                       <button
                         className="btn btn--ghost"
-                        title="Write a starter .multi_agent_controller/project.json into the repository."
+                        title="Write a starter .warmstart/project.json into the repository."
                         onClick={() =>
                           void rpc('project.writeConfig', { id: project.id }).then(refresh)
                         }

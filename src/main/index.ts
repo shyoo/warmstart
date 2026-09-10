@@ -19,6 +19,7 @@ import { showWhenItCan } from './showwindow.js'
 import { trayIconPath } from './trayicon.js'
 import { readWindowBounds, trackWindowBounds } from './windowstate.js'
 import { dataDir } from '../daemon/paths.js'
+import { appEnv } from '@shared/env.js'
 
 const dirname = join(fileURLToPath(import.meta.url), '..')
 
@@ -62,9 +63,9 @@ let quitting = false
  * packaging suite launches the *packaged* binary, so the only thing that can distinguish a test run
  * is the test saying so.
  */
-const headless = process.env.MULTI_AGENT_CONTROLLER_HEADLESS === '1'
+const headless = appEnv('HEADLESS') === '1'
 
-// Electron's default userData is `<appdata>/multi_agent_controller`, which is exactly where the fleet database
+// Electron's default userData is `<appdata>/warmstart`, which is exactly where the fleet database
 // lives - so Chromium's caches would sit next to it, and anyone clearing a cache directory could
 // take the fleet with it. Give the UI its own subdirectory. Must run before `app.whenReady`.
 app.setPath('userData', join(dataDir(), 'ui'))
@@ -205,10 +206,10 @@ function trayImage(): Electron.NativeImage {
 function applyTraySetting(): void {
   if (uiSettings.tray && !tray) {
     tray = new Tray(trayImage())
-    tray.setToolTip('Multi Agent Controller')
+    tray.setToolTip('Warmstart')
     tray.setContextMenu(
       Menu.buildFromTemplate([
-        { label: 'Open Multi Agent Controller', click: () => showWindow() },
+        { label: 'Open Warmstart', click: () => showWindow() },
         { type: 'separator' },
         // ⚠️ Says what it does. "Quit" beside a tray icon reads as "close the tray", and the one
         // thing an operator must not discover by accident is that it also stopped the scheduler.
@@ -301,7 +302,7 @@ void app.whenReady().then(() => {
   ipcMain.handle(
     IPC.appInfo,
     (): AppInfo => ({
-      name: 'Multi Agent Controller',
+      name: 'Warmstart',
       version: app.getVersion(),
       platform: process.platform
     })

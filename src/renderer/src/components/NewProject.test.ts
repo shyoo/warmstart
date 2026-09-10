@@ -150,14 +150,14 @@ describe('what Create will do', () => {
     const plan = creationPlan(draft({ checksText: 'npm test\n\n  npm run lint  ' }), inspection())
     expect(plan).toContain('Add “thing” as a project.')
     expect(plan).toContain(
-      'Write .multi_agent_controller/project.json with these policies — a new file in the repository.'
+      'Write .warmstart/project.json with these policies — a new file in the repository.'
     )
     expect(plan).toContain('Record 2 check commands.')
   })
 
   it('says an existing committed config is being updated, not created', () => {
     expect(creationPlan(draft(), inspection({ hasConfig: true }))).toContain(
-      'Update the committed .multi_agent_controller/project.json with these policies.'
+      'Update the committed .warmstart/project.json with these policies.'
     )
   })
 

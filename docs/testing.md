@@ -23,7 +23,7 @@ a suite in this repository has reported a confident pass for code that was broke
 `npm run test:all` is L1 + L2 + L3. That is the pre-commit set.
 
 ⛔ **Never run `test:e2e` unasked.** It is the only suite that spends, it is gated behind
-`MULTI_AGENT_CONTROLLER_E2E=1`, and CI deliberately never invokes it.
+`WARMSTART_E2E=1`, and CI deliberately never invokes it.
 
 ### What each tier can prove
 
@@ -150,6 +150,19 @@ function under test — and assert the other contract, which in a denied environ
 one. ⭐ Running the checks is not the agent's job anyway: `runChecks` runs `check` in the daemon,
 outside any sandbox.
 
+⛔ **Then the probe itself lied, which is the part worth remembering** (2026-09-09). The helper ran
+`Get-CimInstance … .Count` on Windows and `ps -eo pid=` elsewhere, and parsed **both** with
+`Number(stdout) > 0`. That is right for a printed count and wrong for a list: `Number()` of
+multi-line output is `NaN`, `NaN > 0` is `false`, so off Windows the probe reported **every** host as
+denied — including hosts where enumeration plainly worked — and the suite then demanded
+`sampleProcessTree` answer `null` while it correctly answered a real sample. ⚠️ A two-platform probe
+needs the *shape* of each platform's output checked separately; sharing the parser silently makes one
+branch a constant.
+
+⭐ The general form: **a capability probe is code too, and a probe that always answers the same thing
+is worse than no probe** — it turns one assertion into the wrong assertion rather than into none, and
+the failure then points at the code under test instead of at the fixture.
+
 ### A suite that fails because of the *shape* of the workspace it is in
 
 ⛔ **Pool members are not interchangeable, and the difference is invisible.** On t171, 2026-09-03,
@@ -171,13 +184,42 @@ the command before it builds an argv, so an argv assertion passes on a developer
 `'claude' is not on PATH` in CI. Stub the names onto PATH the way `adapters.test.ts` and
 `resume.test.ts` do — empty files, both with and without `.exe`.
 
-⚠️ This has been found **twice**, the second time in a brand-new test file written by somebody who had
+⛔ **`plan()` is not the only gate, and the second one is quieter** (2026-09-09). `eligibility.ts`
+rejects a worker whose adapter is not installed with a *standing* reason **before** any other gate, so
+a suite about routing gets an empty candidate list and an assertion failure that names the host:
+`expected 'Claude Code is not installed' to match /CodexOne at capacity/`. Four suites — `reviewer`
+(7 cases), `scheduling` (2), `reviewqueue` (1), `headlesspermission` (1) — were green on the author's
+Windows box and red on every CI runner for this reason. ⚠️ Use `forceInstalled(...ids)` from
+`testkit.ts`, and **undo it in `afterAll`**: adapter objects are module singletons, so a suite that
+leaks the stub makes every later suite in the same worker believe the CLI is present.
+
+⛔ **Stub, do not skip.** `describe.runIf` satisfies the "skipped visibly" rule and loses the point:
+these suites test selection logic, which has nothing to do with a CLI and should run everywhere.
+Skipping leaves the router covered only on machines that happen to have the vendors installed.
+
+⚠️ This has now been found **four times**, the second in a brand-new file written by somebody who had
 read the first one's explanation. Check a new suite against a stripped PATH before pushing:
 
 ```bash
 env -u LOCALAPPDATA PATH=/c/Windows/System32:/c/Apps/nodejs:/usr/bin \
   node node_modules/vitest/vitest.mjs run <file>
 ```
+
+### A fixture with nothing to vary tests nothing, and still looks like a test
+
+⛔ `expect(withinPath(root.toLowerCase(), at('ws1'))).toBe(win)` reads as a platform-split
+assertion about case folding. On Windows `root` was `C:\Dev\x` and lowercasing changed it, so
+the assertion meant something. On POSIX `root` was `/dev/x` — **already lowercase** — so
+`.toLowerCase()` returned the same string, the call asked whether a directory contains its own
+child, and the honest answer `true` failed against an expected `false` (2026-09-09).
+
+⚠️ The failure presented as a platform bug in `fspath.ts` on Linux and macOS. It was a fixture
+with no case to fold. The sibling `samePath` tests a few lines above had always used `/Dev/x`
+against `/dev/x` and were correct throughout.
+
+⭐ **The check that catches this class: for every transform a test applies, confirm the fixture is
+actually changed by it.** If `f(x)` and `x` are equal for the chosen fixture, the assertion is
+about something else — and it will pass or fail for reasons unrelated to what its name claims.
 
 ### A Windows path through a shell heredoc loses a backslash
 
@@ -192,7 +234,7 @@ named constant so there is one occurrence to get right rather than nine.
 ### A window the operator did not ask for
 
 ⛔ **A suite may drive a window; it may not put one on the operator's screen.** `test:ui` and
-`test:pack` set `MULTI_AGENT_CONTROLLER_HEADLESS=1`, and `createWindow` honours it by skipping both of
+`test:pack` set `WARMSTART_HEADLESS=1`, and `createWindow` honours it by skipping both of
 its `show()` paths. The window is created, the renderer loads, React runs, Blink lays out, and every
 `innerText` and `getBoundingClientRect` answers exactly as it does on screen. What stops is a
 1440×900 window taking focus off whatever the operator was typing, several times a run.

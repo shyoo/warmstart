@@ -1,5 +1,5 @@
 {
-  "name": "multi-agent-controller",
+  "name": "warmstart",
   "version": "0.0.1",
   "description": "A scheduler with a budget: route coding-agent tasks to the worker, session and moment where they are cheapest to run.",
   "license": "Apache-2.0",

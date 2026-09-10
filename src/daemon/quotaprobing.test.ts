@@ -220,7 +220,7 @@ const demandOf = (demand: Partial<ProbeDemand>): (() => ProbeDemand) => () => ({
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'agentyard-probing-'))
-  process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
+  process.env.WARMSTART_DATA_DIR = dir
   db = await import('./db.js')
   quota = await import('./quota.js')
   events = await import('./events.js')

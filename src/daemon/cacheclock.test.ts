@@ -30,7 +30,7 @@ let workers: typeof import('./workers.js')
 beforeAll(async () => {
   // ⛔ A temp data directory, never the real one. This opens a database and writes to it.
   dir = mkdtempSync(join(tmpdir(), 'agentyard-clock-'))
-  process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
+  process.env.WARMSTART_DATA_DIR = dir
   db = await import('./db.js')
   clock = await import('./cacheclock.js')
   settings = await import('./settings.js')

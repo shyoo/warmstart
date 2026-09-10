@@ -24,7 +24,7 @@ let tasks: typeof import('./tasks.js')
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'agentyard-dependents-'))
-  process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
+  process.env.WARMSTART_DATA_DIR = dir
   db = await import('./db.js')
   tasks = await import('./tasks.js')
   db.openDb(join(dir, 'dependents.db'))

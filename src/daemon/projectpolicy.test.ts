@@ -31,9 +31,9 @@ function makeProject(config?: Partial<ProjectConfig>): Project {
   const root = join(dir, `repo${seq}`)
   mkdirSync(root, { recursive: true })
   if (config) {
-    mkdirSync(join(root, '.multi_agent_controller'), { recursive: true })
+    mkdirSync(join(root, '.warmstart'), { recursive: true })
     writeFileSync(
-      join(root, '.multi_agent_controller', 'project.json'),
+      join(root, '.warmstart', 'project.json'),
       JSON.stringify({ schema_version: 1, name: `repo${seq}`, ...config }, null, 2)
     )
   }
@@ -42,12 +42,12 @@ function makeProject(config?: Partial<ProjectConfig>): Project {
 
 const configOnDisk = (project: Project): Record<string, unknown> =>
   JSON.parse(
-    readFileSync(join(project.root, '.multi_agent_controller', 'project.json'), 'utf8')
+    readFileSync(join(project.root, '.warmstart', 'project.json'), 'utf8')
   ) as Record<string, unknown>
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'agentyard-projectpolicy-'))
-  process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
+  process.env.WARMSTART_DATA_DIR = dir
   db = await import('./db.js')
   projects = await import('./projects.js')
   db.openDb(join(dir, 'projectpolicy.db'))
@@ -155,7 +155,7 @@ describe('setting a project’s policy', () => {
   it('refuses to overwrite a project.json it cannot parse', () => {
     const project = makeProject({ check: [] })
     writeFileSync(
-      join(project.root, '.multi_agent_controller', 'project.json'),
+      join(project.root, '.warmstart', 'project.json'),
       '{ "schema_version": 1, // a comment JSON does not have\n}'
     )
     expect(() => projects.setProjectPolicy(project.id, { finish: 'commit-only' })).toThrow(

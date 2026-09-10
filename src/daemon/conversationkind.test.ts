@@ -54,7 +54,7 @@ const promptText = (task: Task, adapterId = 'claude-code'): string =>
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'agentyard-conversationkind-'))
-  process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
+  process.env.WARMSTART_DATA_DIR = dir
   db = await import('./db.js')
   workers = await import('./workers.js')
   tasks = await import('./tasks.js')
@@ -458,7 +458,7 @@ describe('what the Commit button does', () => {
  *
  * ⛔ **t280, read off the live database.** The conversation came to rest with its session `closed`,
  * so its workspace claim had been released — while ws2 still stood on
- * `multi-agent-controller/t280-…` holding eight uncommitted files. `pendingWorkFor` looked only at the
+ * `warmstart/t280-…` holding eight uncommitted files. `pendingWorkFor` looked only at the
  * claims, answered *"this task is not holding a workspace"*, and the card hid every settle-it control
  * on that answer. The hold reason on the same screen read *"use Finish, Stop or Commit below"*, and
  * there was no Commit below.
@@ -479,12 +479,12 @@ describe('a conversation whose workspace went back to the pool', () => {
   ): Promise<{ taskId: string; branch: string; workspace: string }> => {
     repoSeq += 1
     const root = join(dir, `convo-repo${repoSeq}`)
-    mkdirSync(join(root, '.multi_agent_controller'), { recursive: true })
+    mkdirSync(join(root, '.warmstart'), { recursive: true })
     git(root, 'init', '--initial-branch=main')
     git(root, 'config', 'user.name', 'agentyard test')
     git(root, 'config', 'user.email', 'test@example.invalid')
     writeFileSync(
-      join(root, '.multi_agent_controller', 'project.json'),
+      join(root, '.warmstart', 'project.json'),
       JSON.stringify({
         schema_version: 1,
         name: `convo-repo${repoSeq}`,
@@ -507,7 +507,7 @@ describe('a conversation whose workspace went back to the pool', () => {
       status: 'ready',
       projectId: project.id
     })
-    const branch = `multi-agent-controller/t${task.seq}-${name}`
+    const branch = `warmstart/t${task.seq}-${name}`
     // ⛔ The branch is on the worktree and on the task row, and **nothing holds a claim** — which
     // is exactly the state a conversation rests in once its session has ended.
     git(workspace, 'switch', '-c', branch)

@@ -64,7 +64,7 @@ const open = { hasWorkspace: true, leased: false }
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'agentyard-sharing-'))
-  process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
+  process.env.WARMSTART_DATA_DIR = dir
   db = await import('./db.js')
   sharing = await import('./sharing.js')
   settingsModule = await import('./settings.js')

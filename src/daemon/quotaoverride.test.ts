@@ -76,7 +76,7 @@ function seed7dQuota(workerId: string, percent: number, resetsIn = 7 * 24 * 3600
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'agentyard-quotaoverride-'))
-  process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
+  process.env.WARMSTART_DATA_DIR = dir
   mkdirSync(join(dir, 'adapters'), { recursive: true })
   writeFileSync(
     join(dir, 'adapters', `${ADAPTER}.json`),

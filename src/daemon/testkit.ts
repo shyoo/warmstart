@@ -42,15 +42,55 @@ import { createTask, requireTask, type CreateTaskInput } from './tasks.js'
 import { createWorker } from './workers.js'
 
 /**
- * A scratch database for one suite: temp dir, `MULTI_AGENT_CONTROLLER_DATA_DIR` pointed at it,
+ * A scratch database for one suite: temp dir, `WARMSTART_DATA_DIR` pointed at it,
  * database opened. Returns the dir; suites keep writing their own adapter JSON into it before
  * `loadAdapters()`, because the declared CLI differs per suite.
  */
 export function openTestDb(prefix: string, file = 'test.db'): string {
   const dir = mkdtempSync(join(tmpdir(), prefix))
-  process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
+  process.env.WARMSTART_DATA_DIR = dir
   openDb(join(dir, file))
   return dir
+}
+
+/**
+ * Force `isInstalled()` true for the named adapters, and hand back the undo.
+ *
+ * ⛔ **A suite that asserts *routing* must not also assert that a CLI is on this machine.**
+ * `eligibility.ts` rejects a worker whose adapter is not installed **before** any other gate, and it
+ * does so with a standing reason — so on a machine without the vendor CLI (every CI runner, by
+ * design: no job there may spend a token) a router test gets an empty candidate list and fails
+ * reporting *"Claude Code is not installed"* in place of whatever it meant to measure. Measured
+ * 2026-09-09: this is the whole of why `reviewer` (7), `scheduling` (2), `reviewqueue` (1) and
+ * `headlesspermission` (1) were red on Linux while green on the author's Windows box.
+ *
+ * ⚠️ **The fix is to stub, not to skip.** `describe.runIf` would satisfy `ci.yml`'s "skipped
+ * visibly" rule and lose the point: these suites test selection logic, which has nothing to do with
+ * the CLI and should run everywhere. Skipping leaves the router covered only on machines that happen
+ * to have the vendors installed.
+ *
+ * Third copy of an idiom already hand-rolled in `dispatching`, `awaithuman` and `conversationkind`;
+ * per this file's own rule, it lives here now rather than being forked a fourth time. ⛔ Adapter
+ * objects are module singletons, so **always call the returned undo in `afterAll`** — a suite that
+ * leaks this makes every later suite in the same worker believe the CLI is present.
+ */
+export async function forceInstalled(...adapterIds: string[]): Promise<() => void> {
+  const { adapter } = await import('./adapters/index.js')
+  const undo: Array<() => void> = []
+  for (const id of adapterIds) {
+    const ad = adapter(id)
+    // ⚠️ Bound on capture: an adapter's `isInstalled` may read its own cached state (`local-llm`
+    // and `muse-code` both do), so restoring a bare method reference would put back a function that
+    // has lost its receiver. `no-unbound-method` is right to object.
+    const original = ad.isInstalled.bind(ad)
+    ad.isInstalled = () => true
+    undo.push(() => {
+      ad.isInstalled = original
+    })
+  }
+  return () => {
+    for (const restore of undo) restore()
+  }
 }
 
 /** One worker row. `enabled` defaults true; suites that must never dispatch pass false. */
@@ -328,9 +368,9 @@ export function makeRepo(opts: {
   git(root, 'init', '--initial-branch=main')
   git(root, 'config', 'user.name', 'agentyard test')
   git(root, 'config', 'user.email', 'test@example.invalid')
-  mkdirSync(join(root, '.multi_agent_controller'), { recursive: true })
+  mkdirSync(join(root, '.warmstart'), { recursive: true })
   writeFileSync(
-    join(root, '.multi_agent_controller', 'project.json'),
+    join(root, '.warmstart', 'project.json'),
     JSON.stringify({ schema_version: 1, name: opts.name, ...(opts.projectJson ?? {}) }, null, 2)
   )
   const files = opts.files ?? { 'kept.txt': 'as committed\n' }

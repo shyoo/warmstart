@@ -452,7 +452,7 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
         summary: p.summary
       })
       return decision === 'deny'
-        ? { decision: 'deny' as const, reason: 'Multi Agent Controller policy or the operator declined.' }
+        ? { decision: 'deny' as const, reason: 'Warmstart policy or the operator declined.' }
         : { decision: 'allow' as const }
     },
     'approval.answer': (p) => answerApproval(p.id, p.decision, 'human'),

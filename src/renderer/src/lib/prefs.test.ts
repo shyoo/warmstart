@@ -32,9 +32,9 @@ describe('which task columns are visible', () => {
   })
 
   it('uses the full table when a saved value is malformed or obsolete', () => {
-    stub({ 'multi_agent_controller.taskColumns': '{' })
+    stub({ 'warmstart.taskColumns': '{' })
     expect(readTaskColumns()).toContain('action')
-    stub({ 'multi_agent_controller.taskColumns': '["owner"]' })
+    stub({ 'warmstart.taskColumns': '["owner"]' })
     expect(readTaskColumns()).toContain('action')
   })
 })
@@ -74,14 +74,14 @@ describe('how dense the fleet strip was left', () => {
     const store: Record<string, string> = {}
     stub(store)
     writeFleetDensity('narrow')
-    expect(store['multi_agent_controller.fleetDensity']).toBe('narrow')
+    expect(store['warmstart.fleetDensity']).toBe('narrow')
     expect(readFleetDensity()).toBe('narrow')
     writeFleetDensity('wide')
     expect(readFleetDensity()).toBe('wide')
   })
 
   it('reads anything it does not recognise as wide', () => {
-    stub({ 'multi_agent_controller.fleetDensity': 'condensed' })
+    stub({ 'warmstart.fleetDensity': 'condensed' })
     expect(readFleetDensity()).toBe('wide')
   })
 
@@ -128,7 +128,7 @@ describe('whether quality review filters out ungradable tasks', () => {
     const store: Record<string, string> = {}
     stub(store)
     writeQualityGradableOnly(true)
-    expect(store['multi_agent_controller.qualityGradableOnly']).toBe('true')
+    expect(store['warmstart.qualityGradableOnly']).toBe('true')
     expect(readQualityGradableOnly()).toBe(true)
     writeQualityGradableOnly(false)
     expect(readQualityGradableOnly()).toBe(false)
@@ -215,7 +215,7 @@ describe('which page of the task list you were reading', () => {
   it('reads a stored page that is not a page at all as the first one', () => {
     const signature = taskListSignature(list)
     for (const held of ['nonsense', '[]', JSON.stringify({ signature, page: -1 }), JSON.stringify({ signature, page: 2.5 }), JSON.stringify({ signature, page: 'four' })]) {
-      stub({ 'multi_agent_controller.taskPage': held })
+      stub({ 'warmstart.taskPage': held })
       expect(readTaskPage(signature)).toBe(0)
     }
   })

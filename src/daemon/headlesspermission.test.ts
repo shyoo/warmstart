@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join, sep } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { AdapterInfo } from '@shared/protocol.js'
+import { forceInstalled } from './testkit.js'
 
 /**
  * Why an unattended run stopped asking, and why "Always" now means always.
@@ -29,10 +30,11 @@ let adapters: typeof import('./adapters/index.js')
 
 let projectId: string
 let pool: string
+let undoInstalled: (() => void) | undefined
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'mac-headless-permission-'))
-  process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
+  process.env.WARMSTART_DATA_DIR = dir
   db = await import('./db.js')
   projects = await import('./projects.js')
   approvals = await import('./approvals.js')
@@ -45,9 +47,14 @@ beforeAll(async () => {
   projectId = projects.addProject({ root, name: 'headless permission' }).id
   // What `policyFor` derives for an unconfigured pool: `<root>_workspaces`, one directory per member.
   pool = `${root}_workspaces`
+  // ⛔ `plan()` resolves the CLI on PATH before it can report the argv these tests read.
+  // Measured 2026-09-09: without this the suite fails as `'claude' is not on PATH` on any machine
+  // without Claude Code installed, saying nothing about the permission mode it exists to pin.
+  undoInstalled = await forceInstalled('claude-code')
 })
 
 afterAll(() => {
+  undoInstalled?.()
   db.closeDb()
   rmSync(dir, { recursive: true, force: true })
 })

@@ -36,7 +36,7 @@ const SESSION = 'session-1'
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'agentyard-residency-'))
-  process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
+  process.env.WARMSTART_DATA_DIR = dir
   db = await import('./db.js')
   resources = await import('./resources.js')
   worktrees = await import('./worktrees.js')

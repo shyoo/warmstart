@@ -114,7 +114,7 @@ function landedTask(
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'agentyard-taskcommits-'))
-  process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
+  process.env.WARMSTART_DATA_DIR = dir
   store = await import('./db.js')
   store.openDb(join(dir, 'taskcommits.db'))
   commits = await import('./taskcommits.js')

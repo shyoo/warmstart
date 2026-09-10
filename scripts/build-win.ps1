@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Build Multi Agent Controller on Windows: checks, bundle, packaged app, and optionally an installer.
+  Build Warmstart on Windows: checks, bundle, packaged app, and optionally an installer.
 
 .DESCRIPTION
   A wrapper over the npm scripts, with the three things that actually go wrong on this machine
@@ -102,7 +102,7 @@
 
 .EXAMPLE
   .\scripts\build-win.ps1 -Installer
-  The above, plus "release\Multi Agent Controller Setup <version>.exe".
+  The above, plus "release\Warmstart Setup <version>.exe".
 
 .EXAMPLE
   .\scripts\build-win.ps1 -Quick
@@ -139,7 +139,7 @@ Set-Location $repo
 # what is running, what do I run afterwards - and that is what somebody typing -Help wants.
 if ($Help) {
   Write-Host ""
-  Write-Host "  build-win.ps1 - build Multi Agent Controller on Windows" -ForegroundColor Green
+  Write-Host "  build-win.ps1 - build Warmstart on Windows" -ForegroundColor Green
   Write-Host "  Checks, bundle, packaged app, drive it. ~92s cold; seconds when nothing changed."
   Write-Host ""
   Write-Host "  HOW MUCH TO BUILD" -ForegroundColor Cyan
@@ -327,11 +327,11 @@ $BUNDLE_OUT = @(
   'out/main/index.js', 'out/main/orchestratord.js', 'out/main/agentyard-mcp.js',
   'out/preload/index.cjs', 'out/renderer/index.html'
 )
-$PACKED_APP = 'release/win-unpacked/Multi Agent Controller.exe'
+$PACKED_APP = 'release/win-unpacked/Warmstart.exe'
 
 # ================================================================ stopping what is running
 #
-# ⛔ Nothing here is found by image name. "Multi Agent Controller.exe" and "electron.exe" are shared
+# ⛔ Nothing here is found by image name. "Warmstart.exe" and "electron.exe" are shared
 # with the user's editor, their other agent windows, and every other Electron app on the machine.
 # Ownership is proved by path: a process executing out of this repo's release\, out of this repo's
 # node_modules\electron\dist, or with one of this repo's out\ bundles on its command line, is this
@@ -475,7 +475,7 @@ function Assert-OutputIsFree([string]$relative) {
   Write-Host "⚠️  Closing the window is not enough. orchestratord is spawned detached and outlives" -ForegroundColor DarkGray
   Write-Host "    the UI on purpose - the whole premise is unattended progress across quota windows" -ForegroundColor DarkGray
   Write-Host "    that are hours long. A daemon stranded by an earlier test:pack looks the same." -ForegroundColor DarkGray
-  Write-Host "⛔  Stop it by PID. Never by image name: 'Multi Agent Controller.exe' and 'electron.exe'" -ForegroundColor DarkGray
+  Write-Host "⛔  Stop it by PID. Never by image name: 'Warmstart.exe' and 'electron.exe'" -ForegroundColor DarkGray
   Write-Host "    are shared with other apps and other agent windows." -ForegroundColor DarkGray
   exit 1
 }
@@ -511,7 +511,7 @@ function Assert-BundleIsCurrent {
 }
 
 # ================================================================ the build
-Write-Host "Multi Agent Controller - Windows build" -ForegroundColor Green
+Write-Host "Warmstart - Windows build" -ForegroundColor Green
 Write-Host "repo: $repo" -ForegroundColor DarkGray
 if ($Fresh) { Write-Host "cache: ignored (-Fresh)" -ForegroundColor DarkGray }
 

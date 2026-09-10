@@ -12,7 +12,7 @@ import {
   type ComposerScratch
 } from './composerscratch.js'
 
-const KEY = 'multi_agent_controller.composerScratch'
+const KEY = 'warmstart.composerScratch'
 
 const stub = (store: Record<string, string> | null, throws = false): void => {
   const storage = {

@@ -66,7 +66,7 @@ function finishedTask(input: {
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'agentyard-pace-'))
-  process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
+  process.env.WARMSTART_DATA_DIR = dir
   db = await import('./db.js')
   pace = await import('./pace.js')
   db.openDb(join(dir, 'pace.db'))

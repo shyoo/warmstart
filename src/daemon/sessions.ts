@@ -23,6 +23,7 @@ import { ensureDir, paths } from './paths.js'
 import { removeMcpConfig, writeMcpConfig } from './mcpconfig.js'
 import { StreamParser, renderForHuman, type StreamEvent } from './stream.js'
 import { formatCmdInvocation, unwrapForPty } from './which.js'
+import { appEnv } from '@shared/env.js'
 
 /**
  * Live agent processes.
@@ -52,9 +53,9 @@ const SCROLLBACK_BYTES = 256 * 1024
  * dialog swallows every keystroke sent to the session, so `/usage` was typed into the dialog and
  * the Enter after it accepted the folder - reporting "no fresher reading" forever.
  *
- * Set `MULTI_AGENT_CONTROLLER_AUTO_TRUST=0` to turn it off and answer the dialog by hand instead.
+ * Set `WARMSTART_AUTO_TRUST=0` to turn it off and answer the dialog by hand instead.
  */
-const AUTO_TRUST_SCRATCH = process.env.MULTI_AGENT_CONTROLLER_AUTO_TRUST !== '0'
+const AUTO_TRUST_SCRATCH = appEnv('AUTO_TRUST') !== '0'
 
 /**
  * How agentyard is attached to one agent process.
@@ -1494,7 +1495,7 @@ function openPipes(
   child.stderr?.on('data', (d: string) => onData(d))
   child.on('exit', (code) => onExit(code))
   child.on('error', (err) => {
-    onData(`\n[multi-agent-controller] could not start: ${err.message}\n`)
+    onData(`\n[warmstart] could not start: ${err.message}\n`)
     onExit(-1)
   })
   return {

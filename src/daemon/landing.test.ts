@@ -39,9 +39,9 @@ function makeRepo(name: string): string {
   git(root, 'init', '--initial-branch=main')
   git(root, 'config', 'user.name', 'agentyard test')
   git(root, 'config', 'user.email', 'test@example.invalid')
-  mkdirSync(join(root, '.multi_agent_controller'), { recursive: true })
+  mkdirSync(join(root, '.warmstart'), { recursive: true })
   writeFileSync(
-    join(root, '.multi_agent_controller', 'project.json'),
+    join(root, '.warmstart', 'project.json'),
     JSON.stringify({
       schema_version: 1,
       name,
@@ -74,7 +74,7 @@ function seedTask(branch: string): { project: Project; taskId: string; root: str
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'agentyard-landing-'))
-  process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
+  process.env.WARMSTART_DATA_DIR = dir
   db = await import('./db.js')
   projects = await import('./projects.js')
   tasks = await import('./tasks.js')
@@ -136,7 +136,7 @@ describe('landing without a remote', () => {
     })
 
   it('merges into a clean trunk and never reaches for a remote', async () => {
-    const branch = 'multi-agent-controller/t80-local'
+    const branch = 'warmstart/t80-local'
     const { project, taskId, root, ws } = seedLocal(branch)
     const before = git(root, 'rev-parse', 'main')
 
@@ -159,7 +159,7 @@ describe('landing without a remote', () => {
    * result, so the sentence cannot go back to being a claim nobody can check.
    */
   it('carries what it verified, whether it pushed, and what became of the branch', async () => {
-    const branch = 'multi-agent-controller/t81-told'
+    const branch = 'warmstart/t81-told'
     const { project, taskId, root, ws } = seedLocal(branch)
     // ⚠️ Two commands, so `checksPassed` is a count that could be wrong rather than a boolean that
     // could not. Both are read-only git invocations that exit 0 on every platform this runs on.
@@ -200,7 +200,7 @@ describe('landing without a remote', () => {
     git(root, 'branch', plannerBranch, 'main')
     const mainBefore = git(root, 'rev-parse', 'main')
 
-    const childBranch = `multi-agent-controller/t${seq + 100}-child`
+    const childBranch = `warmstart/t${seq + 100}-child`
     const childTask = tasks.createTask({
       title: `child ${seq}`,
       projectId: project.id,
@@ -231,7 +231,7 @@ describe('landing without a remote', () => {
    * at dispatch, before the rebase, so it is not a parent of what landed.
    */
   it('records the commit range it landed, and both ends still resolve after the branch is gone', async () => {
-    const branch = 'multi-agent-controller/t86-range'
+    const branch = 'warmstart/t86-range'
     const { project, taskId, root, ws } = seedLocal(branch)
     const base = git(root, 'rev-parse', 'main')
 
@@ -250,7 +250,7 @@ describe('landing without a remote', () => {
   })
 
   it('records nothing when the landing did not land, so no range points at unlanded work', async () => {
-    const branch = 'multi-agent-controller/t87-norange'
+    const branch = 'warmstart/t87-norange'
     const { project, taskId, ws } = seedLocal(branch)
     // A trunk on another branch: the merge refuses and the work stays put.
     git(join(dir, `local${seq}`), 'switch', '-c', 'operators-own-branch')
@@ -263,7 +263,7 @@ describe('landing without a remote', () => {
   })
 
   it('⛔ refuses to merge into a trunk somebody is working in, and keeps the branch', async () => {
-    const branch = 'multi-agent-controller/t81-busy'
+    const branch = 'warmstart/t81-busy'
     const { project, taskId, root, ws } = seedLocal(branch)
     // The operator, mid-edit. This is the ordinary state of the trunk on a working day.
     writeFileSync(join(root, 'README.md'), '# fixture\nhalf-written local change\n')
@@ -290,7 +290,7 @@ describe('landing without a remote', () => {
    * untracked, instead of a number. Uses real git: the defect lived in what was asked, and when.
    */
   it('refuses before running anything when the trunk has untracked files, and names them', async () => {
-    const branch = 'multi-agent-controller/t88-untracked'
+    const branch = 'warmstart/t88-untracked'
     const { project, taskId, root, ws } = seedLocal(branch)
     // The operator, mid-scribble: one modified file and one untracked one.
     writeFileSync(join(root, 'README.md'), '# fixture\nhalf-written local change\n')
@@ -312,7 +312,7 @@ describe('landing without a remote', () => {
   }, 20_000)
 
   it('fails on the trunk before the project checks, not on the checks', async () => {
-    const branch = 'multi-agent-controller/t89-checks-skipped'
+    const branch = 'warmstart/t89-checks-skipped'
     const { project, taskId, root, ws } = seedLocal(branch)
     // A check that would fail if it ever ran, plus a trunk that must stop the landing first.
     // ⚠️ `setProjectChecks` writes `project.json` into the trunk uncommitted, which is itself
@@ -329,7 +329,7 @@ describe('landing without a remote', () => {
   }, 20_000)
 
   it('re-checks the trunk inside the landing itself, for dirt that arrived after canLand', async () => {
-    const branch = 'multi-agent-controller/t90-late-dirt'
+    const branch = 'warmstart/t90-late-dirt'
     const { project, taskId, root, ws } = seedLocal(branch)
     writeFileSync(join(root, 'late-scribble.txt'), 'arrived after the preflight\n')
 
@@ -348,7 +348,7 @@ describe('landing without a remote', () => {
   }, 20_000)
 
   it('says which branch is in the way when the trunk is on another one', async () => {
-    const branch = 'multi-agent-controller/t82-elsewhere'
+    const branch = 'warmstart/t82-elsewhere'
     const { project, taskId, root, ws } = seedLocal(branch)
     git(root, 'switch', '-c', 'operators-own-branch')
 
@@ -359,7 +359,7 @@ describe('landing without a remote', () => {
   })
 
   it('verifies without merging, and says so when there is nothing to verify with', async () => {
-    const branch = 'multi-agent-controller/t83-verify'
+    const branch = 'warmstart/t83-verify'
     const { project, taskId, root, ws } = seedLocal(branch)
     const before = git(root, 'rev-parse', 'main')
 
@@ -375,10 +375,10 @@ describe('landing without a remote', () => {
   })
 
   it('reports a failing check instead of calling the task done', async () => {
-    const branch = 'multi-agent-controller/t84-red'
+    const branch = 'warmstart/t84-red'
     const { project, taskId, ws, root } = seedLocal(branch)
     writeFileSync(
-      join(root, '.multi_agent_controller', 'project.json'),
+      join(root, '.warmstart', 'project.json'),
       JSON.stringify({
         schema_version: 1,
         name: 'red',
@@ -400,7 +400,7 @@ describe('landing without a remote', () => {
   it('lets the policy choose the strategy, not the project’s legacy field', () => {
     // ⛔ `makeRepo` writes `landing.strategy: 'auto-land'`. Before 2026-08-30 that field decided
     // what ran, so a project resolved to `pull-request` would still have had its trunk pushed.
-    const { project } = seedLocal('multi-agent-controller/t85-which')
+    const { project } = seedLocal('warmstart/t85-which')
     expect(landing.strategyFor(project, 'commit-and-merge').id).toBe('merge-local')
     expect(landing.strategyFor(project, 'commit-and-verify').id).toBe('verify-only')
     expect(landing.strategyFor(project, 'pull-request').id).toBe('pull-request')
@@ -413,12 +413,12 @@ describe('landing without a remote', () => {
 
 describe('a task that produced no commits', () => {
   it('does not claim to have landed the commit that was already there', async () => {
-    const { project, taskId, root } = seedTask('multi-agent-controller/t1-question')
+    const { project, taskId, root } = seedTask('warmstart/t1-question')
     const result = await landing.landTask({
       project,
       task: tasks.requireTask(taskId),
       workspacePath: root,
-      branch: 'multi-agent-controller/t1-question'
+      branch: 'warmstart/t1-question'
     })
     expect(result.ok).toBe(false)
     expect(result.commit).toBeUndefined()
@@ -426,12 +426,12 @@ describe('a task that produced no commits', () => {
   })
 
   it('says no work landed and asks human how to proceed', async () => {
-    const { project, taskId, root } = seedTask('multi-agent-controller/t2-question')
+    const { project, taskId, root } = seedTask('warmstart/t2-question')
     await landing.landTask({
       project,
       task: tasks.requireTask(taskId),
       workspacePath: root,
-      branch: 'multi-agent-controller/t2-question'
+      branch: 'warmstart/t2-question'
     })
     const said = tasks.messagesFor(taskId).map((m) => m.text).join('\n')
     expect(said).toContain('Not landed')
@@ -443,12 +443,12 @@ describe('a task that produced no commits', () => {
   it('guards against empty commits by going to awaiting_human so a person can review or close', async () => {
     // ⚠️ Empty commit guard: a task with 0 commits and no landed work enters awaiting_human
     // so a human can ask further questions or mark it completed.
-    const { project, taskId, root } = seedTask('multi-agent-controller/t3-question')
+    const { project, taskId, root } = seedTask('warmstart/t3-question')
     const result = await landing.landTask({
       project,
       task: tasks.requireTask(taskId),
       workspacePath: root,
-      branch: 'multi-agent-controller/t3-question'
+      branch: 'warmstart/t3-question'
     })
     expect(result.ok).toBe(false)
     expect(tasks.getTask(taskId)?.status).toBe('awaiting_human')
@@ -458,13 +458,13 @@ describe('a task that produced no commits', () => {
   it('still defers to a task that asked to be checked', async () => {
     // ⛔ "Nothing landed" is an outcome its author wanted to see before it was called done. Skipping
     // the review because the diff turned out empty decides that for them.
-    const { project, taskId, root } = seedTask('multi-agent-controller/t4-verify')
+    const { project, taskId, root } = seedTask('warmstart/t4-verify')
     tasks.updateTask(taskId, { verification: 'required' })
     const result = await landing.landTask({
       project,
       task: tasks.requireTask(taskId),
       workspacePath: root,
-      branch: 'multi-agent-controller/t4-verify'
+      branch: 'warmstart/t4-verify'
     })
     expect(result.nothingToLand).toBeUndefined()
     expect(tasks.getTask(taskId)?.status).toBe('awaiting_human')
@@ -473,7 +473,7 @@ describe('a task that produced no commits', () => {
 
 describe('a task that did commit something', () => {
   it('is not waved through as nothing to land', async () => {
-    const { project, taskId, root } = seedTask('multi-agent-controller/t5-real')
+    const { project, taskId, root } = seedTask('warmstart/t5-real')
     writeFileSync(join(root, 'new.txt'), 'a real change\n')
     git(root, 'add', '-A')
     git(root, 'commit', '-m', 'a real change')
@@ -482,7 +482,7 @@ describe('a task that did commit something', () => {
       project,
       task: tasks.requireTask(taskId),
       workspacePath: root,
-      branch: 'multi-agent-controller/t5-real'
+      branch: 'warmstart/t5-real'
     })
     // ⛔ The check is `rev-list --count main..branch`, so one commit is enough to reach the real
     // strategy. Whether that strategy then succeeds is landing's own business and is covered
@@ -495,14 +495,14 @@ describe('a task that did commit something', () => {
     // ⚠️ A dirty workspace with no commits is *not* "nothing to land" — it is work that exists and
     // is about to be destroyed by the next dispatch into a pooled worktree. Collapsing the two
     // would replace an urgent warning with a shrug.
-    const { project, taskId, root } = seedTask('multi-agent-controller/t6-dirty')
+    const { project, taskId, root } = seedTask('warmstart/t6-dirty')
     writeFileSync(join(root, 'unsaved.txt'), 'not committed\n')
 
     const result = await landing.landTask({
       project,
       task: tasks.requireTask(taskId),
       workspacePath: root,
-      branch: 'multi-agent-controller/t6-dirty'
+      branch: 'warmstart/t6-dirty'
     })
     expect(result.nothingToLand).toBeUndefined()
     expect(result.ok).toBe(false)
@@ -514,7 +514,7 @@ describe('a task that did commit something', () => {
     // the next run inherits it — which leaves a **clean** workspace holding a commit nobody compiled.
     // `isClean` waves that through, `rev-list --count` counts it as a commit to land, and every step
     // after it succeeds. Landing has to know the difference between work and a rescue of work.
-    const { project, taskId, root } = seedTask('multi-agent-controller/t7-rescued')
+    const { project, taskId, root } = seedTask('warmstart/t7-rescued')
     writeFileSync(join(root, 'half-done.txt'), 'as far as it got\n')
     git(root, 'add', '-A')
     git(
@@ -528,7 +528,7 @@ describe('a task that did commit something', () => {
       project,
       task: tasks.requireTask(taskId),
       workspacePath: root,
-      branch: 'multi-agent-controller/t7-rescued'
+      branch: 'warmstart/t7-rescued'
     })
     expect(result.ok).toBe(false)
     expect(result.reason).toContain('rescued')
@@ -538,7 +538,7 @@ describe('a task that did commit something', () => {
   it('lands once the run has finished something on top of the rescue', async () => {
     // ⚠️ The mirror case, and the reason the check reads only the tip: a rescue somebody built on is
     // ordinary history, and the project checks are what judge the result.
-    const { project, taskId, root } = seedTask('multi-agent-controller/t8-rescued-then-finished')
+    const { project, taskId, root } = seedTask('warmstart/t8-rescued-then-finished')
     writeFileSync(join(root, 'half-done.txt'), 'as far as it got\n')
     git(root, 'add', '-A')
     git(
@@ -554,7 +554,7 @@ describe('a task that did commit something', () => {
       project,
       task: tasks.requireTask(taskId),
       workspacePath: root,
-      branch: 'multi-agent-controller/t8-rescued-then-finished'
+      branch: 'warmstart/t8-rescued-then-finished'
     })
     expect(result.reason ?? '').not.toContain('rescued')
   })
@@ -566,7 +566,7 @@ describe('a task that did commit something', () => {
  * ⛔ Measured 2026-08-29. t22's agent pushed its own commit to `origin/main` — which is what this
  * repo's `/commit` skill tells a worktree to do, and therefore the *normal* outcome here rather than
  * an edge case. The finish correctly reported that there was nothing left to land, and then left
- * `multi-agent-controller/t22-…` sitting in the pool: a branch whose every commit was already on the
+ * `warmstart/t22-…` sitting in the pool: a branch whose every commit was already on the
  * target, kept alive by nothing but the absence of a line of code. The success path had deleted its
  * branch since the beginning; only the paths that land *nothing* forgot to.
  *
@@ -592,7 +592,7 @@ function seedPushedTask(branch: string): { project: Project; taskId: string; roo
 
 describe('retiring the branch of a finish that landed nothing', () => {
   it('deletes it, because every commit on it is already in the base', async () => {
-    const branch = 'multi-agent-controller/t30-retire'
+    const branch = 'warmstart/t30-retire'
     const { root } = seedTask(branch)
     const retired = await landing.finishWithoutLanding(root, branch, 'main')
 
@@ -606,7 +606,7 @@ describe('retiring the branch of a finish that landed nothing', () => {
     // ⚠️ The pushed shape on purpose: here the branch tip and the *local* `main` are different
     //    commits, so detaching at the base instead of at HEAD is a mutation this can actually see.
     //    With a branch level with `main` the two are indistinguishable and the test proves nothing.
-    const branch = 'multi-agent-controller/t31-detach'
+    const branch = 'warmstart/t31-detach'
     const { root } = seedPushedTask(branch)
     const before = git(root, 'rev-parse', 'HEAD')
     expect(git(root, 'rev-parse', 'main')).not.toBe(before)
@@ -618,7 +618,7 @@ describe('retiring the branch of a finish that landed nothing', () => {
   })
 
   it('says what became of the branch, and names what a resumed task would start from', async () => {
-    const branch = 'multi-agent-controller/t32-note'
+    const branch = 'warmstart/t32-note'
     const { root } = seedTask(branch)
     const retired = await landing.finishWithoutLanding(root, branch, 'origin/main')
 
@@ -630,7 +630,7 @@ describe('retiring the branch of a finish that landed nothing', () => {
 
   it('deletes a branch the workspace is not standing on', async () => {
     // A workspace parked between tasks is detached; the branch is still there and still dead.
-    const branch = 'multi-agent-controller/t33-parked'
+    const branch = 'warmstart/t33-parked'
     const { root } = seedTask(branch)
     git(root, 'switch', '--detach', 'main')
 
@@ -641,7 +641,7 @@ describe('retiring the branch of a finish that landed nothing', () => {
   it('leaves a branch another worktree still holds, and does not call that a failure', async () => {
     // ⛔ Untidy is not the same as broken. Git refuses to delete a branch checked out elsewhere, and
     //    a finish that reported failure over it would turn a successful task into a person's problem.
-    const branch = 'multi-agent-controller/t34-held'
+    const branch = 'warmstart/t34-held'
     const { root } = seedTask(branch)
     git(root, 'switch', '--detach', 'main')
     git(root, 'worktree', 'add', join(dir, 'holder-t34'), branch)
@@ -654,14 +654,14 @@ describe('retiring the branch of a finish that landed nothing', () => {
   })
 
   it('reports false for a branch that is not there, rather than throwing', async () => {
-    const { root } = seedTask('multi-agent-controller/t35-gone')
+    const { root } = seedTask('warmstart/t35-gone')
     expect((await landing.finishWithoutLanding(root, 'no-such-branch', 'main')).deleted).toBe(false)
   })
 })
 
 describe('landTask on a branch with nothing left to land', () => {
   it('keeps the branch and asks human when no commits exist', async () => {
-    const branch = 'multi-agent-controller/t36-question'
+    const branch = 'warmstart/t36-question'
     const { project, taskId, root } = seedTask(branch)
 
     const result = await landing.landTask({
@@ -677,7 +677,7 @@ describe('landTask on a branch with nothing left to land', () => {
   })
 
   it('does the same when the agent landed the work itself, which is the t22 shape', async () => {
-    const branch = 'multi-agent-controller/t37-agent-pushed'
+    const branch = 'warmstart/t37-agent-pushed'
     const { project, taskId, root } = seedPushedTask(branch)
 
     const result = await landing.landTask({
@@ -699,7 +699,7 @@ describe('landTask on a branch with nothing left to land', () => {
 
   it('keeps the branch of a task that asked to be verified', async () => {
     // ⛔ The early return does not fire, so nothing is retired. A person is about to look at this.
-    const branch = 'multi-agent-controller/t38-verify'
+    const branch = 'warmstart/t38-verify'
     const { project, taskId, root } = seedTask(branch)
     tasks.updateTask(taskId, { verification: 'required' })
 
@@ -715,7 +715,7 @@ describe('landTask on a branch with nothing left to land', () => {
   })
 
   it('deletes the branch only after the work has actually landed', async () => {
-    const branch = 'multi-agent-controller/t39-real'
+    const branch = 'warmstart/t39-real'
     const { project, taskId, root } = seedTask(branch)
     writeFileSync(join(root, 'new.txt'), 'a real change\n')
     git(root, 'add', '-A')
@@ -739,7 +739,7 @@ describe('landTask on a branch with nothing left to land', () => {
   it('keeps the branch when the workspace is dirty', async () => {
     // ⛔ The loudest case. Uncommitted work with no commits is *not* nothing to land, and deleting
     //    the branch under it would remove the only handle on where that work belongs.
-    const branch = 'multi-agent-controller/t40-dirty'
+    const branch = 'warmstart/t40-dirty'
     const { project, taskId, root } = seedTask(branch)
     writeFileSync(join(root, 'unsaved.txt'), 'not committed\n')
 
@@ -760,7 +760,7 @@ describe('landTask on a branch with nothing left to land', () => {
  *
  * ⛔ **Measured 2026-08-29.** t26 and t27 were run in parallel and finished within the same second.
  * One landed. The other was told *"Landing failed: another task is landing right now. 1 commit(s)
- * are on `multi-agent-controller/t27-…`, which is intact"* and was parked on a person's desk. The
+ * are on `warmstart/t27-…`, which is intact"* and was parked on a person's desk. The
  * lock behaved exactly as designed — landing **is** serialised per project, because two rebases onto
  * a moving target race — and the caller turned a two-second queue into a hand-off.
  *
@@ -846,7 +846,7 @@ describe('two tasks landing at once', () => {
 
   it('lands both of them, which is the whole report', async () => {
     // ⭐ The regression, end to end. Before this, one of these two came back `ok: false`.
-    const race = seedRace('multi-agent-controller/t26-first', 'multi-agent-controller/t27-second')
+    const race = seedRace('warmstart/t26-first', 'warmstart/t27-second')
     landingQueue.pollMs = 20
 
     const [a, b] = await Promise.all([
@@ -854,13 +854,13 @@ describe('two tasks landing at once', () => {
         project: race.project,
         task: tasks.requireTask(race.aTask),
         workspacePath: race.aPath,
-        branch: 'multi-agent-controller/t26-first'
+        branch: 'warmstart/t26-first'
       }),
       landing.landTask({
         project: race.project,
         task: tasks.requireTask(race.bTask),
         workspacePath: race.bPath,
-        branch: 'multi-agent-controller/t27-second'
+        branch: 'warmstart/t27-second'
       })
     ])
 
@@ -877,7 +877,7 @@ describe('two tasks landing at once', () => {
   })
 
   it('hands neither of them to a person', async () => {
-    const race = seedRace('multi-agent-controller/t41-a', 'multi-agent-controller/t41-b')
+    const race = seedRace('warmstart/t41-a', 'warmstart/t41-b')
     landingQueue.pollMs = 20
 
     await Promise.all([
@@ -885,13 +885,13 @@ describe('two tasks landing at once', () => {
         project: race.project,
         task: tasks.requireTask(race.aTask),
         workspacePath: race.aPath,
-        branch: 'multi-agent-controller/t41-a'
+        branch: 'warmstart/t41-a'
       }),
       landing.landTask({
         project: race.project,
         task: tasks.requireTask(race.bTask),
         workspacePath: race.bPath,
-        branch: 'multi-agent-controller/t41-b'
+        branch: 'warmstart/t41-b'
       })
     ])
 
@@ -903,7 +903,7 @@ describe('two tasks landing at once', () => {
   it('records the ordering as a dependency on whoever was landing', async () => {
     // ⭐ The operator's own ask: the second task should *depend on* the first rather than fail beside
     //    it. The edge outlives the run, so "t27 landed after t26" is answerable afterwards.
-    const race = seedRace('multi-agent-controller/t42-a', 'multi-agent-controller/t42-b')
+    const race = seedRace('warmstart/t42-a', 'warmstart/t42-b')
     landingQueue.pollMs = 20
 
     const [a] = await Promise.all([
@@ -911,13 +911,13 @@ describe('two tasks landing at once', () => {
         project: race.project,
         task: tasks.requireTask(race.aTask),
         workspacePath: race.aPath,
-        branch: 'multi-agent-controller/t42-a'
+        branch: 'warmstart/t42-a'
       }),
       landing.landTask({
         project: race.project,
         task: tasks.requireTask(race.bTask),
         workspacePath: race.bPath,
-        branch: 'multi-agent-controller/t42-b'
+        branch: 'warmstart/t42-b'
       })
     ])
 
@@ -934,7 +934,7 @@ describe('two tasks landing at once', () => {
     //    completes, and a finished task made ready is a task the scheduler hands to an agent again —
     //    a second run over work that is already committed. The edge is a record; the status would be
     //    an instruction.
-    const race = seedRace('multi-agent-controller/t43-a', 'multi-agent-controller/t43-b')
+    const race = seedRace('warmstart/t43-a', 'warmstart/t43-b')
     landingQueue.pollMs = 10
     landingQueue.waitMs = 10_000
     const lock = holdTheLock(race.project, 'a-task-that-is-landing')
@@ -943,7 +943,7 @@ describe('two tasks landing at once', () => {
       project: race.project,
       task: tasks.requireTask(race.aTask),
       workspacePath: race.aPath,
-      branch: 'multi-agent-controller/t43-a'
+      branch: 'warmstart/t43-a'
     })
     await waitUntilQueued(race.aTask)
     expect(tasks.getTask(race.aTask)?.status).not.toBe('blocked')
@@ -953,7 +953,7 @@ describe('two tasks landing at once', () => {
   })
 
   it('waits for a lock that is busy now and free in a moment, then lands', async () => {
-    const race = seedRace('multi-agent-controller/t44-a', 'multi-agent-controller/t44-b')
+    const race = seedRace('warmstart/t44-a', 'warmstart/t44-b')
     landingQueue.pollMs = 10
     landingQueue.waitMs = 10_000
     const lock = holdTheLock(race.project, 'a-task-that-is-landing')
@@ -962,7 +962,7 @@ describe('two tasks landing at once', () => {
       project: race.project,
       task: tasks.requireTask(race.aTask),
       workspacePath: race.aPath,
-      branch: 'multi-agent-controller/t44-a'
+      branch: 'warmstart/t44-a'
     })
     await waitUntilQueued(race.aTask)
     lock.release()
@@ -976,7 +976,7 @@ describe('two tasks landing at once', () => {
 
   it('releases the lock afterwards, so the queue drains rather than stopping', async () => {
     // ⛔ One leaked exclusive claim stalls a project forever, and the symptom is silence.
-    const race = seedRace('multi-agent-controller/t45-a', 'multi-agent-controller/t45-b')
+    const race = seedRace('warmstart/t45-a', 'warmstart/t45-b')
     landingQueue.pollMs = 10
     const lock = holdTheLock(race.project, 'a-task-that-is-landing')
 
@@ -984,7 +984,7 @@ describe('two tasks landing at once', () => {
       project: race.project,
       task: tasks.requireTask(race.aTask),
       workspacePath: race.aPath,
-      branch: 'multi-agent-controller/t45-a'
+      branch: 'warmstart/t45-a'
     })
     await waitUntilQueued(race.aTask)
     lock.release()
@@ -997,7 +997,7 @@ describe('two tasks landing at once', () => {
   it('gives up on a lock that never frees, and says the branch is fine', async () => {
     // ⚠️ Bounded. An unbounded wait inside a completion is a deadlock with a patient face — the task
     //    would hold its workspace and its session for as long as the daemon lived.
-    const race = seedRace('multi-agent-controller/t46-a', 'multi-agent-controller/t46-b')
+    const race = seedRace('warmstart/t46-a', 'warmstart/t46-b')
     landingQueue.pollMs = 10
     landingQueue.waitMs = 120
     holdTheLock(race.project, 'a-task-that-never-finishes')
@@ -1006,7 +1006,7 @@ describe('two tasks landing at once', () => {
       project: race.project,
       task: tasks.requireTask(race.aTask),
       workspacePath: race.aPath,
-      branch: 'multi-agent-controller/t46-a'
+      branch: 'warmstart/t46-a'
     })
 
     expect(result.ok).toBe(false)
@@ -1014,13 +1014,13 @@ describe('two tasks landing at once', () => {
     // ⭐ The message the operator acts on. A queue that ran out is a retry, not an investigation, and
     //    the branch is intact either way.
     expect(said(race.aTask)).toContain('Nothing is wrong with the branch')
-    expect(git(race.aPath, 'rev-parse', '--verify', 'multi-agent-controller/t46-a')).toBeTruthy()
+    expect(git(race.aPath, 'rev-parse', '--verify', 'warmstart/t46-a')).toBeTruthy()
   })
 
   // ⚠️ Ten seconds of headroom against a thirty-second budget, so that a build which ignored the
   //    cancel fails on the clock instead of on vitest's default five.
   it('stops waiting when the task is cancelled underneath it', async () => {
-    const race = seedRace('multi-agent-controller/t47-a', 'multi-agent-controller/t47-b')
+    const race = seedRace('warmstart/t47-a', 'warmstart/t47-b')
     landingQueue.pollMs = 10
     landingQueue.waitMs = 30_000
     holdTheLock(race.project, 'a-task-that-never-finishes')
@@ -1030,7 +1030,7 @@ describe('two tasks landing at once', () => {
       project: race.project,
       task: tasks.requireTask(race.aTask),
       workspacePath: race.aPath,
-      branch: 'multi-agent-controller/t47-a'
+      branch: 'warmstart/t47-a'
     })
     setTimeout(() => tasks.setStatus(race.aTask, 'cancelling'), 50)
     const result = await pending
@@ -1044,7 +1044,7 @@ describe('two tasks landing at once', () => {
   it('lands anyway when the holder is not a task this fleet has', async () => {
     // ⚠️ The *wait* is what serialises the two; the edge only records that it happened. A holder with
     //    no task row — a hand-taken claim, a row since deleted — costs the record and nothing else.
-    const race = seedRace('multi-agent-controller/t48-a', 'multi-agent-controller/t48-b')
+    const race = seedRace('warmstart/t48-a', 'warmstart/t48-b')
     landingQueue.pollMs = 10
     landingQueue.waitMs = 10_000
     const lock = holdTheLock(race.project, 'not-a-task-id')
@@ -1053,7 +1053,7 @@ describe('two tasks landing at once', () => {
       project: race.project,
       task: tasks.requireTask(race.aTask),
       workspacePath: race.aPath,
-      branch: 'multi-agent-controller/t48-a'
+      branch: 'warmstart/t48-a'
     })
     await waitUntilQueued(race.aTask)
     lock.release()
@@ -1064,7 +1064,7 @@ describe('two tasks landing at once', () => {
   })
 
   it('refuses to close a cycle, and lands both regardless', async () => {
-    const race = seedRace('multi-agent-controller/t49-a', 'multi-agent-controller/t49-b')
+    const race = seedRace('warmstart/t49-a', 'warmstart/t49-b')
     landingQueue.pollMs = 20
     // Whichever of these ends up queueing, the edge it wants may already run the other way.
     tasks.addDependency(race.aTask, race.bTask)
@@ -1074,13 +1074,13 @@ describe('two tasks landing at once', () => {
         project: race.project,
         task: tasks.requireTask(race.aTask),
         workspacePath: race.aPath,
-        branch: 'multi-agent-controller/t49-a'
+        branch: 'warmstart/t49-a'
       }),
       landing.landTask({
         project: race.project,
         task: tasks.requireTask(race.bTask),
         workspacePath: race.bPath,
-        branch: 'multi-agent-controller/t49-b'
+        branch: 'warmstart/t49-b'
       })
     ])
 
@@ -1092,13 +1092,13 @@ describe('two tasks landing at once', () => {
   it('adds nothing and says nothing when there is no queue', async () => {
     // ⛔ The guard, and it must keep passing when the queue is deleted. A landing that never
     //    contended must not acquire a dependency it did not need, and must not claim it waited.
-    const race = seedRace('multi-agent-controller/t50-a', 'multi-agent-controller/t50-b')
+    const race = seedRace('warmstart/t50-a', 'warmstart/t50-b')
 
     const result = await landing.landTask({
       project: race.project,
       task: tasks.requireTask(race.aTask),
       workspacePath: race.aPath,
-      branch: 'multi-agent-controller/t50-a'
+      branch: 'warmstart/t50-a'
     })
 
     expect(result.ok, result.reason).toBe(true)
@@ -1121,7 +1121,7 @@ describe('what a landing tells the operator it did', () => {
     strategy: 'merge-local' as const,
     ok: true as const,
     commit: '98f200abcdef1234',
-    branch: 'multi-agent-controller/t239-thing'
+    branch: 'warmstart/t239-thing'
   }
 
   it('keeps the headline shape the salvage parser reads back off the thread', () => {
@@ -1139,7 +1139,7 @@ describe('what a landing tells the operator it did', () => {
     )
     expect(said).toContain('4 project checks passed')
     expect(said).toContain('**not pushed**')
-    expect(said).toContain('`multi-agent-controller/t239-thing` held nothing `main` does not now have')
+    expect(said).toContain('`warmstart/t239-thing` held nothing `main` does not now have')
   })
 
   it('calls a project with no check commands unverified, which is not a smaller kind of verified', () => {

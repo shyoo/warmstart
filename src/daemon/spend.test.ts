@@ -28,7 +28,7 @@ let tasks: typeof import('./tasks.js')
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'agentyard-spend-'))
-  process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
+  process.env.WARMSTART_DATA_DIR = dir
   db = await import('./db.js')
   spend = await import('./spend.js')
   quota = await import('./quota.js')

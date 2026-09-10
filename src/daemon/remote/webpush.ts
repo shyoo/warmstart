@@ -63,7 +63,7 @@ export function vapidHeader(keys: VapidKeys, endpoint: string, now = Date.now())
         aud: audience,
         // 12 hours: comfortably inside the 24-hour ceiling RFC 8292 puts on this.
         exp: Math.floor(now / 1000) + 12 * 60 * 60,
-        sub: 'mailto:noreply@multi-agent-controller.invalid'
+        sub: 'mailto:noreply@warmstart.invalid'
       })
     )
   )

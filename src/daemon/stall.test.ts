@@ -222,28 +222,38 @@ describe('reading what the platform actually prints', () => {
  */
 async function canEnumerateProcesses(): Promise<boolean> {
   try {
-    const { stdout } =
-      process.platform === 'win32'
-        ? await run(
-            'powershell.exe',
-            [
-              '-NoProfile',
-              '-NonInteractive',
-              '-Command',
-              // ⚠️ Selects the same properties the watchdog reads before counting: WMI may permit a
-              // bare count while denying `CommandLine`, which would otherwise make this a test of
-              // two different host capabilities. It still has to *print a count* — the caller reads
-              // this as a number, so listing the objects themselves would parse as `NaN` and report
-              // every host as denied.
-              '@(Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,' +
-                'KernelModeTime,UserModeTime,CommandLine).Count'
-            ],
-            { timeout: 20_000, windowsHide: true }
-          )
-        : await run('ps', ['-eo', 'pid='], { timeout: 20_000 })
-    // PowerShell may exit successfully after a denied CIM query while printing `0`. That is not
-    // permission to enumerate processes; only a positive count proves the query was allowed.
-    return Number(String(stdout).trim()) > 0
+    // ⛔ **The two platforms print different shapes, and each must be counted its own way.** This
+    // used to run both through one `Number(stdout)`, which is right for PowerShell and wrong for
+    // `ps`: `ps -eo pid=` prints *one pid per line*, so `Number()` of it is `NaN`, `NaN > 0` is
+    // `false`, and the helper reported **every** non-Windows host as denied — including hosts where
+    // enumeration plainly worked. The test then demanded `sampleProcessTree` answer `null`, it
+    // correctly answered a real sample, and the failure read as a regression in the watchdog.
+    // ⚠️ It fails identically on macOS, which takes this same branch.
+    if (process.platform === 'win32') {
+      const { stdout } = await run(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          // ⚠️ Selects the same properties the watchdog reads before counting: WMI may permit a
+          // bare count while denying `CommandLine`, which would otherwise make this a test of
+          // two different host capabilities. It still has to *print a count* — this branch reads
+          // it as a number, so listing the objects themselves would parse as `NaN` and report
+          // every host as denied.
+          '@(Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,' +
+            'KernelModeTime,UserModeTime,CommandLine).Count'
+        ],
+        { timeout: 20_000, windowsHide: true }
+      )
+      // PowerShell may exit successfully after a denied CIM query while printing `0`. That is not
+      // permission to enumerate processes; only a positive count proves the query was allowed.
+      return Number(String(stdout).trim()) > 0
+    }
+    // A denied `ps` exits non-zero and is caught below; a permitted one prints at least this
+    // process. Count the lines it printed rather than parsing them as one number.
+    const { stdout } = await run('ps', ['-eo', 'pid='], { timeout: 20_000 })
+    return String(stdout).split('\n').filter((line) => line.trim() !== '').length > 0
   } catch {
     return false
   }

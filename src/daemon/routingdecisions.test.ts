@@ -63,7 +63,7 @@ function record(patch: Partial<Parameters<typeof ledger.recordRoutingDecision>[0
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'agentyard-routingledger-'))
-  process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
+  process.env.WARMSTART_DATA_DIR = dir
   db = await import('./db.js')
   ledger = await import('./routingdecisions.js')
   db.openDb(join(dir, 'ledger.db'))

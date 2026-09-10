@@ -1260,7 +1260,7 @@ export const pullRequest: LandingStrategy = {
       return {
         ok: false,
         reason:
-          'the GitHub CLI (`gh`) is not on PATH. Multi Agent Controller wraps it rather than talking to the ' +
+          'the GitHub CLI (`gh`) is not on PATH. Warmstart wraps it rather than talking to the ' +
           'GitHub API itself, so that it never holds a token of yours. Install it, or set the ' +
           "project's landing strategy to `leave-branch`."
       }
@@ -1284,7 +1284,7 @@ export const pullRequest: LandingStrategy = {
       const title = `t${ctx.task.seq}: ${ctx.task.title}`.slice(0, 120)
       const body = [
         ctx.task.handoffNote ? `${ctx.task.handoffNote}\n` : '',
-        `Opened by Multi Agent Controller for task t${ctx.task.seq}.`,
+        `Opened by Warmstart for task t${ctx.task.seq}.`,
         '',
         `- branch: \`${ctx.branch}\``,
         `- base: \`${policy.landingTarget}\``,

@@ -34,7 +34,7 @@ under that key and tells the CLI to call `mcp__<key>__approve` (`APPROVE_TOOL`).
 
 ## 2. The tier contract
 
-⛔ **The tier is set by the daemon, never asked for by the caller.** `MULTI_AGENT_CONTROLLER_TIER`
+⛔ **The tier is set by the daemon, never asked for by the caller.** `WARMSTART_TIER`
 comes from the MCP config file `writeMcpConfig(sessionId, tier)` generated for that session; an agent
 cannot promote itself by exporting an environment variable it does not control. Anything other than
 `controller` reads as `worker`.

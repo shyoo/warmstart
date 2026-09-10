@@ -34,7 +34,7 @@ export function Pair({ initialCode, onPaired }: { initialCode: string | null; on
 
   return (
     <div className="m-screen m-screen--center">
-      <h1 className="m-title">Multi Agent Controller</h1>
+      <h1 className="m-title">Warmstart</h1>
       <p className="m-lede">Pair this phone to answer agents from anywhere.</p>
       <label className="m-field">
         <span>Pairing code</span>

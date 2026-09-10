@@ -51,7 +51,7 @@ const CODEX_WORKER = 'dddddddd-0000-4000-8000-000000000001'
 beforeAll(async () => {
   // ⛔ A temp data directory, never the real one. This opens a database and writes to it.
   dir = mkdtempSync(join(tmpdir(), 'agentyard-metering-'))
-  process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
+  process.env.WARMSTART_DATA_DIR = dir
   db = await import('./db.js')
   transcript = await import('./transcript.js')
   sessions = await import('./sessions.js')

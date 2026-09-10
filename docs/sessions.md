@@ -57,7 +57,7 @@ this feature does not turn it on.
 | tier | where | values |
 |---|---|---|
 | Fleet | Settings → Global → **Reusing conversations** | `off` · `on` |
-| Project | the project's **Settings** tab → **Policy** → *Reusing conversations*, or `session.share` in `.multi_agent_controller/project.json` | `off` · `on` · `inherit` |
+| Project | the project's **Settings** tab → **Policy** → *Reusing conversations*, or `session.share` in `.warmstart/project.json` | `off` · `on` · `inherit` |
 | Task | the **Reuse / Fresh** pill under the New Task prompt, and its **Thread** tab | `inherit` · `on` · `off` |
 
 Resolved **task → project → fleet**, taking the first that is not `inherit`.
@@ -185,7 +185,7 @@ project that took the scaffolding gets the sentence and one that declined it is 
 
 A project may also add a **seeding prompt** of its own — *Read CLAUDE.md before you start*, *the API
 contract lives in docs/api.md* — carried verbatim, after the doc line rather than instead of it. Both
-live under `prompt` in `.multi_agent_controller/project.json` and are set from the project's
+live under `prompt` in `.warmstart/project.json` and are set from the project's
 **Settings** tab → **Cold start**:
 
 | tier | where | values |

@@ -1,6 +1,6 @@
 # Task Routing & Judgment Decisions
 
-How Multi Agent Controller decides which worker, session, and moment will run a task.
+How Warmstart decides which worker, session, and moment will run a task.
 
 The scheduler's core loop runs every **10 seconds** and costs **zero tokens**. Every decision is
 deterministic arithmetic over measured costs, cache lifetimes, and quota windows. The LLM

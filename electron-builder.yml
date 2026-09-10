@@ -13,8 +13,8 @@
 #     They read their own bundles out of the asar, which works because Electron-as-Node keeps the
 #     patched `fs`.
 
-appId: io.github.shyoo.multi-agent-controller
-productName: Multi Agent Controller
+appId: io.github.shyoo.warmstart
+productName: Warmstart
 copyright: Copyright © 2026 Sunghwan Yoo
 
 directories:
@@ -85,11 +85,11 @@ mac:
 
 linux:
   # ⛔ Set explicitly, because electron-builder does NOT use `productName` verbatim here. On Windows
-  # and macOS the executable is `Multi Agent Controller`; on Linux the name is sanitised, and the
+  # and macOS the executable is `Warmstart`; on Linux the name is sanitised, and the
   # rename turned `agentyard` - a string no sanitiser touches - into one that it does. The packaged
   # suite went looking for a binary that was never built. Naming it here means one string decides,
   # and it is also the `Exec` line in the .desktop entry.
-  executableName: multi-agent-controller
+  executableName: warmstart
   target:
     - target: AppImage
       arch: [x64, arm64]

@@ -8,7 +8,7 @@ import type { Project } from '@shared/tasks.js'
 /**
  * A pool member that did not arrive clean.
  *
- * ⛔ Measured 2026-08-27. Task t4 never started: `git switch -c multi-agent-controller/t4-… origin/main`
+ * ⛔ Measured 2026-08-27. Task t4 never started: `git switch -c warmstart/t4-… origin/main`
  * failed with *"Your local changes to the following files would be overwritten by checkout"*, naming
  * three files the task had never touched. The scheduler had done everything right — the branch was
  * named after the task, it was created inside a claimed worktree, the trunk was never switched. What
@@ -38,12 +38,12 @@ let seq = 0
 function makeProject(poolSize = 1): Project {
   seq += 1
   const root = join(dir, `repo${seq}`)
-  mkdirSync(join(root, '.multi_agent_controller'), { recursive: true })
+  mkdirSync(join(root, '.warmstart'), { recursive: true })
   git(root, 'init', '--initial-branch=main')
   git(root, 'config', 'user.name', 'agentyard test')
   git(root, 'config', 'user.email', 'test@example.invalid')
   writeFileSync(
-    join(root, '.multi_agent_controller', 'project.json'),
+    join(root, '.warmstart', 'project.json'),
     JSON.stringify({
       schema_version: 1,
       name: `repo${seq}`,
@@ -61,7 +61,7 @@ function makeProject(poolSize = 1): Project {
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'agentyard-worktrees-'))
-  process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
+  process.env.WARMSTART_DATA_DIR = dir
   db = await import('./db.js')
   projects = await import('./projects.js')
   worktrees = await import('./worktrees.js')
@@ -164,7 +164,7 @@ describe('claiming a workspace somebody left dirty', () => {
     await worktrees.prepareWorkspace(project, second!, worktrees.branchNameFor(9, 'later task'))
 
     const stashes = git(second!.path, 'stash', 'list')
-    expect(stashes).toMatch(/multi-agent-controller: 2 file\(s\)/)
+    expect(stashes).toMatch(/warmstart: 2 file\(s\)/)
 
     // The branch starts from the committed content, not from what was rescued...
     expect(text(join(second!.path, 'kept.txt'))).toBe('as committed\n')
@@ -259,7 +259,7 @@ describe('an interrupted run that never committed', () => {
 
     const rescue = await worktrees.parkWorkspace(project, ws!.path)
     expect(rescue?.kind).toBe('stash')
-    expect(git(ws!.path, 'stash', 'list')).toMatch(/multi-agent-controller: 1 file\(s\)/)
+    expect(git(ws!.path, 'stash', 'list')).toMatch(/warmstart: 1 file\(s\)/)
     worktrees.releaseWorkspace(ws!.claimId)
   })
 

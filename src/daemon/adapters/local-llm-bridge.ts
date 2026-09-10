@@ -1,5 +1,5 @@
 /**
- * Bridge between Multi Agent Controller's stream transport and an OpenAI-compatible local LLM server.
+ * Bridge between Warmstart's stream transport and an OpenAI-compatible local LLM server.
  *
  * ⛔ This runs as a **child process**, not inside the daemon. It is spawned by `sessions.ts` the same
  * way any other adapter's CLI is spawned, and communicates through stdin/stdout with NDJSON records

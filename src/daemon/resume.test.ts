@@ -241,7 +241,7 @@ function load(id: string): import('@shared/protocol.js').Session {
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'agentyard-resume-'))
-  process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
+  process.env.WARMSTART_DATA_DIR = dir
   db = await import('./db.js')
   sessions = await import('./sessions.js')
   tasks = await import('./tasks.js')

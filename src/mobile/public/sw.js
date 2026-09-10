@@ -120,7 +120,7 @@ self.addEventListener('fetch', (event) => {
 /* ⛔ The payload is already decrypted by the browser and carries only a title, a sentence and a
  * task id — never a prompt, a path or a credential. See `src/daemon/remote/push.ts`. */
 self.addEventListener('push', (event) => {
-  let alert = { title: 'Multi Agent Controller', body: 'Something needs you.', taskId: null }
+  let alert = { title: 'Warmstart', body: 'Something needs you.', taskId: null }
   try {
     if (event.data) alert = { ...alert, ...event.data.json() }
   } catch {

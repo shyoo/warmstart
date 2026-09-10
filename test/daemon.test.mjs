@@ -547,7 +547,7 @@ try {
   let agentDb = null
   try {
     const sqlite = await import('node:sqlite')
-    agentDb = new sqlite.DatabaseSync(join(daemon.dataDir, 'multi_agent_controller.db'))
+    agentDb = new sqlite.DatabaseSync(join(daemon.dataDir, 'warmstart.db'))
     agentDb.exec('PRAGMA busy_timeout = 5000')
   } catch {
     // No embedded sqlite in this runtime: the checks below cannot seed their runs.
@@ -653,12 +653,12 @@ try {
       branchless.ok === false && /no branch yet/.test(branchless.reply ?? ''),
       branchless.reply
     )
-    // A dispatched planner holds `multi-agent-controller/t<seq>-<slug>`; this one never dispatched
+    // A dispatched planner holds `warmstart/t<seq>-<slug>`; this one never dispatched
     // (every worker here is closed to work), so the suite writes the branch the dispatch would have
     // cut. One column, and the only raw task write in this section — everything else is an RPC.
     agentDb
       .prepare('update tasks set branch = ? where id = ?')
-      .run(`multi-agent-controller/t${planTask.seq}-agent-probe`, planTask.id)
+      .run(`warmstart/t${planTask.seq}-agent-probe`, planTask.id)
     const splitCall = daemon.rpc('agent.split', {
       sessionId: planSession.id,
       pieces: [{ title: 'count the lanterns' }, { title: 'sweep the porch' }]
@@ -1338,14 +1338,14 @@ async function openMcp(d, tier) {
     env: {
       ...process.env,
       ELECTRON_RUN_AS_NODE: '1',
-      MULTI_AGENT_CONTROLLER_SESSION_ID: 'selftest-session',
-      MULTI_AGENT_CONTROLLER_TIER: tier,
-      MULTI_AGENT_CONTROLLER_DATA_DIR: d.dataDir
+      WARMSTART_SESSION_ID: 'selftest-session',
+      WARMSTART_TIER: tier,
+      WARMSTART_DATA_DIR: d.dataDir
     },
     stdio: ['pipe', 'pipe', 'pipe'],
     windowsHide: true
   })
-  child.stderr.on('data', (x) => process.env.MULTI_AGENT_CONTROLLER_TEST_VERBOSE && process.stderr.write(`[mcp] ${x}`))
+  child.stderr.on('data', (x) => process.env.WARMSTART_TEST_VERBOSE && process.stderr.write(`[mcp] ${x}`))
 
   let id = 0
   const pending = new Map()
@@ -1374,7 +1374,7 @@ async function openMcp(d, tier) {
     capabilities: {},
     clientInfo: { name: 'agentyard-selftest', version: '0' }
   })
-  check(`the ${tier}-tier MCP handshake completes`, init.result?.serverInfo?.name === 'multi-agent-controller')
+  check(`the ${tier}-tier MCP handshake completes`, init.result?.serverInfo?.name === 'warmstart')
   child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`)
 
   return {

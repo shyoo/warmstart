@@ -69,7 +69,7 @@ describe('what the new-task composer was left set to', () => {
   })
 
   it('keeps the planner’s row when the pieces row is unreadable', () => {
-    const store: Record<string, string> = { 'multi_agent_controller.composer': JSON.stringify({
+    const store: Record<string, string> = { 'warmstart.composer': JSON.stringify({
       priority: 'P0',
       workerId: 'w-opus',
       pieces: 'not an object'
@@ -124,7 +124,7 @@ describe('what the new-task composer was left set to', () => {
 
   it('reads a finish policy written under its old name', () => {
     stub({
-      'multi_agent_controller.composer': JSON.stringify({ finishPolicy: 'agent-lands' })
+      'warmstart.composer': JSON.stringify({ finishPolicy: 'agent-lands' })
     })
     // ⛔ Not `inherit`. `agent-lands` meant *push the trunk* when it was chosen, and a rename must
     // not quietly turn somebody's remembered choice into a different one.
@@ -133,14 +133,14 @@ describe('what the new-task composer was left set to', () => {
 
   it('remembers conversation, which is a kind the composer files', () => {
     stub({
-      'multi_agent_controller.composer': JSON.stringify({ kind: 'conversation' })
+      'warmstart.composer': JSON.stringify({ kind: 'conversation' })
     })
     expect(readComposerPrefs().kind).toBe('conversation')
   })
 
   it('drops only the field it cannot read, never the record around it', () => {
     stub({
-      'multi_agent_controller.composer': JSON.stringify({
+      'warmstart.composer': JSON.stringify({
         priority: 'P9',
         // ⚠️ `multi-task` and not `conversation`: conversation is a real kind now, and a test whose
         // "unreadable" example quietly became readable would go on passing while asserting nothing.
@@ -197,11 +197,11 @@ describe('what the new-task composer was left set to', () => {
   })
 
   it('ignores a stored shape that is not a record', () => {
-    stub({ 'multi_agent_controller.composer': '["nope"]' })
+    stub({ 'warmstart.composer': '["nope"]' })
     expect(readComposerPrefs()).toEqual(DEFAULT_COMPOSER_PREFS)
-    stub({ 'multi_agent_controller.composer': 'not json at all' })
+    stub({ 'warmstart.composer': 'not json at all' })
     expect(readComposerPrefs()).toEqual(DEFAULT_COMPOSER_PREFS)
-    stub({ 'multi_agent_controller.composer': JSON.stringify({ byWorker: 'w-claude' }) })
+    stub({ 'warmstart.composer': JSON.stringify({ byWorker: 'w-claude' }) })
     expect(readComposerPrefs().byWorker).toEqual({})
   })
 })

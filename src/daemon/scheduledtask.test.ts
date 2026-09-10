@@ -12,7 +12,7 @@ let handlers: ReturnType<(typeof import('./api.js'))['buildApi']>
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'agentyard-scheduledtask-'))
-  process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
+  process.env.WARMSTART_DATA_DIR = dir
   db = await import('./db.js')
   tasks = await import('./tasks.js')
   api = await import('./api.js')

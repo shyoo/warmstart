@@ -321,7 +321,7 @@ function ConversationRow({
         {showProject && <td className={c.projectName ? '' : 'dim'}>{c.projectName ?? '—'}</td>}
         <td className="mono">
           {c.currentBranch ? (
-            c.currentBranch.replace(/^multi-agent-controller\//, '')
+            c.currentBranch.replace(/^warmstart\//, '')
           ) : (
             <span className="dim">—</span>
           )}

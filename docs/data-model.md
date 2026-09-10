@@ -11,7 +11,7 @@ The store, the migration contract, and every enum the rest of the system branche
 
 ## 1. The store
 
-`node:sqlite`, WAL, `foreign_keys = on`, at `<dataDir>/multi_agent_controller.db` (`daemon/db.ts`).
+`node:sqlite`, WAL, `foreign_keys = on`, at `<dataDir>/warmstart.db` (`daemon/db.ts`).
 
 ⛔ **`node:sqlite`, not better-sqlite3.** It ships inside the Node that Electron already carries, so
 there is no native module to rebuild against Electron's ABI and nothing to go wrong at packaging
@@ -44,8 +44,11 @@ the `user_version` a current database sits at — **59** as of 2026-09-09.
   nothing to find at runtime.
 
 ⚠️ `repointIsolationRoots()` runs after `migrate()` on every open. It is the second half of the
-`agentyard` → `multi_agent_controller` data-directory rename; `adoptLegacyDataDir()` in `paths.ts` is
-the first. Both are required and `paths.test.ts` fails if either is removed.
+data-directory renames — `agentyard` → `multi_agent_controller` → `warmstart` — and
+`adoptLegacyDataDir()` in `paths.ts` is the first. Both are required and `paths.test.ts` fails if
+either is removed. ⛔ It loops **every** legacy root rather than only the newest: an install that
+skipped a release holds `isolation_root` values written under either older name, and checking one
+would leave the oldest installs — the ones with the most history to lose — pointing at nothing.
 
 ## 3. The tables
 
@@ -60,7 +63,7 @@ the first. Both are required and `paths.test.ts` fails if either is removed.
 | `turns` | per-turn metering | the exact half of cost |
 | `clock_events` | every cache-clock decision, including the no-ops | |
 | `compactions` | a compaction as an **ask** with a before and an after | a row that never landed stays visible |
-| `projects` | a directory plus policy | policy is committed in `.multi_agent_controller/project.json`; state is private. ⛔ Nothing machine-specific goes in that file — `workspaces.root` is written **relative** to the project root, and the derived default as no key. ⚠️ `prompt.orientation` (`auto` · `off`) and `prompt.seed` are what a **cold** prompt says before the task; absent `prompt` is `auto` with no seed |
+| `projects` | a directory plus policy | policy is committed in `.warmstart/project.json`; state is private. ⛔ Nothing machine-specific goes in that file — `workspaces.root` is written **relative** to the project root, and the derived default as no key. ⚠️ `prompt.orientation` (`auto` · `off`) and `prompt.seed` are what a **cold** prompt says before the task; absent `prompt` is `auto` with no seed |
 | `tasks` | the DAG | `status`, `kind`, `priority`, mandate, budget, the three inherited policies, `auto_compact`, `hold_until`, `quota_override_until`, **`quota_preempt_json`**, `title_summary`, `resolve_retry_asked_at`, `landed_base_sha`/`landed_head_sha`, `quality_review_*`, **`landing_target`**, **`child_defaults_json`**, **`stats_excluded`** — ⛔ an operator's judgement that a *measurement* on this task is wrong, set from the thread's `statistics` row. `statistics.ts`, `pace.ts` and `quality.ts` skip it; `estimator.ts` deliberately does not, because a task excluded for an impossible duration still spent exactly the tokens it spent |
 | `task_commits` | the commits a task actually landed | ⛔ the answer to *what did this task write*, and the one the quality review asks first. `(task_id, sha)` is the key and writes are `insert or ignore`, so a task that lands twice adds a row rather than replacing one. ⛔ `landed_base_sha`/`landed_head_sha` describe a **range**, which is exact for one landing and wrong for two — seven tasks on this fleet landed twice and t124's pair has five other tasks' commits between them. `source` is `landing` when the landing recorded it and `salvage` when `salvageLandedCommits` read it back out of the thread's *"Landed as `<sha>` onto `<target>`"* message |
 | `task_deps` | prerequisite edges | cycle-checked on insert; **`require`** is what counts as met — see below |
@@ -77,7 +80,7 @@ the first. Both are required and `paths.test.ts` fails if either is removed.
 | `loose_end_dismissals` | what an operator has said to stop showing | |
 | `settings` | fleet settings as JSON under string keys | a boolean today can become a shape tomorrow without a migration |
 | `remote_config` | remote access as JSON under string keys, the same shape as `settings` | ⛔ **not** in `settings`: these are not scheduler preferences, and `remote.status` deliberately reads only `enabled`, `bind` and `port` back out. The VAPID signing pair lives here too, under `vapidPublicKey`/`vapidPrivateKey`, written by `remote/push.ts` **without** firing the config-change listener — writing them through `setRemoteConfig` would restart the listener and drop every connected phone |
-| `remote_projects` | which projects a paired phone may reach | ⛔ machine-local on purpose. `.multi_agent_controller/project.json` is pulled by every clone, and whether *this* computer is exposed to a phone is not a fact about the repository |
+| `remote_projects` | which projects a paired phone may reach | ⛔ machine-local on purpose. `.warmstart/project.json` is pulled by every clone, and whether *this* computer is exposed to a phone is not a fact about the repository |
 | `remote_devices` | one paired phone | ⛔ `token_hash` only — the token is shown once, at pairing, and never stored. `revoked_at` is a tombstone, not a delete, so a revoked phone stays visible in the list that revoked it |
 | `remote_push_subscriptions` | where to send a notification | keyed by `endpoint`, which is what the push service and the browser both treat as the subscription's identity. ⛔ `device_id` is what makes revocation complete: revoking a phone drops its subscriptions in the same call, or a lost handset keeps being told what the fleet is doing |
 | `meta` | key/value bookkeeping | |

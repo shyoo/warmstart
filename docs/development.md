@@ -42,7 +42,7 @@ npm run test:daemon  # L2   ⚠️ needs out/ built
 npm run test:ui      # L3   ⚠️ needs out/ built
 npm run test:all     # L1 + L2 + L3 — the pre-commit set
 npm run test:pack    # the packaged app  ⚠️ needs release/ packed
-npm run test:e2e     # ⛔ spends real tokens; MULTI_AGENT_CONTROLLER_E2E=1 required
+npm run test:e2e     # ⛔ spends real tokens; WARMSTART_E2E=1 required
 
 npm run pack         # electron-builder --dir → release/win-unpacked
 npm run dist         # installers for the current platform (dist:win / dist:mac / dist:linux)
@@ -179,7 +179,7 @@ read `git reflog` in the trunk before believing the agent did nothing.
 
 Agent sessions on this repository run in a pooled git worktree, not the trunk.
 
-- The branch is named after the **task** (`multi-agent-controller/t123-…`), never after the slot.
+- The branch is named after the **task** (`warmstart/t123-…`), never after the slot.
 - ⛔ **The git stash stack is shared with the trunk and every other worktree.** Never use bare
   `git stash` / `git stash pop`. Prefer a temporary WIP commit; if you must stash, use
   `git stash push -u -m "<unique-tag>"`, capture the SHA from `git stash list --format='%H %gs'`, and

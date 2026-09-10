@@ -262,7 +262,7 @@ export function NewProject({
             <h3 id="new-project-title">Add a project</h3>
             <p className="wizard-sub">
               A project is a directory plus policy. Everything you choose here is written to{' '}
-              <span className="mono">.multi_agent_controller/project.json</span> in that directory,
+              <span className="mono">.warmstart/project.json</span> in that directory,
               so a second machine or a fresh clone behaves the same way.
             </p>
           </div>

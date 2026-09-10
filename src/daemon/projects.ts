@@ -19,13 +19,24 @@ import { errorMessage } from '@shared/errors.js'
  * workspaces are per-project *capabilities*, not universal assumptions, so a research or
  * media-generation project is a first-class citizen with no repo fiction.
  *
- * Policy is committed at `<root>/.multi_agent_controller/project.json` so a collaborator, a second machine or a
+ * Policy is committed at `<root>/.warmstart/project.json` so a collaborator, a second machine or a
  * fresh clone reproduces the same behaviour - a repo can ship an agentyard config the way it ships an
  * `.editorconfig`. Runtime state stays private in the app-data database. ⛔ Nothing secret ever goes
  * in the committed file: no credentials, no account identifiers, no absolute paths outside the repo.
  */
 
-export const PROJECT_CONFIG_RELATIVE = join('.multi_agent_controller', 'project.json')
+export const PROJECT_CONFIG_RELATIVE = join('.warmstart', 'project.json')
+
+/**
+ * The pre-rename location, still read.
+ *
+ * ⛔ **This file lives in the user's own repository, not in our data directory**, which makes it the
+ * one rename we cannot migrate on their behalf: it is committed, it is shared with collaborators,
+ * and moving it would be this app rewriting somebody else's repo without being asked. So the old
+ * path stays readable indefinitely and the project keeps its policy; `writeProjectConfig` emits only
+ * the new path, so a repo converges the next time its config is written deliberately.
+ */
+const LEGACY_PROJECT_CONFIG_RELATIVE = join('.multi_agent_controller', 'project.json')
 
 const DEFAULTS = {
   poolSize: 3,
@@ -75,10 +86,16 @@ export function requireProject(id: string): Project {
   return p
 }
 
-/** Read `.multi_agent_controller/project.json` if it is there. A missing file is normal, not an error. */
+/**
+ * Read `.warmstart/project.json` if it is there, or the pre-rename `.warmstart` one.
+ * A missing file is normal, not an error.
+ */
 export function readProjectConfig(root: string): { config: ProjectConfig; path: string | null } {
-  const path = join(root, PROJECT_CONFIG_RELATIVE)
-  if (!existsSync(path)) return { config: { schema_version: 1 }, path: null }
+  // ⚠️ New path wins when both exist: a repo mid-migration has had the new one written deliberately.
+  const path = [PROJECT_CONFIG_RELATIVE, LEGACY_PROJECT_CONFIG_RELATIVE]
+    .map((rel) => join(root, rel))
+    .find((candidate) => existsSync(candidate))
+  if (!path) return { config: { schema_version: 1 }, path: null }
   try {
     const parsed = JSON.parse(readFileSync(path, 'utf8')) as ProjectConfig
     return { config: { ...parsed, schema_version: parsed.schema_version ?? 1 }, path }
@@ -151,13 +168,13 @@ export function archiveProject(id: string): Project {
 }
 
 /**
- * Write a starter `.multi_agent_controller/project.json`. Offered rather than assumed: a project that has not
+ * Write a starter `.warmstart/project.json`. Offered rather than assumed: a project that has not
  * asked for one runs on defaults, and defaults that live in code are easier to change than defaults
  * that have been copied into fifty repositories.
  */
 export function writeStarterConfig(id: string): string {
   const project = requireProject(id)
-  const dir = join(project.root, '.multi_agent_controller')
+  const dir = join(project.root, '.warmstart')
   mkdirSync(dir, { recursive: true })
   const path = join(dir, 'project.json')
   if (existsSync(path)) return path
@@ -222,7 +239,7 @@ function editProjectConfig(
   mutate: (config: ProjectConfig, project: Project) => void
 ): Project {
   const project = requireProject(id)
-  const dir = join(project.root, '.multi_agent_controller')
+  const dir = join(project.root, '.warmstart')
   const path = join(dir, 'project.json')
 
   let config: ProjectConfig

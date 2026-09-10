@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { ROOT_MANDATE, type Task } from '@shared/tasks.js'
+import { forceInstalled } from './testkit.js'
 
 /**
  * Task scheduling order and queue dispatch.
@@ -26,10 +27,11 @@ let scoring: typeof import('./scoring.js')
 let workers: typeof import('./workers.js')
 
 let projectId: string
+let undoInstalled: (() => void) | undefined
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'agentyard-scheduling-'))
-  process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
+  process.env.WARMSTART_DATA_DIR = dir
   db = await import('./db.js')
   tasks = await import('./tasks.js')
   projects = await import('./projects.js')
@@ -39,6 +41,11 @@ beforeAll(async () => {
   scoring = await import('./scoring.js')
   workers = await import('./workers.js')
   db.openDb(join(dir, 'scheduling.db'))
+  // ⛔ `eligibility.ts` rejects an uninstalled adapter with a *standing* reason, ahead of the
+  // capacity and concurrency gates these tests exist to pin. Measured 2026-09-09: two cases read
+  // `'Claude Code is not installed'` where they asserted `/CodexOne at capacity/` — the suite was
+  // testing the host, not the scheduler.
+  undoInstalled = await forceInstalled('claude-code', 'openai-compatible')
 
   const root = mkdtempSync(join(tmpdir(), 'agentyard-scheduling-proj-'))
   execFileSync('git', ['init', root], { stdio: 'ignore' })
@@ -55,6 +62,7 @@ beforeEach(() => {
 })
 
 afterAll(() => {
+  undoInstalled?.()
   db.closeDb()
   try {
     rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
@@ -324,7 +332,7 @@ describe('automatic resolve and retry', () => {
         'awaiting_human',
         'human',
         'landing failed: the project checks failed after rebase',
-        'multi-agent-controller/t1-repair-a-red-check',
+        'warmstart/t1-repair-a-red-check',
         task.id
       )
 

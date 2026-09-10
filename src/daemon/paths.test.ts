@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 /**
- * The `agentyard` → `multi_agent_controller` data-directory rename.
+ * The `agentyard` → `warmstart` data-directory rename.
  *
  * ⛔ This is the only change in the rename that can destroy something a user cannot get back. The
  * data directory holds the fleet database *and the isolation roots the vendor CLIs authenticate
@@ -32,15 +32,15 @@ function legacyRootIn(base: string): string {
 }
 
 function newRootIn(base: string): string {
-  return legacyRootIn(base).replace(/agentyard$/, 'multi_agent_controller')
+  return legacyRootIn(base).replace(/agentyard$/, 'warmstart')
 }
 
 beforeEach(() => {
   vi.resetModules()
   sandbox = mkdtempSync(join(tmpdir(), 'mac-paths-'))
   for (const k of HOME_KEYS) saved.set(k, process.env[k])
-  saved.set('MULTI_AGENT_CONTROLLER_DATA_DIR', process.env.MULTI_AGENT_CONTROLLER_DATA_DIR)
-  delete process.env.MULTI_AGENT_CONTROLLER_DATA_DIR
+  saved.set('WARMSTART_DATA_DIR', process.env.WARMSTART_DATA_DIR)
+  delete process.env.WARMSTART_DATA_DIR
   // Every platform branch points at the sandbox, so the test is the same on all three.
   process.env.APPDATA = sandbox
   process.env.XDG_DATA_HOME = join(sandbox, '.local', 'share')
@@ -82,9 +82,9 @@ describe('a data directory written before the rename', () => {
     const { dataDir, paths } = await import('./paths.js')
     const dir = dataDir()
 
-    expect(paths.db).toBe(join(dir, 'multi_agent_controller.db'))
+    expect(paths.db).toBe(join(dir, 'warmstart.db'))
     for (const suffix of ['', '-wal', '-shm']) {
-      expect(readFileSync(join(dir, `multi_agent_controller.db${suffix}`), 'utf8')).toBe(
+      expect(readFileSync(join(dir, `warmstart.db${suffix}`), 'utf8')).toBe(
         `payload${suffix}`
       )
     }
@@ -110,7 +110,7 @@ describe('a data directory written before the rename', () => {
     const legacy = legacyRootIn(sandbox)
     mkdirSync(legacy, { recursive: true })
     const mine = join(sandbox, 'somewhere-else')
-    process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = mine
+    process.env.WARMSTART_DATA_DIR = mine
 
     const { dataDir } = await import('./paths.js')
     expect(dataDir()).toBe(mine)
@@ -136,7 +136,7 @@ describe('the worker paths recorded before the rename', () => {
     const { dataDir } = await import('./paths.js')
     const dir = dataDir()
     const { repointIsolationRoots } = await import('./db.js')
-    const conn = new DatabaseSync(join(dir, 'multi_agent_controller.db'))
+    const conn = new DatabaseSync(join(dir, 'warmstart.db'))
     repointIsolationRoots(conn)
 
     const got = Object.fromEntries(

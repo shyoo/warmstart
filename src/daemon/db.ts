@@ -1,5 +1,5 @@
 import { DatabaseSync } from 'node:sqlite'
-import { dataDir, ensureDir, legacyDataDir, paths } from './paths.js'
+import { dataDir, ensureDir, legacyDataDirs, paths } from './paths.js'
 import { dirname, join, sep } from 'node:path'
 import { log } from './log.js'
 import { costModel } from './costmodel.js'
@@ -1842,30 +1842,36 @@ export function openDb(path = paths.db): DatabaseSync {
 }
 
 /**
- * Fix worker paths left behind by the `agentyard` -> `multi_agent_controller` data-directory rename.
+ * Fix worker paths left behind by a data-directory rename.
  *
  * ⛔ `isolation_root` is stored absolute, so moving the data directory would otherwise point every
  * worker at a path that no longer exists - and an isolation root is where a vendor CLI keeps that
  * account's credential. The move happens in paths.ts before this database is even open; this is the
  * other half of it.
  *
- * ⚠️ Prefix-matched against the *legacy* root only, and skipped entirely when the user has pointed
- * MULTI_AGENT_CONTROLLER_DATA_DIR somewhere of their own. A worker whose root the user chose by hand
- * is theirs, wherever it lives, and must not be rewritten.
+ * ⚠️ **Every previous root, not just the last one.** There have been two renames
+ * (`agentyard` -> `warmstart` -> `warmstart`), and an install that skipped a release
+ * carries rows written under either older name. Checking only the newest legacy root would leave the
+ * oldest installs - exactly the ones with the most history to lose - pointing at nothing.
+ *
+ * ⚠️ Prefix-matched against *legacy* roots only, and skipped entirely for a root the user chose by
+ * hand with `WARMSTART_DATA_DIR`. A worker whose root the user picked is theirs, wherever it lives,
+ * and must not be rewritten.
  */
 export function repointIsolationRoots(conn: DatabaseSync): void {
-  const legacy = legacyDataDir()
   const current = dataDir()
-  if (legacy === current) return
-  const stale = conn
-    .prepare('select id, isolation_root from workers where isolation_root like ?')
-    .all(`${legacy}${sep}%`) as { id: string; isolation_root: string }[]
-  if (stale.length === 0) return
   const update = conn.prepare('update workers set isolation_root = ? where id = ?')
-  for (const w of stale) {
-    update.run(join(current, w.isolation_root.slice(legacy.length + 1)), w.id)
+  for (const legacy of legacyDataDirs()) {
+    if (legacy === current) continue
+    const stale = conn
+      .prepare('select id, isolation_root from workers where isolation_root like ?')
+      .all(`${legacy}${sep}%`) as { id: string; isolation_root: string }[]
+    if (stale.length === 0) continue
+    for (const w of stale) {
+      update.run(join(current, w.isolation_root.slice(legacy.length + 1)), w.id)
+    }
+    log.info(`repointed ${stale.length} worker isolation root(s) from ${legacy} to ${current}`)
   }
-  log.info(`repointed ${stale.length} worker isolation root(s) from ${legacy} to ${current}`)
 }
 
 export function db(): DatabaseSync {
@@ -1885,7 +1891,7 @@ function migrate(conn: DatabaseSync): void {
     // A newer build has already been here. Refusing beats silently corrupting its data.
     throw new Error(
       `database schema v${current} is newer than this build understands (v${MIGRATIONS.length}). ` +
-        'Upgrade Multi Agent Controller, or point MULTI_AGENT_CONTROLLER_DATA_DIR somewhere else.'
+        'Upgrade Warmstart, or point WARMSTART_DATA_DIR somewhere else.'
     )
   }
   for (let v = current; v < MIGRATIONS.length; v++) {

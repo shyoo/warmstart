@@ -35,7 +35,7 @@ Two different paths means you are in a **worktree**; the same path twice means t
 (`C:\Dev\multi_agent_controller`, branch `main`). Establish this first — it changes steps 2, 5 and 6.
 Say which one you are in.
 
-| | **Trunk** | **Worktree** (`multi-agent-controller/t<n>-<topic>`) |
+| | **Trunk** | **Worktree** (`warmstart/t<n>-<topic>`) |
 |---|---|---|
 | `HANDOFF.md` | edit at step 2 | ⚠️ edit at step 5, **after** the rebase |
 | Commit | on `main` | on the task branch |
@@ -181,7 +181,7 @@ npm run test:ui
 - **Run all of them, not only the ones you think you touched.** `test:daemon` and `test:ui` drive the
   real app over a real daemon and catch what typechecks perfectly.
 - ⛔ **Never run `npm run test:e2e`.** It is the only suite that spends tokens, it is gated behind
-  `MULTI_AGENT_CONTROLLER_E2E=1`, and CI deliberately never invokes it. If the change genuinely needs
+  `WARMSTART_E2E=1`, and CI deliberately never invokes it. If the change genuinely needs
   it, **ask first** and say what it will cost.
 - ⚠️ **Report the numbers, not "tests pass".** They become the `Baseline` line in step 2.
 - A failure is a stop condition. Fix it, or say plainly what is broken and stop.
@@ -214,7 +214,7 @@ artefact predates `src/` — but the order above is still the order: build, then
 Then the installer, when the user wants an artifact rather than a check:
 
 ```bash
-npm run dist:win    # → "release/Multi Agent Controller Setup <version>.exe"
+npm run dist:win    # → "release/Warmstart Setup <version>.exe"
 ```
 
 - `release/` is **gitignored**. The artifact is a build product; it is never committed and step 6
@@ -293,7 +293,7 @@ log.
 - ⛔ **Do not sweep somebody else's work into your commit.** In the trunk, `git add -A` stages
   whatever any other tool left in the working tree. Read `git status` and confirm the files are
   yours.
-- **The two names.** Anything a user or an agent reads says **Multi Agent Controller** — commit
+- **The two names.** Anything a user or an agent reads says **Warmstart** — commit
   messages, docs, README, UI copy. `agentyard` stays internal: source comments, `window.agentyard`,
   test fixtures, `LEGACY_APP_DIR`.
 - If something in this file turns out to be wrong — a script renamed, a suite retired, a count that

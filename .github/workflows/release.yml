@@ -1,0 +1,182 @@
+# Release: build installers, attest them, publish a GitHub Release.
+#
+# ⛔ **This workflow never runs on a push to a branch.** It fires on a `v*` tag, or by hand. That is
+# deliberate: `ci.yml` is the thing that runs per push, and a release build is the expensive one —
+# it is the only workflow here that touches macOS.
+#
+# ⚠️ **Cost.** Private-repo rates as of 2026-01: Linux **$0.006/min**, Windows **$0.010/min**, macOS
+# **$0.062/min** — macOS is roughly 10x Linux. ⭐ On a **public** repository, standard runners are
+# free and unlimited, so every number here becomes zero the day the repo goes public. Until then, use
+# the `platforms` input below and build one platform at a time while iterating on this file.
+#
+# ⛔ **No tests run here.** `ci.yml` already ran the suites on the commit being tagged, and repeating
+# them would double the bill for no new information. The tag is expected to point at a green commit.
+#
+# ⛔ **`publish: null` in electron-builder.yml is intentional and stays.** The app must never be able
+# to replace its own binary. This workflow uploads artifacts; a human installs them.
+
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: 'Platforms to build (cost control while iterating)'
+        type: choice
+        default: 'windows'
+        options:
+          - windows
+          - macos
+          - windows+macos
+          - all
+      draft:
+        description: 'Publish as a draft release'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write        # create the release
+  id-token: write        # attestations
+  attestations: write    # attestations
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  electron_config_cache: ${{ github.workspace }}/.electron-cache
+  ELECTRON_CACHE: ${{ github.workspace }}/.electron-cache
+
+jobs:
+  build:
+    name: build · ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # A tag builds what ships. A manual run builds only what you asked for, so testing this
+        # workflow does not cost a macOS build every time.
+        os: ${{ fromJSON(
+          github.event_name == 'push' && '["windows-latest","macos-latest"]'
+          || inputs.platforms == 'windows' && '["windows-latest"]'
+          || inputs.platforms == 'macos' && '["macos-latest"]'
+          || inputs.platforms == 'all' && '["windows-latest","macos-latest","ubuntu-latest"]'
+          || '["windows-latest","macos-latest"]') }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - uses: actions/cache@v4
+        with:
+          path: .electron-cache
+          key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
+      - name: Ensure the Electron binary is present
+        run: node scripts/ensure-electron.mjs
+
+      # ⚠️ macOS signing is opt-in on the presence of secrets, so this workflow still produces an
+      # (unsigned) build before the certificate is wired up. electron-builder reads these env names
+      # directly. ⛔ `electron-builder.yml` still sets `identity: null` and `hardenedRuntime: false` —
+      # both must change when signing goes live, and hardenedRuntime is the setting most likely to
+      # break node-pty. Test that on the Mac before tagging anything.
+      - name: Build installers
+        shell: bash
+        env:
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          case "${{ runner.os }}" in
+            Windows) npm run dist:win ;;
+            macOS)   npm run dist:mac ;;
+            Linux)   npm run dist:linux ;;
+          esac
+
+      # Only the installers. electron-builder leaves unpacked trees and blockmaps in release/ that
+      # nobody should download.
+      - name: Collect installers
+        shell: bash
+        run: |
+          mkdir -p dist-out
+          find release -maxdepth 1 -type f \
+            \( -name '*.exe' -o -name '*.dmg' -o -name '*.AppImage' -o -name '*.deb' \) \
+            -exec cp {} dist-out/ \;
+          ls -la dist-out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installers-${{ matrix.os }}
+          path: dist-out/*
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: attest · checksum · publish
+    needs: build
+    runs-on: ubuntu-latest   # ⭐ cheapest runner; this job only moves files around
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: staging
+          merge-multiple: true
+
+      - name: List what will be published
+        run: ls -la staging
+
+      # ⭐ The honest substitute for a Windows code-signing certificate. This ties every binary to the
+      # exact workflow run and commit that produced it, verifiable by anyone with:
+      #     gh attestation verify <file> --repo ${{ github.repository }}
+      # Free, and it is the same "here is the basis" discipline the cost model applies to numbers.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: 'staging/*'
+
+      - name: Generate checksums
+        working-directory: staging
+        run: sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
+
+      - name: Write the release notes
+        run: |
+          cat > notes.md <<NOTES
+          ## Verify your download
+
+          Every artifact is checksummed in \`SHA256SUMS.txt\` and carries a signed build attestation
+          tying it to the commit and workflow run that produced it:
+
+          \`\`\`bash
+          gh attestation verify <file> --repo ${{ github.repository }}
+          \`\`\`
+
+          ## Windows
+
+          Builds are **unsigned**, so SmartScreen will warn: *More info* → *Run anyway*. Verify the
+          checksum above if you would rather not take it on trust.
+
+          ## macOS
+
+          Apple Silicon and Intel builds are both provided.
+
+          > **Pre-alpha.** Expect rough edges, and please report them.
+          NOTES
+          cat notes.md
+
+      # ⚠️ A manual run produces a **draft** by default, so this pipeline can be exercised end to end
+      # without ever publishing to the world by accident.
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_type == 'tag' && github.ref_name || format('untagged-{0}', github.run_id) }}
+          DRAFT: ${{ (github.event_name == 'workflow_dispatch' && inputs.draft) && '--draft' || '' }}
+        run: |
+          gh release create "$TAG" staging/* \
+            --repo "${{ github.repository }}" \
+            --title "$TAG" \
+            --notes-file notes.md \
+            --prerelease $DRAFT

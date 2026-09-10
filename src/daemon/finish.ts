@@ -341,7 +341,7 @@ function landOrResolve(
 // ---------------------------------------------------------------------------- loose ends
 
 /**
- * ⚠️ `multi-agent-controller/t<seq>-<slug>` is written by `branchNameFor`, so the sequence number is
+ * ⚠️ `warmstart/t<seq>-<slug>` is written by `branchNameFor`, so the sequence number is
  * recoverable from the branch alone — which matters because the workspace has usually been released
  * and reused by the time anybody looks, and the branch is the only thread back to the task.
  */

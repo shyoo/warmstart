@@ -61,7 +61,7 @@ function review(input: {
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'mac-fitness-'))
-  process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
+  process.env.WARMSTART_DATA_DIR = dir
   db = await import('./db.js')
   fitness = await import('./fitness.js')
   db.openDb(join(dir, 'fitness.db'))

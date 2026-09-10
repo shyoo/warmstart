@@ -11,6 +11,7 @@ import { log } from './log.js'
 import { git } from './git.js'
 import { errorMessage } from '@shared/errors.js'
 import { run } from './spawn.js'
+import { appEnvName } from '@shared/env.js'
 
 /**
  * Workspaces: pooled git worktrees.
@@ -26,7 +27,7 @@ import { run } from './spawn.js'
  *  - **Git enforces the isolation.** Two worktrees cannot check out the same branch. That is a hard
  *    guarantee from git, not a claim file. The claim coordinates *scheduling*; git prevents
  *    *collision*.
- *  - ⛔ **The branch is named after the task, never the workspace** - `multi-agent-controller/t12-fix-dialog`, not
+ *  - ⛔ **The branch is named after the task, never the workspace** - `warmstart/t12-fix-dialog`, not
  *    `agent/ws2-…`. Which workspace a task happened to land in is an implementation detail that must
  *    never reach history, and re-running the task later in a different workspace yields the same name.
  *  - ⛔ **Agents never work in the trunk.** The branch is created *inside* the claimed worktree.
@@ -207,7 +208,7 @@ export async function workspaceOnBranch(
   return null
 }
 
-/** `multi-agent-controller/t<seq>-<slug>` - the task's name, never the workspace's. */
+/** `warmstart/t<seq>-<slug>` - the task's name, never the workspace's. */
 export function branchNameFor(seq: number, title: string): string {
   const slug = title
     .toLowerCase()
@@ -215,7 +216,7 @@ export function branchNameFor(seq: number, title: string): string {
     .replace(/^-+|-+$/g, '')
     .slice(0, 40)
     .replace(/-+$/, '')
-  return `multi-agent-controller/t${seq}${slug ? `-${slug}` : ''}`
+  return `warmstart/t${seq}${slug ? `-${slug}` : ''}`
 }
 
 export interface SwitchResult {
@@ -497,13 +498,13 @@ export function workspaceEnv(
 ): Record<string, string> {
   const env: Record<string, string> = {}
   for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v
-  env.MULTI_AGENT_CONTROLLER_WORKSPACE_INDEX = String(workspace.index)
-  env.MULTI_AGENT_CONTROLLER_WORKSPACE_PATH = workspace.path
+  env[appEnvName('WORKSPACE_INDEX')] = String(workspace.index)
+  env[appEnvName('WORKSPACE_PATH')] = workspace.path
 
   const portBase = Number(projectEnv.portBase)
   const perWorkspace = Number(projectEnv.portsPerWorkspace)
   if (Number.isFinite(portBase) && Number.isFinite(perWorkspace)) {
-    env.MULTI_AGENT_CONTROLLER_PORT = String(portBase + (workspace.index - 1) * perWorkspace)
+    env[appEnvName('PORT')] = String(portBase + (workspace.index - 1) * perWorkspace)
   }
   for (const [k, v] of Object.entries(projectEnv)) {
     if (k !== 'portBase' && k !== 'portsPerWorkspace') env[k] = String(v)
@@ -707,7 +708,7 @@ async function rescueDirt(path: string, destination: string): Promise<Rescue | n
   if (!dirty) return null
 
   const files = dirty.split(/\r?\n/).filter(Boolean).length
-  const label = `multi-agent-controller: ${files} file(s) left in ${path} before ${destination}`
+  const label = `warmstart: ${files} file(s) left in ${path} before ${destination}`
 
   const branch = await headBranch(path)
   if (branch) {
@@ -718,7 +719,7 @@ async function rescueDirt(path: string, destination: string): Promise<Rescue | n
         '--no-verify',
         '-m',
         `wip: ${files} file(s) an interrupted run left behind\n\n` +
-          'Multi Agent Controller committed this so the work would travel with the branch rather ' +
+          'Warmstart committed this so the work would travel with the branch rather ' +
           'than sit in a stash the next run cannot see. Nothing here has been compiled, checked ' +
           'or reviewed. Amend it or build on it; it must not land as it stands.\n\n' +
           `${RESCUE_TRAILER}: ${files}`
@@ -892,7 +893,7 @@ async function branchHolders(root: string): Promise<Map<string, string>> {
 }
 
 /**
- * Every `multi-agent-controller/t<n>-…` branch in the repository, and what is on it.
+ * Every `warmstart/t<n>-…` branch in the repository, and what is on it.
  *
  * ⚠️ Never throws, for the same reason `workspaceState` does not: this is read on a timer and to
  * render a panel, and a repository git cannot answer for must come back empty rather than take the
@@ -906,7 +907,7 @@ export async function taskBranches(project: Project, target: string): Promise<Ta
       await git(project.root, [
         'for-each-ref',
         '--format=%(refname:short)',
-        'refs/heads/multi-agent-controller/'
+        'refs/heads/warmstart/'
       ])
     )
       .split(/\r?\n/)

@@ -69,7 +69,7 @@ function stateOf(id: string): string | undefined {
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'agentyard-sessionstate-'))
-  process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
+  process.env.WARMSTART_DATA_DIR = dir
   db = await import('./db.js')
   sessions = await import('./sessions.js')
   dbPath = join(dir, 'sessionstate.db')

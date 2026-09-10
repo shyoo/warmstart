@@ -1,6 +1,6 @@
 # Glossary
 
-These words mean specific things in Multi Agent Controller. Using them loosely makes the scheduler incoherent, so
+These words mean specific things in Warmstart. Using them loosely makes the scheduler incoherent, so
 they are worth pinning down.
 
 > **Audience:** everyone, before using a domain word in code, a commit message or a doc.
@@ -10,12 +10,12 @@ they are worth pinning down.
 
 ---
 
-**Fleet** — every worker Multi Agent Controller knows about, across all providers and accounts.
+**Fleet** — every worker Warmstart knows about, across all providers and accounts.
 
 **Worker** — *an account or endpoint, i.e. a quota bucket.* One Claude subscription is one worker; a
 second subscription is a second worker. A local model with no quota is also a worker. Each has an
 **isolation root** holding its own credentials, written by the vendor's CLI and never read by
-Multi Agent Controller.
+Warmstart.
 
 **Session** — *one live agent process.* Has a model, an effort level, a workspace, a minted session
 id, a context size, a cache expiry and a topic fingerprint.
@@ -24,7 +24,7 @@ id, a context size, a cache expiry and a topic fingerprint.
 > worker; *context* lives on the session. A task must be routed to a worker that can afford it **and**
 > a session that already knows about it. Most orchestrators model only one of the two.
 
-**Human-occupied worker** — an account whose quota Multi Agent Controller tracks but never spends, because a
+**Human-occupied worker** — an account whose quota Warmstart tracks but never spends, because a
 person is using it by hand. Keeps the budget arithmetic honest without taking the account over.
 
 **Worker health** — *whether work survives on this account*, which is a different question from
@@ -43,7 +43,7 @@ expired** is refused the probe too, because there retrying is the thing that can
 **Project** — *a directory plus policy.* Git is **optional**: `vcs: git | none`. Branching,
 committing and parallel workspaces are per-project **capabilities**, not universal assumptions, so a
 media-generation or research project is a first-class citizen with no repo fiction. Policy lives in a
-committed `.multi_agent_controller/project.json`; runtime state stays private in the OS app-data directory.
+committed `.warmstart/project.json`; runtime state stays private in the OS app-data directory.
 
 **Resident session** — *the conversation currently holding a workspace.* ⛔ **The session owns the
 worktree, not the run and not the task**, so it keeps it for as long as it lives — which is what lets
@@ -110,7 +110,7 @@ device, a flaky test that must not run twice at once.
 > scheduler not knowing about a resource.
 
 **External resource service** — an MCP server fronting something contended (credits, a browser, a
-queue). Registered with a `probe` tool that reports availability; Multi Agent Controller then stops dispatching
+queue). Registered with a `probe` tool that reports availability; Warmstart then stops dispatching
 contenders rather than letting them collide.
 
 ---
@@ -533,7 +533,7 @@ windows, preemption protocol, default permission mode, which cost model applies)
 > **Antigravity CLI (`agy`)** replaces it and is the Google adapter. The old CLI survives only under a
 > Gemini Code Assist Standard/Enterprise licence.
 
-**Transport** — how Multi Agent Controller talks to a session. `stream` (`-p` with stream-json over real pipes)
+**Transport** — how Warmstart talks to a session. `stream` (`-p` with stream-json over real pipes)
 gives structured events, a programmatic approval channel, and free live rate-limit records; `pty`
 hosts the real TUI and lets a human take the keyboard. A minted session id lets one session move
 between them via `--resume`.

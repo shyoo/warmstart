@@ -24,7 +24,7 @@ let residency: typeof import('./residency.js')
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'agentyard-workerorder-'))
-  process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
+  process.env.WARMSTART_DATA_DIR = dir
   db = await import('./db.js')
   workers = await import('./workers.js')
   sessions = await import('./sessions.js')

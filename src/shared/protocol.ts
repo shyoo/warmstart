@@ -2389,7 +2389,7 @@ export type DaemonEvent =
    * One line the daemon logged.
    *
    * ⚠️ `debug` is in the union because the level is the *daemon's* choice, gated by
-   * `MULTI_AGENT_CONTROLLER_LOG_LEVEL` at the source. A renderer that could not represent a level
+   * `WARMSTART_LOG_LEVEL` at the source. A renderer that could not represent a level
    * the daemon can send would drop lines an operator had explicitly asked to see.
    */
   | { type: 'log'; level: LogLevel; message: string; ts: number }

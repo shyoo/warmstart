@@ -107,7 +107,7 @@ function taskWithCommits(
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'agentyard-reviewdiff-'))
-  process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
+  process.env.WARMSTART_DATA_DIR = dir
   store = await import('./db.js')
   store.openDb(join(dir, 'reviewdiff.db'))
   review = await import('./review.js')

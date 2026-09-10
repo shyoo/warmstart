@@ -19,7 +19,7 @@ let complexity: typeof import('./complexity.js')
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'mac-complexity-'))
-  process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
+  process.env.WARMSTART_DATA_DIR = dir
   db = await import('./db.js')
   tasks = await import('./tasks.js')
   complexity = await import('./complexity.js')

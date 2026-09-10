@@ -31,7 +31,7 @@ afterAll(() => {
 /** A planner with a branch, the way a dispatched planner holds one. */
 function branchedPlanner(): string {
   const parent = makeTask({ title: 'planner', kind: 'plan' })
-  db().prepare('update tasks set branch = ? where id = ?').run('multi-agent-controller/t9-probe', parent.id)
+  db().prepare('update tasks set branch = ? where id = ?').run('warmstart/t9-probe', parent.id)
   return parent.id
 }
 

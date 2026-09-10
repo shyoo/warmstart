@@ -56,7 +56,7 @@ let origAgyInstalled: () => boolean
 beforeAll(async () => {
   // ⛔ A temp data directory, never the real one. This opens a database and writes to it.
   dir = mkdtempSync(join(tmpdir(), 'agentyard-routing-'))
-  process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
+  process.env.WARMSTART_DATA_DIR = dir
   db = await import('./db.js')
   quota = await import('./quota.js')
   workers = await import('./workers.js')

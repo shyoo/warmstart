@@ -57,7 +57,7 @@ function seedFailedProbe(workerId: string, error = 'Currently unavailable'): voi
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'agentyard-probedeadlock-'))
-  process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
+  process.env.WARMSTART_DATA_DIR = dir
   mkdirSync(join(dir, 'adapters'), { recursive: true })
   writeFileSync(
     join(dir, 'adapters', `${ADAPTER}.json`),

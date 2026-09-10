@@ -76,7 +76,7 @@ The policy is resolved **task → project → fleet**, taking the first that is 
   runs in five days and an exhausted allowance. Nothing about finishing a task needed a remote, so a
   push is now something a person does on purpose.
 - **Project** — the project's **Settings** tab → **Policy** → *Finish policy*, which writes
-  `landing.finish` into `.multi_agent_controller/project.json`. Editing that file by hand is the same
+  `landing.finish` into `.warmstart/project.json`. Editing that file by hand is the same
   thing; the page writes the same key in the same spelling and drops the legacy `landing.strategy`
   when it does, so the file never carries two answers to one question.
 - **Task** — the **finish** dropdown in the task's detail pane, changeable at any time, including
@@ -199,7 +199,7 @@ way — aborting a rebase returns the branch to exactly where it started.
 
 The tool asks it to commit, **once**:
 
-> You have 3 uncommitted file(s). Commit them on `multi-agent-controller/t12-fix-dialog`, then report
+> You have 3 uncommitted file(s). Commit them on `warmstart/t12-fix-dialog`, then report
 > the task complete again. Do not start new work.
 
 On a `custom` project, it sends your instructions instead of that sentence.
@@ -441,7 +441,7 @@ You see it as one extra message, then the ordinary one:
 >
 > Landed as `a41f9c2` onto `main`. Verified first: 4 project checks passed on the rebased branch,
 > before anything moved. Fast-forwarded your local `main` — **not pushed**.
-> `multi-agent-controller/t27-…` held nothing `main` does not now have, so it was deleted. It queued
+> `warmstart/t27-…` held nothing `main` does not now have, so it was deleted. It queued
 > behind t26 and landed once that finished.
 
 ⭐ **The queued task gains a dependency on the one it waited for**, so "t27 landed after t26" is still

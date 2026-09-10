@@ -1,5 +1,5 @@
 {
-  "name": "Multi Agent Controller",
+  "name": "Warmstart",
   "short_name": "Controller",
   "description": "Watch quota, answer agents and file work from your phone.",
   "start_url": "./#/",

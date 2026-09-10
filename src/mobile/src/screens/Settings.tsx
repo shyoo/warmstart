@@ -24,7 +24,7 @@ export function SettingsScreen({ refreshKey }: { refreshKey: number }): React.JS
   const enabled = data.fleet.filter((entry) => entry.worker.enabled)
   const running = enabled.reduce((sum, entry) => sum + entry.sessions.length, 0)
   return <div className="m-screen">
-    <div className="m-hero"><p className="m-eyebrow">Multi Agent Controller</p><h1 className="m-page-title">Connected</h1><p className="m-server">{location.origin}</p></div>
+    <div className="m-hero"><p className="m-eyebrow">Warmstart</p><h1 className="m-page-title">Connected</h1><p className="m-server">{location.origin}</p></div>
     <section className="m-info-grid">
       <div><strong>{data.projects.length}</strong><span>Enabled projects</span></div>
       <div><strong>{enabled.length}</strong><span>Enabled workers</span></div>

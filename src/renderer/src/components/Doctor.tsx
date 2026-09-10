@@ -38,7 +38,7 @@ export function Doctor({ now }: { now: number }): React.JSX.Element {
       <header className="panel-head">
         <div>
           <h2>Global</h2>
-          <p className="panel-sub">What Multi Agent Controller can see, and what it cannot.</p>
+          <p className="panel-sub">What Warmstart can see, and what it cannot.</p>
         </div>
         <button className="btn" disabled={running} onClick={() => void run()}>
           {running ? 'Checking…' : 'Re-check'}

@@ -25,7 +25,7 @@ export function canonicalPath(path: string): string {
   if (process.platform !== 'win32') return absolute
   // Only the drive letter. The rest of a Windows path is case-insensitive too, but folding all of it
   // would change what gets *shown* to an operator, and these strings are displayed as well as
-  // compared — a worktree rendered `c:\dev\multi_agent_controller_workspaces\ws1` is harder to
+  // compared — a worktree rendered `c:\dev\warmstart_workspaces\ws1` is harder to
   // recognise than the one the operator actually typed.
   return absolute.replace(/^([a-z]):/, (_, drive: string) => `${drive.toUpperCase()}:`)
 }

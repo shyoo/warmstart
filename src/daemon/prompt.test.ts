@@ -19,7 +19,7 @@ let agy: Worker
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'agentyard-prompt-test-'))
-  process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
+  process.env.WARMSTART_DATA_DIR = dir
   db = await import('./db.js')
   workers = await import('./workers.js')
   tasks = await import('./tasks.js')
@@ -134,9 +134,9 @@ describe('promptFor prompt construction', () => {
   it('ignores a custom finish instruction when the policy is not custom', async () => {
     const projects = await import('./projects.js')
     const root = mkdtempSync(join(tmpdir(), 'agentyard-prompt-project-'))
-    mkdirSync(join(root, '.multi_agent_controller'), { recursive: true })
+    mkdirSync(join(root, '.warmstart'), { recursive: true })
     writeFileSync(
-      join(root, '.multi_agent_controller', 'project.json'),
+      join(root, '.warmstart', 'project.json'),
       JSON.stringify({
         schema_version: 1,
         name: 'merges-locally',
@@ -337,7 +337,7 @@ describe('run prompt persistence and task.get preview', () => {
     const plan = tasks.createTask({ title: 'Plan the work', kind: 'plan' })
     db.db()
       .prepare('update tasks set branch = ? where id = ?')
-      .run(`multi-agent-controller/t${plan.seq}-plan-the-work`, plan.id)
+      .run(`warmstart/t${plan.seq}-plan-the-work`, plan.id)
 
     const filed = split.applySplit(
       plan.id,
@@ -364,9 +364,9 @@ describe('run prompt persistence and task.get preview', () => {
   it('instructs agent to run project checks before committing when project defines checks', async () => {
     const projects = await import('./projects.js')
     const root = mkdtempSync(join(tmpdir(), 'agentyard-checks-prompt-'))
-    mkdirSync(join(root, '.multi_agent_controller'), { recursive: true })
+    mkdirSync(join(root, '.warmstart'), { recursive: true })
     writeFileSync(
-      join(root, '.multi_agent_controller', 'project.json'),
+      join(root, '.warmstart', 'project.json'),
       JSON.stringify({
         schema_version: 1,
         name: 'checks-project',
@@ -414,7 +414,7 @@ describe('run prompt persistence and task.get preview', () => {
     const lastHuman = msgs.filter((m) => m.role === 'human').pop()
     expect(lastHuman?.text).toContain('The landing failed because project verification checks failed')
     expect(lastHuman?.text).toContain('1 problem (1 error)')
-    expect(lastHuman?.text).toContain(`multi-agent-controller/t${task.seq}-fix-issue`)
+    expect(lastHuman?.text).toContain(`warmstart/t${task.seq}-fix-issue`)
     expect(lastHuman?.text).toContain('squash them into one coherent commit where safe')
     expect(lastHuman?.text).toContain('Rerun the failing command after the fix')
   })
@@ -427,7 +427,7 @@ describe('run prompt persistence and task.get preview', () => {
     const project = projects.addProject({ root })
     const task = tasks.createTask({ title: 'Resolve a conflict', status: 'ready', projectId: project.id })
     tasks.setStatus(task.id, 'awaiting_human', {
-      branch: `multi-agent-controller/t${task.seq}-resolve-a-conflict`,
+      branch: `warmstart/t${task.seq}-resolve-a-conflict`,
       holdReason: 'landing failed: conflict'
     })
 
@@ -473,7 +473,7 @@ describe('run prompt persistence and task.get preview', () => {
     const lastHuman = msgs.filter((m) => m.role === 'human').pop()
     expect(lastHuman?.text).toContain('The landing could not proceed because changes on')
     expect(lastHuman?.text).toContain('1 file(s) are uncommitted')
-    expect(lastHuman?.text).toContain(`multi-agent-controller/t${task.seq}-commit-my-change`)
+    expect(lastHuman?.text).toContain(`warmstart/t${task.seq}-commit-my-change`)
   })
 
   it('keeps a failed retry-landing result visible after the thread refreshes', async () => {
@@ -482,7 +482,7 @@ describe('run prompt persistence and task.get preview', () => {
     // Retry landing button simply bounces back with no explanation.
     const task = tasks.createTask({ title: 'Explain a failed retry', status: 'ready' })
     tasks.setStatus(task.id, 'awaiting_human', {
-      branch: 'multi-agent-controller/t87-retry-landing',
+      branch: 'warmstart/t87-retry-landing',
       holdReason: 'landing failed: the trunk was busy'
     })
 
@@ -497,7 +497,7 @@ describe('run prompt persistence and task.get preview', () => {
   it('refuses relandTask when the trunk tripwire fired, directing to Mark done or Resolve & retry', async () => {
     const task = tasks.createTask({ title: 'Trunk moved landing', status: 'ready' })
     tasks.setStatus(task.id, 'awaiting_human', {
-      branch: 'multi-agent-controller/t157-trunk-moved',
+      branch: 'warmstart/t157-trunk-moved',
       holdReason: 'the trunk moved during this run and this branch is empty — check where the work went'
     })
 
@@ -516,14 +516,14 @@ describe('run prompt persistence and task.get preview', () => {
     const project = projects.addProject({ root })
     const task = tasks.createTask({ title: 'Resolve trunk moved', status: 'ready', projectId: project.id })
     tasks.setStatus(task.id, 'awaiting_human', {
-      branch: `multi-agent-controller/t${task.seq}-resolve-trunk-moved`,
+      branch: `warmstart/t${task.seq}-resolve-trunk-moved`,
       holdReason: 'the trunk moved during this run and this branch is empty — check where the work went'
     })
 
     await expect(resolutions.resolveRetryOnTask(task.id)).resolves.toEqual({ ok: true })
 
     const retry = tasks.messagesFor(task.id).filter((m) => m.role === 'human').at(-1)?.text
-    expect(retry).toContain(`rebase \`multi-agent-controller/t${task.seq}-resolve-trunk-moved\` onto \`main\``)
+    expect(retry).toContain(`rebase \`warmstart/t${task.seq}-resolve-trunk-moved\` onto \`main\``)
     expect(retry).toContain('ensure all intended changes are committed')
     expect(retry).toContain('squash them into one coherent commit')
   })
@@ -547,7 +547,7 @@ describe('run prompt persistence and task.get preview', () => {
       const root = mkdtempSync(join(tmpdir(), 'agentyard-piece-target-'))
       execFileSync('git', ['init', root])
       const project = projects.addProject({ root })
-      const planBranch = 'multi-agent-controller/t900-the-plan'
+      const planBranch = 'warmstart/t900-the-plan'
       const task = tasks.createTask({
         title,
         status: 'ready',
@@ -556,7 +556,7 @@ describe('run prompt persistence and task.get preview', () => {
         landingTarget: planBranch
       })
       tasks.setStatus(task.id, 'awaiting_human', {
-        branch: `multi-agent-controller/t${task.seq}-a-piece`,
+        branch: `warmstart/t${task.seq}-a-piece`,
         holdReason: 'landing failed'
       })
       return { seq: task.seq, taskId: task.id, planBranch }
@@ -595,7 +595,7 @@ describe('run prompt persistence and task.get preview', () => {
       const project = projects.addProject({ root })
       const task = tasks.createTask({ title: 'An ordinary task', status: 'ready', projectId: project.id })
       tasks.setStatus(task.id, 'awaiting_human', {
-        branch: `multi-agent-controller/t${task.seq}-ordinary`,
+        branch: `warmstart/t${task.seq}-ordinary`,
         holdReason: 'landing failed'
       })
 

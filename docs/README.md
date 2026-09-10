@@ -1,6 +1,6 @@
 # Documentation index
 
-Reference for **Multi Agent Controller** — a scheduler that routes coding-agent tasks to the worker,
+Reference for **Warmstart** — a scheduler that routes coding-agent tasks to the worker,
 session and moment where they are cheapest to run.
 
 Everything under `docs/` is **permanent and maintained**. If a page is wrong, fix it; do not append a

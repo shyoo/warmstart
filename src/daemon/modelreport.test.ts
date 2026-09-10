@@ -89,7 +89,7 @@ function decision(workerId: string, model: string, basis: 'score' | 'explore'): 
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'mac-modelreport-'))
-  process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
+  process.env.WARMSTART_DATA_DIR = dir
   db = await import('./db.js')
   workers = await import('./workers.js')
   api = await import('./api.js')

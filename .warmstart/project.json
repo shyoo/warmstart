@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "name": "multi_agent_controller",
+  "name": "warmstart",
   "vcs": "git",
   "workspaces": {
     "poolSize": 4,

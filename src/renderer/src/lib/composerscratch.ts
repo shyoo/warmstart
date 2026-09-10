@@ -1,4 +1,5 @@
 import type { PastedImage } from './pasteimages.js'
+import { appKey } from './storagekeys'
 
 /**
  * What was half-typed into the new-task composer, kept across a navigation.
@@ -26,7 +27,7 @@ import type { PastedImage } from './pasteimages.js'
  * returning null in real configurations, and a scratch is never worth a blank screen.
  */
 
-const KEY = 'multi_agent_controller.composerScratch'
+const KEY = appKey('composerScratch')
 
 /** When the task may start, as offered on the clock beside Send. */
 export const SCHEDULE_OPTIONS = ['now', '30m', '1h', '2h', '4h', 'custom'] as const

@@ -1429,7 +1429,7 @@ describe('an image, and the three channels it can travel down', () => {
 
   beforeAll(async () => {
     store = mkdtempSync(join(tmpdir(), 'agentyard-adapter-image-'))
-    process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = store
+    process.env.WARMSTART_DATA_DIR = store
     const db = await import('./db.js')
     const attachments = await import('./attachments.js')
     db.openDb(join(store, 'images.db'))
@@ -1442,7 +1442,7 @@ describe('an image, and the three channels it can travel down', () => {
   afterAll(async () => {
     const db = await import('./db.js')
     db.closeDb()
-    delete process.env.MULTI_AGENT_CONTROLLER_DATA_DIR
+    delete process.env.WARMSTART_DATA_DIR
     if (store) rmSync(store, { recursive: true, force: true })
   })
 

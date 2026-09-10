@@ -28,7 +28,7 @@ const AGENT: Principal = {
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'agentyard-split-'))
-  process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
+  process.env.WARMSTART_DATA_DIR = dir
   db = await import('./db.js')
   tasks = await import('./tasks.js')
   split = await import('./split.js')
@@ -66,7 +66,7 @@ function planner(
   })
   db.db()
     .prepare('update tasks set branch = ? where id = ?')
-    .run('multi-agent-controller/t1-build-the-thing', task.id)
+    .run('warmstart/t1-build-the-thing', task.id)
   return tasks.requireTask(task.id)
 }
 

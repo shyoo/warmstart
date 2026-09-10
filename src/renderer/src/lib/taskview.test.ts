@@ -197,7 +197,7 @@ describe('the clock beside the hold', () => {
         held({
           status: 'completed',
           holdReason:
-            'Retry landing failed: 1 commit(s) on `multi-agent-controller/t191-cost-model`'
+            'Retry landing failed: 1 commit(s) on `warmstart/t191-cost-model`'
         }),
         NOW
       )
@@ -362,10 +362,10 @@ describe('preferences persistence in localStorage', () => {
   })
 
   it('falls back to default for invalid or unknown stored page size', () => {
-    store.set('multi_agent_controller.taskPageSize', 'not-a-number')
+    store.set('warmstart.taskPageSize', 'not-a-number')
     expect(readTaskPageSize()).toBe(DEFAULT_PAGE_SIZE)
 
-    store.set('multi_agent_controller.taskPageSize', '999')
+    store.set('warmstart.taskPageSize', '999')
     expect(readTaskPageSize()).toBe(DEFAULT_PAGE_SIZE)
   })
 })
@@ -925,7 +925,7 @@ describe('landing recovery actions and canRelandTask', () => {
     // branch empty. Offering "Retry landing" ran relandTask, which failed immediately with "carries
     // no commits... No work landed".
     const t = {
-      branch: 'multi-agent-controller/t157-debug',
+      branch: 'warmstart/t157-debug',
       holdReason: 'the trunk moved during this run and this branch is empty — check where the work went'
     }
     expect(canRelandTask(t)).toBe(false)
@@ -934,9 +934,9 @@ describe('landing recovery actions and canRelandTask', () => {
 
   it('does not offer canReland when Retry landing previously failed due to no commits', () => {
     const t = {
-      branch: 'multi-agent-controller/t157-debug',
+      branch: 'warmstart/t157-debug',
       holdReason:
-        'Retry landing failed: multi-agent-controller/t157-debug carries no commits that origin/main does not already have. No work landed — check if the agent answered as a question instead of making changes.'
+        'Retry landing failed: warmstart/t157-debug carries no commits that origin/main does not already have. No work landed — check if the agent answered as a question instead of making changes.'
     }
     expect(canRelandTask(t)).toBe(false)
   })
@@ -972,9 +972,9 @@ describe('landing recovery actions and canRelandTask', () => {
   it('distinguishes trunk uncommitted changes from workspace uncommitted files', () => {
     // A dirty operator trunk is a trunk blockage, so the branch is committed and can be relanded once trunk is clean.
     const trunkBlocked = {
-      branch: 'multi-agent-controller/t80',
+      branch: 'warmstart/t80',
       holdReason:
-        'landing failed: committed and verified on `multi-agent-controller/t80`, but not merged: the trunk has uncommitted changes. The branch is intact — merge it when the trunk is free.'
+        'landing failed: committed and verified on `warmstart/t80`, but not merged: the trunk has uncommitted changes. The branch is intact — merge it when the trunk is free.'
     }
     expect(isUncommittedTask(trunkBlocked)).toBe(false)
     expect(canRelandTask(trunkBlocked)).toBe(true)

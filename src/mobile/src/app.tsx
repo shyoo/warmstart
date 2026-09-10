@@ -126,7 +126,7 @@ export function App(): React.JSX.Element {
   )
 }
 
-const PROJECT_COOKIE_KEY = 'multi_agent_controller_mobile_project'
+const PROJECT_COOKIE_KEY = 'warmstart_mobile_project'
 function readProjectId(): string {
   try {
     const found = document.cookie.split('; ').find((part) => part.startsWith(`${PROJECT_COOKIE_KEY}=`))

@@ -298,7 +298,7 @@ ${checkList}
 
 ## Where things stand
 
-Project added to Multi Agent Controller. Nothing has been worked on through it yet.
+Project added to Warmstart. Nothing has been worked on through it yet.
 
 - Detected stack: ${stackLine}.
 - Checks: ${checks.length > 0 ? checks.map((c) => `\`${c}\``).join(' · ') : 'none declared yet'}.

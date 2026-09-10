@@ -38,13 +38,13 @@ function makeProject(finish: FinishPolicy): { project: Project; root: string } {
   seq += 1
   const root = join(dir, `repo${seq}`)
   const origin = join(dir, `origin${seq}.git`)
-  mkdirSync(join(root, '.multi_agent_controller'), { recursive: true })
+  mkdirSync(join(root, '.warmstart'), { recursive: true })
   git(dir, 'init', '--bare', '--initial-branch=main', origin)
   git(root, 'init', '--initial-branch=main')
   git(root, 'config', 'user.name', 'agentyard test')
   git(root, 'config', 'user.email', 'test@example.invalid')
   writeFileSync(
-    join(root, '.multi_agent_controller', 'project.json'),
+    join(root, '.warmstart', 'project.json'),
     JSON.stringify({
       schema_version: 1,
       name: `repo${seq}`,
@@ -81,7 +81,7 @@ function makeTask(project: Project, title: string, parent?: Task, kind?: Task['k
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'agentyard-basesync-'))
-  process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
+  process.env.WARMSTART_DATA_DIR = dir
   db = await import('./db.js')
   projects = await import('./projects.js')
   worktrees = await import('./worktrees.js')

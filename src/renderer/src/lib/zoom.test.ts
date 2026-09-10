@@ -63,12 +63,12 @@ describe('zoom', () => {
   })
 
   it('falls back to DEFAULT_ZOOM when localStorage holds invalid data', () => {
-    window.localStorage.setItem('multi_agent_controller.zoomFactor', 'invalid')
+    window.localStorage.setItem('warmstart.zoomFactor', 'invalid')
     expect(readZoomFactor()).toBe(DEFAULT_ZOOM)
   })
 
   it('clamps stored value when read', () => {
-    window.localStorage.setItem('multi_agent_controller.zoomFactor', '9.99')
+    window.localStorage.setItem('warmstart.zoomFactor', '9.99')
     expect(readZoomFactor()).toBe(MAX_ZOOM)
   })
 

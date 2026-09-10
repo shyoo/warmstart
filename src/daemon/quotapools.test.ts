@@ -26,7 +26,7 @@ let costmodel: typeof import('./costmodel.js')
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'agentyard-pools-'))
-  process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
+  process.env.WARMSTART_DATA_DIR = dir
   db = await import('./db.js')
   quota = await import('./quota.js')
   costmodel = await import('./costmodel.js')

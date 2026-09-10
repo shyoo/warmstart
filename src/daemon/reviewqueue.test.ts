@@ -100,7 +100,7 @@ function worker(id: string, adapterId: string): void {
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'agentyard-reviewqueue-'))
-  process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
+  process.env.WARMSTART_DATA_DIR = dir
   db = await import('./db.js')
   quality = await import('./quality.js')
   review = await import('./review.js')
@@ -108,8 +108,14 @@ beforeAll(async () => {
   tasks = await import('./tasks.js')
   adapters = await import('./adapters/index.js')
   // ⛔ L1 does not inherit a host capability. The batch gate correctly checks whether a reviewer
-  // can launch now; this fixture establishes that precondition without requiring Antigravity in CI.
-  vi.spyOn(adapters.adapter('antigravity-cli'), 'isInstalled').mockReturnValue(true)
+  // can launch now; this fixture establishes that precondition without requiring the CLIs in CI.
+  // ⚠️ **Both seeded workers need this, not just one.** Stubbing Antigravity alone left `w-claude`
+  // rejected as *"Claude Code is not installed"* on any machine without it, so a batch that should
+  // take two tasks took one — red on Linux, green on a developer box that happens to have Claude
+  // Code on PATH. Measured 2026-09-09.
+  for (const id of ['antigravity-cli', 'claude-code']) {
+    vi.spyOn(adapters.adapter(id), 'isInstalled').mockReturnValue(true)
+  }
   db.openDb(join(dir, 'queue.db'))
   worker('w-claude', 'claude-code')
   worker('w-antigravity', 'antigravity-cli')

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { appKey } from '../lib/storagekeys'
 
 /**
  * The handle between the sidebar and the work.
@@ -14,7 +15,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
  * reason about when a session behaves unexpectedly. How wide a pane is on this monitor is not that.
  */
 
-const STORAGE_KEY = 'multi_agent_controller.sidebarWidth'
+const STORAGE_KEY = appKey('sidebarWidth')
 
 /** 252px is the default: the width that fits the app name and three controls on one row. */
 export const SIDEBAR_DEFAULT = 252

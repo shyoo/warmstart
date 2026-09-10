@@ -122,7 +122,7 @@ export function Logs({ now }: { now: number }): React.JSX.Element {
       </div>
 
       {/* ⚠️ `debug` is offered even though the daemon usually will not send any. The level is chosen
-          at the daemon by MULTI_AGENT_CONTROLLER_LOG_LEVEL, so this filter narrows what arrives and
+          at the daemon by WARMSTART_LOG_LEVEL, so this filter narrows what arrives and
           can never widen it — said below, because an empty debug view is otherwise a bug report. */}
       <div className="log-view" ref={scroller}>
         {shown.length === 0 ? (

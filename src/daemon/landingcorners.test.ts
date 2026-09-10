@@ -54,12 +54,12 @@ let seq = 0
 function seed(branch: string): { project: Project; taskId: string; root: string } {
   seq += 1
   const root = join(dir, `repo${seq}`)
-  mkdirSync(join(root, '.multi_agent_controller'), { recursive: true })
+  mkdirSync(join(root, '.warmstart'), { recursive: true })
   git(root, 'init', '--initial-branch=main')
   git(root, 'config', 'user.name', 'agentyard test')
   git(root, 'config', 'user.email', 'test@example.invalid')
   writeFileSync(
-    join(root, '.multi_agent_controller', 'project.json'),
+    join(root, '.warmstart', 'project.json'),
     JSON.stringify({
       schema_version: 1,
       name: `repo${seq}`,
@@ -105,7 +105,7 @@ const said = (taskId: string): string =>
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'agentyard-corners-'))
-  process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
+  process.env.WARMSTART_DATA_DIR = dir
   db = await import('./db.js')
   projects = await import('./projects.js')
   tasks = await import('./tasks.js')
@@ -137,7 +137,7 @@ describe('a task whose run was preempted', () => {
     // ⛔ t91/t92, 2026-09-01. `rescueDirt` stashes when HEAD is detached; the branch is then level
     // with the trunk and the tree is clean, and the finish said "the trunk was not touched — work
     // that answers a question rather than changing a file is finished here". It was not finished.
-    const branch = 'multi-agent-controller/t91-preempted'
+    const branch = 'warmstart/t91-preempted'
     const { project, taskId, root } = seed(branch)
     writeFileSync(join(root, 'afternoon.txt'), 'the only copy\n')
     git(root, 'stash', 'push', '--include-untracked', '-m', 'rescued')
@@ -151,7 +151,7 @@ describe('a task whose run was preempted', () => {
   })
 
   it('keeps the branch when the work is in a stash, so the name still leads back to it', async () => {
-    const branch = 'multi-agent-controller/t93-keep-the-branch'
+    const branch = 'warmstart/t93-keep-the-branch'
     const { project, taskId, root } = seed(branch)
     writeFileSync(join(root, 'work.txt'), 'unfinished\n')
     git(root, 'stash', 'push', '--include-untracked', '-m', 'rescued')
@@ -164,9 +164,9 @@ describe('a task whose run was preempted', () => {
     // ⛔ Stashes are repository-wide — every pool member reports the same list — so counting them
     // globally would let one unrelated leftover hold every future task in the project at
     // `awaiting_human`. Git's own `On <branch>:` prefix ties an entry to the run that made it.
-    const branch = 'multi-agent-controller/t94-innocent'
+    const branch = 'warmstart/t94-innocent'
     const { project, taskId, root } = seed(branch)
-    git(root, 'switch', '-c', 'multi-agent-controller/t95-somebody-else')
+    git(root, 'switch', '-c', 'warmstart/t95-somebody-else')
     writeFileSync(join(root, 'theirs.txt'), 'not mine\n')
     git(root, 'stash', 'push', '--include-untracked', '-m', 'theirs')
     git(root, 'switch', branch)
@@ -182,7 +182,7 @@ describe('a task whose run was preempted', () => {
   it('refuses a tip that is only the rescue, however many times it was preempted', async () => {
     // ⚠️ Preemption can happen twice in one window. Two stacked rescues are still nothing finished,
     // and the tip check must not be fooled by there being real *history* below it.
-    const branch = 'multi-agent-controller/t96-twice'
+    const branch = 'warmstart/t96-twice'
     const { project, taskId, root } = seed(branch)
     writeFileSync(join(root, 'first.txt'), 'attempt one\n')
     rescueCommit(root, 1)
@@ -195,7 +195,7 @@ describe('a task whose run was preempted', () => {
   })
 
   it('lands once the resumed run finishes something on top', async () => {
-    const branch = 'multi-agent-controller/t97-resumed'
+    const branch = 'warmstart/t97-resumed'
     const { project, taskId, root } = seed(branch)
     writeFileSync(join(root, 'half.txt'), 'as far as it got\n')
     rescueCommit(root, 1)
@@ -209,7 +209,7 @@ describe('a task whose run was preempted', () => {
   it('still refuses a workspace that is simply dirty, which is a different failure', async () => {
     // ⚠️ Uncommitted work in the tree is not a stash and not a rescue: the slot is still being held
     // and the message has to say where the files are, not offer `git stash apply`.
-    const branch = 'multi-agent-controller/t98-dirty'
+    const branch = 'warmstart/t98-dirty'
     const { project, taskId, root } = seed(branch)
     writeFileSync(join(root, 'live.txt'), 'still being edited\n')
 
@@ -222,7 +222,7 @@ describe('a task whose run was preempted', () => {
   it('leaves a task that asked to be verified alone, stash or no stash', async () => {
     // ⛔ `verification: required` skips the whole shortcut. "Nothing landed" is still an outcome its
     // author wanted to see, and so is "it was stashed" — neither gets decided for them here.
-    const branch = 'multi-agent-controller/t99-verify'
+    const branch = 'warmstart/t99-verify'
     const { project, taskId, root } = seed(branch)
     tasks.updateTask(taskId, { verification: 'required' })
     writeFileSync(join(root, 'work.txt'), 'unfinished\n')
@@ -244,7 +244,7 @@ describe('a task whose run was preempted', () => {
  */
 describe('task branches the repository still has a name for', () => {
   it('reports a branch whose every commit is already in the trunk', async () => {
-    const branch = 'multi-agent-controller/t23-stranded'
+    const branch = 'warmstart/t23-stranded'
     const { project, root } = seed(branch)
     git(root, 'switch', 'main')
 
@@ -253,7 +253,7 @@ describe('task branches the repository still has a name for', () => {
   })
 
   it('counts what a branch is carrying, so real work is never mistaken for a leftover', async () => {
-    const branch = 'multi-agent-controller/t24-has-work'
+    const branch = 'warmstart/t24-has-work'
     const { project, root } = seed(branch)
     writeFileSync(join(root, 'real.txt'), 'a real change\n')
     git(root, 'add', '-A')
@@ -266,7 +266,7 @@ describe('task branches the repository still has a name for', () => {
 
   it('names the worktree holding a branch, which is why deleting it would fail', async () => {
     // ⚠️ The trunk is itself a worktree, and it is standing on this branch right now.
-    const branch = 'multi-agent-controller/t25-held'
+    const branch = 'warmstart/t25-held'
     const { project } = seed(branch)
 
     const found = (await worktrees.taskBranches(project, 'main')).find((b) => b.branch === branch)
@@ -274,7 +274,7 @@ describe('task branches the repository still has a name for', () => {
   })
 
   it('retires a branch that carries nothing', async () => {
-    const branch = 'multi-agent-controller/t26-retire-me'
+    const branch = 'warmstart/t26-retire-me'
     const { project, root } = seed(branch)
     git(root, 'switch', 'main')
 
@@ -286,7 +286,7 @@ describe('task branches the repository still has a name for', () => {
     // ⛔ The whole reason `retireStrandedBranch` re-derives its own licence. The operator's click
     // arrives minutes after the scan; between the two an agent can push to that branch or a resumed
     // run can commit on it, and deleting it on the strength of a stale row destroys that commit.
-    const branch = 'multi-agent-controller/t27-moved-under-us'
+    const branch = 'warmstart/t27-moved-under-us'
     const { project, root } = seed(branch)
     git(root, 'switch', 'main')
     const before = (await worktrees.taskBranches(project, 'main')).find((b) => b.branch === branch)
@@ -305,7 +305,7 @@ describe('task branches the repository still has a name for', () => {
   })
 
   it('refuses a branch a worktree is standing on, and says which one', async () => {
-    const branch = 'multi-agent-controller/t28-checked-out'
+    const branch = 'warmstart/t28-checked-out'
     const { project, root } = seed(branch)
 
     const verdict = await worktrees.retireStrandedBranch(project, branch, 'main')
@@ -315,10 +315,10 @@ describe('task branches the repository still has a name for', () => {
   })
 
   it('says so plainly when asked about a branch that is not there', async () => {
-    const { project } = seed('multi-agent-controller/t29-present')
+    const { project } = seed('warmstart/t29-present')
     const verdict = await worktrees.retireStrandedBranch(
       project,
-      'multi-agent-controller/t30-never-existed',
+      'warmstart/t30-never-existed',
       'main'
     )
     expect(verdict.deleted).toBe(false)
@@ -328,7 +328,7 @@ describe('task branches the repository still has a name for', () => {
   it('reports a branch whose name no longer parses to a task, rather than hiding it', async () => {
     // ⚠️ `taskSeq: null` is not a reason to hide it. A branch nobody can trace back to a task is
     // *more* interesting than one that can be traced, not less.
-    const branch = 'multi-agent-controller/hand-made-branch'
+    const branch = 'warmstart/hand-made-branch'
     const { project, root } = seed(branch)
     git(root, 'switch', 'main')
 
@@ -343,9 +343,9 @@ describe('task branches the repository still has a name for', () => {
   it(
     'surfaces it in the loose-ends scan, which is where an operator would ever see it',
     async () => {
-      const { project, taskId, root } = seed('multi-agent-controller/temporary-panel-branch')
+      const { project, taskId, root } = seed('warmstart/temporary-panel-branch')
       const task = tasks.requireTask(taskId)
-      const branch = `multi-agent-controller/t${task.seq}-in-the-panel`
+      const branch = `warmstart/t${task.seq}-in-the-panel`
       git(root, 'branch', '-m', branch)
       tasks.setStatus(task.id, 'completed')
       git(root, 'switch', 'main')
@@ -362,9 +362,9 @@ describe('task branches the repository still has a name for', () => {
   it(
     'does not offer cleanup actions for a branch its active task still owns',
     async () => {
-      const { project, taskId, root } = seed('multi-agent-controller/temporary-active-branch')
+      const { project, taskId, root } = seed('warmstart/temporary-active-branch')
       const task = tasks.requireTask(taskId)
-      const branch = `multi-agent-controller/t${task.seq}-still-working`
+      const branch = `warmstart/t${task.seq}-still-working`
       git(root, 'branch', '-m', branch)
 
       const ends = (await finish.scanLooseEnds()).filter((e) => e.projectId === project.id)
@@ -394,7 +394,7 @@ describe('the branch a cancelled task leaves', () => {
   }
 
   it('gives back the name when the task is cancelled outright and wrote nothing', async () => {
-    const branch = 'multi-agent-controller/t79-asked-and-stopped'
+    const branch = 'warmstart/t79-asked-and-stopped'
     const { taskId, root } = seed(branch)
     git(root, 'switch', 'main')
 
@@ -405,7 +405,7 @@ describe('the branch a cancelled task leaves', () => {
   it('⛔ keeps a branch that has a commit on it, however the task ended', async () => {
     // ⛔ The promise at the top of `cancel.ts`. A cancelled task's work is still its work, and the
     // operator cancelled the run, not the commit.
-    const branch = 'multi-agent-controller/t80-wrote-something'
+    const branch = 'warmstart/t80-wrote-something'
     const { taskId, root } = seed(branch)
     writeFileSync(join(root, 'done.txt'), 'it got this far\n')
     git(root, 'add', '-A')
@@ -419,7 +419,7 @@ describe('the branch a cancelled task leaves', () => {
   it('keeps the branch of a task paused by a person, which is expected to resume into it', async () => {
     // ⛔ `paused_user` means *not like this, for now*. `resumeTask` documents keeping the branch, and
     // an empty one is the normal state of a task paused before its agent committed anything.
-    const branch = 'multi-agent-controller/t81-paused-not-cancelled'
+    const branch = 'warmstart/t81-paused-not-cancelled'
     const { taskId, root } = seed(branch)
     git(root, 'switch', 'main')
 
@@ -431,7 +431,7 @@ describe('the branch a cancelled task leaves', () => {
     // ⚠️ The common shape for a task cancelled *while running*: the workspace is parked when the
     // session exits, which has not happened yet. The cancel must not fail over it — the branch shows
     // up as a `stranded` loose end instead.
-    const branch = 'multi-agent-controller/t82-still-checked-out'
+    const branch = 'warmstart/t82-still-checked-out'
     const { taskId, root } = seed(branch)
 
     await cancelWith(taskId, branch, 'cancelled')

@@ -53,7 +53,7 @@ function plainDir(files: Record<string, string> = {}): string {
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'agentyard-projectsetup-'))
-  process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
+  process.env.WARMSTART_DATA_DIR = dir
   db = await import('./db.js')
   projects = await import('./projects.js')
   setup = await import('./projectsetup.js')
@@ -182,7 +182,7 @@ describe('inspecting a directory before adding it', () => {
 
   it('loads a committed config so the form opens on what the repository already says', () => {
     const root = repoDir({
-      '.multi_agent_controller/project.json': JSON.stringify({
+      '.warmstart/project.json': JSON.stringify({
         schema_version: 1,
         landing: { finish: 'commit-only', target: 'trunk' },
         check: ['make test']
@@ -282,7 +282,7 @@ describe('creating a project', () => {
     expect(result.docsWritten).toEqual(['README.md', 'AGENTS.md', 'HANDOFF.md'])
 
     const config = JSON.parse(
-      readFileSync(join(root, '.multi_agent_controller', 'project.json'), 'utf8')
+      readFileSync(join(root, '.warmstart', 'project.json'), 'utf8')
     ) as Record<string, unknown>
     expect((config.landing as Record<string, unknown>).finish).toBe('commit-only')
     expect((config.landing as Record<string, unknown>).target).toBe('trunk')

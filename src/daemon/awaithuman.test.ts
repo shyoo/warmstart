@@ -40,7 +40,7 @@ let seq = 0
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'agentyard-awaithuman-'))
-  process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
+  process.env.WARMSTART_DATA_DIR = dir
   db = await import('./db.js')
   workers = await import('./workers.js')
   tasks = await import('./tasks.js')

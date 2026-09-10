@@ -5,12 +5,14 @@
  * Zoom factor is persisted in localStorage so user's chosen zoom level survives restarts.
  */
 
+import { appKey } from './storagekeys'
+
 export const MIN_ZOOM = 0.5
 export const MAX_ZOOM = 3.0
 export const DEFAULT_ZOOM = 1.0
 export const ZOOM_STEP = 0.1
 
-const ZOOM_KEY = 'multi_agent_controller.zoomFactor'
+const ZOOM_KEY = appKey('zoomFactor')
 
 export function clampZoom(factor: number): number {
   const rounded = Math.round(factor * 10) / 10

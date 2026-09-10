@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ensureDir, paths } from './paths.js'
 import { log } from './log.js'
+import { appEnv, appEnvName } from '@shared/env.js'
 
 /**
  * The server name under which these tools are registered with a vendor CLI.
@@ -12,7 +13,7 @@ import { log } from './log.js'
  * permission prompts (`mcp__<server>__approve`). Written out separately in claude-code.ts, the two
  * drifted apart the moment the project was renamed and every approval would have failed silently.
  */
-export const MCP_SERVER_NAME = 'multi-agent-controller'
+export const MCP_SERVER_NAME = 'warmstart'
 
 /** What `--permission-prompt-tool` must be given. See MCP_SERVER_NAME. */
 export const APPROVE_TOOL = `mcp__${MCP_SERVER_NAME}__approve`
@@ -66,9 +67,9 @@ export function writeMcpConfig(sessionId: string, tier: McpTier = 'worker'): str
         args: [script],
         env: {
           ELECTRON_RUN_AS_NODE: '1',
-          MULTI_AGENT_CONTROLLER_SESSION_ID: sessionId,
-          MULTI_AGENT_CONTROLLER_TIER: tier,
-          ...(process.env.MULTI_AGENT_CONTROLLER_DATA_DIR ? { MULTI_AGENT_CONTROLLER_DATA_DIR: process.env.MULTI_AGENT_CONTROLLER_DATA_DIR } : {})
+          [appEnvName('SESSION_ID')]: sessionId,
+          [appEnvName('TIER')]: tier,
+          ...(appEnv('DATA_DIR') ? { [appEnvName('DATA_DIR')]: appEnv('DATA_DIR') as string } : {})
         }
       }
     }

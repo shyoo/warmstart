@@ -46,7 +46,7 @@ function seedReading(ageMs: number, percent = 42): void {
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'agentyard-quotacast-'))
-  process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
+  process.env.WARMSTART_DATA_DIR = dir
   db = await import('./db.js')
   events = await import('./events.js')
   quota = await import('./quota.js')

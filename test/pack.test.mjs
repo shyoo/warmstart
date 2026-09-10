@@ -65,7 +65,7 @@ function icoLayers(path) {
 const OUT = join(REPO, 'release')
 // ⛔ electron-builder's `productName`, not the npm package name: it names the .app bundle and its
 // Resources directory on macOS.
-const PRODUCT = 'Multi Agent Controller'
+const PRODUCT = 'Warmstart'
 
 /**
  * The executable's own name, which is **not** `productName` on every platform.
@@ -74,7 +74,7 @@ const PRODUCT = 'Multi Agent Controller'
  * invisible while the product was called `agentyard`: a lowercase single word survives the sanitiser
  * untouched, so one constant appeared to work everywhere right up until the rename gave it a space.
  */
-const EXECUTABLE = process.platform === 'linux' ? 'multi-agent-controller' : PRODUCT
+const EXECUTABLE = process.platform === 'linux' ? 'warmstart' : PRODUCT
 const dataDir = mkdtempSync(join(tmpdir(), 'agentyard-pack-'))
 let app = null
 // ⚠️ The slowest of the three — it drives a real package and its own daemon — so fifteen minutes.
@@ -256,7 +256,7 @@ try {
   // ---------------------------------------------------------------- it runs
   section('the packaged app starts its own daemon')
   // ⛔ A private data directory. This must not touch the developer's real fleet, and the packaged
-  // app reads MULTI_AGENT_CONTROLLER_DATA_DIR exactly as the development build does - which is itself the thing
+  // app reads WARMSTART_DATA_DIR exactly as the development build does - which is itself the thing
   // being checked.
   // ⛔ Declared before the app starts, because adapters are read once at daemon boot.
   //
@@ -275,8 +275,8 @@ try {
   // reads the window, so there is nothing a visible one would prove.
   const env = {
     ...process.env,
-    MULTI_AGENT_CONTROLLER_DATA_DIR: dataDir,
-    MULTI_AGENT_CONTROLLER_HEADLESS: '1'
+    WARMSTART_DATA_DIR: dataDir,
+    WARMSTART_HEADLESS: '1'
   }
   delete env.ELECTRON_RUN_AS_NODE
   app = spawn(binary, [], {

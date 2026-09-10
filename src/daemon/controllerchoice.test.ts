@@ -60,7 +60,7 @@ function seedQuota(workerId: string, percent: number, sampledAt = Date.now()): v
 beforeAll(async () => {
   // ⛔ A temp data directory, never the real one. This opens a database and writes to it.
   dir = mkdtempSync(join(tmpdir(), 'agentyard-controller-'))
-  process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
+  process.env.WARMSTART_DATA_DIR = dir
 
   // Declared before the registry is built: `loadAdapters()` is called once, deliberately, so that a
   // worker's capabilities cannot change between the gate that admitted its question and the session

@@ -1,6 +1,6 @@
 # Architecture
 
-How Multi Agent Controller is put together: four processes, three loops, and the invariants that are
+How Warmstart is put together: four processes, three loops, and the invariants that are
 not preferences. Read this before touching any code.
 
 > **Audience:** anyone changing the daemon, the shell or the protocol.
@@ -148,14 +148,14 @@ window reading every gate and reserve is computed from.
 
 ## 3. The data directory
 
-`<dataDir>` is `MULTI_AGENT_CONTROLLER_DATA_DIR` if set, otherwise the platform app-data directory
-for `multi_agent_controller` (`paths.ts`). Computed there rather than from Electron's `app.getPath`,
+`<dataDir>` is `WARMSTART_DATA_DIR` if set, otherwise the platform app-data directory
+for `warmstart` (`paths.ts`). Computed there rather than from Electron's `app.getPath`,
 because orchestratord runs as plain Node where the `electron` module is unusable — main reads the
 same function so both agree.
 
 ```
 <dataDir>/
-  multi_agent_controller.db        node:sqlite, WAL
+  warmstart.db        node:sqlite, WAL
   orchestratord.json               { port, token } — 0600, the endpoint file
   orchestratord.lock               single-instance lock
   logs/                            one file per day, pruned after a fortnight
@@ -172,21 +172,37 @@ to the session**. `trustDirectory()` pre-answers that question for `scratch/` on
 project, a worktree, or anybody's home.
 
 ⚠️ **A pre-rename install is carried across by two halves, and both are required.**
-`adoptLegacyDataDir()` in `paths.ts` moves the `agentyard` directory; `repointIsolationRoots()` in
-`db.ts` rewrites the absolute `isolation_root` of every worker inside it. `paths.test.ts` fails if
-either is removed.
+`adoptLegacyDataDir()` in `paths.ts` moves the old directory; `repointIsolationRoots()` in `db.ts`
+rewrites the absolute `isolation_root` of every worker inside it. `paths.test.ts` fails if either is
+removed.
+
+⛔ **There have been two renames, so both are a chain rather than a pair** (2026-09-09):
+`warmstart` ← `multi_agent_controller` ← `agentyard`. `LEGACY_APP_DIRS` is ordered newest-first and
+the **first name that exists wins** — never a merge, because merging two directories would have to
+decide which copy of a credential root is current and there is no honest answer to that. The database
+file inside is matched against *every* old name, since a migration that failed part-way can leave an
+`agentyard.db` inside a `multi_agent_controller` directory. `repointIsolationRoots()` likewise loops
+every legacy root, so an install that skipped a release is still carried.
 
 ### Environment variables
 
+⚠️ **Every variable below is read through `appEnv()` (`src/shared/env.ts`), which falls back to the
+pre-rename `MULTI_AGENT_CONTROLLER_` prefix.** That is load-bearing rather than a courtesy for
+`_SESSION_ID` and `_TIER`: those are written into the **vendor CLIs' own MCP configuration files**,
+so a config written before the rename is still on disk after it, and a server that understood only
+the new name would answer *"no session"* for every tool call in a session already running. Only the
+current name is ever written, so configs converge as sessions are recreated. Remove the fallback once
+no supported install predates 2026-09-09.
+
 | Variable | Read by | Meaning |
 |---|---|---|
-| `MULTI_AGENT_CONTROLLER_DATA_DIR` | everything | override the data directory. What tests use |
-| `MULTI_AGENT_CONTROLLER_TIER` | `src/mcp` | `worker` (default) or `controller`. ⛔ Written **only** by the daemon into the session's MCP config; an agent cannot promote itself |
-| `MULTI_AGENT_CONTROLLER_SESSION_ID` | `src/mcp` | which session a tool call belongs to |
-| `MULTI_AGENT_CONTROLLER_HEADLESS` | `main/showwindow.ts` | suites set it; `createWindow` skips both `show()` paths |
-| `MULTI_AGENT_CONTROLLER_LOG_LEVEL` / `_LOG_STDOUT` | `log.ts` | daemon log verbosity and destination |
-| `MULTI_AGENT_CONTROLLER_E2E` | `test/e2e.test.mjs` | the only gate on the only suite that spends tokens |
-| `MULTI_AGENT_CONTROLLER_AUTO_TRUST` | `sessions.ts` | on unless set to `0`; pre-answers the trust dialog for `scratch/` only |
+| `WARMSTART_DATA_DIR` | everything | override the data directory. What tests use |
+| `WARMSTART_TIER` | `src/mcp` | `worker` (default) or `controller`. ⛔ Written **only** by the daemon into the session's MCP config; an agent cannot promote itself |
+| `WARMSTART_SESSION_ID` | `src/mcp` | which session a tool call belongs to |
+| `WARMSTART_HEADLESS` | `main/showwindow.ts` | suites set it; `createWindow` skips both `show()` paths |
+| `WARMSTART_LOG_LEVEL` / `_LOG_STDOUT` | `log.ts` | daemon log verbosity and destination |
+| `WARMSTART_E2E` | `test/e2e.test.mjs` | the only gate on the only suite that spends tokens |
+| `WARMSTART_AUTO_TRUST` | `sessions.ts` | on unless set to `0`; pre-answers the trust dialog for `scratch/` only |
 | `ELECTRON_RUN_AS_NODE` | `main/daemon.ts` | turns the Electron binary into plain Node for the daemon |
 
 ⛔ **Two tiers means two prompt-cache prefixes on an install.** Adding a third tier adds a third; do
@@ -437,7 +453,7 @@ produces a question nobody can reply to.
 ### Workspaces and branches
 
 - **Agents work in a pooled worktree, never the trunk.** The branch is named after the *task*
-  (`multi-agent-controller/t123-…`), never after the workspace it landed in.
+  (`warmstart/t123-…`), never after the workspace it landed in.
 - **A new task starts from the ref its finish policy will rebase onto**: the local target for
   `merge-local`, otherwise `origin/<target>` when it exists. A subtask starts from its parent's
   branch while that branch still carries work the trunk lacks; after the parent lands it uses the

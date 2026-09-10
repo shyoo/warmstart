@@ -14,7 +14,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
  *
  * ```
  * 22:10:18  consult route answered on ClaudeSecond: t40 routed to ClaudeSecond
- * 22:10:23  dispatch of t40 failed: no free workspace in multi_agent_controller
+ * 22:10:23  dispatch of t40 failed: no free workspace in warmstart
  * 22:10:23  t40 assigned -> failed
  * 22:10:31  landed t38 (0148aa9d) onto main            ← a worktree freed, eight seconds later
  * ```
@@ -55,7 +55,7 @@ function declarePool(): void {
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'agentyard-poolgate-'))
-  process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
+  process.env.WARMSTART_DATA_DIR = dir
   db = await import('./db.js')
   resources = await import('./resources.js')
   projects = await import('./projects.js')

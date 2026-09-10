@@ -201,7 +201,7 @@ export function loadExternalAdapters(dir = externalAdapterDir()): ExternalLoadRe
             // ⛔ Never `measured`. agentyard did not establish any of this; somebody wrote it in a
             // file, and Doctor should say so in exactly those words.
             note:
-              `Declared by the operator in ${name}. Multi Agent Controller has verified none of it, cannot meter ` +
+              `Declared by the operator in ${name}. Warmstart has verified none of it, cannot meter ` +
               'this adapter, and will not stop its orphaned processes.'
           }
         },

@@ -28,8 +28,11 @@ release/
 *.db-wal
 *.sqlite
 
-# Local overrides of committed project policy (.multi_agent_controller/project.json IS committed — see
-# docs/glossary.md; only the local override is not)
+# Local overrides of committed project policy (.warmstart/project.json IS committed — see
+# docs/glossary.md; only the local override is not). The pre-rename paths stay listed: a working
+# tree that still holds them must not start offering them up as new files.
+.warmstart/local.json
+.warmstart/state/
 .multi_agent_controller/local.json
 .multi_agent_controller/state/
 

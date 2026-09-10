@@ -23,7 +23,7 @@ let compaction: typeof import('./compaction.js')
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'agentyard-compaction-'))
-  process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
+  process.env.WARMSTART_DATA_DIR = dir
   db = await import('./db.js')
   compaction = await import('./compaction.js')
   db.openDb(join(dir, 'compaction.db'))

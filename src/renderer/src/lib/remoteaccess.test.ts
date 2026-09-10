@@ -24,8 +24,8 @@ describe('remote access presentation', () => {
     expect(tailscaleStep(status({ installed: true, hostname: 'desk.ts.net', certAvailable: false, error: null, certError: 'certificate is not permitted', certTimedOut: false }))).toMatch(/could not issue.*certificate is not permitted/)
     // ⛔ A cert request we killed on our own timer must not be presented as a tailnet
     // misconfiguration: nothing in the admin console would fix it (t321 → t322, 2026-09-08).
-    expect(tailscaleStep(status({ installed: true, hostname: 'desk.ts.net', certAvailable: false, error: null, certError: 'Multi Agent Controller stopped waiting after 120s.', certTimedOut: true }))).toMatch(/did not finish issuing.*re-check to try again/)
-    expect(tailscaleStep(status({ installed: true, hostname: 'desk.ts.net', certAvailable: false, error: null, certError: 'Multi Agent Controller stopped waiting after 120s.', certTimedOut: true }))).not.toMatch(/tailnet HTTPS setting/)
+    expect(tailscaleStep(status({ installed: true, hostname: 'desk.ts.net', certAvailable: false, error: null, certError: 'Warmstart stopped waiting after 120s.', certTimedOut: true }))).toMatch(/did not finish issuing.*re-check to try again/)
+    expect(tailscaleStep(status({ installed: true, hostname: 'desk.ts.net', certAvailable: false, error: null, certError: 'Warmstart stopped waiting after 120s.', certTimedOut: true }))).not.toMatch(/tailnet HTTPS setting/)
     expect(tailscaleStep(status({ installed: true, hostname: 'desk.ts.net', certAvailable: false, error: null, certError: null, certTimedOut: false }))).toMatch(/HTTPS certificates/)
     expect(tailscaleStep(status({ installed: true, hostname: 'desk.ts.net', certAvailable: true, error: null, certError: null, certTimedOut: false }))).toMatch(/ready/)
   })

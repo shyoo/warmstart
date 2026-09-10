@@ -21,7 +21,7 @@ import type { QuotaSnapshot, QuotaWindow, Worker } from './protocol.js'
 
 export type Vcs = 'git' | 'none'
 
-/** Committed at `<project>/.multi_agent_controller/project.json`. Nothing secret goes in it. */
+/** Committed at `<project>/.warmstart/project.json`. Nothing secret goes in it. */
 export interface ProjectConfig {
   schema_version: number
   name?: string

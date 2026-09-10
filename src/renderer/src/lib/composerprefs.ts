@@ -5,6 +5,7 @@ import {
   type Priority,
   type SessionSharingChoice
 } from '@shared/tasks'
+import { appKey } from './storagekeys'
 
 /**
  * What the new-task composer was left set to.
@@ -26,7 +27,7 @@ import {
  * preference is never worth a blank screen.
  */
 
-const KEY = 'multi_agent_controller.composer'
+const KEY = appKey('composer')
 
 /**
  * What the composer files, as far as the *shape* of the thing goes.

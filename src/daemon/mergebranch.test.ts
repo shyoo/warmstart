@@ -47,9 +47,9 @@ function seedSplit(): {
   git(root, 'init', '--initial-branch=main')
   git(root, 'config', 'user.name', 'agentyard test')
   git(root, 'config', 'user.email', 'test@example.invalid')
-  mkdirSync(join(root, '.multi_agent_controller'), { recursive: true })
+  mkdirSync(join(root, '.warmstart'), { recursive: true })
   writeFileSync(
-    join(root, '.multi_agent_controller', 'project.json'),
+    join(root, '.warmstart', 'project.json'),
     JSON.stringify({
       schema_version: 1,
       name: `split${seq}`,
@@ -63,8 +63,8 @@ function seedSplit(): {
   git(root, 'commit', '-m', 'initial')
 
   const project = projects.addProject({ root })
-  const planBranch = `multi-agent-controller/t${seq}00-the-plan`
-  const childBranch = `multi-agent-controller/t${seq}01-a-piece`
+  const planBranch = `warmstart/t${seq}00-the-plan`
+  const childBranch = `warmstart/t${seq}01-a-piece`
 
   // The plan branch exists and is checked out NOWHERE — the planner parked its workspace on a
   // detached HEAD when phase 1 ended, which is the state children run against.
@@ -91,7 +91,7 @@ beforeAll(async () => {
   // was given. A member recorded as `C:\Users\SUNGHW~1\…` never matches `git worktree list`, which
   // would make the pooled-holder check below silently pass for the wrong reason.
   dir = realpathSync.native(mkdtempSync(join(tmpdir(), 'agentyard-mergebranch-')))
-  process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
+  process.env.WARMSTART_DATA_DIR = dir
   db = await import('./db.js')
   projects = await import('./projects.js')
   tasks = await import('./tasks.js')

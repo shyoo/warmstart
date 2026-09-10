@@ -362,7 +362,7 @@ export function decomposeQuestion(task: Task): string {
     .map((t) => `- t${t.seq} (${t.status}): ${t.title}`)
 
   return [
-    'You are the planning controller for Multi Agent Controller, a scheduler that routes coding-agent work.',
+    'You are the planning controller for Warmstart, a scheduler that routes coding-agent work.',
     'Break the goal below into a small number of sequenced pieces of work.',
     '',
     '# Goal',
@@ -462,7 +462,7 @@ export function triageQuestion(task: Task): string {
   const models = knownModels(task)
 
   return [
-    'You are the controller for Multi Agent Controller. A task has failed more than once and is parked for a',
+    'You are the controller for Warmstart. A task has failed more than once and is parked for a',
     'person. Decide whether it is worth another attempt, and if so, what should change.',
     '',
     `# Task t${task.seq}`,
@@ -617,7 +617,7 @@ export function gateQuestion(task: Task, why: string): string {
     .map((t) => `- t${t.seq} (${t.status}): ${t.title}`)
 
   return [
-    'You are the controller for Multi Agent Controller. An agent filed this task while working on something else.',
+    'You are the controller for Warmstart. An agent filed this task while working on something else.',
     'Decide whether it should exist, and in what form. Cheap to reject; expensive to let a fleet',
     'generate its own work unchecked.',
     '',
@@ -799,7 +799,7 @@ function candidateLine(c: RouteCandidate): string {
 export function routeQuestion(task: Task, candidates: RouteCandidate[]): string {
   const priced = candidates.some((c) => c.estimate)
   return [
-    'You are the controller for Multi Agent Controller. Two accounts score within a hair of each other for a large',
+    'You are the controller for Warmstart. Two accounts score within a hair of each other for a large',
     'task, so the arithmetic cannot separate them. Pick one.',
     '',
     `# Task t${task.seq}`,

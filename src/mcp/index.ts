@@ -9,6 +9,7 @@ import { normaliseAsk } from '@shared/policy.js'
 import { paths } from '../daemon/paths.js'
 import { errorMessage } from '@shared/errors.js'
 import { describeTarget, failed, questionsFrom, text, type NativeQuestion } from './payload.js'
+import { appEnv } from '@shared/env.js'
 
 /**
  * The agentyard MCP server.
@@ -24,7 +25,7 @@ import { describeTarget, failed, questionsFrom, text, type NativeQuestion } from
  * It holds no state. Everything routes to orchestratord, which owns the policy, the queue and the
  * escalation clock.
  *
- * ⛔ **Two tiers, and the tier is set by the daemon, not asked for by the caller.** `MULTI_AGENT_CONTROLLER_TIER`
+ * ⛔ **Two tiers, and the tier is set by the daemon, not asked for by the caller.** `WARMSTART_TIER`
  * comes from the MCP config file the daemon wrote for that session; an agent cannot promote itself by
  * setting an environment variable it does not control. The worker tier can report completion, hand
  * the task back to a person, ask a person, file a follow-up inside its own mandate, and leave a
@@ -36,7 +37,7 @@ import { describeTarget, failed, questionsFrom, text, type NativeQuestion } from
  * work is an agent that can hide it.
  */
 
-const TIER = process.env.MULTI_AGENT_CONTROLLER_TIER === 'controller' ? 'controller' : 'worker'
+const TIER = appEnv('TIER') === 'controller' ? 'controller' : 'worker'
 
 function endpoint(): DaemonEndpoint {
   try {
@@ -98,7 +99,7 @@ function rpc<M extends RpcMethod>(method: M, params?: RpcParams<M>): Promise<Rpc
 // ⛔ Must match MCP_SERVER_NAME in mcpconfig.ts - the daemon registers this server under that
 // key and tells the CLI to call `mcp__<that key>__approve`. Not imported: this bundle is spawned as
 // a standalone process and deliberately shares no daemon module.
-const server = new McpServer({ name: 'multi-agent-controller', version: '0.0.1' })
+const server = new McpServer({ name: 'warmstart', version: '0.0.1' })
 
 /**
  * The permission prompt tool.
@@ -112,7 +113,7 @@ const server = new McpServer({ name: 'multi-agent-controller', version: '0.0.1' 
 server.registerTool(
   'approve',
   {
-    title: 'Ask Multi Agent Controller whether this action may run',
+    title: 'Ask Warmstart whether this action may run',
     description:
       'Called by the agent CLI in place of showing a permission prompt. The controller answers from the ' +
       "project's rules where it can, and asks the operator where it cannot.",
@@ -123,7 +124,7 @@ server.registerTool(
     }
   },
   async (args, extra) => {
-    const sessionId = process.env.MULTI_AGENT_CONTROLLER_SESSION_ID ?? ''
+    const sessionId = appEnv('SESSION_ID') ?? ''
     const toolName = String(args.tool_name ?? 'unknown')
     const target = describeTarget(args.input)
 
@@ -163,7 +164,7 @@ server.registerTool(
     const payload =
       decision === 'allow'
         ? { behavior: 'allow', updatedInput: args.input ?? {} }
-        : { behavior: 'deny', message: message || 'Denied by Multi Agent Controller policy.' }
+        : { behavior: 'deny', message: message || 'Denied by Warmstart policy.' }
 
     return { content: [{ type: 'text' as const, text: JSON.stringify(payload) }] }
   }
@@ -236,7 +237,7 @@ server.registerTool(
     }
   },
   async (args) => {
-    const sessionId = process.env.MULTI_AGENT_CONTROLLER_SESSION_ID ?? ''
+    const sessionId = appEnv('SESSION_ID') ?? ''
     const rawOptions = typeof args.options === 'string' ? parseOptionList(args.options) : (args.options ?? [])
     const explicitMulti =
       args.multi_select === true ||
@@ -309,7 +310,7 @@ server.registerTool(
     }
   },
   async (args) => {
-    const sessionId = process.env.MULTI_AGENT_CONTROLLER_SESSION_ID ?? ''
+    const sessionId = appEnv('SESSION_ID') ?? ''
     try {
       const resolution = await rpc('question.ask', {
         sessionId,
@@ -349,7 +350,7 @@ server.registerTool(
     inputSchema: { summary: z.string().describe('One line: what was done') }
   },
   async (args) => {
-    const sessionId = process.env.MULTI_AGENT_CONTROLLER_SESSION_ID ?? ''
+    const sessionId = appEnv('SESSION_ID') ?? ''
     try {
       await rpc('agent.complete', { sessionId, summary: args.summary })
       return { content: [{ type: 'text' as const, text: 'Recorded. The controller is landing the work.' }] }
@@ -401,7 +402,7 @@ server.registerTool(
     }
   },
   async (args) => {
-    const sessionId = process.env.MULTI_AGENT_CONTROLLER_SESSION_ID ?? ''
+    const sessionId = appEnv('SESSION_ID') ?? ''
     try {
       const result = await rpc('agent.awaitHuman', {
         sessionId,
@@ -439,7 +440,7 @@ server.registerTool(
     }
   },
   async (args) => {
-    const sessionId = process.env.MULTI_AGENT_CONTROLLER_SESSION_ID ?? ''
+    const sessionId = appEnv('SESSION_ID') ?? ''
     try {
       const result = await rpc('agent.createTask', {
         sessionId,
@@ -517,7 +518,7 @@ server.registerTool(
     }
   },
   async (args) => {
-    const sessionId = process.env.MULTI_AGENT_CONTROLLER_SESSION_ID ?? ''
+    const sessionId = appEnv('SESSION_ID') ?? ''
     try {
       const result = await rpc('agent.split', {
         sessionId,
@@ -561,7 +562,7 @@ server.registerTool(
     }
   },
   async (args) => {
-    const sessionId = process.env.MULTI_AGENT_CONTROLLER_SESSION_ID ?? ''
+    const sessionId = appEnv('SESSION_ID') ?? ''
     try {
       const result = await rpc('agent.depend', {
         sessionId,
@@ -595,7 +596,7 @@ server.registerTool(
     inputSchema: { note: z.string() }
   },
   async (args) => {
-    const sessionId = process.env.MULTI_AGENT_CONTROLLER_SESSION_ID ?? ''
+    const sessionId = appEnv('SESSION_ID') ?? ''
     try {
       await rpc('agent.handoff', { sessionId, note: args.note })
       return { content: [{ type: 'text' as const, text: 'Handoff recorded.' }] }

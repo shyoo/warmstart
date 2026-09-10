@@ -1,4 +1,4 @@
-# Multi Agent Controller — Agent Workspace Guide
+# Warmstart — Agent Workspace Guide
 
 How to work in this codebase: the rules you must not break, and where the detail lives.
 
@@ -28,11 +28,11 @@ invariants), [`docs/glossary.md`](docs/glossary.md) (the domain words, which are
   rests on. A confident unsourced sentence is worse than none, because it gets trusted.
 - **Prefer running the cheap experiment over hedging in prose.** Several decisions here were settled
   in minutes by a two-command spike. If a question is empirical, answer it.
-- **Two names, and which one goes where.** **Multi Agent Controller** is public: UI copy, docs, PR
+- **Two names, and which one goes where.** **Warmstart** is public: UI copy, docs, PR
   bodies, prompt text, `productName`, the MCP server name. **`agentyard`** is internal and stays
   that way: source comments, `window.agentyard`, test fixtures, `LEGACY_APP_DIR`. ⛔ On-disk
-  identifiers were *migrated*, not left alone — `.multi_agent_controller/project.json`, the data
-  directory, `MULTI_AGENT_CONTROLLER_*`, `multi-agent-controller/t<seq>` branches. `adoptLegacyDataDir`
+  identifiers were *migrated*, not left alone — `.warmstart/project.json`, the data
+  directory, `WARMSTART_*`, `warmstart/t<seq>` branches. `adoptLegacyDataDir`
   in [`src/daemon/paths.ts`](src/daemon/paths.ts) and `repointIsolationRoots` in `db.ts` are both
   required halves; `paths.test.ts` fails if either goes.
 
@@ -179,7 +179,7 @@ definitions invalidates the whole prompt cache prefix.
 
 **Schema** — [`docs/data-model.md`](docs/data-model.md). Migrations are numbered, append-only and
 must be replay-safe; `versionBefore` matches on text, not number. **MCP** —
-[`docs/mcp.md`](docs/mcp.md): two tiers, and only the daemon writes `MULTI_AGENT_CONTROLLER_TIER`.
+[`docs/mcp.md`](docs/mcp.md): two tiers, and only the daemon writes `WARMSTART_TIER`.
 **Renderer** — [`docs/ui.md`](docs/ui.md): agent output is text, never markup.
 
 ## The one distinction to hold in your head

@@ -34,7 +34,7 @@ let settings: typeof import('./settings.js')
 
 const clean = (over: Partial<WorkspaceState> = {}): WorkspaceState => ({
   path: 'C:/ws1',
-  branch: 'multi-agent-controller/t1-a-task',
+  branch: 'warmstart/t1-a-task',
   dirtyFiles: [],
   untrackedFiles: [],
   unlandedCommits: 1,
@@ -67,7 +67,7 @@ function makeTask(over: { finishPolicy?: FinishPolicyChoice; asked?: boolean; la
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'agentyard-finish-'))
-  process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
+  process.env.WARMSTART_DATA_DIR = dir
   db = await import('./db.js')
   tasks = await import('./tasks.js')
   finish = await import('./finish.js')
@@ -308,7 +308,7 @@ describe('a project with its own finish policy', () => {
 describe('surfacing work that is going nowhere', () => {
   const state = (over: Partial<WorkspaceState>): WorkspaceState => ({
     path: 'C:/ws1',
-    branch: 'multi-agent-controller/t5-refine-the-workers-table',
+    branch: 'warmstart/t5-refine-the-workers-table',
     dirtyFiles: [],
     untrackedFiles: [],
     unlandedCommits: 0,
@@ -330,7 +330,7 @@ describe('surfacing work that is going nowhere', () => {
   it('recovers the task number from the branch name alone', () => {
     // ⚠️ The workspace has usually been released and reused by the time anybody looks, so the
     // branch is the only thread back to the task that made it.
-    expect(finish.taskSeqFromBranch('multi-agent-controller/t12-fix-the-dialog')).toBe(12)
+    expect(finish.taskSeqFromBranch('warmstart/t12-fix-the-dialog')).toBe(12)
     expect(finish.taskSeqFromBranch('some-branch-a-human-made')).toBeNull()
     expect(finish.taskSeqFromBranch(null)).toBeNull()
   })

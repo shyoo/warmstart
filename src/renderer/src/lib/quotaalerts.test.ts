@@ -9,7 +9,7 @@ import {
   writeQuotaAlertDismissals
 } from './quotaalerts.js'
 
-const KEY = 'multi_agent_controller.dismissedQuotaAlerts'
+const KEY = 'warmstart.dismissedQuotaAlerts'
 
 type Gated = Pick<Task, 'id' | 'status' | 'notBefore' | 'quotaPreemptWarning'>
 

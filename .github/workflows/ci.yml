@@ -4,7 +4,7 @@
 # no account signed in, which is exactly the state the suites were taught to handle: CLI-dependent
 # checks are *skipped visibly* with a reason and counted separately, so a green run on a runner
 # cannot be mistaken for a green run on a developer's machine. `npm run test:e2e` is the only suite
-# that spends, it is gated behind MULTI_AGENT_CONTROLLER_E2E=1, and it is deliberately never invoked here.
+# that spends, it is gated behind WARMSTART_E2E=1, and it is deliberately never invoked here.
 #
 # ⚠️ The `pack` job is the interesting one. M6 shipped with macOS and Linux **written for and never
 # run** — configured targets, platform branches, and not one execution. This is the first thing that

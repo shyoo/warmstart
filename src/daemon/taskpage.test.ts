@@ -52,7 +52,7 @@ const ALL_STATUSES: TaskStatus[] = [
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'agentyard-taskpage-'))
-  process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
+  process.env.WARMSTART_DATA_DIR = dir
   db = await import('./db.js')
   tasks = await import('./tasks.js')
   db.openDb(join(dir, 'taskpage.db'))

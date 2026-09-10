@@ -23,7 +23,7 @@ let activetime: typeof import('./activetime.js')
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'agentyard-plansplitmigration-'))
-  process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
+  process.env.WARMSTART_DATA_DIR = dir
   db = await import('./db.js')
   activetime = await import('./activetime.js')
 })

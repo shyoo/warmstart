@@ -1,6 +1,7 @@
 import { appendFileSync, readdirSync, statSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import { ensureDir, paths } from './paths.js'
+import { appEnv } from '@shared/env.js'
 
 /**
  * The daemon's log.
@@ -32,7 +33,7 @@ export interface LogEntry {
 }
 
 const LEVELS: Record<Level, number> = { debug: 10, info: 20, warn: 30, error: 40 }
-const threshold = LEVELS[(process.env.MULTI_AGENT_CONTROLLER_LOG_LEVEL as Level) ?? 'info'] ?? LEVELS.info
+const threshold = LEVELS[(appEnv('LOG_LEVEL') as Level) ?? 'info'] ?? LEVELS.info
 
 /**
  * How much history a UI gets on connect, and how long the files stay.
@@ -141,7 +142,7 @@ function write(level: Level, args: unknown[]): void {
     // Disk full or permissions. Still emit to stderr below.
   }
   if (level === 'error' || level === 'warn') process.stderr.write(line)
-  else if (process.env.MULTI_AGENT_CONTROLLER_LOG_STDOUT) process.stdout.write(line)
+  else if (appEnv('LOG_STDOUT')) process.stdout.write(line)
   for (const fn of listeners) fn({ ts, level, message })
 }
 

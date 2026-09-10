@@ -24,7 +24,7 @@ let projects: typeof import('./projects.js')
 
 const clean = (over: Partial<WorkspaceState> = {}): WorkspaceState => ({
   path: 'C:/ws1',
-  branch: 'multi-agent-controller/t9-a-piece',
+  branch: 'warmstart/t9-a-piece',
   dirtyFiles: [],
   untrackedFiles: [],
   // ⛔ Zero: the tripwire only considers a branch that carries nothing.
@@ -68,7 +68,7 @@ function makeTask(over: Partial<Task> = {}): Task {
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'agentyard-landingtarget-'))
-  process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
+  process.env.WARMSTART_DATA_DIR = dir
   db = await import('./db.js')
   tasks = await import('./tasks.js')
   finish = await import('./finish.js')
@@ -94,9 +94,9 @@ describe('landingTargetFor', () => {
   })
 
   it('returns the task’s own target when it has one', () => {
-    const child = makeTask({ landingTarget: 'multi-agent-controller/t1-the-plan' })
+    const child = makeTask({ landingTarget: 'warmstart/t1-the-plan' })
     expect(projects.landingTargetFor(child, projectWith('main'))).toBe(
-      'multi-agent-controller/t1-the-plan'
+      'warmstart/t1-the-plan'
     )
   })
 
@@ -127,7 +127,7 @@ describe('the trunk tripwire under a split', () => {
   it('⛔ does NOT fire when every commit is attributable to a sibling', () => {
     const child = makeTask({
       parentTaskId: 't-plan',
-      landingTarget: 'multi-agent-controller/t1-the-plan'
+      landingTarget: 'warmstart/t1-the-plan'
     })
     // A sibling landing onto the shared plan branch is this design working, not an agent in the trunk.
     expect(decide(child, SIBLINGS).kind).not.toBe('trunk-moved')
@@ -136,7 +136,7 @@ describe('the trunk tripwire under a split', () => {
   it('⛔ still fires when only SOME of the movement is a sibling’s', () => {
     const child = makeTask({
       parentTaskId: 't-plan',
-      landingTarget: 'multi-agent-controller/t1-the-plan'
+      landingTarget: 'warmstart/t1-the-plan'
     })
     const decision = finish.decideFinish({
       task: child,

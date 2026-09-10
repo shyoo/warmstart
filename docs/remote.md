@@ -23,7 +23,7 @@ into a live agent's terminal (`session.write`). Two more are denied for a reason
 
 There are two switches, and both must be on. Remote access must be enabled for the machine, then each
 project must be enabled individually. ⛔ Project exposure is stored in the daemon database, never in
-the committed `.multi_agent_controller/project.json` — that file is pulled by every clone and by every
+the committed `.warmstart/project.json` — that file is pulled by every clone and by every
 machine, and whether *this* computer is reachable from a phone is not a fact about the repository.
 
 Every call is checked against the project it belongs to, by the parameter that actually carries it:
@@ -88,7 +88,7 @@ sure `tailscale status` works from the normal user terminal. Other certificate r
 tailnet setting or device permission to check.
 ⚠️ The *first* certificate is slow — it is an ACME exchange with Let's Encrypt, measured at **36.1s**
 on 2026-09-08 against `shyoo-12700k.taild143f.ts.net`, where a re-run over the cached certificate took
-**0.16s**. Multi Agent Controller waits 120s and reports giving up as its own timeout, not as a tailnet
+**0.16s**. Warmstart waits 120s and reports giving up as its own timeout, not as a tailnet
 refusal, because nothing in the admin console would fix one (t321 → t322).
 If the port is taken, change it on the same screen. ⚠️ No inbound port forwarding is involved at any
 point.

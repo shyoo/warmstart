@@ -1,4 +1,5 @@
 import type { Task } from '@shared/tasks'
+import { appKey } from './storagekeys'
 
 /**
  * Quota alerts the operator has read and told to stop interrupting.
@@ -25,7 +26,7 @@ import type { Task } from '@shared/tasks'
  * configurations, and a silenced banner is never worth a blank screen.
  */
 
-const KEY = 'multi_agent_controller.dismissedQuotaAlerts'
+const KEY = appKey('dismissedQuotaAlerts')
 
 /** taskId → the gate state that was dismissed. */
 export type QuotaAlertDismissals = Record<string, string>

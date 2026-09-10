@@ -30,16 +30,16 @@ const mine = (limit = 500): string[] =>
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'agentyard-log-'))
-  process.env.MULTI_AGENT_CONTROLLER_DATA_DIR = dir
+  process.env.WARMSTART_DATA_DIR = dir
   // ⛔ Below the default, so the debug-level assertions below test the filter rather than the
   // threshold. The two are different gates and only one of them is this module's job.
-  process.env.MULTI_AGENT_CONTROLLER_LOG_LEVEL = 'debug'
+  process.env.WARMSTART_LOG_LEVEL = 'debug'
   logmod = await import('./log.js')
   paths = await import('./paths.js')
 })
 
 afterAll(() => {
-  delete process.env.MULTI_AGENT_CONTROLLER_LOG_LEVEL
+  delete process.env.WARMSTART_LOG_LEVEL
   try {
     rmSync(dir, { recursive: true, force: true })
   } catch {

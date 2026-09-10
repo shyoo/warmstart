@@ -1,17 +1,23 @@
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { existsSync, mkdirSync, renameSync } from 'node:fs'
+import { appEnv } from '@shared/env.js'
 
 /**
- * The directory name this app writes under, and the one it used to write under.
+ * The directory name this app writes under, and every one it used to write under.
  *
- * ⚠️ `agentyard` was the project's name before it had a public one. It survives as the internal
- * name and in `legacyDataDir`, because a rename that silently abandons someone's fleet - their
- * database, and the isolation roots holding their vendor credentials - is data loss dressed up as
- * a cosmetic change. See `adoptLegacyDataDir`.
+ * ⚠️ **Two renames now, so this is a chain and not a pair.** `agentyard` was the project's name
+ * before it had a public one; `warmstart` was the first public one; `warmstart` is the
+ * name it launched under. A rename that silently abandons someone's fleet - their database, and the
+ * isolation roots holding their vendor credentials - is data loss dressed up as a cosmetic change,
+ * and that is as true of the second rename as it was of the first. See `adoptLegacyDataDir`.
+ *
+ * ⛔ **Ordered newest-first, and that ordering is load-bearing.** An install that predates both
+ * renames may have *both* old directories on disk if a previous migration failed part-way; adopting
+ * the newer one is the only choice that cannot lose work done after the first rename.
  */
-const APP_DIR = 'multi_agent_controller'
-const LEGACY_APP_DIR = 'agentyard'
+const APP_DIR = 'warmstart'
+const LEGACY_APP_DIRS = ['multi_agent_controller', 'agentyard'] as const
 
 function platformDataDir(name: string): string {
   const home = homedir()
@@ -25,9 +31,12 @@ function platformDataDir(name: string): string {
   }
 }
 
-/** Where a pre-rename install kept its state. Read only to migrate off it, never written to. */
-export function legacyDataDir(): string {
-  return platformDataDir(LEGACY_APP_DIR)
+/**
+ * Where pre-rename installs kept their state, newest name first. Read only to migrate off, never
+ * written to.
+ */
+export function legacyDataDirs(): string[] {
+  return LEGACY_APP_DIRS.map(platformDataDir)
 }
 
 let adopted = false
@@ -47,16 +56,27 @@ let adopted = false
 function adoptLegacyDataDir(target: string): void {
   if (adopted) return
   adopted = true
-  const legacy = legacyDataDir()
-  if (legacy === target || existsSync(target) || !existsSync(legacy)) return
+  if (existsSync(target)) return
+  // ⛔ **First name that exists wins, newest first.** Not "every one that exists": merging two old
+  // directories would have to decide which copy of a credential root is current, and there is no
+  // honest answer to that. The ones not adopted stay on disk, untouched.
+  const legacy = legacyDataDirs().find((dir) => dir !== target && existsSync(dir))
+  if (!legacy) return
   try {
     mkdirSync(join(target, '..'), { recursive: true })
     renameSync(legacy, target)
-    const legacyDb = join(target, `${LEGACY_APP_DIR}.db`)
-    if (existsSync(legacyDb) && !existsSync(join(target, `${APP_DIR}.db`))) {
+    // ⚠️ The database inside is named after whichever era wrote it, which is **not** necessarily
+    // the directory just adopted: an install that migrated agentyard -> warmstart kept
+    // its directory renamed and its db renamed together, but a migration that failed half-way left
+    // an `agentyard.db` inside a `warmstart` directory. Try every old name.
+    if (existsSync(join(target, `${APP_DIR}.db`))) return
+    for (const old of LEGACY_APP_DIRS) {
+      const legacyDb = join(target, `${old}.db`)
+      if (!existsSync(legacyDb)) continue
       for (const suffix of ['', '-wal', '-shm']) {
         if (existsSync(legacyDb + suffix)) renameSync(legacyDb + suffix, join(target, `${APP_DIR}.db${suffix}`))
       }
+      return
     }
   } catch {
     // Not fatal, and not worth a crash on startup: the app comes up on an empty data directory and
@@ -65,17 +85,17 @@ function adoptLegacyDataDir(target: string): void {
 }
 
 /**
- * Where Multi Agent Controller keeps its own state.
+ * Where Warmstart keeps its own state.
  *
  * Computed here rather than taken from Electron's `app.getPath`, because orchestratord runs as a
  * plain Node process (Electron with ELECTRON_RUN_AS_NODE) where the `electron` module is not usable.
  * The main process reads the same function so both agree.
  *
- * `MULTI_AGENT_CONTROLLER_DATA_DIR` overrides everything: it is what tests use, and what lets someone
+ * `WARMSTART_DATA_DIR` overrides everything: it is what tests use, and what lets someone
  * keep the fleet on another volume. Nothing about one machine is baked in.
  */
 export function dataDir(): string {
-  const override = process.env.MULTI_AGENT_CONTROLLER_DATA_DIR
+  const override = appEnv('DATA_DIR')
   if (override && override.trim()) return override
 
   const dir = platformDataDir(APP_DIR)

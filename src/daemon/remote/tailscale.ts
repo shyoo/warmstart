@@ -44,7 +44,7 @@ export async function tailscaleInfo(): Promise<TailscaleInfo> {
       // so say who stopped it, or the operator goes looking in the admin console for nothing.
       certTimedOut = typeof err === 'object' && err !== null && 'killed' in err && err.killed === true
       certError = certTimedOut
-        ? `Multi Agent Controller stopped waiting after ${Math.round(CERT_TIMEOUT_MS / 1000)}s.`
+        ? `Warmstart stopped waiting after ${Math.round(CERT_TIMEOUT_MS / 1000)}s.`
         : stderr || errorMessage(err)
     }
     const certAvailable = existsSync(certPath) && existsSync(keyPath)

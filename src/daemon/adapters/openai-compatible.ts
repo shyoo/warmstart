@@ -744,7 +744,7 @@ async function readAccountRateLimits(isolationRoot: string): Promise<CodexRateLi
           jsonrpc: '2.0',
           id: 1,
           method: 'initialize',
-          params: { clientInfo: { name: 'multi-agent-controller', title: 'quota probe', version: '1' } }
+          params: { clientInfo: { name: 'warmstart', title: 'quota probe', version: '1' } }
         })}\n`
       )
     }
@@ -1118,11 +1118,11 @@ export const openaiCompatible: AgentAdapter = {
    * user-level file — which is what `CODEX_HOME` buys.
    */
   writePermissions(isolationRoot: string, rules: PermissionRules): WrittenPermissions {
-    const path = join(isolationRoot, 'multi_agent_controller.config.toml')
+    const path = join(isolationRoot, 'warmstart.config.toml')
     try {
       mkdirSync(isolationRoot, { recursive: true })
       const lines = [
-        '# Written by Multi Agent Controller before each session. Edits are overwritten.',
+        '# Written by Warmstart before each session. Edits are overwritten.',
         '# ⛔ Rules only. It never writes a credential.',
         '',
         '[approval]',
