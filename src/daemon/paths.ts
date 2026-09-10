@@ -1,13 +1,13 @@
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { existsSync, mkdirSync, renameSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, renameSync, rmdirSync } from 'node:fs'
 import { appEnv } from '@shared/env.js'
 
 /**
  * The directory name this app writes under, and every one it used to write under.
  *
  * ⚠️ **Two renames now, so this is a chain and not a pair.** `agentyard` was the project's name
- * before it had a public one; `warmstart` was the first public one; `warmstart` is the
+ * before it had a public one; `multi_agent_controller` was the first public one; `warmstart` is the
  * name it launched under. A rename that silently abandons someone's fleet - their database, and the
  * isolation roots holding their vendor credentials - is data loss dressed up as a cosmetic change,
  * and that is as true of the second rename as it was of the first. See `adoptLegacyDataDir`.
@@ -42,45 +42,64 @@ export function legacyDataDirs(): string[] {
 let adopted = false
 
 /**
- * Move a pre-rename data directory to the new name, once.
+ * Adopt a pre-rename data directory into the current one, once.
  *
- * ⛔ A rename, not a copy: two directories both holding live credential roots is worse than either
+ * ⛔ **A move, not a copy**: two directories both holding live credential roots is worse than either
  * one, and the isolation roots inside are what the vendor CLIs authenticate against. The absolute
- * paths recorded in the database still point at the old location afterwards - `repointIsolationRoots`
+ * paths recorded in the database still point at the old location afterwards — `repointIsolationRoots`
  * in db.ts fixes those on the next open, which is why this is safe to do before the database exists.
  *
- * ⚠️ Deliberately does nothing if the new directory is already there. A half-migrated install is the
- * one state with no good recovery, so an existing target always wins and the old directory is left
- * untouched for the user to deal with.
+ * ⛔ **What decides is our database, not the directory.** This used to return early on
+ * `existsSync(target)`, which is wrong on Windows and wrong in the one case that matters: the data
+ * directory (`<appData>/warmstart`) collides **case-insensitively** with Electron's own userData
+ * folder (`<appData>/<productName>` → `Warmstart`), which exists from the app's first launch and
+ * holds a Chromium profile — Cache, Local Storage, Preferences. Measured on this install 2026-09-10:
+ * the target directory was already there with 15 Chromium entries and no database, while 37MB of
+ * fleet sat in `<appData>/multi_agent_controller`. The old guard would have skipped the adoption
+ * **forever** and started every launch on an empty fleet, which is precisely the data loss this
+ * function exists to prevent.
  */
 function adoptLegacyDataDir(target: string): void {
   if (adopted) return
   adopted = true
-  if (existsSync(target)) return
+  // Already ours: nothing to do, and nothing may be moved over it.
+  if (existsSync(join(target, `${APP_DIR}.db`))) return
+
   // ⛔ **First name that exists wins, newest first.** Not "every one that exists": merging two old
   // directories would have to decide which copy of a credential root is current, and there is no
   // honest answer to that. The ones not adopted stay on disk, untouched.
   const legacy = legacyDataDirs().find((dir) => dir !== target && existsSync(dir))
   if (!legacy) return
+
   try {
-    mkdirSync(join(target, '..'), { recursive: true })
-    renameSync(legacy, target)
-    // ⚠️ The database inside is named after whichever era wrote it, which is **not** necessarily
-    // the directory just adopted: an install that migrated agentyard -> warmstart kept
-    // its directory renamed and its db renamed together, but a migration that failed half-way left
-    // an `agentyard.db` inside a `warmstart` directory. Try every old name.
-    if (existsSync(join(target, `${APP_DIR}.db`))) return
-    for (const old of LEGACY_APP_DIRS) {
-      const legacyDb = join(target, `${old}.db`)
-      if (!existsSync(legacyDb)) continue
-      for (const suffix of ['', '-wal', '-shm']) {
-        if (existsSync(legacyDb + suffix)) renameSync(legacyDb + suffix, join(target, `${APP_DIR}.db${suffix}`))
-      }
-      return
+    mkdirSync(target, { recursive: true })
+    for (const entry of readdirSync(legacy)) {
+      // ⚠️ The database is named after whichever era wrote it, and that is **not** necessarily the
+      // directory holding it: a migration that failed half-way leaves an `agentyard.db` inside a
+      // `multi_agent_controller` directory. Rename any era's database — and its `-wal`/`-shm`
+      // siblings, which are useless apart from it — onto the current name as it moves.
+      const renamed = LEGACY_APP_DIRS.reduce(
+        (name, old) => (name.startsWith(`${old}.db`) ? `${APP_DIR}.db${name.slice(`${old}.db`.length)}` : name),
+        entry
+      )
+      const to = join(target, renamed)
+      // ⛔ An entry already in the target wins, and the legacy copy is left where it is. Half a move
+      // is recoverable by hand; a silent overwrite of something the app is already using is not.
+      if (existsSync(to)) continue
+      renameSync(join(legacy, entry), to)
+    }
+    // ⚠️ Only when it is genuinely empty. `rmdirSync` refuses a directory that still has anything
+    // in it, which is exactly the guard wanted here: whatever could not be moved — because the
+    // target already had it — stays where the user can find it, and an empty husk does not sit
+    // around looking like a second copy of the fleet.
+    try {
+      rmdirSync(legacy)
+    } catch {
+      // Something is still in there. That is information, not a failure.
     }
   } catch {
-    // Not fatal, and not worth a crash on startup: the app comes up on an empty data directory and
-    // the old one is still on disk, intact, for the user to move by hand.
+    // Not fatal, and not worth a crash on startup: the app comes up on whatever it could adopt and
+    // the rest is still on disk, intact, for the user to move by hand.
   }
 }
 

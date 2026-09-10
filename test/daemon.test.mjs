@@ -655,6 +655,19 @@ try {
     })
     const planSession = await spawnAgentSession()
     const planRun = seedAgentRun(planTask.id, probeWorker.id, planSession.id)
+    // ⛔ **The split sequence needs the run too, and it runs before the guards below it.** `agent.split`
+    // resolves the session to a task exactly as `agent.depend` and `agent.awaitHuman` do, so on a host
+    // whose probe PTY has already exited it answers *"This session is not working on a task, so it
+    // cannot split one"* — and then `splitQuestion` stays null and the suite dies on `.id`, taking
+    // every later section with it (run 34447361834: 4 of 63, where 63 is how far it got).
+    const splittable = runIsOpen(planRun)
+    let split = null
+    if (!splittable) {
+      skip('a one-piece split is refused with the rule, not filed', NO_OPEN_RUN)
+      skip('a planner with no branch is refused before anyone is asked, not filed onto the trunk', NO_OPEN_RUN)
+      skip('the split raises one structural approval before writing anything', NO_OPEN_RUN)
+      skip('approving files every piece at once', NO_OPEN_RUN)
+    } else {
     const tooFew = await daemon.rpc('agent.split', {
       sessionId: planSession.id,
       pieces: [{ title: 'only one' }]
@@ -691,15 +704,24 @@ try {
       if (!splitQuestion) await wait(250)
     }
     check('the split raises one structural approval before writing anything', splitQuestion !== null)
-    await daemon.rpc('question.answer', { id: splitQuestion.id, optionIds: ['approve'] })
-    const split = await splitCall
-    check(
-      'approving files every piece at once',
-      split.ok === true && split.seqs.length === 2,
-      (split.seqs ?? []).join(',')
-    )
+    // ⚠️ Guarded rather than assumed. A null here used to throw on `.id`, which aborted the whole
+    // suite — one missing approval reported as "the suite ran to completion" and 130-odd checks that
+    // never ran. A check that fails should cost its own result and nothing else.
+    if (splitQuestion) {
+      await daemon.rpc('question.answer', { id: splitQuestion.id, optionIds: ['approve'] })
+      split = await splitCall
+      check(
+        'approving files every piece at once',
+        split.ok === true && split.seqs.length === 2,
+        (split.seqs ?? []).join(',')
+      )
+    } else {
+      skip('approving files every piece at once', 'no approval was raised to answer')
+    }
+    }
 
-    if (!runIsOpen(planRun)) {
+    // ⚠️ Reads `split.seqs`, so a live run is necessary and not sufficient: the pieces have to exist.
+    if (!split || !runIsOpen(planRun)) {
       skip('an agent can order two of its own pieces', NO_OPEN_RUN)
       skip('an edge to a stranger names the boundary', NO_OPEN_RUN)
     } else {

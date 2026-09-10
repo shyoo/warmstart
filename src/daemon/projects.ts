@@ -27,17 +27,6 @@ import { errorMessage } from '@shared/errors.js'
 
 export const PROJECT_CONFIG_RELATIVE = join('.warmstart', 'project.json')
 
-/**
- * The pre-rename location, still read.
- *
- * ⛔ **This file lives in the user's own repository, not in our data directory**, which makes it the
- * one rename we cannot migrate on their behalf: it is committed, it is shared with collaborators,
- * and moving it would be this app rewriting somebody else's repo without being asked. So the old
- * path stays readable indefinitely and the project keeps its policy; `writeProjectConfig` emits only
- * the new path, so a repo converges the next time its config is written deliberately.
- */
-const LEGACY_PROJECT_CONFIG_RELATIVE = join('.multi_agent_controller', 'project.json')
-
 const DEFAULTS = {
   poolSize: 3,
   landingStrategy: 'auto-land' as const,
@@ -91,11 +80,13 @@ export function requireProject(id: string): Project {
  * A missing file is normal, not an error.
  */
 export function readProjectConfig(root: string): { config: ProjectConfig; path: string | null } {
-  // ⚠️ New path wins when both exist: a repo mid-migration has had the new one written deliberately.
-  const path = [PROJECT_CONFIG_RELATIVE, LEGACY_PROJECT_CONFIG_RELATIVE]
-    .map((rel) => join(root, rel))
-    .find((candidate) => existsSync(candidate))
-  if (!path) return { config: { schema_version: 1 }, path: null }
+  // ⚠️ **The pre-rename `.multi_agent_controller/project.json` is no longer read** (2026-09-10). That
+  // fallback existed for repositories this tool must not rewrite on their owners' behalf, and there
+  // are none — the tool is unpublished and this is the only install. ⛔ Reinstate it before the first
+  // outside user rather than after: a project whose policy silently reverts to defaults reads as the
+  // scheduler misbehaving, not as a missing file, which is exactly how t338 presented.
+  const path = join(root, PROJECT_CONFIG_RELATIVE)
+  if (!existsSync(path)) return { config: { schema_version: 1 }, path: null }
   try {
     const parsed = JSON.parse(readFileSync(path, 'utf8')) as ProjectConfig
     return { config: { ...parsed, schema_version: parsed.schema_version ?? 1 }, path }

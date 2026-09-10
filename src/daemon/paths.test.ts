@@ -72,6 +72,44 @@ describe('a data directory written before the rename', () => {
     )
   })
 
+  it('adopts into a target directory that already exists without our database in it', async () => {
+    // ⛔ The regression that would have cost this install its fleet (2026-09-10). On Windows the data
+    // directory collides case-insensitively with Electron's own userData folder, so `<appData>/
+    // warmstart` already exists — full of a Chromium profile and no database — before the app has
+    // ever stored anything. Guarding adoption on `existsSync(target)` made it a permanent no-op:
+    // 37MB of fleet sat in the legacy directory and every launch started empty.
+    const legacy = legacyRootIn(sandbox)
+    const target = newRootIn(sandbox)
+    mkdirSync(join(target, 'Cache'), { recursive: true })
+    writeFileSync(join(target, 'Preferences'), '{"chromium":true}')
+    mkdirSync(join(legacy, 'workers', 'work-claude'), { recursive: true })
+    writeFileSync(join(legacy, 'workers', 'work-claude', '.credentials.json'), '{"pretend":true}')
+
+    const { dataDir } = await import('./paths.js')
+    expect(dataDir()).toBe(target)
+    expect(
+      readFileSync(join(target, 'workers', 'work-claude', '.credentials.json'), 'utf8'),
+      'the fleet was adopted despite the directory already existing'
+    ).toBe('{"pretend":true}')
+    // ⚠️ And what was already there is untouched, because it is not ours to move.
+    expect(readFileSync(join(target, 'Preferences'), 'utf8')).toBe('{"chromium":true}')
+  })
+
+  it('never moves anything over an entry the target already has', async () => {
+    const legacy = legacyRootIn(sandbox)
+    const target = newRootIn(sandbox)
+    mkdirSync(target, { recursive: true })
+    writeFileSync(join(target, 'orchestratord.json'), 'keep me')
+    mkdirSync(legacy, { recursive: true })
+    writeFileSync(join(legacy, 'orchestratord.json'), 'overwrite me')
+
+    const { dataDir } = await import('./paths.js')
+    dataDir()
+    expect(readFileSync(join(target, 'orchestratord.json'), 'utf8')).toBe('keep me')
+    // ⛔ And the loser stays on disk rather than being deleted: half a move is recoverable by hand.
+    expect(readFileSync(join(legacy, 'orchestratord.json'), 'utf8')).toBe('overwrite me')
+  })
+
   it('brings its database along under the new name, WAL and all', async () => {
     const legacy = legacyRootIn(sandbox)
     mkdirSync(legacy, { recursive: true })
