@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "name": "multi_agent_controller",
+  "vcs": "git",
+  "check": [
+    "npm run typecheck",
+    "npm run lint",
+    "npm test",
+    "npm run build"
+  ]
+}
