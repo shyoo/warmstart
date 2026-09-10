@@ -149,8 +149,8 @@ You need **one**. Having several is the point — see *Multiple accounts* below.
   whether work an agent filed for itself should exist at all. ⛔ Every question it is asked has a
   deterministic answer that fires on a timer if it does not reply — so with no controller account
   configured at all, Warmstart behaves exactly as it would without one.
-- **Doctor** tells you which CLIs were found, who is signed in, how old each quota reading is, which
-  cost model is in force, and — per adapter — what Warmstart can and cannot verify about it.
+- **Settings → Global** tells you which CLIs were found, who is signed in, how old each quota reading
+  is, which cost model is in force, and — per adapter — what Warmstart can and cannot verify about it.
 
 ### Providers are not interchangeable, and Warmstart says so
 

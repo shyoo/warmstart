@@ -69,9 +69,9 @@ does not, whatever its size.
 
 ## Reporting a bug
 
-Include your OS, how you installed Warmstart, and what `Doctor` says — it reports which CLIs were
-found, who is signed in, how old each quota reading is, and what can and cannot be verified per
-adapter. That output answers most of the first round of questions.
+Include your OS, how you installed Warmstart, and what **Settings → Global** reports at the top — which
+CLIs were found, who is signed in, how old each quota reading is, and what can and cannot be verified
+per adapter. That answers most of the first round of questions.
 
 ⚠️ **Do not paste credentials, tokens, or the contents of an isolation directory into an issue.**
 Warmstart never reads them and neither should a bug report.
