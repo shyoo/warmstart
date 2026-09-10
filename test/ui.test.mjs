@@ -700,24 +700,35 @@ try {
       if (!row || !input || !button) return { missing: true };
       const i = input.getBoundingClientRect(), b = button.getBoundingClientRect();
       const r = row.getBoundingClientRect();
+      // Every direct child, so the assertion does not depend on how many controls sit beside the
+      // box: the row carries an optional Stop as well as Send.
+      const others = [...row.children]
+        .filter((el) => el !== input)
+        .map((el) => Math.round(el.getBoundingClientRect().width));
       return {
         overlap: Math.round(i.right - b.left),
         inputWidth: Math.round(i.width),
         rowWidth: Math.round(r.width),
-        buttonWidth: Math.round(b.width),
-        share: r.width ? Math.round((i.width / r.width) * 100) : 0
+        firstButtonWidth: Math.round(b.width),
+        others
       };
     })())
   `)
   const c = JSON.parse(compose)
   check('the Send button does not sit on top of the message box', c.overlap <= 0, compose)
-  // ⛔ **A share of the row, not a pixel count.** This asserted `inputWidth > 200`, which is the
-  // width the box happens to have on a 1440-wide window and says nothing about the layout. Windows CI
-  // clamps the window to a smaller screen, so the same correct layout measured 183 and the job went
-  // red for a fortnight of runs (2026-09-09, run 34430693395) while `overlap` was -8 — the button and
-  // the box adjacent, exactly as intended. What the check is *for* is that the composer is not
-  // squeezed by its own button, and that is a ratio.
-  check('and the message box gets the room', c.share >= 50 && c.inputWidth > c.buttonWidth, compose)
+  // ⛔ **The box is the widest thing in the row — not a pixel count, and not a percentage either.**
+  // This asserted `inputWidth > 200`, which is the width the box happens to have on a 1440-wide
+  // window and says nothing about the layout: Windows CI clamps the window to a smaller screen, so
+  // the identical correct layout measured 183 and the job stayed red while `overlap` was -8, the box
+  // and the button adjacent exactly as intended (run 34430693395).
+  //
+  // ⚠️ A share of the row was the *second* wrong answer and is recorded here because it looked
+  // right: the row carries fixed-width controls — Send, and a Stop that appears only while a run is
+  // stoppable — so the flexible box takes 76% of an 806px row and 48% of a 378px one for the same
+  // correct layout (run 34442707136). Any ratio threshold is a window-size assumption wearing a
+  // percent sign. What the check is *for* is that the composer is never squeezed by the controls
+  // beside it, which is true at every width and needs no constant at all.
+  check('and the message box gets the room', c.others.every((w) => c.inputWidth > w), compose)
 
   // ⛔ Stopping used to mean leaving the thread. The only Stop outside `awaiting_human` lived in the
   // action menu on the task table, so an operator reading a run go wrong had to go back to the list,
