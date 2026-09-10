@@ -28,13 +28,19 @@ release/
 *.db-wal
 *.sqlite
 
-# Local overrides of committed project policy (.warmstart/project.json IS committed — see
-# docs/glossary.md; only the local override is not). The pre-rename paths stay listed: a working
-# tree that still holds them must not start offering them up as new files.
-.warmstart/local.json
-.warmstart/state/
-.multi_agent_controller/local.json
-.multi_agent_controller/state/
+# This project's own Warmstart config, ignored whole.
+#
+# ⚠️ **A project's `.warmstart/project.json` is normally committed** — that is the point of it, and
+# docs/glossary.md says so: a collaborator or a fresh clone reproduces the same behaviour. This repo
+# is the exception, because it is also the machine that develops the tool: its own file carries an
+# absolute `workspaces.root` outside the repo, which is exactly what that file is documented never to
+# contain. Ignoring it here keeps one developer's paths out of everybody's clone; it is not a change
+# to what the file means anywhere else.
+#
+# ⛔ The pre-rename directory stays listed as well. `readProjectConfig` still *reads* it for other
+# people's repositories — see projects.ts — but nothing of ours belongs in one again.
+.warmstart/
+.multi_agent_controller/
 
 # Env and secrets
 .env

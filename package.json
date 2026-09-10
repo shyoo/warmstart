@@ -5,11 +5,11 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/shyoo/multi_agent_controller.git"
+    "url": "git+https://github.com/shyoo/warmstart.git"
   },
-  "homepage": "https://github.com/shyoo/multi_agent_controller#readme",
+  "homepage": "https://github.com/shyoo/warmstart#readme",
   "bugs": {
-    "url": "https://github.com/shyoo/multi_agent_controller/issues"
+    "url": "https://github.com/shyoo/warmstart/issues"
   },
   "private": true,
   "type": "module",
