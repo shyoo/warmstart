@@ -228,6 +228,83 @@ try {
     nav.some((n) => n.startsWith('No projects yet')),
     nav.join(' | ')
   )
+  const sidebarLayout = JSON.parse(
+    await evaluate(`
+      JSON.stringify((() => {
+        const sidebar = document.querySelector('.sidebar')
+        const bottom = sidebar?.querySelector('.sidebar-bottom')
+        const headings = [...(bottom?.querySelectorAll('h2') ?? [])].map(h => h.textContent?.trim())
+        return {
+          anchored: bottom && sidebar
+            ? Math.abs(bottom.getBoundingClientRect().bottom - sidebar.getBoundingClientRect().bottom) < 1
+            : false,
+          headings
+        }
+      })())
+    `)
+  )
+  check(
+    'utility navigation is bottom-anchored after the top-level project list',
+    sidebarLayout.anchored && JSON.stringify(sidebarLayout.headings) === JSON.stringify(['Analytics', 'History', 'Settings']),
+    JSON.stringify(sidebarLayout)
+  )
+
+  // ⛔ The other half of the claim, and the half `margin-top: auto` can get wrong. Anchoring to the
+  // foot of a *spare* sidebar is easy; the failure mode is a full one, where the anchored groups end
+  // up somewhere the operator cannot get to rather than merely lower down.
+  //
+  // ⚠️ The height is injected rather than seeded from real projects — this fixture opens none — so
+  // what is measured is the real sidebar's own overflow behaviour under a tall child. The spacer is
+  // `flex-shrink: 0` because an empty flex child shrinks back to nothing and would measure a sidebar
+  // that never overflowed at all; real nav groups cannot shrink below their own text. It is removed
+  // again before anything else reads the DOM.
+  //
+  // ⛔ **`scrollTop` is not evidence of scrollability.** An `overflow-y: hidden` box is still a
+  // scroll container: `scrollHeight` exceeds `clientHeight` and assigning `scrollTop` moves it, so a
+  // check written only from those two passed against a sidebar the user could not scroll at all
+  // (measured while writing this, t338). The computed `overflow-y` is read for that reason alone —
+  // it is the one thing separating "the content is down there" from "the operator can get to it".
+  const sidebarFull = JSON.parse(
+    await evaluate(`
+      JSON.stringify((() => {
+        const sidebar = document.querySelector('.sidebar')
+        const bottom = sidebar?.querySelector('.sidebar-bottom')
+        if (!sidebar || !bottom) return { overflows: false, userScrollable: false, lastReachable: false }
+        const spacer = document.createElement('div')
+        spacer.style.height = '2000px'
+        spacer.style.flexShrink = '0'
+        spacer.dataset.testSpacer = '1'
+        sidebar.insertBefore(spacer, bottom)
+        try {
+          const overflowY = getComputedStyle(sidebar).overflowY
+          const overflows = sidebar.scrollHeight > sidebar.clientHeight
+          sidebar.scrollTop = sidebar.scrollHeight
+          const items = bottom.querySelectorAll('.nav-item')
+          const last = items[items.length - 1]
+          const lastRect = last.getBoundingClientRect()
+          const frame = sidebar.getBoundingClientRect()
+          return {
+            overflows,
+            userScrollable: overflowY === 'auto' || overflowY === 'scroll',
+            overflowY,
+            lastLabel: last.innerText.trim(),
+            lastReachable: lastRect.top >= frame.top - 1 && lastRect.bottom <= frame.bottom + 1
+          }
+        } finally {
+          spacer.remove()
+          sidebar.scrollTop = 0
+        }
+      })())
+    `)
+  )
+  check(
+    'and a sidebar too full to anchor scrolls to it rather than hiding it',
+    sidebarFull.overflows &&
+      sidebarFull.userScrollable &&
+      sidebarFull.lastReachable &&
+      sidebarFull.lastLabel === 'Global',
+    JSON.stringify(sidebarFull)
+  )
 
   // ⛔ One row, with nav controls and zoom controls.
   const brand = await evaluate(`

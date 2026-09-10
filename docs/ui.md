@@ -107,6 +107,17 @@ typed.** The three docs name the project, the landing target and the check list,
 changing any of them has to leave them agreeing with it — but `DocDraftState.edited` freezes a doc the
 operator has opened and written in, because rewriting it would discard their work with no undo.
 
+⚠️ **Overview and Projects grow from the top of the sidebar; Analytics, History and Settings are
+anchored to its bottom** (`.sidebar-bottom`). When projects use all available height the whole sidebar
+scrolls, preserving that order rather than hiding utility destinations.
+
+⛔ **`margin-top: auto` on the anchored block, never `justify-content` on the sidebar.** The two are
+indistinguishable while there is spare room and part company exactly when there is not: an auto margin
+resolves to zero once the content no longer fits, so the groups fall back into normal scroll order,
+where anchoring the *container* keeps pushing and puts them past the end of the scroll range. Both
+halves are pinned in `test/ui.test.mjs`, the second by injecting the height, since that fixture opens
+no projects and never fills the sidebar on its own ([`testing.md`](testing.md) §3).
+
 ⚠️ **A project's Settings tab has a Cold start panel, and it only knows what is on disk**
 (`ProjectSettings.tsx`). *Orientation docs* is a two-value `SettingButtonSelect` — `auto` names the
 docs the project actually keeps, `off` says nothing about them — and under it the panel prints which

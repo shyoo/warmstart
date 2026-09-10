@@ -361,67 +361,71 @@ export function App(): React.JSX.Element {
           )}
         </nav>
 
-        <nav className="nav-group">
-          <h2>Analytics</h2>
-          <NavItem
-            active={route.kind === 'analytics' && route.page === 'routing-model'}
-            onClick={() => setRoute({ kind: 'analytics', page: 'routing-model', tab: 'overview' })}
-          >
-            Routing Model
-          </NavItem>
-          <NavItem
-            active={route.kind === 'analytics' && route.page === 'statistics'}
-            onClick={() => setRoute({ kind: 'analytics', page: 'statistics', tab: 'price' })}
-          >
-            Statistics
-          </NavItem>
-          <NavItem
-            active={route.kind === 'analytics' && route.page === 'quality-review'}
-            onClick={() => setRoute({ kind: 'analytics', page: 'quality-review' })}
-          >
-            Quality Review
-          </NavItem>
-        </nav>
-
-        <nav className="nav-group">
-          <h2>History</h2>
-          <NavItem
-            active={route.kind === 'history' && route.page === 'conversations'}
-            onClick={() => setRoute({ kind: 'history', page: 'conversations' })}
-          >
-            Conversations
-          </NavItem>
-          <NavItem
-            active={route.kind === 'history' && route.page === 'logs'}
-            onClick={() => setRoute({ kind: 'history', page: 'logs' })}
-          >
-            Logs
-          </NavItem>
-        </nav>
-
-        <nav className="nav-group">
-          <h2>Settings</h2>
-          <NavItem
-            active={route.kind === 'settings' && route.page === 'workers'}
-            onClick={() => setRoute({ kind: 'settings', page: 'workers' })}
-          >
-            Workers
-            <span
-              className="nav-count num"
-              title={
-                `${counts.running} running · ${counts.active} active · ${counts.total} total worker${counts.total === 1 ? '' : 's'}`
-              }
+        {/* Utility destinations stay at the foot of a spare sidebar, but remain after the project
+            list in normal scroll order when there is not enough vertical space. */}
+        <div className="sidebar-bottom">
+          <nav className="nav-group">
+            <h2>Analytics</h2>
+            <NavItem
+              active={route.kind === 'analytics' && route.page === 'routing-model'}
+              onClick={() => setRoute({ kind: 'analytics', page: 'routing-model', tab: 'overview' })}
             >
-              {counts.running}/{counts.active}/{counts.total}
-            </span>
-          </NavItem>
-          <NavItem
-            active={route.kind === 'settings' && route.page === 'global'}
-            onClick={() => setRoute({ kind: 'settings', page: 'global' })}
-          >
-            Global
-          </NavItem>
-        </nav>
+              Routing Model
+            </NavItem>
+            <NavItem
+              active={route.kind === 'analytics' && route.page === 'statistics'}
+              onClick={() => setRoute({ kind: 'analytics', page: 'statistics', tab: 'price' })}
+            >
+              Statistics
+            </NavItem>
+            <NavItem
+              active={route.kind === 'analytics' && route.page === 'quality-review'}
+              onClick={() => setRoute({ kind: 'analytics', page: 'quality-review' })}
+            >
+              Quality Review
+            </NavItem>
+          </nav>
+
+          <nav className="nav-group">
+            <h2>History</h2>
+            <NavItem
+              active={route.kind === 'history' && route.page === 'conversations'}
+              onClick={() => setRoute({ kind: 'history', page: 'conversations' })}
+            >
+              Conversations
+            </NavItem>
+            <NavItem
+              active={route.kind === 'history' && route.page === 'logs'}
+              onClick={() => setRoute({ kind: 'history', page: 'logs' })}
+            >
+              Logs
+            </NavItem>
+          </nav>
+
+          <nav className="nav-group">
+            <h2>Settings</h2>
+            <NavItem
+              active={route.kind === 'settings' && route.page === 'workers'}
+              onClick={() => setRoute({ kind: 'settings', page: 'workers' })}
+            >
+              Workers
+              <span
+                className="nav-count num"
+                title={
+                  `${counts.running} running · ${counts.active} active · ${counts.total} total worker${counts.total === 1 ? '' : 's'}`
+                }
+              >
+                {counts.running}/{counts.active}/{counts.total}
+              </span>
+            </NavItem>
+            <NavItem
+              active={route.kind === 'settings' && route.page === 'global'}
+              onClick={() => setRoute({ kind: 'settings', page: 'global' })}
+            >
+              Global
+            </NavItem>
+          </nav>
+        </div>
       </aside>
 
       <SidebarResizer />

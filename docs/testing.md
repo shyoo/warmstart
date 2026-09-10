@@ -101,6 +101,26 @@ happened to be missing from that reading while being demonstrably present in the
 wrote. ⚠️ Read a form control's **`.value`**; `innerText` answers a question about a *rendering* and a
 control's content is not rendered into its own subtree.
 
+### An `overflow: hidden` box still scrolls, so scrolling it proves nothing
+
+⛔ **`scrollHeight > clientHeight` and an assignment to `scrollTop` are both true of a box the
+operator cannot scroll at all.** `overflow-y: hidden` still establishes a scroll container: the
+content overflows and *programmatic* scrolling moves it, so the sidebar check written from those two
+alone passed with the sidebar's `overflow-y` mutated to `hidden` (t338, 2026-09-09) — a green run over
+navigation that had gone off the bottom of the window for good.
+
+⚠️ Scrollability is one of the few things there is no behavioural signal for, so read the computed
+`overflow-y` and require `auto` or `scroll` **beside** the geometry. That is the exception to
+preferring behaviour over implementation, not a licence to assert CSS generally: the property is the
+only thing separating *the content is down there* from *the operator can get to it*.
+
+⭐ The same check earns its keep on the layout it is really about. Anchoring a group to the foot of a
+sidebar with `justify-content: flex-end` looks identical to `margin-top: auto` whenever there is spare
+room, and differs only once the sidebar is full — which is the case a fixture that opens no projects
+never reaches on its own. Inject the height rather than trusting the empty state, and ⛔ make the
+injected child `flex-shrink: 0`: an empty flex item shrinks back to nothing and measures a container
+that never overflowed.
+
 ### A suite that never reaches your change
 
 ⛔ **`test/ui.test.mjs` never opens a project.** Every task it files has `projectId: null`, so it
@@ -176,6 +196,26 @@ never been granted. `linkedWritableRoots` now grants it (`adapters.md`).
 reporting on the workspace, not on the change.** An agent has no way to tell those apart from the
 inside, and the honest move when a suite cannot start is to say which workspace it was and what the
 error was — not to conclude the change is broken, and not to commit as though the suite had run.
+
+### A suite that fails because of what previous suites left in `%TEMP%`
+
+⛔ **These suites leak their scratch directories, and the leak eventually fails the suite.** Every
+tier below L1 makes its sandbox with `mkdtempSync`, and on Windows a held handle routinely defeats the
+`afterAll` that would remove it — several `afterAll`s say so in as many words. The debris is harmless
+until it is not: on 2026-09-09 `%TEMP%` held **26,234 entries, 17,247 of them `agentyard-*`**, going
+back a fortnight.
+
+⭐ At that size a `git` invocation whose `cwd` is `%TEMP%` costs **1,247ms instead of 143ms**, so
+`claude-code`'s `plan()` — which asks `workspaceGrants(cwd)`, which shells out to git — took 1,342ms
+per call. Alone that is merely slow; across 156 files in parallel it put a **synchronous** test over
+the 15s timeout, and `adapters.test.ts > claude-code is told to call exactly that tool` failed four
+runs in a row while passing in 1.3s on its own. Deleting the stale directories, and nothing else,
+returned the suite to 156/156 and the whole run from 52s to 35s.
+
+⚠️ **A synchronous test that times out is never about its own code**, and a test that passes alone and
+fails in the suite is reporting on the machine. Before changing anything, count what is in `%TEMP%`.
+Clearing it is safe for entries older than the current run — but ⛔ match on the suites' own prefixes
+and an age, never the whole directory, because a *live* run's sandbox is in there too.
 
 ### A test that needs a CLI on PATH, on a machine that has none
 

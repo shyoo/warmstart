@@ -198,6 +198,12 @@ body {
   padding: var(--sp-2) var(--sp-2) var(--sp-3);
 }
 
+/* The project list grows from the top; utility navigation uses the remaining height, then follows
+   it in normal document order when the sidebar must scroll. */
+.sidebar-bottom {
+  margin-top: auto;
+}
+
 .nav-group h2 {
   font-size: var(--text-meta);
   font-weight: 600;
