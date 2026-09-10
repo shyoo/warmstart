@@ -59,6 +59,15 @@ Scoped to its own run, its own project, its own mandate and its own budget. ⛔ 
 raw process spawn, raw SQL, the filesystem outside its project, any way to widen its own mandate, and
 any way to assign work directly to another worker.
 
+⛔ **There is no `commit` or `land` tool, and there will not be one.** It is the question a stuck
+agent reaches for — asked outright on t339, 2026-09-10 — so the answer belongs here rather than only
+in [`landing.md`](landing.md): the agent commits with `git`, in its own workspace, the way it would
+in any repo, and the tool decides what happens to the branch afterwards. Deciding what to stage and
+what a message says is the work, not plumbing. ⚠️ So a task that will not land is **never** an agent
+missing a tool it was not told about. Read the hold reason: it names the condition that failed, and
+every one of them ([`landing.md`](landing.md) §"What safe means") is either something the agent can
+fix in `git` or something only a person can.
+
 | Tool | Does |
 |---|---|
 | `approve` | the permission prompt tool. Called by the CLI in place of showing a card |

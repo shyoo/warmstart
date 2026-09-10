@@ -1,6 +1,6 @@
 import type { FinishPolicy, PendingWork } from '@shared/tasks.js'
 import { FINISH_LABELS, policyLands, policyVerifies } from '@shared/tasks.js'
-import { getProject, landingTargetFor, policyFor } from './projects.js'
+import { getProject, landingTargetFor, policyFor, reloadProjectIfPresent } from './projects.js'
 import { decideFinish, resolveFinishPolicy } from './finish.js'
 import { landingBaseFor, hasRemote, landTask } from './landing.js'
 import {
@@ -80,7 +80,7 @@ export async function resolveConflictOnTask(
   const task = getTask(taskId)
   if (!task) return { ok: false, reason: 'no such task' }
   if (!task.branch) return { ok: false, reason: 'this task has no branch to rebase' }
-  const project = task.projectId ? getProject(task.projectId) : null
+  const project = task.projectId ? reloadProjectIfPresent(task.projectId) : null
   if (!project || project.vcs !== 'git') return { ok: false, reason: 'not a git project' }
   if (task.status === 'running' || task.status === 'assigned') {
     // ⚠️ A live run will be asked by `decideFinish` when it reports, and that path can hand it the
@@ -124,7 +124,7 @@ export async function resolveChecksOnTask(
 ): Promise<{ ok: boolean; reason?: string }> {
   const task = getTask(taskId)
   if (!task) return { ok: false, reason: 'no such task' }
-  const project = task.projectId ? getProject(task.projectId) : null
+  const project = task.projectId ? reloadProjectIfPresent(task.projectId) : null
   if (!project || project.vcs !== 'git') return { ok: false, reason: 'not a git project' }
   const branch = task.branch ?? branchNameFor(task.seq, task.title)
   if (!branch) return { ok: false, reason: 'this task has no branch' }
@@ -202,7 +202,7 @@ export async function resolveTrunkMovedOnTask(
   if (!task) return { ok: false, reason: 'no such task' }
   const branch = task.branch
   if (!branch) return { ok: false, reason: 'task has no branch' }
-  const project = task.projectId ? getProject(task.projectId) : null
+  const project = task.projectId ? reloadProjectIfPresent(task.projectId) : null
   if (!project || project.vcs !== 'git') return { ok: false, reason: 'not a git project' }
   if (task.status === 'running') {
     return { ok: false, reason: 'this task is already running; it will be asked when it reports' }
@@ -387,7 +387,7 @@ export async function commitConversation(
 ): Promise<{ ok: boolean; reason?: string }> {
   const task = getTask(taskId)
   if (!task) return { ok: false, reason: 'no such task' }
-  const project = task.projectId ? getProject(task.projectId) : null
+  const project = task.projectId ? reloadProjectIfPresent(task.projectId) : null
   if (!project || project.vcs !== 'git') return { ok: false, reason: 'not a git project' }
   if (task.status === 'running' || task.status === 'assigned') {
     return { ok: false, reason: 'this task is already running; wait for the turn to end' }
@@ -484,7 +484,9 @@ export async function relandTask(taskId: string): Promise<{ ok: boolean; reason?
   if (/trunk moved.*branch is empty/i.test(task.holdReason ?? '')) {
     return didNotLand('the branch carries no commits; use Mark done if the work in trunk is finished, or Resolve & retry to rebase')
   }
-  const project = task.projectId ? getProject(task.projectId) : null
+  // ⛔ From disk, for the same reason the first completion does it — this button reaches the
+  // identical `decideFinish`, and a stale `check` array would refuse the retry just as silently.
+  const project = task.projectId ? reloadProjectIfPresent(task.projectId) : null
   if (!project || project.vcs !== 'git') return didNotLand('not a git project')
 
   // A task that stopped for a person may already be holding its own worktree. Reuse it for landing:

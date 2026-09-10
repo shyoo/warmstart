@@ -163,3 +163,56 @@ describe('setting a project’s policy', () => {
     )
   })
 })
+
+/**
+ * ⛔ The cached row is not the config. `projects.config_json` is a copy of a file in the *user's own
+ * repo*, and everything the landing gate turns on is read out of it — so the question is not whether
+ * the copy is correct but when it was taken.
+ *
+ * ⭐ t338, 2026-09-10, is the whole reason these exist. The rename moved
+ * `.multi_agent_controller/project.json` to `.warmstart/project.json` while a pre-rename daemon was
+ * still running; its next reload found neither path and cached `{schema_version: 1}`. The new build
+ * could read the new path perfectly well and never did, because `dispatch` only reloads on a *cold*
+ * dispatch and every run of that task resumed one warm conversation. Three runs of the branch were
+ * verified against real checks; the next two stopped at "this project defines no check commands".
+ */
+describe('reading a project’s config at the moment it is used', () => {
+  it('picks up checks a stale row does not have', () => {
+    const project = makeProject({ check: ['npm test'] })
+    expect(projects.policyFor(project).check).toEqual(['npm test'])
+
+    writeFileSync(
+      join(project.root, '.warmstart', 'project.json'),
+      JSON.stringify({ schema_version: 1, check: ['npm test', 'npm run build'] }, null, 2)
+    )
+    // The row still answers with what it was told last, which is exactly the failure mode.
+    expect(projects.policyFor(projects.requireProject(project.id)).check).toEqual(['npm test'])
+
+    const fresh = projects.reloadProjectIfPresent(project.id)
+    expect(fresh).not.toBeNull()
+    expect(projects.policyFor(fresh as Project).check).toEqual(['npm test', 'npm run build'])
+  })
+
+  it('recovers a project whose config was blanked by a build that could not see the new path', () => {
+    // The row a pre-rename daemon left behind: no checks, no path, and the file sitting right there.
+    const project = makeProject({ check: ['npm test'] })
+    const legacy = join(project.root, '.multi_agent_controller')
+    mkdirSync(legacy, { recursive: true })
+    rmSync(join(project.root, '.warmstart'), { recursive: true, force: true })
+    const blanked = projects.reloadProject(project.id)
+    expect(blanked.configPath).toBeNull()
+    expect(projects.policyFor(blanked).check).toEqual([])
+
+    mkdirSync(join(project.root, '.warmstart'), { recursive: true })
+    writeFileSync(
+      join(project.root, '.warmstart', 'project.json'),
+      JSON.stringify({ schema_version: 1, check: ['npm test'] }, null, 2)
+    )
+    const recovered = projects.reloadProjectIfPresent(project.id)
+    expect(projects.policyFor(recovered as Project).check).toEqual(['npm test'])
+  })
+
+  it('answers null rather than throwing for a project that is gone', () => {
+    expect(projects.reloadProjectIfPresent('no-such-project')).toBeNull()
+  })
+})

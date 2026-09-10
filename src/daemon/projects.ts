@@ -160,6 +160,23 @@ export function reloadProject(id: string): Project {
   return updated
 }
 
+/**
+ * `reloadProject` for a caller holding only a task's `projectId`, where the project may be gone.
+ *
+ * ⛔ **The landing decision reads config through this, never through `getProject`.** `config_json`
+ * is a cache of a file in the *user's own repo*, and the row is only refreshed on a cold dispatch —
+ * a warm session resumes above that line (see `dispatch`), so a task that ran all afternoon on one
+ * conversation can reach its finish gate on a config read hours earlier. ⭐ t338, 2026-09-10: the
+ * rename moved `.multi_agent_controller/project.json` to `.warmstart/project.json` while a
+ * pre-rename daemon was running; its next reload found neither path, cached
+ * `{schema_version: 1}`, and the new build never re-read it because every dispatch was warm. Three
+ * runs landed against real checks, then the same branch stopped at *"this project defines no check
+ * commands"* — a hold with no fault in the work and nothing the agent could do about it.
+ */
+export function reloadProjectIfPresent(id: string): Project | null {
+  return getProject(id) ? reloadProject(id) : null
+}
+
 export function archiveProject(id: string): Project {
   db().prepare('update projects set archived_at = ? where id = ?').run(Date.now(), id)
   const project = requireProject(id)

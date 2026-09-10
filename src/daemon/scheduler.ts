@@ -34,7 +34,7 @@ import {
   recordDispatchFailure,
   spendingCreditsOn
 } from './workers.js'
-import { getProject, landingTargetFor, policyFor, reloadProject } from './projects.js'
+import { getProject, landingTargetFor, policyFor, reloadProject, reloadProjectIfPresent } from './projects.js'
 import {
   admitBlocked,
   admitScheduled,
@@ -2937,7 +2937,10 @@ async function landCompletion(
   // for every completion the moment ownership moved, and the finish path is gated on it — a missing
   // workspace means no landing, no loose-end scan, and no ask to commit.
   const held = workspaces.get(sessionId)
-  const project = task.projectId ? getProject(task.projectId) : null
+  // ⛔ Re-read from disk, not the cached row. Everything the finish gate below turns on — `check`,
+  // `landing.target`, `landing.finish` — lives in a file in the user's own repo, and the row is
+  // only refreshed on a *cold* dispatch. See `reloadProjectIfPresent` for the run this cost.
+  const project = task.projectId ? reloadProjectIfPresent(task.projectId) : null
   log.info(
     `t${task.seq} reported complete: run=${run.id.slice(0, 8)} workspace=${held ? 'held' : 'MISSING'} ` +
       `branch=${task.branch ?? 'none'} project=${project?.name ?? 'none'}/${project?.vcs ?? '-'}`

@@ -105,7 +105,15 @@ so they are the ones with a bar. All of these must hold:
    dropdown can widen it**.
 4. **The project defines `check` commands, and they pass.** A project with no checks has nothing
    proving the work builds, so landing it unattended would be a guess. It stops and tells you to add
-   them.
+   them. ⛔ **Read from disk at the moment of the decision, never from `projects.config_json`** —
+   that column is a *cache* of a file in your own repo, refreshed only on a cold dispatch, so a task
+   running all afternoon on one warm conversation would otherwise be judged against a config read
+   hours earlier. ⭐ t338, 2026-09-10: the Warmstart rename moved `.multi_agent_controller/project.json`
+   to `.warmstart/project.json` under a running pre-rename daemon, which cached an empty config; the
+   next build could read the new path and never did. Three runs of that branch were verified against
+   real checks and the next two stopped at *"this project defines no check commands"* — a bar the
+   work met, failed by a stale copy. `reloadProjectIfPresent` in
+   [`projects.ts`](../src/daemon/projects.ts) is the reader; `projectpolicy.test.ts` pins it.
 5. **The rebase onto the target applies.** If it does not, the task is not stopped — the agent is
    asked to resolve it, once. See [below](#when-the-branch-will-not-rebase).
 6. **The branch tip is not a rescue** — not a `wip:` commit the tool itself made of work an
