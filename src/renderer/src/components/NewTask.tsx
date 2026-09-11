@@ -194,14 +194,14 @@ function scheduleLabel(option: ScheduleOption, customTime: string): string {
  */
 export function NewTask({
   projects,
-  fixedProjectId,
+  preselectedProjectId,
   fleet,
   onDone,
   onError
 }: {
   projects: Project[]
-  /** Set when filed from inside a project. The project pill is not drawn — the page above says it. */
-  fixedProjectId?: string
+  /** The project in view when the composer opened. It remains editable. */
+  preselectedProjectId?: string
   /** The accounts that could take this, so one can be pinned and its CLI's models offered. */
   fleet: FleetEntry[]
   onDone: () => void | Promise<void>
@@ -215,7 +215,7 @@ export function NewTask({
    * paragraph every time somebody opened a task to look something up mid-sentence. See
    * `composerscratch.ts` for what is kept and what deliberately is not.
    */
-  const scope = fixedProjectId ?? ''
+  const scope = preselectedProjectId ?? ''
   const [restored] = useState(() => readComposerScratch(scope))
   const [prompt, setPrompt] = useState(restored.prompt)
   /**
@@ -230,7 +230,7 @@ export function NewTask({
    * what the operator actually left it on.
    */
   const [prefs, setPrefsState] = useState<ComposerPrefs>(readComposerPrefs)
-  const [projectId, setProjectId] = useState(fixedProjectId ?? projects[0]?.id ?? '')
+  const [projectId, setProjectId] = useState(preselectedProjectId ?? '')
   /**
    * ⛔ Not remembered, unlike everything on the pill row. A prerequisite is a fact about *this* piece
    * of work, and a schedule is a moment that has usually passed by the next time the form opens —
@@ -564,7 +564,7 @@ export function NewTask({
   const armed = scheduleOption !== 'now'
   // ⛔ A send waits for an upload. Otherwise a click between selecting a file and its RPC completing
   // would create the task without the context the person just chose.
-  const canSend = !saving && !paste.busy && prompt.trim().length > 0
+  const canSend = !saving && !paste.busy && prompt.trim().length > 0 && !!projectId
   const sendLabel =
     saving === 'ready'
       ? '…'
@@ -750,20 +750,18 @@ export function NewTask({
               )}
             />
 
-            {!fixedProjectId && (
-              <PillSelect
-                ariaLabel="Project"
-                title="A git project gets a pooled worktree and a branch named after the task. Agents never work in the trunk."
-                muted={!projectId}
-                value={projectId}
-                label={projectId ? (projectNames.get(projectId) ?? projectId) : 'No project'}
-                options={[
-                  { value: '', label: 'No project', hint: 'runs without a workspace or a branch' },
-                  ...projects.map((p) => ({ value: p.id, label: p.name }))
-                ]}
-                onChange={setProjectId}
-              />
-            )}
+            <PillSelect
+              ariaLabel="Project"
+              title="Choose the project this task belongs to. It supplies the workspace, branch and project policy."
+              muted={!projectId}
+              value={projectId}
+              label={projectId ? (projectNames.get(projectId) ?? projectId) : 'Choose project'}
+              options={[
+                { value: '', label: 'Choose project', hint: 'required before this task can be saved or sent' },
+                ...projects.map((p) => ({ value: p.id, label: p.name }))
+              ]}
+              onChange={setProjectId}
+            />
             <span className="composer-gap" aria-hidden="true" />
             {!isConversation && (
               <PillSelect
@@ -938,20 +936,18 @@ export function NewTask({
                           />
                         )}
                       />
-                      {!fixedProjectId && (
-                        <PillSelect
-                          ariaLabel="Project"
-                          title="A git project gets a pooled worktree and a branch named after the task."
-                          muted={!projectId}
-                          value={projectId}
-                          label={projectId ? (projectNames.get(projectId) ?? projectId) : 'No project'}
-                          options={[
-                            { value: '', label: 'No project', hint: 'runs without a workspace or a branch' },
-                            ...projects.map((p) => ({ value: p.id, label: p.name }))
-                          ]}
-                          onChange={setProjectId}
-                        />
-                      )}
+                      <PillSelect
+                        ariaLabel="Project"
+                        title="Choose the project this task belongs to. It supplies the workspace, branch and project policy."
+                        muted={!projectId}
+                        value={projectId}
+                        label={projectId ? (projectNames.get(projectId) ?? projectId) : 'Choose project'}
+                        options={[
+                          { value: '', label: 'Choose project', hint: 'required before this task can be saved or sent' },
+                          ...projects.map((p) => ({ value: p.id, label: p.name }))
+                        ]}
+                        onChange={setProjectId}
+                      />
                     </div>
                   </td>
                   <td>
@@ -1041,7 +1037,6 @@ export function NewTask({
                 <tr>
                   <td></td>
                   <th className="composer-plan-label">Executor</th>
-                  <td></td>
                   <td>
                     <PillSelect
                       ariaLabel="Piece Priority"

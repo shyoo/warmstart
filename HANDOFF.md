@@ -1,5 +1,5 @@
 # Warmstart — Session Handoff
-**Current design decision:** Long task titles remain opt-in (`summariseTitles`) and never gate dispatch. Each worker now has a separately configurable small **Summary model**; title-only consults use it asynchronously through the ordinary judgment gates, while clearing it leaves that worker out. CLI update health is specified in `transient_docs/cli_update_design_2026-09-08.md`; decide whether its first implementation is passive only or also offers a confirmed, idle-only Update action.
+**Current design decision:** The Windows caption area is Warmstart chrome: native window controls remain at right, while panel, history, refresh, zoom and global **New task** live in the rest of the title bar. The composer is one modal everywhere; a project route preselects (but never locks) its project, and elsewhere the operator must choose one.
 
 Warmstart: a scheduler that routes coding-agent tasks to the worker, session and moment
 where they are cheapest. Electron shell + `orchestratord` daemon. Windows now; macOS/Linux built and

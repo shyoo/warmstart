@@ -93,7 +93,71 @@ body {
   /* ⚠️ Three columns, and the middle one is the grab handle. A 1px border cannot be grabbed,
      and a resizer positioned *inside* the sidebar would scroll away with its content. */
   grid-template-columns: var(--sidebar-w) 4px 1fr;
+  grid-template-rows: 36px minmax(0, 1fr);
   height: 100%;
+}
+
+/* Windows uses the native caption buttons through Electron's title-bar overlay. The renderer owns
+   the rest of this strip, so browser controls and the global composer are always one click away. */
+.titlebar {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 0 146px 0 var(--sp-2);
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+  -webkit-app-region: drag;
+}
+
+.titlebar-nav,
+.titlebar-new-task,
+.titlebar .icon-btn {
+  -webkit-app-region: no-drag;
+}
+
+.titlebar-nav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.titlebar-name {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: var(--text-dense);
+  font-weight: 600;
+  color: var(--color-text-dim);
+  pointer-events: none;
+}
+
+.titlebar-new-task {
+  margin-left: auto;
+  padding-top: 3px;
+  padding-bottom: 3px;
+}
+
+.sidebar,
+.resizer,
+.main {
+  grid-row: 2;
+}
+
+/* The sidebar used to carry navigation buttons. They now live in the title bar, leaving this as
+   navigation only. Hiding it gives the main surface the full window without changing the route. */
+.brand {
+  display: none;
+}
+
+.shell--sidebar-hidden {
+  grid-template-columns: 0 0 1fr;
+}
+
+.shell--sidebar-hidden .sidebar,
+.shell--sidebar-hidden .resizer {
+  display: none;
 }
 
 /*
@@ -129,7 +193,7 @@ body {
 }
 
 .brand {
-  display: flex;
+  display: none;
   align-items: center;
   justify-content: space-between;
   padding: var(--sp-4) var(--sp-3) var(--sp-3) var(--sp-4);
@@ -2132,6 +2196,51 @@ body {
   place-items: center;
   padding: var(--sp-4);
   background: rgb(0 0 0 / 0.58);
+}
+
+/* The task composer is modal wherever it opens. It is deliberately narrower than a task table:
+   writing a prompt benefits from a readable measure, while the Plan & Split pills can scroll inside. */
+.task-composer-modal {
+  width: min(760px, calc(100vw - 2 * var(--sp-5)));
+  max-height: min(720px, calc(100vh - 2 * var(--sp-5)));
+  overflow-y: auto;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.55);
+  padding: var(--sp-3);
+}
+
+.task-composer-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--sp-2);
+}
+
+.task-composer-modal-head h2 {
+  margin: 0;
+  font-size: var(--text-title);
+}
+
+.dialog-close {
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-dim);
+  font: inherit;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.dialog-close:hover,
+.dialog-close:focus-visible {
+  color: var(--color-text);
+  background: var(--color-surface-2);
+  outline: none;
 }
 
 .confirm-dialog {

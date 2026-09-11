@@ -64,7 +64,7 @@ thing entirely. See [`glossary.md`](glossary.md).
 | `FleetStrip` `Workers` `FleetSettings` | the fleet: per-account quota with its **age**, reset countdowns, live sessions; one two-column settings card per worker |
 | `Tasks` `TaskThread` `thread/*` `Dependencies` | the board, one task's thread, and prerequisite edges |
 | `TaskSettingPicker` | ⛔ **one component, seven uses** — the thread's finish, conversation, completion, compaction, objective, worker and priority settings |
-| `NewTask` `Pill` | the composer: the prompt first, its settings as a row of **pills** under it |
+| `NewTask` `NewTaskModal` `Pill` | one shell-owned composer modal: the prompt first, its settings as a row of **pills** under it; a project in view is selected but can always be changed |
 | `Attention` `Questions` | the approvals/questions/quota-gate bar — one keystroke above the operator's work |
 | `Overview` `Controller` `Conversations` | dashboard, the controller chat, and conversation history |
 | `Project` `ProjectSettings` `Projects` | the project routes and the policy tier |

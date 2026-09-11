@@ -1487,9 +1487,7 @@ try {
   await openPill('Priority')
   await pickInMenu('Priority', 'P0')
   check('a chosen priority shows on the pill', (await pillLabel('Priority')) === 'P0')
-  await evaluate(
-    `[...document.querySelectorAll('.panel-head button')].find(b => b.innerText.trim() === 'Cancel')?.click()`
-  )
+  await evaluate(`document.querySelector('button[aria-label="Close new task"]')?.click()`)
   await wait(400)
   await evaluate(
     `[...document.querySelectorAll('.panel-head button')].find(b => b.innerText.trim() === 'New task')?.click()`

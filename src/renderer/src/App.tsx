@@ -29,6 +29,7 @@ import { Doctor } from './components/Doctor'
 import { Attention } from './components/Attention'
 import { Projects } from './components/Projects'
 import { NewProject } from './components/NewProject'
+import { NewTaskModal } from './components/NewTaskModal'
 import { Tasks } from './components/Tasks'
 import { TaskThread } from './components/TaskThread'
 import { Overview } from './components/Overview'
@@ -155,6 +156,9 @@ export function App(): React.JSX.Element {
    * can be opened twice.
    */
   const [addingProject, setAddingProject] = useState(false)
+  const [addingTask, setAddingTask] = useState(false)
+  const [newTaskProjectId, setNewTaskProjectId] = useState<string | undefined>()
+  const [sidebarHidden, setSidebarHidden] = useState(false)
 
   const refreshProjects = useCallback(async () => {
     if (!connected) return
@@ -168,6 +172,18 @@ export function App(): React.JSX.Element {
   useEffect(() => {
     void refreshProjects()
   }, [refreshProjects])
+
+  const openNewTask = useCallback((projectId?: string) => {
+    setNewTaskProjectId(projectId)
+    setAddingTask(true)
+  }, [])
+
+  useEffect(() => {
+    const openFromTasks = (event: Event) =>
+      openNewTask((event as CustomEvent<{ projectId?: string }>).detail?.projectId)
+    window.addEventListener('warmstart:new-task', openFromTasks)
+    return () => window.removeEventListener('warmstart:new-task', openFromTasks)
+  }, [openNewTask])
 
   useDaemonEvents((event) => {
     if (
@@ -244,7 +260,21 @@ export function App(): React.JSX.Element {
   )
 
   return (
-    <div className="shell">
+    <div className={`shell${sidebarHidden ? ' shell--sidebar-hidden' : ''}`}>
+      <header className="titlebar">
+        <div className="titlebar-nav">
+          <IconButton label={sidebarHidden ? 'Show panel' : 'Hide panel'} disabled={false} onClick={() => setSidebarHidden((v) => !v)}>
+            <path d={sidebarHidden ? 'M4 3 L4 13 M7 3 L12 8 L7 13' : 'M12 3 L7 8 L12 13 M4 3 L4 13'} />
+          </IconButton>
+          <IconButton label="Back" disabled={past.length === 0} onClick={goBack}><path d="M10 3 L5 8 L10 13" /></IconButton>
+          <IconButton label="Forward" disabled={future.length === 0} onClick={goForward}><path d="M6 3 L11 8 L6 13" /></IconButton>
+          <IconButton label="Refresh" disabled={!connected || refreshing} onClick={() => void reload()}><path d="M13 8a5 5 0 1 1-1.6-3.7" /><path d="M13 2.5 L13 5.2 L10.3 5.2" /></IconButton>
+          <IconButton label="Zoom out (Ctrl -)" disabled={zoom <= MIN_ZOOM} onClick={zoomOut}><path d="M3 8 H13" /></IconButton>
+          <IconButton label="Zoom in (Ctrl +)" disabled={zoom >= MAX_ZOOM} onClick={zoomIn}><path d="M8 3 V13 M3 8 H13" /></IconButton>
+        </div>
+        <span className="titlebar-name">Warmstart</span>
+        <button className="btn btn--primary titlebar-new-task" onClick={() => openNewTask(route.kind === 'project' ? route.id : undefined)}>New task</button>
+      </header>
       <aside className="sidebar">
         <div className="brand">
           <div className="brand-nav">
@@ -441,6 +471,15 @@ export function App(): React.JSX.Element {
             void refreshProjects()
             setRoute({ kind: 'project', id: project.id, tab: 'tasks' })
           }}
+        />
+      )}
+      {addingTask && (
+        <NewTaskModal
+          projects={projects}
+          fleet={fleet}
+          preselectedProjectId={newTaskProjectId}
+          onClose={() => setAddingTask(false)}
+          onDone={refreshProjects}
         />
       )}
 

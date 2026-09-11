@@ -3,8 +3,6 @@ import type { Project, Task, TaskSort, TaskView } from '@shared/tasks'
 import { TASK_VIEW_ORDER, TASK_VIEWS } from '@shared/tasks'
 import type { ModelOptions } from '@shared/protocol'
 import { rpc, useActivity, useDaemonEvents, useNow, type FleetEntry } from '../lib/daemon'
-import { NewTask } from './NewTask'
-import { clearComposerScratch, hasComposerScratch } from '../lib/composerscratch'
 import { showsLiveOutput } from '../lib/live'
 import { tokens, when } from '../lib/format'
 import { Money, taskPriceTitle } from './Price'
@@ -115,7 +113,7 @@ const TITLE_CHARS = 240
  * never removes the runs.
  */
 export function Tasks({
-  projects,
+  projects: _projects,
   projectId,
   fleet,
   selected,
@@ -141,14 +139,6 @@ export function Tasks({
   const [total, setTotal] = useState(0)
   const [counts, setCounts] = useState<Record<TaskView, number> | null>(null)
   const [error, setError] = useState<string | null>(null)
-  /**
-   * ⭐ Open already, when there is something half-written to come back to. The composer is behind a
-   * button, so a remembered prompt that stayed hidden would be the same as no memory at all — the
-   * operator would press *New task* on an empty-looking form and find their paragraph in it, or
-   * more likely never press it and lose the paragraph.
-   */
-  const composerScope = projectId ?? ''
-  const [adding, setAdding] = useState(() => hasComposerScratch(composerScope))
   /**
    * Which buckets are showing.
    *
@@ -341,17 +331,9 @@ export function Tasks({
         </div>
         <button
           className="btn btn--primary"
-          onClick={() =>
-            setAdding((v) => {
-              // ⛔ Cancel throws the scratch away. Otherwise what was typed is unclosable: the form
-              // would reopen on the next visit, and the button that looks like it dismisses it
-              // would do nothing lasting.
-              if (v) clearComposerScratch(composerScope)
-              return !v
-            })
-          }
+          onClick={() => window.dispatchEvent(new CustomEvent('warmstart:new-task', { detail: { projectId } }))}
         >
-          {adding ? 'Cancel' : 'New task'}
+          New task
         </button>
       </header>
 
@@ -394,19 +376,6 @@ export function Tasks({
           </div>
         </div>
       )}
-      {adding && (
-        <NewTask
-          projects={projects}
-          fixedProjectId={projectId}
-          fleet={fleet}
-          onDone={async () => {
-            setAdding(false)
-            await refresh()
-          }}
-          onError={setError}
-        />
-      )}
-
       {/* ⛔ Counts on every chip, whatever is selected. The number is what makes the row worth
           having: it says what you would get *before* you click, and `Needs you 3` is the one an
           operator is actually scanning for. */}
