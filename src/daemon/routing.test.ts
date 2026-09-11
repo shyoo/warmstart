@@ -1404,6 +1404,19 @@ describe('a task pinned to a list of accounts', () => {
     expect(scoring.chooseTarget(task).worker).toBeNull()
   })
 
+  it('prioritizes an explicit workerId pin over leftover workerIds constraint list', () => {
+    const pinnedWorker = workers.createWorker({ adapterId: 'claude-code', label: 'PinnedWorker', enabled: true })
+    const otherWorker = workers.createWorker({ adapterId: 'claude-code', label: 'OtherWorker', enabled: true })
+
+    const task = tasks.createTask({
+      title: 'a task with conflicting workerId and workerIds',
+      constraints: { workerId: pinnedWorker.id, workerIds: [otherWorker.id] }
+    })
+
+    const choice = scoring.chooseTarget(task)
+    expect(choice.worker?.id).toBe(pinnedWorker.id)
+  })
+
   it('gives each named account the model chosen for it, not one model for the fleet', async () => {
     const { resolveModelChoice } = await import('@shared/tasks.js')
     const first = workers.createWorker({ adapterId: 'claude-code', label: 'Per-worker-model-A', enabled: true })

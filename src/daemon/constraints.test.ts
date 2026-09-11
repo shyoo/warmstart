@@ -340,5 +340,40 @@ describe('task.setWorker RPC', () => {
     expect(unpinned.constraints.workerId).toBeUndefined()
     expect(unpinned.constraints.modelPolicy).toBeUndefined()
   })
+
+  it('clears workerIds when setting a specific worker or unpinning to auto', async () => {
+    const tasks = await import('./tasks.js')
+    const handlers = api.buildApi({
+      version: '1.0.0',
+      startedAt: Date.now(),
+      port: 8080
+    })
+    const other = workers.createWorker({
+      adapterId: 'claude-code',
+      label: 'other-claude',
+      enabled: false
+    })
+
+    // Task created with workerIds list (e.g. from Plan & Split pieces)
+    const task = tasks.createTask({
+      title: 'piece with workerIds',
+      constraints: { workerIds: [claude.id] }
+    })
+    expect(task.constraints.workerIds).toEqual([claude.id])
+
+    // 1. Setting worker explicitly to another worker removes workerIds
+    const pinned = await handlers['task.setWorker']({ id: task.id, workerId: other.id })
+    expect(pinned.constraints.workerId).toBe(other.id)
+    expect(pinned.constraints.workerIds).toBeUndefined()
+
+    // 2. Setting a task with workerIds to null (auto) also removes workerIds
+    const task2 = tasks.createTask({
+      title: 'piece 2 with workerIds',
+      constraints: { workerIds: [claude.id] }
+    })
+    const unpinned = await handlers['task.setWorker']({ id: task2.id, workerId: null })
+    expect(unpinned.constraints.workerId).toBeUndefined()
+    expect(unpinned.constraints.workerIds).toBeUndefined()
+  })
 })
 

@@ -9,7 +9,7 @@ import { lastQuota, windowExpired } from '../quota.js'
 import { getSession } from '../sessions.js'
 import { getProject, policyFor, requireProject } from '../projects.js'
 import { retireStrandedBranch } from '../worktrees.js'
-import { addMessage, attachDependency, blockedDependentsOf, createTask, dependentsOf, detachDependency, getTask, listTasks, messagesFor, pageTasks, projectActivity, promoteDraft, requireTask, setQuotaOverride, runsFor, setTaskStatsExcluded, updateTask } from '../tasks.js'
+import { addMessage, attachDependency, blockedDependentsOf, createTask, dependentsOf, detachDependency, getTask, listTasks, messagesFor, pageTasks, projectActivity, promoteDraft, requireTask, setHoldReason, setQuotaOverride, runsFor, setTaskStatsExcluded, updateTask } from '../tasks.js'
 import { taskCommits } from '../taskcommits.js'
 import { cancelTask, deleteBlockers, deleteTask, restoreTask, resumeTask } from '../cancel.js'
 import { addRule, answerApproval, listRules, openApprovals, removeRule, requestApproval } from '../approvals.js'
@@ -263,10 +263,11 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
     'task.setWorker': (p) => {
       const task = requireTask(p.id)
       if (!p.workerId) {
-        // Reassigned to auto / scheduler choice: clear workerId, adapterId, model, effort, modelPolicy
-        const { workerId, adapterId, model, effort, modelPolicy, ...rest } = task.constraints
+        // Reassigned to auto / scheduler choice: clear workerId, adapterId, model, effort, modelPolicy, workerIds
+        const { workerId, adapterId, model, effort, modelPolicy, workerIds, ...rest } = task.constraints
         const isResting = !['running', 'assigned'].includes(task.status)
         voidQuestionsForTask(task.id, 'task reassigned')
+        if (isResting) setHoldReason(task.id, null)
         return updateTask(p.id, {
           constraints: rest,
           ...(isResting ? { assigneeHint: null } : {})
@@ -281,8 +282,9 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
       const modelPolicy = adapterChanged
         ? 'inherit'
         : (task.constraints.modelPolicy ?? (task.constraints.model ? undefined : 'inherit'))
+      const { workerIds: _workerIds, ...baseConstraints } = task.constraints
       const constraints = checkConstraints({
-        ...task.constraints,
+        ...baseConstraints,
         workerId: worker.id,
         adapterId: worker.adapterId,
         model: adapterChanged ? undefined : task.constraints.model,
@@ -294,7 +296,9 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
         delete constraints.effort
       }
       if (!constraints.modelPolicy) delete constraints.modelPolicy
+      delete constraints.workerIds
       const isResting = !['running', 'assigned'].includes(task.status)
+      if (isResting) setHoldReason(task.id, null)
       return updateTask(p.id, {
         constraints,
         ...(isResting ? { assigneeHint: worker.id } : {})

@@ -230,8 +230,11 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
   const rawCandidates: RawCandidate[] = []
 
   for (const worker of listWorkers()) {
-    if (task.constraints.workerId && task.constraints.workerId !== worker.id) continue
-    if (task.constraints.workerIds && task.constraints.workerIds.length > 0 && !task.constraints.workerIds.includes(worker.id)) continue
+    if (task.constraints.workerId) {
+      if (task.constraints.workerId !== worker.id) continue
+    } else if (task.constraints.workerIds && task.constraints.workerIds.length > 0) {
+      if (!task.constraints.workerIds.includes(worker.id)) continue
+    }
     if (task.constraints.adapterId && task.constraints.adapterId !== worker.adapterId) continue
 
     // ⛔ Role gate: an account that does not do work is not offered work. `controller` is reserved
