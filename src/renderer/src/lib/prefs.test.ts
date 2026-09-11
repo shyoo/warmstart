@@ -8,9 +8,65 @@ import {
   readQualityGradableOnly,
   writeQualityGradableOnly,
   readTaskPage,
+  readTaskSort,
   taskListSignature,
-  writeTaskPage
+  writeTaskPage,
+  writeTaskSort
 } from './prefs.js'
+
+/**
+ * ⛔ t353: sort by price, open a task, press `← Tasks`, and the table was back on *updated*. The
+ * order lived only in the table's state, which opening a task unmounts.
+ */
+describe('which column the task table is ordered by', () => {
+  const stub = (store: Record<string, string> | null, throws = false): void => {
+    const storage = {
+      getItem: (k: string) => {
+        if (throws) throw new Error('site data disabled')
+        return store?.[k] ?? null
+      },
+      setItem: (k: string, v: string) => {
+        if (throws) throw new Error('site data disabled')
+        if (store) store[k] = v
+      }
+    }
+    ;(globalThis as { window?: unknown }).window = { localStorage: store === null ? null : storage }
+  }
+
+  afterEach(() => {
+    delete (globalThis as { window?: unknown }).window
+  })
+
+  it('starts on most recently updated, newest first', () => {
+    stub({})
+    expect(readTaskSort()).toEqual({ sort: 'updated', asc: false })
+  })
+
+  it('comes back as it was left, column and direction together', () => {
+    const store: Record<string, string> = {}
+    stub(store)
+    writeTaskSort('price', true)
+    // A fresh mount of the table, reading it cold.
+    expect(readTaskSort()).toEqual({ sort: 'price', asc: true })
+    writeTaskSort('price', false)
+    expect(readTaskSort()).toEqual({ sort: 'price', asc: false })
+  })
+
+  it('falls back whole rather than half-applying a value it cannot trust', () => {
+    for (const held of ['{', '"price"', '{"sort":"owner","asc":true}', '{"sort":"price"}', '{"sort":"price","asc":"yes"}']) {
+      stub({ 'warmstart.taskSort': held })
+      expect(readTaskSort(), held).toEqual({ sort: 'updated', asc: false })
+    }
+  })
+
+  it('survives a localStorage that throws, or is not there', () => {
+    stub({}, true)
+    expect(readTaskSort()).toEqual({ sort: 'updated', asc: false })
+    expect(() => writeTaskSort('title', true)).not.toThrow()
+    stub(null)
+    expect(readTaskSort()).toEqual({ sort: 'updated', asc: false })
+  })
+})
 
 describe('which task columns are visible', () => {
   const stub = (store: Record<string, string>): void => {

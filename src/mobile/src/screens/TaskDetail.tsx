@@ -67,7 +67,7 @@ export function TaskDetailScreen({ id, refreshKey }: { id: string; refreshKey: n
     <div className="m-screen">
       <section className="m-card">
         <p className="m-meta">
-          t{task.seq} · {task.status}
+          t{task.seq} · {task.landing ? 'landing' : task.status}
           {task.branch ? ` · ${task.branch}` : ''}
         </p>
         <h2 className="m-card-title m-card-title--large">{task.titleSummary ?? task.title}</h2>

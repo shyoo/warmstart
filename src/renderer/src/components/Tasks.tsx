@@ -14,11 +14,13 @@ import {
   readTaskPage,
   readTaskPageSize,
   readTaskColumns,
+  readTaskSort,
   readViews,
   taskListSignature,
   writeTaskPage,
   writeTaskPageSize,
   writeTaskColumns,
+  writeTaskSort,
   writeViews
 } from '../lib/prefs'
 import type { TaskColumn } from '../lib/prefs'
@@ -32,7 +34,7 @@ import {
   isWorking,
   modelLine,
   statusLabel,
-  STATUS_TONE,
+  statusToneFor,
   taskLabelShort,
   Working
 } from '../lib/taskview'
@@ -157,8 +159,8 @@ export function Tasks({
   const [views, setViews] = useState<TaskView[]>(readViews)
   const [pageSize, setPageSize] = useState<number>(readTaskPageSize)
   const [columns, setColumns] = useState<TaskColumn[]>(readTaskColumns)
-  const [sort, setSort] = useState<TaskSort>('updated')
-  const [asc, setAsc] = useState(false)
+  const [sort, setSort] = useState<TaskSort>(() => readTaskSort().sort)
+  const [asc, setAsc] = useState(() => readTaskSort().asc)
   /**
    * ⭐ Seeded from disk, like the view filter above it, and for a sharper reason: opening a task
    * unmounts this table, so without this every `← Tasks` landed on page 1 and somebody reading the
@@ -281,12 +283,11 @@ export function Tasks({
   }
 
   const sortBy = (column: TaskSort): void => {
-    if (sort === column) {
-      setAsc((v) => !v)
-      return
-    }
+    const nextAsc = sort === column ? !asc : OPENS_ASCENDING.has(column)
     setSort(column)
-    setAsc(OPENS_ASCENDING.has(column))
+    setAsc(nextAsc)
+    // ⛔ Saved with the click, like the view filter: see `readTaskSort` for what forgetting it cost.
+    writeTaskSort(column, nextAsc)
   }
 
   const pages = Math.max(1, Math.ceil(total / pageSize))
@@ -747,7 +748,7 @@ export function Tasks({
                       {when(task.updatedAt)}
                     </td>}
                     {shown.has('status') && <td>
-                      <span className={`status ${STATUS_TONE[task.gradingWorkerId ? 'grading' : task.status] ?? ''}`}>
+                      <span className={`status ${statusToneFor(task)}`}>
                         {statusLabel(task)}
                         {isWorking(task) && <Working />}
                       </span>

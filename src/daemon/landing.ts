@@ -29,6 +29,8 @@ import { errorMessage } from '@shared/errors.js'
 import { oneLine } from './threadline.js'
 import { run } from './spawn.js'
 import { stripAnsi } from './stream.js'
+import { emit } from './events.js'
+import { beginLanding, endLanding, isTaskLanding } from './landingstate.js'
 
 // ⛔ Re-exported, not redefined: every existing caller keeps one import site and one answer.
 export { landingBaseFor }
@@ -1387,12 +1389,7 @@ export function strategyFor(
   return STRATEGIES[landingStrategyIdFor(project, policy, task)] ?? leaveBranch
 }
 
-const activeLandings = new Set<string>()
-
-/** Whether a task is currently executing inside `landTask`. */
-export function isTaskLanding(taskId: string): boolean {
-  return activeLandings.has(taskId)
-}
+export { isTaskLanding }
 
 /**
  * Land, or fall back honestly.
@@ -1401,7 +1398,10 @@ export function isTaskLanding(taskId: string): boolean {
  * that says exactly why, and leaves the repository in a state a person can act on.
  */
 export async function landTask(ctx: LandingContext): Promise<LandingResult> {
-  activeLandings.add(ctx.task.id)
+  beginLanding(ctx.task.id)
+  // Announced, because nothing else changes on the row when a landing starts: without this the
+  // Tasks table would go on saying `running` until the landing's own first status write.
+  emit({ type: 'task.changed', task: getTask(ctx.task.id) ?? ctx.task })
   try {
     const strategy = strategyFor(ctx.project, ctx.policy, ctx.task)
 
@@ -1552,7 +1552,9 @@ export async function landTask(ctx: LandingContext): Promise<LandingResult> {
   }
     return result
   } finally {
-    activeLandings.delete(ctx.task.id)
+    endLanding(ctx.task.id)
+    const task = getTask(ctx.task.id)
+    if (task) emit({ type: 'task.changed', task })
   }
 }
 

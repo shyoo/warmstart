@@ -118,8 +118,9 @@ the phone once and never again. Pairing is the one unauthenticated route, and it
 address.
 
 Revoke a phone from the desktop screen the moment it is lost or no longer trusted. Revocation takes
-effect on the next request, and takes that device's notification subscriptions with it — a revoked
-handset that kept receiving pushes would still be told what the fleet is doing.
+effect on the next request, removes the device from the list, and takes that device's notification
+subscriptions with it — a revoked handset that kept receiving pushes would still be told what the
+fleet is doing. To use that phone again, pair it again.
 
 ## Notifications
 

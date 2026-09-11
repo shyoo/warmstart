@@ -52,7 +52,7 @@ export function price(usd: number | null | undefined, estimated = false, partial
 
 export type StatusTone = 'active' | 'human' | 'warning' | 'success' | 'danger' | 'idle'
 export function statusTone(status: string): StatusTone {
-  if (status === 'running' || status === 'assigned' || status === 'cancelling') return 'active'
+  if (status === 'running' || status === 'assigned' || status === 'cancelling' || status === 'landing') return 'active'
   if (status === 'awaiting_human') return 'human'
   if (status === 'blocked' || status === 'paused_quota' || status === 'scheduled') return 'warning'
   if (status === 'completed') return 'success'

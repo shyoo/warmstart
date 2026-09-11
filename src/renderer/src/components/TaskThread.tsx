@@ -41,6 +41,8 @@ import {
   chronologicalTimeline,
   kindLabel,
   pieceSettings,
+  plannedAssignment,
+  statusToneFor,
   elapsed,
   hasQuotaGate,
   holdLine,
@@ -290,6 +292,7 @@ function TaskDetail({
   // ⚠️ Empty for everything that is not a Plan & Split task, which is what keeps the ledger the same
   // shape it has always been for an ordinary one.
   const pieces = pieceSettings(task, fleet)
+  const planned = plannedAssignment(parent, fleet)
 
   /**
    * What the *next* dispatch would ask for: the task's own pin, else the account's default, else the
@@ -511,7 +514,7 @@ function TaskDetail({
         <aside className="detail-side">
           <div className="detail-side-box">
             <Fact label="status">
-              <span className={`status ${STATUS_TONE[task.gradingWorkerId ? 'grading' : task.status] ?? ''}`}>
+              <span className={`status ${statusToneFor(task)}`}>
                 {statusLabel(task)}
                 {isWorking(task) && <Working />}
               </span>
@@ -576,7 +579,7 @@ function TaskDetail({
                 >
                   <span className="dep-seq">t{parent.seq}</span>
                   <span className="dep-title">{taskLabel(parent)}</span>
-                  <span className={`status ${STATUS_TONE[parent.status] ?? ''}`}>
+                  <span className={`status ${statusToneFor(parent)}`}>
                     {statusLabel(parent)}
                     {isWorking(parent) && <Working />}
                   </span>
@@ -584,21 +587,21 @@ function TaskDetail({
               </Fact>
             )}
 
-            {/* The pieces of this plan, with how each one turned out. ⚠️ The whole set, failures
+            {/* The children this plan filed, with how each one turned out. ⚠️ The whole set, failures
                 included: the resolution turn exists to deal with those, so hiding them would
                 describe a different task. */}
             {children.length > 0 && (
-              <Fact label="pieces">
+              <Fact label="children">
                 <DependencyList tasks={children} fallbackCount={0} onOpenTask={onOpenTask} />
               </Fact>
             )}
 
-            {/* ⛔ What each piece is filed with, read from the same two fields the daemon resolves.
-                The operator sets these on the composer's Pieces row and had nowhere to check them
+            {/* ⛔ What each child is filed with, read from the same two fields the daemon resolves.
+                The operator sets these on the composer's Executor row and had nowhere to check them
                 afterwards — which is how a split ran on accounts nobody chose without anybody being
                 able to see that it had. */}
             {pieces.length > 0 && (
-              <Fact label="each piece">
+              <Fact label="executors">
                 <span className="piece-settings">
                   {pieces.map((row) => (
                     <span key={row.label} className="piece-setting">
@@ -625,6 +628,23 @@ function TaskDetail({
                   fallbackCount={blocking}
                   onOpenTask={onOpenTask}
                 />
+              </Fact>
+            )}
+            {/* ⛔ What the plan filed this child with, kept apart from the pickers below: those
+                show what it will run on *now*, and moving a piece rewrites them. */}
+            {planned.length > 0 && (
+              <Fact label="planned">
+                <span
+                  className="piece-settings"
+                  title={`The worker and model t${parent?.seq} filed this child with`}
+                >
+                  {planned.map((row) => (
+                    <span key={row.label} className="piece-setting">
+                      <span className="piece-setting-label">{row.label}</span>
+                      <span className="piece-setting-value">{row.value}</span>
+                    </span>
+                  ))}
+                </span>
               </Fact>
             )}
             <Fact label="worker">

@@ -23,6 +23,7 @@ import { modelLabel } from './modelname'
  */
 
 export const STATUS_TONE: Record<string, string> = {
+  landing: 'state-running',
   grading: 'state-running',
   running: 'state-running',
   assigned: 'state-running',
@@ -64,11 +65,24 @@ export const STATUS_LABEL: Record<string, string> = { assigned: 'dispatching' }
  * time a gate the UI does not know about (quota, capability, a missing baseline) held a task back.
  * ⭐ Measured 2026-08-29: t22 sat at `ready` for seven minutes with `Antigravity at capacity`
  * written on it, and read as a task waiting on the operator to press something.
+ *
+ * ⭐ `landing` (t353) is the same kind of word: the daemon's live `landing` flag while the task is
+ * rebasing, running the project's checks and merging. Flow already said so; the table and the thread
+ * went on saying `running`, or `completed` before the merge had happened. Not a domain status either —
+ * see `landingstate.ts` for why a landing must not be written to the row.
  */
-export function statusLabel(task: Pick<Task, 'status' | 'holdReason' | 'gradingWorkerId'>): string {
+export function statusLabel(
+  task: Pick<Task, 'status' | 'holdReason' | 'gradingWorkerId' | 'landing'>
+): string {
+  if (task.landing) return 'landing'
   if (task.gradingWorkerId) return 'grading'
   if (task.status === 'ready' && task.holdReason) return 'queued'
   return STATUS_LABEL[task.status] ?? task.status
+}
+
+/** The colour beside `statusLabel`, chosen by the same precedence so the word and its tone agree. */
+export function statusToneFor(task: Pick<Task, 'status' | 'gradingWorkerId' | 'landing'>): string {
+  return STATUS_TONE[task.landing ? 'landing' : task.gradingWorkerId ? 'grading' : task.status] ?? ''
 }
 
 /**
@@ -102,8 +116,8 @@ export function holdLine(
 /** Statuses where an agent is actively executing work. */
 export const WORKING_STATUSES = new Set(['running'])
 
-export function isWorking(task: Pick<Task, 'status' | 'gradingWorkerId'>): boolean {
-  return task.status === 'running' || Boolean(task.gradingWorkerId)
+export function isWorking(task: Pick<Task, 'status' | 'gradingWorkerId' | 'landing'>): boolean {
+  return task.status === 'running' || Boolean(task.gradingWorkerId) || Boolean(task.landing)
 }
 
 /**
@@ -510,6 +524,25 @@ export function pieceSettings(
   if (defaults.sessionSharing) rows.push({ label: 'conversation', value: defaults.sessionSharing })
   if (defaults.maxChildren) rows.push({ label: 'fan-out', value: `up to ${defaults.maxChildren} pieces` })
   return rows
+}
+
+/**
+ * The worker and model a piece of a plan was filed with, read off its planner.
+ *
+ * ⛔ **Beside the current worker, never instead of it (t353).** `task.setWorker` rewrites a piece's
+ * own constraints, so once somebody moves a piece the thread could no longer say what the plan had
+ * chosen — and whether a split's routing was right is the question this answers.
+ *
+ * ⚠️ Derived rather than stored, and faithfully: `applySplit` files every piece from the planner's
+ * `childDefaults` (with `constraints.pieceConstraints` behind it), which only `task.create` writes,
+ * and `pieceSettings` resolves those two fields the same way. Empty for anything not a piece.
+ */
+export function plannedAssignment(
+  parent: Pick<Task, 'kind' | 'childDefaults' | 'constraints' | 'priority'> | null,
+  fleet: FleetEntry[]
+): Array<{ label: string; value: string }> {
+  if (!parent) return []
+  return pieceSettings(parent, fleet).filter((row) => row.label === 'workers' || row.label === 'model')
 }
 
 /**

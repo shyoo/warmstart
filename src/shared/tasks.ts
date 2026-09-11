@@ -665,6 +665,8 @@ export interface Task {
   titleSummary: string | null
   kind: TaskKind
   status: TaskStatus
+  /** True only while this task is rebasing, verifying or merging its branch. */
+  landing?: boolean
   priority: Priority
   createdBy: Principal
   parentTaskId: string | null

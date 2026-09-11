@@ -415,9 +415,17 @@ which is the ordinary case for a composer sitting near the bottom of the window.
 ⭐ **A task's thread says which kind of task it is, and a subtask says whose plan it belongs to.** The
 facts column carries `type` (`Task`, `Plan & Split` or `Conversation`) first, because it changes what everything under it
 means; `parent`, for a piece of a split — ⛔ **lineage is not a dependency**, the edge points the other
-way, so neither the `depends on` nor the `blocks` list can ever name it; `pieces`, with how each one
-turned out, failures included; and `each piece`, which reads back the accounts and models the Pieces row
-set, resolved exactly as `applySplit` resolves them.
+way, so neither the `depends on` nor the `blocks` list can ever name it; `children`, with how each one
+turned out, failures included; and `executors`, which reads back the accounts and models the Executor row
+set, resolved exactly as `applySplit` resolves them. A child also carries `planned` above its `worker`
+picker: the worker and model its plan filed it with (`plannedAssignment`), kept apart because moving a
+child rewrites the picker and would otherwise erase what the plan chose (t353).
+
+⭐ **`landing` is a status word, not a status** (t353). While `landTask` is rebasing, verifying and
+merging, the daemon sets `landing` on every task it sends (`landingstate.ts`, applied once in
+`events.ts` `emit` and on `task.list`/`task.page`/`task.get`), and `statusLabel`/`statusToneFor` show
+it in the table, the thread and the phone. ⛔ It is never written to the row: a landing belongs to one
+process, and a stored `landing` would outlive a daemon that died mid-merge.
 
 ⛔ **The title column takes the slack when the window is stretched.** An automatic table layout
 hands out spare width in proportion to what each column *asked* for, and a column asks for as much as

@@ -28,6 +28,7 @@ import { listConversations } from '../conversations.js'
 import { log } from '../log.js'
 import { clockTime } from '../threadline.js'
 import { dismissLooseEnd, resolveFinishPolicy, scanLooseEnds } from '../finish.js'
+import { withLanding } from '../landingstate.js'
 import { resolveSessionSharing } from '../sharing.js'
 import type { Api, ApiContext } from './support.js'
 import { checkConstraints, dependenciesFor } from './support.js'
@@ -47,9 +48,12 @@ type TaskMethod =
 
 export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
   return {
-    'task.list': (p) => listTasks(p ?? {}),
+    'task.list': (p) => listTasks(p ?? {}).map(withLanding),
     'project.activity': (p) => projectActivity(p.projectId, p.limit),
-    'task.page': (p) => pageTasks(p ?? {}),
+    'task.page': (p) => {
+      const page = pageTasks(p ?? {})
+      return { ...page, tasks: page.tasks.map(withLanding) }
+    },
     'task.get': (p) => {
       const task = getTask(p.id)
       if (!task) return null
@@ -84,7 +88,7 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
         .map((id) => getTask(id))
         .filter((t): t is typeof task => !!t && t.deletedAt === null)
       return {
-        task,
+        task: withLanding(task),
         messages: messagesFor(p.id),
         runs,
         sessions,

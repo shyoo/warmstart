@@ -29,6 +29,8 @@ import {
   modelFacts,
   modelLine,
   pieceSettings,
+  plannedAssignment,
+  statusToneFor,
   reassignmentModel,
   resolveRetryCauses,
   projectWorkState,
@@ -90,6 +92,19 @@ describe('the word a person reads beside a task', () => {
   it('still calls a dispatching task dispatching', () => {
     // The rename that was already here, which this must not have displaced.
     expect(statusLabel(task({ status: 'assigned' }))).toBe('dispatching')
+  })
+
+  // ⛔ t353: Flow said landing while the table and the thread said `running` — or `completed`,
+  // before the merge had happened. The landing wins over whatever the row says underneath it.
+  it('calls a landing task landing, whatever its status, in the running colour', () => {
+    for (const status of ['running', 'completed', 'awaiting_human'] as TaskStatus[]) {
+      const landing = { ...task({ status }), gradingWorkerId: null, landing: true }
+      expect(statusLabel(landing), status).toBe('landing')
+      expect(statusToneFor(landing), status).toBe('state-running')
+    }
+    const done = { ...task({ status: 'completed' }), gradingWorkerId: null, landing: false }
+    expect(statusLabel(done)).toBe('completed')
+    expect(statusToneFor(done)).toBe('state-ok')
   })
 })
 
@@ -1063,6 +1078,28 @@ describe('a plan task, as its own page describes it', () => {
   it('says nothing at all about pieces for an ordinary task', () => {
     expect(
       pieceSettings({ kind: 'work', priority: 'P2', childDefaults: null, constraints: {} }, fleet)
+    ).toEqual([])
+  })
+
+  // ⛔ t353: a child's worker picker shows what it runs on now, and moving the child rewrites it.
+  // What the plan chose has to be readable beside it — the worker and model, and nothing else.
+  it('tells a child which worker and model its plan filed it with', () => {
+    const one = plannedAssignment(
+      planner({ childDefaults: { workerIds: ['w-cx'], model: 'gpt-5.6-terra', priority: 'P3', maxChildren: 4 } }),
+      fleet
+    )
+    expect(one.map((r) => r.label)).toEqual(['workers', 'model'])
+    expect(one[0]?.value).toContain('CodexFirst')
+    expect(one[1]?.value).toBeTruthy()
+    expect(plannedAssignment(planner(), fleet)).toEqual([
+      { label: 'workers', value: 'any account the scheduler picks' }
+    ])
+  })
+
+  it('has nothing to say for a task with no plan above it', () => {
+    expect(plannedAssignment(null, fleet)).toEqual([])
+    expect(
+      plannedAssignment({ kind: 'work', priority: 'P2', childDefaults: null, constraints: {} }, fleet)
     ).toEqual([])
   })
 })

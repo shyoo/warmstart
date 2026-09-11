@@ -54,7 +54,7 @@ export function TasksScreen({ refreshKey, projectId, openTask, newTask }: { refr
       </div>
       {shown.map((t) => (
         <article className="m-task" key={t.id}>
-          <div className="m-task-top"><span className="m-row-seq">t{t.seq}</span><span className={`m-status m-status--${statusTone(t.status)}`}>{t.status.replace('_', ' ')}</span></div>
+          <div className="m-task-top"><span className="m-row-seq">t{t.seq}</span><span className={`m-status m-status--${statusTone(t.landing ? 'landing' : t.status)}`}>{t.landing ? 'landing' : t.status.replace('_', ' ')}</span></div>
           <h2 className="m-row-title">{shortTitle(t.titleSummary, t.title)}</h2>
           <div className="m-task-facts">
             <span><small>Worker</small>{workerLabels[t.ranOn ?? t.constraints.workerId ?? t.assignee ?? ''] ?? t.ranOn ?? t.constraints.workerId ?? t.assignee ?? 'Automatic'}</span>

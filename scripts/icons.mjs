@@ -80,9 +80,16 @@ try {
   mkdirSync(pub, { recursive: true })
   copyFileSync(join(repo, SMALL), join(pub, 'favicon.svg'))
 
+  // ⚠️ The phone app keeps its own copies, of the big master: its home-screen icon and manifest read
+  // `icon-1024.png`. They were hand-copied before, which is how a redraw leaves the phone behind.
+  const mobile = join(repo, 'src', 'mobile', 'public')
+  copyFileSync(join(repo, BIG), join(mobile, 'favicon.svg'))
+  copyFileSync(join(repo, 'resources', 'icon.png'), join(mobile, 'icon-1024.png'))
+
   console.log(`resources/icon.ico             ${ICO_SIZES.join(', ')}`)
   console.log('resources/icon.png             1024x1024')
   console.log('src/renderer/public/favicon.svg')
+  console.log('src/mobile/public/favicon.svg, icon-1024.png')
 } finally {
   rmSync(work, { recursive: true, force: true })
 }

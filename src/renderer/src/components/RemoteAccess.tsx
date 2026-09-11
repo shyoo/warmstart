@@ -185,12 +185,11 @@ export function RemoteAccess(): React.JSX.Element {
                   <p className="setting-row-desc">
                     Paired {new Date(device.createdAt).toLocaleString()} · last seen{' '}
                     {device.lastSeenAt ? new Date(device.lastSeenAt).toLocaleString() : 'never'}
-                    {device.revokedAt ? ' · revoked' : ''}
                   </p>
                 </div>
                 <button
                   className="btn btn--danger"
-                  disabled={!!device.revokedAt}
+                  title="Stop this phone's access and remove it from the list. It would need to pair again."
                   onClick={() => void rpc('remote.revokeDevice', { id: device.id }).then(() => refresh())}
                 >
                   Revoke

@@ -1,4 +1,4 @@
-import { TASK_VIEWS, type TaskView } from '@shared/tasks'
+import { TASK_VIEWS, type TaskSort, type TaskView } from '@shared/tasks'
 import { appKey } from './storagekeys'
 
 /**
@@ -15,6 +15,7 @@ import { appKey } from './storagekeys'
 
 const VIEWS_KEY = appKey('taskViews')
 const TASK_COLUMNS_KEY = appKey('taskColumns')
+const TASK_SORT_KEY = appKey('taskSort')
 const FLEET_COLLAPSED_KEY = appKey('fleetCollapsed')
 const FLEET_DENSITY_KEY = appKey('fleetDensity')
 
@@ -95,6 +96,58 @@ export function writeTaskColumns(columns: TaskColumn[]): void {
   try {
     if (typeof window === 'undefined' || !window.localStorage) return
     window.localStorage.setItem(TASK_COLUMNS_KEY, JSON.stringify(columns))
+  } catch {
+    // A preference that cannot be saved is not an error worth showing anybody.
+  }
+}
+
+const TASK_SORTS: readonly TaskSort[] = [
+  'seq',
+  'title',
+  'from',
+  'worker',
+  'dep',
+  'took',
+  'price',
+  'quality',
+  'created',
+  'updated',
+  'status'
+]
+
+export const DEFAULT_TASK_SORT: { sort: TaskSort; asc: boolean } = { sort: 'updated', asc: false }
+
+/**
+ * Which column the task table was ordered by, and which way.
+ *
+ * ⛔ **The bug this exists for (t353):** opening a task unmounts the table, and the order lived only
+ * in component state — so `← Tasks` put a table somebody had sorted by price back on *updated*,
+ * after every task they opened. It also silently discarded the page offset, which is only restored
+ * onto the same sort.
+ *
+ * ⚠️ Read as a pair or not at all. A column with no direction, or a column that is no longer
+ * sortable, falls back to the default rather than half-applying: `price` ascending and `price`
+ * descending are different tables, and guessing the direction is guessing which one they wanted.
+ */
+export function readTaskSort(): { sort: TaskSort; asc: boolean } {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return { ...DEFAULT_TASK_SORT }
+    const raw = window.localStorage.getItem(TASK_SORT_KEY)
+    if (!raw) return { ...DEFAULT_TASK_SORT }
+    const parsed: unknown = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object') return { ...DEFAULT_TASK_SORT }
+    const { sort, asc } = parsed as { sort?: unknown; asc?: unknown }
+    if (typeof asc !== 'boolean' || !TASK_SORTS.includes(sort as TaskSort)) return { ...DEFAULT_TASK_SORT }
+    return { sort: sort as TaskSort, asc }
+  } catch {
+    return { ...DEFAULT_TASK_SORT }
+  }
+}
+
+export function writeTaskSort(sort: TaskSort, asc: boolean): void {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return
+    window.localStorage.setItem(TASK_SORT_KEY, JSON.stringify({ sort, asc }))
   } catch {
     // A preference that cannot be saved is not an error worth showing anybody.
   }

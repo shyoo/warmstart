@@ -25,7 +25,15 @@ describe('remote storage', () => {
     expect(JSON.stringify(store.db().prepare('select token_hash from remote_devices').all())).not.toContain(token)
     revokeDevice(device.id)
     expect(verifyDevice(token)).toBeNull()
-    expect(listRemoteDevices()[0]?.revokedAt).not.toBeNull()
+    // ⛔ Gone, not listed as revoked: a revoked phone can do nothing, so a row for it is clutter.
+    expect(listRemoteDevices()).toEqual([])
+    expect(store.db().prepare('select count(*) as n from remote_devices').get()).toEqual({ n: 0 })
+  })
+  it('does not list or verify a device tombstoned by an older build', () => {
+    const { device, token } = mintDevice('old phone')
+    store.db().prepare('update remote_devices set revoked_at = ? where id = ?').run(Date.now(), device.id)
+    expect(listRemoteDevices()).toEqual([])
+    expect(verifyDevice(token)).toBeNull()
   })
   it('redeems a short pairing code only once and honours expiry', () => {
     const issued = issuePairingCode(100)
