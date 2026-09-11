@@ -3,6 +3,7 @@ import type { CostModelSummary, CostReport } from '@shared/protocol'
 import { rpc, useDaemonEvents } from '../lib/daemon'
 import { age, countdown, money, tokens } from '../lib/format'
 import { errorMessage } from '@shared/errors.js'
+import { Eq } from './Math'
 
 /**
  * Analytics > Cost Model
@@ -40,34 +41,32 @@ export function CostModel({ now }: { now: number }): React.JSX.Element {
     if (event.type === 'session.changed' || event.type === 'turn') void refresh()
   })
 
-  if (error) return <div className="panel"><div className="alert">{error}</div></div>
-  if (!report) return <div className="panel"><p className="dim">Reading the cost model…</p></div>
+  if (error) return <div className="alert">{error}</div>
+  if (!report) return <p className="dim">Reading the cost model…</p>
 
   const { objective } = report
 
   return (
-    <div className="panel">
-      <header className="panel-head">
-        <div>
-          <h2>Cost Model</h2>
-          <p className="panel-sub">
-            The economics of layered money (subscription allocation + overage spend), token normalization, agent efficiency multipliers, and quota preservation across your fleet.
-          </p>
-        </div>
-        <div style={{ textAlign: 'right' }}>
-          <span className="num dim">
+    <div className="stack">
+      {/* ⚠️ Section 3 of the paper, not a page of its own any more: the head it used to carry is
+          the paper's, and the objective it stated is stated once in §1.3. */}
+      <section className="doc-section">
+        <p className="panel-sub">
+          <strong>The Cost Model.</strong> The cost axis of the score: the economics of layered
+          money (subscription allocation + overage spend), token normalization, agent efficiency
+          multipliers, and quota preservation across the fleet. The objective in force is{' '}
+          <span className="num">
             cost {objective.cost.toFixed(2)} · velocity {objective.velocity.toFixed(2)} · quality{' '}
             {objective.quality.toFixed(2)}
           </span>
-          <p className="dim" style={{ margin: 'var(--sp-1) 0 0', fontSize: 'var(--text-dense)' }}>
-            Cost axis ({objective.cost.toFixed(2)}) balances billable dollars and quota against speed
-          </p>
-        </div>
-      </header>
+          ; the cost axis ({objective.cost.toFixed(2)}) is what balances billable dollars and quota
+          against speed in every weight of Table 1.
+        </p>
+      </section>
 
-      {/* ---------------- 1. What a Run Costs in Money ---------------- */}
+      {/* ---------------- 3.1 What a Run Costs in Money ---------------- */}
       <section className="doc-section">
-        <h3>1. What a Run Costs in Money</h3>
+        <h3>3.1 What a Run Costs in Money</h3>
         <p className="panel-sub" style={{ marginBottom: 'var(--sp-3)' }}>
           Every completed run is priced in <strong>layered money</strong>: billable dollars reflect real expenses
           incurred rather than hypothetical list rates.
@@ -101,9 +100,9 @@ export function CostModel({ now }: { now: number }): React.JSX.Element {
         </div>
       </section>
 
-      {/* ---------------- 2. Where the Money Is Measured ---------------- */}
+      {/* ---------------- 3.2 Where the Money Is Measured ---------------- */}
       <section className="doc-section">
-        <h3>2. Where the Money Is Measured (Spend Meters)</h3>
+        <h3>3.2 Where the Money Is Measured (Spend Meters)</h3>
         <p className="panel-sub" style={{ marginBottom: 'var(--sp-3)' }}>
           Live pay-as-you-go spend meters probed from worker accounts (overage cash, cloud credits, and extra usage).
           Credits without an authoritative dollar conversion are displayed as <code>n/a</code>, never assumed as free.
@@ -112,7 +111,7 @@ export function CostModel({ now }: { now: number }): React.JSX.Element {
         {report.spend.length === 0 ? (
           <p className="dim">No spend meters configured across the fleet.</p>
         ) : (
-          <table className="tbl" style={{ marginBottom: 'var(--sp-3)' }}>
+          <table className="tbl tbl--paper" style={{ marginBottom: 'var(--sp-3)' }}>
             <thead>
               <tr>
                 <th>Worker</th>
@@ -189,9 +188,9 @@ export function CostModel({ now }: { now: number }): React.JSX.Element {
         )}
       </section>
 
-      {/* ---------------- 3. Active Cost Models ---------------- */}
+      {/* ---------------- 3.3 Active Cost Models ---------------- */}
       <section className="doc-section">
-        <h3>3. Active Cost Models Loaded in Daemon</h3>
+        <h3>3.3 Active Cost Models Loaded in Daemon</h3>
         <p className="panel-sub" style={{ marginBottom: 'var(--sp-3)' }}>
           All registered models are on <code>channel: &quot;subscription&quot;</code> with relative cache ratios. No{' '}
           <code>channel: &quot;api&quot;</code> cost model file is loaded yet (token per-MTok cash rates are null; billable
@@ -200,7 +199,7 @@ export function CostModel({ now }: { now: number }): React.JSX.Element {
         {models.length === 0 ? (
           <p className="dim">No cost models registered.</p>
         ) : (
-          <table className="tbl" style={{ marginBottom: 'var(--sp-3)' }}>
+          <table className="tbl tbl--paper" style={{ marginBottom: 'var(--sp-3)' }}>
             <thead>
               <tr>
                 <th>Model ID</th>
@@ -227,16 +226,24 @@ export function CostModel({ now }: { now: number }): React.JSX.Element {
         )}
       </section>
 
-      {/* ---------------- 4. Token Normalization & Fallback Mechanics ---------------- */}
+      {/* ---------------- 3.4 Token Normalization & Fallback Mechanics ---------------- */}
       <section className="doc-section">
-        <h3>4. Token Normalization &amp; Fallback Mechanics</h3>
+        <h3>3.4 Token Normalization &amp; Fallback Mechanics</h3>
         <p className="panel-sub" style={{ marginBottom: 'var(--sp-3)' }}>
           When money pricing is unavailable or when comparing raw model efficiency, usage is normalized to{' '}
           <strong>input-token-equivalents</strong>. The scheduler prioritizes money estimates first, deterministically
           falling back to token normalization when dollar pricing cannot be established.
         </p>
 
-        <table className="tbl" style={{ marginBottom: 'var(--sp-3)' }}>
+        <Eq
+          n="5"
+          tex="\text{priced tokens} \;=\; T_{\text{in}} + R_{\text{out}}\,T_{\text{out}} + R_{\text{read}}\,T_{\text{cache read}} + R_{\text{write}}\,T_{\text{cache write}}"
+        />
+        <table className="tbl tbl--paper" style={{ marginBottom: 'var(--sp-3)' }}>
+          <caption>
+            <strong>Table 7.</strong> How usage is normalised, and what the estimator does when
+            money is unavailable.
+          </caption>
           <thead>
             <tr>
               <th>Metric / Mechanism</th>
@@ -276,16 +283,16 @@ export function CostModel({ now }: { now: number }): React.JSX.Element {
         </table>
       </section>
 
-      {/* ---------------- 5. Quota Windows & Compaction Reserves ---------------- */}
+      {/* ---------------- 3.5 Quota Windows & Compaction Reserves ---------------- */}
       <section className="doc-section">
-        <h3>5. Quota Windows &amp; Compaction Reserves</h3>
+        <h3>3.5 Quota Windows &amp; Compaction Reserves</h3>
         <p className="panel-sub" style={{ marginBottom: 'var(--sp-3)' }}>
           <strong>Can each account still afford to save what it holds?</strong> When an agent builds up a
           large context (e.g. 50k–200k tokens), compacting that session requires remaining quota. If an account
           exhausts its quota window, running <code>/compact</code> fails, stranding all accumulated progress.
         </p>
 
-        <table className="tbl" style={{ marginBottom: 'var(--sp-3)' }}>
+        <table className="tbl tbl--paper" style={{ marginBottom: 'var(--sp-3)' }}>
           <thead>
             <tr>
               <th>Worker</th>
@@ -338,9 +345,9 @@ export function CostModel({ now }: { now: number }): React.JSX.Element {
         </table>
       </section>
 
-      {/* ---------------- 6. The Cache Clock ---------------- */}
+      {/* ---------------- 3.6 The Cache Clock ---------------- */}
       <section className="doc-section">
-        <h3>6. Live Cache Clock Decisions</h3>
+        <h3>3.6 Live Cache Clock Decisions</h3>
         <p className="panel-sub" style={{ marginBottom: 'var(--sp-3)' }}>
           The scheduler re-evaluates active sessions every tick. If human latency is low, keeping a session
           warm saves expensive cold starts. If time is running out, it triggers <code>/compact</code> or lets
@@ -349,7 +356,7 @@ export function CostModel({ now }: { now: number }): React.JSX.Element {
         {report.decisions.length === 0 ? (
           <p className="dim">No live sessions holding a prompt cache currently.</p>
         ) : (
-          <table className="tbl" style={{ marginBottom: 'var(--sp-3)' }}>
+          <table className="tbl tbl--paper" style={{ marginBottom: 'var(--sp-3)' }}>
             <thead>
               <tr>
                 <th>Session</th>
@@ -378,9 +385,9 @@ export function CostModel({ now }: { now: number }): React.JSX.Element {
         )}
       </section>
 
-      {/* ---------------- 7. What Each Agent Costs ---------------- */}
+      {/* ---------------- 3.7 What Each Agent Costs ---------------- */}
       <section className="doc-section">
-        <h3>7. What Each Agent Costs (Learned Efficiency Factors)</h3>
+        <h3>3.7 What Each Agent Costs (Learned Efficiency Factors)</h3>
         <p className="panel-sub" style={{ marginBottom: 'var(--sp-3)' }}>
           Priced in input-token-equivalents and USD from completed runs. The estimator multiplies a fleet-neutral task
           size (<span className="num">{tokens(report.costFactors.neutralPriced)}</span> priced tokens;{' '}
@@ -390,7 +397,11 @@ export function CostModel({ now }: { now: number }): React.JSX.Element {
         {report.costFactors.keys.length === 0 ? (
           <p className="dim">Nothing has completed yet, so every agent is assumed to cost the same.</p>
         ) : (
-          <table className="tbl" style={{ marginBottom: 'var(--sp-3)' }}>
+          <table className="tbl tbl--paper" style={{ marginBottom: 'var(--sp-3)' }}>
+            <caption>
+              <strong>Table 8.</strong> Learned efficiency multipliers per adapter and model, and
+              the series each was measured in.
+            </caption>
             <thead>
               <tr>
                 <th>Adapter CLI</th>
@@ -447,6 +458,7 @@ export function CostModel({ now }: { now: number }): React.JSX.Element {
             </tbody>
           </table>
         )}
+        <Eq n="6" tex="\text{factor} \;=\; \text{ratio}^{\,N/(N+5)}, \qquad \text{ratio} = \frac{\tilde{C}_{\text{agent, model}}}{\tilde{C}_{\text{fleet}}}" />
         <p className="note">
           <strong>Warm vs. Cold Separation:</strong> A warm session start costs significantly less than a cold
           start. Warmth is factored out first (currently ×{report.costFactors.warmFactor.toFixed(2)} warm from{' '}
@@ -472,7 +484,7 @@ export function CostModel({ now }: { now: number }): React.JSX.Element {
               <em> Learned From</em> column above says which one each multiplier actually came from.
             </li>
             <li>
-              <strong>Sample Shrinkage (Why the multiplier isn&rsquo;t just the raw ratio):</strong> With few runs, variance is high. Empirical Bayesian shrinkage (formula: <code>ratio^(N / (N+5))</code>) pulls the factor towards 1.0 until sample size N grows. Dollar medians are tracked alongside tokens with their own sample counts (<code>usdSamples</code>).
+              <strong>Sample Shrinkage (Why the multiplier isn&rsquo;t just the raw ratio):</strong> With few runs, variance is high. Empirical Bayesian shrinkage — Eq. 6 — pulls the factor towards 1.0 until sample size N grows. Dollar medians are tracked alongside tokens with their own sample counts (<code>usdSamples</code>).
             </li>
             <li>
               <strong>Warm vs. Cold Starts Separated:</strong> Reusing a warm session context costs far less than a fresh cold start. Warmth is separated out first (currently ×{report.costFactors.warmFactor.toFixed(2)} warm vs ×{report.costFactors.coldFactor.toFixed(2)} cold) so an agent that inherits warm sessions isn&rsquo;t mistakenly credited as being cheaper.

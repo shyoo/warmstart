@@ -15,6 +15,7 @@ import type {
   QualityStats,
   StatRow,
   StatisticsReport,
+  StatisticsWindow,
   VelocityStats
 } from '@shared/statistics.js'
 
@@ -40,11 +41,20 @@ import type {
  */
 
 /**
- * How many finished tasks the page describes. ⚠️ The same ceiling `paceFactors` uses, so the two
- * surfaces are looking at the same window and a disagreement between them is real rather than a
- * difference in how far back each happened to read.
+ * How many finished tasks the page describes by default. ⚠️ The same ceiling `paceFactors` uses, so
+ * the two surfaces are looking at the same window and a disagreement between them is real rather
+ * than a difference in how far back each happened to read.
+ *
+ * ⭐ An operator can ask for `all` instead (t361): a fleet past its two-hundredth task was reading
+ * a window that quietly dropped its oldest work, with nothing on the page but a number saying so.
+ * The read then stops at nothing — `limit -1` is SQLite's own spelling for that — and the report
+ * says `sampleLimit: null`.
  */
 const SAMPLE_LIMIT = 200
+
+function limitFor(window: StatisticsWindow): number | null {
+  return window === 'all' ? null : SAMPLE_LIMIT
+}
 
 /** The absent rung of a key, written the same way `pace.ts` writes it. */
 const NO_MODEL = '?'
@@ -159,7 +169,7 @@ function effortsForSessions(credits: Map<string, Credit>): Map<string, string | 
  * Building a fleet's worth of runs, sessions, quota samples and reviews in a fixture to exercise one
  * percentile is a test about SQLite; the arithmetic is what can be wrong in an interesting way.
  */
-export function samples(now = Date.now()): Sample[] {
+export function samples(now = Date.now(), window: StatisticsWindow = 'recent'): Sample[] {
   const finished = rows<{ id: string }>(
     db()
       .prepare(
@@ -171,7 +181,7 @@ export function samples(now = Date.now()): Sample[] {
           order by updated_at desc
           limit ?`
       )
-      .all(SAMPLE_LIMIT)
+      .all(limitFor(window) ?? -1)
   )
   const ids = finished.map((t) => t.id)
   if (ids.length === 0) return []
@@ -460,10 +470,10 @@ function qualityStats(all: Sample[], label: (id: string) => string): QualityStat
     const mine = clean.filter((r) => ids.has(r.taskId))
     const scored = mine.filter((r) => r.composite !== null)
     const cleanScored = scored.filter((r) => r.clean)
-    const composite =
-      cleanScored.length > 0
-        ? cleanScored.reduce((sum, r) => sum + (r.composite as number), 0) / cleanScored.length
-        : null
+    // ⚠️ The chart folds the same clean composites the mean is taken over, so `distribution.average`
+    //    and `cleanComposite` are one number — printed twice on purpose, never computed twice.
+    const distribution = distributionOf(cleanScored.map((r) => r.composite as number))
+    const composite = distribution.average
 
     // ⛔ **A prior and a fitness are properties of a model, and only of a model.** A benchmark is
     //    published per model, so there is no such thing as one for `claude-code` in general or for
@@ -488,7 +498,8 @@ function qualityStats(all: Sample[], label: (id: string) => string): QualityStat
       samples: scored.length,
       fitness: fit?.value ?? null,
       fitnessBasis: fit?.basis ?? null,
-      tasks: group.length
+      tasks: group.length,
+      distribution
     }
   })
 
@@ -528,13 +539,14 @@ function cleanReviews(): ReviewRow[] {
   }))
 }
 
-export function statisticsReport(now = Date.now()): StatisticsReport {
-  const all = samples(now)
+export function statisticsReport(now = Date.now(), window: StatisticsWindow = 'recent'): StatisticsReport {
+  const all = samples(now, window)
   const labels = adapterLabels()
   const label = (id: string): string => labels[id] ?? id
   return {
     generatedAt: now,
-    sampleLimit: SAMPLE_LIMIT,
+    sampleLimit: limitFor(window),
+    window,
     price: priceStats(all, label),
     velocity: velocityStats(all, label),
     quality: qualityStats(all, label)

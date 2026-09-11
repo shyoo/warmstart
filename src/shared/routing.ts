@@ -14,6 +14,106 @@ import type { Objective } from './tasks.js'
  * to keep in step with the scheduler that produced them.
  */
 
+/**
+ * The routing model this build runs. Printed on the Routing Model page and nowhere else yet.
+ *
+ * ⚠️ A version of the *model* — the terms, their signs and the weight formulas below — not of the
+ * app. It moves when a term is added, removed or re-derived, so a reader comparing two decisions
+ * a month apart can tell whether the arithmetic between them changed.
+ */
+export const ROUTING_MODEL_VERSION = '1.0'
+
+/** The names of the ten objective-derived weights, in the order the scheduler publishes them. */
+export type WeightName =
+  | 'cacheWarmth'
+  | 'contextHeld'
+  | 'contextRot'
+  | 'projectSwitch'
+  | 'quotaRisk'
+  | 'cold'
+  | 'capabilityFit'
+  | 'pace'
+  | 'fitness'
+  | 'price'
+
+/**
+ * Each weight's derivation, as the arithmetic it actually is.
+ *
+ * ⛔ **Published so a score can be checked rather than believed.** A rendered `1.249` tells an
+ * operator nothing — not where it came from, not whether it is large, not what would move it. These
+ * strings are printed beside the number they produce, stamped on every stored decision, and
+ * `cost.test.ts` evaluates every one of them against `weights()` in `objective.ts` so the published
+ * derivation cannot drift from the code that computes it.
+ *
+ * ⚠️ Shared, not daemon-only, because the Routing Model page typesets exactly these strings. A
+ * second table of the same formulas in the renderer is the drift the test above exists to prevent.
+ * Written with `×` and `−` because they are read by people, and parsed back by that test.
+ */
+export const WEIGHT_FORMULAS: Record<WeightName, string> = {
+  cacheWarmth: '1.0 + 2.2×cost − 0.6×velocity',
+  contextHeld: '0.8 + 1.0×cost + 0.4×quality',
+  contextRot: '0.6 + 1.6×quality',
+  projectSwitch: '0.3 + 0.6×cost',
+  quotaRisk: '0.5 + 1.2×cost',
+  cold: '0.8 + 2.0×cost − 0.7×velocity',
+  capabilityFit: '0.7 + 1.3×quality',
+  pace: '0.3 + 1.7×velocity',
+  fitness: '0.4 + 1.6×quality',
+  price: '0.5 + 2.0×cost'
+}
+
+/**
+ * The direction each weight pushes. ⛔ `scoreCandidate` in `scoring.ts` reads this same table, so
+ * the sign the page prints is the sign the sum used.
+ *
+ * ⚠️ `pace` is `+1` with a **signed** value, which is why it is not listed as a penalty: the term is
+ * positive for an agent measured faster than the fleet's centre and negative for one measured slower,
+ * so a single direction here would be a lie about half of its range.
+ */
+export const WEIGHT_SIGNS: Record<WeightName, 1 | -1> = {
+  cacheWarmth: 1,
+  contextHeld: 1,
+  contextRot: -1,
+  projectSwitch: -1,
+  quotaRisk: -1,
+  cold: -1,
+  capabilityFit: 1,
+  pace: 1,
+  fitness: 1,
+  price: -1
+}
+
+/**
+ * A published formula, evaluated at one objective vector.
+ *
+ * ⛔ **Parsed, never evaluated.** `Function(…)` on a string is implied eval, and a page that reaches
+ * for it to typeset a constant has traded a real guarantee for a convenient one. The grammar is
+ * deliberately tiny — signed terms of `number` or `number×name` — and a term outside it throws, so a
+ * formula this cannot read is a build error rather than a silently wrong number.
+ */
+export function evaluateWeightFormula(formula: string, objective: Objective): number {
+  const vars: Record<string, number> = {
+    cost: objective.cost,
+    velocity: objective.velocity,
+    quality: objective.quality
+  }
+  let total = 0
+  for (const [, sign, body] of formula.matchAll(/([+−-]?)\s*([\d.]+(?:×[a-z]+)?)/g)) {
+    const factor = sign === '−' || sign === '-' ? -1 : 1
+    const [num, name] = (body as string).split('×')
+    const scalar = Number(num)
+    if (Number.isNaN(scalar)) throw new Error(`unparsed term: ${body} in ${formula}`)
+    if (name === undefined) {
+      total += factor * scalar
+    } else {
+      const v = vars[name]
+      if (v === undefined) throw new Error(`unknown variable ${name} in ${formula}`)
+      total += factor * scalar * v
+    }
+  }
+  return total
+}
+
 /** One term of one candidate's score, exactly as `scheduler.ts` computed it. */
 export interface RoutingTerm {
   name: string

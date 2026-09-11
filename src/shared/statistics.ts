@@ -141,6 +141,12 @@ export interface QualityStatRow {
   fitnessBasis: string | null
   /** How many finished tasks this fleet ran on the key, whether or not any were graded. */
   tasks: number
+  /**
+   * The clean composites themselves, folded like a price or a duration — so the Quality tab can
+   * draw the same chart the other two do. `samples` here is `clean`, never `samples` above: the
+   * distribution is of the evidence, and a leaked review is not evidence.
+   */
+  distribution: Distribution
 }
 
 export interface QualityStats {
@@ -152,15 +158,30 @@ export interface QualityStats {
   rubricVersion: string
 }
 
+/**
+ * How far back the page reads.
+ *
+ * `recent` is the last 200 finished tasks — the same ceiling `paceFactors` uses, so Statistics and
+ * the pace factor next door are looking at the same window and a disagreement between them is real.
+ * `all` is every completed task the fleet still has. ⚠️ A per-display preference, not a fleet
+ * setting: which window somebody wants to read is a property of the person reading.
+ */
+export type StatisticsWindow = 'recent' | 'all'
+
+export const STATISTICS_WINDOWS: readonly StatisticsWindow[] = ['recent', 'all']
+
 export interface StatisticsReport {
   generatedAt: number
   /**
-   * How many finished tasks were read, and the ceiling that read stops at.
+   * How many finished tasks were read, and the ceiling that read stops at — `null` when the read
+   * was asked for every task and stopped at nothing.
    *
    * ⚠️ Published because every number on the page is *of this window*, not of all time, and a
    * reader comparing two visits a month apart is comparing two different windows.
    */
-  sampleLimit: number
+  sampleLimit: number | null
+  /** The window that was asked for, echoed so the page can say which one it is showing. */
+  window: StatisticsWindow
   price: PriceStats
   velocity: VelocityStats
   quality: QualityStats

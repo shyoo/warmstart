@@ -257,6 +257,25 @@ describe('the sample set', () => {
     finishedTask({ adapter: 'claude-code', model: 'opus', effort: 'high', activeMs: 5 * MIN })
     expect(stats.samples()[0]?.effort).toBe('high')
   })
+
+  it('stops at the last 200 finished tasks by default, and at nothing when asked for all', () => {
+    // t361: a fleet past its two-hundredth task was reading a window that quietly dropped its oldest
+    // work, with nothing on the page but a number saying so.
+    for (let i = 0; i < 203; i++) {
+      finishedTask({ adapter: 'claude-code', model: 'opus', activeMs: MIN })
+    }
+    const recent = stats.statisticsReport(Date.now(), 'recent')
+    expect(recent.sampleLimit).toBe(200)
+    expect(recent.window).toBe('recent')
+    expect(recent.price.tasks).toBe(200)
+
+    const all = stats.statisticsReport(Date.now(), 'all')
+    expect(all.sampleLimit).toBeNull()
+    expect(all.window).toBe('all')
+    expect(all.price.tasks).toBe(203)
+    // ⚠️ And the default is the bounded read, so nothing that never asked gets an unbounded one.
+    expect(stats.statisticsReport().price.tasks).toBe(200)
+  })
 })
 
 describe('the agent → model → effort tree', () => {
@@ -488,6 +507,15 @@ describe('quality', () => {
     expect(model?.cleanComposite).toBe(8)
     expect(model?.clean).toBe(1)
     expect(model?.samples).toBe(2)
+    // ⭐ The chart folds the same clean composites the mean is over: one review, so every
+    //    percentile is that review, and the leaked one is nowhere in it.
+    expect(model?.distribution).toEqual({ samples: 1, average: 8, p50: 8, p99: 8, p100: 8 })
+  })
+
+  it('carries an empty distribution, never a zero, on a rung nothing clean has graded', () => {
+    finishedTask({ adapter: 'claude-code', model: 'opus', activeMs: 4 * MIN })
+    const model = stats.statisticsReport().quality.rows.find((r) => r.level === 'model')
+    expect(model?.distribution).toEqual({ samples: 0, average: null, p50: null, p99: null, p100: null })
   })
 })
 

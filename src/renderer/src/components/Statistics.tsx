@@ -5,11 +5,13 @@ import type {
   PriceStatRow,
   QualityStatRow,
   StatRow,
-  StatisticsReport
+  StatisticsReport,
+  StatisticsWindow
 } from '@shared/statistics'
 import { rpc, useDaemonEvents } from '../lib/daemon'
 import { duration, money, when } from '../lib/format'
 import { effortLabel, modelLabel } from '../lib/modelname'
+import { readStatisticsWindow, writeStatisticsWindow } from '../lib/prefs'
 import { errorMessage } from '@shared/errors.js'
 
 /**
@@ -95,20 +97,45 @@ function rowLabel(row: { level: StatRow['level']; label: string; model: string |
  * under is a comparison between two things the reader cannot tell apart. The table carries the
  * harness in the agent row above each model; a chart has no such row, so it carries it inline.
  */
-function graphLabel(
+export function graphLabel(
   row: { level: StatRow['level']; label: string; model: string | null; adapterId: string; basis?: PriceBasis },
   agents: Map<string, string>,
-  /** The price chart splits the model rung by billing basis, so the bar has to say which dollars it is in. */
-  unit?: 'price' | 'velocity'
+  /**
+   * The price chart splits the model rung by billing basis, so a bar has to say which dollars it is
+   * in — but only when the chart it sits in holds more than one basis. ⛔ *Opus 5 (subs)* under a
+   * title that already reads *Subscription* said the same thing twice and took the width a model
+   * name needed (t361); the API & mixed chart still needs it, because those two bars are different
+   * dollars.
+   */
+  nameBasis = false
 ): string {
   const own = rowLabel(row)
   const suffixed =
-    unit === 'price' && row.level !== 'effort' && row.basis && row.basis !== 'unknown'
+    nameBasis && row.level !== 'effort' && row.basis && row.basis !== 'unknown'
       ? `${own} (${BASIS_LABEL[row.basis]})`
       : own
   if (row.level === 'agent') return suffixed
   const agent = agents.get(row.adapterId)
   return agent ? `${agent} · ${suffixed}` : suffixed
+}
+
+/**
+ * The label column of a chart, sized to the longest label it has to hold.
+ *
+ * ⛔ The column was a fixed 250 units and any label past 34 characters was cut with an ellipsis,
+ * so *Antigravity · Gemini 3.8 Flash Med (subs)* lost its model (t361). The width now follows the
+ * text and the type steps down one size at a time before anything is cut — a chart whose labels
+ * cannot be read is not a comparison, whatever its bars say.
+ *
+ * ⚠️ The character width is an estimate (Inter at 12px averages ~0.56em); it only has to be
+ * generous, since the column is a cap on the text, not a fit.
+ */
+export function labelColumn(labels: string[]): { width: number; fontSize: number; maxChars: number } {
+  const longest = labels.reduce((n, l) => Math.max(n, l.length), 0)
+  const fontSize = longest > 44 ? 10 : longest > 34 ? 11 : 12
+  const perChar = fontSize * 0.58
+  const width = Math.min(360, Math.max(180, Math.ceil(longest * perChar) + 24))
+  return { width, fontSize, maxChars: Math.floor((width - 24) / perChar) }
 }
 
 /**
@@ -147,6 +174,12 @@ export function priceRowsForGraph(rows: PriceStatRow[], bases: PriceBasis[]): Pr
   return rows.filter((row) => bases.includes(row.basis))
 }
 
+const GRAPH_TITLE: Record<'price' | 'velocity' | 'quality', string> = {
+  price: 'Price Distribution Comparison',
+  velocity: 'Active Time Distribution Comparison',
+  quality: 'Clean Composite Distribution Comparison'
+}
+
 function StatGraph({
   rows,
   unit,
@@ -154,7 +187,7 @@ function StatGraph({
   title
 }: {
   rows: Array<StatRow & { basis?: PriceBasis; unpriced?: number }>
-  unit: 'price' | 'velocity'
+  unit: 'price' | 'velocity' | 'quality'
   render: (value: number) => string
   /** Price uses separate scales for subscription and API/overage work. */
   title?: string
@@ -172,6 +205,12 @@ function StatGraph({
 
   if (targetRows.length === 0) return null
 
+  // A bar names its billing basis only when this chart holds more than one — see `graphLabel`.
+  const nameBasis =
+    unit === 'price' && new Set(targetRows.map((r) => r.basis ?? 'unknown')).size > 1
+  const labels = targetRows.map((row) => graphLabel(row, agentLabels, nameBasis))
+  const column = labelColumn(labels)
+
   const maxVal = Math.max(
     1,
     ...targetRows.flatMap((r) => [
@@ -182,8 +221,9 @@ function StatGraph({
     ])
   )
 
-  // ⚠️ Wider than the model name alone needs, because the harness now sits in front of it.
-  const labelWidth = 250
+  // ⚠️ Sized to the longest label, because the harness sits in front of the model name and the
+  //    price chart may put the basis after it.
+  const labelWidth = column.width
   const chartWidth = 470
   const totalWidth = labelWidth + chartWidth + 30
   const rowHeight = mode === 'whisker' ? 34 : 48
@@ -222,7 +262,7 @@ function StatGraph({
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-3)' }}>
           <span style={{ fontWeight: 600, fontSize: 'var(--text-body)' }}>
-            {title ?? `${unit === 'price' ? 'Price' : 'Active Time'} Distribution Comparison`}
+            {title ?? GRAPH_TITLE[unit]}
           </span>
           <div
             className="btn-group"
@@ -353,7 +393,7 @@ function StatGraph({
             const xP100 = scale(d.p100)
             const isHovered = hoveredIdx === idx
 
-            const label = graphLabel(row, agentLabels, unit)
+            const label = labels[idx] ?? ''
 
             return (
               <g
@@ -380,10 +420,10 @@ function StatGraph({
                   y={y + (mode === 'whisker' ? rowHeight / 2 + 4 : 16)}
                   textAnchor="end"
                   fill={isHovered ? 'var(--color-text)' : 'var(--color-text-dim)'}
-                  fontSize="12"
+                  fontSize={column.fontSize}
                   fontWeight={row.level === 'agent' ? '600' : '400'}
                 >
-                  {label.length > 34 ? label.slice(0, 33) + '…' : label}
+                  {label.length > column.maxChars ? label.slice(0, column.maxChars - 1) + '…' : label}
                 </text>
 
                 {mode === 'whisker' ? (
@@ -471,7 +511,7 @@ function StatGraph({
             flexWrap: 'wrap'
           }}
         >
-          <strong>{graphLabel(targetRows[hoveredIdx], agentLabels, unit)}</strong>
+          <strong>{labels[hoveredIdx]}</strong>
           <span className="dim">n={targetRows[hoveredIdx].distribution.samples}</span>
           <span>
             Avg:{' '}
@@ -577,15 +617,22 @@ export function Statistics({
 }): React.JSX.Element {
   const [report, setReport] = useState<StatisticsReport | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // ⭐ Which window to read: the last 200 finished tasks, or all of them. Remembered per display.
+  const [scope, setScope] = useState<StatisticsWindow>(() => readStatisticsWindow())
 
   const refresh = useCallback(async () => {
     try {
-      setReport(await rpc('statistics.report'))
+      setReport(await rpc('statistics.report', { window: scope }))
       setError(null)
     } catch (err) {
       setError(errorMessage(err))
     }
-  }, [])
+  }, [scope])
+
+  const chooseWindow = (next: StatisticsWindow): void => {
+    writeStatisticsWindow(next)
+    setScope(next)
+  }
 
   useEffect(() => {
     void refresh()
@@ -609,15 +656,26 @@ export function Statistics({
             model and per effort level.
           </p>
         </div>
-        {report && (
-          // ⚠️ Worded for the empty fleet too. *last 0 finished tasks* is not a sentence, and the
-          //    state it describes — a new install — is the one a stranger reads this page in first.
-          <span className="tag" title={`Read at ${when(report.generatedAt)}`}>
-            {report.price.tasks === 0
-              ? 'nothing finished yet'
-              : `last ${report.price.tasks} finished task${report.price.tasks === 1 ? '' : 's'}`}
-          </span>
-        )}
+        <div className="panel-actions">
+          {report && (
+            // ⚠️ Worded for the empty fleet too. *last 0 finished tasks* is not a sentence, and the
+            //    state it describes — a new install — is the one a stranger reads this page in first.
+            <span className="tag" title={`Read at ${when(report.generatedAt)}`}>
+              {report.price.tasks === 0
+                ? 'nothing finished yet'
+                : `${report.window === 'all' ? 'all' : 'last'} ${report.price.tasks} finished task${report.price.tasks === 1 ? '' : 's'}`}
+            </span>
+          )}
+          {/* ⭐ The window is a choice, not a constant (t361). A fleet past its two-hundredth task
+              was reading a window that quietly dropped its oldest work. */}
+          <label className="pager-size" title="How far back every tab on this page reads">
+            <span className="dim">Window</span>
+            <select value={scope} onChange={(e) => chooseWindow(e.target.value === 'all' ? 'all' : 'recent')}>
+              <option value="recent">last 200 finished tasks</option>
+              <option value="all">all finished tasks</option>
+            </select>
+          </label>
+        </div>
       </header>
 
       <div className="tabs">
@@ -650,10 +708,20 @@ export function Statistics({
 function Window({ report }: { report: StatisticsReport }): React.JSX.Element {
   return (
     <p className="dim">
-      Folded over the {report.price.tasks} most recently updated <strong>completed</strong> tasks (the
-      read stops at {report.sampleLimit}), each credited to the agent and model of its last
-      non-failed work run — the same rule peer review grades on, so speed, spend and score in this
-      app always name the same author for the same task.
+      Folded over{' '}
+      {report.sampleLimit === null ? (
+        <>
+          every <strong>completed</strong> task this fleet still has — {report.price.tasks} of them
+        </>
+      ) : (
+        <>
+          the {report.price.tasks} most recently updated <strong>completed</strong> tasks (the read
+          stops at {report.sampleLimit}; the Window control above reads all of them)
+        </>
+      )}
+      , each credited to the agent and model of its last non-failed work run — the same rule peer
+      review grades on, so speed, spend and score in this app always name the same author for the
+      same task.
     </p>
   )
 }
@@ -684,8 +752,9 @@ function PriceTab({ report }: { report: StatisticsReport }): React.JSX.Element {
           crossing into overage mid-month does to every total above it. Averaging the two without
           saying which is which turns &ldquo;this agent is cheap&rdquo; into a sentence that means
           nothing — so a model whose tasks were billed both ways gets one row (and one chart bar)
-          per basis, e.g. <em>Opus (subs)</em> beside <em>Opus (mixed)</em>, while the agent row
-          above keeps folding everything.
+          per basis: the table says which in its <em>Billed as</em> column, the API &amp; mixed chart
+          names it on the bar (<em>Opus (mixed)</em>), and the subscription chart, being all one
+          basis, does not repeat it. The agent row above keeps folding everything.
         </div>
         {price.estimated && (
           <p className="dim">
@@ -832,6 +901,11 @@ function QualityTab({
           and who is left who could still grade them.
         </p>
       </section>
+
+      {/* ⭐ The same chart the other two tabs draw, over the clean composites (t361). Rows with no
+          clean review have `distribution.samples === 0` and draw no bar, which is the honest
+          picture: an ungraded model has no distribution, not a short one. */}
+      <StatGraph rows={quality.rows} unit="quality" render={(v) => v.toFixed(1)} />
 
       {quality.rows.length === 0 ? (
         <div className="notice">

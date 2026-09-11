@@ -6226,3 +6226,347 @@ select:focus-visible,
 .stat-tbl td.tbl-num:not(:first-child) {
   text-align: center;
 }
+
+/* ---- the routing model, as a paper ------------------------------------- */
+
+/*
+ * ⛔ **A document surface, not a control surface.** The Routing Model page is where an operator
+ * decides whether to trust the scheduler, and a scoreboard invites a glance where a paper invites
+ * checking. So it is set as one: a measured single column, a serif face, numbered sections,
+ * captioned tables ruled top and bottom (never boxed), and the arithmetic typeset by KaTeX rather
+ * than drawn in ASCII. Everything is scoped under `.paper` so the app's five-size type scale and
+ * one-accent palette are untouched everywhere else; the paper's own sizes are local custom
+ * properties for the same reason.
+ *
+ * ⚠️ The serif stack is system fonts only — Charter (macOS), Palatino Linotype and Cambria
+ * (Windows), then Georgia — nothing is vendored. KaTeX ships its own fonts and they are bundled by
+ * Vite from its CSS, so a formula looks the same on every platform even where the prose does not.
+ */
+.paper {
+  --paper-font: Charter, "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Cambria, Georgia,
+    "Times New Roman", serif;
+  --paper-text: 15px;
+  --paper-small: 13px;
+  --paper-h3: 17px;
+  --paper-title: 28px;
+  --paper-measure: 76ch;
+  max-width: var(--paper-measure);
+  margin: 0 auto;
+  padding: var(--sp-4) var(--sp-3) var(--sp-6);
+  font-family: var(--paper-font);
+  font-size: var(--paper-text);
+  line-height: 1.6;
+  color: var(--color-text);
+}
+
+.paper-head {
+  text-align: center;
+  margin: var(--sp-4) 0 var(--sp-5);
+}
+
+.paper-title {
+  font-family: var(--paper-font);
+  font-size: var(--paper-title);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1.15;
+  margin: 0 0 var(--sp-2);
+}
+
+.paper-subtitle {
+  font-size: 17px;
+  font-style: italic;
+  margin: 0 0 var(--sp-3);
+  color: var(--color-text);
+}
+
+.paper-byline {
+  font-size: var(--paper-small);
+  color: var(--color-text-dim);
+  margin: 0 auto;
+  max-width: 60ch;
+}
+
+.paper-abstract {
+  max-width: 64ch;
+  margin: 0 auto var(--sp-5);
+  padding: 0 var(--sp-3);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.paper-abstract h4 {
+  font-size: var(--paper-small);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  text-align: center;
+  margin: 0 0 var(--sp-2);
+}
+
+.paper-abstract p {
+  margin: 0;
+}
+
+/*
+ * The table of contents. The buttons are still `.tab` so the same suite that clicks *Cost* can
+ * still find it; the section number is drawn in front of the word by a counter, which `innerText`
+ * does not include.
+ */
+.paper-contents {
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: var(--sp-2) var(--sp-4);
+  border-top: 1px solid var(--color-border-strong);
+  border-bottom: 1px solid var(--color-border-strong);
+  padding: var(--sp-2) 0;
+  margin: 0 0 var(--sp-5);
+  counter-reset: paper-section;
+}
+
+.paper-contents .tab {
+  font-family: var(--paper-font);
+  font-size: 14px;
+  color: var(--color-text-dim);
+  border: none;
+  border-radius: 0;
+  padding: 2px 0;
+  background: none;
+  counter-increment: paper-section;
+}
+
+.paper-contents .tab::before {
+  content: "§" counter(paper-section);
+  color: var(--color-text-faint);
+  margin-right: 2px;
+}
+
+.paper-contents .tab--active {
+  color: var(--color-text);
+  font-weight: 700;
+  border-bottom: 2px solid var(--color-text);
+}
+
+.paper-contents .tab--active::before {
+  color: var(--color-text);
+}
+
+.paper .stack {
+  gap: 0;
+}
+
+.paper .doc-section {
+  margin-bottom: var(--sp-5);
+}
+
+.paper .doc-section h3 {
+  font-family: var(--paper-font);
+  font-size: var(--paper-h3);
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--color-text);
+  margin: var(--sp-4) 0 var(--sp-3);
+}
+
+.paper .doc-h4 {
+  font-family: var(--paper-font);
+  font-size: var(--paper-text);
+  font-style: italic;
+  font-weight: 600;
+}
+
+/* Body prose. `.panel-sub` is the app's dim subtitle; in a paper it is a paragraph. */
+.paper .panel-sub {
+  font-size: inherit;
+  color: var(--color-text);
+  max-width: none;
+  margin: 0 0 var(--sp-3);
+}
+
+.paper p.dim,
+.paper .doc-section > .dim {
+  font-size: var(--paper-small);
+  line-height: 1.5;
+  margin: 0 0 var(--sp-3);
+}
+
+.paper .doc-list {
+  font-family: var(--paper-font);
+  font-size: inherit;
+  line-height: 1.55;
+  color: var(--color-text);
+  padding-left: var(--sp-5);
+}
+
+.paper .doc-list li {
+  margin-bottom: var(--sp-2);
+}
+
+.paper .notice,
+.paper .alert,
+.paper .note {
+  font-family: var(--paper-font);
+  font-size: var(--paper-small);
+  line-height: 1.5;
+  margin: 0 0 var(--sp-3);
+}
+
+.paper code,
+.paper .mono {
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+}
+
+/* Display mathematics: centred, numbered on the right like an article. */
+.eq {
+  display: flex;
+  align-items: center;
+  margin: var(--sp-2) 0 var(--sp-3);
+  overflow-x: auto;
+}
+
+.eq-body {
+  flex: 1;
+  text-align: center;
+}
+
+.eq-body .katex-display {
+  margin: 0;
+}
+
+.eq-number {
+  flex: 0 0 auto;
+  font-family: var(--paper-font);
+  font-size: var(--paper-small);
+  color: var(--color-text-dim);
+  padding-left: var(--sp-3);
+}
+
+.paper .katex {
+  font-size: 1.06em;
+}
+
+/* KaTeX draws in `currentColor`; the only thing to set is that a formula inside dim prose stays dim. */
+.math .katex {
+  color: inherit;
+}
+
+/*
+ * Tables in the paper: ruled top and bottom, a thin rule under the head, no vertical lines and no
+ * hover wash — the booktabs convention, because it is the one readers of a table of numbers already
+ * know how to read. The caption is above the table, as a paper's is, and carries the table number
+ * the prose refers to.
+ */
+.tbl--paper {
+  font-family: var(--paper-font);
+  font-size: var(--paper-small);
+  border-top: 1.5px solid var(--color-text);
+  border-bottom: 1.5px solid var(--color-text);
+  margin: 0 0 var(--sp-4);
+  caption-side: top;
+}
+
+.tbl--paper caption {
+  text-align: left;
+  font-size: var(--paper-small);
+  line-height: 1.45;
+  color: var(--color-text);
+  padding: 0 0 var(--sp-2);
+}
+
+.tbl--paper th {
+  font-family: var(--paper-font);
+  font-size: var(--paper-small);
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--color-text);
+  border-bottom: 1px solid var(--color-text);
+  padding: var(--sp-1) var(--sp-2);
+  vertical-align: bottom;
+}
+
+.tbl--paper td {
+  border-bottom: none;
+  padding: 5px var(--sp-2);
+}
+
+.tbl--paper tr:hover td {
+  background: transparent;
+}
+
+/* A cell that must not wrap — a term name, a sign, a formula — and the one column that takes the
+   slack instead, so a narrow measure squeezes the prose column and never breaks a formula in two. */
+.tbl--paper .tbl-nowrap,
+.tbl--paper .math {
+  white-space: nowrap;
+}
+
+.tbl--paper .tbl-wide {
+  width: 40%;
+}
+
+/* Numbers in the paper are in the paper's face, lined up on tabular figures; only a metric tile's
+   big figure keeps the mono face it has everywhere else in the app. */
+.paper .num,
+.tbl--paper .num {
+  font-family: var(--paper-font);
+  font-variant-numeric: tabular-nums;
+}
+
+.paper .metric-tile-value {
+  font-family: var(--font-mono);
+}
+
+.tbl--paper .tbl-total td {
+  border-top: 1px solid var(--color-text);
+}
+
+/* A row that opens the derivation beneath a decision keeps its own rule so the detail reads as
+   belonging to the row above it. */
+.tbl--paper .tbl-detail-row > td {
+  border-top: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--color-border);
+  padding: var(--sp-2) var(--sp-2) var(--sp-3);
+}
+
+/*
+ * A grouped table: one head row per agent, its models beneath. ⛔ The head is a row, not a cell
+ * with a rowspan, so the model rows keep every column aligned with the header.
+ */
+.tbl--grouped .tbl-group-head > td {
+  padding-top: var(--sp-3);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.tbl--grouped .tbl-group-head:first-child > td {
+  padding-top: var(--sp-2);
+}
+
+.tbl--grouped .tbl-group-row > td:first-child {
+  padding-left: calc(var(--sp-2) + 18px);
+}
+
+.paper .metric-tile-label {
+  font-family: var(--paper-font);
+}
+
+.paper .code-block {
+  border: none;
+  border-left: 2px solid var(--color-border-strong);
+  border-radius: 0;
+  background: transparent;
+}
+
+.paper .tag {
+  font-family: var(--font-ui);
+}
+
+@media (max-width: 900px) {
+  .paper {
+    --paper-text: 14px;
+    padding-left: 0;
+    padding-right: 0;
+  }
+}

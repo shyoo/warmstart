@@ -113,7 +113,13 @@ export function atCapacity(
 Every candidate that clears Phase 1 is scored using the objective vector.
 
 ### 3.1 Objective Weights
-Weights derive from the objective vector `(cost, velocity, quality)` configured globally or per-project/task:
+Weights derive from the objective vector `(cost, velocity, quality)` configured globally or per-project/task.
+⛔ The formulas and signs live once, in `WEIGHT_FORMULAS` and `WEIGHT_SIGNS` (`src/shared/routing.ts`):
+`objective.ts` evaluates them, `scoring.ts` sums with them, every stored decision carries them, and
+Analytics › Routing Model typesets *those strings* (`lib/tex.ts`) rather than a second copy —
+`cost.test.ts` checks the strings against `weights()` and `tex.test.ts` that every one typesets. The
+page calls this **Routing Model v1.0** (`ROUTING_MODEL_VERSION`), a version of the terms and formulas
+below, not of the app; it moves when one of them does.
 
 | Term | Direction | Weight Formula (`objective.ts`) | Balanced (`cost 0.30, velocity 0.30, quality 0.40`) | Value Range | Meaning of Value = 1 |
 |---|:---:|---|:---:|:---:|---|
@@ -542,7 +548,8 @@ modes and its own honest gaps. The UI is one tab per axis for that reason, not f
 | **Velocity** | `pace.ts` over `activetime.ts` — median active time per finished task, per (agent, model) | `pace`, plus the concurrency multiplier in `policy()` | Routing Model › Velocity |
 
 ⚠️ **Analytics › Statistics reads the same three axes and is not this table.** `src/daemon/statistics.ts`
-folds the last 200 finished tasks into a measured distribution — average, p50, p99, p100 — per agent,
+folds the last 200 finished tasks (or every one, when the page's *Window* control asks for `all`) into
+a measured distribution — average, p50, p99, p100 — per agent,
 then per model, then per effort, crediting each task exactly as §4.x does via the exported
 `creditedKeys` in `pace.ts` so there is one implementation of the credit rule and not two. Nothing it
 prints is shrunk, blended or clamped, so its numbers **will not match** the pace factor, the blended

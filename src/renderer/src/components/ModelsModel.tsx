@@ -3,6 +3,8 @@ import type { ModelReport } from '@shared/routing'
 import { rpc, useDaemonEvents } from '../lib/daemon'
 import { money } from '../lib/format'
 import { errorMessage } from '@shared/errors.js'
+import { Eq, M } from './Math'
+import { weightFormulaTex } from '../lib/tex'
 
 /**
  * Analytics > Routing Model > Models.
@@ -50,7 +52,7 @@ export function ModelsModel(): React.JSX.Element {
   return (
     <div className="stack">
       <section className="doc-section">
-        <h3>1. A candidate is a (worker, model) pair, not an account</h3>
+        <h3>5.1 A candidate is a (worker, model) pair, not an account</h3>
         <p className="panel-sub">
           Every other axis on this tab scores <em>accounts</em> — which one is free, which one is
           fast, which one has a warm cache. This one exists because an account is not one thing:
@@ -99,14 +101,17 @@ export function ModelsModel(): React.JSX.Element {
       </section>
 
       <section className="doc-section">
-        <h3>2. Fitness — a sufficiency bar, not a leaderboard</h3>
+        <h3>5.2 Fitness — a sufficiency bar, not a leaderboard</h3>
         <p className="panel-sub">
-          <code>fitness = {report.fitnessFormula}</code>, currently{' '}
-          <span className="num">{report.fitnessWeight.toFixed(3)}</span> at quality{' '}
+          <M tex={`\\lambda_{\\mathrm{fitness}} = ${weightFormulaTex(report.fitnessFormula)}`} />,
+          currently <span className="num">{report.fitnessWeight.toFixed(3)}</span> at quality{' '}
           {report.objective.quality.toFixed(2)}. Its value is not how good the model is — it is
           whether the model clears the bar this task&rsquo;s <strong>complexity band</strong> sets:
         </p>
-        <table className="tbl">
+        <table className="tbl tbl--paper">
+          <caption>
+            <strong>Table 11.</strong> The sufficiency bar per complexity band.
+          </caption>
           <thead>
             <tr>
               <th>Complexity band</th>
@@ -129,14 +134,18 @@ export function ModelsModel(): React.JSX.Element {
           that both clear the bar. Falling short costs proportionally, reaching 0 at a quarter-point
           under the bar.
         </p>
-        <pre className="code-block">
-{`shortfall = max(0, required − blended fitness)
-value     = max(0, 1 − shortfall / 0.25)`}
-        </pre>
+        <Eq
+          n="8"
+          tex="x_{\mathrm{fitness}} \;=\; \max\!\left(0,\; 1 - \frac{\max(0,\; \rho_{\text{band}} - \phi)}{0.25}\right)"
+        />
+        <p className="dim">
+          where <M tex="\rho_{\text{band}}" /> is the required fitness from Table 11 and{' '}
+          <M tex="\phi" /> the blended fitness of Eq. 9.
+        </p>
       </section>
 
       <section className="doc-section">
-        <h3>3. Where the blended fitness number comes from</h3>
+        <h3>5.3 Where the blended fitness number comes from</h3>
         <p className="panel-sub">
           Each model&rsquo;s fitness starts from a checked-in <strong>benchmark prior</strong> —
           published where a leaderboard scores this exact id, honestly <em>inferred</em> from a
@@ -144,9 +153,14 @@ value     = max(0, 1 − shortfall / 0.25)`}
           exists. This fleet&rsquo;s own peer reviews are blended in, shrunk toward that prior in log
           space:
         </p>
-        <pre className="code-block">
-{`value = prior^(K/(n+K)) · measured^(n/(n+K)),  K = 8, n = clean reviews`}
-        </pre>
+        <Eq
+          n="9"
+          tex="\phi \;=\; \pi^{\,K/(n+K)} \cdot \mu^{\,n/(n+K)}, \qquad K = 8,\; n = \text{clean reviews}"
+        />
+        <p className="dim">
+          with <M tex="\pi" /> the benchmark prior and <M tex="\mu" /> this fleet&rsquo;s measured
+          clean composite, both on a 0–1 scale.
+        </p>
         <p className="panel-sub">
           <strong>K = 8 is deliberately higher</strong> than the estimator&rsquo;s cost factor (K=5) or
           the pace factor (K=4): a quality composite is graded by a peer LLM against a rubric nobody
@@ -166,17 +180,18 @@ value     = max(0, 1 − shortfall / 0.25)`}
       </section>
 
       <section className="doc-section">
-        <h3>4. Price — logarithmic distance from the cheapest candidate in the field</h3>
+        <h3>5.4 Price — logarithmic distance from the cheapest candidate in the field</h3>
         <p className="panel-sub">
-          <code>price = {report.priceFormula}</code>, currently{' '}
-          <span className="num">{report.priceWeight.toFixed(3)}</span> at cost{' '}
+          <M tex={`\\lambda_{\\mathrm{price}} = ${weightFormulaTex(report.priceFormula)}`} />,
+          currently <span className="num">{report.priceWeight.toFixed(3)}</span> at cost{' '}
           {report.objective.cost.toFixed(2)}. Every candidate in one decision is compared to the
           cheapest estimate in that same field — never to a fixed dollar figure, since what counts as
           expensive depends entirely on what else is on offer this tick.
         </p>
-        <pre className="code-block">
-{`value = clamp(log(cost / cheapest) / log(8), 0, 1)`}
-        </pre>
+        <Eq
+          n="10"
+          tex="x_{\mathrm{price}} \;=\; \operatorname{clamp}\!\left(\frac{\ln\left(\hat{C}(w,m) / \min_{(w',m')} \hat{C}(w',m')\right)}{\ln 8},\; 0,\; 1\right)"
+        />
         <p className="dim">
           0 for the cheapest candidate, 1.0 at 8× its cost or beyond. Priced in dollars when every
           candidate in the field has a money estimate; falls back to priced tokens for the whole field
@@ -186,7 +201,7 @@ value     = max(0, 1 − shortfall / 0.25)`}
       </section>
 
       <section className="doc-section">
-        <h3>5. Exploration — spending a little to stop the score starving itself</h3>
+        <h3>5.5 Exploration — spending a little to stop the score starving itself</h3>
         <p className="panel-sub">
           A model with no prior and no clean review scores 0 for fitness, so the arithmetic alone would
           never route to it — and a model that never runs is never measured, which looks like evidence
@@ -206,8 +221,12 @@ value     = max(0, 1 − shortfall / 0.25)`}
       </section>
 
       <section className="doc-section">
-        <h3>6. This fleet, right now</h3>
-        <table className="tbl">
+        <h3>5.6 This fleet, right now</h3>
+        <table className="tbl tbl--paper">
+          <caption>
+            <strong>Table 12.</strong> Every priced (account, model) pair on this fleet and the
+            numbers behind its <code>fitness</code> and <code>price</code> terms.
+          </caption>
           <thead>
             <tr>
               <th>Account</th>

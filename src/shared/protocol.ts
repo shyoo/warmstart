@@ -6,7 +6,7 @@ import type {
   ReviewQueuePage,
   UngradedTask
 } from './quality.js'
-import type { StatisticsReport } from './statistics.js'
+import type { StatisticsReport, StatisticsWindow } from './statistics.js'
 import type { ModelReport, RoutingDecisionPage, VelocityReport } from './routing.js'
 import type {
   Approval,
@@ -1978,7 +1978,7 @@ export interface RpcMap {
    * over the **same** window of finished tasks. Three calls would let a task land between them and
    * leave a reader comparing columns drawn from two different sample sets.
    */
-  'statistics.report': { params: void; result: StatisticsReport }
+  'statistics.report': { params: { window?: StatisticsWindow } | void; result: StatisticsReport }
   /** The tasks nothing has graded, newest first — what the grade button would work through. */
   'quality.ungraded': { params: { limit?: number }; result: UngradedTask[] }
   /**

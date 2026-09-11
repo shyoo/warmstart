@@ -69,8 +69,8 @@ thing entirely. See [`glossary.md`](glossary.md).
 | `Overview` `Controller` `Conversations` | dashboard, the controller chat, and conversation history |
 | `Project` `ProjectSettings` `Projects` | the project routes and the policy tier |
 | `NewProject` | the add-project wizard: three steps, one modal, `lib/newproject.ts` holds its rules |
-| `Cost` | what the scheduler chose and why |
-| `Statistics` | what finished tasks actually cost, took and scored — three tabs, one RPC |
+| `RoutingModel` `RoutingOverview` `QualityModel` `CostModel` `VelocityModel` `ModelsModel` `Math` | the routing model, written up as a paper: abstract, contents, five numbered sections, KaTeX for the arithmetic |
+| `Statistics` | what finished tasks actually cost, took and scored — three tabs, one RPC, a window control |
 | `LooseEnds` | work that exists and is going nowhere → [`landing.md`](landing.md) |
 | `Doctor` | which CLIs were found, who is signed in, how old each reading is, what is unverifiable |
 | `Logs` | the daemon's log, live and filterable, ring-buffered so a late window sees the past |
@@ -164,27 +164,65 @@ breaks ties, so two open entries still have a stable order.
 ⛔ **Analytics holds three pages, and they answer different questions.** *Routing Model* explains a
 choice: every number on it is shrunk toward a prior, blended or clamped, because it is about to be
 acted on. *Statistics* (`components/Statistics.tsx`, one `statistics.report` call for all three tabs)
-describes what happened: nothing on it is smoothed. Price, Velocity and Quality each fold the last
-200 finished tasks into an agent → model → effort tree, **re-folding the raw samples at every rung**
-rather than averaging the rung below, and every table prints `n` beside its percentiles. The two
-pages will disagree — a shrunk pace factor is not a measured p50 — and the page says so rather than
-reconciling them quietly. Price additionally names its basis per row: `subs`, `API rate` or `mixed`,
-since averaging an amortised share of a flat fee together with money billed on top means nothing —
-and the model rung (with the effort rungs under it) is split one row per basis, so a model billed
-both ways reads as e.g. *Opus (subs)* beside *Opus (mixed)* while the agent row above still folds
-everything.
+describes what happened: nothing on it is smoothed. Price, Velocity and Quality each fold finished
+tasks into an agent → model → effort tree, **re-folding the raw samples at every rung** rather than
+averaging the rung below, and every table prints `n` beside its percentiles. ⭐ **How far back it
+reads is the reader's choice** (t361): the *Window* control in the head reads the last 200 finished
+tasks (the same ceiling `paceFactors` uses, so the two surfaces agree about which tasks exist) or
+*all* of them, remembered per display in `localStorage` (`readStatisticsWindow`, `prefs.ts`) and
+sent as `{ window }`; the report echoes `window` and a `sampleLimit` of `null` for the unbounded
+read, and the daemon reads the default for anything but the literal `all`. The two pages will
+disagree — a shrunk pace factor is not a measured p50 — and the page says so rather than reconciling
+them quietly. Price additionally names its basis per row: `subs`, `API rate` or `mixed`, since
+averaging an amortised share of a flat fee together with money billed on top means nothing — and the
+model rung (with the effort rungs under it) is split one row per basis, so a model billed both ways
+gets a row per basis while the agent row above still folds everything.
 ⚠️ An `unknown` renders `n/a`, never `$0.00`, and the benchmark prior and fitness columns are drawn
 on **model** rows only — a prior is published per model, so there is no prior for `high` alone.
+⭐ Quality draws the same chart as the other two tabs, over each row's `distribution` of **clean**
+composites (`QualityStatRow.distribution`, whose `average` *is* `cleanComposite`); a row nothing
+clean has graded has an empty distribution and no bar — an ungraded model has no distribution, not
+a short one.
 
 ⛔ **The chart names the harness as well as the model, and the table does not have to.** Its bars are
 model rows, which in a table are indented under the agent row that owns them; a chart has no such
 parent, and `claude-sonnet-4-6` is served both by Claude Code and by Antigravity out of different
 subscriptions at different prices. So `graphLabel` prints *Antigravity · Sonnet 4.6*, read off the
 agent rows in the same report rather than off the adapter registry — the chart names only what the
-table beneath it is folding. On the price chart each bar also carries its basis in parentheses
-(*Opus 4.6 (subs)*), because the split model rung would otherwise draw two same-named bars. The
-subscription rows and the API/mixed rows are drawn in separate charts with separate axes: an overage
-must not flatten the subscription distributions it is meant to be compared against.
+table beneath it is folding. The subscription rows and the API/mixed rows are drawn in separate
+charts with separate axes: an overage must not flatten the subscription distributions it is meant to
+be compared against. ⛔ A bar carries its basis in parentheses (*Opus 4.6 (mixed)*) **only in a chart
+that holds more than one basis** — under a title that already reads *Subscription*, *(subs)* said the
+same thing twice and took the width the model name needed (t361). The label column is sized to the
+longest label by `labelColumn` — the type steps down from 12 to 11 to 10 before anything is cut —
+because a chart whose labels cannot be read is not a comparison, whatever its bars say.
+
+⭐ **Routing Model is a paper, and is set as one** (t361; `components/RoutingModel.tsx`, `.paper` in
+`app.css`). It is the page where an operator decides whether to trust the scheduler, and a scoreboard
+invites a glance where a paper invites checking: a title (*Routing Model v1.0*, `ROUTING_MODEL_VERSION`
+in `@shared/routing.ts`), an abstract, a contents strip, and five numbered sections — §1 the
+introduction, motivation and the model itself, §2–§4 one per axis, §5 models — in a single measured
+serif column with captioned, booktabs-ruled tables and the arithmetic typeset by **KaTeX**
+(`components/Math.tsx`: `<M>` inline, `<Eq>` display with a caller-set number). ⛔ **Only program
+constants reach KaTeX** — TeX literals in components, or `WEIGHT_FORMULAS` run through `lib/tex.ts` —
+never agent output or operator text; `trust` is off. ⛔ **Table 1 is not typed twice.** The weight
+formulas, their signs and the balanced column come from `WEIGHT_FORMULAS`, `WEIGHT_SIGNS` and
+`evaluateWeightFormula` in `@shared/routing.ts` — the strings the scheduler stamps on every stored
+decision, checked against `weights()` by `cost.test.ts` — and `tex.test.ts` typesets every one of them
+with errors *on*. ⚠️ The section tabs keep their one-word labels (the UI suite clicks them by text);
+the `§n` is a CSS counter, which `innerText` does not include. ⚠️ Every measured figure the prose
+quotes names its page and date, because a motivating example that invents its numbers teaches the
+reader to distrust the real ones underneath. ⚠️ A shell heredoc on this platform drops one backslash
+from every `\` — `tex.ts` was written that way once and `\mathrm{cost}` typeset as six italic letters
+without complaint; `tex.test.ts` now pins the backslash, and TeX-bearing files are written with the
+Edit tool.
+
+⛔ **The scored table on Routing Model › Quality is grouped by agent, not ordered by score.**
+(`groupKeys`, `QualityModel.test.tsx`.) One head row per agent — *Claude Code · 2 models · 7
+reviews* — with its models beneath it, agents by label and models by label within each, so a row
+does not move when a grade lands; the number to compare on is in the row and the order is for finding
+the row. The flat list ordered by composite put *Opus 5 · Claude Code* three rows from *Sonnet 5 ·
+Claude Code* and left the reader to regroup it by eye (t361).
 
 ⚠️ **A task can be taken out of all of it, from its own thread.** The `statistics` row in the thread's
 right pane toggles `Task.excludedFromStats`, and an excluded task leaves Statistics, the pace factor
@@ -249,8 +287,9 @@ eligible review agent* with every candidate and its reason on hover, and a batch
 (`lib/agentname.ts`, `components/AgentLabel.tsx`.) `openai-compatible` is a transport, not a judge:
 it is Codex CLI on one account and whatever a local endpoint is serving on another, and *graded by
 openai-compatible* names neither. So *Work by*, *Graded by*, the batch's *Reviewer* column and the
-*Model / agent* and *Graded on* tables on Routing Model › Quality all lead with the model and put the
-adapter's own label beside it — *GPT 5.6 Terra · Codex CLI*. ⚠️ The labels come from the adapters
+*Graded on* table on Routing Model › Quality all lead with the model and put the adapter's own label
+beside it — *GPT 5.6 Terra · Codex CLI* — and the scored table there groups models under the agent's
+label for the same reason. ⚠️ The labels come from the adapters
 themselves (`ReviewQueuePage.adapterLabels`), not from a vendor table in the renderer that would go
 stale the day one shipped, and the exact `adapter/model` slugs are in every `title`, because the
 operator who needs the id is the one debugging a routing mistake. ⛔ A review that never recorded its

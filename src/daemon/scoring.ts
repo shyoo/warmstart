@@ -2,6 +2,7 @@ import { canWork } from '@shared/protocol.js'
 import type { QuotaWindow, Session, Worker } from '@shared/protocol.js'
 import type { Objective, Project, Task } from '@shared/tasks.js'
 import { windowHighWater, WINDOW_HIGH_WATER } from '@shared/tasks.js'
+import { WEIGHT_SIGNS } from '@shared/routing.js'
 import { adapter } from './adapters/index.js'
 import { paceFactors, paceFor, paceValue, type PaceFactors } from './pace.js'
 import {
@@ -895,22 +896,11 @@ export interface ScoreBreakdown {
   terms: ScoreTerm[]
 }
 
-/** The direction each weight pushes. ⛔ Must match the signs used in `scoreCandidate`. */
-const SIGN_OF: Record<keyof ReturnType<typeof weights>, 1 | -1> = {
-  cacheWarmth: 1,
-  contextHeld: 1,
-  contextRot: -1,
-  projectSwitch: -1,
-  quotaRisk: -1,
-  cold: -1,
-  capabilityFit: 1,
-  // ⛔ `+1` with a **signed** value, which is why it is not listed as a penalty. See `paceValue`:
-  // the term is positive for an agent measured faster than the fleet's centre and negative for one
-  // measured slower, so a single direction here would be a lie about half of its range.
-  pace: 1,
-  fitness: 1,
-  price: -1
-}
+/**
+ * The direction each weight pushes — `WEIGHT_SIGNS` in `@shared/routing.ts`, the one table the
+ * Routing Model page prints and this sum uses. ⛔ Must match the signs used in `scoreCandidate`.
+ */
+const SIGN_OF: Record<keyof ReturnType<typeof weights>, 1 | -1> = WEIGHT_SIGNS
 
 /** `score = Σ sign × weight × value`, and nothing else. */
 function breakdownOf(

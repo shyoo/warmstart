@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useState } from 'react'
-import type { QualityReport, UngradedTask } from '@shared/quality'
+import { Fragment, useCallback, useEffect, useState } from 'react'
+import type { QualityKey, QualityReport, UngradedTask } from '@shared/quality'
 import { RUBRIC_DIMENSIONS, type RubricDimension } from '@shared/review'
 import { rpc, useDaemonEvents } from '../lib/daemon'
 import { when } from '../lib/format'
 import { modelLabel } from '../lib/modelname'
 import { AgentLabel } from './AgentLabel'
+import { Eq, M } from './Math'
 import { errorMessage } from '@shared/errors.js'
 
 /**
@@ -62,7 +63,7 @@ export function QualityModel({
   return (
     <div className="stack">
       <section className="doc-section">
-        <h3>1. Where a quality number comes from</h3>
+        <h3>2.1 Where a quality number comes from</h3>
         <p className="panel-sub">
           Every task on this fleet is run <strong>once</strong>, for cost reasons. One run produces no
           comparison: it tells you the task finished, not whether it finished well. The run&rsquo;s
@@ -85,7 +86,7 @@ export function QualityModel({
       </section>
 
       <section className="doc-section">
-        <h3>2. How the peer review works, in plain language</h3>
+        <h3>2.2 How the peer review works, in plain language</h3>
         <ol className="doc-list">
           <li>
             <strong>A task finishes.</strong> The daemon works out whose work it is: the adapter of
@@ -155,15 +156,20 @@ export function QualityModel({
       </section>
 
       <section className="doc-section">
-        <h3>3. The rubric</h3>
+        <h3>2.3 The rubric</h3>
         <p className="panel-sub">
           Seven dimensions, each scored 0–10 against five described anchor states the judge
           interpolates between — never a bare line to pick a number off. A dimension that does not
           apply is scored <code>null</code>, not 0, and the composite renormalises over what was
           actually scored: a pure-CSS change has no test coverage to grade and must not be punished
-          for it.
+          for it. For a review scoring the set <M tex="D" /> of applicable dimensions,
         </p>
-        <table className="tbl">
+        <Eq n="4" tex="\text{composite} \;=\; \frac{\sum_{d \in D} \omega_d\, s_d}{\sum_{d \in D} \omega_d}, \qquad s_d \in [0, 10]" />
+        <table className="tbl tbl--paper">
+          <caption>
+            <strong>Table 4.</strong> The rubric in force, with the weight <M tex="\omega_d" /> of each
+            dimension.
+          </caption>
           <thead>
             <tr>
               <th>Dimension</th>
@@ -190,7 +196,7 @@ export function QualityModel({
       </section>
 
       <section className="doc-section">
-        <h3>4. What each agent and model has scored</h3>
+        <h3>2.4 What each agent and model has scored</h3>
         {report.keys.length === 0 ? (
           <p className="dim">
             Nothing has been graded yet, so there is no per-model quality to show. Grade some finished
@@ -198,10 +204,14 @@ export function QualityModel({
           </p>
         ) : (
           <>
-            <table className="tbl">
+            <table className="tbl tbl--paper tbl--grouped">
+              <caption>
+                <strong>Table 5.</strong> Measured quality per agent and model, grouped by the agent
+                that ran the work. <em>Clean</em> excludes mixed-authorship and leaked reviews.
+              </caption>
               <thead>
                 <tr>
-                  <th>Model / agent</th>
+                  <th>Agent / model</th>
                   <th className="tbl-num">Clean mean</th>
                   <th className="tbl-num">All</th>
                   <th className="tbl-num">n (clean/all)</th>
@@ -215,33 +225,43 @@ export function QualityModel({
                 </tr>
               </thead>
               <tbody>
-                {report.keys.map((key) => (
-                  <tr key={`${key.adapterId}/${key.model ?? '?'}`}>
-                    {/* ⛔ The model leads. `openai-compatible` is a transport, and the two things
-                        it reaches here — Codex CLI and a local endpoint — are not one agent whose
-                        quality can be averaged into a single row's worth of number. */}
-                    <td className="tbl-strong">
-                      <AgentLabel
-                        adapterId={key.adapterId}
-                        model={key.model}
-                        labels={report.adapterLabels}
-                      />
-                    </td>
-                    <td className="tbl-num num">{fmt(key.cleanComposite)}</td>
-                    <td className="tbl-num num dim">{fmt(key.composite)}</td>
-                    <td className="tbl-num num">
-                      {key.clean}/{key.samples}
-                    </td>
-                    <td className="tbl-num num dim">
-                      {key.worst === null ? 'n/a' : `${key.worst.toFixed(1)}–${(key.best ?? 0).toFixed(1)}`}
-                    </td>
-                    {RUBRIC_DIMENSIONS.map((d) => (
-                      <td key={d} className="tbl-num num dim">
-                        {fmt(key.dimensions[d] ?? null)}
+                {groupKeys(report.keys, report.adapterLabels).map((group) => (
+                  <Fragment key={group.adapterId}>
+                    {/* ⛔ One header row per agent, then its models beneath it. The table used to
+                        be one flat list ordered by score, which put *Opus 5 · Claude Code* three
+                        rows away from *Sonnet 5 · Claude Code* and left the reader to regroup it
+                        by eye — the one comparison the page is for. */}
+                    <tr className="tbl-group-head">
+                      <td colSpan={6 + RUBRIC_DIMENSIONS.length} className="tbl-strong">
+                        {group.label}
+                        <span className="dim">
+                          {' '}· {group.keys.length} model{group.keys.length === 1 ? '' : 's'} ·{' '}
+                          {group.reviews} review{group.reviews === 1 ? '' : 's'}
+                        </span>
                       </td>
+                    </tr>
+                    {group.keys.map((key) => (
+                      <tr key={`${key.adapterId}/${key.model ?? '?'}`} className="tbl-group-row">
+                        <td title={`${key.adapterId} / ${key.model ?? 'model not recorded'}`}>
+                          {modelLabel(key.model) ?? <span className="dim">model not recorded</span>}
+                        </td>
+                        <td className="tbl-num num">{fmt(key.cleanComposite)}</td>
+                        <td className="tbl-num num dim">{fmt(key.composite)}</td>
+                        <td className="tbl-num num">
+                          {key.clean}/{key.samples}
+                        </td>
+                        <td className="tbl-num num dim">
+                          {key.worst === null ? 'n/a' : `${key.worst.toFixed(1)}–${(key.best ?? 0).toFixed(1)}`}
+                        </td>
+                        {RUBRIC_DIMENSIONS.map((d) => (
+                          <td key={d} className="tbl-num num dim">
+                            {fmt(key.dimensions[d] ?? null)}
+                          </td>
+                        ))}
+                        <td className="tbl-when">{key.lastGradedAt ? when(key.lastGradedAt) : '—'}</td>
+                      </tr>
                     ))}
-                    <td className="tbl-when">{key.lastGradedAt ? when(key.lastGradedAt) : '—'}</td>
-                  </tr>
+                  </Fragment>
                 ))}
               </tbody>
             </table>
@@ -257,8 +277,12 @@ export function QualityModel({
 
       {report.reviewers.length > 0 && (
         <section className="doc-section">
-          <h3>5. Who has been grading, and how generously</h3>
-          <table className="tbl">
+          <h3>2.5 Who has been grading, and how generously</h3>
+          <table className="tbl tbl--paper">
+            <caption>
+              <strong>Table 6.</strong> Each grader, the model it actually graded on, and the
+              distribution of the scores it gave.
+            </caption>
             <thead>
               <tr>
                 <th>Reviewer</th>
@@ -325,7 +349,7 @@ export function QualityModel({
       )}
 
       <section className="doc-section">
-        <h3>{report.reviewers.length > 0 ? '6' : '5'}. Ungraded work</h3>
+        <h3>{report.reviewers.length > 0 ? '2.6' : '2.5'} Ungraded work</h3>
         <div className="metric-grid">
           <Tile value={String(report.ungradedTasks)} label="finished tasks with no grade" />
           {report.failures.map((f) => (
@@ -350,7 +374,7 @@ export function QualityModel({
         {ungraded.length > 0 && (
           <>
             <h4 className="doc-h4">Next in line</h4>
-            <table className="tbl">
+            <table className="tbl tbl--paper">
               <thead>
                 <tr>
                   <th>Task</th>
@@ -382,6 +406,37 @@ export function QualityModel({
       </section>
     </div>
   )
+}
+
+/**
+ * The scored keys, grouped by the agent that ran the work and ordered so the table reads
+ * *Claude Code › Opus 5, Sonnet 5 · Codex CLI › GPT 5.6* rather than as one list sorted by score.
+ *
+ * ⚠️ Agents by label, models by label within each — a fixed order, so a row does not move when a
+ * grade lands. The number to compare on is printed in the row; the order is for finding the row.
+ */
+export function groupKeys(
+  keys: QualityKey[],
+  labels: Record<string, string>
+): Array<{ adapterId: string; label: string; reviews: number; keys: QualityKey[] }> {
+  const byAdapter = new Map<string, QualityKey[]>()
+  for (const key of keys) {
+    const list = byAdapter.get(key.adapterId) ?? []
+    list.push(key)
+    byAdapter.set(key.adapterId, list)
+  }
+  const name = (id: string): string => labels[id] ?? id
+  // ⚠️ A key with no recorded model sorts last, after every named model, so the honest gap sits at
+  //    the bottom of its group rather than at the top of the table.
+  const modelName = (key: QualityKey): string => modelLabel(key.model) ?? '\uffff'
+  return [...byAdapter.entries()]
+    .sort((a, b) => name(a[0]).localeCompare(name(b[0])))
+    .map(([adapterId, list]) => ({
+      adapterId,
+      label: name(adapterId),
+      reviews: list.reduce((n, k) => n + k.samples, 0),
+      keys: [...list].sort((a, b) => modelName(a).localeCompare(modelName(b)))
+    }))
 }
 
 function Tile({ value, label }: { value: string; label: string }): React.JSX.Element {

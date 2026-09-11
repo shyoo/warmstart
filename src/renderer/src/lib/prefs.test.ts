@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import type { TaskView } from '@shared/tasks'
 import {
+  readStatisticsWindow,
+  writeStatisticsWindow,
   readFleetDensity,
   readTaskColumns,
   writeFleetDensity,
@@ -282,5 +284,43 @@ describe('which page of the task list you were reading', () => {
     expect(() => writeTaskPage(taskListSignature(list), 2)).not.toThrow()
     stub(null)
     expect(readTaskPage(taskListSignature(list))).toBe(0)
+  })
+})
+
+/** t361: how far back Analytics › Statistics reads is the reader’s choice, and it has to survive a restart. */
+describe('the statistics window', () => {
+  const stub = (store: Record<string, string> | null, throws = false): void => {
+    const storage = {
+      getItem: (k: string) => {
+        if (throws) throw new Error('site data disabled')
+        return store?.[k] ?? null
+      },
+      setItem: (k: string, v: string) => {
+        if (throws) throw new Error('site data disabled')
+        if (store) store[k] = v
+      }
+    }
+    ;(globalThis as { window?: unknown }).window = { localStorage: store === null ? null : storage }
+  }
+
+  afterEach(() => {
+    delete (globalThis as { window?: unknown }).window
+  })
+
+  it('reads the bounded window by default, and after any value that is not the literal all', () => {
+    stub({})
+    expect(readStatisticsWindow()).toBe('recent')
+    const store: Record<string, string> = {}
+    stub(store)
+    writeStatisticsWindow('all')
+    expect(readStatisticsWindow()).toBe('all')
+    store[Object.keys(store)[0] as string] = 'everything'
+    expect(readStatisticsWindow()).toBe('recent')
+  })
+
+  it('is never worth a blank screen', () => {
+    stub({}, true)
+    expect(readStatisticsWindow()).toBe('recent')
+    expect(() => writeStatisticsWindow('all')).not.toThrow()
   })
 })

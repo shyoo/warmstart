@@ -1,4 +1,5 @@
 import { TASK_VIEWS, type TaskSort, type TaskView } from '@shared/tasks'
+import type { StatisticsWindow } from '@shared/statistics'
 import { appKey } from './storagekeys'
 
 /**
@@ -272,6 +273,33 @@ export function writeQualityGradableOnly(gradableOnly: boolean): void {
 
 
 
+
+const STATISTICS_WINDOW_KEY = appKey('statisticsWindow')
+
+/**
+ * How far back Analytics › Statistics reads: the last 200 finished tasks, or every one.
+ *
+ * ⛔ Only the one value opts in. Anything else — absent, empty, a window that has since been
+ * renamed — reads as `recent`, because the default has to be the bounded read. Per-display, in
+ * `localStorage`, on the precedent every other preference here sets.
+ */
+export function readStatisticsWindow(): StatisticsWindow {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return 'recent'
+    return window.localStorage.getItem(STATISTICS_WINDOW_KEY) === 'all' ? 'all' : 'recent'
+  } catch {
+    return 'recent'
+  }
+}
+
+export function writeStatisticsWindow(value: StatisticsWindow): void {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return
+    window.localStorage.setItem(STATISTICS_WINDOW_KEY, value)
+  } catch {
+    // A preference that cannot be saved is not an error worth showing anybody.
+  }
+}
 
 const TASK_PAGE_KEY = appKey('taskPage')
 

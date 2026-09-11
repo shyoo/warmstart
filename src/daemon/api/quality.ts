@@ -106,7 +106,9 @@ export function apiQuality(_ctx: ApiContext): Pick<Api, QualityMethod> {
     'routing.velocity': () => velocityReport(),
     'routing.models': () => modelReport(),
     'quality.report': () => qualityReport(),
-    'statistics.report': () => statisticsReport(),
+    // ⚠️ Anything but the literal `all` reads the default window: a stale or mistyped preference
+    //    must not turn into an unbounded read.
+    'statistics.report': (p) => statisticsReport(Date.now(), p?.window === 'all' ? 'all' : 'recent'),
     'quality.ungraded': (p) => ungradedTasks(p?.limit ?? 25),
     'quality.queue': (p) =>
       reviewQueue(p?.filter ?? 'none', p?.limit ?? 25, p?.offset ?? 0, p?.gradableOnly ?? false),

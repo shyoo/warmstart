@@ -3,6 +3,8 @@ import type { VelocityReport } from '@shared/routing'
 import { rpc, useDaemonEvents } from '../lib/daemon'
 import { duration } from '../lib/format'
 import { errorMessage } from '@shared/errors.js'
+import { Eq, M } from './Math'
+import { weightFormulaTex } from '../lib/tex'
 
 /**
  * Analytics > Routing Model > Velocity.
@@ -44,14 +46,17 @@ export function VelocityModel(): React.JSX.Element {
   return (
     <div className="stack">
       <section className="doc-section">
-        <h3>1. How the scheduler finds an available worker</h3>
+        <h3>4.1 How the scheduler finds an available worker</h3>
         <p className="panel-sub">
           Availability is a <strong>gate</strong>, not a score. Before anything is weighed, every
           account is asked a series of yes/no questions, and failing one discards it outright rather
           than merely making it less attractive — a task that cannot run on account A may run on
           account B <em>right now</em>, and queueing behind A would be the wrong answer.
         </p>
-        <table className="tbl">
+        <table className="tbl tbl--paper">
+          <caption>
+            <strong>Table 9.</strong> The eligibility gates, in the order they are asked.
+          </caption>
           <thead>
             <tr>
               <th>Gate</th>
@@ -106,16 +111,17 @@ export function VelocityModel(): React.JSX.Element {
       </section>
 
       <section className="doc-section">
-        <h3>2. What velocity buys you in the score</h3>
+        <h3>4.2 What velocity buys you in the score</h3>
         <p className="panel-sub">
           Raising <code>velocity</code> in your objective vector does three separate things, none of
           them a switch:
         </p>
         <ul className="doc-list">
           <li>
-            <strong>It makes a cold start cheap.</strong> <code>cold = 0.8 + 2.0×cost − 0.7×velocity</code>
-            . Velocity-weighted work stops waiting for the account holding a warm prompt cache and
-            takes whichever one is free.
+            <strong>It makes a cold start cheap.</strong>{' '}
+            <M tex="\lambda_{\mathrm{cold}} = 0.8 + 2.0\,c - 0.7\,v" />. Velocity-weighted work
+            stops waiting for the account holding a warm prompt cache and takes whichever one is
+            free.
           </li>
           <li>
             <strong>It doubles effective concurrency.</strong> Above 0.5 velocity, a worker&rsquo;s
@@ -124,15 +130,15 @@ export function VelocityModel(): React.JSX.Element {
           </li>
           <li>
             <strong>It makes measured pace matter.</strong>{' '}
-            <code>pace = {report.paceFormula}</code>, currently{' '}
-            <span className="num">{report.paceWeight.toFixed(3)}</span> at velocity{' '}
+            <M tex={`\\lambda_{\\mathrm{pace}} = ${weightFormulaTex(report.paceFormula)}`} />,
+            currently <span className="num">{report.paceWeight.toFixed(3)}</span> at velocity{' '}
             {objective.velocity.toFixed(2)}.
           </li>
         </ul>
       </section>
 
       <section className="doc-section">
-        <h3>3. The pace term — learned from what tasks actually took</h3>
+        <h3>4.3 The pace term — learned from what tasks actually took</h3>
         <p className="panel-sub">
           The scheduler keeps a per-agent, per-model median of how long a finished task has actually
           taken, and prefers the faster account when nothing else separates two candidates. Three
@@ -154,18 +160,21 @@ export function VelocityModel(): React.JSX.Element {
           </li>
           <li>
             <strong>Shrunk towards 1 by how few samples it rests on.</strong>{' '}
-            <code>factor = ratio^(n/(n+4))</code>, in log space so that ×4 and ×¼ are pulled by the
-            same proportion. One finished task can never mint a 4× multiplier.
+            <M tex="f = r^{\,n/(n+4)}" />, in log space so that ×4 and ×¼ are pulled by the same
+            proportion. One finished task can never mint a 4× multiplier.
           </li>
         </ul>
-        <pre className="code-block">
-{`value  = −log(factor) / log(4),  clamped to [−1, +1]
-       = +1  measured 4x faster than the fleet's median task
-       =  0  exactly at the median — or nothing measured yet
-       = −1  measured 4x slower
-
-contribution = +${report.paceWeight.toFixed(3)} × value`}
-        </pre>
+        <Eq
+          n="7"
+          tex="x_{\mathrm{pace}} \;=\; \operatorname{clamp}\!\left(-\frac{\ln f}{\ln 4},\; -1,\; +1\right), \qquad f = \left(\frac{\tilde{t}_{\text{agent, model}}}{\bar{t}_{\text{fleet}}}\right)^{n/(n+4)}"
+        />
+        <p className="panel-sub">
+          so <M tex="+1" /> is measured four times faster than the fleet&rsquo;s median task,{' '}
+          <M tex="0" /> is exactly at the median — or nothing measured yet — and <M tex="-1" /> is
+          four times slower; the contribution is{' '}
+          <M tex={`+${report.paceWeight.toFixed(3)} \\times x_{\\mathrm{pace}}`} /> at this
+          objective.
+        </p>
         <p className="dim">
           ⛔ This is the only <em>signed</em> value in the whole score, and deliberately: every other
           term measures a quantity with a floor — there is no such thing as less-than-no prompt cache
@@ -184,7 +193,7 @@ contribution = +${report.paceWeight.toFixed(3)} × value`}
       </section>
 
       <section className="doc-section">
-        <h3>4. This fleet, right now</h3>
+        <h3>4.4 This fleet, right now</h3>
         <div className="metric-grid">
           <div className="metric-tile">
             <div className="metric-tile-value">
@@ -202,7 +211,11 @@ contribution = +${report.paceWeight.toFixed(3)} × value`}
           </div>
         </div>
 
-        <table className="tbl">
+        <table className="tbl tbl--paper">
+          <caption>
+            <strong>Table 10.</strong> Every account, its availability, and the pace term it would
+            score right now.
+          </caption>
           <thead>
             <tr>
               <th>Account</th>
