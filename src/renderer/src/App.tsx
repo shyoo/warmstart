@@ -261,70 +261,65 @@ export function App(): React.JSX.Element {
 
   return (
     <div className={`shell${sidebarHidden ? ' shell--sidebar-hidden' : ''}`}>
+      {/*
+        The window's caption area, which this app draws itself.
+
+        ⛔ There is no second title bar under this one. `captionOptions` in `main/titlebar.ts`
+        hides the native one and leaves only the platform's window buttons, overlaid at the right —
+        so everything here has to stay inside `env(titlebar-area-*)`, and every control needs
+        `-webkit-app-region: no-drag` or the strip's drag region swallows its clicks.
+      */}
       <header className="titlebar">
         <div className="titlebar-nav">
-          <IconButton label={sidebarHidden ? 'Show panel' : 'Hide panel'} disabled={false} onClick={() => setSidebarHidden((v) => !v)}>
-            <path d={sidebarHidden ? 'M4 3 L4 13 M7 3 L12 8 L7 13' : 'M12 3 L7 8 L12 13 M4 3 L4 13'} />
+          <IconButton
+            label={sidebarHidden ? 'Show panel' : 'Hide panel'}
+            disabled={false}
+            onClick={() => setSidebarHidden((v) => !v)}
+          >
+            <path d="M2.5 3 H13.5 V13 H2.5 Z" />
+            <path d={sidebarHidden ? 'M6.5 3 V13' : 'M6.5 3 V13 M6.5 8 H2.5'} />
           </IconButton>
-          <IconButton label="Back" disabled={past.length === 0} onClick={goBack}><path d="M10 3 L5 8 L10 13" /></IconButton>
-          <IconButton label="Forward" disabled={future.length === 0} onClick={goForward}><path d="M6 3 L11 8 L6 13" /></IconButton>
-          <IconButton label="Refresh" disabled={!connected || refreshing} onClick={() => void reload()}><path d="M13 8a5 5 0 1 1-1.6-3.7" /><path d="M13 2.5 L13 5.2 L10.3 5.2" /></IconButton>
-          <IconButton label="Zoom out (Ctrl -)" disabled={zoom <= MIN_ZOOM} onClick={zoomOut}><path d="M3 8 H13" /></IconButton>
-          <IconButton label="Zoom in (Ctrl +)" disabled={zoom >= MAX_ZOOM} onClick={zoomIn}><path d="M8 3 V13 M3 8 H13" /></IconButton>
+          <IconButton label="Back" disabled={past.length === 0} onClick={goBack}>
+            <path d="M10 3 L5 8 L10 13" />
+          </IconButton>
+          <IconButton label="Forward" disabled={future.length === 0} onClick={goForward}>
+            <path d="M6 3 L11 8 L6 13" />
+          </IconButton>
+          <IconButton
+            label="Refresh"
+            disabled={!connected || refreshing}
+            onClick={() => void reload()}
+          >
+            <path d="M13 8a5 5 0 1 1-1.6-3.7" />
+            <path d="M13 2.5 L13 5.2 L10.3 5.2" />
+          </IconButton>
+          <IconButton label="Zoom out (Ctrl -)" disabled={zoom <= MIN_ZOOM} onClick={zoomOut}>
+            <circle cx="6.5" cy="6.5" r="4" />
+            <path d="M9.5 9.5 L13.5 13.5" />
+            <path d="M4.5 6.5 L8.5 6.5" />
+          </IconButton>
+          {/* Only once the zoom is off 100%, and it is the control that puts it back. */}
+          {zoom !== DEFAULT_ZOOM && (
+            <button className="zoom-badge" title="Reset zoom (Ctrl 0)" onClick={resetZoom}>
+              {Math.round(zoom * 100)}%
+            </button>
+          )}
+          <IconButton label="Zoom in (Ctrl +)" disabled={zoom >= MAX_ZOOM} onClick={zoomIn}>
+            <circle cx="6.5" cy="6.5" r="4" />
+            <path d="M9.5 9.5 L13.5 13.5" />
+            <path d="M4.5 6.5 L8.5 6.5" />
+            <path d="M6.5 4.5 L6.5 8.5" />
+          </IconButton>
         </div>
         <span className="titlebar-name">Warmstart</span>
-        <button className="btn btn--primary titlebar-new-task" onClick={() => openNewTask(route.kind === 'project' ? route.id : undefined)}>New task</button>
+        <button
+          className="btn btn--primary titlebar-new-task"
+          onClick={() => openNewTask(route.kind === 'project' ? route.id : undefined)}
+        >
+          New task
+        </button>
       </header>
       <aside className="sidebar">
-        <div className="brand">
-          <div className="brand-nav">
-            <IconButton label="Back" disabled={past.length === 0} onClick={goBack}>
-              <path d="M10 3 L5 8 L10 13" />
-            </IconButton>
-            <IconButton label="Forward" disabled={future.length === 0} onClick={goForward}>
-              <path d="M6 3 L11 8 L6 13" />
-            </IconButton>
-            <IconButton
-              label="Refresh"
-              disabled={!connected || refreshing}
-              onClick={() => void reload()}
-            >
-              <path d="M13 8a5 5 0 1 1-1.6-3.7" />
-              <path d="M13 2.5 L13 5.2 L10.3 5.2" />
-            </IconButton>
-          </div>
-          <div className="brand-zoom">
-            <IconButton
-              label="Zoom out (Ctrl -)"
-              disabled={zoom <= MIN_ZOOM}
-              onClick={zoomOut}
-            >
-              <circle cx="6.5" cy="6.5" r="4" />
-              <path d="M9.5 9.5 L13.5 13.5" />
-              <path d="M4.5 6.5 L8.5 6.5" />
-            </IconButton>
-            {zoom !== DEFAULT_ZOOM && (
-              <button
-                className="zoom-badge"
-                title="Reset zoom (Ctrl 0)"
-                onClick={resetZoom}
-              >
-                {Math.round(zoom * 100)}%
-              </button>
-            )}
-            <IconButton
-              label="Zoom in (Ctrl +)"
-              disabled={zoom >= MAX_ZOOM}
-              onClick={zoomIn}
-            >
-              <circle cx="6.5" cy="6.5" r="4" />
-              <path d="M9.5 9.5 L13.5 13.5" />
-              <path d="M4.5 6.5 L8.5 6.5" />
-              <path d="M6.5 4.5 L6.5 8.5" />
-            </IconButton>
-          </div>
-        </div>
-
         <nav className="nav-group">
           <h2>Overview</h2>
           <NavItem

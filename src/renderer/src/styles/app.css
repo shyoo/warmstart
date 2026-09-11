@@ -93,27 +93,48 @@ body {
   /* ⚠️ Three columns, and the middle one is the grab handle. A 1px border cannot be grabbed,
      and a resizer positioned *inside* the sidebar would scroll away with its content. */
   grid-template-columns: var(--sidebar-w) 4px 1fr;
-  grid-template-rows: 36px minmax(0, 1fr);
+  /* ⚠️ `auto`, not a constant: row one is the window's caption area and the platform decides how
+     tall that is. `.titlebar` measures it from `env(titlebar-area-height)`. */
+  grid-template-rows: auto minmax(0, 1fr);
   height: 100%;
 }
 
-/* Windows uses the native caption buttons through Electron's title-bar overlay. The renderer owns
-   the rest of this strip, so browser controls and the global composer are always one click away. */
+/*
+ * The window's caption area, drawn by this app.
+ *
+ * ⛔ **This row replaces the native title bar; it does not sit under one.** `main/titlebar.ts`
+ * hides the native caption and leaves only the platform's own window buttons, overlaid at one end
+ * of this strip — so the padding here is *where those buttons are not*, read from the three
+ * `titlebar-area` environment variables the overlay publishes. Hard-coding that inset was wrong
+ * twice over: the buttons are at the right on Windows and at the left on macOS, and their width
+ * changes with the window's scale factor.
+ *
+ * ⚠️ The fallbacks are the no-overlay case (Linux keeps its own frame), where nothing is reserved.
+ */
 .titlebar {
+  --caption-x: env(titlebar-area-x, 0px);
+  --caption-w: env(titlebar-area-width, 100vw);
   grid-column: 1 / -1;
   grid-row: 1;
+  position: relative;
   display: flex;
   align-items: center;
   gap: var(--sp-2);
-  padding: 0 146px 0 var(--sp-2);
+  /* Floored, because the overlay height follows the OS while the controls in here follow the
+     app's zoom, and a strip shorter than its own buttons clips them. */
+  height: max(34px, env(titlebar-area-height, 34px));
+  padding-left: max(var(--sp-2), var(--caption-x));
+  padding-right: calc(100vw - var(--caption-w) - var(--caption-x) + var(--sp-2));
   background: var(--color-surface);
   border-bottom: 1px solid var(--color-border);
+  /* ⛔ The whole strip drags the window, and every control in it opts back out below. Without the
+     no-drag half, a click on Back or New task moves the window instead of pressing the button. */
   -webkit-app-region: drag;
 }
 
 .titlebar-nav,
 .titlebar-new-task,
-.titlebar .icon-btn {
+.titlebar button {
   -webkit-app-region: no-drag;
 }
 
@@ -123,6 +144,9 @@ body {
   gap: 2px;
 }
 
+/* ⚠️ Centred on the window rather than laid out between the two groups, so the name does not move
+   when a control appears beside it — the zoom badge comes and goes. It takes no clicks at all, so
+   the strip's drag region keeps running underneath it and the window drags by its own title. */
 .titlebar-name {
   position: absolute;
   left: 50%;
@@ -143,12 +167,6 @@ body {
 .resizer,
 .main {
   grid-row: 2;
-}
-
-/* The sidebar used to carry navigation buttons. They now live in the title bar, leaving this as
-   navigation only. Hiding it gives the main surface the full window without changing the route. */
-.brand {
-  display: none;
 }
 
 .shell--sidebar-hidden {
@@ -192,21 +210,8 @@ body {
   overflow-y: auto;
 }
 
-.brand {
-  display: none;
-  align-items: center;
-  justify-content: space-between;
-  padding: var(--sp-4) var(--sp-3) var(--sp-3) var(--sp-4);
-}
-
-.brand-nav,
-.brand-zoom {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  flex: 0 0 auto;
-}
-
+/* The zoom readout, which is also the control that puts the zoom back to 100%. It lives in the
+   title bar beside the two magnifiers. */
 .zoom-badge {
   font-family: var(--font-mono);
   font-size: 10px;
@@ -2211,16 +2216,25 @@ body {
   padding: var(--sp-3);
 }
 
-.task-composer-modal-head {
+/* The composer's own head row: what this is, what it is filing into, and the way out. The project
+   picker sits with the title rather than on the pill row, because it is the one answer with no
+   default — see the comment on it in NewTask.tsx. */
+.composer-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  margin-bottom: var(--sp-2);
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-3);
 }
 
-.task-composer-modal-head h2 {
+.composer-head h2 {
   margin: 0;
   font-size: var(--text-title);
+  line-height: 1.2;
+}
+
+/* Pushes the close button to the far end, and leaves the picker beside the title. */
+.composer-head-project {
+  margin-right: auto;
 }
 
 .dialog-close {
@@ -5911,7 +5925,13 @@ select:focus-visible,
    few pixels tall with their options unreachable. Nothing at the root can clip it. */
 .pill-menu {
   position: fixed;
-  z-index: 120;
+  /*
+   * ⛔ **Above the modal shade (300), not merely above the page.** The menu is portalled to
+   * `<body>`, so it is a *sibling* of a dialog's shade rather than a descendant: at 120 every pill
+   * inside the task composer opened its menu underneath the dialog it belongs to, which read as a
+   * dropdown that was clipped away to nothing (t354 → t356).
+   */
+  z-index: 400;
   min-width: 200px;
   max-width: 380px;
   overflow-y: auto;

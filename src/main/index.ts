@@ -17,6 +17,7 @@ import { DaemonClient, daemonScriptPath, type DaemonStatus } from './daemon.js'
 import { DEFAULT_UI_SETTINGS, readUiSettings, writeUiSettings } from './uisettings.js'
 import { showWhenItCan } from './showwindow.js'
 import { trayIconPath } from './trayicon.js'
+import { captionOptions } from './titlebar.js'
 import { readWindowBounds, trackWindowBounds } from './windowstate.js'
 import { dataDir } from '../daemon/paths.js'
 import { appEnv } from '@shared/env.js'
@@ -239,7 +240,8 @@ function createWindow(): BrowserWindow {
     show: false,
     // Matches --color-bg in tokens.css so the window does not flash white before paint.
     backgroundColor: '#0e1013',
-    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    // ⛔ The caption area is this app's chrome; see titlebar.ts for why it is not the default.
+    ...captionOptions(process.platform),
     webPreferences: {
       preload: join(dirname, '../preload/index.cjs'),
       sandbox: true,

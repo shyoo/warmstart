@@ -196,6 +196,7 @@ export function NewTask({
   projects,
   preselectedProjectId,
   fleet,
+  onClose,
   onDone,
   onError
 }: {
@@ -204,6 +205,8 @@ export function NewTask({
   preselectedProjectId?: string
   /** The accounts that could take this, so one can be pinned and its CLI's models offered. */
   fleet: FleetEntry[]
+  /** Dismiss, drawn in this component's own head row beside the project it is filing into. */
+  onClose: () => void
   onDone: () => void | Promise<void>
   onError: (message: string) => void
 }): React.JSX.Element {
@@ -251,6 +254,18 @@ export function NewTask({
   const [saving, setSaving] = useState<'draft' | 'ready' | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const attachmentPickerRef = useRef<HTMLInputElement>(null)
+
+  /**
+   * ⚠️ Focus lands in the prompt, not on the close button. This opens as a modal over the whole
+   * window, and the one thing everybody who opened it came to do is type — including anyone
+   * returning to a paragraph the scratch kept, whose caret this puts at its end.
+   */
+  useEffect(() => {
+    const box = textareaRef.current
+    if (!box) return
+    box.focus()
+    box.setSelectionRange(box.value.length, box.value.length)
+  }, [])
   // ⚠️ Uploaded the moment they are added, so what the form carries is a list of ids.
   // ⚠️ Seeded from the scratch, which holds ids and no bytes: a restored attachment is the same
   // upload wearing a name instead of a thumbnail.
@@ -579,6 +594,42 @@ export function NewTask({
   return (
     <div className="composer">
       {/*
+        ⛔ **The project is the first control, not one of the pills.** It is the only setting with no
+        usable default — it decides the workspace, the branch and the policy every other control
+        inherits from, and `Send` is disabled until it is answered. On the pill row under the prompt
+        it read as one more remembered preference and sat at the far end of a line the eye has
+        already left; here it is where the person looks first, and it still just says its answer.
+      */}
+      <header className="composer-head">
+        <h2 id="new-task-title">New task</h2>
+        <PillSelect
+          className="composer-head-project"
+          ariaLabel="Project"
+          title="The project this task belongs to. It supplies the workspace, branch and project policy. Preselected from the project you were looking at, and always changeable."
+          muted={!projectId}
+          value={projectId}
+          label={projectId ? (projectNames.get(projectId) ?? projectId) : 'Choose project'}
+          options={[
+            {
+              value: '',
+              label: 'Choose project',
+              hint: 'required before this task can be saved or sent'
+            },
+            ...projects.map((p) => ({ value: p.id, label: p.name }))
+          ]}
+          onChange={setProjectId}
+        />
+        <button
+          className="dialog-close"
+          aria-label="Close new task"
+          title="Close"
+          onClick={onClose}
+        >
+          ×
+        </button>
+      </header>
+
+      {/*
         The ask itself, first and largest.
 
         ⚠️ A textarea, not a single-line input. What goes here is the prompt an agent receives
@@ -750,18 +801,6 @@ export function NewTask({
               )}
             />
 
-            <PillSelect
-              ariaLabel="Project"
-              title="Choose the project this task belongs to. It supplies the workspace, branch and project policy."
-              muted={!projectId}
-              value={projectId}
-              label={projectId ? (projectNames.get(projectId) ?? projectId) : 'Choose project'}
-              options={[
-                { value: '', label: 'Choose project', hint: 'required before this task can be saved or sent' },
-                ...projects.map((p) => ({ value: p.id, label: p.name }))
-              ]}
-              onChange={setProjectId}
-            />
             <span className="composer-gap" aria-hidden="true" />
             {!isConversation && (
               <PillSelect
@@ -915,40 +954,26 @@ export function NewTask({
                     />
                   </td>
                   <td>
-                    <div style={{ display: 'inline-flex', gap: '4px', alignItems: 'center' }}>
-                      <Pill
-                        ariaLabel="Wait for other tasks"
-                        title="This task is held at blocked until every task named here has completed."
-                        muted={dependsOn.length === 0}
-                        label={
-                          dependsOn.length === 0
-                            ? 'Depends on'
-                            : dependsOn.length === 1
-                              ? `Depends on t${depTasks[0]?.seq ?? '?'}`
-                              : `Depends on [${dependsOn.length}] tasks`
-                        }
-                        menu={() => (
-                          <DependencyMenu
-                            all={candidateTasks}
-                            chosen={dependsOn}
-                            onChange={setDependsOn}
-                            projectNames={projectNames}
-                          />
-                        )}
-                      />
-                      <PillSelect
-                        ariaLabel="Project"
-                        title="Choose the project this task belongs to. It supplies the workspace, branch and project policy."
-                        muted={!projectId}
-                        value={projectId}
-                        label={projectId ? (projectNames.get(projectId) ?? projectId) : 'Choose project'}
-                        options={[
-                          { value: '', label: 'Choose project', hint: 'required before this task can be saved or sent' },
-                          ...projects.map((p) => ({ value: p.id, label: p.name }))
-                        ]}
-                        onChange={setProjectId}
-                      />
-                    </div>
+                    <Pill
+                      ariaLabel="Wait for other tasks"
+                      title="This task is held at blocked until every task named here has completed."
+                      muted={dependsOn.length === 0}
+                      label={
+                        dependsOn.length === 0
+                          ? 'Depends on'
+                          : dependsOn.length === 1
+                            ? `Depends on t${depTasks[0]?.seq ?? '?'}`
+                            : `Depends on [${dependsOn.length}] tasks`
+                      }
+                      menu={() => (
+                        <DependencyMenu
+                          all={candidateTasks}
+                          chosen={dependsOn}
+                          onChange={setDependsOn}
+                          projectNames={projectNames}
+                        />
+                      )}
+                    />
                   </td>
                   <td>
                     <PillSelect

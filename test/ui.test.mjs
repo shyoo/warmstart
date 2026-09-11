@@ -306,27 +306,78 @@ try {
     JSON.stringify(sidebarFull)
   )
 
-  // ⛔ One row, with nav controls and zoom controls.
-  const brand = await evaluate(`
+  // ⛔ **One title bar, and it is ours.** t354 drew this strip *under* the native caption and the
+  // window carried two; the shell now hides the native one (`main/titlebar.ts`), which makes this
+  // row the top of the window. So: it starts at y=0, the sidebar and the work begin below it, the
+  // controls that used to be in the sidebar are in here, and none of them is inside the drag region
+  // that moves the window.
+  const titlebar = await evaluate(`
     JSON.stringify((() => {
-      const b = document.querySelector('.brand');
-      const nav = b?.querySelector('.brand-nav');
-      const zoom = b?.querySelector('.brand-zoom');
-      if (!b || !nav || !zoom) return { missing: true };
-      const br = b.getBoundingClientRect(), zr = zoom.getBoundingClientRect();
+      const strip = document.querySelector('.titlebar');
+      const sidebar = document.querySelector('.sidebar');
+      const work = document.querySelector('.main');
+      if (!strip || !sidebar || !work) return { missing: true };
+      const r = strip.getBoundingClientRect();
+      const style = getComputedStyle(strip);
+      const padLeft = parseFloat(style.paddingLeft), padRight = parseFloat(style.paddingRight);
+      const buttons = [...strip.querySelectorAll('button')];
       return {
-        navButtons: nav.querySelectorAll('button').length,
-        zoomButtons: zoom.querySelectorAll('button').length,
-        hasTitle: !!b.querySelector('h1'),
-        overflows: zr.right > br.right + 1
+        top: Math.round(r.top),
+        spansTheWindow: Math.round(r.width) >= Math.round(document.documentElement.clientWidth),
+        aboveTheSidebar: r.bottom <= sidebar.getBoundingClientRect().top + 1,
+        aboveTheWork: r.bottom <= work.getBoundingClientRect().top + 1,
+        controls: buttons.map(b => (b.getAttribute('aria-label') ?? b.innerText).trim()),
+        draggable: style.webkitAppRegion,
+        clickable: buttons.every(b => getComputedStyle(b).webkitAppRegion === 'no-drag'),
+        // The padding is the space the platform's own window buttons are overlaid into, read from
+        // env(titlebar-area-*) — so nothing of ours may be drawn inside it.
+        reservedForTheCaption: Math.round(Math.max(padLeft, padRight)),
+        insideTheCaption: buttons.every(b => {
+          const br = b.getBoundingClientRect();
+          return br.left >= r.left + padLeft - 1 && br.right <= r.right - padRight + 1;
+        }),
+        sidebarStillHasControls: !!sidebar.querySelector('.brand, .brand-nav, .brand-zoom')
       };
     })())
   `)
-  const b = JSON.parse(brand)
-  check('the navigation bar carries back, forward and refresh', b.navButtons === 3, brand)
-  check('the zoom bar carries zoom in and zoom out controls', b.zoomButtons >= 2, brand)
-  check('the app title is removed from the sidebar toolbar', b.hasTitle === false, brand)
-  check('nothing overflows the sidebar', b.overflows === false, brand)
+  const t = JSON.parse(titlebar)
+  check('the app draws its own title bar at the very top of the window', t.top === 0, titlebar)
+  check(
+    'and the sidebar and the work start below it, so the window has only one title bar',
+    t.spansTheWindow === true && t.aboveTheSidebar === true && t.aboveTheWork === true,
+    titlebar
+  )
+  check(
+    'it carries the panel toggle, back, forward, refresh, both zooms and New task',
+    ['Hide panel', 'Back', 'Forward', 'Refresh', 'Zoom out (Ctrl -)', 'Zoom in (Ctrl +)'].every(
+      (name) => t.controls?.includes(name)
+    ) && t.controls?.includes('New task'),
+    titlebar
+  )
+  // ⛔ Both halves. `drag` with no `no-drag` on the controls is a strip whose buttons move the window
+  // instead of doing anything, which is indistinguishable from a dead title bar.
+  check(
+    'the strip drags the window and its controls still take clicks',
+    t.draggable === 'drag' && t.clickable === true,
+    titlebar
+  )
+  check('nothing of ours is drawn under the window buttons', t.insideTheCaption === true, titlebar)
+  // ⚠️ Windows only, and it is the measurement that proves the *shell* half of the fix: the caption
+  // buttons are an overlay there (three of them, ~138px), so a reserved width of nothing means the
+  // renderer never learned about the overlay and the native title bar is still being drawn.
+  if (process.platform === 'win32') {
+    check(
+      'and the window-controls overlay reserved its width in this row',
+      t.reservedForTheCaption > 100,
+      titlebar
+    )
+  } else {
+    skip(
+      'and the window-controls overlay reserved its width in this row',
+      `no overlay on ${process.platform}: Windows gets titleBarOverlay, macOS its traffic lights, Linux keeps its own frame`
+    )
+  }
+  check('the controls it took over are gone from the sidebar', t.sidebarStillHasControls === false, titlebar)
 
   section('zero state')
   check(
@@ -1063,11 +1114,28 @@ try {
         muted: p.classList.contains('pill--muted'),
         disabled: p.disabled
       }));
+      const head = composer.querySelector('.composer-head');
+      const project = head?.querySelector('button.pill[aria-label="Project"]');
       return {
         pills,
         textarea: !!composer.querySelector('textarea.ask-input'),
         promptIsFirst:
           !!ask && !!bar && ask.getBoundingClientRect().bottom <= bar.getBoundingClientRect().top + 1,
+        // ⛔ The project is the one setting with no default, so it is in the head row with the
+        // title — not at the end of the pill row, which is where t354 left it.
+        isModal: !!composer.closest('.task-composer-modal[role="dialog"]'),
+        projectInTheHead: !!project,
+        projectOnThePillRow: pills.some(p => p.name === 'Project'),
+        projectIsTopLeft: !!project && !!ask &&
+          project.getBoundingClientRect().bottom <= ask.getBoundingClientRect().top + 1 &&
+          project.getBoundingClientRect().left <
+            head.getBoundingClientRect().left + head.getBoundingClientRect().width / 2,
+        closeIsTopRight: (() => {
+          const x = head?.querySelector('button[aria-label="Close new task"]');
+          if (!x || !head) return false;
+          const hr = head.getBoundingClientRect();
+          return x.getBoundingClientRect().right >= hr.right - 1;
+        })(),
         // The three things the old form did that this one must not: labelled rows, native pickers,
         // and the word "inherited" written out on every control that has a default.
         legacyRows: composer.querySelectorAll('.form-row').length,
@@ -1083,6 +1151,16 @@ try {
   const f = JSON.parse(filing)
   const pillNames = (f.pills ?? []).map((p) => p.name)
   check('the prompt is the first thing in the composer', f.promptIsFirst === true, filing)
+  check('the composer opens as a modal over the whole window', f.isModal === true, filing)
+  // ⛔ **Where, not merely whether.** The project decides the workspace, the branch and the policy
+  // every other control inherits, and `Send` is disabled until it is answered — so it is asked
+  // first, in the head row, with the way out at the other end of the same row.
+  check(
+    'the project is chosen at the top left, beside the title, and not from the pill row',
+    f.projectInTheHead === true && f.projectIsTopLeft === true && f.projectOnThePillRow === false,
+    filing
+  )
+  check('and the way out is at the top right of the same row', f.closeIsTopRight === true, filing)
   check(
     'and every setting is a pill under it rather than a labelled row',
     f.legacyRows === 0 && f.selects === 0 && f.pills?.length >= 6,
@@ -1247,7 +1325,7 @@ try {
     chat
   )
   check(
-    '⚠️ while keeping everything a conversation still chooses — account, model, priority, project',
+    '⚠️ while keeping everything a conversation still chooses — account, model, priority',
     ['Worker', 'Model', 'Priority'].every((n) => convo.names?.includes(n)),
     chat
   )
@@ -1360,6 +1438,56 @@ try {
     'the conversation policy offers inherit, reuse and fresh',
     ['inherit', 'on', 'off'].every((v) => sharingOptions.includes(v)),
     JSON.stringify(sharingOptions)
+  )
+  await closeMenus()
+
+  // ⛔ **A menu opened inside the modal has to paint above the modal's own shade.** It is portalled
+  // to `<body>`, which makes it a *sibling* of that shade rather than a descendant, and at the
+  // z-index it carried in t354 every dropdown in the composer opened underneath the dialog that
+  // owns it — reported as a drop-down that was clipped away. So this is hit-tested at the centre of
+  // a real option: "is the menu in the DOM" was true the whole time it was invisible.
+  await openPill('Project')
+  const reachable = await evaluate(`
+    (async () => {
+      // ⚠️ Asked of the daemon rather than assumed: this suite adds its project much later, so the
+      // honest count here is *however many exist now* plus the row that says one is required.
+      const known = await window.agentyard.rpc('project.list', {});
+      const pill = [...document.querySelectorAll('button.pill')]
+        .find(p => p.getAttribute('aria-label') === 'Project');
+      const menu = document.getElementById(pill?.getAttribute('aria-controls') ?? '');
+      const row = menu?.querySelector('[role="option"]');
+      if (!menu || !row) return JSON.stringify({ missing: true });
+      const r = row.getBoundingClientRect(), mr = menu.getBoundingClientRect();
+      const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      const rows = [...menu.querySelectorAll('[role="option"]')];
+      return JSON.stringify({
+        options: rows.length,
+        projects: known.length,
+        firstSaysItIsRequired: (rows[0]?.innerText ?? '').includes('Choose project'),
+        onTop: !!hit && menu.contains(hit),
+        covering: hit ? (hit.getAttribute('class') || hit.tagName) : null,
+        insideTheWindow:
+          mr.top >= -1 && mr.left >= -1 &&
+          mr.bottom <= window.innerHeight + 1 && mr.right <= window.innerWidth + 1,
+        height: Math.round(mr.height)
+      });
+    })()
+  `)
+  const reach = JSON.parse(reachable)
+  check(
+    'the project picker offers every project this fleet has, and says one is required',
+    reach.options === reach.projects + 1 && reach.firstSaysItIsRequired === true,
+    reachable
+  )
+  check(
+    '⛔ and its menu is on top of the modal rather than behind it, so an option can be clicked',
+    reach.onTop === true && reach.height > 20,
+    reachable
+  )
+  check(
+    'and it opens inside the window, flipping above the pill when there is no room below',
+    reach.insideTheWindow === true,
+    reachable
   )
   await closeMenus()
 
@@ -1611,10 +1739,16 @@ try {
     JSON.stringify({ sendWhenArmed, sendWhenNot })
   )
 
-  await evaluate(
-    `[...document.querySelectorAll('.panel-head button')].find(b => b.innerText.trim() === 'Cancel')?.click()`
-  )
+  // ⚠️ The dialog's own close button. This read `.panel-head` `Cancel` until t356 — a button that
+  // has not existed since the composer became a modal, so it matched nothing and every check below
+  // ran with the dialog still open over the window it was inspecting.
+  await evaluate(`document.querySelector('button[aria-label="Close new task"]')?.click()`)
   await wait(500)
+  check(
+    'closing the composer leaves the window with no dialog over it',
+    (await evaluate(`!document.querySelector('.task-composer-modal')`)) === true,
+    'the modal is the only thing between the operator and their work'
+  )
 
   // An approval with no live session: the deadline is genuinely unknown and must render as such.
   await evaluate(`

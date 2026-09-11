@@ -17,12 +17,11 @@ import { appKey } from '../lib/storagekeys'
 
 const STORAGE_KEY = appKey('sidebarWidth')
 
-/** 252px is the default: the width that fits the app name and three controls on one row. */
+/** 252px is the default: the width that fits the longest route and project names on one row. */
 export const SIDEBAR_DEFAULT = 252
 
 /**
- * ⛔ Both bounds are real, not decoration. Below `MIN` the nav items truncate to uselessness and the
- * brand row drops its controls, which is the failure `.brand h1` was already fixed once for. Above
+ * ⛔ Both bounds are real, not decoration. Below `MIN` the nav items truncate to uselessness. Above
  * `MAX` the sidebar starts eating the pane the work is actually in - and on a narrow window, a drag
  * that could hide the content entirely is a state with no way back except a reset the user has to
  * guess at.

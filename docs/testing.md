@@ -138,6 +138,13 @@ as long as the timing held, and flipped the day a section four seconds earlier w
 (2026-09-08). A section that depends on a particular screen now navigates to it and waits for the
 value it is about, rather than for a fixed number of milliseconds.
 
+⛔ **A `?.click()` that matched nothing dismisses nothing, and says nothing either.** The composer
+section closed itself by finding a `.panel-head` button whose text was `Cancel`; that button stopped
+existing the day the composer became a modal, so the optional chain resolved to `undefined` and every
+check for the rest of the run read a window with a dialog over it (t354 → t356, 2026-09-11). A driver
+step whose whole job is to change the screen is worth asserting on: this one now checks the dialog is
+gone, which is one line and the only thing that would have caught it.
+
 ### A merge strategy that silently does nothing looks exactly like one that worked
 
 ⛔ **`merge-branch` moves a git ref with `update-ref`**, which will happily move a branch backwards,

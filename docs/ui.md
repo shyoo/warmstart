@@ -64,7 +64,7 @@ thing entirely. See [`glossary.md`](glossary.md).
 | `FleetStrip` `Workers` `FleetSettings` | the fleet: per-account quota with its **age**, reset countdowns, live sessions; one two-column settings card per worker |
 | `Tasks` `TaskThread` `thread/*` `Dependencies` | the board, one task's thread, and prerequisite edges |
 | `TaskSettingPicker` | ⛔ **one component, seven uses** — the thread's finish, conversation, completion, compaction, objective, worker and priority settings |
-| `NewTask` `NewTaskModal` `Pill` | one shell-owned composer modal: the prompt first, its settings as a row of **pills** under it; a project in view is selected but can always be changed |
+| `NewTask` `NewTaskModal` `Pill` | one shell-owned composer modal: the project and the prompt first, the rest as a row of **pills** under it; a project in view is selected but can always be changed |
 | `Attention` `Questions` | the approvals/questions/quota-gate bar — one keystroke above the operator's work |
 | `Overview` `Controller` `Conversations` | dashboard, the controller chat, and conversation history |
 | `Project` `ProjectSettings` `Projects` | the project routes and the policy tier |
@@ -106,6 +106,21 @@ disables. ⛔ The directory fields use `window.agentyard.pickFolders()`, the sam
 typed.** The three docs name the project, the landing target and the check list, so going Back and
 changing any of them has to leave them agreeing with it — but `DocDraftState.edited` freezes a doc the
 operator has opened and written in, because rewriting it would discard their work with no undo.
+
+⛔ **The window's title bar is this app's, and there is only one of it.** `captionOptions` in
+[`../src/main/titlebar.ts`](../src/main/titlebar.ts) hides the native caption on Windows and macOS and
+leaves the platform's own window buttons overlaid at one end of it; `.titlebar` in `App.tsx` draws the
+rest — panel toggle, back, forward, refresh, the two zooms with their reset badge, the app name, and
+the global **New task**. ⚠️ Two halves make it work and either alone is a bug that looks like the
+other's. (1) The strip's inset comes from `env(titlebar-area-x/width/height)`, never a constant: the
+buttons are at the right on Windows and the left on macOS, and their width follows the display scale —
+145px on the machine this was measured on (2026-09-11, t356). (2) `-webkit-app-region: drag` on the
+strip with `no-drag` on every control in it; with only the first, its buttons move the window instead
+of doing anything. ⚠️ **Linux keeps its own frame** — `titleBarOverlay` is Windows and macOS only, so
+hiding the caption there would leave a window with no close button — and the strip simply reserves no
+caption width, which is what the absent environment variables already say. t354 shipped this row
+*under* the native caption and the window carried two title bars; `test/ui.test.mjs` now measures that
+the row starts at y=0 with the sidebar and the work below it.
 
 ⚠️ **Overview and Projects grow from the top of the sidebar; Analytics, History and Settings are
 anchored to its bottom** (`.sidebar-bottom`). When projects use all available height the whole sidebar
@@ -260,6 +275,15 @@ The same thread ledger also offers **Your review** after completed or cancelled 
 selects an integer 0–10 and must add a brief explanation. These direct ratings feed the quality
 aggregate alongside peer grades, but never masquerade as its seven rubric dimensions or as an agent
 reviewer; a mixed-authorship rating is kept but excluded from clean model comparison.
+
+⛔ **The project is the composer's first control, in its head row, not one of the pills.** It is the
+only setting with no usable default — it decides the workspace, the branch and the policy every other
+control inherits, and Send stays disabled until it is answered — so it sits beside the dialog's title
+with the close button at the other end of the same row. On the pill row it read as one more remembered
+preference at the far end of a line the eye has already left. ⚠️ **A pill's menu is portalled to
+`<body>`, which makes it a sibling of a dialog's shade rather than a descendant**, so `.pill-menu`
+sits above the shade's z-index and not merely above the page: underneath it, every dropdown in this
+modal opened behind the dialog that owns it and read as clipped away (t354 → t356).
 
 ⛔ **The attachment picker lives inside the prompt it enriches, beside Save as Draft, Send and the
 schedule clock.** Those actions apply to all three kinds: Single Task, Plan & Split and Conversation.
