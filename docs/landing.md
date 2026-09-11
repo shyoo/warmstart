@@ -231,6 +231,22 @@ the branch and the target **in memory** — it writes no index and no working tr
 is the whole point: it means the conflict can be handed back to the conversation that wrote the code,
 instead of surfacing after the session is gone.
 
+⭐ **And the agent is asked to look before it says it is finished.** The closing contract every work
+task gets (`integrationClause`, [`src/daemon/prompt.ts`](../src/daemon/prompt.ts)) requires the agent,
+immediately before `task_complete`, to fetch the landing target, rebase onto it if the branch has
+fallen behind or diverged, resolve every conflict, and **re-run the validation** on the rebased branch
+— and forbids reporting complete while a conflict is unresolved or a rebase is in progress. The target
+named is the one the landing will really use (`landingTargetFor`), so a task landing on a release
+branch is not told to rebase onto `main`.
+
+⚠️ **This narrows the window; it does not close it.** The target can still move between the agent's
+check and the landing, so the reading below remains the backstop and nothing here is allowed to assume
+the branch is current. What it removes is the *stale* case — a divergence that sat on disk, unlooked-at,
+for the length of the run — which is what t363 (2026-09-11) was: sound work, `task_complete` sent, the
+conflict found afterwards by the tool, with the one agent holding the context of the change already
+gone. ⛔ Withheld where it cannot be acted on: a non-git project, a planning turn that has written no
+code, and an open conversation (which lands through `land_work`, and that does the rebase itself).
+
 When it conflicts, the tool starts the rebase and **leaves it stopped at the conflict**, then asks:
 
 > Your branch no longer rebases onto `origin/main` — it moved while you were working.

@@ -3,7 +3,7 @@ import { isOpenConversation, policyVerifies } from '@shared/tasks.js'
 import { resolveCompletionMode } from '@shared/policy.js'
 import { describeAttachment } from './attachments.js'
 import { adapter } from './adapters/index.js'
-import { getProject } from './projects.js'
+import { getProject, landingTargetFor } from './projects.js'
 import { coldStartBlock } from './orientation.js'
 import { markDelivered, messagesFor, runsFor } from './tasks.js'
 import { childrenOf as splitChildrenOf } from './split.js'
@@ -114,13 +114,55 @@ const HAND_BACK_CLAUSE =
   'Ending your turn without calling one of these leaves the task reading as still running.'
 
 /**
+ * Check the branch against its landing target *before* saying the work is done.
+ *
+ * ⛔ **Completion is a claim about the branch, not about the working tree.** `task_complete` is the
+ * one signal that an agent finished, and everything downstream reads it as *this branch is ready to
+ * land*. An agent that ran the checks on a branch cut from an older trunk has proved something about
+ * a tree nobody will ever merge: the target moved while it worked, and the first thing that finds out
+ * is `readMergeability` inside `decideFinish`, long after the turn ended.
+ *
+ * ⭐ Measured on t363 (2026-09-11): the work was sound, `task_complete` arrived, and the conflict
+ * surfaced afterwards from the tool — so the one agent holding the whole context of the change was
+ * already gone by the time anything knew there was a merge to resolve. ⚠️ This does not close the
+ * race, and is not claimed to: the target can move in the seconds between the check and the landing.
+ * It removes the *stale* half — a divergence that was already on disk, unlooked-at, for the length of
+ * the run — and leaves `decideFinish` as the backstop it always was.
+ *
+ * ⚠️ The re-run is the load-bearing half of the clause. A rebase changes the code the checks ran
+ * against, so a green result from before it answers for a tree that no longer exists; an agent told
+ * to rebase but not to re-check will rebase and report, which is the same claim with extra steps.
+ *
+ * ⚠️ Named in the same breath as the completion signal, and in that signal's own vocabulary — an
+ * MCP-less agent has no `task_complete` and naming it would name a channel it has not got (see the
+ * note in `promptFor`).
+ */
+function integrationClause(target: string, hasChecks: boolean, mcpLess: boolean): string {
+  const declare = mcpLess ? 'write the `TASK COMPLETE: ` line' : 'call `task_complete`'
+  return (
+    `Immediately before you ${declare}, check whether this branch has fallen behind or diverged from ` +
+    `\`${target}\` — fetch it first, because it can move while you work. If it has, rebase onto the ` +
+    `latest \`${target}\` and resolve every conflict yourself, then re-run ` +
+    (hasChecks ? "this project's checks" : 'the validation relevant to what you changed') +
+    ' on the rebased branch: a result from before the rebase does not answer for the code after it. ' +
+    `Do not ${declare} while a conflict is unresolved or a rebase is still in progress — that signal ` +
+    'says the branch is ready to land, and a branch that does not rebase cleanly is not.'
+  )
+}
+
+/**
  * What the planner is told when its pieces have all settled.
  *
  * ⛔ The table of outcomes is prepended by the caller, because "some of them failed" is the normal
  * case and the resolution turn exists precisely to deal with it. A planner woken with no idea what
  * happened would start by re-reading every child's thread at full price.
  */
-function resolutionInstruction(task: Task, checkLead: string, commitHygiene: string): string {
+function resolutionInstruction(
+  task: Task,
+  checkLead: string,
+  commitHygiene: string,
+  integration: string
+): string {
   // ⛔ Named with their outcomes, because "some of them failed" is the normal case and a planner
   //    woken with no idea what happened would re-read every child's thread at full price to find out.
   const roll = splitChildrenOf(task.id)
@@ -145,6 +187,7 @@ function resolutionInstruction(task: Task, checkLead: string, commitHygiene: str
       checkLead +
       'When the work is finished, call the MCP tool `task_complete` with a one-line summary. ' +
       commitHygiene +
+      (integration ? ' ' + integration : '') +
       HAND_BACK_CLAUSE
   ].join('\n')
 }
@@ -245,13 +288,20 @@ export function framingLapsed(taskId: string, sessionId: string): boolean {
  * The session has them; what it needs is to be told they still apply, because a turn that arrives
  * with a new note and no contract at all is ambiguous about whether the old one was withdrawn.
  *
+ * ⚠️ **`integrationClause` is pointed at, not repeated**, and the clause it names is the one whose
+ * answer went stale while the session waited: a follow-up arriving hours later is the turn most
+ * likely to be sitting behind its target. It is still only *pointed* at, for the reason above — the
+ * session read it in full on its first turn — so what this adds is the phrase that keeps *the state
+ * this branch has to be in* inside the thing the agent is being told still applies.
+ *
  * ⚠️ Two endings, for the same reason `conversationInstruction` has two: an MCP-less agent's terminal
  * contract is a line of text and naming it a tool call would name a channel it has not got.
  */
 function resumedAnchor(mcpLess: boolean): string {
   return (
-    'Your instructions from the start of this task still apply — including this project’s checks ' +
-    'and how its work is to be finished. ' +
+    'Your instructions from the start of this task still apply — including this project’s checks, ' +
+    'the state this branch has to be in before you report complete, and how its work is to be ' +
+    'finished. ' +
     (mcpLess
       ? 'When the work is finished, end with a line beginning `TASK COMPLETE: ` followed by a ' +
         'one-line summary.'
@@ -420,6 +470,28 @@ export function promptFor(
     'to this task, squash them into one coherent commit where safe. Do not rewrite commits already ' +
     'on the landing target, force-push, or use a destructive reset.'
 
+  // ⛔ **Only where there is a branch and a target to be behind**, which is `vcs: 'git'` and nothing
+  // else. A non-git project is a pool of one over its own directory (`policyFor`), so there is no
+  // rebase to ask for and the clause would be an instruction the agent cannot carry out — the same
+  // failure as naming a tool it has not got, one paragraph up. ⚠️ Not gated on the finish policy:
+  // `commit-only` and `await-human` leave the branch where the agent put it, and a branch a person
+  // will land by hand later is exactly the one that must not be handed over mid-conflict.
+  //
+  // ⚠️ **Who re-runs the checks is not the same question on a one-turn CLI.** A
+  // `streamPrompts: 'once'` adapter is told, further down, that the tool runs this project's checks
+  // outside its sandbox after it commits — so naming them again here would contradict that in the
+  // one turn it has. It is still asked to rebase and to re-validate; what changes is that the clause
+  // points at *the validation relevant to what you changed* rather than at a list somebody else runs.
+  const toolRunsChecks = adapter(adapterId).info.capabilities.streamPrompts === 'once'
+  const integration =
+    project?.vcs === 'git'
+      ? integrationClause(
+          landingTargetFor(task, project),
+          checks.length > 0 && !toolRunsChecks,
+          !adapter(adapterId).info.capabilities.mcp
+        )
+      : ''
+
   // ⛔ **A plan task's closing instruction is a different instruction**, and it is selected on
   // `task.kind` — which is a domain fact, not a mode name. (The rule this codebase enforces against
   // branching on a name is about adapters and objectives, which are *data*; what kind of thing a task
@@ -456,7 +528,7 @@ export function promptFor(
     } else if (planPhase === 'planning') {
       parts.push(planningInstruction(checkLead))
     } else if (planPhase === 'resolving') {
-      parts.push(resolutionInstruction(task, checkLead, commitHygiene))
+      parts.push(resolutionInstruction(task, checkLead, commitHygiene, integration))
     } else if (followUp) {
       // ⚠️ One sentence where the whole contract used to be. See `RESUMED_ANCHOR`.
       parts.push(resumedAnchor(false))
@@ -471,7 +543,8 @@ export function promptFor(
         : 'Work to the end without stopping between phases. ' +
           checkLead +
           'When the work is finished, call the MCP tool `task_complete` with a one-line summary. ') +
-        commitHygiene + ' ' + ASK_HUMAN_CLAUSE + HAND_BACK_CLAUSE
+        commitHygiene + (integration ? ' ' + integration : '') + ' ' + ASK_HUMAN_CLAUSE +
+        HAND_BACK_CLAUSE
     )
   } else {
     // ⛔ The options are asked for in the same breath as the question, because the operator's side
@@ -499,7 +572,9 @@ export function promptFor(
         ? conversationInstruction(true)
         : checkLead +
         'When the work is finished, commit what you have and end with a line beginning `TASK COMPLETE: ` ' +
-        'followed by a one-line summary of what changed. ' + commitHygiene + ' If you need a decision from a person, end your reply with a line beginning ' +
+        'followed by a one-line summary of what changed. ' + commitHygiene +
+        (integration ? ' ' + integration : '') +
+        ' If you need a decision from a person, end your reply with a line beginning ' +
         '`NEEDS DECISION:` followed by the question, and stop rather than guessing. If you are ' +
         'choosing between specific options, put each one on its own line directly under it as ' +
         '`- <the option> — <what choosing it means>`, so they can be offered as buttons. ' +

@@ -1090,3 +1090,278 @@ describe('framingLapsed', () => {
     expect(prompt.framingLapsed(other.id, 'sess-borrowed')).toBe(false)
   })
 })
+
+/**
+ * ⛔ **Completion is a claim about the branch, and the claim was not being checked.** Measured on
+ * t363 (2026-09-11): the work was right, `task_complete` arrived, and the divergence from the target
+ * was found afterwards by `readMergeability` inside `decideFinish` — by which point the one agent
+ * holding the whole context of the change had already gone. The clause does not close the race (the
+ * target can move between the check and the landing) and nothing here claims it does; it removes the
+ * divergence that had been sitting on disk, unlooked-at, for the length of the run.
+ */
+describe('the pre-completion rebase check', () => {
+  /** A git project with `config` merged into its `project.json`. */
+  const gitProject = async (slug: string, config: Record<string, unknown> = {}) => {
+    const projects = await import('./projects.js')
+    const root = mkdtempSync(join(tmpdir(), `agentyard-rebase-${slug}-`))
+    mkdirSync(join(root, '.warmstart'), { recursive: true })
+    writeFileSync(
+      join(root, '.warmstart', 'project.json'),
+      JSON.stringify({ schema_version: 1, name: slug, vcs: 'git', ...config })
+    )
+    return projects.addProject({ root })
+  }
+
+  it('makes an MCP agent check, rebase, re-check and only then report complete', async () => {
+    const project = await gitProject('mcp', {
+      landing: { finish: 'commit-and-merge' },
+      check: ['npm test']
+    })
+    const task = tasks.createTask({
+      title: 'Touch the same file',
+      status: 'ready',
+      projectId: project.id
+    })
+    const text = promptText(task, 'claude-code', false, { markDelivered: false })
+
+    expect(text).toContain(
+      'Immediately before you call `task_complete`, check whether this branch has fallen behind or ' +
+        'diverged from `main`'
+    )
+    // ⚠️ Fetch first, or the comparison answers about the target as of whenever the workspace was
+    // last updated — which is the staleness that produced the conflict in the first place.
+    expect(text).toContain('fetch it first, because it can move while you work')
+    expect(text).toContain('rebase onto the latest `main` and resolve every conflict yourself')
+    // ⚠️ The load-bearing half: a rebase changes the code the checks ran against, so a green result
+    // from before it answers for a tree that no longer exists.
+    expect(text).toContain("re-run this project's checks")
+    expect(text).toContain('a result from before the rebase does not answer for the code after it')
+    expect(text).toContain(
+      'Do not call `task_complete` while a conflict is unresolved or a rebase is still in progress'
+    )
+
+    // ⛔ And the rest of the contract is untouched — this is an addition, not a rewrite.
+    expect(text).toContain('Work to the end without stopping between phases')
+    expect(text).toContain("run this project's checks (`npm test`) and ensure they pass")
+    expect(text).toContain('call the MCP tool `task_complete` with a one-line summary')
+    expect(text).toContain('squash them into one coherent commit where safe')
+    expect(text).toContain('Do not rewrite commits already on the landing target, force-push')
+    expect(text).toContain('call `ask_human` rather than guessing')
+    expect(text).toContain('call `await_human` with the reason')
+  })
+
+  /**
+   * ⛔ The target is the one the landing will really use, through `landingTargetFor` — a task that
+   * lands on a release branch told to rebase onto `main` would be told to do the wrong thing, and a
+   * plan piece landing on its parent's branch is exactly that case.
+   */
+  it('names the task’s own landing target, not the project default', async () => {
+    const project = await gitProject('target', {
+      landing: { finish: 'commit-and-merge', target: 'trunk' }
+    })
+    const task = tasks.createTask({ title: 'Land elsewhere', status: 'ready', projectId: project.id })
+    expect(promptText(task, 'claude-code', false, { markDelivered: false })).toContain(
+      'diverged from `trunk`'
+    )
+
+    // ⚠️ Set at creation, which is where a task's own target comes from — a plan piece inherits its
+    // parent's branch there (`effectiveLandingTarget`), and that is the case this is standing in for.
+    const onRelease = tasks.createTask({
+      title: 'Land on the release branch',
+      status: 'ready',
+      projectId: project.id,
+      landingTarget: 'release/2.0'
+    })
+    const own = promptText(onRelease, 'claude-code', false, { markDelivered: false })
+    expect(own).toContain('diverged from `release/2.0`')
+    expect(own).toContain('rebase onto the latest `release/2.0`')
+    expect(own).not.toContain('diverged from `trunk`')
+  })
+
+  /**
+   * ⚠️ In the completion signal's own vocabulary. An MCP-less agent has no `task_complete`, and
+   * naming it would name a channel it has not got — the same failure `promptFor` documents for
+   * every other tool.
+   */
+  it('speaks to an MCP-less agent about its line, not about a tool it has not got', async () => {
+    const project = await gitProject('mcpless', { landing: { finish: 'commit-and-merge' } })
+    const task = tasks.createTask({ title: 'No MCP here', status: 'ready', projectId: project.id })
+    const text = promptText(task, 'antigravity-cli', false, { markDelivered: false })
+
+    expect(text).toContain('Immediately before you write the `TASK COMPLETE: ` line')
+    expect(text).toContain('Do not write the `TASK COMPLETE: ` line while a conflict is unresolved')
+    expect(text).not.toContain('task_complete')
+    // ⛔ The rest of that adapter's contract survives.
+    expect(text).toContain('`NEEDS DECISION:`')
+  })
+
+  /**
+   * ⛔ **Who runs the checks is not the same question on a one-turn CLI.** A `streamPrompts: 'once'`
+   * adapter is told further down that the tool runs this project's checks outside its sandbox, so
+   * naming them here would contradict that in the one turn it has. It is still asked to rebase and
+   * still asked to re-validate.
+   */
+  it('does not tell a one-turn CLI to re-run checks somebody else runs', async () => {
+    const project = await gitProject('oneturn', {
+      landing: { finish: 'commit-and-merge' },
+      check: ['npm test']
+    })
+    const task = tasks.createTask({ title: 'One turn only', status: 'ready', projectId: project.id })
+    const text = promptText(task, 'openai-compatible', false, { markDelivered: false })
+
+    expect(text).toContain('Immediately before you write the `TASK COMPLETE: ` line')
+    expect(text).toContain('re-run the validation relevant to what you changed')
+    expect(text).not.toContain("re-run this project's checks")
+    // ⚠️ And the sentence it would have contradicted is still there.
+    expect(text).toContain('the tool runs `npm test` outside your sandbox')
+  })
+
+  /** ⭐ A checkpointed agent reports complete the same way, so it gets the same requirement. */
+  it('applies in checkpointed mode too', async () => {
+    const project = await gitProject('checkpointed', { landing: { finish: 'commit-and-merge' } })
+    const task = tasks.createTask({ title: 'Steered', status: 'ready', projectId: project.id })
+    tasks.updateTask(task.id, { completionMode: 'checkpointed' })
+    const text = promptText(tasks.requireTask(task.id), 'claude-code', false, {
+      markDelivered: false
+    })
+    expect(text).toContain('call the MCP tool `checkpoint`')
+    expect(text).toContain('Immediately before you call `task_complete`, check whether this branch')
+  })
+
+  /**
+   * ⚠️ A plan's resolution turn is the turn most likely to be behind: every piece landed into this
+   * branch while the target carried on moving.
+   */
+  it('applies to a plan’s resolution turn', async () => {
+    const project = await gitProject('plan', { landing: { finish: 'commit-and-merge' } })
+    const planning = tasks.createTask({
+      title: 'Plan and then resolve',
+      kind: 'plan',
+      status: 'ready',
+      projectId: project.id
+    })
+    const child = tasks.createTask({
+      title: 'Piece one',
+      status: 'ready',
+      projectId: project.id,
+      parentTaskId: planning.id
+    })
+    tasks.addDependency(planning.id, child.id, 'settled')
+    const text = promptText(tasks.requireTask(planning.id), 'claude-code', false, {
+      markDelivered: false
+    })
+    expect(text).toContain('Every piece of your plan has settled')
+    expect(text).toContain('Immediately before you call `task_complete`, check whether this branch')
+  })
+
+  /**
+   * ⛔ Not on the planning turn. That turn files a split and stops — it has written no code, so
+   * there is nothing to rebase, and the one sentence that matters there is *do not write code*.
+   */
+  it('is withheld from a planning turn, which has nothing to rebase', async () => {
+    const project = await gitProject('planning', { landing: { finish: 'commit-and-merge' } })
+    const task = tasks.createTask({
+      title: 'Only planning',
+      kind: 'plan',
+      status: 'ready',
+      projectId: project.id
+    })
+    const text = promptText(task, 'claude-code', false, { markDelivered: false })
+    expect(text).toContain('You are PLANNING this work, not doing it')
+    expect(text).not.toContain('Immediately before you call `task_complete`')
+  })
+
+  /**
+   * ⛔ A non-git project is a pool of one over its own directory, so there is no branch to be behind
+   * and no rebase to ask for — instructing one would be naming an action the agent cannot take.
+   */
+  it('is withheld from a project with no version control', async () => {
+    const projects = await import('./projects.js')
+    const root = mkdtempSync(join(tmpdir(), 'agentyard-rebase-novcs-'))
+    mkdirSync(join(root, '.warmstart'), { recursive: true })
+    writeFileSync(
+      join(root, '.warmstart', 'project.json'),
+      JSON.stringify({
+        schema_version: 1,
+        name: 'no-vcs',
+        vcs: 'none',
+        landing: { finish: 'commit-and-merge' }
+      })
+    )
+    const project = projects.addProject({ root })
+    const task = tasks.createTask({ title: 'No repository', status: 'ready', projectId: project.id })
+    const text = promptText(task, 'claude-code', false, { markDelivered: false })
+    expect(text).toContain('call the MCP tool `task_complete` with a one-line summary')
+    expect(text).not.toContain('has fallen behind or diverged')
+  })
+
+  /** ⛔ And from a task with no project at all, which has no target to be measured against. */
+  it('is withheld from a task with no project', () => {
+    const task = tasks.createTask({ title: 'Projectless', status: 'ready' })
+    expect(promptText(task, 'claude-code', false, { markDelivered: false })).not.toContain(
+      'has fallen behind or diverged'
+    )
+  })
+
+  /**
+   * ⛔ **An open conversation is not told this, and the omission is the point.** It does not reach
+   * for `task_complete` on its own judgement, and its route to the target is `land_work`, which does
+   * the rebase and the checks itself. Telling it to rebase before a completion it is not supposed to
+   * declare would be inviting the landing nobody asked for.
+   */
+  it('is withheld from an open conversation, which lands through `land_work`', async () => {
+    const project = await gitProject('conversation', { landing: { finish: 'commit-and-merge' } })
+    const task = tasks.createTask({
+      title: 'Talk it through',
+      kind: 'conversation',
+      status: 'ready',
+      projectId: project.id
+    })
+    const text = promptText(task, 'claude-code', false, { markDelivered: false })
+    expect(text).toContain('call the MCP tool `land_work`')
+    expect(text).not.toContain('has fallen behind or diverged')
+  })
+
+  /**
+   * ⚠️ A follow-up into the session that already read the clause is **pointed** at it rather than
+   * given it again — the same subtraction `resumedAnchor` makes for the checks and the hygiene. What
+   * the anchor has to carry is that the requirement still stands, because a follow-up arriving hours
+   * later is the turn most likely to be sitting behind its target.
+   */
+  it('is pointed at, not repeated, on a follow-up into the same session', async () => {
+    const project = await gitProject('followup', { landing: { finish: 'commit-and-merge' } })
+    const task = tasks.createTask({ title: 'Carry on', status: 'ready', projectId: project.id })
+    prompt.promptFor(task, 'claude-code', false, { markDelivered: true })
+    tasks.addMessage(task.id, 'human', 'one more thing')
+    const text = promptText(tasks.requireTask(task.id), 'claude-code', true, {
+      markDelivered: false
+    })
+
+    expect(text).toContain('one more thing')
+    expect(text).toContain('the state this branch has to be in before you report complete')
+    expect(text).toContain('call the MCP tool `task_complete` with a one-line summary')
+    // ⛔ Pointed at, not restated: the session read it in full on its first turn.
+    expect(text).not.toContain('has fallen behind or diverged')
+  })
+
+  /**
+   * ⭐ **A compaction undoes the subtraction.** What the agent holds afterwards is a summary somebody
+   * else wrote, and nothing guarantees the clause survived it — so the whole contract, this clause
+   * included, goes back in.
+   */
+  it('comes back in full after a compaction', async () => {
+    const project = await gitProject('compacted', { landing: { finish: 'commit-and-merge' } })
+    const task = tasks.createTask({
+      title: 'Compacted mid-task',
+      status: 'ready',
+      projectId: project.id
+    })
+    prompt.promptFor(task, 'claude-code', false, { markDelivered: true })
+    tasks.addMessage(task.id, 'human', 'and now this')
+    const text = promptText(tasks.requireTask(task.id), 'claude-code', true, {
+      markDelivered: false,
+      compacted: true
+    })
+    expect(text).toContain('Immediately before you call `task_complete`, check whether this branch')
+  })
+})
