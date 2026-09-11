@@ -158,7 +158,8 @@ uses leading whitespace as data. `cmd /d /s /c` splits any path with a space;
 `node --experimental-strip-types` resolves no `@shared` alias, so `adapters/local-llm-bridge.ts`
 shares nothing and copies instead. The preload must be CommonJS, and native modules cannot load from inside an asar.
 `ready-to-show` may never fire, so no window may be shown only from it. `node:sqlite`, not
-better-sqlite3.
+better-sqlite3. ⛔ An agent inside the Claude desktop app has `%APPDATA%` redirected to that package's
+own copy — what it reads or writes under `AppData\Roaming` is not what the user's app sees (§4 Paths).
 
 **Adapters and CLIs** — [`docs/adapters.md`](docs/adapters.md). ⛔ Read it before writing a
 capability from a vendor doc; several documented claims would have failed on the first spawn. A

@@ -114,6 +114,17 @@ two directories everywhere else. ⚠️ **Both failures are silent**: a missed m
 and in the workspace pool it hands the task a **different worktree** than the one its conversation
 describes.
 
+⛔ **An agent's `%APPDATA%` may not be the user's.** A tool running inside a packaged host — the Claude
+desktop app is an MSIX package — has `AppData\Roaming` redirected to that package's
+`%LOCALAPPDATA%\Packages\<id>\LocalCache\Roaming\`: reads fall through to the real folder until the
+package holds its own copy, writes always land in the copy, and every process the tool spawns inherits
+the redirect. Measured 2026-09-10: the same `warmstart.db` path was 425 KB from the user's shortcut
+and 37 MB from the agent's shell, and `fsutil file queryfileid` run from inside reported the two as
+one file. Every launch by the agent showed the fleet; every launch by the user was empty; the user's
+"the file is not there" was correct all day. To see what the user sees, spawn outside the package
+(`Invoke-CimMethod -ClassName Win32_Process -MethodName Create`, output to `C:\Users\Public\`) or ask
+the user to run the command. `C:\Dev` and `C:\Users\Public` are not redirected.
+
 ### Spawning
 
 - **node-pty does not search PATH.** On Windows it goes straight to `CreateProcess` and fails with a
