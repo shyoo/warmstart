@@ -140,11 +140,9 @@ export function TaskDetailScreen({ id, refreshKey }: { id: string; refreshKey: n
       <section className="m-card">
         <h3 className="m-section-title">History</h3>
         {messages.map((m) => (
-          <div className="m-message" key={m.id}>
-            <p className="m-meta">
-              {m.role} · {relTime(m.ts, now)}
-            </p>
-            <p className="m-message-text">{m.text}</p>
+          <div className={`m-message m-message--${m.role}`} key={m.id}>
+            <div className="m-message-bubble"><p className="m-message-text">{m.text}</p></div>
+            <p className="m-meta">{relTime(m.ts, now)} {m.detail && <details className="m-detail"><summary>ⓘ</summary><span>{m.detail}</span></details>}</p>
           </div>
         ))}
         {messages.length === 0 && <p className="m-empty">No messages yet.</p>}

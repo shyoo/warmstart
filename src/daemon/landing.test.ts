@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import type { FinishPolicy, Project } from '@shared/tasks.js'
+import { messageBody } from './threadline.js'
 
 /**
  * Landing a task that changed nothing.
@@ -180,7 +181,7 @@ describe('landing without a remote', () => {
     expect(result.pushed).toBe(false)
     expect(result.branchDeleted).toBe(true)
 
-    const said = tasks.messagesFor(taskId).map((m) => m.text).join('\n')
+    const said = tasks.messagesFor(taskId).map(messageBody).join('\n')
     expect(said).toContain('Landed as')
     expect(said).toContain('2 project checks passed')
     expect(said).toContain('not pushed')
@@ -424,7 +425,9 @@ describe('landing without a remote', () => {
     expect(result.checkOutput ?? '').toContain('the-red-test')
     expect(result.checkOutput ?? '').not.toContain('')
     // ⛔ And the thread copy — which is what `resolveChecksOnTask` sends the agent — is clean too.
-    const said = tasks.messagesFor(taskId).map((m) => m.text).join('\n')
+    // ⚠️ Text *and* detail: the line is one sentence and the check output lives behind it, which is
+    // exactly what `resolveChecksOnTask` reads through `messageBody`.
+    const said = tasks.messagesFor(taskId).map((m) => (m.detail ? `${m.text}\n${m.detail}` : m.text)).join('\n')
     expect(said).toContain('the-red-test')
     expect(said).not.toContain('')
   })
@@ -465,11 +468,30 @@ describe('a task that produced no commits', () => {
       workspacePath: root,
       branch: 'warmstart/t2-question'
     })
-    const said = tasks.messagesFor(taskId).map((m) => m.text).join('\n')
+    const said = tasks.messagesFor(taskId).map(messageBody).join('\n')
     expect(said).toContain('Not landed')
     expect(said).toContain('no work landed')
     // ⛔ And never the sentence that started this. "Landed as <sha>" is what somebody skims.
     expect(said).not.toContain('Landed as')
+  })
+
+  it('says it on one line, and keeps the explanation behind the line rather than dropping it', async () => {
+    // ⛔ A system message is a one-liner with its basis in `detail`. The line is what a person skims;
+    //    the detail is what they open, and what the resolve buttons read back (`messageBody`). A
+    //    shortening that dropped the explanation would leave the thread saying *what* without *why*.
+    const { project, taskId, root } = seedTask('warmstart/t4-question')
+    await landing.landTask({
+      project,
+      task: tasks.requireTask(taskId),
+      workspacePath: root,
+      branch: 'warmstart/t4-question'
+    })
+    const line = tasks.messagesFor(taskId).find((m) => m.role === 'system' && m.text.startsWith('Not landed'))
+    expect(line?.text).toBe('Not landed: no commits were produced')
+    expect(line?.event).toBe('landing.failed')
+    expect(line?.detail).toContain('carries no commits that')
+    expect(line?.detail).toContain('Check if the agent answered as a question instead of making changes')
+    expect(line?.detail).toContain('The branch has been kept')
   })
 
   it('guards against empty commits by going to awaiting_human so a person can review or close', async () => {
@@ -520,7 +542,7 @@ describe('a task that did commit something', () => {
     // strategy. Whether that strategy then succeeds is landing's own business and is covered
     // end-to-end by the opt-in L4 run against a real remote.
     expect(result.nothingToLand).toBeUndefined()
-    expect(tasks.messagesFor(taskId).map((m) => m.text).join('\n')).not.toContain('Nothing to land')
+    expect(tasks.messagesFor(taskId).map(messageBody).join('\n')).not.toContain('Nothing to land')
   })
 
   it('leaves uncommitted work to the refusal that says where it is', async () => {
@@ -538,7 +560,7 @@ describe('a task that did commit something', () => {
     })
     expect(result.nothingToLand).toBeUndefined()
     expect(result.ok).toBe(false)
-    expect(tasks.messagesFor(taskId).map((m) => m.text).join('\n')).toContain('uncommitted')
+    expect(tasks.messagesFor(taskId).map(messageBody).join('\n')).toContain('uncommitted')
   })
 
   it('⛔ refuses a tip that is only the rescue of an interrupted run', async () => {
@@ -721,7 +743,7 @@ describe('landTask on a branch with nothing left to land', () => {
 
     expect(result.nothingToLand).toBe(true)
     expect(result.branchDeleted).toBe(true)
-    const said = tasks.messagesFor(taskId).map((m) => m.text).join('\n')
+    const said = tasks.messagesFor(taskId).map(messageBody).join('\n')
     // ⛔ Names the ref it compared, tells the operator their trunk is behind, and says the branch is
     //    gone. Each on its own leaves a reasonable person with the wrong picture.
     expect(said).toContain('origin/main')
@@ -855,7 +877,7 @@ function holdTheLock(project: Project, holder: string): { release: () => void } 
   return { release: () => resources.release(held.id) }
 }
 
-const said = (taskId: string): string => tasks.messagesFor(taskId).map((m) => m.text).join('\n')
+const said = (taskId: string): string => tasks.messagesFor(taskId).map(messageBody).join('\n')
 
 /**
  * Block until the task has actually queued, rather than for a number of milliseconds.
@@ -1160,11 +1182,17 @@ describe('what a landing tells the operator it did', () => {
     // ⛔ `taskcommits.ts` recovers the commits of every task that landed before `task_commits`
     //    existed by matching this opening. Reword it and 200 tasks quietly stop being reviewable.
     const said = landing.landedMessage(base, 'main', null)
-    expect(said.startsWith('Landed as `98f200ab` onto `main`.')).toBe(true)
+    expect(said.headline).toBe('Landed as `98f200ab` onto `main`')
+    // ⛔ And the detail never repeats it: one thread row must not carry two headlines for
+    //    `salvageLandedCommits` to count twice.
+    expect(said.detail).not.toContain('Landed as')
   })
+  const detailOf = (...args: Parameters<typeof landing.landedMessage>): string =>
+    landing.landedMessage(...args).detail
+
 
   it('says what it verified, how far the work went, and what became of the branch', () => {
-    const said = landing.landedMessage(
+    const said = detailOf(
       { ...base, checksPassed: 4, pushed: false, branchDeleted: true },
       'main',
       null
@@ -1175,7 +1203,7 @@ describe('what a landing tells the operator it did', () => {
   })
 
   it('calls a project with no check commands unverified, which is not a smaller kind of verified', () => {
-    const said = landing.landedMessage({ ...base, checksPassed: 0 }, 'main', null)
+    const said = detailOf({ ...base, checksPassed: 0 }, 'main', null)
     expect(said).toContain('Nothing was verified')
     expect(said).not.toContain('passed')
   })
@@ -1183,28 +1211,28 @@ describe('what a landing tells the operator it did', () => {
   it('says nothing at all about verification for a strategy that does not verify', () => {
     // ⚠️ `open-pr` deliberately runs no checks locally — a pull request exists so that CI and a
     //    person do that — so the honest report is silence, not a claim in either direction.
-    const said = landing.landedMessage(base, 'main', null)
+    const said = detailOf(base, 'main', null)
     expect(said).not.toContain('verified')
     expect(said).not.toContain('Verified')
   })
 
   it('says a branch was kept rather than pretending it was tidied', () => {
-    const said = landing.landedMessage({ ...base, branchDeleted: false }, 'main', null)
+    const said = detailOf({ ...base, branchDeleted: false }, 'main', null)
     expect(said).toContain('was kept')
   })
 
   it('names the remote when the work was pushed, and only then', () => {
-    expect(landing.landedMessage({ ...base, pushed: true }, 'main', null)).toContain('`origin/main`')
-    expect(landing.landedMessage(base, 'main', null)).not.toContain('origin/')
+    expect(detailOf({ ...base, pushed: true }, 'main', null)).toContain('`origin/main`')
+    expect(detailOf(base, 'main', null)).not.toContain('origin/')
   })
 
   it('counts the commits only when there is more than one to count', () => {
     // ⚠️ "1 commit, tipped by that one" is the headline again in more words.
-    expect(landing.landedMessage({ ...base, commitsLanded: 3 }, 'main', null)).toContain('3 commits')
-    expect(landing.landedMessage({ ...base, commitsLanded: 1 }, 'main', null)).not.toContain('commits,')
+    expect(detailOf({ ...base, commitsLanded: 3 }, 'main', null)).toContain('3 commits')
+    expect(detailOf({ ...base, commitsLanded: 1 }, 'main', null)).not.toContain('commits,')
   })
 
   it('still says it queued, which is the only evidence the land queue ran', () => {
-    expect(landing.landedMessage(base, 'main', { seq: 26 })).toContain('queued behind t26')
+    expect(detailOf(base, 'main', { seq: 26 })).toContain('queued behind t26')
   })
 })

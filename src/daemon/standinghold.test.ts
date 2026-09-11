@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { messageBody } from './threadline.js'
 
 /**
  * A task nothing will ever start, and what the fleet does about it.
@@ -161,7 +162,7 @@ describe('a hold that nothing but a person will clear', () => {
     expect(over.assignee).toBe('human')
     expect(over.holdReason).toBeTruthy()
     expect(
-      tasks.messagesFor(task).some((m) => /Nothing in this fleet can start this task/.test(m.text))
+      tasks.messagesFor(task).some((m) => /Nothing in this fleet can start this task/.test(messageBody(m)))
     ).toBe(true)
   })
 
@@ -175,7 +176,7 @@ describe('a hold that nothing but a person will clear', () => {
 
     const said = tasks
       .messagesFor(task)
-      .map((m) => m.text)
+      .map(messageBody)
       .join('\n')
     expect(said).toMatch(/re-file this task without the pin/)
 

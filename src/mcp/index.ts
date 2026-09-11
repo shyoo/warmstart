@@ -423,6 +423,90 @@ server.registerTool(
 )
 
 /**
+ * Land a conversation's committed work, mid-conversation, because a person asked for it.
+ *
+ * ⛔ **Still not a commit tool.** The agent commits with `git`, in its own workspace, exactly as it
+ * would in any repository — deciding what to stage and what the message says is the work, not
+ * plumbing, and [`landing.md`] is built on the daemon never authoring a commit. What this adds is the
+ * step *after* the commit, which an agent genuinely could not do safely by hand: rebase onto a target
+ * that has moved, run the project's own checks, and merge or push under the project's policy while
+ * landing is serialised so two rebases cannot race.
+ *
+ * ⛔ **And it ends nothing.** `task_complete` and `await_human` are still the only two ways a run
+ * ends. This one returns, the run stays open, the task is still an open conversation, and the reply
+ * names the fresh branch to carry on in — because the branch it landed was retired by the landing.
+ * That is the whole reason the description says *the conversation continues*: an agent that read this
+ * as a quieter `task_complete` would stop talking to somebody who is still typing.
+ *
+ * ⚠️ Registering it changes the tool definitions, which invalidates the prompt-cache prefix of
+ * **every** worker session on the install, not only conversations — a session's MCP config is frozen
+ * for its lifetime and workers on one project get identical configs. Same price `checkpoint` and
+ * `task_split` pay, and the same mitigation: registered for everyone, named in the prompt only where
+ * it applies. See mcp.md §2.
+ */
+server.registerTool(
+  'land_work',
+  {
+    title: 'Land this conversation\'s committed work',
+    description:
+      'In a conversation, after you have committed: call this when the person has asked you to land ' +
+      'the work. It rebases your branch onto the landing target, runs the project checks, and merges ' +
+      'or pushes according to the project policy. Commit first with `git` yourself — this does not ' +
+      'commit — and never merge or push to the target by hand. It is NOT `task_complete` and it ends ' +
+      'nothing: the conversation carries on, and the reply names the new branch to keep working on. ' +
+      'It refuses on anything that is not a conversation, and on a landing that would not be safe, ' +
+      'and tells you why.',
+    inputSchema: {
+      summary: z
+        .string()
+        .optional()
+        .describe('One line: what this landing contains. Recorded on the thread beside it.'),
+      rung: z
+        .enum(['commit-and-merge', 'commit-and-push', 'pull-request'])
+        .optional()
+        .describe(
+          'How far to take it, when the person named one. Omit to use the project\'s own policy.'
+        )
+    }
+  },
+  async (args) => {
+    const sessionId = appEnv('SESSION_ID') ?? ''
+    try {
+      const result = await rpc('agent.land', {
+        sessionId,
+        ...(args.summary ? { summary: args.summary } : {}),
+        ...(args.rung ? { rung: args.rung } : {})
+      })
+      if (!result.ok) {
+        // ⚠️ The daemon's reason, verbatim and alone. Every one of them names a condition that
+        // failed, and most are something the agent can fix in `git`; rewording it here would lose
+        // the only sentence that says what to do next.
+        return {
+          content: [{ type: 'text' as const, text: `Nothing was landed: ${result.reason}` }],
+          isError: true
+        }
+      }
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text:
+              `Landed ${result.landedSha?.slice(0, 8)} onto ${result.target}. ` +
+              `This conversation continues on ${result.nextBranch} — commit any further work there. ` +
+              'The task is not finished; carry on.'
+          }
+        ]
+      }
+    } catch (err) {
+      return {
+        content: [{ type: 'text' as const, text: `Could not land: ${String(err)}` }],
+        isError: true
+      }
+    }
+  }
+)
+
+/**
  * Agent-authored work. Bounded by the calling task's inherited mandate and budget - a task that has
  * lost `spawn_tasks` simply cannot do this, and the refusal comes from the daemon, not from here.
  */

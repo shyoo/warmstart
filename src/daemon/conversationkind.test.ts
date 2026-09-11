@@ -139,10 +139,24 @@ describe('what a conversation is told at the end of its turn', () => {
     expect(prompt).not.toContain('Work to the end without stopping between phases')
   })
 
-  it('is told not to commit, and is not handed the commit-hygiene paragraph', () => {
+  it('may commit on its own branch, and may never merge or push to the target', () => {
+    // ⛔ The line moved, and where it moved to is the point. A commit on the agent's own branch is
+    // free and is how work survives a preemption; what is forbidden is the half that touches
+    // somebody else's ref. The old wording forbade both together and left a conversation that had
+    // been asked to commit with nothing it was allowed to do.
     const prompt = promptText(conversation())
-    expect(prompt).toContain('Do not commit, merge, push, or run this project’s checks unless you are asked to')
+    expect(prompt).toContain('You may commit on your own branch whenever it helps')
+    expect(prompt).toContain('never merge or push to the landing target yourself')
     expect(prompt).not.toContain('squash them into one coherent commit')
+  })
+
+  it('is told how to land when it is asked to, and that landing does not end the task', () => {
+    // ⛔ Both halves, and the second is what stops `land_work` reading as a quieter
+    // `task_complete`. An agent that lands and then stops has left somebody mid-sentence.
+    const prompt = promptText(conversation())
+    expect(prompt).toContain('When the person asks you to land the work')
+    expect(prompt).toContain('`land_work`')
+    expect(prompt).toContain('Landing does not end this task')
   })
 
   it('is told not to reach for task_complete on its own judgement, but is told the tool exists', () => {
@@ -168,7 +182,22 @@ describe('what a conversation is told at the end of its turn', () => {
     expect(prompt).toContain('NEEDS DECISION:')
   })
 
-  it('goes back to the ordinary instruction once Commit has written a rung', () => {
+  it('⛔ never names `land_work` to an adapter that has no MCP, and names the person instead', () => {
+    // ⛔ Decided from `capabilities.mcp`, never from the adapter's name. Naming a tool an agent has
+    // not got is not a harmless extra sentence: it reads as an instruction it cannot follow, and the
+    // agent spends the turn hunting for the tool rather than saying the work is ready.
+    const prompt = promptText(conversation(), 'antigravity-cli')
+    expect(prompt).not.toContain('land_work')
+    expect(prompt).toContain('the person lands it from this thread')
+    // ⚠️ And the commit half is the same on both: commit freely, never touch the target.
+    expect(prompt).toContain('never merge or push to the landing target yourself')
+  })
+
+  it('goes back to the ordinary instruction once a real rung is written', () => {
+    // ⚠️ **No button writes one any more** — Commit asks and Land lands, and both leave the task an
+    // open conversation. The only thing that reaches this is an operator setting the task's own
+    // finish dropdown, which is them saying to finish it like a work task. The mechanism is pinned
+    // here because that is what `isOpenConversation` is for.
     const task = conversation()
     tasks.updateTask(task.id, { finishPolicy: 'commit-and-merge' })
     const prompt = promptText(tasks.requireTask(task.id))
@@ -377,13 +406,16 @@ describe('what ends a conversation turn', () => {
     expect(after.endedAt).not.toBeNull()
     expect(after.outcome).toBe('completed')
     expect(tasks.requireTask(task.id).status).toBe('awaiting_human')
-    expect(tasks.requireTask(task.id).holdReason).toContain('finished this turn')
+    expect(tasks.requireTask(task.id).holdReason).toBe('your turn')
 
-    // The agent's final answer must be recorded as an agent message with runId
+    // The agent's final answer must be recorded as an agent message with runId — and nothing after
+    // it: the "reply to carry on" notice that used to follow every answer said what the buttons
+    // under it already say.
     const msgs = tasks.messagesFor(task.id)
     const agentMsg = msgs.find((m) => m.role === 'agent' && m.runId === runId)
     expect(agentMsg).toBeDefined()
     expect(agentMsg?.text).toBe('Here is what I found.')
+    expect(msgs.slice(msgs.indexOf(agentMsg!) + 1).filter((m) => m.role === 'system')).toHaveLength(0)
   })
 
   it('persists intermediate streaming activity on the run', async () => {
@@ -441,6 +473,27 @@ describe('what the Commit button does', () => {
       ok: false,
       reason: 'not a git project'
     })
+  })
+
+  // ⛔ The seam between the Commit ▼ and `land_work`: the menu offers `commit-and-verify`, and the
+  // tool's schema accepts only the three rungs that land. Naming the tool with that rung was an
+  // instruction the agent could not follow.
+  it('names `land_work` only for a rung that lands, and only to an agent that has the tool', () => {
+    const base = { branch: 'warmstart/t9.2-chat', checks: ['npm test'] }
+    const verify = resolutions.commitConversationInstruction({ ...base, policy: 'commit-and-verify', canLand: true })
+    expect(verify).not.toContain('land_work')
+    expect(verify).toContain('`npm test`')
+    expect(verify).toContain('nothing is to be merged or pushed')
+    const only = resolutions.commitConversationInstruction({ ...base, checks: [], policy: 'commit-only', canLand: true })
+    expect(only).not.toContain('land_work')
+    const merge = resolutions.commitConversationInstruction({ ...base, policy: 'commit-and-merge', canLand: true })
+    expect(merge).toContain('`land_work` with `rung: "commit-and-merge"`')
+    expect(merge).toContain('warmstart/t9.2-chat')
+    const noTool = resolutions.commitConversationInstruction({ ...base, policy: 'commit-and-merge', canLand: false })
+    expect(noTool).not.toContain('land_work')
+    expect(noTool).toContain('**Land**')
+    // ⛔ Every variant keeps the conversation open.
+    for (const said of [verify, only, merge, noTool]) expect(said).toContain('do not call `task_complete`')
   })
 
   it('reports no workspace rather than an empty diff when it has nowhere to look', async () => {

@@ -272,8 +272,10 @@ export function applySplit(
   addMessage(
     parent.id,
     'system',
-    `Split into ${created.length} pieces: ${listed}. This task now waits for all of them to ` +
-      'settle — completed, failed or cancelled — and then comes back to review the result as a whole.'
+    `Split into ${created.length} pieces`,
+    null,
+    [],
+    { detail: `${listed}. This task waits for all pieces to settle — completed, failed or cancelled — then reviews the result as a whole.` }
   )
   setStatus(parent.id, 'blocked', {
     holdReason: `waiting on ${created.length} pieces of its own plan (${listed})`

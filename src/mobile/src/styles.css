@@ -176,9 +176,15 @@ html, body, #root { height: 100%; margin: 0; }
 .m-row-body { flex: 1; display: flex; flex-direction: column; gap: 2px; }
 .m-row-title { font-weight: 600; }
 
-.m-message { border-top: 1px solid var(--color-border, #2a2e35); padding: 8px 0; }
-.m-message:first-of-type { border-top: none; }
+.m-message { display: flex; flex-direction: column; padding: 4px 0; }
+.m-message--human { align-items: flex-end; }
+.m-message-bubble { max-width: 86%; padding: 8px 10px; border-radius: 12px; background: var(--color-surface-2, #252a31); }
+.m-message--human .m-message-bubble { background: var(--color-accent-dim, #294f8e); }
+.m-message--system .m-message-bubble { background: var(--color-bg, #101318); color: var(--color-text-dim, #a3aab5); }
 .m-message-text { white-space: pre-wrap; word-break: break-word; margin: 4px 0 0; font-size: 14px; }
+.m-message-bubble .m-message-text { margin: 0; }
+.m-detail { display: inline; margin-left: 6px; }
+.m-detail span { display: block; margin-top: 6px; white-space: pre-wrap; color: var(--color-text-dim, #a3aab5); }
 
 .m-tabs {
   display: flex; flex: none;

@@ -22,12 +22,15 @@ import {
   messagesFor,
   runsFor,
   setHoldReason,
-  setStatus,
-  updateTask
+  setStatus
 } from './tasks.js'
 import { db } from './db.js'
 import { log } from './log.js'
+import { messageBody, oneLine } from './threadline.js'
 import { continueTask, releaseFor, sessionOf } from './scheduler.js'
+import { landConversationWork } from './conversationland.js'
+import { adapter } from './adapters/index.js'
+import { getWorker } from './workers.js'
 
 /**
  * RPC-driven actions, not scheduling: every "Resolve & retry" and "Land/Commit" button on a
@@ -126,15 +129,15 @@ export async function resolveChecksOnTask(
   if (!task) return { ok: false, reason: 'no such task' }
   const project = task.projectId ? reloadProjectIfPresent(task.projectId) : null
   if (!project || project.vcs !== 'git') return { ok: false, reason: 'not a git project' }
-  const branch = task.branch ?? branchNameFor(task.seq, task.title)
+  const branch = task.branch ?? branchNameFor(task.seq, task.title, task.branchUnit)
   if (!branch) return { ok: false, reason: 'this task has no branch' }
   if (task.status === 'running' || task.status === 'assigned') {
     return { ok: false, reason: 'this task is already running; it will be asked when it reports' }
   }
 
   const msgs = messagesFor(task.id)
-  const lastSystem = [...msgs].reverse().find((m) => m.role === 'system' && /landing failed|checks failed/i.test(m.text))
-  const failureDetail = lastSystem ? lastSystem.text : (task.holdReason ?? 'Project checks failed')
+  const lastSystem = [...msgs].reverse().find((m) => m.role === 'system' && /landing failed|checks failed/i.test(messageBody(m)))
+  const failureDetail = lastSystem ? messageBody(lastSystem) : (task.holdReason ?? 'Project checks failed')
   const checks = project.config.check ?? []
   // ⚠️ Said in full, because the shortcut is real: t347's agent reported *"focused daemon tests"*
   // green and complete, and the landing's own run of `npm test` was red on a file it had not
@@ -174,7 +177,7 @@ export async function resolveCommitOnTask(
   if (!task) return { ok: false, reason: 'no such task' }
   const project = task.projectId ? getProject(task.projectId) : null
   if (!project || project.vcs !== 'git') return { ok: false, reason: 'not a git project' }
-  const branch = task.branch ?? branchNameFor(task.seq, task.title)
+  const branch = task.branch ?? branchNameFor(task.seq, task.title, task.branchUnit)
   if (!branch) return { ok: false, reason: 'this task has no branch' }
   if (task.status === 'running' || task.status === 'assigned') {
     return { ok: false, reason: 'this task is already running; it will be asked when it reports' }
@@ -185,8 +188,8 @@ export async function resolveCommitOnTask(
   db().prepare('update tasks set finish_asked_at = null where id = ?').run(task.id)
 
   const msgs = messagesFor(task.id)
-  const lastSystem = [...msgs].reverse().find((m) => m.role === 'system' && /uncommitted|cannot be asked after its turn ends|rescue|stash/i.test(m.text))
-  const failureDetail = lastSystem ? lastSystem.text : (task.holdReason ?? 'Uncommitted changes remain')
+  const lastSystem = [...msgs].reverse().find((m) => m.role === 'system' && /uncommitted|cannot be asked after its turn ends|rescue|stash/i.test(messageBody(m)))
+  const failureDetail = lastSystem ? messageBody(lastSystem) : (task.holdReason ?? 'Uncommitted changes remain')
 
   const instruction =
     `The landing could not proceed because changes on \`${branch}\` are uncommitted:\n\n` +
@@ -220,8 +223,8 @@ export async function resolveTrunkMovedOnTask(
   db().prepare('update tasks set finish_asked_at = null where id = ?').run(task.id)
 
   const msgs = messagesFor(task.id)
-  const lastSystem = [...msgs].reverse().find((m) => m.role === 'system' && /trunk moved|trunk tripwire|branch is empty/i.test(m.text))
-  const failureDetail = lastSystem ? lastSystem.text : (task.holdReason ?? 'The trunk moved during this run and this branch is empty')
+  const lastSystem = [...msgs].reverse().find((m) => m.role === 'system' && /trunk moved|trunk tripwire|branch is empty/i.test(messageBody(m)))
+  const failureDetail = lastSystem ? messageBody(lastSystem) : (task.holdReason ?? 'The trunk moved during this run and this branch is empty')
 
   // ⛔ **The task's own target, not the project's.** A piece of a Plan & Split lands onto its
   // planner's branch, and `landingBaseFor` answers about the project's trunk unless it is handed the
@@ -288,7 +291,7 @@ export async function resolveRetryOnTask(
   if (automatic) {
     // ⛔ Before asking: a send/dispatch that fails still spent the one automatic chance.
     markResolveRetryAsked(task.id)
-    addMessage(task.id, 'system', 'Automatically retrying once with the failure details. A second failure will wait for your review.')
+    addMessage(task.id, 'system', 'Retrying once automatically', null, [], { detail: 'Retrying with the failure details. A second failure will wait for your review.' })
   }
   return resolver(task.id)
 }
@@ -384,12 +387,19 @@ export async function pendingWorkFor(taskId: string): Promise<PendingWork> {
  * asked an agent or landed by itself depending on state nobody can see would be two actions wearing
  * one label; the card draws Commit when there are uncommitted files and Land when there are not.
  *
- * ⛔ **The rung is written to `finishPolicy` first, and that write does two jobs.** It is what the
- * landing will read when the agent reports complete — so `commit·verify·merge` really merges — and
- * it is what takes this task out of `isOpenConversation`, which switches the next turn back to the
- * ordinary closing instruction. Without the second, the agent would be handed the conversation
- * instruction that tells it *not* to commit, in the same turn it is being asked to commit, and would
- * quite reasonably do nothing.
+ * ⛔ **And it no longer writes the rung, which is the change of 2026-09-10.** It used to, and that
+ * write ended the conversation: `finish_policy` stopped being `inherit`, `isOpenConversation` went
+ * false for ever, the kind stopped answering `await-human`, and the next `task_complete` completed
+ * the task. A chat could be committed exactly once and then was no longer a chat. The rung is
+ * carried in the *instruction* instead — the agent commits and then lands with it — so the turn
+ * contract never changes and only Finish or Stop ends the thread.
+ *
+ * ⚠️ Two instructions, because the agent's way of landing is not the same on both. An MCP adapter
+ * has `land_work` and is told to call it; an MCP-less one has no tool and is told to say the commit
+ * is ready so that the person can press **Land**. Decided from `capabilities.mcp`, never from an
+ * adapter name — a missing feature is a missing capability.
+ *
+ * ⛔ `commit-only` is the rung that means *commit and stop there*, so it asks for no landing at all.
  */
 export async function commitConversation(
   taskId: string,
@@ -402,29 +412,59 @@ export async function commitConversation(
   if (task.status === 'running' || task.status === 'assigned') {
     return { ok: false, reason: 'this task is already running; wait for the turn to end' }
   }
-  const branch = task.branch ?? branchNameFor(task.seq, task.title)
+  const branch = task.branch ?? branchNameFor(task.seq, task.title, task.branchUnit)
   if (!branch) return { ok: false, reason: 'this task has no branch' }
 
-  updateTask(task.id, { finishPolicy: policy })
-  // ⛔ Cleared for the same reason `resolveCommitOnTask` clears it: the next `task_complete` has to
-  // reach a real finish decision rather than being turned away as already-asked.
-  db().prepare('update tasks set finish_asked_at = null where id = ?').run(task.id)
+  const instruction = commitConversationInstruction({
+    policy,
+    branch,
+    checks: policyVerifies(policy) ? (project.config.check ?? []) : [],
+    canLand: agentCanLand(task.id)
+  })
 
-  const checks = policyVerifies(policy) ? (project.config.check ?? []) : []
+  addMessage(task.id, 'human', instruction)
+  const outcome = continueTask(task.id)
+  log.info(`t${task.seq}: asked the agent to commit this conversation as ${policy} (${outcome})`)
+  return { ok: true }
+}
+
+/**
+ * What the Commit button asks a conversation's agent to do. Pure, and exported for its test.
+ *
+ * ⛔ **Only a rung that lands names a landing.** `land_work` accepts the three `policyLands` rungs
+ * and nothing else, so `commit-and-verify` — which the Commit ▼ offers — used to produce an
+ * instruction to call the tool with a value its own schema refuses. `commit-only` and
+ * `commit-and-verify` both end at the commit; the second runs the checks first.
+ *
+ * ⚠️ What this agent can do about landing is asked of the adapter by the caller, never assumed. A
+ * session with no MCP has no `land_work`, and naming a tool an agent has not got is the failure
+ * `promptFor` documents — it reads as an instruction it cannot follow rather than as an absence.
+ */
+export function commitConversationInstruction({
+  policy,
+  branch,
+  checks,
+  canLand
+}: {
+  policy: FinishPolicy
+  branch: string
+  checks: string[]
+  canLand: boolean
+}): string {
   const checkStep =
     checks.length > 0
-      ? `Run this project's checks (${checks.map((check) => `\`${check}\``).join(', ')}) and fix any failure before you report complete. `
+      ? `Run this project's checks (${checks.map((check) => `\`${check}\``).join(', ')}) and fix any failure first. `
       : ''
-  const after =
-    policy === 'commit-only'
-      ? 'Nothing will be merged or pushed afterwards. '
-      : policy === 'commit-and-verify'
-        ? 'Nothing will be merged or pushed afterwards; the tool runs the checks again on its side. '
-        : policy === 'pull-request'
-          ? 'The tool pushes the branch and opens the pull request afterwards — do not open one yourself. '
-          : 'The tool takes it from there and lands the branch afterwards. '
+  const after = !policyLands(policy)
+    ? 'Stop there — nothing is to be merged or pushed. '
+    : canLand
+      ? `Then land it by calling the MCP tool \`land_work\` with \`rung: "${policy}"\`. ` +
+        'It rebases, runs the checks and merges or pushes per policy, and names the branch to ' +
+        'carry on in. Do not merge or push to the landing target yourself. '
+      : 'Then say in your reply that the commit is ready to land, and stop — the person will press ' +
+        '**Land**. Do not merge or push to the landing target yourself. '
 
-  const instruction =
+  return (
     `Please commit this conversation's work now: ${FINISH_LABELS[policy]}.\n\n` +
     `Commit everything you have changed on \`${branch}\`. ` +
     'If two or more commits ahead of this branch’s landing target all belong to this task, squash ' +
@@ -432,12 +472,26 @@ export async function commitConversation(
     'target, force-push, or use a destructive reset. ' +
     checkStep +
     after +
-    'When the commit is in place, call `task_complete` with a one-line summary of what it contains.'
+    '⛔ This does not end the task: do not call `task_complete`, and carry on afterwards as before.'
+  )
+}
 
-  addMessage(task.id, 'human', instruction)
-  const outcome = continueTask(task.id)
-  log.info(`t${task.seq}: asked the agent to commit this conversation as ${policy} (${outcome})`)
-  return { ok: true }
+/**
+ * Has the account this task is talking to got `land_work`?
+ *
+ * ⛔ Read off the adapter's declared `capabilities.mcp`, never off its name — the invariant in
+ * AGENTS.md. ⚠️ Falls back, when no session is live, to the account the task is pinned to and then
+ * to the one it last ran on — **not** `assignee`, which a resting conversation has handed to
+ * `'human'` — and to *no MCP* when none resolves: telling an agent to press a button it does not
+ * have is wrong but inert, where telling it to call a tool it has not got is an instruction it
+ * cannot follow.
+ */
+function agentCanLand(taskId: string): boolean {
+  const task = getTask(taskId)
+  const live = sessionOf(taskId)
+  const workerId = task?.constraints.workerId || task?.ranOn || null
+  const adapterId = live?.adapterId ?? (workerId ? (getWorker(workerId)?.adapterId ?? null) : null)
+  return adapterId ? adapter(adapterId).info.capabilities.mcp === true : false
 }
 
 /**
@@ -447,17 +501,18 @@ export async function commitConversation(
  * conversation whose agent committed leaves a clean tree and commits sitting on its branch: Commit
  * has nothing to ask for, Finish only writes down that a person is satisfied, and Retry landing is
  * drawn only after a landing has already failed. So the work stayed on the branch and the thread
- * offered no way to move it — which is what "one of them should be commit/verify/land into main,
- * where the tool does the last landing part" is asking for.
+ * offered no way to move it.
  *
- * ⛔ **The rung is written to `finishPolicy` first**, for the same two reasons as
- * `commitConversation`: `relandTask` reads the resolved policy, and a conversation's own kind
- * otherwise resolves to `await-human`, which lands nothing. ⚠️ Only the rungs the *tool* acts on are
- * offered (`policyLands`) — landing under `commit-only` would be a button that does nothing.
+ * ⛔ **It delegates to `landConversationWork`, and writes no rung.** Pressing Land used to write
+ * the chosen rung onto `finish_policy` and call `relandTask`, which completed the task — so one
+ * landing was the last thing a conversation ever did. Now the rung is passed *through* the landing
+ * rather than persisted, the task stays an open conversation, and it comes back on the next numbered
+ * branch ready for the next thing the person says. Only Finish and Stop end a conversation.
  *
- * ⛔ **No shortcut past `decideFinish`.** `relandTask` runs the identical bar a first completion
- * meets — authority, checks, a clean tree, real commits — so a dirty tree is refused here with the
- * ordinary reason rather than landed because somebody pressed a button.
+ * ⚠️ Only the rungs the *tool* acts on are accepted (`policyLands`) — landing under `commit-only`
+ * would be a button that does nothing. ⛔ And no shortcut past `decideFinish`: the identical bar a
+ * first completion meets, so a dirty tree is refused with the ordinary reason rather than landed
+ * because somebody pressed a button.
  */
 export async function landConversation(
   taskId: string,
@@ -468,12 +523,28 @@ export async function landConversation(
   if (!policyLands(policy)) {
     return { ok: false, reason: `${FINISH_LABELS[policy]} does not land a branch` }
   }
+  // ⚠️ The *button*, not the tool. `landConversationWork` runs perfectly well beside an open run
+  // — that is how `land_work` reaches it, with the agent blocked on the reply — but an operator
+  // pressing Land mid-turn is landing a tree an agent is still editing, which the clean-tree bar
+  // would refuse a moment later anyway and less legibly.
   if (task.status === 'running' || task.status === 'assigned') {
     return { ok: false, reason: 'this task is already running; wait for the turn to end' }
   }
-  updateTask(task.id, { finishPolicy: policy })
   log.info(`t${task.seq}: landing this conversation as ${policy} at the operator's request`)
-  return relandTask(task.id)
+  const result = await landConversationWork(task.id, { rung: policy })
+  if (!result.ok) {
+    // ⚠️ Kept on the task as well as returned, for the reason `relandTask` gives: the renderer
+    // refreshes the task the moment the call returns and has nowhere to put a reason that only
+    // came back through the RPC.
+    const detail = `Landing failed: ${result.reason ?? 'the landing did not complete'}`
+    setHoldReason(task.id, detail)
+    addMessage(task.id, 'system', `Not landed: ${oneLine(result.reason ?? 'the landing did not complete')}`, null, [], {
+      event: 'landing.failed',
+      detail
+    })
+    return { ok: false, ...(result.reason ? { reason: result.reason } : {}) }
+  }
+  return { ok: true }
 }
 
 export async function relandTask(taskId: string): Promise<{ ok: boolean; reason?: string }> {
@@ -486,7 +557,7 @@ export async function relandTask(taskId: string): Promise<{ ok: boolean; reason?
   const didNotLand = (reason: string): { ok: false; reason: string } => {
     const detail = `Retry landing failed: ${reason}`
     setHoldReason(task.id, detail)
-    addMessage(task.id, 'system', detail)
+    addMessage(task.id, 'system', `Retry did not land: ${oneLine(reason)}`, null, [], { event: 'landing.failed', detail })
     return { ok: false, reason }
   }
 

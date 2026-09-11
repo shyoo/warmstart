@@ -22,6 +22,7 @@ function mockTask(over: Partial<Task> = {}): Task {
     title: 'test prompt',
     titleSummary: null,
     landingTarget: null,
+    branchUnit: 1,
     childDefaults: null,
     kind: 'work',
     landedBaseSha: null,

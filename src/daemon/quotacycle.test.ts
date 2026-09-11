@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { Task } from '@shared/tasks.js'
+import { messageBody } from './threadline.js'
 
 /**
  * A fleet with work arriving, windows filling, tasks parked on a clock, and nobody watching.
@@ -123,8 +124,8 @@ const statusOf = (task: Task): string | undefined => tasks.getTask(task.id)?.sta
 const resumeNotes = (task: Task): string[] =>
   tasks
     .messagesFor(task.id)
-    .filter((m) => m.role === 'system' && /Back in the queue|has reset/.test(m.text))
-    .map((m) => m.text)
+    .filter((m) => m.role === 'system' && /Back in the queue|has reset/.test(messageBody(m)))
+    .map(messageBody)
 
 let origClaudeInstalled: () => boolean
 let origAgyInstalled: () => boolean

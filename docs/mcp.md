@@ -59,14 +59,24 @@ Scoped to its own run, its own project, its own mandate and its own budget. ⛔ 
 raw process spawn, raw SQL, the filesystem outside its project, any way to widen its own mandate, and
 any way to assign work directly to another worker.
 
-⛔ **There is no `commit` or `land` tool, and there will not be one.** It is the question a stuck
-agent reaches for — asked outright on t339, 2026-09-10 — so the answer belongs here rather than only
-in [`landing.md`](landing.md): the agent commits with `git`, in its own workspace, the way it would
-in any repo, and the tool decides what happens to the branch afterwards. Deciding what to stage and
-what a message says is the work, not plumbing. ⚠️ So a task that will not land is **never** an agent
-missing a tool it was not told about. Read the hold reason: it names the condition that failed, and
-every one of them ([`landing.md`](landing.md) §"What safe means") is either something the agent can
-fix in `git` or something only a person can.
+⛔ **There is still no `commit` tool, and there will not be one.** The agent commits with `git`, in
+its own workspace, the way it would in any repo, and the tool decides what happens to the branch
+afterwards. Deciding what to stage and what a message says is the work, not plumbing.
+
+⛔ **`land_work` exists, and it is for conversations only.** It refuses every other kind, because on
+a `work` task landing *is* finishing and `task_complete` is already that call. The case it answers is
+narrower and had no answer at all: in a conversation, a person says *land this*, and the agent has
+committed on its branch and cannot safely do the next step by hand — rebase onto a target that has
+moved, run the project's own checks, merge or push under the project's policy, all while landing is
+serialised per project so two rebases cannot race. ⛔ It ends **nothing**: the run stays open, the
+task stays an open conversation, and the reply names the next numbered branch to carry on in, because
+the landing retired the one the work was on. See [`landing.md`](landing.md).
+
+⚠️ **The t339 lesson still holds for work tasks, and is unchanged.** A *work* task that will not
+land is never an agent missing a tool it was not told about. Read the hold reason: it names the
+condition that failed, and every one of them ([`landing.md`](landing.md) §"What safe means") is either
+something the agent can fix in `git` or something only a person can. `land_work` is not a way round
+any of them — it runs the identical bar and hands the same reason back, verbatim.
 
 | Tool | Does |
 |---|---|
@@ -79,6 +89,7 @@ fix in `git` or something only a person can.
 | `handoff` | leave a note for whoever continues; prepended to the next run's prompt |
 | `task_split` | file a whole Plan & Split at once — 2 to N pieces with dependency edges encoding every required execution or landing order; edge-free pieces may run in parallel. ⛔ Raises **one** approval and blocks on it; atomic |
 | `task_depend` | add one edge between two pieces of **this task's own** split. ⛔ never an arbitrary task in the fleet |
+| `land_work` | ⛔ **conversations only.** Rebase, check and land what this conversation has committed, because the person asked. Refuses anything else. Ends nothing — the reply names the branch to keep working on |
 
 ⛔ **`task_complete` and `await_human` are the only two ways a run can end, and an agent that calls
 neither leaves the task reading `running` for ever.** An ordinary run stays open until completion is
@@ -151,6 +162,13 @@ session's MCP config is frozen for its lifetime and workers on one project get i
 That is a real, recurring cost, paid to avoid a third tier and the third prompt-cache prefix it would
 buy. `checkpoint` sets the precedent: registered for everyone, *named in the prompt* only where it
 applies.
+
+⚠️ **`land_work` pays exactly the same price, and it is worth saying out loud because it is used by
+one task kind.** Adding it changed the tool definitions, which invalidates **every** worker session's
+prompt-cache prefix on the install — not only conversations' — and every session opened before it
+carries the old config until it ends (§2). It follows `checkpoint`'s mitigation: registered for
+everyone, named in the prompt only where it applies, which is `conversationInstruction` in
+`prompt.ts`.
 
 ⚠️ The approval window holds the planner's worker slot — `awaitingHumanReservations` counts an
 `awaiting_human` task against `maxConcurrent` so the answer can resume a warm session. Same price

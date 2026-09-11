@@ -5,6 +5,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import type { Session, Worker } from '@shared/protocol.js'
 import type { Run } from '@shared/tasks.js'
 import type { WorkerChoice } from './scheduler.js'
+import { messageBody } from './threadline.js'
 
 /**
  * The routing and reporting faults found in one afternoon of real use, turned into checks.
@@ -2046,7 +2047,7 @@ describe('model-aware routing', () => {
       expect(chosenInScored?.model).toBe(choice.model)
 
       const messages = tasks.messagesFor(task.id)
-      const exploreMsg = messages.find((m) => m.text.includes('Model exploration: trying'))
+      const exploreMsg = messages.find((m) => messageBody(m).includes('Model exploration: trying'))
       expect(exploreMsg).toBeDefined()
     } finally {
       setSetting('modelExploration', false)

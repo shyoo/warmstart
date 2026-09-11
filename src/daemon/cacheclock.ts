@@ -1211,13 +1211,13 @@ async function reviveAndCompact(session: Session, decision: ClockDecision): Prom
     preTokens: decision.contextTokens
   })
   if (run?.taskId) {
-    addMessage(
-      run.taskId,
-      'system',
-      `Woke this conversation up to compact it: ${decision.reason}. It costs about ` +
+    addMessage(run.taskId, 'system', `Woke the conversation to compact it (≈${decision.estimatedCost} tokens)`, null, [], {
+      event: 'compaction',
+      detail:
+        `Woke this conversation up to compact it: ${decision.reason}. It costs about ` +
         `${decision.estimatedCost} tokens now, against a rebuild of the whole prefix if it is left ` +
         'until this task starts again. The session is closed again as soon as it lands.'
-    )
+    })
   }
   log.info(
     `reviving ${session.id.slice(0, 8)} to compact it: ${decision.reason} ` +
@@ -1308,9 +1308,16 @@ async function executeMove(session: Session, decision: ClockDecision): Promise<v
         addMessage(
           run.taskId,
           'system',
-          `Compacting this session: ${decision.reason}. ` +
-            `Context is ${fmt(decision.contextTokens)} tokens; this costs about ` +
-            `${fmt(decision.estimatedCost)} and makes every turn after it read a smaller prefix.`
+          `Compacting (≈${fmt(decision.contextTokens)} tokens)`,
+          null,
+          [],
+          {
+            event: 'compaction',
+            detail:
+              `Compacting this session: ${decision.reason}. Context is ${fmt(decision.contextTokens)} ` +
+              `tokens; this costs about ${fmt(decision.estimatedCost)} and makes every turn after it ` +
+              'read a smaller prefix.'
+          }
         )
       }
       log.info(

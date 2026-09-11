@@ -1,4 +1,5 @@
 import type {
+  FinishPolicy,
   LooseEnd,
   Project,
   ResolvedFinishPolicy,
@@ -105,6 +106,19 @@ export interface FinishInputs {
    */
   siblingLanded?: string[]
   /**
+   * The commits **this task** is recorded as having landed on its own target.
+   *
+   * ⛔ **The fourth condition on the tripwire, and a conversation that lands twice is why.** The
+   * rule is *empty branch* + *target moved* = an agent worked in the trunk. A conversation lands,
+   * carries on talking on a fresh branch, and then answers a question without writing a file — at
+   * which point its branch is legitimately empty and the target moved during the same run, because
+   * *it* moved it. Subtracted exactly as a sibling's landings are, for exactly the same reason:
+   * movement with a known author is not evidence against anybody.
+   *
+   * ⚠️ Empty for a task that has never landed, which leaves the rule as it was.
+   */
+  ownLanded?: string[]
+  /**
    * Whether the branch would rebase onto its target, read without touching anything.
    *
    * ⚠️ `null` is **no reading**, exactly like `trunk`: a git too old for `merge-tree`, a target that
@@ -112,6 +126,19 @@ export interface FinishInputs {
    * `landTask` remains the backstop that actually attempts the rebase.
    */
   merge?: MergeReading | null
+  /**
+   * The rung to judge against, when the caller has one the three tiers do not answer with.
+   *
+   * ⛔ **The one caller is a conversation landing**, and without it this function is unusable
+   * there: a `conversation` on `inherit` resolves to `await-human` *from its kind*, which is the
+   * whole point of the kind, so `decideFinish` would refuse to land a conversation on principle
+   * every time. The override says which rung is being asked about; it does not widen anything
+   * — `mandateAllows('land')`, the checks, the clean tree and the rescue-tip rule are all
+   * still ahead of it.
+   *
+   * ⚠️ Absent on every other path, which resolves task → project → fleet exactly as before.
+   */
+  policy?: FinishPolicy
 }
 
 export interface TrunkReading {
@@ -130,9 +157,15 @@ export function decideFinish({
   hasChecks,
   trunk,
   merge,
-  siblingLanded = []
+  siblingLanded = [],
+  ownLanded = [],
+  policy: policyOverride
 }: FinishInputs): FinishDecision {
-  const { policy, instruction } = resolveFinishPolicy(task, project)
+  const resolved = resolveFinishPolicy(task, project)
+  // ⚠️ The override replaces the *rung*, never the instruction: `custom` is the only policy that
+  // carries one, it is not a rung anything lands on, and `policyLands` refuses it at the caller.
+  const policy = policyOverride ?? resolved.policy
+  const instruction = resolved.instruction
   const loose = state.dirtyFiles.length + state.untrackedFiles.length
 
   // 0. A rebase this tool started and the agent did not finish. ⛔ Checked before anything else,
@@ -212,8 +245,9 @@ export function decideFinish({
     // ⛔ Attribute the movement before accusing anybody of it. Every commit a sibling landed is
     //    subtracted; if that accounts for all of them the target moved for a reason this design
     //    creates on purpose, and the run is ordinary. Anything unaccounted for still fires.
+    const explained = [...siblingLanded, ...ownLanded]
     const unexplained = trunk
-      ? trunk.commits.filter((c) => !siblingLanded.some((sha) => sha && c.startsWith(sha.slice(0, 8))))
+      ? trunk.commits.filter((c) => !explained.some((sha) => sha && c.startsWith(sha.slice(0, 8))))
       : []
     if (trunk && trunk.after !== trunk.before && (trunk.commits.length === 0 || unexplained.length > 0)) {
       return {
@@ -344,9 +378,13 @@ function landOrResolve(
  * ⚠️ `warmstart/t<seq>-<slug>` is written by `branchNameFor`, so the sequence number is
  * recoverable from the branch alone — which matters because the workspace has usually been released
  * and reused by the time anybody looks, and the branch is the only thread back to the task.
+ *
+ * ⚠️ A conversation that has landed is on `warmstart/t<seq>.<unit>-<slug>`, and the unit is skipped:
+ * the task is the same task however many times it has landed. A pattern that did not allow for it
+ * matched nothing and left every such branch attributed to no task at all.
  */
 export function taskSeqFromBranch(branch: string | null): number | null {
-  const match = branch?.match(/\/t(\d+)-/)
+  const match = branch?.match(/\/t(\d+)(?:\.\d+)?-/)
   return match?.[1] ? Number.parseInt(match[1], 10) : null
 }
 

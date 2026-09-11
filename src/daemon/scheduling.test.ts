@@ -80,6 +80,7 @@ function makeTask(overrides: Partial<Task> = {}): Task {
     titleSummary: overrides.titleSummary ?? null,
     kind: overrides.kind ?? 'work',
     landingTarget: overrides.landingTarget ?? null,
+    branchUnit: overrides.branchUnit ?? 1,
     childDefaults: overrides.childDefaults ?? null,
     landedBaseSha: overrides.landedBaseSha ?? null,
     landedHeadSha: overrides.landedHeadSha ?? null,
@@ -340,7 +341,7 @@ describe('automatic resolve and retry', () => {
     const retried = tasks.requireTask(task.id)
     expect(retried.status).toBe('ready')
     expect(retried.resolveRetryAskedAt).not.toBeNull()
-    expect(tasks.messagesFor(task.id).filter((m) => /Automatically retrying once/.test(m.text))).toHaveLength(1)
+    expect(tasks.messagesFor(task.id).filter((m) => /Retrying once automatically/.test(m.text))).toHaveLength(1)
     // ⛔ **And it is the *checks* instruction that goes out, not the rebase one.** This test always
     // used the real hold reason — "the project checks failed after rebase" — and never looked at
     // what was sent, which is how `/conflict|rebase/` matched it for a fortnight: t344 and t347
@@ -359,6 +360,6 @@ describe('automatic resolve and retry', () => {
     })
     expect(await resolutions.resolveRetryOnTask(task.id, true)).toMatchObject({ ok: false })
     expect(tasks.requireTask(task.id).status).toBe('awaiting_human')
-    expect(tasks.messagesFor(task.id).filter((m) => /Automatically retrying once/.test(m.text))).toHaveLength(1)
+    expect(tasks.messagesFor(task.id).filter((m) => /Retrying once automatically/.test(m.text))).toHaveLength(1)
   })
 })

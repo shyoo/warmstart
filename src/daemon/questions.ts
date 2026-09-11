@@ -429,7 +429,7 @@ function park(id: string, why: string): QuestionResolution {
   if (parked.taskId) {
     // ⚠️ The question itself is already in the thread, written when it was asked. This says
     // only what changed, so a reader is not shown the same sentence twice.
-    addMessage(parked.taskId, 'system', `Still waiting on that decision - ${why}.`)
+    addMessage(parked.taskId, 'system', 'Still waiting on that decision', null, [], { detail: `${why}.` })
     setStatus(parked.taskId, 'awaiting_human', {
       assignee: 'human',
       holdReason: `the agent asked and is waiting on you: ${parked.question.slice(0, 300)}`

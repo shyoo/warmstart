@@ -93,9 +93,10 @@ function pickCustomInstruction(policy: FinishPolicy, instruction: string): strin
  * ⛔ **A conversation answers `await-human` from its kind, above the project and the fleet.** Not as
  * a default it merely starts on: a chat filed into a project set to `commit-and-merge` would
  * otherwise land the repository every time the agent said something conclusive, which is the one
- * thing the kind exists to stop. ⚠️ Only while its own policy is `inherit` — the Commit button
- * writes a real rung, and from that moment the operator's choice is the answer. `isOpenConversation`
- * is that same test read from the other side.
+ * thing the kind exists to stop. ⚠️ Only while its own policy is `inherit` — a real rung set on the
+ * task's own finish setting is the operator's answer from that moment. Landing a conversation does not
+ * pass through here at all: `landConversationWork` hands `decideFinish` its rung directly, and leaves
+ * the task on `inherit`. `isOpenConversation` is that same test read from the other side.
  */
 export function resolveFinishPolicy(task: Task | null | undefined, project: Project | null | undefined, fleetFinish: FinishPolicy = DEFAULT_FLEET_FINISH): ResolvedFinishPolicy {
   const instruction = finishInstructionFor(project)

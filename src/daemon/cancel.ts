@@ -99,8 +99,10 @@ export async function cancelTask(taskId: string, options: CancelOptions = {}): P
   addMessage(
     taskId,
     'system',
-    `Cancel requested by ${requestedBy}${options.reason ? `: ${options.reason}` : ''}. ` +
-      `Resting state: ${restingState}.`
+    `Cancel requested (${restingState})`,
+    null,
+    [],
+    { detail: `Requested by ${requestedBy}${options.reason ? `: ${options.reason}` : ''}. Resting state: ${restingState}.` }
   )
 
   // The subtree goes first, and with the same resting state - an operator who paused a parent must
@@ -268,7 +270,7 @@ export function resumeTask(taskId: string): Task {
     return task
   }
   db().prepare('update tasks set cancel_json = null, not_before = null where id = ?').run(taskId)
-  addMessage(taskId, 'system', 'Resumed.')
+  addMessage(taskId, 'system', 'Resumed')
   setStatus(taskId, task.status === 'cancelled' ? 'draft' : 'ready')
   return requireTask(taskId)
 }

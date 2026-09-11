@@ -7,7 +7,7 @@
  * only reason this file imports from `Facts.tsx`.
  */
 import { canWork } from '@shared/protocol'
-import { Fragment, useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import {
   FINISH_LABELS,
   FINISH_SHORT,
@@ -476,9 +476,6 @@ export function Decide({
   // known*, and drawing a warning or a Commit button off an unknown is how a card ends up telling
   // somebody there is nothing to lose a moment before there is.
   const uncommittedNow = conversation && pending?.supported === true && pending.hasDiff
-  const uncommittedLine = pending
-    ? `${pending.dirtyFiles + pending.untrackedFiles} uncommitted file(s) in this workspace.`
-    : ''
 
   /**
    * Committed work sitting on the branch with nowhere to go.
@@ -518,51 +515,25 @@ export function Decide({
   /**
    * Every cause whose explanation the operator gets, under one button (t289). The copy lives
    * here because it is presentation; which causes match lives in `resolveRetryCauses`, because
-   * that is the rule a test can pin.
+   * that is the rule a test can pin. ⚠️ Plain strings, because they go into the button's tooltip.
    */
-  const resolveCauseCopy: Record<ResolveRetryCause, { heading: string; body: React.JSX.Element }> = {
-    conflicted: {
-      heading: 'The work is fine, the branch is stale.',
-      body: (
-        <>
-          Sends the branch back to an agent to rebase onto the landing target and resolve the
-          conflicts, then report complete again — same thread, so it keeps the context it already
-          has. Nothing is discarded and the branch is never reset.
-        </>
-      )
-    },
-    checksFailed: {
-      heading: 'Project checks failed.',
-      body: (
-        <>
-          Sends the check output back to the agent to fix the lint, type, or test errors, commit
-          the fix on <span className="mono">{task.branch}</span>, and report complete again — same
-          thread, preserving existing context.
-        </>
-      )
-    },
-    uncommitted: {
-      heading: 'Uncommitted work.',
-      body: (
-        <>
-          Sends the branch back to an agent to commit the changes on{' '}
-          <span className="mono">{task.branch}</span> and report complete again — same thread,
-          preserving existing context.
-        </>
-      )
-    },
-    trunkMoved: {
-      heading: 'The trunk moved and the branch is empty.',
-      body: (
-        <>
-          Sends the branch back to an agent to rebase onto the landing target, ensure all intended
-          changes are committed on <span className="mono">{task.branch}</span>, run project checks,
-          and report complete again — same thread, preserving existing context.
-        </>
-      )
-    }
+  const resolveCauseCopy: Record<ResolveRetryCause, string> = {
+    conflicted:
+      'The work is fine, the branch is stale: sends the branch back to an agent to rebase onto the ' +
+      'landing target, resolve the conflicts and report complete again. Nothing is discarded and ' +
+      'the branch is never reset.',
+    checksFailed:
+      'Project checks failed: sends the check output back to the agent to fix the lint, type or test ' +
+      `errors, commit the fix on ${task.branch} and report complete again.`,
+    uncommitted:
+      `Uncommitted work: sends the branch back to an agent to commit the changes on ${task.branch} ` +
+      'and report complete again.',
+    trunkMoved:
+      'The trunk moved and the branch is empty: sends the branch back to an agent to rebase onto the ' +
+      `landing target, make sure every intended change is committed on ${task.branch}, run the ` +
+      'project checks and report complete again.'
   }
-  const resolveCauses = resolveRetryCauses(task).map((key) => ({ key, ...resolveCauseCopy[key] }))
+  const resolveCauses = resolveRetryCauses(task).map((key) => resolveCauseCopy[key])
 
   const handleResolveRetry = async () => {
     setBusy(true)
@@ -626,35 +597,107 @@ export function Decide({
           effort: selectedEffort || null
         })
       }
-      const targetName = selectedWorkerId
-        ? (fleet.find((e) => e.worker.id === selectedWorkerId)?.worker.label ?? selectedWorkerId)
-        : 'auto / scheduler choice'
-      await rpc('task.message', {
-        id: task.id,
-        text: `Reassigned worker to ${targetName} and continued.`
-      })
+      // ⛔ **Not a sentence in the person's voice.** This used to post *"Reassigned worker to X and
+      // continued."* as a human message — words nobody typed, read back to them in their own bubble
+      // and sent to the agent as though they had said it. The daemon already writes the *Worker
+      // switched to …* system line when the worker changes, so the thread needs no second account
+      // of it. What it still needs is a run: `task.message` is the one RPC that continues a resting
+      // task (`task.resume` only leaves `paused_*`), and it takes a text, so the note is the
+      // smallest thing a person could plausibly have meant by pressing the button.
+      await rpc('task.message', { id: task.id, text: 'Continue.' })
       await onRefresh()
     } finally {
       setBusy(false)
     }
   }
 
+  /**
+   * The labels, once. A conversation *finishes* and *stops*; an ordinary task is *marked done* and
+   * *stopped here*. Both pairs are the same two actions, and the tooltips below say what each does
+   * to the DAG — the thing the buttons used to spell out beside themselves.
+   */
+  const finishLabel = conversation ? (confirmFinish && uncommittedNow ? 'Finish anyway' : 'Finish') : 'Mark done'
+  const stopLabel = conversation ? 'Stop' : 'Stop here'
+  const uncommittedCount = pending ? pending.dirtyFiles + pending.untrackedFiles : 0
+  const uncommittedShort = `${uncommittedCount} uncommitted file${uncommittedCount === 1 ? '' : 's'}`
+  const branchName = pending?.branch ?? task.branch
+
+  // ⛔ **The prose moved into the tooltips, and none of it was dropped.** The card used to carry a
+  // paragraph beside every button — what it does, what it does to the DAG, which rung, where the
+  // rung came from — and six of them stacked under a resting conversation was a wall nobody read.
+  // Each button's `title` now says the whole of it; what stays on the card is what protects work.
+  const finishTitle = conversation
+    ? (uncommittedNow
+        ? `⚠️ ${uncommittedShort} in this workspace. Finish releases the workspace, and ${uncommittedCount === 1 ? 'it goes' : 'they go'} back to the pool with it — Commit first, or press Finish twice to finish anyway. `
+        : '') +
+      `Ends this conversation and records your judgement that it is finished. ${releases} ` +
+      'The branch is kept. ⚠️ Nothing verified the work — task_complete remains the only signal that an agent finished.'
+    : `Records your judgement that this is finished. ${releases} ` +
+      '⚠️ Nothing verified the work — task_complete remains the only signal that an agent finished.'
+  const stopTitle =
+    (conversation ? 'Ends this conversation and parks the task as paused_user' : 'Parks the task as paused_user') +
+    `, which Resume picks back up. ${holds} The branch and the workspace are kept; nothing is destroyed.`
+  const commitTitle =
+    'Asks this conversation’s agent — in the same session, so it still has the context — to commit ' +
+    (uncommittedNow ? `the ${uncommittedShort} on ${branchName}` : `whatever is uncommitted on ${branchName}`) +
+    ` and then land it: ${FINISH_LABELS[commitRung]} (${commitRungWhere}). ` +
+    'With the land_work MCP tool the agent lands it itself; on an adapter without MCP it says the ' +
+    'commit is ready and you press Land. “Commit only” asks for the commit and no landing. ' +
+    'This spends a turn and does not finish the task: the conversation stays open, on the next ' +
+    'numbered branch once it lands. ▼ picks a different rung for this press.' +
+    (uncommittedNow && pending?.unclaimed
+      ? ' This task is not holding that workspace any more; the branch and these files are still in it, and the run prefers that tree.'
+      : '') +
+    (cannotLook
+      ? ` ⚠️ Could not read this task’s workspace (${pending?.reason}), so there is no telling what is uncommitted; the run checks the branch out again.`
+      : '')
+  const landTitle =
+    `Lands ${pending?.unlandedCommits === 1 ? '1 commit' : `${pending?.unlandedCommits ?? 0} commits`} ` +
+    `sitting on ${branchName} without spending a turn: ${FINISH_LABELS[landRung]} (${landRungWhere}). ` +
+    'The tool rebases onto the landing target, runs the project’s checks where the rung asks for ' +
+    'them, and merges or pushes as the rung says; a refusal leaves the branch exactly where it is. ' +
+    'Landing does not finish this conversation — only Finish and Stop do — so the thread comes back ' +
+    'open on the next numbered branch, ready to land again. ▼ picks another rung for this press.'
+  const resolveTitle =
+    'Dispatches a run on this thread — same thread, so it keeps the context it already has — to ' +
+    'resolve what stopped it and report complete again. ' +
+    resolveCauses.join(' ')
+  const relandTitle =
+    `Rebases and lands ${task.branch} again now, without dispatching an agent. Use it once the ` +
+    'trunk is clean or another task has finished landing.'
+  const reassignTitle =
+    'Sets the worker, model and effort for this task’s next run and dispatches it now, on this same ' +
+    'thread. Auto lets the scheduler pick by quota and capacity.'
+
+  // ⚠️ One inline line for the DAG, and only when there is a DAG. "2 tasks wait on this one" is a
+  // fact somebody can check, and it is the difference between the rest of a plan running and not —
+  // which is why it does not live only behind a hover. With nothing waiting, nothing is said.
+  const finishVerb = conversation ? 'Finish' : 'Mark done'
+  const waitingLine =
+    blocking === 0
+      ? null
+      : `${blocking === 1 ? '1 task waits' : `${blocking} tasks wait`} on this one — ${finishVerb} releases ${blocking === 1 ? 'it' : 'them'}; ${stopLabel} keeps ${blocking === 1 ? 'it' : 'them'} blocked.`
+
+  // ⚠️ The head repeats the hold reason only when it says something. 'your turn' is what every
+  // resting conversation reads, and the card's own label already says it.
+  const holdReason = task.holdReason?.trim() ?? ''
+  const showHold = holdReason !== '' && holdReason.toLowerCase() !== 'your turn'
+
   return (
     <div className="decide">
       <div className="decide-head">
         <span>your call</span>
         {/* The reason it stopped, where the answer is given rather than only in the ledger. */}
-        {task.holdReason && <span className="decide-why">{task.holdReason}</span>}
+        {showHold && <span className="decide-why">{holdReason}</span>}
       </div>
 
-      <div className="decide-option">
+      {/* ⛔ One row, every action on it, and what each one does on its tooltip. Commit and Land are
+          drawn on what the workspace actually holds — `pendingWork` runs git rather than reading the
+          task — and as **two** controls, because committing costs a turn and landing does not. */}
+      <div className="decide-actions">
         <button
           className="btn btn--ok"
-          title={
-            uncommittedNow
-              ? 'There is uncommitted work in this workspace. Finishing releases it — commit first, or press again to finish anyway.'
-              : 'Records your judgement that this is finished. ⚠️ Nothing verified the work — task_complete remains the only signal that an agent finished.'
-          }
+          title={finishTitle}
           disabled={busy}
           onClick={() => {
             // ⛔ **The warning is a first press, not a dialog**, and it is armed only when something
@@ -670,51 +713,21 @@ export function Decide({
             void onResolve()
           }}
         >
-          {conversation ? (confirmFinish && uncommittedNow ? 'Finish anyway' : 'Finish') : 'Mark done'}
+          {finishLabel}
         </button>
-        <span className="decide-what">
-          <strong>Finished.</strong> {releases} ⚠️ Your judgement, written into the thread as such —
-          nothing here checked the work.
-          {uncommittedNow && (
-            <>
-              {' '}
-              <span className="decide-warn">
-                ⚠️ {uncommittedLine} Finishing releases this workspace, and uncommitted files go back
-                to the pool with it. Commit below first, or press Finish again to finish anyway.
-              </span>
-            </>
-          )}
-        </span>
-      </div>
 
-      <div className="decide-option">
-        <button
-          className="btn btn--danger"
-          title="Parks the task. Destroys nothing, and Resume picks it up where it stopped."
-          disabled={busy}
-          onClick={() => void onStop()}
-        >
-          {conversation ? 'Stop' : 'Stop here'}
+        <button className="btn btn--danger" title={stopTitle} disabled={busy} onClick={() => void onStop()}>
+          {stopLabel}
         </button>
-        <span className="decide-what">
-          <strong>Not finished.</strong> Parks it as <span className="mono">paused_user</span>, which
-          Resume picks back up. {holds} The branch and the workspace are kept.
-        </span>
-      </div>
 
-      {/* ⛔ Drawn on what the workspace actually holds, which is why `pendingWork` runs git rather
-          than reading the task — and drawn as **two** controls, because committing costs a turn and
-          landing does not. A Commit button on a clean tree would dispatch a turn to commit nothing;
-          one control that quietly did either would be two actions wearing one label. */}
-      {(uncommittedNow || cannotLook) && (
-        <div className="decide-option">
+        {(uncommittedNow || cannotLook) && (
           <SplitButton
             className="commit-select"
             label="Commit"
             tone="warn"
             value={commitRung}
             disabled={busy}
-            title={`Asks this conversation’s agent to commit, then ${FINISH_LABELS[commitRung]}. Use ▼ for a different landing strategy.`}
+            title={commitTitle}
             ariaLabel="Commit this conversation"
             menuAriaLabel="Landing strategy for this commit"
             options={COMMIT_RUNGS.map((rung) => ({
@@ -723,48 +736,20 @@ export function Decide({
             }))}
             onAct={(rung) => void handleCommit(rung as FinishPolicy)}
           />
-          <span className="decide-what">
-            <strong>Commit it.</strong> {uncommittedLine} Asks this conversation’s agent — in the
-            same session, so it still has the context — to commit on{' '}
-            <span className="mono">{pending?.branch ?? task.branch}</span> and report complete, then
-            the tool does <strong>{FINISH_LABELS[commitRung]}</strong> with the branch —{' '}
-            {commitRungWhere}. ▼ picks a different one for this press.
-            {/* ⚠️ Said out loud rather than hidden behind a missing button: the card could not read
-                the tree, so it does not know whether there is anything to commit — and the run this
-                dispatches checks the branch out again wherever it has to. */}
-            {cannotLook && (
-              <span className="decide-warn">
-                {' '}
-                ⚠️ Could not read this task’s workspace ({pending?.reason}), so there is no telling
-                what is uncommitted. The run will check the branch out again.
-              </span>
-            )}
-            {/* ⚠️ The workspace is not claimed by this task any more — its session ended and the slot
-                went back to the pool — but the branch and these files are still sitting in it. */}
-            {uncommittedNow && pending?.unclaimed && (
-              <span className="dim">
-                {' '}
-                This task is not holding that workspace any more; the branch and these files are
-                still in it, and the run prefers that tree.
-              </span>
-            )}
-            {commitError && <span className="decide-warn"> ⚠️ {commitError}</span>}
-          </span>
-        </div>
-      )}
+        )}
 
-      {/* ⛔ The clean-tree half: committed work with nowhere to go. No agent, no turn — the tool
-          rebases, runs the project's checks and merges, exactly as it would have at the end of an
-          ordinary task. */}
-      {unlandedNow && (
-        <div className="decide-option">
+        {/* ⛔ The clean-tree half: committed work with nowhere to go. No agent, no turn — the tool
+            rebases, runs the project's checks and merges, exactly as it would have at the end of an
+            ordinary task. ⚠️ And unlike an ordinary task, it ends nothing: the thread stays open on
+            the next numbered branch and can be landed again. See docs/landing.md. */}
+        {unlandedNow && (
           <SplitButton
             className="commit-select"
             label="Land"
             tone="primary"
             value={landRung}
             disabled={busy}
-            title={`Lands this branch: ${FINISH_LABELS[landRung]}. Use ▼ for a different landing strategy.`}
+            title={landTitle}
             ariaLabel="Land this conversation"
             menuAriaLabel="Landing strategy for this branch"
             options={LAND_RUNGS.map((rung) => ({
@@ -773,191 +758,162 @@ export function Decide({
             }))}
             onAct={(rung) => void handleLand(rung as FinishPolicy)}
           />
-          <span className="decide-what">
-            <strong>Land it.</strong> Nothing is uncommitted, and{' '}
-            {pending?.unlandedCommits === 1
-              ? '1 commit is'
-              : `${pending?.unlandedCommits} commits are`}{' '}
-            sitting on <span className="mono">{pending?.branch ?? task.branch}</span>. The tool does
-            this part itself and spends no turn: it rebases onto the landing target, runs the
-            project’s checks where the rung asks for them, and then does what the rung says. This press
-            does <strong>{FINISH_LABELS[landRung]}</strong> — {landRungWhere}; ▼ picks another. A
-            refusal leaves the branch exactly where it is.
-            {commitError && <span className="decide-warn"> ⚠️ {commitError}</span>}
-          </span>
-        </div>
-      )}
+        )}
 
-      {resolveCauses.length > 0 && (
-        <div className="decide-option">
+        {resolveCauses.length > 0 && (
           <button
             className="btn btn--primary"
-            title="Dispatches a run on this thread to resolve what stopped it and report complete again — same thread, so it keeps the context it already has."
+            title={resolveTitle}
             disabled={busy}
             onClick={() => void handleResolveRetry()}
           >
             Resolve &amp; retry
           </button>
-          <span className="decide-what">
-            {resolveCauses.map((cause, index) => (
-              <Fragment key={cause.key}>
-                {index > 0 && <br />}
-                <strong>{cause.heading}</strong> {cause.body}
-              </Fragment>
-            ))}
-          </span>
-        </div>
-      )}
+        )}
 
-      {canReland && (
-        <div className="decide-option">
-          <button
-            className="btn btn--primary"
-            title="Attempts to land the branch again without dispatching an agent."
-            disabled={busy}
-            onClick={() => void handleReland()}
-          >
+        {canReland && (
+          <button className="btn btn--primary" title={relandTitle} disabled={busy} onClick={() => void handleReland()}>
             Retry landing
           </button>
-          <span className="decide-what">
-            <strong>Land again.</strong> Attempts to rebase and land <span className="mono">{task.branch}</span> now.
-            Use this if the trunk is now clean or another task has finished landing.
-          </span>
-        </div>
-      )}
-
-      <div className="decide-option">
-        <button
-          className="btn btn--primary"
-          title="Reassigns the worker and model and dispatches a new run on this thread."
-          disabled={busy}
-          onClick={() => void handleReassign()}
-        >
-          Reassign
-        </button>
-        <div className="decide-what">
-          {/* ⚠️ One row, and it stays one row. Each selector used to size itself to its own longest
-              label — "Auto (scheduler decides)", "account default (claude-opus-5)" — so the three of
-              them asked for more width than the column has and wrapped onto a line each, turning one
-              decision into a stack. They share the row equally now and ellipsize instead; the full
-              label is still on the button that opens the menu, and in the menu itself. */}
-          <div className="reassign-row">
-            <SettingButtonSelect
-              className="reassign-select"
-              value={selectedWorkerId}
-              disabled={busy}
-              ariaLabel="Reassign worker"
-              options={[
-                { value: '', label: 'Auto (scheduler decides)' },
-                /* ⛔ Deactivated accounts are not offered. Reassigning to a disabled worker
-                   parks the task on an account the scheduler will never hand a turn, so the menu
-                   lists only what can actually pick the work up. The one exception is the account
-                   this task is already pinned to — if it was deactivated after assignment it stays
-                   in the list, so the button reads its label instead of a bare id. */
-                ...fleet
-                  .filter((e) => (e.worker.enabled && canWork(e.worker.role)) || e.worker.id === selectedWorkerId)
-                  .map((e) => ({
-                    value: e.worker.id,
-                    label: `${e.worker.label} (${e.worker.adapterId})`
-                  }))
-              ]}
-              onChange={(nextWorkerId) => {
-                setSelectedWorkerId(nextWorkerId)
-                if (!nextWorkerId) {
-                  setSelectedModel('')
-                  setSelectedEffort('')
-                } else {
-                  const w = fleet.find((entry) => entry.worker.id === nextWorkerId)?.worker
-                  const offered = modelOptions.find((o) => o.adapterId === w?.adapterId)?.models ?? []
-                  if (
-                    selectedModel &&
-                    selectedModel !== '__auto__' &&
-                    selectedModel !== '__inherit__' &&
-                    !offered.some((m) => m.id === selectedModel)
-                  ) {
-                    setSelectedModel(reassignmentModel(selectedModel, offered))
-                    setSelectedEffort('')
-                  }
-                }
-              }}
-            />
-
-            {offeredModels.length > 0 && (
-              <SettingButtonSelect
-                className="reassign-select"
-                value={selectedModel}
-                disabled={busy}
-                ariaLabel="Reassign model"
-                options={[
-                  ...(offeredModels.length > 1
-                    ? [{ value: '__auto__', label: 'Auto Model (scheduler decides)' }]
-                    : []),
-                  {
-                    value: '',
-                    label: inheritedModel
-                      ? `account default (${modelLabel(inheritedModel) ?? inheritedModel})`
-                      : 'CLI default model'
-                  },
-                  // ⚠️ The label is written for a person; the value stays the id, which is what is
-                  // sent to the CLI and what the cost model is keyed by.
-                  ...offeredModels.map((m) => ({ value: m.id, label: modelLabel(m.id) ?? m.id }))
-                ]}
-                displayLabel={
-                  selectedModel === '__auto__'
-                    ? 'Auto Model'
-                    : !selectedModel || selectedModel === '__inherit__'
-                      ? inheritedModel
-                        ? (modelLabel(inheritedModel) ?? inheritedModel)
-                        : 'CLI default model'
-                      : undefined
-                }
-                onChange={(val) => {
-                  setSelectedModel(val)
-                  setSelectedEffort('')
-                }}
-              />
-            )}
-
-            {offeredEfforts.length > 0 && (
-              <SettingButtonSelect
-                className="reassign-select"
-                value={selectedEffort}
-                disabled={busy}
-                ariaLabel="Reassign effort"
-                options={[
-                  {
-                    value: '',
-                    label: selectedWorker?.defaultEffort
-                      ? `account default (${effortLabel(selectedWorker.defaultEffort)})`
-                      : 'CLI default effort'
-                  },
-                  ...offeredEfforts.map((level) => ({
-                    value: level,
-                    label: effortLabel(level) ?? level
-                  }))
-                ]}
-                displayLabel={
-                  !selectedEffort
-                    ? selectedWorker?.defaultEffort
-                      ? (effortLabel(selectedWorker.defaultEffort) ?? selectedWorker.defaultEffort)
-                      : 'CLI default effort'
-                    : undefined
-                }
-                onChange={(val) => setSelectedEffort(val)}
-              />
-            )}
-          </div>
-          <span>
-            <strong>Reroute & continue.</strong> Sets the worker/model preference and dispatches a new run.
-            If set to Auto, the scheduler automatically picks the best worker (e.g. Antigravity) based on quota and capacity.
-          </span>
-        </div>
+        )}
       </div>
 
-      <p className="decide-hint">
-        Or say what you want next in the box below — another run on this same thread, preferring the
-        session that still holds its context.
-      </p>
+      {/* ⛔ What stays inline is what protects work: the files Finish would walk away from, a tree
+          the card could not read, and a commit or landing that was refused. Everything else about
+          each button is on its tooltip. ⚠️ Warning colour inside the card rather than a banner above
+          it: each line qualifies one button, not the whole card. */}
+      {uncommittedNow && (
+        <div className="decide-note decide-warn">
+          ⚠️ {uncommittedShort} —{' '}
+          {confirmFinish
+            ? 'press again to finish anyway'
+            : `Finish releases ${uncommittedCount === 1 ? 'it' : 'them'}; Commit first, or press Finish twice`}
+        </div>
+      )}
+      {cannotLook && (
+        <div className="decide-note decide-warn">
+          ⚠️ Could not read this task’s workspace ({pending?.reason}) — Commit checks the branch out again
+        </div>
+      )}
+      {commitError && <div className="decide-note decide-warn">⚠️ {commitError}</div>}
+      {waitingLine && <div className="decide-note">{waitingLine}</div>}
+
+      {/* ⚠️ One row, and it stays one row. Each selector used to size itself to its own longest
+          label — "Auto (scheduler decides)", "account default (claude-opus-5)" — so the three of
+          them asked for more width than the column has and wrapped onto a line each, turning one
+          decision into a stack. They share the row equally now and ellipsize instead; the full
+          label is still on the button that opens the menu, and in the menu itself. */}
+      <div className="reassign-row">
+        <button className="btn btn--primary" title={reassignTitle} disabled={busy} onClick={() => void handleReassign()}>
+          Reassign
+        </button>
+        <SettingButtonSelect
+          className="reassign-select"
+          value={selectedWorkerId}
+          disabled={busy}
+          ariaLabel="Reassign worker"
+          options={[
+            { value: '', label: 'Auto (scheduler decides)' },
+            /* ⛔ Deactivated accounts are not offered. Reassigning to a disabled worker
+               parks the task on an account the scheduler will never hand a turn, so the menu
+               lists only what can actually pick the work up. The one exception is the account
+               this task is already pinned to — if it was deactivated after assignment it stays
+               in the list, so the button reads its label instead of a bare id. */
+            ...fleet
+              .filter((e) => (e.worker.enabled && canWork(e.worker.role)) || e.worker.id === selectedWorkerId)
+              .map((e) => ({
+                value: e.worker.id,
+                label: `${e.worker.label} (${e.worker.adapterId})`
+              }))
+          ]}
+          onChange={(nextWorkerId) => {
+            setSelectedWorkerId(nextWorkerId)
+            if (!nextWorkerId) {
+              setSelectedModel('')
+              setSelectedEffort('')
+            } else {
+              const w = fleet.find((entry) => entry.worker.id === nextWorkerId)?.worker
+              const offered = modelOptions.find((o) => o.adapterId === w?.adapterId)?.models ?? []
+              if (
+                selectedModel &&
+                selectedModel !== '__auto__' &&
+                selectedModel !== '__inherit__' &&
+                !offered.some((m) => m.id === selectedModel)
+              ) {
+                setSelectedModel(reassignmentModel(selectedModel, offered))
+                setSelectedEffort('')
+              }
+            }
+          }}
+        />
+
+        {offeredModels.length > 0 && (
+          <SettingButtonSelect
+            className="reassign-select"
+            value={selectedModel}
+            disabled={busy}
+            ariaLabel="Reassign model"
+            options={[
+              ...(offeredModels.length > 1
+                ? [{ value: '__auto__', label: 'Auto Model (scheduler decides)' }]
+                : []),
+              {
+                value: '',
+                label: inheritedModel
+                  ? `account default (${modelLabel(inheritedModel) ?? inheritedModel})`
+                  : 'CLI default model'
+              },
+              // ⚠️ The label is written for a person; the value stays the id, which is what is
+              // sent to the CLI and what the cost model is keyed by.
+              ...offeredModels.map((m) => ({ value: m.id, label: modelLabel(m.id) ?? m.id }))
+            ]}
+            displayLabel={
+              selectedModel === '__auto__'
+                ? 'Auto Model'
+                : !selectedModel || selectedModel === '__inherit__'
+                  ? inheritedModel
+                    ? (modelLabel(inheritedModel) ?? inheritedModel)
+                    : 'CLI default model'
+                  : undefined
+            }
+            onChange={(val) => {
+              setSelectedModel(val)
+              setSelectedEffort('')
+            }}
+          />
+        )}
+
+        {offeredEfforts.length > 0 && (
+          <SettingButtonSelect
+            className="reassign-select"
+            value={selectedEffort}
+            disabled={busy}
+            ariaLabel="Reassign effort"
+            options={[
+              {
+                value: '',
+                label: selectedWorker?.defaultEffort
+                  ? `account default (${effortLabel(selectedWorker.defaultEffort)})`
+                  : 'CLI default effort'
+              },
+              ...offeredEfforts.map((level) => ({
+                value: level,
+                label: effortLabel(level) ?? level
+              }))
+            ]}
+            displayLabel={
+              !selectedEffort
+                ? selectedWorker?.defaultEffort
+                  ? (effortLabel(selectedWorker.defaultEffort) ?? selectedWorker.defaultEffort)
+                  : 'CLI default effort'
+                : undefined
+            }
+            onChange={(val) => setSelectedEffort(val)}
+          />
+        )}
+      </div>
+
+      <p className="decide-hint">Or reply below to carry on in this same thread.</p>
     </div>
   )
 }

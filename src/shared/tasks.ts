@@ -292,16 +292,16 @@ export interface ProjectCreateResult {
 export type TaskKind = 'work' | 'plan' | 'conversation'
 
 /**
- * A conversation nobody has asked to commit yet.
+ * A conversation still running under the conversation contract.
  *
  * ⛔ **The one flag that decides which contract a turn runs under**, and it is derived rather than
  * stored so it cannot disagree with the finish policy beside it. A conversation's finish policy is
- * `inherit` for its whole ordinary life — `resolveFinishPolicy` reads the kind and answers
- * `await-human`, which is what keeps a project set to `commit-and-merge` from landing a chat. The
- * **only** thing that writes a real rung onto a conversation is the Commit button, and that write is
- * precisely the moment the turn contract has to change back: the agent is now being asked to commit
- * and report complete, so it needs the ordinary closing instruction and the ordinary
- * `task_complete` landing path. One field, two states, no third place to keep them in step.
+ * `inherit` for its whole life — `resolveFinishPolicy` reads the kind and answers `await-human`,
+ * which is what keeps a project set to `commit-and-merge` from landing a chat on its own.
+ * ⚠️ **Neither Commit nor Land writes a rung any more** (t343): a conversation lands through
+ * `land_work` or the Land button as often as it is asked to and stays open, and migration 64 reset
+ * the rows an older build had left carrying one. The only thing that takes a conversation out of this
+ * contract now is an operator choosing a real rung on the task's own *finish* setting.
  */
 export function isOpenConversation(
   task: Pick<Task, 'kind' | 'finishPolicy'> | null | undefined
@@ -571,6 +571,21 @@ export interface Budget {
 
 export type MessageRole = 'human' | 'agent' | 'controller' | 'system'
 
+/** The closed set of concise system timeline entries the UI can render specially. */
+export type MessageEvent =
+  | 'worker.assigned'
+  | 'worker.switched'
+  | 'conversation.joined'
+  /** *Landed as `sha` onto `target`* — the headline `salvageLandedCommits` reads back. */
+  | 'landing.landed'
+  | 'landing.failed'
+  /** A finish verdict that stopped short of landing; the resolve buttons read the last of these. */
+  | 'finish.held'
+  | 'quota.parked'
+  | 'quota.preempted'
+  | 'provider.overloaded'
+  | 'compaction'
+
 /**
  * An image a person put on a message, stored as bytes on disk with its metadata in sqlite.
  *
@@ -601,6 +616,10 @@ export interface TaskMessage {
   taskId: string
   role: MessageRole
   text: string
+  /** Machine-readable kind for a concise system entry; null for ordinary messages. */
+  event: MessageEvent | null
+  /** Supporting evidence shown only when the concise entry is expanded. */
+  detail: string | null
   runId: string | null
   /**
    * When this message reached an agent. A note typed into a live session is answered in that
@@ -773,6 +792,20 @@ export interface Task {
     resumeAt: number
   } | null
   branch: string | null
+  /**
+   * Which numbered branch this task is on: 1 for `warmstart/t12-…`, 2 for `warmstart/t12.2-…`.
+   *
+   * ⛔ **Because a conversation can land more than once, and a landed branch is retired.** Every
+   * other kind of task has exactly one branch for its whole life, so the name could be derived from
+   * the seq alone. A conversation that lands keeps talking: the target has moved, the old branch is
+   * gone, and the next stretch of work has to be cut fresh from the landed target under a name
+   * nothing else holds. The counter is what makes that name derivable rather than guessed — see
+   * `branchNameFor` and `landConversationWork`.
+   *
+   * ⚠️ 1 on every task that has never landed twice, which is every task that existed before this
+   * column, so `branchNameFor(seq, title)` keeps answering exactly what it always did.
+   */
+  branchUnit: number
   /**
    * The ref this task's work lands onto, or null to take the project's.
    *
@@ -2405,6 +2438,16 @@ export interface LandingResult {
    * true of `open-pr` on purpose: a pull request exists so that CI and a person do that.
    */
   checksPassed?: number
+  /**
+   * The thread line this landing would have written, handed back instead of posted.
+   *
+   * ⛔ **Only under `LandingContext.quiet`, and only so one landing writes one message.** A
+   * conversation landing composes its own headline — it has a next branch to name that `landTask`
+   * knows nothing about — and needs `landedMessage`'s clauses underneath it. Letting `landTask`
+   * post its own as well would put two *"Landed as …"* lines on the thread for one landing, which
+   * `salvageLandedCommits` would then read twice.
+   */
+  message?: { headline: string; detail: string }
   /**
    * How many commits this landing put on the target, counted from the target's own history.
    *

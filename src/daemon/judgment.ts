@@ -20,6 +20,7 @@ import { estimateTask, pessimisticOn, type Estimate } from './estimator.js'
 import { resolveObjective } from './objective.js'
 import { settings } from './settings.js'
 import { log } from './log.js'
+import { messageBody, oneLine } from './threadline.js'
 import { errorMessage } from '@shared/errors.js'
 
 /**
@@ -423,7 +424,11 @@ function applyDecompose(task: Task, answer: Record<string, unknown>): ApplyResul
       status: 'draft',
       ...(child.estTokens ? { estTokens: child.estTokens } : {})
     })
-    if (child.acceptance) addMessage(made.id, 'system', `Done when: ${child.acceptance}`)
+    if (child.acceptance) {
+      addMessage(made.id, 'system', `Done when: ${oneLine(child.acceptance)}`, null, [], {
+        ...(oneLine(child.acceptance) === child.acceptance ? {} : { detail: child.acceptance })
+      })
+    }
     created.push(made)
     for (const dep of child.dependsOn) {
       const target = created[dep]
@@ -433,15 +438,12 @@ function applyDecompose(task: Task, answer: Record<string, unknown>): ApplyResul
 
   const note = typeof answer.note === 'string' ? answer.note.trim() : ''
   const named = created.map((c) => `t${c.seq}`).join(', ')
-  addMessage(
-    task.id,
-    'system',
-    [
-      `Decomposed into ${created.length} draft task(s): ${named}.`,
+  addMessage(task.id, 'system', `Decomposed into ${created.length} draft task(s): ${named}`, null, [], {
+    detail: [
       'Each is a draft on purpose - its prompt is written when it is promoted, not now.',
       ...(note ? ['', note] : [])
     ].join('\n')
-  )
+  })
   setStatus(task.id, 'completed')
   return good(`${created.length} drafts: ${named}`)
 }
@@ -458,7 +460,7 @@ export function triageQuestion(task: Task): string {
     )
   const thread = messagesFor(task.id)
     .slice(-12)
-    .map((m) => `${m.role}: ${m.text.slice(0, 600)}`)
+    .map((m) => `${m.role}: ${messageBody(m).slice(0, 600)}`)
   const models = knownModels(task)
 
   return [
@@ -519,7 +521,7 @@ function applyTriage(task: Task, answer: Record<string, unknown>): ApplyResult {
 
   switch (decision.action) {
     case 'human':
-      addMessage(task.id, 'system', `Controller: this needs a person.${why}`)
+      addMessage(task.id, 'system', 'Controller needs you', null, [], { detail: `This needs a person.${why}` })
       setStatus(task.id, 'awaiting_human', {
         assignee: 'human',
         holdReason: `the controller decided this needs a person.${why}`
@@ -527,7 +529,7 @@ function applyTriage(task: Task, answer: Record<string, unknown>): ApplyResult {
       return good('handed to a person')
 
     case 'retry':
-      addMessage(task.id, 'system', `Controller: retrying unchanged.${why}`)
+      addMessage(task.id, 'system', 'Controller: retrying unchanged', null, [], { detail: why.trim() })
       setStatus(task.id, 'ready')
       return good('queued for another attempt')
 
@@ -535,14 +537,14 @@ function applyTriage(task: Task, answer: Record<string, unknown>): ApplyResult {
       // The replacement is filed as a controller-role message so the next run's prompt carries it. The
       // system note above it records where it came from, so nobody later reads it as something the
       // operator typed.
-      addMessage(task.id, 'system', `Controller rewrote the instruction.${why}`)
+      addMessage(task.id, 'system', 'Controller rewrote the instruction', null, [], { detail: why.trim() })
       addMessage(task.id, 'controller', decision.prompt)
       setStatus(task.id, 'ready')
       return good('instruction rewritten and requeued')
 
     case 'escalate':
       updateTask(task.id, { constraints: { ...task.constraints, model: decision.model } })
-      addMessage(task.id, 'system', `Controller escalated this to ${decision.model}.${why}`)
+      addMessage(task.id, 'system', `Controller escalated to ${decision.model}`, null, [], { detail: why.trim() })
       setStatus(task.id, 'ready')
       return good(`escalated to ${decision.model}`)
   }
@@ -667,7 +669,7 @@ function applyGate(task: Task, answer: Record<string, unknown>): ApplyResult {
   switch (decision.verdict) {
     case 'accept':
       noteTitleSummary(task, answer)
-      addMessage(task.id, 'system', `Controller admitted this.${why}`)
+      addMessage(task.id, 'system', 'Controller admitted this', null, [], { detail: why.trim() })
       setStatus(task.id, 'ready')
       return good(`t${task.seq} admitted`)
 
@@ -680,7 +682,7 @@ function applyGate(task: Task, answer: Record<string, unknown>): ApplyResult {
         title: decision.title,
         titleSummary: validateTitleSummary(answer)
       })
-      addMessage(task.id, 'system', `Controller rescoped this.${why}`)
+      addMessage(task.id, 'system', 'Controller rescoped this', null, [], { detail: why.trim() })
       setStatus(task.id, 'ready')
       return good(`t${task.seq} rescoped and admitted`)
 
@@ -690,13 +692,13 @@ function applyGate(task: Task, answer: Record<string, unknown>): ApplyResult {
       noteTitleSummary(task, answer)
       // ⛔ Cancelled, never deleted. Plan §7.4 - an agent's rejected idea is evidence about how the
       // fleet behaves, and the only tier that can delete anything is a person.
-      addMessage(task.id, 'system', `Controller rejected this.${why}`)
+      addMessage(task.id, 'system', 'Controller rejected this', null, [], { detail: why.trim() })
       setStatus(task.id, 'cancelled')
       return good(`t${task.seq} rejected`)
 
     case 'human':
       noteTitleSummary(task, answer)
-      addMessage(task.id, 'system', `Controller passed this to you.${why}`)
+      addMessage(task.id, 'system', 'Controller passed this to you', null, [], { detail: why.trim() })
       setStatus(task.id, 'awaiting_human', {
         assignee: 'human',
         holdReason: `the controller passed this to you.${why}`
@@ -888,10 +890,9 @@ function applyRoute(task: Task, answer: Record<string, unknown>): ApplyResult {
   const checked = validateRoute(answer, allCandidates.length ? allCandidates : listWorkers().map((w) => w.id))
   if (!checked.ok) return bad(checked.reason)
   noteTitleSummary(task, answer)
-  const { workerId, model, why } = checked.value
+  const { workerId, model } = checked.value
   const label = listWorkers().find((w) => w.id === workerId)?.label ?? workerId.slice(0, 8)
   const modelText = model ? ` (${model})` : ''
-  addMessage(task.id, 'system', `Controller routed this to ${label}${modelText}.${why ? ` ${why}` : ''}`)
   return good(`t${task.seq} routed to ${label}${modelText}`)
 }
 
@@ -986,12 +987,11 @@ export function fallbackFor(consult: Consult): string {
     switch (consult.kind) {
       case 'decompose':
         // ⛔ Never guess a decomposition. A made-up plan looks exactly like a real one on a board.
-        addMessage(
-          task.id,
-          'system',
-          'This needs decomposing and no controller was available to do it. Break it into drafts by ' +
+        addMessage(task.id, 'system', 'Needs decomposing — no controller was available', null, [], {
+          detail:
+            'This needs decomposing and no controller was available to do it. Break it into drafts by ' +
             'hand, or designate a controller account and requeue it.'
-        )
+        })
         setStatus(task.id, 'awaiting_human', {
           assignee: 'human',
           holdReason: 'this needs breaking into drafts and no controller was available to do it'
@@ -1001,11 +1001,9 @@ export function fallbackFor(consult: Consult): string {
       case 'triage':
         // Already where the deterministic path put it. Saying so is the point: silence would read as
         // a controller decision.
-        addMessage(
-          task.id,
-          'system',
-          'This has failed more than once and no controller was available to diagnose it.'
-        )
+        addMessage(task.id, 'system', 'Failed more than once — no controller was available', null, [], {
+          detail: 'This has failed more than once and no controller was available to diagnose it.'
+        })
         setStatus(task.id, 'awaiting_human', {
           assignee: 'human',
           holdReason: 'this has failed more than once and no controller was available to diagnose it'
@@ -1014,12 +1012,11 @@ export function fallbackFor(consult: Consult): string {
 
       case 'gate':
         // A draft holds nothing and dispatches nothing, so waiting costs only time.
-        addMessage(
-          task.id,
-          'system',
-          'Filed by an agent and held for review; no controller was available. It stays a draft until ' +
+        addMessage(task.id, 'system', 'Held as a draft — no controller was available', null, [], {
+          detail:
+            'Filed by an agent and held for review; no controller was available. It stays a draft until ' +
             'you queue it or delete it.'
-        )
+        })
         return 'held as a draft'
 
       case 'route':

@@ -1,5 +1,6 @@
-/** The six RPCs an agent reaches through MCP, and the only ones it can. */
+/** The seven RPCs an agent reaches through MCP, and the only ones it can. */
 import { addMessage, createTask, getTask, runForSession, setTaskHandoff } from '../tasks.js'
+import { landConversationWork } from '../conversationland.js'
 import { askQuestion } from '../questions.js'
 import { addSplitDependency, applySplit, validateSplit } from '../split.js'
 import { completeTask, endPlannerForSplit, parkForHuman } from '../scheduler.js'
@@ -9,7 +10,7 @@ import { admitAgentTask } from './support.js'
 
 type AgentMethod =
   | 'agent.complete' | 'agent.awaitHuman' | 'agent.createTask' | 'agent.split' | 'agent.depend'
-  | 'agent.handoff'
+  | 'agent.handoff' | 'agent.land'
 
 export function apiAgent(_ctx: ApiContext): Pick<Api, AgentMethod> {
   return {
@@ -159,6 +160,32 @@ export function apiAgent(_ctx: ApiContext): Pick<Api, AgentMethod> {
       const parent = run?.taskId ? getTask(run.taskId) : null
       if (!parent) return { ok: false, reason: 'this session is not working on a task' }
       return addSplitDependency(parent.id, p.taskSeq, p.dependsOnSeq)
+    },
+    /**
+     * Land a conversation's committed work without ending anything.
+     *
+     * ⛔ **Session → open run → task, and never a task id from the caller.** Every worker RPC here
+     * is scoped to the run the calling process is actually serving; accepting an id would let an
+     * agent land a branch belonging to a task it was never given.
+     *
+     * ⚠️ Deliberately *not* routed through `completeTask`: no finish decision is taken on the
+     * task, the run stays open, and the agent goes on working in the branch this returns. The
+     * refusals — wrong kind, dirty tree, no commits, no checks, no authority — all come back as
+     * `reason`, which the tool passes through verbatim.
+     */
+    'agent.land': async (p) => {
+      const run = runForSession(p.sessionId)
+      if (!run?.taskId) return { ok: false, reason: 'this session is not working on a task' }
+      const result = await landConversationWork(run.taskId, {
+        sessionId: p.sessionId,
+        ...(p.rung ? { rung: p.rung } : {})
+      })
+      // ⚠️ The summary is recorded on the thread rather than used to decide anything. It is what
+      // the agent says the landing contains, and the operator reads it beside the landing line.
+      if (result.ok && p.summary?.trim()) {
+        addMessage(run.taskId, 'agent', p.summary.trim(), run.id)
+      }
+      return result
     },
     'agent.handoff': (p) => {
       const run = runForSession(p.sessionId)

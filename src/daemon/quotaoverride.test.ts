@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { pinnedTask } from './testkit.js'
+import { messageBody } from './threadline.js'
 
 /**
  * t71, and the two things that were wrong with the way it waited.
@@ -352,7 +353,7 @@ describe('task.overrideQuota', () => {
     await handlers()['task.overrideQuota']({ id: task.id })
 
     const notes = tasks.messagesFor(task.id).filter((m) => m.role === 'system')
-    expect(notes.some((m) => m.text.includes('overrode the 92% quota gate'))).toBe(true)
+    expect(notes.some((m) => messageBody(m).includes('overrode the 92% quota gate'))).toBe(true)
   })
 })
 
@@ -500,7 +501,7 @@ describe('7-day windows have more runway and compact / hold around 97-98%', () =
     expect(result.applies).toBe(true)
 
     const notes = tasks.messagesFor(task.id).filter((m) => m.role === 'system')
-    expect(notes.some((m) => m.text.includes('overrode the 97% quota gate'))).toBe(true)
+    expect(notes.some((m) => messageBody(m).includes('overrode the 97% quota gate'))).toBe(true)
   })
 })
 

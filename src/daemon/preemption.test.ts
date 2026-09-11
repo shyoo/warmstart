@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { messageBody } from './threadline.js'
 
 /**
  * Preempting a run once, rather than once every ten seconds.
@@ -117,7 +118,7 @@ function seedQuotaPercent(workerId: string, percent: number, resetsAt = Date.now
 const noticesOn = (taskId: string): number =>
   tasks
     .messagesFor(taskId)
-    .filter((m) => m.role === 'system' && m.text.includes('past its estimate')).length
+    .filter((m) => m.role === 'system' && messageBody(m).includes('past its estimate')).length
 
 /** Every preemption of any kind, which is the only thing `preempt` does synchronously. */
 const wrapUpsOn = (taskId: string): number =>
@@ -448,7 +449,7 @@ describe('the switches that gate all of this', () => {
     await scheduler.tick()
     const first = tasks.requireTask(task.id).quotaPreemptWarning
     expect(first?.reason).toContain('96%')
-    const posted = tasks.messagesFor(task.id).filter((m) => m.text.includes('Quota preemption warning')).length
+    const posted = tasks.messagesFor(task.id).filter((m) => messageBody(m).includes('Quota preemption warning')).length
     expect(posted).toBe(1)
 
     await vi.advanceTimersByTimeAsync(30_000)
@@ -460,7 +461,7 @@ describe('the switches that gate all of this', () => {
     expect(second?.reason).toContain('98%')
     expect(wrapUpsOn(task.id)).toBe(0)
     expect(
-      tasks.messagesFor(task.id).filter((m) => m.text.includes('Quota preemption warning')).length
+      tasks.messagesFor(task.id).filter((m) => messageBody(m).includes('Quota preemption warning')).length
     ).toBe(posted)
   })
 
@@ -633,7 +634,7 @@ describe('a task parked for a quota window', () => {
     //    `scheduled` on the next `admit()` for a deadline that has already gone by.
     expect(back.notBefore).toBeNull()
     expect(back.assignee).toBeNull()
-    expect(tasks.messagesFor(task.id).some((m) => m.text.includes('has reset'))).toBe(true)
+    expect(tasks.messagesFor(task.id).some((m) => messageBody(m).includes('has reset'))).toBe(true)
   })
 
   it('waits while the window is still shut', () => {

@@ -128,7 +128,7 @@ line. ⛔ Neither reaches a warm session — see [`sessions.md`](sessions.md) �
 too, because a setting whose effect is *sometimes* is one an operator will otherwise test by watching
 a follow-up and conclude is broken.
 
-⛔ **A thread message renders inline code spans, and nothing else of markdown.** Every message this
+⛔ **A thread message renders as a chat bubble and renders inline code spans, and nothing else of markdown.** Human bubbles sit right; agent, controller and darker system bubbles sit left, with no role column (`lib/threadbubble.ts`). Under each bubble a meta line carries the time, a `📋 1,475` `PromptChip` on the last answer of the run that prompt produced (`promptMessageId`; on the live bubble until there is one) which opens the prompt in a dialog, and ⓘ for a system line's `detail`. Intermediate activity is a `⚙ n steps` chip. ⛔ No full-width *"Prompt sent for run …"* rows, anywhere in the thread. Every message this
 codebase writes names refs, branches, shas and files in backticks — *"Landed as `98f200ab` onto
 `main`"* — and `{m.text}` printed the backticks, which is the worst of both readings: punctuation to
 ignore, and no distinction between `main` the branch and main the adjective. `lib/codespans.ts`
@@ -337,18 +337,46 @@ on the branch and warning about it would cry wolf on every conversation that did
 releases the workspace, so over a dirty tree it arms once and says what it would lose before it will
 do it.
 
+⭐ **The card is one row of buttons, and the explanation of each is its tooltip** (2026-09-10). It
+used to draw one row per action with a paragraph beside every button — what it does, what it does
+to the DAG, which rung and where the rung came from — and six of those under a resting conversation
+was a wall nobody read. `Decide` now renders `.decide-actions`: `Finish · Stop · Commit ▼ · Land ▼`
+(plus *Resolve & retry* and *Retry landing* when a landing has failed), Commit and Land by the same
+`pendingWork` rules as before, and every paragraph moved verbatim into that button's `title`. The
+ordinary `awaiting_human` card takes the same shape with *Mark done · Stop here*. ⛔ **What stays
+inline is only what protects work**, one short `.decide-note` each: the uncommitted-file count
+Finish would release (*⚠️ 3 uncommitted files — press again to finish anyway* once armed), a
+workspace the card could not read, a refused commit or landing (`commitError`), and — on an
+ordinary task — how many tasks wait on this one, because that is the difference between *Mark
+done* and *Stop here* and it must not live only behind a hover. The head drops the hold reason
+when it is just `your turn`, which is what every resting conversation reads. *Reassign* sits at the
+head of the worker · model · effort row, and pressing it no longer posts *"Reassigned worker to X
+and continued."* in the person's voice: the daemon already writes the *Worker switched to …* system
+line, and the button continues the task with the one-word note `Continue.` — `task.message` is the
+only RPC that continues a resting task and it takes a text. `QuotaDecide` keeps the older
+button-beside-paragraph rows.
+
+⛔ **Neither Commit nor Land ends the conversation, and neither writes a rung.** Both used to write
+the chosen rung onto the task, which took it out of `isOpenConversation` for ever — so pressing either
+one, once, turned a chat into an ordinary work task that the next `task_complete` would complete. Only
+**Finish** and **Stop** end a conversation. Press Land as often as there is something to land; each
+press leaves the thread open on the next numbered branch ([`landing.md`](landing.md)).
+
 - **Commit ▼** — uncommitted files. The ▼ offers the finish ladder minus `await-human` (which is
   what the conversation is already doing) and `custom` (an instruction about the project's own finish,
-  not about this commit); the rung writes itself to the task and the agent is asked — in the same
-  session, so it still has the context — to commit and report complete, after which the ordinary
-  landing path runs that rung. ⚠️ It asks rather than commits because the daemon never authors a
-  commit; see [`landing.md`](landing.md).
+  not about this commit). The agent is asked — in the same session, so it still has the context — to
+  commit and then land on the rung picked, by calling `land_work`; on an adapter with no MCP it is
+  asked to say the commit is ready so you can press **Land**. `commit-only` asks for the commit and
+  no landing. ⚠️ It asks rather than commits because the daemon never authors a commit; see
+  [`landing.md`](landing.md).
 - **Land ▼** — a clean tree with commits the landing target does not have. ⛔ **Two controls, not one
   that changes meaning:** committing costs a turn and landing does not, so `task.landConversation`
-  writes the rung and lands the branch itself — rebase, the project's checks, merge — through the same
-  `decideFinish` bar a first completion meets. Its ▼ offers only the rungs the tool acts on
-  (`policyLands`: merge, push, pull request), because landing under `commit-only` would be a button
-  that does nothing. This state used to have no button at all: Commit had nothing to ask for and
+  lands the branch itself — rebase, the project's checks, merge — through the same `decideFinish` bar
+  a first completion meets, and the thread comes back open on the branch it names. Its ▼ offers only
+  the rungs the tool acts on (`policyLands`: merge, push, pull request), because landing under
+  `commit-only` would be a button that does nothing. ⚠️ It refuses while a turn is running — the
+  agent is editing that tree — where `land_work` does not, because there the agent is blocked on the
+  tool's own reply. This state used to have no button at all: Commit had nothing to ask for and
   *Retry landing* is drawn only after a landing has already failed.
 - ⭐ **Both are buttons with a second answer behind a ▼ — `SplitButton`, not a picker** (t283).
   They shipped as `SettingButtonSelect`s: the dark rounded control with a ✍ on it that every
@@ -359,7 +387,7 @@ do it.
   The ▼ half is a `Pill` wearing the button's colour, so the portal, the flip and the arrow keys are
   the same code every other menu uses.
 - ⭐ **The rung it starts on is the task's, else the project's, else the fleet's** — `defaultRung`
-  in `lib/finishrung.ts`, and the card prints where the answer came from. ⛔ Deliberately **not**
+  in `lib/finishrung.ts`, and the button's tooltip says where the answer came from. ⛔ Deliberately **not**
   `resolveFinishPolicy`, which answers `await-human` for a conversation above every other tier: that
   is right for what happens when a task finishes on its own and useless for the button whose purpose
   is to overrule it. Before this the controls had no value at all, so their menus opened on the first

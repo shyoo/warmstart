@@ -55,6 +55,75 @@ export function PromptDisclosure({
 }
 
 /**
+ * The prompt a run was sent, as a chip under a chat bubble: `📋 1,475`.
+ *
+ * ⛔ **A chip, not a row.** The thread used to spend a full-width disclosure on every run — *"Prompt
+ * sent for run 3f9a…"* — which in a conversation put a bar of chrome between every pair of bubbles.
+ * The count is what a reader scanning wants (how much was this agent handed?); the text is one click
+ * away, in a dialog rather than unfolded inside the bubble, because a prompt is routinely longer than
+ * the whole conversation around it.
+ */
+export function PromptChip({
+  prompt,
+  title = 'The prompt this run was sent'
+}: {
+  prompt: string
+  title?: string
+}): React.JSX.Element {
+  const [open, setOpen] = useState(false)
+  const [copied, setCopied] = useState(false)
+  const count = prompt.length.toLocaleString()
+  const copy = () => {
+    void navigator.clipboard.writeText(prompt).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    })
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        className="prompt-chip"
+        title={`${title} — ${count} characters. Click to read or copy it.`}
+        aria-label={`${title}, ${count} characters`}
+        onClick={() => setOpen(true)}
+      >
+        📋 {count}
+      </button>
+      {open && (
+        <div className="confirm-shade" role="presentation" onClick={() => setOpen(false)}>
+          <div
+            className="confirm-dialog prompt-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label={title}
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') setOpen(false)
+            }}
+          >
+            <div className="prompt-dialog-head">
+              <h3>{title}</h3>
+              <span className="num dim">{count} chars</span>
+            </div>
+            <pre className="prompt-pre prompt-dialog-body">{prompt}</pre>
+            <div className="confirm-actions">
+              <button type="button" className="btn" onClick={copy}>
+                {copied ? 'Copied' : 'Copy'}
+              </button>
+              <button type="button" className="btn btn--primary" autoFocus onClick={() => setOpen(false)}>
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  )
+}
+
+/**
  * Collapsible intermediate activity disclosure with step count and copy-to-clipboard.
  */
 export function ActivityDisclosure({

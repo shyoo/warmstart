@@ -20,6 +20,7 @@ import {
   type Task,
   type TaskConstraints,
   type TaskKind,
+  type MessageEvent,
   type TaskMessage,
   type TaskPage,
   type ProjectActivity,
@@ -95,6 +96,7 @@ interface TaskRow {
   quota_override_until: number | null
   quota_preempt_json: string | null
   branch: string | null
+  branch_unit: number | null
   landing_target: string | null
   child_defaults_json: string | null
   landed_base_sha: string | null
@@ -238,6 +240,9 @@ function toTask(r: TaskRow, timing: ActiveTiming = ZERO_TIMING): Task {
       ? (JSON.parse(r.quota_preempt_json) as Task['quotaPreemptWarning'])
       : null,
     branch: r.branch,
+    // ⚠️ `null` reads as 1: every row written before migration 63, which is every task that has
+    // never landed twice. See `Task.branchUnit`.
+    branchUnit: r.branch_unit ?? 1,
     landingTarget: r.landing_target ?? null,
     childDefaults: parseChildDefaults(r.child_defaults_json),
     landedBaseSha: r.landed_base_sha ?? null,
@@ -604,12 +609,12 @@ export function isSplitWork(task: Task): boolean {
 
 export function plannerBranchFor(project: Project, task: Task): string | null {
   if (task.kind === 'plan') {
-    return task.branch ?? (project.vcs === 'git' ? branchNameFor(task.seq, task.title) : null)
+    return task.branch ?? (project.vcs === 'git' ? branchNameFor(task.seq, task.title, task.branchUnit) : null)
   }
   if (task.parentTaskId) {
     const parent = getTask(task.parentTaskId)
     if (parent?.kind === 'plan') {
-      return parent.branch ?? (project.vcs === 'git' ? branchNameFor(parent.seq, parent.title) : null)
+      return parent.branch ?? (project.vcs === 'git' ? branchNameFor(parent.seq, parent.title, parent.branchUnit) : null)
     }
   }
   return null
@@ -653,7 +658,7 @@ export function createTask(input: CreateTaskInput): Task {
   const duplicate = input.mergeDuplicates === false ? null : findNearDuplicate(title, input.projectId ?? null)
   if (duplicate && createdBy.kind !== 'human') {
     log.info(`merged near-duplicate task "${title}" into t${duplicate.seq}`)
-    addMessage(duplicate.id, 'system', `A duplicate of this task was filed and merged: "${title}".`)
+    addMessage(duplicate.id, 'system', 'A duplicate of this task was filed and merged', null, [], { detail: `"${title}"` })
     return duplicate
   }
 
@@ -665,7 +670,7 @@ export function createTask(input: CreateTaskInput): Task {
   const effectiveLandingTarget =
     input.landingTarget ??
     (parent?.kind === 'plan'
-      ? (parent.branch ?? (project && project.vcs === 'git' ? branchNameFor(parent.seq, parent.title) : null))
+      ? (parent.branch ?? (project && project.vcs === 'git' ? branchNameFor(parent.seq, parent.title, parent.branchUnit) : null))
       : null)
 
   db()
@@ -832,16 +837,15 @@ export function attachDependency(taskId: string, dependsOn: string): Task {
   const dep = requireTask(dependsOn)
   addDependency(taskId, dependsOn)
   const task = admit(taskId)
-  addMessage(
-    taskId,
-    'system',
-    task.status === 'blocked' && before.status !== 'blocked'
-      ? `Now waits on t${dep.seq}: ${dep.title}. Admitted automatically when it completes.`
-      : `Now waits on t${dep.seq}: ${dep.title}.` +
-        (TERMINAL_OR_HELD.includes(before.status) && before.status !== 'draft'
-          ? ' This task is past admission, so the prerequisite applies to its next dispatch.'
-          : '')
-  )
+  addMessage(taskId, 'system', `Now waits on t${dep.seq}`, null, [], {
+    detail:
+      task.status === 'blocked' && before.status !== 'blocked'
+        ? `${dep.title}. Admitted automatically when it completes.`
+        : `${dep.title}.` +
+          (TERMINAL_OR_HELD.includes(before.status) && before.status !== 'draft'
+            ? ' This task is past admission, so the prerequisite applies to its next dispatch.'
+            : '')
+  })
   // ⚠️ Emitted even when the status did not move. `setStatus` emits on a transition; an edge added
   // to a running task is a change to the task nothing else would broadcast, and the pane showing it
   // is the one the person is looking at.
@@ -861,7 +865,10 @@ export function detachDependency(taskId: string, dependsOn: string): Task {
   addMessage(
     taskId,
     'system',
-    dep ? `No longer waits on t${dep.seq}: ${dep.title}.` : 'A prerequisite was removed.'
+    dep ? `No longer waits on t${dep.seq}` : 'A prerequisite was removed',
+    null,
+    [],
+    dep ? { detail: dep.title } : {}
   )
   emit({ type: 'task.changed', task })
   log.info(`t${task.seq} no longer depends on ${dep ? `t${dep.seq}` : dependsOn}`)
@@ -1026,12 +1033,16 @@ export function resumeQuotaPaused(released?: (task: Task) => string | null): num
     addMessage(
       r.id,
       'system',
-      early
-        ? `Back in the queue ahead of its own timer: ${early} The dispatch gate reads the quota ` +
-            'again, so a worker still over its limit will hold this rather than run it.'
-        : 'The quota window this task was waiting on has reset. Back in the queue — the dispatch ' +
-            'gate reads the quota again, so a worker still over its limit will hold it rather than ' +
-            'run it.'
+      early ? 'Back in the queue ahead of its own timer' : 'Back in the queue: the quota window has reset',
+      null,
+      [],
+      {
+        detail: early
+          ? `${early} The dispatch gate reads the quota again, so a worker still over its limit will ` +
+            'hold this rather than run it.'
+          : 'The quota window this task was waiting on has reset. The dispatch gate reads the quota ' +
+            'again, so a worker still over its limit will hold it rather than run it.'
+      }
     )
     setStatus(r.id, 'ready', { assignee: null })
     resumed += 1
@@ -1423,6 +1434,27 @@ export function setTaskHandoff(taskId: string, note: string): void {
   if (task) emit({ type: 'task.changed', task })
 }
 
+/**
+ * Move a task onto its next numbered branch, without touching its status.
+ *
+ * ⛔ **Both fields in one write, because they are one fact.** `branch` is the name and `branchUnit`
+ * is what re-derives that name anywhere the column is null — a prompt, a loose end, a recovery
+ * instruction. Writing one without the other gives two answers to *which branch is this task on*,
+ * and the stale one is the one the derivations use.
+ *
+ * ⛔ **Not `setStatus`.** The one caller is a conversation landing, whose whole contract is that the
+ * task's status and run are left exactly as they were; `setStatus` would also clear `hold_reason`
+ * and fire `admitDependents`.
+ */
+export function setTaskBranch(taskId: string, branch: string, unit: number): Task {
+  db()
+    .prepare('update tasks set branch = ?, branch_unit = ?, updated_at = ? where id = ?')
+    .run(branch, unit, Date.now(), taskId)
+  const task = requireTask(taskId)
+  emit({ type: 'task.changed', task })
+  return task
+}
+
 /** Leaving `draft` re-enters admission, which is what makes "not like this" a real resting state. */
 export function promoteDraft(id: string): Task {
   const task = requireTask(id)
@@ -1446,11 +1478,12 @@ export function addMessage(
   role: TaskMessage['role'],
   text: string,
   runId: string | null = null,
-  attachmentIds: string[] = []
+  attachmentIds: string[] = [],
+  options: { event?: MessageEvent; detail?: string } = {}
 ): number {
   const info = db()
-    .prepare('insert into task_messages (task_id, role, text, run_id, ts) values (?,?,?,?,?)')
-    .run(taskId, role, text, runId, Date.now())
+    .prepare('insert into task_messages (task_id, role, text, run_id, event, detail, ts) values (?,?,?,?,?,?,?)')
+    .run(taskId, role, text, runId, options.event ?? null, options.detail ?? null, Date.now())
   const id = Number(info.lastInsertRowid)
   if (attachmentIds.length > 0) bindAttachments(attachmentIds, taskId, id)
   return id
@@ -1463,6 +1496,8 @@ export function messagesFor(taskId: string): TaskMessage[] {
     role: string
     text: string
     run_id: string | null
+    event: MessageEvent | null
+    detail: string | null
     delivered_at: number | null
     ts: number
   }>(db().prepare('select * from task_messages where task_id = ? order by ts, id').all(taskId))
@@ -1474,6 +1509,8 @@ export function messagesFor(taskId: string): TaskMessage[] {
     taskId: r.task_id,
     role: r.role as TaskMessage['role'],
     text: r.text,
+    event: r.event,
+    detail: r.detail,
     runId: r.run_id,
     deliveredAt: r.delivered_at,
     ts: r.ts,

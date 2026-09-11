@@ -610,6 +610,38 @@ try {
     })()`)
   )
 
+  // ⛔ A chat, not a log: what the person said sits on the right, everything else on the left. Read
+  // off geometry rather than class names, because a class that is applied and a stylesheet that
+  // ignores it look identical to a selector. ⚠️ At least one person's bubble is half the claim — the
+  // filed prompt is a human message on every task, so an empty set means the check measured nothing.
+  const sides = JSON.parse(
+    await evaluate(`(() => {
+      const thread = document.querySelector('.thread--task');
+      if (!thread) return JSON.stringify({ human: 0, left: 0, ok: false });
+      const t = thread.getBoundingClientRect();
+      // ⚠️ Gaps, not the midline: a long prompt fills 82% of the row and crosses the middle whichever
+      // edge it hugs, so only "which edge is nearer" tells right-aligned from left-aligned.
+      const hugsRight = (b) => {
+        const r = b.getBoundingClientRect();
+        return t.right - r.right < r.left - t.left;
+      };
+      const bubbles = [...thread.querySelectorAll('.msg:not(.msg--live) .msg-bubble')];
+      const human = bubbles.filter(b => b.closest('.msg--human'));
+      const others = bubbles.filter(b => !b.closest('.msg--human'));
+      return JSON.stringify({
+        human: human.length,
+        left: others.length,
+        ok: human.every(hugsRight) && others.every(b => !hugsRight(b)),
+        noRoleColumn: !thread.querySelector('.msg-role')
+      });
+    })()`)
+  )
+  check(
+    '⛔ the person’s bubbles sit on the right, the agent’s and the system’s on the left, with no role column',
+    sides.human > 0 && sides.ok && sides.noRoleColumn,
+    JSON.stringify(sides)
+  )
+
   // ---- the seven settings, now one component ------------------------------------------
   // ⛔ **The tier this row was missing.** The thread's settings were seven copies of one component
   // and are now one (`TaskSettingPicker`, 2026-09-08); the menus behind them are pure and tested at
@@ -4045,7 +4077,8 @@ try {
         'awaiting_human',
         'human',
         convoBranch,
-        'The agent finished this turn. Reply to carry on in the same conversation, or use Finish, Stop or Commit below.',
+        // ⚠️ The reason `endConversationTurn` writes, verbatim: the card drops it from its head.
+        'your turn',
         settleTask.id
       )
     store.close()
@@ -4079,13 +4112,68 @@ try {
     /Commit/.test(settleLabels),
     settleLabels
   )
-  const commitCopy = await evaluate(
-    `document.querySelector('.decide')?.innerText ?? ''`
+  // ⭐ The explanation lives on the button's tooltip now, not beside it.
+  const commitTitle = await evaluate(
+    `document.querySelector('.decide .commit-select .split-btn-main')?.title ?? ''`
   )
   check(
-    'and the card names the branch the files are sitting on',
-    commitCopy.includes(convoBranch),
-    commitCopy.slice(0, 400)
+    'and the Commit tooltip names the branch the files are sitting on',
+    commitTitle.includes(convoBranch) && /land_work/.test(commitTitle),
+    commitTitle.slice(0, 400)
+  )
+
+  // ⭐ The card stopped being a wall of text: one row of actions, the prose on their tooltips, and
+  // only the lines that protect work left inline. ⚠️ Both halves asserted non-empty: an empty card
+  // has no paragraph either.
+  const cardShape = JSON.parse(
+    await evaluate(`
+      (() => {
+        const card = document.querySelector('.decide:not(.decide--quota)');
+        const lines = (card?.innerText ?? '').split('\\n').map(l => l.trim()).filter(Boolean);
+        return JSON.stringify({
+          buttons: [...(card?.querySelectorAll('.decide-actions .btn') ?? [])].map(b => b.innerText.trim()),
+          paragraphs: card ? card.querySelectorAll('.decide-what').length : -1,
+          longest: lines.reduce((a, l) => (l.length > a.length ? l : a), ''),
+          multi: lines.filter(l => (l.match(/[.!?]\\s+[A-Z⚠]/g) ?? []).length >= 1)
+        });
+      })()
+    `)
+  )
+  check(
+    '⛔ the conversation card is one row of actions with no explanatory paragraph',
+    cardShape.buttons.length >= 3 &&
+      cardShape.buttons.includes('Finish') &&
+      cardShape.buttons.includes('Stop') &&
+      cardShape.paragraphs === 0 &&
+      cardShape.multi.length === 0,
+    JSON.stringify(cardShape)
+  )
+  const headCopy = await evaluate(`document.querySelector('.decide:not(.decide--quota) .decide-head')?.innerText ?? ''`)
+  check(
+    'and the head says "your call" without repeating "your turn" beside it',
+    /your call/i.test(headCopy) && !/your turn/i.test(headCopy),
+    JSON.stringify(headCopy)
+  )
+  // ⛔ Finish over a dirty tree still arms first, and the arming is the one warning kept inline.
+  await evaluate(
+    `[...document.querySelectorAll('.decide .decide-actions .btn')].find(b => b.innerText.trim() === 'Finish')?.click()`
+  )
+  await wait(400)
+  const armed = JSON.parse(
+    await evaluate(`
+      JSON.stringify({
+        label: [...document.querySelectorAll('.decide .decide-actions .btn')].map(b => b.innerText.trim()).find(t => /^Finish/.test(t)) ?? '',
+        warn: [...document.querySelectorAll('.decide .decide-note.decide-warn')].map(n => n.innerText.trim()).join(' | '),
+        status: document.querySelector('.detail-side .status')?.innerText.trim() ?? ''
+      })
+    `)
+  )
+  check(
+    '⛔ Finish over uncommitted files arms with a one-line warning rather than finishing',
+    armed.label === 'Finish anyway' &&
+      /1 uncommitted file — press again to finish anyway/.test(armed.warn) &&
+      /awaiting_human/.test(armed.status),
+    JSON.stringify(armed)
   )
 
   // The other half: commit the work in that same worktree, and the card must offer to land it.
@@ -4109,11 +4197,23 @@ try {
   )
   // ⭐ t283: the card says which landing strategy the button will use, and it is the project's
   // answer rather than the bottom rung of the ladder. `ui project` inherits the fleet default.
-  const landCopy = await evaluate(`document.querySelector('.decide')?.innerText ?? ''`)
+  const landTitle = await evaluate(
+    `[...document.querySelectorAll('.decide .commit-select .split-btn-main')].pop()?.title ?? ''`
+  )
   check(
-    'and it names the landing strategy it will use, taken from the project or the fleet',
-    /commit, verify and merge into main/i.test(landCopy) && /fleet default|project/i.test(landCopy),
-    landCopy.slice(0, 600)
+    'and its tooltip names the landing strategy it will use, taken from the project or the fleet',
+    /commit, verify and merge into main/i.test(landTitle) && /fleet default|project/i.test(landTitle),
+    landTitle.slice(0, 600)
+  )
+  // ⚠️ The arming from the Finish press above must not outlive the files it warned about: the tree
+  // is clean now, so the button is an ordinary Finish again.
+  const finishAfterCommit = await evaluate(
+    `[...document.querySelectorAll('.decide .decide-actions .btn')].map(b => b.innerText.trim()).find(t => /^Finish/.test(t)) ?? ''`
+  )
+  check(
+    'and once the tree is clean the Finish arming is gone again',
+    finishAfterCommit === 'Finish',
+    finishAfterCommit
   )
   // ⚠️ Opened, then read on a later turn: the menu is React state, so a query in the same
   // evaluate as the click reads the DOM one render too early and finds nothing.

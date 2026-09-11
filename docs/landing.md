@@ -55,12 +55,46 @@ verifies** — merging unverified work into a trunk is worse than leaving it on 
 ⛔ **A `conversation` task answers `await-human` from its kind, above all three tiers.** Not a default
 it starts on — a chat filed into a project set to `commit-and-merge` would otherwise land the
 repository every time the agent said something conclusive. The override holds only while the task's own
-policy is `inherit` (`isOpenConversation`), and the one thing that writes a real rung is the thread's
-**Commit** button. That write does two jobs: it is what the landing reads when the agent reports
-complete, and it is what switches the next turn back to the ordinary "commit and report complete"
-instruction. Commit **asks the agent** rather than committing, on the same session so the context
-survives — the daemon does not author commits, which is the same rule `commit-after-verified` runs into
-above.
+policy is `inherit` (`isOpenConversation`), and **nothing in the thread writes a real rung**: the only
+thing that does is an operator setting the task's own **finish** dropdown, which is them saying to
+finish this like a work task.
+
+⛔ **A conversation lands as often as it is asked to, and a landing never ends it.** This is the
+2026-09-10 change, and it is a correction: Commit and Land both used to write the chosen rung onto
+`finish_policy` first, and that write took the task out of `isOpenConversation` **for ever**. One
+landing and the chat stopped being a chat — the kind stopped answering `await-human`, the turn
+contract switched to the one-shot work contract, and the next `task_complete` completed the task. So
+a conversation could reach `main` exactly once. Only **Finish** and **Stop** end a conversation now.
+
+- **The agent commits on its own branch whenever that helps**, which is how work survives a
+  preemption, and is told so in `conversationInstruction`. What it may never do is merge or push to
+  the landing target by hand.
+- **It lands only when the person asks**, by calling the `land_work` MCP tool
+  ([`mcp.md`](mcp.md) §3). The rung comes from the ask, or — absent one — from the project's own
+  policy with the conversation-kind override skipped, which is what the thread shows as
+  *inherited*. It is passed *through* the landing rather than persisted.
+- **Commit** still asks the agent rather than committing — the daemon does not author commits, the
+  same rule `commit-after-verified` runs into above — and the instruction now carries the rung: commit,
+  then `land_work` with it. On an MCP-less adapter it says to report the commit ready so the person can
+  press **Land**, decided from `capabilities.mcp` and never from an adapter name.
+- **Land** does the same thing from the operator's side, spending no turn.
+
+⛔ **Each landing cuts the next numbered branch**, because the landing retires the one the work was
+on. `warmstart/t343-<slug>` → `warmstart/t343.2-<slug>` → `.3`, cut from the target the landing just
+moved, so the next stretch of work starts on top of what landed rather than behind it. The counter is
+`tasks.branch_unit` ([`data-model.md`](data-model.md)); `branchNameFor(seq, title, unit)` writes the
+name and both readers that parse a seq back out of a branch skip the unit, because the task is the
+same task however many times it has landed.
+
+⚠️ **A conversation's own landings are subtracted from the trunk tripwire**, exactly as a Plan &
+Split sibling's are and for the same reason: *empty branch + target moved* stops being evidence of
+anything once the task itself is the thing that moved the target. See the tripwire below.
+
+⚠️ **Nothing about the landing bar is relaxed.** `land_work` and **Land** both run the identical
+`decideFinish` — the mandate, a clean tree, real commits, the project's checks read from disk, the
+rescue-tip rule — under the same per-project landing lease. A refusal moves nothing at all: it does
+not write a rung, does not rest the task, does not touch the branch, and hands back the reason
+verbatim.
 
 ⚠️ `agent-lands` is the pre-2026-08-30 spelling of `commit-and-push` and is still read from an
 existing `project.json`. A rename that silently changed what a config *does* would be worse than the
@@ -166,6 +200,13 @@ pairing above stops being evidence of anything. Movement that is attributable to
 ⛔ Not an exemption for children: a piece that commits onto the plan branch instead of its own branch is
 the same failure one level down, so anything left unaccounted for still fires, and the report names only
 the unexplained commits.
+
+⛔ **And a fourth, because a conversation that lands makes them ordinary too.** A conversation lands,
+carries on talking, and then answers a question without writing a file — which is an empty branch and a
+target that moved during the same run, moved by *this task*, on purpose, minutes earlier. So the
+commits this task's own landings are recorded as having put there (`task_commits`) are subtracted as
+well. Same shape as the sibling rule, one relationship over: movement with a known author is not
+evidence against anybody, and anything left over still fires.
 
 In the UI, you can:
 - **Mark done** — if you inspected the commits in trunk and accept them as the finished work.
@@ -454,16 +495,23 @@ landing **waits for its turn** rather than being refused. The wait happens insid
 already waiting: nothing is re-dispatched, and no agent starts a second time over work that is
 already committed.
 
-You see it as one extra message, then the ordinary one:
+You see it as one extra line, then the ordinary one. Each is a single sentence on the thread; what
+follows it here is its `detail`, behind the expander:
 
-> Waiting to land: t26 (…) is landing right now, and landing is serialised per project so that two
-> rebases cannot race for the trunk. This one is queued behind it and now depends on it, and will
-> land by itself.
+> **Waiting to land behind t26**
+> t26 (…) is landing now; landing is serialised per project so rebases cannot race for the trunk.
+> This task is queued behind it and now depends on it, and will land by itself.
 >
-> Landed as `a41f9c2` onto `main`. Verified first: 4 project checks passed on the rebased branch,
-> before anything moved. Fast-forwarded your local `main` — **not pushed**.
-> `warmstart/t27-…` held nothing `main` does not now have, so it was deleted. It queued
-> behind t26 and landed once that finished.
+> **Landed as `a41f9c2` onto `main`**
+> Verified first: 4 project checks passed on the rebased branch, before anything moved.
+> Fast-forwarded your local `main` — **not pushed**. `warmstart/t27-…` held nothing `main` does
+> not now have, so it was deleted. It queued behind t26 and landed once that finished.
+
+⛔ **Every system line on a thread is one short sentence, and what it used to say is its `detail`.**
+Nothing is dropped: a red check reads *"Not landed: the project checks failed after rebase"*, with
+where the work is and the check output behind it. Code that reads a message back matches on text and detail
+together (`messageBody` in `threadline.ts`), except salvage, which reads the headline alone — so the
+headline keeps its shape.
 
 ⭐ **The queued task gains a dependency on the one it waited for**, so "t27 landed after t26" is still
 answerable tomorrow. ⚠️ The edge is a *record*, not an instruction: the task is deliberately **not**
@@ -476,7 +524,7 @@ message says the branch is fine and that landing it again is all it needs, becau
 out is a retry rather than an investigation.
 
 ⛔ Measured 2026-08-29: t26 and t27 were run in parallel and finished within the same second. One
-landed; the other was told *"Landing failed: another task is landing right now"* and parked on a
+landed; the other was told *"Waiting to land behind t26"* and parked on a
 person's desk with a perfectly good commit on an intact branch. The lock was doing its job — the
 caller was reporting a queue as a failure.
 

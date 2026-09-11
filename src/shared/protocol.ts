@@ -2263,6 +2263,34 @@ export interface RpcMap {
     params: { sessionId: string; taskSeq: number; dependsOnSeq: number }
     result: { ok: boolean; reason?: string }
   }
+  /**
+   * Land a **conversation's** committed work, and carry on talking.
+   *
+   * ⛔ **Not a terminal contract, and the one worker RPC that ends nothing.** `agent.complete` and
+   * `agent.awaitHuman` both close the run; this one leaves the run open, the status alone and the
+   * finish policy on `inherit`, because the person asking for a landing mid-conversation has not
+   * said the conversation is over. Only Finish and Stop say that.
+   *
+   * ⛔ **Refused on a `work` task**, where landing *is* finishing: a work task that landed through
+   * here would have its branch merged while the finish path was still waiting for `task_complete`,
+   * and would then be judged against a branch that no longer exists.
+   *
+   * ⚠️ `rung` is limited by the tool to the three that land (`policyLands`); absent, the landing
+   * takes the project's own rung with the conversation-kind override skipped. It is never persisted
+   * onto the task — it says what this landing does, not what this task's finish policy is.
+   */
+  'agent.land': {
+    params: { sessionId: string; summary?: string; rung?: FinishPolicy }
+    result: {
+      ok: boolean
+      /** The refusal, verbatim. The agent is shown exactly this and nothing is moved. */
+      reason?: string
+      landedSha?: string
+      target?: string
+      /** The branch the conversation is now on, which is where the next commit goes. */
+      nextBranch?: string
+    }
+  }
 
   'remote.status': { params: void; result: RemoteStatus }
   'remote.recheck': { params: void; result: RemoteStatus }

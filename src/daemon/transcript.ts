@@ -493,12 +493,18 @@ export function recordCompaction(
       record.taskId,
       'system',
       `Compacted${record.preTokens ? ` from ${Math.round(record.preTokens / 1000)}k tokens` : ''}` +
-        `${record.durationMs ? ` in ${Math.round(record.durationMs / 1000)}s` : ''}. ` +
-        (record.trigger === 'clock'
-          ? 'The cache clock asked for this.'
-          : record.trigger === 'agent'
-            ? 'The agent asked for this itself.'
-            : 'The CLI did this on its own when the context filled.')
+        `${record.durationMs ? ` in ${Math.round(record.durationMs / 1000)}s` : ''}`,
+      null,
+      [],
+      {
+        event: 'compaction',
+        detail:
+          record.trigger === 'clock'
+            ? 'The cache clock asked for this.'
+            : record.trigger === 'agent'
+              ? 'The agent asked for this itself.'
+              : 'The CLI did this on its own when the context filled.'
+      }
     )
   }
 

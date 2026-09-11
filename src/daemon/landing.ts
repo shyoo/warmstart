@@ -4,6 +4,7 @@ import type {
   FinishPolicy,
   LandingResult,
   LandingStrategyId,
+  MessageEvent,
   Project,
   ResourceClaim,
   Task
@@ -25,6 +26,7 @@ import { launchArgs, which } from './which.js'
 import { log } from './log.js'
 import { git } from './git.js'
 import { errorMessage } from '@shared/errors.js'
+import { oneLine } from './threadline.js'
 import { run } from './spawn.js'
 import { stripAnsi } from './stream.js'
 
@@ -60,6 +62,21 @@ export interface LandingContext {
    * fallback for `custom` only.
    */
   policy?: FinishPolicy
+  /**
+   * Land, but write nothing to the thread and move nothing about the task.
+   *
+   * ⛔ **For the one caller whose task must come out the far side unchanged: a conversation
+   * landing.** Every other path into `landTask` is a task *finishing*, so posting the outcome and
+   * resting a failure at `awaiting_human` is exactly right. A conversation is still open — the
+   * person is still typing, the run may still be blocked on the tool call that asked for this — and
+   * a refusal that parked the task or a success that posted its own headline would both end the
+   * conversation by a side door.
+   *
+   * ⚠️ It suppresses the *reporting*, never the bar. Every check still runs, `task_commits` is still
+   * written, and the message this would have posted comes back as `LandingResult.message` so the
+   * caller can say the same things under its own headline.
+   */
+  quiet?: boolean
 }
 
 export interface LandingStrategy {
@@ -1094,9 +1111,10 @@ async function awaitLandTurn(
   addMessage(
     ctx.task.id,
     'system',
-    `Waiting to land: ${other ? `t${other.seq} (${other.title})` : 'another task'} is landing right ` +
-      'now, and landing is serialised per project so that two rebases cannot race for the trunk. ' +
-      `This one is queued behind it${linked ? ' and now depends on it' : ''}, and will land by itself.`
+    `Waiting to land behind ${other ? `t${other.seq}` : 'another task'}`,
+    null,
+    [],
+    { detail: `${other ? `t${other.seq} (${other.title})` : 'Another task'} is landing now; landing is serialised per project so rebases cannot race for the trunk. This task is queued behind it${linked ? ' and now depends on it' : ''}, and will land by itself.` }
   )
   log.info(`t${ctx.task.seq} is queued behind ${other ? `t${other.seq}` : 'another task'} to land`)
 
@@ -1387,6 +1405,16 @@ export async function landTask(ctx: LandingContext): Promise<LandingResult> {
   try {
     const strategy = strategyFor(ctx.project, ctx.policy, ctx.task)
 
+  // ⛔ Every report this function makes goes through these two, so `quiet` is one decision rather
+  // than six. See `LandingContext.quiet`: a conversation landing owns its own thread line and must
+  // not have its task rested, because the conversation has not finished.
+  const say = (text: string, detail?: string, event?: MessageEvent): void => {
+    if (!ctx.quiet) addMessage(ctx.task.id, 'system', text, null, [], { ...(event ? { event } : {}), ...(detail ? { detail } : {}) })
+  }
+  const restForHuman = (holdReason: string): void => {
+    if (!ctx.quiet) setStatus(ctx.task.id, 'awaiting_human', { assignee: 'human', holdReason })
+  }
+
   // ⛔ Before the strategy, and only when the workspace is clean. A task that produced **no commits**
   // has nothing to land, and saying "landed as <the commit that was already there>" is not a
   // harmless overstatement - it tells somebody their change reached the trunk. Uncommitted work is a
@@ -1412,16 +1440,13 @@ export async function landTask(ctx: LandingContext): Promise<LandingResult> {
           `\`${ctx.branch}\` has no commits and the workspace is clean, but this repository is ` +
           `holding ${stashed} stash(es) taken off that branch — the work an interrupted run left ` +
           'behind. That is not nothing to land.'
-        addMessage(
-          ctx.task.id,
-          'system',
-          `Not landed automatically: ${reason} ⚠️ Recover it with \`git stash list\` and ` +
-            `\`git stash apply\` in ${ctx.workspacePath}. ⛔ The branch has been kept.`
+        say(
+          'Not landed: the work is in a stash',
+          `${reason} ⚠️ Recover it with \`git stash list\` and \`git stash apply\` in ` +
+            `${ctx.workspacePath}. ⛔ The branch has been kept.`,
+          'landing.failed'
         )
-        setStatus(ctx.task.id, 'awaiting_human', {
-          assignee: 'human',
-          holdReason: `the work is in a stash, not on \`${ctx.branch}\``
-        })
+        restForHuman(`the work is in a stash, not on \`${ctx.branch}\``)
         return { strategy: strategy.id, ok: false, branch: ctx.branch, reason }
       }
       // ⛔ **Names the ref it compared.** This said `main` while comparing `origin/main`, which is
@@ -1432,11 +1457,10 @@ export async function landTask(ctx: LandingContext): Promise<LandingResult> {
       const behind = (await commitsAhead(ctx.workspacePath, base, target)) ?? 0
       if (behind > 0) {
         const retired = await finishWithoutLanding(ctx.workspacePath, ctx.branch, base)
-        addMessage(
-          ctx.task.id,
-          'system',
-          `Nothing to land: \`${ctx.branch}\` carries no commits that \`${base}\` does not already ` +
-            'have, and the workspace is clean.' +
+        say(
+          `Nothing to land: \`${base}\` already has it`,
+          `\`${ctx.branch}\` carries no commits that \`${base}\` does not already have, and the ` +
+            'workspace is clean.' +
             ` The work reached \`${base}\` without passing through here — your \`${target}\` is ` +
             `${behind} commit(s) behind it, so run \`git pull\` in the trunk to see it.` +
             retired.note
@@ -1453,15 +1477,8 @@ export async function landTask(ctx: LandingContext): Promise<LandingResult> {
       const reason =
         `\`${ctx.branch}\` carries no commits that \`${base}\` does not already have and no work landed. ` +
         'Check if the agent answered as a question instead of making changes.'
-      addMessage(
-        ctx.task.id,
-        'system',
-        `Not landed: ${reason} ⛔ The branch has been kept.`
-      )
-      setStatus(ctx.task.id, 'awaiting_human', {
-        assignee: 'human',
-        holdReason: 'no commits were produced on this branch'
-      })
+      say('Not landed: no commits were produced', `${reason} ⛔ The branch has been kept.`, 'landing.failed')
+      restForHuman('no commits were produced on this branch')
       return {
         strategy: strategy.id,
         ok: false,
@@ -1475,16 +1492,12 @@ export async function landTask(ctx: LandingContext): Promise<LandingResult> {
 
   if (!allowed.ok) {
     const fallback = await leaveBranch.land(ctx)
-    addMessage(
-      ctx.task.id,
-      'system',
-      `Not landed automatically: ${allowed.reason}. ` +
-        (await whereTheWorkIs(ctx.workspacePath, ctx.branch))
+    say(
+      `Not landed: ${oneLine(allowed.reason ?? 'the landing was refused')}`,
+      `${allowed.reason ?? 'the landing was refused'}. ${await whereTheWorkIs(ctx.workspacePath, ctx.branch)}`,
+      'landing.failed'
     )
-    setStatus(ctx.task.id, 'awaiting_human', {
-      assignee: 'human',
-      holdReason: `the work is done but did not land: ${allowed.reason}`
-    })
+    restForHuman(`the work is done but did not land: ${allowed.reason}`)
     return { ...fallback, ok: false, reason: allowed.reason }
   }
 
@@ -1493,9 +1506,10 @@ export async function landTask(ctx: LandingContext): Promise<LandingResult> {
   // records; an operator reading a message wants `t26`.
   const behind = result.contendedWith ? getTask(result.contendedWith) : null
   if (!result.ok) {
-    addMessage(
-      ctx.task.id,
-      'system',
+    // ⚠️ `result.reason` is kept whole in the detail: a conflict names its paths and a check failure
+    // its command, and the line above the expander is only the first clause of that.
+    say(
+      `Not landed: ${oneLine(result.reason ?? 'the landing did not complete')}`,
       `Landing failed: ${result.reason}. ` +
         (await whereTheWorkIs(ctx.workspacePath, ctx.branch)) +
         // ⭐ A task that failed *only* because it was queued has nothing wrong with it, and the action
@@ -1506,15 +1520,14 @@ export async function landTask(ctx: LandingContext): Promise<LandingResult> {
             `${behind ? `t${behind.seq}` : 'another task'} and the wait ran out. Landing it again is ` +
             'all this needs.'
           : '') +
-        // ⚠️ The tail, because that is where a test runner puts its summary — and this thread message
-        // is also what `resolveChecksOnTask` hands the agent, so it has to reach back far enough to
-        // name the failing test. 2,000 characters of coloured output did not (t344).
-        (result.checkOutput ? `\n\n${result.checkOutput.slice(-4000)}` : '')
+        // ⚠️ The tail, because that is where a test runner puts its summary — and this message's detail
+        // is also what `resolveChecksOnTask` hands the agent (through `messageBody`), so it has to
+        // reach back far enough to name the failing test. 2,000 characters of coloured output did
+        // not (t344).
+        (result.checkOutput ? `\n\n${result.checkOutput.slice(-4000)}` : ''),
+      'landing.failed'
     )
-    setStatus(ctx.task.id, 'awaiting_human', {
-      assignee: 'human',
-      holdReason: `landing failed: ${result.reason}`
-    })
+    restForHuman(`landing failed: ${result.reason}`)
   } else {
     // ⛔ **Written here, on the one path every strategy's success goes through.** The branch this
     // range names has usually just been deleted by `retireBranch`, and after that nothing else in
@@ -1527,15 +1540,15 @@ export async function landTask(ctx: LandingContext): Promise<LandingResult> {
     // every other task that landed in between. `task_commits` names what this task put on the
     // target and nothing else, and `resolveRange` prefers it. See `taskcommits.ts`.
     const landed = await recordLandedCommits(ctx, result)
-    addMessage(
-      ctx.task.id,
-      'system',
-      landedMessage(
-        { ...result, ...(landed === null ? {} : { commitsLanded: landed }) },
-        landingTargetFor(ctx.task, ctx.project),
-        behind
-      )
+    const said = landedMessage(
+      { ...result, ...(landed === null ? {} : { commitsLanded: landed }) },
+      landingTargetFor(ctx.task, ctx.project),
+      behind
     )
+    // ⛔ Handed back rather than posted under `quiet`, so one landing puts one *"Landed as …"* line
+    // on the thread however many callers want to describe it. See `LandingResult.message`.
+    if (ctx.quiet) result.message = said
+    else say(said.headline, said.detail, 'landing.landed')
   }
     return result
   } finally {
@@ -1563,14 +1576,20 @@ export async function landTask(ctx: LandingContext): Promise<LandingResult> {
  * ⚠️ Pure and exported for the tests. Composing prose inside `landTask` is what let the old sentence
  * go five months without anybody being able to assert what it says.
  */
+export interface LandedMessage {
+  /** *Landed as `sha` onto `target`* — the line on the thread, and the shape salvage parses. */
+  headline: string
+  /** The clauses behind the expander: what was verified, pushed, deleted, and queued behind. */
+  detail: string
+}
+
 export function landedMessage(
   result: LandingResult,
   target: string,
   behind: { seq: number } | null
-): string {
-  const parts: string[] = [
-    `Landed as \`${result.commit?.slice(0, 8)}\` onto \`${target}\`.`
-  ]
+): LandedMessage {
+  const headline = `Landed as \`${result.commit?.slice(0, 8)}\` onto \`${target}\``
+  const parts: string[] = []
 
   if (result.commitsLanded && result.commitsLanded > 1) {
     parts.push(`${result.commitsLanded} commits, tipped by that one.`)
@@ -1605,7 +1624,7 @@ export function landedMessage(
   }
 
   if (behind) parts.push(`It queued behind t${behind.seq} and landed once that finished.`)
-  return parts.join(' ')
+  return { headline, detail: parts.join(' ') }
 }
 
 /**

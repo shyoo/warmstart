@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { Project } from '@shared/tasks.js'
+import { messageBody } from './threadline.js'
 
 /**
  * Landing, in the states the rest of the fleet actually leaves behind.
@@ -100,7 +101,7 @@ const land = async (project: Project, taskId: string, root: string, branch: stri
 const said = (taskId: string): string =>
   tasks
     .messagesFor(taskId)
-    .map((m) => m.text)
+    .map(messageBody)
     .join('\n')
 
 beforeAll(async () => {

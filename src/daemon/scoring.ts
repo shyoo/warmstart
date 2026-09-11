@@ -48,7 +48,7 @@ import { reserveState } from './reserve.js'
 import { costModel } from './costmodel.js'
 import { db } from './db.js'
 import type { RoutingBasis } from '@shared/routing.js'
-import type { WorkerChoice } from './scheduler.js'
+import type { WorkerChoice, WorkerRefusal } from './scheduler.js'
 import {
   needsBaseline,
   poolFor,
@@ -156,8 +156,18 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
    * busy is a task that will run without anybody being asked anything.
    */
   let standing = true
-  function refuse(why: string, isStanding = false): void {
+  /**
+   * The same refusals, one per (worker, reason), with the *kind* of gate that fired.
+   *
+   * ⛔ Kept apart from `reasons` because a different reader wants them: the sentence is for the
+   * operator's row, the kind is for the thread — *why did this task move off the account it was
+   * on* is answered by finding the previous worker here, and matching it against prose that names
+   * a window percentage would be a heuristic over a string this file also writes.
+   */
+  const refusals: WorkerRefusal[] = []
+  function refuse(worker: Worker, kind: WorkerRefusal['kind'], why: string, isStanding = false): void {
     reasons.push(why)
+    refusals.push({ workerId: worker.id, kind, why })
     if (!isStanding) standing = false
   }
   /**
@@ -242,6 +252,8 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
     if (!canWork(worker.role)) {
       // ⚠️ Standing: a role is a setting on the account, and no tick changes one.
       refuse(
+        worker,
+        'account',
         worker.role === 'none'
           ? `${worker.label} is held out of both work and judgment`
           : `${worker.label} is controller only`,
@@ -257,7 +269,7 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
     // that has to know *what is being asked* stays below, where the task is in scope.
     const unfit = accountRefusal(worker)
     if (unfit) {
-      refuse(unfit.why, unfit.standing)
+      refuse(worker, 'account', unfit.why, unfit.standing)
       continue
     }
 
@@ -268,7 +280,7 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
     )
     if (missing.length) {
       // ⚠️ Standing: an adapter does not grow a capability while a task waits for it.
-      refuse(`${worker.label} lacks ${missing.join(', ')}`, true)
+      refuse(worker, 'account', `${worker.label} lacks ${missing.join(', ')}`, true)
       continue
     }
 
@@ -282,7 +294,7 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
     const sessions = sessionsForWorker(worker.id)
     const retained = retainedReservations(worker.id, sessions)
     if (atCapacity(sessions, worker.maxConcurrent, reuse, retained)) {
-      refuse(`${worker.label} at capacity`)
+      refuse(worker, 'capacity', `${worker.label} at capacity`)
       continue
     }
 
@@ -397,6 +409,8 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
               : ''
             const spent = verdict.blocking.exhausted && override ? ', which no override can buy a turn on' : ''
             refuse(
+              worker,
+              'quota',
               `${worker.label}${modelSuffix} at ${Math.round(win.percent)}% of its ${label} window${spent}` +
                 `${staleness}${whyCreditsDidNotLift(worker, switches.spendCreditsPastLimit)}`
             )
@@ -430,6 +444,7 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
       worker: null,
       session: null,
       reason: reasons.length ? reasons.join('; ') : 'no eligible worker',
+      refusals,
       quotaUnverified,
       score: 0,
       holdUntil: quotaHoldUntil,
@@ -548,6 +563,7 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
     ...winner,
     objective,
     routedBy: basis,
+    refusals,
     // ⚠️ Eight, not four. The consult shortlist is four because a controller reading more than that
     // is paying for prose it will not use; a person auditing a decision months later wants the field.
     scored: candidates.slice(0, 8).map((c) => ({
@@ -575,11 +591,9 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
       random
     })
     if (res.explored) {
-      addMessage(
-        task.id,
-        'system',
-        `Model exploration: trying ${res.choice.model ?? 'default'} on ${res.choice.worker?.label} instead of ${res.originalWinner?.model ?? 'default'}, which arithmetic scored highest.`
-      )
+      addMessage(task.id, 'system', `Exploring ${res.choice.model ?? 'default'} on ${res.choice.worker?.label}`, null, [], {
+        detail: `Model exploration: trying ${res.choice.model ?? 'default'} on ${res.choice.worker?.label} instead of ${res.originalWinner?.model ?? 'default'}, which arithmetic scored highest.`
+      })
       return res.choice
     }
     return choice
@@ -623,7 +637,7 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
   if (!tie || estimate < ROUTE_CONSULT_FLOOR_TOKENS) return finalizeChoice(decided(best, 'score'))
 
   const answered = latestAnswer('route', task.id, ROUTE_ANSWER_MAX_AGE_MS) as
-    | { workerId?: string; model?: string }
+    | { workerId?: string; model?: string; why?: string }
     | null
   if (answered?.workerId) {
     // ⛔ Validated again, here, against the candidate set that exists *now*. The fleet the controller
@@ -638,7 +652,12 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
       // that was already paid for and fall through to asking the same question again.
       const named = answered.model ? matching.find((c) => c.model === answered.model) : undefined
       const picked = named ?? [...matching].sort((a, b) => b.score - a.score)[0]
-      if (picked) return finalizeChoice(decided(picked, 'controller'))
+      if (picked) {
+        return finalizeChoice({
+          ...decided(picked, 'controller'),
+          controllerWhy: typeof answered.why === 'string' ? answered.why.trim() : ''
+        })
+      }
     }
   }
 

@@ -441,8 +441,10 @@ export function escalateStale(now = Date.now()): number {
       addMessage(
         approval.taskId,
         'system',
-        `Waiting on a decision: ${approval.summary}\n` +
-          `(unanswered for ${Math.round((now - approval.askedAt) / 60000)} minutes)`
+        `Approval still needs your decision`,
+        null,
+        [],
+        { detail: `${approval.summary}\nUnanswered for ${Math.round((now - approval.askedAt) / 60000)} minutes.` }
       )
       setStatus(approval.taskId, 'awaiting_human', {
         assignee: 'human',

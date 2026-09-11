@@ -7,6 +7,7 @@ import { isSubmitKey, useUiSettings } from '../lib/uisettings'
 import { duration, tokens, when } from '../lib/format'
 import { Working } from '../lib/taskview'
 import { errorMessage } from '@shared/errors.js'
+import { bubbleSide } from '../lib/threadbubble'
 
 /**
  * The controller.
@@ -160,29 +161,31 @@ export function Controller(_props: { now: number }): React.JSX.Element {
             <p className="dim">Ask it about the fleet, or tell it to file, rescope or promote work.</p>
           ) : (
             messages.map((m) => (
-              <div key={m.id} className={`msg msg--${m.role}`}>
-                <span className="msg-role">
-                  {m.role === 'controller' ? 'CONTROLLER' : m.role.toUpperCase()}
-                  {m.role === 'controller' && m.workerLabel ? ` · ${m.workerLabel}` : ''}
+              <div key={m.id} className={`msg msg--${m.role} msg--${bubbleSide(m.role)}`}>
+                <div className="msg-bubble">
+                  <span className="msg-text">{m.text}</span>
                   {/* The same clock the task thread carries: a conversation held across a working
                       day cannot be read without one. */}
-                  <span className="msg-when" title={new Date(m.ts).toLocaleString()}>
-                    {when(m.ts)}
+                  <span className="msg-meta">
+                    {m.role === 'controller' && m.workerLabel ? m.workerLabel : ''}
+                    <span className="msg-when" title={new Date(m.ts).toLocaleString()}>
+                      {when(m.ts)}
+                    </span>
                   </span>
-                </span>
-                <span className="msg-text">{m.text}</span>
+                </div>
               </div>
             ))
           )}
           {/* ⚠️ A live bubble in the thread, not a line of grey text under it — the controller is
               answering *here*, in sequence, and marked as unfinished for as long as that is true. */}
           {busy && (
-            <div className="msg msg--controller msg--live">
-              <span className="msg-role">CONTROLLER</span>
-              <span className="msg-text">
-                <span className="dim">thinking</span>
-                <Working />
-              </span>
+            <div className="msg msg--controller msg--left msg--live">
+              <div className="msg-bubble">
+                <span className="msg-text">
+                  <span className="dim">thinking</span>
+                  <Working />
+                </span>
+              </div>
             </div>
           )}
           <div ref={threadEnd} />

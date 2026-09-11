@@ -152,12 +152,24 @@ function resolutionInstruction(task: Task, checkLead: string, commitHygiene: str
 /**
  * What a conversation is told at the end of every turn, instead of "finish the job".
  *
- * ⛔ **The whole of the difference between this kind and `work`, and it is a subtraction.** The
- * ordinary closing instruction says run to the end, run the checks, commit, squash, report complete
- * — which is exactly right for a task dispatched at 3am and exactly wrong when a person is reading
- * each turn as it lands. Left in place it makes every reply in a conversation end with a landing
- * nobody asked for, and an agent that has been told to commit will commit half-finished work rather
- * than appear to have disobeyed.
+ * ⛔ **The whole of the difference between this kind and `work`, and it is mostly a subtraction.**
+ * The ordinary closing instruction says run to the end, run the checks, commit, squash, report
+ * complete — which is exactly right for a task dispatched at 3am and exactly wrong when a person is
+ * reading each turn as it lands. Left in place it makes every reply in a conversation end with a
+ * landing nobody asked for, and an agent that has been told to commit will commit half-finished work
+ * rather than appear to have disobeyed.
+ *
+ * ⛔ **What is no longer subtracted is the commit itself.** This used to say *do not commit, merge
+ * or push*, full stop, because a conversation's only route to a commit was the Commit button. A
+ * commit on the agent's own branch costs nothing, risks nothing and is how work survives a
+ * preemption — so it is now encouraged whenever it helps, and what stays forbidden is the part that
+ * touches somebody else's branch: merging or pushing to the landing target by hand.
+ *
+ * ⛔ **Landing is a tool call, and only when the person asks.** `land_work` rebases, runs the
+ * project's checks and merges or pushes under the project's policy, and the conversation carries on
+ * afterwards on the branch it names. Naming it here is what stops the two failure modes at either
+ * end: an agent that lands whenever it feels finished, and an agent that has committed everything a
+ * person asked for and has no idea how to get it onto `main`.
  *
  * ⛔ **`task_complete` is still named, and is still the only completion signal.** What changes is
  * who decides to send it: the agent is told not to reach for it on its own judgement, because the
@@ -165,31 +177,31 @@ function resolutionInstruction(task: Task, checkLead: string, commitHygiene: str
  * unmentioned would be worse than either — see the note in `promptFor` about naming tools an agent
  * has not got, which has the same failure mode in reverse.
  *
- * ⚠️ Nothing is said about the project's checks or about squashing. Both belong to a commit, the
- * Commit button is what asks for one, and that button re-enters the ordinary instruction above with
- * the rung the operator picked. Saying it here would be telling the agent to do work whose result it
- * has just been told not to commit.
- *
- * ⚠️ Two endings, because the terminal contract is not the same on both. An MCP adapter is told not
- * to *call* `task_complete`; an MCP-less one is told not to *write* the line that stands in for it.
- * Naming the wrong one would be naming a channel the agent has not got, which is the failure the
- * note on `capabilities.mcp` in `promptFor` describes.
+ * ⚠️ **Two versions, decided from `capabilities.mcp` and never from an adapter name.** An MCP-less
+ * agent has no `land_work` and no `task_complete`; its terminal contract is a line of text, and its
+ * route to a landing is a person pressing **Land** after it says the commit is ready. Naming the
+ * wrong one would be naming a channel the agent has not got.
  */
 function conversationInstruction(mcpLess: boolean): string {
   return (
     'This is an ongoing conversation, not a one-shot task. Answer what has just been asked and ' +
     'stop there — you will get another turn, so there is no need to finish everything now and no ' +
     'need to leave the work in a shippable state at the end of every turn. ' +
-    'Do not commit, merge, push, or run this project’s checks unless you are asked to: a person ' +
-    'decides when this work is committed, from the buttons on this thread. ' +
+    'You may commit on your own branch whenever it helps — a commit is how work survives between ' +
+    'turns — but never merge or push to the landing target yourself. ' +
     (mcpLess
-      ? 'Do not end a reply with a line beginning `TASK COMPLETE: ` on your own judgement — that ' +
+      ? 'Commit when you are asked to, and say in your reply that the work is ready; the person ' +
+        'lands it from this thread. ' +
+        'Do not end a reply with a line beginning `TASK COMPLETE: ` on your own judgement — that ' +
         'line reports the whole task finished, so write it only if you are told the work is done. ' +
         'If you need a decision from a person, end your reply with a line beginning `NEEDS DECISION:` ' +
         'followed by the question, and stop rather than guessing. If you are choosing between ' +
         'specific options, put each one on its own line directly under it as ' +
         '`- <the option> — <what choosing it means>`, so they can be offered as buttons.'
-      : 'Do not call `task_complete` on your own judgement — call it only if you are told the work ' +
+      : 'When the person asks you to land the work, commit it and then call the MCP tool ' +
+        '`land_work`: it rebases, runs this project’s checks and merges or pushes per policy, and ' +
+        'tells you the new branch to carry on in. Landing does not end this task. ' +
+        'Do not call `task_complete` on your own judgement — call it only if you are told the work ' +
         'is done. ' +
         ASK_HUMAN_CLAUSE)
   )
@@ -291,11 +303,13 @@ export function promptFor(
   //
   // ⚠️ A compaction answers `false` to both, which is what makes it safe to withhold anything at all.
   const holdsPrompt = resumed && !opts.compacted
-  // ⛔ A conversation somebody has pressed Commit on is not a conversation any more. Everything it
-  // holds is `conversationInstruction` — *do not commit, a person decides* — and the turn it is
-  // about to be given is the exact opposite of that. `isOpenConversation` is the one flag that says
-  // which contract a turn runs under, so a `conversation` task that is no longer one has changed
-  // contract by definition and is told so in full.
+  // ⛔ A conversation carrying a real rung is not an open conversation any more, and the contract it
+  // is holding is the wrong one. ⚠️ **Neither button writes a rung now** — Commit asks, Land lands,
+  // and both leave `finish_policy` on `inherit` so the thread stays open — so the only thing that
+  // reaches this today is an operator setting the task's own **finish** dropdown, which is them
+  // saying the conversation is to be finished like a work task. `isOpenConversation` is still the
+  // one flag that says which contract a turn runs under, so a task that has left it is told the new
+  // contract in full rather than being left under the one it was given.
   const contractWithdrawn = task.kind === 'conversation' && !isOpenConversation(task)
   const holdsContract = holdsPrompt && !contractWithdrawn
 

@@ -208,15 +208,26 @@ export async function workspaceOnBranch(
   return null
 }
 
-/** `warmstart/t<seq>-<slug>` - the task's name, never the workspace's. */
-export function branchNameFor(seq: number, title: string): string {
+/**
+ * `warmstart/t<seq>-<slug>` - the task's name, never the workspace's.
+ *
+ * ⛔ **`unit` is the landing counter, and 1 writes the name this has always written.** A branch that
+ * lands is retired, so a task that lands twice needs a second name — `warmstart/t343.2-<slug>`, then
+ * `.3` — cut from the target its previous landing moved. Every caller passes the task's own
+ * `branchUnit`, which is 1 for every task that has not landed and gone on working.
+ *
+ * ⚠️ The dot is inside the `t<seq>` token on purpose: `taskSeqFromBranch` and `seqFromBranch` both
+ * read the seq back out of a branch name, and a suffix that looked like part of the slug would make
+ * a numbered branch unattributable to the task that owns it.
+ */
+export function branchNameFor(seq: number, title: string, unit = 1): string {
   const slug = title
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 40)
     .replace(/-+$/, '')
-  return `warmstart/t${seq}${slug ? `-${slug}` : ''}`
+  return `warmstart/t${seq}${unit > 1 ? `.${unit}` : ''}${slug ? `-${slug}` : ''}`
 }
 
 export interface SwitchResult {
@@ -939,9 +950,15 @@ export async function taskBranches(project: Project, target: string): Promise<Ta
   return found
 }
 
-/** The task a branch was named after, or `null` when the name no longer parses to one. */
+/**
+ * The task a branch was named after, or `null` when the name no longer parses to one.
+ *
+ * ⚠️ The `.2` of a re-landed conversation's branch is skipped rather than read: the *task* is still
+ * t343 however many times it has landed, and a numbered branch that parsed to nothing would drop
+ * every stretch of a landing conversation's work out of the loose-ends scan.
+ */
 function seqFromBranch(branch: string): number | null {
-  const match = /\/t(\d+)-/.exec(branch)
+  const match = /\/t(\d+)(?:\.\d+)?-/.exec(branch)
   return match?.[1] ? Number.parseInt(match[1], 10) : null
 }
 

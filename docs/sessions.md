@@ -139,6 +139,9 @@ while it waits for you, and it takes the lease back when you reply.
 When a borrower takes over, the worktree moves to **its** branch, and three notices go out:
 
 - the parked task's thread gets a note saying where its tree went and that its branch is untouched;
+- the borrower's thread gets *Joined t<seq>'s conversation — this agent can see that task's work*
+  (`event: conversation.joined`, the saving in its detail). ⛔ A task continuing its **own**
+  conversation writes nothing — this line exists because a borrow is an information boundary;
 - the agent is told, at the top of its next prompt, that **files it read earlier came from a different
   branch** and must be re-read;
 - the log records the switch.
@@ -167,7 +170,7 @@ it:
 |---|---|
 | a **cold or borrowed** session | it has never heard this task |
 | a **compaction** landed since this task last spoke | the framing may have been summarised away with everything else — read from the `compactions` table, against the start of this task's last run in that session |
-| the conversation **contract was withdrawn** (Commit pressed) | the turn is now under a different contract from the one it was told, so it is told the new one |
+| the conversation **contract was withdrawn** | the turn is now under a different contract from the one it was told, so it is told the new one. ⚠️ Neither Commit nor Land withdraws it any more — both leave the task an open conversation — so the one thing that reaches this is an operator setting the task’s own **finish** dropdown |
 
 ⚠️ Plan tasks are the deliberate exception: a planning or resolving turn always carries its full
 instruction, because that instruction rolls up what the children actually did and is new every time.

@@ -3954,9 +3954,55 @@ select:focus-visible,
 }
 
 /*
+ * ⛔ One row, every action on it, and what each does on its tooltip. The card used to draw one row
+ * per choice with a paragraph beside each button — what it does, what it does to the DAG, which
+ * rung and where the rung came from — and six of those stacked under a resting conversation was a
+ * wall of text nobody read. The paragraphs are the buttons' `title`s now; the row wraps rather than
+ * scrolls, so a narrow thread gets two lines of buttons and never a clipped one.
+ */
+.decide-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-2);
+}
+
+.decide-actions .btn {
+  flex: 0 0 auto;
+}
+
+/* The Commit ▼ and Land ▼ controls size to their label on this row, like the buttons beside them. */
+.decide-actions .commit-select {
+  width: auto;
+  flex: 0 0 auto;
+}
+
+.decide-actions .split-btn-main {
+  width: auto;
+  flex: 0 0 auto;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+  border-right: 0;
+}
+
+/*
+ * ⛔ What stays inline is what protects work: the files Finish would release, a tree that could not
+ * be read, a refused commit or landing, and the count of tasks waiting on this one. One short line
+ * each, never a paragraph.
+ */
+.decide-note {
+  font-size: var(--text-meta);
+  color: var(--color-text-dim);
+  line-height: var(--leading-body);
+  margin-bottom: var(--sp-1);
+}
+
+/*
  * ⛔ One row per choice: the button, and beside it what pressing it does. The two used to sit side
  * by side with nothing between them, which made "Mark done" and "Stop here" read as the same action
  * worded twice — while one of them releases every task waiting on this one and the other does not.
+ * ⚠️ `QuotaDecide` still draws this shape; the ordinary card moved to `.decide-actions` above.
  */
 .decide-option {
   display: grid;
@@ -4080,7 +4126,8 @@ select:focus-visible,
 }
 
 /*
- * The worker / model / effort selectors on the Reassign option: one row, three equal shares.
+ * The worker / model / effort selectors on the Reassign option: one row, three equal shares, with
+ * the Reassign button itself at the head of the row on the ordinary card.
  * ⛔ `flex: 1 1 0` and not `1 1 auto`. With an `auto` basis each selector is sized by its own
  * longest label first and only then shrunk, which is what put them on three lines in a column this
  * narrow. A zero basis makes the row's width the only input, so they always fit beside each other.
@@ -4096,6 +4143,10 @@ select:focus-visible,
   flex: 1 1 0;
   min-width: 0;
   width: auto;
+}
+
+.reassign-row > .btn {
+  flex: 0 0 auto;
 }
 
 /* The rightmost menu opens leftwards, so a 190px-wide list does not hang off the card. */
@@ -4439,42 +4490,43 @@ select:focus-visible,
 
 
 .msg {
-  display: grid;
-  grid-template-columns: 74px 1fr;
-  gap: var(--sp-3);
+  display: flex;
   font-size: var(--text-dense);
-  padding: var(--sp-1) 0;
-  border-bottom: 1px solid var(--color-border);
+  padding: 2px 0;
 }
 
 .msg:last-child {
   border-bottom: 0;
 }
 
-.msg-role {
-  font-size: var(--text-meta);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+.msg--right { justify-content: flex-end; }
+.msg-bubble { max-width: min(82%, 760px); padding: var(--sp-2) var(--sp-3); border-radius: 12px; background: var(--color-bubble-agent); }
+.msg--right .msg-bubble { background: var(--color-bubble-human); }
+.msg--system .msg-bubble { background: var(--color-bubble-system); color: var(--color-text-dim); }
+.msg-meta { display: flex; align-items: center; gap: var(--sp-1); margin-top: 3px; min-height: 14px; }
+.msg-when { display: inline; margin: 0; }
+.msg-detail, .msg-chip-disclosure { font-size: var(--text-meta); color: var(--color-text-faint); }
+.msg-detail > div { margin-top: var(--sp-2); padding-top: var(--sp-2); border-top: 1px solid var(--color-border); white-space: pre-wrap; color: var(--color-text); }
+.msg-chip-disclosure { margin: 0 0 var(--sp-1); }
+.msg-chip-disclosure summary, .msg-detail summary { cursor: pointer; }
+.msg--right .msg-meta { justify-content: flex-end; }
+
+/* The prompt a run was sent: `📋 1,475` under the bubble, opening a dialog. See `PromptChip`. */
+.prompt-chip {
+  padding: 0 5px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: transparent;
   color: var(--color-text-faint);
-  padding-top: 2px;
+  font-family: var(--font-mono);
+  font-size: var(--text-meta);
+  line-height: 16px;
+  cursor: pointer;
 }
-
-.msg--agent .msg-role {
-  color: var(--state-running);
-}
-
-.msg--human .msg-role {
-  color: var(--state-human);
-}
-
-.msg--controller .msg-role {
-  color: var(--state-ok);
-}
-
-.msg--system .msg-role {
-  color: var(--state-warn);
-}
+.prompt-chip:hover { color: var(--color-text); border-color: var(--color-border-strong); }
+.prompt-dialog { width: min(820px, 100%); }
+.prompt-dialog-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--sp-2); }
+.prompt-dialog-body { max-height: 60vh; padding: var(--sp-2); border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-bg); }
 
 /* A conversation is read top to bottom and is longer than a task thread, so it gets more room. */
 .thread--chat {
@@ -4581,7 +4633,12 @@ select:focus-visible,
 }
 
 .thread-preview-prompt {
-  margin: var(--sp-2) 0 var(--sp-3) 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--sp-1);
+  margin: 0 0 var(--sp-2) 0;
+  font-size: var(--text-meta);
 }
 
 .msg-activity-box {

@@ -30,6 +30,7 @@ import { TaskQuestions } from './Questions'
 import { AddDependency, candidatesFor, DependencyList, useTaskCandidates } from './Dependencies'
 import { showsLiveOutput } from '../lib/live'
 import { codeSpans } from '../lib/codespans'
+import { bubbleSide, promptMessageId } from '../lib/threadbubble'
 import { duration, tokens, when } from '../lib/format'
 import { Money, taskPriceTitle } from './Price'
 import { effortLabel, modelLabel } from '../lib/modelname'
@@ -58,7 +59,7 @@ import { useAction } from '../lib/useAction'
 import { TaskSettingPicker } from './TaskSettingPicker'
 import { CacheCost, Fact, ModelFact, SessionFact } from './thread/Facts'
 import { Decide, QuotaDecide, QuotaOverride } from './thread/Decide'
-import { ActivityDisclosure, PromptDisclosure } from './thread/Disclosure'
+import { ActivityDisclosure, PromptChip } from './thread/Disclosure'
 import { CompactionRow, ReviewRow, RunRow } from './thread/RunRow'
 import {
   compactionChoice,
@@ -422,10 +423,8 @@ function TaskDetail({
 
           {detail.previewPrompt && task.status !== 'draft' && task.status !== 'running' && (
             <div className="thread-preview-prompt">
-              <PromptDisclosure
-                prompt={detail.previewPrompt}
-                label="Prompt to be sent on next dispatch"
-              />
+              <span className="dim">next dispatch</span>
+              <PromptChip prompt={detail.previewPrompt} title="Prompt to be sent on next dispatch" />
             </div>
           )}
 
@@ -1177,6 +1176,7 @@ function Thread({
    * through, and what the agent actually recorded is already in the messages above.
    */
   const showLive = live
+  const liveRun = showLive ? runs.find((r) => !r.endedAt) : undefined
 
   return (
     <div className="thread thread--task">
@@ -1184,11 +1184,7 @@ function Thread({
         <p className="dim">Nothing has been said on this task yet.</p>
       )}
       {messages.map((m) => {
-        const runForMsg = m.runId
-          ? runs.find((r) => r.id === m.runId)
-          : m.role === 'system'
-            ? runs.find((r) => r.prompt && Math.abs(r.startedAt - m.ts) < 5000)
-            : null
+        const runForMsg = m.runId ? runs.find((r) => r.id === m.runId) : null
         const isTargetMsgForRunActivity =
           runForMsg?.activity &&
           runForMsg.activity.length > 0 &&
@@ -1196,25 +1192,17 @@ function Thread({
             (!messages.some((other) => other.runId === runForMsg.id && other.role === 'agent') &&
               m.role === 'system'))
         return (
-          <div key={m.id} className={`msg msg--${m.role}`}>
-            <span className="msg-role">
-              {m.role}
-              {/* ⛔ On every message. A thread with no clock cannot answer "did the agent reply to
-                  that, or was it already saying this?" — and on a task that ran over two days, which
-                  is ordinary here, it cannot even say which day. The exact moment is in the title,
-                  because the column has room for a short form and not for both. */}
-              <span className="msg-when" title={new Date(m.ts).toLocaleString()}>
-                {when(m.ts)}
-              </span>
-            </span>
-            <span className="msg-text">
+          <div key={m.id} className={`msg msg--${m.role} msg--${bubbleSide(m.role)}`}>
+            <div className="msg-bubble">
+              <div className="msg-text">
               {isTargetMsgForRunActivity && (
-                <div className="msg-activity-box">
+                <details className="msg-chip-disclosure">
+                  <summary>⚙ {runForMsg.activity!.length} step{runForMsg.activity!.length === 1 ? '' : 's'}</summary>
                   <ActivityDisclosure
                     activity={runForMsg.activity!}
                     label={`Intermediate activity (${runForMsg.activity!.length} step${runForMsg.activity!.length === 1 ? '' : 's'})`}
                   />
-                </div>
+                </details>
               )}
               {/* ⛔ The backticks were being printed. Every message this codebase writes names refs,
                   branches, shas and files in them — *"Landed as `98f200ab` onto `main`"* — and until
@@ -1235,41 +1223,47 @@ function Thread({
                   )}
                 </span>
               )}
-              {runForMsg?.prompt && (
-                <div className="msg-prompt-box">
-                  <PromptDisclosure
-                    prompt={runForMsg.prompt}
-                    label={`Prompt sent for run ${runForMsg.id.slice(0, 8)}`}
-                  />
-                </div>
-              )}
-            </span>
+              </div>
+              {/* ⛔ The meta line under the bubble: when, the prompt that produced it as a `📋 1,475`
+                  chip (on the run's last answer — see `promptMessageId`), and ⓘ for the detail a
+                  short system line keeps behind it. */}
+              <div className="msg-meta">
+                <span className="msg-when" title={new Date(m.ts).toLocaleString()}>{when(m.ts)}</span>
+                {runForMsg?.prompt && promptMessageId(messages, runForMsg.id) === m.id && (
+                  <PromptChip prompt={runForMsg.prompt} />
+                )}
+                {m.detail && <details className="msg-detail"><summary title="Show details">ⓘ</summary><div><MessageText text={m.detail} /></div></details>}
+              </div>
+            </div>
           </div>
         )
       })}
 
       {showLive && (
-        <div className="msg msg--agent msg--live">
-          {/* ⚠️ No dots here. They belong at the end of the text, where the sentence stops — that
-              is where a reader is looking when they want to know whether more is coming. */}
-          <span className="msg-role">agent</span>
-          <span className="msg-text">
-            {activity.length === 0 ? (
-              <span className="dim">waiting for the agent’s first words…</span>
-            ) : (
-              activity.map((line, i) => (
-                <span key={`${line.ts}-${i}`} className="msg-live-line">
-                  {line.text}
-                </span>
-              ))
+        <div className="msg msg--agent msg--left msg--live">
+          <div className="msg-bubble">
+            <span className="msg-text">
+              {activity.length === 0 ? (
+                <span className="dim">waiting for the agent’s first words…</span>
+              ) : (
+                activity.map((line, i) => (
+                  <span key={`${line.ts}-${i}`} className="msg-live-line">
+                    {line.text}
+                  </span>
+                ))
+              )}
+              {/* ⛔ An animation, not a sentence, and once: at the point the text stops, which is
+                  where a reader looks to see whether more is coming. */}
+              <Working />
+            </span>
+            {/* ⚠️ The running turn's prompt has nowhere else to go until the agent answers: a warm
+                continuation on the same worker writes no system line to hang it on. */}
+            {liveRun?.prompt && promptMessageId(messages, liveRun.id) === null && (
+              <div className="msg-meta">
+                <PromptChip prompt={liveRun.prompt} />
+              </div>
             )}
-            {/* ⛔ An animation, not a sentence. "live — replaced by what the agent records when
-                the run ends" was a caption explaining a mechanism nobody had asked about, and it
-                sat there looking like part of the transcript. Three pulsing dots at the point the
-                text stops say the one thing a reader wants — *more is coming* — and stop saying it
-                the instant it is no longer true. */}
-            <Working />
-          </span>
+          </div>
         </div>
       )}
     </div>
@@ -1789,18 +1783,9 @@ function Compose({
         no next run. The message went into a still-warm session and produced nothing anybody could
         see. It now starts one, and the hint says which of the two happened.
       */}
-      <p className="compose-hint">
-        {outcome === 'requeued'
-          ? 'Queued as a new run on this task — same thread, and it goes back to the session that ' +
-            'still holds the context where there is one.'
-          : outcome === 'delivered'
-            ? 'Delivered into the run that is already going.'
-            : running
-              ? 'Delivered straight into the session that is running — a cache read, and it ' +
-                'refreshes that session’s TTL. The agent sees it mid-task.'
-              : 'This continues the task rather than filing a new one: it starts another run on the ' +
-                'same thread, preferring the session, worker and workspace it already used.'}
-      </p>
+      {/* ⚠️ Only after a send, and one short line: the placeholder already says what the box does. */}
+      {outcome === 'requeued' && <p className="compose-hint">Queued — same thread, same session where it can.</p>}
+      {outcome === 'delivered' && <p className="compose-hint">Delivered into the running turn.</p>}
     </div>
   )
 }
@@ -2037,10 +2022,7 @@ function DraftControls({
         {deleteError && <div className="alert">{deleteError}</div>}
         {previewPrompt && (
           <div className="draft-preview-prompt">
-            <PromptDisclosure
-              prompt={previewPrompt}
-              label="Prompt to be sent to agent"
-            />
+            <PromptChip prompt={previewPrompt} title="Prompt to be sent to agent" />
           </div>
         )}
       </div>

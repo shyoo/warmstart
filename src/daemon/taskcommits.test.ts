@@ -166,6 +166,49 @@ describe('salvaging landed commits from the thread', () => {
     expect(commits.taskCommits(task)[0]?.target).toBe('main')
   })
 
+  it('reads back the headline `landTask` writes today, with its clauses in `detail` beside it', async () => {
+    // ⛔ The thread line is one sentence with everything else behind an expander. This is the round
+    //    trip that keeps that shortening honest: the exact `headline` the landing composes, on a row
+    //    whose `detail` holds the rest, must still resolve to the commit it names — once, because the
+    //    detail never repeats the headline.
+    const landing = await import('./landing.js')
+    const project = makeProject()
+    const landed = commit(project.root, 'a landing written as a one-liner')
+    const said = landing.landedMessage(
+      { strategy: 'auto-land', ok: true, commit: landed, branch: 'warmstart/t9-x', checksPassed: 2, pushed: false, branchDeleted: true },
+      'main',
+      null
+    )
+    expect(said.headline).toBe(`Landed as \`${landed.slice(0, 8)}\` onto \`main\``)
+    expect(said.detail).toContain('2 project checks passed')
+    expect(said.detail).not.toContain('Landed as')
+
+    taskSeq += 1
+    const id = `task-${taskSeq}`
+    const now = Date.now()
+    store
+      .db()
+      .prepare(
+        `insert into tasks
+           (id, seq, project_id, title, status, created_by_json, mandate_json, budget_json,
+            created_at, updated_at)
+         values (?, ?, ?, 'a task', 'completed', '{}', '{}', '{}', ?, ?)`
+      )
+      .run(id, taskSeq, project.id, now, now)
+    store
+      .db()
+      .prepare(
+        `insert into task_messages (task_id, role, text, detail, event, ts)
+         values (?, 'system', ?, ?, 'landing.landed', ?)`
+      )
+      .run(id, said.headline, said.detail, now)
+
+    const report = await commits.salvageLandedCommits()
+    expect(report.unresolved).toBe(0)
+    expect(commits.taskCommitShas(id)).toEqual([landed])
+    expect(commits.taskCommits(id)[0]?.target).toBe('main')
+  })
+
   it('fills a range for a single landing and refuses to invent one for two', async () => {
     const project = makeProject()
     const first = commit(project.root, 'landing one')

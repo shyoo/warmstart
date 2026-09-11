@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { Session, Worker } from '@shared/protocol.js'
 import type { Task } from '@shared/tasks.js'
+import { messageBody } from './threadline.js'
 
 /**
  * What happens to a task when the run under it does not succeed.
@@ -345,7 +346,7 @@ describe('a run that produced nothing at all', () => {
     expect(s?.contextTokens).toBe(0)
     // Task stays ready for a cold restart
     expect(tasks.getTask(task.id)?.status).toBe('ready')
-    const said = tasks.messagesFor(task.id).map((m) => m.text).join('\n')
+    const said = tasks.messagesFor(task.id).map(messageBody).join('\n')
     expect(said).toContain('The conversation prefix has been cleared')
     expect(said).toContain('restart cold')
   })
@@ -372,7 +373,7 @@ describe('a run that did work and then failed', () => {
       text: 'Tool use failed: the file could not be written',
       terminalReason: 'error_during_execution'
     })
-    expect(tasks.messagesFor(task.id).map((m) => m.text).join('\n')).toContain(
+    expect(tasks.messagesFor(task.id).map(messageBody).join('\n')).toContain(
       'the file could not be written'
     )
   })
@@ -814,11 +815,11 @@ describe('continuing a task that has stopped', () => {
     expect(tasks.getTask(task.id)?.notBefore).toBeNull()
   })
 
-  it('says so in the thread, so the record shows why it ran again', () => {
+  it('does not add thread noise before the next dispatch decides where work runs', () => {
     const { task } = settle('completed')
+    const before = tasks.messagesFor(task.id).length
     scheduler.continueTask(task.id)
-    const said = tasks.messagesFor(task.id).map((m) => m.text).join('\n')
-    expect(said).toContain('same thread, a new run')
+    expect(tasks.messagesFor(task.id)).toHaveLength(before)
   })
 
   it('clears the assignee so the scheduler chooses again', () => {
@@ -852,7 +853,7 @@ describe('answering a task that is waiting on a person', () => {
     expect(tasks.getTask(task.id)?.status).toBe('completed')
     // ⚠️ `task_complete` stays the only signal that an *agent* finished. This is the separate and
     // equally legitimate signal that a person is satisfied, and it says so in the thread.
-    const said = tasks.messagesFor(task.id).map((m) => m.text).join('\n')
+    const said = tasks.messagesFor(task.id).map(messageBody).join('\n')
     expect(said).toContain('Marked done by you')
     expect(said).toContain('Nothing here verified the work')
   })
@@ -861,7 +862,7 @@ describe('answering a task that is waiting on a person', () => {
     const { task } = seedRunningTask()
     tasks.setStatus(task.id, 'awaiting_human', { assignee: 'human' })
     scheduler.resolveTask(task.id, 'committed by hand, landing was right to refuse')
-    expect(tasks.messagesFor(task.id).map((m) => m.text).join('\n')).toContain('landing was right')
+    expect(tasks.messagesFor(task.id).map(messageBody).join('\n')).toContain('landing was right')
   })
 
   it('unblocks whatever was waiting on it', () => {
@@ -1202,7 +1203,7 @@ describe('a turn refused because the account is out of window', () => {
 
   it('says so on the thread, with the time it expects to be back', async () => {
     const { task } = await refuse()
-    const said = tasks.messagesFor(task.id).map((m) => m.text)
+    const said = tasks.messagesFor(task.id).map(messageBody)
     expect(said.some((t) => /quota window, not a fault in the work/.test(t))).toBe(true)
     expect(said.some((t) => /parked until it resets/.test(t))).toBe(true)
   })
@@ -1291,7 +1292,7 @@ describe('a Codex turn refused because the account is out of quota', () => {
 
   it('says so on the thread, with the time it expects to be back', async () => {
     const { task } = await refuse()
-    const said = tasks.messagesFor(task.id).map((m) => m.text)
+    const said = tasks.messagesFor(task.id).map(messageBody)
     expect(said.some((t) => /quota window, not a fault in the work/.test(t))).toBe(true)
     expect(said.some((t) => /parked until it resets/.test(t))).toBe(true)
   })
@@ -1386,7 +1387,7 @@ describe('a turn failed because the remote provider is overloaded (529)', () => 
 
   it('says so on the thread, with the retry delay and expected time', async () => {
     const { task } = await refuse()
-    const said = tasks.messagesFor(task.id).map((m) => m.text)
+    const said = tasks.messagesFor(task.id).map(messageBody)
     expect(said.some((t) => /temporary server-side issue from the provider/.test(t))).toBe(true)
     expect(said.some((t) => /attempting again automatically/.test(t))).toBe(true)
   })
@@ -1523,7 +1524,7 @@ describe('resolveTask when a person marks a task as complete', () => {
 
     const messages = tasks.messagesFor(task.id)
     const resolution = messages.find((m) => m.role === 'system')
-    expect(resolution?.text).toContain(note)
+    expect(resolution?.detail).toContain(note)
     expect(resolution?.text).toContain('Marked done by you')
   })
 

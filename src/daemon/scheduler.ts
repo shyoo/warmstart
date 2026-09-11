@@ -142,6 +142,7 @@ import {
 import { stripAnsi } from './stream.js'
 import { activityFor, clearActivity } from './activity.js'
 import { log } from './log.js'
+import { clockTime, oneLine, shortDuration } from './threadline.js'
 import { RESTART_REAP_NOTE } from './activetime.js'
 import { db } from './db.js'
 import {
@@ -426,14 +427,13 @@ function handOverStandingHold(task: Task, reason: string, now = Date.now()): boo
   }
   if (now - prior.since < STANDING_HOLD_GRACE_MS) return false
   standingHolds.delete(task.id)
-  addMessage(
-    task.id,
-    'system',
-    `Nothing in this fleet can start this task as it is filed: ${reason}. That is not a queue — ` +
+  addMessage(task.id, 'system', `Cannot start as filed: ${oneLine(reason)}`, null, [], {
+    detail:
+      `Nothing in this fleet can start this task as it is filed: ${reason}. That is not a queue — ` +
       'waiting will not change it, so it is over to you: fix the account (install the CLI, sign in, ' +
       're-enable it) or re-file this task without the pin that names it. Say anything here once it ' +
       'is sorted and this goes straight back in the queue.'
-  )
+  })
   setStatus(task.id, 'awaiting_human', { assignee: 'human', holdReason: reason })
   log.warn(
     `t${task.seq} handed to a person after ${Math.round((now - prior.since) / 60000)}m of a hold ` +
@@ -556,7 +556,9 @@ export async function tick(): Promise<TickResult> {
         continue
       }
       log.warn(`dispatch of t${task.seq} failed: ${verdict.reason}`)
-      addMessage(task.id, 'system', `Could not start: ${verdict.reason}`)
+      addMessage(task.id, 'system', `Could not start: ${oneLine(verdict.reason)}`, null, [], {
+        ...(oneLine(verdict.reason) === verdict.reason ? {} : { detail: verdict.reason })
+      })
       setStatus(task.id, 'failed')
     }
   }
@@ -883,6 +885,14 @@ async function captureQuotaAfter(run: Run): Promise<void> {
 
 // ---------------------------------------------------------------------------- gates
 
+/** One account the dispatch gates refused, and which gate it was. */
+export interface WorkerRefusal {
+  workerId: string
+  /** `quota` — a window is spent. `capacity` — every slot is busy. `account` — the account itself cannot take a turn (disabled, signed out, no CLI, wrong role, missing capability). */
+  kind: 'quota' | 'capacity' | 'account'
+  why: string
+}
+
 export interface WorkerChoice {
   worker: Worker | null
   /** A live, idle session already holding this task's context. Reusing it is the cheapest move here. */
@@ -892,6 +902,16 @@ export interface WorkerChoice {
   reason: string
   quotaUnverified: boolean
   score: number
+  /** The controller's rationale, carried from its stored route answer to the dispatched run. */
+  controllerWhy?: string
+  /**
+   * Every account the gates turned away, with the kind of gate that did it.
+   *
+   * ⛔ The thread's *Worker switched … — quota* line is read from here, not from the previous run:
+   * a run's own fields say how it ended, not why its account was not chosen again. Present on
+   * both the decided and the empty result; absent only on a deferred one.
+   */
+  refusals?: WorkerRefusal[]
   /**
    * How that score was arrived at, term by term.
    *
@@ -1269,7 +1289,7 @@ function askForPlan(task: Task): boolean {
   })
   if (!queued) return false
   setStatus(task.id, 'assigned', { assignee: 'controller' })
-  addMessage(task.id, 'system', 'Queued for decomposition. Its children arrive as drafts.')
+  addMessage(task.id, 'system', 'Queued for decomposition', null, [], { detail: 'Its children arrive as drafts.' })
   return true
 }
 
@@ -1305,10 +1325,16 @@ export function noteQuotaOverrideDispatch(task: Task, worker: Worker): void {
   addMessage(
     task.id,
     'system',
-    `Starting on ${worker.label} at ${Math.round(win.percent)}% of its ${win.label ?? '5h'} ` +
-      `window. The ${gate}% gate would normally hold this task; it was overridden by ` +
-      'hand, so this run is also exempt from being preempted over that percentage. ⚠️ A turn the ' +
-      'vendor actually refuses still stops it, and the window boundary itself still applies.'
+    `Starting on ${worker.label} at ${Math.round(win.percent)}% — quota gate overridden`,
+    null,
+    [],
+    {
+      detail:
+        `Starting on ${worker.label} at ${Math.round(win.percent)}% of its ${win.label ?? '5h'} ` +
+        `window. The ${gate}% gate would normally hold this task; it was overridden by ` +
+        'hand, so this run is also exempt from being preempted over that percentage. ⚠️ A turn the ' +
+        'vendor actually refuses still stops it, and the window boundary itself still applies.'
+    }
   )
 }
 
@@ -1337,11 +1363,17 @@ export function noteCreditsDispatch(task: Task, worker: Worker): void {
   addMessage(
     task.id,
     'system',
-    `Starting on ${worker.label} at ${Math.round(win.percent)}% of its ${win.label ?? '5h'} window. ` +
-      `The ${blocking.threshold}% gate would normally hold this task; "spend credits past the plan ` +
-      'limit" is on and this account reports usage credits enabled, so the run goes ahead and is ' +
-      'billed against those credits. ⚠️ Turn the switch off in Settings › Fleet to go back to ' +
-      'waiting for the window.'
+    `Starting on ${worker.label} at ${Math.round(win.percent)}% — spending credits`,
+    null,
+    [],
+    {
+      detail:
+        `Starting on ${worker.label} at ${Math.round(win.percent)}% of its ${win.label ?? '5h'} window. ` +
+        `The ${blocking.threshold}% gate would normally hold this task; "spend credits past the plan ` +
+        'limit" is on and this account reports usage credits enabled, so the run goes ahead and is ' +
+        'billed against those credits. ⚠️ Turn the switch off in Settings › Fleet to go back to ' +
+        'waiting for the window.'
+    }
   )
 }
 
@@ -1402,7 +1434,7 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
   // the workspace this task claimed, on this task's branch. Claiming again would double-book the
   // pool, and re-preparing would switch a branch under a live agent.
   if (choice.session) {
-    await dispatchIntoWarmSession(task, worker, choice.session, quotaUnverified)
+    await dispatchIntoWarmSession(task, worker, choice.session, quotaUnverified, choice)
     return
   }
 
@@ -1470,7 +1502,7 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
       }
     }
 
-    branch = project.vcs === 'git' ? (task.branch ?? branchNameFor(task.seq, task.title)) : null
+    branch = project.vcs === 'git' ? (task.branch ?? branchNameFor(task.seq, task.title, task.branchUnit)) : null
     // ⛔ The task goes through, so a split child is cut from its **plan branch** rather than the
     //    project's trunk. Without it child 2 would be branched off `main`, would not contain child 1's
     //    work, and a `depends_on` edge between them would order the runs and deliver nothing.
@@ -1541,9 +1573,15 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
     addMessage(
       task.id,
       'system',
-      `The last run here was interrupted with ${rescued.files} file(s) uncommitted. They were ` +
-        `committed onto \`${branch}\` as ${rescued.sha.slice(0, 8)} so this run inherits them, and ` +
-        'that commit cannot land until something is finished on top of it.'
+      `Rescued ${rescued.files} uncommitted file(s) as ${rescued.sha.slice(0, 8)} on \`${branch}\``,
+      null,
+      [],
+      {
+        detail:
+          `The last run here was interrupted with ${rescued.files} file(s) uncommitted. They were ` +
+          `committed onto \`${branch}\` as ${rescued.sha.slice(0, 8)} so this run inherits them, and ` +
+          'that commit cannot land until something is finished on top of it.'
+      }
     )
   }
   const rescueNotice = rescued
@@ -1620,8 +1658,14 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
       addMessage(
         lender.taskId,
         'system',
-        `t${task.seq} reopened this task's conversation (${revive.id.slice(0, 8)}) to reuse its ` +
-          'context. Nothing here was changed, and this task keeps its own branch and its own history.'
+        `t${task.seq} reopened this task's conversation (${revive.id.slice(0, 8)})`,
+        null,
+        [],
+        {
+          detail:
+            `t${task.seq} reopened this conversation to reuse its context. Nothing here was changed, ` +
+            'and this task keeps its own branch and its own history.'
+        }
       )
     }
     log.info(
@@ -1673,13 +1717,13 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
     assignee: worker.id,
     ...(branch ? { branch } : {})
   })
-  addMessage(
-    task.id,
-    'system',
-    `${revive ? 'Resumed the earlier conversation' : 'Started'} on ${worker.label}` +
-      `${branch ? ` in ${workspace?.path} on \`${branch}\`` : ''}` +
-      (quotaUnverified ? ' — quota reading was not trustworthy, so this run is marked unverified.' : ''),
-    run.id
+  announceWorker(
+    task,
+    worker,
+    picked.model ?? worker.defaultModel,
+    run,
+    dispatchDetail({ choice, workspace: workspace?.path ?? cwd, branch, revive: !!revive, quotaUnverified }),
+    choice
   )
 
   // The CLI needs a moment before it starts reading stdin; a message sent too early is dropped.
@@ -1705,6 +1749,105 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
   if (choice.breakdown) {
     log.info([`t${task.seq} score:`, ...formatScore(choice.breakdown)].join('\n'))
   }
+}
+
+/**
+ * Everything the old *Started on X in <path> on <branch>* and *Controller routed this to X …*
+ * messages said, as the expandable detail under the one line that replaced them.
+ *
+ * ⚠️ `unverified` is the only fact here that also earns a line of its own — see `announceWorker`.
+ */
+export function dispatchDetail(input: {
+  choice: Pick<WorkerChoice, 'reason' | 'controllerWhy'> & { score?: number }
+  workspace: string
+  branch: string | null
+  revive: boolean
+  quotaUnverified: boolean
+}): string {
+  const { choice } = input
+  return [
+    choice.controllerWhy ? `Controller: ${choice.controllerWhy}` : null,
+    `Routing: ${choice.reason}${choice.score === undefined ? '' : ` (score ${choice.score.toFixed(2)})`}.`,
+    `Workspace: ${input.workspace}${input.branch ? ` on ${input.branch}` : ''}.`,
+    input.revive ? 'Conversation: resumed.' : 'Conversation: cold start.',
+    input.quotaUnverified ? 'Quota reading was not trustworthy; this run is marked unverified.' : null
+  ]
+    .filter(Boolean)
+    .join('\n')
+}
+
+/** The few words a *Worker switched* line ends with. The full basis goes in the entry's detail. */
+export type WorkerSwitchReason = 'reassigned by you' | 'quota' | 'previous worker unavailable' | 'scheduler choice'
+
+/**
+ * Write the worker line a run owes the thread — and only when it says something new.
+ *
+ * ⛔ **One line per material change, not one per run.** The first run says who has the task; a run
+ * on the same account says nothing, because a thread that repeats *Started on Claude* under every
+ * reply is a thread nobody reads; a run on a different account says so and says why. The evidence
+ * that used to be the message — the controller's rationale, the workspace, the branch, cold or
+ * resumed, the quota caveat — travels in `detail`, expandable and never in the way.
+ *
+ * ⚠️ The one exception to the quiet continuation is a run dispatched on an untrusted quota reading:
+ * that caveat is the kind of thing a person wants beside the run it applies to.
+ *
+ * ⛔ The switch reason is *read off the decision*, not inferred from the thread. `choice.refusals`
+ * is the gate that turned the previous account away, written by the same pass that chose this one;
+ * a pin on this worker outranks it because a person reassigning a task is the one case where the
+ * scheduler had no say. Only `work` runs count as *previous*: a peer quality review runs under this
+ * task on a different account by design, and is not a worker this task ever moved off.
+ */
+export function announceWorker(
+  task: Task,
+  worker: Worker,
+  model: string | null,
+  run: Run,
+  detail: string,
+  choice: Pick<WorkerChoice, 'refusals' | 'scored'> = {}
+): void {
+  const previous = runsFor(task.id).find((candidate) => candidate.id !== run.id && candidate.kind === 'work')
+  const assigned = (): void => {
+    addMessage(task.id, 'system', `Worker assigned: ${worker.label} (${model ?? 'default'})`, run.id, [], {
+      event: 'worker.assigned',
+      detail
+    })
+  }
+  if (!previous) {
+    assigned()
+    return
+  }
+  if (previous.workerId === worker.id) {
+    if (run.quotaUnverified) assigned()
+    return
+  }
+  const previousWorker = getWorker(previous.workerId)
+  const refused = choice.refusals?.find((r) => r.workerId === previous.workerId) ?? null
+  const contended = choice.scored?.some((c) => c.workerId === previous.workerId) ?? false
+  const reason: WorkerSwitchReason =
+    task.constraints.workerId === worker.id
+      ? 'reassigned by you'
+      : contended
+        ? 'scheduler choice'
+        : refused?.kind === 'quota'
+          ? 'quota'
+          : refused || !previousWorker || previousWorker.retiredAt
+            ? 'previous worker unavailable'
+            : 'scheduler choice'
+  const previousLabel = previousWorker?.label ?? previous.workerId.slice(0, 8)
+  addMessage(
+    task.id,
+    'system',
+    `Worker switched to ${worker.label} (${model ?? 'default'}) — ${reason}`,
+    run.id,
+    [],
+    {
+      event: 'worker.switched',
+      detail: [
+        `Previously on ${previousLabel}${refused ? `: ${refused.why}` : contended ? ', which scored lower this time' : ''}.`,
+        detail
+      ].join('\n')
+    }
+  )
 }
 
 /**
@@ -1743,7 +1886,8 @@ async function dispatchIntoWarmSession(
   task: Task,
   worker: Worker,
   session: Session,
-  quotaUnverified: boolean
+  quotaUnverified: boolean,
+  choice: Pick<WorkerChoice, 'refusals' | 'scored'> = {}
 ): Promise<void> {
   const model = costModel(adapter(worker.adapterId).info.policy.costModelId)
   // ⚠️ The saving is a *claim about this provider's pricing*. Where the cache cannot be priced there
@@ -1798,7 +1942,7 @@ async function dispatchIntoWarmSession(
   // — but a borrower that committed would have put its work on somebody else's branch, which is the
   // exact failure phase 2's switch-and-tell exists to prevent.
   const branch =
-    task.branch ?? (project && project.vcs === 'git' ? branchNameFor(task.seq, task.title) : null)
+    task.branch ?? (project && project.vcs === 'git' ? branchNameFor(task.seq, task.title, task.branchUnit) : null)
 
   // Whose conversation this was, read **before** the switch moves the tree off their branch.
   const previousOccupant = session.currentBranch ? taskOnBranch(session.currentBranch) : null
@@ -1853,24 +1997,31 @@ async function dispatchIntoWarmSession(
   // ⚠️ The branch travels with the status, exactly as it does on a cold dispatch. Without it a
   // borrowed task stays `branch: null` forever and the finish path has nothing to land.
   setStatus(task.id, 'running', { assignee: worker.id, ...(branch ? { branch } : {}) })
-  // ⛔ Says whose conversation this is. It used to say "the session that still holds **this task's**
-  // context" unconditionally - true for a continuation and false for a borrowed one, where the
-  // context belongs to somebody else's task and the operator most needs to be told so.
   const borrowed = !runsFor(task.id).some((r) => r.sessionId === session.id && r.id !== run.id)
-  addMessage(
-    task.id,
-    'system',
-    (borrowed
-      ? `Continued in a conversation opened by another task${
-          previousOccupant && previousOccupant.id !== task.id ? ` (t${previousOccupant.seq})` : ''
-        } — this agent can see that task's work`
-      : `Continued in the session that still holds this task's context`) +
-      (saved !== null && saved > 0
-        ? ` — about ${saved} input-token-equivalents cheaper than a cold start.`
-        : saved === null
-          ? ' — cheaper than a cold start, though this provider’s cache is not priced, so by how much is unknown.'
-          : '.'),
-    run.id
+  if (borrowed) {
+    const owner = previousOccupant && previousOccupant.id !== task.id ? `t${previousOccupant.seq}` : 'another task'
+    addMessage(task.id, 'system', `Joined ${owner}'s conversation — this agent can see that task's work`, run.id, [], {
+      event: 'conversation.joined',
+      detail: saved !== null && saved > 0
+        ? `About ${saved} input-token-equivalents cheaper than a cold start.`
+        : 'Continued warm; this provider’s cache saving is not priced.'
+    })
+  }
+  announceWorker(
+    task,
+    worker,
+    session.model ?? worker.defaultModel,
+    run,
+    dispatchDetail({
+      choice: {
+        reason: `warm continuation (${saved === null ? 'saving unknown' : `~${saved} input-token-equivalents saved`})`
+      },
+      workspace: session.cwd,
+      branch,
+      revive: true,
+      quotaUnverified
+    }),
+    choice
   )
   // ⚠️ The branch notice goes **first**, before the task's own words. An agent that reads the work
   // before it reads "the files you remember are from another branch" has already started planning
@@ -1946,12 +2097,12 @@ export function openConversation(
   // it a `/compact` this path issued would be invisible to `moveOutcome`, and the next tick that
   // found the session near expiry would happily send a second one.
   markClockMove(session.id, 'compact', session.tokensSinceCompact)
-  addMessage(
-    task.id,
-    'system',
-    `Compacting before starting: ${plan.reason}. This costs about ${plan.estimatedCost} tokens ` +
+  addMessage(task.id, 'system', `Compacting before starting (≈${plan.estimatedCost} tokens)`, null, [], {
+    event: 'compaction',
+    detail:
+      `Compacting before starting: ${plan.reason}. This costs about ${plan.estimatedCost} tokens ` +
       'once, and the prompt goes in as soon as it lands.'
-  )
+  })
   log.info(
     `t${task.seq}: compacting the resumed conversation ${session.id.slice(0, 8)} before prompting ` +
       `(~${plan.estimatedCost} tokens)`
@@ -1972,9 +2123,16 @@ export function openConversation(
       addMessage(
         task.id,
         'system',
-        'The compaction did not land within ' +
-          `${Math.round(RESUME_COMPACT_WAIT_MS / 60000)} minutes, so the work is starting on the ` +
-          'full context. The request stays on the record, unlanded.'
+        `Compaction did not land in ${Math.round(RESUME_COMPACT_WAIT_MS / 60000)}m — starting on the full context`,
+        null,
+        [],
+        {
+          event: 'compaction',
+          detail:
+            'The compaction did not land within ' +
+            `${Math.round(RESUME_COMPACT_WAIT_MS / 60000)} minutes, so the work is starting on the ` +
+            'full context. The request stays on the record, unlanded.'
+        }
       )
     }
     send(why)
@@ -2065,12 +2223,12 @@ async function warnBeforeQuotaPreempt(
       : now + QUOTA_PREEMPT_WARNING_MS
     const graceSeconds = Math.max(0, Math.ceil((preemptAt - now) / 1000))
     setQuotaPreemptWarning(task.id, { trigger, reason, preemptAt, resumeAt })
-    addMessage(
-      task.id,
-      'system',
-      `Quota preemption warning: ${reason}. Automatic preemption in ` +
+    addMessage(task.id, 'system', `Quota preemption in ${graceSeconds}s unless overridden`, null, [], {
+      event: 'quota.preempted',
+      detail:
+        `Quota preemption warning: ${reason}. Automatic preemption in ` +
         `${graceSeconds} seconds unless a person overrides it.`
-    )
+    })
     log.warn(
       `t${task.seq} will be preempted for quota in ${graceSeconds}s ` +
         `unless overridden (${reason})`
@@ -2312,12 +2470,11 @@ async function runWatchdogs(): Promise<void> {
     // held to a higher bar than the one above it.
     const factor = switches.autoRunawayStop ? overrunFactor(run.id) : null
     if (factor !== null && factor > RUNAWAY_FACTOR) {
-      addMessage(
-        task.id,
-        'system',
-        `This run has spent about ${factor.toFixed(1)}× the estimate for work like it. ` +
+      addMessage(task.id, 'system', `Runaway: ${factor.toFixed(1)}× the estimate — stopping`, null, [], {
+        detail:
+          `This run has spent about ${factor.toFixed(1)}× the estimate for work like it. ` +
           'Stopping it and handing it back rather than letting it keep spending.'
-      )
+      })
       await preempt(task, session, Date.now(), 'runaway')
       continue
     }
@@ -2398,15 +2555,14 @@ async function reportStall(task: Task, session: Session, lastTurn: number): Prom
     `${sample.processes.length} process(es) under it have used ${gained.toFixed(1)}s of CPU in the ` +
     `last ${idleFor}s`
   log.warn(`${headline} - reported, not stopped`)
-  addMessage(
-    task.id,
-    'system',
-    `${headline}. Work burns CPU; a wait on something that will never arrive does not.\n\n` +
+  addMessage(task.id, 'system', `Looks stuck: no turn for ${minutes}m (reported, not stopped)`, null, [], {
+    detail:
+      `${headline}. Work burns CPU; a wait on something that will never arrive does not.\n\n` +
       `${describeTree(sample)}\n\n` +
       '⚠️ Nothing has been stopped — this is a report, and a run blocked on a slow network call ' +
       'looks the same. If it is stuck, stop the process above that is holding it and this task ' +
       'will carry on; the fleet will not kill a process it cannot prove is its own.'
-  )
+  })
 }
 
 /**
@@ -2440,13 +2596,12 @@ function noteCreditsStandDown(run: Run, task: Task, what: 'preempt' | 'compact')
   creditStandDownSaid.add(key)
   const worker = getWorker(run.workerId)
   const doing = what === 'preempt' ? 'wrap this run up at the plan limit' : 'compact this session'
-  addMessage(
-    task.id,
-    'system',
-    `Not going to ${doing}: "spend credits past the plan limit" is on, and ${worker?.label ?? 'this worker'} ` +
+  addMessage(task.id, 'system', `Not going to ${doing} — spending credits`, null, [], {
+    detail:
+      `Not going to ${doing}: "spend credits past the plan limit" is on, and ${worker?.label ?? 'this worker'} ` +
       'reports usage credits enabled, so the run carries on past the limit and is billed against ' +
       'those credits. Turn the switch off in Settings › Fleet to go back to wrapping up instead.'
-  )
+  })
 }
 
 /**
@@ -2507,9 +2662,18 @@ async function preempt(
     task.id,
     'system',
     because === 'runaway'
-      ? 'Preempted: this run was well past its estimate.'
-      : `Preempted before the quota window closes (${because}). Resuming automatically after the ` +
-        `reset, expected ${new Date(resumeAt).toISOString()}.${shownLine}`
+      ? 'Preempted: well past its estimate'
+      : `Preempted for quota — resumes ${clockTime(resumeAt)}`,
+    null,
+    [],
+    {
+      event: 'quota.preempted',
+      detail:
+        because === 'runaway'
+          ? 'This run was well past its estimate and was stopped rather than left spending.'
+          : `Preempted before the quota window closes (${because}). Resuming automatically after the ` +
+            `reset, expected ${new Date(resumeAt).toISOString()}.${shownLine}`
+    }
   )
   // ⭐ Go and make the displayed number true. The probe itself is the poller's job and its gates
   // still apply; this only says that this account is now worth looking at.
@@ -2649,13 +2813,11 @@ export function resolveTask(taskId: string, note?: string): Task {
   const task = requireTask(taskId)
   if (task.status === 'completed') return task
 
-  addMessage(
-    task.id,
-    'system',
-    note?.trim()
-      ? `Marked done by you: ${note.trim()}`
-      : 'Marked done by you. ⚠️ Nothing here verified the work — this records your judgement, not a check.'
-  )
+  addMessage(task.id, 'system', 'Marked done by you', null, [], {
+    detail: note?.trim()
+      ? note.trim()
+      : '⚠️ Nothing here verified the work — this records your judgement, not a check.'
+  })
 
   // ⛔ Finish any open run BEFORE calling setStatus. If a run was still open when the task was
   // resolved by hand, it must be closed with the specific note about hand resolution or the clock
@@ -2736,13 +2898,6 @@ export function continueTask(taskId: string): 'delivered' | 'requeued' | 'queued
   if (task.status === 'running' || task.status === 'assigned') return 'delivered'
   if (!CONTINUABLE_FROM.includes(task.status)) return 'queued'
 
-  addMessage(
-    task.id,
-    'system',
-    'Continuing this task with what you just said — same thread, a new run. It goes back to the ' +
-      'session that still holds its context where there is one, and starts a fresh one where there ' +
-      'is not.'
-  )
   // ⛔ Requeuing this task for continuation starts a fresh run. Any lingering open run from an
   // earlier attempt (e.g. after approval escalation or process interruption) must be finished.
   for (const run of runsFor(task.id)) {
@@ -2970,7 +3125,10 @@ async function landCompletion(
       hasChecks: policy.check.length > 0,
       trunk,
       merge,
-      siblingLanded: siblingLandedShas(task)
+      siblingLanded: siblingLandedShas(task),
+      // ⭐ And this task's own landings, which a conversation makes ordinary in exactly the way
+      // Plan & Split made a sibling's ordinary. See `FinishInputs.ownLanded`.
+      ownLanded: taskCommitShas(task.id)
     })
     log.info(`t${task.seq} finish: ${decision.kind} (${finishPolicy})`)
 
@@ -2985,13 +3143,13 @@ async function landCompletion(
         finishing !== null &&
         adapter(finishing.adapterId).info.capabilities.streamPrompts === 'once'
       if (oneShot) {
-        addMessage(
-          task.id,
-          'system',
-          `${decision.reason}. ${adapter(finishing.adapterId).info.label} runs one turn and exits, ` +
+        addMessage(task.id, 'system', `Not finished: ${oneLine(decision.reason)} — over to you`, null, [], {
+          event: 'finish.held',
+          detail:
+            `${decision.reason}. ${adapter(finishing.adapterId).info.label} runs one turn and exits, ` +
             'so it cannot be asked to finish the job afterwards — this one is over to you. Its next ' +
             'run is told to land its own work.'
-        )
+        })
         setStatus(task.id, 'awaiting_human', {
           assignee: 'human',
           holdReason: `${decision.reason}, and this CLI cannot be asked after its turn ends`
@@ -3006,12 +3164,18 @@ async function landCompletion(
       // instruction and will report completion again — so closing the run here would orphan a live
       // session and release a workspace out from under it.
       markFinishAsked(task.id)
-      addMessage(task.id, 'system', decision.instruction)
+      // ⚠️ The instruction is sent whole; the thread keeps it behind the line.
+      addMessage(task.id, 'system', `Asked the agent to finish: ${oneLine(decision.reason)}`, null, [], {
+        detail: decision.instruction
+      })
       try {
         sendPrompt(sessionId, decision.instruction)
       } catch (err) {
         log.warn(`could not send the finish instruction for t${task.seq}:`, err)
-        addMessage(task.id, 'system', 'Could not reach the session to ask. Over to you.')
+        addMessage(task.id, 'system', 'Could not reach the session to ask — over to you', null, [], {
+          event: 'finish.held',
+          detail: `${decision.reason}. The finish instruction could not be delivered to the session.`
+        })
         setStatus(task.id, 'awaiting_human', { assignee: 'human', holdReason: decision.reason })
         finishRun(run.id, 'completed', summary)
         await releaseFor(run.id, task.id, project.id)
@@ -3038,17 +3202,17 @@ async function landCompletion(
         finishing !== null &&
         adapter(finishing.adapterId).info.capabilities.streamPrompts === 'once'
       if (oneShot) {
-        addMessage(
-          task.id,
-          'system',
-          // ⛔ `decision.reason`, not a message composed fresh here: finish.ts's `landOrResolve`
+        addMessage(task.id, 'system', `Conflict with \`${decision.base}\` — over to you`, null, [], {
+          event: 'finish.held',
+          // ⛔ `decision.reason`, not a sentence composed fresh here: finish.ts's `landOrResolve`
           // names the branch and says "has a conflict" on purpose, and this is also exactly the
-          // sentence `holdReason` gets two lines down — the message in the thread and the reason on
+          // sentence `holdReason` gets two lines down — the detail in the thread and the reason on
           // the task must read as the same fact, not two summaries of it that could drift apart.
-          `${decision.reason}. ${adapter(finishing.adapterId).info.label} runs one turn and exits, ` +
+          detail:
+            `${decision.reason}. ${adapter(finishing.adapterId).info.label} runs one turn and exits, ` +
             'so it cannot be asked to resolve the conflict mid-session — this one is over to you. ' +
             `Conflicts with \`${decision.base}\` in ${decision.paths.join(', ') || 'unknown files'}.`
-        )
+        })
         setStatus(task.id, 'awaiting_human', {
           assignee: 'human',
           holdReason: `${decision.reason}, and this CLI cannot be asked after its turn ends`
@@ -3075,7 +3239,10 @@ async function landCompletion(
         landNow = true
       } else {
         const paths = begun.paths.length ? begun.paths : decision.paths
-        addMessage(task.id, 'system', decision.instruction)
+        // ⚠️ The instruction is sent whole; the thread keeps it behind the line.
+        addMessage(task.id, 'system', `Asked the agent to resolve a conflict with \`${decision.base}\``, null, [], {
+          detail: decision.instruction
+        })
         // ⛔ Marked before the prompt goes out, and only on the path that actually prompts. A send
         //    that throws still counts as an ask — the failure path hands the task to a person — but
         //    a conflict that never needed asking about must not spend the one ask.
@@ -3091,13 +3258,13 @@ async function landCompletion(
           //    somebody notices by hand.
           log.warn(`could not send the conflict instruction for t${task.seq}:`, err)
           await abortRebase(held.workspace.path)
-          addMessage(
-            task.id,
-            'system',
-            'Could not reach the session to ask, so the rebase was put back and nothing was lost. ' +
+          addMessage(task.id, 'system', 'Could not reach the session — rebase put back, over to you', null, [], {
+            event: 'finish.held',
+            detail:
+              'Could not reach the session to ask, so the rebase was put back and nothing was lost. ' +
               `Over to you: \`${task.branch}\` conflicts with \`${decision.base}\` in ` +
               `${paths.join(', ') || 'unknown files'}.`
-          )
+          })
           setStatus(task.id, 'awaiting_human', { assignee: 'human', holdReason: decision.reason })
           finishRun(run.id, 'completed', summary)
           await releaseFor(run.id, task.id, project.id)
@@ -3122,7 +3289,10 @@ async function landCompletion(
       if (result.ok) setStatus(task.id, 'completed')
       else automaticRetry = true
     } else if (decision.kind === 'await-human') {
-      addMessage(task.id, 'system', `Finished, and not landed: ${decision.reason}`)
+      addMessage(task.id, 'system', `Finished, not landed: ${oneLine(decision.reason)}`, null, [], {
+        event: 'finish.held',
+        detail: decision.reason
+      })
       setStatus(task.id, 'awaiting_human', { assignee: 'human', holdReason: decision.reason })
     } else if (decision.kind === 'trunk-moved') {
       // ⛔ Handed to a person rather than reported as finished. The run is still closed normally by
@@ -3139,7 +3309,10 @@ async function landCompletion(
             .map((c) => `  ${c}`)
             .join('\n')}`
         : ''
-      addMessage(task.id, 'system', `${decision.reason}${listed}`)
+      addMessage(task.id, 'system', `Not finished: the trunk moved and \`${task.branch}\` is empty`, null, [], {
+        event: 'finish.held',
+        detail: `${decision.reason}${listed}`
+      })
       setStatus(task.id, 'awaiting_human', {
         assignee: 'human',
         holdReason: 'the trunk moved during this run and this branch is empty — check where the work went'
@@ -3157,17 +3330,24 @@ async function landCompletion(
       // ⚠️ `state.landedRef`, not the local target: it is the ref `decideFinish` just compared
       //    against, and the message must name the same one the decision used.
       const retired = await finishWithoutLanding(held.workspace.path, task.branch, state.landedRef)
-      addMessage(task.id, 'system', `Finished — ${decision.reason}${retired.note}`)
+      addMessage(task.id, 'system', 'Finished — nothing to land', null, [], {
+        detail: `${decision.reason}${retired.note}`
+      })
       setStatus(task.id, 'completed')
     } else {
       // ⚠️ Narrowed by hand: the chain now opens on `landNow` rather than on a kind, so TypeScript
       //    cannot rule out the kinds that carry no reason. `relandTask` reads it the same way.
       const why = 'reason' in decision ? decision.reason : 'nothing to land'
-      addMessage(task.id, 'system', `Finished — ${why}`)
+      addMessage(task.id, 'system', `Finished — ${oneLine(why)}`, null, [], {
+        ...(oneLine(why) === why ? {} : { detail: why })
+      })
       setStatus(task.id, 'completed')
     }
   } else if (task.verification === 'required') {
-    addMessage(task.id, 'system', 'Finished, and this task asked for human verification.')
+    addMessage(task.id, 'system', 'Finished — waiting for your verification', null, [], {
+      event: 'finish.held',
+      detail: 'This task asked for human verification before it lands.'
+    })
     setStatus(task.id, 'awaiting_human', {
       assignee: 'human',
       holdReason: 'the work is finished and you asked to check it before it lands'
@@ -3245,9 +3425,7 @@ export async function endConversationTurn(
   task: Task,
   resultText?: string | null
 ): Promise<void> {
-  const why =
-    'The agent finished this turn. Reply to carry on in the same conversation, or use Finish, Stop ' +
-    'or Commit below. Nothing has been committed and nothing has been landed.'
+  const why = 'your turn'
   finishRun(run.id, 'completed', 'the turn ended; the conversation is still open')
 
   let effectiveAnswer = (resultText ?? '').trim()
@@ -3278,7 +3456,6 @@ export async function endConversationTurn(
     addMessage(task.id, 'agent', effectiveAnswer, run.id)
   }
 
-  addMessage(task.id, 'system', why)
   // ⚠️ The run ends either way; the *reason* is only written over a task that was still working. A
   // conversation whose agent asked a question is already resting on that question, and replacing
   // "the agent asked and is waiting on you: …" with this sentence would hide the one thing the
@@ -3327,13 +3504,13 @@ export async function endUnfinishedRun(
       // first turn produces no metered turn and looks exactly like a lapsed account from here, and
       // benching a healthy worker over a window that will reopen on its own is the wrong answer to
       // both halves: the account is not broken, and the task has a time it can run again.
-      addMessage(
-        task.id,
-        'system',
-        `${why} That is this account's quota window, not a fault in the work — parked until it ` +
+      addMessage(task.id, 'system', `Parked on quota until ${clockTime(parkAt)}`, null, [], {
+        event: 'quota.parked',
+        detail:
+          `${why} That is this account's quota window, not a fault in the work — parked until it ` +
           `resets, expected ${new Date(parkAt).toISOString()}, and the fleet puts this back in the ` +
           'queue by itself then (sooner, if a reading shows the window has already come back).'
-      )
+      })
       // ⛔ `not_before` before the status, and both before anything else can see the row: a task at
       // `paused_quota` with no reset time is one `resumeQuotaPaused` releases immediately, straight
       // back into the account that just refused it.
@@ -3350,9 +3527,16 @@ export async function endUnfinishedRun(
       addMessage(
         task.id,
         'system',
-        `${why} This is a temporary server-side issue from the provider — attempting again ` +
-          `automatically in ${delaySec}s (attempt ${overloadRetry.attempt} of ${MAX_OVERLOAD_ATTEMPTS}, ` +
-          `expected ${new Date(overloadRetry.retryAt).toISOString()}).`
+        `Provider overloaded — retrying in ${shortDuration(delaySec * 1000)} (${overloadRetry.attempt}/${MAX_OVERLOAD_ATTEMPTS})`,
+        null,
+        [],
+        {
+          event: 'provider.overloaded',
+          detail:
+            `${why} This is a temporary server-side issue from the provider — attempting again ` +
+            `automatically in ${delaySec}s (attempt ${overloadRetry.attempt} of ${MAX_OVERLOAD_ATTEMPTS}, ` +
+            `expected ${new Date(overloadRetry.retryAt).toISOString()}).`
+        }
       )
       db()
         .prepare('update tasks set not_before = ?, updated_at = ? where id = ?')
@@ -3371,33 +3555,30 @@ export async function endUnfinishedRun(
         const isAccountFault = Boolean(ad.needsReauth?.(reason) || ad.subscriptionExpired?.(reason))
         if (isAccountFault) {
           recordDispatchFailure(run.workerId, reason, run.id)
-          addMessage(
-            task.id,
-            'system',
-            `Nothing ran on this worker. ${reason} That account is held out of dispatch until it is ` +
+          addMessage(task.id, 'system', 'Nothing ran on this worker — back in the queue for another', null, [], {
+            detail:
+              `Nothing ran on this worker. ${reason} That account is held out of dispatch until it is ` +
               'probed again; this task goes back in the queue for another one.'
-          )
+          })
         } else {
           log.warn(
             `conversation ${session.id.slice(0, 8)} failed to resume on ${run.workerId}; ` +
               `cleared prefix without holding out worker: ${reason}`
           )
-          addMessage(
-            task.id,
-            'system',
-            `Resuming conversation ${session.id.slice(0, 8)} failed (${reason}). ` +
+          addMessage(task.id, 'system', 'Resuming the conversation failed — restarting cold', null, [], {
+            detail:
+              `Resuming conversation ${session.id.slice(0, 8)} failed (${reason}). ` +
               'The conversation prefix has been cleared; this task will restart cold.'
-          )
+          })
         }
         setStatus(task.id, 'ready', { assignee: null })
       } else {
         recordDispatchFailure(run.workerId, reason, run.id)
-        addMessage(
-          task.id,
-          'system',
-          `Nothing ran on this worker. ${reason} That account is held out of dispatch until it is ` +
+        addMessage(task.id, 'system', 'Nothing ran on this worker — back in the queue for another', null, [], {
+          detail:
+            `Nothing ran on this worker. ${reason} That account is held out of dispatch until it is ` +
             'probed again; this task goes back in the queue for another one.'
-        )
+        })
         // ⚠️ Back to `ready`, not to a person. The gate added by `recordDispatchFailure` means the next
         // tick cannot choose the same account, so this re-routes rather than loops - and when there is
         // no other eligible worker the task holds at `ready` with the reason on its row, which is the
@@ -3410,10 +3591,13 @@ export async function endUnfinishedRun(
       const msg =
         `The provider remains overloaded after ${MAX_OVERLOAD_ATTEMPTS} attempts (${why}). ` +
         `Paused for human intervention — if it persists, check ${statusPage}.`
-      addMessage(task.id, 'system', msg)
+      addMessage(task.id, 'system', `Provider still overloaded after ${MAX_OVERLOAD_ATTEMPTS} attempts — over to you`, null, [], {
+        event: 'provider.overloaded',
+        detail: msg
+      })
       setStatus(task.id, 'awaiting_human', { assignee: 'human', holdReason: msg })
     } else {
-      addMessage(task.id, 'system', why)
+      addMessage(task.id, 'system', oneLine(why), null, [], { ...(oneLine(why) === why ? {} : { detail: why }) })
       // ⛔ The deterministic outcome happens first and unconditionally, so the task is already in a
       // safe and visible state whether or not a controller ever answers.
       setStatus(task.id, 'awaiting_human', { assignee: 'human', holdReason: why })
@@ -3588,12 +3772,20 @@ function announceRescue(rescue: Rescue | null): void {
     task.id,
     'system',
     rescue.kind === 'commit'
-      ? `This run stopped with ${rescue.files} file(s) uncommitted. They were committed onto ` +
-        `\`${rescue.branch}\` as ${rescue.sha.slice(0, 8)}, so the next run picks up where this one ` +
-        'stopped. It cannot land until something is finished on top of it.'
-      : `This run stopped with ${rescue.files} file(s) uncommitted, and they could not be committed ` +
-        'onto the branch — they are in a git stash in this workspace instead. ⚠️ A stash does not ' +
-        'travel to the next run: recover it by hand with `git stash list`.'
+      ? `Rescued ${rescue.files} uncommitted file(s) as ${rescue.sha.slice(0, 8)} on \`${rescue.branch}\``
+      : `Stashed ${rescue.files} uncommitted file(s) — recover by hand`,
+    null,
+    [],
+    {
+      detail:
+        rescue.kind === 'commit'
+          ? `This run stopped with ${rescue.files} file(s) uncommitted. They were committed onto ` +
+            `\`${rescue.branch}\` as ${rescue.sha.slice(0, 8)}, so the next run picks up where this one ` +
+            'stopped. It cannot land until something is finished on top of it.'
+          : `This run stopped with ${rescue.files} file(s) uncommitted, and they could not be committed ` +
+            'onto the branch — they are in a git stash in this workspace instead. ⚠️ A stash does not ' +
+            'travel to the next run: recover it by hand with `git stash list`.'
+    }
   )
 }
 
@@ -3672,14 +3864,13 @@ async function switchBorrowedTree(
   // a person goes to read what this task did.
   const previous = result.from ? taskOnBranch(result.from) : null
   if (previous && previous.id !== task.id && !TERMINAL_STATUSES.has(previous.status)) {
-    addMessage(
-      previous.id,
-      'system',
-      `The conversation this task was running in has been borrowed by t${task.seq}, and its ` +
+    addMessage(previous.id, 'system', `Conversation borrowed by t${task.seq} — \`${result.from}\` untouched`, null, [], {
+      detail:
+        `The conversation this task was running in has been borrowed by t${task.seq}, and its ` +
         `workspace ${path} is now on \`${branch}\`. ⛔ Your branch \`${result.from}\` is untouched — ` +
         'nothing was committed, stashed or discarded. The workspace switches back when this task ' +
         'runs again, and the agent is told.'
-    )
+    })
   }
 
   log.info(
@@ -3782,11 +3973,11 @@ export function reconcileTasks(): number {
     // `reconcileClaims` releases the rows beside it.
     if (task.status === 'cancelling') {
       const why = 'orchestratord restarted while this was cancelling; paused.'
-      addMessage(task.id, 'system', why)
+      addMessage(task.id, 'system', 'Restarted while cancelling — paused', null, [], { detail: why })
       setStatus(task.id, 'paused_user', { assignee: null, holdReason: why })
     } else {
       const why = 'orchestratord restarted while this was running; awaiting human input before resuming.'
-      addMessage(task.id, 'system', why)
+      addMessage(task.id, 'system', 'Restarted while running — over to you', null, [], { detail: why })
       setStatus(task.id, 'awaiting_human', { assignee: 'human', holdReason: why })
     }
   }

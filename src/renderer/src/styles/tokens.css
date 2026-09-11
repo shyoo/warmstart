@@ -61,6 +61,9 @@
 
   --color-accent: #7aa2f7;
   --color-accent-dim: #3d5a94;
+  --color-bubble-human: #263b67;
+  --color-bubble-agent: #1d2833;
+  --color-bubble-system: #15191f;
 
   /* State only. Nothing decorative gets to be saturated. */
   --state-running: #7aa2f7;
@@ -91,6 +94,9 @@
     --color-text-faint: #8b929d;
 
     --color-accent: #3b6ee0;
+    --color-bubble-human: #dce8ff;
+    --color-bubble-agent: #f0f3f7;
+    --color-bubble-system: #e5e8ed;
 
     --state-running: #3b6ee0;
     --state-ok: #2f8f52;
@@ -114,6 +120,9 @@
   --color-text-dim: #5c636e;
   --color-text-faint: #8b929d;
   --color-accent: #3b6ee0;
+  --color-bubble-human: #dce8ff;
+  --color-bubble-agent: #f0f3f7;
+  --color-bubble-system: #e5e8ed;
   --state-running: #3b6ee0;
   --state-ok: #2f8f52;
   --state-warn: #a86b12;

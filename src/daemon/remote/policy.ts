@@ -128,6 +128,7 @@ export const REMOTE_METHODS = {
   'agent.awaitHuman': 'deny',
   'agent.split': 'deny',
   'agent.depend': 'deny',
+  'agent.land': 'deny',
   'remote.status': 'deny',
   'remote.recheck': 'deny',
   'remote.setEnabled': 'deny',

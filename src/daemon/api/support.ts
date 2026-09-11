@@ -60,12 +60,12 @@ export function admitAgentTask(taskId: string): void {
   const risk = riskOf(task)
 
   if (risk.gate === 'auto') {
-    addMessage(task.id, 'system', `Admitted automatically: ${risk.why}.`)
+    addMessage(task.id, 'system', 'Admitted automatically', null, [], { detail: `${risk.why}.` })
     promoteDraft(task.id)
     return
   }
   if (risk.gate === 'human') {
-    addMessage(task.id, 'system', `Held for you: ${risk.why}.`)
+    addMessage(task.id, 'system', 'Held for you', null, [], { detail: `${risk.why}.` })
     updateTask(task.id, { assigneeHint: 'human' })
     setStatus(task.id, 'awaiting_human', {
       assignee: 'human',
@@ -74,7 +74,7 @@ export function admitAgentTask(taskId: string): void {
     return
   }
 
-  addMessage(task.id, 'system', `Held for the controller to review: ${risk.why}.`)
+  addMessage(task.id, 'system', 'Held for the controller to review', null, [], { detail: `${risk.why}.` })
   // ⚠️ It stays a draft while the question is open. A draft dispatches nothing and holds nothing, so
   // the cost of waiting - including waiting forever, if there is no controller - is only time.
   enqueueConsult({ kind: 'gate', subjectId: task.id, question: gateQuestion(task, risk.why) })

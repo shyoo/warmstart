@@ -187,7 +187,7 @@ describe('the gate moves an agent-filed task somewhere definite', () => {
     const after = getTask(task.id)
     expect(after?.status).toBe('cancelled')
     expect(after?.deletedAt).toBeNull()
-    expect(messagesFor(task.id).some((m) => m.text.includes('duplicate'))).toBe(true)
+    expect(messagesFor(task.id).some((m) => m.detail?.includes('duplicate'))).toBe(true)
   })
 
   it('a malformed verdict changes nothing', () => {
@@ -500,4 +500,3 @@ describe('validateRoute', () => {
     }
   })
 })
-

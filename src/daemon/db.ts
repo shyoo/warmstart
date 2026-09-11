@@ -1787,6 +1787,39 @@ const MIGRATIONS: Migration[] = [
       when 'local-llm' then 'qwen3-coder-30b-a3b'
       else summarising_model end
       where summarising_model is null;`)
+  },
+  // 62 - concise system thread events keep their evidence in expandable detail.
+  (conn) => {
+    const what = 'concise system thread events'
+    if (!hasColumn(conn, 'task_messages', 'event')) {
+      conn.exec('alter table task_messages add column event text;')
+    }
+    if (!hasColumn(conn, 'task_messages', 'detail')) {
+      conn.exec('alter table task_messages add column detail text;')
+    }
+    void what
+  },
+  // 63 - a conversation lands more than once, so its branch needs a number after the seq.
+  //
+  // ⛔ Guarded by `hasColumn` like every additive column here. `null` reads as 1 in `toTask`, so
+  // every existing row keeps the branch name `branchNameFor` has always given it.
+  (conn) => {
+    if (!hasColumn(conn, 'tasks', 'branch_unit')) {
+      conn.exec('alter table tasks add column branch_unit integer;')
+    }
+    conn.exec('update tasks set branch_unit = 1 where branch_unit is null;')
+  },
+  // 64 - a conversation stays open after it lands, so no conversation carries a real rung any more.
+  //
+  // ⛔ **A deliberate reset, not a cleanup.** Before this build the thread's Commit and Land buttons
+  // wrote the chosen rung onto `tasks.finish_policy`, which took the task out of
+  // `isOpenConversation` for ever: the kind stopped answering `await-human`, the conversation
+  // contract was withdrawn, and one landing ended the chat. Landing no longer writes a rung at all,
+  // so a row left carrying one is a record of a mechanism that no longer exists — and left alone it
+  // would keep a conversation the operator is still talking in under the one-shot work contract.
+  // ⚠️ Scoped to `kind = 'conversation'`; nothing else has ever had its rung written by a button.
+  (conn) => {
+    conn.exec("update tasks set finish_policy = 'inherit' where kind = 'conversation';")
   }
 ]
 

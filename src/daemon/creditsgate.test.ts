@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { pinnedTask } from './testkit.js'
 import type { CreditStatus } from '@shared/protocol.js'
+import { messageBody } from './threadline.js'
 
 /**
  * t282: "spend usage credits past the plan limit" at the moment a run **starts**.
@@ -112,7 +113,7 @@ function notes(taskId: string): string[] {
   return tasks
     .messagesFor(taskId)
     .filter((m) => m.role === 'system')
-    .map((m) => m.text)
+    .map(messageBody)
 }
 
 /** The account the operator actually gave permission for: fleet, worker, and vendor agreeing. */
@@ -468,7 +469,7 @@ describe('a task already parked at paused_quota when the switch is thrown', () =
     const back = tasks.requireTask(task.id)
     expect(back.status).toBe('ready')
     expect(back.notBefore).toBeNull()
-    expect(tasks.messagesFor(task.id).some((m) => m.text.includes('Back in the queue'))).toBe(true)
+    expect(tasks.messagesFor(task.id).some((m) => messageBody(m).includes('Back in the queue'))).toBe(true)
   })
 
   it('and that task is one the dispatch gate will actually take', () => {

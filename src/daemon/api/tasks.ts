@@ -26,6 +26,7 @@ import { settings } from '../settings.js'
 import { compactionsForTask } from '../compaction.js'
 import { listConversations } from '../conversations.js'
 import { log } from '../log.js'
+import { clockTime } from '../threadline.js'
 import { dismissLooseEnd, resolveFinishPolicy, scanLooseEnds } from '../finish.js'
 import { resolveSessionSharing } from '../sharing.js'
 import type { Api, ApiContext } from './support.js'
@@ -416,12 +417,11 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
           }
         }
       }
-      addMessage(
-        p.id,
-        'system',
-        `A person overrode the ${gatePercent}% quota gate for this task until ` +
+      addMessage(p.id, 'system', `Quota gate (${gatePercent}%) overridden until ${clockTime(until)}`, null, [], {
+        detail:
+          `A person overrode the ${gatePercent}% quota gate for this task until ` +
           `${new Date(until).toISOString()}.${resumed ? ' Resumed to continue to completion.' : ''} ${reason}`
-      )
+      })
       return { task: requireTask(p.id), until, applies, reason }
     },
     'task.resolve': (p) => resolveTask(p.id, p.note),

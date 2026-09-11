@@ -373,4 +373,247 @@ describe('dispatching scenarios and capacity tracking', () => {
     const runStillRunning = tasks.requireRun('r-run')
     expect(runStillRunning.endedAt).toBeNull()
   })
+
+})
+
+/**
+ * The worker line a run owes the thread.
+ *
+ * ⛔ One line per material change, not one per run. Before 2026-09-10 every dispatch wrote a long
+ * *Started on X in <path> on <branch>* and a controller-routed one wrote *Controller routed this
+ * to X. <why>* beside it; a conversation of twelve turns carried twenty-four of them. What these pin:
+ * the first run says who has the task, a run on the same account says nothing, a run on a different
+ * account says so in a few words and keeps the basis in `detail`.
+ *
+ * ⚠️ Through `announceWorker` and `dispatchDetail` rather than `dispatch`, which spawns a CLI no
+ * L1 suite has. `chooseTarget` is driven for real, because the switch reason is read off its result.
+ */
+describe('the worker line a run writes to the thread', () => {
+  function runOn(taskId: string, workerId: string, patch: { quotaUnverified?: boolean; kind?: 'work' | 'quality_review' } = {}) {
+    return tasks.startRun({
+      taskId,
+      workerId,
+      sessionId: null,
+      projectId: null,
+      quotaUnverified: patch.quotaUnverified ?? false,
+      costModelId: null,
+      ...(patch.kind ? { kind: patch.kind } : {})
+    })
+  }
+  const system = (taskId: string) => tasks.messagesFor(taskId).filter((m) => m.role === 'system')
+
+  it('a routed first dispatch writes exactly one worker.assigned whose detail carries the controller’s why', () => {
+    const first = createReadyWorker('First')
+    const task = tasks.createTask({ title: 'Worker timeline' })
+    const run = runOn(task.id, first.id)
+    const detail = scheduler.dispatchDetail({
+      choice: { reason: 'consulted', controllerWhy: 'lowest projected cost on a warm cache', score: 1.25 },
+      workspace: 'C:\\ws\\slot-1',
+      branch: 'warmstart/t1-worker-timeline',
+      revive: false,
+      quotaUnverified: false
+    })
+    scheduler.announceWorker(task, first, 'sonnet', run, detail)
+
+    const lines = system(task.id)
+    expect(lines).toHaveLength(1)
+    expect(lines[0]).toMatchObject({
+      event: 'worker.assigned',
+      text: 'Worker assigned: First (sonnet)',
+      runId: run.id
+    })
+    // Everything the two old messages said, and nothing of it on the line itself.
+    expect(lines[0]?.detail).toContain('Controller: lowest projected cost on a warm cache')
+    expect(lines[0]?.detail).toContain('Workspace: C:\\ws\\slot-1 on warmstart/t1-worker-timeline')
+    expect(lines[0]?.detail).toContain('Conversation: cold start')
+    expect(lines[0]?.detail).toContain('score 1.25')
+    expect(lines[0]?.text).not.toContain('C:\\ws')
+  })
+
+  it('a continuation on the same worker writes nothing', () => {
+    const first = createReadyWorker('First')
+    const task = tasks.createTask({ title: 'Worker timeline' })
+    const initial = runOn(task.id, first.id)
+    scheduler.announceWorker(task, first, 'sonnet', initial, 'Routing: score.')
+    tasks.finishRun(initial.id, 'completed')
+
+    const continued = runOn(task.id, first.id)
+    scheduler.announceWorker(task, first, 'sonnet', continued, 'Routing: warm continuation.')
+
+    expect(system(task.id)).toHaveLength(1)
+    expect(system(task.id)[0]?.event).toBe('worker.assigned')
+  })
+
+  it('… unless the run went out on an untrusted quota reading, which still earns a short line', () => {
+    const first = createReadyWorker('First')
+    const task = tasks.createTask({ title: 'Worker timeline' })
+    const initial = runOn(task.id, first.id)
+    scheduler.announceWorker(task, first, 'sonnet', initial, 'Routing: score.')
+    tasks.finishRun(initial.id, 'completed')
+
+    const unverified = runOn(task.id, first.id, { quotaUnverified: true })
+    scheduler.announceWorker(task, first, 'sonnet', unverified, 'Quota reading was not trustworthy; this run is marked unverified.')
+
+    const lines = system(task.id)
+    expect(lines).toHaveLength(2)
+    expect(lines[1]).toMatchObject({ event: 'worker.assigned', text: 'Worker assigned: First (sonnet)', runId: unverified.id })
+    expect(lines[1]?.detail).toContain('not trustworthy')
+  })
+
+  it('a worker change writes exactly one worker.switched, with the reason in a few words', () => {
+    const first = createReadyWorker('First')
+    const second = createReadyWorker('Second')
+    const task = tasks.createTask({ title: 'Worker timeline' })
+    const initial = runOn(task.id, first.id)
+    scheduler.announceWorker(task, first, 'sonnet', initial, 'Routing: score.')
+    tasks.finishRun(initial.id, 'completed')
+
+    const switched = runOn(task.id, second.id)
+    scheduler.announceWorker(task, second, 'haiku', switched, 'Routing: score (score 0.90).', {
+      scored: [
+        { workerId: second.id, label: 'Second', adapterId: 'claude-code', model: 'haiku', warm: false, quotaUnverified: false, score: 0.9, chosen: true, terms: [] },
+        { workerId: first.id, label: 'First', adapterId: 'claude-code', model: 'sonnet', warm: false, quotaUnverified: false, score: 0.4, chosen: false, terms: [] }
+      ],
+      refusals: []
+    })
+
+    const changes = system(task.id).filter((m) => m.event === 'worker.switched')
+    expect(changes).toHaveLength(1)
+    expect(changes[0]?.text).toBe('Worker switched to Second (haiku) — scheduler choice')
+    expect(changes[0]?.runId).toBe(switched.id)
+    expect(changes[0]?.detail).toContain('Previously on First, which scored lower this time.')
+    expect(changes[0]?.detail).toContain('Routing: score (score 0.90).')
+  })
+
+  it('names quota when the previous worker was held on a window, and unavailability when the account itself was refused', () => {
+    const first = createReadyWorker('First')
+    const second = createReadyWorker('Second')
+    const onQuota = tasks.createTask({ title: 'held on quota' })
+    const a = runOn(onQuota.id, first.id)
+    scheduler.announceWorker(onQuota, first, 'sonnet', a, 'Routing: score.')
+    tasks.finishRun(a.id, 'preempted', 'quota')
+    const b = runOn(onQuota.id, second.id)
+    scheduler.announceWorker(onQuota, second, 'sonnet', b, 'Routing: score.', {
+      refusals: [{ workerId: first.id, kind: 'quota', why: 'First at 99% of its 7d window' }]
+    })
+    const quotaLine = system(onQuota.id).find((m) => m.event === 'worker.switched')
+    expect(quotaLine?.text).toBe('Worker switched to Second (sonnet) — quota')
+    expect(quotaLine?.detail).toContain('Previously on First: First at 99% of its 7d window.')
+
+    const signedOut = tasks.createTask({ title: 'account refused' })
+    const c = runOn(signedOut.id, first.id)
+    scheduler.announceWorker(signedOut, first, 'sonnet', c, 'Routing: score.')
+    tasks.finishRun(c.id, 'failed')
+    const d = runOn(signedOut.id, second.id)
+    scheduler.announceWorker(signedOut, second, 'sonnet', d, 'Routing: score.', {
+      refusals: [{ workerId: first.id, kind: 'account', why: 'First is not signed in' }]
+    })
+    expect(system(signedOut.id).find((m) => m.event === 'worker.switched')?.text).toBe(
+      'Worker switched to Second (sonnet) — previous worker unavailable'
+    )
+  })
+
+  it('says “reassigned by you” when the task was pinned to the new worker, whatever the gates said', () => {
+    const first = createReadyWorker('First')
+    const second = createReadyWorker('Second')
+    const task = tasks.createTask({ title: 'Worker timeline' })
+    const a = runOn(task.id, first.id)
+    scheduler.announceWorker(task, first, 'sonnet', a, 'Routing: score.')
+    tasks.finishRun(a.id, 'completed')
+    tasks.updateTask(task.id, { constraints: { workerId: second.id } })
+    const pinned = tasks.requireTask(task.id)
+    const b = runOn(task.id, second.id)
+    scheduler.announceWorker(pinned, second, 'sonnet', b, 'Routing: pinned.', {
+      refusals: [{ workerId: first.id, kind: 'quota', why: 'First at 99% of its 7d window' }]
+    })
+    expect(system(task.id).find((m) => m.event === 'worker.switched')?.text).toBe(
+      'Worker switched to Second (sonnet) — reassigned by you'
+    )
+  })
+
+  it('does not mistake a peer quality review for a worker this task moved off', () => {
+    const first = createReadyWorker('First')
+    const reviewer = createReadyWorker('Reviewer')
+    const task = tasks.createTask({ title: 'Worker timeline' })
+    const a = runOn(task.id, first.id)
+    scheduler.announceWorker(task, first, 'sonnet', a, 'Routing: score.')
+    tasks.finishRun(a.id, 'completed')
+    const review = runOn(task.id, reviewer.id, { kind: 'quality_review' })
+    tasks.finishRun(review.id, 'completed')
+
+    const again = runOn(task.id, first.id)
+    scheduler.announceWorker(task, first, 'sonnet', again, 'Routing: warm continuation.')
+    expect(system(task.id).filter((m) => m.event === 'worker.switched')).toHaveLength(0)
+    expect(system(task.id)).toHaveLength(1)
+  })
+
+  it('chooseTarget carries each refusal with the gate that fired it, so the switch line never parses prose', () => {
+    const now = Date.now()
+    const held = createReadyWorker('Held')
+    const off = createReadyWorker('Off')
+    createReadyWorker('Open')
+    workers.updateWorker(off.id, { enabled: false })
+    db.db()
+      .prepare(
+        `insert into quota_samples (worker_id, window_id, label, percent, resets_at, source, sampled_at)
+         values (?,?,?,?,?,?,?)`
+      )
+      .run(held.id, 'weekly', 'Claude 7d', 99, now + 33 * 3600 * 1000, 'cli', now)
+
+    const task = tasks.createTask({ title: 'who was refused' })
+    const choice = scoring.chooseTarget(task)
+    expect(choice.worker?.label).toBe('Open')
+    expect(choice.refusals).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ workerId: held.id, kind: 'quota' }),
+        expect.objectContaining({ workerId: off.id, kind: 'account', why: 'Off disabled' })
+      ])
+    )
+    expect(choice.refusals?.find((r) => r.workerId === held.id)?.why).toContain('99% of its Claude 7d window')
+  })
+
+  it('chooseTarget carries the controller’s why from its stored route answer to the dispatch', () => {
+    const first = createReadyWorker('First')
+    createReadyWorker('Second')
+    const task = tasks.createTask({ title: 'a large task two accounts tie on', estTokens: 200_000 })
+    const now = Date.now()
+    db.db()
+      .prepare(
+        `insert into consults (id, kind, subject_id, status, question, answer_json, created_at, started_at, ended_at)
+         values (?,?,?,?,?,?,?,?,?)`
+      )
+      .run(
+        'consult-route-1', 'route', task.id, 'answered', 'which account?',
+        JSON.stringify({ workerId: first.id, why: 'First holds the warmer cache for this repository.' }),
+        now, now, now
+      )
+
+    const choice = scoring.chooseTarget(task, () => 0.999)
+    expect(choice.routedBy).toBe('controller')
+    expect(choice.worker?.id).toBe(first.id)
+    expect(choice.controllerWhy).toBe('First holds the warmer cache for this repository.')
+    expect(scheduler.dispatchDetail({ choice, workspace: 'C:\\ws', branch: null, revive: false, quotaUnverified: false }))
+      .toContain('Controller: First holds the warmer cache for this repository.')
+  })
+
+  it('migration 62: task-message event columns replay without losing concise detail', () => {
+    const file = join(dir, 'replay_m62.db')
+    db.openDb(file)
+    const task = tasks.createTask({ title: 'Concise thread entry' })
+    tasks.addMessage(task.id, 'system', 'Worker assigned: Claude (sonnet)', null, [], {
+      event: 'worker.assigned',
+      detail: 'Controller: lower cost.\nConversation: cold start.'
+    })
+
+    db.db().exec(`pragma user_version = ${db.versionBefore('concise system thread events')}`)
+    db.closeDb()
+    db.openDb(file)
+
+    const message = tasks.messagesFor(task.id).find((m) => m.event === 'worker.assigned')
+    expect(message).toMatchObject({
+      text: 'Worker assigned: Claude (sonnet)',
+      event: 'worker.assigned',
+      detail: 'Controller: lower cost.\nConversation: cold start.'
+    })
+  })
 })

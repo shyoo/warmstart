@@ -490,7 +490,8 @@ describe('run prompt persistence and task.get preview', () => {
     expect(tasks.requireTask(task.id).holdReason).toBe('Retry landing failed: not a git project')
     expect(tasks.messagesFor(task.id).at(-1)).toMatchObject({
       role: 'system',
-      text: 'Retry landing failed: not a git project'
+      text: 'Retry did not land: not a git project',
+      detail: 'Retry landing failed: not a git project'
     })
   })
 
