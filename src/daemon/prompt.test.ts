@@ -64,9 +64,39 @@ describe('promptFor prompt construction', () => {
     expect(prompt).toContain('Please inspect auth.ts and fix the login redirect.')
     expect(prompt).toContain('call the MCP tool `task_complete` with a one-line summary')
     expect(prompt).toContain('call `ask_human` rather than guessing')
+    expect(prompt).toContain('MCP tool `task_read`')
+    expect(prompt).toContain('scoped to this task')
     // ⛔ And where the choices go. On t235 an agent lettered them into the question as well, so when
     // the tool call lost its `options` argument the operator got prose and a text box.
     expect(prompt).toContain('as an entry in its `options` argument')
+  })
+
+  it('lets a worker read only the task attached to its live session', async () => {
+    const task = tasks.createTask({ title: 'Recover t354 context', status: 'ready' })
+    tasks.addMessage(task.id, 'human', 'The earlier reference is t354.')
+    const sessionId = '00000000-0000-0000-0000-000000000354'
+    db.db()
+      .prepare(
+        `insert into sessions (id, worker_id, adapter_id, transport, project_id, cwd, state, purpose, started_at)
+         values (?, ?, 'claude-code', 'stream', null, ?, 'live', 'work', ?)`
+      )
+      .run(sessionId, claude.id, dir, Date.now())
+    const run = tasks.startRun({
+      taskId: task.id,
+      workerId: claude.id,
+      sessionId,
+      projectId: null,
+      quotaUnverified: true,
+      costModelId: null
+    })
+    const handlers = api.buildApi({ version: '1.0.0', port: 1234, startedAt: Date.now() })
+
+    const result = await handlers['agent.taskRead']({ sessionId })
+
+    expect(result?.task.id).toBe(task.id)
+    expect(result?.messages.map((message) => message.text)).toContain('The earlier reference is t354.')
+    expect(result?.runs.map((entry) => entry.id)).toContain(run.id)
+    expect(await handlers['agent.taskRead']({ sessionId: 'not-a-live-session' })).toBeNull()
   })
 
   it('tells an autonomous agent to run to the end', () => {

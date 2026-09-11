@@ -2224,6 +2224,16 @@ export interface RpcMap {
   'chat.clear': { params: { threadId?: string } | void; result: { ok: true } }
 
   // ---- worker tier: called by the MCP server on an agent's behalf -----------------------
+  /**
+   * Read the task this session is currently running, including its recorded thread and prior runs.
+   *
+   * ⛔ The task id comes from the live run, never from the caller. A worker can recover the context
+   * of its own work without gaining a way to inspect another task or the fleet.
+   */
+  'agent.taskRead': {
+    params: { sessionId: string }
+    result: { task: Task; messages: TaskMessage[]; runs: Run[] } | null
+  }
   /** ⛔ The only signal that a task succeeded. A process exiting says nothing about the work. */
   'agent.complete': { params: { sessionId: string; summary: string }; result: { ok: true } }
   /** Agent-authored work. Bounded by the calling task's inherited mandate and budget. */

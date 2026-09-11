@@ -80,6 +80,7 @@ any of them — it runs the identical bar and hands the same reason back, verbat
 
 | Tool | Does |
 |---|---|
+| `task_read` | read **this task only**: its task record, whole thread, and prior runs. The daemon derives the task from the caller's live session, so it is a route to recover a past reference, not a way to inspect the board |
 | `approve` | the permission prompt tool. Called by the CLI in place of showing a card |
 | `task_complete` | ⛔ **the only signal that a task succeeded.** A process exiting cleanly says nothing |
 | `await_human` | ⛔ **the other terminal contract:** the agent has gone as far as it can and the rest is a person's. Ends the run `blocked`, rests the task at `awaiting_human`, claims nothing and lands nothing |
@@ -90,6 +91,10 @@ any of them — it runs the identical bar and hands the same reason back, verbat
 | `task_split` | file a whole Plan & Split at once — 2 to N pieces with dependency edges encoding every required execution or landing order; edge-free pieces may run in parallel. ⛔ Raises **one** approval and blocks on it; atomic |
 | `task_depend` | add one edge between two pieces of **this task's own** split. ⛔ never an arbitrary task in the fleet |
 | `land_work` | ⛔ **conversations only.** Rebase, check and land what this conversation has committed, because the person asked. Refuses anything else. Ends nothing — the reply names the branch to keep working on |
+
+⚠️ `task_read` changes every worker session's tool-definition prefix. Existing sessions retain their
+frozen MCP config until they end; fresh ones pay the new prefix so a worker can recover its own
+recorded context without database access.
 
 ⛔ **`task_complete` and `await_human` are the only two ways a run can end, and an agent that calls
 neither leaves the task reading `running` for ever.** An ordinary run stays open until completion is

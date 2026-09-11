@@ -1,5 +1,5 @@
-/** The seven RPCs an agent reaches through MCP, and the only ones it can. */
-import { addMessage, createTask, getTask, runForSession, setTaskHandoff } from '../tasks.js'
+/** The worker RPCs an agent reaches through MCP, and the only ones it can. */
+import { addMessage, createTask, getTask, messagesFor, runForSession, runsFor, setTaskHandoff } from '../tasks.js'
 import { landConversationWork } from '../conversationland.js'
 import { askQuestion } from '../questions.js'
 import { addSplitDependency, applySplit, validateSplit } from '../split.js'
@@ -9,11 +9,24 @@ import type { Api, ApiContext } from './support.js'
 import { admitAgentTask } from './support.js'
 
 type AgentMethod =
-  | 'agent.complete' | 'agent.awaitHuman' | 'agent.createTask' | 'agent.split' | 'agent.depend'
+  | 'agent.taskRead' | 'agent.complete' | 'agent.awaitHuman' | 'agent.createTask' | 'agent.split' | 'agent.depend'
   | 'agent.handoff' | 'agent.land'
 
 export function apiAgent(_ctx: ApiContext): Pick<Api, AgentMethod> {
   return {
+    /**
+     * The worker's native route back to the task record.
+     *
+     * ⛔ Session → open run → task, rather than a caller-supplied task id. A worker needs the
+     * previous thread to recover an earlier reference, but may not turn that into fleet-wide read
+     * authority merely by changing an argument in an MCP call.
+     */
+    'agent.taskRead': (p) => {
+      const run = runForSession(p.sessionId)
+      const task = run?.taskId ? getTask(run.taskId) : null
+      if (!task) return null
+      return { task, messages: messagesFor(task.id), runs: runsFor(task.id) }
+    },
     'agent.complete': async (p) => {
       await completeTask(p.sessionId, p.summary)
       return { ok: true as const }

@@ -177,6 +177,37 @@ server.registerTool(
 // and any way to assign work directly to another worker.
 if (TIER === 'worker') {
 /**
+ * The worker can recover the task record it is actually running without reading the database or
+ * gaining an id-shaped route into the rest of the board. This is particularly useful after a
+ * resumed session when a past task reference matters more than the opening instruction.
+ */
+server.registerTool(
+  'task_read',
+  {
+    title: 'Read this task and its recorded history',
+    description:
+      'Read the task you are currently working on, including its whole thread and every prior run. ' +
+      'Use this when an earlier reference or result matters. It can read only this task, not another ' +
+      'task or the fleet.'
+  },
+  async () => {
+    const sessionId = appEnv('SESSION_ID') ?? ''
+    try {
+      const result = await rpc('agent.taskRead', { sessionId })
+      if (!result) {
+        return {
+          content: [{ type: 'text' as const, text: 'No active task is associated with this session.' }],
+          isError: true
+        }
+      }
+      return text(result)
+    } catch (err) {
+      return failed(err)
+    }
+  }
+)
+
+/**
  * The worker tier's way to ask a person something, rather than guessing and being wrong expensively.
  *
  * ⛔ **This replaced `request_human`, which could not carry an answer.** That tool routed through

@@ -427,6 +427,14 @@ export function promptFor(
   const planPhase = task.kind === 'plan' ? planPhaseOf(task) : null
 
   if (adapter(adapterId).info.capabilities.mcp) {
+    // ⚠️ This belongs only in the first prompt. `task_read` is a recovery route for recorded context,
+    // not an instruction to spend tokens re-reading a thread the live session already holds.
+    if (!holdsPrompt) {
+      parts.push(
+        'Warmstart gives you the MCP tool `task_read` to read this task’s recorded thread and prior ' +
+        'runs. Use it when an earlier task reference or result matters; it is scoped to this task.'
+      )
+    }
     // ⛔ The completion mode changes what "finished" means, so it belongs in the same sentence
     // as `task_complete` rather than somewhere earlier in the prompt. ⚠️ `ask_human` is offered
     // in **both** modes: stopping for a decision that changes what you build is never the thing being

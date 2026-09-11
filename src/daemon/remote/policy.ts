@@ -122,6 +122,9 @@ export const REMOTE_METHODS = {
   'chat.history': 'deny',
   'chat.send': 'deny',
   'chat.clear': 'deny',
+  // Worker MCP identity comes from the daemon-written session config. A paired phone must never
+  // impersonate that identity, even to read a task.
+  'agent.taskRead': 'deny',
   'agent.complete': 'deny',
   'agent.createTask': 'deny',
   'agent.handoff': 'deny',
