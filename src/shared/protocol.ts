@@ -2103,9 +2103,19 @@ export interface RpcMap {
     params: { id: string }
     result: { task: Task; started: boolean; reason?: string }
   }
-  /** Resume a resolvable landing failure (conflict, verification, or uncommitted work) on its thread. */
+  /**
+   * Resume a resolvable landing failure (conflict, verification, or uncommitted work) on its thread.
+   * An optional worker/model choice is applied before the corrective prompt is dispatched, so a
+   * failed landing can be handed to a different agent without losing its evidence.
+   */
   'task.resolveRetry': {
-    params: { id: string }
+    params: {
+      id: string
+      workerId?: string | null
+      model?: string | null
+      modelPolicy?: 'auto' | 'inherit' | null
+      effort?: string | null
+    }
     result: { task: Task; started: boolean; reason?: string }
   }
   /**

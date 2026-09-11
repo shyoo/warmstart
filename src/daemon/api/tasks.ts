@@ -46,6 +46,38 @@ type TaskMethod =
   | 'question.ask' | 'question.list' | 'question.forTask' | 'question.answer' | 'resource.list'
   | 'conversation.list' | 'looseend.list' | 'looseend.retire' | 'looseend.dismiss' | 'looseend.reclaim'
 
+/** Apply a next-run worker/model choice without sending a generic “Continue” turn first. */
+function reassignForResolveRetry(
+  id: string,
+  choice: { workerId: string | null; model: string | null; modelPolicy: 'auto' | 'inherit' | null; effort: string | null }
+): void {
+  const task = requireTask(id)
+  if (!choice.workerId) {
+    const { workerId, adapterId, model, effort, modelPolicy, workerIds, ...constraints } = task.constraints
+    voidQuestionsForTask(task.id, 'task reassigned')
+    updateTask(id, { constraints, assigneeHint: null })
+    return
+  }
+
+  const worker = requireWorker(choice.workerId)
+  if (task.constraints.workerId !== worker.id) voidQuestionsForTask(task.id, 'task reassigned')
+  const adapterChanged = task.constraints.adapterId && task.constraints.adapterId !== worker.adapterId
+  const { workerIds: _workerIds, ...baseConstraints } = task.constraints
+  const constraints = checkConstraints({
+    ...baseConstraints,
+    workerId: worker.id,
+    adapterId: worker.adapterId,
+    model: adapterChanged ? undefined : (choice.model ?? undefined),
+    effort: adapterChanged ? undefined : (choice.effort ?? undefined),
+    modelPolicy: adapterChanged ? 'inherit' : (choice.modelPolicy ?? 'inherit')
+  })
+  if (!constraints.model) delete constraints.model
+  if (!constraints.effort) delete constraints.effort
+  if (!constraints.modelPolicy) delete constraints.modelPolicy
+  delete constraints.workerIds
+  updateTask(id, { constraints, assigneeHint: worker.id })
+}
+
 export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
   return {
     'task.list': (p) => listTasks(p ?? {}).map(withLanding),
@@ -319,6 +351,18 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
       return { task: requireTask(p.id), started: result.ok, ...(result.reason ? { reason: result.reason } : {}) }
     },
     'task.resolveRetry': async (p) => {
+      // The hold reason is the classifier's evidence. `task.setWorker` normally clears it for a
+      // resting task, which made a reassigned retry look like an unexplained generic retry.
+      const holdReason = requireTask(p.id).holdReason
+      if (p.workerId !== undefined) {
+        reassignForResolveRetry(p.id, {
+          workerId: p.workerId,
+          model: p.model ?? null,
+          modelPolicy: p.modelPolicy ?? null,
+          effort: p.effort ?? null
+        })
+        setHoldReason(p.id, holdReason)
+      }
       const result = await resolveRetryOnTask(p.id)
       return { task: requireTask(p.id), started: result.ok, ...(result.reason ? { reason: result.reason } : {}) }
     },

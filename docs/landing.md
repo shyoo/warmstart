@@ -528,6 +528,12 @@ in the resulting `landing.failed` detail. **Resolve & retry** then includes that
 agent prompt, so the next run starts from the failing test rather than merely being told that checks
 failed (t347, 2026-09-11).
 
+⭐ **Resolve & retry can change its next worker or model.** The selector applies the new routing
+choice before it dispatches the corrective run, but retains the landing failure as its classifier and
+prompt evidence. The replacement agent is told this is a landing repair, the failed check output or
+conflict, the task branch and landing target, and the complete rebase/verify/commit procedure; it is
+not asked to restart the original task without context.
+
 ⭐ **The queued task gains a dependency on the one it waited for**, so "t27 landed after t26" is still
 answerable tomorrow. ⚠️ The edge is a *record*, not an instruction: the task is deliberately **not**
 moved to `blocked`, because `blocked` means work waiting to be dispatched and would send a finished

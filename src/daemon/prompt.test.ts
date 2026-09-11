@@ -449,6 +449,39 @@ describe('run prompt persistence and task.get preview', () => {
     expect(lastHuman?.text).toContain('rerun the failing command in full')
   })
 
+  it('can hand a failed landing to another worker without losing the corrective prompt', async () => {
+    const { execFileSync } = await import('node:child_process')
+    const projects = await import('./projects.js')
+    const root = mkdtempSync(join(tmpdir(), 'agentyard-reassign-resolve-retry-'))
+    execFileSync('git', ['init', root])
+    const project = projects.addProject({ root })
+    const task = tasks.createTask({
+      title: 'Let another worker land this',
+      status: 'ready',
+      projectId: project.id,
+      constraints: { workerId: claude.id, adapterId: claude.adapterId }
+    })
+    tasks.setStatus(task.id, 'awaiting_human', {
+      holdReason: 'landing failed: the project checks failed after rebase'
+    })
+    tasks.addMessage(task.id, 'system', 'Landing failed: the project checks failed after rebase.\n\n$ npm test\nFAIL landing repair')
+
+    const result = await api.buildApi({ version: 'test', startedAt: Date.now(), port: 0 })['task.resolveRetry']({
+      id: task.id,
+      workerId: agy.id,
+      model: null,
+      modelPolicy: 'inherit',
+      effort: null
+    })
+
+    expect(result.started).toBe(true)
+    expect(tasks.requireTask(task.id).constraints.workerId).toBe(agy.id)
+    const correction = tasks.messagesFor(task.id).filter((m) => m.role === 'human').at(-1)?.text
+    expect(correction).toContain('The landing failed because project verification checks failed')
+    expect(correction).toContain('FAIL landing repair')
+    expect(correction).toContain('Commit or amend the fixes')
+  })
+
   it('gives a conflict retry the full rebase, squash, and verification sequence', async () => {
     const { execFileSync } = await import('node:child_process')
     const projects = await import('./projects.js')

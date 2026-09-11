@@ -538,7 +538,15 @@ export function Decide({
   const handleResolveRetry = async () => {
     setBusy(true)
     try {
-      await rpc('task.resolveRetry', { id: task.id })
+      const modelPolicy = selectedModel === '__auto__' ? 'auto' : 'inherit'
+      const model = selectedModel === '__auto__' ? null : selectedModel || null
+      await rpc('task.resolveRetry', {
+        id: task.id,
+        workerId: selectedWorkerId || null,
+        model,
+        modelPolicy,
+        effort: selectedEffort || null
+      })
       await onRefresh()
     } finally {
       setBusy(false)
@@ -659,7 +667,9 @@ export function Decide({
     'Landing does not finish this conversation — only Finish and Stop do — so the thread comes back ' +
     'open on the next numbered branch, ready to land again. ▼ picks another rung for this press.'
   const resolveTitle =
-    'Dispatches a run on this thread — same thread, so it keeps the context it already has — to ' +
+    'Dispatches a landing-repair run on this thread with the worker and model selected below. It carries ' +
+    'the landing failure, check output, branch and required landing procedure into that run, so the new ' +
+    'agent knows it is repairing and landing existing work rather than starting the task over. ' +
     'resolve what stopped it and report complete again. ' +
     resolveCauses.join(' ')
   const relandTitle =
@@ -797,6 +807,11 @@ export function Decide({
       )}
       {commitError && <div className="decide-note decide-warn">⚠️ {commitError}</div>}
       {waitingLine && <div className="decide-note">{waitingLine}</div>}
+      {resolveCauses.length > 0 && (
+        <div className="decide-note">
+          Choose a worker or model below to hand this landing repair to another agent; Resolve &amp; retry sends it the failure details and landing procedure.
+        </div>
+      )}
 
       {/* ⚠️ One row, and it stays one row. Each selector used to size itself to its own longest
           label — "Auto (scheduler decides)", "account default (claude-opus-5)" — so the three of
