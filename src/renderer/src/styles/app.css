@@ -1899,27 +1899,52 @@ body {
   white-space: nowrap;
 }
 
-/* The task table's title column takes the slack, and the slack is most of a stretched window.
+/* The task table has responsive viewpoints. Compact operational facts keep their space; title gets
+   the remainder. Secondary history and context yield before the table asks for horizontal scroll. */
+.tbl--tasks { table-layout: fixed; }
+.tbl--tasks .tbl-col-seq { width: 44px; }
+.tbl--tasks .tbl-col-from { width: 44px; }
+.tbl--tasks .tbl-col-worker { width: 92px; }
+.tbl--tasks .tbl-col-dep { width: 42px; }
+.tbl--tasks .tbl-col-took { width: 58px; }
+.tbl--tasks .tbl-col-price { width: 70px; }
+.tbl--tasks .tbl-col-quality { width: 58px; }
+.tbl--tasks .tbl-col-created,
+.tbl--tasks .tbl-col-updated { width: 64px; }
+.tbl--tasks .tbl-col-status { width: 82px; }
+.tbl--tasks .tbl-col-action { width: 48px; }
 
-   ⛔ **An automatic table layout hands out spare width in proportion to what each column asked
-   for**, and a column asks for as much as its widest content wants — capped by `max-width`. At 48ch
-   the title stopped asking, so widening the window shared the extra evenly between the one column
-   that is text and the eleven that are numbers, dates and chips. Raising the cap is the whole fix:
-   the title now asks for more than every other column combined and is given it.
-
-   ⚠️ Still a `max-width` rather than none, and still definite, because that is what `text-overflow:
-   ellipsis` needs in order to draw at the column edge instead of overflowing the row. `min()` keeps
-   both ends honest: `46vw` so a stretched window is what widens it, `120ch` so a very wide monitor
-   does not hand one column three quarters of the table. ⚠️ Scoped to `.tbl--tasks`; the three other
-   tables that share `.tbl-title-cell` are narrower and keep the 48ch above. */
+/* Un-sized in fixed layout means title gets every remaining pixel. */
 .tbl--tasks .tbl-title-cell,
 .tbl--tasks .tbl-title {
-  max-width: min(120ch, 46vw);
+  max-width: none;
 }
 
-/* The branch under the title, held to two-thirds of it for the same reason it was held before. */
+/* The branch follows the title cell rather than setting a second minimum table width. */
 .tbl--tasks .tbl-path {
-  max-width: min(80ch, 30vw);
+  max-width: 100%;
+}
+
+/* A model id qualifies Worker; it must not widen the task table. */
+.tbl--tasks .tbl-model { overflow: hidden; text-overflow: ellipsis; }
+
+@media (max-width: 1250px) {
+  .tbl--tasks .tbl-col-created,
+  .tbl--tasks .tbl-col-updated { display: none; }
+}
+
+@media (max-width: 1000px) {
+  .tbl--tasks .tbl-col-from,
+  .tbl--tasks .tbl-col-quality { display: none; }
+  .tbl--tasks .tbl-col-worker { width: 78px; }
+  .tbl--tasks .tbl-col-took { width: 52px; }
+}
+
+@media (max-width: 700px) {
+  .tbl--tasks .tbl-col-dep { display: none; }
+  .tbl--tasks .tbl-col-worker { width: 68px; }
+  .tbl--tasks .tbl-col-price { width: 62px; }
+  .tbl--tasks .tbl-col-status { width: 68px; }
 }
 
 .tbl-title .tbl-strong {

@@ -496,17 +496,13 @@ merging, the daemon sets `landing` on every task it sends (`landingstate.ts`, ap
 it in the table, the thread and the phone. ⛔ It is never written to the row: a landing belongs to one
 process, and a stored `landing` would outlive a daemon that died mid-merge.
 
-⛔ **The title column takes the slack when the window is stretched.** An automatic table layout
-hands out spare width in proportion to what each column *asked* for, and a column asks for as much as
-its widest content wants — capped by `max-width`. At 48ch the title stopped asking, so a wider window
-was shared evenly between the one column that is text and the eleven that are numbers, dates and
-chips. `.tbl--tasks` raises the cap to `min(120ch, 46vw)`: still definite, because that is what
-`text-overflow: ellipsis` needs to draw at the column edge, and still bounded at both ends.
-⚠️ **And two truncations were fighting.** `taskLabelShort` cut the string at 70 characters *before*
-the cell ever measured anything, so a wide window drew an `…` with empty space after it — a
-truncation mark that was not telling the truth. The table now passes `TITLE_CHARS`, a bound on the
-payload (a title *is* the prompt, and can be paragraphs) set well past the widest the column can be,
-which leaves CSS to decide where the line ends.
+⛔ **The title column takes the slack at every width.** `.tbl--tasks` has a fixed column budget:
+ID, worker, active time, price, status and actions keep compact widths, and title receives what
+remains. At 1250px the history dates yield; at 1000px filer and quality yield; at 700px dependencies
+yield. This is a deliberate change of viewpoint, not a change to the operator's Columns preference:
+the facts needed to act stay visible before horizontal scrolling becomes necessary. A long model id
+ellipsises inside Worker rather than widening the table. ⚠️ `taskLabelShort` bounds the payload (a
+title is the prompt and can be paragraphs), while CSS decides where its visible ellipsis belongs.
 
 ⛔ **Every column of the task table sorts, and two kinds of column sort in two different places.**
 `seq`, `title`, `status`, `quality`, `created` and `updated` are real columns: SQLite orders them and

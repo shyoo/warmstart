@@ -494,6 +494,12 @@ export function Tasks({
         </div>
       ) : (
         <table className="tbl tbl--tasks">
+          {/* The title receives whatever remains after compact operational columns. This keeps a
+              narrow table readable without scrolling horizontally to reach its right-hand facts. */}
+          <colgroup>
+            <col className="tbl-col-seq" />
+            {columns.map((column) => <col key={column} className={`tbl-col-${column}`} />)}
+          </colgroup>
           {/* ⛔ `tbl--tasks` exists for one rule: **the title column takes the slack.**
               `.tbl-title-cell` is shared with three narrower tables and caps the title at 48ch, and
               an automatic table layout hands out spare width in proportion to what each column
