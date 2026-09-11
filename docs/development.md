@@ -28,6 +28,11 @@ is no npm setting that fixes it. It is idempotent — safe to run when you are u
 Requirements: Node 22+ (to build; the app runs on the Node inside Electron), Git 2.40+, and at least
 one agent CLI on `PATH` for anything beyond L1.
 
+**Pulling source does not refresh dependencies.** When `package.json` or `package-lock.json` changes,
+run `npm ci` before building (or `npm install` only when deliberately changing the resolved dependencies),
+then run `node scripts/ensure-electron.mjs`. An existing `node_modules` otherwise lacks newly locked
+packages and TypeScript reports the misleading-looking `Cannot find module` error.
+
 ## 2. The scripts
 
 ```bash
