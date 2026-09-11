@@ -513,6 +513,12 @@ where the work is and the check output behind it. Code that reads a message back
 together (`messageBody` in `threadline.ts`), except salvage, which reads the headline alone — so the
 headline keeps its shape.
 
+⭐ **Retry landing preserves red-check output too.** A retry is a second caller of the landing bar,
+not a shortcut around it: if its project check fails, the same tail of the command output is retained
+in the resulting `landing.failed` detail. **Resolve & retry** then includes that detail in the new
+agent prompt, so the next run starts from the failing test rather than merely being told that checks
+failed (t347, 2026-09-11).
+
 ⭐ **The queued task gains a dependency on the one it waited for**, so "t27 landed after t26" is still
 answerable tomorrow. ⚠️ The edge is a *record*, not an instruction: the task is deliberately **not**
 moved to `blocked`, because `blocked` means work waiting to be dispatched and would send a finished

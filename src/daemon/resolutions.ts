@@ -554,8 +554,13 @@ export async function relandTask(taskId: string): Promise<{ ok: boolean; reason?
   // button appear to bounce back: the renderer refreshes the task immediately, then has nowhere to
   // render a false `landed` result. Keep the outcome on the task as well as returning it, so it is
   // visible after that refresh and remains in the thread for somebody who opens it later.
-  const didNotLand = (reason: string): { ok: false; reason: string } => {
-    const detail = `Retry landing failed: ${reason}`
+  const didNotLand = (reason: string, checkOutput?: string): { ok: false; reason: string } => {
+    // ⛔ The ordinary landing path puts a red check's output in the thread detail, and
+    // `resolveChecksOnTask` uses that detail as the next agent's evidence. Retry landing used to
+    // replace it with the short reason alone, so its next Resolve & retry prompt said only
+    // "checks failed" and sent an agent back without the failing test (t347, 2026-09-11).
+    // Keep the same tail the ordinary path keeps: runners put the actionable summary last.
+    const detail = `Retry landing failed: ${reason}` + (checkOutput ? `\n\n${checkOutput.slice(-4000)}` : '')
     setHoldReason(task.id, detail)
     addMessage(task.id, 'system', `Retry did not land: ${oneLine(reason)}`, null, [], { event: 'landing.failed', detail })
     return { ok: false, reason }
@@ -616,7 +621,7 @@ export async function relandTask(taskId: string): Promise<{ ok: boolean; reason?
         if (open.sessionId) releaseAllFor(open.sessionId)
       }
     }
-    if (!result.ok) return didNotLand(result.reason ?? 'landing did not complete')
+    if (!result.ok) return didNotLand(result.reason ?? 'landing did not complete', result.checkOutput)
     return { ok: true, ...(result.reason ? { reason: result.reason } : {}) }
   } finally {
     // ⚠️ Parked and released in every path, including the refusals above. A workspace held by a

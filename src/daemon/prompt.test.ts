@@ -495,6 +495,57 @@ describe('run prompt persistence and task.get preview', () => {
     })
   })
 
+  it('carries retry-landing check output into the corrective agent prompt', async () => {
+    // ⛔ `landTask` preserves this output on its own failure path, but `relandTask` is a separate
+    // caller. This uses a real branch and check so the assertion follows the exact Retry landing →
+    // Resolve & retry sequence t347 took, rather than recreating the final thread message by hand.
+    const { execFileSync } = await import('node:child_process')
+    const root = mkdtempSync(join(dir, 'retry-landing-checks-'))
+    const branch = 'warmstart/t-retry-landing-checks'
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: root, stdio: 'ignore' })
+    git('init', '--initial-branch=main')
+    git('config', 'user.name', 'Warmstart test')
+    git('config', 'user.email', 'test@example.invalid')
+    mkdirSync(join(root, '.warmstart'), { recursive: true })
+    writeFileSync(
+      join(root, '.warmstart', 'project.json'),
+      JSON.stringify({
+        schema_version: 1,
+        name: 'retry-landing-checks',
+        vcs: 'git',
+        landing: { finish: 'commit-and-verify', target: 'main' },
+        check: ["node -e \"console.error('RETRY_LANDING_FAILURE'); process.exit(1)\""]
+      })
+    )
+    writeFileSync(join(root, 'README.md'), '# fixture\n')
+    git('add', '-A')
+    git('commit', '-m', 'initial')
+    git('switch', '-c', branch)
+    writeFileSync(join(root, 'work.txt'), 'work\n')
+    git('add', 'work.txt')
+    git('commit', '-m', 'task work')
+    git('switch', 'main')
+
+    const projects = await import('./projects.js')
+    const project = projects.addProject({ root })
+    const task = tasks.createTask({ title: 'Retain retry check failure', status: 'ready', projectId: project.id })
+    tasks.setStatus(task.id, 'awaiting_human', {
+      branch,
+      holdReason: 'landing failed: the trunk was busy'
+    })
+
+    await expect(resolutions.relandTask(task.id)).resolves.toMatchObject({
+      ok: false,
+      reason: 'the project checks failed'
+    })
+    const retryFailure = tasks.messagesFor(task.id).at(-1)
+    expect(retryFailure?.detail).toContain('RETRY_LANDING_FAILURE')
+
+    await expect(resolutions.resolveChecksOnTask(task.id)).resolves.toEqual({ ok: true })
+    const correction = tasks.messagesFor(task.id).filter((m) => m.role === 'human').at(-1)
+    expect(correction?.text).toContain('RETRY_LANDING_FAILURE')
+  })
+
   it('refuses relandTask when the trunk tripwire fired, directing to Mark done or Resolve & retry', async () => {
     const task = tasks.createTask({ title: 'Trunk moved landing', status: 'ready' })
     tasks.setStatus(task.id, 'awaiting_human', {
