@@ -33,6 +33,24 @@ export type DaemonStatus =
 const STARTUP_TIMEOUT_MS = 20_000
 
 /**
+ * How long to wait before trying the whole `ensure` again, per consecutive failure.
+ *
+ * ⛔ **A startup that times out must not be a dead end.** `ensure` used to set `state: 'error'` and
+ * stop there, and nothing else could ever call it again: `scheduleReconnect` is wired to the
+ * WebSocket `close` event, and on this path no socket was ever opened. One slow start - a cold
+ * 244MB unsigned binary being scanned, a 37MB database opening, or a spawn refused because the
+ * previous daemon still held the lock - left the window disconnected until the operator quit and
+ * relaunched. The renderer compounds it: `refreshProjects` returns early on `if (!connected)` and
+ * is only re-run when `connected` changes, so the fleet stayed empty with no way back.
+ *
+ * ⚠️ Backs off rather than hammering. Each attempt may spawn another daemon, and while the lock
+ * makes a duplicate exit harmlessly, spawning a process every two seconds forever is not a cost
+ * worth paying to recover from something that is usually over within one retry. The last value
+ * repeats, so it settles into a slow poll instead of giving up.
+ */
+const ENSURE_RETRY_BACKOFF_MS = [2_000, 5_000, 15_000, 30_000] as const
+
+/**
  * The text of one WebSocket frame.
  *
  * ⚠️ `ws` hands a message over as `Buffer | ArrayBuffer | Buffer[]` - which of the three depends on
@@ -53,6 +71,10 @@ export class DaemonClient extends EventEmitter {
   private status: DaemonStatus = { state: 'stopped' }
   private reconnectTimer: NodeJS.Timeout | null = null
   private disposed = false
+  /** Remembered so a retry can spawn without the caller being around to pass it again. */
+  private daemonScript: string | null = null
+  private retryTimer: NodeJS.Timeout | null = null
+  private retryAttempt = 0
 
   getStatus(): DaemonStatus {
     return this.status
@@ -65,7 +87,12 @@ export class DaemonClient extends EventEmitter {
 
   /** Attach to a running daemon, or start one and wait for it to answer. */
   async ensure(daemonScript: string): Promise<DaemonStatus> {
+    this.daemonScript = daemonScript
     if (this.status.state === 'connected') return this.status
+    if (this.retryTimer) {
+      clearTimeout(this.retryTimer)
+      this.retryTimer = null
+    }
     this.setStatus({ state: 'starting' })
 
     const existing = readEndpoint()
@@ -101,8 +128,35 @@ export class DaemonClient extends EventEmitter {
       }
     }
 
-    this.setStatus({ state: 'error', message: 'orchestratord did not answer within 20s' })
+    // ⚠️ Still `error`, because it still is not connected and the UI must say so - but no longer
+    // final. The retry is what turns "quit and relaunch" back into "wait a moment".
+    this.setStatus({
+      state: 'error',
+      message: `orchestratord did not answer within ${STARTUP_TIMEOUT_MS / 1000}s - retrying`
+    })
+    this.scheduleEnsureRetry()
     return this.status
+  }
+
+  /**
+   * Try `ensure` again after a backoff, until it connects or the app goes away.
+   *
+   * ⛔ Never while connected, and never twice at once: a second timer would double the spawn rate
+   * on every failure and the two would drift apart.
+   */
+  private scheduleEnsureRetry(): void {
+    const script = this.daemonScript
+    if (this.disposed || this.retryTimer || !script) return
+    const wait =
+      ENSURE_RETRY_BACKOFF_MS[Math.min(this.retryAttempt, ENSURE_RETRY_BACKOFF_MS.length - 1)]
+    this.retryAttempt += 1
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null
+      if (this.disposed || this.status.state === 'connected') return
+      void this.ensure(script)
+    }, wait)
+    // Timers must not hold the process open on their own: quitting mid-backoff should quit.
+    this.retryTimer.unref?.()
   }
 
   private async alive(endpoint: DaemonEndpoint): Promise<boolean> {
@@ -119,6 +173,13 @@ export class DaemonClient extends EventEmitter {
 
   private attach(endpoint: DaemonEndpoint): void {
     this.endpoint = endpoint
+    // A success clears the backoff, so the next bad start gets the fast retry rather than the slow
+    // one this session happened to end on.
+    this.retryAttempt = 0
+    if (this.retryTimer) {
+      clearTimeout(this.retryTimer)
+      this.retryTimer = null
+    }
     const { token: _token, ...safe } = endpoint
     this.setStatus({ state: 'connected', endpoint: safe, connectedAt: Date.now() })
     this.connectEvents()
@@ -197,6 +258,7 @@ export class DaemonClient extends EventEmitter {
   dispose(): void {
     this.disposed = true
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
+    if (this.retryTimer) clearTimeout(this.retryTimer)
     this.socket?.close()
     this.socket = null
   }

@@ -45,6 +45,15 @@ controller and transcript tailers → publish the endpoint file.
 ⛔ **Adapters load before the scheduler starts.** An adapter appearing under a running scheduler
 means capabilities changed between the gate that admitted a task and the dispatch that acted on it.
 
+⚠️ **The endpoint file is published last, so it is the whole startup that main is waiting on** — the
+lock, the migrations against a database that can be tens of MB, and every reconcile above it.
+`main/daemon.ts` `ensure()` polls for it for 20s; on a cold start of an unsigned packaged binary
+being scanned, that is not always enough. ⛔ **A timeout must not be terminal**: it re-runs `ensure`
+on a 2s → 5s → 15s → 30s backoff (last value repeating) rather than settling into `error` forever.
+It used to settle — `scheduleReconnect` hangs off the WebSocket `close` event, and on that path no
+socket was ever opened, so one slow start left the window showing an empty fleet until the operator
+quit and relaunched. Pinned by `src/main/daemonretry.test.ts`.
+
 ### Talking to the daemon
 
 | Caller | Path |

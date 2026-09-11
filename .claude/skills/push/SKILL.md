@@ -23,7 +23,7 @@ git rev-parse --git-dir --git-common-dir --abbrev-ref HEAD
 ```
 
 Two different paths means you are in a **worktree**; the same path twice means the **trunk**
-(`C:\Dev\multi_agent_controller`, branch `main`). Establish this first — it changes steps 2, 5 and 6.
+(`C:\Dev\warmstart`, branch `main`). Establish this first — it changes steps 2, 5 and 6.
 Say which one you are in.
 
 | | **Trunk** | **Worktree** (`warmstart/t<n>-<topic>`) |
