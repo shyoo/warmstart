@@ -1,7 +1,8 @@
 import { useState } from 'react'
-import type { EnterBehavior } from '@shared/ipc'
+import type { EnterBehavior, ThemePreference, UiSettings } from '@shared/ipc'
 import { useUiSettings } from '../lib/uisettings'
 import { SettingRow, SettingSwitch } from './SettingRow'
+import { SettingButtonSelect } from './SettingButtonSelect'
 import { errorMessage } from '@shared/errors.js'
 import { RemoteAccess } from './RemoteAccess'
 
@@ -22,7 +23,7 @@ export function AppSettings(): React.JSX.Element {
 
   // ⛔ The answer comes back from main, never the value that was clicked. A switch that paints
   // itself and persists nothing is the failure this kind of control is used to rule out.
-  const save = async (patch: { tray?: boolean; enterBehavior?: EnterBehavior }): Promise<void> => {
+  const save = async (patch: Partial<UiSettings>): Promise<void> => {
     setSaving(true)
     setError(null)
     try {
@@ -36,6 +37,7 @@ export function AppSettings(): React.JSX.Element {
 
   const tray = settings.tray
   const enterBehavior = settings.enterBehavior
+  const theme = settings.theme
 
   return (
     <>
@@ -50,6 +52,11 @@ export function AppSettings(): React.JSX.Element {
       {error && <div className="alert">{error}</div>}
 
       <div className="setting-list">
+        <SettingRow
+          title="Appearance"
+          description={theme === 'system' ? 'Follows this system’s light or dark appearance, including changes while Warmstart is open.' : theme === 'light' ? 'Uses the light appearance in this window.' : 'Uses the dark appearance in this window.'}
+          control={<SettingButtonSelect value={theme} aria-label="Appearance" disabled={saving} onChange={(value) => void save({ theme: value as ThemePreference })} options={[{ value: 'system', label: 'System' }, { value: 'light', label: 'Light' }, { value: 'dark', label: 'Dark' }]} />}
+        />
         <SettingRow
           title="Enter key behavior"
           description={

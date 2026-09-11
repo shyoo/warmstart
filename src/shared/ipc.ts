@@ -15,6 +15,7 @@ export interface AppInfo {
 }
 
 export type EnterBehavior = 'send' | 'newline'
+export type ThemePreference = 'system' | 'light' | 'dark'
 
 /**
  * Preferences the app owns rather than the fleet.
@@ -40,11 +41,15 @@ export interface UiSettings {
    * - `'newline'`: Pressing Enter adds a new line; ⌘/Ctrl+Enter sends the prompt.
    */
   enterBehavior: EnterBehavior
+
+  /** The colour scheme for this window; System follows prefers-color-scheme live. */
+  theme: ThemePreference
 }
 
 export const DEFAULT_UI_SETTINGS: UiSettings = {
   tray: false,
-  enterBehavior: 'send'
+  enterBehavior: 'send',
+  theme: 'system'
 }
 
 export type DaemonUiStatus =

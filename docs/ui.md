@@ -532,7 +532,7 @@ list. Logic extracted into a pure function under `lib/` is provable at L1 instea
 | `menuposition.ts` | where a pill's portalled menu goes: flip above, clamp to the window, never clip |
 | `newproject.ts` | the add-project wizard's step blockers, its creation plan, and the template signature |
 | `prefs.ts` | saved views, fleet collapse and density, page size, **which page of the list you were reading** (localStorage) |
-| `uisettings.ts` `zoom.ts` | tray/Enter behaviour and zoom, mirrored from main's `ui-settings.json` |
+| `uisettings.ts` `zoom.ts` | tray/Enter behaviour, colour theme and zoom, mirrored from main's `ui-settings.json` |
 | `pasteimages.tsx` | paste-to-attach; downscales to 1568px and uploads one image per call |
 | `composerprefs.ts` | what the composer was last set to — ⛔ **last-selected beats inherited**, and model/effort are keyed **per account** |
 | `composerscratch.ts` | what is still half-written in the composer — ⛔ a **scratch, not a draft**: no task row is filed |
@@ -541,6 +541,8 @@ list. Logic extracted into a pure function under `lib/` is provable at L1 instea
 and change what the *scheduler* does; these are read by the main process and change what the *window*
 does — including whether closing it leaves the daemon running, which main must decide when the daemon
 is not answering.
+
+**Appearance is a window preference:** Global offers System (the default), Light and Dark. System follows live OS light/dark changes; Light and Dark set an explicit palette.
 
 ## 5. Styling
 

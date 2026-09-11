@@ -35,7 +35,11 @@ export function readUiSettings(): UiSettings {
       enterBehavior:
         parsed.enterBehavior === 'send' || parsed.enterBehavior === 'newline'
           ? parsed.enterBehavior
-          : DEFAULT_UI_SETTINGS.enterBehavior
+          : DEFAULT_UI_SETTINGS.enterBehavior,
+      theme:
+        parsed.theme === 'system' || parsed.theme === 'light' || parsed.theme === 'dark'
+          ? parsed.theme
+          : DEFAULT_UI_SETTINGS.theme
     }
   } catch {
     return { ...DEFAULT_UI_SETTINGS }

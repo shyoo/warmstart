@@ -1,8 +1,14 @@
 import { useCallback, useEffect, useState } from 'react'
-import { DEFAULT_UI_SETTINGS, type EnterBehavior, type UiSettings } from '@shared/ipc.js'
+import { DEFAULT_UI_SETTINGS, type EnterBehavior, type ThemePreference, type UiSettings } from '@shared/ipc.js'
 
 let cachedUiSettings: UiSettings | null = null
 const listeners = new Set<(settings: UiSettings) => void>()
+
+export function applyThemePreference(theme: ThemePreference): void {
+  if (typeof document === 'undefined') return
+  if (theme === 'system') document.documentElement.removeAttribute('data-theme')
+  else document.documentElement.dataset.theme = theme
+}
 
 /**
  * Hook to access and update UI settings persisted in `ui-settings.json` via the main process.
@@ -26,6 +32,10 @@ export function useUiSettings(): {
       listeners.delete(listener)
     }
   }, [])
+
+  useEffect(() => {
+    applyThemePreference(settings.theme)
+  }, [settings.theme])
 
   const updateUiSettings = useCallback(async (patch: Partial<UiSettings>) => {
     if (typeof window !== 'undefined' && window.agentyard?.setUiSettings) {

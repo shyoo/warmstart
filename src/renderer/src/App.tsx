@@ -41,6 +41,7 @@ import { RoutingModel, type RoutingTab } from './components/RoutingModel'
 import { Statistics, type StatisticsTab } from './components/Statistics'
 import { QualityReview } from './components/QualityReview'
 import { ProjectDot, projectWorkState } from './lib/taskview'
+import { useUiSettings } from './lib/uisettings'
 
 /**
  * The shell.
@@ -95,6 +96,7 @@ type Route =
   | { kind: 'settings'; page: 'workers' | 'global' }
 
 export function App(): React.JSX.Element {
+  useUiSettings()
   const info = useAppInfo()
   const status = useDaemonStatus()
   const connected = status.state === 'connected'
