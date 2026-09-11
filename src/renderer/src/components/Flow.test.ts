@@ -32,6 +32,7 @@ function mockTask(over: Partial<Task> = {}): Task {
     qualityReviewCount: 0,
     qualityReviewedAt: null,
     qualityReviewer: null,
+    qualityManualCount: 0,
     status: 'ready',
     priority: 'P1',
     createdBy: { kind: 'human' },

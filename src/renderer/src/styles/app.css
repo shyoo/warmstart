@@ -4390,6 +4390,14 @@ select:focus-visible,
   margin-bottom: var(--sp-2);
 }
 
+/* Edit / Delete under a stored rating, and Cancel / Save under the form: one row, right-aligned. */
+.manual-review-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+  margin-top: var(--sp-2);
+}
+
 .side-note {
   font-size: var(--text-meta);
   line-height: var(--leading-body);

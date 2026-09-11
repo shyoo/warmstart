@@ -39,6 +39,21 @@ import {
 import { errorMessage } from '@shared/errors.js'
 
 /**
+ * Who the Quality cell's number came from. `qualityReviewCount` includes the operator's own rating
+ * (`qualityManualCount` says whether it does), so a task rated only by hand names *you*, never
+ * "another agent".
+ */
+export function qualityWho(task: Pick<Task, 'qualityReviewCount' | 'qualityManualCount' | 'qualityReviewer'>): string {
+  const peers = task.qualityReviewCount - task.qualityManualCount
+  if (task.qualityReviewCount > 1) {
+    return `Average of ${task.qualityReviewCount} grades` +
+      (task.qualityManualCount > 0 ? ` (${peers} peer ${peers === 1 ? 'review' : 'reviews'} and your rating)` : '')
+  }
+  if (task.qualityManualCount > 0) return 'Your rating'
+  return `Scored by ${task.qualityReviewer ?? 'another agent'}`
+}
+
+/**
  * A column header you can sort by.
  *
  * ⚠️ The arrow is on the sorted column only. An arrow on every header — the "sortable" hint some
@@ -700,7 +715,7 @@ export function Tasks({
                       ) : (
                         <span
                           title={
-                            `${task.qualityReviewCount > 1 ? `Average of ${task.qualityReviewCount} completed reviews` : `Scored by ${task.qualityReviewer ?? 'another agent'}`}: ${task.qualityScore.toFixed(1)}/10` +
+                            `${qualityWho(task)}: ${task.qualityScore.toFixed(1)}/10` +
                             (task.qualityReviewedAt
                               ? ` on ${new Date(task.qualityReviewedAt).toLocaleString()}`
                               : '')

@@ -908,15 +908,22 @@ export interface Task {
    * cost. All four fields are written by `recordReview` and by nothing else.
    *
    * ⚠️ `null` means *not reviewed*, which is a different thing from *reviewed and scored zero*.
-   * The score is the arithmetic mean across `qualityReviewCount` completed, scored reviews.
+   * The score is the arithmetic mean across `qualityReviewCount` completed, scored peer reviews
+   * **and** the operator's own rating, when there is one — `TASK_QUALITY_RECOMPUTE_SQL` in
+   * `review.ts` is the one place that arithmetic lives.
    */
   qualityReviewId: string | null
   qualityScore: number | null
-  /** Number of completed, scored reviews included in `qualityScore`'s arithmetic mean. */
+  /** Number of grades included in `qualityScore`'s arithmetic mean, the operator's rating included. */
   qualityReviewCount: number
   qualityReviewedAt: number | null
-  /** The reviewer's adapter id. ⛔ Never the subject's — a review never grades its own author. */
+  /** The newest peer reviewer's adapter id. ⛔ Never the subject's — a review never grades its own author. */
   qualityReviewer: string | null
+  /**
+   * How many of `qualityReviewCount` are the operator's own rating: 0 or 1, since a task keeps at
+   * most one (`createManualReview`). Read live from `manual_reviews`, not stored on the row.
+   */
+  qualityManualCount: number
   /** Reviewer account while a peer grade is in flight; display state, not task lifecycle state. */
   gradingWorkerId?: string | null
   /**

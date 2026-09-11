@@ -89,6 +89,7 @@ function makeTask(overrides: Partial<Task> = {}): Task {
     qualityReviewCount: overrides.qualityReviewCount ?? 0,
     qualityReviewedAt: overrides.qualityReviewedAt ?? null,
     qualityReviewer: overrides.qualityReviewer ?? null,
+    qualityManualCount: overrides.qualityManualCount ?? 0,
     status: overrides.status ?? 'ready',
     priority: overrides.priority ?? 'P2',
     createdBy: overrides.createdBy ?? { kind: 'human' },

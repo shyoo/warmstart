@@ -1543,12 +1543,15 @@ function QualityReviewBox({
         quality review
       </div>
       {latest && (
+        // ⚠️ `qualityScore` folds in the operator's own rating when there is one, so the denominator
+        // shown here is the task's, not the peer list's — or the number would not match its count.
         <div className="side-run-fact">
-          <span className="side-run-key">{completed.length > 1 ? 'average:' : 'score:'}</span>
+          <span className="side-run-key">{task.qualityReviewCount > 1 ? 'average:' : 'score:'}</span>
           <span className="side-run-val">
             <strong className="num">{task.qualityScore?.toFixed(1) ?? '—'} / 10</strong>
             <span className="dim">
-              {' '}· {completed.length} {completed.length === 1 ? 'review' : 'reviews'}
+              {' '}· {completed.length} peer {completed.length === 1 ? 'review' : 'reviews'}
+              {task.qualityManualCount > 0 ? ' and your rating' : ''}
             </span>
           </span>
         </div>
@@ -1607,7 +1610,14 @@ function QualityReviewBox({
   )
 }
 
-/** A human's overall verdict sits beside, never inside, the peer-review rubric. */
+/**
+ * A human's overall verdict sits beside, never inside, the peer-review rubric.
+ *
+ * ⛔ One rating per task, and it is editable: the daemon caps `manual_reviews` at one row per task
+ * (`createManualReview`), so this box is either the form for a first rating or the stored one with
+ * Edit and Delete. Editing reuses the same select and textarea, pre-filled, and Save goes to
+ * `review.manual.update` rather than creating a second row.
+ */
 function ManualReviewBox({
   task,
   reviews,
@@ -1617,25 +1627,41 @@ function ManualReviewBox({
   reviews: ManualReview[]
   refresh: () => Promise<void>
 }): React.JSX.Element | null {
+  const existing = reviews[0] ?? null
   const [score, setScore] = useState('')
   const [explanation, setExplanation] = useState('')
-  const [saving, setSaving] = useState(false)
+  const [editing, setEditing] = useState(false)
+  const [busy, setBusy] = useState(false)
   const [failure, setFailure] = useState<string | null>(null)
   const finished = task.status === 'completed' || task.status === 'cancelled'
   if (!finished) return null
 
+  const beginEdit = () => {
+    if (!existing) return
+    setScore(String(existing.score))
+    setExplanation(existing.explanation)
+    setFailure(null)
+    setEditing(true)
+  }
+
+  const cancelEdit = () => {
+    setEditing(false)
+    setScore('')
+    setExplanation('')
+    setFailure(null)
+  }
+
   const submit = async () => {
-    setSaving(true)
+    setBusy(true)
     setFailure(null)
     try {
-      const result = await rpc('review.manual.create', {
-        taskId: task.id,
-        score: Number(score),
-        explanation
-      })
+      const result = existing
+        ? await rpc('review.manual.update', { reviewId: existing.id, score: Number(score), explanation })
+        : await rpc('review.manual.create', { taskId: task.id, score: Number(score), explanation })
       if (result.ok) {
         setScore('')
         setExplanation('')
+        setEditing(false)
       } else {
         setFailure(result.reason)
       }
@@ -1643,32 +1669,33 @@ function ManualReviewBox({
     } catch (err) {
       setFailure(errorMessage(err))
     } finally {
-      setSaving(false)
+      setBusy(false)
     }
   }
 
-  return (
-    <div className="detail-side-box">
-      <div
-        className="side-label"
-        title="Your overall 0–10 rating and explanation. It contributes to quality reporting, but does not use the peer-review rubric."
-      >
-        your review
-      </div>
-      {reviews.map((review) => (
-        <div className="side-run" key={review.id}>
-          <div className="side-run-head">
-            <strong className="num">{review.score} / 10</strong>
-            <span className="dim">{when(review.createdAt)}</span>
-          </div>
-          <div className="side-note">{review.explanation}</div>
-        </div>
-      ))}
+  const remove = async () => {
+    if (!existing) return
+    setBusy(true)
+    setFailure(null)
+    try {
+      const result = await rpc('review.manual.delete', { reviewId: existing.id })
+      if (!result.ok) setFailure(result.reason)
+      else setEditing(false)
+      await refresh()
+    } catch (err) {
+      setFailure(errorMessage(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const form = (
+    <>
       <select
         className="reassign-select quality-review-select"
         aria-label="Your quality rating"
         value={score}
-        disabled={saving}
+        disabled={busy}
         onChange={(event) => setScore(event.target.value)}
       >
         <option value="">Rate the agent’s work…</option>
@@ -1680,14 +1707,65 @@ function ManualReviewBox({
         className="compose-input"
         rows={2}
         value={explanation}
-        disabled={saving}
+        disabled={busy}
         placeholder="Briefly explain this rating…"
         onChange={(event) => setExplanation(event.target.value)}
       />
-      <button type="button" className="btn" disabled={saving || score === '' || !explanation.trim()} onClick={() => void submit()}>
-        {saving ? 'saving…' : 'Save your review'}
-      </button>
-      <div className="side-note dim">This is an overall rating, not a seven-dimension rubric score.</div>
+      <div className="manual-review-actions">
+        {existing && (
+          <button type="button" className="btn" disabled={busy} onClick={cancelEdit}>
+            Cancel
+          </button>
+        )}
+        <button
+          type="button"
+          className="btn"
+          disabled={busy || score === '' || !explanation.trim()}
+          onClick={() => void submit()}
+        >
+          {busy ? 'saving…' : existing ? 'Save changes' : 'Save your review'}
+        </button>
+      </div>
+    </>
+  )
+
+  return (
+    <div className="detail-side-box">
+      <div
+        className="side-label"
+        title="Your overall 0–10 rating and explanation. It counts in this task’s quality score and in quality reporting, but does not use the peer-review rubric."
+      >
+        your review
+      </div>
+      {existing && !editing && (
+        <div className="side-run">
+          <div className="side-run-head">
+            <strong className="num">{existing.score} / 10</strong>
+            <span className="dim">{when(existing.createdAt)}</span>
+          </div>
+          <div className="side-note">{existing.explanation}</div>
+          <div className="manual-review-actions">
+            <button type="button" className="btn" disabled={busy} onClick={beginEdit}>
+              Edit
+            </button>
+            <button
+              type="button"
+              className="btn btn--danger btn--ghost"
+              disabled={busy}
+              title="Remove your rating. The task’s quality score is recomputed from any peer reviews that remain."
+              onClick={() => void remove()}
+            >
+              {busy ? 'deleting…' : 'Delete'}
+            </button>
+          </div>
+        </div>
+      )}
+      {(!existing || editing) && form}
+      <div className="side-note dim">
+        {existing
+          ? 'One rating per task: edit it if you change your mind.'
+          : 'This is an overall rating, not a seven-dimension rubric score.'}
+      </div>
       {failure && <div className="side-note warn">{failure}</div>}
     </div>
   )

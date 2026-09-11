@@ -272,9 +272,15 @@ grading. A pending review overlays **grading** in Tasks, TaskThread and Flow wit
 task's stored lifecycle status or claiming a worktree. Accounts on any adapter that authored the work are absent;
 the daemon revalidates a named choice when the button is pressed rather than trusting the menu.
 The same thread ledger also offers **Your review** after completed or cancelled agent work: an operator
-selects an integer 0–10 and must add a brief explanation. These direct ratings feed the quality
-aggregate alongside peer grades, but never masquerade as its seven rubric dimensions or as an agent
-reviewer; a mixed-authorship rating is kept but excluded from clean model comparison.
+selects an integer 0–10 and must add a brief explanation. ⛔ **One rating per task, and it stays
+editable**: once saved the box shows it with **Edit** (the same select and textarea, pre-filled,
+saving through `review.manual.update`) and **Delete**, and a second save is refused by the daemon
+rather than averaged in — one person twice is not two opinions. The rating counts in the task's
+headline quality — the Tasks **Quality** column and the thread's *quality review* score line, whose
+tooltip and denominator say when it is included (*Your rating*, or *N grades (… and your rating)*) —
+and in the Analytics aggregate alongside peer grades, but never masquerades as the seven rubric
+dimensions or as an agent reviewer; a mixed-authorship rating is kept but excluded from clean model
+comparison.
 
 ⛔ **The project is the composer's first control, in its head row, not one of the pills.** It is the
 only setting with no usable default — it decides the workspace, the branch and the policy every other

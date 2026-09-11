@@ -12,6 +12,7 @@ import {
   type RubricDimension
 } from '@shared/review.js'
 import { db, row, rows } from './db.js'
+import { TASK_QUALITY_RECOMPUTE_SQL } from './qualitysql.js'
 import { taskCommits } from './taskcommits.js'
 import { requireTask } from './tasks.js'
 import { emit } from './events.js'
@@ -921,25 +922,7 @@ export function completeReview(
     )
     .run(JSON.stringify(parsed.scores), score, parsed.summary, JSON.stringify(parsed.notable), now, id)
 
-  db()
-    .prepare(
-      `update tasks
-          set quality_review_id = ?, quality_review_score = ?, quality_review_at = ?,
-              quality_reviewer = ?
-        where id = ?`
-    )
-    .run(id, score, now, existing.reviewerAdapter, existing.taskId)
-
-  const aggregate = db()
-    .prepare(
-      `select avg(composite) as score, count(composite) as count
-         from quality_reviews
-        where task_id = ? and status = 'complete' and composite is not null`
-    )
-    .get(existing.taskId) as { score: number | null; count: number }
-  db()
-    .prepare('update tasks set quality_review_score = ?, quality_review_count = ? where id = ?')
-    .run(aggregate.score === null ? null : Math.round(aggregate.score * 10) / 10, aggregate.count, existing.taskId)
+  recomputeTaskQuality(existing.taskId)
 
   log.info(
     `quality review ${id.slice(0, 8)} scored ${score ?? 'nothing'} on ${existing.subjectAdapter}'s work`
@@ -986,23 +969,16 @@ export function deleteReview(id: string): { ok: true } | { ok: false; reason: st
   }
 
   db().prepare('delete from quality_reviews where id = ?').run(id)
-
-  db().prepare(`
-    update tasks
-       set quality_review_score = (
-             select round(avg(q.composite), 1) from quality_reviews q
-              where q.task_id = tasks.id and q.status = 'complete' and q.composite is not null
-           ),
-           quality_review_count = (
-             select count(q.composite) from quality_reviews q
-              where q.task_id = tasks.id and q.status = 'complete' and q.composite is not null
-           )
-     where id = ?
-  `).run(existing.task_id)
+  recomputeTaskQuality(existing.task_id)
 
   log.info(`quality review ${id.slice(0, 8)} deleted`)
   emit({ type: 'task.changed', task: requireTaskRow(existing.task_id) })
   return { ok: true }
+}
+
+/** Re-derive a task's headline quality after any review or rating is written or removed. */
+function recomputeTaskQuality(taskId: string): void {
+  db().prepare(`${TASK_QUALITY_RECOMPUTE_SQL} where id = ?`).run(taskId)
 }
 
 export function requireReview(id: string): QualityReview {
@@ -1046,16 +1022,31 @@ function toManualReview(r: ManualReviewRow): ManualReview {
   }
 }
 
-/** Store a direct user rating without applying the peer-review rubric. */
-export function createManualReview(taskId: string, score: number, explanation: string):
-  | { ok: true; review: ManualReview }
-  | { ok: false; reason: string } {
+/** The same two checks for a new rating and an edited one; the explanation comes back trimmed. */
+function validRating(score: number, explanation: string): { ok: true; text: string } | { ok: false; reason: string } {
   if (!Number.isInteger(score) || score < 0 || score > 10) {
     return { ok: false, reason: 'rating must be a whole number from 0 to 10' }
   }
   const text = explanation.trim()
   if (!text) return { ok: false, reason: 'add a brief explanation for this rating' }
   if (text.length > 2_000) return { ok: false, reason: 'explanation must be 2,000 characters or fewer' }
+  return { ok: true, text }
+}
+
+/**
+ * Store a direct user rating without applying the peer-review rubric.
+ *
+ * ⛔ **One per task.** There is one operator, so a second rating of the same work is a changed mind,
+ * not a second opinion — and a mean of two of them would count one person twice. Edit the existing
+ * one (`updateManualReview`) or delete it; the cap is the place to revisit if accounts ever arrive.
+ */
+export function createManualReview(taskId: string, score: number, explanation: string):
+  | { ok: true; review: ManualReview }
+  | { ok: false; reason: string } {
+  const valid = validRating(score, explanation)
+  if (!valid.ok) return valid
+  const existing = manualReviewsForTask(taskId)
+  if (existing.length > 0) return { ok: false, reason: 'this task already has your review — edit or delete it instead' }
   const authorship = authorshipOf(taskId)
   if (!authorship.subjectAdapter) return { ok: false, reason: 'this task has no agent work to rate' }
   const id = randomUUID()
@@ -1064,8 +1055,26 @@ export function createManualReview(taskId: string, score: number, explanation: s
     `insert into manual_reviews
        (id, task_id, subject_adapter, subject_model, mixed_authorship, score, explanation, created_at)
      values (?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(id, taskId, authorship.subjectAdapter, authorship.subjectModel, authorship.mixed ? 1 : 0, score, text, now)
+  ).run(id, taskId, authorship.subjectAdapter, authorship.subjectModel, authorship.mixed ? 1 : 0, score, valid.text, now)
+  recomputeTaskQuality(taskId)
   emit({ type: 'task.changed', task: requireTaskRow(taskId) })
+  return { ok: true, review: requireManualReview(id) }
+}
+
+/**
+ * Change a rating's score or explanation in place. ⚠️ The subject columns are left as they were:
+ * they record whose work was rated, and a changed mind about the score does not change the author.
+ */
+export function updateManualReview(id: string, score: number, explanation: string):
+  | { ok: true; review: ManualReview }
+  | { ok: false; reason: string } {
+  const found = row<ManualReviewRow>(db().prepare('select * from manual_reviews where id = ?').get(id))
+  if (!found) return { ok: false, reason: `no manual review '${id}'` }
+  const valid = validRating(score, explanation)
+  if (!valid.ok) return valid
+  db().prepare('update manual_reviews set score = ?, explanation = ? where id = ?').run(score, valid.text, id)
+  recomputeTaskQuality(found.task_id)
+  emit({ type: 'task.changed', task: requireTaskRow(found.task_id) })
   return { ok: true, review: requireManualReview(id) }
 }
 
@@ -1085,6 +1094,7 @@ export function deleteManualReview(id: string): { ok: true } | { ok: false; reas
   const found = row<ManualReviewRow>(db().prepare('select * from manual_reviews where id = ?').get(id))
   if (!found) return { ok: false, reason: `no manual review '${id}'` }
   db().prepare('delete from manual_reviews where id = ?').run(id)
+  recomputeTaskQuality(found.task_id)
   emit({ type: 'task.changed', task: requireTaskRow(found.task_id) })
   return { ok: true }
 }

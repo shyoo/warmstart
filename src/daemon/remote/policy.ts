@@ -46,6 +46,7 @@ export const REMOTE_METHODS = {
   'review.cancel': 'deny',
   'review.delete': 'deny',
   'review.manual.create': 'deny',
+  'review.manual.update': 'deny',
   'review.manual.delete': 'deny',
   'task.create': 'write',
   'attachment.create': 'deny',

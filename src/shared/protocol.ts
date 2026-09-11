@@ -1734,6 +1734,11 @@ export interface RpcMap {
     params: { taskId: string; score: number; explanation: string }
     result: { ok: true; review: ManualReview } | { ok: false; reason: string }
   }
+  /** Change the operator's rating in place; the task keeps at most one. */
+  'review.manual.update': {
+    params: { reviewId: string; score: number; explanation: string }
+    result: { ok: true; review: ManualReview } | { ok: false; reason: string }
+  }
   'review.manual.delete': {
     params: { reviewId: string }
     result: { ok: true } | { ok: false; reason: string }

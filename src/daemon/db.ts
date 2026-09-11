@@ -4,6 +4,7 @@ import { dirname, join, sep } from 'node:path'
 import { log } from './log.js'
 import { costModel } from './costmodel.js'
 import { namesAnAuthor } from './blinding.js'
+import { TASK_QUALITY_RECOMPUTE_SQL } from './qualitysql.js'
 
 /**
  * Storage.
@@ -1820,6 +1821,16 @@ const MIGRATIONS: Migration[] = [
   // ⚠️ Scoped to `kind = 'conversation'`; nothing else has ever had its rung written by a button.
   (conn) => {
     conn.exec("update tasks set finish_policy = 'inherit' where kind = 'conversation';")
+  },
+  // 65 - a task's headline quality counts the operator's own rating alongside its peer grades.
+  //
+  // ⚠️ Until this build `manual_reviews` fed the Analytics aggregate but not `tasks.quality_review_*`,
+  // so a task rated by hand showed `—` in the Quality column. The text is `TASK_QUALITY_RECOMPUTE_SQL`
+  // from `review.ts`, scoped to rows that have a rating; every other row's mean is unchanged.
+  // Replay-safe: the statement is idempotent.
+  (conn) => {
+    conn.exec(`${TASK_QUALITY_RECOMPUTE_SQL}
+       where exists (select 1 from manual_reviews m where m.task_id = tasks.id)`)
   }
 ]
 

@@ -72,6 +72,7 @@ interface TaskRow {
   last_run_worker_id?: string | null
   last_run_model?: string | null
   grading_worker_id?: string | null
+  manual_review_count?: number | null
   mandate_json: string
   budget_json: string
   not_before: number | null
@@ -142,7 +143,8 @@ const TASK_SELECT = `
       order by r.started_at desc limit 1) as last_run_model,
     (select q.reviewer_worker_id from quality_reviews q
       where q.task_id = t.id and q.status = 'pending'
-      order by q.created_at desc limit 1) as grading_worker_id
+      order by q.created_at desc limit 1) as grading_worker_id,
+    (select count(*) from manual_reviews m where m.task_id = t.id) as manual_review_count
   from tasks t`
 
 /**
@@ -252,6 +254,7 @@ function toTask(r: TaskRow, timing: ActiveTiming = ZERO_TIMING): Task {
     qualityReviewCount: r.quality_review_count ?? 0,
     qualityReviewedAt: r.quality_review_at ?? null,
     qualityReviewer: r.quality_reviewer ?? null,
+    qualityManualCount: r.manual_review_count ?? 0,
     gradingWorkerId: r.grading_worker_id ?? null,
     excludedFromStats: r.stats_excluded === 1,
     nonGradable: r.non_gradable === 1,

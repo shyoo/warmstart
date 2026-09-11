@@ -96,6 +96,7 @@ beforeEach(() => {
   db.db().prepare('delete from runs').run()
   db.db().prepare('delete from workers').run()
   db.db().prepare('delete from quality_reviews').run()
+  db.db().prepare('delete from manual_reviews').run()
 })
 
 describe('picking a reviewer', () => {
@@ -584,5 +585,144 @@ describe('a reviewer whose turn ended in an error', () => {
   it('says so plainly when the error carried no words at all', () => {
     expect(reviewer.resultError(null, 'turn.failed')).toContain('said nothing about it')
     expect(reviewer.resultError('   ', null)).toContain('said nothing about it')
+  })
+})
+
+/**
+ * The operator's own rating.
+ *
+ * ⛔ **One per task, editable, and it counts.** There is one operator, so a second rating of the
+ * same work is a changed mind, not a second opinion — a mean of two of them would count one person
+ * twice. And it feeds the task's headline score the way it already fed the Analytics aggregate:
+ * before t359 a task rated only by hand showed `—` in the Quality column.
+ */
+describe("the operator's own rating", () => {
+  const peerScores = (score: number): Record<RubricDimension, DimensionScore> =>
+    Object.fromEntries(
+      RUBRIC_DIMENSIONS.map((dimension) => [dimension, { score, rationale: 'measured in the committed diff' }])
+    ) as Record<RubricDimension, DimensionScore>
+
+  async function peerReview(score: number): Promise<void> {
+    const review = await import('./review.js')
+    const pending = review.createPendingReview({
+      taskId: TASK,
+      runId: `review-run-${score}`,
+      reviewerWorkerId: CODEX,
+      reviewerAdapter: 'openai-compatible',
+      reviewerModel: 'gpt-5.4-mini',
+      subjectAdapter: 'claude-code',
+      subjectModel: 'claude-opus-5',
+      authorship: [],
+      mixed: false,
+      diff: null,
+      blindingLeak: false
+    })
+    review.completeReview(pending.id, { ok: true, scores: peerScores(score), summary: 's', notable: [] })
+  }
+
+  it('counts in the task headline, alone and averaged with peer grades', async () => {
+    const review = await import('./review.js')
+    const tasks = await import('./tasks.js')
+    worker(CLAUDE_A, 'ClaudeFirst', 'claude-code')
+    worker(CODEX, 'CodexFirst', 'openai-compatible')
+    workRun(CLAUDE_A, 'claude-code', 'claude-opus-5')
+
+    const created = review.createManualReview(TASK, 4, 'Missed half the brief.')
+    expect(created.ok).toBe(true)
+    let task = tasks.getTask(TASK)!
+    expect(task.qualityScore).toBe(4)
+    expect(task.qualityReviewCount).toBe(1)
+    expect(task.qualityManualCount).toBe(1)
+    expect(task.qualityReviewer).toBeNull()
+    expect(task.qualityReviewedAt).not.toBeNull()
+
+    await peerReview(8)
+    task = tasks.getTask(TASK)!
+    expect(task.qualityScore).toBe(6)
+    expect(task.qualityReviewCount).toBe(2)
+    expect(task.qualityManualCount).toBe(1)
+    expect(task.qualityReviewer).toBe('openai-compatible')
+  })
+
+  it('caps at one per task and edits in place', async () => {
+    const review = await import('./review.js')
+    const tasks = await import('./tasks.js')
+    worker(CLAUDE_A, 'ClaudeFirst', 'claude-code')
+    workRun(CLAUDE_A, 'claude-code', 'claude-opus-5')
+
+    const first = review.createManualReview(TASK, 4, 'Missed half the brief.')
+    if (!first.ok) throw new Error(first.reason)
+    const second = review.createManualReview(TASK, 9, 'Changed my mind.')
+    expect(second.ok).toBe(false)
+    if (second.ok) throw new Error('a second rating was accepted')
+    expect(second.reason).toContain('already has your review')
+
+    const edited = review.updateManualReview(first.review.id, 9, '  Changed my mind.  ')
+    if (!edited.ok) throw new Error(edited.reason)
+    expect(edited.review.id).toBe(first.review.id)
+    expect(edited.review.score).toBe(9)
+    expect(edited.review.explanation).toBe('Changed my mind.')
+    expect(review.manualReviewsForTask(TASK)).toHaveLength(1)
+    expect(tasks.getTask(TASK)?.qualityScore).toBe(9)
+
+    expect(review.updateManualReview(first.review.id, 11, 'x').ok).toBe(false)
+    expect(review.updateManualReview(first.review.id, 5, '   ').ok).toBe(false)
+    expect(review.updateManualReview('nope', 5, 'x').ok).toBe(false)
+    expect(tasks.getTask(TASK)?.qualityScore).toBe(9)
+  })
+
+  it('deleting it recomputes the headline from what remains', async () => {
+    const review = await import('./review.js')
+    const tasks = await import('./tasks.js')
+    worker(CLAUDE_A, 'ClaudeFirst', 'claude-code')
+    worker(CODEX, 'CodexFirst', 'openai-compatible')
+    workRun(CLAUDE_A, 'claude-code', 'claude-opus-5')
+    await peerReview(8)
+    const created = review.createManualReview(TASK, 2, 'Broke the build.')
+    if (!created.ok) throw new Error(created.reason)
+    expect(tasks.getTask(TASK)?.qualityScore).toBe(5)
+
+    expect(review.deleteManualReview(created.review.id)).toEqual({ ok: true })
+    let task = tasks.getTask(TASK)!
+    expect(task.qualityScore).toBe(8)
+    expect(task.qualityReviewCount).toBe(1)
+    expect(task.qualityManualCount).toBe(0)
+    expect(task.qualityReviewer).toBe('openai-compatible')
+
+    // And with nothing left at all the headline is an honest null, never a zero.
+    const again = review.createManualReview(TASK, 2, 'Broke the build.')
+    if (!again.ok) throw new Error(again.reason)
+    for (const peer of review.reviewsForTask(TASK)) review.deleteReview(peer.id)
+    expect(tasks.getTask(TASK)?.qualityScore).toBe(2)
+    review.deleteManualReview(again.review.id)
+    task = tasks.getTask(TASK)!
+    expect(task.qualityScore).toBeNull()
+    expect(task.qualityReviewCount).toBe(0)
+    expect(task.qualityReviewedAt).toBeNull()
+    // ⚠️ Deleting the newest peer review used to leave the reviewer's name on the task.
+    expect(task.qualityReviewer).toBeNull()
+    expect(task.qualityReviewId).toBeNull()
+  })
+
+  it('migration 65 folds a rating stored before it into the headline', async () => {
+    const tasks = await import('./tasks.js')
+    // A row written the way the pre-t359 build wrote it: the rating stored, the task untouched.
+    db.db()
+      .prepare(
+        `insert into manual_reviews
+           (id, task_id, subject_adapter, subject_model, mixed_authorship, score, explanation, created_at)
+         values ('old-rating', ?, 'claude-code', 'claude-opus-5', 0, 7, 'Fine.', 5)`
+      )
+      .run(TASK)
+    expect(tasks.getTask(TASK)?.qualityScore).toBeNull()
+
+    db.db().exec(`pragma user_version = ${db.versionBefore('where exists (select 1 from manual_reviews m')}`)
+    db.closeDb()
+    db.openDb(join(dir, 'reviewer.db'))
+
+    const task = tasks.getTask(TASK)!
+    expect(task.qualityScore).toBe(7)
+    expect(task.qualityReviewCount).toBe(1)
+    expect(task.qualityReviewedAt).toBe(5)
   })
 })
