@@ -3721,3 +3721,32 @@ reasoning rather than status.
 **t326** (2026-09-08): typecheck · lint · `npm test` (**2,874 passed, 2 platform skips**) · build clean (t326, measured 2026-09-08). The phone now has fixed Attention / Quota / Tasks / Settings navigation; enabled-only quota gauges with reset countdowns; ten-row local task pages with summary-first labels, worker/model/active-time/price/update/status/action; a Tasks `+` composer; and a read-only server/project/fleet information screen. `project.list` is filtered by the same remote-project switch as `task.list`, proven across the real listener. `test:daemon`: **197/202 passed**; all remote checks passed, while five earlier `agent.*` checks failed after node-pty's `conpty_console_list_agent` could not `AttachConsole` in this sandbox (the documented host-capability class, not inferred as a product regression). Remote access also distinguishes three Tailscale certificate failures that all used to read as one: an HTTPS/policy refusal, Windows' protected local-service-pipe denial (needs a Tailscale update and a working normal-user `tailscale status`), and — the one the operator actually hit twice — **our own 10s timeout killing a cold issuance**, measured at **36.1s** on 2026-09-08 against a real tailnet where the cached re-run took **0.16s**; the budget is now 120s and a kill we performed says so instead of blaming a tailnet setting (t322). A Plan & Split planner now closes its run at the successful split transition, rather than letting agent time tick until its CLI eventually exits — and **migration 57 moved the four planners that ran before that back onto their splits** (t191, t226, t292, t310, each carrying **47.3-47.9 minutes** of one session idle timeout as work; t191 now reads 30.0m rather than 77.4m, t226 126.9 not 174.7, t292 12.2 not 59.6, t310 67.8 not 115.4), anchored on the newest child filed inside the run's own span and leaving a run with no such child exactly as it found it. Manual user reviews now store an explained 0–10 overall rating separately from the peer rubric and contribute to quality aggregates without fabricated dimensions or a reviewer run.
 
 **Maintainability batch landed and finished (t293-t297, reviewed as a whole by t292, closed out by t298, 2026-09-08).** Nine of the eleven rows of `transient_docs/maintainability_plan_2026-09-07.md` §4 are in: `scheduler.ts` 6,745 → 3,780 across five new modules (`prompt` `scoring` `residency` `turnend` `resolutions`), `shared/policy.ts` owns the preference resolvers, `testkit.ts` seeds L1 rows, the six `agent.*` RPCs have L2 checks, and `cancel.ts` reaches exactly `split.ts`’s canonical children. ⛔ **`api.ts` and `shared/policy.ts` came back marked done having done something else, and were redone during review**: `api.ts` is now 28 lines and the 118 handlers live in `src/daemon/api/{workers,projects,tasks,quality,agent}.ts` over a shared `api/support.ts`, each domain returning `Pick<Api, ItsMethodUnion>` so the mapped type still fails the build by *name* on a method nobody claims (re-proved by deleting one). ⭐ **The two rows the batch never attempted are now in too (t298)**: `TaskThread.tsx` is **1,973 lines / 12 components**, from 4,086 / 34. The seven `*Picker`s are one `components/TaskSettingPicker.tsx` reading pure menu functions in `renderer/src/lib/threadview.ts` — 19 L1 checks on what an operator is *offered*, where the renderer had none — and the rest sit in `components/thread/{Facts,Decide,RunRow,Disclosure}.tsx`; every one of the 25 moved function bodies was compared byte-for-byte against its parent commit. ⚠️ `Disclosure.tsx` is not in the plan and exists to keep the graph acyclic. ⛔ `test/ui.test.mjs` now drives the settings themselves (355 checks): writing those five exposed a ledger section that had been asserting against **whichever thread was still on screen** and passing only while the timing held. ⚠ The new scheduler modules import back from `scheduler.ts`, so nothing in them may read a scheduler binding at module-eval time (`14f7155` fixed one that did). CLIs here: claude 2.1.252 · agy 1.1.25 · codex 0.151.0 · local-llm 1.0.0 (qwen3-coder live tested) · muse 1.0.3 (in WSL2, live tested). ⚠️ With none installed — the CI state — the daemon suite skips 5 checks, each with a stated reason.
+
+## A slot that `git status` called clean and `git switch` refused (2026-09-11, t353 → t355)
+
+t355 was filed to debug why t353's Codex run "failed to make edit to the file"; assigning it failed
+first, on `git switch -c warmstart/t355-… main` → *Your local changes to the following files would be
+overwritten by checkout* naming eleven files. Read from the daemon log and the Codex rollout (outside
+the Claude container — `docs/development.md` §4 *Paths*): the same refusal had already killed the
+park of `ws1` for t353's retry at 07:46:23.
+
+**Cause.** Codex's sandbox refused to write `prefs.ts`. The agent wrote the content to `%TEMP%`,
+`git hash-object -w` + `update-index --cacheinfo` staged it, committed `a246ae7`, and then ran
+`update-index --assume-unchanged` on all eleven files so `git status` would stop showing the working
+tree — which still held the *old* content — as modified. `status --porcelain` honours the bit and
+read empty; `rescueDirt` rescued nothing; `switch` compares the real stat and refused.
+
+**Fix.** `unhideIndexEntries` (`worktrees.ts`) clears `assume-unchanged` and `skip-worktree` from
+`ls-files -v` before the rescue looks. Anything that was hidden is **stashed, never committed**: the
+working tree lagged the commit, so a `wip:` of it would have been a revert of the agent's own work at
+the tip of its branch, and the next run would have landed it. Regression test against real git in
+`worktrees.test.ts`. `ws1` repaired by hand — bits cleared, ten files byte-identical to `main` and
+`Tasks.tsx` a strict subset of the commit, all stashed under a label.
+
+**Beside it.** `cleanWorkspaceAcls` ran `icacls /reset` with `stdio: 'ignore'`. Measured: 171 of
+19,321 files are owned by `CodexSandboxOffline` and refuse the reset (the unelevated daemon has
+Modify, not WRITE_DAC), keeping a stale capability SID; and the pass takes 7.2 s against a 5 s cap,
+so it is killed on every prepare. Both now `warn`. **Not proven**: why the sandbox refused that one
+file — by its ACL it was writable, and a `codex sandbox` probe hung without a console. Delete-and-
+checkout of sandbox-owned files is the untried fix. Rejected: raising the cap (a per-dispatch cost,
+the owner's call) and committing hidden dirt on the branch (the revert problem above).

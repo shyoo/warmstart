@@ -263,6 +263,44 @@ describe('an interrupted run that never committed', () => {
     worktrees.releaseWorkspace(ws!.claimId)
   })
 
+  it('sees through assume-unchanged, and stashes rather than commits what was behind it', async () => {
+    // ⛔ t353/t355, 2026-09-11. Codex could not write the files, so it staged straight into the
+    // index, committed, and marked the files assume-unchanged to quiet `git status`. Status was
+    // empty, the rescue found nothing, and every later `switch` in ws1 refused with "local changes
+    // would be overwritten" — and the working tree held the *old* content, so a `wip:` commit of it
+    // would have reverted the agent's own work at the tip of its branch.
+    const project = makeProject()
+    const ws = await worktrees.claimWorkspace(project, 'run-1')
+    const branch = worktrees.branchNameFor(353, 'three ui fixes')
+    await worktrees.prepareWorkspace(project, ws!, branch)
+
+    const staged = join(dir, `staged${seq}.txt`)
+    writeFileSync(staged, 'written into the index, never to disk\n')
+    const blob = git(ws!.path, 'hash-object', '-w', staged)
+    git(ws!.path, 'update-index', '--cacheinfo', `100644,${blob},kept.txt`)
+    git(ws!.path, 'commit', '-m', 'staged straight into the index')
+    git(ws!.path, 'update-index', '--assume-unchanged', 'kept.txt')
+    // The state that fooled the rescue: a real commit, a lagging working tree, and a clean status.
+    expect(text(join(ws!.path, 'kept.txt'))).toBe('as committed\n')
+    expect(git(ws!.path, 'status', '--porcelain')).toBe('')
+
+    const rescue = await worktrees.parkWorkspace(project, ws!.path)
+    expect(rescue?.kind).toBe('stash')
+    expect(git(ws!.path, 'stash', 'list')).toMatch(/1 of them hidden behind assume-unchanged/)
+    // The park went through, the bit is gone, and the branch tip is still the agent's commit.
+    expect(git(ws!.path, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('HEAD')
+    expect(git(ws!.path, 'ls-files', '-v', 'kept.txt')).toBe('H kept.txt')
+    expect(git(ws!.path, 'log', '--format=%s', '-1', branch)).toBe('staged straight into the index')
+
+    // And the next claim of the slot gets the branch, with the committed content on disk.
+    worktrees.releaseWorkspace(ws!.claimId)
+    const next = await worktrees.claimWorkspace(project, 'run-2')
+    const result = await worktrees.prepareWorkspace(project, next!, branch)
+    expect(result.error).toBeUndefined()
+    expect(text(join(next!.path, 'kept.txt'))).toBe('written into the index, never to disk\n')
+    worktrees.releaseWorkspace(next!.claimId)
+  })
+
   it('rescues nothing at all when the run committed everything it did', async () => {
     // ⚠️ Otherwise every park would leave a `wip:` commit, and `rescueAtTip` would block the landing
     // of every task that ever paused.

@@ -175,6 +175,16 @@ all three. codex is granted them with `--add-dir` (`gitWritableRoots` in
 so it is granted from the measured requirement and never by reflex, and `--sandbox` itself is never
 relaxed to buy the same thing.
 
+⚠️ **The ACL reset on prepare (`cleanWorkspaceAcls`) is partial, twice over, and now says so.**
+Measured in `ws1`, 2026-09-11: a sandboxed Codex run rewrites files as `CodexSandboxOffline`, and the
+daemon — the operator's own token, unelevated — holds Modify on those but not WRITE_DAC, so
+`icacls /reset /t /c` answers *Access is denied* on each (171 of 19,321) and carries on; they keep
+the DACL the sandbox last gave them, an old capability SID included. And the full pass takes
+**7.2 s** against the 5 s `execFileSync` cap, so it is killed on every prepare and whatever sorts
+after the cut-off is never touched. Both were silent behind `stdio: 'ignore'`; both are `warn` lines
+now. Raising the cap costs every dispatch that much and is a separate decision; delete-and-checkout
+of the sandbox-owned files (Modify includes DELETE) is the untried fix.
+
 ⛔ **A worktree is where an agent *starts*, not a boundary it is held inside.** For `antigravity-cli`
 the workspace must be named with `--add-dir <cwd>` on **every** spawn, resume included — cwd alone let
 a task edit and commit in the trunk on 2026-08-28. ⚠️ Ask any new adapter the same question before

@@ -290,6 +290,15 @@ compiled and a rescue leaves a *clean* workspace that the rest of the bar would 
 ⚠️ **Only if there is a branch to commit to.** A pool member at rest has a detached HEAD; there the
 work is stashed as it always was, which is what condition 1's note is about.
 
+⛔ **And only if nothing was hidden from `git status`.** Before it looks, `rescueDirt` clears
+`assume-unchanged` and `skip-worktree` off every index entry (`unhideIndexEntries`), because `status`
+honours those bits and `switch` does not. Measured on t353/t355, 2026-09-11: Codex, refused a file
+write by its sandbox, staged straight into the index, committed, and marked all eleven files
+`assume-unchanged` — `status` read clean, the rescue did nothing, and the next two `switch`es in that
+slot died on *"local changes would be overwritten"*. Whatever was behind the bit is **stashed, never
+committed**: in that case the working tree *lagged* the commit, and a `wip:` of it would have put a
+revert of the agent's own work at the tip. The stash label says how many were hidden.
+
 ⛔ Measured 2026-09-01 (t91, t92): both runs were preempted with everything uncommitted, both had it
 stashed, both branches were left at the base commit. The resumed runs saw empty branches and started
 over — one spent 13.3M tokens re-deriving work that was in `git stash list` the whole time.

@@ -437,9 +437,12 @@ try {
     'a continuation is a run on one thread; filing a second task would split the history'
   )
   const thread = await daemon.rpc('task.get', { id: finished.id })
+  // ⛔ Since t343 the reply itself is the record: the system line that restated it ("Continuing
+  // this task… same thread, a new run") is no longer written, so a thread reads like a chat.
   check(
-    'and the thread records why it ran again',
-    thread.messages.some((m) => /same thread, a new run/.test(m.text))
+    'and the thread carries the reply itself, not a notice restating it',
+    thread.messages.some((m) => m.text === 'now commit it') &&
+      !thread.messages.some((m) => /Continuing this task/.test(m.text))
   )
   await daemon.rpc('task.cancel', { id: finished.id, restingState: 'cancelled' })
 
@@ -463,7 +466,8 @@ try {
   const judged = await daemon.rpc('task.get', { id: waiting.id })
   check(
     'and it is written down as a judgement, not as a verification',
-    judged.messages.some((m) => /Marked done by you: checked it myself/.test(m.text)),
+    // ⛔ One sentence in `text`, the person's note in `detail` (t343, migration 62).
+    judged.messages.some((m) => m.text === 'Marked done by you' && m.detail === 'checked it myself'),
     'task_complete stays the only signal that an agent finished'
   )
   // ⛔ The DAG's only moving part. The scheduler carried a private copy of admitDependents that

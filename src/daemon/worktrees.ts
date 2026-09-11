@@ -386,30 +386,50 @@ async function catchUpEmptyBranch(path: string, branch: string, base: string): P
  * explicit `(DENY)` ACLs on the workspace or its `.git/worktrees/<slot>` metadata directory, which
  * subsequently causes git locks (`index.lock`, `HEAD.lock`) to fail with Permission Denied.
  * Resetting ACLs on preparation ensures clean inherited permissions.
+ *
+ * ⚠️ **It cannot reset every file, and now says so.** Measured in ws1, 2026-09-11: 155 files were
+ * owned by `CodexSandboxOffline` — a sandboxed run had rewritten them — and the daemon, running as
+ * the operator without elevation, holds Modify on them but not WRITE_DAC. `icacls … /reset` answers
+ * *Access is denied* for each and `/c` carries on, so those files keep whatever DACL the sandbox
+ * last gave them: an old capability SID, and not necessarily the one the next run is granted. With
+ * `stdio: 'ignore'` that was invisible; t353's Codex run reported *"Failed to write file"* on one of
+ * exactly those files and nothing in the log pointed here.
  */
 export function cleanWorkspaceAcls(workspacePath: string): void {
   if (process.platform !== 'win32') return
-  try {
-    if (existsSync(workspacePath)) {
-      execFileSync('icacls', [workspacePath, '/reset', '/t', '/c'], {
-        stdio: 'ignore',
+  const reset = (path: string): void => {
+    let out: string
+    try {
+      out = execFileSync('icacls', [path, '/reset', '/t', '/c'], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
         windowsHide: true,
         timeout: 5000
       })
+    } catch (err) {
+      // `/c` makes icacls exit 0 past per-file failures, so this is the timeout or a missing tool.
+      // ⚠️ Measured 2026-09-11: a full `/reset /t` of ws1 takes 7.2 s for 19,321 files, so the 5 s
+      // cap is hit on every prepare and whatever sorts after the cut-off is never reset. Said, not
+      // hidden — raising the cap would cost every dispatch that much, and is a separate decision.
+      if ((err as { killed?: boolean }).killed) log.warn(`ACL reset of ${path} did not finish in 5 s`)
+      else log.warn(`ACL reset of ${path} failed:`, err)
+      return
     }
+    // icacls ends with `Successfully processed N files; Failed processing M files`.
+    const failed = Number(/Failed processing (\d+) files/.exec(out)?.[1] ?? 0)
+    if (failed > 0) {
+      log.warn(`could not reset ACLs on ${failed} file(s) under ${path} — a sandboxed run owns them`)
+    }
+  }
+  try {
+    if (existsSync(workspacePath)) reset(workspacePath)
     const dotGit = join(workspacePath, '.git')
     if (existsSync(dotGit) && !statSync(dotGit).isDirectory()) {
       const pointer = readFileSync(dotGit, 'utf8').trim()
       const match = /^gitdir:\s*(.+)$/m.exec(pointer)
       if (match?.[1]) {
         const gitDir = resolve(workspacePath, match[1].trim())
-        if (existsSync(gitDir)) {
-          execFileSync('icacls', [gitDir, '/reset', '/t', '/c'], {
-            stdio: 'ignore',
-            windowsHide: true,
-            timeout: 5000
-          })
-        }
+        if (existsSync(gitDir)) reset(gitDir)
       }
     }
   } catch {
@@ -678,6 +698,48 @@ async function headBranch(path: string): Promise<string | null> {
 }
 
 /**
+ * Clear the two index bits that tell git to stop looking at the working tree, and return the paths
+ * that carried them.
+ *
+ * ⛔ Measured on t353 and t355, 2026-09-11. Codex's Windows sandbox refused to write `prefs.ts`, so
+ * the agent staged its edits straight into the index (`hash-object -w`, `update-index --cacheinfo`),
+ * committed, and then ran `update-index --assume-unchanged` on all eleven files so that `git status`
+ * would stop reporting the working tree — which still held the *old* content — as modified. It
+ * worked: the commit was real and `status --porcelain` came back empty. So `rescueDirt` found nothing
+ * to rescue, and the next `switch` in that slot died on *"Your local changes to the following files
+ * would be overwritten"* naming every one of them — once parking ws1 for t353's retry, once claiming
+ * it for t355. `status` honours the bit; `switch` compares the real stat and refuses.
+ *
+ * ⚠️ Both bits. `skip-worktree` is what sparse checkout sets and what people reach for when
+ * `assume-unchanged` "does not stick"; git refreshes them differently and `switch` fails on either.
+ */
+async function unhideIndexEntries(path: string): Promise<string[]> {
+  let listing: string
+  try {
+    listing = await git(path, ['ls-files', '-v'])
+  } catch {
+    return []
+  }
+  // One tag letter, a space, the path. Uppercase is ordinary; lowercase is assume-unchanged; `S`
+  // (lowercase `s` when both) is skip-worktree.
+  const hidden = listing
+    .split(/\r?\n/)
+    .map((line) => /^([a-zS]) (.+)$/.exec(line))
+    .filter((m): m is RegExpExecArray => m !== null)
+    .map((m) => m[2] as string)
+  if (hidden.length === 0) return []
+  try {
+    await git(path, ['update-index', '--no-assume-unchanged', '--no-skip-worktree', '--', ...hidden])
+    const named = hidden.slice(0, 5).join(', ') + (hidden.length > 5 ? ', …' : '')
+    log.warn(`${hidden.length} file(s) in ${path} were hidden from git status — ${named}`)
+  } catch (err) {
+    log.warn(`could not clear assume-unchanged on ${hidden.length} file(s) in ${path}:`, err)
+    return []
+  }
+  return hidden
+}
+
+/**
  * Get uncommitted work out of the way of a branch switch — **onto the branch when there is one.**
  *
  * ⛔ **Committed if possible, stashed if not, discarded never.** `reset --hard` would be one line and
@@ -710,6 +772,9 @@ async function headBranch(path: string): Promise<string | null> {
  * keep the scheduler moving is the one outcome worse than a task that will not start.
  */
 async function rescueDirt(path: string, destination: string): Promise<Rescue | null> {
+  // ⛔ First, so the status below tells the truth. A file behind `assume-unchanged` is invisible to
+  // `status` and fatal to `switch`; see `unhideIndexEntries`.
+  const hidden = await unhideIndexEntries(path)
   let dirty: string
   try {
     dirty = await git(path, ['status', '--porcelain'])
@@ -719,10 +784,17 @@ async function rescueDirt(path: string, destination: string): Promise<Rescue | n
   if (!dirty) return null
 
   const files = dirty.split(/\r?\n/).filter(Boolean).length
-  const label = `warmstart: ${files} file(s) left in ${path} before ${destination}`
+  const label =
+    `warmstart: ${files} file(s) left in ${path} before ${destination}` +
+    (hidden.length > 0 ? `, ${hidden.length} of them hidden behind assume-unchanged` : '')
 
   const branch = await headBranch(path)
-  if (branch) {
+  // ⛔ Stashed, never committed, when any of it was hidden. The one measured case is the working
+  // tree *lagging* a commit made straight into the index: committing that as `wip:` would put a
+  // revert of the agent's own work at the tip of its branch, and the next run would land it. Whoever
+  // sets the bit is saying the working-tree copy is not the truth, so it goes where nothing lands
+  // from — and stays recoverable by name, like every other stash this writes.
+  if (branch && hidden.length === 0) {
     try {
       await git(path, ['add', '-A'])
       await git(path, [
