@@ -856,7 +856,7 @@ describe('plan', () => {
     expect(script).toContain("export MUSE_NO_AUTO_UPDATE='1'")
   })
 
-  it.runIf(reachable)('resumes by reusing the conversation’s own id, with no extra flag', () => {
+  it.runIf(reachable)('resumes by reusing the conversation’s own id, with no --resume', () => {
     const plan = museCode.plan({
       sessionId: 'aaaaaaaa-1111-4111-8111-111111111111',
       resumeFrom: 'bbbbbbbb-2222-4222-8222-222222222222',
@@ -866,7 +866,38 @@ describe('plan', () => {
     })
     const script = plan.args[plan.args.length - 1] ?? ''
     expect(script).toContain("'--session-id' 'bbbbbbbb-2222-4222-8222-222222222222'")
-    expect(script).not.toContain('resume')
+    expect(script).not.toContain('--resume')
+  })
+
+  /**
+   * ⛔ **t364, and the refusal is the vendor's, not this app's.** muse compares `--workspace` against
+   * the root the session was *opened* in and exits 1 with an empty stdout when they differ —
+   * `session <id> was created in workspace <A>; refusing to resume in workspace <B>; pass
+   * --workspace <A> or --allow-workspace-switch`. Measured 2026-09-11 against muse 1.1.1 on a
+   * `--provider echo` session, so the reading cost nothing: refused without the flag, resumed and
+   * re-rooted its tools with it. t364 hit it for real — a conversation opened under the pre-rename
+   * `multi_agent_controller_workspaces\ws1`, whose **row** `repointIsolationRoots` had moved to
+   * `warmstart_workspaces\ws1` while the vendor's own log still said the old path — and read as the
+   * agent failing the task 4.4 seconds after dispatch.
+   */
+  it.runIf(reachable)('lets a resumed conversation move to the worktree this run claimed', () => {
+    const resumed = museCode.plan({
+      sessionId: 'aaaaaaaa-1111-4111-8111-111111111111',
+      resumeFrom: 'bbbbbbbb-2222-4222-8222-222222222222',
+      isolationRoot: root,
+      cwd,
+      transport: 'stream'
+    })
+    expect(resumed.args[resumed.args.length - 1] ?? '').toContain("'--allow-workspace-switch'")
+    // ⚠️ And not on a cold start, where there is no recorded root to disagree with and the flag
+    // would only widen what a fresh session may do.
+    const cold = museCode.plan({
+      sessionId: 'aaaaaaaa-1111-4111-8111-111111111111',
+      isolationRoot: root,
+      cwd,
+      transport: 'stream'
+    })
+    expect(cold.args[cold.args.length - 1] ?? '').not.toContain('--allow-workspace-switch')
   })
 
   /**

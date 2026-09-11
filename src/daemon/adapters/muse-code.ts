@@ -994,8 +994,9 @@ export const museCode: AgentAdapter = {
       'exec',
       '--json',
       // ⛔ Reusing the id **is** the resume: measured, a second exec on the same id appended to the
-      // conversation and logged `session.resumed`. So there is no separate resume flag to pass, and
-      // `resumeFrom` — which is this app's own id for the same conversation — simply wins.
+      // conversation and logged `session.resumed`. So there is no `--resume` to pass, and
+      // `resumeFrom` — which is this app's own id for the same conversation — simply wins. ⚠️ Not
+      // *no flags*, though: see `--allow-workspace-switch` below, which a resume does need.
       '--session-id',
       req.resumeFrom ?? req.sessionId,
       '--prompt-file',
@@ -1003,6 +1004,27 @@ export const museCode: AgentAdapter = {
       // Roots the policy-gated workspace tools at the worktree this run was given.
       '--workspace',
       hostPath(host, req.cwd),
+      // ⛔ **A resume must say the workspace may move, or it is not a resume at all.** muse records
+      // the workspace root a session was *opened* in and compares it to `--workspace` on every
+      // later exec: `session <id> was created in workspace <A>; refusing to resume in workspace
+      // <B>; pass --workspace <A> or --allow-workspace-switch`, then **exit 1** with an empty
+      // stdout, before the model is called. Measured 2026-09-11 against muse 1.1.1 on a throwaway
+      // `--provider echo` session (so the reading cost no tokens): two dirs, same id, refused
+      // without the flag and resumed with it, re-rooting its tools at the new directory.
+      //
+      // ⚠️ This fleet hands a conversation whichever pooled worktree the run claimed, and a path
+      // this app believes is the same directory can still be a different string to the vendor:
+      // t364 (2026-09-11) died in 4.4s, read as *the session ended (exit 1) without reporting
+      // completion*, because the conversation was opened on 2026-09-07 under
+      // `multi_agent_controller_workspaces\ws1` and `repointIsolationRoots` rewrote **our** row to
+      // `warmstart_workspaces\ws1` at the rename — it cannot reach inside the vendor's session log.
+      // So the app's `samePath` gate passed and muse's own comparison did not. The same refusal
+      // waits for any conversation revived into a different pool slot, rename or no rename.
+      //
+      // ⭐ The worktree the dispatch claimed is the authority on where this run works, which is why
+      // the switch is allowed rather than the resume declined: declining pays a full cold start for
+      // a prefix that is sitting right there.
+      ...(req.resumeFrom ? ['--allow-workspace-switch'] : []),
       ...permissionArgs(
         req.permissionMode ?? info.policy.headlessPermissionMode ?? info.policy.defaultPermissionMode
       )

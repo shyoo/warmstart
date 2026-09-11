@@ -33,7 +33,7 @@ first spawn.** That is the whole reason `AdapterInfo.verification` exists.
 | Warmstart MCP tools | ✔ | ⛔ global registration only | ⛔ global registration only | ⛔ function calling in bridge | ⛔ `mcpServers` is per-**root** config, not per session |
 | Prompt arrives on stdin as | a conversation, pipe stays open | a conversation, pipe stays open | ⛔ **one prompt, then EOF** — `codex exec` is one-shot | a conversation, pipe stays open | ⛔ **it does not** — `exec` answers `missing prompt`; the host script writes a `--prompt-file` |
 | Accepts our session id | ✔ | ⛔ | ⛔ | ⛔ | ✔ `--session-id` |
-| Resumes a past conversation | ✔ `--resume <id>` | ✔ `--conversation <id>` | ✔ **`exec resume <thread_id>`** — measured 2026-09-02 | ⛔ fresh conversation per dispatch | ✔ **the same `--session-id`** — measured 2026-09-06 |
+| Resumes a past conversation | ✔ `--resume <id>` | ✔ `--conversation <id>` | ✔ **`exec resume <thread_id>`** — measured 2026-09-02 | ⛔ fresh conversation per dispatch | ✔ **the same `--session-id`** — measured 2026-09-06; ⚠️ plus `--allow-workspace-switch`, or it refuses a new directory and exits 1 |
 | Prompt cache TTL | **60m** (`1h`, 2.0× write) | ⛔ unpriced (storage per token-hour) | **30m** (1.25× write) | ⛔ none | ⛔ unpublished (reads and writes are *reported*, not priced) |
 | Free quota probe | ✔ the `.claude.json` cache; `/usage` refreshes it | ⛔ **measured — see below** | ✔ **`account/rateLimits/read`**, rollout as fallback | ⛔ none (unlimited) | ⚠️ **screen only** — `/usage `; the provider can answer `Currently unavailable` with no windows |
 | Free **money** meter (`spendProbe`) | `config-cache` — `.claude.json`’s usage-credit counter, only while the vendor says credits are enabled | ⛔ `none` — cloud credits are real and nothing read reports a balance | `config-cache` — `credits.balance`, in the rollout the quota already comes from | ⛔ `none` — it runs on the operator's own machine | ⛔ `none` — no local file names a figure |
@@ -145,7 +145,7 @@ from a Windows host, on a live *Everyday Usage* account. The full capture is
 | `exec` reads its prompt from stdin, like `codex exec` | ⛔ **It has no stdin prompt channel at all.** A piped prompt answers `missing prompt` / `usage: muse exec [OPTIONS] [PROMPT]` and exits 1. The prompt is argv or `--prompt-file` and nothing else — so the host script does `cat > <file>` first and the EOF the `once` transport already sends becomes the go signal. Nothing in the scheduler changed |
 | `exec --json` carries usage, the way agy and codex do | ⛔ **It carries none.** A full real run was captured — 39 records — and there is no usage anywhere in it. Usage is in the **session log** (`payload.event.kind == "model_completed"`), so `metering: 'transcript'` |
 | a transcript is a transcript | ⛔ **Three differences at once, all silent.** It keys on `payload_type` not `type`, dates records in **microseconds**, and counts the cached prefix *inside* `input_tokens` (24,679 against a 24,433 cache read). A Claude-shaped reader meters nothing; summing the fields as they arrive doubles every cache read. Adapters now declare `decodeTranscript` |
-| resuming needs a resume flag | ⭐ **Reusing `--session-id` is the resume.** A second `exec` on the same id appended to the conversation and logged `session.resumed` with `prior_turn_count: 1`. So the vendor's handle for a conversation is the id this app minted for it |
+| resuming needs a resume flag | ⭐ **Reusing `--session-id` is the resume.** A second `exec` on the same id appended to the conversation and logged `session.resumed` with `prior_turn_count: 1`. So the vendor's handle for a conversation is the id this app minted for it. ⚠️ But it needs **`--allow-workspace-switch`** — see *a resumed conversation is bound to the directory it was opened in* below |
 | `/usage` + Enter shows the panel | ⛔ **The slash-command popup swallows the first Enter.** Two Enters work, and so does a **trailing space** — which is the fix, because `quota.ts` writes `${command}\r` and `'/usage '` submits in one go. ⚠️ And a **newly signed-in account has no windows on it at all** — see *the first probe of a new muse worker* below — so the parser answers `null` rather than 0% |
 | an isolation root is a directory | ⚠️ **Two of them.** No `MUSE_HOME` exists and the real binary ignores the launcher's `MUSE_AUTH_PATH` (grep: 0 hits), so isolation is `XDG_CONFIG_HOME` + `XDG_DATA_HOME` or nothing. Both work on a Windows drive, with one benign warning: DrvFs cannot express mode 0700, so cross-session messaging disables itself |
 | *(Windows)* `wsl.exe -- bash -lc <script> arg…` passes the arguments | ⛔ **It drops them.** `$#` came back `0`, `$0` read `/bin/bash`. Every path is quoted into the script text by `shQuote` instead |
@@ -166,8 +166,38 @@ Code is not installed"* and every task pinned to it was held — **while its quo
 through `hostPlan`, read that same account's windows in the same minute.** ⚠️ The asymmetry is the
 lesson: a bridged CLI has to be reached the same way for a question about itself as for a turn.
 
-⚠️ **Still unflown**: `--image`, and no task has yet been dispatched to a commissioned muse worker.
-Every capability above was exercised against the CLI; none of it has been through the scheduler.
+⚠️ **Still unflown**: `--image`, for the 0700 reason above. The rest has now been through the
+scheduler — muse workers have taken real dispatches, and the two faults that found are in this
+section: the image asset store (t289) and the workspace-bound resume (t364).
+
+### A resumed conversation is bound to the directory it was opened in (t364, 2026-09-11)
+
+muse records the `workspace_root` a session was **opened** in — it is the second record in
+`session.jsonl`, `runtime.session.metadata` — and compares it to `--workspace` on every later `exec`.
+When they differ it refuses:
+
+```
+session <id> was created in workspace <A>; refusing to resume in workspace <B>;
+pass --workspace <A> or --allow-workspace-switch to continue in the new workspace
+```
+
+⛔ **That refusal is exit 1 with an empty stdout, before the model is called**, so it reads exactly
+like an agent that failed its task: *the session ended (exit 1) without reporting completion*, four
+seconds after dispatch, task to `awaiting_human`. t364 lost a dispatch to it and t366 lost two more to
+the same conversation. Measured 2026-09-11 against muse 1.1.1 (1.1.1-R2514.1) on a throwaway
+`--provider echo` session, so confirming it cost no tokens: two directories and one id, refused
+without the flag, and with it a warning plus `workspace root: <B> (explicit)` and a normal run.
+
+⚠️ **The app's `samePath` gate cannot see this.** The conversation t364 revived was opened on
+2026-09-07 under `multi_agent_controller_workspaces\ws1`; the rename's `repointIsolationRoots`
+rewrote the `sessions.cwd` **row** to `warmstart_workspaces\ws1`, which is the one thing it can
+reach — the vendor's own session log still says the old path. So this app believed the directory was
+unchanged while muse compared two different strings. The same refusal waits on any conversation
+revived into a *different pool slot*, rename or no rename, which is a thing this fleet does by design.
+
+⭐ So `muse-code.ts` passes `--allow-workspace-switch` **whenever `resumeFrom` is set**, and never on
+a cold start. The worktree the dispatch claimed is the authority on where a run works; declining the
+resume instead would pay a full cold start for a prefix that is sitting right there.
 
 ### Three faults behind one message: *"its usage panel did not appear"*
 
