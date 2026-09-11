@@ -379,6 +379,113 @@ try {
   }
   check('the controls it took over are gone from the sidebar', t.sidebarStillHasControls === false, titlebar)
 
+  section('title bar controls')
+  // ⛔ The sidebar and resizer disappear from grid auto-placement when hidden. Without `.main`
+  // explicitly living in column three, it is then placed into the first, 0px column and the whole
+  // page appears broken. Check both the state transition and the work surface's actual rectangle.
+  const panelState = async () =>
+    JSON.parse(
+      await evaluate(`
+        JSON.stringify((() => {
+          const shell = document.querySelector('.shell')
+          const main = document.querySelector('.main')
+          const toggle = document.querySelector('button[aria-label="Show panel"], button[aria-label="Hide panel"]')
+          if (!shell || !main || !toggle) return { missing: true }
+          const shellRect = shell.getBoundingClientRect()
+          const mainRect = main.getBoundingClientRect()
+          return {
+            label: toggle.getAttribute('aria-label'),
+            sidebarVisible: getComputedStyle(document.querySelector('.sidebar')).display !== 'none',
+            resizerVisible: getComputedStyle(document.querySelector('.resizer')).display !== 'none',
+            mainStartsAtShellEdge: Math.abs(mainRect.left - shellRect.left) < 1,
+            mainFillsShell: Math.abs(mainRect.right - shellRect.right) < 1,
+            mainHasArea: mainRect.width > 100,
+            statusbarVisible: !!main.querySelector('.statusbar')
+          }
+        })())
+      `)
+    )
+  await evaluate(`document.querySelector('button[aria-label="Hide panel"]')?.click()`)
+  await wait(250)
+  const hiddenPanel = await panelState()
+  check(
+    'Hide panel leaves the work surface visible across the full window',
+    hiddenPanel.label === 'Show panel' &&
+      hiddenPanel.sidebarVisible === false &&
+      hiddenPanel.resizerVisible === false &&
+      hiddenPanel.mainStartsAtShellEdge === true &&
+      hiddenPanel.mainFillsShell === true &&
+      hiddenPanel.mainHasArea === true &&
+      hiddenPanel.statusbarVisible === true,
+    JSON.stringify(hiddenPanel)
+  )
+  await evaluate(`document.querySelector('button[aria-label="Show panel"]')?.click()`)
+  await wait(250)
+  const shownPanel = await panelState()
+  check(
+    'Show panel restores the navigation and resize handle',
+    shownPanel.label === 'Hide panel' && shownPanel.sidebarVisible === true && shownPanel.resizerVisible === true,
+    JSON.stringify(shownPanel)
+  )
+
+  await evaluate(`[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim() === 'Controller')?.click()`)
+  await wait(250)
+  await evaluate(`document.querySelector('button[aria-label="Back"]')?.click()`)
+  await wait(250)
+  check(
+    'Back returns to the previous destination',
+    (await evaluate(`document.querySelector('.content')?.innerText.includes('Loose ends') ?? false`)) === true
+  )
+  await evaluate(`document.querySelector('button[aria-label="Forward"]')?.click()`)
+  await wait(250)
+  check(
+    'Forward returns to the destination that Back left',
+    (await evaluate(`document.querySelector('.content')?.innerText.includes('Controller') ?? false`)) === true
+  )
+
+  await evaluate(`document.querySelector('button[aria-label="Refresh"]')?.click()`)
+  const refreshSettled = await until(
+    () => evaluate(`!document.querySelector('button[aria-label="Refresh"]')?.disabled`),
+    5_000
+  )
+  check('Refresh completes and leaves the connected shell usable', refreshSettled, String(refreshSettled))
+
+  const zoomFactor = () => evaluate(`window.localStorage.getItem('warmstart.zoomFactor')`)
+  await evaluate(`document.querySelector('button[aria-label="Zoom in (Ctrl +)"]')?.click()`)
+  check(
+    'Zoom in changes and persists the zoom, exposing its reset control',
+    (await zoomFactor()) === '1.10' &&
+      (await evaluate(`document.querySelector('.zoom-badge')?.innerText ?? ''`)) === '110%',
+    `${await zoomFactor()} / ${await evaluate(`document.querySelector('.zoom-badge')?.innerText ?? ''`)}`
+  )
+  await evaluate(`document.querySelector('.zoom-badge')?.click()`)
+  check(
+    'the zoom readout resets zoom to 100%',
+    (await zoomFactor()) === '1.00' && (await evaluate(`!document.querySelector('.zoom-badge')`)) === true,
+    String(await zoomFactor())
+  )
+  await evaluate(`document.querySelector('button[aria-label="Zoom out (Ctrl -)"]')?.click()`)
+  check(
+    'Zoom out changes and persists the zoom',
+    (await zoomFactor()) === '0.90' &&
+      (await evaluate(`document.querySelector('.zoom-badge')?.innerText ?? ''`)) === '90%',
+    `${await zoomFactor()} / ${await evaluate(`document.querySelector('.zoom-badge')?.innerText ?? ''`)}`
+  )
+  await evaluate(`document.querySelector('.zoom-badge')?.click()`)
+
+  await evaluate(`[...document.querySelectorAll('.titlebar button')].find(b => b.innerText.trim() === 'New task')?.click()`)
+  await wait(250)
+  check(
+    'New task opens the global composer from the title bar',
+    (await evaluate(`!!document.querySelector('.task-composer-modal[role="dialog"]')`)) === true
+  )
+  await evaluate(`document.querySelector('button[aria-label="Close new task"]')?.click()`)
+  await wait(250)
+  check(
+    'and its close button returns to the route underneath',
+    (await evaluate(`!document.querySelector('.task-composer-modal')`)) === true
+  )
+
   section('zero state')
   check(
     'an empty fleet says so rather than showing furniture',

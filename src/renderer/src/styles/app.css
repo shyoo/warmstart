@@ -169,6 +169,13 @@ body {
   grid-row: 2;
 }
 
+.main {
+  /* ⛔ An auto-placed main moves into column one when the panel and its handle are `display: none`.
+     Hidden state makes columns one and two 0px, which collapsed the entire page. The work always
+     belongs in the flexible third column, whether the panel is visible or not. */
+  grid-column: 3;
+}
+
 .shell--sidebar-hidden {
   grid-template-columns: 0 0 1fr;
 }
